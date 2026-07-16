@@ -1,0 +1,15 @@
+#!/bin/sh
+
+mount -t proc proc /proc
+mkdir -p /run
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+hostname -F /etc/hostname
+ip link set lo up
+if ip link set eth0 up; then
+	ip addr add 10.0.2.15/24 dev eth0
+	ip route add default via 10.0.2.2 dev eth0
+	echo "nameserver 10.0.2.3" > /etc/resolv.conf
+fi
+
+read boot_uptime boot_idle < /proc/uptime
+echo "Darwin UML userspace ready at ${boot_uptime}s"

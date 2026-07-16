@@ -1,0 +1,7 @@
+rm /etc/inittab
+write darwin/rootfs/inittab /etc/inittab
+rm /etc/init.d/rcS
+write darwin/rootfs/rcS /etc/init.d/rcS
+set_inode_field /etc/init.d/rcS mode 0100755
+rm /etc/profile
+write darwin/rootfs/profile /etc/profile

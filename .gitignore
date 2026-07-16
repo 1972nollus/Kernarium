@@ -1,0 +1,22 @@
+# Project build products
+/.build/
+
+# Local root filesystem image
+/rootfs.ext2
+
+# Compiler and debugger output outside the build directory
+*.dSYM/
+compile_commands.json
+
+# macOS filesystem metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor and IDE state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

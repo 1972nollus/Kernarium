@@ -1,0 +1,38 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#include "../include/uml_darwin_runtime.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+int darwin_uml_open(const char *path, int flags, int mode)
+{
+	return open(path, flags, mode);
+}
+
+int darwin_uml_fcntl(int fd, int command, long argument)
+{
+	return fcntl(fd, command, argument);
+}
+
+int darwin_uml_ioctl(int fd, unsigned long command, void *argument)
+{
+	return ioctl(fd, command, argument);
+}
+
+void darwin_uml_abort(void)
+{
+	signal(SIGABRT, SIG_DFL);
+	abort();
+}
+
+void darwin_uml_exit(int status, void *caller)
+{
+	dprintf(STDERR_FILENO, "Darwin: ELF exit(%d) called from %p\n",
+		status, caller);
+	_exit(status);
+}
