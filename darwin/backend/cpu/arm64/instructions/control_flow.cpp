@@ -4,6 +4,7 @@
 #include "../detail/instruction_helpers.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 namespace uml::backend::arm64 {
@@ -152,6 +153,23 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 	else if (system_register == 0xd51b'4420U)
 		cpu.fpsr = static_cast<std::uint32_t>(
 			cpu.read_register(transfer, false));
+	else if (system_register == 0xd53b'4200U)
+		cpu.write_register(transfer, cpu.nzcv, false);
+	else if (system_register == 0xd51b'4200U)
+		cpu.nzcv = static_cast<std::uint32_t>(
+			cpu.read_register(transfer, false)) & 0xf000'0000U;
+	else if (system_register == 0xd53b'e000U)
+		/* Express the virtual counter directly in nanoseconds.  Pairing a 1 GHz
+		 * frequency with steady_clock keeps CNTVCT monotonic and makes the two
+		 * architectural registers self-consistent without exposing host timing
+		 * details to the guest.
+		 */
+		cpu.write_register(transfer, 1'000'000'000U, false);
+	else if (system_register == 0xd53b'e040U)
+		cpu.write_register(transfer, static_cast<std::uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count()),
+			false);
 	else
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};

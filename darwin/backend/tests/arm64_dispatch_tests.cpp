@@ -247,12 +247,19 @@ static void architectural_system_registers()
 	memory.put32(base + 12, 0xd51b'4428U); // msr fpsr, x8
 	memory.put32(base + 16, 0xd53b'4429U); // mrs x9, fpsr
 	memory.put32(base + 20, 0xd53b'002aU); // mrs x10, ctr_el0
-	memory.put32(base + 24, 0xd400'0001U); // svc #0
+	memory.put32(base + 24, 0xd53b'420bU); // mrs x11, nzcv
+	memory.put32(base + 28, 0xd51b'420cU); // msr nzcv, x12
+	memory.put32(base + 32, 0xd53b'420dU); // mrs x13, nzcv
+	memory.put32(base + 36, 0xd53b'e00eU); // mrs x14, cntfrq_el0
+	memory.put32(base + 40, 0xd53b'e04fU); // mrs x15, cntvct_el0
+	memory.put32(base + 44, 0xd400'0001U); // svc #0
 	arm64::CpuState cpu{};
 	cpu.pc = base;
 	cpu.registers[6] = 0xaaaa'bbbb'0400'0000ULL;
 	cpu.registers[8] = 0xcccc'dddd'0800'0000ULL;
-	const auto result = arm64::Dispatcher{}.run(cpu, memory, 8);
+	cpu.registers[12] = 0xffff'ffff'5000'0000ULL;
+	cpu.nzcv = 0xa000'0000U;
+	const auto result = arm64::Dispatcher{}.run(cpu, memory, 16);
 	require(result.reason == arm64::StopReason::system_call);
 	require(cpu.registers[5] == 1U << 4);
 	require(cpu.fpcr == 0x0400'0000U);
@@ -260,6 +267,11 @@ static void architectural_system_registers()
 	require(cpu.fpsr == 0x0800'0000U);
 	require(cpu.registers[9] == 0x0800'0000U);
 	require(cpu.registers[10] == 0x8444'8004U);
+	require(cpu.registers[11] == 0xa000'0000U);
+	require(cpu.nzcv == 0x5000'0000U);
+	require(cpu.registers[13] == 0x5000'0000U);
+	require(cpu.registers[14] == 1'000'000'000U);
+	require(cpu.registers[15] != 0);
 }
 
 static void architectural_hint()
@@ -1102,7 +1114,8 @@ static void simd_integer_compare_register()
 	memory.put32(base, 0x6ee3'3486U);      // cmhi v6.2d, v4.2d, v3.2d
 	memory.put32(base + 4, 0x4e61'3444U);  // cmgt v4.8h, v2.8h, v1.8h
 	memory.put32(base + 8, 0x6e20'8c23U);  // cmeq v3.16b, v1.16b, v0.16b
-	memory.put32(base + 12, 0xd400'0001U); // svc #0
+	memory.put32(base + 12, 0x4e69'8d07U); // cmtst v7.8h, v8.8h, v9.8h
+	memory.put32(base + 16, 0xd400'0001U); // svc #0
 	arm64::CpuState cpu{};
 	cpu.pc = base;
 	cpu.vectors[0].bytes.fill(std::byte{0x20});
@@ -1115,6 +1128,9 @@ static void simd_integer_compare_register()
 	arm64::detail::set_vector_half(cpu.vectors[4], 1, 2);
 	arm64::detail::set_vector_half(cpu.vectors[3], 0, 8);
 	arm64::detail::set_vector_half(cpu.vectors[3], 1, 3);
+	cpu.vectors[8].bytes.fill(std::byte{0x0f});
+	cpu.vectors[9].bytes.fill(std::byte{0xf0});
+	cpu.vectors[9].bytes[2] = std::byte{0x01};
 	const auto result = arm64::Dispatcher{}.run(cpu, memory, 8);
 	require(result.reason == arm64::StopReason::system_call);
 	for (std::size_t index = 0; index < 16; ++index)
@@ -1128,6 +1144,9 @@ static void simd_integer_compare_register()
 		require(cpu.vectors[6].bytes[index] == std::byte{0xff});
 	for (std::size_t index = 8; index < 16; ++index)
 		require(cpu.vectors[6].bytes[index] == std::byte{});
+	for (std::size_t index = 0; index < 16; ++index)
+		require(cpu.vectors[7].bytes[index] ==
+			(index == 2 || index == 3 ? std::byte{0xff} : std::byte{}));
 }
 
 static void simd_bitwise_register_operations()
@@ -1280,7 +1299,11 @@ static void simd_integer_reductions()
 	memory.put32(base, 0x0e31'bbffU);      // addv b31, v31.8b
 	memory.put32(base + 4, 0x4e30'a8e6U);  // smaxv b6, v7.16b
 	memory.put32(base + 8, 0x6e71'a9acU);  // uminv h12, v13.8h
-	memory.put32(base + 12, 0xd400'0001U); // svc #0
+	memory.put32(base + 12, 0x0e30'3820U); // saddlv h0, v1.8b
+	memory.put32(base + 16, 0x4e70'3862U); // saddlv s2, v3.8h
+	memory.put32(base + 20, 0x6e30'38a4U); // uaddlv h4, v5.16b
+	memory.put32(base + 24, 0x6eb0'3928U); // uaddlv d8, v9.4s
+	memory.put32(base + 28, 0xd400'0001U); // svc #0
 	arm64::CpuState cpu{};
 	cpu.pc = base;
 	cpu.vectors[31].bytes.fill(std::byte{1});
@@ -1289,7 +1312,16 @@ static void simd_integer_reductions()
 	cpu.vectors[13].bytes.fill(std::byte{0xff});
 	cpu.vectors[13].bytes[4] = std::byte{0x34};
 	cpu.vectors[13].bytes[5] = std::byte{0x12};
-	const auto result = arm64::Dispatcher{}.run(cpu, memory, 8);
+	cpu.vectors[1].bytes.fill(std::byte{1});
+	cpu.vectors[1].bytes[0] = std::byte{0x80};
+	for (std::size_t lane = 0; lane < 8; ++lane)
+		arm64::detail::encode_little_endian(lane == 0 ? 0x8000 : 1,
+			std::span{cpu.vectors[3].bytes}.subspan(lane * 2, 2));
+	cpu.vectors[5].bytes.fill(std::byte{0xff});
+	for (std::size_t lane = 0; lane < 4; ++lane)
+		arm64::detail::encode_little_endian(0xffff'ffffU,
+			std::span{cpu.vectors[9].bytes}.subspan(lane * 4, 4));
+	const auto result = arm64::Dispatcher{}.run(cpu, memory, 12);
 	require(result.reason == arm64::StopReason::system_call);
 	require(cpu.vectors[31].bytes[0] == std::byte{8});
 	require(cpu.vectors[6].bytes[0] == std::byte{0x7f});
@@ -1301,6 +1333,22 @@ static void simd_integer_reductions()
 	}
 	for (std::size_t index = 2; index < 16; ++index)
 		require(cpu.vectors[12].bytes[index] == std::byte{});
+	require(arm64::detail::decode_little_endian(
+		std::span{cpu.vectors[0].bytes}.first(2)) == 0xff87);
+	require(arm64::detail::decode_little_endian(
+		std::span{cpu.vectors[2].bytes}.first(4)) == 0xffff'8007U);
+	require(arm64::detail::decode_little_endian(
+		std::span{cpu.vectors[4].bytes}.first(2)) == 0x0ff0);
+	require(arm64::detail::decode_little_endian(
+		std::span{cpu.vectors[8].bytes}.first(8)) == 0x3'ffff'fffcULL);
+	for (std::size_t index = 2; index < 16; ++index) {
+		require(cpu.vectors[0].bytes[index] == std::byte{});
+		require(cpu.vectors[4].bytes[index] == std::byte{});
+	}
+	for (std::size_t index = 4; index < 16; ++index)
+		require(cpu.vectors[2].bytes[index] == std::byte{});
+	for (std::size_t index = 8; index < 16; ++index)
+		require(cpu.vectors[8].bytes[index] == std::byte{});
 }
 
 static void simd_byte_extract()

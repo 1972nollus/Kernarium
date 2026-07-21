@@ -142,8 +142,7 @@ RunResult Dispatcher::simd_compare_register(CpuState &cpu, GuestMemory &,
 	const auto address = cpu.pc;
 	const unsigned opcode = (instruction >> 11) & 0x1fU;
 	const bool unsigned_compare = (instruction & 0x2000'0000U) != 0;
-	if (opcode != 6 && opcode != 7 &&
-	    (opcode != 17 || !unsigned_compare))
+	if (opcode != 6 && opcode != 7 && opcode != 17)
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
 	const std::size_t lane_size = std::size_t{1} <<
@@ -164,7 +163,8 @@ RunResult Dispatcher::simd_compare_register(CpuState &cpu, GuestMemory &,
 			std::span{right}.subspan(offset, lane_size));
 		bool matches;
 		if (opcode == 17) {
-			matches = left_value == right_value;
+			matches = unsigned_compare ? left_value == right_value :
+				(left_value & right_value) != 0;
 		} else if (unsigned_compare) {
 			matches = opcode == 6 ? left_value > right_value :
 				left_value >= right_value;
@@ -345,31 +345,39 @@ RunResult Dispatcher::simd_reduce_integer(CpuState &cpu, GuestMemory &,
 	const auto address = cpu.pc;
 	const unsigned opcode = (instruction >> 10) & 0x3fU;
 	const bool addition = opcode == 46;
+	const bool widening_addition = opcode == 14;
 	const bool minimum = (instruction & 0x0001'0000U) != 0;
 	const bool unsigned_compare = (instruction & 0x2000'0000U) != 0;
-	const std::size_t lane_size = std::size_t{1} <<
+	const std::size_t source_lane_size = std::size_t{1} <<
 		((instruction >> 22) & 0x3U);
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
 		16 : 8;
-	if (lane_size > 4 || (lane_size == 4 && vector_size != 16) ||
-	    (!addition && opcode != 42))
+	if (source_lane_size > 4 ||
+	    (source_lane_size == 4 && vector_size != 16) ||
+	    (!addition && !widening_addition && opcode != 42))
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	std::uint64_t reduced = decode_little_endian(
-		std::span{source}.first(lane_size));
-	for (std::size_t offset = lane_size; offset < vector_size;
-	     offset += lane_size) {
+		std::span{source}.first(source_lane_size));
+	if (widening_addition && !unsigned_compare)
+		reduced = static_cast<std::uint64_t>(detail::sign_extend(
+			reduced, static_cast<unsigned>(source_lane_size * 8)));
+	for (std::size_t offset = source_lane_size; offset < vector_size;
+	     offset += source_lane_size) {
 		const auto value = decode_little_endian(
-			std::span{source}.subspan(offset, lane_size));
-		if (addition) {
-			reduced += value;
+			std::span{source}.subspan(offset, source_lane_size));
+		if (addition || widening_addition) {
+			reduced += widening_addition && !unsigned_compare ?
+				static_cast<std::uint64_t>(detail::sign_extend(value,
+					static_cast<unsigned>(source_lane_size * 8))) :
+				value;
 		} else {
 			bool value_before_reduced;
 			if (unsigned_compare) {
 				value_before_reduced = value < reduced;
 			} else {
-				const auto bits = static_cast<unsigned>(lane_size * 8);
+				const auto bits = static_cast<unsigned>(source_lane_size * 8);
 				value_before_reduced = detail::sign_extend(value, bits) <
 					detail::sign_extend(reduced, bits);
 			}
@@ -378,7 +386,10 @@ RunResult Dispatcher::simd_reduce_integer(CpuState &cpu, GuestMemory &,
 		}
 	}
 	std::array<std::byte, 16> result{};
-	encode_little_endian(reduced, std::span{result}.first(lane_size));
+	const std::size_t destination_lane_size = widening_addition ?
+		source_lane_size * 2 : source_lane_size;
+	encode_little_endian(reduced,
+		std::span{result}.first(destination_lane_size));
 	cpu.vectors[instruction & 0x1fU].bytes = result;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
