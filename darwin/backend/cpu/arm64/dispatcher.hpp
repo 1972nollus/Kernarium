@@ -99,6 +99,8 @@ private:
 				       std::uint32_t) const;
 	[[nodiscard]] RunResult bit_reverse_count(CpuState &, GuestMemory &,
 						      std::uint32_t) const;
+	[[nodiscard]] RunResult crc32(CpuState &, GuestMemory &,
+					 std::uint32_t) const;
 	[[nodiscard]] RunResult floating_compare(CpuState &, GuestMemory &,
 						    std::uint32_t) const;
 	[[nodiscard]] RunResult floating_move(CpuState &, GuestMemory &,
@@ -137,6 +139,18 @@ private:
 	[[nodiscard]] RunResult simd_arithmetic_register(CpuState &,
 							     GuestMemory &,
 							     std::uint32_t) const;
+	[[nodiscard]] RunResult simd_three_same(CpuState &, GuestMemory &,
+						   std::uint32_t) const;
+	[[nodiscard]] RunResult simd_two_register_misc(CpuState &, GuestMemory &,
+							 std::uint32_t) const;
+	[[nodiscard]] RunResult simd_across_lanes(CpuState &, GuestMemory &,
+						     std::uint32_t) const;
+	[[nodiscard]] RunResult simd_scalar_pairwise(CpuState &, GuestMemory &,
+						       std::uint32_t) const;
+	[[nodiscard]] RunResult simd_by_indexed_element(CpuState &, GuestMemory &,
+							  std::uint32_t) const;
+	[[nodiscard]] RunResult simd_crypto(CpuState &, GuestMemory &,
+					       std::uint32_t) const;
 	[[nodiscard]] RunResult simd_arithmetic_narrow(CpuState &, GuestMemory &,
 							   std::uint32_t) const;
 	[[nodiscard]] RunResult simd_arithmetic_wide(CpuState &, GuestMemory &,

@@ -124,7 +124,9 @@ RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 					std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	if ((instruction & 0xbfe0'fc00U) == 0x0e00'3c00U) {
+	if ((instruction & 0xbfe0'fc00U) == 0x0e00'3c00U ||
+	    (instruction & 0xbfe0'fc00U) == 0x0e00'2c00U) {
+		const bool signed_move = (instruction & 0x1000U) == 0;
 		const unsigned immediate = (instruction >> 16) & 0x1fU;
 		if (immediate == 0)
 			return {StopReason::unsupported_instruction, address, instruction,
@@ -140,9 +142,14 @@ RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 		if (offset + element_size > 16)
 			return {StopReason::unsupported_instruction, address, instruction,
 				0, false};
-		const auto value = detail::decode_little_endian(
+		auto value = detail::decode_little_endian(
 			std::span{cpu.vectors[(instruction >> 5) & 0x1fU].bytes}
 				.subspan(offset, element_size));
+		if (signed_move)
+			value = static_cast<std::uint64_t>(detail::sign_extend(value,
+				static_cast<unsigned>(element_size * 8)));
+		if ((instruction & 0x4000'0000U) == 0)
+			value &= 0xffff'ffffU;
 		cpu.write_register(instruction & 0x1fU, value, false);
 		cpu.pc += 4;
 		return continue_after(address, instruction);

@@ -411,8 +411,10 @@ RunResult Dispatcher::load_store_simd_structure(
 {
 	const auto pc = cpu.pc;
 	const unsigned opcode = (instruction >> 12) & 0xfU;
+	const bool interleaved = opcode == 8 || opcode == 4 || opcode == 0;
 	const unsigned register_count = opcode == 7 ? 1 : opcode == 10 ? 2 :
-		opcode == 6 ? 3 : opcode == 2 ? 4 : 0;
+		opcode == 6 ? 3 : opcode == 2 ? 4 : opcode == 8 ? 2 :
+		opcode == 4 ? 3 : opcode == 0 ? 4 : 0;
 	if (register_count == 0)
 		return {StopReason::unsupported_instruction, pc, instruction, 0,
 			false};
@@ -420,6 +422,11 @@ RunResult Dispatcher::load_store_simd_structure(
 	const bool post_index = (instruction & 0x0080'0000U) != 0;
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
 		16 : 8;
+	const std::size_t element_size = std::size_t{1} <<
+		((instruction >> 10) & 0x3U);
+	if (element_size > vector_size)
+		return {StopReason::unsupported_instruction, pc, instruction, 0,
+			false};
 	const std::size_t transfer_size = vector_size * register_count;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto address = cpu.read_register(base_register, true);
@@ -432,15 +439,32 @@ RunResult Dispatcher::load_store_simd_structure(
 			auto &destination = cpu.vectors[
 				(first_register + index) & 0x1fU].bytes;
 			destination.fill(std::byte{});
-			std::copy_n(bytes.begin() + index * vector_size, vector_size,
-				destination.begin());
+			if (interleaved) {
+				for (std::size_t lane = 0; lane < vector_size / element_size;
+				     ++lane)
+					std::copy_n(bytes.begin() +
+						(lane * register_count + index) * element_size,
+						element_size,
+						destination.begin() + lane * element_size);
+			} else {
+				std::copy_n(bytes.begin() + index * vector_size, vector_size,
+					destination.begin());
+			}
 		}
 	} else {
 		for (unsigned index = 0; index < register_count; ++index) {
 			const auto &source = cpu.vectors[
 				(first_register + index) & 0x1fU].bytes;
-			std::copy_n(source.begin(), vector_size,
-				bytes.begin() + index * vector_size);
+			if (interleaved) {
+				for (std::size_t lane = 0; lane < vector_size / element_size;
+				     ++lane)
+					std::copy_n(source.begin() + lane * element_size,
+						element_size, bytes.begin() +
+						(lane * register_count + index) * element_size);
+			} else {
+				std::copy_n(source.begin(), vector_size,
+					bytes.begin() + index * vector_size);
+			}
 		}
 		if (!memory.write(address, std::span{bytes}.first(transfer_size)))
 			return {StopReason::memory_fault, address, instruction, 0, true};

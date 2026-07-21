@@ -3,12 +3,15 @@
 add_library(uml_arm64_dispatch OBJECT
     cpu/arm64/dispatcher.cpp
     cpu/arm64/instructions/control_flow.cpp
+    cpu/arm64/instructions/crc32.cpp
     cpu/arm64/instructions/floating_point.cpp
     cpu/arm64/instructions/integer.cpp
     cpu/arm64/instructions/integer/arithmetic.cpp
     cpu/arm64/instructions/load_store.cpp
     cpu/arm64/instructions/simd.cpp
+    cpu/arm64/instructions/simd/complete.cpp
     cpu/arm64/instructions/simd/conversion.cpp
+    cpu/arm64/instructions/simd/crypto.cpp
     cpu/arm64/instructions/simd/floating_point.cpp
     cpu/arm64/instructions/simd/narrowing.cpp
     cpu/arm64/instructions/simd/rearrange.cpp
@@ -198,6 +201,7 @@ if(UML_BUILD_TESTS)
 
     add_executable(uml_arm64_dispatch_tests
         tests/arm64_dispatch_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/arm64-neon-inventory.s
         $<TARGET_OBJECTS:uml_arm64_dispatch>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_static_mmu>

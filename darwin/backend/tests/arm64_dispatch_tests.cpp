@@ -18,14 +18,19 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <limits>
 #include <source_location>
 #include <span>
+#include <string_view>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace arm64 = uml::backend::arm64;
+
+extern "C" const std::uint32_t uml_arm64_neon_inventory_begin[];
+extern "C" const std::uint32_t uml_arm64_neon_inventory_end[];
 
 static void require(bool condition,
 		    const std::source_location location =
@@ -108,6 +113,393 @@ private:
 	std::vector<std::byte> bytes_;
 	std::vector<std::uint64_t> invalidated_code_;
 };
+
+static void complete_neon_inventory_decodes()
+{
+	FlatMemory memory(0, 0x1000);
+	for (auto instruction = uml_arm64_neon_inventory_begin;
+	     instruction != uml_arm64_neon_inventory_end; ++instruction) {
+		arm64::CpuState cpu{};
+		const auto result = arm64::Dispatcher{}.execute(cpu, memory,
+			*instruction);
+		if (result.reason == arm64::StopReason::unsupported_instruction ||
+		    result.reason == arm64::StopReason::illegal_instruction) {
+			std::fprintf(stderr, "NEON inventory decode failed: 0x%08x\n",
+				*instruction);
+			std::abort();
+		}
+	}
+}
+
+static void crypto_extension_known_answers()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	const auto set_bytes = [](arm64::VectorRegister &vector,
+				  unsigned first) {
+		for (unsigned index = 0; index < vector.bytes.size(); ++index)
+			vector.bytes[index] = static_cast<std::byte>(first + index);
+	};
+	const auto set_words = [](arm64::VectorRegister &vector,
+				  const std::array<std::uint32_t, 4> &words) {
+		for (std::size_t index = 0; index < words.size(); ++index)
+			arm64::detail::encode_little_endian(words[index],
+				std::span{vector.bytes}.subspan(index * 4, 4));
+	};
+	const auto set_doublewords = [](arm64::VectorRegister &vector,
+				       const std::array<std::uint64_t, 2> &words) {
+		for (std::size_t index = 0; index < words.size(); ++index)
+			arm64::detail::encode_little_endian(words[index],
+				std::span{vector.bytes}.subspan(index * 8, 8));
+	};
+	const auto require_hex = [](const arm64::VectorRegister &vector,
+				    std::string_view expected) {
+		const auto nibble = [](char value) -> unsigned {
+			if (value >= '0' && value <= '9')
+				return static_cast<unsigned>(value - '0');
+			return static_cast<unsigned>(value - 'a' + 10);
+		};
+		require(expected.size() == vector.bytes.size() * 2);
+		for (std::size_t index = 0; index < vector.bytes.size(); ++index) {
+			const auto byte = (nibble(expected[index * 2]) << 4) |
+				nibble(expected[index * 2 + 1]);
+			require(vector.bytes[index] == static_cast<std::byte>(byte));
+		}
+	};
+
+	struct CryptoCase final {
+		std::uint32_t instruction;
+		std::string_view expected;
+	};
+	constexpr std::array aes_cases{
+		CryptoCase{0x4e28'4820U, "cacacacacacacacacacacacacacacaca"},
+		CryptoCase{0x4e28'5820U, "7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c"},
+		CryptoCase{0x4e28'6820U, "12171015161314111a1f181d1e1b1c19"},
+		CryptoCase{0x4e28'7820U, "1a1f181d1e1b1c191217101516131411"},
+	};
+	for (const auto &test : aes_cases) {
+		arm64::CpuState cpu{};
+		set_bytes(cpu.vectors[0], 0);
+		set_bytes(cpu.vectors[1], 16);
+		require(dispatcher.execute(cpu, memory, test.instruction).reason ==
+			arm64::StopReason::continued);
+		require_hex(cpu.vectors[0], test.expected);
+	}
+
+	for (const auto &test : std::array{
+		CryptoCase{0x0e22'e020U, "00001100240035005000410074006500"},
+		CryptoCase{0x4e22'e020U, "c000d100e400f50090008100b400a500"},
+	}) {
+		arm64::CpuState cpu{};
+		set_bytes(cpu.vectors[1], 0);
+		set_bytes(cpu.vectors[2], 16);
+		require(dispatcher.execute(cpu, memory, test.instruction).reason ==
+			arm64::StopReason::continued);
+		require_hex(cpu.vectors[0], test.expected);
+	}
+	for (const auto instruction : {0x0ee2'e020U, 0x4ee2'e020U}) {
+		arm64::CpuState cpu{};
+		const auto offset = instruction == 0x4ee2'e020U ? 8U : 0U;
+		arm64::detail::encode_little_endian(0x0123'4567'89ab'cdefULL,
+			std::span{cpu.vectors[1].bytes}.subspan(offset, 8));
+		arm64::detail::encode_little_endian(0xfedc'ba98'7654'3210ULL,
+			std::span{cpu.vectors[2].bytes}.subspan(offset, 8));
+		require(dispatcher.execute(cpu, memory, instruction).reason ==
+			arm64::StopReason::continued);
+		require_hex(cpu.vectors[0], "f010c8289878a040b0508868d838e000");
+	}
+
+	constexpr std::array destination{
+		0x0123'4567U, 0x89ab'cdefU, 0xfedc'ba98U, 0x7654'3210U};
+	constexpr std::array first{
+		0x0f1e'2d3cU, 0x4b5a'6978U, 0x8796'a5b4U, 0xc3d2'e1f0U};
+	constexpr std::array second{
+		0x1111'1111U, 0x2222'2222U, 0x3333'3333U, 0x4444'4444U};
+	constexpr std::array sha_cases{
+		CryptoCase{0x5e02'0020U, "f28d735ae6db9bd3358282417129dd50"},
+		CryptoCase{0x5e02'1020U, "c9aff3dd4e68d747cf5c5c9b25cc6e11"},
+		CryptoCase{0x5e02'2020U, "3475284ee1e9382315805d7a7129dd50"},
+		CryptoCase{0x5e28'0820U, "4f8bc703000000000000000000000000"},
+		CryptoCase{0x5e02'3020U, "eeeeeeeedddddddd97a4f1c22c1f4a79"},
+		CryptoCase{0x5e28'1820U, "3e58f294b6d07a1cd0b61c7a5dd44cc5"},
+		CryptoCase{0x5e02'4020U, "c2edd73b817a63555e325bcd65b43a29"},
+		CryptoCase{0x5e02'5020U, "a4faa20a6262fb9693c065b30d407eec"},
+		CryptoCase{0x5e28'2820U, "b311813e80df2b8a4bee7e214a2c0769"},
+		CryptoCase{0x5e02'6020U, "12e2704c5e2ffebb161008302cb8cf59"},
+	};
+	for (const auto &test : sha_cases) {
+		arm64::CpuState cpu{};
+		set_words(cpu.vectors[0], destination);
+		set_words(cpu.vectors[1], first);
+		set_words(cpu.vectors[2], second);
+		require(dispatcher.execute(cpu, memory, test.instruction).reason ==
+			arm64::StopReason::continued);
+		require_hex(cpu.vectors[0], test.expected);
+	}
+
+	constexpr std::array destination64{
+		0x0123'4567'89ab'cdefULL, 0xfedc'ba98'7654'3210ULL};
+	constexpr std::array first64{
+		0x0f1e'2d3c'4b5a'6978ULL, 0x8796'a5b4'c3d2'e1f0ULL};
+	constexpr std::array second64{
+		0x1111'1111'2222'2222ULL, 0x3333'3333'4444'4444ULL};
+	constexpr std::array third64{
+		0x5555'5555'6666'6666ULL, 0x7777'7777'8888'8888ULL};
+	constexpr std::array sha3_sha512_cases{
+		CryptoCase{0xce62'8020U, "66a47f56d0bc96dd996d3f5c6f421720"},
+		CryptoCase{0xce62'8420U, "b36ea1ffc958ad41e4090e8ab7dade5a"},
+		CryptoCase{0xcec0'8020U, "4db35c1deb7d906f170cc5d781ef7a7e"},
+		CryptoCase{0xce62'8820U, "1f9b271a2e671648cd52c7d38d55a594"},
+		CryptoCase{0xce02'0c20U, "3c2d1e0f78695a4b3c2d1e0ff0e1d2c3"},
+		CryptoCase{0xce62'8c20U, "3c2d1e0f1e0f3c2d78695a4bd2c3f0e1"},
+		CryptoCase{0xce82'4420U, "bcb4169e070fad25cbc343cb525ada52"},
+		CryptoCase{0xce22'0c20U, "78695a4b3c2d1e0fb4a59687b4a59687"},
+	};
+	for (const auto &test : sha3_sha512_cases) {
+		arm64::CpuState cpu{};
+		set_doublewords(cpu.vectors[0], destination64);
+		set_doublewords(cpu.vectors[1], first64);
+		set_doublewords(cpu.vectors[2], second64);
+		set_doublewords(cpu.vectors[3], third64);
+		require(dispatcher.execute(cpu, memory, test.instruction).reason ==
+			arm64::StopReason::continued);
+		require_hex(cpu.vectors[0], test.expected);
+	}
+
+	struct CrcCase final {
+		std::uint32_t instruction;
+		std::uint32_t expected;
+	};
+	constexpr std::array crc_cases{
+		CrcCase{0x1ac2'4020U, 0x437b'dd3cU},
+		CrcCase{0x1ac2'4420U, 0xe7fb'56daU},
+		CrcCase{0x1ac2'4820U, 0x9e6e'72f6U},
+		CrcCase{0x9ac2'4c20U, 0xdf04'eaaaU},
+		CrcCase{0x1ac2'5020U, 0xeb0d'fffbU},
+		CrcCase{0x1ac2'5420U, 0xbbd4'f0f7U},
+		CrcCase{0x1ac2'5820U, 0x14f8'd626U},
+		CrcCase{0x9ac2'5c20U, 0x679d'fef3U},
+	};
+	for (const auto &test : crc_cases) {
+		arm64::CpuState cpu{};
+		cpu.registers[0] = ~std::uint64_t{};
+		cpu.registers[1] = 0x1234'5678U;
+		cpu.registers[2] = 0xfedc'ba98'7654'3210ULL;
+		require(dispatcher.execute(cpu, memory, test.instruction).reason ==
+			arm64::StopReason::continued);
+		require(cpu.registers[0] == test.expected);
+	}
+}
+
+static void neon_saturating_halving_and_shift_semantics()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[1].bytes.fill(std::byte{0xfd});
+		cpu.vectors[2].bytes.fill(std::byte{2});
+		require(dispatcher.execute(cpu, memory, 0x0e22'0420U).reason ==
+			arm64::StopReason::continued); // shadd v0.8b, v1.8b, v2.8b
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			if (cpu.vectors[0].bytes[lane] != std::byte{0xff}) {
+				std::fprintf(stderr, "shadd lane %zu = %02x\n", lane,
+					std::to_integer<unsigned>(cpu.vectors[0].bytes[lane]));
+				std::abort();
+			}
+	}
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[1].bytes.fill(std::byte{0x7f});
+		cpu.vectors[2].bytes.fill(std::byte{1});
+		require(dispatcher.execute(cpu, memory, 0x0e22'0c20U).reason ==
+			arm64::StopReason::continued); // sqadd v0.8b, v1.8b, v2.8b
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			require(cpu.vectors[0].bytes[lane] == std::byte{0x7f});
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[1].bytes.fill(std::byte{});
+		cpu.vectors[2].bytes.fill(std::byte{1});
+		require(dispatcher.execute(cpu, memory, 0x2e22'2c20U).reason ==
+			arm64::StopReason::continued); // uqsub v0.8b, v1.8b, v2.8b
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			require(cpu.vectors[0].bytes[lane] == std::byte{});
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+	{
+		arm64::CpuState cpu{};
+		for (std::size_t lane = 0; lane < 4; ++lane) {
+			arm64::detail::encode_little_endian(0x8000,
+				std::span{cpu.vectors[1].bytes}.subspan(lane * 2, 2));
+			arm64::detail::encode_little_endian(0x8000,
+				std::span{cpu.vectors[2].bytes}.subspan(lane * 2, 2));
+		}
+		require(dispatcher.execute(cpu, memory, 0x0e62'b420U).reason ==
+			arm64::StopReason::continued); // sqdmulh v0.4h, v1.4h, v2.4h
+		for (std::size_t lane = 0; lane < 4; ++lane)
+			require(arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(lane * 2, 2)) ==
+				0x7fff);
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[0].bytes.fill(std::byte{10});
+		cpu.vectors[1].bytes.fill(std::byte{8});
+		require(dispatcher.execute(cpu, memory, 0x0f0f'1420U).reason ==
+			arm64::StopReason::continued); // ssra v0.8b, v1.8b, #1
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			if (cpu.vectors[0].bytes[lane] != std::byte{14}) {
+				std::fprintf(stderr, "ssra lane %zu = %02x\n", lane,
+					std::to_integer<unsigned>(cpu.vectors[0].bytes[lane]));
+				std::abort();
+			}
+	}
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[1].bytes.fill(std::byte{0x7f});
+		require(dispatcher.execute(cpu, memory, 0x0f09'7420U).reason ==
+			arm64::StopReason::continued); // sqshl v0.8b, v1.8b, #1
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			require(cpu.vectors[0].bytes[lane] == std::byte{0x7f});
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+}
+
+static void neon_narrow_convert_and_indexed_semantics()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	{
+		arm64::CpuState cpu{};
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			arm64::detail::encode_little_endian(lane == 0 ? 200 :
+				lane == 1 ? 0xff38 : lane,
+				std::span{cpu.vectors[1].bytes}.subspan(lane * 2, 2));
+		require(dispatcher.execute(cpu, memory, 0x0e21'4820U).reason ==
+			arm64::StopReason::continued); // sqxtn v0.8b, v1.8h
+		require(cpu.vectors[0].bytes[0] == std::byte{0x7f});
+		require(cpu.vectors[0].bytes[1] == std::byte{0x80});
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+	{
+		arm64::CpuState cpu{};
+		for (std::size_t lane = 0; lane < 2; ++lane) {
+			arm64::detail::encode_little_endian(std::bit_cast<std::uint32_t>(
+				lane == 0 ? 1.2F : -1.2F),
+				std::span{cpu.vectors[1].bytes}.subspan(lane * 4, 4));
+		}
+		require(dispatcher.execute(cpu, memory, 0x0ea1'8820U).reason ==
+			arm64::StopReason::continued); // frintp v0.2s, v1.2s
+		require(std::bit_cast<float>(static_cast<std::uint32_t>(
+			arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(0, 4)))) == 2.0F);
+		require(std::bit_cast<float>(static_cast<std::uint32_t>(
+			arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(4, 4)))) == -1.0F);
+	}
+	{
+		arm64::CpuState cpu{};
+		for (std::size_t lane = 0; lane < 4; ++lane) {
+			arm64::detail::encode_little_endian(2,
+				std::span{cpu.vectors[1].bytes}.subspan(lane * 2, 2));
+			arm64::detail::encode_little_endian(lane == 1 ? 3 : 9,
+				std::span{cpu.vectors[2].bytes}.subspan(lane * 2, 2));
+			arm64::detail::encode_little_endian(1,
+				std::span{cpu.vectors[0].bytes}.subspan(lane * 2, 2));
+		}
+		require(dispatcher.execute(cpu, memory, 0x2f52'0020U).reason ==
+			arm64::StopReason::continued); // mla v0.4h, v1.4h, v2.h[1]
+		for (std::size_t lane = 0; lane < 4; ++lane)
+			require(arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(lane * 2, 2)) == 7);
+	}
+	{
+		arm64::CpuState cpu{};
+		arm64::detail::encode_little_endian(0x8000'0000U,
+			std::span{cpu.vectors[1].bytes}.subspan(12, 4));
+		require(dispatcher.execute(cpu, memory, 0x4e1c'2c20U).reason ==
+			arm64::StopReason::continued); // smov x0, v1.s[3]
+		require(cpu.registers[0] == 0xffff'ffff'8000'0000ULL);
+	}
+}
+
+static void neon_interleaved_structure_semantics()
+{
+	FlatMemory memory(0, 0x1000);
+	std::array<std::byte, 16> interleaved{};
+	for (std::size_t lane = 0; lane < 8; ++lane) {
+		interleaved[lane * 2] = static_cast<std::byte>(lane);
+		interleaved[lane * 2 + 1] = static_cast<std::byte>(0x10 + lane);
+	}
+	require(memory.write(0, interleaved));
+	arm64::CpuState cpu{};
+	require(arm64::Dispatcher{}.execute(cpu, memory, 0x0c40'8000U).reason ==
+		arm64::StopReason::continued); // ld2 {v0.8b, v1.8b}, [x0]
+	for (std::size_t lane = 0; lane < 8; ++lane) {
+		require(cpu.vectors[0].bytes[lane] == static_cast<std::byte>(lane));
+		require(cpu.vectors[1].bytes[lane] ==
+			static_cast<std::byte>(0x10 + lane));
+	}
+}
+
+static void neon_widening_and_reduction_semantics()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	{
+		arm64::CpuState cpu{};
+		cpu.vectors[1].bytes.fill(std::byte{0x80});
+		cpu.vectors[2].bytes.fill(std::byte{0x7f});
+		require(dispatcher.execute(cpu, memory, 0x0e22'7020U).reason ==
+			arm64::StopReason::continued); // sabdl v0.8h, v1.8b, v2.8b
+		for (std::size_t lane = 0; lane < 8; ++lane)
+			require(arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(lane * 2, 2)) == 255);
+	}
+	{
+		arm64::CpuState cpu{};
+		for (std::size_t lane = 0; lane < 4; ++lane) {
+			arm64::detail::encode_little_endian(0x8000,
+				std::span{cpu.vectors[1].bytes}.subspan(lane * 2, 2));
+			arm64::detail::encode_little_endian(0x8000,
+				std::span{cpu.vectors[2].bytes}.subspan(lane * 2, 2));
+		}
+		require(dispatcher.execute(cpu, memory, 0x0e62'd020U).reason ==
+			arm64::StopReason::continued); // sqdmull v0.4s, v1.4h, v2.4h
+		for (std::size_t lane = 0; lane < 4; ++lane)
+			require(arm64::detail::decode_little_endian(
+				std::span{cpu.vectors[0].bytes}.subspan(lane * 4, 4)) ==
+				0x7fff'ffffU);
+		require((cpu.fpsr & (1U << 27)) != 0);
+	}
+	{
+		arm64::CpuState cpu{};
+		const std::array values{
+			std::numeric_limits<float>::quiet_NaN(), -2.0F, 3.0F, 1.0F};
+		for (std::size_t lane = 0; lane < values.size(); ++lane)
+			arm64::detail::encode_little_endian(std::bit_cast<std::uint32_t>(
+				values[lane]), std::span{cpu.vectors[1].bytes}.subspan(
+					lane * 4, 4));
+		require(dispatcher.execute(cpu, memory, 0x6e30'c820U).reason ==
+			arm64::StopReason::continued); // fmaxnmv s0, v1.4s
+		require(std::bit_cast<float>(static_cast<std::uint32_t>(
+			arm64::detail::vector_half(cpu.vectors[0], 0))) == 3.0F);
+	}
+	{
+		arm64::CpuState cpu{};
+		arm64::detail::encode_little_endian(std::bit_cast<std::uint32_t>(1.25F),
+			std::span{cpu.vectors[1].bytes}.subspan(0, 4));
+		arm64::detail::encode_little_endian(std::bit_cast<std::uint32_t>(2.75F),
+			std::span{cpu.vectors[1].bytes}.subspan(4, 4));
+		require(dispatcher.execute(cpu, memory, 0x7e30'd820U).reason ==
+			arm64::StopReason::continued); // faddp s0, v1.2s
+		require(std::bit_cast<float>(static_cast<std::uint32_t>(
+			arm64::detail::vector_half(cpu.vectors[0], 0))) == 4.0F);
+	}
+}
 
 class SplitAtomicMemory final : public arm64::GuestMemory {
 public:
@@ -3016,6 +3408,12 @@ static void uml_static_walker_turnstile_blocks_host_thread()
 
 int main()
 {
+	complete_neon_inventory_decodes();
+	crypto_extension_known_answers();
+	neon_saturating_halving_and_shift_semantics();
+	neon_narrow_convert_and_indexed_semantics();
+	neon_interleaved_structure_semantics();
+	neon_widening_and_reduction_semantics();
 	arithmetic_and_memory();
 	static_control_flow();
 	architectural_undefined_instruction();

@@ -58,7 +58,8 @@ template<typename Floating>
 		Floating first;
 		Floating second;
 		if (unsigned_group &&
-		    ((opcode == 0x1a && !alternate) || opcode == 0x1e)) {
+		    (opcode == 0x18 || (opcode == 0x1a && !alternate) ||
+		     opcode == 0x1e)) {
 			const auto &source = lane < lanes / 2 ? left : right;
 			const std::size_t pair = (lane % (lanes / 2)) * 2;
 			first = decode_lane<Floating>(source, pair);
@@ -68,7 +69,7 @@ template<typename Floating>
 			second = decode_lane<Floating>(right, lane);
 		}
 		Floating value;
-		if (opcode == 0x18 && !unsigned_group) {
+		if (opcode == 0x18) {
 			value = alternate ? std::fmin(first, second) :
 				std::fmax(first, second);
 		} else if (opcode == 0x19 && !unsigned_group) {
@@ -102,8 +103,11 @@ template<typename Floating>
 					sizeof(Floating)));
 			continue;
 		} else if (opcode == 0x1e) {
-			value = alternate ? std::fmin(first, second) :
-				std::fmax(first, second);
+			if (std::isnan(first) || std::isnan(second))
+				value = std::numeric_limits<Floating>::quiet_NaN();
+			else
+				value = alternate ? std::fmin(first, second) :
+					std::fmax(first, second);
 		} else if (opcode == 0x1f && unsigned_group && !alternate) {
 			value = first / second;
 		} else if (opcode == 0x1f && !unsigned_group) {

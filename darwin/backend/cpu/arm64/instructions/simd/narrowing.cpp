@@ -64,10 +64,18 @@ RunResult Dispatcher::simd_arithmetic_wide(CpuState &cpu, GuestMemory &,
 	const unsigned operation = (instruction >> 12) & 0xfU;
 	const unsigned size = (instruction >> 22) & 0x3U;
 	const bool multiply = operation == 8 || operation == 10 || operation == 12;
-	if ((!multiply && operation > 3) || size == 3)
+	const bool absolute_difference = operation == 5 || operation == 7;
+	const bool saturating_multiply = operation == 9 || operation == 11 ||
+		operation == 13;
+	const bool scalar = (instruction & 0x1000'0000U) != 0;
+	if ((!multiply && !absolute_difference && !saturating_multiply &&
+	     operation > 3) || size == 3 || (scalar && !saturating_multiply))
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
 	const bool unsigned_values = (instruction & 0x2000'0000U) != 0;
+	if (saturating_multiply && unsigned_values)
+		return {StopReason::unsupported_instruction, address, instruction, 0,
+			false};
 	const bool subtract = operation >= 2;
 	const bool wide_left = (operation & 1U) != 0;
 	const std::size_t narrow_size = std::size_t{1} << size;
@@ -83,16 +91,60 @@ RunResult Dispatcher::simd_arithmetic_wide(CpuState &cpu, GuestMemory &,
 	const auto old_destination =
 		cpu.vectors[instruction & 0x1fU].bytes;
 	std::array<std::byte, 16> result{};
-	for (std::size_t output = 0; output < 16; output += wide_size) {
+	const std::size_t output_size = scalar ? wide_size : 16;
+	for (std::size_t output = 0; output < output_size; output += wide_size) {
 		const std::size_t lane = output / wide_size;
-		const auto decode_narrow = [&](const auto &bytes) {
-			const auto raw = decode_little_endian(std::span{bytes}.subspan(
+		const auto decode_raw_narrow = [&](const auto &bytes) {
+			return decode_little_endian(std::span{bytes}.subspan(
 				narrow_base + lane * narrow_size, narrow_size));
+		};
+		const auto decode_narrow = [&](const auto &bytes) {
+			const auto raw = decode_raw_narrow(bytes);
 			return unsigned_values ? raw : static_cast<std::uint64_t>(
 				detail::sign_extend(raw, narrow_bits));
 		};
 		std::uint64_t value;
-		if (multiply) {
+		if (saturating_multiply) {
+			const __int128 product = static_cast<__int128>(
+				detail::sign_extend(decode_raw_narrow(left), narrow_bits)) *
+				static_cast<__int128>(detail::sign_extend(
+					decode_raw_narrow(right), narrow_bits)) * 2;
+			__int128 combined = product;
+			if (operation != 13) {
+				const auto accumulator = decode_little_endian(
+					std::span{old_destination}.subspan(output, wide_size));
+				combined = static_cast<__int128>(
+					detail::sign_extend(accumulator, wide_bits)) +
+					(operation == 11 ? -product : product);
+			}
+			const __int128 minimum = -static_cast<__int128>(
+				static_cast<unsigned __int128>(1) << (wide_bits - 1));
+			const __int128 maximum = static_cast<__int128>(
+				(static_cast<unsigned __int128>(1) << (wide_bits - 1)) - 1);
+			if (combined < minimum || combined > maximum)
+				cpu.fpsr |= 1U << 27;
+			combined = std::clamp(combined, minimum, maximum);
+			value = static_cast<std::uint64_t>(combined);
+		} else if (absolute_difference) {
+			const auto first = decode_raw_narrow(left);
+			const auto second = decode_raw_narrow(right);
+			std::uint64_t difference;
+			if (unsigned_values)
+				difference = first >= second ? first - second : second - first;
+			else {
+				const auto signed_first = static_cast<__int128>(
+					detail::sign_extend(first, narrow_bits));
+				const auto signed_second = static_cast<__int128>(
+					detail::sign_extend(second, narrow_bits));
+				const auto delta = signed_first - signed_second;
+				difference = static_cast<std::uint64_t>(
+					delta < 0 ? -delta : delta);
+			}
+			value = difference;
+			if (operation == 5)
+				value += decode_little_endian(
+					std::span{old_destination}.subspan(output, wide_size));
+		} else if (multiply) {
 			const auto product =
 				(decode_narrow(left) * decode_narrow(right)) & wide_mask;
 			if (operation == 12) {
