@@ -3,6 +3,7 @@
 
 # Local root filesystem image
 /rootfs.ext2
+*.img
 
 # Compiler and debugger output outside the build directory
 *.dSYM/
@@ -20,3 +21,5 @@ compile_commands.json
 *.swp
 *.swo
 *~
+__pycache__/
+*.pyc

@@ -1,0 +1,29 @@
+#!/bin/sh
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+
+fail()
+{
+	echo "Unable to construct the tmpfs overlay root: $*" >&2
+	exec /bin/sh
+}
+
+# The kernel mounted /dev/ubda read-only as /.  Keep that mount as the lower
+# layer and place every write made by init or an LTP case in volatile memory.
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt || fail "tmpfs mount"
+mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || fail "workspace"
+mount -o bind / /mnt/lower || fail "read-only lower bind"
+mount -t overlay overlay \
+	-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
+	/mnt/root || fail "overlay mount"
+
+# Child mounts of the original root are not included in the overlay lower
+# layer.  Install a fresh devtmpfs before pivoting so /sbin/init sees devices.
+mount -t devtmpfs devtmpfs /mnt/root/dev || fail "devtmpfs mount"
+mkdir -p /mnt/root/.uml-lower || fail "old-root directory"
+cd /mnt/root || fail "new-root chdir"
+pivot_root . .uml-lower || fail "pivot_root"
+
+echo "Darwin UML root overlay: lower=/dev/ubda (ro), upper=tmpfs"
+exec /sbin/init

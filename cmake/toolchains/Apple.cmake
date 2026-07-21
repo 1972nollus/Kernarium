@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Configure with -DUML_APPLE_PLATFORM=macos|ios|ios-simulator.
+
+set(UML_APPLE_PLATFORM "macos" CACHE STRING "Apple target platform")
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES UML_APPLE_PLATFORM)
+set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "Apple architectures" FORCE)
+
+function(uml_apple_sdk_path sdk result)
+    execute_process(
+        COMMAND xcrun --sdk ${sdk} --show-sdk-path
+        OUTPUT_VARIABLE sdk_path
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+    set(${result} "${sdk_path}" PARENT_SCOPE)
+endfunction()
+
+if(UML_APPLE_PLATFORM STREQUAL "macos")
+    uml_apple_sdk_path(macosx UML_APPLE_SDK_PATH)
+    set(CMAKE_SYSTEM_NAME Darwin)
+    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Deployment target" FORCE)
+elseif(UML_APPLE_PLATFORM STREQUAL "ios")
+    uml_apple_sdk_path(iphoneos UML_APPLE_SDK_PATH)
+    set(CMAKE_SYSTEM_NAME iOS)
+    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0 CACHE STRING "Deployment target" FORCE)
+elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+    uml_apple_sdk_path(iphonesimulator UML_APPLE_SDK_PATH)
+    set(CMAKE_SYSTEM_NAME iOS)
+    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 16.0 CACHE STRING "Deployment target" FORCE)
+else()
+    message(FATAL_ERROR "Unknown UML_APPLE_PLATFORM=${UML_APPLE_PLATFORM}")
+endif()

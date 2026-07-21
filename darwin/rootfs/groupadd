@@ -1,0 +1,39 @@
+#!/bin/sh
+# Compatibility frontend for BusyBox-based root filesystems without the
+# shadow-utils groupadd command.
+
+usage()
+{
+	echo "usage: groupadd [-f] [-g gid] [-r] group" >&2
+	exit 2
+}
+
+force=false
+gid=
+system_group=false
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-f) force=true; shift ;;
+	-g)
+		[ "$#" -ge 2 ] || usage
+		gid=$2
+		shift 2
+		;;
+	-r) system_group=true; shift ;;
+	--) shift; break ;;
+	-*) echo "groupadd: unsupported option: $1" >&2; usage ;;
+	*) break ;;
+	esac
+done
+
+[ "$#" -eq 1 ] || usage
+group=$1
+
+set --
+[ -z "$gid" ] || set -- "$@" -g "$gid"
+[ "$system_group" = false ] || set -- "$@" -S
+
+if ! addgroup "$@" "$group"; then
+	[ "$force" = true ] || exit 1
+fi

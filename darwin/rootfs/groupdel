@@ -1,0 +1,26 @@
+#!/bin/sh
+# Compatibility frontend for BusyBox-based root filesystems without the
+# shadow-utils groupdel command.
+
+usage()
+{
+	echo "usage: groupdel [-f] group" >&2
+	exit 2
+}
+
+force=false
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-f) force=true; shift ;;
+	--) shift; break ;;
+	-*) echo "groupdel: unsupported option: $1" >&2; usage ;;
+	*) break ;;
+	esac
+done
+
+[ "$#" -eq 1 ] || usage
+
+if ! delgroup "$1"; then
+	[ "$force" = true ] || exit 1
+fi

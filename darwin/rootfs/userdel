@@ -1,0 +1,34 @@
+#!/bin/sh
+# Compatibility frontend for root filesystems that provide BusyBox deluser but
+# not the shadow-utils userdel command expected by Linux test and admin tools.
+
+usage()
+{
+	echo "usage: userdel [-f] [-r] user" >&2
+	exit 2
+}
+
+force=false
+remove_home=false
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-f) force=true; shift ;;
+	-r) remove_home=true; shift ;;
+	--) shift; break ;;
+	-*) echo "userdel: unsupported option: $1" >&2; usage ;;
+	*) break ;;
+	esac
+done
+
+[ "$#" -eq 1 ] || usage
+user=$1
+home=$(awk -F: -v user="$user" '$1 == user { print $6; exit }' /etc/passwd)
+
+if ! deluser "$user"; then
+	[ "$force" = true ] || exit 1
+fi
+
+if [ "$remove_home" = true ] && [ -n "$home" ] && [ "$home" != / ]; then
+	rm -rf -- "$home"
+fi

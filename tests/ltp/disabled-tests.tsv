@@ -1,0 +1,48 @@
+# scenario	test_id	reason
+mm	mmap10	KSM-dependent mapping-release workload is intentionally disabled for Darwin UML
+mm	mmap10_1	KSM-dependent mapping-release workload is intentionally disabled for Darwin UML
+mm	ksm01	KSM is intentionally disabled for Darwin UML
+mm	ksm01_1	KSM is intentionally disabled for Darwin UML
+mm	ksm02	KSM is intentionally disabled for Darwin UML
+mm	ksm02_1	KSM is intentionally disabled for Darwin UML
+mm	ksm03	KSM is intentionally disabled for Darwin UML
+mm	ksm03_1	KSM is intentionally disabled for Darwin UML
+mm	ksm04	KSM is intentionally disabled for Darwin UML
+mm	ksm04_1	KSM is intentionally disabled for Darwin UML
+mm	ksm05	KSM is intentionally disabled for Darwin UML
+mm	ksm06	KSM is intentionally disabled for Darwin UML
+mm	ksm06_1	KSM is intentionally disabled for Darwin UML
+mm	ksm06_2	KSM is intentionally disabled for Darwin UML
+mm	ksm07	KSM is intentionally disabled for Darwin UML
+mm	oom01	KSM-dependent OOM workload is intentionally disabled for Darwin UML
+mm	thp03	Requires MADV_MERGEABLE while KSM is intentionally disabled for Darwin UML
+pty	pty03	Hardware-facing network TTY line disciplines are outside the serial-only emulator device model
+pty	pty04	Requires SLIP and SLCAN hardware-facing network TTY line disciplines intentionally disabled for Darwin UML
+pty	pty05	Requires the N_HDLC synchronous-serial hardware interface intentionally absent from Darwin UML
+pty	pty07	Requires the physical display and keyboard virtual-terminal switcher intentionally disabled for Darwin UML
+cve	cve-2011-2183	Duplicates ksm05 while KSM is intentionally disabled for Darwin UML
+cve	cve-2017-2636	Duplicates pty05 and requires the intentionally absent N_HDLC synchronous-serial hardware interface
+cve	cve-2020-11494	Duplicates pty04 and requires intentionally disabled hardware-facing network TTY line disciplines
+cve	cve-2020-14416	Duplicates pty03 and requires intentionally disabled hardware-facing network TTY line disciplines
+controllers	cgroup_fj_function_debug	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_2_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_3_3_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_4_4_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_9_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_10_3_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_1_200_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_200_1_none	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_2_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_3_3_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_4_4_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_9_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_10_3_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_1_200_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_200_1_one	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_2_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_3_3_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_4_4_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_2_9_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_10_3_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_1_200_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance
+controllers	cgroup_fj_stress_debug_200_1_each	Requires the optional cgroup diagnostic controller whose kernel-wide diagnostics dependency significantly affects emulator timing and performance

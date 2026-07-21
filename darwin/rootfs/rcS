@@ -1,8 +1,35 @@
 #!/bin/sh
 
 mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mkdir -p /sys/kernel/security
+mount -t securityfs securityfs /sys/kernel/security
 mkdir -p /run
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+mkdir -p /dev/shm
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm
+mkdir -p /tmp
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp
+case " $(cat /proc/cmdline) " in
+*" uml_ltp_workspace=ext2 "*)
+	# Some filesystem tests require ordinary block-filesystem semantics and
+	# reject both the overlay root and tmpfs.  Keep their workspace volatile:
+	# the sparse ext2 backing file itself lives in the /run tmpfs.
+	workspace_image=/run/uml-ltp-workspace.ext2
+	dd if=/dev/zero of="$workspace_image" bs=1M count=0 seek=512 2>/dev/null
+	workspace_loop=$(losetup -f)
+	if losetup "$workspace_loop" "$workspace_image" &&
+		mkfs.ext2 -q "$workspace_loop" &&
+		mount -t ext2 -o noatime "$workspace_loop" /tmp; then
+		chmod 1777 /tmp
+	else
+		echo "Unable to mount volatile ext2 LTP workspace; using tmpfs" >&2
+		losetup -d "$workspace_loop" 2>/dev/null
+	fi
+	;;
+esac
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
 hostname -F /etc/hostname
 ip link set lo up
 if ip link set eth0 up; then
