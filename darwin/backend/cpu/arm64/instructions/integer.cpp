@@ -115,7 +115,7 @@ RunResult Dispatcher::logical_immediate(CpuState &cpu, GuestMemory &,
 		cpu.nzcv = ((result >> (width - 1)) != 0 ? 0x8000'0000U : 0) |
 			(result == 0 ? 0x4000'0000U : 0);
 	}
-	cpu.write_register(instruction & 0x1fU, result, false);
+	cpu.write_register(instruction & 0x1fU, result, operation != 3);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }

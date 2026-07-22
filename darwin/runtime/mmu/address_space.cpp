@@ -30,23 +30,6 @@ namespace {
 constexpr std::uint64_t page_size = 4096;
 constexpr std::uint64_t address_limit = 0x6000'0000'0000ULL;
 
-struct PageKey final {
-	std::uint64_t generation;
-	std::uint64_t address;
-
-	bool operator==(const PageKey &) const = default;
-};
-
-struct PageKeyHash final {
-	[[nodiscard]] std::size_t operator()(const PageKey &key) const noexcept
-	{
-		auto value = key.address >> 12;
-		value ^= key.generation * 0x9e37'79b9'7f4a'7c15ULL;
-		value ^= value >> 33;
-		return static_cast<std::size_t>(value);
-	}
-};
-
 struct BackingKey final {
 	std::uint64_t device;
 	std::uint64_t inode;
@@ -108,8 +91,19 @@ private:
 	std::size_t size_;
 };
 
+struct Mapping final {
+	std::shared_ptr<MappedBacking> backing;
+	std::uint64_t offset;
+	int fd;
+	int protection;
+	bool guest_code;
+	bool guest_writable;
+};
+
 struct GenerationState final {
 	std::mutex walker_mutex;
+	mutable std::shared_mutex mappings_mutex;
+	std::unordered_map<std::uint64_t, Mapping> mappings;
 	std::atomic_uint64_t mapping_changes{1};
 	std::atomic_uint64_t code_changes{1};
 	std::atomic_uint64_t invalidation_epoch{};
@@ -318,15 +312,6 @@ private:
 	std::uint64_t generation_;
 };
 
-struct Mapping final {
-	std::shared_ptr<MappedBacking> backing;
-	std::uint64_t offset;
-	int fd;
-	int protection;
-	bool guest_code;
-	bool guest_writable;
-};
-
 struct MappingOperation final {
 	bool map;
 	std::uint64_t address;
@@ -364,6 +349,11 @@ constexpr std::size_t maximum_mapping_history = 4096;
 struct ActiveGeneration final {
 	std::uint64_t generation{};
 	std::shared_ptr<GenerationState> state;
+};
+
+struct GenerationReference final {
+	std::shared_ptr<GenerationState> owner;
+	GenerationState *state{};
 };
 
 ActiveGeneration &active_thread_generation()
@@ -414,9 +404,10 @@ public:
 					guest_code, guest_writable}});
 			return 0;
 		}
-		auto quiesce = quiesce_generation(generation);
-		std::lock_guard lock{mutex_};
-		map_locked(generation, address, length,
+		auto state = state_for(generation);
+		ExecutionQuiesce quiesce{state, generation};
+		std::lock_guard lock{state->mappings_mutex};
+		map_locked(*state, address, length,
 			Mapping{std::move(backing), offset, fd, protection,
 				guest_code, guest_writable});
 		return 0;
@@ -428,14 +419,15 @@ public:
 			return -1;
 		const auto generation = generation_for(
 			address, active_thread_generation().generation);
-		auto quiesce = quiesce_generation(generation);
-		std::lock_guard lock{mutex_};
+		auto state = state_for(generation);
+		ExecutionQuiesce quiesce{state, generation};
+		std::lock_guard lock{state->mappings_mutex};
 		bool changed = false;
 		bool changes_code = false;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
-			auto mapping = mappings_.find({generation, address + position});
-			if (mapping != mappings_.end() &&
+			auto mapping = state->mappings.find(address + position);
+			if (mapping != state->mappings.end() &&
 			    mapping->second.protection != protection) {
 				changed = true;
 				changes_code = changes_code || mapping->second.guest_code;
@@ -443,7 +435,7 @@ public:
 			}
 		}
 		if (changed)
-			changed_locked(generation, changes_code, address, length);
+			changed_locked(*state, changes_code, address, length);
 		return 0;
 	}
 
@@ -464,8 +456,8 @@ public:
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		state->invalidation_epoch.fetch_add(1, std::memory_order_release);
-		std::lock_guard lock{mutex_};
-		unmap_locked(generation, address, length);
+		std::lock_guard lock{state->mappings_mutex};
+		unmap_locked(*state, address, length);
 		return 0;
 	}
 
@@ -480,9 +472,8 @@ public:
 		auto &active = active_thread_generation();
 		if (active.generation == generation && active.state)
 			return 0;
-		std::lock_guard lock{mutex_};
 		active.generation = generation;
-		active.state = state_for_locked(generation);
+		active.state = state_for(generation);
 		return 0;
 	}
 
@@ -490,16 +481,19 @@ public:
 	{
 		if (generation == 0)
 			return 0;
-		auto quiesce = quiesce_generation(generation);
-		std::lock_guard lock{mutex_};
-		for (auto iterator = mappings_.begin(); iterator != mappings_.end();) {
-			if (iterator->first.generation == generation)
-				iterator = mappings_.erase(iterator);
-			else
-				++iterator;
+		auto state = state_for(generation);
+		ExecutionQuiesce quiesce{state, generation};
+		{
+			std::lock_guard lock{state->mappings_mutex};
+			state->mappings.clear();
+			changed_locked(*state, true, 0, 0);
 		}
-		changed_locked(generation, true, 0, 0);
-		states_.erase(generation);
+		{
+			std::lock_guard lock{states_mutex_};
+			if (const auto found = states_.find(generation);
+			    found != states_.end() && found->second == state)
+				states_.erase(found);
+		}
 		auto &active = active_thread_generation();
 		if (active.generation == generation)
 			active.state.reset();
@@ -511,10 +505,10 @@ public:
 		address &= ~(page_size - 1);
 		const auto generation = generation_for(
 			address, active_thread_generation().generation);
-		std::shared_lock lock{mutex_};
-		auto iterator = mappings_.find(
-			{generation, address});
-		if (iterator == mappings_.end())
+		auto reference = reference_for(generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		auto iterator = reference.state->mappings.find(address);
+		if (iterator == reference.state->mappings.end())
 			return -1;
 		return iterator->second.fd == fd && iterator->second.offset == offset;
 	}
@@ -528,18 +522,18 @@ public:
 			return -1;
 		const auto generation = generation_for(
 			address, active_thread_generation().generation);
-		auto quiesce = quiesce_generation(generation);
-		std::lock_guard lock{mutex_};
-		auto iterator = mappings_.find(
-			{generation, address});
-		if (iterator == mappings_.end())
+		auto state = state_for(generation);
+		ExecutionQuiesce quiesce{state, generation};
+		std::lock_guard lock{state->mappings_mutex};
+		auto iterator = state->mappings.find(address);
+		if (iterator == state->mappings.end())
 			return 0;
 		if (iterator->second.fd == fd && iterator->second.offset == offset)
 			return 0;
 		iterator->second.backing = std::move(backing);
 		iterator->second.offset = offset;
 		iterator->second.fd = fd;
-		changed_locked(generation, iterator->second.guest_code, address,
+		changed_locked(*state, iterator->second.guest_code, address,
 			page_size);
 		return 0;
 	}
@@ -547,10 +541,11 @@ public:
 	int has_mapping(std::uint64_t address)
 	{
 		address &= ~(page_size - 1);
-		std::shared_lock lock{mutex_};
-		return mappings_.contains(
-			{generation_for(address,
-				active_thread_generation().generation), address});
+		const auto generation = generation_for(
+			address, active_thread_generation().generation);
+		auto reference = reference_for(generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		return reference.state->mappings.contains(address);
 	}
 
 	int copy_from_buffer(std::uint64_t address, const void *buffer,
@@ -570,25 +565,21 @@ public:
 		 * a sibling guest thread may update another byte in the same 4 KiB page
 		 * while the kernel operates through its Darwin 16 KiB physical shadow.
 		 */
-		std::shared_lock lock{mutex_};
 		const auto generation = generation_for(
 			page, active_thread_generation().generation);
-		auto iterator = mappings_.find(
-			{generation, page});
-		if (iterator == mappings_.end())
+		auto reference = reference_for(generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		auto iterator = reference.state->mappings.find(page);
+		if (iterator == reference.state->mappings.end())
 			return 0;
 		auto *destination = iterator->second.backing->at(
 			iterator->second.offset + in_page);
 		if (destination == nullptr)
 			return -1;
 		std::memcpy(destination, buffer, length);
-		if (iterator->second.guest_code) {
-			auto state = states_.find(generation);
-			if (state == states_.end())
-				return -1;
-			state->second->code_changes.fetch_add(
+		if (iterator->second.guest_code)
+			reference.state->code_changes.fetch_add(
 				1, std::memory_order_release);
-		}
 		return 0;
 	}
 
@@ -599,14 +590,15 @@ public:
 			return DARWIN_UML_STATIC_HOST_ERROR;
 		*result = nullptr;
 		const auto page = address & ~(page_size - 1);
+		const auto resolved_generation = generation_for(page, generation);
 		/* The execution gate excludes mapping mutation in this generation.
-		 * Other generations may translate concurrently as well, so lookup is
-		 * a shared operation rather than a process-wide exclusive lock.
+		 * Keep each generation's mapping lookup independent so unrelated guest
+		 * processes neither share a hash table nor touch the same lock cacheline.
 		 */
-		std::shared_lock lock{mutex_};
-		auto iterator = mappings_.find(
-			{generation_for(page, generation), page});
-		if (iterator == mappings_.end())
+		auto reference = reference_for(resolved_generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		auto iterator = reference.state->mappings.find(page);
+		if (iterator == reference.state->mappings.end())
 			return DARWIN_UML_STATIC_UNMAPPED;
 		const auto &mapping = iterator->second;
 		const bool permitted = access == DARWIN_UML_STATIC_EXECUTE ?
@@ -637,8 +629,7 @@ public:
 			return (code ? active.state->code_changes :
 				active.state->mapping_changes)
 				.load(std::memory_order_acquire);
-		std::lock_guard lock{mutex_};
-		auto state = state_for_locked(generation);
+		auto state = state_for(generation);
 		return (code ? state->code_changes : state->mapping_changes)
 			.load(std::memory_order_acquire);
 	}
@@ -655,8 +646,7 @@ public:
 					std::memory_order_acquire),
 				0,
 			};
-		std::lock_guard lock{mutex_};
-		auto state = state_for_locked(generation);
+		auto state = state_for(generation);
 		return {
 			state->mapping_changes.load(std::memory_order_acquire),
 			state->code_changes.load(std::memory_order_acquire),
@@ -670,8 +660,8 @@ public:
 	{
 		if (current_sequence == nullptr || (capacity != 0 && output == nullptr))
 			return -1;
-		std::lock_guard lock{mutex_};
-		auto state = state_for_locked(generation);
+		auto state = state_for(generation);
+		std::shared_lock lock{state->mappings_mutex};
 		const auto current = state->mapping_changes.load(
 			std::memory_order_acquire);
 		*current_sequence = current;
@@ -705,8 +695,8 @@ public:
 		 */
 		const auto generation = generation_for(
 			address, active_thread_generation().generation);
-		std::lock_guard lock{mutex_};
-		code_changed_locked(generation);
+		state_for(generation)->code_changes.fetch_add(
+			1, std::memory_order_release);
 	}
 
 	[[nodiscard]] std::uint64_t active_generation() const noexcept
@@ -754,15 +744,15 @@ public:
 			    batch.invalidation_epoch) {
 				result = -EAGAIN;
 			} else {
-				std::lock_guard lock{mutex_};
+				std::lock_guard lock{state->mappings_mutex};
 				for (const auto &operation : batch.operations) {
 					if (operation.map)
-						map_locked(batch.generation,
+						map_locked(*state,
 							operation.address,
 							operation.length,
 							operation.mapping);
 					else
-						unmap_locked(batch.generation,
+						unmap_locked(*state,
 							operation.address,
 							operation.length);
 				}
@@ -896,6 +886,16 @@ private:
 		return address < address_limit ? generation : 0;
 	}
 
+	GenerationReference reference_for(std::uint64_t generation)
+	{
+		auto &active = active_thread_generation();
+		if (active.generation == generation && active.state)
+			return {{}, active.state.get()};
+		auto owner = state_for(generation);
+		auto *state = owner.get();
+		return {std::move(owner), state};
+	}
+
 	std::shared_ptr<MappedBacking> backing_for(int fd)
 	{
 		auto &batch = mapping_batch();
@@ -950,27 +950,25 @@ private:
 
 	std::shared_ptr<GenerationState> state_for(std::uint64_t generation)
 	{
-		std::lock_guard lock{mutex_};
+		{
+			std::shared_lock lock{states_mutex_};
+			if (const auto found = states_.find(generation);
+			    found != states_.end())
+				return found->second;
+		}
+		std::lock_guard lock{states_mutex_};
 		return state_for_locked(generation);
 	}
 
-	std::optional<ExecutionQuiesce> quiesce_generation(
-		std::uint64_t generation)
-	{
-		return std::optional<ExecutionQuiesce>{
-			std::in_place, state_for(generation), generation};
-	}
-
-	void map_locked(std::uint64_t generation, std::uint64_t address,
+	void map_locked(GenerationState &state, std::uint64_t address,
 		std::uint64_t length, const Mapping &mapping)
 	{
 		bool changed = false;
 		bool changes_code = false;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
-			if (const auto previous = mappings_.find(
-				    {generation, address + position});
-			    previous != mappings_.end()) {
+			if (const auto previous = state.mappings.find(address + position);
+			    previous != state.mappings.end()) {
 				if (previous->second.fd == mapping.fd &&
 				    previous->second.offset == mapping.offset + position &&
 				    previous->second.protection == mapping.protection &&
@@ -982,56 +980,48 @@ private:
 			}
 			changed = true;
 			changes_code = changes_code || mapping.guest_code;
-			mappings_.insert_or_assign(
-				PageKey{generation, address + position},
+			state.mappings.insert_or_assign(
+				address + position,
 				Mapping{mapping.backing, mapping.offset + position,
 					mapping.fd, mapping.protection,
 					mapping.guest_code, mapping.guest_writable});
 		}
 		if (changed)
-			changed_locked(generation, changes_code, address, length);
+			changed_locked(state, changes_code, address, length);
 	}
 
-	void unmap_locked(std::uint64_t generation, std::uint64_t address,
+	void unmap_locked(GenerationState &state, std::uint64_t address,
 		std::uint64_t length)
 	{
 		bool changed = false;
 		bool changes_code = false;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
-			auto mapping = mappings_.find({generation, address + position});
-			if (mapping == mappings_.end())
+			auto mapping = state.mappings.find(address + position);
+			if (mapping == state.mappings.end())
 				continue;
 			changed = true;
 			changes_code = changes_code || mapping->second.guest_code;
-			mappings_.erase(mapping);
+			state.mappings.erase(mapping);
 		}
 		if (changed)
-			changed_locked(generation, changes_code, address, length);
+			changed_locked(state, changes_code, address, length);
 	}
 
-	void code_changed_locked(std::uint64_t generation)
-	{
-		state_for_locked(generation)->code_changes.fetch_add(
-			1, std::memory_order_release);
-	}
-
-	void changed_locked(std::uint64_t generation, bool changes_code,
+	void changed_locked(GenerationState &state, bool changes_code,
 		std::uint64_t address, std::uint64_t length)
 	{
-		auto state = state_for_locked(generation);
-		const auto sequence = state->mapping_changes.fetch_add(
+		const auto sequence = state.mapping_changes.fetch_add(
 			1, std::memory_order_release) + 1;
-		state->mapping_history.push_back({sequence, address, length});
-		if (state->mapping_history.size() > maximum_mapping_history)
-			state->mapping_history.pop_front();
+		state.mapping_history.push_back({sequence, address, length});
+		if (state.mapping_history.size() > maximum_mapping_history)
+			state.mapping_history.pop_front();
 		if (changes_code)
-			state->code_changes.fetch_add(1, std::memory_order_release);
+			state.code_changes.fetch_add(1, std::memory_order_release);
 	}
 
-	mutable std::shared_mutex mutex_;
+	mutable std::shared_mutex states_mutex_;
 	std::mutex backing_mutex_;
-	std::unordered_map<PageKey, Mapping, PageKeyHash> mappings_;
 	std::unordered_map<std::uint64_t, std::shared_ptr<GenerationState>> states_;
 	std::unordered_map<BackingKey, std::weak_ptr<MappedBacking>, BackingKeyHash>
 		backings_;

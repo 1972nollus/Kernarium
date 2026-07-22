@@ -738,13 +738,16 @@ static void logical_bitmask_immediate()
 	constexpr std::uint64_t base = 0xb000;
 	FlatMemory memory(base, 0x1000);
 	memory.put32(base, 0x121a'7884U);     // and w4, w4, #0xffffffdf
-	memory.put32(base + 4, 0xd400'0001U); // svc #0
+	memory.put32(base + 4, 0x927a'e53fU); // and sp, x9, #0xffffffffffffffc0
+	memory.put32(base + 8, 0xd400'0001U); // svc #0
 	arm64::CpuState cpu{};
 	cpu.pc = base;
 	cpu.registers[4] = 0xffff'ffff'ffff'ffffULL;
+	cpu.registers[9] = 0x12'347U;
 	const auto result = arm64::Dispatcher{}.run(cpu, memory, 4);
 	require(result.reason == arm64::StopReason::system_call);
 	require(cpu.registers[4] == 0xffff'ffdfU);
+	require(cpu.sp == 0x12'340U);
 }
 
 static void add_sub_register_forms()
@@ -2776,6 +2779,32 @@ static void uml_static_entry_bridge()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+static void uml_static_lazy_fp_boundary()
+{
+	constexpr unsigned long generation = 113;
+	constexpr std::uint64_t base = 0x1'2000;
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put32(0, 0x4f00'041fU); // movi v31.4s, #0
+	backing.put32(4, 0xd400'0001U); // svc #0
+
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	std::memset(fp.vectors[31], 0xff, sizeof(fp.vectors[31]));
+	registers.pc = base;
+	unsigned long tls = 0;
+	const int event = darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 8);
+	for (const auto byte : fp.vectors[31])
+		require(byte == 0);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 static void uml_static_descriptor_reuse_invalidation()
 {
 	constexpr unsigned long first_generation = 107;
@@ -3477,6 +3506,7 @@ int main()
 	integer_multiply_long();
 	conditional_compare_immediate();
 	uml_static_entry_bridge();
+	uml_static_lazy_fp_boundary();
 	uml_static_descriptor_reuse_invalidation();
 	uml_static_host_interrupt_sequence();
 	uml_static_signal_return_bridge();

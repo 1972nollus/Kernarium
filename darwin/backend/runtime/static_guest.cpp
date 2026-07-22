@@ -111,10 +111,7 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pc = registers.pc;
 	cpu.nzcv = registers.pstate;
 	cpu.tls = tls;
-	for (std::size_t index = 0; index < cpu.vectors.size(); ++index)
-		std::memcpy(cpu.vectors[index].bytes.data(), fp.vectors[index], 16);
-	cpu.fpsr = fp.fpsr;
-	cpu.fpcr = fp.fpcr;
+	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 
 void save_cpu(const arm64::CpuState &cpu,
@@ -128,10 +125,11 @@ void save_cpu(const arm64::CpuState &cpu,
 	registers.pc = cpu.pc;
 	registers.pstate = cpu.nzcv;
 	tls = static_cast<unsigned long>(cpu.tls);
-	for (std::size_t index = 0; index < cpu.vectors.size(); ++index)
-		std::memcpy(fp.vectors[index], cpu.vectors[index].bytes.data(), 16);
-	fp.fpsr = cpu.fpsr;
-	fp.fpcr = cpu.fpcr;
+	if (cpu.fp_dirty) {
+		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
+		fp.fpsr = cpu.fpsr;
+		fp.fpcr = cpu.fpcr;
+	}
 }
 
 [[nodiscard]] bool prepare_signal_return(arm64::CpuState &cpu) noexcept

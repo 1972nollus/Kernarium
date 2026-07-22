@@ -39,6 +39,8 @@ struct alignas(32) Tlb final {
 private:
 	void flush();
 	void invalidate(std::uint64_t address, std::uint64_t length);
+	void reconcile_changes(
+		std::uint64_t next_generation, std::uint64_t next_changes);
 };
 
 } // namespace uml::backend::arm64::gadgets

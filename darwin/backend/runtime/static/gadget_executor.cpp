@@ -223,7 +223,13 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	preempted_ = sequences.execution_interrupt != 0;
 	if (preempted_)
 		return arm64::gadgets::Event::interrupt;
-	memory.prepare(generation, sequences.mapping_changes);
+	if (mapping_generation_ != generation ||
+	    mapping_changes_ != sequences.mapping_changes) {
+		memory.prepare(generation, sequences.mapping_changes);
+		tlb_.prepare(generation, sequences.mapping_changes);
+		mapping_generation_ = generation;
+		mapping_changes_ = sequences.mapping_changes;
+	}
 	prepare_cache(generation, sequences.code_changes);
 	std::optional<CachedResult> selected;
 	std::optional<BuildResult> uncached;
@@ -285,12 +291,17 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	arm64::RunResult expected_result{};
 	std::unique_ptr<OverlayMemory> overlay;
 	if (verifying) {
+		/* The reference dispatcher accesses vectors directly.  Materialize the
+		 * deferred kernel frame before copying it so gadget verification observes
+		 * the same incoming FP state as normal execution.
+		 */
+		if (built.program.accesses_fp_state())
+			cpu.access_fp_state();
 		expected = std::make_unique<arm64::CpuState>(cpu);
 		overlay = std::make_unique<OverlayMemory>(memory);
 		expected_result = arm64::Dispatcher{}.run(
 			*expected, *overlay, built.program.instruction_count());
 	}
-	tlb_.prepare(generation, sequences.mapping_changes);
 	const auto event = arm64::gadgets::execute(built.program, cpu, tlb_);
 	if (event == arm64::gadgets::Event::fatal) {
 		std::array<std::byte, sizeof(std::uint32_t)> current_encoded{};

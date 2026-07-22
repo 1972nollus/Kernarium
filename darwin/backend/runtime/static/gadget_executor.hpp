@@ -42,6 +42,8 @@ private:
 	static constexpr std::size_t maximum_cache_entries = 16 * 1024;
 	unsigned long cache_generation_{};
 	std::uint64_t cache_changes_{};
+	unsigned long mapping_generation_{};
+	std::uint64_t mapping_changes_{};
 	std::unordered_map<std::uint64_t, BuildResult> programs_;
 	arm64::gadgets::Tlb tlb_;
 	void *execution_context_{};

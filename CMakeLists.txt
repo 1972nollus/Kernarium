@@ -30,6 +30,8 @@ else()
 endif()
 
 option(UML_BUILD_TESTS "Build host-runnable backend unit tests" ${UML_TARGET_MACOS})
+option(UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+    "Route non-control gadget instructions through the interpreter for debugging" OFF)
 
 if(UML_BUILD_TESTS)
     enable_testing()

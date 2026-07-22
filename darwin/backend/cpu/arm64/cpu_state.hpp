@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace uml::backend::arm64 {
 
@@ -25,6 +26,32 @@ struct CpuState final {
 	std::uint64_t exclusive_value{};
 	std::uint64_t exclusive_version{};
 	std::uint8_t exclusive_size{};
+	const std::byte *deferred_vectors{};
+	std::uint32_t deferred_fpcr{};
+	std::uint32_t deferred_fpsr{};
+	bool fp_loaded{true};
+	bool fp_dirty{};
+
+	void defer_fp_load(const void *source, std::uint32_t source_fpcr,
+			  std::uint32_t source_fpsr) noexcept
+	{
+		deferred_vectors = static_cast<const std::byte *>(source);
+		deferred_fpcr = source_fpcr;
+		deferred_fpsr = source_fpsr;
+		fp_loaded = false;
+		fp_dirty = false;
+	}
+
+	void access_fp_state() noexcept
+	{
+		if (!fp_loaded) {
+			std::memcpy(vectors.data(), deferred_vectors, sizeof(vectors));
+			fpcr = deferred_fpcr;
+			fpsr = deferred_fpsr;
+			fp_loaded = true;
+		}
+		fp_dirty = true;
+	}
 
 	[[nodiscard]] std::uint64_t read_register(unsigned index,
 					     bool stack_pointer) const noexcept

@@ -26,16 +26,21 @@ set_target_properties(uml_arm64_dispatch PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_arm64_gadgets OBJECT
-    cpu/arm64/gadgets/decoded.cpp
     cpu/arm64/gadgets/program.cpp
     cpu/arm64/gadgets/tlb.cpp
     cpu/arm64/gadgets/engine.S)
+if(UML_ENABLE_GADGET_INTERPRETER_RUNPATH)
+    target_sources(uml_arm64_gadgets PRIVATE
+        cpu/arm64/gadgets/decoded.cpp)
+endif()
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/include
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
+target_compile_definitions(uml_arm64_gadgets PRIVATE
+    UML_ENABLE_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
 set_target_properties(uml_arm64_gadgets PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 

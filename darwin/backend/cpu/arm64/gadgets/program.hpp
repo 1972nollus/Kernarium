@@ -23,16 +23,30 @@ enum class Event : int {
 class Program final {
 public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		std::vector<std::uintptr_t> words) noexcept;
+		std::vector<std::uintptr_t> words, bool accesses_fp_state) noexcept;
 
-	[[nodiscard]] std::uint64_t guest_address() const noexcept;
-	[[nodiscard]] std::size_t instruction_count() const noexcept;
-	[[nodiscard]] std::span<const std::uintptr_t> words() const noexcept;
+	[[nodiscard]] std::uint64_t guest_address() const noexcept
+	{
+		return guest_address_;
+	}
+	[[nodiscard]] std::size_t instruction_count() const noexcept
+	{
+		return instruction_count_;
+	}
+	[[nodiscard]] std::span<const std::uintptr_t> words() const noexcept
+	{
+		return words_;
+	}
+	[[nodiscard]] bool accesses_fp_state() const noexcept
+	{
+		return accesses_fp_state_;
+	}
 
 private:
 	std::uint64_t guest_address_{};
 	std::size_t instruction_count_{};
 	std::vector<std::uintptr_t> words_;
+	bool accesses_fp_state_{};
 };
 
 struct BuildResult final {

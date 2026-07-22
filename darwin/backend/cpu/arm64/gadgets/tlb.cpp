@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 
 namespace uml::backend::arm64::gadgets {
 namespace {
@@ -65,7 +66,17 @@ void Tlb::prepare(
 	}
 	if (changes == next_changes)
 		return;
+	reconcile_changes(next_generation, next_changes);
+}
 
+/* Keep the mapping-change buffer out of prepare()'s steady-state stack frame.
+ * Darwin probes this 8 KiB allocation at function entry even when the
+ * generation and sequence are unchanged, which made the nominal fast path
+ * show up prominently in CPU profiles.
+ */
+__attribute__((noinline)) void Tlb::reconcile_changes(
+	std::uint64_t next_generation, std::uint64_t next_changes)
+{
 	std::array<darwin_uml_static_mapping_change, 256> changed_ranges{};
 	std::uint64_t current_changes = next_changes;
 	const int count = darwin_uml_static_vm_mapping_changes(
@@ -119,6 +130,48 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		(address & (page_size - 1));
 }
 } // namespace uml::backend::arm64::gadgets
+
+extern "C" std::uint32_t uml_arm64_gadget_memory_transfer(
+	uml::backend::arm64::gadgets::Tlb *tlb, std::uint64_t address,
+	void *data, std::size_t size, std::uint32_t access) noexcept
+{
+	using uml::backend::arm64::gadgets::Access;
+	constexpr std::size_t page_size = 4096;
+	if (tlb == nullptr || data == nullptr || size == 0 || size > 64)
+		return 0;
+
+	const auto direction = access == static_cast<std::uint32_t>(Access::write) ?
+		Access::write : Access::read;
+	std::array<std::byte *, 2> pages{};
+	std::array<std::size_t, 2> lengths{};
+	std::size_t count = 0;
+	std::size_t completed = 0;
+	while (completed < size) {
+		if (count == pages.size())
+			return 0;
+		const auto current = address + completed;
+		auto *translated = tlb->translate(current, direction);
+		if (translated == nullptr)
+			return 0;
+		const auto length = std::min(size - completed,
+			page_size - static_cast<std::size_t>(current % page_size));
+		pages[count] = translated;
+		lengths[count] = length;
+		++count;
+		completed += length;
+	}
+
+	completed = 0;
+	auto *bytes = static_cast<std::byte *>(data);
+	for (std::size_t index = 0; index < count; ++index) {
+		if (direction == Access::write)
+			std::memcpy(pages[index], bytes + completed, lengths[index]);
+		else
+			std::memcpy(bytes + completed, pages[index], lengths[index]);
+		completed += lengths[index];
+	}
+	return 1;
+}
 
 extern "C" void *uml_arm64_gadget_tlb_miss(
 	uml::backend::arm64::gadgets::Tlb *tlb, std::uint64_t address,
