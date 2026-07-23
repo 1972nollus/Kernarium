@@ -182,8 +182,11 @@ RunResult Dispatcher::multiply_add(CpuState &cpu, GuestMemory &,
 	if (((instruction >> 29) & 0x3U) != 0 ||
 	    (operation != 0 && !is_64_bit) ||
 	    (operation != 0 && operation != 1 && operation != 2 &&
-	     operation != 5 && operation != 6))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	     operation != 5 && operation != 6) ||
+	    ((operation == 2 || operation == 6) &&
+	     (((instruction >> 10) & 0x1fU) != 0x1fU ||
+	      (instruction & 0x0000'8000U) != 0)))
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = width_mask(is_64_bit);
 	const auto left = cpu.read_register((instruction >> 5) & 0x1fU, false) &
@@ -208,9 +211,6 @@ RunResult Dispatcher::multiply_add(CpuState &cpu, GuestMemory &,
 		result = (instruction & 0x0000'8000U) != 0 ?
 			addend - product : addend + product;
 	} else {
-		if ((instruction & 0x0000'8000U) != 0)
-			return {StopReason::unsupported_instruction, address,
-				instruction, 0, false};
 		if (operation == 2) {
 			const __int128 product = static_cast<__int128>(
 				static_cast<std::int64_t>(left)) *

@@ -26,6 +26,10 @@ public:
 	[[nodiscard]] std::byte *atomic_pointer(
 		std::uint64_t address, std::size_t size,
 		arm64::MemoryAccess access) override;
+	[[nodiscard]] bool read_allocation_tag(
+		std::uint64_t address, std::uint8_t &tag) override;
+	[[nodiscard]] bool write_allocation_tag(
+		std::uint64_t address, std::uint8_t tag) override;
 	void invalidate_code(std::uint64_t address) override;
 	[[nodiscard]] bool validate_write(
 		std::uint64_t address, std::size_t size);

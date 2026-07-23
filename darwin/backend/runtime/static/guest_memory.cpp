@@ -76,6 +76,26 @@ std::byte *StaticGuestMemory::atomic_pointer(
 	return translate(address, access);
 }
 
+bool StaticGuestMemory::read_allocation_tag(
+	std::uint64_t address, std::uint8_t &tag)
+{
+	if (darwin_uml_static_vm_load_allocation_tag(
+		generation_, address, &tag) == DARWIN_UML_STATIC_TRANSLATED)
+		return true;
+	return record_fault(address & 0x00ff'ffff'ffff'fff0ULL,
+		arm64::MemoryAccess::read);
+}
+
+bool StaticGuestMemory::write_allocation_tag(
+	std::uint64_t address, std::uint8_t tag)
+{
+	if (darwin_uml_static_vm_store_allocation_tag(
+		generation_, address, tag) == DARWIN_UML_STATIC_TRANSLATED)
+		return true;
+	return record_fault(address & 0x00ff'ffff'ffff'fff0ULL,
+		arm64::MemoryAccess::write);
+}
+
 void StaticGuestMemory::invalidate_code(std::uint64_t address)
 {
 	darwin_uml_static_vm_invalidate_code(

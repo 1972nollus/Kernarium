@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_static_mmu.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -84,11 +85,64 @@ public:
 
 	[[nodiscard]] std::size_t size() const noexcept { return size_; }
 
+	[[nodiscard]] std::uint8_t load_allocation_tag(
+		std::uint64_t offset) const noexcept
+	{
+		const auto page = offset / page_size;
+		const auto index = static_cast<std::size_t>(
+			(offset & (page_size - 1)) / 16);
+		std::shared_lock lock{tags_mutex_};
+		const auto found = tag_pages_.find(page);
+		return found == tag_pages_.end() ? 0 :
+			found->second->tags[index].load(std::memory_order_acquire);
+	}
+
+	[[nodiscard]] bool store_allocation_tag(
+		std::uint64_t offset, std::uint8_t tag) noexcept
+	{
+		const auto page = offset / page_size;
+		const auto index = static_cast<std::size_t>(
+			(offset & (page_size - 1)) / 16);
+		TagPage *tags = nullptr;
+		{
+			std::shared_lock lock{tags_mutex_};
+			const auto found = tag_pages_.find(page);
+			if (found != tag_pages_.end())
+				tags = found->second.get();
+		}
+		if (tags == nullptr) {
+			std::lock_guard lock{tags_mutex_};
+			auto &slot = tag_pages_[page];
+			if (!slot) {
+				try {
+					slot = std::make_unique<TagPage>();
+				} catch (...) {
+					return false;
+				}
+			}
+			tags = slot.get();
+		}
+		tags->tags[index].store(tag & 15U, std::memory_order_release);
+		return true;
+	}
+
 private:
+	struct TagPage final {
+		TagPage() noexcept
+		{
+			for (auto &tag : tags)
+				tag.store(0, std::memory_order_relaxed);
+		}
+
+		std::array<std::atomic_uint8_t, page_size / 16> tags;
+	};
+
 	MappedBacking(std::byte *data, std::size_t size) : data_(data), size_(size) {}
 
 	std::byte *data_;
 	std::size_t size_;
+	mutable std::shared_mutex tags_mutex_;
+	std::unordered_map<std::uint64_t, std::unique_ptr<TagPage>> tag_pages_;
 };
 
 struct Mapping final {
@@ -616,6 +670,20 @@ public:
 		return DARWIN_UML_STATIC_TRANSLATED;
 	}
 
+	int load_allocation_tag(std::uint64_t generation, std::uint64_t address,
+		std::uint8_t *tag)
+	{
+		if (tag == nullptr)
+			return DARWIN_UML_STATIC_HOST_ERROR;
+		return access_allocation_tag(generation, address, false, tag);
+	}
+
+	int store_allocation_tag(std::uint64_t generation, std::uint64_t address,
+		std::uint8_t tag)
+	{
+		return access_allocation_tag(generation, address, true, &tag);
+	}
+
 	[[nodiscard]] std::uint64_t changes(std::uint64_t generation,
 					       bool code)
 	{
@@ -880,6 +948,35 @@ public:
 	}
 
 private:
+	int access_allocation_tag(std::uint64_t generation,
+		std::uint64_t address, bool write, std::uint8_t *tag)
+	{
+		/* MTE allocation tags are indexed by the untagged Tag Granule. */
+		address &= 0x00ff'ffff'ffff'fff0ULL;
+		const auto page = address & ~(page_size - 1);
+		const auto resolved_generation = generation_for(page, generation);
+		auto reference = reference_for(resolved_generation);
+		std::shared_lock lock{reference.state->mappings_mutex};
+		const auto iterator = reference.state->mappings.find(page);
+		if (iterator == reference.state->mappings.end())
+			return DARWIN_UML_STATIC_UNMAPPED;
+		auto &mapping = iterator->second;
+		const int required = write ? PROT_WRITE : PROT_READ;
+		if ((mapping.protection & required) == 0)
+			return DARWIN_UML_STATIC_PERMISSION;
+		const auto offset = mapping.offset +
+			(address & (page_size - 1));
+		if (offset >= mapping.backing->size())
+			return DARWIN_UML_STATIC_HOST_ERROR;
+		if (write) {
+			if (!mapping.backing->store_allocation_tag(offset, *tag))
+				return DARWIN_UML_STATIC_HOST_ERROR;
+		} else {
+			*tag = mapping.backing->load_allocation_tag(offset);
+		}
+		return DARWIN_UML_STATIC_TRANSLATED;
+	}
+
 	static std::uint64_t generation_for(std::uint64_t address,
 					    std::uint64_t generation) noexcept
 	{
@@ -1161,6 +1258,20 @@ extern "C" int darwin_uml_static_vm_translate(
 {
 	return uml::runtime::address_space().translate(
 		generation, address, access, host_address);
+}
+
+extern "C" int darwin_uml_static_vm_load_allocation_tag(
+	unsigned long generation, unsigned long address, uint8_t *tag)
+{
+	return uml::runtime::address_space().load_allocation_tag(
+		generation, address, tag);
+}
+
+extern "C" int darwin_uml_static_vm_store_allocation_tag(
+	unsigned long generation, unsigned long address, uint8_t tag)
+{
+	return uml::runtime::address_space().store_allocation_tag(
+		generation, address, tag);
 }
 
 extern "C" uint64_t darwin_uml_static_vm_changes(unsigned long generation)

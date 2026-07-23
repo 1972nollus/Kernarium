@@ -79,24 +79,31 @@ if(UML_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/ltp/run_guest_ltp_tests.py)
     set_tests_properties(ltp-runner-parser PROPERTIES LABELS "host;ltp")
-    add_test(NAME guest-smp-parallel
+    # Guest boot/process-topology checks are integration tests. Keep them out
+    # of ordinary `ctest`; invoke this suite explicitly with
+    # `cmake --build <build-dir> --target guest-smp-parallel`.
+    add_custom_target(guest-smp-parallel
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/smp/run_guest_smp.py
             --emulator $<TARGET_FILE:uml-darwin>
-            --rootfs ${PROJECT_SOURCE_DIR}/rootfs.ext2)
-    set_tests_properties(guest-smp-parallel PROPERTIES
-        LABELS "guest;quick;smp"
-        RUN_SERIAL TRUE
-        TIMEOUT 45)
-    add_test(NAME guest-ltp-verified
+            --rootfs ${PROJECT_SOURCE_DIR}/rootfs.ext2
+        DEPENDS uml-darwin
+        COMMENT "Running standalone guest SMP integration suite"
+        USES_TERMINAL
+        VERBATIM)
+
+    # The full guest LTP campaign is an integration suite, not a unit test.
+    # Keep it out of ordinary `ctest`; invoke it explicitly with
+    # `cmake --build <build-dir> --target guest-ltp-verified`.
+    add_custom_target(guest-ltp-verified
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/ltp/run_guest_ltp.py
             --emulator $<TARGET_FILE:uml-darwin>
             --rootfs ${PROJECT_SOURCE_DIR}/rootfs.ext2
             --manifest ${PROJECT_SOURCE_DIR}/tests/ltp/verified-tests.tsv
-            --jobs ${UML_LTP_JOBS})
-    set_tests_properties(guest-ltp-verified PROPERTIES
-        LABELS "guest;ltp"
-        RUN_SERIAL TRUE
-        TIMEOUT 86400)
+            --jobs ${UML_LTP_JOBS}
+        DEPENDS uml-darwin
+        COMMENT "Running standalone guest LTP integration suite"
+        USES_TERMINAL
+        VERBATIM)
 endif()

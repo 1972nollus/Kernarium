@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "../../dispatcher.hpp"
 
+#include "../../detail/floating_integer_conversion.hpp"
 #include "../../detail/instruction_helpers.hpp"
 
 #include <array>
@@ -16,6 +17,108 @@ namespace uml::backend::arm64 {
 using detail::continue_after;
 using detail::decode_little_endian;
 using detail::encode_little_endian;
+
+RunResult Dispatcher::floating_javascript_convert(CpuState &cpu,
+	GuestMemory &, std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	if ((instruction & 0xffff'fc00U) != 0x1e7e'0000U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const auto source =
+		cpu.vectors[(instruction >> 5) & 31U].bytes;
+	const auto input = decode_little_endian(std::span{source}.first(8U));
+	const auto converted =
+		detail::convert_floating_to_javascript_integer(input, cpu.fpcr);
+	cpu.write_register(instruction & 31U, converted.value, false);
+	cpu.nzcv = converted.sets_z ? 0x4000'0000U : 0U;
+	cpu.fpsr |= converted.exceptions;
+	cpu.pc += 4U;
+	return continue_after(address, instruction);
+}
+
+RunResult Dispatcher::integer_to_floating_checked(CpuState &cpu,
+	GuestMemory &, std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	const auto decoded = detail::decode_integer_to_floating(instruction);
+	if (!decoded.recognized || !decoded.valid)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const unsigned destination = instruction & 31U;
+	const unsigned source_register = (instruction >> 5) & 31U;
+	const auto source = decoded.source_gpr ? std::array<std::byte, 16>{} :
+		cpu.vectors[source_register].bytes;
+	const std::uint64_t gpr_source = decoded.source_gpr ?
+		cpu.read_register(source_register, false) : 0U;
+	auto result = decoded.scalar && (cpu.fpcr & 4U) != 0U ?
+		cpu.vectors[destination].bytes : std::array<std::byte, 16>{};
+	std::uint32_t exceptions{};
+	const unsigned integer_bytes = decoded.integer_width / 8U;
+	const unsigned destination_bytes = decoded.destination_width / 8U;
+	for (unsigned lane = 0; lane < decoded.lanes; ++lane) {
+		const auto input = decoded.source_gpr ? gpr_source :
+			decode_little_endian(std::span{source}.subspan(
+				lane * integer_bytes, integer_bytes));
+		const auto converted = detail::convert_integer_to_floating_bits(
+			input, decoded.integer_width, decoded.destination_width,
+			decoded.fractional_bits, decoded.unsigned_source, cpu.fpcr);
+		encode_little_endian(converted.bits,
+			std::span{result}.subspan(
+				lane * destination_bytes, destination_bytes));
+		exceptions |= converted.exceptions;
+	}
+	cpu.vectors[destination].bytes = result;
+	cpu.fpsr |= exceptions;
+	cpu.pc += 4U;
+	return continue_after(address, instruction);
+}
+
+RunResult Dispatcher::floating_to_integer_checked(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	const auto decoded = detail::decode_floating_to_integer(instruction);
+	if (!decoded.recognized || !decoded.valid)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const unsigned destination = instruction & 31U;
+	const auto source = cpu.vectors[(instruction >> 5) & 31U].bytes;
+	std::uint32_t exceptions{};
+	if (decoded.destination_gpr) {
+		const auto input = decode_little_endian(
+			std::span{source}.first(decoded.source_width / 8U));
+		const auto converted = detail::convert_floating_to_integer_bits(input,
+			decoded.source_width, decoded.integer_width,
+			decoded.fractional_bits,
+			decoded.unsigned_result, decoded.rounding,
+			cpu.fpcr);
+		cpu.write_register(destination,
+			decoded.integer_width == 64U ? converted.value :
+				static_cast<std::uint32_t>(converted.value), false);
+		exceptions = converted.exceptions;
+	} else {
+		auto result = decoded.scalar && (cpu.fpcr & 4U) != 0U ?
+			cpu.vectors[destination].bytes : std::array<std::byte, 16>{};
+		const unsigned lane_bytes = decoded.source_width / 8U;
+		for (unsigned lane = 0; lane < decoded.lanes; ++lane) {
+			const auto input = decode_little_endian(std::span{source}.subspan(
+				lane * lane_bytes, lane_bytes));
+			const auto converted = detail::convert_floating_to_integer_bits(
+				input, decoded.source_width, decoded.integer_width,
+				decoded.fractional_bits,
+				decoded.unsigned_result, decoded.rounding, cpu.fpcr);
+			encode_little_endian(converted.value,
+				std::span{result}.subspan(lane * decoded.integer_width / 8U,
+					decoded.integer_width / 8U));
+			exceptions |= converted.exceptions;
+		}
+		cpu.vectors[destination].bytes = result;
+	}
+	cpu.fpsr |= exceptions;
+	cpu.pc += 4U;
+	return continue_after(address, instruction);
+}
 
 RunResult Dispatcher::simd_integer_float_convert(CpuState &cpu,
 						  GuestMemory &,

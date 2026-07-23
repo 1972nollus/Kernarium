@@ -1,1121 +1,1010 @@
 gadget nop
 	next_gadget
 
-.macro load_base_and_address
+/* Literal form invariants are resolved while translating. Operand bits 15:0
+ * are the CpuState destination byte offset; bits 63:16 are the signed PC
+ * displacement. The following word is the guest PC used for address formation
+ * and precise memory faults. */
+.macro literal_integer_fast name, instruction, host_register, bytes, extension, discard
+gadget \name
+	ldr x8, [_stream]
+	ldr x9, [_stream, #8]
+	and x19, x8, #0xffff
+	asr x10, x8, #16
+	add x7, x9, x10
+	and x11, x7, #0xfff
+	cmp x11, #(4096 - \bytes)
+	b.hi .Lliteral_integer_fast_cross\@
+	add _stream, _stream, #8
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	.if !\discard
+	str x0, [_cpu, x19]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lliteral_integer_fast_cross\@:
+	add _stream, _stream, #8
+	transfer_slow 0, x7, \bytes
+	.if \bytes == 8
+	fmov x0, d0
+	.else
+	fmov w0, s0
+	.endif
+	.if \extension
+	sxtw x0, w0
+	.endif
+	.if !\discard
+	str x0, [_cpu, x19]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro literal_integer_modes name, instruction, host_register, bytes, extension
+	literal_integer_fast \name\()_r, \instruction, \host_register, \bytes, \extension, 0
+	literal_integer_fast \name\()_z, \instruction, \host_register, \bytes, \extension, 1
+.endm
+
+literal_integer_modes literal_load32_fast, ldr, w, 4, 0
+literal_integer_modes literal_load64_fast, ldr, x, 8, 0
+literal_integer_modes literal_load32_signed_fast, ldrsw, x, 4, 1
+
+.purgem literal_integer_modes
+.purgem literal_integer_fast
+
+.macro literal_vector_fast name, instruction, host_register, bytes
+gadget \name
+	ldr x8, [_stream]
+	ldr x9, [_stream, #8]
+	and x19, x8, #0xffff
+	asr x10, x8, #16
+	add x7, x9, x10
+	and x11, x7, #0xfff
+	cmp x11, #(4096 - \bytes)
+	b.hi .Lliteral_vector_fast_cross\@
+	add _stream, _stream, #8
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	str q0, [_cpu, x19]
+	add _stream, _stream, #8
+	next_gadget
+
+.Lliteral_vector_fast_cross\@:
+	add _stream, _stream, #8
+	transfer_slow 0, x7, \bytes
+	str q0, [_cpu, x19]
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+literal_vector_fast literal_load_vector32_fast, ldr, s, 4
+literal_vector_fast literal_load_vector64_fast, ldr, d, 8
+literal_vector_fast literal_load_vector128_fast, ldr, q, 16
+
+.purgem literal_vector_fast
+
+/* Production word/doubleword unsigned-immediate transfers.  The translator
+ * converts both register numbers to CpuState byte offsets and folds XZR into
+ * a distinct entry. Stream: [Rt offset, Rn offset, byte displacement][PC].
+ * The only conditional branches left are the runtime cross-page and TLB/fault
+ * decisions; valid same-page hits execute no opcode or register-mode tests. */
+.macro scalar_unsigned_fast load, bits64, transfer_zero, suffix
+gadget \suffix
 	ldr x8, [_stream], #8
-	and x19, x8, #0x1f
-	ubfx x20, x8, #8, #5
-	ubfx x21, x8, #16, #32
-	cmp x20, #31
-	b.eq 90f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x7, [x9, x20, lsl #3]
-	b 91f
-90:	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
-91:	add x7, x7, x21
-.endm
-
-/* Direct host accesses are used within one translated 4 KiB page; a dedicated
- * TLB-copy helper handles the rare cross-page case without interpreting the
- * instruction. The stream is [instruction][guest PC].
- */
-.macro select_memory_path last_offset, slow_path
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	lsr x21, x8, #32
+	ldr x7, [_cpu, x20]
+	add x7, x7, x21
 	and x9, x7, #0xfff
-	cmp x9, #\last_offset
-	b.hi \slow_path
-	/* Skip the instruction while leaving the guest PC at _stream for the
-	 * shared memory-fault handler.
-	 */
-	add _stream, _stream, #8
-.endm
-
-gadget load32_unsigned
-	load_base_and_address
-	select_memory_path 4092, load32_cross_page
+	.if \bits64
+	cmp x9, #4088
+	.else
+	cmp x9, #4092
+	.endif
+	b.hi .Lscalar_unsigned_cross\@
+	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	ldr w0, [x7]
-	b load32_store_result
-load32_cross_page:
-	add _stream, _stream, #8
-	transfer_slow 0, x7, 4
-	fmov w0, s0
-load32_store_result:
-	cmp x19, #31
-	b.eq 1f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x0, [x9, x19, lsl #3]
-1:	add _stream, _stream, #8
-	next_gadget
-
-gadget load64_unsigned
-	load_base_and_address
-	select_memory_path 4088, load64_cross_page
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+		.if \bits64
 	ldr x0, [x7]
-	b load64_store_result
-load64_cross_page:
-	add _stream, _stream, #8
-	transfer_slow 0, x7, 8
-	fmov x0, d0
-load64_store_result:
-	cmp x19, #31
-	b.eq 1f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x0, [x9, x19, lsl #3]
-1:	add _stream, _stream, #8
-	next_gadget
-
-gadget store32_unsigned
-	load_base_and_address
-	select_memory_path 4092, store32_cross_page
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	cmp x19, #31
-	b.eq 1f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	add x9, x9, x19, lsl #3
-	ldr w0, [x9]
-	b 2f
-1:	mov w0, wzr
-2:	str w0, [x7]
-	add _stream, _stream, #8
-	next_gadget
-store32_cross_page:
-	add _stream, _stream, #8
-	cmp x19, #31
-	b.eq 3f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	add x9, x9, x19, lsl #3
-	ldr w0, [x9]
-	b 4f
-3:	mov w0, wzr
-4:	fmov s0, w0
-	transfer_slow 1, x7, 4
-	add _stream, _stream, #8
-	next_gadget
-
-gadget store64_unsigned
-	load_base_and_address
-	select_memory_path 4088, store64_cross_page
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	cmp x19, #31
-	b.eq 1f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b 2f
-1:	mov x0, xzr
-2:	str x0, [x7]
-	add _stream, _stream, #8
-	next_gadget
-store64_cross_page:
-	add _stream, _stream, #8
-	cmp x19, #31
-	b.eq 3f
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b 4f
-3:	mov x0, xzr
-4:	fmov d0, x0
-	transfer_slow 1, x7, 8
-	add _stream, _stream, #8
-	next_gadget
-
-/* Scalar integer unsigned-immediate loads/stores not handled by the compact
- * word/doubleword gadgets above. Stream: [instruction][guest PC].
- */
-gadget load_store_integer_unsigned
-	ldr x8, [_stream]
-	and w19, w8, #0x1f
-	ubfx w20, w8, #5, #5
-	ubfx w21, w8, #30, #2
-	ubfx w22, w8, #22, #2
-	ubfx x23, x8, #10, #12
-	cmp w20, #31
-	b.eq integer_unsigned_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x7, [x9, x20, lsl #3]
-	b integer_unsigned_base_ready
-integer_unsigned_load_sp:
-	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
-integer_unsigned_base_ready:
-	lsl x23, x23, x21
-	add x7, x7, x23
-	mov x24, #1
-	lsl x24, x24, x21
-	and x9, x7, #0xfff
-	add x9, x9, x24
-	cmp x9, #4096
-	b.hi integer_unsigned_cross_page
-	/* Consume the instruction, leaving the PC for a translation fault. */
-	add _stream, _stream, #8
-	cbz w22, integer_unsigned_store
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	cmp w21, #0
-	b.eq integer_unsigned_load8
-	cmp w21, #1
-	b.eq integer_unsigned_load16
-	/* Only LDRSW reaches this path for a word transfer. */
+		.else
 	ldr w0, [x7]
-	sxtw x0, w0
-	b integer_unsigned_load_result
-integer_unsigned_load8:
-	ldrb w0, [x7]
-integer_unsigned_loaded8:
-	cmp w22, #2
-	b.eq integer_unsigned_sign8_x
-	cmp w22, #3
-	b.ne integer_unsigned_load_result
-	sxtb w0, w0
-	b integer_unsigned_load_result
-integer_unsigned_sign8_x:
-	sxtb x0, w0
-	b integer_unsigned_load_result
-integer_unsigned_load16:
-	ldrh w0, [x7]
-integer_unsigned_loaded16:
-	cmp w22, #2
-	b.eq integer_unsigned_sign16_x
-	cmp w22, #3
-	b.ne integer_unsigned_load_result
-	sxth w0, w0
-	b integer_unsigned_load_result
-integer_unsigned_sign16_x:
-	sxth x0, w0
-integer_unsigned_load_result:
-	cmp w19, #31
-	b.eq integer_unsigned_done
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x0, [x9, x19, lsl #3]
-	b integer_unsigned_done
-integer_unsigned_store:
+		.endif
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	cmp w19, #31
-	b.eq integer_unsigned_zero_store
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b integer_unsigned_store_ready
-integer_unsigned_zero_store:
+		.if \transfer_zero
 	mov x0, xzr
-integer_unsigned_store_ready:
-	cmp w21, #0
-	b.eq integer_unsigned_store8
-	strh w0, [x7]
-	b integer_unsigned_done
-integer_unsigned_store8:
-	strb w0, [x7]
-	b integer_unsigned_done
-integer_unsigned_cross_page:
-	add _stream, _stream, #8
-	cbz w22, integer_unsigned_cross_store
-	cmp w21, #0
-	b.eq integer_unsigned_cross_load8
-	cmp w21, #1
-	b.eq integer_unsigned_cross_load16
-	transfer_slow 0, x7, 4
-	fmov w0, s0
-	sxtw x0, w0
-	b integer_unsigned_load_result
-integer_unsigned_cross_load8:
-	transfer_slow 0, x7, 1
-	umov w0, v0.b[0]
-	b integer_unsigned_loaded8
-integer_unsigned_cross_load16:
-	transfer_slow 0, x7, 2
-	umov w0, v0.h[0]
-	b integer_unsigned_loaded16
-integer_unsigned_cross_store:
-	cmp w19, #31
-	b.eq integer_unsigned_cross_zero_store
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b integer_unsigned_cross_store_ready
-integer_unsigned_cross_zero_store:
-	mov x0, xzr
-integer_unsigned_cross_store_ready:
-	fmov d0, x0
-	cmp w21, #0
-	b.eq integer_unsigned_cross_store8
-	transfer_slow 1, x7, 2
-	b integer_unsigned_done
-integer_unsigned_cross_store8:
-	transfer_slow 1, x7, 1
-integer_unsigned_done:
-	add _stream, _stream, #8
-	next_gadget
-
-/* SIMD&FP unsigned-immediate loads/stores, including 128-bit Q transfers.
- * Scalar vector loads clear the unused high bytes as required by A64.
- * Stream: [instruction][guest PC].
- */
-gadget load_store_vector_unsigned
-	ldr x8, [_stream]
-	and w19, w8, #0x1f
-	ubfx w20, w8, #5, #5
-	ubfx w21, w8, #30, #2
-	ubfx w22, w8, #22, #2
-	ubfx x23, x8, #10, #12
-	cmp w22, #2
-	b.lo vector_unsigned_size_ready
-	mov w21, #4
-vector_unsigned_size_ready:
-	cmp w20, #31
-	b.eq vector_unsigned_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x7, [x9, x20, lsl #3]
-	b vector_unsigned_base_ready
-vector_unsigned_load_sp:
-	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
-vector_unsigned_base_ready:
-	lsl x23, x23, x21
-	add x7, x7, x23
-	mov x24, #1
-	lsl x24, x24, x21
-	and x9, x7, #0xfff
-	add x9, x9, x24
-	cmp x9, #4096
-	b.hi vector_unsigned_cross_page
-	add _stream, _stream, #8
-	tbnz x8, #22, vector_unsigned_load
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	ldr q0, [x9]
-	cmp w21, #0
-	b.eq vector_unsigned_store8
-	cmp w21, #1
-	b.eq vector_unsigned_store16
-	cmp w21, #2
-	b.eq vector_unsigned_store32
-	cmp w21, #3
-	b.eq vector_unsigned_store64
-	str q0, [x7]
-	b vector_unsigned_done
-vector_unsigned_store8:
-	str b0, [x7]
-	b vector_unsigned_done
-vector_unsigned_store16:
-	str h0, [x7]
-	b vector_unsigned_done
-vector_unsigned_store32:
-	str s0, [x7]
-	b vector_unsigned_done
-vector_unsigned_store64:
-	str d0, [x7]
-	b vector_unsigned_done
-vector_unsigned_load:
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	movi v0.16b, #0
-	cmp w21, #0
-	b.eq vector_unsigned_load8
-	cmp w21, #1
-	b.eq vector_unsigned_load16
-	cmp w21, #2
-	b.eq vector_unsigned_load32
-	cmp w21, #3
-	b.eq vector_unsigned_load64
-	ldr q0, [x7]
-	b vector_unsigned_load_store
-vector_unsigned_load8:
-	ldr b0, [x7]
-	b vector_unsigned_load_store
-vector_unsigned_load16:
-	ldr h0, [x7]
-	b vector_unsigned_load_store
-vector_unsigned_load32:
-	ldr s0, [x7]
-	b vector_unsigned_load_store
-vector_unsigned_load64:
-	ldr d0, [x7]
-vector_unsigned_load_store:
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	str q0, [x9]
-	b vector_unsigned_done
-vector_unsigned_cross_page:
-	add _stream, _stream, #8
-	tbnz x8, #22, vector_unsigned_cross_load
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	ldr q0, [x9]
-	cmp w21, #0
-	b.eq vector_unsigned_cross_store8
-	cmp w21, #1
-	b.eq vector_unsigned_cross_store16
-	cmp w21, #2
-	b.eq vector_unsigned_cross_store32
-	cmp w21, #3
-	b.eq vector_unsigned_cross_store64
-	transfer_slow 1, x7, 16
-	b vector_unsigned_done
-vector_unsigned_cross_store8:
-	transfer_slow 1, x7, 1
-	b vector_unsigned_done
-vector_unsigned_cross_store16:
-	transfer_slow 1, x7, 2
-	b vector_unsigned_done
-vector_unsigned_cross_store32:
-	transfer_slow 1, x7, 4
-	b vector_unsigned_done
-vector_unsigned_cross_store64:
-	transfer_slow 1, x7, 8
-	b vector_unsigned_done
-vector_unsigned_cross_load:
-	cmp w21, #0
-	b.eq vector_unsigned_cross_load8
-	cmp w21, #1
-	b.eq vector_unsigned_cross_load16
-	cmp w21, #2
-	b.eq vector_unsigned_cross_load32
-	cmp w21, #3
-	b.eq vector_unsigned_cross_load64
-	transfer_slow 0, x7, 16
-	b vector_unsigned_load_store
-vector_unsigned_cross_load8:
-	transfer_slow 0, x7, 1
-	b vector_unsigned_load_store
-vector_unsigned_cross_load16:
-	transfer_slow 0, x7, 2
-	b vector_unsigned_load_store
-vector_unsigned_cross_load32:
-	transfer_slow 0, x7, 4
-	b vector_unsigned_load_store
-vector_unsigned_cross_load64:
-	transfer_slow 0, x7, 8
-	b vector_unsigned_load_store
-vector_unsigned_done:
-	add _stream, _stream, #8
-	next_gadget
-
-/* SIMD&FP unscaled, pre/post-indexed, and register-offset transfers.
- * Stream: [instruction][guest PC].
- */
-gadget load_store_vector_other
-	ldr x8, [_stream]
-	and w19, w8, #0x1f
-	ubfx w20, w8, #5, #5
-	ubfx w21, w8, #30, #2
-	ubfx w22, w8, #22, #2
-	cmp w22, #2
-	b.lo vector_other_size_ready
-	mov w21, #4
-vector_other_size_ready:
-	cmp w20, #31
-	b.eq vector_other_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x24, [x9, x20, lsl #3]
-	b vector_other_base_ready
-vector_other_load_sp:
-	ldr x24, [_cpu, #UML_GADGET_CPU_SP]
-vector_other_base_ready:
-	tbz x8, #21, vector_other_immediate
-	mov w23, wzr
-	ubfx w6, w8, #16, #5
-	cmp w6, #31
-	b.eq vector_other_zero_offset
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x26, [x9, x6, lsl #3]
-	b vector_other_offset_loaded
-vector_other_zero_offset:
-	mov x26, xzr
-vector_other_offset_loaded:
-	ubfx w6, w8, #13, #3
-	cmp w6, #2
-	b.eq vector_other_uxtw
-	cmp w6, #6
-	b.eq vector_other_sxtw
-	b vector_other_offset_extended
-vector_other_uxtw:
-	mov w26, w26
-	b vector_other_offset_extended
-vector_other_sxtw:
-	sxtw x26, w26
-vector_other_offset_extended:
-	tbz x8, #12, vector_other_offset_ready
-	lsl x26, x26, x21
-vector_other_offset_ready:
-	add x26, x24, x26
-	b vector_other_address_ready
-vector_other_immediate:
-	sbfx x6, x8, #12, #9
-	add x25, x24, x6
-	ubfx w23, w8, #10, #2
-	cmp w23, #1
-	csel x26, x24, x25, eq
-vector_other_address_ready:
-	mov x27, #1
-	lsl x27, x27, x21
-	and x9, x26, #0xfff
-	add x9, x9, x27
-	cmp x9, #4096
-	b.hi vector_other_cross_page
-	add _stream, _stream, #8
-	tbnz x8, #22, vector_other_load
-	mov x7, x26
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	ldr q0, [x9]
-	cmp w21, #0
-	b.eq vector_other_store8
-	cmp w21, #1
-	b.eq vector_other_store16
-	cmp w21, #2
-	b.eq vector_other_store32
-	cmp w21, #3
-	b.eq vector_other_store64
-	str q0, [x7]
-	b vector_other_writeback
-vector_other_store8:
-	str b0, [x7]
-	b vector_other_writeback
-vector_other_store16:
-	str h0, [x7]
-	b vector_other_writeback
-vector_other_store32:
-	str s0, [x7]
-	b vector_other_writeback
-vector_other_store64:
-	str d0, [x7]
-	b vector_other_writeback
-vector_other_load:
-	mov x7, x26
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	movi v0.16b, #0
-	cmp w21, #0
-	b.eq vector_other_load8
-	cmp w21, #1
-	b.eq vector_other_load16
-	cmp w21, #2
-	b.eq vector_other_load32
-	cmp w21, #3
-	b.eq vector_other_load64
-	ldr q0, [x7]
-	b vector_other_load_store
-vector_other_load8:
-	ldr b0, [x7]
-	b vector_other_load_store
-vector_other_load16:
-	ldr h0, [x7]
-	b vector_other_load_store
-vector_other_load32:
-	ldr s0, [x7]
-	b vector_other_load_store
-vector_other_load64:
-	ldr d0, [x7]
-vector_other_load_store:
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	str q0, [x9]
-	b vector_other_writeback
-vector_other_cross_page:
-	add _stream, _stream, #8
-	tbnz x8, #22, vector_other_cross_load
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x9, x9, x19, lsl #4
-	ldr q0, [x9]
-	cmp w21, #0
-	b.eq vector_other_cross_store8
-	cmp w21, #1
-	b.eq vector_other_cross_store16
-	cmp w21, #2
-	b.eq vector_other_cross_store32
-	cmp w21, #3
-	b.eq vector_other_cross_store64
-	transfer_slow 1, x26, 16
-	b vector_other_writeback
-vector_other_cross_store8:
-	transfer_slow 1, x26, 1
-	b vector_other_writeback
-vector_other_cross_store16:
-	transfer_slow 1, x26, 2
-	b vector_other_writeback
-vector_other_cross_store32:
-	transfer_slow 1, x26, 4
-	b vector_other_writeback
-vector_other_cross_store64:
-	transfer_slow 1, x26, 8
-	b vector_other_writeback
-vector_other_cross_load:
-	cmp w21, #0
-	b.eq vector_other_cross_load8
-	cmp w21, #1
-	b.eq vector_other_cross_load16
-	cmp w21, #2
-	b.eq vector_other_cross_load32
-	cmp w21, #3
-	b.eq vector_other_cross_load64
-	transfer_slow 0, x26, 16
-	b vector_other_load_store
-vector_other_cross_load8:
-	transfer_slow 0, x26, 1
-	b vector_other_load_store
-vector_other_cross_load16:
-	transfer_slow 0, x26, 2
-	b vector_other_load_store
-vector_other_cross_load32:
-	transfer_slow 0, x26, 4
-	b vector_other_load_store
-vector_other_cross_load64:
-	transfer_slow 0, x26, 8
-	b vector_other_load_store
-vector_other_writeback:
-	cmp w23, #1
-	b.eq vector_other_do_writeback
-	cmp w23, #3
-	b.ne vector_other_done
-vector_other_do_writeback:
-	cmp w20, #31
-	b.eq vector_other_write_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x25, [x9, x20, lsl #3]
-	b vector_other_done
-vector_other_write_sp:
-	str x25, [_cpu, #UML_GADGET_CPU_SP]
-vector_other_done:
-	add _stream, _stream, #8
-	next_gadget
-
-/* Integer load/store instructions using an unscaled immediate, pre/post
- * indexing, or a register offset. Stream: [instruction][guest PC].
- */
-gadget load_store_integer_other
-	ldr x8, [_stream]
-	and w19, w8, #0x1f
-	ubfx w20, w8, #5, #5
-	ubfx w21, w8, #30, #2
-	ubfx w22, w8, #22, #2
-
-	cmp w20, #31
-	b.eq integer_other_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x24, [x9, x20, lsl #3]
-	b integer_other_base_ready
-integer_other_load_sp:
-	ldr x24, [_cpu, #UML_GADGET_CPU_SP]
-integer_other_base_ready:
-	tbz x8, #21, integer_other_immediate
-
-	/* Register offset: UXTW/LSL/SXTW/SXTX, optionally scaled by the
-	 * transfer size. Builder validation rejects other option values.
-	 */
-	mov w23, wzr
-	ubfx w6, w8, #16, #5
-	cmp w6, #31
-	b.eq integer_other_zero_offset
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x26, [x9, x6, lsl #3]
-	b integer_other_offset_loaded
-integer_other_zero_offset:
-	mov x26, xzr
-integer_other_offset_loaded:
-	ubfx w6, w8, #13, #3
-	cmp w6, #2
-	b.eq integer_other_uxtw
-	cmp w6, #6
-	b.eq integer_other_sxtw
-	b integer_other_offset_extended
-integer_other_uxtw:
-	and x26, x26, #0xffffffff
-	b integer_other_offset_extended
-integer_other_sxtw:
-	sxtw x26, w26
-integer_other_offset_extended:
-	tbz x8, #12, integer_other_offset_ready
-	lsl x26, x26, x21
-integer_other_offset_ready:
-	add x26, x24, x26
-	b integer_other_address_ready
-
-integer_other_immediate:
-	sbfx x6, x8, #12, #9
-	add x25, x24, x6
-	ubfx w23, w8, #10, #2
-	cmp w23, #1
-	csel x26, x24, x25, eq
-
-integer_other_address_ready:
-	/* Host pages need not be adjacent even when guest pages are. */
-	mov x27, #1
-	lsl x27, x27, x21
-	and x9, x26, #0xfff
-	add x9, x9, x27
-	cmp x9, #4096
-	b.hi integer_other_cross_page
-	/* Consume the instruction, leaving the guest PC for a fault. */
-	add _stream, _stream, #8
-	cbz w22, integer_other_store
-
-	mov x7, x26
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	cmp w21, #0
-	b.eq integer_other_load8
-	cmp w21, #1
-	b.eq integer_other_load16
-	cmp w21, #2
-	b.eq integer_other_load32
-	ldr x0, [x7]
-	b integer_other_load_result
-integer_other_load8:
-	ldrb w0, [x7]
-integer_other_loaded8:
-	cmp w22, #2
-	b.eq integer_other_sign8_x
-	cmp w22, #3
-	b.ne integer_other_load_result
-	sxtb w0, w0
-	b integer_other_load_result
-integer_other_sign8_x:
-	sxtb x0, w0
-	b integer_other_load_result
-integer_other_load16:
-	ldrh w0, [x7]
-integer_other_loaded16:
-	cmp w22, #2
-	b.eq integer_other_sign16_x
-	cmp w22, #3
-	b.ne integer_other_load_result
-	sxth w0, w0
-	b integer_other_load_result
-integer_other_sign16_x:
-	sxth x0, w0
-	b integer_other_load_result
-integer_other_load32:
-	ldr w0, [x7]
-integer_other_loaded32:
-	cmp w22, #2
-	b.ne integer_other_load_result
-	sxtw x0, w0
-integer_other_load_result:
-	cmp w19, #31
-	b.eq integer_other_writeback
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x0, [x9, x19, lsl #3]
-	b integer_other_writeback
-
-integer_other_store:
-	mov x7, x26
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	cmp w19, #31
-	b.eq integer_other_zero_store
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b integer_other_store_value_ready
-integer_other_zero_store:
-	mov x0, xzr
-integer_other_store_value_ready:
-	cmp w21, #0
-	b.eq integer_other_store8
-	cmp w21, #1
-	b.eq integer_other_store16
-	cmp w21, #2
-	b.eq integer_other_store32
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+		.if \bits64
 	str x0, [x7]
-	b integer_other_writeback
-integer_other_store8:
-	strb w0, [x7]
-	b integer_other_writeback
-integer_other_store16:
-	strh w0, [x7]
-	b integer_other_writeback
-integer_other_store32:
+		.else
 	str w0, [x7]
-	b integer_other_writeback
-
-integer_other_cross_page:
-	add _stream, _stream, #8
-	cbz w22, integer_other_cross_store
-	cmp w21, #0
-	b.eq integer_other_cross_load8
-	cmp w21, #1
-	b.eq integer_other_cross_load16
-	cmp w21, #2
-	b.eq integer_other_cross_load32
-	transfer_slow 0, x26, 8
-	fmov x0, d0
-	b integer_other_load_result
-integer_other_cross_load8:
-	transfer_slow 0, x26, 1
-	umov w0, v0.b[0]
-	b integer_other_loaded8
-integer_other_cross_load16:
-	transfer_slow 0, x26, 2
-	umov w0, v0.h[0]
-	b integer_other_loaded16
-integer_other_cross_load32:
-	transfer_slow 0, x26, 4
-	fmov w0, s0
-	b integer_other_loaded32
-integer_other_cross_store:
-	cmp w19, #31
-	b.eq integer_other_cross_zero_store
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x0, [x9, x19, lsl #3]
-	b integer_other_cross_store_ready
-integer_other_cross_zero_store:
-	mov x0, xzr
-integer_other_cross_store_ready:
-	fmov d0, x0
-	cmp w21, #0
-	b.eq integer_other_cross_store8
-	cmp w21, #1
-	b.eq integer_other_cross_store16
-	cmp w21, #2
-	b.eq integer_other_cross_store32
-	transfer_slow 1, x26, 8
-	b integer_other_writeback
-integer_other_cross_store8:
-	transfer_slow 1, x26, 1
-	b integer_other_writeback
-integer_other_cross_store16:
-	transfer_slow 1, x26, 2
-	b integer_other_writeback
-integer_other_cross_store32:
-	transfer_slow 1, x26, 4
-
-integer_other_writeback:
-	cmp w23, #1
-	b.eq integer_other_do_writeback
-	cmp w23, #3
-	b.ne integer_other_done
-integer_other_do_writeback:
-	cmp w20, #31
-	b.eq integer_other_write_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x25, [x9, x20, lsl #3]
-	b integer_other_done
-integer_other_write_sp:
-	str x25, [_cpu, #UML_GADGET_CPU_SP]
-integer_other_done:
+		.endif
+	.endif
 	add _stream, _stream, #8
 	next_gadget
 
-/* Integer LDP/STP, including signed-offset, pre-index, and post-index forms.
- * Stream: [instruction][guest PC]. Both addresses are translated before an
- * STP changes memory, preserving restartability across a 4 KiB boundary.
- */
-gadget load_store_pair
-	ldr x8, [_stream]
-	and w22, w8, #0x1f
-	ubfx w23, w8, #10, #5
-	ubfx w24, w8, #5, #5
-	ubfx w25, w8, #30, #2
-	ubfx w26, w8, #22, #1
-	ubfx w27, w8, #23, #2
-	sbfx x6, x8, #15, #7
-	cmp w25, #2
-	cset w5, eq
-	add w5, w5, #2
-	lsl x6, x6, x5
-	cmp w24, #31
-	b.eq pair_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x16, [x9, x24, lsl #3]
-	b pair_base_ready
-pair_load_sp:
-	ldr x16, [_cpu, #UML_GADGET_CPU_SP]
-pair_base_ready:
+.Lscalar_unsigned_cross\@:
+	.if \load
+		.if \bits64
+	transfer_slow 0, x7, 8
+	fmov x0, d0
+		.else
+	transfer_slow 0, x7, 4
+	fmov w0, s0
+		.endif
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
+		.if \transfer_zero
+	mov x0, xzr
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+		.if \bits64
+	fmov d0, x0
+	transfer_slow 1, x7, 8
+		.else
+	fmov s0, w0
+	transfer_slow 1, x7, 4
+		.endif
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+scalar_unsigned_fast 1, 0, 0, load32_unsigned_fast_r
+scalar_unsigned_fast 1, 0, 1, load32_unsigned_fast_z
+scalar_unsigned_fast 1, 1, 0, load64_unsigned_fast_r
+scalar_unsigned_fast 1, 1, 1, load64_unsigned_fast_z
+scalar_unsigned_fast 0, 0, 0, store32_unsigned_fast_r
+scalar_unsigned_fast 0, 0, 1, store32_unsigned_fast_z
+scalar_unsigned_fast 0, 1, 0, store64_unsigned_fast_r
+scalar_unsigned_fast 0, 1, 1, store64_unsigned_fast_z
+
+.purgem scalar_unsigned_fast
+
+/* Translation-specialized byte/halfword and sign-extending unsigned-offset
+ * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn
+ * and the already-scaled displacement, so the runtime does not inspect an
+ * opcode or branch on register 31. */
+.macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	lsr x21, x8, #32
+	ldr x7, [_cpu, x20]
+	add x7, x7, x21
+	and x9, x7, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lscalar_unsigned_narrow_load_cross\@
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	.if !\transfer_zero
+	str x0, [_cpu, x19]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lscalar_unsigned_narrow_load_cross\@:
+	transfer_slow 0, x7, \bytes
+	.if \bytes == 1
+	umov w0, v0.b[0]
+	.elseif \bytes == 2
+	umov w0, v0.h[0]
+	.else
+	fmov w0, s0
+	.endif
+	.if \extension == 1
+	sxtb w0, w0
+	.elseif \extension == 2
+	sxtb x0, w0
+	.elseif \extension == 3
+	sxth w0, w0
+	.elseif \extension == 4
+	sxth x0, w0
+	.elseif \extension == 5
+	sxtw x0, w0
+	.endif
+	.if !\transfer_zero
+	str x0, [_cpu, x19]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro scalar_unsigned_load_narrow_modes name, instruction, host_register, bytes, extension
+	scalar_unsigned_load_narrow_fast \name\()_r, \instruction, \host_register, \bytes, \extension, 0
+	scalar_unsigned_load_narrow_fast \name\()_z, \instruction, \host_register, \bytes, \extension, 1
+.endm
+
+scalar_unsigned_load_narrow_modes load8_unsigned_fast, ldrb, w, 1, 0
+scalar_unsigned_load_narrow_modes load16_unsigned_fast, ldrh, w, 2, 0
+scalar_unsigned_load_narrow_modes load8_signed_w_fast, ldrsb, w, 1, 1
+scalar_unsigned_load_narrow_modes load8_signed_x_fast, ldrsb, x, 1, 2
+scalar_unsigned_load_narrow_modes load16_signed_w_fast, ldrsh, w, 2, 3
+scalar_unsigned_load_narrow_modes load16_signed_x_fast, ldrsh, x, 2, 4
+scalar_unsigned_load_narrow_modes load32_signed_x_fast, ldrsw, x, 4, 5
+
+.purgem scalar_unsigned_load_narrow_modes
+.purgem scalar_unsigned_load_narrow_fast
+
+.macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	lsr x21, x8, #32
+	ldr x7, [_cpu, x20]
+	add x7, x7, x21
+	and x9, x7, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lscalar_unsigned_narrow_store_cross\@
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	.if \transfer_zero
+	mov x0, xzr
+	.else
+	ldr x0, [_cpu, x19]
+	.endif
+	\instruction w0, [x7]
+	add _stream, _stream, #8
+	next_gadget
+
+.Lscalar_unsigned_narrow_store_cross\@:
+	.if \transfer_zero
+	mov x0, xzr
+	.else
+	ldr x0, [_cpu, x19]
+	.endif
+	fmov d0, x0
+	transfer_slow 1, x7, \bytes
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro scalar_unsigned_store_narrow_modes name, instruction, bytes
+	scalar_unsigned_store_narrow_fast \name\()_r, \instruction, \bytes, 0
+	scalar_unsigned_store_narrow_fast \name\()_z, \instruction, \bytes, 1
+.endm
+
+scalar_unsigned_store_narrow_modes store8_unsigned_fast, strb, 1
+scalar_unsigned_store_narrow_modes store16_unsigned_fast, strh, 2
+
+.purgem scalar_unsigned_store_narrow_modes
+.purgem scalar_unsigned_store_narrow_fast
+
+/* All SIMD&FP unsigned-offset widths use a translated CpuState vector offset,
+ * translated base offset, and scaled displacement. Width and direction are
+ * fixed by the selected symbol. */
+.macro vector_unsigned_fast name, load, instruction, host_register, bytes
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	lsr x21, x8, #32
+	ldr x7, [_cpu, x20]
+	add x7, x7, x21
+	and x9, x7, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lvector_unsigned_cross\@
+	.if \load
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	str q0, [_cpu, x19]
+	.else
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	ldr q0, [_cpu, x19]
+	\instruction \host_register\()0, [x7]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lvector_unsigned_cross\@:
+	.if \load
+	transfer_slow 0, x7, \bytes
+	str q0, [_cpu, x19]
+	.else
+	ldr q0, [_cpu, x19]
+	transfer_slow 1, x7, \bytes
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+vector_unsigned_fast vector_load8_unsigned_fast, 1, ldr, b, 1
+vector_unsigned_fast vector_load16_unsigned_fast, 1, ldr, h, 2
+vector_unsigned_fast vector_load32_unsigned_fast, 1, ldr, s, 4
+vector_unsigned_fast vector_load64_unsigned_fast, 1, ldr, d, 8
+vector_unsigned_fast vector_load128_unsigned_fast, 1, ldr, q, 16
+vector_unsigned_fast vector_store8_unsigned_fast, 0, str, b, 1
+vector_unsigned_fast vector_store16_unsigned_fast, 0, str, h, 2
+vector_unsigned_fast vector_store32_unsigned_fast, 0, str, s, 4
+vector_unsigned_fast vector_store64_unsigned_fast, 0, str, d, 8
+vector_unsigned_fast vector_store128_unsigned_fast, 0, str, q, 16
+
+.purgem vector_unsigned_fast
+
+/* Scalar unscaled/pre/post-indexed accesses. Operand: Rt CpuState offset in
+ * bits 15:0, Rn offset in 31:16, signed imm9 in 63:32. Mode 0 is adjusted
+ * address without writeback, mode 1 pre-index, mode 2 post-index, and mode 3
+ * post-index with architecturally suppressed overlapping-load writeback. */
+.macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	asr x21, x8, #32
+	ldr x24, [_cpu, x20]
+	add x25, x24, x21
+	.if \mode >= 2
+	mov x26, x24
+	.else
+	mov x26, x25
+	.endif
+	and x9, x26, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lscalar_other_immediate_cross\@
+	mov x7, x26
+	.if \load
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+		.if \transfer_zero
+	mov x0, xzr
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+	\instruction \host_register\()0, [x7]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x25, [_cpu, x20]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lscalar_other_immediate_cross\@:
+	.if \load
+	transfer_slow 0, x26, \bytes
+		.if \bytes == 1
+	umov w0, v0.b[0]
+		.elseif \bytes == 2
+	umov w0, v0.h[0]
+		.elseif \bytes == 4
+	fmov w0, s0
+		.else
+	fmov x0, d0
+		.endif
+		.if \extension == 1
+	sxtb w0, w0
+		.elseif \extension == 2
+	sxtb x0, w0
+		.elseif \extension == 3
+	sxth w0, w0
+		.elseif \extension == 4
+	sxth x0, w0
+		.elseif \extension == 5
+	sxtw x0, w0
+		.endif
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
+		.if \transfer_zero
+	mov x0, xzr
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+	fmov d0, x0
+	transfer_slow 1, x26, \bytes
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x25, [_cpu, x20]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro scalar_other_immediate_operation name, load, instruction, host_register, bytes, extension
+	scalar_other_immediate_fast scalar_other_\name\()_offset_r, \load, \instruction, \host_register, \bytes, \extension, 0, 0
+	scalar_other_immediate_fast scalar_other_\name\()_offset_z, \load, \instruction, \host_register, \bytes, \extension, 0, 1
+	scalar_other_immediate_fast scalar_other_\name\()_pre_r, \load, \instruction, \host_register, \bytes, \extension, 1, 0
+	scalar_other_immediate_fast scalar_other_\name\()_pre_z, \load, \instruction, \host_register, \bytes, \extension, 1, 1
+	scalar_other_immediate_fast scalar_other_\name\()_post_r, \load, \instruction, \host_register, \bytes, \extension, 2, 0
+	scalar_other_immediate_fast scalar_other_\name\()_post_z, \load, \instruction, \host_register, \bytes, \extension, 2, 1
+	scalar_other_immediate_fast scalar_other_\name\()_post_suppress_r, \load, \instruction, \host_register, \bytes, \extension, 3, 0
+	scalar_other_immediate_fast scalar_other_\name\()_post_suppress_z, \load, \instruction, \host_register, \bytes, \extension, 3, 1
+.endm
+
+scalar_other_immediate_operation store8, 0, strb, w, 1, 0
+scalar_other_immediate_operation load8u, 1, ldrb, w, 1, 0
+scalar_other_immediate_operation load8sx, 1, ldrsb, x, 1, 2
+scalar_other_immediate_operation load8sw, 1, ldrsb, w, 1, 1
+scalar_other_immediate_operation store16, 0, strh, w, 2, 0
+scalar_other_immediate_operation load16u, 1, ldrh, w, 2, 0
+scalar_other_immediate_operation load16sx, 1, ldrsh, x, 2, 4
+scalar_other_immediate_operation load16sw, 1, ldrsh, w, 2, 3
+scalar_other_immediate_operation store32, 0, str, w, 4, 0
+scalar_other_immediate_operation load32u, 1, ldr, w, 4, 0
+scalar_other_immediate_operation load32sx, 1, ldrsw, x, 4, 5
+scalar_other_immediate_operation store64, 0, str, x, 8, 0
+scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
+
+.purgem scalar_other_immediate_operation
+.purgem scalar_other_immediate_fast
+
+/* Register-offset form. The upper operand half stores the translated Rm
+ * CpuState byte offset. Extension (UXTW/X/SXTW) and optional scaling are fixed
+ * in the gadget symbol. */
+.macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	ubfx x21, x8, #32, #16
+	ldr x24, [_cpu, x20]
+	ldr x26, [_cpu, x21]
+	.if \address_extension == 0
+	mov w26, w26
+	.elseif \address_extension == 2
+	sxtw x26, w26
+	.endif
+	.if \shifted
+		.if \bytes == 2
+	lsl x26, x26, #1
+		.elseif \bytes == 4
+	lsl x26, x26, #2
+		.elseif \bytes == 8
+	lsl x26, x26, #3
+		.endif
+	.endif
+	add x26, x24, x26
+	and x9, x26, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lscalar_other_register_cross\@
+	mov x7, x26
+	.if \load
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+		.if \transfer_zero
+	mov x0, xzr
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+	\instruction \host_register\()0, [x7]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lscalar_other_register_cross\@:
+	.if \load
+	transfer_slow 0, x26, \bytes
+		.if \bytes == 1
+	umov w0, v0.b[0]
+		.elseif \bytes == 2
+	umov w0, v0.h[0]
+		.elseif \bytes == 4
+	fmov w0, s0
+		.else
+	fmov x0, d0
+		.endif
+		.if \result_extension == 1
+	sxtb w0, w0
+		.elseif \result_extension == 2
+	sxtb x0, w0
+		.elseif \result_extension == 3
+	sxth w0, w0
+		.elseif \result_extension == 4
+	sxth x0, w0
+		.elseif \result_extension == 5
+	sxtw x0, w0
+		.endif
+		.if !\transfer_zero
+	str x0, [_cpu, x19]
+		.endif
+	.else
+		.if \transfer_zero
+	mov x0, xzr
+		.else
+	ldr x0, [_cpu, x19]
+		.endif
+	fmov d0, x0
+	transfer_slow 1, x26, \bytes
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro scalar_other_register_extension name, load, instruction, host_register, bytes, result_extension, address_extension, extension_name, shifted
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_r, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 0
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_z, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 1
+.endm
+
+/* The final parameter controls result sign extension; address extension is
+ * supplied explicitly by scalar_other_register_extension below. */
+.macro scalar_other_register_all name, load, instruction, host_register, bytes, result_extension
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 0, uxtw, 0
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 1, x, 0
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 2, sxtw, 0
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 0, uxtw, 1
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 1, x, 1
+	scalar_other_register_extension \name, \load, \instruction, \host_register, \bytes, \result_extension, 2, sxtw, 1
+.endm
+
+scalar_other_register_all store8, 0, strb, w, 1, 0
+scalar_other_register_all load8u, 1, ldrb, w, 1, 0
+scalar_other_register_all load8sx, 1, ldrsb, x, 1, 2
+scalar_other_register_all load8sw, 1, ldrsb, w, 1, 1
+scalar_other_register_all store16, 0, strh, w, 2, 0
+scalar_other_register_all load16u, 1, ldrh, w, 2, 0
+scalar_other_register_all load16sx, 1, ldrsh, x, 2, 4
+scalar_other_register_all load16sw, 1, ldrsh, w, 2, 3
+scalar_other_register_all store32, 0, str, w, 4, 0
+scalar_other_register_all load32u, 1, ldr, w, 4, 0
+scalar_other_register_all load32sx, 1, ldrsw, x, 4, 5
+scalar_other_register_all store64, 0, str, x, 8, 0
+scalar_other_register_all load64u, 1, ldr, x, 8, 0
+
+.purgem scalar_other_register_all
+.purgem scalar_other_register_extension
+.purgem scalar_other_register_fast
+
+/* SIMD&FP unscaled/pre/post-indexed and register-offset forms use the same
+ * translated address descriptors as scalar memory, with the V-register byte
+ * offset in bits 15:0. */
+.macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	asr x21, x8, #32
+	ldr x24, [_cpu, x20]
+	add x25, x24, x21
+	.if \mode == 2
+	mov x26, x24
+	.else
+	mov x26, x25
+	.endif
+	and x9, x26, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lvector_other_immediate_cross\@
+	mov x7, x26
+	.if \load
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	str q0, [_cpu, x19]
+	.else
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	ldr q0, [_cpu, x19]
+	\instruction \host_register\()0, [x7]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x25, [_cpu, x20]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lvector_other_immediate_cross\@:
+	.if \load
+	transfer_slow 0, x26, \bytes
+	str q0, [_cpu, x19]
+	.else
+	ldr q0, [_cpu, x19]
+	transfer_slow 1, x26, \bytes
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x25, [_cpu, x20]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro vector_other_immediate_operation name, load, instruction, host_register, bytes
+	vector_other_immediate_fast vector_other_\name\()_offset, \load, \instruction, \host_register, \bytes, 0
+	vector_other_immediate_fast vector_other_\name\()_pre, \load, \instruction, \host_register, \bytes, 1
+	vector_other_immediate_fast vector_other_\name\()_post, \load, \instruction, \host_register, \bytes, 2
+.endm
+
+.macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted
+gadget \name
+	ldr x8, [_stream], #8
+	and x19, x8, #0xffff
+	ubfx x20, x8, #16, #16
+	ubfx x21, x8, #32, #16
+	ldr x24, [_cpu, x20]
+	ldr x26, [_cpu, x21]
+	.if \extension == 0
+	mov w26, w26
+	.elseif \extension == 2
+	sxtw x26, w26
+	.endif
+	.if \shifted
+		.if \bytes == 2
+	lsl x26, x26, #1
+		.elseif \bytes == 4
+	lsl x26, x26, #2
+		.elseif \bytes == 8
+	lsl x26, x26, #3
+		.elseif \bytes == 16
+	lsl x26, x26, #4
+		.endif
+	.endif
+	add x26, x24, x26
+	and x9, x26, #0xfff
+	cmp x9, #(4096 - \bytes)
+	b.hi .Lvector_other_register_cross\@
+	mov x7, x26
+	.if \load
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	\instruction \host_register\()0, [x7]
+	str q0, [_cpu, x19]
+	.else
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	ldr q0, [_cpu, x19]
+	\instruction \host_register\()0, [x7]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+
+.Lvector_other_register_cross\@:
+	.if \load
+	transfer_slow 0, x26, \bytes
+	str q0, [_cpu, x19]
+	.else
+	ldr q0, [_cpu, x19]
+	transfer_slow 1, x26, \bytes
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro vector_other_register_extension name, load, instruction, host_register, bytes, extension, extension_name, shifted
+	vector_other_register_fast vector_other_\name\()_\extension_name\()_\shifted, \load, \instruction, \host_register, \bytes, \extension, \shifted
+.endm
+
+.macro vector_other_operation name, load, instruction, host_register, bytes
+	vector_other_immediate_operation \name, \load, \instruction, \host_register, \bytes
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 0, uxtw, 0
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 1, x, 0
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 2, sxtw, 0
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 0, uxtw, 1
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 1, x, 1
+	vector_other_register_extension \name, \load, \instruction, \host_register, \bytes, 2, sxtw, 1
+.endm
+
+vector_other_operation store8, 0, str, b, 1
+vector_other_operation load8, 1, ldr, b, 1
+vector_other_operation store16, 0, str, h, 2
+vector_other_operation load16, 1, ldr, h, 2
+vector_other_operation store32, 0, str, s, 4
+vector_other_operation load32, 1, ldr, s, 4
+vector_other_operation store64, 0, str, d, 8
+vector_other_operation load64, 1, ldr, d, 8
+vector_other_operation store128, 0, str, q, 16
+vector_other_operation load128, 1, ldr, q, 16
+
+.purgem vector_other_operation
+.purgem vector_other_register_extension
+.purgem vector_other_register_fast
+.purgem vector_other_immediate_operation
+.purgem vector_other_immediate_fast
+
+/* Translation-specialized integer pair transfers. The packed operand holds
+ * Rt/Rt2/Rn CpuState byte offsets in successive 16-bit fields and the signed,
+ * already-scaled displacement in the upper 16 bits. Width, direction,
+ * writeback mode, sign extension, and both XZR cases are fixed by the symbol.
+ * Mode 0 is adjusted address without writeback, mode 1 pre-index, mode 2
+ * post-index, and mode 3 post-index with suppressed load writeback. */
+.macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero
+gadget \name
+	ldr x8, [_stream], #8
+	and x22, x8, #0xffff
+	ubfx x23, x8, #16, #16
+	ubfx x24, x8, #32, #16
+	asr x6, x8, #48
+	ldr x16, [_cpu, x24]
 	add x21, x16, x6
-	cmp w27, #1
-	csel x19, x16, x21, eq
-	mov x5, #4
-	mov x9, #8
-	cmp w25, #2
-	csel x5, x5, x9, ne
-	/* Adjacent guest pages need not have adjacent host mappings. Route either
-	 * uncommon cross-page element through the validated TLB-copy helper.
-	 */
-	and x9, x19, #0xfff
-	add x9, x9, x5
-	cmp x9, #4096
-	b.hi pair_cross_page
-	adds x20, x19, x5
-	b.cs pair_cross_page
-	and x9, x20, #0xfff
-	add x9, x9, x5
-	cmp x9, #4096
-	b.hi pair_cross_page
-	/* Consume the instruction, leaving the guest PC for a fault. */
-	add _stream, _stream, #8
-	cbz w26, pair_translate_store
-
+	.if \mode >= 2
+	mov x19, x16
+	.else
+	mov x19, x21
+	.endif
+	/* Comparing the page bits of the first and final transfer bytes catches
+	 * both page crossing and address wraparound with one hot-path branch. */
+	add x20, x19, #\bytes
+	add x9, x19, #((2 * \bytes) - 1)
+	eor x9, x9, x19
+	tst x9, #0xfffffffffffff000
+	b.ne .Linteger_pair_cross\@
+	.if \load
 	mov x7, x19
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	mov x19, x7
 	mov x7, x20
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	mov x20, x7
-	cmp w25, #2
-	b.eq pair_load64
-	ldr w6, [x19]
-	ldr w7, [x20]
-	b pair_store_loaded
-pair_load64:
-	ldr x6, [x19]
-	ldr x7, [x20]
-pair_store_loaded:
-	cmp w25, #1
-	b.ne 1f
-	sxtw x6, w6
-	sxtw x7, w7
-1:
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	cmp w22, #31
-	b.eq pair_skip_first_load
-	str x6, [x8, x22, lsl #3]
-pair_skip_first_load:
-	cmp w23, #31
-	b.eq pair_writeback
-	str x7, [x8, x23, lsl #3]
-	b pair_writeback
-
-pair_translate_store:
+	\instruction \host_register\()6, [x19]
+	\instruction \host_register\()7, [x20]
+		.if !\first_zero
+	str x6, [_cpu, x22]
+		.endif
+		.if !\second_zero
+	str x7, [_cpu, x23]
+		.endif
+	.else
 	mov x7, x19
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	mov x19, x7
 	mov x7, x20
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	mov x20, x7
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	cmp w22, #31
-	b.eq pair_zero_first_store
-	ldr x6, [x8, x22, lsl #3]
-	b pair_first_store_ready
-pair_zero_first_store:
+		.if \first_zero
 	mov x6, xzr
-pair_first_store_ready:
-	cmp w23, #31
-	b.eq pair_zero_second_store
-	ldr x7, [x8, x23, lsl #3]
-	b pair_second_store_ready
-pair_zero_second_store:
+		.else
+	ldr x6, [_cpu, x22]
+		.endif
+		.if \second_zero
 	mov x7, xzr
-pair_second_store_ready:
-	cmp w25, #2
-	b.eq pair_store64
-	str w6, [x19]
-	str w7, [x20]
-	b pair_writeback
-pair_store64:
-	str x6, [x19]
-	str x7, [x20]
-	b pair_writeback
-
-pair_cross_page:
+		.else
+	ldr x7, [_cpu, x23]
+		.endif
+	\instruction \host_register\()6, [x19]
+	\instruction \host_register\()7, [x20]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
 	add _stream, _stream, #8
-	cbnz w26, pair_cross_load
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	cmp w22, #31
-	b.eq pair_cross_zero_first
-	ldr x6, [x8, x22, lsl #3]
-	b pair_cross_first_ready
-pair_cross_zero_first:
-	mov x6, xzr
-pair_cross_first_ready:
-	cmp w23, #31
-	b.eq pair_cross_zero_second
-	ldr x7, [x8, x23, lsl #3]
-	b pair_cross_second_ready
-pair_cross_zero_second:
-	mov x7, xzr
-pair_cross_second_ready:
-	cmp w25, #2
-	b.eq pair_cross_store64
-	fmov s0, w6
-	mov v0.s[1], w7
-	transfer_slow 1, x19, 8
-	b pair_writeback
-pair_cross_store64:
-	fmov d0, x6
-	mov v0.d[1], x7
-	transfer_slow 1, x19, 16
-	b pair_writeback
-pair_cross_load:
-	cmp w25, #2
-	b.eq pair_cross_load64
-	transfer_slow 0, x19, 8
+	next_gadget
+
+.Linteger_pair_cross\@:
+	.if \load
+	transfer_slow 0, x19, (\bytes * 2)
+		.if \bytes == 4
 	fmov w6, s0
 	umov w7, v0.s[1]
-	b pair_store_loaded
-pair_cross_load64:
-	transfer_slow 0, x19, 16
+			.if \sign_extend
+	sxtw x6, w6
+	sxtw x7, w7
+			.endif
+		.else
 	fmov x6, d0
 	umov x7, v0.d[1]
-	b pair_store_loaded
+		.endif
+		.if !\first_zero
+	str x6, [_cpu, x22]
+		.endif
+		.if !\second_zero
+	str x7, [_cpu, x23]
+		.endif
+	.else
+		.if \first_zero
+	mov x6, xzr
+		.else
+	ldr x6, [_cpu, x22]
+		.endif
+		.if \second_zero
+	mov x7, xzr
+		.else
+	ldr x7, [_cpu, x23]
+		.endif
+		.if \bytes == 4
+	fmov s0, w6
+	mov v0.s[1], w7
+		.else
+	fmov d0, x6
+	mov v0.d[1], x7
+		.endif
+	transfer_slow 1, x19, (\bytes * 2)
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
 
-pair_writeback:
-	cmp w27, #1
-	b.eq pair_do_writeback
-	cmp w27, #3
-	b.ne pair_done
-pair_do_writeback:
-	cmp w24, #31
-	b.eq pair_write_sp
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	str x21, [x8, x24, lsl #3]
-	b pair_done
-pair_write_sp:
-	str x21, [_cpu, #UML_GADGET_CPU_SP]
-pair_done:
+.macro integer_pair_mode name, load, instruction, host_register, bytes, sign_extend, mode
+	integer_pair_fast integer_pair_\name\()_\mode\()_rr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_rz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 1
+	integer_pair_fast integer_pair_\name\()_\mode\()_zr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_zz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 1
+.endm
+
+.macro integer_pair_operation name, load, instruction, host_register, bytes, sign_extend
+	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 0
+	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 1
+	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 2
+	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 3
+.endm
+
+integer_pair_operation store32, 0, str, w, 4, 0
+integer_pair_operation load32, 1, ldr, w, 4, 0
+integer_pair_operation load32s, 1, ldrsw, x, 4, 1
+integer_pair_operation store64, 0, str, x, 8, 0
+integer_pair_operation load64, 1, ldr, x, 8, 0
+
+.purgem integer_pair_operation
+.purgem integer_pair_mode
+.purgem integer_pair_fast
+
+/* Translation-specialized SIMD&FP pairs. Operand fields match the integer
+ * pair descriptor, but the first two offsets address VectorRegister slots.
+ * Width, direction, and address mode are fixed by the selected symbol. */
+.macro vector_pair_fast name, load, instruction, host_register, bytes, mode
+gadget \name
+	ldr x8, [_stream], #8
+	and x22, x8, #0xffff
+	ubfx x23, x8, #16, #16
+	ubfx x24, x8, #32, #16
+	asr x6, x8, #48
+	ldr x16, [_cpu, x24]
+	add x21, x16, x6
+	.if \mode == 2
+	mov x19, x16
+	.else
+	mov x19, x21
+	.endif
+	add x20, x19, #\bytes
+	add x9, x19, #((2 * \bytes) - 1)
+	eor x9, x9, x19
+	tst x9, #0xfffffffffffff000
+	b.ne .Lvector_pair_cross\@
+	.if \load
+	mov x7, x19
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	mov x19, x7
+	mov x7, x20
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	mov x20, x7
+	\instruction \host_register\()0, [x19]
+	\instruction \host_register\()1, [x20]
+	str q0, [_cpu, x22]
+	str q1, [_cpu, x23]
+	.else
+	mov x7, x19
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	mov x19, x7
+	mov x7, x20
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	mov x20, x7
+	ldr q0, [_cpu, x22]
+	ldr q1, [_cpu, x23]
+	\instruction \host_register\()0, [x19]
+	\instruction \host_register\()1, [x20]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
 	add _stream, _stream, #8
 	next_gadget
 
-/* SIMD&FP LDP/STP for S, D, and Q registers. Stream: [instruction][PC]. */
-gadget load_store_vector_pair
-	ldr x8, [_stream]
-	and w22, w8, #0x1f
-	ubfx w23, w8, #10, #5
-	ubfx w24, w8, #5, #5
-	ubfx w25, w8, #30, #2
-	ubfx w26, w8, #22, #1
-	ubfx w27, w8, #23, #2
-	sbfx x6, x8, #15, #7
-	add w5, w25, #2
-	lsl x6, x6, x5
-	cmp w24, #31
-	b.eq vector_pair_load_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	ldr x16, [x9, x24, lsl #3]
-	b vector_pair_base_ready
-vector_pair_load_sp:
-	ldr x16, [_cpu, #UML_GADGET_CPU_SP]
-vector_pair_base_ready:
-	add x21, x16, x6
-	cmp w27, #1
-	csel x19, x16, x21, eq
-	mov x5, #4
-	lsl x5, x5, x25
-	and x9, x19, #0xfff
-	add x9, x9, x5
-	cmp x9, #4096
-	b.hi vector_pair_cross_page
-	adds x20, x19, x5
-	b.cs vector_pair_cross_page
-	and x9, x20, #0xfff
-	add x9, x9, x5
-	cmp x9, #4096
-	b.hi vector_pair_cross_page
-	add _stream, _stream, #8
-	cbz w26, vector_pair_translate_store
-	mov x7, x19
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	mov x19, x7
-	mov x7, x20
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	mov x20, x7
-	movi v0.16b, #0
-	movi v1.16b, #0
-	cmp w25, #0
-	b.eq vector_pair_load32
-	cmp w25, #1
-	b.eq vector_pair_load64
-	ldr q0, [x19]
-	ldr q1, [x20]
-	b vector_pair_store_loaded
-vector_pair_load32:
-	ldr s0, [x19]
-	ldr s1, [x20]
-	b vector_pair_store_loaded
-vector_pair_load64:
-	ldr d0, [x19]
-	ldr d1, [x20]
-vector_pair_store_loaded:
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x10, x9, x22, lsl #4
-	add x11, x9, x23, lsl #4
-	str q0, [x10]
-	str q1, [x11]
-	b vector_pair_writeback
-vector_pair_translate_store:
-	mov x7, x19
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	mov x19, x7
-	mov x7, x20
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	mov x20, x7
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x10, x9, x22, lsl #4
-	add x11, x9, x23, lsl #4
-	ldr q0, [x10]
-	ldr q1, [x11]
-	cmp w25, #0
-	b.eq vector_pair_store32
-	cmp w25, #1
-	b.eq vector_pair_store64
-	str q0, [x19]
-	str q1, [x20]
-	b vector_pair_writeback
-vector_pair_store32:
-	str s0, [x19]
-	str s1, [x20]
-	b vector_pair_writeback
-vector_pair_store64:
-	str d0, [x19]
-	str d1, [x20]
-	b vector_pair_writeback
-vector_pair_cross_page:
-	add _stream, _stream, #8
-	cbnz w26, vector_pair_cross_load
-	add x9, _cpu, #UML_GADGET_CPU_V0
-	add x10, x9, x22, lsl #4
-	add x11, x9, x23, lsl #4
-	ldr q0, [x10]
-	ldr q1, [x11]
-	cmp w25, #0
-	b.eq vector_pair_cross_store32
-	cmp w25, #1
-	b.eq vector_pair_cross_store64
-	transfer_slow 1, x19, 32
-	b vector_pair_writeback
-vector_pair_cross_store32:
-	mov v0.s[1], v1.s[0]
-	transfer_slow 1, x19, 8
-	b vector_pair_writeback
-vector_pair_cross_store64:
-	mov v0.d[1], v1.d[0]
-	transfer_slow 1, x19, 16
-	b vector_pair_writeback
-vector_pair_cross_load:
-	cmp w25, #0
-	b.eq vector_pair_cross_load32
-	cmp w25, #1
-	b.eq vector_pair_cross_load64
-	transfer_slow 0, x19, 32
-	b vector_pair_store_loaded
-vector_pair_cross_load32:
-	transfer_slow 0, x19, 8
+.Lvector_pair_cross\@:
+	.if \load
+	transfer_slow 0, x19, (\bytes * 2)
+		.if \bytes == 4
 	movi v1.16b, #0
 	mov v1.s[0], v0.s[1]
 	movi v2.16b, #0
 	mov v2.s[0], v0.s[0]
 	mov v0.16b, v2.16b
-	b vector_pair_store_loaded
-vector_pair_cross_load64:
-	transfer_slow 0, x19, 16
+		.elseif \bytes == 8
 	movi v1.16b, #0
 	mov v1.d[0], v0.d[1]
 	movi v2.16b, #0
 	mov v2.d[0], v0.d[0]
 	mov v0.16b, v2.16b
-	b vector_pair_store_loaded
-vector_pair_writeback:
-	cmp w27, #1
-	b.eq vector_pair_do_writeback
-	cmp w27, #3
-	b.ne vector_pair_done
-vector_pair_do_writeback:
-	cmp w24, #31
-	b.eq vector_pair_write_sp
-	add x9, _cpu, #UML_GADGET_CPU_X0
-	str x21, [x9, x24, lsl #3]
-	b vector_pair_done
-vector_pair_write_sp:
-	str x21, [_cpu, #UML_GADGET_CPU_SP]
-vector_pair_done:
+		.endif
+	str q0, [_cpu, x22]
+	str q1, [_cpu, x23]
+	.else
+	ldr q0, [_cpu, x22]
+	ldr q1, [_cpu, x23]
+		.if \bytes == 4
+	mov v0.s[1], v1.s[0]
+		.elseif \bytes == 8
+	mov v0.d[1], v1.d[0]
+		.endif
+	transfer_slow 1, x19, (\bytes * 2)
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
 	add _stream, _stream, #8
 	next_gadget
+.endm
+
+.macro vector_pair_operation name, load, instruction, host_register, bytes
+	vector_pair_fast vector_pair_\name\()_0, \load, \instruction, \host_register, \bytes, 0
+	vector_pair_fast vector_pair_\name\()_1, \load, \instruction, \host_register, \bytes, 1
+	vector_pair_fast vector_pair_\name\()_2, \load, \instruction, \host_register, \bytes, 2
+.endm
+
+vector_pair_operation store32, 0, str, s, 4
+vector_pair_operation load32, 1, ldr, s, 4
+vector_pair_operation store64, 0, str, d, 8
+vector_pair_operation load64, 1, ldr, d, 8
+vector_pair_operation store128, 0, str, q, 16
+vector_pair_operation load128, 1, ldr, q, 16
+
+.purgem vector_pair_operation
+.purgem vector_pair_fast
+
+/* LDRAA/LDRAB authenticate the base with a zero modifier before applying the
+ * signed scaled offset. Key, writeback, SP alignment, and XZR destination are
+ * fixed by the builder. Stream: [packed direct offsets/immediate][guest PC]. */
+.macro pauth_load name, authentication, writeback, base_sp, discard
+gadget pauth_load_\name
+	ldr x8, [_stream], #8
+	.if !\discard
+	and w19, w8, #0xffff
+	.endif
+	ubfx w20, w8, #16, #16
+	asr x21, x8, #32
+	ldr x7, [_cpu, x20]
+	.if \base_sp
+	tst x7, #0xf
+	b.ne uml_arm64_gadget_memory_fault
+	.endif
+	\authentication x7
+	add x25, x7, x21
+	and x9, x25, #0xfff
+	cmp x9, #4088
+	b.hi pauth_load_\name\()_cross
+	mov x7, x25
+	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	ldr x0, [x7]
+	b pauth_load_\name\()_finish
+pauth_load_\name\()_cross:
+	transfer_slow 0, x25, 8
+	fmov x0, d0
+pauth_load_\name\()_finish:
+	.if !\discard
+	str x0, [_cpu, x19]
+	.endif
+	.if \writeback
+	str x25, [_cpu, x20]
+	.endif
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+.macro pauth_load_modes key, authentication
+pauth_load \key\()_o_rr, \authentication, 0, 0, 0
+pauth_load \key\()_o_rz, \authentication, 0, 0, 1
+pauth_load \key\()_o_sr, \authentication, 0, 1, 0
+pauth_load \key\()_o_sz, \authentication, 0, 1, 1
+pauth_load \key\()_w_rr, \authentication, 1, 0, 0
+pauth_load \key\()_w_rz, \authentication, 1, 0, 1
+pauth_load \key\()_w_sr, \authentication, 1, 1, 0
+pauth_load \key\()_w_sz, \authentication, 1, 1, 1
+.endm
+
+pauth_load_modes a, autdza
+pauth_load_modes b, autdzb
+
+.purgem pauth_load_modes
+.purgem pauth_load
 
 uml_arm64_gadget_memory_fault:
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_MEMORY_FAULT
 	b uml_arm64_gadget_leave
-

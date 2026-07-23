@@ -7,7 +7,7 @@
 
 /* Apple Silicon exposes the Armv8 CRC and cryptographic extensions. Keep the
  * assembler aware of them so extension-backed gadgets can use native ops. */
-.arch armv8-a+crc+crypto
+.arch armv8.6-a+crc+crypto+sha3+sm4+lor+rcpc+i8mm+fp16
 
 #if __APPLE__
 #define NAME(value) _##value
@@ -53,17 +53,48 @@ NAME(uml_arm64_gadget_\name):
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
 	str w6, [sp, #0x80]
 	msr fpcr, x6
-	msr fpsr, xzr
+	/* FPSR exception and saturation flags are cumulative architectural
+	 * state. Seed the native environment from the guest. */
+	ldr w6, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x6
 99:
 .endm
 
 .macro restore_fp_environment
 	ldr x6, [sp, #0x78]
 	cbz x6, 98f
+	/* Commit native FP/AdvSIMD exception state before restoring the host. */
+	mrs x5, fpsr
+	str w5, [_cpu, #UML_GADGET_CPU_FPSR]
 	ldp x6, x5, [sp, #0x68]
 	msr fpcr, x6
 	msr fpsr, x5
 	str xzr, [sp, #0x78]
+98:
+.endm
+
+/* Native FEAT_FP8 instructions consume FPMR.  Save it only for blocks that
+ * actually execute such a gadget, then load the current guest value directly
+ * before the instruction.  The production builder never selects these paths
+ * on a host without the corresponding FP8 feature. */
+.macro ensure_fpmr_environment
+	ldrb w6, [sp, #0x84]
+	cbnz w6, 97f
+	.inst 0xd53b4446 /* mrs x6, FPMR */
+	str x6, [sp, #0x88]
+	mov w6, #1
+	strb w6, [sp, #0x84]
+97:
+	ldr x6, [_cpu, #UML_GADGET_CPU_FPMR]
+	.inst 0xd51b4446 /* msr FPMR, x6 */
+.endm
+
+.macro restore_fpmr_environment
+	ldrb w6, [sp, #0x84]
+	cbz w6, 98f
+	ldr x6, [sp, #0x88]
+	.inst 0xd51b4446 /* msr FPMR, x6 */
+	strb wzr, [sp, #0x84]
 98:
 .endm
 
@@ -79,15 +110,7 @@ NAME(uml_arm64_gadget_\name):
 	add x10, x10, x9, lsl #5
 	ldr x11, [x10, #\page_offset]
 	cmp x8, x11
-	b.ne 91f
-	.if \access
-	ldr x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS]
-	.else
-	ldr x12, [x10, #UML_GADGET_TLB_ENTRY_READ_DATA_MINUS_ADDRESS]
-	.endif
-	add x7, x12, x7
-	b 92f
-91:
+	b.eq 91f
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
 	mov x1, x7
@@ -96,6 +119,14 @@ NAME(uml_arm64_gadget_\name):
 	ldp x1, x2, [sp], #16
 	cbz x0, uml_arm64_gadget_memory_fault
 	mov x7, x0
+	b 92f
+91:
+	.if \access
+	ldr x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS]
+	.else
+	ldr x12, [x10, #UML_GADGET_TLB_ENTRY_READ_DATA_MINUS_ADDRESS]
+	.endif
+	add x7, x12, x7
 92:
 .endm
 
@@ -145,11 +176,13 @@ NAME(uml_arm64_gadget_enter):
 	stp x28, x29, [sp, #0x50]
 	str lr, [sp, #0x60]
 	str xzr, [sp, #0x78]
+	str wzr, [sp, #0x84]
 	mov _stream, x0
 	next_gadget
 
 .p2align 4
 uml_arm64_gadget_leave:
+	restore_fpmr_environment
 	restore_fp_environment
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
@@ -160,1003 +193,1819 @@ uml_arm64_gadget_leave:
 	ldp x18, x19, [sp], #0x90
 	ret
 
-gadget movz
+/* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
+ * folded to NOP, so the live entry is a three-load straight-line store. */
+gadget move_wide_constant
 	ldr x8, [_stream], #8
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #2
-	ubfx x11, x8, #16, #16
-	ubfx x12, x8, #32, #1
-	lsl x10, x10, #4
-	lsl x11, x11, x10
-	cbnz x12, 1f
-	and x11, x11, #0xffffffff
-1:	add x13, _cpu, #UML_GADGET_CPU_X0
-	cmp x9, #31
-	b.eq 2f
-	str x11, [x13, x9, lsl #3]
-2:	next_gadget
-
-gadget movk
-	ldr x8, [_stream], #8
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #2
-	ubfx x11, x8, #16, #16
-	ubfx x12, x8, #32, #1
+	ldr x11, [_stream], #8
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	cmp x9, #31
-	b.eq 3f
+	str x11, [x13, x8]
+	next_gadget
+
+/* MOVK keeps only Rd and imm16 in the stream. Width and halfword position are
+ * separate entries; invalid 32-bit halfwords and XZR were rejected/folded by
+ * the translator. */
+.macro move_wide_keep bits64, shift, suffix
+gadget move_wide_keep_\suffix
+	ldr x8, [_stream], #8
+	and w9, w8, #0x1f
+	ubfx x11, x8, #8, #16
+	add x13, _cpu, #UML_GADGET_CPU_X0
 	ldr x14, [x13, x9, lsl #3]
-	cbnz x12, 1f
-	and x14, x14, #0xffffffff
-1:	lsl x10, x10, #4
+	.if !\bits64
+	mov w14, w14
+	.endif
 	mov x15, #0xffff
-	lsl x15, x15, x10
-	lsl x11, x11, x10
+	.if \shift
+	lsl x15, x15, #\shift
+	lsl x11, x11, #\shift
+	.endif
 	bic x14, x14, x15
 	orr x14, x14, x11
-	cbnz x12, 2f
-	and x14, x14, #0xffffffff
-2:	str x14, [x13, x9, lsl #3]
-3:	next_gadget
+	str x14, [x13, x9, lsl #3]
+	next_gadget
+.endm
 
-gadget movn
-	ldr x8, [_stream], #8
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #2
-	ubfx x11, x8, #16, #16
-	ubfx x12, x8, #32, #1
-	lsl x10, x10, #4
-	lsl x11, x11, x10
-	mvn x11, x11
-	cbnz x12, 1f
-	and x11, x11, #0xffffffff
-1:	cmp x9, #31
-	b.eq 2f
-	add x13, _cpu, #UML_GADGET_CPU_X0
-	str x11, [x13, x9, lsl #3]
-2:	next_gadget
+move_wide_keep 0, 0, w0
+move_wide_keep 0, 16, w1
+move_wide_keep 1, 0, x0
+move_wide_keep 1, 16, x1
+move_wide_keep 1, 32, x2
+move_wide_keep 1, 48, x3
 
-/* ADD/SUB (immediate), including the architectural SP and flag semantics.
- * The inline operand is the original instruction word.
- */
-gadget add_sub_immediate
+.purgem move_wide_keep
+
+/* Production ADD/SUB-immediate entries.  Width, operation, flag update and
+ * both architectural register-31 meanings are fixed by the translator.  The
+ * compact operand is Rd[4:0], Rn[12:8], immediate[39:16].  These variants
+ * deliberately contain no opcode tests or conditional branches. */
+.macro add_sub_immediate_fast bits64, subtract, flags, source_sp, destination_special, suffix
+gadget add_sub_immediate_\suffix
 	ldr x8, [_stream], #8
-	and x9, x8, #0x1f
-	ubfx x10, x8, #5, #5
-	ubfx x11, x8, #10, #12
-	tbz x8, #22, 1f
-	lsl x11, x11, #12
-1:	cmp x10, #31
-	b.eq 2f
+	.if \source_sp
+	ldr x15, [_cpu, #UML_GADGET_CPU_SP]
+	.else
+	ubfx w10, w8, #8, #5
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x15, [x12, x10, lsl #3]
-	b 3f
-2:	ldr x15, [_cpu, #UML_GADGET_CPU_SP]
-3:	tbnz x8, #31, 6f
-	/* 32-bit form. Native ADDS/SUBS calculate exactly the guest NZCV. */
-	tbnz x8, #30, 4f
-	adds w16, w15, w11
-	b 5f
-4:	subs w16, w15, w11
-5:	mov w16, w16
-	b 9f
-6:	tbnz x8, #30, 7f
+	.endif
+	lsr x11, x8, #16
+	.if \bits64
+		.if \subtract
+			.if \flags
+	subs x16, x15, x11
+			.else
+	sub x16, x15, x11
+			.endif
+		.else
+			.if \flags
 	adds x16, x15, x11
-	b 9f
-7:	subs x16, x15, x11
-9:	tbz x8, #29, 10f
+			.else
+	add x16, x15, x11
+			.endif
+		.endif
+	.else
+		.if \subtract
+			.if \flags
+	subs w16, w15, w11
+			.else
+	sub w16, w15, w11
+			.endif
+		.else
+			.if \flags
+	adds w16, w15, w11
+			.else
+	add w16, w15, w11
+			.endif
+		.endif
+	.endif
+	.if \flags
 	mrs x17, nzcv
 	str w17, [_cpu, #UML_GADGET_CPU_NZCV]
-10:	cmp x9, #31
-	b.ne 11f
-	/* Rd=31 is SP only when S=0; flag-setting aliases discard the result. */
-	tbnz x8, #29, 12f
+	.endif
+	.if \destination_special
+		.if !\flags
 	str x16, [_cpu, #UML_GADGET_CPU_SP]
-	b 12f
-11:	add x12, _cpu, #UML_GADGET_CPU_X0
+		.endif
+	.else
+	and w9, w8, #0x1f
+	add x12, _cpu, #UML_GADGET_CPU_X0
 	str x16, [x12, x9, lsl #3]
-12:	next_gadget
-
-/* ADD/SUB (shifted or extended register). The inline operand is the original
- * instruction word. This is the same-architecture threaded-code form used by
- * iSH's ARM64 Asbestos backend, adapted to CpuState's compact register ABI.
- */
-gadget add_sub_register
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #31, #1
-	ubfx w13, w8, #30, #1
-	ubfx w14, w8, #29, #1
-
-	/* Shifted-register Rn is XZR; extended-register Rn may be SP. */
-	cmp w10, #31
-	b.ne addsub_load_rn
-	tbnz x8, #21, addsub_load_sp
-	mov x15, xzr
-	b addsub_rn_ready
-addsub_load_sp:
-	ldr x15, [_cpu, #UML_GADGET_CPU_SP]
-	b addsub_rn_ready
-addsub_load_rn:
-	add x7, _cpu, #UML_GADGET_CPU_X0
-	ldr x15, [x7, x10, lsl #3]
-addsub_rn_ready:
-	cmp w11, #31
-	b.eq addsub_zero_rm
-	add x7, _cpu, #UML_GADGET_CPU_X0
-	ldr x16, [x7, x11, lsl #3]
-	b addsub_rm_ready
-addsub_zero_rm:
-	mov x16, xzr
-addsub_rm_ready:
-	tbnz x8, #21, addsub_extend
-
-	ubfx w17, w8, #22, #2
-	ubfx w6, w8, #10, #6
-	cbz w6, addsub_operand_ready
-	cbz w12, addsub_shift32
-	cmp w17, #0
-	b.eq addsub_lsl64
-	cmp w17, #1
-	b.eq addsub_lsr64
-	asr x16, x16, x6
-	b addsub_operand_ready
-addsub_lsl64:
-	lsl x16, x16, x6
-	b addsub_operand_ready
-addsub_lsr64:
-	lsr x16, x16, x6
-	b addsub_operand_ready
-addsub_shift32:
-	cmp w17, #0
-	b.eq addsub_lsl32
-	cmp w17, #1
-	b.eq addsub_lsr32
-	asr w16, w16, w6
-	b addsub_operand_ready
-addsub_lsl32:
-	lsl w16, w16, w6
-	b addsub_operand_ready
-addsub_lsr32:
-	lsr w16, w16, w6
-	b addsub_operand_ready
-
-addsub_extend:
-	ubfx w17, w8, #13, #3
-	ubfx w6, w8, #10, #3
-	cmp w17, #0
-	b.eq addsub_uxtb
-	cmp w17, #1
-	b.eq addsub_uxth
-	cmp w17, #2
-	b.eq addsub_uxtw
-	cmp w17, #3
-	b.eq addsub_extended
-	cmp w17, #4
-	b.eq addsub_sxtb
-	cmp w17, #5
-	b.eq addsub_sxth
-	cmp w17, #6
-	b.eq addsub_sxtw
-	b addsub_extended
-addsub_uxtb:
-	and x16, x16, #0xff
-	b addsub_extended
-addsub_uxth:
-	and x16, x16, #0xffff
-	b addsub_extended
-addsub_uxtw:
-	mov w16, w16
-	b addsub_extended
-addsub_sxtb:
-	sxtb x16, w16
-	b addsub_extended
-addsub_sxth:
-	sxth x16, w16
-	b addsub_extended
-addsub_sxtw:
-	sxtw x16, w16
-addsub_extended:
-	lsl x16, x16, x6
-
-addsub_operand_ready:
-	cbz w12, addsub_operation32
-	cbnz w14, addsub_flags64
-	cbnz w13, addsub_sub64
-	add x7, x15, x16
-	b addsub_store
-addsub_sub64:
-	sub x7, x15, x16
-	b addsub_store
-addsub_flags64:
-	cbnz w13, addsub_subs64
-	adds x7, x15, x16
-	b addsub_save_flags
-addsub_subs64:
-	subs x7, x15, x16
-	b addsub_save_flags
-
-addsub_operation32:
-	cbnz w14, addsub_flags32
-	cbnz w13, addsub_sub32
-	add w7, w15, w16
-	b addsub_store
-addsub_sub32:
-	sub w7, w15, w16
-	b addsub_store
-addsub_flags32:
-	cbnz w13, addsub_subs32
-	adds w7, w15, w16
-	b addsub_save_flags
-addsub_subs32:
-	subs w7, w15, w16
-
-addsub_save_flags:
-	mrs x15, nzcv
-	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
-
-addsub_store:
-	cmp w9, #31
-	b.ne addsub_store_register
-	/* Rd=31 is SP only for non-flag-setting extended-register forms. */
-	tbz x8, #21, addsub_done
-	cbnz w14, addsub_done
-	str x7, [_cpu, #UML_GADGET_CPU_SP]
-	b addsub_done
-addsub_store_register:
-	add x15, _cpu, #UML_GADGET_CPU_X0
-	str x7, [x15, x9, lsl #3]
-addsub_done:
+	.endif
 	next_gadget
+.endm
 
-/* ADC/ADCS/SBC/SBCS, using the saved guest carry and native NZCV result. */
-gadget add_sub_carry
+.macro add_sub_immediate_modes bits64, subtract, flags, prefix
+add_sub_immediate_fast \bits64, \subtract, \flags, 0, 0, \prefix\()_rr
+add_sub_immediate_fast \bits64, \subtract, \flags, 0, 1, \prefix\()_rs
+add_sub_immediate_fast \bits64, \subtract, \flags, 1, 0, \prefix\()_sr
+add_sub_immediate_fast \bits64, \subtract, \flags, 1, 1, \prefix\()_ss
+.endm
+
+add_sub_immediate_modes 0, 0, 0, w_add_n
+add_sub_immediate_modes 0, 0, 1, w_add_s
+add_sub_immediate_modes 0, 1, 0, w_sub_n
+add_sub_immediate_modes 0, 1, 1, w_sub_s
+add_sub_immediate_modes 1, 0, 0, x_add_n
+add_sub_immediate_modes 1, 0, 1, x_add_s
+add_sub_immediate_modes 1, 1, 0, x_sub_n
+add_sub_immediate_modes 1, 1, 1, x_sub_s
+
+.purgem add_sub_immediate_modes
+.purgem add_sub_immediate_fast
+
+/* Production ADD/SUB shifted/extended register entries. CpuState byte offsets
+ * for ordinary registers/SP and the shift amount are prepacked by Builder.
+ * Width, arithmetic, flags, transform, XZR inputs, and discard/SP destination
+ * behavior are all entry-point constants. */
+.macro add_sub_register_finish bits64, subtract, flags, destination_discard
+	.if \bits64
+		.if \subtract
+			.if \flags
+	subs x7, x15, x16
+			.else
+	sub x7, x15, x16
+			.endif
+		.else
+			.if \flags
+	adds x7, x15, x16
+			.else
+	add x7, x15, x16
+			.endif
+		.endif
+	.else
+		.if \subtract
+			.if \flags
+	subs w7, w15, w16
+			.else
+	sub w7, w15, w16
+			.endif
+		.else
+			.if \flags
+	adds w7, w15, w16
+			.else
+	add w7, w15, w16
+			.endif
+		.endif
+	.endif
+	.if \flags
+	mrs x14, nzcv
+	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
+	.endif
+	.if !\destination_discard
+	and x9, x8, #0xffff
+	str x7, [_cpu, x9]
+	.endif
+	next_gadget
+.endm
+
+.macro add_sub_register_shifted_fast bits64, subtract, flags, shift_kind, left_zero, right_zero, destination_discard, suffix
+gadget add_sub_register_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	cmp w10, #31
-	b.eq carry_zero_left
+	.if \left_zero
+	mov x15, xzr
+	.else
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	.endif
+	.if \right_zero
+	mov x16, xzr
+	.else
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.endif
+	.if \shift_kind != 0
+	ubfx x6, x8, #48, #6
+		.if \bits64
+			.if \shift_kind == 1
+	lsl x16, x16, x6
+			.elseif \shift_kind == 2
+	lsr x16, x16, x6
+			.else
+	asr x16, x16, x6
+			.endif
+		.else
+			.if \shift_kind == 1
+	lsl w16, w16, w6
+			.elseif \shift_kind == 2
+	lsr w16, w16, w6
+			.else
+	asr w16, w16, w6
+			.endif
+		.endif
+	.endif
+	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
+.endm
+
+.macro add_sub_register_extended_fast bits64, subtract, flags, extension, shift_nonzero, right_zero, destination_discard, suffix
+gadget add_sub_register_\suffix
+	ldr x8, [_stream], #8
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	.if \right_zero
+	mov x16, xzr
+	.else
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.endif
+	.if \extension == 0
+	and x16, x16, #0xff
+	.elseif \extension == 1
+	and x16, x16, #0xffff
+	.elseif \extension == 2
+	mov w16, w16
+	.elseif \extension == 4
+	sxtb x16, w16
+	.elseif \extension == 5
+	sxth x16, w16
+	.elseif \extension == 6
+	sxtw x16, w16
+	.endif
+	.if \shift_nonzero
+	ubfx x6, x8, #48, #3
+	lsl x16, x16, x6
+	.endif
+	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
+.endm
+
+.macro add_sub_shifted_destinations bits64, subtract, flags, shift_kind, left_zero, right_zero, prefix
+add_sub_register_shifted_fast \bits64, \subtract, \flags, \shift_kind, \left_zero, \right_zero, 0, \prefix\()_r
+add_sub_register_shifted_fast \bits64, \subtract, \flags, \shift_kind, \left_zero, \right_zero, 1, \prefix\()_d
+.endm
+.macro add_sub_shifted_sources bits64, subtract, flags, shift_kind, prefix
+add_sub_shifted_destinations \bits64, \subtract, \flags, \shift_kind, 0, 0, \prefix\()_rr
+add_sub_shifted_destinations \bits64, \subtract, \flags, \shift_kind, 0, 1, \prefix\()_rz
+add_sub_shifted_destinations \bits64, \subtract, \flags, \shift_kind, 1, 0, \prefix\()_zr
+add_sub_shifted_destinations \bits64, \subtract, \flags, \shift_kind, 1, 1, \prefix\()_zz
+.endm
+.macro add_sub_shifted_transforms bits64, subtract, flags, prefix
+add_sub_shifted_sources \bits64, \subtract, \flags, 0, \prefix\()_n
+add_sub_shifted_sources \bits64, \subtract, \flags, 1, \prefix\()_l
+add_sub_shifted_sources \bits64, \subtract, \flags, 2, \prefix\()_r
+add_sub_shifted_sources \bits64, \subtract, \flags, 3, \prefix\()_a
+.endm
+
+.macro add_sub_extended_destinations bits64, subtract, flags, extension, shift_nonzero, right_zero, prefix
+add_sub_register_extended_fast \bits64, \subtract, \flags, \extension, \shift_nonzero, \right_zero, 0, \prefix\()_r
+add_sub_register_extended_fast \bits64, \subtract, \flags, \extension, \shift_nonzero, \right_zero, 1, \prefix\()_d
+.endm
+.macro add_sub_extended_sources bits64, subtract, flags, extension, shift_nonzero, prefix
+add_sub_extended_destinations \bits64, \subtract, \flags, \extension, \shift_nonzero, 0, \prefix\()_r
+add_sub_extended_destinations \bits64, \subtract, \flags, \extension, \shift_nonzero, 1, \prefix\()_z
+.endm
+.macro add_sub_extended_transforms bits64, subtract, flags, prefix
+add_sub_extended_sources \bits64, \subtract, \flags, 0, 0, \prefix\()_e0n
+add_sub_extended_sources \bits64, \subtract, \flags, 0, 1, \prefix\()_e0s
+add_sub_extended_sources \bits64, \subtract, \flags, 1, 0, \prefix\()_e1n
+add_sub_extended_sources \bits64, \subtract, \flags, 1, 1, \prefix\()_e1s
+add_sub_extended_sources \bits64, \subtract, \flags, 2, 0, \prefix\()_e2n
+add_sub_extended_sources \bits64, \subtract, \flags, 2, 1, \prefix\()_e2s
+add_sub_extended_sources \bits64, \subtract, \flags, 3, 0, \prefix\()_e3n
+add_sub_extended_sources \bits64, \subtract, \flags, 3, 1, \prefix\()_e3s
+add_sub_extended_sources \bits64, \subtract, \flags, 4, 0, \prefix\()_e4n
+add_sub_extended_sources \bits64, \subtract, \flags, 4, 1, \prefix\()_e4s
+add_sub_extended_sources \bits64, \subtract, \flags, 5, 0, \prefix\()_e5n
+add_sub_extended_sources \bits64, \subtract, \flags, 5, 1, \prefix\()_e5s
+add_sub_extended_sources \bits64, \subtract, \flags, 6, 0, \prefix\()_e6n
+add_sub_extended_sources \bits64, \subtract, \flags, 6, 1, \prefix\()_e6s
+add_sub_extended_sources \bits64, \subtract, \flags, 7, 0, \prefix\()_e7n
+add_sub_extended_sources \bits64, \subtract, \flags, 7, 1, \prefix\()_e7s
+.endm
+
+.macro add_sub_register_all bits64, subtract, flags, prefix
+add_sub_shifted_transforms \bits64, \subtract, \flags, \prefix\()_sh
+add_sub_extended_transforms \bits64, \subtract, \flags, \prefix\()_ex
+.endm
+
+add_sub_register_all 0, 0, 0, w_add_n
+add_sub_register_all 0, 0, 1, w_add_s
+add_sub_register_all 0, 1, 0, w_sub_n
+add_sub_register_all 0, 1, 1, w_sub_s
+add_sub_register_all 1, 0, 0, x_add_n
+add_sub_register_all 1, 0, 1, x_add_s
+add_sub_register_all 1, 1, 0, x_sub_n
+add_sub_register_all 1, 1, 1, x_sub_s
+
+.purgem add_sub_register_all
+.purgem add_sub_extended_transforms
+.purgem add_sub_extended_sources
+.purgem add_sub_extended_destinations
+.purgem add_sub_shifted_transforms
+.purgem add_sub_shifted_sources
+.purgem add_sub_shifted_destinations
+.purgem add_sub_register_extended_fast
+.purgem add_sub_register_shifted_fast
+.purgem add_sub_register_finish
+
+/* Production ADC/SBC entries.  All instruction-invariant choices, including
+ * XZR operands and a discarded XZR destination, are translation-selected.
+ * Stream operand: Rd[4:0], Rn[12:8], Rm[20:16]. */
+.macro add_sub_carry_fast bits64, subtract, flags, left_zero, right_zero, destination_zero, suffix
+gadget add_sub_carry_\suffix
+	ldr x8, [_stream], #8
+	.if \left_zero
+	mov x15, xzr
+	.else
+	ubfx w10, w8, #8, #5
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x15, [x12, x10, lsl #3]
-	b carry_left_ready
-carry_zero_left:
-	mov x15, xzr
-carry_left_ready:
-	cmp w11, #31
-	b.eq carry_zero_right
+	.endif
+	.if \right_zero
+	mov x16, xzr
+	.else
+	ubfx w11, w8, #16, #5
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x16, [x12, x11, lsl #3]
-	b carry_right_ready
-carry_zero_right:
-	mov x16, xzr
-carry_right_ready:
+	.endif
 	ldr w12, [_cpu, #UML_GADGET_CPU_NZCV]
 	msr nzcv, x12
-	tbz x8, #31, carry_operation32
-	tbnz x8, #30, carry_subtract64
-	tbnz x8, #29, carry_add_flags64
-	adc x7, x15, x16
-	b carry_store
-carry_add_flags64:
-	adcs x7, x15, x16
-	b carry_save_flags
-carry_subtract64:
-	tbnz x8, #29, carry_subtract_flags64
-	sbc x7, x15, x16
-	b carry_store
-carry_subtract_flags64:
+	.if \bits64
+		.if \subtract
+			.if \flags
 	sbcs x7, x15, x16
-	b carry_save_flags
-carry_operation32:
-	tbnz x8, #30, carry_subtract32
-	tbnz x8, #29, carry_add_flags32
-	adc w7, w15, w16
-	b carry_store
-carry_add_flags32:
-	adcs w7, w15, w16
-	b carry_save_flags
-carry_subtract32:
-	tbnz x8, #29, carry_subtract_flags32
-	sbc w7, w15, w16
-	b carry_store
-carry_subtract_flags32:
+			.else
+	sbc x7, x15, x16
+			.endif
+		.else
+			.if \flags
+	adcs x7, x15, x16
+			.else
+	adc x7, x15, x16
+			.endif
+		.endif
+	.else
+		.if \subtract
+			.if \flags
 	sbcs w7, w15, w16
-carry_save_flags:
+			.else
+	sbc w7, w15, w16
+			.endif
+		.else
+			.if \flags
+	adcs w7, w15, w16
+			.else
+	adc w7, w15, w16
+			.endif
+		.endif
+	.endif
+	.if \flags
 	mrs x12, nzcv
 	str w12, [_cpu, #UML_GADGET_CPU_NZCV]
-carry_store:
-	cmp w9, #31
-	b.eq carry_done
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	str x7, [x12, x9, lsl #3]
-carry_done:
+	.endif
 	next_gadget
+.endm
 
-/* MADD/MSUB, signed/unsigned long multiply-add, and high multiply. The
- * validated stream retains its PC operand only for consistency with decoded
- * fallback blocks. Stream: [instruction][guest PC].
+.macro add_sub_carry_zero_modes bits64, subtract, flags, left_zero, right_zero, prefix
+add_sub_carry_fast \bits64, \subtract, \flags, \left_zero, \right_zero, 0, \prefix\()_r
+add_sub_carry_fast \bits64, \subtract, \flags, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+
+.macro add_sub_carry_source_modes bits64, subtract, flags, prefix
+add_sub_carry_zero_modes \bits64, \subtract, \flags, 0, 0, \prefix\()_rr
+add_sub_carry_zero_modes \bits64, \subtract, \flags, 0, 1, \prefix\()_rz
+add_sub_carry_zero_modes \bits64, \subtract, \flags, 1, 0, \prefix\()_zr
+add_sub_carry_zero_modes \bits64, \subtract, \flags, 1, 1, \prefix\()_zz
+.endm
+
+add_sub_carry_source_modes 0, 0, 0, w_adc_n
+add_sub_carry_source_modes 0, 0, 1, w_adc_s
+add_sub_carry_source_modes 0, 1, 0, w_sbc_n
+add_sub_carry_source_modes 0, 1, 1, w_sbc_s
+add_sub_carry_source_modes 1, 0, 0, x_adc_n
+add_sub_carry_source_modes 1, 0, 1, x_adc_s
+add_sub_carry_source_modes 1, 1, 0, x_sbc_n
+add_sub_carry_source_modes 1, 1, 1, x_sbc_s
+
+.purgem add_sub_carry_source_modes
+.purgem add_sub_carry_zero_modes
+.purgem add_sub_carry_fast
+
+/* FEAT_MTE GMI/SUBP/SUBPS. Encoding-constant SP/ZR choices select one of
+ * eight straight-line variants for each operation. No decoder checks or
+ * conditional branches remain in the valid production hot path.
+ * Stream operand: Rd[4:0], Rn[12:8], Rm[20:16].
  */
-gadget multiply_add
+.macro mte_pointer opname, operation, n_special, m_special, d_zero, suffix
+gadget mte_\opname\()_\suffix
 	ldr x8, [_stream], #8
+	.if !\n_special
+	ubfx w10, w8, #8, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x17, x10, lsl #3]
+	.else
+	ldr x12, [_cpu, #UML_GADGET_CPU_SP]
+	.endif
+	.if !\m_special
+	ubfx w11, w8, #16, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x13, [x17, x11, lsl #3]
+	.elseif \operation == 0
+	mov x13, xzr
+	.else
+	ldr x13, [_cpu, #UML_GADGET_CPU_SP]
+	.endif
+
+	.if \operation == 0
+	ubfx x14, x12, #56, #4
+	mov x15, #1
+	lsl x15, x15, x14
+	orr x14, x13, x15
+	.else
+	sbfx x12, x12, #0, #56
+	sbfx x13, x13, #0, #56
+	.if \operation == 2
+	subs x14, x12, x13
+	mrs x15, nzcv
+	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	.else
+	sub x14, x12, x13
+	.endif
+	.endif
+
+	.if !\d_zero
 	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #10, #5
-	ubfx w12, w8, #16, #5
-	ubfx w13, w8, #21, #3
-	add x14, _cpu, #UML_GADGET_CPU_X0
-	cmp w10, #31
-	csel x15, xzr, x14, eq
-	b.eq multiply_left_ready
-	ldr x15, [x14, x10, lsl #3]
-multiply_left_ready:
-	cmp w12, #31
-	csel x16, xzr, x14, eq
-	b.eq multiply_right_ready
-	ldr x16, [x14, x12, lsl #3]
-multiply_right_ready:
-	cmp w11, #31
-	csel x17, xzr, x14, eq
-	b.eq multiply_addend_ready
-	ldr x17, [x14, x11, lsl #3]
-multiply_addend_ready:
-	cmp w13, #0
-	b.eq multiply_regular
-	cmp w13, #1
-	b.eq multiply_signed_long
-	cmp w13, #5
-	b.eq multiply_unsigned_long
-	cmp w13, #2
-	b.eq multiply_signed_high
-	umulh x7, x15, x16
-	b multiply_store
-multiply_signed_high:
-	smulh x7, x15, x16
-	b multiply_store
-multiply_signed_long:
-	tbnz x8, #15, multiply_signed_subtract_long
-	smaddl x7, w15, w16, x17
-	b multiply_store
-multiply_signed_subtract_long:
-	smsubl x7, w15, w16, x17
-	b multiply_store
-multiply_unsigned_long:
-	tbnz x8, #15, multiply_unsigned_subtract_long
-	umaddl x7, w15, w16, x17
-	b multiply_store
-multiply_unsigned_subtract_long:
-	umsubl x7, w15, w16, x17
-	b multiply_store
-multiply_regular:
-	tbnz x8, #31, multiply_regular64
-	tbnz x8, #15, multiply_subtract32
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	str x14, [x17, x9, lsl #3]
+	.endif
+	next_gadget
+.endm
+
+.macro mte_pointer_variants opname, operation
+mte_pointer \opname, \operation, 0, 0, 0, rrr
+mte_pointer \opname, \operation, 0, 0, 1, rrz
+mte_pointer \opname, \operation, 0, 1, 0, rsr
+mte_pointer \opname, \operation, 0, 1, 1, rsz
+mte_pointer \opname, \operation, 1, 0, 0, srr
+mte_pointer \opname, \operation, 1, 0, 1, srz
+mte_pointer \opname, \operation, 1, 1, 0, ssr
+mte_pointer \opname, \operation, 1, 1, 1, ssz
+.endm
+
+mte_pointer_variants gmi, 0
+mte_pointer_variants subp, 1
+mte_pointer_variants subps, 2
+
+/* ADDG/SUBG use a CpuState table derived from effective MTE enablement and
+ * GCR_EL1.Exclude. Source-SP and destination-SP choices are fixed while the
+ * stream is built, leaving each production variant entirely branch-free.
+ * Stream operand: Rd[4:0], Rn[12:8], tag offset[19:16], imm6[29:24].
+ */
+.macro mte_tag_add_sub opname, subtract, source_sp, destination_sp, suffix
+gadget mte_\opname\()_\suffix
+	ldr x8, [_stream], #8
+	.if !\source_sp
+	ubfx w10, w8, #8, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x17, x10, lsl #3]
+	.else
+	ldr x12, [_cpu, #UML_GADGET_CPU_SP]
+	.endif
+	ubfx w13, w8, #16, #4
+	ubfx x14, x12, #56, #4
+	orr w13, w13, w14, lsl #4
+	add x15, _cpu, #UML_GADGET_CPU_MTE_TAG_CHOICES
+	ldrb w13, [x15, x13]
+	ubfx x14, x8, #24, #6
+	lsl x14, x14, #4
+	.if \subtract
+	sub x14, x12, x14
+	.else
+	add x14, x12, x14
+	.endif
+	bfi x14, x13, #56, #4
+	.if \destination_sp
+	str x14, [_cpu, #UML_GADGET_CPU_SP]
+	.else
+	and w9, w8, #0x1f
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	str x14, [x17, x9, lsl #3]
+	.endif
+	next_gadget
+.endm
+
+.macro mte_tag_add_sub_variants opname, subtract
+mte_tag_add_sub \opname, \subtract, 0, 0, rr
+mte_tag_add_sub \opname, \subtract, 0, 1, rs
+mte_tag_add_sub \opname, \subtract, 1, 0, sr
+mte_tag_add_sub \opname, \subtract, 1, 1, ss
+.endm
+
+mte_tag_add_sub_variants addg, 0
+mte_tag_add_sub_variants subg, 1
+
+/* Select the zero-based requested set bit from w15. A 256-byte popcount
+ * table in x6 and four branch-free binary-search stages avoid an IRG loop.
+ */
+.macro irg_select_stage group_mask, shift, result_shift
+	and w10, w15, #\group_mask
+	ldrb w10, [x6, x10]
+	cmp w9, w10
+	cset w11, hs
+	sub w10, w9, w10
+	csel w9, w10, w9, hs
+	lsr w10, w15, #\shift
+	csel w15, w10, w15, hs
+	orr w14, w14, w11, lsl #\result_shift
+.endm
+
+/* IRG. Encoding-constant source-SP, mask-XZR, and destination-SP choices are
+ * specialized. The two early branches model disabled MTE and the all-excluded
+ * case; the RRND branch selects the architecturally runtime GCR mode. Tag
+ * selection itself is branch-free. Stream: [register operand][popcount table].
+ */
+.macro mte_irg n_sp, m_zero, d_sp, suffix
+gadget mte_irg_\suffix
+	ldr x8, [_stream], #8
+	ldr x6, [_stream], #8
+	.if !\n_sp
+	ubfx w10, w8, #8, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x17, x10, lsl #3]
+	.else
+	ldr x12, [_cpu, #UML_GADGET_CPU_SP]
+	.endif
+	.if !\m_zero
+	ubfx w11, w8, #16, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x13, [x17, x11, lsl #3]
+	.else
+	mov x13, xzr
+	.endif
+	ldrb w14, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbz w14, .Lirg_zero\@
+	ldrh w14, [_cpu, #UML_GADGET_CPU_MTE_EXCLUDE]
+	orr w13, w13, w14
+	mvn w15, w13
+	and w15, w15, #0xffff
+	cbz w15, .Lirg_zero\@
+
+	and w16, w15, #0xff
+	ldrb w16, [x6, x16]
+	lsr w17, w15, #8
+	ldrb w17, [x6, x17]
+	add w16, w16, w17
+	ldrb w17, [_cpu, #UML_GADGET_CPU_MTE_RANDOM_TAGS]
+	cbz w17, .Lirg_deterministic\@
+	ldr x14, [_cpu, #UML_GADGET_CPU_MTE_RANDOM_STATE]
+	eor x14, x14, x14, lsl #13
+	eor x14, x14, x14, lsr #7
+	eor x14, x14, x14, lsl #17
+	str x14, [_cpu, #UML_GADGET_CPU_MTE_RANDOM_STATE]
+	udiv x9, x14, x16
+	msub x9, x9, x16, x14
+	b .Lirg_select\@
+
+.Lirg_deterministic\@:
+	ldrb w14, [_cpu, #UML_GADGET_CPU_MTE_TAG]
+	add w14, w14, #1
+	cmp w14, w16
+	csel w14, wzr, w14, hs
+	strb w14, [_cpu, #UML_GADGET_CPU_MTE_TAG]
+	ldrh w17, [_cpu, #UML_GADGET_CPU_MTE_SEED]
+	madd w9, w16, w17, w14
+	lsr w9, w9, #16
+	udiv w10, w9, w16
+	msub w9, w10, w16, w9
+	ubfx w10, w17, #5, #1
+	eor w10, w10, w17, lsr #3
+	eor w10, w10, w17, lsr #2
+	eor w10, w10, w17
+	and w10, w10, #1
+	lsr w17, w17, #1
+	orr w17, w17, w10, lsl #15
+	strh w17, [_cpu, #UML_GADGET_CPU_MTE_SEED]
+
+.Lirg_select\@:
+	mov w14, wzr
+	irg_select_stage 0xff, 8, 3
+	irg_select_stage 0xf, 4, 2
+	irg_select_stage 0x3, 2, 1
+	irg_select_stage 0x1, 1, 0
+.Lirg_result\@:
+	bfi x12, x14, #56, #4
+	.if \d_sp
+	str x12, [_cpu, #UML_GADGET_CPU_SP]
+	.else
+	and w9, w8, #0x1f
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	str x12, [x17, x9, lsl #3]
+	.endif
+	next_gadget
+.Lirg_zero\@:
+	mov w14, wzr
+	b .Lirg_result\@
+.endm
+
+mte_irg 0, 0, 0, rrr
+mte_irg 0, 0, 1, rrs
+mte_irg 0, 1, 0, rzr
+mte_irg 0, 1, 1, rzs
+mte_irg 1, 0, 0, srr
+mte_irg 1, 0, 1, srs
+mte_irg 1, 1, 0, szr
+mte_irg 1, 1, 1, szs
+
+/* FEAT_CPA ADDPT/SUBPT. Operation, shift, SP/ZR sources, and SP destination
+ * are all fixed by translation, producing 128 branch-free hot-path variants.
+ * CSEL applies PointerAddCheck only for effective CPTA and a detected carry
+ * into the top byte (or a prior poison marker). Stream operand matches IRG.
+ */
+.macro cpa_pointer opname, subtract, shift, n_sp, m_zero, d_sp, suffix
+gadget cpa_\opname\()_\shift\()_\suffix
+	ldr x8, [_stream], #8
+	.if !\n_sp
+	ubfx w10, w8, #8, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x17, x10, lsl #3]
+	.else
+	ldr x12, [_cpu, #UML_GADGET_CPU_SP]
+	.endif
+	.if !\m_zero
+	ubfx w11, w8, #16, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x13, [x17, x11, lsl #3]
+	.else
+	mov x13, xzr
+	.endif
+	lsl x13, x13, #\shift
+	.if \subtract
+	sub x14, x12, x13
+	.else
+	add x14, x12, x13
+	.endif
+
+	eor x15, x14, x12
+	lsr x15, x15, #56
+	cmp x15, #0
+	cset w15, ne
+	eor x16, x12, x12, lsr #1
+	ubfx x16, x16, #54, #1
+	orr w15, w15, w16
+	ldrb w16, [_cpu, #UML_GADGET_CPU_CPA_ENABLED]
+	tst w15, w16
+	mov x17, x14
+	lsr x16, x12, #55
+	bfi x17, x16, #55, #9
+	eor x16, x16, #1
+	bfi x17, x16, #54, #1
+	csel x14, x17, x14, ne
+
+	.if \d_sp
+	str x14, [_cpu, #UML_GADGET_CPU_SP]
+	.else
+	and w9, w8, #0x1f
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	str x14, [x17, x9, lsl #3]
+	.endif
+	next_gadget
+.endm
+
+.macro cpa_pointer_modes opname, subtract, shift
+cpa_pointer \opname, \subtract, \shift, 0, 0, 0, rrr
+cpa_pointer \opname, \subtract, \shift, 0, 0, 1, rrs
+cpa_pointer \opname, \subtract, \shift, 0, 1, 0, rzr
+cpa_pointer \opname, \subtract, \shift, 0, 1, 1, rzs
+cpa_pointer \opname, \subtract, \shift, 1, 0, 0, srr
+cpa_pointer \opname, \subtract, \shift, 1, 0, 1, srs
+cpa_pointer \opname, \subtract, \shift, 1, 1, 0, szr
+cpa_pointer \opname, \subtract, \shift, 1, 1, 1, szs
+.endm
+
+.macro cpa_pointer_shifts opname, subtract
+cpa_pointer_modes \opname, \subtract, 0
+cpa_pointer_modes \opname, \subtract, 1
+cpa_pointer_modes \opname, \subtract, 2
+cpa_pointer_modes \opname, \subtract, 3
+cpa_pointer_modes \opname, \subtract, 4
+cpa_pointer_modes \opname, \subtract, 5
+cpa_pointer_modes \opname, \subtract, 6
+cpa_pointer_modes \opname, \subtract, 7
+.endm
+
+cpa_pointer_shifts addpt, 0
+cpa_pointer_shifts subpt, 1
+
+/* FEAT_CPA MADDPT/MSUBPT. All XZR source and discard-destination choices are
+ * translation-time specializations. MUL+SMULH detect signed product overflow;
+ * the independent CPTA/CPTM controls are combined without a hot-path branch.
+ * Stream operand packs Rd, Rn, Rm, and Ra into byte lanes 0..3.
+ */
+.macro cpa_multiply opname, subtract, n_zero, m_zero, a_zero, d_zero, suffix
+gadget cpa_\opname\()_\suffix
+	.if \d_zero
+	ldr x8, [_stream], #8
+	next_gadget
+	.else
+	ldr x8, [_stream], #8
+	.if !\a_zero
+	ubfx w10, w8, #24, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x17, x10, lsl #3]
+	.else
+	mov x12, xzr
+	.endif
+
+	.if \n_zero || \m_zero
+	mov x14, xzr
+	mov w6, wzr
+	.else
+	ubfx w10, w8, #8, #5
+	ubfx w11, w8, #16, #5
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	ldr x13, [x17, x10, lsl #3]
+	ldr x11, [x17, x11, lsl #3]
+	mul x14, x13, x11
+	smulh x6, x13, x11
+	asr x7, x14, #63
+	cmp x6, x7
+	cset w6, ne
+	.endif
+
+	.if \subtract
+	sub x14, x12, x14
+	.else
+	add x14, x12, x14
+	.endif
+
+	eor x15, x14, x12
+	lsr x15, x15, #56
+	cmp x15, #0
+	cset w15, ne
+	eor x16, x12, x12, lsr #1
+	ubfx x16, x16, #54, #1
+	orr w15, w15, w16
+	ldrb w16, [_cpu, #UML_GADGET_CPU_CPA_ENABLED]
+	and w15, w15, w16
+	ldrb w16, [_cpu, #UML_GADGET_CPU_CPA_MULTIPLY_ENABLED]
+	and w6, w6, w16
+	orr w15, w15, w6
+	tst w15, w15
+	mov x17, x14
+	lsr x16, x12, #55
+	bfi x17, x16, #55, #9
+	eor x16, x16, #1
+	bfi x17, x16, #54, #1
+	csel x14, x17, x14, ne
+
+	and w9, w8, #0x1f
+	add x17, _cpu, #UML_GADGET_CPU_X0
+	str x14, [x17, x9, lsl #3]
+	next_gadget
+	.endif
+.endm
+
+.macro cpa_multiply_modes opname, subtract
+cpa_multiply \opname, \subtract, 0, 0, 0, 0, rrrr
+cpa_multiply \opname, \subtract, 0, 0, 0, 1, rrrz
+cpa_multiply \opname, \subtract, 0, 0, 1, 0, rrzr
+cpa_multiply \opname, \subtract, 0, 0, 1, 1, rrzz
+cpa_multiply \opname, \subtract, 0, 1, 0, 0, rzrr
+cpa_multiply \opname, \subtract, 0, 1, 0, 1, rzrz
+cpa_multiply \opname, \subtract, 0, 1, 1, 0, rzzr
+cpa_multiply \opname, \subtract, 0, 1, 1, 1, rzzz
+cpa_multiply \opname, \subtract, 1, 0, 0, 0, zrrr
+cpa_multiply \opname, \subtract, 1, 0, 0, 1, zrrz
+cpa_multiply \opname, \subtract, 1, 0, 1, 0, zrzr
+cpa_multiply \opname, \subtract, 1, 0, 1, 1, zrzz
+cpa_multiply \opname, \subtract, 1, 1, 0, 0, zzrr
+cpa_multiply \opname, \subtract, 1, 1, 0, 1, zzrz
+cpa_multiply \opname, \subtract, 1, 1, 1, 0, zzzr
+cpa_multiply \opname, \subtract, 1, 1, 1, 1, zzzz
+.endm
+
+cpa_multiply_modes maddpt, 0
+cpa_multiply_modes msubpt, 1
+
+/* Production multiply family. The validated operation and every XZR choice
+ * are translation-selected; the old unused PC stream word is gone. Stream:
+ * destination, left, right, addend CpuState byte offsets in 16-bit fields. */
+.macro multiply_add_fast operation, left_zero, right_zero, addend_zero, destination_zero, suffix
+gadget multiply_add_\suffix
+	ldr x8, [_stream], #8
+	.if \left_zero
+	mov x15, xzr
+	.else
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	.endif
+	.if \right_zero
+	mov x16, xzr
+	.else
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.endif
+	.if \operation < 8
+		.if \addend_zero
+	mov x17, xzr
+		.else
+	ubfx x12, x8, #48, #16
+	ldr x17, [_cpu, x12]
+		.endif
+	.endif
+	.if \operation == 0
 	madd w7, w15, w16, w17
-	b multiply_store
-multiply_subtract32:
+	.elseif \operation == 1
 	msub w7, w15, w16, w17
-	b multiply_store
-multiply_regular64:
-	tbnz x8, #15, multiply_subtract64
+	.elseif \operation == 2
 	madd x7, x15, x16, x17
-	b multiply_store
-multiply_subtract64:
+	.elseif \operation == 3
 	msub x7, x15, x16, x17
-multiply_store:
-	cmp w9, #31
-	b.eq multiply_done
-	str x7, [x14, x9, lsl #3]
-multiply_done:
-	add _stream, _stream, #8
+	.elseif \operation == 4
+	smaddl x7, w15, w16, x17
+	.elseif \operation == 5
+	smsubl x7, w15, w16, x17
+	.elseif \operation == 6
+	umaddl x7, w15, w16, x17
+	.elseif \operation == 7
+	umsubl x7, w15, w16, x17
+	.elseif \operation == 8
+	smulh x7, x15, x16
+	.else
+	umulh x7, x15, x16
+	.endif
+	.if !\destination_zero
+	and x9, x8, #0xffff
+	str x7, [_cpu, x9]
+	.endif
 	next_gadget
+.endm
+.macro multiply_destinations operation, left_zero, right_zero, addend_zero, prefix
+multiply_add_fast \operation, \left_zero, \right_zero, \addend_zero, 0, \prefix\()_r
+multiply_add_fast \operation, \left_zero, \right_zero, \addend_zero, 1, \prefix\()_z
+.endm
+.macro multiply_addends operation, left_zero, right_zero, prefix
+multiply_destinations \operation, \left_zero, \right_zero, 0, \prefix\()_r
+multiply_destinations \operation, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro multiply_sources operation, prefix
+multiply_addends \operation, 0, 0, \prefix\()_rr
+multiply_addends \operation, 0, 1, \prefix\()_rz
+multiply_addends \operation, 1, 0, \prefix\()_zr
+multiply_addends \operation, 1, 1, \prefix\()_zz
+.endm
 
-/* LSLV/LSRV/ASRV/RORV. */
-gadget variable_shift
+multiply_sources 0, w_madd
+multiply_sources 1, w_msub
+multiply_sources 2, x_madd
+multiply_sources 3, x_msub
+multiply_sources 4, smaddl
+multiply_sources 5, smsubl
+multiply_sources 6, umaddl
+multiply_sources 7, umsubl
+multiply_sources 8, smulh
+multiply_sources 9, umulh
+
+.purgem multiply_sources
+.purgem multiply_addends
+.purgem multiply_destinations
+.purgem multiply_add_fast
+
+/* Translation-selected LSLV/LSRV/ASRV/RORV. */
+.macro variable_shift_fast operation, bits64, left_zero, right_zero, destination_zero, suffix
+gadget variable_shift_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #10, #2
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	cmp w10, #31
-	b.eq variable_shift_zero_value
+	.if \left_zero
+	mov x15, xzr
+	.else
+	ubfx w10, w8, #8, #5
 	ldr x15, [x13, x10, lsl #3]
-	b variable_shift_value_ready
-variable_shift_zero_value:
-	mov x15, xzr
-variable_shift_value_ready:
-	cmp w11, #31
-	b.eq variable_shift_zero_amount
+	.endif
+	.if \right_zero
+	mov x16, xzr
+	.else
+	ubfx w11, w8, #16, #5
 	ldr x16, [x13, x11, lsl #3]
-	b variable_shift_amount_ready
-variable_shift_zero_amount:
-	mov x16, xzr
-variable_shift_amount_ready:
-	tbz x8, #31, variable_shift_32
-	cmp w12, #0
-	b.eq variable_shift_left64
-	cmp w12, #1
-	b.eq variable_shift_right64
-	cmp w12, #2
-	b.eq variable_shift_arithmetic64
-	ror x7, x15, x16
-	b variable_shift_store
-variable_shift_left64:
+	.endif
+	.if \bits64
+		.if \operation == 0
 	lsl x7, x15, x16
-	b variable_shift_store
-variable_shift_right64:
+		.elseif \operation == 1
 	lsr x7, x15, x16
-	b variable_shift_store
-variable_shift_arithmetic64:
+		.elseif \operation == 2
 	asr x7, x15, x16
-	b variable_shift_store
-variable_shift_32:
-	cmp w12, #0
-	b.eq variable_shift_left32
-	cmp w12, #1
-	b.eq variable_shift_right32
-	cmp w12, #2
-	b.eq variable_shift_arithmetic32
-	ror w7, w15, w16
-	b variable_shift_store
-variable_shift_left32:
+		.else
+	ror x7, x15, x16
+		.endif
+	.else
+		.if \operation == 0
 	lsl w7, w15, w16
-	b variable_shift_store
-variable_shift_right32:
+		.elseif \operation == 1
 	lsr w7, w15, w16
-	b variable_shift_store
-variable_shift_arithmetic32:
+		.elseif \operation == 2
 	asr w7, w15, w16
-variable_shift_store:
-	cmp w9, #31
-	b.eq variable_shift_done
+		.else
+	ror w7, w15, w16
+		.endif
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	str x7, [x13, x9, lsl #3]
-variable_shift_done:
+	.endif
 	next_gadget
+.endm
 
-/* UDIV/SDIV have the same defined zero-divisor and signed-overflow behavior
- * on the guest and host A64 architectures. */
-gadget divide
+.macro variable_shift_destinations operation, bits64, left_zero, right_zero, prefix
+variable_shift_fast \operation, \bits64, \left_zero, \right_zero, 0, \prefix\()_r
+variable_shift_fast \operation, \bits64, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro variable_shift_sources operation, bits64, prefix
+variable_shift_destinations \operation, \bits64, 0, 0, \prefix\()_rr
+variable_shift_destinations \operation, \bits64, 0, 1, \prefix\()_rz
+variable_shift_destinations \operation, \bits64, 1, 0, \prefix\()_zr
+variable_shift_destinations \operation, \bits64, 1, 1, \prefix\()_zz
+.endm
+
+variable_shift_sources 0, 0, w_lsl
+variable_shift_sources 1, 0, w_lsr
+variable_shift_sources 2, 0, w_asr
+variable_shift_sources 3, 0, w_ror
+variable_shift_sources 0, 1, x_lsl
+variable_shift_sources 1, 1, x_lsr
+variable_shift_sources 2, 1, x_asr
+variable_shift_sources 3, 1, x_ror
+
+.purgem variable_shift_sources
+.purgem variable_shift_destinations
+.purgem variable_shift_fast
+
+/* Translation-selected UDIV/SDIV. Host A64 already implements the guest's
+ * zero-divisor and signed-overflow results without a conditional branch. */
+.macro divide_fast signed, bits64, left_zero, right_zero, destination_zero, suffix
+gadget divide_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
 	add x12, _cpu, #UML_GADGET_CPU_X0
-	cmp w10, #31
-	b.eq divide_zero_left
-	ldr x15, [x12, x10, lsl #3]
-	b divide_left_ready
-divide_zero_left:
+	.if \left_zero
 	mov x15, xzr
-divide_left_ready:
-	cmp w11, #31
-	b.eq divide_zero_right
-	ldr x16, [x12, x11, lsl #3]
-	b divide_right_ready
-divide_zero_right:
+	.else
+	ubfx w10, w8, #8, #5
+	ldr x15, [x12, x10, lsl #3]
+	.endif
+	.if \right_zero
 	mov x16, xzr
-divide_right_ready:
-	tbz x8, #31, divide_32
-	tbnz x8, #10, divide_signed64
-	udiv x7, x15, x16
-	b divide_store
-divide_signed64:
+	.else
+	ubfx w11, w8, #16, #5
+	ldr x16, [x12, x11, lsl #3]
+	.endif
+	.if \bits64
+		.if \signed
 	sdiv x7, x15, x16
-	b divide_store
-divide_32:
-	tbnz x8, #10, divide_signed32
-	udiv w7, w15, w16
-	b divide_store
-divide_signed32:
+		.else
+	udiv x7, x15, x16
+		.endif
+	.else
+		.if \signed
 	sdiv w7, w15, w16
-divide_store:
-	cmp w9, #31
-	b.eq divide_done
+		.else
+	udiv w7, w15, w16
+		.endif
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	str x7, [x12, x9, lsl #3]
-divide_done:
+	.endif
 	next_gadget
+.endm
+.macro divide_destinations signed, bits64, left_zero, right_zero, prefix
+divide_fast \signed, \bits64, \left_zero, \right_zero, 0, \prefix\()_r
+divide_fast \signed, \bits64, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro divide_sources signed, bits64, prefix
+divide_destinations \signed, \bits64, 0, 0, \prefix\()_rr
+divide_destinations \signed, \bits64, 0, 1, \prefix\()_rz
+divide_destinations \signed, \bits64, 1, 0, \prefix\()_zr
+divide_destinations \signed, \bits64, 1, 1, \prefix\()_zz
+.endm
 
-/* CRC32/CRC32C map one-for-one to the host CRC extension. */
-gadget crc32
+divide_sources 0, 0, w_u
+divide_sources 1, 0, w_s
+divide_sources 0, 1, x_u
+divide_sources 1, 1, x_s
+
+.purgem divide_sources
+.purgem divide_destinations
+.purgem divide_fast
+
+/* Translation-selected CRC32/CRC32C. */
+.macro crc32_fast operation, left_zero, right_zero, destination_zero, suffix
+gadget crc32_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #10, #3
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	cmp w10, #31
-	b.eq 1f
+	.if \left_zero
+	mov w14, wzr
+	.else
+	ubfx w10, w8, #8, #5
 	ldr x14, [x13, x10, lsl #3]
-	b 2f
-1:	mov w14, wzr
-2:	cmp w11, #31
-	b.eq 3f
+	.endif
+	.if \right_zero
+	mov x15, xzr
+	.else
+	ubfx w11, w8, #16, #5
 	ldr x15, [x13, x11, lsl #3]
-	b 4f
-3:	mov x15, xzr
-4:	cmp w12, #0
-	b.eq 5f
-	cmp w12, #1
-	b.eq 6f
-	cmp w12, #2
-	b.eq 7f
-	cmp w12, #3
-	b.eq 8f
-	cmp w12, #4
-	b.eq 9f
-	cmp w12, #5
-	b.eq 10f
-	cmp w12, #6
-	b.eq 11f
+	.endif
+	.if \operation == 0
+	crc32b w16, w14, w15
+	.elseif \operation == 1
+	crc32h w16, w14, w15
+	.elseif \operation == 2
+	crc32w w16, w14, w15
+	.elseif \operation == 3
+	crc32x w16, w14, x15
+	.elseif \operation == 4
+	crc32cb w16, w14, w15
+	.elseif \operation == 5
+	crc32ch w16, w14, w15
+	.elseif \operation == 6
+	crc32cw w16, w14, w15
+	.else
 	crc32cx w16, w14, x15
-	b 12f
-5:	crc32b w16, w14, w15
-	b 12f
-6:	crc32h w16, w14, w15
-	b 12f
-7:	crc32w w16, w14, w15
-	b 12f
-8:	crc32x w16, w14, x15
-	b 12f
-9:	crc32cb w16, w14, w15
-	b 12f
-10:	crc32ch w16, w14, w15
-	b 12f
-11:	crc32cw w16, w14, w15
-12:	cmp w9, #31
-	b.eq 13f
-	str x16, [x13, x9, lsl #3]
-13:	next_gadget
-
-/* EXTR/ROR use variable shifts so one gadget covers every immediate. */
-gadget extract_register
-	ldr x8, [_stream], #8
+	.endif
+	.if !\destination_zero
 	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #10, #6
+	str x16, [x13, x9, lsl #3]
+	.endif
+	next_gadget
+.endm
+.macro crc32_destinations operation, left_zero, right_zero, prefix
+crc32_fast \operation, \left_zero, \right_zero, 0, \prefix\()_r
+crc32_fast \operation, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro crc32_sources operation, prefix
+crc32_destinations \operation, 0, 0, \prefix\()_rr
+crc32_destinations \operation, 0, 1, \prefix\()_rz
+crc32_destinations \operation, 1, 0, \prefix\()_zr
+crc32_destinations \operation, 1, 1, \prefix\()_zz
+.endm
+
+crc32_sources 0, b
+crc32_sources 1, h
+crc32_sources 2, w
+crc32_sources 3, x
+crc32_sources 4, cb
+crc32_sources 5, ch
+crc32_sources 6, cw
+crc32_sources 7, cx
+
+.purgem crc32_sources
+.purgem crc32_destinations
+.purgem crc32_fast
+
+/* Translation-selected EXTR/ROR. Width, zero shift, and all XZR choices are
+ * fixed. Stream operand: Rd, Rn, Rm, shift in successive bytes. */
+.macro extract_register_fast bits64, shift_nonzero, left_zero, right_zero, destination_zero, suffix
+gadget extract_register_\suffix
+	ldr x8, [_stream], #8
 	add x13, _cpu, #UML_GADGET_CPU_X0
-	cmp w10, #31
-	b.eq 1f
+	.if \left_zero
+	mov x14, xzr
+	.else
+	ubfx w10, w8, #8, #5
 	ldr x14, [x13, x10, lsl #3]
-	b 2f
-1:	mov x14, xzr
-2:	cmp w11, #31
-	b.eq 3f
+	.endif
+	.if \right_zero
+	mov x15, xzr
+	.else
+	ubfx w11, w8, #16, #5
 	ldr x15, [x13, x11, lsl #3]
-	b 4f
-3:	mov x15, xzr
-4:	tbz x8, #31, 7f
-	cbz w12, 5f
+	.endif
+	.if \shift_nonzero
+	ubfx w12, w8, #24, #6
+		.if \bits64
 	lsr x16, x15, x12
 	mov w17, #64
 	sub w17, w17, w12
 	lsl x17, x14, x17
 	orr x16, x16, x17
-	b 8f
-5:	mov x16, x15
-	b 8f
-7:	cbz w12, 6f
+		.else
 	lsr w16, w15, w12
 	mov w17, #32
 	sub w17, w17, w12
 	lsl w17, w14, w17
 	orr w16, w16, w17
-	b 8f
-6:	mov w16, w15
-8:	cmp w9, #31
-	b.eq 9f
+		.endif
+	.else
+		.if \bits64
+	mov x16, x15
+		.else
+	mov w16, w15
+		.endif
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	str x16, [x13, x9, lsl #3]
-9:	next_gadget
-
-/* CSEL/CSINC/CSINV/CSNEG. The inline operand is the guest instruction. */
-gadget conditional_select
-	ldr x19, [_stream], #8
-	ubfx w20, w19, #5, #5
-	ubfx w21, w19, #16, #5
-	and w22, w19, #0x1f
-	ubfx w23, w19, #12, #4
-	stp x1, x2, [sp, #-16]!
-	ldr w0, [_cpu, #UML_GADGET_CPU_NZCV]
-	mov w1, w23
-	bl NAME(uml_arm64_gadget_condition_holds)
-	ldp x1, x2, [sp], #16
-	cbz w0, conditional_select_false
-	cmp w20, #31
-	b.eq conditional_select_zero
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	ldr x7, [x8, x20, lsl #3]
-	b conditional_select_width
-conditional_select_false:
-	cmp w21, #31
-	b.eq conditional_select_zero_false
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	ldr x7, [x8, x21, lsl #3]
-	b conditional_select_transform
-conditional_select_zero_false:
-	mov x7, xzr
-conditional_select_transform:
-	tbnz x19, #30, conditional_select_invert
-	tbz x19, #10, conditional_select_width
-	add x7, x7, #1
-	b conditional_select_width
-conditional_select_invert:
-	tbz x19, #10, conditional_select_complement
-	neg x7, x7
-	b conditional_select_width
-conditional_select_complement:
-	mvn x7, x7
-	b conditional_select_width
-conditional_select_zero:
-	mov x7, xzr
-conditional_select_width:
-	tbnz x19, #31, conditional_select_store
-	mov w7, w7
-conditional_select_store:
-	cmp w22, #31
-	b.eq conditional_select_done
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	str x7, [x8, x22, lsl #3]
-conditional_select_done:
+	.endif
 	next_gadget
+.endm
+.macro extract_destinations bits64, shift_nonzero, left_zero, right_zero, prefix
+extract_register_fast \bits64, \shift_nonzero, \left_zero, \right_zero, 0, \prefix\()_r
+extract_register_fast \bits64, \shift_nonzero, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro extract_sources bits64, shift_nonzero, prefix
+extract_destinations \bits64, \shift_nonzero, 0, 0, \prefix\()_rr
+extract_destinations \bits64, \shift_nonzero, 0, 1, \prefix\()_rz
+extract_destinations \bits64, \shift_nonzero, 1, 0, \prefix\()_zr
+extract_destinations \bits64, \shift_nonzero, 1, 1, \prefix\()_zz
+.endm
 
-/* CCMN/CCMP. The builder fixes the condition so the host evaluates it from
- * the guest NZCV without calling back into C++. Operand: guest instruction. */
-.macro conditional_compare name, condition
-gadget conditional_compare_\name
+extract_sources 0, 0, w_n
+extract_sources 0, 1, w_s
+extract_sources 1, 0, x_n
+extract_sources 1, 1, x_s
+
+.purgem extract_sources
+.purgem extract_destinations
+.purgem extract_register_fast
+
+/* Production CSEL/CSINC/CSINV/CSNEG use the native conditional-select family
+ * directly. Builder maps XZR sources to CpuState::gadget_zero and discards an
+ * XZR destination as NOP, so no opcode/register-mode branches remain. */
+.macro conditional_select_fast name, condition, operation, bits64, suffix
+gadget conditional_select_fast_\name\()_\suffix
+	ldr x8, [_stream], #8
+	ubfx x9, x8, #0, #16
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr x15, [_cpu, x10]
+	ldr x16, [_cpu, x11]
+	ldr w12, [_cpu, #UML_GADGET_CPU_NZCV]
+	msr nzcv, x12
+	.if \bits64
+		.if \operation == 0
+	csel x7, x15, x16, \condition
+		.elseif \operation == 1
+	csinc x7, x15, x16, \condition
+		.elseif \operation == 2
+	csinv x7, x15, x16, \condition
+		.else
+	csneg x7, x15, x16, \condition
+		.endif
+	.else
+		.if \operation == 0
+	csel w7, w15, w16, \condition
+		.elseif \operation == 1
+	csinc w7, w15, w16, \condition
+		.elseif \operation == 2
+	csinv w7, w15, w16, \condition
+		.else
+	csneg w7, w15, w16, \condition
+		.endif
+	.endif
+	str x7, [_cpu, x9]
+	next_gadget
+.endm
+.macro conditional_select_fast_modes name, condition
+conditional_select_fast \name, \condition, 0, 0, w_sel
+conditional_select_fast \name, \condition, 0, 1, x_sel
+conditional_select_fast \name, \condition, 1, 0, w_inc
+conditional_select_fast \name, \condition, 1, 1, x_inc
+conditional_select_fast \name, \condition, 2, 0, w_inv
+conditional_select_fast \name, \condition, 2, 1, x_inv
+conditional_select_fast \name, \condition, 3, 0, w_neg
+conditional_select_fast \name, \condition, 3, 1, x_neg
+.endm
+
+conditional_select_fast_modes eq, eq
+conditional_select_fast_modes ne, ne
+conditional_select_fast_modes hs, hs
+conditional_select_fast_modes lo, lo
+conditional_select_fast_modes mi, mi
+conditional_select_fast_modes pl, pl
+conditional_select_fast_modes vs, vs
+conditional_select_fast_modes vc, vc
+conditional_select_fast_modes hi, hi
+conditional_select_fast_modes ls, ls
+conditional_select_fast_modes ge, ge
+conditional_select_fast_modes lt, lt
+conditional_select_fast_modes gt, gt
+conditional_select_fast_modes le, le
+conditional_select_fast_modes always, al
+
+.purgem conditional_select_fast_modes
+.purgem conditional_select_fast
+
+/* Production CCMN/CCMP. The sole conditional branch is the architectural
+ * condition itself; width, add/subtract, immediate/register and XZR selection
+ * are fixed at translation. Stream: left offset, right offset/immediate, NZCV. */
+.macro conditional_compare_fast name, condition, subtract, bits64, immediate, suffix
+gadget conditional_compare_fast_\name\()_\suffix
 	ldr x8, [_stream], #8
 	ldr w9, [_cpu, #UML_GADGET_CPU_NZCV]
 	msr nzcv, x9
-	b.\condition 1f
-	and w9, w8, #0xf
+	b.\condition .Lconditional_compare_true\@
+	ubfx x9, x8, #32, #4
 	lsl w9, w9, #28
 	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
-	b 6f
-1:	ubfx w9, w8, #5, #5
-	ubfx w10, w8, #16, #5
-	add x11, _cpu, #UML_GADGET_CPU_X0
-	cmp w9, #31
-	b.eq 2f
-	ldr x12, [x11, x9, lsl #3]
-	b 3f
-2:	mov x12, xzr
-3:	tbz x8, #11, 4f
-	mov x13, x10
-	b 5f
-4:	cmp w10, #31
-	b.eq 7f
-	ldr x13, [x11, x10, lsl #3]
-	b 5f
-7:	mov x13, xzr
-5:	tbz x8, #31, 8f
-	tbnz x8, #30, 9f
+	next_gadget
+.Lconditional_compare_true\@:
+	ubfx x10, x8, #0, #16
+	ldr x12, [_cpu, x10]
+	.if \immediate
+	ubfx x13, x8, #16, #5
+	.else
+	ubfx x11, x8, #16, #16
+	ldr x13, [_cpu, x11]
+	.endif
+	.if \bits64
+		.if \subtract
+	cmp x12, x13
+		.else
 	cmn x12, x13
-	b 10f
-9:	cmp x12, x13
-	b 10f
-8:	tbnz x8, #30, 11f
+		.endif
+	.else
+		.if \subtract
+	cmp w12, w13
+		.else
 	cmn w12, w13
-	b 10f
-11:	cmp w12, w13
-10:	mrs x9, nzcv
+		.endif
+	.endif
+	mrs x9, nzcv
 	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
-6:	next_gadget
+	next_gadget
+.endm
+.macro conditional_compare_fast_modes name, condition
+conditional_compare_fast \name, \condition, 0, 0, 0, w_cmn_r
+conditional_compare_fast \name, \condition, 0, 0, 1, w_cmn_i
+conditional_compare_fast \name, \condition, 0, 1, 0, x_cmn_r
+conditional_compare_fast \name, \condition, 0, 1, 1, x_cmn_i
+conditional_compare_fast \name, \condition, 1, 0, 0, w_cmp_r
+conditional_compare_fast \name, \condition, 1, 0, 1, w_cmp_i
+conditional_compare_fast \name, \condition, 1, 1, 0, x_cmp_r
+conditional_compare_fast \name, \condition, 1, 1, 1, x_cmp_i
 .endm
 
-conditional_compare eq, eq
-conditional_compare ne, ne
-conditional_compare hs, hs
-conditional_compare lo, lo
-conditional_compare mi, mi
-conditional_compare pl, pl
-conditional_compare vs, vs
-conditional_compare vc, vc
-conditional_compare hi, hi
-conditional_compare ls, ls
-conditional_compare ge, ge
-conditional_compare lt, lt
-conditional_compare gt, gt
-conditional_compare le, le
-conditional_compare always, al
+conditional_compare_fast_modes eq, eq
+conditional_compare_fast_modes ne, ne
+conditional_compare_fast_modes hs, hs
+conditional_compare_fast_modes lo, lo
+conditional_compare_fast_modes mi, mi
+conditional_compare_fast_modes pl, pl
+conditional_compare_fast_modes vs, vs
+conditional_compare_fast_modes vc, vc
+conditional_compare_fast_modes hi, hi
+conditional_compare_fast_modes ls, ls
+conditional_compare_fast_modes ge, ge
+conditional_compare_fast_modes lt, lt
+conditional_compare_fast_modes gt, gt
+conditional_compare_fast_modes le, le
+conditional_compare_fast_modes always, al
 
-/* AND/BIC/ORR/ORN/EOR/EON/ANDS/BICS (shifted register). */
-gadget logical_shifted
+.purgem conditional_compare_fast_modes
+.purgem conditional_compare_fast
+
+/* Production logical shifted-register entries.  Builder specializes width,
+ * operation, inversion, shift kind (including the common no-shift form), and
+ * every XZR choice. Stream: Rd, Rn, Rm, shift in successive bytes. */
+.macro logical_shifted_fast operation, bits64, invert, shift_kind, left_zero, right_zero, destination_zero, suffix
+gadget logical_shifted_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #31, #1
-	ubfx w13, w8, #29, #2
-
-	cmp w10, #31
-	b.eq logical_zero_rn
 	add x14, _cpu, #UML_GADGET_CPU_X0
-	ldr x15, [x14, x10, lsl #3]
-	b logical_rn_ready
-logical_zero_rn:
+	.if \left_zero
 	mov x15, xzr
-logical_rn_ready:
-	cmp w11, #31
-	b.eq logical_zero_rm
-	add x14, _cpu, #UML_GADGET_CPU_X0
-	ldr x16, [x14, x11, lsl #3]
-	b logical_rm_ready
-logical_zero_rm:
+	.else
+	ubfx w10, w8, #8, #5
+	ldr x15, [x14, x10, lsl #3]
+	.endif
+	.if \right_zero
 	mov x16, xzr
-logical_rm_ready:
-	ubfx w17, w8, #22, #2
-	ubfx w6, w8, #10, #6
-	cbz w6, logical_shift_ready
-	cbz w12, logical_shift32
-	cmp w17, #0
-	b.eq logical_lsl64
-	cmp w17, #1
-	b.eq logical_lsr64
-	cmp w17, #2
-	b.eq logical_asr64
-	ror x16, x16, x6
-	b logical_shift_ready
-logical_lsl64:
+	.else
+	ubfx w11, w8, #16, #5
+	ldr x16, [x14, x11, lsl #3]
+	.endif
+	.if \shift_kind != 0
+	ubfx w6, w8, #24, #6
+		.if \bits64
+			.if \shift_kind == 1
 	lsl x16, x16, x6
-	b logical_shift_ready
-logical_lsr64:
+			.elseif \shift_kind == 2
 	lsr x16, x16, x6
-	b logical_shift_ready
-logical_asr64:
+			.elseif \shift_kind == 3
 	asr x16, x16, x6
-	b logical_shift_ready
-logical_shift32:
-	cmp w17, #0
-	b.eq logical_lsl32
-	cmp w17, #1
-	b.eq logical_lsr32
-	cmp w17, #2
-	b.eq logical_asr32
-	ror w16, w16, w6
-	b logical_shift_ready
-logical_lsl32:
+			.else
+	ror x16, x16, x6
+			.endif
+		.else
+			.if \shift_kind == 1
 	lsl w16, w16, w6
-	b logical_shift_ready
-logical_lsr32:
+			.elseif \shift_kind == 2
 	lsr w16, w16, w6
-	b logical_shift_ready
-logical_asr32:
+			.elseif \shift_kind == 3
 	asr w16, w16, w6
-
-logical_shift_ready:
-	tbz x8, #21, logical_operand_ready
+			.else
+	ror w16, w16, w6
+			.endif
+		.endif
+	.endif
+	.if \invert
 	mvn x16, x16
-logical_operand_ready:
-	cbz w12, logical_operation32
-	cmp w13, #1
-	b.eq logical_orr64
-	cmp w13, #2
-	b.eq logical_eor64
-	cmp w13, #3
-	b.eq logical_ands64
+	.endif
+	.if \bits64
+		.if \operation == 0
 	and x7, x15, x16
-	b logical_store
-logical_orr64:
+		.elseif \operation == 1
 	orr x7, x15, x16
-	b logical_store
-logical_eor64:
+		.elseif \operation == 2
 	eor x7, x15, x16
-	b logical_store
-logical_ands64:
+		.else
 	ands x7, x15, x16
-	b logical_save_flags
-
-logical_operation32:
-	cmp w13, #1
-	b.eq logical_orr32
-	cmp w13, #2
-	b.eq logical_eor32
-	cmp w13, #3
-	b.eq logical_ands32
+		.endif
+	.else
+		.if \operation == 0
 	and w7, w15, w16
-	b logical_store
-logical_orr32:
+		.elseif \operation == 1
 	orr w7, w15, w16
-	b logical_store
-logical_eor32:
+		.elseif \operation == 2
 	eor w7, w15, w16
-	b logical_store
-logical_ands32:
+		.else
 	ands w7, w15, w16
-
-logical_save_flags:
+		.endif
+	.endif
+	.if \operation == 3
 	mrs x14, nzcv
 	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
-logical_store:
-	cmp w9, #31
-	b.eq logical_done
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	add x14, _cpu, #UML_GADGET_CPU_X0
 	str x7, [x14, x9, lsl #3]
-logical_done:
+	.endif
 	next_gadget
+.endm
+.macro logical_shifted_destinations operation, bits64, invert, shift_kind, left_zero, right_zero, prefix
+logical_shifted_fast \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, 0, \prefix\()_r
+logical_shifted_fast \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, 1, \prefix\()_z
+.endm
+.macro logical_shifted_sources operation, bits64, invert, shift_kind, prefix
+logical_shifted_destinations \operation, \bits64, \invert, \shift_kind, 0, 0, \prefix\()_rr
+logical_shifted_destinations \operation, \bits64, \invert, \shift_kind, 0, 1, \prefix\()_rz
+logical_shifted_destinations \operation, \bits64, \invert, \shift_kind, 1, 0, \prefix\()_zr
+logical_shifted_destinations \operation, \bits64, \invert, \shift_kind, 1, 1, \prefix\()_zz
+.endm
+.macro logical_shifted_shifts operation, bits64, invert, prefix
+logical_shifted_sources \operation, \bits64, \invert, 0, \prefix\()_n
+logical_shifted_sources \operation, \bits64, \invert, 1, \prefix\()_l
+logical_shifted_sources \operation, \bits64, \invert, 2, \prefix\()_r
+logical_shifted_sources \operation, \bits64, \invert, 3, \prefix\()_a
+logical_shifted_sources \operation, \bits64, \invert, 4, \prefix\()_o
+.endm
 
-/* Logical (immediate). The second operand was decoded by the C++ builder,
- * avoiding any runtime instruction generation while keeping this hot path
- * entirely in precompiled assembly.
- */
-gadget logical_immediate
+logical_shifted_shifts 0, 0, 0, w_and_p
+logical_shifted_shifts 0, 0, 1, w_and_n
+logical_shifted_shifts 1, 0, 0, w_orr_p
+logical_shifted_shifts 1, 0, 1, w_orr_n
+logical_shifted_shifts 2, 0, 0, w_eor_p
+logical_shifted_shifts 2, 0, 1, w_eor_n
+logical_shifted_shifts 3, 0, 0, w_ands_p
+logical_shifted_shifts 3, 0, 1, w_ands_n
+logical_shifted_shifts 0, 1, 0, x_and_p
+logical_shifted_shifts 0, 1, 1, x_and_n
+logical_shifted_shifts 1, 1, 0, x_orr_p
+logical_shifted_shifts 1, 1, 1, x_orr_n
+logical_shifted_shifts 2, 1, 0, x_eor_p
+logical_shifted_shifts 2, 1, 1, x_eor_n
+logical_shifted_shifts 3, 1, 0, x_ands_p
+logical_shifted_shifts 3, 1, 1, x_ands_n
+
+.purgem logical_shifted_shifts
+.purgem logical_shifted_sources
+.purgem logical_shifted_destinations
+.purgem logical_shifted_fast
+
+/* Production logical-immediate entries.  The immediate is decoded once by
+ * Builder; width, operation, XZR/SP meanings and flag update are entry-point
+ * constants. Stream: [Rd[4:0], Rn[12:8]][decoded immediate]. */
+.macro logical_immediate_fast operation, bits64, source_zero, destination_special, suffix
+gadget logical_immediate_\suffix
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
-	and x9, x8, #0x1f
-	ubfx x10, x8, #5, #5
-	ubfx x11, x8, #29, #2
-	cmp x10, #31
-	b.eq 1f
+	.if \source_zero
+	mov x15, xzr
+	.else
+	ubfx w10, w8, #8, #5
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x15, [x12, x10, lsl #3]
-	b 2f
-1:	mov x15, xzr
-2:	cmp x11, #1
-	b.eq 4f
-	cmp x11, #2
-	b.eq 5f
-	cmp x11, #3
-	b.eq 6f
+	.endif
+	.if \bits64
+		.if \operation == 0
 	and x16, x15, x14
-	b 7f
-4:	orr x16, x15, x14
-	b 7f
-5:	eor x16, x15, x14
-	b 7f
-6:	tbz x8, #31, 10f
+		.elseif \operation == 1
+	orr x16, x15, x14
+		.elseif \operation == 2
+	eor x16, x15, x14
+		.else
 	ands x16, x15, x14
-	b 11f
-10:	ands w16, w15, w14
-11:	mrs x17, nzcv
+		.endif
+	.else
+		.if \operation == 0
+	and w16, w15, w14
+		.elseif \operation == 1
+	orr w16, w15, w14
+		.elseif \operation == 2
+	eor w16, w15, w14
+		.else
+	ands w16, w15, w14
+		.endif
+	.endif
+	.if \operation == 3
+	mrs x17, nzcv
 	str w17, [_cpu, #UML_GADGET_CPU_NZCV]
-7:	tbnz x8, #31, 8f
-	mov w16, w16
-8:	cmp x9, #31
-	b.ne 12f
-	cmp x11, #3
-	b.eq 9f
+	.endif
+	.if \destination_special
+		.if \operation != 3
 	str x16, [_cpu, #UML_GADGET_CPU_SP]
-	b 9f
-12:	add x12, _cpu, #UML_GADGET_CPU_X0
+		.endif
+	.else
+	and w9, w8, #0x1f
+	add x12, _cpu, #UML_GADGET_CPU_X0
 	str x16, [x12, x9, lsl #3]
-9:	next_gadget
+	.endif
+	next_gadget
+.endm
+.macro logical_immediate_modes operation, bits64, prefix
+logical_immediate_fast \operation, \bits64, 0, 0, \prefix\()_rr
+logical_immediate_fast \operation, \bits64, 0, 1, \prefix\()_rs
+logical_immediate_fast \operation, \bits64, 1, 0, \prefix\()_zr
+logical_immediate_fast \operation, \bits64, 1, 1, \prefix\()_zs
+.endm
 
-/* SBFM/BFM/UBFM. The builder predecodes the architectural write and test
- * masks, leaving only the variable rotate and merge in the hot path.
- * Stream: [instruction][write mask][test mask].
- */
-gadget bitfield
+logical_immediate_modes 0, 0, w_and
+logical_immediate_modes 1, 0, w_orr
+logical_immediate_modes 2, 0, w_eor
+logical_immediate_modes 3, 0, w_ands
+logical_immediate_modes 0, 1, x_and
+logical_immediate_modes 1, 1, x_orr
+logical_immediate_modes 2, 1, x_eor
+logical_immediate_modes 3, 1, x_ands
+
+.purgem logical_immediate_modes
+.purgem logical_immediate_fast
+
+/* Production SBFM/BFM/UBFM. Builder has already decoded both masks, folds a
+ * discarded Rd to NOP, and selects width/operation/XZR/zero-rotate. Stream:
+ * [destination/source CpuState offsets, rotate, imms][write mask][test mask]. */
+.macro bitfield_fast operation, bits64, rotate_nonzero, source_zero, suffix
+gadget bitfield_\suffix
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
 	ldr x17, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #10, #6
-	ubfx w12, w8, #16, #6
-	ubfx w13, w8, #29, #2
-	cmp w10, #31
-	b.eq bitfield_zero_source
-	add x15, _cpu, #UML_GADGET_CPU_X0
-	ldr x15, [x15, x10, lsl #3]
-	b bitfield_source_ready
-bitfield_zero_source:
+	.if \source_zero
 	mov x15, xzr
-bitfield_source_ready:
-	tbnz x8, #31, bitfield_rotate64
-	ror w16, w15, w12
-	mov w16, w16
+	.else
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	.endif
+	.if !\bits64
 	mov w15, w15
-	b bitfield_rotated
-bitfield_rotate64:
+	.endif
+	.if \rotate_nonzero
+	ubfx x12, x8, #32, #6
+		.if \bits64
 	ror x16, x15, x12
-bitfield_rotated:
+		.else
+	ror w16, w15, w12
+		.endif
+	.else
+	mov x16, x15
+	.endif
 	and x16, x16, x14
-	cmp w13, #1
-	b.eq bitfield_merge
-	cmp w13, #0
-	b.ne bitfield_blend
-	/* Sign-fill the bits selected from the top value. */
+	.if \operation == 0
+	ubfx x11, x8, #40, #6
 	lsr x6, x15, x11
 	tst x6, #1
 	csetm x6, ne
-	b bitfield_blend_with_top
-bitfield_merge:
-	cmp w9, #31
-	b.eq bitfield_zero_destination
-	add x6, _cpu, #UML_GADGET_CPU_X0
-	ldr x6, [x6, x9, lsl #3]
-	b bitfield_destination_ready
-bitfield_zero_destination:
-	mov x6, xzr
-bitfield_destination_ready:
+	.elseif \operation == 1
+	and x9, x8, #0xffff
+	ldr x6, [_cpu, x9]
 	bic x7, x6, x14
 	orr x16, x16, x7
-	b bitfield_blend_with_top
-bitfield_blend:
+	.else
 	mov x6, xzr
-bitfield_blend_with_top:
+	.endif
 	bic x6, x6, x17
 	and x16, x16, x17
 	orr x16, x16, x6
-	tbnz x8, #31, bitfield_store
+	.if !\bits64
 	mov w16, w16
-bitfield_store:
-	cmp w9, #31
-	b.eq bitfield_done
-	add x7, _cpu, #UML_GADGET_CPU_X0
-	str x16, [x7, x9, lsl #3]
-bitfield_done:
+	.endif
+	and x9, x8, #0xffff
+	str x16, [_cpu, x9]
 	next_gadget
+.endm
+.macro bitfield_sources operation, bits64, prefix
+bitfield_fast \operation, \bits64, 0, 0, \prefix\()_n_r
+bitfield_fast \operation, \bits64, 0, 1, \prefix\()_n_z
+bitfield_fast \operation, \bits64, 1, 0, \prefix\()_r_r
+bitfield_fast \operation, \bits64, 1, 1, \prefix\()_r_z
+.endm
 
-/* RBIT/REV16/REV32/REV/CLZ/CLS map directly to native A64 operations. */
-gadget bit_reverse_count
+bitfield_sources 0, 0, w_s
+bitfield_sources 1, 0, w_b
+bitfield_sources 2, 0, w_u
+bitfield_sources 0, 1, x_s
+bitfield_sources 1, 1, x_b
+bitfield_sources 2, 1, x_u
+
+.purgem bitfield_sources
+.purgem bitfield_fast
+
+/* Translation-selected data-processing (1 source) operations. */
+.macro bit_reverse_count_fast operation, bits64, source_zero, destination_zero, suffix
+gadget bit_reverse_count_\suffix
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #5, #5
-	ubfx w11, w8, #10, #5
-	cmp w10, #31
-	b.eq bit_reverse_zero_source
-	add x12, _cpu, #UML_GADGET_CPU_X0
-	ldr x12, [x12, x10, lsl #3]
-	b bit_reverse_source_ready
-bit_reverse_zero_source:
+	.if \source_zero
 	mov x12, xzr
-bit_reverse_source_ready:
-	tbz x8, #31, bit_reverse_32
-	cmp w11, #0
-	b.eq bit_reverse_rbit64
-	cmp w11, #1
-	b.eq bit_reverse_rev16_64
-	cmp w11, #2
-	b.eq bit_reverse_rev32_64
-	cmp w11, #3
-	b.eq bit_reverse_rev64
-	cmp w11, #4
-	b.eq bit_reverse_clz64
-	cls x13, x12
-	b bit_reverse_store
-bit_reverse_rbit64:
+	.else
+	ubfx w10, w8, #8, #5
+	add x14, _cpu, #UML_GADGET_CPU_X0
+	ldr x12, [x14, x10, lsl #3]
+	.endif
+	.if \bits64
+		.if \operation == 0
 	rbit x13, x12
-	b bit_reverse_store
-bit_reverse_rev16_64:
+		.elseif \operation == 1
 	rev16 x13, x12
-	b bit_reverse_store
-bit_reverse_rev32_64:
+		.elseif \operation == 2
 	rev32 x13, x12
-	b bit_reverse_store
-bit_reverse_rev64:
+		.elseif \operation == 3
 	rev x13, x12
-	b bit_reverse_store
-bit_reverse_clz64:
+		.elseif \operation == 4
 	clz x13, x12
-	b bit_reverse_store
-bit_reverse_32:
-	cmp w11, #0
-	b.eq bit_reverse_rbit32
-	cmp w11, #1
-	b.eq bit_reverse_rev16_32
-	cmp w11, #2
-	b.eq bit_reverse_rev32
-	cmp w11, #4
-	b.eq bit_reverse_clz32
-	cls w13, w12
-	b bit_reverse_store
-bit_reverse_rbit32:
+		.elseif \operation == 5
+	cls x13, x12
+		.elseif \operation == 6
+	rbit x13, x12
+	clz x13, x13
+		.elseif \operation == 7
+	fmov d0, x12
+	cnt v0.8b, v0.8b
+	addv b0, v0.8b
+	umov w13, v0.b[0]
+		.else
+	cmp x12, #0
+	cneg x13, x12, mi
+		.endif
+	.else
+		.if \operation == 0
 	rbit w13, w12
-	b bit_reverse_store
-bit_reverse_rev16_32:
+		.elseif \operation == 1
 	rev16 w13, w12
-	b bit_reverse_store
-bit_reverse_rev32:
+		.elseif \operation == 2
 	rev w13, w12
-	b bit_reverse_store
-bit_reverse_clz32:
+		.elseif \operation == 4
 	clz w13, w12
-bit_reverse_store:
-	cmp w9, #31
-	b.eq bit_reverse_done
+		.elseif \operation == 5
+	cls w13, w12
+		.elseif \operation == 6
+	rbit w13, w12
+	clz w13, w13
+		.elseif \operation == 7
+	mov w12, w12
+	fmov d0, x12
+	cnt v0.8b, v0.8b
+	addv b0, v0.8b
+	umov w13, v0.b[0]
+		.else
+	cmp w12, #0
+	cneg w13, w12, mi
+		.endif
+	.endif
+	.if !\destination_zero
+	and w9, w8, #0x1f
 	add x14, _cpu, #UML_GADGET_CPU_X0
 	str x13, [x14, x9, lsl #3]
-bit_reverse_done:
+	.endif
 	next_gadget
+.endm
+.macro bit_reverse_count_modes operation, bits64, prefix
+bit_reverse_count_fast \operation, \bits64, 0, 0, \prefix\()_rr
+bit_reverse_count_fast \operation, \bits64, 0, 1, \prefix\()_rz
+bit_reverse_count_fast \operation, \bits64, 1, 0, \prefix\()_zr
+bit_reverse_count_fast \operation, \bits64, 1, 1, \prefix\()_zz
+.endm
+
+bit_reverse_count_modes 0, 0, w_rbit
+bit_reverse_count_modes 1, 0, w_rev16
+bit_reverse_count_modes 2, 0, w_rev
+bit_reverse_count_modes 4, 0, w_clz
+bit_reverse_count_modes 5, 0, w_cls
+bit_reverse_count_modes 6, 0, w_ctz
+bit_reverse_count_modes 7, 0, w_cnt
+bit_reverse_count_modes 8, 0, w_abs
+bit_reverse_count_modes 0, 1, x_rbit
+bit_reverse_count_modes 1, 1, x_rev16
+bit_reverse_count_modes 2, 1, x_rev32
+bit_reverse_count_modes 3, 1, x_rev
+bit_reverse_count_modes 4, 1, x_clz
+bit_reverse_count_modes 5, 1, x_cls
+bit_reverse_count_modes 6, 1, x_ctz
+bit_reverse_count_modes 7, 1, x_cnt
+bit_reverse_count_modes 8, 1, x_abs
+
+.purgem bit_reverse_count_modes
+.purgem bit_reverse_count_fast
+
+/* FEAT_PAuth strip operations are exact native host instructions. Translation
+ * resolves instruction/data and XZR cases, so ordinary execution is one
+ * register load, XPAC, and one register store. */
+.macro xpac_register name, instruction
+gadget \name
+	ldr x8, [_stream], #8
+	ldr x9, [_cpu, x8]
+	\instruction x9
+	str x9, [_cpu, x8]
+	next_gadget
+.endm
+
+xpac_register xpaci, xpaci
+xpac_register xpacd, xpacd
+
+.purgem xpac_register
+
+gadget xpaclri
+	ldr x30, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	xpaclri
+	str x30, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	next_gadget
+
+/* Classic FEAT_PAuth operations. Packed operands are direct CpuState byte
+ * offsets: destination in bits[15:0], modifier in bits[31:16]. The builder
+ * selects modifier-zero forms separately, avoiding an execution-time test. */
+.macro pauth_operation name, instruction, zero_instruction
+gadget pauth_\name\()_r
+	ldr x8, [_stream], #8
+	and w10, w8, #0xffff
+	ubfx w11, w8, #16, #16
+	ldr x9, [_cpu, x10]
+	ldr x12, [_cpu, x11]
+	\instruction x9, x12
+	str x9, [_cpu, x10]
+	next_gadget
+gadget pauth_\name\()_z
+	ldr x8, [_stream], #8
+	and w10, w8, #0xffff
+	ldr x9, [_cpu, x10]
+	\zero_instruction x9
+	str x9, [_cpu, x10]
+	next_gadget
+.endm
+
+pauth_operation pacia, pacia, paciza
+pauth_operation pacib, pacib, pacizb
+pauth_operation pacda, pacda, pacdza
+pauth_operation pacdb, pacdb, pacdzb
+pauth_operation autia, autia, autiza
+pauth_operation autib, autib, autizb
+pauth_operation autda, autda, autdza
+pauth_operation autdb, autdb, autdzb
+
+.purgem pauth_operation
+
+/* PACGA writes a fresh 64-bit result, so the destination need not be loaded.
+ * The builder separately selects the XZR first-source form and packs the
+ * remaining direct CpuState offsets into one stream word. */
+gadget pauth_pacga_r
+	ldr x8, [_stream], #8
+	and w10, w8, #0xffff
+	ubfx w11, w8, #16, #16
+	ubfx x12, x8, #32, #16
+	ldr x9, [_cpu, x11]
+	ldr x13, [_cpu, x12]
+	pacga x14, x9, x13
+	str x14, [_cpu, x10]
+	next_gadget
+
+gadget pauth_pacga_z
+	ldr x8, [_stream], #8
+	and w10, w8, #0xffff
+	ubfx x12, x8, #32, #16
+	ldr x13, [_cpu, x12]
+	pacga x14, xzr, x13
+	str x14, [_cpu, x10]
+	next_gadget
+
+/* Production FEAT_CSSC min/max. Width and immediate/register form are fixed;
+ * XZR sources use CpuState::gadget_zero and XZR destination is folded to NOP. */
+.macro integer_min_max_fast name, condition, is_signed, bits64, immediate, suffix
+gadget integer_\name\()_fast_\suffix
+	ldr x8, [_stream], #8
+	ubfx x9, x8, #0, #16
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr x12, [_cpu, x10]
+	.if \immediate
+	mov x13, x11
+		.if \is_signed
+	sxtb x13, w13
+		.endif
+	.else
+	ldr x13, [_cpu, x11]
+	.endif
+	.if \bits64
+	cmp x12, x13
+	csel x14, x12, x13, \condition
+	.else
+	cmp w12, w13
+	csel w14, w12, w13, \condition
+	.endif
+	str x14, [_cpu, x9]
+	next_gadget
+.endm
+.macro integer_min_max_fast_modes name, condition, is_signed
+integer_min_max_fast \name, \condition, \is_signed, 0, 0, w_r
+integer_min_max_fast \name, \condition, \is_signed, 0, 1, w_i
+integer_min_max_fast \name, \condition, \is_signed, 1, 0, x_r
+integer_min_max_fast \name, \condition, \is_signed, 1, 1, x_i
+.endm
+
+integer_min_max_fast_modes smax, ge, 1
+integer_min_max_fast_modes umax, hs, 0
+integer_min_max_fast_modes smin, le, 1
+integer_min_max_fast_modes umin, ls, 0
+
+.purgem integer_min_max_fast_modes
+.purgem integer_min_max_fast
+
+gadget cfinv
+	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	eor w8, w8, #0x20000000
+	str w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
+
+gadget axflag
+	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	ubfx w9, w8, #30, #1
+	ubfx w10, w8, #29, #1
+	ubfx w11, w8, #28, #1
+	orr w9, w9, w11
+	bic w10, w10, w11
+	lsl w9, w9, #30
+	orr w9, w9, w10, lsl #29
+	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
+
+gadget xaflag
+	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	ubfx w9, w8, #30, #1
+	ubfx w10, w8, #29, #1
+	orr w11, w9, w10
+	eor w12, w11, #1
+	and w13, w9, w10
+	bic w14, w9, w10
+	lsl w12, w12, #31
+	orr w12, w12, w13, lsl #30
+	orr w12, w12, w11, lsl #29
+	orr w12, w12, w14, lsl #28
+	str w12, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
+
+gadget rmif_fast
+	ldr x8, [_stream], #8
+	ubfx x9, x8, #0, #16
+	ldr x12, [_cpu, x9]
+	ubfx x11, x8, #16, #6
+	ror x13, x12, x11
+	and w13, w13, #0xf
+	ubfx w14, w8, #24, #4
+	lsl w13, w13, #28
+	lsl w14, w14, #28
+	ldr w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	bic w15, w15, w14
+	and w13, w13, w14
+	orr w15, w15, w13
+	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
+
+.macro setf_fast width, suffix
+gadget setf_fast_\suffix
+	ldr x8, [_stream], #8
+	and x9, x8, #0xffff
+	ldr w12, [_cpu, x9]
+	mov w13, #\width
+	sub w14, w13, #1
+	lsrv w15, w12, w14
+	and w15, w15, #1
+	lsrv w16, w12, w13
+	eor w16, w16, w15
+	and w16, w16, #1
+	mov w17, #1
+	lslv w17, w17, w13
+	sub w17, w17, #1
+	tst w12, w17
+	cset w17, eq
+	ldr w18, [_cpu, #UML_GADGET_CPU_NZCV]
+	and w18, w18, #0x20000000
+	orr w18, w18, w15, lsl #31
+	orr w18, w18, w17, lsl #30
+	orr w18, w18, w16, lsl #28
+	str w18, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
+.endm
+
+setf_fast 8, 8
+setf_fast 16, 16
+
+.purgem setf_fast

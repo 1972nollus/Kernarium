@@ -864,6 +864,118 @@ static void scalar_bit_reverse_and_count()
 	require(cpu.registers[7] == 0x4433'2211U);
 }
 
+static void scalar_cssc_integer_operations()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	struct CsscCase final {
+		std::uint32_t instruction;
+		std::uint64_t left;
+		std::uint64_t right;
+		std::uint64_t expected;
+	};
+	constexpr auto negative_one = ~std::uint64_t{0};
+	constexpr std::array cases{
+		CsscCase{0x5ac0'2020U, 0xffff'ffff'8000'0000ULL, 0,
+			0x8000'0000U}, // abs w0, w1
+		CsscCase{0xdac0'2062U, std::uint64_t{0} - 5, 0, 5},
+		CsscCase{0x5ac0'1ca4U, 0xffff'ffff'ffff'ffffULL, 0, 32},
+		CsscCase{0xdac0'1ce6U, 0xf0f0'f0f0'f0f0'f0f0ULL, 0, 32},
+		CsscCase{0x5ac0'1928U, 0, 0, 32},
+		CsscCase{0xdac0'196aU, 0x0000'0001'0000'0000ULL, 0, 32},
+		CsscCase{0x11c2'01acU, 0x8000'0000U, 0, 0xffff'ff80U},
+		CsscCase{0x91c1'fdeeU, negative_one, 0, 127},
+		CsscCase{0x11c8'1630U, 9, 0, 5},
+		CsscCase{0x91cb'fe72U, std::uint64_t{0} - 9, 0,
+			std::uint64_t{0} - 9},
+		CsscCase{0x11c7'feb4U, 3, 0, 255},
+		CsscCase{0x91c4'1ef6U, negative_one, 0, negative_one},
+		CsscCase{0x11cc'0338U, 17, 0, 0},
+		CsscCase{0x91ce'037aU, 3, 0, 3},
+		CsscCase{0x1ac2'6020U, 0xffff'fffeU, 7, 7},
+		CsscCase{0x9ac5'6083U, std::uint64_t{1} << 63, negative_one,
+			negative_one},
+		CsscCase{0x1ac8'68e6U, 100, 0xffff'fffbU, 0xffff'fffbU},
+		CsscCase{0x9acb'6949U, 4, 4, 4},
+		CsscCase{0x1ace'65acU, 0xffff'ffffU, 1, 0xffff'ffffU},
+		CsscCase{0x9ad1'660fU, 0, negative_one, negative_one},
+		CsscCase{0x1ad4'6e72U, 3, 7, 3},
+		CsscCase{0x9ad7'6ed5U, negative_one, 9, 9},
+	};
+	for (const auto &test : cases) {
+		arm64::CpuState cpu{};
+		const auto n = (test.instruction >> 5) & 31U;
+		const auto m = (test.instruction >> 16) & 31U;
+		const auto d = test.instruction & 31U;
+		if (n != 31)
+			cpu.registers[n] = test.left;
+		if ((test.instruction & 0x7fe0'f000U) == 0x1ac0'6000U &&
+		    m != 31)
+			cpu.registers[m] = test.right;
+		const auto result = dispatcher.execute(cpu, memory, test.instruction);
+		require(result.reason == arm64::StopReason::continued);
+		require(cpu.pc == sizeof(std::uint32_t));
+		require(cpu.registers[d] == test.expected);
+	}
+	arm64::CpuState cpu{};
+	cpu.registers[1] = 123;
+	require(dispatcher.execute(cpu, memory, 0x5ac0'203fU).reason ==
+		arm64::StopReason::continued); // abs wzr, w1
+	require(cpu.registers[1] == 123);
+	require(dispatcher.execute(cpu, memory, 0x5ac0'23e0U).reason ==
+		arm64::StopReason::continued); // abs w0, wzr
+	require(cpu.registers[0] == 0);
+}
+
+static void flag_manipulation_instructions()
+{
+	FlatMemory memory(0, 0x1000);
+	arm64::Dispatcher dispatcher;
+	const auto execute = [&](std::uint32_t instruction, std::uint32_t nzcv,
+				 unsigned source, std::uint64_t value) {
+		arm64::CpuState cpu{};
+		cpu.nzcv = nzcv;
+		if (source != 31)
+			cpu.registers[source] = value;
+		require(dispatcher.execute(cpu, memory, instruction).reason ==
+			arm64::StopReason::continued);
+		require(cpu.pc == sizeof(std::uint32_t));
+		return cpu.nzcv;
+	};
+	require(execute(0xd500'401fU, 0x9000'0000U, 31, 0) ==
+		0xb000'0000U); // cfinv preserves N/Z/V
+	require(execute(0xd500'401fU, 0xf000'0000U, 31, 0) ==
+		0xd000'0000U);
+	constexpr std::array arm_flags{
+		0x6000'0000U, 0x8000'0000U, 0x2000'0000U, 0x3000'0000U};
+	constexpr std::array external_flags{
+		0x6000'0000U, 0x0000'0000U, 0x2000'0000U, 0x4000'0000U};
+	for (std::size_t index = 0; index < arm_flags.size(); ++index) {
+		require(execute(0xd500'405fU, arm_flags[index], 31, 0) ==
+			external_flags[index]);
+		require(execute(0xd500'403fU, external_flags[index], 31, 0) ==
+			arm_flags[index]);
+	}
+	require(execute(0xba08'846aU, 0x5000'0000U, 3,
+		std::uint64_t{0xa} << 17) == 0xf000'0000U);
+	require(execute(0xba00'048fU, 0xa000'0000U, 4, 5) ==
+		0x5000'0000U); // rmif x4, #0, #15
+	require(execute(0xba1f'84afU, 0, 5, 5) ==
+		0xa000'0000U); // low nibble after rotate-right by 63 is 0b1010
+	require(execute(0x3a00'08adU, 0x2000'0000U, 5, 0) ==
+		0x6000'0000U); // setf8: zero, C preserved
+	require(execute(0x3a00'08adU, 0x2000'0000U, 5, 0x80) ==
+		0xb000'0000U); // negative with signed overflow
+	require(execute(0x3a00'08adU, 0, 5, 0x180) ==
+		0x8000'0000U); // negative without signed overflow
+	require(execute(0x3a00'48cdU, 0x2000'0000U, 6, 0) ==
+		0x6000'0000U); // setf16
+	require(execute(0x3a00'48cdU, 0, 6, 0x8000) ==
+		0x9000'0000U);
+	require(execute(0x3a00'48cdU, 0x2000'0000U, 6, 0x1'8000) ==
+		0xa000'0000U);
+}
+
 static void scalar_floating_compare()
 {
 	constexpr std::uint64_t base = 0xc800;
@@ -3458,6 +3570,8 @@ int main()
 	variable_shift_register_forms();
 	scalar_division();
 	scalar_bit_reverse_and_count();
+	scalar_cssc_integer_operations();
+	flag_manipulation_instructions();
 	scalar_floating_compare();
 	scalar_floating_moves_and_conversions();
 	scalar_fixed_point_conversions();

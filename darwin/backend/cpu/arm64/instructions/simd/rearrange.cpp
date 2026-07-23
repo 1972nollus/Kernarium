@@ -25,7 +25,7 @@ RunResult Dispatcher::simd_extract(CpuState &cpu, GuestMemory &,
 		16 : 8;
 	const std::size_t offset = (instruction >> 11) & 0xfU;
 	if (offset >= vector_size)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto &left = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	const auto &right = cpu.vectors[(instruction >> 16) & 0x1fU].bytes;
@@ -50,7 +50,7 @@ RunResult Dispatcher::simd_permute(CpuState &cpu, GuestMemory &,
 		std::size_t{1} << ((instruction >> 22) & 0x3U);
 	const std::size_t element_count = vector_size / element_size;
 	if (element_count < 2)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 
 	const auto left = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
@@ -85,7 +85,7 @@ RunResult Dispatcher::simd_permute(CpuState &cpu, GuestMemory &,
 				index + (opcode == 7 ? element_count / 2 : 0));
 			break;
 		default:
-			return {StopReason::unsupported_instruction, address,
+			return {StopReason::illegal_instruction, address,
 				instruction, 0, false};
 		}
 	}
@@ -120,6 +120,74 @@ RunResult Dispatcher::simd_table_lookup(CpuState &cpu, GuestMemory &,
 	return continue_after(address, instruction);
 }
 
+RunResult Dispatcher::simd_lut_lookup(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	const unsigned op2 = (instruction >> 22) & 3U;
+	const unsigned len = (instruction >> 13) & 3U;
+	const unsigned op = (instruction >> 12) & 1U;
+	unsigned index_bits;
+	unsigned element_bytes;
+	unsigned part;
+	unsigned table_count;
+	if (op2 == 1U) {
+		/* LUTI4 B requires len[0]=1, while LUTI4 H allocates every len. */
+		if (op == 0U && (len & 1U) == 0U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		index_bits = 4U;
+		element_bytes = op == 0U ? 1U : 2U;
+		part = op == 0U ? len >> 1 : len;
+		table_count = op == 0U ? 1U : 2U;
+	} else if (op2 == 2U) {
+		if (op == 0U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		index_bits = 2U;
+		element_bytes = 1U;
+		part = len;
+		table_count = 1U;
+	} else if (op2 == 3U) {
+		index_bits = 2U;
+		element_bytes = 2U;
+		part = (len << 1) | op;
+		table_count = 1U;
+	} else {
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	}
+
+	const unsigned destination = instruction & 31U;
+	const unsigned table_register = (instruction >> 5) & 31U;
+	const unsigned indices_register = (instruction >> 16) & 31U;
+	const auto indices = cpu.vectors[indices_register].bytes;
+	const auto table1 = cpu.vectors[table_register].bytes;
+	const auto table2 = cpu.vectors[(table_register + 1U) & 31U].bytes;
+	std::array<std::byte, 16> result{};
+	const unsigned elements = 16U / element_bytes;
+	const unsigned index_mask = (1U << index_bits) - 1U;
+	const unsigned first_index = elements * part;
+	for (unsigned element = 0; element < elements; ++element) {
+		const unsigned bit = (first_index + element) * index_bits;
+		const unsigned index =
+			(std::to_integer<unsigned>(indices[bit / 8U]) >> (bit & 7U)) &
+			index_mask;
+		const unsigned table_elements = 16U / element_bytes;
+		const bool second = index >= table_elements;
+		if (second && table_count == 1U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		const auto &table = second ? table2 : table1;
+		const unsigned table_index = second ? index - table_elements : index;
+		std::copy_n(table.begin() + table_index * element_bytes,
+			element_bytes, result.begin() + element * element_bytes);
+	}
+	cpu.vectors[destination].bytes = result;
+	cpu.pc += 4U;
+	return continue_after(address, instruction);
+}
+
 RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 					std::uint32_t instruction) const
 {
@@ -128,27 +196,22 @@ RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 	    (instruction & 0xbfe0'fc00U) == 0x0e00'2c00U) {
 		const bool signed_move = (instruction & 0x1000U) == 0;
 		const unsigned immediate = (instruction >> 16) & 0x1fU;
-		if (immediate == 0)
-			return {StopReason::unsupported_instruction, address, instruction,
-				0, false};
-		const unsigned element_shift = std::countr_zero(immediate);
-		if (element_shift > 3 ||
-		    (element_shift == 3 && (instruction & 0x4000'0000U) == 0))
-			return {StopReason::unsupported_instruction, address, instruction,
-				0, false};
-		const std::size_t element_size = std::size_t{1} << element_shift;
-		const std::size_t lane = immediate >> (element_shift + 1);
-		const std::size_t offset = lane * element_size;
-		if (offset + element_size > 16)
-			return {StopReason::unsupported_instruction, address, instruction,
-				0, false};
+		const auto lane = detail::decode_simd_lane_index(immediate);
+		const bool is_64_bit = (instruction & 0x4000'0000U) != 0;
+		const bool valid = lane && (signed_move ?
+			(lane->element_shift < (is_64_bit ? 3U : 2U)) :
+			(is_64_bit ? lane->element_shift == 3U :
+			 lane->element_shift < 3U));
+		if (!valid)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
 		auto value = detail::decode_little_endian(
 			std::span{cpu.vectors[(instruction >> 5) & 0x1fU].bytes}
-				.subspan(offset, element_size));
+				.subspan(lane->offset, lane->element_size));
 		if (signed_move)
 			value = static_cast<std::uint64_t>(detail::sign_extend(value,
-				static_cast<unsigned>(element_size * 8)));
-		if ((instruction & 0x4000'0000U) == 0)
+				lane->element_size * 8U));
+		if (!is_64_bit)
 			value &= 0xffff'ffffU;
 		cpu.write_register(instruction & 0x1fU, value, false);
 		cpu.pc += 4;
@@ -158,6 +221,11 @@ RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 	const unsigned source = (instruction >> 5) & 0x1fU;
 	const unsigned destination = instruction & 0x1fU;
 	switch (opcode) {
+	case 0x1ee6'0000U:
+	case 0x9ee6'0000U:
+		cpu.write_register(destination,
+			vector_half(cpu.vectors[source], 0) & 0xffffU, false);
+		break;
 	case 0x9e66'0000U:
 		cpu.write_register(destination, vector_half(cpu.vectors[source], 0),
 			false);
@@ -173,6 +241,12 @@ RunResult Dispatcher::simd_general_move(CpuState &cpu, GuestMemory &,
 	case 0x9e67'0000U:
 		set_vector_half(cpu.vectors[destination], 0,
 			cpu.read_register(source, false));
+		set_vector_half(cpu.vectors[destination], 1, 0);
+		break;
+	case 0x1ee7'0000U:
+	case 0x9ee7'0000U:
+		set_vector_half(cpu.vectors[destination], 0,
+			cpu.read_register(source, false) & 0xffffU);
 		set_vector_half(cpu.vectors[destination], 1, 0);
 		break;
 	case 0x1e27'0000U:
@@ -197,23 +271,14 @@ RunResult Dispatcher::simd_insert_general(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned immediate = (instruction >> 16) & 0x1fU;
-	if (immediate == 0)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const unsigned element_shift = std::countr_zero(immediate);
-	if (element_shift > 3)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const std::size_t element_size = std::size_t{1} << element_shift;
-	const std::size_t lane = immediate >> (element_shift + 1);
-	const std::size_t offset = lane * element_size;
-	if (offset + element_size > 16)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	const auto lane = detail::decode_simd_lane_index(immediate);
+	if (!lane)
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto source = cpu.read_register((instruction >> 5) & 0x1fU, false);
 	auto &destination = cpu.vectors[instruction & 0x1fU].bytes;
 	encode_little_endian(source,
-		std::span{destination}.subspan(offset, element_size));
+		std::span{destination}.subspan(lane->offset, lane->element_size));
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -223,34 +288,22 @@ RunResult Dispatcher::simd_insert_element(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned destination_immediate = (instruction >> 16) & 0x1fU;
-	if (destination_immediate == 0)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	const auto destination_lane =
+		detail::decode_simd_lane_index(destination_immediate);
+	if (!destination_lane)
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
-	const unsigned element_shift = std::countr_zero(destination_immediate);
-	if (element_shift > 3)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const std::size_t element_size = std::size_t{1} << element_shift;
-	const std::size_t destination_lane =
-		destination_immediate >> (element_shift + 1);
 	const unsigned source_immediate = (instruction >> 11) & 0xfU;
-	if ((source_immediate & (element_size - 1)) != 0)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const std::size_t source_lane = source_immediate >> element_shift;
-	const std::size_t destination_offset = destination_lane * element_size;
-	const std::size_t source_offset = source_lane * element_size;
-	if (destination_offset + element_size > 16 ||
-	    source_offset + element_size > 16)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
+	const std::size_t source_offset = source_immediate &
+		~(destination_lane->element_size - 1U);
 
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	std::array<std::byte, 8> element{};
-	std::copy_n(source.begin() + source_offset, element_size, element.begin());
+	std::copy_n(source.begin() + source_offset, destination_lane->element_size,
+		element.begin());
 	auto &destination = cpu.vectors[instruction & 0x1fU].bytes;
-	std::copy_n(element.begin(), element_size,
-		destination.begin() + destination_offset);
+	std::copy_n(element.begin(), destination_lane->element_size,
+		destination.begin() + destination_lane->offset);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -260,21 +313,19 @@ RunResult Dispatcher::simd_duplicate_general(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned immediate = (instruction >> 16) & 0x1fU;
-	const unsigned element_shift = immediate & 1U ? 0 :
-		immediate & 2U ? 1 : immediate & 4U ? 2 :
-		immediate & 8U ? 3 : 4;
-	if (element_shift == 4)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const std::size_t element_size = std::size_t{1} << element_shift;
+	const auto lane = detail::decode_simd_lane_index(immediate);
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
 		16 : 8;
+	if (!lane || (vector_size == 8 && lane->element_shift == 3U))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const auto source = cpu.read_register((instruction >> 5) & 0x1fU, false);
 	auto &destination = cpu.vectors[instruction & 0x1fU].bytes;
 	destination.fill(std::byte{});
-	for (std::size_t offset = 0; offset < vector_size; offset += element_size)
+	for (std::size_t offset = 0; offset < vector_size;
+	     offset += lane->element_size)
 		encode_little_endian(source,
-			std::span{destination}.subspan(offset, element_size));
+			std::span{destination}.subspan(offset, lane->element_size));
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -284,26 +335,19 @@ RunResult Dispatcher::simd_duplicate_element(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned immediate = (instruction >> 16) & 0x1fU;
-	if (immediate == 0)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const unsigned element_shift = std::countr_zero(immediate);
-	if (element_shift > 3)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
-	const std::size_t element_size = std::size_t{1} << element_shift;
+	const auto lane = detail::decode_simd_lane_index(immediate);
 	const bool scalar = (instruction & 0x1000'0000U) != 0;
-	const std::size_t vector_size = scalar ? element_size :
-		(instruction & 0x4000'0000U) != 0 ? 16 : 8;
-	const std::size_t lane = immediate >> (element_shift + 1);
-	const std::size_t source_offset = lane * element_size;
-	if (source_offset + element_size > 16 || element_size > vector_size)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	if (!lane || (!scalar && (instruction & 0x4000'0000U) == 0 &&
+		lane->element_shift == 3U))
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
+	const std::size_t vector_size = scalar ? lane->element_size :
+		(instruction & 0x4000'0000U) != 0 ? 16 : 8;
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	std::array<std::byte, 16> result{};
-	for (std::size_t offset = 0; offset < vector_size; offset += element_size)
-		std::copy_n(source.begin() + source_offset, element_size,
+	for (std::size_t offset = 0; offset < vector_size;
+	     offset += lane->element_size)
+		std::copy_n(source.begin() + lane->offset, lane->element_size,
 			result.begin() + offset);
 	cpu.vectors[instruction & 0x1fU].bytes = result;
 	cpu.pc += 4;

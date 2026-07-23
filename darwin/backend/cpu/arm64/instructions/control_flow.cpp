@@ -22,7 +22,13 @@ RunResult Dispatcher::exception(CpuState &cpu, GuestMemory &,
 		cpu.pc += 4;
 		return {StopReason::system_call, address, instruction, 1, false};
 	}
-	return {StopReason::breakpoint, address, instruction, 1, false};
+	if ((instruction & 0xffe0'001fU) == 0xd420'0000U)
+		return {StopReason::breakpoint, address, instruction, 1, false};
+	/* The static guest executes in the architectural EL0, non-Debug context.
+	 * HVC, SMC, HLT, DCPS<n>, DRPS, ERET, ERETAA, and ERETAB are therefore all
+	 * Undefined without changing PC or general-purpose state.
+	 */
+	return {StopReason::illegal_instruction, address, instruction, 0, false};
 }
 
 RunResult Dispatcher::branch_immediate(CpuState &cpu, GuestMemory &,
@@ -69,6 +75,55 @@ RunResult Dispatcher::compare_branch(CpuState &cpu, GuestMemory &,
 	return continue_after(address, instruction);
 }
 
+RunResult Dispatcher::compare_conditional_branch(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	const bool immediate = (instruction & 0x0100'0000U) != 0;
+	const unsigned narrow_control = (instruction >> 14) & 3U;
+	const bool valid_form = immediate ?
+		(instruction & 0x0000'4000U) == 0 :
+		(narrow_control == 0 ||
+		 (((instruction >> 31) == 0) && narrow_control >= 2));
+	const unsigned cc = (instruction >> 21) & 7U;
+	if (!valid_form || cc == 4 || cc == 5)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+
+	const bool narrow = !immediate && narrow_control >= 2;
+	const unsigned width = narrow ?
+		((instruction & 0x0000'4000U) != 0 ? 16U : 8U) :
+		((instruction & 0x8000'0000U) != 0 ? 64U : 32U);
+	const auto mask = width == 64 ? ~std::uint64_t{0} :
+		(std::uint64_t{1} << width) - 1;
+	const auto left = cpu.read_register(instruction & 31U, false) & mask;
+	const auto right = immediate ? (instruction >> 15) & 63U :
+		cpu.read_register((instruction >> 16) & 31U, false) & mask;
+	const auto signed_left = sign_extend(left, width);
+	const auto signed_right = sign_extend(right, width);
+
+	bool take = false;
+	switch (cc) {
+	case 0: take = signed_left > signed_right; break;
+	case 1:
+		take = immediate ? signed_left < signed_right :
+			signed_left >= signed_right;
+		break;
+	case 2: take = left > right; break;
+	case 3: take = immediate ? left < right : left >= right; break;
+	case 6: take = left == right; break;
+	case 7: take = left != right; break;
+	default: break;
+	}
+
+	const auto displacement = sign_extend(
+		static_cast<std::uint64_t>((instruction >> 5) & 0x1ffU) << 2,
+		11);
+	cpu.pc = take ? static_cast<std::uint64_t>(
+		static_cast<std::int64_t>(address) + displacement) : address + 4;
+	return continue_after(address, instruction);
+}
+
 RunResult Dispatcher::test_branch(CpuState &cpu, GuestMemory &,
 				  std::uint32_t instruction) const
 {
@@ -99,6 +154,48 @@ RunResult Dispatcher::branch_register(CpuState &cpu, GuestMemory &,
 	return continue_after(address, instruction);
 }
 
+RunResult Dispatcher::branch_authenticated(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	const bool return_form =
+		(instruction & 0xffff'fbffU) == 0xd65f'0bffU;
+	const bool key_b = (instruction & 0x400U) != 0;
+	const bool link = !return_form && (instruction & 0x0020'0000U) != 0;
+	unsigned target_register;
+	std::uint64_t modifier;
+	bool zero_modifier;
+	if (return_form) {
+		target_register = 30;
+		modifier = cpu.sp;
+		zero_modifier = false;
+	} else {
+		target_register = (instruction >> 5) & 31U;
+		const unsigned modifier_register = instruction & 31U;
+		zero_modifier = (instruction & 0x0100'0000U) == 0;
+		if (zero_modifier && modifier_register != 31U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		modifier = zero_modifier ? 0 :
+			cpu.read_register(modifier_register, true);
+	}
+	auto target = cpu.read_register(target_register, false);
+	if (zero_modifier) {
+		if (key_b)
+			__asm__ volatile("autizb %0" : "+r"(target));
+		else
+			__asm__ volatile("autiza %0" : "+r"(target));
+	} else if (key_b) {
+		__asm__ volatile("autib %0, %1" : "+r"(target) : "r"(modifier));
+	} else {
+		__asm__ volatile("autia %0, %1" : "+r"(target) : "r"(modifier));
+	}
+	if (link)
+		cpu.registers[30] = address + 4;
+	cpu.pc = target;
+	return continue_after(address, instruction);
+}
+
 RunResult Dispatcher::pc_relative(CpuState &cpu, GuestMemory &,
 				  std::uint32_t instruction) const
 {
@@ -124,6 +221,9 @@ RunResult Dispatcher::pc_relative(CpuState &cpu, GuestMemory &,
 RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 				     std::uint32_t instruction) const
 {
+	constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
+	constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
+	constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
 	const auto address = cpu.pc;
 	const unsigned transfer = instruction & 0x1fU;
 	const auto system_register = instruction & 0xffff'ffe0U;
@@ -131,6 +231,10 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 		cpu.write_register(transfer, cpu.tls, false);
 	else if (system_register == 0xd51b'd040U)
 		cpu.tls = cpu.read_register(transfer, false);
+	else if (system_register == 0xd53b'd060U)
+		/* Linux does not assign TPIDRRO_EL0 for this UML architecture, but the
+		 * architectural EL0 read remains present and reads its reset value. */
+		cpu.write_register(transfer, 0, false);
 	else if (system_register == 0xd53b'00e0U)
 		/* DZP=1 advertises that DC ZVA is unavailable.  The emulator has no
 		 * cache-maintenance side channel, so userspace must use ordinary
@@ -144,15 +248,19 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 		 */
 		cpu.write_register(transfer, 0x8444'8004U, false);
 	else if (system_register == 0xd53b'4400U)
-		cpu.write_register(transfer, cpu.fpcr, false);
+		cpu.write_register(transfer, cpu.fpcr & fpcr_mask, false);
 	else if (system_register == 0xd51b'4400U)
 		cpu.fpcr = static_cast<std::uint32_t>(
-			cpu.read_register(transfer, false));
+			cpu.read_register(transfer, false)) & fpcr_mask;
 	else if (system_register == 0xd53b'4420U)
-		cpu.write_register(transfer, cpu.fpsr, false);
+		cpu.write_register(transfer, cpu.fpsr & fpsr_mask, false);
 	else if (system_register == 0xd51b'4420U)
 		cpu.fpsr = static_cast<std::uint32_t>(
-			cpu.read_register(transfer, false));
+			cpu.read_register(transfer, false)) & fpsr_mask;
+	else if (system_register == 0xd53b'4440U)
+		cpu.write_register(transfer, cpu.fpmr & fpmr_mask, false);
+	else if (system_register == 0xd51b'4440U)
+		cpu.fpmr = cpu.read_register(transfer, false) & fpmr_mask;
 	else if (system_register == 0xd53b'4200U)
 		cpu.write_register(transfer, cpu.nzcv, false);
 	else if (system_register == 0xd51b'4200U)
@@ -171,10 +279,42 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 				std::chrono::steady_clock::now().time_since_epoch()).count()),
 			false);
 	else
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	cpu.pc += 4;
 	return continue_after(address, instruction);
+}
+
+RunResult Dispatcher::system_register_pair(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	/* The current EL0 profile exposes no 128-bit system registers. Decode the
+	 * whole FEAT_SYSREG128 allocation so odd Rt (reserved) and inaccessible
+	 * named/numeric registers all fail before touching architectural state. */
+	return {StopReason::illegal_instruction, cpu.pc, instruction, 0, false};
+}
+
+RunResult Dispatcher::system_instruction_pair(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	/* FEAT_SYSINSTR128 is not exposed to the static EL0 guest profile. */
+	return {StopReason::illegal_instruction, cpu.pc, instruction, 0, false};
+}
+
+RunResult Dispatcher::system_instruction(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	/* The two enabled EL0 cache-maintenance operations are decoded to the
+	 * dedicated handler before this complete SYS/SYSL allocation. All other
+	 * operations either require a higher exception level or an extension not
+	 * exposed by this static userspace profile. */
+	return {StopReason::illegal_instruction, cpu.pc, instruction, 0, false};
+}
+
+RunResult Dispatcher::unavailable_extension(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	return {StopReason::illegal_instruction, cpu.pc, instruction, 0, false};
 }
 
 RunResult Dispatcher::memory_barrier(CpuState &cpu, GuestMemory &,
@@ -182,6 +322,22 @@ RunResult Dispatcher::memory_barrier(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	std::atomic_thread_fence(std::memory_order_seq_cst);
+	cpu.pc += 4;
+	return continue_after(address, instruction);
+}
+
+RunResult Dispatcher::clear_exclusive(CpuState &cpu, GuestMemory &,
+	std::uint32_t instruction) const
+{
+	const auto address = cpu.pc;
+	/* CRm is architecturally ignored. Clear every debug representation of the
+	 * local monitor so stale state cannot survive malformed test sequences. */
+	cpu.exclusive_address = ~std::uint64_t{0};
+	cpu.exclusive_key = 0;
+	cpu.exclusive_value = 0;
+	cpu.exclusive_value2 = 0;
+	cpu.exclusive_version = 0;
+	cpu.exclusive_size = 0;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }

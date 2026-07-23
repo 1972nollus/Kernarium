@@ -21,9 +21,38 @@ struct CpuState final {
 	std::uint32_t fpcr{};
 	std::uint32_t fpsr{};
 	std::uint64_t tls{};
+	/* EL0's effective MTE state and the GCR_EL1.Exclude value supplied by
+	 * the userspace runtime. Production ADDG/SUBG gadgets use the derived
+	 * table so tag selection is a single indexed load with no hot-path loop.
+	 * Change these fields only through set_mte_configuration().
+	 */
+	bool mte_enabled{};
+	std::uint16_t mte_exclude{};
+	std::array<std::uint8_t, 256> mte_tag_choices{};
+	bool mte_random_tags{};
+	std::uint16_t mte_seed{1};
+	std::uint8_t mte_tag{};
+	std::uint64_t mte_random_state{0x9e37'79b9'7f4a'7c15ULL};
+	/* Effective CPTA and CPTM controls. Addition overflow and signed
+	 * multiplication overflow are independently configurable architecturally.
+	 */
+	bool cpa_enabled{};
+	bool cpa_multiply_enabled{};
+	std::uint32_t accdata{};
+	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
+	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
+	 * use DAIFSet/DAIFClr; the other fields are effective feature state. */
+	bool pstate_ssbs{};
+	bool pstate_dit{};
+	bool pstate_tco{};
+	bool pstate_sm{};
+	bool pstate_za{};
+	bool pstate_daif_access{};
+	std::uint8_t pstate_daif{};
 	std::uint64_t exclusive_address{~std::uint64_t{0}};
 	std::uintptr_t exclusive_key{};
 	std::uint64_t exclusive_value{};
+	std::uint64_t exclusive_value2{};
 	std::uint64_t exclusive_version{};
 	std::uint8_t exclusive_size{};
 	const std::byte *deferred_vectors{};
@@ -31,6 +60,53 @@ struct CpuState final {
 	std::uint32_t deferred_fpsr{};
 	bool fp_loaded{true};
 	bool fp_dirty{};
+	/* FEAT_FPMR state is kept separately from the lazily imported legacy
+	 * FPCR/FPSR/vector image.  Its reset value selects E5M2 with zero scales. */
+	std::uint64_t fpmr{};
+	/* Read-only zero slot for translation-specialized production gadgets.
+	 * Builder may map an architectural XZR source to this byte offset, avoiding
+	 * a runtime register-number comparison. No destination is ever mapped here. */
+	std::uint64_t gadget_zero{};
+
+	[[nodiscard]] std::uint8_t choose_mte_tag(
+		unsigned start, unsigned offset) const noexcept
+	{
+		if (!mte_enabled || mte_exclude == 0xffffU)
+			return 0;
+		unsigned tag = start & 15U;
+		unsigned remaining = offset & 15U;
+		if (remaining == 0) {
+			while ((mte_exclude & (1U << tag)) != 0)
+				tag = (tag + 1U) & 15U;
+		} else {
+			while (remaining-- != 0) {
+				tag = (tag + 1U) & 15U;
+				while ((mte_exclude & (1U << tag)) != 0)
+					tag = (tag + 1U) & 15U;
+			}
+		}
+		return static_cast<std::uint8_t>(tag);
+	}
+
+	void set_mte_configuration(bool enabled, std::uint16_t exclude) noexcept
+	{
+		mte_enabled = enabled;
+		mte_exclude = exclude;
+		for (unsigned start = 0; start < 16; ++start)
+			for (unsigned offset = 0; offset < 16; ++offset)
+				mte_tag_choices[start * 16 + offset] =
+					choose_mte_tag(start, offset);
+	}
+
+	void set_mte_generator(bool random_tags, std::uint16_t seed,
+		std::uint8_t tag, std::uint64_t random_state =
+			0x9e37'79b9'7f4a'7c15ULL) noexcept
+	{
+		mte_random_tags = random_tags;
+		mte_seed = seed;
+		mte_tag = tag & 15U;
+		mte_random_state = random_state;
+	}
 
 	void defer_fp_load(const void *source, std::uint32_t source_fpcr,
 			  std::uint32_t source_fpsr) noexcept

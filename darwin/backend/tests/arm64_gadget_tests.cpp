@@ -134,6 +134,11 @@ int main()
 		NullMemory memory;
 		const auto dispatched = uml::backend::arm64::Dispatcher{}.execute(
 			expected, memory, instruction);
+		if (dispatched.reason !=
+		    uml::backend::arm64::StopReason::continued)
+			std::fprintf(stderr,
+				"SIMD differential dispatch failed for %#010x: reason=%u\n",
+				instruction, static_cast<unsigned>(dispatched.reason));
 		require(dispatched.reason ==
 			uml::backend::arm64::StopReason::continued);
 		const std::array stream{instruction, 0xd400'0001U};
@@ -148,8 +153,15 @@ int main()
 		    sizeof(actual.vectors)) != 0 || actual.fpsr != expected.fpsr ||
 		    actual.nzcv != expected.nzcv ||
 		    actual.registers != expected.registers) {
-			std::fprintf(stderr, "SIMD differential mismatch: 0x%08x\n",
-				instruction);
+			std::fprintf(stderr,
+				"SIMD differential mismatch: 0x%08x, FPSR %08x/%08x, NZCV %08x/%08x\n",
+				instruction, actual.fpsr, expected.fpsr, actual.nzcv,
+				expected.nzcv);
+			for (std::size_t reg = 0; reg < actual.registers.size(); ++reg)
+				if (actual.registers[reg] != expected.registers[reg])
+					std::fprintf(stderr, "  X%zu %016llx/%016llx\n", reg,
+						static_cast<unsigned long long>(actual.registers[reg]),
+						static_cast<unsigned long long>(expected.registers[reg]));
 			std::abort();
 		}
 	}
@@ -454,6 +466,93 @@ int main()
 	require(cpu.registers[15] == 0xefcd'ab89U);
 	require(cpu.registers[16] == 0);
 	require(cpu.registers[17] == 0);
+
+	/* Every FEAT_CSSC scalar encoding has a production gadget and is
+	 * differential-tested against the pure architectural interpreter. */
+	const std::array cssc_instructions{
+		0x5ac0'2020U, // abs w0, w1
+		0xdac0'2062U, // abs x2, x3
+		0x5ac0'1ca4U, // cnt w4, w5
+		0xdac0'1ce6U, // cnt x6, x7
+		0x5ac0'1928U, // ctz w8, w9
+		0xdac0'196aU, // ctz x10, x11
+		0x11c2'01acU, // smax w12, w13, #-128
+		0x91c1'fdeeU, // smax x14, x15, #127
+		0x11c8'1630U, // smin w16, w17, #5
+		0x91cb'fe72U, // smin x18, x19, #-1
+		0x11c7'feb4U, // umax w20, w21, #255
+		0x91c4'1ef6U, // umax x22, x23, #7
+		0x11cc'0338U, // umin w24, w25, #0
+		0x91ce'037aU, // umin x26, x27, #128
+		0x1ac2'6020U, // smax w0, w1, w2
+		0x9ac5'6083U, // smax x3, x4, x5
+		0x1ac8'68e6U, // smin w6, w7, w8
+		0x9acb'6949U, // smin x9, x10, x11
+		0x1ace'65acU, // umax w12, w13, w14
+		0x9ad1'660fU, // umax x15, x16, x17
+		0x1ad4'6e72U, // umin w18, w19, w20
+		0x9ad7'6ed5U, // umin x21, x22, x23
+		0x5ac0'203fU, // abs wzr, w1
+		0x5ac0'23e0U, // abs w0, wzr
+	};
+	for (const auto instruction : cssc_instructions) {
+		uml::backend::arm64::CpuState initial{};
+		initial.pc = base;
+		for (std::size_t index = 0; index < initial.registers.size(); ++index)
+			initial.registers[index] =
+				0x8000'0000'ffff'ff80ULL + index * 0x1020'4081ULL;
+		auto expected = initial;
+		NullMemory memory;
+		require(uml::backend::arm64::Dispatcher{}.execute(
+			expected, memory, instruction).reason ==
+			uml::backend::arm64::StopReason::continued);
+		const std::array stream{instruction, 0xd400'0001U};
+		const auto built = gadgets::Builder{}.build(base, stream);
+		require(built.complete);
+		auto actual = initial;
+		tlb->prepare(0, darwin_uml_static_vm_changes(0));
+		require(gadgets::execute(built.program, actual, *tlb) ==
+			gadgets::Event::system_call);
+		if (actual.registers != expected.registers)
+			std::fprintf(stderr, "CSSC gadget mismatch for %#010x\n",
+				instruction);
+		require(actual.registers == expected.registers);
+	}
+	const std::array flag_instructions{
+		0xd500'401fU, // cfinv
+		0xd500'405fU, // axflag
+		0xd500'403fU, // xaflag
+		0xba08'846aU, // rmif x3, #17, #10
+		0xba00'048fU, // rmif x4, #0, #15
+		0xba1f'84afU, // rmif x5, #63, #15
+		0x3a00'08adU, // setf8 w5
+		0x3a00'48cdU, // setf16 w6
+	};
+	for (const auto instruction : flag_instructions) {
+		for (unsigned flags = 0; flags < 16; ++flags) {
+			uml::backend::arm64::CpuState initial{};
+			initial.pc = base;
+			initial.nzcv = flags << 28;
+			initial.registers[3] = std::uint64_t{0xa} << 17;
+			initial.registers[4] = 5;
+			initial.registers[5] = 5;
+			initial.registers[6] = 0x1'8000;
+			auto expected = initial;
+			NullMemory memory;
+			require(uml::backend::arm64::Dispatcher{}.execute(
+				expected, memory, instruction).reason ==
+				uml::backend::arm64::StopReason::continued);
+			const std::array stream{instruction, 0xd400'0001U};
+			const auto built = gadgets::Builder{}.build(base, stream);
+			require(built.complete);
+			auto actual = initial;
+			tlb->prepare(0, darwin_uml_static_vm_changes(0));
+			require(gadgets::execute(built.program, actual, *tlb) ==
+				gadgets::Event::system_call);
+			require(actual.nzcv == expected.nzcv);
+			require(actual.registers == expected.registers);
+		}
+	}
 
 	const std::array simd_bitwise_instructions{
 		0x4e22'1c20U, // and v0.16b, v1.16b, v2.16b

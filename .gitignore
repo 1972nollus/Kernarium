@@ -23,3 +23,5 @@ compile_commands.json
 *~
 __pycache__/
 *.pyc
+/tmp/
+*.pdf

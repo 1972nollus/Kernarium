@@ -69,6 +69,18 @@ public:
 			access == MemoryAccess::write ? Access::write : Access::read);
 	}
 
+	bool read_allocation_tag(
+		std::uint64_t address, std::uint8_t &tag) override
+	{
+		return tlb_.read_allocation_tag(address, tag);
+	}
+
+	bool write_allocation_tag(
+		std::uint64_t address, std::uint8_t tag) override
+	{
+		return tlb_.write_allocation_tag(address, tag);
+	}
+
 	MemoryFault last_fault() const noexcept override
 	{
 		return {tlb_.fault_address,
@@ -132,6 +144,7 @@ extern "C" int uml_arm64_gadget_execute_decoded(
 	case StopReason::illegal_instruction:
 		return static_cast<int>(Event::illegal_instruction);
 	case StopReason::breakpoint:
+		return static_cast<int>(Event::breakpoint);
 	case StopReason::unsupported_instruction:
 		return static_cast<int>(Event::fatal);
 	}

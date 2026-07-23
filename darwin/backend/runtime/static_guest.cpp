@@ -24,6 +24,7 @@ enum class DispatchExit : std::size_t {
 	interrupt,
 	budget,
 	illegal_instruction,
+	breakpoint,
 	fatal,
 	count,
 };
@@ -270,6 +271,12 @@ extern "C" int darwin_uml_static_enter_guest(
 				gadget_instructions,
 				uml::backend::DispatchExit::illegal_instruction);
 			return DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
+		case uml::backend::arm64::gadgets::Event::breakpoint:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started,
+				gadget_instructions,
+				uml::backend::DispatchExit::breakpoint);
+			return DARWIN_UML_EVENT_BREAKPOINT;
 		case uml::backend::arm64::gadgets::Event::fatal:
 			uml::backend::save_cpu(cpu, registers, fp, *tls);
 			uml::backend::profile_dispatch(dispatch_started,

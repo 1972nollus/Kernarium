@@ -40,6 +40,16 @@ public:
 	{
 		return nullptr;
 	}
+	[[nodiscard]] virtual bool read_allocation_tag(
+		std::uint64_t, std::uint8_t &)
+	{
+		return false;
+	}
+	[[nodiscard]] virtual bool write_allocation_tag(
+		std::uint64_t, std::uint8_t)
+	{
+		return false;
+	}
 	virtual void invalidate_code(std::uint64_t) {}
 	[[nodiscard]] virtual MemoryFault last_fault() const noexcept
 	{

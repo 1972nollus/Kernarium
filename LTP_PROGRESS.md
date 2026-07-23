@@ -2683,7 +2683,19 @@ python3 tests/ltp/run_guest_ltp.py \
   --run-host-pressure
 ```
 
-CTest exposes the same manifest as `guest-ltp-verified`.
+The full manifest is intentionally excluded from ordinary CTest runs. Run the
+standalone integration suite explicitly:
+
+```sh
+cmake --build .build/cmake-macos --target guest-ltp-verified
+```
+
+The guest SMP boot/process-topology regression is also an integration suite
+and is excluded from ordinary CTest runs. Run it explicitly with:
+
+```sh
+cmake --build .build/cmake-macos --target guest-smp-parallel
+```
 
 Latest quick non-LTP regression after specializing translated conditional branches and rebuilding the production kernel profile: **8/8 passed** in 13.83 seconds, including the 12.00-second guest SMP check which verified parallel host-core use and CPU hotplug. The runner/parser unit suite also passes **56/56**.
 

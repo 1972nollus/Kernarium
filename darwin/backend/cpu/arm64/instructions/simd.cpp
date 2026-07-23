@@ -11,10 +11,10 @@
 namespace uml::backend::arm64 {
 
 using detail::continue_after;
+using detail::decode_simd_modified_immediate;
 using detail::decode_little_endian;
 using detail::encode_little_endian;
 using detail::set_vector_half;
-using detail::simd_integer_immediate;
 using detail::vector_half;
 
 RunResult Dispatcher::simd_modified_immediate(CpuState &cpu, GuestMemory &,
@@ -22,78 +22,22 @@ RunResult Dispatcher::simd_modified_immediate(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const bool q = (instruction & 0x4000'0000U) != 0;
-	const bool invert = (instruction & 0x2000'0000U) != 0;
-	const unsigned mode = (instruction >> 12) & 0xfU;
 	const unsigned destination = instruction & 0x1fU;
-	const auto immediate = static_cast<std::uint8_t>(
-		(((instruction >> 16) & 0x7U) << 5) |
-		((instruction >> 5) & 0x1fU));
-	std::uint64_t pattern;
-	bool combine = (mode & 1U) != 0 && mode != 13 && mode != 15;
-	if (mode == 14 && invert) {
-		pattern = 0;
-		for (unsigned index = 0; index < 8; ++index)
-			if ((immediate & (1U << index)) != 0)
-				pattern |= 0xffULL << (index * 8);
-		combine = false;
-	} else if (mode == 15) {
-		const std::uint64_t sign = immediate >> 7;
-		const std::uint64_t exponent_bit = (immediate >> 6) & 1U;
-		const std::uint64_t fraction = immediate & 0x3fU;
-		if (!invert) {
-			const std::uint32_t exponent =
-				((1U - exponent_bit) << 7) |
-				(exponent_bit * 0x7cU) |
-				((fraction >> 4) & 0x3U);
-			const std::uint32_t fp =
-				(static_cast<std::uint32_t>(sign) << 31) |
-				(exponent << 23) |
-				(static_cast<std::uint32_t>(fraction & 0xfU) << 19);
-			pattern = static_cast<std::uint64_t>(fp) |
-				(static_cast<std::uint64_t>(fp) << 32);
-		} else {
-			if (!q)
-				return {StopReason::unsupported_instruction, address,
-					instruction, 0, false};
-			const std::uint64_t exponent =
-				((1U - exponent_bit) << 10) |
-				(exponent_bit * 0x3fcU) |
-				((fraction >> 4) & 0x3U);
-			pattern = (sign << 63) | (exponent << 52) |
-				((fraction & 0xfU) << 48);
-		}
-		combine = false;
-	} else {
-		const unsigned base_mode = combine ? mode - 1 : mode;
-		if (mode == 12) {
-			const auto element =
-				(static_cast<std::uint64_t>(immediate) << 8) | 0xffU;
-			pattern = element | (element << 32);
-		} else if (mode == 13) {
-			const auto element =
-				(static_cast<std::uint64_t>(immediate) << 16) | 0xffffU;
-			pattern = element | (element << 32);
-		} else {
-			const auto decoded = simd_integer_immediate(base_mode, immediate);
-			if (!decoded)
-				return {StopReason::unsupported_instruction, address,
-					instruction, 0, false};
-			pattern = *decoded;
-		}
-	}
+	const auto decoded = decode_simd_modified_immediate(instruction);
+	if (!decoded)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	auto &vector = cpu.vectors[destination];
-	if (combine) {
-		set_vector_half(vector, 0, invert ?
-			vector_half(vector, 0) & ~pattern :
-			vector_half(vector, 0) | pattern);
-		set_vector_half(vector, 1, q ? (invert ?
-			vector_half(vector, 1) & ~pattern :
-			vector_half(vector, 1) | pattern) : 0);
+	if (decoded->action != 0U) {
+		set_vector_half(vector, 0, decoded->action == 2U ?
+			vector_half(vector, 0) & ~decoded->pattern :
+			vector_half(vector, 0) | decoded->pattern);
+		set_vector_half(vector, 1, q ? (decoded->action == 2U ?
+			vector_half(vector, 1) & ~decoded->pattern :
+			vector_half(vector, 1) | decoded->pattern) : 0);
 	} else {
-		if (invert && mode != 14 && mode != 15)
-			pattern = ~pattern;
-		set_vector_half(vector, 0, pattern);
-		set_vector_half(vector, 1, q ? pattern : 0);
+		set_vector_half(vector, 0, decoded->pattern);
+		set_vector_half(vector, 1, q ? decoded->pattern : 0);
 	}
 	cpu.pc += 4;
 	return continue_after(address, instruction);
@@ -106,15 +50,19 @@ RunResult Dispatcher::simd_compare_zero(CpuState &cpu, GuestMemory &,
 	const unsigned opcode = (instruction >> 12) & 0x1fU;
 	const bool alternate = (instruction & 0x2000'0000U) != 0;
 	if (opcode != 8 && opcode != 9 && (opcode != 10 || alternate))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
-	const std::size_t lane_size = std::size_t{1} <<
-		((instruction >> 22) & 0x3U);
+	const unsigned size = (instruction >> 22) & 0x3U;
 	const bool scalar = (instruction & 0x1000'0000U) != 0;
+	const bool q = (instruction & 0x4000'0000U) != 0;
+	if ((scalar && size != 3U) || (!scalar && !q && size == 3U))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const std::size_t lane_size = std::size_t{1} << size;
 	const std::size_t vector_size = scalar ? lane_size :
-		(instruction & 0x4000'0000U) != 0 ? 16 : 8;
+		q ? 16 : 8;
 	if (lane_size > vector_size)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	auto &destination = cpu.vectors[instruction & 0x1fU].bytes;
@@ -286,15 +234,20 @@ RunResult Dispatcher::simd_bit_unary(CpuState &cpu, GuestMemory &,
 	const unsigned opcode = (instruction >> 10) & 0x3fU;
 	const bool alternate = (instruction & 0x2000'0000U) != 0;
 	const unsigned size = (instruction >> 22) & 0x3U;
+	const bool valid = opcode == 22 ?
+		((!alternate && size == 0) || (alternate && size <= 1)) :
+		opcode == 2 ? ((!alternate && size < 3) ||
+			(alternate && size < 2)) :
+		opcode == 6 && !alternate && size == 0;
+	if (!valid)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
 		16 : 8;
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	auto &destination = cpu.vectors[instruction & 0x1fU].bytes;
 	std::array<std::byte, 16> result{};
 	if (opcode == 22) {
-		if ((!alternate && size != 0) || (alternate && size > 1))
-			return {StopReason::unsupported_instruction, address,
-				instruction, 0, false};
 		for (std::size_t index = 0; index < vector_size; ++index) {
 			const auto value = std::to_integer<std::uint8_t>(source[index]);
 			if (alternate && size == 0) {
@@ -322,7 +275,7 @@ RunResult Dispatcher::simd_bit_unary(CpuState &cpu, GuestMemory &,
 		else if (opcode == 6 && !alternate && size == 0)
 			block_size = 2;
 		else
-			return {StopReason::unsupported_instruction, address,
+			return {StopReason::illegal_instruction, address,
 				instruction, 0, false};
 		const std::size_t lane_size = std::size_t{1} << size;
 		for (std::size_t block = 0; block < vector_size;
@@ -354,8 +307,9 @@ RunResult Dispatcher::simd_reduce_integer(CpuState &cpu, GuestMemory &,
 		16 : 8;
 	if (source_lane_size > 4 ||
 	    (source_lane_size == 4 && vector_size != 16) ||
-	    (!addition && !widening_addition && opcode != 42))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	    (!addition && !widening_addition && opcode != 42) ||
+	    (addition && unsigned_compare))
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto &source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	std::uint64_t reduced = decode_little_endian(

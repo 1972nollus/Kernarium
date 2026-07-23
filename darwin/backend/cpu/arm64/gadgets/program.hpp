@@ -18,6 +18,7 @@ enum class Event : int {
 	memory_fault = 2,
 	interrupt = 3,
 	illegal_instruction = 4,
+	breakpoint = 5,
 };
 
 class Program final {

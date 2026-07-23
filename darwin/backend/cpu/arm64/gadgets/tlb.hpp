@@ -35,6 +35,10 @@ struct alignas(32) Tlb final {
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);
 	[[nodiscard]] std::byte *translate(std::uint64_t address, Access access);
+	[[nodiscard]] bool read_allocation_tag(
+		std::uint64_t address, std::uint8_t &tag);
+	[[nodiscard]] bool write_allocation_tag(
+		std::uint64_t address, std::uint8_t tag);
 
 private:
 	void flush();

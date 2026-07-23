@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "../dispatcher.hpp"
 
+#include "../detail/floating_compare.hpp"
+#include "../detail/floating_conversion.hpp"
 #include "../detail/instruction_helpers.hpp"
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace uml::backend::arm64 {
 
@@ -15,18 +21,6 @@ using detail::condition_holds;
 using detail::vector_half;
 
 namespace {
-
-template<typename Floating>
-[[nodiscard]] std::uint32_t compare_floating(Floating left, Floating right)
-{
-	if (std::isnan(left) || std::isnan(right))
-		return 0x3000'0000U;
-	if (left == right)
-		return 0x6000'0000U;
-	if (left < right)
-		return 0x8000'0000U;
-	return 0x2000'0000U;
-}
 
 [[nodiscard]] long double round_floating(long double value, unsigned mode)
 {
@@ -75,35 +69,71 @@ template<typename Floating>
 	}
 }
 
-[[nodiscard]] std::uint64_t convert_floating_to_integer(long double value,
-							 bool unsigned_result,
-							 unsigned bits,
-							 unsigned rounding_mode)
+struct IntegerConversion final {
+	std::uint64_t value;
+	std::uint32_t exceptions;
+};
+
+[[nodiscard]] IntegerConversion convert_floating_to_integer(long double value,
+							    bool unsigned_result,
+							    unsigned bits,
+							    unsigned rounding_mode)
 {
 	if (std::isnan(value))
-		return 0;
-	value = round_floating(value, rounding_mode);
+		return {0U, 1U};
+	const auto rounded = round_floating(value, rounding_mode);
 	if (unsigned_result) {
-		const auto maximum = bits == 64 ?
-			static_cast<long double>(std::numeric_limits<std::uint64_t>::max()) :
-			static_cast<long double>(std::numeric_limits<std::uint32_t>::max());
-		if (value <= 0)
-			return 0;
-		if (value >= maximum)
-			return bits == 64 ? ~std::uint64_t{0} : 0xffff'ffffULL;
-		return static_cast<std::uint64_t>(value);
+		const auto upper_exclusive = std::ldexp(1.0L, static_cast<int>(bits));
+		if (rounded < 0)
+			return {0U, 1U};
+		if (rounded >= upper_exclusive)
+			return {bits == 64 ? ~std::uint64_t{0} : 0xffff'ffffULL, 1U};
+		return {static_cast<std::uint64_t>(rounded),
+			value != rounded ? 1U << 4 : 0U};
 	}
-	const auto minimum = bits == 64 ?
-		static_cast<long double>(std::numeric_limits<std::int64_t>::min()) :
-		static_cast<long double>(std::numeric_limits<std::int32_t>::min());
-	const auto maximum = bits == 64 ?
-		static_cast<long double>(std::numeric_limits<std::int64_t>::max()) :
-		static_cast<long double>(std::numeric_limits<std::int32_t>::max());
-	if (value <= minimum)
-		return bits == 64 ? std::uint64_t{1} << 63 : 0x8000'0000ULL;
-	if (value >= maximum)
-		return bits == 64 ? 0x7fff'ffff'ffff'ffffULL : 0x7fff'ffffULL;
-	return static_cast<std::uint64_t>(static_cast<std::int64_t>(value));
+	const auto upper_exclusive = std::ldexp(1.0L, static_cast<int>(bits - 1U));
+	if (rounded < -upper_exclusive)
+		return {bits == 64 ? std::uint64_t{1} << 63 : 0x8000'0000ULL, 1U};
+	if (rounded >= upper_exclusive)
+		return {bits == 64 ? 0x7fff'ffff'ffff'ffffULL : 0x7fff'ffffULL, 1U};
+	return {static_cast<std::uint64_t>(static_cast<std::int64_t>(rounded)),
+		value != rounded ? 1U << 4 : 0U};
+}
+
+[[nodiscard]] constexpr std::uint64_t floating_sign_operation(
+	std::uint64_t value, unsigned bits, bool negate,
+	bool alternative_handling) noexcept
+{
+	const unsigned fraction_bits = bits == 16U ? 10U : bits == 32U ? 23U : 52U;
+	const unsigned exponent_bits = bits == 16U ? 5U : bits == 32U ? 8U : 11U;
+	const auto sign = std::uint64_t{1} << (bits - 1U);
+	const auto fraction = (std::uint64_t{1} << fraction_bits) - 1U;
+	const auto exponent = ((std::uint64_t{1} << exponent_bits) - 1U) <<
+		fraction_bits;
+	/* FPAbs/FPNeg preserve the entire NaN encoding when FPCR.AH is set,
+	 * including its sign and signaling/quiet payload. They never raise an
+	 * exception, so integer-space semantics also avoid quieting an SNaN or
+	 * accidentally setting FPSR.IOC in the debug interpreter. */
+	if (alternative_handling && (value & exponent) == exponent &&
+	    (value & fraction) != 0U)
+		return value;
+	return negate ? value ^ sign : value & ~sign;
+}
+
+[[nodiscard]] constexpr std::uint64_t expand_vfp_immediate(
+	std::uint8_t immediate, unsigned bits) noexcept
+{
+	const unsigned exponent_bits = bits == 16U ? 5U : bits == 32U ? 8U : 11U;
+	const unsigned fraction_bits = bits - exponent_bits - 1U;
+	const auto sign = static_cast<std::uint64_t>(immediate >> 7) << (bits - 1U);
+	const auto control = static_cast<std::uint64_t>((immediate >> 6) & 1U);
+	const auto exponent_top = (control ^ 1U) << (bits - 2U);
+	const auto exponent_repeat = control == 0U ? 0U :
+		((std::uint64_t{1} << (exponent_bits - 3U)) - 1U) <<
+			(fraction_bits + 2U);
+	const auto payload = static_cast<std::uint64_t>(immediate & 0x3fU) <<
+		(fraction_bits - 4U);
+	return sign | exponent_top | exponent_repeat | payload;
 }
 
 } // namespace
@@ -113,26 +143,20 @@ RunResult Dispatcher::floating_compare(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned type = (instruction >> 22) & 3U;
-	if (type > 1)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	const bool compare_zero = (instruction & 8U) != 0U;
+	const unsigned right_register = (instruction >> 16) & 0x1fU;
+	if (type == 2U || (instruction & 7U) != 0U ||
+	    (compare_zero && right_register != 0U))
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned left_register = (instruction >> 5) & 0x1fU;
-	const unsigned right_register = (instruction >> 16) & 0x1fU;
-	const bool compare_zero = (instruction & 8U) != 0;
-	if (type == 0) {
-		const auto left = std::bit_cast<float>(static_cast<std::uint32_t>(
-			vector_half(cpu.vectors[left_register], 0)));
-		const auto right = compare_zero ? 0.0F :
-			std::bit_cast<float>(static_cast<std::uint32_t>(
-				vector_half(cpu.vectors[right_register], 0)));
-		cpu.nzcv = compare_floating(left, right);
-	} else {
-		const auto left = std::bit_cast<double>(
-			vector_half(cpu.vectors[left_register], 0));
-		const auto right = compare_zero ? 0.0 : std::bit_cast<double>(
-			vector_half(cpu.vectors[right_register], 0));
-		cpu.nzcv = compare_floating(left, right);
-	}
+	const unsigned width = type == 3U ? 16U : type == 0U ? 32U : 64U;
+	const auto comparison = detail::compare_floating_bits(
+		vector_half(cpu.vectors[left_register], 0),
+		compare_zero ? 0U : vector_half(cpu.vectors[right_register], 0),
+		width, (instruction & 16U) != 0U, cpu.fpcr);
+	cpu.nzcv = comparison.nzcv;
+	cpu.fpsr |= comparison.exceptions;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -143,29 +167,21 @@ RunResult Dispatcher::floating_conditional_compare(CpuState &cpu,
 {
 	const auto address = cpu.pc;
 	const unsigned type = (instruction >> 22) & 0x3U;
-	if (type > 1)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	if (type == 2U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	if (!condition_holds(cpu.nzcv, (instruction >> 12) & 0xfU)) {
 		cpu.nzcv = (instruction & 0xfU) << 28;
 	} else {
 		const unsigned left_register = (instruction >> 5) & 0x1fU;
 		const unsigned right_register = (instruction >> 16) & 0x1fU;
-		if (type == 0) {
-			const auto left = std::bit_cast<float>(
-				static_cast<std::uint32_t>(vector_half(
-					cpu.vectors[left_register], 0)));
-			const auto right = std::bit_cast<float>(
-				static_cast<std::uint32_t>(vector_half(
-					cpu.vectors[right_register], 0)));
-			cpu.nzcv = compare_floating(left, right);
-		} else {
-			const auto left = std::bit_cast<double>(
-				vector_half(cpu.vectors[left_register], 0));
-			const auto right = std::bit_cast<double>(
-				vector_half(cpu.vectors[right_register], 0));
-			cpu.nzcv = compare_floating(left, right);
-		}
+		const unsigned width = type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const auto comparison = detail::compare_floating_bits(
+			vector_half(cpu.vectors[left_register], 0),
+			vector_half(cpu.vectors[right_register], 0), width,
+			(instruction & 16U) != 0U, cpu.fpcr);
+		cpu.nzcv = comparison.nzcv;
+		cpu.fpsr |= comparison.exceptions;
 	}
 	cpu.pc += 4;
 	return continue_after(address, instruction);
@@ -177,18 +193,18 @@ RunResult Dispatcher::floating_conditional_select(CpuState &cpu,
 {
 	const auto address = cpu.pc;
 	const unsigned type = (instruction >> 22) & 0x3U;
-	if (type > 1)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	if (type == 2U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned source = condition_holds(cpu.nzcv,
 		(instruction >> 12) & 0xfU) ? (instruction >> 5) & 0x1fU :
 		(instruction >> 16) & 0x1fU;
-	std::uint64_t bits = vector_half(cpu.vectors[source], 0);
-	if (type == 0)
-		bits &= 0xffff'ffffU;
+	const unsigned lane_bytes = type == 3U ? 2U : type == 0U ? 4U : 8U;
+	const auto source_bytes = cpu.vectors[source].bytes;
 	const unsigned destination = instruction & 0x1fU;
-	detail::set_vector_half(cpu.vectors[destination], 0, bits);
-	detail::set_vector_half(cpu.vectors[destination], 1, 0);
+	std::array<std::byte, 16> result{};
+	std::copy_n(source_bytes.begin(), lane_bytes, result.begin());
+	cpu.vectors[destination].bytes = result;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -244,31 +260,28 @@ RunResult Dispatcher::floating_move(CpuState &cpu, GuestMemory &,
 				    std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	const bool is_double = (instruction & 0x0040'0000U) != 0;
+	const unsigned type = (instruction >> 22) & 3U;
+	if (type == 2U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const unsigned lane_bytes = type == 3U ? 2U : type == 0U ? 4U : 8U;
 	const unsigned destination = instruction & 0x1fU;
-	std::uint64_t bits;
+	std::uint64_t bits{};
 	if ((instruction & 0xff20'1fe0U) == 0x1e20'1000U) {
 		const auto immediate = static_cast<std::uint8_t>(
-			((instruction >> 13) & 0xffU) ^ 0x40U);
-		const bool negative = (immediate & 0x80U) != 0;
-		const unsigned exponent = (immediate >> 4) & 0x7U;
-		const unsigned fraction = immediate & 0xfU;
-		double value = static_cast<double>(16 + fraction) /
-			static_cast<double>(1U << (7 - exponent));
-		if (negative)
-			value = -value;
-		bits = is_double ? std::bit_cast<std::uint64_t>(value) :
-			std::bit_cast<std::uint32_t>(static_cast<float>(value));
-	} else if ((instruction & 0xffbf'fc00U) == 0x1e20'4000U) {
-		bits = vector_half(cpu.vectors[(instruction >> 5) & 0x1fU], 0);
+			(instruction >> 13) & 0xffU);
+		bits = expand_vfp_immediate(immediate, lane_bytes * 8U);
+	} else if ((instruction & 0xff3f'fc00U) == 0x1e20'4000U) {
+		const auto source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
+		bits = detail::decode_little_endian(
+			std::span{source}.first(lane_bytes));
 	} else {
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};
 	}
-	if (!is_double)
-		bits &= 0xffff'ffffU;
-	detail::set_vector_half(cpu.vectors[destination], 0, bits);
-	detail::set_vector_half(cpu.vectors[destination], 1, 0);
+	std::array<std::byte, 16> result{};
+	detail::encode_little_endian(bits, std::span{result}.first(lane_bytes));
+	cpu.vectors[destination].bytes = result;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -278,34 +291,54 @@ RunResult Dispatcher::floating_arithmetic(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned type = (instruction >> 22) & 0x3U;
-	if (type > 1)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
 	const unsigned source = (instruction >> 5) & 0x1fU;
 	const unsigned destination = instruction & 0x1fU;
 	const bool one_source =
 		(instruction & 0xff20'7c00U) == 0x1e20'4000U;
 	const unsigned unary_operation = (instruction >> 15) & 0x3fU;
-	if (one_source && (unary_operation == 4 || unary_operation == 5)) {
-		std::uint64_t converted;
-		if (unary_operation == 4 && type == 1) {
-			const auto value = static_cast<float>(std::bit_cast<double>(
-				vector_half(cpu.vectors[source], 0)));
-			converted = std::bit_cast<std::uint32_t>(value);
-		} else if (unary_operation == 5 && type == 0) {
-			const auto value = static_cast<double>(std::bit_cast<float>(
-				static_cast<std::uint32_t>(vector_half(
-					cpu.vectors[source], 0))));
-			converted = std::bit_cast<std::uint64_t>(value);
-		} else {
-			return {StopReason::unsupported_instruction, address, instruction,
-				0, false};
-		}
-		detail::set_vector_half(cpu.vectors[destination], 0, converted);
-		detail::set_vector_half(cpu.vectors[destination], 1, 0);
+	if (one_source && (unary_operation == 1U || unary_operation == 2U)) {
+		/* ftype=10 is reserved. Validate it before any register read so a bad
+		 * instruction cannot partially mutate state in the safety-first path. */
+		if (type == 2U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		const unsigned lane_bytes = type == 3U ? 2U : type == 0U ? 4U : 8U;
+		const auto source_bytes = cpu.vectors[source].bytes;
+		auto result = (cpu.fpcr & 4U) != 0U ?
+			cpu.vectors[destination].bytes : std::array<std::byte, 16>{};
+		const auto raw = detail::decode_little_endian(
+			std::span{source_bytes}.first(lane_bytes));
+		const auto output = floating_sign_operation(raw, lane_bytes * 8U,
+			unary_operation == 2U, (cpu.fpcr & 2U) != 0U);
+		detail::encode_little_endian(output,
+			std::span{result}.first(lane_bytes));
+		cpu.vectors[destination].bytes = result;
 		cpu.pc += 4;
 		return continue_after(address, instruction);
 	}
+	if (one_source && unary_operation >= 4U && unary_operation <= 7U) {
+		const unsigned destination_type = (instruction >> 15) & 3U;
+		if (type == 2U || destination_type == 2U || type == destination_type)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		const unsigned source_width = type == 3U ? 16U : type == 0U ? 32U : 64U;
+		const unsigned destination_width = destination_type == 3U ? 16U :
+			destination_type == 0U ? 32U : 64U;
+		const auto converted = detail::convert_floating_precision(
+			vector_half(cpu.vectors[source], 0), source_width,
+			destination_width, cpu.fpcr);
+		auto result = (cpu.fpcr & 4U) != 0U ?
+			cpu.vectors[destination].bytes : std::array<std::byte, 16>{};
+		detail::encode_little_endian(converted.bits,
+			std::span{result}.first(destination_width / 8U));
+		cpu.vectors[destination].bytes = result;
+		cpu.fpsr |= converted.exceptions;
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
+	if (type > 1U)
+		return {StopReason::unsupported_instruction, address, instruction, 0,
+			false};
 	std::uint64_t output;
 	if (type == 0) {
 		const auto left = std::bit_cast<float>(static_cast<std::uint32_t>(
@@ -469,8 +502,9 @@ RunResult Dispatcher::floating_integer_convert(CpuState &cpu, GuestMemory &,
 		const auto converted = convert_floating_to_integer(
 			value, (opcode & 1U) != 0, wide ? 64 : 32,
 			opcode >= 4 ? 4 : rounding_mode);
+		cpu.fpsr |= converted.exceptions;
 		cpu.write_register(destination,
-			wide ? converted : converted & 0xffff'ffffU, false);
+			wide ? converted.value : converted.value & 0xffff'ffffU, false);
 	} else {
 		return {StopReason::unsupported_instruction, address, instruction, 0,
 			false};

@@ -24,17 +24,17 @@ RunResult Dispatcher::simd_shift_right_narrow(CpuState &cpu, GuestMemory &,
 	const auto address = cpu.pc;
 	const unsigned opcode = (instruction >> 11) & 0x1fU;
 	if (opcode != 16 && opcode != 17)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned encoded_shift = (instruction >> 16) & 0x7fU;
 	const unsigned source_bits = encoded_shift >= 32 ? 64 :
 		encoded_shift >= 16 ? 32 : encoded_shift >= 8 ? 16 : 0;
 	if (source_bits == 0)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned shift = source_bits - encoded_shift;
 	if (shift == 0 || shift > source_bits / 2)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t source_size = source_bits / 8;
 	const std::size_t destination_size = source_size / 2;
@@ -48,12 +48,12 @@ RunResult Dispatcher::simd_shift_right_narrow(CpuState &cpu, GuestMemory &,
 	for (std::size_t input_offset = 0, output = output_offset;
 	     input_offset < source.size();
 	     input_offset += source_size, output += destination_size) {
-		auto value = decode_little_endian(
+		unsigned __int128 value = decode_little_endian(
 			std::span{source}.subspan(input_offset, source_size));
 		if (opcode == 17)
-			value += std::uint64_t{1} << (shift - 1);
+			value += static_cast<unsigned __int128>(1) << (shift - 1);
 		value >>= shift;
-		encode_little_endian(value,
+		encode_little_endian(static_cast<std::uint64_t>(value),
 			std::span{result}.subspan(output, destination_size));
 	}
 	destination = result;
@@ -69,21 +69,24 @@ RunResult Dispatcher::simd_shift_immediate(CpuState &cpu, GuestMemory &memory,
 	const bool alternate = (instruction & 0x2000'0000U) != 0;
 	const unsigned encoded = (instruction >> 16) & 0x7fU;
 	if (encoded < 8)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	if (opcode == 20)
 		return simd_shift_left_long(cpu, memory, instruction);
 	if (opcode >= 16 && opcode <= 19) {
+		const bool scalar = (instruction & 0x1000'0000U) != 0;
+		if (scalar && opcode <= 17U && !alternate)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
 		const unsigned source_bits = encoded >= 32 ? 64 :
 			encoded >= 16 ? 32 : 16;
 		const unsigned shift = source_bits - encoded;
 		if (shift == 0 || shift > source_bits / 2)
-			return {StopReason::unsupported_instruction, address, instruction, 0,
+			return {StopReason::illegal_instruction, address, instruction, 0,
 				false};
 		const std::size_t source_size = source_bits / 8;
 		const std::size_t destination_size = source_size / 2;
 		const unsigned destination_bits = source_bits / 2;
-		const bool scalar = (instruction & 0x1000'0000U) != 0;
 		const auto source = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 		const auto old_destination = cpu.vectors[instruction & 0x1fU].bytes;
 		std::array<std::byte, 16> result{};
@@ -132,22 +135,22 @@ RunResult Dispatcher::simd_shift_immediate(CpuState &cpu, GuestMemory &memory,
 	const unsigned lane_bits = std::bit_floor(encoded);
 	if (lane_bits > 64 || (opcode == 8 && !alternate) ||
 	    (opcode == 12 && !alternate))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t lane_size = lane_bits / 8;
 	const bool scalar = (instruction & 0x1000'0000U) != 0;
 	if (scalar && lane_bits != 64 && opcode != 12 && opcode != 14 &&
 	    opcode != 28 && opcode != 31)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	if (scalar && (opcode == 28 || opcode == 31) && lane_bits < 32)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t vector_size = scalar ? lane_size :
 		(instruction & 0x4000'0000U) != 0 ? 16 : 8;
 	if (lane_size > vector_size ||
 	    (!scalar && lane_size == 8 && vector_size != 16))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	if (opcode == 28 || opcode == 31) {
 		const unsigned fractional_bits = 2 * lane_bits - encoded;
@@ -203,13 +206,13 @@ RunResult Dispatcher::simd_shift_immediate(CpuState &cpu, GuestMemory &memory,
 	const bool shift_left = opcode == 10 || opcode == 12 || opcode == 14;
 	if (opcode != 0 && opcode != 2 && opcode != 4 && opcode != 6 &&
 	    opcode != 8 && opcode != 10 && opcode != 12 && opcode != 14)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned shift = shift_left ? encoded - lane_bits :
 		2 * lane_bits - encoded;
 	if ((shift_left && shift >= lane_bits) ||
 	    (!shift_left && (shift == 0 || shift > lane_bits)))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = lane_bits == 64 ? ~std::uint64_t{0} :
 		(std::uint64_t{1} << lane_bits) - 1;
@@ -306,7 +309,7 @@ RunResult Dispatcher::simd_shift_register(CpuState &cpu, GuestMemory &,
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
 		16 : 8;
 	if (lane_size > vector_size || (lane_size == 8 && vector_size != 16))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = lane_bits == 64 ? ~std::uint64_t{0} :
 		(std::uint64_t{1} << lane_bits) - 1;
@@ -365,11 +368,11 @@ RunResult Dispatcher::simd_shift_left_long(CpuState &cpu, GuestMemory &,
 	const unsigned encoded = (instruction >> 16) & 0x7fU;
 	const unsigned source_bits = std::bit_floor(encoded);
 	if (source_bits < 8 || source_bits > 32)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned shift = encoded - source_bits;
 	if (shift >= source_bits)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const bool unsigned_source = (instruction & 0x2000'0000U) != 0;
 	const std::size_t source_size = source_bits / 8;

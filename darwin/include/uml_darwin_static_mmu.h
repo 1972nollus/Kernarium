@@ -74,6 +74,15 @@ int darwin_uml_static_vm_translate(unsigned long generation,
 				   unsigned long address,
 				   enum darwin_uml_static_access access,
 				   void **host_address);
+/* Allocation tags are attached to the shared physical backing rather than a
+ * virtual mapping, so aliases in one or more generations observe one tag.
+ * Return values use enum darwin_uml_static_translation_result. */
+int darwin_uml_static_vm_load_allocation_tag(unsigned long generation,
+					      unsigned long address,
+					      uint8_t *tag);
+int darwin_uml_static_vm_store_allocation_tag(unsigned long generation,
+					       unsigned long address,
+					       uint8_t tag);
 uint64_t darwin_uml_static_vm_changes(unsigned long generation);
 struct darwin_uml_static_sequences darwin_uml_static_vm_sequences(
 	unsigned long generation);

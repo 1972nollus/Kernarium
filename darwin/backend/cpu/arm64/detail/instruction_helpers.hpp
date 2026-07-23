@@ -176,6 +176,111 @@ constexpr std::optional<std::uint64_t> simd_integer_immediate(
 	return std::nullopt;
 }
 
+struct SimdModifiedImmediate final {
+	std::uint64_t pattern;
+	unsigned action; // 0 = replace, 1 = ORR, 2 = BIC
+};
+
+struct SimdLaneIndex final {
+	unsigned element_shift;
+	unsigned element_size;
+	unsigned index;
+	unsigned offset;
+};
+
+/* Decode the shared imm5 lane encoding.  Bit 4 selects the upper 64-bit
+ * source half; at least one of bits [3:0] must select an element size. */
+constexpr std::optional<SimdLaneIndex> decode_simd_lane_index(
+	unsigned immediate)
+{
+	immediate &= 0x1fU;
+	if ((immediate & 0xfU) == 0)
+		return std::nullopt;
+	const unsigned element_shift = std::countr_zero(immediate);
+	const unsigned index = immediate >> (element_shift + 1U);
+	return SimdLaneIndex{element_shift, 1U << element_shift, index,
+		index << element_shift};
+}
+
+constexpr std::optional<SimdModifiedImmediate>
+decode_simd_modified_immediate(std::uint32_t instruction)
+{
+	const bool q = (instruction & 0x4000'0000U) != 0;
+	const bool invert = (instruction & 0x2000'0000U) != 0;
+	const unsigned mode = (instruction >> 12) & 0xfU;
+	const bool o2 = (instruction & 0x800U) != 0;
+	const auto immediate = static_cast<std::uint8_t>(
+		(((instruction >> 16) & 0x7U) << 5) |
+		((instruction >> 5) & 0x1fU));
+
+	/* o2 == 1 has exactly one allocated encoding: FP16 FMOV.  Validate
+	 * this before applying any of the integer/immediate expansion rules. */
+	if (o2) {
+		if (invert || mode != 15U)
+			return std::nullopt;
+		const std::uint64_t sign = immediate >> 7;
+		const std::uint64_t exponent_bit = (immediate >> 6) & 1U;
+		const std::uint64_t fp = (sign << 15) |
+			((1U - exponent_bit) << 14) |
+			(exponent_bit * 0x3000U) |
+			(static_cast<std::uint64_t>(immediate & 0x3fU) << 6);
+		return SimdModifiedImmediate{
+			fp * 0x0001'0001'0001'0001ULL, 0U};
+	}
+
+	std::uint64_t pattern;
+	const bool combine = (mode & 1U) != 0 && mode != 13U && mode != 15U;
+	if (mode == 14U) {
+		if (!invert) {
+			pattern = static_cast<std::uint64_t>(immediate) *
+				0x0101'0101'0101'0101ULL;
+		} else {
+			pattern = 0;
+			for (unsigned index = 0; index < 8; ++index)
+				if ((immediate & (1U << index)) != 0)
+					pattern |= 0xffULL << (index * 8);
+		}
+	} else if (mode == 15U) {
+		const std::uint64_t sign = immediate >> 7;
+		const std::uint64_t exponent_bit = (immediate >> 6) & 1U;
+		const std::uint64_t fraction = immediate & 0x3fU;
+		if (!invert) {
+			const std::uint32_t exponent = ((1U - exponent_bit) << 7) |
+				(exponent_bit * 0x7cU) | ((fraction >> 4) & 3U);
+			const std::uint32_t fp =
+				(static_cast<std::uint32_t>(sign) << 31) |
+				(exponent << 23) |
+				(static_cast<std::uint32_t>(fraction & 15U) << 19);
+			pattern = fp | (static_cast<std::uint64_t>(fp) << 32);
+		} else {
+			if (!q)
+				return std::nullopt;
+			const std::uint64_t exponent = ((1U - exponent_bit) << 10) |
+				(exponent_bit * 0x3fcU) | ((fraction >> 4) & 3U);
+			pattern = (sign << 63) | (exponent << 52) |
+				((fraction & 15U) << 48);
+		}
+	} else if (mode == 12U) {
+		const auto element =
+			(static_cast<std::uint64_t>(immediate) << 8) | 0xffU;
+		pattern = element | (element << 32);
+	} else if (mode == 13U) {
+		const auto element =
+			(static_cast<std::uint64_t>(immediate) << 16) | 0xffffU;
+		pattern = element | (element << 32);
+	} else {
+		const auto decoded = simd_integer_immediate(
+			combine ? mode - 1U : mode, immediate);
+		if (!decoded)
+			return std::nullopt;
+		pattern = *decoded;
+	}
+	if (!combine && invert && mode != 14U && mode != 15U)
+		pattern = ~pattern;
+	return SimdModifiedImmediate{
+		pattern, combine ? (invert ? 2U : 1U) : 0U};
+}
+
 inline std::uint64_t vector_half(const VectorRegister &vector, unsigned half)
 {
 	std::uint64_t value;

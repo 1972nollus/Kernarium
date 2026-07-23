@@ -32,6 +32,11 @@ endif()
 option(UML_BUILD_TESTS "Build host-runnable backend unit tests" ${UML_TARGET_MACOS})
 option(UML_ENABLE_GADGET_INTERPRETER_RUNPATH
     "Route non-control gadget instructions through the interpreter for debugging" OFF)
+if(UML_ENABLE_GADGET_INTERPRETER_RUNPATH AND
+   NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(FATAL_ERROR
+        "UML_ENABLE_GADGET_INTERPRETER_RUNPATH is debug-only; configure with CMAKE_BUILD_TYPE=Debug")
+endif()
 
 if(UML_BUILD_TESTS)
     enable_testing()

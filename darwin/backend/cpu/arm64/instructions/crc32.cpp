@@ -3,13 +3,28 @@
 
 #include "../detail/instruction_helpers.hpp"
 
-#include <arm_acle.h>
-
 #include <cstdint>
 
 namespace uml::backend::arm64 {
 
-__attribute__((target("crc")))
+namespace {
+
+[[nodiscard]] std::uint32_t crc32_software(std::uint32_t accumulator,
+					   std::uint64_t value,
+					   unsigned byte_count,
+					   std::uint32_t polynomial)
+{
+	for (unsigned byte = 0; byte < byte_count; ++byte) {
+		accumulator ^= static_cast<std::uint8_t>(value >> (byte * 8));
+		for (unsigned bit = 0; bit < 8; ++bit)
+			accumulator = (accumulator >> 1) ^
+				((accumulator & 1U) != 0 ? polynomial : 0);
+	}
+	return accumulator;
+}
+
+} // namespace
+
 RunResult Dispatcher::crc32(CpuState &cpu, GuestMemory &,
 			    std::uint32_t instruction) const
 {
@@ -24,18 +39,11 @@ RunResult Dispatcher::crc32(CpuState &cpu, GuestMemory &,
 	const auto accumulator = static_cast<std::uint32_t>(
 		cpu.read_register((instruction >> 5) & 0x1fU, false));
 	const auto data = cpu.read_register((instruction >> 16) & 0x1fU, false);
-	std::uint32_t result;
-	switch (operation) {
-	case 0: result = __crc32b(accumulator, static_cast<std::uint8_t>(data)); break;
-	case 1: result = __crc32h(accumulator, static_cast<std::uint16_t>(data)); break;
-	case 2: result = __crc32w(accumulator, static_cast<std::uint32_t>(data)); break;
-	case 3: result = __crc32d(accumulator, data); break;
-	case 4: result = __crc32cb(accumulator, static_cast<std::uint8_t>(data)); break;
-	case 5: result = __crc32ch(accumulator, static_cast<std::uint16_t>(data)); break;
-	case 6: result = __crc32cw(accumulator, static_cast<std::uint32_t>(data)); break;
-	case 7: result = __crc32cd(accumulator, data); break;
-	default: __builtin_unreachable();
-	}
+	const unsigned byte_count = 1U << size;
+	const std::uint32_t polynomial = operation < 4U ?
+		0xedb8'8320U : 0x82f6'3b78U;
+	const auto result = crc32_software(
+		accumulator, data, byte_count, polynomial);
 	cpu.write_register(instruction & 0x1fU, result, false);
 	cpu.pc += 4;
 	return detail::continue_after(address, instruction);

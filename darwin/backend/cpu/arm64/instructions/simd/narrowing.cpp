@@ -24,7 +24,7 @@ RunResult Dispatcher::simd_arithmetic_narrow(CpuState &cpu, GuestMemory &,
 	const std::size_t source_size = std::size_t{2} <<
 		((instruction >> 22) & 0x3U);
 	if (source_size > 8)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t destination_size = source_size / 2;
 	const unsigned destination_bits =
@@ -70,11 +70,11 @@ RunResult Dispatcher::simd_arithmetic_wide(CpuState &cpu, GuestMemory &,
 	const bool scalar = (instruction & 0x1000'0000U) != 0;
 	if ((!multiply && !absolute_difference && !saturating_multiply &&
 	     operation > 3) || size == 3 || (scalar && !saturating_multiply))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const bool unsigned_values = (instruction & 0x2000'0000U) != 0;
-	if (saturating_multiply && unsigned_values)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	if (saturating_multiply && (unsigned_values || size == 0))
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const bool subtract = operation >= 2;
 	const bool wide_left = (operation & 1U) != 0;
@@ -84,7 +84,7 @@ RunResult Dispatcher::simd_arithmetic_wide(CpuState &cpu, GuestMemory &,
 	const unsigned wide_bits = narrow_bits * 2;
 	const auto wide_mask = wide_bits == 64 ? ~std::uint64_t{0} :
 		(std::uint64_t{1} << wide_bits) - 1;
-	const std::size_t narrow_base =
+	const std::size_t narrow_base = !scalar &&
 		(instruction & 0x4000'0000U) != 0 ? 8 : 0;
 	const auto left = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	const auto right = cpu.vectors[(instruction >> 16) & 0x1fU].bytes;
@@ -178,7 +178,7 @@ RunResult Dispatcher::simd_narrow_move(CpuState &cpu, GuestMemory &,
 	const auto address = cpu.pc;
 	const unsigned size = (instruction >> 22) & 0x3U;
 	if (size == 3)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const std::size_t source_size = std::size_t{2} << size;
 	const std::size_t destination_size = source_size / 2;
