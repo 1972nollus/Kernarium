@@ -17,6 +17,13 @@ namespace uml::backend {
 namespace {
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
+constexpr std::uint32_t pstate_nzcv = 0xf000'0000U;
+constexpr std::uint32_t pstate_tco = 0x0200'0000U;
+constexpr std::uint32_t pstate_dit = 0x0100'0000U;
+constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
+constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
+constexpr std::uint64_t svcr_sm = 1U;
+constexpr std::uint64_t svcr_za = 2U;
 
 enum class DispatchExit : std::size_t {
 	system_call,
@@ -110,8 +117,28 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.registers[30] = registers.lr;
 	cpu.sp = registers.sp;
 	cpu.pc = registers.pc;
-	cpu.nzcv = registers.pstate;
+	cpu.nzcv = registers.pstate & pstate_nzcv;
+	cpu.pstate_tco = (registers.pstate & pstate_tco) != 0;
+	cpu.pstate_dit = (registers.pstate & pstate_dit) != 0;
+	cpu.pstate_ssbs = (registers.pstate & pstate_ssbs) != 0;
+	cpu.pstate_daif = static_cast<std::uint8_t>(
+		(registers.pstate & pstate_daif) >> 6);
+	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
+	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
+	cpu.fpmr = registers.fpmr;
 	cpu.tls = tls;
+	/* An exception return may clear the local monitor, and the backend has
+	 * no architectural reservation token in uml_pt_regs.  Clear every
+	 * diagnostic field so reusing the large CpuState scratch object cannot
+	 * make a later STXR succeed spuriously.
+	 */
+	cpu.exclusive_address = ~std::uint64_t{0};
+	cpu.exclusive_key = 0;
+	cpu.exclusive_value = 0;
+	cpu.exclusive_value2 = 0;
+	cpu.exclusive_version = 0;
+	cpu.exclusive_size = 0;
+	cpu.gadget_zero = 0;
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 
@@ -124,7 +151,19 @@ void save_cpu(const arm64::CpuState &cpu,
 	registers.lr = cpu.registers[30];
 	registers.sp = cpu.sp;
 	registers.pc = cpu.pc;
-	registers.pstate = cpu.nzcv;
+	registers.pstate =
+		(registers.pstate &
+		 ~(pstate_nzcv | pstate_tco | pstate_dit |
+		   pstate_ssbs | pstate_daif)) |
+		(cpu.nzcv & pstate_nzcv) |
+		(cpu.pstate_tco ? pstate_tco : 0U) |
+		(cpu.pstate_dit ? pstate_dit : 0U) |
+		(cpu.pstate_ssbs ? pstate_ssbs : 0U) |
+		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
+	registers.fpmr = cpu.fpmr;
+	registers.svcr =
+		(cpu.pstate_sm ? svcr_sm : 0U) |
+		(cpu.pstate_za ? svcr_za : 0U);
 	tls = static_cast<unsigned long>(cpu.tls);
 	if (cpu.fp_dirty) {
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
@@ -167,6 +206,18 @@ private:
 	bool entered_;
 };
 
+struct GuestThreadRuntime final {
+	arm64::CpuState cpu{};
+	StaticGuestMemory memory;
+	GadgetExecutor executor;
+};
+
+GuestThreadRuntime &guest_thread_runtime()
+{
+	static thread_local GuestThreadRuntime runtime;
+	return runtime;
+}
+
 } // namespace
 } // namespace uml::backend
 
@@ -197,10 +248,11 @@ extern "C" int darwin_uml_static_enter_guest(
 		return DARWIN_UML_EVENT_SYSCALL;
 	}
 
-	uml::backend::arm64::CpuState cpu{};
+	auto &runtime = uml::backend::guest_thread_runtime();
+	auto &cpu = runtime.cpu;
 	uml::backend::load_cpu(cpu, registers, fp, *tls);
-	static thread_local uml::backend::StaticGuestMemory memory;
-	static thread_local uml::backend::GadgetExecutor executor;
+	auto &memory = runtime.memory;
+	auto &executor = runtime.executor;
 	uml::backend::GuestExecutionScope execution{
 		executor, generation, cpu.pc};
 	if (!execution.entered())

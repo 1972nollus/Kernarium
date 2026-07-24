@@ -1092,9 +1092,16 @@ extern "C" [[gnu::noinline]] void uml_arm64_simd_floating_compare_software(
 namespace uml::backend::arm64::gadgets {
 namespace {
 
+struct EngineResult final {
+	std::int32_t event;
+	std::uint32_t reserved;
+	std::size_t executed;
+};
+
 extern "C" {
-int uml_arm64_gadget_enter(const std::uintptr_t *program, CpuState *cpu,
-			    Tlb *tlb);
+EngineResult uml_arm64_gadget_enter(const std::uintptr_t *program,
+				    CpuState *cpu, Tlb *tlb,
+				    std::size_t initial_instructions);
 void uml_arm64_gadget_move_wide_constant();
 void uml_arm64_gadget_move_wide_keep_w0();
 void uml_arm64_gadget_move_wide_keep_w1();
@@ -3405,7 +3412,9 @@ void uml_arm64_gadget_fatal();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_breakpoint();
 void uml_arm64_gadget_branch();
+void uml_arm64_gadget_branch_linked();
 void uml_arm64_gadget_branch_link();
+void uml_arm64_gadget_branch_link_linked();
 void uml_arm64_gadget_branch_register();
 void uml_arm64_gadget_branch_link_register();
 #define DECLARE_POINTER_AUTH_BRANCH(kind, key) \
@@ -3433,6 +3442,23 @@ void uml_arm64_gadget_branch_ge();
 void uml_arm64_gadget_branch_lt();
 void uml_arm64_gadget_branch_gt();
 void uml_arm64_gadget_branch_le();
+#define UML_DECLARE_LINKED_CONDITION(name) \
+	void uml_arm64_gadget_branch_##name##_linked();
+UML_DECLARE_LINKED_CONDITION(eq)
+UML_DECLARE_LINKED_CONDITION(ne)
+UML_DECLARE_LINKED_CONDITION(hs)
+UML_DECLARE_LINKED_CONDITION(lo)
+UML_DECLARE_LINKED_CONDITION(mi)
+UML_DECLARE_LINKED_CONDITION(pl)
+UML_DECLARE_LINKED_CONDITION(vs)
+UML_DECLARE_LINKED_CONDITION(vc)
+UML_DECLARE_LINKED_CONDITION(hi)
+UML_DECLARE_LINKED_CONDITION(ls)
+UML_DECLARE_LINKED_CONDITION(ge)
+UML_DECLARE_LINKED_CONDITION(lt)
+UML_DECLARE_LINKED_CONDITION(gt)
+UML_DECLARE_LINKED_CONDITION(le)
+#undef UML_DECLARE_LINKED_CONDITION
 #define UML_DECLARE_CMPBR_I_SIZE(size) \
 	void uml_arm64_gadget_cmpbr_i_##size##_sgt(); \
 	void uml_arm64_gadget_cmpbr_i_##size##_slt(); \
@@ -3461,8 +3487,12 @@ UML_DECLARE_CMPBR_R_SIZE(x)
 #undef UML_DECLARE_CMPBR_R_SIZE
 #undef UML_DECLARE_CMPBR_R_MODES
 void uml_arm64_gadget_branch_always();
+void uml_arm64_gadget_branch_always_linked();
 void uml_arm64_gadget_compare_branch();
+void uml_arm64_gadget_compare_branch_linked();
 void uml_arm64_gadget_test_branch();
+void uml_arm64_gadget_test_branch_linked();
+void uml_arm64_gadget_link_exit();
 #if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 void uml_arm64_gadget_decoded();
 void uml_arm64_gadget_decoded_control();
@@ -4612,19 +4642,23 @@ decode_pointer_auth_hint(std::uint32_t instruction) noexcept
 		 (instruction & 31U) != 31U);
 }
 
-void emit(std::vector<std::uintptr_t> &words, Gadget gadget)
+template<typename Allocator>
+void emit(std::vector<std::uintptr_t, Allocator> &words, Gadget gadget)
 {
 	words.push_back(reinterpret_cast<std::uintptr_t>(gadget));
 }
 
-void emit(std::vector<std::uintptr_t> &words, std::uintptr_t operand)
+template<typename Allocator>
+void emit(std::vector<std::uintptr_t, Allocator> &words,
+	  std::uintptr_t operand)
 {
 	words.push_back(operand);
 }
 
-void emit_interpreter_or_fatal(std::vector<std::uintptr_t> &words,
-			       std::uint32_t instruction,
-			       std::uint64_t address)
+template<typename Allocator>
+void emit_interpreter_or_fatal(
+	std::vector<std::uintptr_t, Allocator> &words,
+	std::uint32_t instruction, std::uint64_t address)
 {
 #if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	emit(words, uml_arm64_gadget_decoded);
@@ -4654,6 +4688,28 @@ void emit_interpreter_or_fatal(std::vector<std::uintptr_t> &words,
 	case 12: return uml_arm64_gadget_branch_gt;
 	case 13: return uml_arm64_gadget_branch_le;
 	default: return uml_arm64_gadget_branch_always;
+	}
+}
+
+[[nodiscard]] Gadget conditional_branch_linked_gadget(
+	unsigned condition) noexcept
+{
+	switch (condition) {
+	case 0: return uml_arm64_gadget_branch_eq_linked;
+	case 1: return uml_arm64_gadget_branch_ne_linked;
+	case 2: return uml_arm64_gadget_branch_hs_linked;
+	case 3: return uml_arm64_gadget_branch_lo_linked;
+	case 4: return uml_arm64_gadget_branch_mi_linked;
+	case 5: return uml_arm64_gadget_branch_pl_linked;
+	case 6: return uml_arm64_gadget_branch_vs_linked;
+	case 7: return uml_arm64_gadget_branch_vc_linked;
+	case 8: return uml_arm64_gadget_branch_hi_linked;
+	case 9: return uml_arm64_gadget_branch_ls_linked;
+	case 10: return uml_arm64_gadget_branch_ge_linked;
+	case 11: return uml_arm64_gadget_branch_lt_linked;
+	case 12: return uml_arm64_gadget_branch_gt_linked;
+	case 13: return uml_arm64_gadget_branch_le_linked;
+	default: return uml_arm64_gadget_branch_always_linked;
 	}
 }
 
@@ -8645,7 +8701,8 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 } // namespace
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
-		 std::vector<std::uintptr_t> words, bool accesses_fp_state) noexcept
+		 std::pmr::vector<std::uintptr_t> words,
+		 bool accesses_fp_state) noexcept
 	: guest_address_{guest_address}, instruction_count_{instruction_count},
 	  words_{std::move(words)}, accesses_fp_state_{accesses_fp_state}
 {
@@ -8653,9 +8710,10 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 
 BuildResult Builder::build(
 	std::uint64_t guest_address,
-	std::span<const std::uint32_t> instructions) const
+	std::span<const std::uint32_t> instructions,
+	LinkResolver resolve_link, std::pmr::memory_resource *storage) const
 {
-	std::vector<std::uintptr_t> words;
+	std::pmr::vector<std::uintptr_t> words{storage};
 	words.reserve(instructions.size() * 2 + 2);
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
@@ -8720,9 +8778,16 @@ BuildResult Builder::build(
 			const auto target = static_cast<std::uint64_t>(
 				static_cast<std::int64_t>(address) + displacement);
 			const bool link = (instruction >> 31) != 0;
-			emit(words, link ? uml_arm64_gadget_branch_link :
-				uml_arm64_gadget_branch);
-			emit(words, target);
+			if (resolve_link) {
+				emit(words, link ? uml_arm64_gadget_branch_link_linked :
+					uml_arm64_gadget_branch_linked);
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+			} else {
+				emit(words, link ? uml_arm64_gadget_branch_link :
+					uml_arm64_gadget_branch);
+				emit(words, target);
+			}
 			if (link)
 				emit(words, address + sizeof(instruction));
 			++compiled;
@@ -8733,10 +8798,21 @@ BuildResult Builder::build(
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
 				21);
-			emit(words, conditional_branch_gadget(instruction & 15U));
-			emit(words, static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(address) + displacement));
-			emit(words, address + sizeof(instruction));
+			const auto target = static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(address) + displacement);
+			const auto fallthrough = address + sizeof(instruction);
+			if (resolve_link) {
+				emit(words, conditional_branch_linked_gadget(
+					instruction & 15U));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(fallthrough)));
+			} else {
+				emit(words, conditional_branch_gadget(instruction & 15U));
+				emit(words, target);
+				emit(words, fallthrough);
+			}
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
@@ -8776,8 +8852,14 @@ BuildResult Builder::build(
 				take = cmpbr_equal_register_result(cc);
 			}
 			if (constant) {
-				emit(words, uml_arm64_gadget_branch_always);
-				emit(words, take ? target : fallthrough);
+				if (resolve_link) {
+					emit(words, uml_arm64_gadget_branch_always_linked);
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(take ? target : fallthrough)));
+				} else {
+					emit(words, uml_arm64_gadget_branch_always);
+					emit(words, take ? target : fallthrough);
+				}
 			} else if (immediate) {
 				emit(words, cmpbr_immediate_gadget(
 					(instruction >> 31) != 0, cc));
@@ -8805,13 +8887,23 @@ BuildResult Builder::build(
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
 				21);
-			emit(words, uml_arm64_gadget_compare_branch);
+			emit(words, resolve_link ? uml_arm64_gadget_compare_branch_linked :
+				uml_arm64_gadget_compare_branch);
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(instruction >> 31) << 8) |
 				(static_cast<std::uintptr_t>((instruction >> 24) & 1U) << 9));
-			emit(words, static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(address) + displacement));
-			emit(words, address + sizeof(instruction));
+			const auto target = static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(address) + displacement);
+			const auto fallthrough = address + sizeof(instruction);
+			if (resolve_link) {
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(fallthrough)));
+			} else {
+				emit(words, target);
+				emit(words, fallthrough);
+			}
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
@@ -8822,13 +8914,23 @@ BuildResult Builder::build(
 				16);
 			const auto bit = ((instruction >> 31) << 5) |
 				((instruction >> 19) & 31U);
-			emit(words, uml_arm64_gadget_test_branch);
+			emit(words, resolve_link ? uml_arm64_gadget_test_branch_linked :
+				uml_arm64_gadget_test_branch);
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(bit) << 8) |
 				(static_cast<std::uintptr_t>((instruction >> 24) & 1U) << 16));
-			emit(words, static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(address) + displacement));
-			emit(words, address + sizeof(instruction));
+			const auto target = static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(address) + displacement);
+			const auto fallthrough = address + sizeof(instruction);
+			if (resolve_link) {
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(fallthrough)));
+			} else {
+				emit(words, target);
+				emit(words, fallthrough);
+			}
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
@@ -11884,8 +11986,15 @@ BuildResult Builder::build(
 		}
 		++compiled;
 	}
-	emit(words, uml_arm64_gadget_interrupt);
-	emit(words, guest_address + compiled * sizeof(std::uint32_t));
+	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);
+	if (resolve_link) {
+		emit(words, uml_arm64_gadget_branch_linked);
+		emit(words, reinterpret_cast<std::uintptr_t>(
+			resolve_link(fallthrough)));
+	} else {
+		emit(words, uml_arm64_gadget_interrupt);
+		emit(words, fallthrough);
+	}
 	return {Program{guest_address, compiled, std::move(words),
 		program_accesses_fp_state}, true,
 		guest_address + compiled * sizeof(std::uint32_t), 0};
@@ -11893,12 +12002,23 @@ BuildResult Builder::build(
 
 Event execute(const Program &program, CpuState &cpu, Tlb &tlb) noexcept
 {
+	std::size_t executed = 0;
+	return execute(program, cpu, tlb, executed);
+}
+
+Event execute(const Program &program, CpuState &cpu, Tlb &tlb,
+	      std::size_t &executed) noexcept
+{
+	executed = 0;
 	if (program.words().empty())
 		return Event::fatal;
 	if (program.accesses_fp_state())
 		cpu.access_fp_state();
-	return static_cast<Event>(
-		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb));
+	const auto result =
+		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
+			program.instruction_count());
+	executed = result.executed;
+	return static_cast<Event>(result.event);
 }
 
 } // namespace uml::backend::arm64::gadgets

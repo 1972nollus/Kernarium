@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory_resource>
 #include <span>
 #include <vector>
 
@@ -24,7 +26,8 @@ enum class Event : int {
 class Program final {
 public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		std::vector<std::uintptr_t> words, bool accesses_fp_state) noexcept;
+		std::pmr::vector<std::uintptr_t> words,
+		bool accesses_fp_state) noexcept;
 
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
 	{
@@ -46,7 +49,7 @@ public:
 private:
 	std::uint64_t guest_address_{};
 	std::size_t instruction_count_{};
-	std::vector<std::uintptr_t> words_;
+	std::pmr::vector<std::uintptr_t> words_;
 	bool accesses_fp_state_{};
 };
 
@@ -57,14 +60,31 @@ struct BuildResult final {
 	std::uint32_t stop_instruction{};
 };
 
+/* Direct control-flow gadgets load these immutable-layout cells through the
+ * data stream. The cache may retarget a cell from the shared exit stream to a
+ * translated successor without modifying executable memory. */
+struct BlockLink final {
+	const std::uintptr_t *stream{};
+	std::size_t instruction_count{};
+	std::uint64_t guest_pc{};
+};
+
 class Builder final {
 public:
+	using LinkResolver =
+		std::function<const BlockLink *(std::uint64_t guest_pc)>;
+
 	[[nodiscard]] BuildResult build(
 		std::uint64_t guest_address,
-		std::span<const std::uint32_t> instructions) const;
+		std::span<const std::uint32_t> instructions,
+		LinkResolver resolve_link = {},
+		std::pmr::memory_resource *storage =
+			std::pmr::get_default_resource()) const;
 };
 
 [[nodiscard]] Event execute(const Program &program, CpuState &cpu,
 			    Tlb &tlb) noexcept;
+[[nodiscard]] Event execute(const Program &program, CpuState &cpu,
+			    Tlb &tlb, std::size_t &executed) noexcept;
 
 } // namespace uml::backend::arm64::gadgets

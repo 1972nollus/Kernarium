@@ -46,64 +46,67 @@ An entry is complete only when all four boxes are checked:
   duplicated to avoid unconditional finish branches. Remaining instruction-
   state tests are architectural FPCR/RCW semantics, while remaining memory
   branches are TLB, page-span, alignment/fault, or atomic-retry checks.
-- Dead-gadget audit: global gadget definitions were compared with every
-  production object reference plus internal assembly relocations/native
-  tables. The final set difference is empty after removing obsolete generic
-  load/store, conditional-select/compare, integer min/max, atomic, FP/SIMD,
-  and system-register gadgets.
+- Dead-gadget audit: all **8,642** global gadget definitions were compared
+  with every production object reference plus internal assembly
+  relocations/native tables. The final set difference is empty after removing
+  obsolete generic load/store, conditional-select/compare, integer min/max,
+  atomic, FP/SIMD, system-register, P5 compare/branch-fusion, and P10 mapped-
+  vector gadgets.
 - Host acceleration: gadgets use exact AArch64 host operations and extensions
   where their semantics match, including scalar/vector arithmetic, crypto,
   atomics, FP/Advanced SIMD, BF16, and FP8 native tables; guarded software
   behavior remains for semantics the host cannot reproduce exactly.
-- Test organization: instruction coverage is split across **293 focused A64
+- Test organization: instruction coverage is split across **296 focused A64
   test source files**, with separate allocation/encoding, behavior, control-
   state, fault/ordering, and gadget checks as applicable.
-- Standard CTest (guest integrations excluded): **298/298 Release**, **298/298
-  Debug gadget**, and **298/298 Debug interpreter** pass. The LTP runner parser
-  remains a unit test. Guest SMP and the verified guest LTP campaign are
-  standalone targets, `guest-smp-parallel` and `guest-ltp-verified`.
+- Final standard CTest (guest integrations excluded): **301/301 Release
+  production gadgets** and **301/301 Debug interpreter** pass. The LTP runner
+  parser remains a unit test. Guest SMP and the verified guest LTP campaign
+  are standalone targets, `guest-smp-parallel` and `guest-ltp-verified`.
 - Standalone integration regression: the Release verified-LTP campaign passed
   its 2,142 selected guest cases, and the guest SMP topology/parallelism check
   passed before both suites were removed from ordinary CTest.
 
 ## UnixBench production baseline
 
-Run completed successfully on 2026-07-23 with UnixBench 6.0.1 and the Release
-gadget build (kernel `6.18.38-gef5c549c2e6b-dirty`, build 475). The emulator
+The final accepted-source run completed successfully on 2026-07-24 with
+UnixBench 6.0.1 and the Release gadget build (kernel
+`6.18.38-g82f68fb0ae9e-dirty`). The emulator
 exposed 20 vCPUs and was passed `mem=8G`; the guest reported **8,216,336 KiB**
 `MemTotal`.
 
-The kernel's initrd feature was enabled so a small external recovery initramfs
-could perform the isolated boot. It mounted GPT partition 1 (`/dev/ubda1`)
-from `rootfs.img` as ext4 read-only, mounted tmpfs for the upper/work
-directories, and moved an overlayfs mount onto `/` before running exactly
+The kernel's initrd feature remains enabled in both the maintained defconfig
+and built kernel (`CONFIG_BLK_DEV_INITRD=y`). The benchmark boot used a PID-1
+recovery shell, mounted GPT partition 1 (`/dev/ubda1`) from `rootfs.img` as
+ext4 read-only, mounted tmpfs for the upper/work directories, and entered an
+overlay-root chroot before running exactly
 `/root/byte-unixbench/UnixBench/Run`. Guest evidence was:
 
 ```text
 EXT4-fs (ubda1): mounted filesystem ... ro
-__BENCHMARK_OVERLAY_READY__: /dev/ubda1 ro + tmpfs upper
 MemTotal:        8216336 kB
-overlay / overlay rw,relatime,lowerdir=/lower,upperdir=/ram/upper,workdir=/ram/work
+overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work
 ```
 
 | Test | 1-copy result | 1-copy index | 20-copy result | 20-copy index |
 |---|---:|---:|---:|---:|
-| Dhrystone 2 | 1,230,299.9 lps | 105.4 | 20,341,035.2 lps | 1,743.0 |
-| Double-Precision Whetstone | 379.4 MWIPS | 69.0 | 6,472.2 MWIPS | 1,176.8 |
-| Execl Throughput | 314.0 lps | 73.0 | 1,484.5 lps | 345.2 |
-| File Copy, 1024-byte buffer | 492,383.4 KBps | 1,243.4 | 1,004,320.5 KBps | 2,536.2 |
-| File Copy, 256-byte buffer | 125,953.5 KBps | 761.0 | 258,943.5 KBps | 1,564.6 |
-| File Copy, 4096-byte buffer | 267,078.0 KBps | 460.5 | 1,883,334.2 KBps | 3,247.1 |
-| Pipe Throughput | 602,325.8 lps | 484.2 | 1,129,243.3 lps | 907.8 |
-| Pipe Context Switching | 56,734.9 lps | 141.8 | 66,421.9 lps | 166.1 |
-| Process Creation | 1,083.2 lps | 86.0 | 1,745.4 lps | 138.5 |
-| Shell Scripts, 1 concurrent | 603.0 lpm | 142.2 | 4,126.4 lpm | 973.2 |
-| Shell Scripts, 8 concurrent | 407.3 lpm | 678.8 | 514.4 lpm | 857.3 |
-| System Call Overhead | 399,181.7 lps | 266.1 | 866,591.8 lps | 577.7 |
+| Dhrystone 2 | 1,811,304.2 lps | 155.2 | 30,124,572.3 lps | 2,581.4 |
+| Double-Precision Whetstone | 418.5 MWIPS | 76.1 | 7,016.7 MWIPS | 1,275.8 |
+| Execl Throughput | 472.5 lps | 109.9 | 1,820.0 lps | 423.3 |
+| File Copy, 1024-byte buffer | 538,502.5 KBps | 1,359.9 | 1,039,792.6 KBps | 2,625.7 |
+| File Copy, 256-byte buffer | 139,013.3 KBps | 840.0 | 265,389.3 KBps | 1,603.6 |
+| File Copy, 4096-byte buffer | 458,313.6 KBps | 790.2 | 1,734,678.1 KBps | 2,990.8 |
+| Pipe Throughput | 670,028.2 lps | 538.6 | 1,163,381.3 lps | 935.2 |
+| Pipe Context Switching | 58,069.6 lps | 145.2 | 70,190.2 lps | 175.5 |
+| Process Creation | 1,303.5 lps | 103.5 | 1,896.5 lps | 150.5 |
+| Shell Scripts, 1 concurrent | 969.6 lpm | 228.7 | 5,786.5 lpm | 1,364.7 |
+| Shell Scripts, 8 concurrent | 610.3 lpm | 1,017.2 | 771.4 lpm | 1,285.7 |
+| System Call Overhead | 441,221.7 lps | 294.1 | 1,489,129.1 lps | 992.8 |
 
-- **Single-copy System Benchmarks Index Score: 239.2**
-- **20-copy System Benchmarks Index Score: 819.6**
-- UnixBench exit status: **0**; the guest then powered off cleanly.
+- **Single-copy System Benchmarks Index Score: 305.0**
+- **20-copy System Benchmarks Index Score: 976.9**
+- **Composite score: 545.852**
+- UnixBench exit status: **0** and the child-completion marker was **0**.
 - `rootfs.img` before and after: size **8,589,934,592 bytes**, mtime
   **1784725767**, SHA-256
   `9d1398970ea078dcef37bed42ed5eba6ba132f53cca6849420a3f8f188f510ba`.

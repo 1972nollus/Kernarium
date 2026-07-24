@@ -61,6 +61,12 @@ struct darwin_uml_guest_registers {
 	int64_t syscall;
 	int32_t is_user;
 	int32_t padding;
+	/* Architectural state without a slot in user_pt_regs.  Keeping it in
+	 * uml_pt_regs makes syscall/fault boundaries and vCPU migration lossless
+	 * without putting backend pointers in the kernel register frame.
+	 */
+	uint64_t fpmr;
+	uint64_t svcr;
 };
 
 /* Linux's user_fpsimd_state and Darwin's arm_neon_state64_t share this
@@ -81,6 +87,9 @@ static_assert(offsetof(darwin_uml_guest_registers, pc) == 32 * sizeof(uint64_t))
 static_assert(offsetof(darwin_uml_guest_registers, pstate) == 33 * sizeof(uint64_t));
 static_assert(offsetof(darwin_uml_guest_registers, original_x0) ==
 	      34 * sizeof(uint64_t));
+static_assert(offsetof(darwin_uml_guest_registers, fpmr) ==
+	      40 * sizeof(uint64_t));
+static_assert(sizeof(darwin_uml_guest_registers) == 42 * sizeof(uint64_t));
 static_assert(sizeof(darwin_uml_faultinfo) == 24);
 static_assert(sizeof(darwin_uml_guest_fp_registers) == 528);
 #endif

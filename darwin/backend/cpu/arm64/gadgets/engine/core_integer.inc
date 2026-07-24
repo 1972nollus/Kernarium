@@ -167,7 +167,12 @@ NAME(uml_arm64_gadget_\name):
 .globl NAME(uml_arm64_gadget_enter)
 .p2align 4
 NAME(uml_arm64_gadget_enter):
-	/* x0 = data-only program stream, x1 = CpuState. */
+	/* x0 = data-only program stream, x1 = CpuState, x2 = TLB,
+	 * x3 = initial guest instruction count. x29 is otherwise unused by the
+	 * engine and remains live across helper calls. The two-register result
+	 * returns the event in w0 and completed count in x1 without a hot-boundary
+	 * memory store. Apple reserves x18, so it remains untouched.
+	 */
 	stp x18, x19, [sp, #-0x90]!
 	stp x20, x21, [sp, #0x10]
 	stp x22, x23, [sp, #0x20]
@@ -178,12 +183,14 @@ NAME(uml_arm64_gadget_enter):
 	str xzr, [sp, #0x78]
 	str wzr, [sp, #0x84]
 	mov _stream, x0
+	mov x29, x3
 	next_gadget
 
 .p2align 4
 uml_arm64_gadget_leave:
 	restore_fpmr_environment
 	restore_fp_environment
+	mov x1, x29
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
 	ldp x26, x27, [sp, #0x40]

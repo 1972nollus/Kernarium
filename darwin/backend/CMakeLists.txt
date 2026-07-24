@@ -220,6 +220,34 @@ if(UML_BUILD_TESTS)
     target_compile_options(uml_arm64_dispatch_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME arm64-static-dispatch COMMAND uml_arm64_dispatch_tests)
 
+    add_executable(uml_arm64_static_boundary_state_tests
+        tests/arm64_static_boundary_state_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_static_runtime>)
+    target_include_directories(uml_arm64_static_boundary_state_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_static_boundary_state_tests PRIVATE
+        -Wall -Wextra -Werror)
+    add_test(NAME arm64-static-boundary-state
+        COMMAND uml_arm64_static_boundary_state_tests)
+
+    add_executable(uml_arm64_static_translation_tests
+        tests/arm64_static_translation_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_static_runtime>)
+    target_include_directories(uml_arm64_static_translation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_static_translation_tests PRIVATE
+        -Wall -Wextra -Werror)
+    add_test(NAME arm64-static-translation
+        COMMAND uml_arm64_static_translation_tests)
+
     add_executable(uml_arm64_gadget_tests
         tests/arm64_gadget_tests.cpp
         $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -245,6 +273,20 @@ if(UML_BUILD_TESTS)
     target_compile_definitions(uml_arm64_gadget_hot_path_tests PRIVATE
 		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
     add_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)
+
+    add_executable(uml_arm64_gadget_link_tests
+		tests/arm64_gadget_link_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+    target_include_directories(uml_arm64_gadget_link_tests PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_gadget_link_tests PRIVATE
+		-Wall -Wextra -Werror)
+    target_compile_definitions(uml_arm64_gadget_link_tests PRIVATE
+		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
+    add_test(NAME arm64-gadget-links COMMAND uml_arm64_gadget_link_tests)
 
     add_executable(uml_arm64_base_arithmetic_tests
 		tests/arm64_base_arithmetic_tests.cpp
