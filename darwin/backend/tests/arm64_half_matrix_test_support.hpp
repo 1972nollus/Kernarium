@@ -25,7 +25,7 @@ inline constexpr std::array register_cases{
 [[nodiscard]] constexpr std::uint32_t instruction(bool widening,
 	Registers registers = {0, 1, 2}) noexcept
 {
-	const std::uint32_t base = widening ? 0x4e40'ec00U : 0x6ec0'ec00U;
+	const std::uint32_t base = widening ? 0x4e40'ec00U : 0x4ec0'ec00U;
 	return base | ((registers.second & 31U) << 16) |
 		((registers.first & 31U) << 5) | (registers.destination & 31U);
 }

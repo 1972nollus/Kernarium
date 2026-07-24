@@ -578,7 +578,7 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_floating_unary}, // fabs
 		DecodeEntry{0xbf3f'fc00U, 0x2e20'f800U,
 			&Dispatcher::simd_floating_unary}, // fneg
-		DecodeEntry{0xbf3f'fc00U, 0x2e21'f800U,
+		DecodeEntry{0xbfbf'fc00U, 0x2ea1'f800U,
 			&Dispatcher::simd_floating_unary}, // fsqrt
 		DecodeEntry{0xbfff'fc00U, 0x0ef8'f800U,
 			&Dispatcher::simd_floating_unary}, // fabs (FP16)

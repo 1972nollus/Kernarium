@@ -692,8 +692,8 @@ gadget half_matrix_\name
 	next_gadget
 .endm
 
-half_matrix_native native_non_widening, 0x6ec1ec02, 0
-half_matrix_native checked_non_widening, 0x6ec1ec02, 2
+half_matrix_native native_non_widening, 0x4ec1ec02, 0
+half_matrix_native checked_non_widening, 0x4ec1ec02, 2
 half_matrix_native native_widening, 0x4e41ec02, 0
 half_matrix_native checked_widening, 0x4e41ec02, 3
 .purgem half_matrix_native

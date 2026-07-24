@@ -42,7 +42,7 @@ inline constexpr std::array shapes{
 		if (shape.q)
 			encoded |= 0x4000'0000U;
 	} else {
-		encoded = negate ? 0x2e20'f800U : 0x0e20'f800U;
+		encoded = negate ? 0x2ea0'f800U : 0x0ea0'f800U;
 		if (shape.q)
 			encoded |= 0x4000'0000U;
 		if (shape.lane_bytes == 8U)

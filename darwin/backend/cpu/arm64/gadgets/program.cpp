@@ -10234,9 +10234,13 @@ BuildResult Builder::build(
 				half_operation == 0x2ef8'f800U;
 			const bool negate = half ? half_operation == 0x2ef8'f800U :
 				(instruction & 0xbf3f'fc00U) == 0x2e20'f800U;
-			const auto gadget = simd_floating_sign_gadget(negate, half,
-				!half && (instruction & 0x0040'0000U) != 0U,
-				(instruction & 0x4000'0000U) != 0U);
+			const bool allocated = half ||
+				(instruction & 0x0080'0000U) != 0U;
+			const auto gadget = allocated ?
+				simd_floating_sign_gadget(negate, half,
+					!half && (instruction & 0x0040'0000U) != 0U,
+					(instruction & 0x4000'0000U) != 0U) :
+				nullptr;
 			if (gadget == nullptr) {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);

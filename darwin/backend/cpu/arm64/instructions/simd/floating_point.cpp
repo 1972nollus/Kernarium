@@ -804,13 +804,17 @@ RunResult Dispatcher::simd_floating_unary(CpuState &cpu, GuestMemory &,
 			half_operation == 0x2ef8'f800U);
 	} else if (ordinary_operation == 0x0e20'f800U ||
 		   ordinary_operation == 0x2e20'f800U) {
+		if ((instruction & 0x0080'0000U) == 0U)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
 		const bool is_double = (instruction & 0x0040'0000U) != 0U;
 		if (is_double && !q)
 			return {StopReason::illegal_instruction, address, instruction, 0,
 				false};
 		execute_floating_sign_unary(cpu, instruction, is_double ? 8U : 4U,
 			vector_bytes, ordinary_operation == 0x2e20'f800U);
-	} else if (ordinary_operation == 0x2e21'f800U) {
+	} else if (ordinary_operation == 0x2e21'f800U &&
+		   (instruction & 0x0080'0000U) != 0U) {
 		const bool is_double = (instruction & 0x0040'0000U) != 0U;
 		if (is_double && !q)
 			return {StopReason::illegal_instruction, address, instruction, 0,

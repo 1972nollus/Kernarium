@@ -46,7 +46,7 @@ An entry is complete only when all four boxes are checked:
   duplicated to avoid unconditional finish branches. Remaining instruction-
   state tests are architectural FPCR/RCW semantics, while remaining memory
   branches are TLB, page-span, alignment/fault, or atomic-retry checks.
-- Dead-gadget audit: all **8,642** global gadget definitions were compared
+- Dead-gadget audit: all **8,644** global gadget definitions were compared
   with every production object reference plus internal assembly
   relocations/native tables. The final set difference is empty after removing
   obsolete generic load/store, conditional-select/compare, integer min/max,
@@ -59,54 +59,107 @@ An entry is complete only when all four boxes are checked:
 - Test organization: instruction coverage is split across **296 focused A64
   test source files**, with separate allocation/encoding, behavior, control-
   state, fault/ordering, and gadget checks as applicable.
-- Final standard CTest (guest integrations excluded): **301/301 Release
-  production gadgets** and **301/301 Debug interpreter** pass. The LTP runner
+- Final standard CTest (guest integrations excluded): **302/302 Release
+  production gadgets** and **302/302 Debug interpreter** pass. The LTP runner
   parser remains a unit test. Guest SMP and the verified guest LTP campaign
   are standalone targets, `guest-smp-parallel` and `guest-ltp-verified`.
 - Standalone integration regression: the Release verified-LTP campaign passed
   its 2,142 selected guest cases, and the guest SMP topology/parallelism check
   passed before both suites were removed from ordinary CTest.
 
+### 2026-07-24 scalar FABD runtime regression
+
+- Reported failure: a long-running Python process reached scalar
+  `FABD D30,D15,D30` (`0x7efed5fe`) and production translation emitted a fatal
+  event at that word.
+- Root cause: the shared scalar S/D FABD decoder and its test encoder used the
+  unallocated bit-23-clear pattern (`0x7e20d400`/`0x7e60d400`). Architecturally
+  allocated S/D encodings set bit 23
+  (`0x7ea0d400`/`0x7ee0d400`), so ordinary low-register tests could pass while
+  the real high-register instruction remained unrecognized.
+- Fix: the strict shared decoder now recognizes the complete allocation,
+  rejects the unallocated bit-23-clear siblings before side effects, and lets
+  production translation select the existing width-specialized native `fabd`
+  gadget. The obsolete broad interpreter decode-table entry was removed.
+- Unit evidence: exact-encoding interpreter behavior, exact production-gadget
+  differential execution, high-register variants, and invalid-sibling
+  rejection pass in both `.build/cmake-macos` and
+  `.build/cmake-interpreter`. The standard suite passes **302/302**.
+- Live evidence: a read-only `rootfs.img` plus tmpfs OverlayFS/systemd guest
+  completed a 180-second Python FP-format/parse stress (2,280,000 iterations),
+  8,000 dynamic system-register calls, and 250,000 direct executions of
+  `0x7efed5fe`, all without a fatal event or result mismatch. OpenJDK 21.0.11
+  also started successfully, and the guest shut down cleanly.
+
+### Independent encoding-allocation audit
+
+- Every raw instruction word in the A64 test-support headers, every expected
+  mnemonic table, and every native gadget-engine `.inst` word was
+  independently disassembled with LLVM's AArch64 decoder rather than relying
+  on the emulator decoder and its matching test encoder.
+- The audit found and corrected three shared allocation mistakes:
+  vector FABS/FNEG required bit 23 set; non-widening FMMLA required bit 29
+  clear; and the vector FSQRT decoder needed bit 23 in its mask/value so that
+  the valid bit-23-clear FRINT64X family was not claimed as FSQRT.
+- Exact canonical words for all affected half/single/double, Q, and
+  high-register forms are asserted in focused allocation files. Reserved
+  siblings are rejected before source reads or architectural writes by the
+  debug interpreter, while production resolves the allocation once during
+  translation and keeps the valid gadget hot path branch-free.
+- The non-widening FMMLA bit layout was additionally checked against the
+  rendered 2026-06 PDF encoding diagram. After correction, every executable
+  raw test/gadget word decodes to its intended architectural family; remaining
+  LLVM-invalid constants are deliberately partial family values, reserved
+  negative tests, or non-instruction FP data.
+
 ## UnixBench production baseline
 
 The final accepted-source run completed successfully on 2026-07-24 with
 UnixBench 6.0.1 and the Release gadget build (kernel
-`6.18.38-g82f68fb0ae9e-dirty`). The emulator
-exposed 20 vCPUs and was passed `mem=8G`; the guest reported **8,216,336 KiB**
+`6.18.38-g22c669fb9862`). The emulator
+exposed 20 vCPUs and was passed `mem=8G`; the guest reported **8,216,340 KiB**
 `MemTotal`.
 
 The kernel's initrd feature remains enabled in both the maintained defconfig
-and built kernel (`CONFIG_BLK_DEV_INITRD=y`). The benchmark boot used a PID-1
-recovery shell, mounted GPT partition 1 (`/dev/ubda1`) from `rootfs.img` as
-ext4 read-only, mounted tmpfs for the upper/work directories, and entered an
-overlay-root chroot before running exactly
+and built kernel (`CONFIG_BLK_DEV_INITRD=y`). The benchmark boot used
+`scripts/boot-overlay-systemd.sh`, mounted GPT partition 1 (`/dev/ubda1`) from
+`rootfs.img` as ext4 read-only, mounted tmpfs for the OverlayFS upper/work
+directories, pivoted to the overlay root, and ran systemd as PID 1 before
+running exactly
 `/root/byte-unixbench/UnixBench/Run`. Guest evidence was:
 
 ```text
 EXT4-fs (ubda1): mounted filesystem ... ro
-MemTotal:        8216336 kB
-overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work
+MemTotal:        8216340 kB
+overlay / overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work
+/dev/ubda1 /.uml-lower ext4 ro,relatime
 ```
 
 | Test | 1-copy result | 1-copy index | 20-copy result | 20-copy index |
 |---|---:|---:|---:|---:|
-| Dhrystone 2 | 1,811,304.2 lps | 155.2 | 30,124,572.3 lps | 2,581.4 |
-| Double-Precision Whetstone | 418.5 MWIPS | 76.1 | 7,016.7 MWIPS | 1,275.8 |
-| Execl Throughput | 472.5 lps | 109.9 | 1,820.0 lps | 423.3 |
-| File Copy, 1024-byte buffer | 538,502.5 KBps | 1,359.9 | 1,039,792.6 KBps | 2,625.7 |
-| File Copy, 256-byte buffer | 139,013.3 KBps | 840.0 | 265,389.3 KBps | 1,603.6 |
-| File Copy, 4096-byte buffer | 458,313.6 KBps | 790.2 | 1,734,678.1 KBps | 2,990.8 |
-| Pipe Throughput | 670,028.2 lps | 538.6 | 1,163,381.3 lps | 935.2 |
-| Pipe Context Switching | 58,069.6 lps | 145.2 | 70,190.2 lps | 175.5 |
-| Process Creation | 1,303.5 lps | 103.5 | 1,896.5 lps | 150.5 |
-| Shell Scripts, 1 concurrent | 969.6 lpm | 228.7 | 5,786.5 lpm | 1,364.7 |
-| Shell Scripts, 8 concurrent | 610.3 lpm | 1,017.2 | 771.4 lpm | 1,285.7 |
-| System Call Overhead | 441,221.7 lps | 294.1 | 1,489,129.1 lps | 992.8 |
+| Dhrystone 2 | 1,817,444.7 lps | 155.7 | 29,589,257.7 lps | 2,535.5 |
+| Double-Precision Whetstone | 417.7 MWIPS | 76.0 | 7,072.6 MWIPS | 1,285.9 |
+| Execl Throughput | 458.7 lps | 106.7 | 1,805.8 lps | 420.0 |
+| File Copy, 1024-byte buffer | 540,525.3 KBps | 1,365.0 | 1,032,100.8 KBps | 2,606.3 |
+| File Copy, 256-byte buffer | 138,603.6 KBps | 837.5 | 264,029.6 KBps | 1,595.3 |
+| File Copy, 4096-byte buffer | 460,890.9 KBps | 794.6 | 1,715,671.0 KBps | 2,958.1 |
+| Pipe Throughput | 672,031.0 lps | 540.2 | 1,187,436.8 lps | 954.5 |
+| Pipe Context Switching | 55,321.3 lps | 138.3 | 56,308.9 lps | 140.8 |
+| Process Creation | 1,385.8 lps | 110.0 | 1,851.6 lps | 147.0 |
+| Shell Scripts, 1 concurrent | 976.7 lpm | 230.4 | 5,700.3 lpm | 1,344.4 |
+| Shell Scripts, 8 concurrent | 604.6 lpm | 1,007.7 | 753.7 lpm | 1,256.2 |
+| System Call Overhead | 443,769.5 lps | 295.8 | 1,304,863.5 lps | 869.9 |
 
 - **Single-copy System Benchmarks Index Score: 305.0**
-- **20-copy System Benchmarks Index Score: 976.9**
-- **Composite score: 545.852**
-- UnixBench exit status: **0** and the child-completion marker was **0**.
+- **20-copy System Benchmarks Index Score: 942.1**
+- **Composite score: 536.042**
+- UnixBench exit status: **0**. The complete run lasted about 57 minutes
+  without a fatal guest event, including the sustained FP and 20-vCPU phases.
+- In the network-enabled validation boot, guest DNS resolved
+  `deb.debian.org`, an HTTP request returned `200 OK`, and OpenJDK 21.0.11
+  started successfully. The earlier no-network observation was reproduced
+  only when the host emulator process itself was launched inside a
+  DNS/network-restricted development sandbox.
 - `rootfs.img` before and after: size **8,589,934,592 bytes**, mtime
   **1784725767**, SHA-256
   `9d1398970ea078dcef37bed42ed5eba6ba132f53cca6849420a3f8f188f510ba`.
@@ -679,7 +732,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - F1CVTL, F1CVTL2, F2CVTL, F2CVTL2: 8-bit floating-point convert to half-precision (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABD: Floating-point absolute difference (scalar and vector). Correct scalar S/D allocation-bit decoding is covered through both the strict interpreter and translation-specialized native gadgets, including the reported `0x7efed5fe` high-register encoding.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABS (scalar): Floating-point absolute value (scalar).
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABS (vector): Floating-point absolute value (vector).
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABS (vector): Floating-point absolute value (vector). Canonical allocation-word assertions and early rejection of the unallocated bit-23-clear siblings prevent decoder/test agreement on invalid encodings.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FACGE: Floating-point absolute compare greater than or equal (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FACGT: Floating-point absolute compare greater than (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FADD (scalar): Floating-point add (scalar).
@@ -786,7 +839,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMLS (vector): Floating-point fused multiply-subtract from accumulator (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMLSL, FMLSL2 (by element): Floating-point fused multiply-subtract long from accumulator (by element).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMLSL, FMLSL2 (vector): Floating-point fused multiply-subtract long from accumulator (vector).
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMMLA (non-widening): Half-precision matrix multiply-accumulate.
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMMLA (non-widening): Half-precision matrix multiply-accumulate. The canonical `0x4ec0ec00` allocation and native-host `.inst` are asserted independently; the former bit-29-set test sibling is rejected before side effects.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMMLA (widening, 8-bit floating-point to half-precision): 8-bit floating-point matrix multiply-accumulate to half-precision.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMMLA (widening, 8-bit floating-point to single-precision): 8-bit floating-point matrix multiply-accumulate to single-precision.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMMLA (widening, half-precision to single-precision): Half-precision matrix multiply-accumulate to single-precision.
@@ -801,7 +854,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMULX: Floating-point multiply extended.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FMULX (by element): Floating-point multiply extended (by element).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNEG (scalar): Floating-point negate (scalar).
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNEG (vector): Floating-point negate (vector).
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNEG (vector): Floating-point negate (vector). Canonical allocation-word assertions and early rejection of the unallocated bit-23-clear siblings cover both interpreter and gadget paths.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNMADD: Floating-point negated fused multiply-add (scalar).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNMSUB: Floating-point negated fused multiply-subtract (scalar).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FNMUL (scalar): Floating-point multiply-negate (scalar).
@@ -834,7 +887,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FRSQRTS: Floating-point reciprocal square root step.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSCALE: Floating-point adjust exponent by vector.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSQRT (scalar): Floating-point square root (scalar).
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSQRT (vector): Floating-point square root (vector).
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSQRT (vector): Floating-point square root (vector). The strict allocation mask includes bit 23, with exact canonical-word checks proving the bit-23-clear FRINT64X family is not misclassified.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSUB (scalar): Floating-point subtract (scalar).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FSUB (vector): Floating-point subtract (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - INS (element): Insert vector element from another vector element.

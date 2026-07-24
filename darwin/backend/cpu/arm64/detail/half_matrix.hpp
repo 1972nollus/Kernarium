@@ -23,8 +23,10 @@ struct HalfMatrix final {
 {
 	const auto operation = instruction & 0xbfe0'fc00U;
 	const bool q = (instruction & 0x4000'0000U) != 0U;
-	if (operation == 0x2ec0'ec00U)
+	if (operation == 0x0ec0'ec00U)
 		return {true, q, false};
+	if (operation == 0x2ec0'ec00U)
+		return {true, false, false};
 	if (operation == 0x0e40'ec00U)
 		return {true, q, true};
 	return {};

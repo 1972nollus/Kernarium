@@ -81,7 +81,7 @@ decode_basic_floating_arithmetic(std::uint32_t instruction) noexcept
 		operation = BasicFloatingOperation::multiply;
 	else if ((instruction & 0xbf20'fc00U) == 0x2e20'fc00U)
 		operation = BasicFloatingOperation::divide;
-	else if ((instruction & 0xbf3f'fc00U) == 0x2e21'f800U)
+	else if ((instruction & 0xbfbf'fc00U) == 0x2ea1'f800U)
 		operation = BasicFloatingOperation::square_root;
 	else
 		recognized = false;
