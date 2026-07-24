@@ -35,7 +35,8 @@ inline constexpr std::array minmax_operations{
 	Operation::minimum, Operation::minimum_number};
 inline constexpr std::array register_cases{
 	Registers{0, 1, 2}, Registers{1, 1, 2}, Registers{2, 1, 2},
-	Registers{31, 30, 29}, Registers{30, 31, 30}};
+	Registers{31, 30, 29}, Registers{30, 31, 30},
+	Registers{30, 15, 30}};
 
 template<typename Function>
 void for_each_form(Function &&function)
@@ -90,8 +91,8 @@ void for_each_form(Function &&function)
 [[nodiscard]] constexpr std::uint32_t instruction(const Form &form,
 	Registers registers = {0, 1, 2}) noexcept
 {
-	constexpr std::array fabd_scalar{0x7ec0'1400U, 0x7e20'd400U,
-		0x7e60'd400U};
+	constexpr std::array fabd_scalar{0x7ec0'1400U, 0x7ea0'd400U,
+		0x7ee0'd400U};
 	constexpr std::array fabd_vector{0x2ec0'1400U, 0x6ec0'1400U,
 		0x2ea0'd400U, 0x6ea0'd400U, 0x6ee0'd400U};
 	constexpr std::array faddp_scalar{0x5e30'd800U, 0x7e30'd800U,

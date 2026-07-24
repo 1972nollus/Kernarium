@@ -1,3 +1,30 @@
+/* DC ZVA is fixed at 64 bytes by the virtual DCZID_EL0. Translation selects
+ * the real-register and XZR forms, and the 64-byte alignment guarantees that
+ * one successful 4 KiB TLB lookup covers every store. Stream:
+ * [register byte offset, when present][guest PC]. */
+.macro cache_zero name, zero
+gadget cache_zero_\name
+	.if \zero
+	mov x7, xzr
+	.else
+	ldr x8, [_stream], #8
+	ldr x7, [_cpu, x8]
+	and x7, x7, #0xffffffffffffffc0
+	.endif
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	stp xzr, xzr, [x7]
+	stp xzr, xzr, [x7, #16]
+	stp xzr, xzr, [x7, #32]
+	stp xzr, xzr, [x7, #48]
+	add _stream, _stream, #8
+	next_gadget
+.endm
+
+cache_zero r, 0
+cache_zero z, 1
+
+.purgem cache_zero
+
 /* FEAT_LS64 helpers serialize the 64-byte transaction and validate the TLB
  * before committing architectural state. Translation specializes operation,
  * SP addressing, and discarded status results; only the fault branch remains.
@@ -218,7 +245,7 @@ gadget sysreg_fpcr_read
 
 gadget sysreg_dczid_read
 	ldr x8, [_stream], #8
-	mov x9, #0x10
+	mov x9, #4
 	str x9, [_cpu, x8]
 	next_gadget
 

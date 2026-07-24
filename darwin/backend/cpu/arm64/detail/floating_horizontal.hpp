@@ -100,8 +100,9 @@ struct FloatingHorizontal final {
 	if ((instruction & 0xffe0'fc00U) == 0x7ec0'1400U)
 		return {true, true, FloatingHorizontalOperation::absolute_difference,
 			FloatingHorizontalForm::scalar_binary, 16U, 16U};
-	if ((instruction & 0xffa0'fc00U) == 0x7e20'd400U)
-		return {true, true, FloatingHorizontalOperation::absolute_difference,
+	if ((instruction & 0xff20'fc00U) == 0x7e20'd400U)
+		return {true, (instruction & 0x0080'0000U) != 0U,
+			FloatingHorizontalOperation::absolute_difference,
 			FloatingHorizontalForm::scalar_binary,
 			(instruction & 0x0040'0000U) != 0U ? 64U : 32U, 16U};
 

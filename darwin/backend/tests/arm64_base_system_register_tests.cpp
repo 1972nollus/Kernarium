@@ -199,7 +199,7 @@ void read_only_registers()
 {
 	for (const auto [instruction, expected] : {
 		std::array<std::uint64_t, 2>{0xd53b'd067U, 0U},
-		std::array<std::uint64_t, 2>{0xd53b'00e7U, 0x10U},
+		std::array<std::uint64_t, 2>{0xd53b'00e7U, 4U},
 		std::array<std::uint64_t, 2>{0xd53b'0027U, 0x8444'8004U},
 		std::array<std::uint64_t, 2>{0xd53b'e007U, 1'000'000'000U}}) {
 		const auto result = run(static_cast<std::uint32_t>(instruction),

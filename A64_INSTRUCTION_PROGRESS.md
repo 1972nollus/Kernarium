@@ -257,7 +257,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - CSINV: Conditional select invert.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - CSNEG: Conditional select negation.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - CTZ: Count trailing zeros.
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - DC: Data cache operation: an alias of SYS.
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - DC: Data cache operation: an alias of SYS. DC ZVA exposes a 64-byte block and uses a checked all-or-nothing interpreter write plus a translation-specialized four-store gadget; OpenJDK 21 startup is covered by live validation.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - DCPS1: Debug change PE state to EL1.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - DCPS2: Debug change PE state to EL2.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - DCPS3: Debug change PE state to EL3.
@@ -677,7 +677,7 @@ overlay /mnt/root overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - EOR3: Three-way exclusive-OR.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - EXT: Extract vector from pair of vectors.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - F1CVTL, F1CVTL2, F2CVTL, F2CVTL2: 8-bit floating-point convert to half-precision (vector).
-- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABD: Floating-point absolute difference (vector).
+- [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABD: Floating-point absolute difference (scalar and vector). Correct scalar S/D allocation-bit decoding is covered through both the strict interpreter and translation-specialized native gadgets, including the reported `0x7efed5fe` high-register encoding.
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABS (scalar): Floating-point absolute value (scalar).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FABS (vector): Floating-point absolute value (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] Tests - FACGE: Floating-point absolute compare greater than or equal (vector).

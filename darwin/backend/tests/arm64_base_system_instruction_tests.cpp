@@ -11,7 +11,8 @@ namespace {
 [[nodiscard]] constexpr bool enabled_cache(std::uint32_t instruction)
 {
 	const auto operation = instruction & 0xffff'ffe0U;
-	return operation == 0xd50b'7b20U || operation == 0xd50b'7520U;
+	return operation == 0xd50b'7420U || operation == 0xd50b'7b20U ||
+		operation == 0xd50b'7520U;
 }
 
 void enabled_cache_operations()
@@ -48,8 +49,8 @@ void complete_numeric_allocation()
 	test::Harness harness;
 	/* Every numeric SYS/SYSL operation is decoded.  Exercise every operation
 	 * tuple and both a real register and the architectural XZR/default form in
-	 * both runpaths.  The only enabled tuples are the two userspace cache
-	 * synchronization operations tested above. */
+	 * both runpaths. The only enabled tuples are DC ZVA plus the two userspace
+	 * cache synchronization operations. */
 	for (const bool result : {false, true})
 		for (unsigned op1 = 0; op1 < 8; ++op1)
 			for (unsigned crn = 0; crn < 16; ++crn)

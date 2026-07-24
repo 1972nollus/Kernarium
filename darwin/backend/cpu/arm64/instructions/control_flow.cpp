@@ -3,6 +3,7 @@
 
 #include "../detail/instruction_helpers.hpp"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -236,11 +237,8 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 		 * architectural EL0 read remains present and reads its reset value. */
 		cpu.write_register(transfer, 0, false);
 	else if (system_register == 0xd53b'00e0U)
-		/* DZP=1 advertises that DC ZVA is unavailable.  The emulator has no
-		 * cache-maintenance side channel, so userspace must use ordinary
-		 * stores for architecturally visible zeroing.
-		 */
-		cpu.write_register(transfer, 1U << 4, false);
+		/* DZP=0 and BS=4 advertise the 64-byte DC ZVA implementation. */
+		cpu.write_register(transfer, 4U, false);
 	else if (system_register == 0xd53b'0020U)
 		/* 64-byte I/D cache lines, PIPT L1, and 64-byte exclusive and
 		 * cache-writeback granules.  The static dispatcher models the
@@ -347,6 +345,21 @@ RunResult Dispatcher::cache_maintenance(CpuState &cpu, GuestMemory &memory,
 {
 	const auto address = cpu.pc;
 	const auto operation = instruction & 0xffff'ffe0U;
+
+	if (operation == 0xd50b'7420U) {
+		/* DC ZVA ignores the low BlockSize bits. Keep the interpreter
+		 * deliberately explicit: validate and commit the complete block
+		 * through GuestMemory so an invalid mapping cannot expose a partial
+		 * architectural store.
+		 */
+		const auto block = cpu.read_register(
+			instruction & 0x1fU, false) & ~std::uint64_t{63};
+		const std::array<std::byte, 64> zeros{};
+		if (!memory.write(block, zeros))
+			return {StopReason::memory_fault, block, instruction, 0, true};
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
 
 	/* Guest data writes already update the single coherent physical backing.
 	 * DC CVAU therefore needs only an ordering edge.  IC IVAU additionally

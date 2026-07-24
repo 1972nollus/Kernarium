@@ -2821,6 +2821,8 @@ void uml_arm64_gadget_sysreg_nzcv_write_r();
 void uml_arm64_gadget_sysreg_nzcv_write_z();
 void uml_arm64_gadget_sysreg_cntfrq_read();
 void uml_arm64_gadget_sysreg_cntvct_read();
+void uml_arm64_gadget_cache_zero_r();
+void uml_arm64_gadget_cache_zero_z();
 void uml_arm64_gadget_pstate_store();
 void uml_arm64_gadget_pstate_smza_store();
 void uml_arm64_gadget_pstate_daif_set();
@@ -9060,7 +9062,16 @@ BuildResult Builder::build(
 		} else if ((instruction & 0xfff8'0000U) == 0xd508'0000U ||
 			   (instruction & 0xfff8'0000U) == 0xd528'0000U) {
 			const auto operation = instruction & 0xffff'ffe0U;
-			if (operation == 0xd50b'7b20U ||
+			if (operation == 0xd50b'7420U) {
+				const unsigned source = instruction & 31U;
+				emit(words, source == 31U ?
+					uml_arm64_gadget_cache_zero_z :
+					uml_arm64_gadget_cache_zero_r);
+				if (source != 31U)
+					emit(words, static_cast<std::uintptr_t>(
+						source * sizeof(std::uint64_t)));
+				emit(words, address);
+			} else if (operation == 0xd50b'7b20U ||
 			    operation == 0xd50b'7520U) {
 				/* The static VM invalidation path tracks guest executable
 				 * writes, so the production cache operation needs no work. */

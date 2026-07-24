@@ -566,6 +566,21 @@ if(UML_BUILD_TESTS)
     add_test(NAME arm64-base-system-registers
 		COMMAND uml_arm64_base_system_register_tests)
 
+    add_executable(uml_arm64_base_cache_zero_tests
+		tests/arm64_base_cache_zero_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+    target_include_directories(uml_arm64_base_cache_zero_tests PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_base_cache_zero_tests PRIVATE
+		-Wall -Wextra -Werror)
+    target_compile_definitions(uml_arm64_base_cache_zero_tests PRIVATE
+		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
+    add_test(NAME arm64-base-cache-zero
+		COMMAND uml_arm64_base_cache_zero_tests)
+
 	foreach(SYSTEM_TEST IN ITEMS
 			system_register_allocation
 			system_instruction

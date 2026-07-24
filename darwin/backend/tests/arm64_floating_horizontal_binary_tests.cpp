@@ -64,9 +64,28 @@ void all_binary_results_and_inactive_lanes()
 	});
 }
 
+void reported_scalar_double_fabd_encoding()
+{
+	test::common::Harness harness;
+	const test::Form form{test::Operation::absolute_difference,
+		test::Kind::scalar_binary, 64U, 16U};
+	constexpr test::Registers registers{30, 15, 30};
+	const auto encoded = test::instruction(form, registers);
+	test::common::require(encoded == 0x7efe'd5feU);
+
+	auto initial = test::common::state(0x74e0);
+	test::basic::set_lane(initial, registers.first, 0, -17.25);
+	test::basic::set_lane(initial, registers.second, 0, 4.5);
+	const auto actual = harness.run_interpreter(encoded, initial);
+	test::common::require(test::basic::lane_bits<double>(
+		actual, registers.destination, 0) ==
+		std::bit_cast<std::uint64_t>(21.75));
+}
+
 } // namespace
 
 int main()
 {
 	all_binary_results_and_inactive_lanes();
+	reported_scalar_double_fabd_encoding();
 }

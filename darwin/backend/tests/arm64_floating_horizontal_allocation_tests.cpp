@@ -20,6 +20,13 @@ void every_operation_form_and_shape()
 void reserved_shapes_are_rejected_before_side_effects()
 {
 	test::common::Harness harness;
+	for (const auto width : {32U, 64U}) {
+		auto scalar_fabd = test::instruction(
+			{test::Operation::absolute_difference,
+			 test::Kind::scalar_binary, width, 16U});
+		scalar_fabd &= ~0x0080'0000U;
+		harness.require_illegal(scalar_fabd, test::common::state(199));
+	}
 	for (const auto operation : test::minmax_operations) {
 		auto scalar = test::instruction(
 			{operation, test::Kind::scalar_binary, 32U, 16U});

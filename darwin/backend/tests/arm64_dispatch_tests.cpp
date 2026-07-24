@@ -653,7 +653,7 @@ static void architectural_system_registers()
 	cpu.nzcv = 0xa000'0000U;
 	const auto result = arm64::Dispatcher{}.run(cpu, memory, 16);
 	require(result.reason == arm64::StopReason::system_call);
-	require(cpu.registers[5] == 1U << 4);
+	require(cpu.registers[5] == 4U);
 	require(cpu.fpcr == 0x0400'0000U);
 	require(cpu.registers[7] == 0x0400'0000U);
 	require(cpu.fpsr == 0x0800'0000U);

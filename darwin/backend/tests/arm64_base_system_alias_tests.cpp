@@ -73,9 +73,9 @@ void cache_instruction_aliases()
 {
 	test::Harness harness;
 	/* Exhaust the shared AT/BRB/DC/IC/prediction/GCS/TRCIT C7 namespace.
-	 * DC CVAU and IC IVAU are the only enabled EL0 operations.  This covers
-	 * every DC and IC operation version, including optional-tag forms and
-	 * DC ZVA (prohibited by the advertised DCZID_EL0.DZP value). */
+	 * DC ZVA, DC CVAU, and IC IVAU are the only enabled EL0 operations. This
+	 * covers every other DC and IC operation version, including optional-tag
+	 * forms. */
 	for (unsigned op1 = 0; op1 < 8; ++op1)
 		for (unsigned crm = 0; crm < 16; ++crm)
 			for (unsigned op2 = 0; op2 < 8; ++op2)
@@ -83,7 +83,8 @@ void cache_instruction_aliases()
 					const auto instruction = test::system_instruction(false,
 						op1, 7, crm, op2, transfer);
 					const auto operation = instruction & 0xffff'ffe0U;
-					if (operation != 0xd50b'7b20U &&
+					if (operation != 0xd50b'7420U &&
+					    operation != 0xd50b'7b20U &&
 					    operation != 0xd50b'7520U)
 						harness.require_illegal(instruction);
 				}
