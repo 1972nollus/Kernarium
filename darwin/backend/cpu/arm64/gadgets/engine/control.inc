@@ -29,27 +29,50 @@ gadget breakpoint
 	b uml_arm64_gadget_leave
 
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
- * target points at the one-word link_exit stream, so the hot path needs no
- * linked/unlinked test. Bound chains at 4,096 guest instructions; the outer
+ * target points at its own {link_exit, guest_pc} stream, so the hot path needs
+ * no linked/unlinked test. Resolved edges defer the architectural PC store
+ * until an actual exit. Bound chains at 4,096 guest instructions; the outer
  * dispatcher then observes pending shootdowns/IPIs well before its 64K
  * fairness limit. */
 .macro follow_block_link link
-	ldr x9, [\link, #16]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	ldp x10, x11, [\link]
+	ldp _stream, x11, [\link]
 	add x29, x29, x11
 	cmp x29, #1, lsl #12
 	b.lo 98f
+	ldr x9, [\link, #16]
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 98:
-	mov _stream, x10
 	next_gadget
 .endm
 
 gadget link_exit
+	ldr x9, [_stream]
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
+
+/*
+ * Translation points FP/SIMD BlockLinks at a private
+ * {fp_link_entry, target_stream} prefix. Most entries need one predicted
+ * loaded-state branch and one dirty-byte store. Only a freshly deferred
+ * kernel frame calls the cold materialization helper.
+ */
+gadget fp_link_entry
+	ldrb w8, [_cpu, #UML_GADGET_CPU_FP_LOADED]
+	cbz w8, 97f
+	mov w8, #1
+	strb w8, [_cpu, #UML_GADGET_CPU_FP_DIRTY]
+98:
+	ldr _stream, [_stream]
+	next_gadget
+97:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	bl NAME(uml_arm64_gadget_access_fp_state)
+	ldp x1, x2, [sp], #16
+	b 98b
 
 #if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 /* Explicit debug-only interpreter fallback. Production builds do not contain
@@ -65,6 +88,7 @@ gadget decoded
 	mov w2, w3
 	bl NAME(uml_arm64_gadget_execute_decoded)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, 1f
 	b uml_arm64_gadget_leave
 1:	next_gadget
@@ -82,6 +106,7 @@ gadget decoded_control
 	mov w2, w3
 	bl NAME(uml_arm64_gadget_execute_decoded)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	b uml_arm64_gadget_leave
 #endif
 
@@ -131,6 +156,44 @@ gadget return
 	str x10, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
+
+/* Two-entry data-only indirect target caches. Translation fixes the source
+ * register offset and cache-cell address. A hit immediately follows the
+ * already-safe BlockLink; only a miss commits the target and identifies the
+ * cell for cold C++ training. */
+.macro follow_indirect_link
+	ldp x11, x12, [x9]
+	cmp x10, x11
+	b.eq 98f
+	ldp x11, x12, [x9, #16]
+	cmp x10, x11
+	b.eq 98f
+	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x10, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+98:
+	follow_block_link x12
+.endm
+
+gadget branch_register_cached
+	ldp x8, x9, [_stream]
+	ldr x10, [_cpu, x8]
+	follow_indirect_link
+
+gadget branch_link_register_cached
+	ldp x8, x9, [_stream], #16
+	ldr x11, [_stream]
+	ldr x10, [_cpu, x8]
+	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	follow_indirect_link
+
+gadget return_cached
+	ldp x8, x9, [_stream]
+	ldr x10, [_cpu, x8]
+	follow_indirect_link
+
+.purgem follow_indirect_link
 
 /* Authenticated indirect branches. Key, link behavior, zero modifier, and
  * XZR target are fixed by the builder. The ordinary register/register path
@@ -190,8 +253,7 @@ pauth_branch blra_b_zz, autib, autizb, 1, 1, 1
 gadget branch_\name
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
-	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x8
+	msr nzcv, x27
 	csel x9, x19, x20, \condition
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
@@ -202,8 +264,7 @@ gadget branch_\name
 gadget branch_\name\()_linked
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
-	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x8
+	msr nzcv, x27
 	csel x8, x19, x20, \condition
 	follow_block_link x8
 .endm

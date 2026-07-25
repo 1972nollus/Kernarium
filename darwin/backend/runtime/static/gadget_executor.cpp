@@ -187,17 +187,13 @@ private:
 } // namespace
 
 extern "C" void uml_arm64_gadget_link_exit();
+extern "C" void uml_arm64_gadget_fp_link_entry();
 
 class GadgetExecutor::ProgramCache final {
 public:
-	ProgramCache()
-	{
-		unlinked_stream_[0] =
-			reinterpret_cast<std::uintptr_t>(uml_arm64_gadget_link_exit);
-	}
-
 	void invalidate() noexcept
 	{
+		indirect_links_.clear();
 		links_.clear();
 		++epoch_;
 		if (epoch_ != 0)
@@ -228,16 +224,45 @@ public:
 	{
 		const auto found = links_.find(pc);
 		if (found != links_.end())
-			return found->second.get();
-		auto created = std::make_unique<arm64::gadgets::BlockLink>(
-			arm64::gadgets::BlockLink{
-				.stream = unlinked_stream_.data(),
-				.instruction_count = 0,
-				.guest_pc = pc,
-			});
-		const auto *result = created.get();
+			return &found->second->link;
+		auto created = std::make_unique<LinkRecord>(pc);
+		const auto *result = &created->link;
 		links_.emplace(pc, std::move(created));
 		return result;
+	}
+
+	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
+		std::uint64_t source_pc)
+	{
+		const auto found = indirect_links_.find(source_pc);
+		if (found != indirect_links_.end())
+			return found->second.get();
+		constexpr auto empty_pc = ~std::uint64_t{};
+		const auto *empty_link = link(empty_pc);
+		auto created = std::make_unique<arm64::gadgets::IndirectLink>();
+		for (auto &entry : created->entries) {
+			entry.guest_pc = empty_pc;
+			entry.link = empty_link;
+		}
+		auto *result = created.get();
+		indirect_links_.emplace(source_pc, std::move(created));
+		return result;
+	}
+
+	void learn_indirect(arm64::gadgets::IndirectLink &site,
+			    std::uint64_t target_pc)
+	{
+		const auto *target = link(target_pc);
+		for (auto &entry : site.entries) {
+			if (entry.guest_pc != target_pc)
+				continue;
+			entry.link = target;
+			return;
+		}
+		auto &entry = site.entries[site.next_replacement & 1U];
+		entry.guest_pc = target_pc;
+		entry.link = target;
+		site.next_replacement ^= 1U;
 	}
 
 	[[nodiscard]] const BuildResult &store(
@@ -297,6 +322,36 @@ private:
 		std::size_t offset;
 	};
 
+	struct LinkRecord final {
+		explicit LinkRecord(std::uint64_t pc) noexcept
+			: fallback_stream{
+				reinterpret_cast<std::uintptr_t>(
+					uml_arm64_gadget_link_exit),
+				static_cast<std::uintptr_t>(pc)},
+			  fp_stream{
+				reinterpret_cast<std::uintptr_t>(
+					uml_arm64_gadget_fp_link_entry),
+				0},
+			  link{
+				.stream = fallback_stream.data(),
+				.instruction_count = 0,
+				.guest_pc = pc,
+			  }
+		{
+		}
+
+		void reset() noexcept
+		{
+			link.stream = fallback_stream.data();
+			link.instruction_count = 0;
+			fp_stream[1] = 0;
+		}
+
+		std::array<std::uintptr_t, 2> fallback_stream;
+		std::array<std::uintptr_t, 2> fp_stream;
+		arm64::gadgets::BlockLink link;
+	};
+
 	[[nodiscard]] static Location locate(std::uint64_t pc) noexcept
 	{
 		const auto block = pc >> 2;
@@ -312,11 +367,17 @@ private:
 
 	void activate(std::uint64_t pc, const BuildResult &result)
 	{
-		if (!result.complete || result.program.instruction_count() == 0 ||
-		    result.program.accesses_fp_state())
+		if (!result.complete || result.program.instruction_count() == 0)
 			return;
 		auto *target = const_cast<arm64::gadgets::BlockLink *>(link(pc));
-		target->stream = result.program.words().data();
+		auto &record = *links_.find(pc)->second;
+		if (result.program.accesses_fp_state()) {
+			record.fp_stream[1] = reinterpret_cast<std::uintptr_t>(
+				result.program.words().data());
+			target->stream = record.fp_stream.data();
+		} else {
+			target->stream = result.program.words().data();
+		}
 		target->instruction_count = result.program.instruction_count();
 	}
 
@@ -324,17 +385,23 @@ private:
 			const arm64::gadgets::Program &program) noexcept
 	{
 		const auto found = links_.find(pc);
-		if (found == links_.end() ||
-		    found->second->stream != program.words().data())
+		if (found == links_.end())
 			return;
-		found->second->stream = unlinked_stream_.data();
-		found->second->instruction_count = 0;
+		auto &record = *found->second;
+		const auto *words = program.words().data();
+		const bool direct = record.link.stream == words;
+		const bool fp = record.link.stream == record.fp_stream.data() &&
+			record.fp_stream[1] ==
+				reinterpret_cast<std::uintptr_t>(words);
+		if (direct || fp)
+			record.reset();
 	}
 
-	std::array<std::uintptr_t, 1> unlinked_stream_{};
 	std::pmr::unsynchronized_pool_resource program_storage_;
 	std::unordered_map<std::uint64_t,
-		std::unique_ptr<arm64::gadgets::BlockLink>> links_;
+		std::unique_ptr<LinkRecord>> links_;
+	std::unordered_map<std::uint64_t,
+		std::unique_ptr<arm64::gadgets::IndirectLink>> indirect_links_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 	std::uint64_t epoch_{1};
@@ -453,7 +520,10 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 				[this](std::uint64_t pc) {
 					return programs_->link(pc);
 				},
-				programs_->program_storage());
+				programs_->program_storage(),
+				[this](std::uint64_t source_pc) {
+					return programs_->indirect_link(source_pc);
+				});
 		}();
 		if (verification_requested) {
 			uncached.emplace(std::move(decoded));
@@ -505,6 +575,13 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	}
 	const auto event =
 		arm64::gadgets::execute(built.program, cpu, tlb_, executed);
+	if (cpu.gadget_indirect_miss != nullptr) {
+		programs_->learn_indirect(
+			*static_cast<arm64::gadgets::IndirectLink *>(
+				cpu.gadget_indirect_miss),
+			cpu.pc);
+		cpu.gadget_indirect_miss = nullptr;
+	}
 	if (event == arm64::gadgets::Event::fatal) {
 		std::array<std::byte, sizeof(std::uint32_t)> current_encoded{};
 		std::uint32_t current_instruction = 0;

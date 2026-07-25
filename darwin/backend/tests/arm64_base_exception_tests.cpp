@@ -126,7 +126,12 @@ void check_gadget(std::uint32_t instruction, gadgets::Event event,
 	auto cpu = initial;
 	cpu.pc = base;
 	tlb.prepare(0, darwin_uml_static_vm_changes(0));
-	require(gadgets::execute(built.program, cpu, tlb) == event);
+	const auto actual = gadgets::execute(built.program, cpu, tlb);
+	if (actual != event)
+		std::fprintf(stderr,
+			"exception gadget mismatch instruction=%#x actual=%d expected=%d\n",
+			instruction, static_cast<int>(actual), static_cast<int>(event));
+	require(actual == event);
 	require_state(cpu, initial, advance ? base + 4 : base);
 }
 

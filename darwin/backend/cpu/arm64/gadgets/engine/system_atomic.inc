@@ -68,6 +68,7 @@ gadget mops_prologue_\name
 	mov x1, x8
 	bl NAME(uml_arm64_gadget_mops_prologue_transfer_\name)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 .endm
 
@@ -75,11 +76,13 @@ gadget mops_prologue_\name
 gadget mops_epilogue_\name
 	ldr x8, [_stream], #8
 	stp x1, x2, [sp, #-16]!
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	mov x0, x1
 	mov x1, x2
 	mov x2, x8
 	bl NAME(uml_arm64_gadget_mops_epilogue_transfer_\name)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, uml_arm64_gadget_memory_fault
 	tbz w0, #1, 1f
 	b NAME(uml_arm64_gadget_illegal)
@@ -99,11 +102,13 @@ mops_epilogue set_z
 gadget mops_set_tag_prologue
 	ldr x8, [_stream], #8
 	stp x1, x2, [sp, #-16]!
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	mov x0, x1
 	mov x1, x2
 	mov x2, x8
 	bl NAME(uml_arm64_gadget_mops_set_tag_prologue_transfer)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, uml_arm64_gadget_memory_fault
 	add _stream, _stream, #8
 	next_gadget
@@ -112,11 +117,13 @@ gadget mops_set_tag_prologue
 gadget mops_set_tag_epilogue_\name
 	ldr x8, [_stream], #8
 	stp x1, x2, [sp, #-16]!
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	mov x0, x1
 	mov x1, x2
 	mov x2, x8
 	bl NAME(uml_arm64_gadget_mops_set_tag_epilogue_transfer_\name)
 	ldp x1, x2, [sp], #16
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, uml_arm64_gadget_memory_fault
 	tbz w0, #1, 1f
 	b NAME(uml_arm64_gadget_illegal)
@@ -207,14 +214,6 @@ gadget sysreg_\name\()_read
 	next_gadget
 .endm
 
-.macro sysreg_read32 name, field
-gadget sysreg_\name\()_read
-	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #\field]
-	str x9, [_cpu, x8]
-	next_gadget
-.endm
-
 .macro sysreg_write64 name, field
 gadget sysreg_\name\()_write_r
 	ldr x8, [_stream], #8
@@ -228,10 +227,13 @@ gadget sysreg_\name\()_write_z
 
 sysreg_read64 tls, UML_GADGET_CPU_TLS
 sysreg_write64 tls, UML_GADGET_CPU_TLS
-sysreg_read32 nzcv, UML_GADGET_CPU_NZCV
+
+gadget sysreg_nzcv_read
+	ldr x8, [_stream], #8
+	str x27, [_cpu, x8]
+	next_gadget
 
 .purgem sysreg_write64
-.purgem sysreg_read32
 .purgem sysreg_read64
 
 gadget sysreg_fpcr_read
@@ -357,11 +359,11 @@ gadget sysreg_nzcv_write_r
 	ldr x8, [_stream], #8
 	ldr w9, [_cpu, x8]
 	and w9, w9, #0xf0000000
-	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w9
 	next_gadget
 
 gadget sysreg_nzcv_write_z
-	str wzr, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, wzr
 	next_gadget
 
 gadget pstate_store
@@ -851,7 +853,7 @@ simd_structure_interleaved 4
 	ldr x9, [x7]
 	dup v0.2d, x9
 	.endif
-	and w9, w27, #31
+	and w9, w26, #31
 	add x10, _cpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
 	.if \q
@@ -872,21 +874,21 @@ gadget simd_replicate_\name
 	b.hi .Lsimd_replicate_slow\@
 	mov x7, x21
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	and w27, w19, #31
+	and w26, w19, #31
 	simd_replicate_one \width, \q
 	.if \count > 1
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	.if \count > 2
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	.if \count > 3
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	.if \mode == 1
@@ -913,21 +915,21 @@ gadget simd_replicate_\name
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_replicate_fault\@
 	mov x7, sp
-	and w27, w19, #31
+	and w26, w19, #31
 	simd_replicate_one \width, \q
 	.if \count > 1
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	.if \count > 2
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	.if \count > 3
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_replicate_one \width, \q
 	.endif
 	add sp, sp, #48
@@ -979,7 +981,7 @@ simd_replicate_counts d_q, 8, 1
  * offset is precomputed into operand bits 63:48; width, register count,
  * direction, and writeback mode are fixed by the selected symbol. */
 .macro simd_lane_one load, width
-	and w9, w27, #31
+	and w9, w26, #31
 	add x10, _cpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
 	add x10, x10, x23
@@ -1015,21 +1017,21 @@ simd_replicate_counts d_q, 8, 1
 .endm
 
 .macro simd_lane_transfer load, count, width
-	and w27, w19, #31
+	and w26, w19, #31
 	simd_lane_one \load, \width
 	.if \count > 1
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_lane_one \load, \width
 	.endif
 	.if \count > 2
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_lane_one \load, \width
 	.endif
 	.if \count > 3
 	add x7, x7, #\width
-	add w27, w27, #1
+	add w26, w26, #1
 	simd_lane_one \load, \width
 	.endif
 .endm
@@ -1656,7 +1658,7 @@ gadget rcw_scalar_\name
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	str x16, [x8, x21, lsl #3]
 	.endif
-	str w12, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w12
 	add _stream, _stream, #8
 	next_gadget
 .endm
@@ -1719,10 +1721,10 @@ gadget rcw_pair_\name
 		ubfx w20, w19, #16, #5
 		ldr x26, [x8, x20, lsl #3]
 		.if \result_second_zero
-		mov x27, xzr
+		mov x6, xzr
 		.else
 		add w21, w20, #1
-		ldr x27, [x8, x21, lsl #3]
+		ldr x6, [x8, x21, lsl #3]
 		.endif
 	.else
 		ubfx w21, w19, #16, #5
@@ -1733,7 +1735,7 @@ gadget rcw_pair_\name
 	mov x23, x13
 	.if \operation == 0
 		cmp x12, x26
-		ccmp x13, x27, #0, eq
+		ccmp x13, x6, #0, eq
 		.if \soft
 		cset w9, eq
 		eor x8, x12, x24
@@ -1793,7 +1795,7 @@ gadget rcw_pair_\name
 		str x12, [x8, x20, lsl #3]
 		str x13, [x8, x21, lsl #3]
 	.endif
-	str w11, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w11
 	add _stream, _stream, #8
 	next_gadget
 .endm
@@ -2264,10 +2266,10 @@ gadget ordered_pair_load_\name
 	add x24, x7, #(2 * \element_size)
 	.endif
 	add x25, x7, #\element_size
-	eor x27, x7, x25
-	lsr x27, x27, #12
+	eor x23, x7, x25
+	lsr x23, x23, #12
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	cbz x27, 70f
+	cbz x23, 70f
 	mov x26, x7
 	mov x7, x25
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -2327,10 +2329,10 @@ gadget ordered_pair_store_\name
 	tst x7, #(\element_size - 1)
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #\element_size
-	eor x27, x7, x25
-	lsr x27, x27, #12
+	eor x23, x7, x25
+	lsr x23, x23, #12
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	cbz x27, 70f
+	cbz x23, 70f
 	mov x26, x7
 	mov x7, x25
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
@@ -2405,8 +2407,8 @@ gadget consistent_pair_\name
 	tst x7, #7
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #8
-	eor x27, x7, x25
-	lsr x27, x27, #12
+	eor x23, x7, x25
+	lsr x23, x23, #12
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	/* The 16-byte-aligned hot path cannot cross a 4KB page. */
 	tbnz x7, #3, 70f
@@ -2418,7 +2420,7 @@ gadget consistent_pair_\name
 	clrex
 	b 73f
 70:
-	cbz x27, 71f
+	cbz x23, 71f
 	mov x26, x7
 	mov x7, x25
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -2468,8 +2470,8 @@ gadget consistent_pair_\name
 	tst x7, #7
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #8
-	eor x27, x7, x25
-	lsr x27, x27, #12
+	eor x23, x7, x25
+	lsr x23, x23, #12
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \zero_first
 	mov x12, xzr
@@ -2496,7 +2498,7 @@ gadget consistent_pair_\name
 	b.ne 80b
 	b 73f
 70:
-	cbz x27, 71f
+	cbz x23, 71f
 	mov x26, x7
 	mov x7, x25
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE

@@ -67,6 +67,10 @@ struct CpuState final {
 	 * Builder may map an architectural XZR source to this byte offset, avoiding
 	 * a runtime register-number comparison. No destination is ever mapped here. */
 	std::uint64_t gadget_zero{};
+	/* Private execution-engine scratch. An indirect control-flow cache miss
+	 * records its data-only cache cell here so the outer dispatcher can train
+	 * that exact site. This is never guest-visible architectural state. */
+	void *gadget_indirect_miss{};
 
 	[[nodiscard]] std::uint8_t choose_mte_tag(
 		unsigned start, unsigned offset) const noexcept

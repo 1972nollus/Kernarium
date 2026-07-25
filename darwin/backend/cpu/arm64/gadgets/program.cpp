@@ -39,6 +39,12 @@ namespace {
 using uml::backend::arm64::CpuState;
 using uml::backend::arm64::detail::Fp8Operation;
 
+extern "C" [[gnu::noinline]] void uml_arm64_gadget_access_fp_state(
+	CpuState *cpu) noexcept
+{
+	cpu->access_fp_state();
+}
+
 [[nodiscard]] std::uint32_t fp8_read_lane(
 	const std::array<std::byte, 16> &bytes, unsigned offset,
 	unsigned width) noexcept
@@ -3419,6 +3425,9 @@ void uml_arm64_gadget_branch_link();
 void uml_arm64_gadget_branch_link_linked();
 void uml_arm64_gadget_branch_register();
 void uml_arm64_gadget_branch_link_register();
+void uml_arm64_gadget_branch_register_cached();
+void uml_arm64_gadget_branch_link_register_cached();
+void uml_arm64_gadget_return_cached();
 #define DECLARE_POINTER_AUTH_BRANCH(kind, key) \
 	void uml_arm64_gadget_pauth_branch_##kind##_##key##_rr(); \
 	void uml_arm64_gadget_pauth_branch_##kind##_##key##_rz(); \
@@ -4496,8 +4505,14 @@ static_assert(offsetof(CpuState, pstate_sm) == 1091);
 static_assert(offsetof(CpuState, pstate_za) == 1092);
 static_assert(offsetof(CpuState, pstate_daif_access) == 1093);
 static_assert(offsetof(CpuState, pstate_daif) == 1094);
+static_assert(offsetof(CpuState, deferred_vectors) == 1144);
+static_assert(offsetof(CpuState, deferred_fpcr) == 1152);
+static_assert(offsetof(CpuState, deferred_fpsr) == 1156);
+static_assert(offsetof(CpuState, fp_loaded) == 1160);
+static_assert(offsetof(CpuState, fp_dirty) == 1161);
 static_assert(offsetof(CpuState, fpmr) == 1168);
 static_assert(offsetof(CpuState, gadget_zero) == 1176);
+static_assert(offsetof(CpuState, gadget_indirect_miss) == 1184);
 
 /* Rows are PACIA, PACIB, PACDA, PACDB, AUTIA, AUTIB, AUTDA, AUTDB;
  * columns are register/SP modifier and architecturally-zero modifier. */
@@ -8700,6 +8715,71 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	return data_processing || vector_load_store || fp_system_register;
 }
 
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+enum class ProductionDecodeStart : std::uint8_t {
+	branch_system,
+	data_processing_immediate,
+	data_processing_register,
+	data_processing_pointer_auth_overlap,
+	floating_simd,
+	load_store,
+	exception
+};
+
+/* Generate the architectural first-level decoder from A64's op0 field.
+ * Fine-grained masks remain in their existing priority order inside each
+ * family, so overlapping encodings retain exactly the audited behavior. */
+[[nodiscard]] consteval std::array<ProductionDecodeStart, 256>
+make_production_decode_starts()
+{
+	std::array<ProductionDecodeStart, 256> starts{};
+	for (unsigned byte = 0; byte < starts.size(); ++byte) {
+		const unsigned op0 = (byte >> 1) & 15U;
+		switch (op0) {
+		case 8:
+		case 9:
+			starts[byte] = ProductionDecodeStart::data_processing_immediate;
+			break;
+		case 5:
+		case 13:
+			starts[byte] = ProductionDecodeStart::data_processing_register;
+			break;
+		case 7:
+		case 15:
+			starts[byte] = ProductionDecodeStart::floating_simd;
+			break;
+		case 4:
+		case 6:
+		case 12:
+		case 14:
+			starts[byte] = ProductionDecodeStart::load_store;
+			break;
+		default:
+			starts[byte] = ProductionDecodeStart::branch_system;
+			break;
+		}
+		/* ADR/ADRP use immlo in high-byte bits 6:5, so all eight possible
+		 * high bytes share this low-five-bit signature. */
+		if ((byte & 0x1fU) == 0x10U)
+			starts[byte] = ProductionDecodeStart::branch_system;
+	}
+	/* Exceptions share op0 with branches/system but sit at the tail of the
+	 * detailed chain. Their distinct high byte can jump there directly. */
+	starts[0xd4] = ProductionDecodeStart::exception;
+	/* FEAT_PAuth_LR has two encodings inside data-processing space. Route
+	 * those high-byte overlaps through the exact unavailability predicate,
+	 * then resume ordinary data processing when it does not match. */
+	starts[0xda] =
+		ProductionDecodeStart::data_processing_pointer_auth_overlap;
+	starts[0xf3] =
+		ProductionDecodeStart::data_processing_pointer_auth_overlap;
+	return starts;
+}
+
+inline constexpr auto production_decode_starts =
+	make_production_decode_starts();
+#endif
+
 } // namespace
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
@@ -8713,7 +8793,8 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 BuildResult Builder::build(
 	std::uint64_t guest_address,
 	std::span<const std::uint32_t> instructions,
-	LinkResolver resolve_link, std::pmr::memory_resource *storage) const
+	LinkResolver resolve_link, std::pmr::memory_resource *storage,
+	IndirectLinkResolver resolve_indirect_link) const
 {
 	std::pmr::vector<std::uintptr_t> words{storage};
 	words.reserve(instructions.size() * 2 + 2);
@@ -8753,7 +8834,50 @@ BuildResult Builder::build(
 			emit(words, instruction);
 			emit(words, address);
 #endif
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else {
+			switch (production_decode_starts[instruction >> 24]) {
+			case ProductionDecodeStart::branch_system:
+				goto decode_branch_system;
+			case ProductionDecodeStart::data_processing_immediate:
+				goto decode_data_processing_immediate;
+			case ProductionDecodeStart::data_processing_register:
+				/* Immediate and register families are interleaved in the
+				 * audited fine decoder; share their first entry while still
+				 * skipping the branch/system prefix. */
+				goto decode_data_processing_immediate;
+			case ProductionDecodeStart::data_processing_pointer_auth_overlap:
+				if (pointer_auth_lr_unavailable(instruction))
+					goto decode_branch_system;
+				goto decode_data_processing_immediate;
+			case ProductionDecodeStart::floating_simd:
+				goto decode_floating_simd;
+			case ProductionDecodeStart::load_store:
+				goto decode_load_store_guard;
+			case ProductionDecodeStart::exception:
+				goto decode_exception;
+			}
+		}
+
+decode_load_store_guard:
+		if ((instruction & 0xffff'fc00U) == 0xd91f'0c00U ||
+		    (instruction & 0xffff'fc00U) == 0xd91f'1c00U) {
+			/* FEAT_GCS is absent. Keep this ahead of broad load/store
+			 * lowering and never observe the encoded address or source. */
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
+		}
+		goto decode_load_store;
+
+decode_branch_system:
+		if (pointer_auth_lr_unavailable(instruction)) {
+#else
 		} else if (pointer_auth_lr_unavailable(instruction)) {
+#endif
 			/* FEAT_PAuth_LR is not advertised by the static guest profile.
 			 * Its non-HINT encodings are architecturally UNDEFINED. */
 			emit(words, uml_arm64_gadget_illegal);
@@ -8762,6 +8886,7 @@ BuildResult Builder::build(
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 		} else if ((instruction & 0xffff'fc00U) == 0xd91f'0c00U ||
 			   (instruction & 0xffff'fc00U) == 0xd91f'1c00U) {
 			/* FEAT_GCS is absent.  Keep this ahead of broad load/store
@@ -8773,6 +8898,7 @@ BuildResult Builder::build(
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
+#endif
 		} else if ((instruction & 0x7c00'0000U) == 0x1400'0000U) {
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>(instruction & 0x03ff'ffffU) << 2,
@@ -8975,13 +9101,20 @@ BuildResult Builder::build(
 			   (instruction & 0xffff'fc1fU) == 0xd65f'0000U) {
 			const auto opcode = instruction & 0xffff'fc1fU;
 			const unsigned source = (instruction >> 5) & 31U;
+			const bool cached = static_cast<bool>(resolve_indirect_link);
 			emit(words, opcode == 0xd61f'0000U ?
-				uml_arm64_gadget_branch_register :
+				(cached ? uml_arm64_gadget_branch_register_cached :
+					uml_arm64_gadget_branch_register) :
 				opcode == 0xd63f'0000U ?
-				uml_arm64_gadget_branch_link_register :
-				uml_arm64_gadget_return);
+				(cached ? uml_arm64_gadget_branch_link_register_cached :
+					uml_arm64_gadget_branch_link_register) :
+				(cached ? uml_arm64_gadget_return_cached :
+					uml_arm64_gadget_return));
 			emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
 				static_cast<std::uintptr_t>(source * 8U));
+			if (cached)
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_indirect_link(address)));
 			if (opcode == 0xd63f'0000U)
 				emit(words, address + sizeof(instruction));
 			++compiled;
@@ -9092,7 +9225,41 @@ BuildResult Builder::build(
 			   (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
 			   instruction == 0xd503'30ffU) {
 			emit(words, memory_barrier_gadget(instruction));
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else if (instruction == 0xd503'20ffU) {
+			emit(words, uml_arm64_gadget_xpaclri);
+		} else if (const auto pointer_auth =
+			decode_pointer_auth_hint(instruction); pointer_auth) {
+			emit(words, pointer_auth_gadgets[pointer_auth->operation]
+				[pointer_auth->zero_modifier]);
+			emit(words, pointer_auth_operand(pointer_auth->destination,
+				pointer_auth->modifier));
+		} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
+			emit(words, architectural_hint_gadget(instruction));
+		} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||
+			   (instruction & 0xffff'ffe0U) == 0xd503'1000U ||
+			   (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
+			emit(words, uml_arm64_gadget_nop);
+		} else if (instruction == 0xd6bf'03e0U ||
+			   instruction == 0xd69f'03e0U ||
+			   instruction == 0xd69f'0bffU ||
+			   instruction == 0xd69f'0fffU) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
+		} else {
+			emit_interpreter_or_fatal(words, instruction, address);
+		}
+		goto instruction_decoded;
+
+decode_data_processing_immediate:
+		if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
+#else
 		} else if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
+#endif
 			const unsigned operation = (instruction >> 29) & 3U;
 			const unsigned halfword = (instruction >> 21) & 3U;
 			const bool is_64_bit = (instruction >> 31) != 0;
@@ -9559,7 +9726,17 @@ BuildResult Builder::build(
 				source == 31U, destination == 31U));
 			emit(words, destination |
 				(static_cast<std::uintptr_t>(source) << 8));
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else {
+			emit_interpreter_or_fatal(words, instruction, address);
+		}
+		goto instruction_decoded;
+
+decode_floating_simd:
+		if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
+#else
 		} else if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
+#endif
 			emit(words, (instruction & 31U) == 31U ?
 				uml_arm64_gadget_floating_javascript_convert_discard :
 				uml_arm64_gadget_floating_javascript_convert);
@@ -10774,6 +10951,7 @@ BuildResult Builder::build(
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state}, true, address, instruction};
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 		} else if (instruction == 0xd503'20ffU) {
 			emit(words, uml_arm64_gadget_xpaclri);
 		} else if (const auto pointer_auth =
@@ -10788,6 +10966,7 @@ BuildResult Builder::build(
 			   (instruction & 0xffff'ffe0U) == 0xd503'1000U ||
 			   (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
 			emit(words, uml_arm64_gadget_nop);
+#endif
 		} else if ((instruction & 0xbfe0'fc00U) == 0x0e00'0c00U) {
 			const auto lane = detail::decode_simd_lane_index(
 				(instruction >> 16) & 31U);
@@ -10805,7 +10984,17 @@ BuildResult Builder::build(
 			emit(words, gadget);
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else {
+			emit_interpreter_or_fatal(words, instruction, address);
+		}
+		goto instruction_decoded;
+
+decode_load_store:
+		if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
+#else
 		} else if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
+#endif
 			/* PRFM (literal) is an implementation-defined performance hint. */
 			emit(words, uml_arm64_gadget_nop);
 		} else if ((instruction & 0x3b00'0000U) == 0x1800'0000U) {
@@ -11966,7 +12155,17 @@ BuildResult Builder::build(
 					program_accesses_fp_state},
 					true, address, instruction};
 			}
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else {
+			emit_interpreter_or_fatal(words, instruction, address);
+		}
+		goto instruction_decoded;
+
+decode_exception:
+		if ((instruction & 0xffe0'001fU) == 0xd420'0000U) {
+#else
 		} else if ((instruction & 0xffe0'001fU) == 0xd420'0000U) {
+#endif
 			emit(words, uml_arm64_gadget_breakpoint);
 			emit(words, address);
 			++compiled;
@@ -11999,6 +12198,9 @@ BuildResult Builder::build(
 		} else {
 			emit_interpreter_or_fatal(words, instruction, address);
 		}
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+instruction_decoded:
+#endif
 		++compiled;
 	}
 	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);

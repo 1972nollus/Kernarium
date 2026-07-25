@@ -177,8 +177,12 @@ inline void require_illegal(std::uint32_t instruction)
 	gadget.pc = pc;
 	auto tlb = std::make_unique<gadgets::Tlb>();
 	tlb->prepare(0, darwin_uml_static_vm_changes(0));
-	require(gadgets::execute(built.program, gadget, *tlb) ==
-		gadgets::Event::illegal_instruction);
+	const auto event = gadgets::execute(built.program, gadget, *tlb);
+	if (event != gadgets::Event::illegal_instruction)
+		std::fprintf(stderr,
+			"pointer-auth illegal mismatch instruction=%#x event=%d\n",
+			instruction, static_cast<int>(event));
+	require(event == gadgets::Event::illegal_instruction);
 	require(gadget.pc == pc);
 	require(gadget.registers == initial.registers);
 	require(gadget.sp == initial.sp);

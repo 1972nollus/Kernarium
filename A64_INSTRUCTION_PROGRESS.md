@@ -59,8 +59,8 @@ An entry is complete only when all four boxes are checked:
 - Test organization: instruction coverage is split across **296 focused A64
   test source files**, with separate allocation/encoding, behavior, control-
   state, fault/ordering, and gadget checks as applicable.
-- Final standard CTest (guest integrations excluded): **302/302 Release
-  production gadgets** and **302/302 Debug interpreter** pass. The LTP runner
+- Current standard CTest (guest integrations excluded): **307/307 Release
+  production gadgets** and **307/307 Debug interpreter** pass. The LTP runner
   parser remains a unit test. Guest SMP and the verified guest LTP campaign
   are standalone targets, `guest-smp-parallel` and `guest-ltp-verified`.
 - Standalone integration regression: the Release verified-LTP campaign passed

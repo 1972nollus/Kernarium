@@ -220,6 +220,35 @@ void deferred_fp_source_is_refreshed_at_boundary()
 		require(byte == 0x5a);
 }
 
+void deferred_fp_source_is_materialized_on_linked_target()
+{
+	constexpr unsigned long generation = 204;
+	constexpr std::uint64_t base = 0x54'0000;
+	constexpr std::uint64_t first_value = 0x0123'4567'89ab'cdefULL;
+	constexpr std::uint64_t second_value = 0xfedc'ba98'7654'3210ULL;
+	TemporaryBacking backing;
+	backing.put32(0, 0x1400'0004U);  // b base + 16
+	backing.put32(16, 0x9e66'0000U); // fmov x0, d0
+	backing.put32(20, 0xd400'0001U); // svc #0
+	Mapping mapping{generation, base, backing};
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+
+	/* Translate and activate the FP target before its integer predecessor. */
+	registers.pc = base + 16;
+	std::memcpy(fp.vectors[0], &first_value, sizeof(first_value));
+	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.x[0] == first_value);
+
+	/* A new entry defers a different kernel frame. The cached predecessor now
+	 * chains through the FP prefix and must observe this new source. */
+	registers.pc = base;
+	std::memcpy(fp.vectors[0], &second_value, sizeof(second_value));
+	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.x[0] == second_value);
+	require(registers.pc == base + 24);
+}
+
 } // namespace
 
 int main()
@@ -228,4 +257,5 @@ int main()
 	pstate_and_svcr_survive_boundary();
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();
+	deferred_fp_source_is_materialized_on_linked_target();
 }

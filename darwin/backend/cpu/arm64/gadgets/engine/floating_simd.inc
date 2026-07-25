@@ -1355,7 +1355,7 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 	orr x15, x15, x16
 	msr fpsr, x15
 .Lfloating_store_\@:
-	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w14
 	next_gadget
 .endm
 
@@ -1430,8 +1430,7 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 			.endif
 		.endif
 	.endif
-	mrs x14, nzcv
-	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	next_gadget
 .Lfloating_software_\@:
 	.if \bits == 16
@@ -1481,12 +1480,11 @@ floating_compare_direct floating_compare_signaling_d_zero, 64, 1, 1
 .macro floating_conditional_compare name, condition, bits, signal
 gadget \name
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x9
+	msr nzcv, x27
 	b.\condition .Lfloating_condition_passed_\@
 	and w9, w8, #0xf
 	lsl w9, w9, #28
-	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w9
 	next_gadget
 .Lfloating_condition_passed_\@:
 	floating_compare_body \bits, \signal, 0
@@ -1868,6 +1866,7 @@ floating_convert_precision floating_convert_d_to_s, 64, 32
 	bl NAME(uml_arm64_floating_javascript_convert_software)
 	mov x1, x19
 	mov x2, x20
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
 	next_gadget
@@ -1885,8 +1884,7 @@ gadget \name
 	tst w16, #3
 	b.ne .Lfloating_javascript_convert_software_\@
 	fjcvtzs w14, d0
-	mrs x15, nzcv
-	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.if \discard == 0
 	and w9, w8, #0x1f
 	add x13, _cpu, #UML_GADGET_CPU_X0
@@ -5497,8 +5495,7 @@ gadget floating_select_\name\()_\suffix
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
-	ldr w12, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x12
+	msr nzcv, x27
 	add x12, _cpu, #UML_GADGET_CPU_V0
 	add x13, x12, x10, lsl #4
 	add x14, x12, x11, lsl #4

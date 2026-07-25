@@ -36,6 +36,7 @@ NAME(uml_arm64_gadget_\name):
  * state without leaking guest exception flags into the caller. */
 .macro ensure_fp_environment
 	ldr x6, [sp, #0x78]
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	cbz x6, 97f
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
 	ldr w5, [sp, #0x80]
@@ -44,6 +45,14 @@ NAME(uml_arm64_gadget_\name):
 	str w6, [sp, #0x80]
 	msr fpcr, x6
 	b 99f
+#else
+	/* Production FPCR writes update the active native environment eagerly.
+	 * Therefore an active environment is already current, and every later
+	 * native FP/SIMD gadget needs only this single predicted branch. The
+	 * correctness-first decoded runpath retains the full value comparison
+	 * above because its C++ bridge may update CpuState directly. */
+	cbnz x6, 99f
+#endif
 97:
 	mrs x6, fpcr
 	mrs x5, fpsr
@@ -51,7 +60,9 @@ NAME(uml_arm64_gadget_\name):
 	mov x6, #1
 	str x6, [sp, #0x78]
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	str w6, [sp, #0x80]
+#endif
 	msr fpcr, x6
 	/* FPSR exception and saturation flags are cumulative architectural
 	 * state. Seed the native environment from the guest. */
@@ -184,10 +195,15 @@ NAME(uml_arm64_gadget_enter):
 	str wzr, [sp, #0x84]
 	mov _stream, x0
 	mov x29, x3
+	/* Keep the architectural flags in a callee-saved host register. Gadget
+	 * scratch comparisons may clobber native PSTATE, so consumers still issue
+	 * MSR NZCV, but no per-instruction CpuState load/store is required. */
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 
 .p2align 4
 uml_arm64_gadget_leave:
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	restore_fpmr_environment
 	restore_fp_environment
 	mov x1, x29
@@ -287,8 +303,7 @@ gadget add_sub_immediate_\suffix
 		.endif
 	.endif
 	.if \flags
-	mrs x17, nzcv
-	str w17, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.endif
 	.if \destination_special
 		.if !\flags
@@ -356,8 +371,7 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
 		.endif
 	.endif
 	.if \flags
-	mrs x14, nzcv
-	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.endif
 	.if !\destination_discard
 	and x9, x8, #0xffff
@@ -524,8 +538,7 @@ gadget add_sub_carry_\suffix
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x16, [x12, x11, lsl #3]
 	.endif
-	ldr w12, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x12
+	msr nzcv, x27
 	.if \bits64
 		.if \subtract
 			.if \flags
@@ -556,8 +569,7 @@ gadget add_sub_carry_\suffix
 		.endif
 	.endif
 	.if \flags
-	mrs x12, nzcv
-	str w12, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.endif
 	.if !\destination_zero
 	and w9, w8, #0x1f
@@ -627,8 +639,7 @@ gadget mte_\opname\()_\suffix
 	sbfx x13, x13, #0, #56
 	.if \operation == 2
 	subs x14, x12, x13
-	mrs x15, nzcv
-	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.else
 	sub x14, x12, x13
 	.endif
@@ -1339,8 +1350,7 @@ gadget conditional_select_fast_\name\()_\suffix
 	ubfx x11, x8, #32, #16
 	ldr x15, [_cpu, x10]
 	ldr x16, [_cpu, x11]
-	ldr w12, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x12
+	msr nzcv, x27
 	.if \bits64
 		.if \operation == 0
 	csel x7, x15, x16, \condition
@@ -1401,12 +1411,11 @@ conditional_select_fast_modes always, al
 .macro conditional_compare_fast name, condition, subtract, bits64, immediate, suffix
 gadget conditional_compare_fast_\name\()_\suffix
 	ldr x8, [_stream], #8
-	ldr w9, [_cpu, #UML_GADGET_CPU_NZCV]
-	msr nzcv, x9
+	msr nzcv, x27
 	b.\condition .Lconditional_compare_true\@
 	ubfx x9, x8, #32, #4
 	lsl w9, w9, #28
-	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w9
 	next_gadget
 .Lconditional_compare_true\@:
 	ubfx x10, x8, #0, #16
@@ -1430,8 +1439,7 @@ gadget conditional_compare_fast_\name\()_\suffix
 	cmn w12, w13
 		.endif
 	.endif
-	mrs x9, nzcv
-	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	next_gadget
 .endm
 .macro conditional_compare_fast_modes name, condition
@@ -1532,8 +1540,7 @@ gadget logical_shifted_\suffix
 		.endif
 	.endif
 	.if \operation == 3
-	mrs x14, nzcv
-	str w14, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.endif
 	.if !\destination_zero
 	and w9, w8, #0x1f
@@ -1618,8 +1625,7 @@ gadget logical_immediate_\suffix
 		.endif
 	.endif
 	.if \operation == 3
-	mrs x17, nzcv
-	str w17, [_cpu, #UML_GADGET_CPU_NZCV]
+	mrs x27, nzcv
 	.endif
 	.if \destination_special
 		.if \operation != 3
@@ -1937,13 +1943,11 @@ integer_min_max_fast_modes umin, ls, 0
 .purgem integer_min_max_fast
 
 gadget cfinv
-	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
-	eor w8, w8, #0x20000000
-	str w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	eor w27, w27, #0x20000000
 	next_gadget
 
 gadget axflag
-	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w8, w27
 	ubfx w9, w8, #30, #1
 	ubfx w10, w8, #29, #1
 	ubfx w11, w8, #28, #1
@@ -1951,11 +1955,11 @@ gadget axflag
 	bic w10, w10, w11
 	lsl w9, w9, #30
 	orr w9, w9, w10, lsl #29
-	str w9, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w9
 	next_gadget
 
 gadget xaflag
-	ldr w8, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w8, w27
 	ubfx w9, w8, #30, #1
 	ubfx w10, w8, #29, #1
 	orr w11, w9, w10
@@ -1966,7 +1970,7 @@ gadget xaflag
 	orr w12, w12, w13, lsl #30
 	orr w12, w12, w11, lsl #29
 	orr w12, w12, w14, lsl #28
-	str w12, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w12
 	next_gadget
 
 gadget rmif_fast
@@ -1979,11 +1983,11 @@ gadget rmif_fast
 	ubfx w14, w8, #24, #4
 	lsl w13, w13, #28
 	lsl w14, w14, #28
-	ldr w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w15, w27
 	bic w15, w15, w14
 	and w13, w13, w14
 	orr w15, w15, w13
-	str w15, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w15
 	next_gadget
 
 .macro setf_fast width, suffix
@@ -2003,12 +2007,11 @@ gadget setf_fast_\suffix
 	sub w17, w17, #1
 	tst w12, w17
 	cset w17, eq
-	ldr w18, [_cpu, #UML_GADGET_CPU_NZCV]
-	and w18, w18, #0x20000000
+	and w18, w27, #0x20000000
 	orr w18, w18, w15, lsl #31
 	orr w18, w18, w17, lsl #30
 	orr w18, w18, w16, lsl #28
-	str w18, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov w27, w18
 	next_gadget
 .endm
 

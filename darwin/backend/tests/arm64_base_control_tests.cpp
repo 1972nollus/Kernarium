@@ -64,6 +64,11 @@ public:
 		gadget.pc = base;
 		tlb_->prepare(0, darwin_uml_static_vm_changes(0));
 		const auto event = gadgets::execute(built.program, gadget, *tlb_);
+		if (event != gadgets::Event::continued &&
+		    event != gadgets::Event::interrupt)
+			std::fprintf(stderr,
+				"control gadget mismatch instruction=%#x event=%d\n",
+				instruction, static_cast<int>(event));
 		require(event == gadgets::Event::continued ||
 			event == gadgets::Event::interrupt);
 		require(gadget.registers == expected.registers);

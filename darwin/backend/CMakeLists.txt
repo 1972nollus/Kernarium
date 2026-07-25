@@ -200,6 +200,25 @@ if(UML_BUILD_TESTS)
         -Wall -Wextra -Werror)
     add_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
 
+    add_executable(uml_tlb_sync_range_tests
+        tests/tlb_sync_range_tests.cpp)
+    target_include_directories(uml_tlb_sync_range_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/linux-6.18/arch/um/include)
+    target_compile_features(uml_tlb_sync_range_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_tlb_sync_range_tests PRIVATE
+        -Wall -Wextra -Werror)
+    add_test(NAME uml-tlb-sync-ranges COMMAND uml_tlb_sync_range_tests)
+
+    add_executable(uml_static_mmu_batch_tests
+        tests/static_mmu_batch_tests.cpp
+        $<TARGET_OBJECTS:uml_static_mmu>)
+    target_include_directories(uml_static_mmu_batch_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_features(uml_static_mmu_batch_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_static_mmu_batch_tests PRIVATE
+        -Wall -Wextra -Werror)
+    add_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests)
+
     add_executable(uml_backend_api_tests tests/backend_api_tests.cpp)
     target_link_libraries(uml_backend_api_tests PRIVATE UML::Backend)
     target_compile_features(uml_backend_api_tests PRIVATE cxx_std_20)
@@ -274,6 +293,32 @@ if(UML_BUILD_TESTS)
 		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
     add_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)
 
+    add_executable(uml_arm64_gadget_nzcv_residency_tests
+		tests/arm64_gadget_nzcv_residency_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+    target_include_directories(uml_arm64_gadget_nzcv_residency_tests PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_gadget_nzcv_residency_tests PRIVATE
+		-Wall -Wextra -Werror)
+    add_test(NAME arm64-gadget-nzcv-residency
+		COMMAND uml_arm64_gadget_nzcv_residency_tests)
+
+    add_executable(uml_arm64_gadget_fp_environment_tests
+		tests/arm64_gadget_fp_environment_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+    target_include_directories(uml_arm64_gadget_fp_environment_tests PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_gadget_fp_environment_tests PRIVATE
+		-Wall -Wextra -Werror)
+    add_test(NAME arm64-gadget-fp-environment
+		COMMAND uml_arm64_gadget_fp_environment_tests)
+
     add_executable(uml_arm64_gadget_link_tests
 		tests/arm64_gadget_link_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -287,6 +332,19 @@ if(UML_BUILD_TESTS)
     target_compile_definitions(uml_arm64_gadget_link_tests PRIVATE
 		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
     add_test(NAME arm64-gadget-links COMMAND uml_arm64_gadget_link_tests)
+
+    add_executable(uml_arm64_gadget_indirect_link_tests
+		tests/arm64_gadget_indirect_link_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+    target_include_directories(uml_arm64_gadget_indirect_link_tests PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_gadget_indirect_link_tests PRIVATE
+		-Wall -Wextra -Werror)
+    add_test(NAME arm64-gadget-indirect-links
+		COMMAND uml_arm64_gadget_indirect_link_tests)
 
     add_executable(uml_arm64_base_arithmetic_tests
 		tests/arm64_base_arithmetic_tests.cpp

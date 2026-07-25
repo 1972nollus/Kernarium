@@ -173,8 +173,10 @@ rm -f /etc/resolv.conf ||
 	fail "remove stale resolver configuration"
 printf '%s\n' \
 	'# Darwin UML user-mode network' \
+	'nameserver 1.1.1.1' \
+	'nameserver 8.8.8.8' \
 	'nameserver 10.0.2.3' \
-	'options timeout:2 attempts:2' > /etc/resolv.conf ||
+	'options timeout:1 attempts:3 rotate' > /etc/resolv.conf ||
 	fail "install user-network resolver configuration"
 echo "Darwin UML root overlay: lower=read-only, upper=tmpfs"
 if [ -x /lib/systemd/systemd ]; then

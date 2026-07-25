@@ -139,6 +139,7 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.exclusive_version = 0;
 	cpu.exclusive_size = 0;
 	cpu.gadget_zero = 0;
+	cpu.gadget_indirect_miss = nullptr;
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 

@@ -449,6 +449,612 @@ Profiles are `/private/tmp/unixbench-priority11-dhrystone.sample.txt`,
 `/private/tmp/unixbench-priority11-filecopy.sample.txt`, and
 `/private/tmp/unixbench-priority11-parallel-execl.sample.txt`.
 
+## Geekbench 6.7.1 profiling campaign
+
+### Benchmark topology correction
+
+The first Geekbench attempt exposed an invalid virtual CPU topology:
+Geekbench reported `1 Processor, 1 Core, 20 Threads` and its multi-core pass
+used only a little more than one host core. UML's generic topology supplied
+the same default `core_id` for every vCPU, causing user space to collapse all
+20 independent host-thread-backed vCPUs into one SMT core.
+
+The arm64 UML topology now reports one physical package, one distinct core ID
+per vCPU, and a singleton thread-sibling mask. The standalone SMP integration
+suite verifies those sysfs attributes for every online CPU. The rebuilt guest
+reports:
+
+```text
+Topology                      1 Processor, 20 Cores
+```
+
+The standard production suite passes 302/302 tests after this correction.
+The standalone SMP integration suite also passes: two runnable guest jobs used
+9.48 seconds of host CPU over 4.00 seconds of wall time (2.37 host cores), and
+the CPU hotplug loop completed.
+
+### Profiles and controlled-baseline status
+
+Three macOS `sample` profiles were captured before source optimization:
+
+- File Compression: linked direct/conditional branch gadgets dominate active
+  engine samples, while C++ `run_block` is comparatively small. This supports
+  deferring the guest-PC store on ordinary resolved successor edges.
+- PDF Renderer: frequent `gadget_leave` and `run_block` transitions surround
+  native vector arithmetic.
+- Object Detection: `GadgetExecutor::run_block` (941 samples),
+  `simd_unary_saddlp_8h` (688), `gadget_leave` (623), vector load (564), and
+  several SIMD arithmetic gadgets dominate. This makes safe FP/SIMD successor
+  links the highest-potential Geekbench-specific follow-up.
+
+The topology-corrected baseline reached Multi-Core File Compression, but was
+discarded before scoring when two orphaned Python multiprocessing pools began
+using roughly 15--17 host cores. Their exact orphaned process groups were
+terminated after approval. A separate active OpenCode workflow then began
+repeatedly launching `./tools/crack_salt_c` at roughly nine host cores, so no
+new baseline was started. Time Machine was stopped again. Benchmarking must
+resume only after that user-owned workload is no longer active.
+
+A later topology-corrected run completed every single-core and multi-core
+workload in 4h06m51s. It is a functional/profile control rather than a scored
+baseline:
+
+- Time Machine restarted briefly during several long workloads. A 10-second
+  watcher stopped each attempt, and the affected PDF Renderer, Photo Library,
+  and Photo Filter rows are explicitly contaminated.
+- A 15-second Multi-Core Navigation profile proved that Geekbench did create
+  work across many vCPUs. Most carriers were blocked in the per-address-space
+  Darwin walker mutex; TLB misses then contended on `mappings_mutex`, while
+  mapping commits briefly closed the execution gate. This is the remaining
+  reason the clean phase used only about 1--2 host cores after topology was
+  corrected.
+- The run uploads its result before printing scores.
+  Guest DNS failed at that final step, so the process exited 255 and did not
+  retain a `.gb6`/JSON result. The completed phase log is
+  `/tmp/geekbench-watched-baseline.log` inside the discarded tmpfs overlay,
+  and the host profile is
+  `/private/tmp/geekbench-multicore-navigation.sample.txt`.
+
+Network diagnosis reproduced the resolver failure independently. Direct TCP
+through libslirp completed 200 fresh connections, and both the slirp worker
+and guest route remained healthy. The virtual DNS proxy at `10.0.2.3`,
+however, transiently failed after roughly 20 rapid lookups and recovered after
+two seconds. Direct `1.1.1.1` survived roughly 790 rapid lookups. A rotated
+resolver set of Cloudflare, Google, then the virtual proxy passed 2,000
+consecutive Geekbench-domain lookups. The overlay launcher now installs that
+fallback order with bounded retries; a fresh scored run is still required.
+
+A scored retry began with the corrected topology and hardened resolver, but
+was stopped during single-core HTML5 Browser rather than retained. A host
+isolation check found that a macOS `ReportCrash` agent had already been using
+approximately one full core when the benchmark started, and a leftover
+two-vCPU network-diagnostic guest was still present. The diagnostic guest and
+benchmark guest were stopped. `ReportCrash` was handling the corpse of an
+earlier `uml-darwin` process (PID 87932); after the user agent was killed, the
+root `com.apple.ReportCrash.Root` service continued the same work at 100% CPU.
+The next scored run must wait until that root-owned reporter finishes, is
+temporarily suspended with administrator authorization, or the host reboots.
+
+### Accepted trial G1: deferred PC stores on linked edges
+
+The G1 source trial is retained after a matched focused A/B run.
+Each resolved successor edge now loads the target stream and instruction count
+as one pair and defers the architectural PC store until an actual engine exit.
+This removes the target-PC load, `CpuState::pc` store, and stream-register move
+from the ordinary linked path. Unresolved links each own an immutable
+`{link_exit, guest_pc}` fallback stream, while the exact 4,096-instruction
+fairness exit still stores the current target PC before returning.
+
+The split link test covers unresolved and resolved direct edges, BL, both
+always-condition encodings, both outcomes of B.cond, CBZ/CBNZ, TBZ/TBNZ,
+sequential fallthrough links, live retarget/reset, and the exact fairness
+boundary. Production and safety-first interpreter suites both pass 302/302.
+Production disassembly confirms the ordinary edge has no PC store; only the
+unresolved/fairness exits retain it.
+
+A new standalone performance integration suite runs a checked 300-million
+iteration conditional linked-block loop in one or ten guest processes. It is
+not registered in standard CTest. Both A/B executables contain the same final
+bounded-range MMU kernel and link metadata; only the `follow_block_link`
+assembly is changed:
+
+- ten-worker old PC-store path: 2.981-second median, 9.74 host cores;
+- ten-worker deferred-PC path: 2.953-second median, 9.77 host cores, 0.94%
+  faster;
+- one-worker old PC-store path: 2.879-second median;
+- one-worker deferred-PC path: 2.867-second median, 0.42% faster.
+
+The gain is small but consistent across the single- and ten-worker controls,
+and the retained path removes three instructions from every resolved linked
+edge. A full Geekbench comparison remains useful as an end-to-end confirmation
+but is no longer required to retain G1.
+
+Two immutable A/B executables are prepared under `.build/bench/` with the same
+embedded topology-corrected kernel and all other accepted emulator changes:
+
+- `uml-darwin-baseline`,
+  SHA-256 `d2c8a8c0b0eb84a9a54169c8d5b482bb72fdf0ea3c94825bbab62dfc0ba7ef98`;
+- `uml-darwin-g1-deferred-pc`,
+  SHA-256 `69212f4e17e22ebe24264d3a93d0045d486f2869fb33a2a9f4cc9fbeeb7d7265`.
+
+The normal production executable is byte-identical to the G1 artifact.
+Disassembly of the baseline and G1 artifacts verifies that the intended
+linked-edge sequence is their relevant difference. This removes rebuild
+variance from the pending clean comparison.
+
+The user subsequently selected 10 guest cores rather than 20 so macOS
+background work can use the other 10 host cores. The controlled A/B campaign
+therefore uses `ncpus=10` for both artifacts; Geekbench reports
+`1 Processor, 10 Cores`. The 10-core immutable-baseline run started at guest
+epoch 1784942167 with 8 GiB configured memory, the read-only image plus tmpfs
+OverlayFS root, working rotated DNS, and Docker/containerd/apt timers stopped.
+
+### Accepted shared-mm fix: bounded disjoint TLB synchronization ranges
+
+At the user's request, the long 10-core baseline was sampled immediately and
+stopped during Multi-Core PDF Renderer. An exact score was intentionally not
+waited for. The guest then powered off cleanly; the read-only `rootfs.img`
+lower layer was not modified.
+
+The 15-second sample
+`/private/tmp/geekbench-10c-multicore-pdf.sample.txt` proves the low CPU use
+was inside the emulator rather than Geekbench's scheduler:
+
+- all ten Geekbench vCPU carrier threads existed;
+- eight carriers spent roughly 58%--91% of their samples waiting in
+  `darwin_uml_static_vm_walker_lock`;
+- the ten carrier call trees contain 63,045 walker-wait samples out of
+  106,630 total carrier samples (59.1%);
+- the lock owner was repeatedly committing
+  `darwin_uml_static_vm_batch_end`, especially
+  `AddressSpace::map_locked`.
+
+The kernel tracked all pending PTE changes in one global
+`{minimum address, maximum address}` envelope per Linux `mm`. Concurrent
+faults in distant thread stacks, heaps, shared objects, and JIT-like mappings
+therefore made the Darwin walker visit the enormous empty gaps between real
+changes. Every sibling vCPU then queued behind that unnecessary walk.
+
+The accepted fix retains up to 16 sorted, disjoint 16 KiB host-slot ranges per
+`mm`. It is allocation-free under the existing spinlock. Overlapping and
+adjacent intervals merge exactly; capacity overflow bridges only the smaller
+neighboring gap rather than collapsing the entire address space. A walker
+atomically snapshots the range set, walks all snapshots into one host batch,
+and preserves every failed snapshot for retry. The existing per-mm turnstile,
+VMA lock order, stale-epoch retry, and host execution gate remain unchanged,
+so the optimization does not weaken mapping safety.
+
+Validation:
+
+- a new standard unit suite tests sorted insertion, duplicate/adjacent and
+  multi-range merging, all overflow directions, tie-breaking, 4,000
+  randomized updates, ordering, capacity, and coverage invariants;
+- the production gadget suite and correctness-first interpreter suite both
+  pass 303/303 standard tests;
+- the Darwin UML kernel and final combined executable build successfully;
+- the standalone 10-core SMP/topology suite passes on the old and new builds,
+  with two runnable guest jobs using 2.07 host cores in both controls;
+- existing 20-worker anonymous and file-mapping LTP stresses remain correct
+  and already use 9.50 and 8.87 host cores respectively;
+- a new freestanding shared-mm integration workload gives ten clone threads
+  distant valid mappings. The old envelope cannot finish even 200 iterations
+  in 30 seconds. The final bounded-range build completes the identical 200
+  iterations in 0.127 seconds, a greater-than-236x lower-bound improvement,
+  and completes 20,000 iterations in 9.197 seconds.
+
+An accepted-build follow-up sample is
+`/private/tmp/shared-mmap-multirange.sample.txt`. In its ten vCPU carriers,
+walker-lock waits fell to 1,079 of 60,630 samples (1.78%); mapping-batch work
+accounted for another 958 samples (1.58%). This is a different focused
+workload from PDF Renderer, so it is diagnostic rather than a Geekbench score,
+but it verifies that the pathological address-span walk has been removed.
+
+The final lock-audited immutable candidate is
+`.build/bench/uml-darwin-g1-multirange-final`, SHA-256
+`3d73367c1a52acdbe548ed5a7c2cf85a8102b8b455525f8774ecb6cb724858dd`.
+The final audit moved the range-count read under its spinlock. After that
+correction the kernel rebuilt, the range unit suite passed, and the short
+10-core integration control completed 2,000 iterations per thread in 0.938
+seconds while consuming 2.480 host-CPU seconds (2.64 cores).
+Geekbench's `--multi-core` and `--single-core` switches were not usable in this campaign. There is therefore no supported way
+to jump directly to its multi-core phase; a later real Geekbench confirmation
+must run the complete CPU suite.
+
+### Accepted trial G2: FP/SIMD successor linking
+
+The existing cache deliberately left every FP/SIMD target unresolved. A vector
+loop therefore left the assembly engine, restored host state, entered C++,
+looked up the same PC, and re-entered assembly at every block boundary even
+after both blocks were hot. Existing Object Detection and PDF Renderer samples
+showed frequent `gadget_leave` / `run_block` boundaries around dominant SIMD
+gadgets, so this was tested with a short focused workload instead of waiting
+for another multi-hour Geekbench run.
+
+Translation now classifies each completed target once. Integer-only targets
+still point directly at their gadget streams. FP/SIMD targets point at a
+private immutable `{fp_link_entry, target_stream}` prefix owned by their link
+record. The ordinary loaded-state prefix is only:
+
+- one FP-loaded byte load and one predicted conditional branch;
+- one FP-dirty byte store;
+- one translation-selected target-stream load and the normal gadget dispatch.
+
+There is no runtime opcode decode or per-instruction validity check. Only a
+fresh deferred kernel FP frame takes the cold C++ materialization helper.
+Unresolved targets retain their private `{link_exit, guest_pc}` stream, and
+the existing 4,096-instruction fairness exit is unchanged. Eviction recognizes
+both direct and FP-prefixed targets and resets them before program storage is
+reused.
+
+The expanded split link suite directly checks already-loaded and newly
+deferred vector frames, FPCR/FPSR transfer, dirty marking, syscall events,
+linked vector-load faults and fault PCs, combined instruction counts, and the
+shared exact fairness boundary. A ProgramCache boundary test warms the FP
+target with one kernel frame, then enters through a cached integer predecessor
+with a different deferred frame and verifies that the linked target observes
+the new value. Final validation is:
+
+- production gadget CTest: 303/303 passed;
+- correctness-first interpreter CTest: 303/303 passed;
+- 10-vCPU standalone SMP control: 39.95 host-CPU seconds in 4.01 seconds,
+  or 9.97 host cores.
+
+The standalone FP link integration workload performs 30 million checked
+Advanced SIMD loop iterations per worker. Its matched G1/G2 results are:
+
+- one worker: 0.575-second G1 median versus 0.334-second G2 median, 41.9%
+  faster;
+- ten workers: 0.601-second G1 median versus 0.366-second G2 median, 39.1%
+  faster;
+- the integer-only ten-worker control is not regressed: 2.934-second G1
+  median versus 2.925-second G2 median.
+
+The accepted executable is `.build/bench/uml-darwin-g2-fp-links`, SHA-256
+`10ac942d9d0ea1890a8e7bd5776307f50701d904d867db058ca1e859d68e5483`.
+The normal production executable is byte-identical. The focused guest binary
+has SHA-256
+`e91ec92bca04b82fdd8e96af71851825b65353c7c5cdad70bc30cc9b3ca187eb`.
+The runner and both FP/SIMD and integer controls live under `tests/perf/` and
+remain standalone integration/performance suites rather than standard CTest
+tests.
+
+### Accepted trial G3: additive mapping batches do not stop sibling vCPUs
+
+The first complete, topology-correct 10-core Geekbench baseline is
+(result). It scored **66 single-core**
+and **306 multi-core** on the immutable G2 executable. The workload-boundary
+profile is `/private/tmp/geekbench-g2-profile`.
+
+The remaining large emulator-side serialization was
+`AddressSpace::end_batch`. Every mapping batch acquired the global execution
+gate and interrupted sibling vCPUs, even when the batch only published
+previously absent demand-paged mappings. The software TLB stores positive
+translations only, so publishing an absent page cannot leave a stale positive
+entry in a running vCPU.
+
+G3 classifies a completed mapping batch once, under the existing exclusive
+mapping lock:
+
+- batches which only add absent pages or replay identical mappings publish
+  directly, without stopping sibling vCPUs;
+- unmaps, permission changes, backing changes, and every other replacement
+  retain the existing `ExecutionQuiesce` path;
+- the invalidation epoch is checked before either path and checked again after
+  acquiring quiescence for a destructive batch;
+- a concurrent lookup either completes its miss before the exclusive mapping
+  lock or observes the newly published mapping after the lock is released.
+
+The new split `static-mmu-batch` unit suite holds an execution reader while
+committing both classes. It directly proves that an additive batch completes
+without an interrupt and that a replacement batch still interrupts and waits
+for the reader. Production gadgets and the correctness-first interpreter each
+pass **304/304** standard tests.
+
+A matched ten-worker shared-mm stress improved from a 0.822-second median to
+0.685 seconds (**16.7% faster**) and reduced host CPU consumption from 1.90 to
+1.63 CPU-seconds (**14.2% less**). The immutable candidate is
+`.build/bench/uml-darwin-g3-additive-batches`, SHA-256
+`12b35d7864ee9ba4b44f27baf2ea428064cbf87fdd6bcca69c2e3d419dff5883`.
+
+The complete G3 confirmation is
+(result). It scored
+**65 single-core / 324 multi-core**, versus 66/306 on G2: single-core changed
+-1.5%, while the multi-core aggregate improved **5.9%**. Both runs used one
+10-core guest processor, 8 GiB, the read-only first partition plus tmpfs
+OverlayFS root, systemd, and the same benchmark preparation.
+
+| Workload | G2 SC | G3 SC | G2 MC | G3 MC |
+|---|---:|---:|---:|---:|
+| File Compression | 84 | 82 | 322 | 359 |
+| Navigation | 137 | 134 | 302 | 291 |
+| HTML5 Browser | 54 | 54 | 398 | 396 |
+| PDF Renderer | 74 | 73 | 247 | 362 |
+| Photo Library | 67 | 66 | 382 | 450 |
+| Clang | 40 | 43 | 310 | 290 |
+| Text Processing | 38 | 38 | 48 | 47 |
+| Asset Compression | 73 | 73 | 582 | 600 |
+| Object Detection | 28 | 28 | 168 | 171 |
+| Background Blur | 61 | 60 | 402 | 427 |
+| Horizon Detection | 95 | 92 | 660 | 668 |
+| Object Remover | 106 | 98 | 555 | 415 |
+| HDR | 71 | 69 | 467 | 474 |
+| Photo Filter | 90 | 87 | 147 | 198 |
+| Ray Tracer | 74 | 75 | 703 | 686 |
+| Structure from Motion | 65 | 63 | 301 | 384 |
+
+The candidate profile is `/private/tmp/geekbench-g3-additive-profile`.
+Representative measured changes are:
+
+- Multi-Core PDF Renderer: 137.626 to 93.955 seconds, 4.92 to 5.68 host
+  cores, and 5.69 to 8.35 Mpixels/s (**46.7% more throughput**). Its matched
+  five-second call graphs contain 57.6% fewer walker-lock samples.
+- Multi-Core File Compression: 71.913 to 65.757 seconds, 4.79 to 5.83 host
+  cores, and 46.3 to 51.6 MB/s (**11.4% more throughput**).
+- Multi-Core Photo Library improved 17.5%, Photo Filter 34.2%, and Structure
+  from Motion 28.2% by reported throughput.
+- Multi-Core Text Processing remained essentially serial at 1.32/1.33 host
+  cores. This is a workload property rather than a missing guest CPU: Clang
+  used 9.01/8.90 cores, and the standalone SMP control uses approximately all
+  ten host cores.
+
+The isolated regressions were profiled before accepting the aggregate gain.
+Neither the G2 nor G3 Object Remover sample contains
+`AddressSpace::end_batch` or a walker-lock wait, and both have the same
+dominant scalar-load/arithmetic/branch gadget ordering. Its 25.1% multi-core
+throughput regression therefore does not execute the changed path. Clang's
+multi-core score fell 6.5%, but its walker/quiesce samples decreased and its
+single-core score improved 7.5%. Navigation likewise showed fewer quiesce
+occurrences despite a 3.6% score decline. No safe, causal correction was
+available for these run-dependent exceptions, so G3 is retained for its
+focused improvement, removed contention, and higher multi-core aggregate
+rather than adding a speculative workload-specific branch.
+
+### Rejected trial G4: per-memory-site L0 TLB hint
+
+G4 moved the software-TLB index calculation out of the common memory gadget
+path by retaining a mutable last-index hint at each translated memory site.
+The candidate preserved the full page tag and permission checks, handled a
+different `Tlb` object safely, and invalidated correctly across remapping. Its
+focused correctness coverage passed.
+
+The runtime cost of loading and maintaining the site hint exceeded the saved
+hash instructions. A 50-million-iteration mixed scalar/SIMD memory control
+changed from 1.105 to 1.107 seconds. The decisive 500-million-iteration run
+changed from a 10.722-second G3 median to 10.840 seconds, a **1.10%**
+regression. G4 was rejected and all implementation and CTest changes were
+reverted. The standalone reusable control remains
+`tests/perf/guest_memory_site_loop.S`.
+
+### Accepted trial G5: keep guest NZCV in host x27
+
+G5 reserves callee-saved host `x27` for the guest NZCV value across the
+assembly engine. Translation-selected flag producers write `w27`; consumers
+restore native PSTATE from `x27`; entry and exit perform the only normal
+`CpuState::nzcv` load/store. Helper boundaries which can read or write flags
+synchronize explicitly. Scratch users formerly occupying x27 were moved to
+other already-saved registers.
+
+The split `arm64-gadget-nzcv-residency` suite checks integer flag production,
+MSR/MRS NZCV, FP compare flags, and a TLB-miss helper between producer and
+consumer. The initial full sweep also exposed and repaired MOPS and software
+FJCVT helper-boundary synchronization.
+
+On the 300-million-iteration selector/control loop, seven matched G3 samples
+had a 2.830-second median and G5 had a 2.278-second median: **19.5% faster**.
+The 500-million-iteration mixed scalar/SIMD memory control improved from
+10.722 to 9.921 seconds: **7.5% faster**. Production and interpreter each
+passed the then-current 305-test standard suite. The retained immutable G5
+comparison executable is `.build/bench/uml-darwin-g5-nzcv-register`, SHA-256
+`9e51e9d66c20dd60f7ade135fbf98df5b350e7c9dfe6534760e23e0a60813c85`.
+
+### Accepted trial G6: two-way indirect branch/return links
+
+G6 gives each translated BR, BLR, and RET site a two-entry data-only target
+cache. Translation fixes the source-register offset and cache-cell address.
+A hit compares the guest target and follows the existing stable `BlockLink`
+without returning to C++. Only a cold or polymorphic miss stores the target
+PC, identifies its exact cache cell in private engine scratch, and returns to
+the dispatcher for training. Target eviction resets the stable `BlockLink` to
+its safe fallback stream, so cached sites never retain raw pointers to evicted
+program storage. Code invalidation discards both programs and indirect cells
+together.
+
+The new split `arm64-gadget-indirect-links` suite covers a cold miss, both
+cache ways, BR, BLR link-register semantics, RET with an arbitrary source
+register, combined instruction accounting, and safe target-eviction fallback.
+Production and correctness-first interpreter configurations each pass
+**306/306** standard tests.
+
+The dedicated 50-million-iteration monomorphic BLR/RET control improved from
+a 1.440-second G5 median to 0.805 seconds, **44.1% faster**. An unaffected
+direct-link control changed from 2.304 to 2.310 seconds (+0.26%, within run
+noise), while the mixed memory/SIMD control improved from 1.032 to 1.026
+seconds. G6 is retained. Its immutable executable is
+`.build/bench/uml-darwin-g6-indirect-pic`, SHA-256
+`381826874a7bcd263d786a2b7002a1d8346e8052e5938d5e06ca1508daf4600e`.
+The standalone indirect control is
+`tests/perf/guest_indirect_link_loop.S`.
+
+### Accepted trial G7: hoist repeated FP-environment validation
+
+G7 keeps the full FPCR comparison in the correctness-first interpreter
+runpath, where the decoded C++ bridge can change `CpuState` directly. In the
+production gadget engine, an active native FP environment is already current:
+production FPCR/FPSR writers update it eagerly. Later FP/SIMD gadgets therefore
+need only one load and one predicted branch instead of reloading and comparing
+FPCR on every instruction.
+
+The split `arm64-gadget-fp-environment` suite changes FPCR twice in one
+translated block and verifies that native arithmetic observes each rounding
+mode. It also verifies that clearing FPSR mid-block persists. Production and
+correctness-first interpreter configurations each pass **307/307** standard
+tests.
+
+The 500-million-iteration FP control improved from a 4.485-second G6 median to
+4.435 seconds, **1.1% faster**. G7 is retained. Its immutable executable is
+`.build/bench/uml-darwin-g7-fp-environment`, SHA-256
+`f00906ce747eb6fbbdb4087d2c9187be0dc2974273343d396f4015a2a2296da3`.
+The standalone control is `tests/perf/guest_fp_environment_loop.S`.
+
+### Rejected trial G8: wider predecoded GPR operand offsets
+
+G8 changed the compact ADD/SUB-immediate and logical shifted-register
+descriptors from architectural register numbers to `CpuState` byte offsets.
+The stream stayed the same size and disassembly confirmed that two host
+address-building instructions disappeared from each affected gadget.
+
+The initial mixed control changed from 2.340 to 2.329 seconds, but a dedicated
+1.6-billion-operation control tied exactly at 2.033 seconds. The decisive
+8-billion-operation run changed from a 10.023-second G7 median to 10.029
+seconds, a **0.06% regression**. The threaded indirect dispatch, rather than
+the removed integer adds, limits this workload. G8 was rejected and the
+runtime, translator, and lowering-test changes were reverted; the rebuilt
+production executable is byte-identical to G7. The reusable control remains
+`tests/perf/guest_operand_predecode_loop.S`.
+
+### Accepted trial G9: generated top-level production decoder
+
+G9 generates a 256-entry first-level table from A64's architectural `op0`
+field. Production translation now jumps directly to branch/system,
+data-processing, FP/SIMD, load/store, or exception lowering while retaining
+the existing audited mask priority within each family. Explicit overrides
+preserve ADR/ADRP's PC-relative lowering and the FEAT_PAuth_LR encodings which
+overlap data-processing space. Matched families terminate before another
+family can append a second gadget.
+
+The table and direct family jumps are production-only. The correctness-first
+interpreter runpath retains its decoded C++ bridge and original validation.
+The exhaustive exception sweep and focused PC-relative, logical/bitfield,
+pointer-auth, MTE, and SIMD suites caught and drove fixes for every overlap
+before acceptance. The complete production and interpreter configurations
+each pass **307/307** standard tests.
+
+On a read-only tmpfs-overlay guest, five matched runs of 5,000 `/bin/true`
+execs improved from a 26.509-second G7 median to 22.336 seconds, **15.7%
+faster**. Three confirmation runs on the final frozen artifact had a
+22.323-second median. G9 is retained. Its immutable executable is
+`.build/bench/uml-darwin-g9-generated-decode`, SHA-256
+`4dc3ca6eca7e5011906658523ec27a46be3e2fba4fb8ddf10df197cc3ca245d8`.
+The reusable read-only guest command harness is
+`tests/perf/run_guest_command_bench.py`.
+
+### Final accepted-stack Geekbench confirmation
+
+The complete G5+G6+G7+G9 confirmation is
+(result). It scored
+**71 single-core / 370 multi-core**, versus 65/324 on the accepted G3
+comparison run: the aggregates improved **9.2% single-core** and
+**14.2% multi-core**. Both runs used one 10-core guest processor, 8 GiB, the
+read-only first partition plus tmpfs OverlayFS root, systemd, and the same
+benchmark preparation. The final executable is the frozen G9 artifact,
+SHA-256
+`4dc3ca6eca7e5011906658523ec27a46be3e2fba4fb8ddf10df197cc3ca245d8`.
+
+| Workload | G3 SC | G9 SC | Delta | G3 MC | G9 MC | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| File Compression | 82 | 91 | +11.0% | 359 | 420 | +17.0% |
+| Navigation | 134 | 150 | +11.9% | 291 | 385 | +32.3% |
+| HTML5 Browser | 54 | 62 | +14.8% | 396 | 478 | +20.7% |
+| PDF Renderer | 73 | 78 | +6.8% | 362 | 375 | +3.6% |
+| Photo Library | 66 | 70 | +6.1% | 450 | 483 | +7.3% |
+| Clang | 43 | 47 | +9.3% | 290 | 313 | +7.9% |
+| Text Processing | 38 | 43 | +13.2% | 47 | 53 | +12.8% |
+| Asset Compression | 73 | 79 | +8.2% | 600 | 649 | +8.2% |
+| Object Detection | 28 | 28 | +0.0% | 171 | 191 | +11.7% |
+| Background Blur | 60 | 60 | +0.0% | 427 | 444 | +4.0% |
+| Horizon Detection | 92 | 98 | +6.5% | 668 | 686 | +2.7% |
+| Object Remover | 98 | 110 | +12.2% | 415 | 585 | +41.0% |
+| HDR | 69 | 78 | +13.0% | 474 | 512 | +8.0% |
+| Photo Filter | 87 | 91 | +4.6% | 198 | 245 | +23.7% |
+| Ray Tracer | 75 | 89 | +18.7% | 686 | 831 | +21.1% |
+| Structure from Motion | 63 | 67 | +6.3% | 384 | 453 | +18.0% |
+
+The instrumented profile is
+`/private/tmp/geekbench-g9-retry-profile`, with its console in
+`/private/tmp/geekbench-g9-retry-console.log`. Against the G3 workload
+profile, 30 of 31 comparable phase/workload wall times improved. The only
+exception, single-core Background Blur, changed by +0.37%, while its scored
+result tied at 60. Representative improvements were 24.2% for single-core
+File Compression, 25.1% for multi-core Navigation, 40.2% for multi-core
+Object Remover, and 14.0% for multi-core File Compression. The latter used
+5.66 host cores versus G3's 5.83; multi-core Clang used 8.84 host cores.
+
+An earlier G9 attempt was stopped after its console remained in multi-core
+File Compression for approximately six minutes. The first process check used
+`ps` lifetime-average CPU, which was not a valid workload-interval measure.
+After the controlling terminal exited, the emulator also ignored SIGTERM and
+remained as a one-core orphan until its exact PID was killed. Before retrying,
+all retained artifacts passed the standalone 10-vCPU control at
+9.70--9.99 host cores and the shared-mm stress at 2.50--2.74 host cores.
+The clean retry used one-second interval telemetry, reproduced multi-core File
+Compression in 56.5 seconds at 5.66 host cores, completed every workload, and
+uploaded successfully. No source rollback is warranted for the non-reproduced
+aborted-run anomaly.
+
+### Geekbench resume checklist
+
+- [x] Correct the guest topology from one core / 20 SMT threads to 20
+  independent cores.
+- [x] Verify Geekbench `--sysinfo` reports `1 Processor, 20 Cores`.
+- [x] Keep `rootfs.img` partition 1 read-only under the tmpfs OverlayFS root,
+  use 8 GiB memory and systemd; use the user-selected 10-vCPU topology for
+  current benchmark runs.
+- [x] Stop Docker, containerd, apt timers, and Time Machine before each run.
+- [x] Capture representative scalar/control-flow and FP/SIMD profiles.
+- [x] Run the standalone SMP topology/parallelism integration test on an idle
+  host.
+- [x] Complete a full topology-corrected functional/profile run. All workloads
+  finished in 4h06m51s; the result upload failed before scores were
+  printed.
+- [x] Diagnose the failed upload and harden the tmpfs overlay resolver with
+  rotated public/public/virtual fallbacks; validate 2,000 rapid lookups.
+- [x] Stop a contaminated scored retry after detecting a full-core
+  `ReportCrash` loop and a leftover diagnostic emulator.
+- [x] Start the user-selected 10-core baseline at epoch 1784942167, reach
+  Multi-Core PDF Renderer, capture the live low-utilization profile, and stop
+  the run early as explicitly requested instead of waiting for an exact
+  baseline score.
+- [x] Diagnose the dominant multi-core serialization, retain bounded disjoint
+  TLB synchronization ranges, add direct unit and standalone integration
+  coverage, and validate the greater-than-236x focused A/B improvement.
+- [x] Strengthen the standalone SMP integration control to run one busy
+  process per vCPU; the accepted 10-vCPU build consumes 38.18 host-CPU seconds
+  in 4.00 seconds, or 9.54 host cores.
+- [x] Profile the accepted build and reduce walker-lock waiting from 59.1% in
+  the observed Geekbench carriers to 1.78% in the focused shared-mm carriers.
+- [x] Accept G1 after matched focused link-loop A/B runs: 0.42% faster with one
+  worker and 0.94% faster with ten workers, while removing three hot-path
+  instructions per resolved linked edge.
+- [x] Accept G2 after matched focused FP/SIMD-link A/B runs: 41.9% faster with
+  one worker and 39.1% faster with ten workers, no integer-control regression,
+  303/303 tests in each execution mode, and a 9.97-core SMP control.
+- [x] Complete one full 10-core Geekbench confirmation on the accepted
+  shared-mm plus G1/G2 build and retain its result URL plus every sub-test
+  score. The `--multi-core` shortcut cannot be used.
+- [x] Profile the remaining mapping-batch serialization, implement G3's
+  additive publication fast path, pass 304/304 tests in production and
+  interpreter modes, and retain its 5.9% multi-core aggregate improvement.
+- [x] Profile any regressed sub-tests and try focused corrections before
+  rejecting an aggregate improvement.
+- [x] Reject G4's per-site L0 TLB hint after a 1.10% decisive-control
+  regression and restore the accepted G3 source.
+- [x] Accept G5's resident-NZCV path after 19.5% and 7.5% focused gains plus
+  complete production/interpreter validation.
+- [x] Accept G6's two-way indirect branch/return links after a 44.1% focused
+  gain, neutral unaffected controls, and 306/306 tests in both modes.
+- [x] Accept G7's production FP-environment hoist after a 1.1% focused gain
+  and 307/307 tests in both execution modes.
+- [x] Reject G8's wider predecoded GPR offsets after a decisive 0.06%
+  regression, then restore a byte-identical G7 production executable.
+- [x] Accept G9's generated production top-level decoder after a 15.7%
+  exec/startup gain and 307/307 tests in both execution modes.
+- [x] Complete the final 10-core G5+G6+G7+G9 Geekbench confirmation at
+  71 single-core / 370 multi-core, retain its result URL and profile, and
+  verify every scored subtest improved or tied against G3.
+- [x] Remove every rejected/unused gadget and finish with production plus
+  interpreter validation; after G3, both standard configurations pass
+  304/304 tests and G3 adds no gadget entry.
+
 ## Pause and resume checklist
 
 Work paused on 2026-07-23 after the initial trial 3 rejection because the host

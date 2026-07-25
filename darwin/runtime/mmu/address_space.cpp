@@ -17,6 +17,7 @@
 #include <optional>
 #include <pthread.h>
 #include <shared_mutex>
+#include <span>
 #include <thread>
 #include <vector>
 #include <sys/mman.h>
@@ -807,12 +808,8 @@ public:
 		int result = 0;
 		auto state = state_for(batch.generation);
 		{
-			ExecutionQuiesce quiesce{state, batch.generation};
-			if (state->invalidation_epoch.load(std::memory_order_acquire) !=
-			    batch.invalidation_epoch) {
-				result = -EAGAIN;
-			} else {
-				std::lock_guard lock{state->mappings_mutex};
+			std::unique_lock lock{state->mappings_mutex};
+			const auto apply_operations = [&] {
 				for (const auto &operation : batch.operations) {
 					if (operation.map)
 						map_locked(*state,
@@ -824,6 +821,33 @@ public:
 							operation.address,
 							operation.length);
 				}
+			};
+			if (state->invalidation_epoch.load(std::memory_order_acquire) !=
+			    batch.invalidation_epoch) {
+				result = -EAGAIN;
+			} else if (!batch_changes_published_mapping(
+					   *state, batch.operations)) {
+				/*
+				 * Publishing a page which was previously absent cannot
+				 * invalidate a running vCPU's positive-only TLB.  Its
+				 * mapping miss either finishes before this lock is acquired
+				 * or observes the new entry after the lock is released.
+				 * Avoid stopping every sibling vCPU for ordinary first-touch
+				 * demand paging.
+				 */
+				apply_operations();
+			} else {
+				lock.unlock();
+				ExecutionQuiesce quiesce{state, batch.generation};
+				lock.lock();
+				if (state->invalidation_epoch.load(
+					    std::memory_order_acquire) !=
+				    batch.invalidation_epoch) {
+					result = -EAGAIN;
+				} else {
+					apply_operations();
+				}
+				lock.unlock();
 			}
 		}
 		batch.operations.clear();
@@ -1085,6 +1109,35 @@ private:
 		}
 		if (changed)
 			changed_locked(state, changes_code, address, length);
+	}
+
+	[[nodiscard]] static bool batch_changes_published_mapping(
+		const GenerationState &state,
+		std::span<const MappingOperation> operations)
+	{
+		for (const auto &operation : operations) {
+			for (std::uint64_t position = 0;
+			     position < operation.length; position += page_size) {
+				const auto previous =
+					state.mappings.find(operation.address + position);
+				if (previous == state.mappings.end())
+					continue;
+				if (!operation.map)
+					return true;
+				const auto &mapping = previous->second;
+				if (mapping.fd != operation.mapping.fd ||
+				    mapping.offset !=
+					    operation.mapping.offset + position ||
+				    mapping.protection !=
+					    operation.mapping.protection ||
+				    mapping.guest_code !=
+					    operation.mapping.guest_code ||
+				    mapping.guest_writable !=
+					    operation.mapping.guest_writable)
+					return true;
+			}
+		}
+		return false;
 	}
 
 	void unmap_locked(GenerationState &state, std::uint64_t address,

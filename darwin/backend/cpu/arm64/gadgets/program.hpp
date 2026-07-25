@@ -4,6 +4,7 @@
 #include "../cpu_state.hpp"
 #include "tlb.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -68,18 +69,45 @@ struct BlockLink final {
 	std::size_t instruction_count{};
 	std::uint64_t guest_pc{};
 };
+static_assert(offsetof(BlockLink, stream) == 0);
+static_assert(offsetof(BlockLink, instruction_count) == 8);
+static_assert(offsetof(BlockLink, guest_pc) == 16);
+static_assert(sizeof(BlockLink) == 24);
+
+struct IndirectLinkEntry final {
+	std::uint64_t guest_pc{};
+	const BlockLink *link{};
+};
+static_assert(offsetof(IndirectLinkEntry, guest_pc) == 0);
+static_assert(offsetof(IndirectLinkEntry, link) == 8);
+static_assert(sizeof(IndirectLinkEntry) == 16);
+
+/* Two target cells cover the monomorphic and common bimorphic branch/return
+ * sites while keeping the assembly hit path compact. ProgramCache owns and
+ * trains these data-only cells; translated streams only retain stable
+ * pointers to them. */
+struct IndirectLink final {
+	std::array<IndirectLinkEntry, 2> entries{};
+	std::uint8_t next_replacement{};
+};
+static_assert(offsetof(IndirectLink, entries) == 0);
+static_assert(offsetof(IndirectLink, next_replacement) == 32);
+static_assert(sizeof(IndirectLink) == 40);
 
 class Builder final {
 public:
 	using LinkResolver =
 		std::function<const BlockLink *(std::uint64_t guest_pc)>;
+	using IndirectLinkResolver =
+		std::function<IndirectLink *(std::uint64_t source_pc)>;
 
 	[[nodiscard]] BuildResult build(
 		std::uint64_t guest_address,
 		std::span<const std::uint32_t> instructions,
 		LinkResolver resolve_link = {},
 		std::pmr::memory_resource *storage =
-			std::pmr::get_default_resource()) const;
+			std::pmr::get_default_resource(),
+		IndirectLinkResolver resolve_indirect_link = {}) const;
 };
 
 [[nodiscard]] Event execute(const Program &program, CpuState &cpu,
