@@ -10,6 +10,7 @@ file(GLOB_RECURSE RAW_MAKEFILES LIST_DIRECTORIES false
 set(VIOLATIONS)
 foreach(PATH IN LISTS C_SOURCES RAW_MAKEFILES)
     if(PATH MATCHES "/linux-6\\.18/" OR
+       PATH MATCHES "/external/" OR
        PATH MATCHES "/\\.build/" OR
        PATH MATCHES "/\\.git/")
         continue()

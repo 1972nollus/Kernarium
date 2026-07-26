@@ -63,7 +63,7 @@ if(TARGET uml_rootfs_kernel_metadata)
 endif()
 set_property(TARGET uml-darwin APPEND PROPERTY LINK_DEPENDS
     "${UML_KERNEL_IMAGE}")
-target_link_libraries(uml-darwin PRIVATE UML::Backend)
+target_link_libraries(uml-darwin PRIVATE UML::Backend UML::GpuBackend)
 target_compile_options(uml-darwin PRIVATE -Wall -Wextra -Werror)
 target_link_options(uml-darwin PRIVATE
     "LINKER:-export_dynamic"

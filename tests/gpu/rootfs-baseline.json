@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "image": "rootfs.img",
+  "sha256": "06b158cbdf1650466eec1460f09668fd44ca8010b0549f562e56d88c22a09d0c",
+  "size": 8589934592,
+  "frozen_mode": "0444",
+  "installed_guest": {
+    "architecture": "arm64",
+    "distribution": "Debian GNU/Linux 13 (trixie)",
+    "mesa": "26.1.2-1~bpo13+1",
+    "kde_plasma_desktop": "5:162",
+    "kwin_wayland": "4:6.3.6",
+    "vulkan_tools": "1.4.304.0+dfsg1-2"
+  }
+}

@@ -44,9 +44,47 @@ if(UML_BUILD_TESTS)
         COMMAND ${CMAKE_COMMAND}
             -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
             -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME gpu-guest-rootfs-safety
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/gpu/test_run_gpu_guest.py)
+    set_tests_properties(gpu-guest-rootfs-safety PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/gpu)
 endif()
 
 add_subdirectory(darwin/backend)
+
+if(UML_TARGET_MACOS)
+    # First-party host code remains C++, but the vendored VNC implementation
+    # is C and is built as part of the GPU service.
+    enable_language(C)
+    set(LIBVNCSERVER_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(WITH_LIBVNCSERVER ON CACHE BOOL "" FORCE)
+    set(WITH_LIBVNCCLIENT ON CACHE BOOL "" FORCE)
+    set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(WITH_ZLIB ON CACHE BOOL "" FORCE)
+    set(WITH_LZO OFF CACHE BOOL "" FORCE)
+    set(WITH_JPEG OFF CACHE BOOL "" FORCE)
+    set(WITH_PNG OFF CACHE BOOL "" FORCE)
+    set(WITH_SDL OFF CACHE BOOL "" FORCE)
+    set(WITH_GTK OFF CACHE BOOL "" FORCE)
+    set(WITH_LIBSSHTUNNEL OFF CACHE BOOL "" FORCE)
+    set(WITH_GNUTLS OFF CACHE BOOL "" FORCE)
+    set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(WITH_SYSTEMD OFF CACHE BOOL "" FORCE)
+    set(WITH_GCRYPT OFF CACHE BOOL "" FORCE)
+    set(WITH_FFMPEG OFF CACHE BOOL "" FORCE)
+    set(WITH_TIGHTVNC_FILETRANSFER OFF CACHE BOOL "" FORCE)
+    set(WITH_WEBSOCKETS OFF CACHE BOOL "" FORCE)
+    set(WITH_SASL OFF CACHE BOOL "" FORCE)
+    set(WITH_XCB OFF CACHE BOOL "" FORCE)
+    set(WITH_QT OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/libvncserver
+        ${PROJECT_BINARY_DIR}/external/libvncserver EXCLUDE_FROM_ALL)
+    add_subdirectory(darwin/gpu)
+endif()
 
 if(UML_BUILD_CLI)
     if(NOT UML_TARGET_MACOS)

@@ -8,6 +8,8 @@ extern "C" {
 #include <arpa/inet.h>
 #include <cerrno>
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -18,6 +20,33 @@ extern "C" {
 
 namespace uml::network {
 namespace {
+
+class ScopedGuestTimerBlock final {
+public:
+	ScopedGuestTimerBlock()
+	{
+		sigset_t blocked;
+
+		sigemptyset(&blocked);
+		sigaddset(&blocked, SIGALRM);
+		error_ = pthread_sigmask(SIG_BLOCK, &blocked, &previous_);
+	}
+
+	~ScopedGuestTimerBlock()
+	{
+		if (error_ == 0)
+			(void)pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
+	}
+
+	[[nodiscard]] int error() const noexcept
+	{
+		return error_;
+	}
+
+private:
+	sigset_t previous_ {};
+	int error_ {};
+};
 
 constexpr std::array<unsigned char, 6> default_mac{
 	0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
@@ -120,6 +149,17 @@ int SlirpBackend::open(std::span<unsigned char, 6> mac,
 			return -EIO;
 		}
 		try {
+			/*
+			 * ITIMER_REAL is UML's guest clock and must run only on its
+			 * designated CPU pthread. Darwin otherwise may select this
+			 * SLiRP worker for SIGALRM and enter Linux scheduler code on a
+			 * foreign host stack.
+			 */
+			ScopedGuestTimerBlock timer_block;
+
+			if (timer_block.error() != 0)
+				throw std::system_error{
+					timer_block.error(), std::generic_category()};
 			worker_ = std::jthread{[this](std::stop_token stop_token) {
 				event_loop(stop_token);
 			}};
