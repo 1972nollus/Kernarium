@@ -1108,6 +1108,7 @@ extern "C" {
 EngineResult uml_arm64_gadget_enter(const std::uintptr_t *program,
 				    CpuState *cpu, Tlb *tlb,
 				    std::size_t initial_instructions);
+void uml_arm64_gadget_restore_native_fp_environment(CpuState *cpu);
 void uml_arm64_gadget_move_wide_constant();
 void uml_arm64_gadget_move_wide_keep_w0();
 void uml_arm64_gadget_move_wide_keep_w1();
@@ -4512,7 +4513,10 @@ static_assert(offsetof(CpuState, fp_loaded) == 1160);
 static_assert(offsetof(CpuState, fp_dirty) == 1161);
 static_assert(offsetof(CpuState, fpmr) == 1168);
 static_assert(offsetof(CpuState, gadget_zero) == 1176);
-static_assert(offsetof(CpuState, gadget_indirect_miss) == 1184);
+static_assert(offsetof(CpuState, gadget_host_fpcr) == 1184);
+static_assert(offsetof(CpuState, gadget_host_fpsr) == 1192);
+static_assert(offsetof(CpuState, gadget_fp_active) == 1200);
+static_assert(offsetof(CpuState, gadget_indirect_miss) == 1208);
 
 /* Rows are PACIA, PACIB, PACDA, PACDB, AUTIA, AUTIB, AUTDA, AUTDB;
  * columns are register/SP modifier and architecturally-zero modifier. */
@@ -8797,7 +8801,8 @@ BuildResult Builder::build(
 	IndirectLinkResolver resolve_indirect_link) const
 {
 	std::pmr::vector<std::uintptr_t> words{storage};
-	words.reserve(instructions.size() * 2 + 2);
+	words.reserve(std::min<std::size_t>(
+		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
 	for (const auto instruction : instructions) {
@@ -9992,7 +9997,20 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, detail::basic_floating_operand(instruction));
+			if (basic_floating.scalar) {
+				emit(words, detail::basic_floating_operand(instruction));
+			} else {
+				const auto vector_offset = [](unsigned index) {
+					return offsetof(CpuState, vectors) +
+						index * sizeof(VectorRegister);
+				};
+				emit(words,
+					vector_offset(instruction & 31U) |
+					(static_cast<std::uintptr_t>(vector_offset(
+						(instruction >> 5) & 31U)) << 16) |
+					(static_cast<std::uintptr_t>(vector_offset(
+						(instruction >> 16) & 31U)) << 32));
+			}
 		} else if ((instruction & 0xff20'7c00U) == 0x1e20'4000U ||
 			   (instruction & 0xff20'0c00U) == 0x1e20'0800U) {
 			const auto type = (instruction >> 22) & 3U;
@@ -10230,9 +10248,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words,
+				vector_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 5) & 31U)) << 16) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 16) & 31U)) << 32));
 		} else if (const auto floating_conversion =
 				detail::decode_simd_floating_precision_vector(instruction);
 			   floating_conversion.recognized) {
@@ -10281,9 +10306,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words,
+				vector_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 5) & 31U)) << 16) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 16) & 31U)) << 32));
 		} else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
 			    (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
 			    (instruction & 0xbf20'fc00U) == 0x0e00'3800U ||
@@ -10343,13 +10375,30 @@ decode_floating_simd:
 				uml_arm64_gadget_simd_lut_software);
 			emit(words, simd_lut_operand(instruction, shape, part));
 		} else if ((instruction & 0xbfe0'8c00U) == 0x0e00'0000U) {
+			const unsigned count =
+				((instruction >> 13) & 3U) + 1U;
 			emit(words, simd_table_lookup_gadget(
 				(instruction & 0x1000U) != 0,
-				((instruction >> 13) & 3U) + 1U,
+				count,
 				(instruction & 0x4000'0000U) != 0));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			if (count == 1U) {
+				const auto vector_offset = [](unsigned index) {
+					return offsetof(CpuState, vectors) +
+						index * sizeof(VectorRegister);
+				};
+				emit(words,
+					vector_offset(instruction & 31U) |
+					(static_cast<std::uintptr_t>(vector_offset(
+						(instruction >> 5) & 31U)) << 16) |
+					(static_cast<std::uintptr_t>(vector_offset(
+						(instruction >> 16) & 31U)) << 32));
+			} else {
+				emit(words, (instruction & 31U) |
+					(static_cast<std::uintptr_t>(
+						(instruction >> 5) & 31U) << 8) |
+					(static_cast<std::uintptr_t>(
+						(instruction >> 16) & 31U) << 16));
+			}
 		} else if ((instruction & 0x9ff8'0400U) == 0x0f00'0400U) {
 			/* This allocation overlaps the broad shift-immediate masks below
 			 * in cmode bits, so it must be selected first. */
@@ -10399,9 +10448,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words,
+				vector_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 5) & 31U)) << 16) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 16) & 31U)) << 32));
 		} else if ((instruction & 0xbfff'fc00U) == 0x0ef8'f800U ||
 			   (instruction & 0xbfff'fc00U) == 0x2ef8'f800U ||
 			   (instruction & 0xbf3f'fc00U) == 0x0e20'f800U ||
@@ -10504,9 +10560,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(element->register_index) << 16));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words,
+				vector_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 5) & 31U)) << 16) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					element->register_index)) << 32));
 		} else if ((((instruction & 0x9f00'0400U) == 0x0f00'0000U) ||
 			    ((instruction & 0xdf00'0400U) == 0x5f00'0000U)) &&
 			   is_simd_indexed_integer_group(
@@ -10810,9 +10873,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words,
+				vector_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 5) & 31U)) << 16) |
+				(static_cast<std::uintptr_t>(vector_offset(
+					(instruction >> 16) & 31U)) << 32));
 		} else if (((instruction & 0x9f3f'fc00U) == 0x0e20'8800U ||
 			    (instruction & 0x9f3f'fc00U) == 0x0e20'9800U ||
 			    (instruction & 0x9f3f'fc00U) == 0x0e20'a800U ||
@@ -12234,8 +12304,30 @@ Event execute(const Program &program, CpuState &cpu, Tlb &tlb,
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count());
+	uml_arm64_gadget_restore_native_fp_environment(&cpu);
 	executed = result.executed;
 	return static_cast<Event>(result.event);
+}
+
+Event execute_preserving_native_fp_environment(
+	const Program &program, CpuState &cpu, Tlb &tlb,
+	std::size_t &executed) noexcept
+{
+	executed = 0;
+	if (program.words().empty())
+		return Event::fatal;
+	if (program.accesses_fp_state())
+		cpu.access_fp_state();
+	const auto result =
+		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
+			program.instruction_count());
+	executed = result.executed;
+	return static_cast<Event>(result.event);
+}
+
+void restore_native_fp_environment(CpuState &cpu) noexcept
+{
+	uml_arm64_gadget_restore_native_fp_environment(&cpu);
 }
 
 } // namespace uml::backend::arm64::gadgets

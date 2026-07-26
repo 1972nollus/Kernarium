@@ -474,11 +474,11 @@ static_assert(offsetof(TlbEntry, read_page) == 0);
 static_assert(offsetof(TlbEntry, write_page) == 8);
 static_assert(offsetof(TlbEntry, read_data_minus_address) == 16);
 static_assert(offsetof(TlbEntry, write_data_minus_address) == 24);
-static_assert(offsetof(Tlb, generation) == 0);
-static_assert(offsetof(Tlb, changes) == 8);
-static_assert(offsetof(Tlb, fault_address) == 16);
-static_assert(offsetof(Tlb, fault_access) == 24);
-static_assert(offsetof(Tlb, entries) == 32);
+static_assert(offsetof(Tlb, entries) == 0);
+static_assert(offsetof(Tlb, generation) == 262144);
+static_assert(offsetof(Tlb, changes) == 262152);
+static_assert(offsetof(Tlb, fault_address) == 262160);
+static_assert(offsetof(Tlb, fault_access) == 262168);
 
 } // namespace
 

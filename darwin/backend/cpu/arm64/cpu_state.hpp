@@ -67,6 +67,12 @@ struct CpuState final {
 	 * Builder may map an architectural XZR source to this byte offset, avoiding
 	 * a runtime register-number comparison. No destination is ever mapped here. */
 	std::uint64_t gadget_zero{};
+	/* Production may retain the guest FPCR/FPSR in the native registers across
+	 * internal translated-block exits.  These private fields preserve the host
+	 * environment until the outer guest-dispatch boundary. */
+	std::uint64_t gadget_host_fpcr{};
+	std::uint64_t gadget_host_fpsr{};
+	bool gadget_fp_active{};
 	/* Private execution-engine scratch. An indirect control-flow cache miss
 	 * records its data-only cache cell here so the outer dispatcher can train
 	 * that exact site. This is never guest-visible architectural state. */

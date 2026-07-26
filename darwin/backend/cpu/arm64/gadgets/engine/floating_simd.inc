@@ -1119,18 +1119,14 @@ floating_binary floating_negative_multiply_double, d0, d1, d2, d, fnmul
 gadget simd_basic_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	movi v2.16b, #0
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -1138,15 +1134,12 @@ gadget simd_basic_\name
 gadget simd_basic_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x9, lsl #4
-	ldr q0, [x13]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	ldr q0, [_cpu, x10]
 	movi v2.16b, #0
 	\operation v2.\arrangement, v0.\arrangement
-	str q2, [x14]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -2690,17 +2683,16 @@ gadget simd_three_same_\name
 	ensure_fp_environment
 	.endif
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	ldr q0, [x12, x10, lsl #4]
-	ldr q1, [x12, x11, lsl #4]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x12, x9, lsl #4]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [x12, x9, lsl #4]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -2710,17 +2702,16 @@ gadget simd_three_same_\name
 	ensure_fp_environment
 	.endif
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	ldr q0, [x12, x10, lsl #4]
-	ldr q1, [x12, x11, lsl #4]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x12, x9, lsl #4]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation \arrangement\()2, \arrangement\()0, \arrangement\()1
-	str q2, [x12, x9, lsl #4]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3127,20 +3118,16 @@ gadget simd_widening_\name
 	ensure_fp_environment
 	.endif
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x15]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation v2.\destination, v0.\left, v1.\right
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3148,20 +3135,16 @@ gadget simd_widening_\name
 gadget simd_widening_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x15]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation \destination\()2, \source\()0, \source\()1
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -4552,6 +4535,24 @@ simd_shift_left_long_operation ushll2, ushll2, 16b, 8h, 4s
 .macro simd_table_lookup_shape name, operation, count, extend, wide
 gadget \name
 	ldr x8, [_stream], #8
+	.if \count == 1
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q4, [_cpu, x11]
+		.if \extend
+	ldr q5, [_cpu, x9]
+		.endif
+	\operation v5.16b, {v0.16b}, v4.16b
+		.if \wide
+	str q5, [_cpu, x9]
+		.else
+	add x15, _cpu, x9
+	str d5, [x15]
+	str xzr, [x15, #8]
+		.endif
+	.else
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	ubfx w11, w8, #16, #5
@@ -4596,6 +4597,7 @@ gadget \name
 	.else
 	str d5, [x15]
 	str xzr, [x15, #8]
+	.endif
 	.endif
 	next_gadget
 .endm
@@ -5153,17 +5155,13 @@ simd_indexed_saturating_accumulate_high_family sqrdmlsh, sqrdmlsh
 gadget simd_indexed_\name\()_\shape\()_\index
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x14]
-	ldr q1, [x15]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x13]
+	ldr q2, [_cpu, x9]
 	.endif
 	.if \scalar
 	.if \accumulate
@@ -5180,7 +5178,7 @@ gadget simd_indexed_\name\()_\shape\()_\index
 	mov v2.16b, v3.16b
 1:
 	.endif
-	str q2, [x13]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -5768,7 +5766,11 @@ gadget fp8_software
 	ldp x1, x2, [sp], #16
 	/* A preceding native FP gadget may already own the live host FPSR. Merge
 	 * software conversion flags into it so block-leave cannot overwrite them. */
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	ldr x11, [sp, #0x78]
+#else
+	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+#endif
 	cbz x11, 1f
 	mrs x12, fpsr
 	ldr w13, [_cpu, #UML_GADGET_CPU_FPSR]

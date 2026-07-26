@@ -184,9 +184,11 @@ gadget \name
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
+	.if \bytes > 1
 	and x9, x7, #0xfff
 	cmp x9, #(4096 - \bytes)
 	b.hi .Lscalar_unsigned_narrow_load_cross\@
+	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
 	.if !\transfer_zero
@@ -195,11 +197,10 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 
+	.if \bytes > 1
 .Lscalar_unsigned_narrow_load_cross\@:
 	transfer_slow 0, x7, \bytes
-	.if \bytes == 1
-	umov w0, v0.b[0]
-	.elseif \bytes == 2
+	.if \bytes == 2
 	umov w0, v0.h[0]
 	.else
 	fmov w0, s0
@@ -220,6 +221,7 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.endif
 .endm
 
 .macro scalar_unsigned_load_narrow_modes name, instruction, host_register, bytes, extension
@@ -246,9 +248,11 @@ gadget \name
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
+	.if \bytes > 1
 	and x9, x7, #0xfff
 	cmp x9, #(4096 - \bytes)
 	b.hi .Lscalar_unsigned_narrow_store_cross\@
+	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \transfer_zero
 	mov x0, xzr
@@ -259,6 +263,7 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 
+	.if \bytes > 1
 .Lscalar_unsigned_narrow_store_cross\@:
 	.if \transfer_zero
 	mov x0, xzr
@@ -269,6 +274,7 @@ gadget \name
 	transfer_slow 1, x7, \bytes
 	add _stream, _stream, #8
 	next_gadget
+	.endif
 .endm
 
 .macro scalar_unsigned_store_narrow_modes name, instruction, bytes
@@ -350,9 +356,11 @@ gadget \name
 	.else
 	mov x26, x25
 	.endif
+	.if \bytes > 1
 	and x9, x26, #0xfff
 	cmp x9, #(4096 - \bytes)
 	b.hi .Lscalar_other_immediate_cross\@
+	.endif
 	mov x7, x26
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -375,12 +383,11 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 
+	.if \bytes > 1
 .Lscalar_other_immediate_cross\@:
 	.if \load
 	transfer_slow 0, x26, \bytes
-		.if \bytes == 1
-	umov w0, v0.b[0]
-		.elseif \bytes == 2
+		.if \bytes == 2
 	umov w0, v0.h[0]
 		.elseif \bytes == 4
 	fmov w0, s0
@@ -415,6 +422,7 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.endif
 .endm
 
 .macro scalar_other_immediate_operation name, load, instruction, host_register, bytes, extension
@@ -471,9 +479,11 @@ gadget \name
 		.endif
 	.endif
 	add x26, x24, x26
+	.if \bytes > 1
 	and x9, x26, #0xfff
 	cmp x9, #(4096 - \bytes)
 	b.hi .Lscalar_other_register_cross\@
+	.endif
 	mov x7, x26
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -493,12 +503,11 @@ gadget \name
 	add _stream, _stream, #8
 	next_gadget
 
+	.if \bytes > 1
 .Lscalar_other_register_cross\@:
 	.if \load
 	transfer_slow 0, x26, \bytes
-		.if \bytes == 1
-	umov w0, v0.b[0]
-		.elseif \bytes == 2
+		.if \bytes == 2
 	umov w0, v0.h[0]
 		.elseif \bytes == 4
 	fmov w0, s0
@@ -530,6 +539,7 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+	.endif
 .endm
 
 .macro scalar_other_register_extension name, load, instruction, host_register, bytes, result_extension, address_extension, extension_name, shifted
@@ -728,7 +738,6 @@ gadget \name
 	.endif
 	/* Comparing the page bits of the first and final transfer bytes catches
 	 * both page crossing and address wraparound with one hot-path branch. */
-	add x20, x19, #\bytes
 	add x9, x19, #((2 * \bytes) - 1)
 	eor x9, x9, x19
 	tst x9, #0xfffffffffffff000
@@ -737,11 +746,7 @@ gadget \name
 	mov x7, x19
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	mov x19, x7
-	mov x7, x20
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	mov x20, x7
-	\instruction \host_register\()6, [x19]
-	\instruction \host_register\()7, [x20]
+	\instruction \host_register\()6, \host_register\()7, [x19]
 		.if !\first_zero
 	str x6, [_cpu, x22]
 		.endif
@@ -752,9 +757,6 @@ gadget \name
 	mov x7, x19
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	mov x19, x7
-	mov x7, x20
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	mov x20, x7
 		.if \first_zero
 	mov x6, xzr
 		.else
@@ -765,8 +767,7 @@ gadget \name
 		.else
 	ldr x7, [_cpu, x23]
 		.endif
-	\instruction \host_register\()6, [x19]
-	\instruction \host_register\()7, [x20]
+	\instruction \host_register\()6, \host_register\()7, [x19]
 	.endif
 	.if \mode == 1 || \mode == 2
 	str x21, [_cpu, x24]
@@ -835,11 +836,11 @@ gadget \name
 	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 3
 .endm
 
-integer_pair_operation store32, 0, str, w, 4, 0
-integer_pair_operation load32, 1, ldr, w, 4, 0
-integer_pair_operation load32s, 1, ldrsw, x, 4, 1
-integer_pair_operation store64, 0, str, x, 8, 0
-integer_pair_operation load64, 1, ldr, x, 8, 0
+integer_pair_operation store32, 0, stp, w, 4, 0
+integer_pair_operation load32, 1, ldp, w, 4, 0
+integer_pair_operation load32s, 1, ldpsw, x, 4, 1
+integer_pair_operation store64, 0, stp, x, 8, 0
+integer_pair_operation load64, 1, ldp, x, 8, 0
 
 .purgem integer_pair_operation
 .purgem integer_pair_mode
@@ -862,7 +863,6 @@ gadget \name
 	.else
 	mov x19, x21
 	.endif
-	add x20, x19, #\bytes
 	add x9, x19, #((2 * \bytes) - 1)
 	eor x9, x9, x19
 	tst x9, #0xfffffffffffff000
@@ -871,24 +871,16 @@ gadget \name
 	mov x7, x19
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	mov x19, x7
-	mov x7, x20
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	mov x20, x7
-	\instruction \host_register\()0, [x19]
-	\instruction \host_register\()1, [x20]
+	\instruction \host_register\()0, \host_register\()1, [x19]
 	str q0, [_cpu, x22]
 	str q1, [_cpu, x23]
 	.else
 	mov x7, x19
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	mov x19, x7
-	mov x7, x20
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	mov x20, x7
 	ldr q0, [_cpu, x22]
 	ldr q1, [_cpu, x23]
-	\instruction \host_register\()0, [x19]
-	\instruction \host_register\()1, [x20]
+	\instruction \host_register\()0, \host_register\()1, [x19]
 	.endif
 	.if \mode == 1 || \mode == 2
 	str x21, [_cpu, x24]
@@ -937,12 +929,12 @@ gadget \name
 	vector_pair_fast vector_pair_\name\()_2, \load, \instruction, \host_register, \bytes, 2
 .endm
 
-vector_pair_operation store32, 0, str, s, 4
-vector_pair_operation load32, 1, ldr, s, 4
-vector_pair_operation store64, 0, str, d, 8
-vector_pair_operation load64, 1, ldr, d, 8
-vector_pair_operation store128, 0, str, q, 16
-vector_pair_operation load128, 1, ldr, q, 16
+vector_pair_operation store32, 0, stp, s, 4
+vector_pair_operation load32, 1, ldp, s, 4
+vector_pair_operation store64, 0, stp, d, 8
+vector_pair_operation load64, 1, ldp, d, 8
+vector_pair_operation store128, 0, stp, q, 16
+vector_pair_operation load128, 1, ldp, q, 16
 
 .purgem vector_pair_operation
 .purgem vector_pair_fast

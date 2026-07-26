@@ -1,6 +1,6 @@
 # Darwin UML LTP progress
 
-Last updated: 2026-07-20 (Asia/Tokyo)
+Last updated: 2026-07-26 (Asia/Tokyo)
 
 ## Scope and rules
 
@@ -2702,6 +2702,27 @@ Latest quick non-LTP regression after specializing translated conditional branch
 Latest focused verification after the pressure-category audit: the guest SMP parallelism regression passed in **11.94 seconds**, and the runner/parser unit suite passed **58/58**. The initial in-sandbox SMP invocation could not read host process accounting; the identical host-permitted invocation passed.
 
 Final campaign disposition: **2,417/2,516 accepted with zero failures**. This comprises **2,141/2,141 ordinary**, **1/1 isolated timing**, and **275/374 serialized full-topology host-pressure** cases. At the user's instruction the active pressure case was interrupted and the remaining pressure tail was skipped, so **99 cases are recorded as unrun, not passed**. The campaign is considered finished by explicit user direction.
+
+### 2026-07-26 G35 non-pressure requalification
+
+The frozen G35 production executable (SHA-256
+`55bd43f8c83b09dadd522da25f28620386b029fd59835fa632000e7536eb00ac`)
+was requalified from the beginning with 16 workers. The standard pressure
+exclusion skipped all 374 `host-pressure` entries and selected 2,141 ordinary
+cases plus the isolated serial timing case. The run completed **2,141/2,142
+accepted in 1,324.5 seconds**, with no emulator fatal event and no failure
+other than `syscalls/futex_wake02`.
+
+`futex_wake02` emitted all eleven expected TPASS assertions, including its
+final no-waiter check, but did not return the shell completion marker before
+the 240-second host timeout. The same teardown timeout reproduced once in an
+immediate isolated run. Both the pre-G35 G9 control and the rejected G34
+control completed the unchanged case in 7.4 seconds. G35 then completed it
+successfully **nine consecutive times** in 7.3--7.4 seconds. The full run is
+therefore recorded as 2,141/2,142 rather than promoted to a clean pass; the
+focused evidence identifies an intermittent post-assertion teardown anomaly,
+not a failed instruction or test assertion. The complete run log is
+`/private/tmp/ltp-g35-nonpressure-20260726.log`.
 
 Latest serialized pressure qualification: **280/280 accepted** in 20,752.2 seconds. The lane ran one case at a time after the concurrent ordinary lane had been qualified, exercised the full host topology for pressure-tagged cases, completed the 900-second memory-control phases, and left no emulator, runner, diagnostic, or debugger process behind. The final aggregate case completed its unchanged internal matrix and was accepted by its strict legacy-userspace contract.
 

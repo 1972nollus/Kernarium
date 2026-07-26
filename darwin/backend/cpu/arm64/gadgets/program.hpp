@@ -114,5 +114,9 @@ public:
 			    Tlb &tlb) noexcept;
 [[nodiscard]] Event execute(const Program &program, CpuState &cpu,
 			    Tlb &tlb, std::size_t &executed) noexcept;
+[[nodiscard]] Event execute_preserving_native_fp_environment(
+	const Program &program, CpuState &cpu, Tlb &tlb,
+	std::size_t &executed) noexcept;
+void restore_native_fp_environment(CpuState &cpu) noexcept;
 
 } // namespace uml::backend::arm64::gadgets

@@ -35,8 +35,8 @@ NAME(uml_arm64_gadget_\name):
  * guest FPCR; later gadgets notice guest FPCR writes. Leave restores the host
  * state without leaking guest exception flags into the caller. */
 .macro ensure_fp_environment
-	ldr x6, [sp, #0x78]
 #if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+	ldr x6, [sp, #0x78]
 	cbz x6, 97f
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
 	ldr w5, [sp, #0x80]
@@ -45,14 +45,6 @@ NAME(uml_arm64_gadget_\name):
 	str w6, [sp, #0x80]
 	msr fpcr, x6
 	b 99f
-#else
-	/* Production FPCR writes update the active native environment eagerly.
-	 * Therefore an active environment is already current, and every later
-	 * native FP/SIMD gadget needs only this single predicted branch. The
-	 * correctness-first decoded runpath retains the full value comparison
-	 * above because its C++ bridge may update CpuState directly. */
-	cbnz x6, 99f
-#endif
 97:
 	mrs x6, fpcr
 	mrs x5, fpsr
@@ -60,18 +52,27 @@ NAME(uml_arm64_gadget_\name):
 	mov x6, #1
 	str x6, [sp, #0x78]
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	str w6, [sp, #0x80]
-#endif
 	msr fpcr, x6
 	/* FPSR exception and saturation flags are cumulative architectural
 	 * state. Seed the native environment from the guest. */
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x6
 99:
+#else
+	/* Production retains the native guest environment across internal block
+	 * exits. FPCR writes update it eagerly, so the steady path is one load
+	 * and one predicted branch. Keep the cold system-register setup out of
+	 * every generated gadget to minimize code footprint. */
+	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbnz w6, 99f
+	bl uml_arm64_gadget_activate_native_fp_environment
+99:
+#endif
 .endm
 
 .macro restore_fp_environment
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	ldr x6, [sp, #0x78]
 	cbz x6, 98f
 	/* Commit native FP/AdvSIMD exception state before restoring the host. */
@@ -82,6 +83,7 @@ NAME(uml_arm64_gadget_\name):
 	msr fpsr, x5
 	str xzr, [sp, #0x78]
 98:
+#endif
 .endm
 
 /* Native FEAT_FP8 instructions consume FPMR.  Save it only for blocks that
@@ -117,8 +119,7 @@ NAME(uml_arm64_gadget_\name):
 	ubfx x9, x7, #12, #13
 	eor x9, x9, x7, lsr #25
 	and w9, w9, #0x1fff
-	add x10, _tlb, #UML_GADGET_TLB_ENTRIES
-	add x10, x10, x9, lsl #5
+	add x10, _tlb, x9, lsl #5
 	ldr x11, [x10, #\page_offset]
 	cmp x8, x11
 	b.eq 91f
@@ -175,6 +176,22 @@ NAME(uml_arm64_gadget_\name):
 .endm
 
 .text
+#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+.p2align 4
+uml_arm64_gadget_activate_native_fp_environment:
+	mrs x6, fpcr
+	mrs x5, fpsr
+	str x6, [_cpu, #UML_GADGET_CPU_HOST_FPCR]
+	str x5, [_cpu, #UML_GADGET_CPU_HOST_FPSR]
+	mov w6, #1
+	strb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	msr fpcr, x6
+	ldr w6, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x6
+	ret
+#endif
+
 .globl NAME(uml_arm64_gadget_enter)
 .p2align 4
 NAME(uml_arm64_gadget_enter):
@@ -215,6 +232,8 @@ uml_arm64_gadget_leave:
 	ldp x20, x21, [sp, #0x10]
 	ldp x18, x19, [sp], #0x90
 	ret
+	/* Retain the established alignment of the core integer gadget bank. */
+	.space 32
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
  * folded to NOP, so the live entry is a three-load straight-line store. */
@@ -1480,7 +1499,9 @@ gadget logical_shifted_\suffix
 	ldr x8, [_stream], #8
 	add x14, _cpu, #UML_GADGET_CPU_X0
 	.if \left_zero
+		.if \operation != 1 || \invert || \shift_kind != 0 || \destination_zero
 	mov x15, xzr
+		.endif
 	.else
 	ubfx w10, w8, #8, #5
 	ldr x15, [x14, x10, lsl #3]
@@ -1518,7 +1539,17 @@ gadget logical_shifted_\suffix
 	.if \invert
 	mvn x16, x16
 	.endif
-	.if \bits64
+	.if \operation == 1 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
+		.if \bits64
+	and w9, w8, #0x1f
+	str x16, [x14, x9, lsl #3]
+		.else
+	mov w7, w16
+	and w9, w8, #0x1f
+	str x7, [x14, x9, lsl #3]
+		.endif
+	.else
+		.if \bits64
 		.if \operation == 0
 	and x7, x15, x16
 		.elseif \operation == 1
@@ -1538,16 +1569,29 @@ gadget logical_shifted_\suffix
 		.else
 	ands w7, w15, w16
 		.endif
-	.endif
-	.if \operation == 3
+		.endif
+		.if \operation == 3
 	mrs x27, nzcv
-	.endif
-	.if !\destination_zero
+		.endif
+		.if !\destination_zero
 	and w9, w8, #0x1f
-	add x14, _cpu, #UML_GADGET_CPU_X0
 	str x7, [x14, x9, lsl #3]
+		.endif
 	.endif
 	next_gadget
+	/* The removed runtime base-address instruction used one word in every
+	 * result-writing entry. Preserve the established bank layout with an
+	 * unreachable word after the dispatch branch. */
+	.if !\destination_zero
+	nop
+	.endif
+	/* Keep later logical entries at their established cache-line phase. The
+	 * native 64-bit MOV alias removed two additional runtime instructions. */
+	.if \operation == 1 && \bits64 && \left_zero && !\invert && \shift_kind == 0 && !\destination_zero
+	nop
+	nop
+	nop
+	.endif
 .endm
 .macro logical_shifted_destinations operation, bits64, invert, shift_kind, left_zero, right_zero, prefix
 logical_shifted_fast \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, 0, \prefix\()_r

@@ -82,6 +82,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("profile_dir", type=Path)
     parser.add_argument("--top", type=int, default=30)
+    parser.add_argument(
+        "--phase",
+        choices=("Single-Core", "Multi-Core"),
+        help="limit aggregate stacks to one Geekbench phase",
+    )
     args = parser.parse_args()
 
     rows = read_telemetry(args.profile_dir / "host-cpu.csv")
@@ -99,12 +104,21 @@ def main() -> None:
             f"{consumed:.3f}\t{consumed / wall:.3f}\t{mean_cpu:.1f}")
 
     aggregate: Counter[str] = Counter()
-    for sample_path in sorted(args.profile_dir.glob("*.sample.txt")):
+    pattern = (
+        "*-single-core-*.sample.txt"
+        if args.phase == "Single-Core"
+        else "*-multi-core-*.sample.txt"
+        if args.phase == "Multi-Core"
+        else "*.sample.txt"
+    )
+    for sample_path in sorted(args.profile_dir.glob(pattern)):
         aggregate.update(sample_top_stacks(sample_path))
     print("\ncount\tsymbol")
     shown = 0
     for symbol, count in aggregate.most_common():
-        if "(in uml-darwin)" not in symbol:
+        # Immutable comparison artifacts carry a trial suffix in their Mach-O
+        # image name (for example, uml-darwin-g9-generated-decode).
+        if "(in uml-darwin" not in symbol:
             continue
         print(f"{count}\t{symbol}")
         shown += 1

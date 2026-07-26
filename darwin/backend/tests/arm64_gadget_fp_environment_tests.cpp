@@ -35,6 +35,15 @@ std::uint32_t single(const arm64::CpuState &cpu, unsigned index)
 	return bits;
 }
 
+#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
+std::uint64_t native_fpcr()
+{
+	std::uint64_t value = 0;
+	asm volatile("mrs %0, fpcr" : "=r"(value));
+	return value;
+}
+#endif
+
 template<std::size_t Size>
 arm64::CpuState execute(const std::array<std::uint32_t, Size> &instructions,
 	arm64::CpuState cpu)
@@ -91,4 +100,38 @@ int main()
 		require(cpu.registers[4] == 0);
 		require(cpu.fpsr == 0);
 	}
+
+#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
+	/* The production executor may retain the guest FP environment between
+	 * internal block exits, but an explicit dispatch-boundary restore must
+	 * commit FPSR and restore the caller environment exactly once. */
+	{
+		const std::array instructions{
+			0x1e22'2820U, // fadd s0,s1,s2
+			0xd400'0001U, // svc #0
+		};
+		const auto built = gadgets::Builder{}.build(0xa000, instructions);
+		require(built.complete);
+		arm64::CpuState cpu{};
+		cpu.fpcr = 1U << 22; // Round toward plus infinity.
+		set_single(cpu, 1, 0x3f80'0000U);
+		set_single(cpu, 2, 0x3380'0000U);
+		gadgets::Tlb tlb;
+		std::size_t executed = 0;
+		const auto host_fpcr = native_fpcr();
+		require(gadgets::execute_preserving_native_fp_environment(
+			built.program, cpu, tlb, executed) ==
+			gadgets::Event::system_call);
+		require(cpu.gadget_fp_active);
+		require(single(cpu, 0) == 0x3f80'0001U);
+		require(gadgets::execute_preserving_native_fp_environment(
+			built.program, cpu, tlb, executed) ==
+			gadgets::Event::system_call);
+		require(cpu.gadget_fp_active);
+		require(single(cpu, 0) == 0x3f80'0001U);
+		gadgets::restore_native_fp_environment(cpu);
+		require(!cpu.gadget_fp_active);
+		require(native_fpcr() == host_fpcr);
+	}
+#endif
 }

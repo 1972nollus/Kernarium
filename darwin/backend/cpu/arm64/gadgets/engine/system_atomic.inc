@@ -282,7 +282,11 @@ gadget sysreg_cntvct_read
 
 gadget sysreg_fpsr_read
 	ldr x8, [_stream], #8
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	ldr x11, [sp, #0x78]
+#else
+	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+#endif
 	cbz x11, 8f
 	mrs x9, fpsr
 	b 9f
@@ -303,22 +307,34 @@ gadget sysreg_\name\()_write_r
 	movk w10, #\high_mask, lsl #16
 	and w9, w9, w10
 	str w9, [_cpu, #\field]
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	ldr x11, [sp, #0x78]
+#else
+	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+#endif
 	cbz x11, 8f
 	msr \system, x9
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	.if \update_stack
 	str w9, [sp, #0x80]
 	.endif
+#endif
 8:
 	next_gadget
 gadget sysreg_\name\()_write_z
 	str wzr, [_cpu, #\field]
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	ldr x11, [sp, #0x78]
+#else
+	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+#endif
 	cbz x11, 9f
 	msr \system, xzr
+#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 	.if \update_stack
 	str wzr, [sp, #0x80]
 	.endif
+#endif
 9:
 	next_gadget
 .endm

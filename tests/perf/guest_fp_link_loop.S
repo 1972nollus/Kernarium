@@ -9,7 +9,10 @@
 
 	.equ NR_WRITE,		64
 	.equ NR_EXIT_GROUP,	94
-	.equ ITERATIONS,	30000000
+#ifndef BENCH_ITERATIONS
+#define BENCH_ITERATIONS 30000000
+#endif
+	.equ ITERATIONS,	BENCH_ITERATIONS
 
 	.section .text
 	.global _start

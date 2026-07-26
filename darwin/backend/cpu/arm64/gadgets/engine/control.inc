@@ -32,8 +32,8 @@ gadget breakpoint
  * target points at its own {link_exit, guest_pc} stream, so the hot path needs
  * no linked/unlinked test. Resolved edges defer the architectural PC store
  * until an actual exit. Bound chains at 4,096 guest instructions; the outer
- * dispatcher then observes pending shootdowns/IPIs well before its 64K
- * fairness limit. */
+ * dispatcher still observes pending shootdowns/IPIs sixteen times within its
+ * 64K fairness limit. */
 .macro follow_block_link link
 	ldp _stream, x11, [\link]
 	add x29, x29, x11

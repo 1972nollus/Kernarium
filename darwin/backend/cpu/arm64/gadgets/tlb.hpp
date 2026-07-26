@@ -25,12 +25,12 @@ inline constexpr std::size_t tlb_entry_count = 1U << 13;
  * offsets.inc synchronized with this type.
  */
 struct alignas(32) Tlb final {
+	std::array<TlbEntry, tlb_entry_count> entries{};
 	std::uint64_t generation{};
 	std::uint64_t changes{};
 	std::uint64_t fault_address{};
 	Access fault_access{Access::read};
 	std::uint32_t reserved{};
-	std::array<TlbEntry, tlb_entry_count> entries{};
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);

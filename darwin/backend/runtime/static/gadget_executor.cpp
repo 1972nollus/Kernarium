@@ -222,31 +222,23 @@ public:
 	[[nodiscard]] const arm64::gadgets::BlockLink *link(
 		std::uint64_t pc)
 	{
-		const auto found = links_.find(pc);
-		if (found != links_.end())
-			return &found->second->link;
-		auto created = std::make_unique<LinkRecord>(pc);
-		const auto *result = &created->link;
-		links_.emplace(pc, std::move(created));
-		return result;
+		return &link_record(pc).link;
 	}
 
 	[[nodiscard]] arm64::gadgets::IndirectLink *indirect_link(
 		std::uint64_t source_pc)
 	{
-		const auto found = indirect_links_.find(source_pc);
-		if (found != indirect_links_.end())
-			return found->second.get();
-		constexpr auto empty_pc = ~std::uint64_t{};
-		const auto *empty_link = link(empty_pc);
-		auto created = std::make_unique<arm64::gadgets::IndirectLink>();
-		for (auto &entry : created->entries) {
-			entry.guest_pc = empty_pc;
-			entry.link = empty_link;
+		const auto [created, inserted] =
+			indirect_links_.try_emplace(source_pc);
+		if (inserted) {
+			constexpr auto empty_pc = ~std::uint64_t{};
+			const auto *empty_link = link(empty_pc);
+			for (auto &entry : created->second.entries) {
+				entry.guest_pc = empty_pc;
+				entry.link = empty_link;
+			}
 		}
-		auto *result = created.get();
-		indirect_links_.emplace(source_pc, std::move(created));
-		return result;
+		return &created->second;
 	}
 
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
@@ -365,12 +357,17 @@ private:
 		};
 	}
 
+	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
+	{
+		return links_.try_emplace(pc, pc).first->second;
+	}
+
 	void activate(std::uint64_t pc, const BuildResult &result)
 	{
 		if (!result.complete || result.program.instruction_count() == 0)
 			return;
-		auto *target = const_cast<arm64::gadgets::BlockLink *>(link(pc));
-		auto &record = *links_.find(pc)->second;
+		auto &record = link_record(pc);
+		auto *target = &record.link;
 		if (result.program.accesses_fp_state()) {
 			record.fp_stream[1] = reinterpret_cast<std::uintptr_t>(
 				result.program.words().data());
@@ -387,7 +384,7 @@ private:
 		const auto found = links_.find(pc);
 		if (found == links_.end())
 			return;
-		auto &record = *found->second;
+		auto &record = found->second;
 		const auto *words = program.words().data();
 		const bool direct = record.link.stream == words;
 		const bool fp = record.link.stream == record.fp_stream.data() &&
@@ -398,10 +395,9 @@ private:
 	}
 
 	std::pmr::unsynchronized_pool_resource program_storage_;
+	std::unordered_map<std::uint64_t, LinkRecord> links_;
 	std::unordered_map<std::uint64_t,
-		std::unique_ptr<LinkRecord>> links_;
-	std::unordered_map<std::uint64_t,
-		std::unique_ptr<arm64::gadgets::IndirectLink>> indirect_links_;
+		arm64::gadgets::IndirectLink> indirect_links_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 	std::uint64_t epoch_{1};
@@ -573,8 +569,10 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 		expected_result = arm64::Dispatcher{}.run(
 			*expected, *overlay, built.program.instruction_count());
 	}
-	const auto event =
-		arm64::gadgets::execute(built.program, cpu, tlb_, executed);
+	const auto event = verification_requested ?
+		arm64::gadgets::execute(built.program, cpu, tlb_, executed) :
+		arm64::gadgets::execute_preserving_native_fp_environment(
+			built.program, cpu, tlb_, executed);
 	if (cpu.gadget_indirect_miss != nullptr) {
 		programs_->learn_indirect(
 			*static_cast<arm64::gadgets::IndirectLink *>(

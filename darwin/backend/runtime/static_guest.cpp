@@ -143,10 +143,11 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 
-void save_cpu(const arm64::CpuState &cpu,
+void save_cpu(arm64::CpuState &cpu,
 	      darwin_uml_guest_registers &registers,
 	      darwin_uml_guest_fp_registers &fp, unsigned long &tls)
 {
+	arm64::gadgets::restore_native_fp_environment(cpu);
 	std::copy_n(cpu.registers.begin(), 29, std::begin(registers.x));
 	registers.fp = cpu.registers[29];
 	registers.lr = cpu.registers[30];

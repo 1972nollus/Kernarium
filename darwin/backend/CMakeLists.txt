@@ -209,6 +209,16 @@ if(UML_BUILD_TESTS)
         -Wall -Wextra -Werror)
     add_test(NAME uml-tlb-sync-ranges COMMAND uml_tlb_sync_range_tests)
 
+    add_executable(uml_arm64_gadget_tlb_layout_tests
+        tests/arm64_gadget_tlb_layout_tests.cpp)
+    target_include_directories(uml_arm64_gadget_tlb_layout_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(uml_arm64_gadget_tlb_layout_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_arm64_gadget_tlb_layout_tests PRIVATE
+        -Wall -Wextra -Werror)
+    add_test(NAME arm64-gadget-tlb-layout
+        COMMAND uml_arm64_gadget_tlb_layout_tests)
+
     add_executable(uml_static_mmu_batch_tests
         tests/static_mmu_batch_tests.cpp
         $<TARGET_OBJECTS:uml_static_mmu>)
@@ -314,6 +324,8 @@ if(UML_BUILD_TESTS)
     target_include_directories(uml_arm64_gadget_fp_environment_tests PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
 		${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_definitions(uml_arm64_gadget_fp_environment_tests PRIVATE
+		UML_TEST_GADGET_INTERPRETER_RUNPATH=$<BOOL:${UML_ENABLE_GADGET_INTERPRETER_RUNPATH}>)
     target_compile_options(uml_arm64_gadget_fp_environment_tests PRIVATE
 		-Wall -Wextra -Werror)
     add_test(NAME arm64-gadget-fp-environment

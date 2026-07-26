@@ -991,6 +991,649 @@ Compression in 56.5 seconds at 5.66 host cores, completed every workload, and
 uploaded successfully. No source rollback is warranted for the non-reproduced
 aborted-run anomaly.
 
+### Rejected trial G10: two-instruction TLB hash
+
+The production `translate` macro was changed from a three-instruction TLB
+index sequence (`UBFX`, `EOR`, `AND`) to the mathematically equivalent
+two-instruction sequence `EOR address, address, LSR #13` plus `UBFX #12,#13`.
+The candidate passed a one-million-address equivalence test and all **308/308**
+standard tests in both production and correctness-first interpreter builds.
+Disassembly confirmed that the mask instruction was absent from each
+production memory gadget.
+
+The short 50-million-iteration mixed scalar/SIMD memory control was
+inconclusive: the G9 and G10 medians were 1.037 and 1.034 seconds. The
+ten-times-longer control rejected the candidate: seven G9 runs had a
+**10.140-second** median while seven G10 runs had a **10.175-second** median,
+so G10 was 0.35% slower at the same 1.08-host-core utilization. The alternate
+dependency chain did not turn its lower instruction count into throughput.
+All G10 runtime, ABI helper, build, and test changes were removed; the
+independent Geekbench profile analyzer fix remains. The rejected executable
+is retained only as `.build/bench/uml-darwin-g10-tlb-hash`, SHA-256
+`bbc3605621a54f509e7ee5bf06340edcf812539466809ea41071215a6dc4fd25`.
+
+### Accepted trial G11: entries-first gadget TLB
+
+The 32 Geekbench workload profiles showed memory gadgets consuming 25--53%
+of active emulator samples in most sections. G11 moves the 8,192 hot
+`TlbEntry` objects to offset zero in `Tlb` and places generation/fault
+metadata after the 256 KiB entry array. Production gadgets can consequently
+form `tlb + index * 32` with one shifted `ADD` rather than a header-base `ADD`
+followed by an indexed `ADD`. The hash, hit validation, miss handling, and
+correctness-first interpreter algorithm are unchanged.
+
+A separate ABI-layout test fixes every entry and metadata offset.
+Disassembly confirms one entry-address `ADD` in the production load/store
+path. Production and interpreter configurations each pass **308/308**
+standard tests.
+
+To avoid comparing different embedded-kernel build identifiers, the accepted
+G9 source was rebuilt with the same toolchain immediately before measurement.
+Seven long single-worker mixed scalar/SIMD memory runs improved from a
+**10.186-second** G9 median to **10.072 seconds**, or **1.12%**. Five
+10-worker runs were neutral within noise: 10.344 versus 10.358 seconds
+(+0.14%), with 9.88 versus 9.87 host cores. G11 is retained under the
+aggregate rule. The production build is byte-identical to the frozen
+`.build/bench/uml-darwin-g11-tlb-entries-first`, SHA-256
+`1240e249fc5d525724ebf84590d0a208fd934c0181a43d0283c3519c9623739e`.
+
+### Accepted trial G12: one translation for same-page SIMD pairs
+
+The per-workload profile identified `vector_pair_load128_0` as 29.7% of
+single-core and 27.6% of multi-core Background Blur samples. The pair gadget
+already compared the first and final guest byte and diverted page-crossing or
+wrapping accesses to the atomic slow path, but then performed two identical
+TLB hashes and tag checks for same-page transfers. G12 translates the first
+guest address once and derives the second host address by adding the fixed
+element width. It does not fuse guest instructions and does not change the
+interpreter path.
+
+The exhaustive SIMD pair suite covers all element widths, addressing modes,
+signed displacements, page edges, cross-page accesses, writeback, invalid
+duplicate destinations, and load/store fault atomicity. Production and
+interpreter configurations each pass **308/308** standard tests. Production
+disassembly confirms one TLB lookup in the hot pair gadget.
+
+Seven 200-million-iteration vector-pair runs improved from **2.492 to 2.430
+seconds** with one worker (**2.49%**) and five ten-worker runs improved from
+**2.535 to 2.485 seconds** (**1.97%**). An unaffected scalar/single-vector
+memory loop also improved slightly from 1.050 to 1.043 seconds, excluding a
+general regression. G12 is retained as
+`.build/bench/uml-darwin-g12-vector-pair-one-translation`, SHA-256
+`89c607caa7b923ab553861fd347ece5d4b548542887d264c7745c478f5e8310a`.
+The reusable focused source is `tests/perf/guest_vector_pair_loop.S`.
+
+### Accepted trial G13: one translation for same-page integer pairs
+
+The integer `LDP`/`STP` production gadgets had the same redundant same-page
+TLB lookup as the SIMD pair gadgets. G13 preserves the existing first-to-last
+byte page/wrap check and atomic cross-page slow path, translates the first
+guest address once, and derives the adjacent host address by adding the
+translation-time element width. The interpreter remains unchanged.
+
+Production disassembly confirms one TLB lookup in the specialized integer
+pair gadget. The exhaustive integer pair suite covers 32- and 64-bit
+transfers, all addressing modes, XZR source/destination cases, signed
+displacements, page boundaries, writeback constraints, and fault atomicity.
+Production and interpreter configurations each pass **308/308** standard
+tests.
+
+Seven 200-million-iteration integer-pair runs improved from **2.142 to 2.132
+seconds** with one worker (**0.47%**) and five ten-worker runs improved from
+**2.170 to 2.157 seconds** (**0.60%**) at the same 9.81-host-core
+utilization. G13 is retained as
+`.build/bench/uml-darwin-g13-integer-pair-one-translation`, SHA-256
+`24f5727e526dd5ee213ece2457e35e3af5d056e5accfb64fb0f4fe10ca84dee1`.
+The reusable focused source is `tests/perf/guest_integer_pair_loop.S`.
+
+### Accepted trial G14: native host SIMD pair transfers
+
+After G12 removed the duplicate translation, a valid same-page guest SIMD
+`LDP`/`STP` still executed an address `ADD` and two independent host
+`LDR`/`STR` instructions. G14 emits the matching host `LDP`/`STP` directly
+for 32-, 64-, and 128-bit elements. The existing page/wrap guard guarantees
+that the combined host access stays within one validated mapping; cross-page
+accesses and precise/atomic faults continue through the unchanged slow path.
+This maps one guest instruction to one host instruction and does not fuse
+separate guest operations.
+
+The initial 200-million-iteration control was within launch noise: -0.25%
+with one worker and +0.44% with ten. A five-times-longer steady-state control
+resolved it decisively. Five single-worker runs improved from **12.175 to
+11.987 seconds** (**1.54%**), and three ten-worker runs improved from **12.345
+to 12.241 seconds** (**0.84%**) while reducing host CPU consumption.
+Disassembly confirms one native `LDP q0, q1` in the hottest 128-bit load
+gadget. Production and interpreter configurations each pass **308/308**
+standard tests.
+
+G14 is retained as
+`.build/bench/uml-darwin-g14-vector-pair-native-ldp`, SHA-256
+`61c48abb9635bf577f62606ce729e2a78625c208a4381bc6832739d7623382cc`.
+`tests/perf/guest_vector_pair_loop.S` now accepts `BENCH_ITERATIONS` at
+assembly time so short and extended controls use one checked source.
+
+### Accepted trial G15: native host integer pair transfers
+
+G15 independently maps same-page integer `LDP`, `STP`, and sign-extending
+`LDPSW` guest instructions to their matching host pair instruction. It
+removes the second host address `ADD` and one memory instruction without
+changing translation, page/wrap guards, XZR specialization, writeback,
+cross-page handling, or interpreter behavior.
+
+Five one-billion-iteration single-worker runs improved from **10.537 to
+10.355 seconds** (**1.73%**). Three ten-worker runs improved from **10.677 to
+10.528 seconds** (**1.40%**) at the same 9.91-host-core utilization and with
+lower host CPU consumption. Disassembly confirms one native `LDP x6, x7` in
+the 64-bit load gadget. Production and interpreter configurations each pass
+**308/308** standard tests.
+
+G15 is retained as
+`.build/bench/uml-darwin-g15-integer-pair-native-ldp`, SHA-256
+`58f3717c6749d400238449678dd62ade64db55f2dd05a7a77d5eb5ea54a25627`.
+`tests/perf/guest_integer_pair_loop.S` also accepts `BENCH_ITERATIONS` for
+matched short and extended controls.
+
+### Accepted trial G16: eliminate impossible scalar-byte page crossing
+
+One-byte transfers cannot cross a 4 KiB page or wrap across an address
+boundary, but every production scalar byte gadget still masked the page
+offset, compared it with 4095, and conditionally branched to an unreachable
+cross-page path. G16 uses assembly-time width specialization to omit those
+three instructions and the dead slow-path body for unsigned-offset,
+unscaled/pre/post-indexed, and register-offset scalar byte loads/stores.
+Wider accesses are unchanged, TLB validation still protects the addressed
+page, and the correctness-first interpreter retains its checks.
+
+This targets the all-workload profile directly: indexed byte load alone was
+18.7% of single-core Object Remover samples, while byte transfers were also
+prominent in PDF Renderer, HDR, Horizon Detection, and Ray Tracer.
+Disassembly confirms that both leading byte-load forms enter the TLB lookup
+immediately after address formation, with no page-cross branch.
+
+Five one-billion-iteration register-offset byte-transfer runs improved from
+**10.190 to 10.101 seconds** with one worker (**0.87%**). Three ten-worker
+runs improved from **10.289 to 10.199 seconds** (**0.87%**) at 9.90 host
+cores. One candidate repetition suffered an unrelated host scheduling stall
+at only 7.05 utilized cores; the other two candidate runs were 10.199 and
+10.179 seconds, so the median remains representative. Production and
+interpreter configurations each pass **308/308** standard tests.
+
+G16 is retained as
+`.build/bench/uml-darwin-g16-scalar-byte-no-cross-check`, SHA-256
+`cff15cf2c67169102d05d421c83df36da5f3596341f7134ce071733be7a5e4a0`.
+The reusable focused source is `tests/perf/guest_scalar_byte_loop.S`.
+
+### Rejected trial G17: direct ADD/SUB-immediate GPR addressing
+
+The hot ADD/SUB-immediate production gadget formed `CpuState + X0 offset`
+before indexed source and destination accesses even though the X0 offset is
+zero. G17 removed those two `ADD #0` instructions and addressed the array
+directly. Targeted correctness tests passed and disassembly confirmed the
+shorter gadget.
+
+The short control was dominated by a roughly 50 ms scheduling quantum, so a
+five-times-longer ADD/EOR control was used for the decision. Five G16 runs
+had a **10.116-second** median; five G17 runs had a **10.152-second** median,
+a repeatable **0.36% regression** at the same 1.10 host cores. Shrinking the
+large generated gadget region shifted later hot logical entries, and the
+layout effect outweighed the instruction reduction on this host. The runtime
+change was reverted; rebuilding produces a byte-identical accepted G16
+executable with SHA-256
+`cff15cf2c67169102d05d421c83df36da5f3596341f7134ce071733be7a5e4a0`.
+The rejected executable is retained only as
+`.build/bench/uml-darwin-g17-add-sub-immediate-direct-gpr`.
+
+### Accepted trial G18: inline immutable branch-link records
+
+Translation/runtime accounts for roughly 20% of both Clang profiles.
+`ProgramCache::link` previously allocated an `unordered_map` node, a separate
+`LinkRecord` object, and stored a `unique_ptr` for every new direct branch
+target. G18 constructs `LinkRecord` directly inside the node. Standard
+unordered-map node references remain stable across rehash, so translated
+streams retain the same stable link address while avoiding one allocation
+and pointer chase per new target. The gadget execution hot path and link data
+layout are unchanged.
+
+Three matched 5,000-`/bin/true` single-worker runs improved from **20.062 to
+19.854 seconds** (**1.04%**). Five matched runs distributing the same 5,000
+execs over ten workers improved from **3.805 to 3.715 seconds** (**2.37%**)
+and reduced host CPU consumption from about 33.9 to 32.7 seconds. Production
+and interpreter configurations each pass **308/308** standard tests,
+including direct-link, indirect-link, eviction, invalidation, and translation
+coverage.
+
+G18 is retained as `.build/bench/uml-darwin-g18-inline-link-records`,
+SHA-256
+`12f2a2b8f897723d01544812096b6d4cc4eb184b3c4ca833ec9fb199877943e1`.
+
+### Accepted trial G19: inline indirect-link cells
+
+G19 applies the same allocation cleanup independently to two-way indirect
+branch/return link cells. Each `IndirectLink` now lives directly in its
+unordered-map node instead of requiring a second `unique_ptr` allocation.
+Node-stable addresses preserve every translated stream pointer, and the G6
+two-entry PIC lookup/training hot path is byte-for-byte unchanged.
+
+The effect is small but consistently non-negative. Seven parallel 5,000-exec
+runs changed from **3.625 to 3.623 seconds** while reducing median
+utilization from 8.83 to 8.79 host cores. Three single-worker runs changed
+from **18.123 to 18.102 seconds** and reduced host CPU time from about 20.33
+to 20.27 seconds. This is a noise-level **0.12% wall-time gain**, retained
+because both controls reduce CPU work, neither regresses, and the change also
+removes allocation/ownership complexity. Production and interpreter
+configurations each pass **308/308** standard tests.
+
+G19 is retained as `.build/bench/uml-darwin-g19-inline-indirect-links`,
+SHA-256
+`c77d9fb0959777368c61c647ceec83fafbfe396030d3e9ef5ba33353158c0ad4`.
+
+### Rejected trial G20: pooled link-map nodes
+
+G20 changed both inline link maps to PMR maps backed by the cache's existing
+unsynchronized program-word pool, intending to recycle nodes across
+fork/exec generation invalidations. Targeted link/translation tests passed.
+The matched 5,000-exec single-worker control instead regressed from a
+**19.176-second** G19 median to **19.423 seconds**, or **1.29%**, with no
+host-CPU improvement. Mixing these larger node size classes into the word
+pool costs more than the general allocator on this host. The PMR map change
+was removed; the rebuilt executable is byte-identical to accepted G19. The
+rejected artifact remains only as
+`.build/bench/uml-darwin-g20-pooled-link-maps`, SHA-256
+`85fff94459822611e1722dee173f85b393e10e8e6819efc4873548309d3806d6`.
+
+### Rejected trial G21: 16K linked-chain checkpoint
+
+G21 raised the direct-link engine checkpoint from 4,096 to 16,384 guest
+instructions, intending to reduce `uml_arm64_gadget_leave` overhead observed
+in the multi-core HDR profile while retaining four interrupt checks within
+the dispatcher's 64K fairness window. A focused boundary test verified the
+new exact 16,384-instruction exit, and all link, hot-path, and FP-environment
+tests passed.
+
+The extended one-billion-iteration controls did not establish a useful
+single-core gain. Reverse-order FP/SIMD trials were effectively identical
+(**8.805 versus 8.804 seconds**), while integer trials were also flat
+(**7.785 versus 7.781 seconds**). Ten-worker integer throughput improved only
+**0.15%** and the first FP series regressed before reverse-order repetitions
+showed that result was run-order noise. Because the longer latency between
+interrupt checks buys no repeatable throughput improvement, G21 was rejected
+and the 4K checkpoint restored. The rejected artifact remains only as
+`.build/bench/uml-darwin-g21-16k-link-checkpoint`, SHA-256
+`4c4cc22c41c9cfcb32f67ca5eceb81ccaced28d732353167e89b9363e0c4963d`.
+
+### Rejected trial G22: lightweight production builder callbacks
+
+G22 targeted Clang's approximately 20% translation/runtime share by passing
+direct function-pointer/context pairs from `ProgramCache` into the production
+builder instead of constructing two capturing `std::function` wrappers. The
+ordinary test API and generated decoder were unchanged, and the seven focused
+translation, direct/indirect-link, NZCV, FP-environment, and gadget tests all
+passed.
+
+The initial 5,000-exec series appeared 7.7% faster, but reverse-order
+measurement proved that gap was host-state drift: G22 and G19 medians were
+**19.220 and 19.245 seconds**, only **0.13%** apart, with the same effective
+host utilization. The additional callback ABI is not justified by a
+noise-level result, so G22 was removed. Its rejected artifact remains only as
+`.build/bench/uml-darwin-g22-fast-builder-callbacks`, SHA-256
+`805e5b98fd4e04f869d85b4f60125274fd57d4448f746085403b094c5e413d66`.
+
+### Rejected trial G23: combined scalar page/TLB checks
+
+G23 tested two ways to reduce the separate page-cross and TLB-tag decisions
+in the dominant 32/64-bit scalar memory gadgets. The first used the unsigned
+identity `address - cached_page <= 4096 - width` to prove both properties in
+one range check, removing three hot instructions. It passed scalar immediate,
+cross-page, static-gadget, and hot-path tests, but the long memory control
+regressed from **9.959 to 9.983 seconds** because the subtraction extended the
+loaded-tag dependency chain.
+
+G23b retained the original tag comparison and replaced only the early
+cross-page branch with `CCMP`, moving the distinction to the cold failure
+path. Disassembly confirmed one fewer hot conditional branch, but the flags
+dependency serialized the lookup and decisively regressed the same control to
+**10.238 seconds** (**2.8%**). Both variants were rejected and the independent
+checks restored. The rejected artifacts are
+`.build/bench/uml-darwin-g23-bounded-tlb-check`
+(`2f2ce2b9e8475a36ba7a997f0fb043bb98a81e50e3b3ee5a256a88e2002b40c3`)
+and `.build/bench/uml-darwin-g23b-ccmp-tlb-bound`
+(`118467b246362078e9b6a3ebee132f08c2a98131d928ecab4741b2680cc419ec`).
+
+### Accepted trial G24: predecoded one-table SIMD lookup offsets
+
+The complete workload matrix identified the one-table `TBL` gadget as 9.0%
+of single-core and 9.4% of multi-core Structure from Motion. G24 moves the
+three guest-vector address calculations into translation for the one-table
+`TBL`/`TBX` forms. Their stream word now carries three absolute 16-bit
+`CpuState` vector offsets, allowing the production gadget to load and store
+directly from `_cpu` without constructing the vector-bank base and three
+scaled addresses at runtime. Multi-table forms retain their original compact
+descriptor because their consecutive table-register list can wrap from V31
+to V0.
+
+Disassembly confirms that the valid one-table hot path removes four runtime
+address-generation instructions and adds no branch. A one-billion-iteration
+single-worker `TBL` control improved from **8.801 to 8.597 seconds**
+(**2.32%**) and a 300-million-iteration ten-worker control improved from
+**2.749 to 2.659 seconds** (**3.27%**) while sustaining 9.84 effective host
+cores. The untouched two-table control was non-regressing at **8.971 versus
+8.928 seconds**. Focused static-gadget, FP-environment, allocation, and
+table-behavior tests passed, followed by all **307/307** production behavior
+tests and **307/307** interpreter tests. The separate source-tree language
+audit now discovers unrelated C sources in the user-added `external/` vendor
+trees; no emulator behavior test failed.
+
+G24 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g24-predecoded-tbl1-offsets`, SHA-256
+`c9d801c02f801bda3e08a6b1b76d076e4dabb79b845b68ea8bbdb48463299dc3`.
+
+### Accepted trial G25: predecoded indexed-FP vector offsets
+
+Background Blur's three specialized indexed `FMLA.4S` lane gadgets account
+for 25.3% of single-core and 22.5% of multi-core active samples. The same
+family's indexed `FMUL.4S` gadget adds another 5.1% and 4.8%, respectively.
+G25 changes the translated operand for all indexed floating-point forms to
+carry absolute 16-bit destination, first-source, and element-source offsets
+within `CpuState`. Production gadgets now use those offsets directly in
+native vector loads and stores, removing the vector-bank base plus three
+scaled address constructions. The operation, arrangement, lane, and
+scalar/vector choice remain selected entirely at translation time.
+
+The one-billion-iteration indexed `FMLA.4S` control improved from **8.768 to
+8.568 seconds** (**2.28%**). Its 300-million-iteration ten-worker counterpart
+improved from **2.701 to 2.648 seconds** (**1.96%**) while utilization rose
+slightly from 9.83 to 9.86 effective host cores. G24's unrelated one-table
+lookup control remained flat at **8.597 versus 8.603 seconds**. All
+**307/307** production behavior tests and **307/307** interpreter tests
+passed.
+
+G25 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g25-predecoded-indexed-fp-offsets`, SHA-256
+`ad399afb028484a858ed8d4c179d8fbc115de691efe46735dd3746108ae6c711`.
+
+### Accepted trial G26: predecoded basic vector-FP offsets
+
+Basic vector `FADD.4S` contributes 3.0% of single-core Asset Compression,
+5.3% of single-core Background Blur, and similar shares in their multi-core
+phases. Vector `FMUL` and `FSUB` in the same family appear in Asset
+Compression and Structure from Motion. G26 gives the vector-only basic
+floating-point gadgets the same translation-time absolute-offset encoding as
+G25. Scalar forms retain their original register descriptor and NEP handling.
+Each binary vector gadget eliminates the vector-bank base and three scaled
+address calculations; unary vector forms eliminate the base and two scaled
+addresses.
+
+The one-billion-iteration `FADD.4S` control improved from **9.165 to 8.597
+seconds** (**6.20%**). Its 300-million-iteration ten-worker control improved
+from **2.802 to 2.670 seconds** (**4.71%**) with 9.79 effective host cores.
+The reverse-order indexed-FMLA control was flat at **8.633 versus 8.640
+seconds**. All **307/307** production behavior tests and **307/307**
+interpreter tests passed.
+
+G26 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g26-predecoded-basic-vector-fp-offsets`, SHA-256
+`76d29510298e396094560586516a877e45d33882357d8b70259e724098241d70`.
+
+### Accepted trial G27: predecoded three-same SIMD offsets
+
+Object Detection spends 4.5% of its single-core and 3.3% of its multi-core
+active samples in the native same-width `ADD.4S` gadget. G27 predecodes the
+three vector offsets for the complete integer three-same and RDM families.
+Their production gadgets now issue native loads and stores directly relative
+to `CpuState`, eliminating the vector-bank base and three scaled address
+calculations without adding a runtime decision.
+
+The one-billion-iteration `ADD.4S` control improved from **8.599 to 8.481
+seconds** (**1.37%**). The 300-million-iteration ten-worker control improved
+from **2.666 to 2.636 seconds** (**1.13%**) while holding 9.83 effective host
+cores. G26's unrelated vector-FADD control remained non-regressing. All
+**307/307** production behavior tests and **307/307** interpreter tests
+passed.
+
+G27 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g27-predecoded-three-same-offsets`, SHA-256
+`d956a7de2ddea9049b18d8daaac18b31f365eb872d3de60b7d4d8ea1e994cf92`.
+
+### Rejected trial G28: predecoded pairwise-long SIMD offsets
+
+G28 applied a two-offset stream format only to the pairwise-long
+`SADDLP`/`UADDLP`/`SADALP`/`UADALP` gadgets, targeting Object Detection's
+5.7% single-core `SADDLP.8H` share. This safely removed one address-generation
+instruction and passed the focused two-register, reduction, and static-gadget
+tests. However, matched one-billion-iteration runs of the exact
+`SADDLP Vd.4S, Vn.8H` form produced identical **8.516-second** medians. The
+extra translation encoding is not justified by a zero throughput result.
+
+G28 was rejected and the current production executable is byte-identical to
+G27. Its rejected artifact remains only as
+`.build/bench/uml-darwin-g28-predecoded-pairwise-long-offsets`, SHA-256
+`0ceca44e6dc056bf80f2f9eaee55a3a5740a5d79e8037f90373ee69de5bf1fe8`.
+
+### Accepted trial G29: predecoded widening and high-narrow SIMD offsets
+
+Object Detection spends 4.4% of its single-core and 3.7% of its multi-core
+active samples in the native `SMULL.8B`/`SMULL2.16B` widening gadgets. G29
+predecodes all three vector-register offsets for the shared widening gadget
+family. The high-narrow family uses the same assembly macro, so its translator
+now emits the matching absolute-offset descriptor as well. The runtime path
+eliminates the vector-bank base and four address-building instructions without
+adding a conditional branch.
+
+Matched 300-million-iteration `SMULL.8B` runs improved from **2.642 to 2.573
+seconds** (**2.61%**) for one worker and from **2.717 to 2.635 seconds**
+(**3.02%**) for ten workers. Both ten-worker medians sustained 9.84 effective
+host cores. The unrelated `ADD.4S` control remained exactly flat at **2.568
+seconds**. All **307/307** production behavior tests and **307/307**
+correctness-first interpreter tests passed.
+
+G29 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g29-predecoded-widening-offsets`, SHA-256
+`69ded38f676ac5e1a5984c39d20384000475fcd12df72604615d26f8a16eb0b2`.
+
+### Accepted trial G30: dispatch-scoped native FP environment
+
+Multi-core HDR was the only profiled workload with a large engine-leave
+share: 12.8% of active emulator samples. The old leave path serialized four
+native system-register operations on every internal translated-block exit:
+it committed guest FPSR and restored host FPCR/FPSR even though the next block
+usually selected the same guest environment again.
+
+G30 retains guest FPCR/FPSR in the native registers across internal production
+dispatches and restores the host environment only at the outer guest-entry
+boundary. A `CpuState` flag makes the steady FP gadget path one load plus one
+predicted branch; first-use activation is in one shared cold routine rather
+than duplicated into every gadget. Direct `gadgets::execute` calls and the
+correctness-first interpreter still restore on every call. System-register
+writes update the active native state immediately, and the outer restore
+commits FPSR before copying the guest boundary state.
+
+The first layout moved the large SIMD gadget bank to a different cache-line
+phase and caused an apparent integer-control regression. Restoring its
+established 64-byte phase removed that effect: matched `ADD.4S` medians are
+**2.601 seconds** for G30 and **2.604 seconds** for G29. The ordinary linked
+FADD control is **2.600 versus 2.582 seconds** for one worker (a bounded
+**0.70% regression**) and **2.641 versus 2.664 seconds** for ten workers (a
+**0.86% gain**).
+
+The exit-heavy polymorphic FP control exposes the intended multicore effect.
+Seven ten-worker repetitions improved from a **4.343-second**, **7.25-core**
+G29 median to **2.998 seconds** and **9.73 cores** with G30: **31.0% less wall
+time**. Its one-worker median changed from **2.900 to 2.924 seconds**
+(**0.83% slower**), so the change is accepted for its substantial multicore
+gain under the revised aggregate rule. All **307/307** production and
+**307/307** interpreter tests pass; the split FP-environment test verifies
+both dispatch-scoped preservation and exact host restoration.
+
+G30 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g30c-dispatch-fp-environment-aligned`, SHA-256
+`547aa0dbe03e80e825c70face32d6ba9e7f225384b610f0fc02cf737626405c5`.
+
+### Accepted trial G31: single link-map lookup
+
+Clang is the profile's cold-translation outlier: `Builder`, `ProgramCache::link`,
+and `run_block` together account for roughly one fifth of its active samples.
+The direct-link miss path formerly called `find` and then `try_emplace`, hashing
+the same PC twice. G31 adds a private `link_record` helper which performs one
+`try_emplace`; direct links, indirect links, and cache activation initialize
+the returned record only when insertion actually occurred. This changes no
+translated-program format and adds nothing to the assembly hot path.
+
+The ten-worker `/bin/true` fork/exec control improved from **3.149 to 3.120
+seconds** (**0.92%**) and reduced host CPU time from **28.12 to 27.84
+seconds**. A matched reverse-order single-worker pair was **18.266 seconds**
+for G31 versus **18.221 seconds** for G30 (**0.25% slower**), while host CPU
+time fell from **20.22 to 20.05 seconds**. The change is retained under the
+aggregate rule because it improves the multicore Clang-shaped workload and
+reduces CPU consumption without adding any steady translated-code cost.
+
+G31's frozen executable is
+`.build/bench/uml-darwin-g31-single-link-map-lookup`, SHA-256
+`fccb6ca08e200959cc005ed388ae58d72837d7ed9772d5d627562d391b6bbbab`.
+
+### Accepted trial G32: bounded initial program reserve
+
+Every cold `Builder` previously reserved enough word storage for the
+worst-case expansion of the entire 64-instruction fetch window: 130 words,
+even when a branch or fault ended the block much earlier. G32 keeps the exact
+same growth behavior but caps the initial reserve at **34 words**, avoiding
+most excess cold allocation and zeroing while leaving normal short programs
+allocation-free.
+
+Matched single-worker `/bin/true` fork/exec runs improved from **17.826
+seconds** for G31 to **16.686 seconds** for G32 (**6.39%**). The reverse-order
+ten-worker control improved from **3.113 to 3.093 seconds** (**0.64%**) and
+reduced host CPU time from **27.77 to 27.26 seconds**. A reserve sweep rejected
+18, 26, and 50 words: 34 words was the repeatable local optimum, including
+reverse-order comparisons which separated it from host-frequency drift.
+
+All **307/307** production tests and **307/307** correctness-first interpreter
+tests pass with the final G31+G32 source. G32's frozen executable is
+`.build/bench/uml-darwin-g32-bounded-program-reserve`, SHA-256
+`6c2d64a38f8b3b78bcd0f9b4181fa4102dd02c86f9222effffaa9ed55e0affa8`.
+
+### Rejected trials G33/G33b/G33c: cached active-link pointers
+
+G33 stored the active direct-link record in each fixed-cache slot so cache
+hits could avoid a second map lookup. Although its ten-worker fork/exec
+control improved by roughly 0.95%, the enlarged slot stride regressed the
+single-worker control by **3.1%**. G33b and G33c moved the pointer into a
+separate side array, including a version without redundant initialization.
+Alternating single-worker pairs showed a small apparent gain, but the decisive
+ten-worker control regressed from **3.221 to 3.274 seconds** (**1.65%**).
+
+All three variants were rejected and their source removed. Their diagnostic
+artifacts remain under `.build/bench/` only; the production source and binary
+returned exactly to G32.
+
+### Rejected trial G34: retained direct-link map nodes
+
+G34 retained up to 32,768 direct-link map nodes across address-space
+generations and lazily reset each node through an epoch field. The intent was
+to avoid allocator and hash-node churn during fork/exec-heavy workloads.
+Instead, the single-worker control regressed from **16.958 to 17.061
+seconds** (**0.61%**) and the ten-worker control from **3.171 to 3.234
+seconds** (**2.0%**). The extra epoch state and larger retained working set
+outweighed allocation reuse.
+
+G34 was rejected and completely removed. Its rejected artifact remains only
+as `.build/bench/uml-darwin-g34-retained-link-nodes`; the rebuilt production
+executable is byte-identical to frozen G32.
+
+### Accepted trial G35: branch-free logical MOV alias
+
+The all-workload profile identified `ORR Rd, ZR, Rm`—the integer register MOV
+alias—as 3.7% to 6.4% of active samples in Photo Library, HTML5 Browser, Clang,
+and Text Processing. Although translation already selected a dedicated
+logical-register entry, its runtime still materialized the zero left operand,
+executed the redundant ORR, and recalculated the unchanged `CpuState` register
+base before the result store.
+
+G35 makes the existing entry's translation-time constants effective in its
+assembly body. The 64-bit alias loads the source and stores it directly; the
+32-bit alias performs the required zero-extension and stores the result.
+Every result-writing logical-register gadget also reuses its live register-bank
+base. No stream word, opcode check, conditional branch, or new gadget entry is
+added. The hot 64-bit MOV entry falls from **11 to 8 host instructions**.
+Unreachable padding after each indirect dispatch preserves every later
+logical gadget at its G32 address and cache-line phase.
+
+The exact 1.6-billion-MOV control improves from **2.431 to 1.816 seconds**
+(**25.3%**) for one worker and from **2.528 to 1.893 seconds** (**25.1%**) for
+ten workers while sustaining 9.82 effective host cores. The mixed ADD/EOR
+non-alias control is neutral/slightly faster at **9.854 versus 9.861
+seconds**. The existing exhaustive logical-register matrix covers 32- and
+64-bit MOV aliases, including 32-bit zero-extension from a source with set
+upper bits. All **307/307** production tests and **307/307** correctness-first
+interpreter tests pass.
+
+G35 is accepted. Its frozen executable is
+`.build/bench/uml-darwin-g35-logical-move-alias-aligned`, SHA-256
+`55bd43f8c83b09dadd522da25f28620386b029fd59835fa632000e7536eb00ac`.
+
+#### Full G35 LTP and Geekbench confirmation
+
+The 2026-07-26 from-scratch non-pressure LTP requalification selected 2,141
+ordinary cases and one serial timing case while explicitly skipping all 374
+`host-pressure` entries. It completed **2,141/2,142 accepted in 1,324.5
+seconds**. The sole timeout, `futex_wake02`, had already emitted all eleven
+TPASS assertions and stalled during teardown; after one isolated reproduction,
+the unchanged G35 executable passed nine consecutive focused reruns. The full
+run is still recorded conservatively as 2,141/2,142. See `LTP_PROGRESS.md` for
+the controls and exact disposition.
+
+The matching 10-core, 8 GiB, read-only-lower OverlayFS Geekbench 6 run
+completed in **3,302 seconds** and uploaded as
+(result). It scored **79 single-core**
+and **416 multi-core**, versus the pre-G35 G9 result
+(result) at **71 / 370**. That is an
+aggregate improvement of **11.3% single-core** and **12.4% multi-core**.
+Thirty-one of 32 section scores improved:
+
+| Workload | G9 SC | G35 SC | Delta | G9 MC | G35 MC | Delta |
+|---|---:|---:|---:|---:|---:|---:|
+| File Compression | 91 | 102 | +12.1% | 420 | 448 | +6.7% |
+| Navigation | 150 | 161 | +7.3% | 385 | 466 | +21.0% |
+| HTML5 Browser | 62 | 71 | +14.5% | 478 | 515 | +7.7% |
+| PDF Renderer | 78 | 82 | +5.1% | 375 | 439 | +17.1% |
+| Photo Library | 70 | 78 | +11.4% | 483 | 532 | +10.1% |
+| Clang | 47 | 55 | +17.0% | 313 | 369 | +17.9% |
+| Text Processing | 43 | 48 | +11.6% | 53 | 58 | +9.4% |
+| Asset Compression | 79 | 85 | +7.6% | 649 | 716 | +10.3% |
+| Object Detection | 28 | 33 | +17.9% | 191 | 218 | +14.1% |
+| Background Blur | 60 | 71 | +18.3% | 444 | 517 | +16.4% |
+| Horizon Detection | 98 | 102 | +4.1% | 686 | 719 | +4.8% |
+| Object Remover | 110 | 128 | +16.4% | 585 | 664 | +13.5% |
+| HDR | 78 | 102 | +30.8% | 512 | 636 | +24.2% |
+| Photo Filter | 91 | 101 | +11.0% | 245 | 239 | -2.4% |
+| Ray Tracer | 89 | 98 | +10.1% | 831 | 924 | +11.2% |
+| Structure from Motion | 67 | 76 | +13.4% | 453 | 549 | +21.2% |
+
+The only regression is multi-core Photo Filter, **245 to 239 (-2.4%)**.
+Observed host utilization confirms that representative multi-core sections
+now scale across the guest topology: File Compression used about 8.1 cores,
+Navigation about 8.5, and Clang 9.7--9.9. Text Processing remains the known
+workload-specific exception at about 1.1 host cores. DNS and Java prechecks
+passed, the upload succeeded, the guest powered off cleanly, and no emulator
+process remained.
+
+### Rejected trial G36: reused ADD-immediate register-bank base
+
+Ordinary 64-bit ADD-immediate is the largest non-memory symbol after G35 in
+the aggregate 32-section profile. G36 kept its source-load `CpuState` base
+live through the native addition and reused it for the result store, removing
+one runtime instruction without changing layout or adding a branch.
+
+The exact 1.6-billion-ADD control found no repeatable benefit. Two surrounding
+single-worker G35 baselines had **3.381** and **3.437-second** medians, whose
+**3.409-second** average matches G36's **3.411 seconds**. The first ten-worker
+pair appeared to favor G36 at **3.510 versus 3.544 seconds**, but an immediate
+reverse-order G35 run was **3.507 seconds** with the same 34.56–34.58 host-CPU
+seconds. This is host-frequency and scheduling variance, not an improvement.
+
+G36 was rejected and the runtime change removed. Rebuilding returns exactly to
+frozen G35; `guest_add_immediate_loop.S` remains as a standalone diagnostic
+control.
+
 ### Geekbench resume checklist
 
 - [x] Correct the guest topology from one core / 20 SMT threads to 20
@@ -1051,6 +1694,78 @@ aborted-run anomaly.
 - [x] Complete the final 10-core G5+G6+G7+G9 Geekbench confirmation at
   71 single-core / 370 multi-core, retain its result URL and profile, and
   verify every scored subtest improved or tied against G3.
+- [x] Reject G10's two-instruction TLB hash after the long focused control
+  regressed 0.35%, and remove its runtime/test changes.
+- [x] Analyze all 32 G9 per-workload samples and rank workload-local
+  bottlenecks in `GEEKBENCH_WORKLOAD_PROFILE.md`.
+- [x] Accept G11's entries-first TLB after a 1.12% long single-worker memory
+  gain, neutral ten-worker control, and 308/308 tests in both modes.
+- [x] Accept G12's same-page SIMD-pair translation reuse after 2.49%
+  single-worker and 1.97% ten-worker gains plus 308/308 tests in both modes.
+- [x] Accept G13's same-page integer-pair translation reuse after 0.47%
+  single-worker and 0.60% ten-worker gains plus 308/308 tests in both modes.
+- [x] Accept G14's native host SIMD `LDP`/`STP` mapping after 1.54%
+  single-worker and 0.84% ten-worker extended-control gains plus 308/308
+  tests in both modes.
+- [x] Accept G15's native host integer `LDP`/`STP`/`LDPSW` mapping after
+  1.73% single-worker and 1.40% ten-worker gains plus 308/308 tests in both
+  modes.
+- [x] Accept G16's scalar-byte assembly-time no-cross specialization after
+  matching 0.87% single-worker and ten-worker gains plus 308/308 tests in
+  both modes.
+- [x] Reject G17's direct ADD/SUB-immediate GPR addressing after the extended
+  focused control regressed 0.36%, then restore a byte-identical G16 build.
+- [x] Accept G18's inline branch-link records after 1.04% single-worker and
+  2.37% ten-worker fork/exec gains plus 308/308 tests in both modes.
+- [x] Accept G19's inline indirect-link cells after non-regressing single-
+  and ten-worker controls, lower host CPU use, and 308/308 tests in both
+  modes.
+- [x] Reject G20's PMR-backed link maps after a 1.29% single-worker exec
+  regression, then restore a byte-identical G19 build.
+- [x] Reject G21's 16K linked-chain checkpoint after extended integer and
+  FP/SIMD controls showed no repeatable single-core gain; restore the 4K
+  interrupt/fairness boundary.
+- [x] Reject G22's lightweight builder callbacks after reverse-order
+  fork/exec controls reduced the apparent gain to 0.13%.
+- [x] Reject both G23 combined page/TLB checks after dependency-chain
+  regressions of 0.24% and 2.8%, then restore independent predicted branches.
+- [x] Accept G24's predecoded one-table `TBL`/`TBX` vector offsets after
+  2.32% single-worker and 3.27% ten-worker target gains, a non-regressing
+  two-table control, and 307/307 production plus interpreter behavior tests.
+- [x] Accept G25's predecoded indexed-FP vector offsets after 2.28%
+  single-worker and 1.96% ten-worker indexed-FMLA gains, an unaffected
+  one-table control, and 307/307 production plus interpreter tests.
+- [x] Accept G26's predecoded basic vector-FP offsets after 6.20%
+  single-worker and 4.71% ten-worker FADD gains, a flat reverse-order
+  indexed-FMLA control, and 307/307 production plus interpreter tests.
+- [x] Accept G27's predecoded three-same SIMD offsets after 1.37%
+  single-worker and 1.13% ten-worker ADD gains, stable multicore utilization,
+  and 307/307 production plus interpreter tests.
+- [x] Reject G28's predecoded pairwise-long offsets after the exact
+  SADDLP.8H-source control remained identical at 8.516 seconds; restore a
+  byte-identical G27 executable.
+- [x] Accept G29's predecoded widening and high-narrow SIMD offsets after
+  2.61% single-worker and 3.02% ten-worker SMULL gains, a flat unrelated
+  ADD.4S control, and 307/307 production plus interpreter tests.
+- [x] Accept G30's dispatch-scoped native FP environment after removing its
+  cache-layout regression, improving the exit-heavy ten-worker control by
+  31.0%, and passing 307/307 production plus interpreter tests.
+- [x] Accept G31's single-lookup link insertion after a 0.92% ten-worker
+  fork/exec gain, lower host CPU use, and no assembly hot-path growth.
+- [x] Accept G32's 34-word bounded initial Builder reserve after a 6.39%
+  single-worker and 0.64% ten-worker fork/exec gain; reject the 18-, 26-, and
+  50-word alternatives and pass 307/307 tests in both execution modes.
+- [x] Reject G33/G33b/G33c active-link pointer caching after either a 3.1%
+  single-worker regression or a 1.65% ten-worker regression, and remove all
+  variants.
+- [x] Reject G34 retained link-map nodes after 0.61% single-worker and 2.0%
+  ten-worker regressions, then restore a byte-identical G32 executable.
+- [x] Accept G35's branch-free logical MOV alias after 25.3% single-worker
+  and 25.1% ten-worker target gains, a neutral non-alias control, exact
+  cache-phase preservation, and 307/307 tests in both execution modes.
+- [x] Reject G36's ADD-immediate base reuse after reverse-order scalar and
+  ten-worker controls reduced the apparent gain to measurement variance, then
+  restore the byte-identical G35 executable.
 - [x] Remove every rejected/unused gadget and finish with production plus
   interpreter validation; after G3, both standard configurations pass
   304/304 tests and G3 adds no gadget entry.
