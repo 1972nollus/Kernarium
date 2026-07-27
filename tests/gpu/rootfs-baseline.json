@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
   "image": "rootfs.img",
-  "sha256": "06b158cbdf1650466eec1460f09668fd44ca8010b0549f562e56d88c22a09d0c",
+  "sha256": "1d218ccce95b9a84de480de6e1a7274b086228948923359b7bc4d6280235619a",
   "size": 8589934592,
   "frozen_mode": "0444",
   "installed_guest": {
     "architecture": "arm64",
     "distribution": "Debian GNU/Linux 13 (trixie)",
+    "chromium": "150.0.7871.100-1~deb13u1",
     "mesa": "26.1.2-1~bpo13+1",
     "kde_plasma_desktop": "5:162",
     "kwin_wayland": "4:6.3.6",

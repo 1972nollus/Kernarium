@@ -87,17 +87,32 @@ EOF
     apt-get update
     apt-get install -y -t trixie-backports \\
         {package_arguments}
+    apt-get install -y chromium chromium-sandbox
     mesa_version="$(dpkg-query -W -f='${{Version}}' mesa-libgallium)"
     case "$mesa_version" in
         26.*) ;;
         *) echo "Expected Mesa 26, installed $mesa_version"; exit 1 ;;
     esac
+    chromium_version="$(dpkg-query -W -f='${{Version}}' chromium)"
+    test -n "$chromium_version"
+    install -d -m 0755 /etc/chromium.d
+    cat > /etc/chromium.d/uml-virgl <<'EOF'
+# ANGLE's GLES backend runs on Mesa Virgl, while WebGL is allowed to fall
+# back to its accelerated ES 2 context.
+CHROMIUM_FLAGS="${{CHROMIUM_FLAGS}} --ozone-platform=x11"
+CHROMIUM_FLAGS="${{CHROMIUM_FLAGS}} --use-gl=angle --use-angle=gles-egl"
+CHROMIUM_FLAGS="${{CHROMIUM_FLAGS}} --ignore-gpu-blocklist --enable-webgl"
+CHROMIUM_FLAGS="${{CHROMIUM_FLAGS}} --disable-features=FallbackToSWIfGLES3NotSupported,Vulkan,WebGPUService,WebGPUCompatibilityMode"
+EOF
+    chmod 0644 /etc/chromium.d/uml-virgl
     dpkg-query -W -f='installed ${{binary:Package}}=${{Version}}\\n' \\
-        {package_arguments}
+        {package_arguments} chromium chromium-sandbox
+    grep -F -- '--use-angle=gles-egl' /etc/chromium.d/uml-virgl
+    apt-get clean
 ) || status=$?
 
 # The maintenance unit is deliberately transient. Keep only the backports
-# source and installed packages in the frozen image.
+# source, installed packages, and Chromium Virgl configuration in the image.
 rm -f /etc/systemd/system/uml-gpu-rootfs-maintenance.service
 rm -f /usr/local/libexec/uml-gpu-rootfs-maintenance
 sync
@@ -122,7 +137,7 @@ printf '%s' '{encoded}' | base64 -d > /usr/local/libexec/uml-gpu-rootfs-maintena
 chmod 0755 /usr/local/libexec/uml-gpu-rootfs-maintenance
 cat > /etc/systemd/system/uml-gpu-rootfs-maintenance.service <<'EOF'
 [Unit]
-Description=Install the frozen-image GPU userspace stack
+Description=Install the frozen-image GPU and Chromium userspace
 Wants=network-online.target
 After=network-online.target
 
@@ -258,7 +273,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             }
         )
         if return_code != 0 or not saw_pass or saw_fail:
-            raise RuntimeError("Mesa 26 maintenance service did not pass")
+            raise RuntimeError("rootfs package maintenance service did not pass")
     except BaseException as error:
         result["failure"] = f"{type(error).__name__}: {error}"
         raise
