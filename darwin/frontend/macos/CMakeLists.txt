@@ -10,6 +10,15 @@ find_program(GMAKE_EXECUTABLE gmake REQUIRED)
 set(UML_KERNEL_BUILD_DIR "${PROJECT_SOURCE_DIR}/.build/kernel")
 set(UML_KERNEL_DEFCONFIG
     "${PROJECT_SOURCE_DIR}/linux-6.18/arch/um/configs/arm64_defconfig")
+if(UML_GUEST_16K_PAGES)
+    set(UML_KERNEL_PAGE_CONFIG
+        -d PAGE_SIZE_4KB
+        -e PAGE_SIZE_16KB)
+else()
+    set(UML_KERNEL_PAGE_CONFIG
+        -e PAGE_SIZE_4KB
+        -d PAGE_SIZE_16KB)
+endif()
 
 add_custom_command(
     OUTPUT "${UML_KERNEL_BUILD_DIR}/.config"
@@ -22,6 +31,17 @@ add_custom_command(
             LD=/opt/homebrew/opt/lld/bin/ld.lld
             CROSS_COMPILE=aarch64-unknown-linux-gnu-
             arm64_defconfig
+    COMMAND ${PROJECT_SOURCE_DIR}/linux-6.18/scripts/config
+            --file "${UML_KERNEL_BUILD_DIR}/.config"
+            ${UML_KERNEL_PAGE_CONFIG}
+    COMMAND ${GMAKE_EXECUTABLE}
+            O=${UML_KERNEL_BUILD_DIR}
+            -C ${PROJECT_SOURCE_DIR}/linux-6.18
+            ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin
+            LLVM=/opt/homebrew/opt/llvm/bin/
+            LD=/opt/homebrew/opt/lld/bin/ld.lld
+            CROSS_COMPILE=aarch64-unknown-linux-gnu-
+            olddefconfig
     DEPENDS "${UML_KERNEL_DEFCONFIG}"
     COMMENT "Refreshing the Darwin UML arm64 kernel configuration"
     VERBATIM)

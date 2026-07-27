@@ -1,6 +1,6 @@
 /* DC ZVA is fixed at 64 bytes by the virtual DCZID_EL0. Translation selects
  * the real-register and XZR forms, and the 64-byte alignment guarantees that
- * one successful 4 KiB TLB lookup covers every store. Stream:
+ * one successful guest-page TLB lookup covers every store. Stream:
  * [register byte offset, when present][guest PC]. */
 .macro cache_zero name, zero
 gadget cache_zero_\name
@@ -737,9 +737,7 @@ gadget simd_structure_\name
 	ldr x19, [_stream], #8
 	ubfx x24, x19, #16, #16
 	ldr x20, [_cpu, x24]
-	and x8, x20, #0xfff
-	cmp x8, #(4096 - (\count * (8 << \q)))
-	b.hi .Lsimd_structure_slow\@
+	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
 	mov x7, x20
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -885,9 +883,7 @@ gadget simd_replicate_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ldr x21, [_cpu, x20]
-	and x8, x21, #0xfff
-	cmp x8, #(4096 - (\count * \width))
-	b.hi .Lsimd_replicate_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
 	mov x7, x21
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	and w26, w19, #31
@@ -1058,9 +1054,7 @@ gadget simd_lane_\name
 	ubfx x20, x19, #16, #16
 	ubfx x23, x19, #48, #16
 	ldr x21, [_cpu, x20]
-	and x8, x21, #0xfff
-	cmp x8, #(4096 - (\count * \width))
-	b.hi .Lsimd_lane_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
 	mov x7, x21
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -2283,7 +2277,7 @@ gadget ordered_pair_load_\name
 	.endif
 	add x25, x7, #\element_size
 	eor x23, x7, x25
-	lsr x23, x23, #12
+	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	cbz x23, 70f
 	mov x26, x7
@@ -2346,7 +2340,7 @@ gadget ordered_pair_store_\name
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #\element_size
 	eor x23, x7, x25
-	lsr x23, x23, #12
+	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	cbz x23, 70f
 	mov x26, x7
@@ -2424,9 +2418,9 @@ gadget consistent_pair_\name
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #8
 	eor x23, x7, x25
-	lsr x23, x23, #12
+	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	/* The 16-byte-aligned hot path cannot cross a 4KB page. */
+	/* The 16-byte-aligned hot path cannot cross a guest page. */
 	tbnz x7, #3, 70f
 	.if \ordered
 	ldaxp x12, x13, [x7]
@@ -2487,7 +2481,7 @@ gadget consistent_pair_\name
 	b.ne uml_arm64_gadget_memory_fault
 	add x25, x7, #8
 	eor x23, x7, x25
-	lsr x23, x23, #12
+	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \zero_first
 	mov x12, xzr

@@ -1842,3 +1842,138 @@ Temporary benchmark logs from this session are
 `/private/tmp/unixbench-priority2.log`, and
 `/private/tmp/unixbench-priority3-repeat.log`; later trial logs are named in
 their trial sections and may not survive reboot.
+
+## G37: build-selected 16 KiB guest pages
+
+Started 2026-07-26. The new `UML_GUEST_16K_PAGES` CMake option defaults to
+`ON`, configures `CONFIG_PAGE_SIZE_16KB=y`, and supplies one page-size/shift
+contract to the C++ MMU, translated gadgets, assembly TLB, and tests. Passing
+`-DUML_GUEST_16K_PAGES=OFF` preserves the 4 KiB compatibility build.
+
+The 16 KiB kernel uses three populated page-table levels. An initial
+four-populated-level configuration was rejected during boot validation because
+its 128 TiB top-level span made the 64 TiB UML task limit fold to zero and sent
+address-space teardown through an impractically large range. The corrected
+three-level geometry uses 11-bit table indices, `PMD_SHIFT=25`, and
+`PGDIR_SHIFT=36`.
+
+Native kernel physical aliases now map the shared backing directly. The 16 KiB
+build excludes the 4 KiB native-shadow object and its tests, quarter-page stack
+reconciliation, shadow flush/copy calls at syscall and uaccess boundaries, and
+the extra allocator alignment used only by the fallback. Guest mapping
+generation checks remain because concurrent PTE replacement is independent of
+page size. Arbitrary unaligned scalar/pair accesses can still cross a 16 KiB
+boundary, so their necessary cross-page gadgets remain; their hot check is
+specialized to three host instructions using the build-time page shift.
+
+- [x] Add the default-on CMake flag and kernel configuration.
+- [x] Add correct three-level 16 KiB UML page-table geometry.
+- [x] Compile the native 4 KiB shadow MMU and shadow-only kernel paths out of
+  the 16 KiB build.
+- [x] Make MMU, TLB, gadget, and split test fixtures page-size aware.
+- [x] Build the production gadget-only configuration.
+- [x] Pass the initial 308/308 non-VNC production tests and the VNC test.
+- [x] Pass 306/306 non-VNC interpreter tests and the VNC test after making the
+  SLiRP-only DHCP assertion configuration-aware.
+- [x] Build and pass the 4 KiB fallback: 307/307 non-VNC tests plus VNC.
+- [x] Boot the production guest with 10 CPUs and 8 GiB through the tmpfs
+  overlay/systemd launcher; verify 16,384-byte pages, read-only lower rootfs,
+  DNS, and Java 21.
+- [x] Rebuild after the final dead shadow-path audit and pass 308/308 non-VNC
+  production tests plus the standalone VNC smoke test.
+- [x] Repeat the final debug interpreter matrix: 306/306 non-VNC tests plus
+  VNC.
+- [x] Repeat the final 4 KiB compatibility matrix: 307/307 non-VNC tests plus
+  VNC, including its native-shadow-MMU test.
+- [x] Complete the full 10-core Geekbench 6 comparison against G35.
+
+The final production run used the exact post-audit source, 10 guest cores,
+7.91 GiB of visible memory, a 16,384-byte runtime page size, and the
+read-only-lower tmpfs OverlayFS launcher. It completed all workloads and
+powered off cleanly in **3,272 seconds** (54m32s), uploading
+(result). The result was **77
+single-core / 488 multi-core**, compared with G35's 4 KiB
+(result) result at **79 / 416**:
+**-2.5% single-core and +17.3% multi-core**. The substantial multi-core gain
+outweighs the small single-core regression, so the default-on 16 KiB page
+configuration is accepted; the 4 KiB compatibility option remains available
+for comparison and fallback.
+
+## G38-G42: 16 KiB single-core TLB profiling
+
+Started 2026-07-27 in response to the G37 single-core regression. Per-workload
+1 ms samples showed that translated memory gadgets account for approximately
+24-47% of sampled gadget tops in representative single-core workloads. The
+existing gadget TLB used an 8,192-entry, 32-byte direct table and computed its
+index with `UBFX`, `EOR`, and `AND` before loading the entry. Under 16 KiB
+pages, the extra fold was retained from the 4 KiB design even though a larger
+low-index range is affordable.
+
+The experiments used G37's immutable executable
+`.build/bench/uml-darwin-g37-16k-baseline` as the comparison point. Focused
+memory controls include the existing general translation loop and a new
+freestanding alias control, `tests/perf/guest_tlb_128m_alias_loop.S`, whose two
+hot pages are exactly 128 MiB apart.
+
+- **G38, 4,096-entry table: rejected.** Halving the table retained the index
+  work and increased capacity pressure. Its full result was **77 / 454** at
+  (result), below G37's 77 / 488.
+- **G39, 8,192 one-way direct entries: rejected.** Removing `EOR` and `AND`
+  improved the general single-worker control from 9.922 s to 9.771 s
+  (**1.52%**) and the ten-worker control from 10.344 s to 10.059 s
+  (**2.76%**). However, Ray Tracer grew from 58.574 s to 88.814 s and its
+  sample contained 49 TLB-miss stack lines. The 128 MiB alias control took
+  0.677 s, confirming deterministic direct-index thrashing. The diagnostic
+  full result is (result).
+- **G40, 16,384 one-way direct entries: rejected.** The alias control improved
+  to 0.193 s and the general single-worker control to 9.651 s, but Ray Tracer
+  still took 87.904 s with 41 TLB-miss stack lines. The run was stopped after
+  single-core because the capacity increase did not fix the workload's
+  conflict pattern.
+- **G41, one-instruction folded 16,384-entry index: rejected.** Combining the
+  fold into `EOR address,address,LSR #14` followed by `UBFX` protected the
+  alias control at 0.197 s, but the general control regressed to 9.855 s and
+  surrendered most of the direct-index gain.
+- **G42, 16,384-set two-way direct TLB: accepted.** The 16 KiB table now has
+  two adjacent 32-byte ways per set. The primary way remains the hot path:
+  one `UBFX`, one scaled `ADD`, one tag load, one compare, and one predicted
+  hit branch. The second tag is tested only after a primary miss. The C++ miss
+  helper co-locates read/write translations for the same guest page, fills an
+  unused way first, then uses per-set round-robin replacement. The 4 KiB
+  fallback retains its original 8,192-entry folded one-way layout.
+
+G42's alias control is 0.198 s, the general single-worker control is 9.666 s
+(**2.58% faster than G37**), and the ten-worker control is 9.988 s at 9.85
+host cores (**3.44% faster**). Its full single-core workload wall-time sum is
+2,167.409 s versus G37's 2,264.746 s, a **4.30% reduction**. Large improvements
+include Clang at 148.498 s versus 179.754 s (**17.39%**) and Text Processing at
+238.381 s versus 269.418 s (**11.52%**). The accepted full run completed and
+uploaded (result).
+
+Ray Tracer still selected the approximately 89-second calibration duration in
+G42, but unlike both one-way candidates its sample contained **zero** gadget
+TLB-miss stack lines. Horizon Detection similarly alternated between
+approximately 59 and 89 seconds across otherwise unchanged runs. Those
+duration steps are Geekbench adaptive-run variability rather than evidence of
+remaining TLB conflicts; the controlled alias workload and the miss profile
+are the acceptance controls.
+
+The accepted executable is
+`.build/bench/uml-darwin-g42-16k-two-way-direct-tlb` with SHA-256
+`79514d09b5ed0d80018f9a96ab9ea1c73bc8b183f109ea9927b2e65ac0c05f72`.
+Profiles and console output are in
+`/private/tmp/geekbench-g42-two-way-tlb-profile` and
+`/private/tmp/geekbench-g42-two-way-tlb-console.log`; these temporary paths may
+not survive a reboot.
+
+- [x] Profile every G37 single-core Geekbench section.
+- [x] Measure smaller, direct, wider, and folded TLB alternatives separately.
+- [x] Add a deterministic 128 MiB set-alias performance control.
+- [x] Keep the minimum-instruction primary hit path and move replacement work
+  to the translation/miss stage.
+- [x] Add build-specific one-way/two-way collision and independent read/write
+  unit coverage.
+- [x] Complete the accepted G42 full Geekbench run.
+- [x] Pass 308/308 production non-VNC tests plus standalone VNC.
+- [x] Pass 306/306 debug-interpreter non-VNC tests plus standalone VNC.
+- [x] Pass 307/307 4 KiB fallback non-VNC tests plus standalone VNC.

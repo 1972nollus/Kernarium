@@ -4,6 +4,7 @@
 #include "../cpu_state.hpp"
 
 #include "uml_darwin_static_mmu.h"
+#include "uml_darwin_guest.h"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +15,7 @@
 namespace uml::backend::arm64::gadgets {
 namespace {
 
-constexpr std::uint64_t page_size = 4096;
+constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
 enum class Ls64Operation {
 	load,
@@ -464,9 +465,14 @@ template <bool source_zero>
 
 [[nodiscard]] constexpr std::size_t index_for(std::uint64_t address) noexcept
 {
-	const auto page = address >> 12;
+	const auto page = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	return static_cast<std::size_t>(
+		(page & (tlb_set_count - 1)) * tlb_way_count);
+#else
 	return static_cast<std::size_t>((page ^ (page >> 13)) &
-		(tlb_entry_count - 1));
+		(tlb_set_count - 1));
+#endif
 }
 
 static_assert(sizeof(TlbEntry) == 32);
@@ -475,10 +481,14 @@ static_assert(offsetof(TlbEntry, write_page) == 8);
 static_assert(offsetof(TlbEntry, read_data_minus_address) == 16);
 static_assert(offsetof(TlbEntry, write_data_minus_address) == 24);
 static_assert(offsetof(Tlb, entries) == 0);
-static_assert(offsetof(Tlb, generation) == 262144);
-static_assert(offsetof(Tlb, changes) == 262152);
-static_assert(offsetof(Tlb, fault_address) == 262160);
-static_assert(offsetof(Tlb, fault_access) == 262168);
+static_assert(offsetof(Tlb, generation) ==
+	tlb_entry_count * sizeof(TlbEntry));
+static_assert(offsetof(Tlb, changes) ==
+	offsetof(Tlb, generation) + sizeof(std::uint64_t));
+static_assert(offsetof(Tlb, fault_address) ==
+	offsetof(Tlb, changes) + sizeof(std::uint64_t));
+static_assert(offsetof(Tlb, fault_access) ==
+	offsetof(Tlb, fault_address) + sizeof(std::uint64_t));
 
 } // namespace
 
@@ -490,17 +500,21 @@ Tlb::Tlb()
 void Tlb::flush()
 {
 	std::ranges::fill(entries, TlbEntry{});
+	std::ranges::fill(replacement_way, 0);
 }
 
 void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 {
 	const auto end = address + length;
 	for (auto page = address; page < end; page += page_size) {
-		auto &entry = entries[index_for(page)];
-		if (entry.read_page == page)
-			entry.read_page = 1;
-		if (entry.write_page == page)
-			entry.write_page = 1;
+		const auto first = index_for(page);
+		for (std::size_t way = 0; way < tlb_way_count; ++way) {
+			auto &entry = entries[first + way];
+			if (entry.read_page == page)
+				entry.read_page = 1;
+			if (entry.write_page == page)
+				entry.write_page = 1;
+		}
 	}
 }
 
@@ -545,15 +559,17 @@ __attribute__((noinline)) void Tlb::reconcile_changes(
 std::byte *Tlb::translate(std::uint64_t address, Access access)
 {
 	const auto page = address & ~(page_size - 1);
-	auto &entry = entries[index_for(address)];
-	const auto cached_page = access == Access::write ?
-		entry.write_page : entry.read_page;
-	if (cached_page == page) {
-		const auto base = access == Access::write ?
-			entry.write_data_minus_address :
-			entry.read_data_minus_address;
-		return reinterpret_cast<std::byte *>(
-			base + address);
+	const auto first = index_for(address);
+	for (std::size_t way = 0; way < tlb_way_count; ++way) {
+		auto &entry = entries[first + way];
+		const auto cached_page = access == Access::write ?
+			entry.write_page : entry.read_page;
+		if (cached_page == page) {
+			const auto base = access == Access::write ?
+				entry.write_data_minus_address :
+				entry.read_data_minus_address;
+			return reinterpret_cast<std::byte *>(base + address);
+		}
 	}
 
 	void *translated = nullptr;
@@ -567,6 +583,34 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		fault_access = access;
 		return nullptr;
 	}
+	std::size_t selected = tlb_way_count;
+	for (std::size_t way = 0; way < tlb_way_count; ++way) {
+		const auto &candidate = entries[first + way];
+		const auto other_page = access == Access::write ?
+			candidate.read_page : candidate.write_page;
+		if (other_page == page) {
+			selected = way;
+			break;
+		}
+	}
+	if (selected == tlb_way_count) {
+		for (std::size_t way = 0; way < tlb_way_count; ++way) {
+			const auto &candidate = entries[first + way];
+			const auto cached_page = access == Access::write ?
+				candidate.write_page : candidate.read_page;
+			if (cached_page == 1) {
+				selected = way;
+				break;
+			}
+		}
+	}
+	const auto set = first / tlb_way_count;
+	if (selected == tlb_way_count) {
+		selected = replacement_way[set];
+		replacement_way[set] = static_cast<std::uint8_t>(
+			(selected + 1) % tlb_way_count);
+	}
+	auto &entry = entries[first + selected];
 	const auto host_page = reinterpret_cast<std::uintptr_t>(translated);
 	if (access == Access::write) {
 		entry.write_data_minus_address = host_page - page;
@@ -747,7 +791,7 @@ extern "C" std::uint32_t uml_arm64_gadget_memory_transfer(
 	void *data, std::size_t size, std::uint32_t access) noexcept
 {
 	using uml::backend::arm64::gadgets::Access;
-	constexpr std::size_t page_size = 4096;
+	constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	if (tlb == nullptr || data == nullptr || size == 0 || size > 64)
 		return 0;
 

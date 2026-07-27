@@ -66,7 +66,8 @@ void successful_forms()
 					for (const unsigned encoded_offset : encoded_offsets) {
 						const auto displacement =
 							load_test::sign_extend(encoded_offset, 10) * 8;
-						const auto plain_base = guest + 12 * 4096;
+						const auto plain_base =
+							guest + 12 * load_test::StaticMapping::page_size;
 						const auto address = plain_base + displacement;
 						std::memcpy(mapping.at(address), &payload, sizeof(payload));
 						const auto signed_address = signed_base(plain_base, key_b);
@@ -114,7 +115,8 @@ void cross_page_load()
 	constexpr std::uint64_t guest = 0x3b00'0000;
 	load_test::StaticMapping mapping{guest, 2,
 		"/tmp/uml-pauth-load-cross-XXXXXX"};
-	constexpr std::uint64_t address = guest + 4 * 4096 - 4;
+	constexpr std::uint64_t address =
+		guest + 4 * load_test::StaticMapping::page_size - 4;
 	constexpr std::uint64_t payload = 0x0123'4567'89ab'cdefULL;
 	std::memcpy(mapping.at(address), &payload, sizeof(payload));
 	for (const bool key_b : {false, true}) {

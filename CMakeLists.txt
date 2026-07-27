@@ -30,6 +30,8 @@ else()
 endif()
 
 option(UML_BUILD_TESTS "Build host-runnable backend unit tests" ${UML_TARGET_MACOS})
+option(UML_GUEST_16K_PAGES
+    "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
 option(UML_ENABLE_GADGET_INTERPRETER_RUNPATH
     "Route non-control gadget instructions through the interpreter for debugging" OFF)
 if(UML_ENABLE_GADGET_INTERPRETER_RUNPATH AND
@@ -37,6 +39,17 @@ if(UML_ENABLE_GADGET_INTERPRETER_RUNPATH AND
     message(FATAL_ERROR
         "UML_ENABLE_GADGET_INTERPRETER_RUNPATH is debug-only; configure with CMAKE_BUILD_TYPE=Debug")
 endif()
+
+if(UML_GUEST_16K_PAGES)
+    set(UML_GUEST_PAGE_SIZE 16384)
+    set(UML_GUEST_PAGE_SHIFT 14)
+else()
+    set(UML_GUEST_PAGE_SIZE 4096)
+    set(UML_GUEST_PAGE_SHIFT 12)
+endif()
+add_compile_definitions(
+    DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
+    DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT})
 
 if(UML_BUILD_TESTS)
     enable_testing()

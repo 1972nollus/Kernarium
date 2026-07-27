@@ -2,6 +2,7 @@
 #include "../dispatcher.hpp"
 #include "program.hpp"
 #include "tlb.hpp"
+#include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -13,7 +14,7 @@
 namespace uml::backend::arm64::gadgets {
 namespace {
 
-constexpr std::size_t page_size = 4096;
+constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
 class TlbMemory final : public GuestMemory {
 public:

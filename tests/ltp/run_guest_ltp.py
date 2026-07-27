@@ -72,6 +72,22 @@ LTP_TIMEOUT_MUL = 4
 # exercise more than one CPU are manifest-tagged host-pressure, retain the full
 # guest topology, and run alone at the end of the suite.
 DEFAULT_PARALLEL_GUEST_CPUS = 1
+SYSTEMD_OVERLAY_BOOTSTRAP = (
+    "set -eu; "
+    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt; "
+    "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root; "
+    "mount -o bind / /mnt/lower; "
+    "mount -t overlay overlay "
+    "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; "
+    "mount -t devtmpfs devtmpfs /mnt/root/dev; "
+    "mkdir -p /mnt/root/.uml-lower; "
+    "cd /mnt/root; "
+    "pivot_root . .uml-lower; "
+    "rm -f /etc/resolv.conf; "
+    "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
+    "'nameserver 10.0.2.3' > /etc/resolv.conf; "
+    "exec /lib/systemd/systemd"
+)
 _ACTIVE_GUESTS: set["Guest"] = set()
 _ACTIVE_GUESTS_LOCK = threading.Lock()
 
@@ -120,12 +136,13 @@ def emulator_arguments(
     workspace: str = "tmpfs",
     kernel_arguments: Sequence[str] = (),
     swap_path: pathlib.Path | None = None,
+    init_path: str = "/sbin/uml-overlay-init",
 ) -> list[str]:
     arguments = [
         str(emulator),
         f"ubd0r={rootfs}",
         "ro",
-        "init=/sbin/uml-overlay-init",
+        f"init={init_path}",
         f"mem={memory}",
     ]
     if workspace == "ext2":
@@ -243,10 +260,19 @@ class Guest:
         swap_size: str | None = None,
         cgroup1: str | None = None,
         cgroup2_nsdelegate: bool = False,
+        systemd_overlay: bool = False,
     ) -> None:
         self._swap_path = create_swap_image(swap_size) if swap_size else None
         self._cgroup1 = cgroup1
         self._cgroup2_nsdelegate = cgroup2_nsdelegate
+        self._systemd_overlay = systemd_overlay
+        if systemd_overlay:
+            kernel_arguments = (
+                *kernel_arguments,
+                "console=tty0",
+                "ip=dhcp",
+                "systemd.unit=multi-user.target",
+            )
         master, slave = pty.openpty()
         self._master = master
         os.set_blocking(master, False)
@@ -255,6 +281,7 @@ class Guest:
                 emulator_arguments(
                     emulator, rootfs, memory, workspace, kernel_arguments,
                     self._swap_path,
+                    "/bin/sh" if systemd_overlay else "/sbin/uml-overlay-init",
                 ),
                 stdin=slave,
                 stdout=slave,
@@ -296,9 +323,26 @@ class Guest:
                     pass
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        self._read_until(re.compile(rb" login:\s*$", re.MULTILINE), timeout_seconds)
-        self._write("root\n")
-        self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+        if self._systemd_overlay:
+            self._read_until(
+                re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds
+            )
+            self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
+            self._read_until(
+                re.compile(rb" login:\s*root \(automatic login\)",
+                           re.MULTILINE),
+                timeout_seconds,
+            )
+            self._read_until(
+                re.compile(rb"(?:^|\r?\n)[^\r\n]*# $"),
+                timeout_seconds,
+            )
+        else:
+            self._read_until(
+                re.compile(rb" login:\s*$", re.MULTILINE), timeout_seconds
+            )
+            self._write("root\n")
+            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
         if self._swap_path is not None:
             result = self.run_command(
                 "mkswap /dev/ubdb >/dev/null && swapon /dev/ubdb",

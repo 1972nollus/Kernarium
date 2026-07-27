@@ -17,8 +17,9 @@ a separate writable ext2 image named `rootfs.ext2`.
   host instructions.
 - `backend/runtime/static/` contains the guest executor, 8,192-entry TLB,
   data-only block cache, and optional differential verification.
-- `runtime/mmu/address_space.cpp` models independent 4 KiB userspace mappings.
-  `native_address_space.cpp` assembles native-kernel 4 KiB mappings inside
+- `runtime/mmu/address_space.cpp` models independent build-selected userspace
+  pages. `native_address_space.cpp` is compiled only for the optional 4 KiB
+  compatibility build, where it assembles native-kernel mappings inside
   Darwin's 16 KiB VM slots.
 - `network/device.cpp` is the portable Ethernet transport boundary;
   `network/slirp/` is the macOS CLI's unprivileged NAT implementation.
@@ -42,6 +43,12 @@ ctest --test-dir .build/cmake-macos --output-on-failure
 .build/cmake-macos/bin/uml-darwin
 ```
 
+`UML_GUEST_16K_PAGES=ON` is the default. It configures the UML kernel for
+16 KiB pages and specializes the runtime, TLB, and gadgets for the same page
+geometry. To build the compatibility configuration instead, pass
+`-DUML_GUEST_16K_PAGES=OFF`; this selects 4 KiB kernel pages and restores the
+Darwin native-shadow mapper required by that layout.
+
 The launcher looks for a writable `rootfs.ext2` beside the executable, then in
 the current directory, or at `UML_ROOTFS`. Unless overridden, it adds
 `ubd0=... root=/dev/ubda init=/sbin/init mem=256M ip=dhcp rw`. The default
@@ -63,9 +70,10 @@ scripts/build-xcframework.sh
 ```
 
 The result is `.build/xcframework/UMLBackend.xcframework`. Every slice contains
-the static gadget executor, 4 KiB userspace and native-kernel MMUs, POSIX host
-bridge, and callback-backed Ethernet device. It contains no ELF loader,
-Capstone, Mach exception server, libslirp, or writable-executable code path.
+the static gadget executor, build-selected userspace MMU, POSIX host bridge,
+and callback-backed Ethernet device. A 4 KiB build also contains the
+native-kernel shadow MMU. It contains no ELF loader, Capstone, Mach exception
+server, libslirp, or writable-executable code path.
 
 ## Native kernel and sandbox boundary
 
@@ -102,22 +110,23 @@ assembler, binary patching, or JIT cache.
 without creating executable memory. `UML_MMU_TRACE=1` traces native-kernel
 mapping operations.
 
-## 4 KiB MMU
+## Guest page MMU
 
-Linux applications use 4 KiB pages while Apple Silicon uses 16 KiB host VM
-pages. Userspace accesses therefore go through the data MMU and its 4 KiB TLB;
-no guest executable page needs to be host executable. Each Linux `mm` has a
-generation, so fork, COW, unmap, and task switches keep independent mappings
-inside one host address space.
+The default Linux configuration uses 16 KiB pages, matching Apple Silicon's
+host VM page size. Userspace accesses still go through the data MMU and its
+16 KiB TLB, so no guest executable page needs to be host executable. Physical
+aliases map the shared backing directly; shadow synchronization, quarter-page
+reconciliation, and their syscall-boundary work are excluded at build time.
+Each Linux `mm` has a generation, so fork, COW, unmap, and task switches keep
+independent mappings inside one host address space.
 
-The native kernel still needs ordinary host pointers for vmalloc and physical
-aliases. Host-aligned runs map directly from the reserved physical-memory
-backing. Unaligned 4 KiB pages are reconstructed as quarters of anonymous
-16 KiB slots. Each quarter stores an original snapshot: writeback occurs only
-after a byte change, and is discarded if an authoritative physical alias
-changed in the meantime. Removing an absent quarter is a successful no-op and
-cannot accidentally unmap a live sibling. The entire 256 MiB guest physical
-backing is reserved once rather than through per-page host allocations.
+The optional 4 KiB compatibility configuration retains the native shadow MMU.
+Host-aligned runs map directly from the reserved physical-memory backing, while
+unaligned 4 KiB pages are reconstructed as quarters of anonymous 16 KiB slots.
+Each quarter stores an original snapshot: writeback occurs only after a byte
+change, and is discarded if an authoritative physical alias changed in the
+meantime. Removing an absent quarter is a successful no-op and cannot
+accidentally unmap a live sibling.
 
 ## Networking
 

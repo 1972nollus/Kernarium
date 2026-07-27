@@ -4,6 +4,7 @@
 #include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -242,7 +243,7 @@ public:
 
 class StaticMapping final {
 public:
-	static constexpr std::size_t page_size = 4096;
+	static constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	/* Covers the largest 12-bit scaled Q offset (65520 bytes), while still
 	 * leaving pages on either side for signed and cross-page cases. */
 	static constexpr std::size_t length = 24 * page_size;

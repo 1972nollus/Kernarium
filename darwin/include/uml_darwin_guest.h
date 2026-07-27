@@ -9,8 +9,15 @@
 extern "C" {
 #endif
 
+#ifndef DARWIN_UML_GUEST_PAGE_SIZE
+#define DARWIN_UML_GUEST_PAGE_SIZE 16384
+#endif
+
+#ifndef DARWIN_UML_GUEST_PAGE_SHIFT
+#define DARWIN_UML_GUEST_PAGE_SHIFT 14
+#endif
+
 enum {
-	DARWIN_UML_GUEST_PAGE_SIZE = 4096,
 	DARWIN_UML_GUEST_REGISTER_COUNT = 31,
 	DARWIN_UML_VECTOR_REGISTER_COUNT = 32,
 };
@@ -82,6 +89,10 @@ struct darwin_uml_guest_fp_registers {
 #ifdef __cplusplus
 }
 
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
+	      (UINT64_C(1) << DARWIN_UML_GUEST_PAGE_SHIFT));
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
+	      DARWIN_UML_GUEST_PAGE_SIZE == 16384);
 static_assert(offsetof(darwin_uml_guest_registers, fp) == 29 * sizeof(uint64_t));
 static_assert(offsetof(darwin_uml_guest_registers, pc) == 32 * sizeof(uint64_t));
 static_assert(offsetof(darwin_uml_guest_registers, pstate) == 33 * sizeof(uint64_t));

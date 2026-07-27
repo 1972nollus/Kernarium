@@ -2,6 +2,7 @@
 #include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -133,7 +134,7 @@ public:
 		descriptor_ = mkstemp(path);
 		require(descriptor_ >= 0);
 		require(unlink(path) == 0);
-		require(ftruncate(descriptor_, 4096) == 0);
+		require(ftruncate(descriptor_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 		std::array<std::byte, 4096> bytes{};
 		bytes.fill(fill);
 		require(pwrite(descriptor_, bytes.data(), bytes.size(), 0) ==
@@ -170,7 +171,7 @@ void gadget_zero_and_fault()
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
 		reinterpret_cast<void *>(memory_base), backing.descriptor(), 0,
-		4096, PROT_READ | PROT_WRITE, 0, 1) == 0);
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 
 	const std::array instructions{
 		0xd50b'7427U, // dc zva, x7

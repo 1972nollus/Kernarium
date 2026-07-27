@@ -2,6 +2,7 @@
 #include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 
 #include <array>
@@ -175,12 +176,13 @@ void gadget_memory_paths()
 	const int fd = mkstemp(path);
 	require(fd >= 0);
 	require(unlink(path) == 0);
-	require(ftruncate(fd, 8192) == 0);
+	require(ftruncate(fd, 2 * DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 	constexpr std::uint64_t guest = 0x20'0000;
 	constexpr unsigned long generation = 29;
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(guest), fd,
-		0, 8192, PROT_READ | PROT_WRITE, 0, 1) == 0);
+		0, 2 * DARWIN_UML_GUEST_PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
 
 	const std::uint32_t word = 0xf123'4567U;
 	const std::uint64_t doubleword = 0x0123'4567'89ab'cdefULL;
@@ -242,7 +244,8 @@ void gadget_memory_paths()
 
 	constexpr std::uint64_t fault_pc = guest + 0x300;
 	const auto fault_instruction = instruction_for_address(
-		true, 2, fault_pc, guest + 8192 - 4, 7);
+		true, 2, fault_pc,
+		guest + 2 * DARWIN_UML_GUEST_PAGE_SIZE - 4, 7);
 	const auto fault_program = gadgets::Builder{}.build(
 		fault_pc, std::array{fault_instruction});
 	cpu = {};

@@ -66,8 +66,8 @@ int darwin_uml_static_vm_batch_end(void);
 int darwin_uml_static_vm_walker_lock(unsigned long generation);
 int darwin_uml_static_vm_walker_unlock(unsigned long generation);
 
-/* Returns a host data pointer valid through the end of the translated 4 KiB
- * page.  The mapping is never executable.  Each vCPU observes concurrent
+/* Returns a host data pointer valid through the end of the translated guest
+ * page. The mapping is never executable. Each vCPU observes concurrent
  * map/protect/unmap operations at its next bounded guest-dispatch boundary.
  */
 int darwin_uml_static_vm_translate(unsigned long generation,

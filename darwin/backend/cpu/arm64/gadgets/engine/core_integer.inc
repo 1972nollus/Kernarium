@@ -111,18 +111,34 @@ NAME(uml_arm64_gadget_\name):
 98:
 .endm
 
-/* Translate guest address x7 through the persistent 8,192-entry iSH-style
- * TLB. On success x7 is the host address. The miss helper updates the entry.
+/* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
+ * build uses 16,384 two-way direct sets; the 4 KiB fallback retains 8,192
+ * one-way folded entries. On success x7 is the host address. The miss helper
+ * updates the entry.
  */
 .macro translate access, page_offset
-	and x8, x7, #0xfffffffffffff000
-	ubfx x9, x7, #12, #13
-	eor x9, x9, x7, lsr #25
-	and w9, w9, #0x1fff
+	and x8, x7, #UML_GADGET_GUEST_PAGE_BASE_MASK
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	add x10, _tlb, x9, lsl #6
+#else
+	ubfx x9, x7, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	eor x9, x9, x7, lsr #UML_GADGET_TLB_FOLD_SHIFT
+	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
 	add x10, _tlb, x9, lsl #5
+#endif
 	ldr x11, [x10, #\page_offset]
 	cmp x8, x11
 	b.eq 91f
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	.if \access
+	ldr x11, [x10, #UML_GADGET_TLB_SECOND_WRITE_PAGE]
+	.else
+	ldr x11, [x10, #UML_GADGET_TLB_SECOND_READ_PAGE]
+	.endif
+	cmp x8, x11
+	b.eq 93f
+#endif
 	stp x1, x2, [sp, #-16]!
 	mov x0, x2
 	mov x1, x7
@@ -132,6 +148,16 @@ NAME(uml_arm64_gadget_\name):
 	cbz x0, uml_arm64_gadget_memory_fault
 	mov x7, x0
 	b 92f
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+93:
+	.if \access
+	ldr x12, [x10, #UML_GADGET_TLB_SECOND_WRITE_DATA_MINUS_ADDRESS]
+	.else
+	ldr x12, [x10, #UML_GADGET_TLB_SECOND_READ_DATA_MINUS_ADDRESS]
+	.endif
+	add x7, x12, x7
+	b 92f
+#endif
 91:
 	.if \access
 	ldr x12, [x10, #UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS]
@@ -140,6 +166,15 @@ NAME(uml_arm64_gadget_\name):
 	.endif
 	add x7, x12, x7
 92:
+.endm
+
+/* A translated transfer is at most 64 bytes, so adding its final byte can
+ * cross at most one guest-page boundary.  The xor therefore needs only the
+ * page-index low bit, avoiding a separate mask/compare instruction. */
+.macro branch_if_cross_page address, bytes, scratch, target
+	add \scratch, \address, #(\bytes - 1)
+	eor \scratch, \scratch, \address
+	tbnz \scratch, #UML_GADGET_GUEST_PAGE_SHIFT, \target
 .endm
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all

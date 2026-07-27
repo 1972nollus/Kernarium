@@ -12,9 +12,7 @@ gadget \name
 	and x19, x8, #0xffff
 	asr x10, x8, #16
 	add x7, x9, x10
-	and x11, x7, #0xfff
-	cmp x11, #(4096 - \bytes)
-	b.hi .Lliteral_integer_fast_cross\@
+	branch_if_cross_page x7, \bytes, x11, .Lliteral_integer_fast_cross\@
 	add _stream, _stream, #8
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
@@ -61,9 +59,7 @@ gadget \name
 	and x19, x8, #0xffff
 	asr x10, x8, #16
 	add x7, x9, x10
-	and x11, x7, #0xfff
-	cmp x11, #(4096 - \bytes)
-	b.hi .Lliteral_vector_fast_cross\@
+	branch_if_cross_page x7, \bytes, x11, .Lliteral_vector_fast_cross\@
 	add _stream, _stream, #8
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
@@ -98,13 +94,11 @@ gadget \suffix
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
-	and x9, x7, #0xfff
 	.if \bits64
-	cmp x9, #4088
+	branch_if_cross_page x7, 8, x9, .Lscalar_unsigned_cross\@
 	.else
-	cmp x9, #4092
+	branch_if_cross_page x7, 4, x9, .Lscalar_unsigned_cross\@
 	.endif
-	b.hi .Lscalar_unsigned_cross\@
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 		.if \bits64
@@ -185,9 +179,7 @@ gadget \name
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
 	.if \bytes > 1
-	and x9, x7, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lscalar_unsigned_narrow_load_cross\@
+	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_load_cross\@
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
@@ -249,9 +241,7 @@ gadget \name
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
 	.if \bytes > 1
-	and x9, x7, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lscalar_unsigned_narrow_store_cross\@
+	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_store_cross\@
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \transfer_zero
@@ -299,9 +289,7 @@ gadget \name
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
 	add x7, x7, x21
-	and x9, x7, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lvector_unsigned_cross\@
+	branch_if_cross_page x7, \bytes, x9, .Lvector_unsigned_cross\@
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()0, [x7]
@@ -357,9 +345,7 @@ gadget \name
 	mov x26, x25
 	.endif
 	.if \bytes > 1
-	and x9, x26, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lscalar_other_immediate_cross\@
+	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_immediate_cross\@
 	.endif
 	mov x7, x26
 	.if \load
@@ -480,9 +466,7 @@ gadget \name
 	.endif
 	add x26, x24, x26
 	.if \bytes > 1
-	and x9, x26, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lscalar_other_register_cross\@
+	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_register_cross\@
 	.endif
 	mov x7, x26
 	.if \load
@@ -592,9 +576,7 @@ gadget \name
 	.else
 	mov x26, x25
 	.endif
-	and x9, x26, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lvector_other_immediate_cross\@
+	branch_if_cross_page x26, \bytes, x9, .Lvector_other_immediate_cross\@
 	mov x7, x26
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -657,9 +639,7 @@ gadget \name
 		.endif
 	.endif
 	add x26, x24, x26
-	and x9, x26, #0xfff
-	cmp x9, #(4096 - \bytes)
-	b.hi .Lvector_other_register_cross\@
+	branch_if_cross_page x26, \bytes, x9, .Lvector_other_register_cross\@
 	mov x7, x26
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -738,10 +718,7 @@ gadget \name
 	.endif
 	/* Comparing the page bits of the first and final transfer bytes catches
 	 * both page crossing and address wraparound with one hot-path branch. */
-	add x9, x19, #((2 * \bytes) - 1)
-	eor x9, x9, x19
-	tst x9, #0xfffffffffffff000
-	b.ne .Linteger_pair_cross\@
+	branch_if_cross_page x19, (2 * \bytes), x9, .Linteger_pair_cross\@
 	.if \load
 	mov x7, x19
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -863,10 +840,7 @@ gadget \name
 	.else
 	mov x19, x21
 	.endif
-	add x9, x19, #((2 * \bytes) - 1)
-	eor x9, x9, x19
-	tst x9, #0xfffffffffffff000
-	b.ne .Lvector_pair_cross\@
+	branch_if_cross_page x19, (2 * \bytes), x9, .Lvector_pair_cross\@
 	.if \load
 	mov x7, x19
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -957,9 +931,7 @@ gadget pauth_load_\name
 	.endif
 	\authentication x7
 	add x25, x7, x21
-	and x9, x25, #0xfff
-	cmp x9, #4088
-	b.hi pauth_load_\name\()_cross
+	branch_if_cross_page x25, 8, x9, pauth_load_\name\()_cross
 	mov x7, x25
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	ldr x0, [x7]

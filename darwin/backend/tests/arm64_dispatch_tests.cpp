@@ -2894,7 +2894,7 @@ static void uml_static_entry_bridge()
 static void uml_static_lazy_fp_boundary()
 {
 	constexpr unsigned long generation = 113;
-	constexpr std::uint64_t base = 0x1'2000;
+	constexpr std::uint64_t base = 0x1'4000;
 	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x4f00'041fU); // movi v31.4s, #0
 	backing.put32(4, 0xd400'0001U); // svc #0
@@ -3155,7 +3155,7 @@ static void uml_static_permission_fault()
 static void uml_static_illegal_instruction()
 {
 	constexpr unsigned long generation = 109;
-	constexpr std::uint64_t base = 0x2'2000;
+	constexpr std::uint64_t base = 0x2'4000;
 	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x0000'0000U); // udf #0
 
@@ -3344,7 +3344,7 @@ static void uml_static_concurrent_translation_readers()
 	constexpr unsigned long first_generation = 106;
 	constexpr unsigned long writer_generation =
 		first_generation + reader_count;
-	constexpr std::uint64_t base = 0x3'2000;
+	constexpr std::uint64_t base = 0x3'0000;
 	TemporaryBacking backing{(reader_count + 1) *
 		DARWIN_UML_GUEST_PAGE_SIZE};
 

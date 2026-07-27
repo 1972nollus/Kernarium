@@ -19,7 +19,13 @@ struct alignas(32) TlbEntry final {
 	std::uintptr_t write_data_minus_address{};
 };
 
-inline constexpr std::size_t tlb_entry_count = 1U << 13;
+inline constexpr std::size_t tlb_index_bits =
+	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 13U;
+inline constexpr std::size_t tlb_set_count = 1U << tlb_index_bits;
+inline constexpr std::size_t tlb_way_count =
+	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 2U : 1U;
+inline constexpr std::size_t tlb_entry_count =
+	tlb_set_count * tlb_way_count;
 
 /* Public data layout is an assembly ABI. Static assertions in tlb.cpp keep
  * offsets.inc synchronized with this type.
@@ -31,6 +37,7 @@ struct alignas(32) Tlb final {
 	std::uint64_t fault_address{};
 	Access fault_access{Access::read};
 	std::uint32_t reserved{};
+	std::array<std::uint8_t, tlb_set_count> replacement_way{};
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 
 #include <array>
@@ -37,12 +38,13 @@ public:
 		fd_ = mkstemp(path);
 		require(fd_ >= 0);
 		require(unlink(path) == 0);
-		require(ftruncate(fd_, 4096) == 0);
+		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 		constexpr std::uint64_t value = 0x0123'4567'89ab'cdefULL;
 		require(pwrite(fd_, &value, sizeof(value), 0) ==
 			static_cast<ssize_t>(sizeof(value)));
 		require(darwin_uml_static_vm_map_generation(generation,
-				reinterpret_cast<void *>(guest), fd_, 0, 4096,
+				reinterpret_cast<void *>(guest), fd_, 0,
+				DARWIN_UML_GUEST_PAGE_SIZE,
 				PROT_READ | PROT_WRITE, 0, 1) == 0);
 	}
 

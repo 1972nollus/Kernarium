@@ -69,14 +69,17 @@ target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_static_runtime PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-add_library(uml_native_mmu OBJECT
-    ${PROJECT_SOURCE_DIR}/darwin/runtime/mmu/native_address_space.cpp)
-target_include_directories(uml_native_mmu PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/runtime/mmu)
-target_compile_features(uml_native_mmu PUBLIC cxx_std_20)
-target_compile_options(uml_native_mmu PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_native_mmu PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
+if(NOT UML_GUEST_16K_PAGES)
+    add_library(uml_native_mmu OBJECT
+        ${PROJECT_SOURCE_DIR}/darwin/runtime/mmu/native_address_space.cpp)
+    target_include_directories(uml_native_mmu PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/runtime/mmu)
+    target_compile_features(uml_native_mmu PUBLIC cxx_std_20)
+    target_compile_options(uml_native_mmu PRIVATE -Wall -Wextra -Werror)
+    set_target_properties(uml_native_mmu PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    set(UML_NATIVE_MMU_OBJECTS $<TARGET_OBJECTS:uml_native_mmu>)
+endif()
 
 add_library(uml_backend STATIC
     src/backend.cpp
@@ -88,7 +91,7 @@ add_library(uml_backend STATIC
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_static_runtime>
-    $<TARGET_OBJECTS:uml_native_mmu>)
+    ${UML_NATIVE_MMU_OBJECTS})
 
 add_library(UML::Backend ALIAS uml_backend)
 
@@ -189,7 +192,7 @@ if(UML_BUILD_KERNEL_RUNNER)
     endif()
 endif()
 
-if(UML_BUILD_TESTS)
+if(UML_BUILD_TESTS AND NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_mmu_tests
         tests/native_mmu_tests.cpp
         $<TARGET_OBJECTS:uml_native_mmu>)
@@ -199,7 +202,9 @@ if(UML_BUILD_TESTS)
     target_compile_options(uml_native_mmu_tests PRIVATE
         -Wall -Wextra -Werror)
     add_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
+endif()
 
+if(UML_BUILD_TESTS)
     add_executable(uml_tlb_sync_range_tests
         tests/tlb_sync_range_tests.cpp)
     target_include_directories(uml_tlb_sync_range_tests PRIVATE
@@ -232,6 +237,8 @@ if(UML_BUILD_TESTS)
     add_executable(uml_backend_api_tests tests/backend_api_tests.cpp)
     target_link_libraries(uml_backend_api_tests PRIVATE UML::Backend)
     target_compile_features(uml_backend_api_tests PRIVATE cxx_std_20)
+    target_compile_definitions(uml_backend_api_tests PRIVATE
+        UML_BACKEND_TEST_HAS_SLIRP=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>)
     target_compile_options(uml_backend_api_tests PRIVATE
         -Wall -Wextra -Werror)
     add_test(NAME backend-native-entry-api COMMAND uml_backend_api_tests)

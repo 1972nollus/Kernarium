@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_static_mmu.h"
+#include "uml_darwin_guest.h"
 
 #include <array>
 #include <atomic>
@@ -29,7 +30,7 @@
 namespace uml::runtime {
 namespace {
 
-constexpr std::uint64_t page_size = 4096;
+constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 constexpr std::uint64_t address_limit = 0x6000'0000'0000ULL;
 
 struct BackingKey final {
@@ -49,7 +50,7 @@ struct BackingKeyHash final {
 };
 
 /* One non-executable shared mapping covers the complete UML physical-memory
- * file.  Besides avoiding a host mapping per 4 KiB guest page, this is the
+ * file.  Besides avoiding a host mapping per guest page, this is the
  * iSH-style MMU invariant that lets a TLB hit become pointer arithmetic.
  */
 class MappedBacking final {
@@ -617,8 +618,8 @@ public:
 		 * but neither the mapping table nor generation metadata is structurally
 		 * changed.  Let unrelated page copies and translations proceed in
 		 * parallel.  Copying only the bytes changed by uaccess is essential:
-		 * a sibling guest thread may update another byte in the same 4 KiB page
-		 * while the kernel operates through its Darwin 16 KiB physical shadow.
+		 * a sibling guest thread may update another byte in the same guest page
+		 * while the 4 KiB fallback operates through a Darwin 16 KiB shadow.
 		 */
 		const auto generation = generation_for(
 			page, active_thread_generation().generation);

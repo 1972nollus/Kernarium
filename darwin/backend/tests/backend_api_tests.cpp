@@ -2,6 +2,7 @@
 #include "uml/backend.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -16,7 +17,9 @@ extern "C" int darwin_uml_net_write(const void *buffer, unsigned long length);
 namespace {
 
 bool native_arguments_valid;
+#if UML_BACKEND_TEST_HAS_SLIRP
 bool dhcp_argument_present;
+#endif
 
 struct NetworkState final {
 	int writes{};
@@ -67,6 +70,7 @@ int network_write(void *context, const void *, size_t)
 	return 0;
 }
 
+#if UML_BACKEND_TEST_HAS_SLIRP
 int native_dhcp_kernel(int argc, char *const argv[], char *const[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
@@ -76,6 +80,7 @@ int native_dhcp_kernel(int argc, char *const argv[], char *const[])
 		});
 	return 0;
 }
+#endif
 
 void test_native_entry()
 {
@@ -123,6 +128,7 @@ void test_native_entry()
 		"network callback was not invoked exactly once");
 }
 
+#if UML_BACKEND_TEST_HAS_SLIRP
 void test_default_network_requests_dhcp()
 {
 	const uml_backend_config config{
@@ -145,6 +151,7 @@ void test_default_network_requests_dhcp()
 	require(dhcp_argument_present,
 		"default user network did not request kernel DHCP");
 }
+#endif
 
 } // namespace
 
@@ -152,9 +159,15 @@ int main()
 {
 	try {
 		test_native_entry();
+#if UML_BACKEND_TEST_HAS_SLIRP
 		test_default_network_requests_dhcp();
+#endif
 		return EXIT_SUCCESS;
+	} catch (const std::exception &error) {
+		std::fprintf(stderr, "backend API test failed: %s\n", error.what());
+		return EXIT_FAILURE;
 	} catch (...) {
+		std::fprintf(stderr, "backend API test failed: unknown exception\n");
 		return EXIT_FAILURE;
 	}
 }

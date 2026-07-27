@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_mte_memory_test_support.hpp"
+#include "uml_darwin_guest.h"
 
 #include <array>
 #include <cstdint>
@@ -204,19 +205,23 @@ void allocation_tags_follow_shared_backing_aliases()
 	std::memcpy(path.data(), pattern, sizeof(pattern));
 	const int fd = mkstemp(path.data());
 	mte::test::require(fd >= 0 && unlink(path.data()) == 0 &&
-		ftruncate(fd, 2 * 4096) == 0);
+		ftruncate(fd, 2 * DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 	mte::test::require(darwin_uml_static_vm_map_generation(first_generation,
-		reinterpret_cast<void *>(first), fd, 0, 2 * 4096,
+		reinterpret_cast<void *>(first), fd, 0,
+		2 * DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	mte::test::require(darwin_uml_static_vm_map_generation(second_generation,
-		reinterpret_cast<void *>(second), fd, 0, 2 * 4096,
+		reinterpret_cast<void *>(second), fd, 0,
+		2 * DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	mte::static_store_tag(first_generation, first + 0x2f, 13);
 	mte::test::require(mte::static_load_tag(
 		second_generation, second + 0x20) == 13);
-	mte::static_store_tag(second_generation, second + 4096 + 0x31, 6);
+	mte::static_store_tag(second_generation,
+		second + DARWIN_UML_GUEST_PAGE_SIZE + 0x31, 6);
 	mte::test::require(mte::static_load_tag(
-		first_generation, first + 4096 + 0x3f) == 6);
+		first_generation,
+		first + DARWIN_UML_GUEST_PAGE_SIZE + 0x3f) == 6);
 	mte::test::require(darwin_uml_static_vm_destroy(first_generation) == 0 &&
 		darwin_uml_static_vm_destroy(second_generation) == 0 && close(fd) == 0);
 }

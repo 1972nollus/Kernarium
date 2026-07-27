@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "uml_darwin_guest.h"
 
 #include <array>
 #include <bit>
@@ -1049,12 +1050,13 @@ int main()
 	const int fd = mkstemp(path);
 	require(fd >= 0);
 	require(unlink(path) == 0);
-	require(ftruncate(fd, 8192) == 0);
+	require(ftruncate(fd, 2 * DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 	constexpr std::uint64_t guest_page = 0x1'0000;
 	constexpr unsigned long generation = 19;
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(guest_page), fd,
-		0, 4096, PROT_READ | PROT_WRITE, 0, 1) == 0);
+		0, DARWIN_UML_GUEST_PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	std::array<std::byte, 64> structure_bytes{};
 	for (std::size_t index = 0; index < structure_bytes.size(); ++index)
 		structure_bytes[index] = static_cast<std::byte>(index * 7 + 3);
@@ -1258,10 +1260,11 @@ int main()
 	const auto cross_page_program = gadgets::Builder{}.build(
 		0x8400, cross_page_instructions);
 	require(cross_page_program.complete);
-	constexpr std::uint64_t crossing_address = guest_page + 4091;
+	constexpr auto crossing_offset = DARWIN_UML_GUEST_PAGE_SIZE - 5;
+	constexpr std::uint64_t crossing_address = guest_page + crossing_offset;
 	const std::uint64_t crossing_value = 0x8877'6655'4433'2211ULL;
 	std::array<std::byte, 8> zero_bytes{};
-	require(pwrite(fd, zero_bytes.data(), zero_bytes.size(), 4091) ==
+	require(pwrite(fd, zero_bytes.data(), zero_bytes.size(), crossing_offset) ==
 		static_cast<ssize_t>(zero_bytes.size()));
 	cpu = {};
 	cpu.registers[0] = crossing_value;
@@ -1272,11 +1275,14 @@ int main()
 		gadgets::Event::memory_fault);
 	require(cpu.pc == 0x8400);
 	std::array<std::byte, 8> crossing_bytes{};
-	require(pread(fd, crossing_bytes.data(), crossing_bytes.size(), 4091) ==
+	require(pread(fd, crossing_bytes.data(), crossing_bytes.size(),
+		crossing_offset) ==
 		static_cast<ssize_t>(crossing_bytes.size()));
 	require(crossing_bytes == zero_bytes);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(guest_page + 4096), fd, 4096, 4096,
+		reinterpret_cast<void *>(
+			guest_page + DARWIN_UML_GUEST_PAGE_SIZE),
+		fd, DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	cpu = {};
 	cpu.registers[0] = crossing_value;
@@ -1287,7 +1293,8 @@ int main()
 		gadgets::Event::system_call);
 	require(cpu.registers[5] == crossing_value);
 	std::uint64_t crossing_stored = 0;
-	require(pread(fd, &crossing_stored, sizeof(crossing_stored), 4091) ==
+	require(pread(fd, &crossing_stored, sizeof(crossing_stored),
+		crossing_offset) ==
 		static_cast<ssize_t>(sizeof(crossing_stored)));
 	require(crossing_stored == crossing_value);
 
@@ -1339,19 +1346,29 @@ int main()
 	require(stored_pair[0] == 0x0123'4567'89ab'cdefULL);
 	require(stored_pair[1] == 0xfedc'ba98'7654'3210ULL);
 
-	/* Guest pages 16 and 8209 hash to the same 8,192-entry TLB slot. Loading
-	 * A, then B, then A again must miss on the final load instead of reusing
-	 * B's host-base field under A's stale read tag.
+	/* Select two guest pages in the same build-specific set. Loading A, then
+	 * B, then A again must preserve distinct host bases in both the two-way
+	 * direct 16 KiB TLB and the one-way folded 4 KiB fallback.
 	 */
-	constexpr std::uint64_t collision_page = 0x2011'000;
+	constexpr std::uint64_t collision_page =
+		guest_page + (
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+			gadgets::tlb_set_count
+#else
+			gadgets::tlb_set_count + 1
+#endif
+		) *
+			DARWIN_UML_GUEST_PAGE_SIZE;
 	const std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	const std::uint64_t collision_value = 0xaaaa'bbbb'cccc'ddddULL;
 	require(pwrite(fd, &first_value, sizeof(first_value), 0) ==
 		static_cast<ssize_t>(sizeof(first_value)));
-	require(pwrite(fd, &collision_value, sizeof(collision_value), 4096) ==
+	require(pwrite(fd, &collision_value, sizeof(collision_value),
+		DARWIN_UML_GUEST_PAGE_SIZE) ==
 		static_cast<ssize_t>(sizeof(collision_value)));
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(collision_page), fd, 4096, 4096,
+		reinterpret_cast<void *>(collision_page), fd,
+		DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	const std::array collision_instructions{
 		0xf940'0040U, // ldr x0, [x2]
@@ -1372,6 +1389,14 @@ int main()
 	require(cpu.registers[0] == first_value);
 	require(cpu.registers[1] == collision_value);
 	require(cpu.registers[4] == first_value);
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	constexpr auto collision_set =
+		((guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT) &
+			(gadgets::tlb_set_count - 1)) *
+		gadgets::tlb_way_count;
+	require(tlb->entries[collision_set].read_page == guest_page);
+	require(tlb->entries[collision_set + 1].read_page == collision_page);
+#endif
 
 	/* Read and write translations have independent host bases.  Preserve a
 	 * read translation when a write to a colliding page fills the other half
@@ -1386,7 +1411,17 @@ int main()
 		collision_page, gadgets::Access::write);
 	require(read_translation != nullptr);
 	require(write_translation != nullptr);
-	constexpr std::size_t collision_slot = 16;
+	constexpr auto guest_page_number =
+		guest_page >> DARWIN_UML_GUEST_PAGE_SHIFT;
+	constexpr std::size_t collision_slot =
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+		(guest_page_number & (gadgets::tlb_set_count - 1)) *
+		gadgets::tlb_way_count;
+#else
+		(guest_page_number ^
+			(guest_page_number >> gadgets::tlb_index_bits)) &
+		(gadgets::tlb_set_count - 1);
+#endif
 	require(independent_tlb->entries[collision_slot].read_page == guest_page);
 	require(independent_tlb->entries[collision_slot].write_page ==
 		collision_page);
@@ -1401,7 +1436,8 @@ int main()
 	 */
 	constexpr std::uint64_t cached_page = 0x3000'000;
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(cached_page), fd, 0, 4096,
+		reinterpret_cast<void *>(cached_page), fd, 0,
+		DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	tlb->prepare(generation,
 		darwin_uml_static_vm_changes(generation));
@@ -1409,7 +1445,8 @@ int main()
 	require(cached_first != nullptr);
 	require(*reinterpret_cast<std::uint64_t *>(cached_first) == first_value);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(cached_page), fd, 4096, 4096,
+		reinterpret_cast<void *>(cached_page), fd,
+		DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	require(tlb->translate(cached_page, gadgets::Access::read) == cached_first);
 	tlb->prepare(generation,

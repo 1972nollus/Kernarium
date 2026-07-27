@@ -29,6 +29,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument("--memory", default="1024M")
+    parser.add_argument("--boot-timeout", type=int, default=180)
+    parser.add_argument(
+        "--systemd-overlay",
+        action="store_true",
+        help="boot rootfs.img through a read-only-lower tmpfs overlay",
+    )
     return parser.parse_args()
 
 
@@ -85,17 +92,18 @@ def main() -> int:
     guest = Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
-        "1024M",
+        arguments.memory,
         "tmpfs",
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
         ),
+        systemd_overlay=arguments.systemd_overlay,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
     try:
-        guest.boot_and_login()
+        guest.boot_and_login(arguments.boot_timeout)
         upload(guest, arguments.binary)
         command = workload_command(arguments.workers)
         for repetition in range(arguments.repetitions):
@@ -110,7 +118,8 @@ def main() -> int:
                     f"({result.return_code})\n{result.output}"
                 )
             output_lines = result.output.splitlines()
-            if output_lines != ["OK"] * arguments.workers:
+            success_lines = [line for line in output_lines if line == "OK"]
+            if success_lines != ["OK"] * arguments.workers:
                 raise RuntimeError(
                     f"repetition {repetition + 1} returned "
                     f"unexpected output {result.output!r}"

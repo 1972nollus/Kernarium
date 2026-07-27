@@ -125,8 +125,13 @@ arm64::MemoryFault StaticGuestMemory::last_fault() const noexcept
 constexpr std::size_t StaticGuestMemory::index_for(
 	std::uint64_t address) noexcept
 {
-	const auto page = address >> 12;
+	const auto page = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	return static_cast<std::size_t>(
+		(page ^ (page >> tlb_index_bits)) & (tlb_size - 1));
+#else
 	return static_cast<std::size_t>((page ^ (page >> 13)) & (tlb_size - 1));
+#endif
 }
 
 constexpr std::size_t StaticGuestMemory::access_index(

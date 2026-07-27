@@ -37,7 +37,9 @@ public:
 
 private:
 	static constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-	static constexpr std::size_t tlb_size = 1U << 13;
+	static constexpr std::size_t tlb_index_bits =
+		DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 13U;
+	static constexpr std::size_t tlb_size = 1U << tlb_index_bits;
 
 	struct TlbEntry final {
 		std::uint64_t page{1};
