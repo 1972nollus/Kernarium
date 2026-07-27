@@ -8,6 +8,8 @@ import argparse
 import base64
 import os
 from pathlib import Path
+import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -26,30 +28,30 @@ EXTENSION_MANIFEST = """{
   "version": "1.0",
   "content_scripts": [{
     "matches": ["https://webglsamples.org/aquarium/*"],
-    "js": ["prefer-webgl1.js"],
-    "run_at": "document_start",
-    "world": "MAIN"
-  }, {
-    "matches": ["https://webglsamples.org/aquarium/*"],
     "js": ["verify.js"],
     "run_at": "document_idle"
   }]
 }
 """
-# Aquarium enables its VR path by default and probes WebGL2 first. ANGLE can
-# only expose accelerated WebGL1 on this Virgl GLES backend, so keep that
-# unsupported probe from invalidating Chromium's shared GPU channel.
-PREFER_WEBGL1_SCRIPT = """(() => {
-  const getContext = HTMLCanvasElement.prototype.getContext;
-  HTMLCanvasElement.prototype.getContext = function(type, ...attributes) {
-    if (type === "webgl2") {
-      return null;
-    }
-    return getContext.call(this, type, ...attributes);
-  };
-})();
-"""
 EXTENSION_SCRIPT = """(() => {
+  const rasterMarker = document.createElement("div");
+  rasterMarker.textContent = "RASTER OK";
+  rasterMarker.style.cssText = [
+    "position:fixed",
+    "right:8px",
+    "top:8px",
+    "width:220px",
+    "height:64px",
+    "z-index:2147483647",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "background:#ff00ff",
+    "color:#00ff00",
+    "font:32px monospace"
+  ].join(";");
+  document.documentElement.appendChild(rasterMarker);
+
   let attempts = 0;
   const timer = setInterval(() => {
     attempts += 1;
@@ -68,7 +70,8 @@ EXTENSION_SCRIPT = """(() => {
       }
       return;
     }
-    const gl = document.getElementById("canvas")?.getContext("webgl");
+    const canvas = document.getElementById("canvas");
+    const gl = canvas?.getContext("webgl2") || canvas?.getContext("webgl");
     if (!gl) {
       console.error("UML_AQUARIUM_ERROR|WebGL context unavailable");
       clearInterval(timer);
@@ -116,10 +119,10 @@ exec runuser -u plasma -- env \
     XDG_RUNTIME_DIR="$runtime" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
     chromium \
+    @CHROMIUM_EXTRA_FLAGS@ \
     --no-first-run \
     --disable-crash-reporter \
     --enable-logging=stderr \
-    --v=1 \
     --start-maximized \
     --user-data-dir=/tmp/chromium-aquarium \
     --disable-extensions-except=/var/tmp/uml-aquarium-extension \
@@ -141,14 +144,6 @@ StandardError=journal+console
 [Install]
 WantedBy=graphical.target
 """
-SECCOMP_TEST_CONFIG = """# Test Chromium without its UML seccomp workaround.
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ozone-platform=x11"
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --use-gl=angle --use-angle=gles-egl"
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ignore-gpu-blocklist --enable-webgl"
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --disable-features=FallbackToSWIfGLES3NotSupported,Vulkan,WebGPUService,WebGPUCompatibilityMode"
-"""
-
-
 def unused_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -196,6 +191,27 @@ def stop_guest(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=15)
 
 
+def raster_marker_visible(capture_path: Path) -> bool:
+    data = capture_path.read_bytes()
+    header = re.match(br"P6\s+(\d+)\s+(\d+)\s+255\s", data)
+    if not header:
+        raise RuntimeError("VNC capture is not an 8-bit binary PPM image")
+    width, height = (int(value) for value in header.groups())
+    pixels = memoryview(data)[header.end() :]
+    if len(pixels) != width * height * 3:
+        raise RuntimeError("VNC capture has an invalid PPM payload size")
+
+    green_pixels = 0
+    for y in range(80, min(height, 180)):
+        row = y * width * 3
+        for x in range(max(0, width - 280), width):
+            offset = row + x * 3
+            red, green, blue = pixels[offset : offset + 3]
+            if red <= 80 and green >= 180 and blue <= 80:
+                green_pixels += 1
+    return green_pixels >= 50
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -209,9 +225,15 @@ def main() -> int:
         default=REPO_ROOT / ".build/chromium-webgl",
     )
     parser.add_argument(
-        "--test-kernel-seccomp",
+        "--chromium-flag",
+        action="append",
+        default=[],
+        help="append a Chromium flag for diagnostic comparison",
+    )
+    parser.add_argument(
+        "--ignore-image-chromium-config",
         action="store_true",
-        help="replace the image's Chromium flags without disabling seccomp",
+        help="remove the image's Chromium compatibility config in the overlay",
     )
     parser.add_argument("--timeout", type=float, default=240)
     options = parser.parse_args()
@@ -225,13 +247,8 @@ def main() -> int:
     separator = command.index("--")
     overlay_commands = (
         *(
-            (
-                install_text(
-                    "/etc/chromium.d/uml-virgl",
-                    SECCOMP_TEST_CONFIG,
-                ),
-            )
-            if options.test_kernel_seccomp
+            ("rm -f /etc/chromium.d/uml-virgl",)
+            if options.ignore_image_chromium_config
             else ()
         ),
         install_text(
@@ -243,12 +260,11 @@ def main() -> int:
             EXTENSION_SCRIPT,
         ),
         install_text(
-            "/var/tmp/uml-aquarium-extension/prefer-webgl1.js",
-            PREFER_WEBGL1_SCRIPT,
-        ),
-        install_text(
             "/usr/local/libexec/uml-chromium-aquarium",
-            LAUNCHER,
+            LAUNCHER.replace(
+                "@CHROMIUM_EXTRA_FLAGS@",
+                " ".join(shlex.quote(flag) for flag in options.chromium_flag),
+            ),
             "0755",
         ),
         install_text(
@@ -311,6 +327,10 @@ def main() -> int:
                 check=True,
                 timeout=120,
             )
+            if not raster_marker_visible(capture_path):
+                raise RuntimeError(
+                    "Chromium rendered WebGL but lost the 2D raster text marker"
+                )
             print(renderer_line)
             print(f"Aquarium capture: {capture_path}")
         finally:
