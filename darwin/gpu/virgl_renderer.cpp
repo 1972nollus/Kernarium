@@ -3,6 +3,7 @@
 #include "virgl_renderer.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cstring>
@@ -17,6 +18,12 @@
 extern "C" {
 #include <virgl_hw.h>
 #include <virglrenderer.h>
+
+typedef void (*epoxy_resolver_stub_t)(void);
+typedef epoxy_resolver_stub_t
+    (*epoxy_resolver_failure_handler_t)(const char* name);
+epoxy_resolver_failure_handler_t epoxy_set_resolver_failure_handler(
+    epoxy_resolver_failure_handler_t handler);
 }
 
 namespace uml::gpu {
@@ -27,10 +34,37 @@ namespace {
 // in-process emulator indefinitely.
 constexpr auto maximumFenceWait = std::chrono::seconds(60);
 
+std::atomic_bool missingGlEntryPoint;
+
+void unavailableGlEntryPoint()
+{
+}
+
+epoxy_resolver_stub_t handleMissingGlEntryPoint(const char* name)
+{
+    missingGlEntryPoint.store(true, std::memory_order_release);
+    std::cerr << "Virgl rejected unavailable host GL entry point: "
+              << (name == nullptr ? "(unknown)" : name) << '\n';
+    /*
+     * Libepoxy normally aborts here. Its supported failure-handler contract
+     * allows a fallback stub; Virgl's public operation wrapper then turns the
+     * recorded resolution failure into EIO for the guest context.
+     */
+    return &unavailableGlEntryPoint;
+}
+
+int checkGlDispatchResult(int result)
+{
+    if (!missingGlEntryPoint.exchange(false, std::memory_order_acq_rel))
+        return result;
+    return result == 0 ? EIO : result;
+}
+
 } // namespace
 
 VirglRenderer::VirglRenderer()
 {
+    epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
     // virgl_renderer_init() retains this pointer until cleanup rather than
     // copying the callback table. Keep it alive for the process lifetime so
     // deferred fence callbacks cannot refer to constructor stack storage.
@@ -50,10 +84,11 @@ VirglRenderer::VirglRenderer()
     // threaded path relies on Linux eventfd.
     constexpr int rendererFlags = 0;
     const int result = virgl_renderer_init(this, rendererFlags, &callbacks);
-    if (result != 0) {
+    const int checkedResult = checkGlDispatchResult(result);
+    if (checkedResult != 0) {
         throw std::runtime_error(
             "failed to initialize in-process Virgl renderer: " +
-            std::to_string(result));
+            std::to_string(checkedResult));
     }
 }
 
@@ -73,6 +108,10 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
     result.data.resize(maximumSize);
     virgl_renderer_fill_caps(
         capsetId, result.maximumVersion, result.data.data());
+    if (checkGlDispatchResult(0) != 0) {
+        throw std::runtime_error(
+            "Virgl capset requested an unavailable host GL entry point");
+    }
     /*
      * Capability discovery intentionally probes optional GL entry points and
      * formats. Apple's core driver reports GL_INVALID_ENUM for some of those
@@ -96,11 +135,12 @@ int VirglRenderer::createContext(
 {
     if (debugName.size() > std::numeric_limits<std::uint32_t>::max())
         return EINVAL;
-    const int result = virgl_renderer_context_create_with_flags(
-        contextId,
-        flags,
-        static_cast<std::uint32_t>(debugName.size()),
-        debugName.data());
+    const int result = checkGlDispatchResult(
+        virgl_renderer_context_create_with_flags(
+            contextId,
+            flags,
+            static_cast<std::uint32_t>(debugName.size()),
+            debugName.data()));
     if (result != 0)
         return result;
 
@@ -150,10 +190,11 @@ int VirglRenderer::submit(
 
     // virglrenderer accepts an immutable command but retains a legacy void*
     // API. The implementation does not modify this storage.
-    return virgl_renderer_submit_cmd(
-        const_cast<std::uint8_t*>(command.data()),
-        static_cast<int>(contextId),
-        static_cast<int>(command.size() / commandWordSize));
+    return checkGlDispatchResult(
+        virgl_renderer_submit_cmd(
+            const_cast<std::uint8_t*>(command.data()),
+            static_cast<int>(contextId),
+            static_cast<int>(command.size() / commandWordSize)));
 }
 
 int VirglRenderer::createResource3d(const Resource3d& resource)
@@ -171,7 +212,8 @@ int VirglRenderer::createResource3d(const Resource3d& resource)
         .nr_samples = resource.sampleCount,
         .flags = resource.flags,
     };
-    return virgl_renderer_resource_create(&arguments, nullptr, 0);
+    return checkGlDispatchResult(
+        virgl_renderer_resource_create(&arguments, nullptr, 0));
 }
 
 int VirglRenderer::transferResource(
@@ -193,27 +235,29 @@ int VirglRenderer::transferResource(
         .d = box.depth,
     };
     if (toHost) {
-        return virgl_renderer_transfer_write_iov(
+        return checkGlDispatchResult(
+            virgl_renderer_transfer_write_iov(
+                resourceId,
+                contextId,
+                static_cast<int>(level),
+                stride,
+                layerStride,
+                &transferBox,
+                offset,
+                nullptr,
+                0));
+    }
+    return checkGlDispatchResult(
+        virgl_renderer_transfer_read_iov(
             resourceId,
             contextId,
-            static_cast<int>(level),
+            level,
             stride,
             layerStride,
             &transferBox,
             offset,
             nullptr,
-            0);
-    }
-    return virgl_renderer_transfer_read_iov(
-        resourceId,
-        contextId,
-        level,
-        stride,
-        layerStride,
-        &transferBox,
-        offset,
-        nullptr,
-        0);
+            0));
 }
 
 void VirglRenderer::readResourceRectangle(
@@ -261,6 +305,7 @@ int VirglRenderer::createFenceAndWait(
             contextId, mergeableFence, ringIndex, fenceId);
         key = contextRingKey(contextId, ringIndex);
     }
+    result = checkGlDispatchResult(result);
     if (result != 0)
         return result;
 
@@ -290,6 +335,8 @@ int VirglRenderer::createFenceAndWait(
             virgl_renderer_poll();
         else
             virgl_renderer_context_poll(contextId);
+        if (checkGlDispatchResult(0) != 0)
+            return EIO;
         lock.lock();
         fenceCondition_.wait_until(
             lock, std::min(deadline, now + pollingInterval));
