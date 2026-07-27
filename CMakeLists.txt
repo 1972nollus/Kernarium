@@ -63,6 +63,9 @@ if(UML_BUILD_TESTS)
             ${PROJECT_SOURCE_DIR}/tests/gpu/test_run_gpu_guest.py)
     set_tests_properties(gpu-guest-rootfs-safety PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/gpu)
+    add_test(NAME kde-vnc-launcher-options
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/gpu/test_boot_kde_vnc.py)
 endif()
 
 add_subdirectory(darwin/backend)

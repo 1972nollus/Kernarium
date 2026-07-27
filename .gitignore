@@ -25,3 +25,5 @@ __pycache__/
 *.pyc
 /tmp/
 *.pdf
+/external/*
+!/external/.gitkeep

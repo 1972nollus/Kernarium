@@ -86,6 +86,7 @@ struct HostGpuOptions {
 	bool enabled {};
 	std::string vnc_bind_address {"127.0.0.1"};
 	std::uint16_t vnc_port {5900};
+	std::string vnc_password;
 	std::uint32_t width {1280};
 	std::uint32_t height {720};
 };
@@ -131,6 +132,16 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 					"invalid host option: " +
 					std::string(argument));
 			prepared.gpu.vnc_bind_address = address;
+			prepared.gpu.enabled = true;
+		} else if (argument.starts_with("--gpu-vnc-password=")) {
+			const auto password =
+				argument.substr(std::string_view{
+					"--gpu-vnc-password="}.size());
+			if (password.empty() || password.size() > 8)
+				throw std::invalid_argument(
+					"VNC password must contain between 1 and "
+					"8 bytes");
+			prepared.gpu.vnc_password = password;
 			prepared.gpu.enabled = true;
 		} else if (parse_host_integer(
 				   argument, "--gpu-vnc-port=",
@@ -271,6 +282,8 @@ int main(int argc, char *argv[], char *envp[])
 						.vncBindAddress =
 							prepared.gpu.vnc_bind_address,
 						.vncPort = prepared.gpu.vnc_port,
+						.vncPassword =
+							prepared.gpu.vnc_password,
 						.width = prepared.gpu.width,
 						.height = prepared.gpu.height,
 					});

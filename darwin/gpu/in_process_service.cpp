@@ -158,6 +158,7 @@ private:
                 {},
                 options_.vncBindAddress,
                 options_.vncPort,
+                options_.vncPassword,
                 options_.width,
                 options_.height,
                 false,

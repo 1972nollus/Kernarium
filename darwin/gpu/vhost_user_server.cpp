@@ -129,6 +129,7 @@ VhostUserServer::VhostUserServer(
     std::filesystem::path socketPath,
     std::string vncBindAddress,
     std::uint16_t vncPort,
+    std::string vncPassword,
     std::uint32_t width,
     std::uint32_t height,
     bool selfTestPattern,
@@ -139,6 +140,7 @@ VhostUserServer::VhostUserServer(
     , display_(
           vncBindAddress_,
           vncPort,
+          std::move(vncPassword),
           width,
           height,
           std::move(inputSink))

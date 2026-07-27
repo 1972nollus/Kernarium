@@ -89,12 +89,14 @@ void copyRectangleWithVImage(
 VncDisplay::VncDisplay(
     const std::string& bindAddress,
     std::uint16_t port,
+    std::string password,
     std::uint32_t width,
     std::uint32_t height,
     VncInputSink inputSink)
     : width_(width)
     , height_(height)
     , inputSink_(std::move(inputSink))
+    , password_(std::move(password))
 {
     if (width == 0 || height == 0 ||
         width > std::numeric_limits<std::size_t>::max() / height / 4U) {
@@ -154,6 +156,17 @@ VncDisplay::VncDisplay(
     screen_->serverFormat.redShift = 16;
     screen_->serverFormat.greenShift = 8;
     screen_->serverFormat.blueShift = 0;
+    if (!password_.empty()) {
+        if (password_.size() > 8) {
+            rfbScreenCleanup(screen_);
+            screen_ = nullptr;
+            throw std::invalid_argument(
+                "VNC password must contain at most 8 bytes");
+        }
+        passwordList_[0] = password_.data();
+        screen_->authPasswdData = passwordList_.data();
+        screen_->passwordCheck = rfbCheckPasswordByList;
+    }
     rfbInitServer(screen_);
     if (!rfbIsActive(screen_)) {
         rfbScreenCleanup(screen_);

@@ -10,6 +10,7 @@ namespace uml::gpu {
 struct InProcessGpuOptions {
     std::string vncBindAddress {"127.0.0.1"};
     std::uint16_t vncPort {5900};
+    std::string vncPassword;
     std::uint32_t width {1280};
     std::uint32_t height {720};
 };

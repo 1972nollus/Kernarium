@@ -17,10 +17,16 @@ extern "C" {
 namespace {
 
 std::uint64_t receivedUpdates;
+std::string configuredPassword;
 
 void framebufferUpdate(rfbClient*, int, int, int, int)
 {
     ++receivedUpdates;
+}
+
+char* getPassword(rfbClient*)
+{
+    return ::strdup(configuredPassword.c_str());
 }
 
 void processOneMessage(rfbClient* client)
@@ -95,24 +101,38 @@ void writePpm(const rfbClient& client, const std::string& path)
 
 int main(int argumentCount, char** arguments)
 {
+    int argumentIndex = 1;
+    if (argumentCount >= 3 &&
+        std::strcmp(arguments[argumentIndex], "--password") == 0) {
+        configuredPassword = arguments[argumentIndex + 1];
+        argumentIndex += 2;
+    }
+    const int remainingArguments = argumentCount - argumentIndex;
     const bool captureMode =
-        argumentCount == 4 && std::strcmp(arguments[1], "--capture") == 0;
+        remainingArguments == 3 &&
+        std::strcmp(arguments[argumentIndex], "--capture") == 0;
     const bool inputMode =
-        argumentCount == 3 && std::strcmp(arguments[1], "--input") == 0;
-    if (argumentCount != 2 && !captureMode && !inputMode) {
+        remainingArguments == 2 &&
+        std::strcmp(arguments[argumentIndex], "--input") == 0;
+    if (remainingArguments != 1 && !captureMode && !inputMode) {
         std::cerr << "usage: " << arguments[0]
-                  << " PORT\n       " << arguments[0]
-                  << " --capture OUTPUT.ppm PORT\n       " << arguments[0]
-                  << " --input PORT\n";
+                  << " [--password PASS] PORT\n       " << arguments[0]
+                  << " [--password PASS] --capture OUTPUT.ppm PORT\n       "
+                  << arguments[0]
+                  << " [--password PASS] --input PORT\n";
         return 2;
     }
     try {
-        const std::string capturePath = captureMode ? arguments[2] : "";
+        const std::string capturePath =
+            captureMode ? arguments[argumentIndex + 1] : "";
         const int port =
-            std::stoi(arguments[captureMode ? 3 : inputMode ? 2 : 1]);
+            std::stoi(arguments[
+                argumentIndex + (captureMode ? 2 : inputMode ? 1 : 0)]);
         rfbClient* client = rfbGetClient(8, 3, 4);
         if (client == nullptr)
             throw std::runtime_error("rfbGetClient failed");
+        if (!configuredPassword.empty())
+            client->GetPassword = getPassword;
         client->serverHost = ::strdup("127.0.0.1");
         client->serverPort = port;
         client->GotFrameBufferUpdate = framebufferUpdate;

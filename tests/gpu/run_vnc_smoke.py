@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--client", type=Path, required=True)
     options = parser.parse_args()
     port = unused_port()
+    password = "umltest"
 
     with tempfile.TemporaryDirectory(prefix="uml-gpu-vnc-") as directory:
         vhost_socket = Path(directory) / "gpu.sock"
@@ -31,10 +32,10 @@ def main() -> int:
                 str(options.server),
                 "--socket",
                 str(vhost_socket),
-                "--vnc-bind",
-                "0.0.0.0",
                 "--vnc-port",
                 str(port),
+                "--vnc-password",
+                password,
                 "--width",
                 "64",
                 "--height",
@@ -57,8 +58,28 @@ def main() -> int:
             else:
                 raise RuntimeError("VNC server did not become ready")
 
+            rejected = subprocess.run(
+                [
+                    str(options.client),
+                    "--password",
+                    "wrong",
+                    str(port),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=10,
+            )
+            if rejected.returncode == 0:
+                raise RuntimeError("VNC server accepted an incorrect password")
+
             subprocess.run(
-                [str(options.client), str(port)],
+                [
+                    str(options.client),
+                    "--password",
+                    password,
+                    str(port),
+                ],
                 check=True,
                 timeout=10,
             )

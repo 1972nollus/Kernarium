@@ -4,6 +4,7 @@
 #include "protocol.hpp"
 #include "vnc_input.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -22,6 +23,7 @@ public:
     VncDisplay(
         const std::string& bindAddress,
         std::uint16_t port,
+        std::string password,
         std::uint32_t width,
         std::uint32_t height,
         VncInputSink inputSink = {});
@@ -64,6 +66,8 @@ private:
     std::uint32_t height_;
     VncInputSink inputSink_;
     std::vector<std::uint8_t> framebuffer_;
+    std::string password_;
+    std::array<char*, 2> passwordList_ {};
     rfbScreenInfoPtr screen_ {};
     std::mutex framebufferMutex_;
     std::atomic_bool running_ {true};

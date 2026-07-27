@@ -40,6 +40,7 @@ void usage(const char* executable)
         << "  --socket PATH         vhost-user Unix socket (required)\n"
         << "  --vnc-bind ADDRESS    VNC IPv4 bind address (default: 127.0.0.1)\n"
         << "  --vnc-port PORT       VNC port (default: 5900)\n"
+        << "  --vnc-password PASS   require a VNC password (1-8 bytes)\n"
         << "  --width PIXELS        scanout width (default: 1280)\n"
         << "  --height PIXELS       scanout height (default: 720)\n"
         << "  --self-test-pattern   show deterministic VNC test pixels\n";
@@ -53,6 +54,7 @@ int main(int argumentCount, char** arguments)
         std::filesystem::path socketPath;
         std::string vncBindAddress = "127.0.0.1";
         std::uint16_t vncPort = 5900;
+        std::string vncPassword;
         std::uint32_t width = 1280;
         std::uint32_t height = 720;
         bool selfTestPattern = false;
@@ -71,6 +73,12 @@ int main(int argumentCount, char** arguments)
                 vncBindAddress = value(argument);
             else if (argument == "--vnc-port")
                 vncPort = parseInteger<std::uint16_t>(value(argument), argument);
+            else if (argument == "--vnc-password") {
+                vncPassword = value(argument);
+                if (vncPassword.empty() || vncPassword.size() > 8)
+                    throw std::invalid_argument(
+                        "VNC password must contain between 1 and 8 bytes");
+            }
             else if (argument == "--width")
                 width = parseInteger<std::uint32_t>(value(argument), argument);
             else if (argument == "--height")
@@ -96,6 +104,7 @@ int main(int argumentCount, char** arguments)
             std::move(socketPath),
             std::move(vncBindAddress),
             vncPort,
+            std::move(vncPassword),
             width,
             height,
             selfTestPattern);

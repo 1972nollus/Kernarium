@@ -84,6 +84,15 @@ def port_number(value: str) -> int:
     return parsed
 
 
+def vnc_password(value: str) -> str:
+    length = len(value.encode("utf-8"))
+    if length == 0 or length > 8:
+        raise argparse.ArgumentTypeError(
+            "must contain between 1 and 8 UTF-8 bytes"
+        )
+    return value
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -94,10 +103,18 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--bind",
         type=ipv4_address,
-        default="0.0.0.0",
-        help="VNC IPv4 bind address (default: all interfaces)",
+        default="127.0.0.1",
+        help="VNC IPv4 bind address (default: 127.0.0.1)",
     )
     parser.add_argument("--port", type=port_number, default=5900)
+    parser.add_argument(
+        "--password",
+        type=vnc_password,
+        help=(
+            "enable VNC password authentication (the VNC protocol accepts "
+            "at most 8 bytes)"
+        ),
+    )
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
     parser.add_argument("--memory", default="8G")
@@ -140,6 +157,12 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
             "--gpu",
             f"--gpu-vnc-bind={options.bind}",
             f"--gpu-vnc-port={options.port}",
+        )
+    )
+    if options.password is not None:
+        command.append(f"--gpu-vnc-password={options.password}")
+    command.extend(
+        (
             f"--gpu-width={options.width}",
             f"--gpu-height={options.height}",
         )
@@ -149,21 +172,20 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
 
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
+    authentication = (
+        "with password authentication"
+        if options.password is not None
+        else "without authentication"
+    )
+    print(
+        f"VNC will listen {authentication} on "
+        f"{options.bind}:{options.port}.",
+        file=sys.stderr,
+    )
     if options.bind == "0.0.0.0":
         print(
-            "VNC will listen without authentication on every IPv4 interface, "
-            f"port {options.port}.",
-            file=sys.stderr,
-        )
-        print(
-            "Connect to this Mac's IPv4 address; use --bind 127.0.0.1 "
-            "for local-only access.",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "VNC will listen without authentication on "
-            f"{options.bind}:{options.port}.",
+            "The server is reachable on every IPv4 interface; use "
+            "--bind 127.0.0.1 for local-only access.",
             file=sys.stderr,
         )
     print("Press Ctrl-C in this terminal to stop the guest.", file=sys.stderr)
