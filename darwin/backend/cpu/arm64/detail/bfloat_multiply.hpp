@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_exception.hpp"
+
 #include <bit>
 #include <cstdint>
 
@@ -24,18 +26,6 @@ struct BFloatMultiplyLong final {
 		return {true, true, (instruction & 0x4000'0000U) != 0U, index};
 	}
 	return {};
-}
-
-[[nodiscard]] constexpr std::uintptr_t bfloat_multiply_long_operand(
-	std::uint32_t instruction, const BFloatMultiplyLong &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) &
-			(decoded.by_element ? 15U : 31U)) << 16) |
-		(static_cast<std::uintptr_t>(decoded.top) << 24) |
-		(static_cast<std::uintptr_t>(decoded.by_element) << 25) |
-		(static_cast<std::uintptr_t>(decoded.index) << 26);
 }
 
 namespace bfloat_multiply_detail {
@@ -95,7 +85,7 @@ namespace bfloat_multiply_detail {
 	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
 	if (suppress_exceptions)
 		__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = fpcr;
+	const std::uint64_t local_fpcr = host_fpcr(fpcr);
 	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
 	if (suppress_exceptions) {
 		const std::uint64_t clear = 0U;

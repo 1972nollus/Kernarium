@@ -1,311 +1,299 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_load_store_test_support.hpp"
+#include "arm64_base_load_store_register_test_support.hpp"
 
 #include <array>
-#include <cstring>
+#include <cstdio>
+#include <optional>
+#include <span>
+#include <vector>
 
-namespace test = arm64_load_store_test;
+namespace test = arm64_load_store_register_test;
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine_tests = uml::backend::tests;
 
 namespace {
 
-constexpr std::uint64_t pc = 0x90'0000;
-constexpr std::uint64_t base = 0x40'0000;
-constexpr std::uint64_t store_value = 0x8877'6655'4433'2211ULL;
+using test::Registers;
+using test::check_transfer;
+using test::make_initial;
+using test::matrix_raw;
 
-void check_register_transfer(const test::IntegerVariant &variant,
-	unsigned option, bool scaled, unsigned rm, std::uint64_t raw_offset)
-{
-	test::ProbeMemory memory;
-	arm64::CpuState cpu{};
-	test::fill_registers(cpu);
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[3] = store_value;
-	if (rm < 31)
-		cpu.registers[rm] = raw_offset;
-	const auto actual_base = rm == 2 ? raw_offset : base;
-	const auto actual_store = rm == 3 ? raw_offset : store_value;
-	const auto offset = rm == 31 ? 0 : test::extend_offset(raw_offset,
-		option, scaled ? variant.size_code : 0);
-	const auto expected_address = actual_base + offset;
-	const auto instruction = test::register_offset(variant.size_code,
-		variant.operation, rm, option, scaled, 2, 2, 3);
-	const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
-	test::require(result.reason == arm64::StopReason::continued);
-	test::require(cpu.pc == pc + 4);
-	test::require(memory.last_address == expected_address);
-	test::require(memory.last_size == variant.size);
-	test::require(cpu.registers[2] == actual_base);
-	if (variant.load) {
-		test::require(memory.reads == 1 && memory.writes == 0);
-		test::require(cpu.registers[3] == test::expected_integer_load(
-			variant, test::payload_value(memory, variant.size)));
-	} else {
-		test::require(memory.reads == 0 && memory.writes == 1);
-		test::require(std::memcmp(memory.written.data(), &actual_store,
-			variant.size) == 0);
-	}
+void operation_extension_shift_and_register_fields(
+    engine_tests::EngineHarness &harness) {
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true}) {
+        for (unsigned rm = 0; rm < 32; ++rm) {
+          const Registers registers{rm, 26, 27};
+          const auto raw = registers.rn == registers.rm
+                               ? 0x0010'0000U
+                               : matrix_raw(option, rm);
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers, raw,
+              test::data_base + 0x400U + rm * 16U,
+              0x1000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) | rm);
+          char name[112];
+          std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u rm=%u",
+                        static_cast<int>(variant.name.size()),
+                        variant.name.data(), option,
+                        static_cast<unsigned>(scaled), rm);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 17U + rm);
+        }
+
+        for (unsigned rn = 0; rn < 32; ++rn) {
+          const Registers registers{24, rn, 25};
+          const auto raw = registers.rn == registers.rm
+                               ? 0x0011'0000U
+                               : matrix_raw(option, rn);
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers, raw,
+              test::data_base + 0x800U + rn * 16U,
+              0x2000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) | rn);
+          char name[112];
+          std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u rn=%u",
+                        static_cast<int>(variant.name.size()),
+                        variant.name.data(), option,
+                        static_cast<unsigned>(scaled), rn);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 19U + rn);
+        }
+
+        for (unsigned rt = 0; rt < 32; ++rt) {
+          const Registers registers{22, 23, rt};
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers,
+              matrix_raw(option, rt), test::data_base + 0xc00U + rt * 16U,
+              0x3000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) | rt);
+          char name[112];
+          std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u rt=%u",
+                        static_cast<int>(variant.name.size()),
+                        variant.name.data(), option,
+                        static_cast<unsigned>(scaled), rt);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 23U + rt);
+        }
+      }
+  }
 }
 
-void exhaustive_extensions_and_fields()
-{
-	constexpr std::array raw_values{
-		std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x7fff'ffffU},
-		std::uint64_t{0x8000'0000U}, std::uint64_t{0xffff'ffffU},
-		std::uint64_t{0x7fff'ffff'ffff'ffffULL},
-		std::uint64_t{0x8000'0000'0000'0000ULL},
-		std::uint64_t{0xffff'ffff'ffff'ffffULL}};
-	for (const auto &variant : test::integer_variants)
-		for (const unsigned option : {2U, 3U, 6U, 7U})
-			for (const bool scaled : {false, true})
-				for (const auto raw : raw_values)
-					check_register_transfer(
-						variant, option, scaled, 4, raw);
-
-	for (const auto &variant : test::integer_variants)
-		for (const unsigned option : {2U, 3U, 6U, 7U})
-			for (const bool scaled : {false, true})
-				for (unsigned rm = 0; rm < 32; ++rm)
-					check_register_transfer(variant, option, scaled,
-						rm, 0x8000'0000'0000'0000ULL | rm);
+void extension_boundaries(engine_tests::EngineHarness &harness) {
+  constexpr std::array raw_values{
+      std::uint64_t{0},
+      std::uint64_t{1},
+      std::uint64_t{0x7fff'ffffU},
+      std::uint64_t{0x8000'0000U},
+      std::uint64_t{0xffff'ffffU},
+      std::uint64_t{0x7fff'ffff'ffff'ffffULL},
+      std::uint64_t{0x8000'0000'0000'0000ULL},
+      std::uint64_t{0xffff'ffff'ffff'ffffULL},
+  };
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true})
+        for (unsigned raw_index = 0; raw_index < raw_values.size();
+             ++raw_index) {
+          const Registers registers{4, 2, 3};
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers,
+              raw_values[raw_index],
+              test::data_base + 0x1000U + raw_index * 32U,
+              0x4000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) |
+                  raw_index);
+          char name[120];
+          std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u raw=%u",
+                        static_cast<int>(variant.name.size()),
+                        variant.name.data(), option,
+                        static_cast<unsigned>(scaled), raw_index);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 31U + raw_index);
+        }
+  }
 }
 
-void aliases_and_special_registers()
-{
-	for (const auto &variant : test::integer_variants) {
-		/* XZR is a zero index and Rt==31 discards loads/stores zero. */
-		test::ProbeMemory memory;
-		arm64::CpuState cpu{};
-		test::fill_registers(cpu);
-		cpu.pc = pc;
-		cpu.sp = base;
-		const auto registers = cpu.registers;
-		const auto instruction = test::register_offset(variant.size_code,
-			variant.operation, 31, 3, true, 2, 31, 31, false);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory, instruction).reason ==
-			arm64::StopReason::continued);
-		test::require(memory.last_address == base);
-		test::require(cpu.sp == base);
-		test::require(cpu.registers == registers);
-		if (!variant.load) {
-			std::array<std::byte, 8> zero{};
-			test::require(std::memcmp(memory.written.data(), zero.data(),
-				variant.size) == 0);
-		}
-
-		/* Rm==Rt: the offset is consumed before a load replaces Rt. */
-		memory = {};
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		cpu.registers[4] = 7;
-		const auto rm_rt = test::register_offset(variant.size_code,
-			variant.operation, 4, 3, false, 2, 2, 4, false);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory, rm_rt).reason ==
-			arm64::StopReason::continued);
-		test::require(memory.last_address == base + 7);
-		if (variant.load)
-			test::require(cpu.registers[4] == test::expected_integer_load(
-				variant, test::payload_value(memory, variant.size)));
-		else
-			test::require(std::memcmp(memory.written.data(), &cpu.registers[4],
-				variant.size) == 0);
-
-		/* Rn==Rt has no writeback and stores the original base value. */
-		memory = {};
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[5] = base;
-		const auto rn_rt = test::register_offset(variant.size_code,
-			variant.operation, 31, 3, false, 2, 5, 5, false);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory, rn_rt).reason ==
-			arm64::StopReason::continued);
-		if (variant.load)
-			test::require(cpu.registers[5] == test::expected_integer_load(
-				variant, test::payload_value(memory, variant.size)));
-		else
-			test::require(std::memcmp(memory.written.data(), &base,
-				variant.size) == 0);
-	}
+void transfer_value_boundaries(engine_tests::EngineHarness &harness) {
+  constexpr std::array source_values{
+      std::uint64_t{0},
+      std::uint64_t{0x0123'4567'89ab'cdefULL},
+      std::uint64_t{0x8000'0000'0000'0000ULL},
+      std::uint64_t{0xffff'ffff'ffff'ffffULL},
+  };
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    const auto sign_bit = std::uint64_t{1}
+                          << (static_cast<unsigned>(variant.size * 8U) - 1U);
+    const std::array memory_values{
+        std::uint64_t{0},
+        sign_bit - 1U,
+        sign_bit,
+        variant.size == 8U ? ~std::uint64_t{0}
+                           : (std::uint64_t{1} << (variant.size * 8U)) - 1U,
+    };
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true})
+        for (unsigned value_index = 0; value_index < source_values.size();
+             ++value_index) {
+          const Registers registers{4, 2, 3};
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers,
+              matrix_raw(option, value_index),
+              test::data_base + 0x1200U + value_index * 32U,
+              0x4800'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) |
+                  value_index);
+          std::optional<std::uint64_t> initial_value;
+          if (variant.load) {
+            initial_value = memory_values[value_index];
+          } else {
+            initial.registers[registers.rt] = source_values[value_index];
+          }
+          char name[120];
+          std::snprintf(
+              name, sizeof(name), "%.*s option=%u scaled=%u transfer-value=%u",
+              static_cast<int>(variant.name.size()), variant.name.data(),
+              option, static_cast<unsigned>(scaled), value_index);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 33U + value_index,
+                         initial_value);
+        }
+  }
 }
 
-void reserved_encodings_are_illegal()
-{
-	test::ProbeMemory memory;
-	for (const auto &variant : test::integer_variants) {
-		/* mode 00 shares this major encoding with FEAT_LSE atomics and is
-		 * exhaustively classified by the split atomic suites. Only modes 01
-		 * and 11 remain reserved register-offset encodings. */
-		for (const unsigned mode : {1U, 3U})
-			for (unsigned rm = 0; rm < 32; ++rm)
-				for (unsigned option = 0; option < 8; ++option)
-					for (const bool scaled : {false, true}) {
-						arm64::CpuState cpu{};
-						cpu.pc = pc;
-						const auto instruction = test::register_offset(
-							variant.size_code, variant.operation, rm, option,
-							scaled, mode, 2, 3);
-						/* This apparent mode-01/mode-11 overlap is the allocated
-						 * LDRAA/LDRAB immediate space, exhaustively covered by the
-						 * pointer-authenticated load suite. */
-						if ((instruction & 0xff20'0400U) == 0xf820'0400U)
-							continue;
-						const auto result = arm64::Dispatcher{}.execute(
-							cpu, memory, instruction);
-						if (result.reason != arm64::StopReason::illegal_instruction)
-							std::fprintf(stderr,
-								"reserved register-offset instruction %#x continued\n",
-								instruction);
-						test::require(result.reason ==
-							arm64::StopReason::illegal_instruction);
-						test::require(cpu.pc == pc);
-					}
-		for (const unsigned option : {0U, 1U, 4U, 5U})
-			for (unsigned rm = 0; rm < 32; ++rm)
-				for (const bool scaled : {false, true}) {
-					arm64::CpuState cpu{};
-					cpu.pc = pc;
-					test::require(arm64::Dispatcher{}.execute(cpu, memory,
-						test::register_offset(variant.size_code,
-							variant.operation, rm, option, scaled,
-							2, 2, 3)).reason ==
-						arm64::StopReason::illegal_instruction);
-				}
-	}
-
-	for (const auto [size_code, operation] :
-	     {std::array{2U, 3U}, std::array{3U, 3U}})
-		for (const unsigned option : {2U, 3U, 6U, 7U}) {
-			arm64::CpuState cpu{};
-			cpu.pc = pc;
-			test::require(arm64::Dispatcher{}.execute(cpu, memory,
-				test::register_offset(size_code, operation, 4, option,
-					true, 2, 2, 3)).reason ==
-				arm64::StopReason::illegal_instruction);
-		}
-	test::require(memory.reads == 0 && memory.writes == 0);
+void explicit_aliases(engine_tests::EngineHarness &harness) {
+  constexpr std::array alias_sets{
+      Registers{6, 6, 7},  Registers{6, 7, 6},    Registers{6, 7, 7},
+      Registers{6, 6, 6},  Registers{31, 6, 7},   Registers{6, 31, 7},
+      Registers{6, 7, 31}, Registers{31, 31, 31},
+  };
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true})
+        for (unsigned alias_index = 0; alias_index < alias_sets.size();
+             ++alias_index) {
+          const auto registers = alias_sets[alias_index];
+          const auto raw = registers.rn == registers.rm
+                               ? 0x0012'0000U
+                               : matrix_raw(option, alias_index);
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers, raw,
+              test::data_base + 0x1400U + alias_index * 32U,
+              0x5000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) |
+                  alias_index);
+          char name[120];
+          std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u alias=%u",
+                        static_cast<int>(variant.name.size()),
+                        variant.name.data(), option,
+                        static_cast<unsigned>(scaled), alias_index);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 37U + alias_index);
+        }
+  }
 }
 
-void fault_atomicity()
-{
-	for (const auto &variant : test::integer_variants) {
-		test::ProbeMemory memory;
-		memory.fault_read = true;
-		memory.fault_write = true;
-		arm64::CpuState cpu{};
-		test::fill_registers(cpu);
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		cpu.registers[3] = store_value;
-		cpu.registers[4] = 13;
-		const auto before = cpu;
-		const auto instruction = test::register_offset(variant.size_code,
-			variant.operation, 4, 3, true, 2, 2, 3, false);
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
-		test::require(result.reason == arm64::StopReason::memory_fault);
-		test::require(result.address == base + (13 << variant.size_code));
-		test::require(result.write == !variant.load);
-		test::require(cpu.registers == before.registers);
-		test::require(cpu.pc == before.pc);
-	}
+void aligned_sp_effective_addresses(engine_tests::EngineHarness &harness) {
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true})
+        for (unsigned residue = 0;
+             residue < (scaled ? 1U : variant.size); ++residue) {
+          const Registers registers{4, 31, 3};
+          auto initial = test::seeded_state(
+              0x5800'0000'0000'0000ULL |
+              (static_cast<std::uint64_t>(variant_index) << 32) |
+              (option << 16) | (static_cast<unsigned>(scaled) << 8) |
+              residue);
+          initial.sp = test::data_base + 0x1c00U;
+          initial.registers[registers.rm] = residue;
+          initial.registers[registers.rt] =
+              test::transfer_value + variant_index * 0x101U;
+          char name[120];
+          std::snprintf(
+              name, sizeof(name),
+              "%.*s option=%u scaled=%u aligned-SP effective-residue=%u",
+              static_cast<int>(variant.name.size()), variant.name.data(),
+              option, static_cast<unsigned>(scaled), residue);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 39U + residue);
+        }
+  }
 }
 
-void gadget_register_matrix()
-{
-	test::StaticMapping mapping{0x60'0000, 53,
-		"/private/tmp/uml-base-ls-reg.XXXXXX"};
-	const auto map_base = mapping.guest() +
-		10 * test::StaticMapping::page_size;
-	for (const auto &variant : test::integer_variants)
-		for (const unsigned option : {2U, 3U, 6U, 7U})
-			for (const bool scaled : {false, true}) {
-				const std::uint64_t raw = option >= 6 ?
-					std::uint64_t{0xffff'ffff'ffff'ffffULL} : 3U;
-				const auto offset = test::extend_offset(raw, option,
-					scaled ? variant.size_code : 0);
-				const auto address = map_base + offset;
-				arm64::CpuState cpu{};
-				cpu.registers[2] = map_base;
-				cpu.registers[3] = store_value;
-				cpu.registers[4] = raw;
-				test::ProbeMemory payload;
-				std::memcpy(mapping.at(address), payload.payload.data(),
-					variant.size);
-				const auto instruction = test::register_offset(
-					variant.size_code, variant.operation, 4, option,
-					scaled, 2, 2, 3, false);
-				test::require(mapping.execute(pc, instruction, cpu) ==
-					gadgets::Event::system_call);
-				if (variant.load)
-					test::require(cpu.registers[3] ==
-						test::expected_integer_load(variant,
-							test::payload_value(payload, variant.size)));
-				else
-					test::require(std::memcmp(mapping.at(address), &store_value,
-						variant.size) == 0);
-			}
-}
-
-void gadget_special_cross_page_fault_and_illegal()
-{
-	test::StaticMapping mapping{0x80'0000, 59,
-		"/private/tmp/uml-base-ls-reg-edge.XXXXXX"};
-	for (const auto &variant : test::integer_variants) {
-		const auto cross = mapping.guest() +
-			4 * test::StaticMapping::page_size -
-			(variant.size > 1 ? variant.size / 2 : 0);
-		arm64::CpuState cpu{};
-		cpu.sp = cross;
-		cpu.registers[3] = store_value;
-		test::ProbeMemory payload;
-		std::memcpy(mapping.at(cross), payload.payload.data(), variant.size);
-		test::require(mapping.execute(pc, test::register_offset(
-			variant.size_code, variant.operation, 31, 3, true,
-			2, 31, 3, false), cpu) == gadgets::Event::system_call);
-		if (variant.load)
-			test::require(cpu.registers[3] == test::expected_integer_load(
-				variant, test::payload_value(payload, variant.size)));
-		else
-			test::require(std::memcmp(mapping.at(cross), &store_value,
-				variant.size) == 0);
-
-		const auto fault = mapping.guest() + test::StaticMapping::length + 64;
-		cpu = {};
-		cpu.registers[2] = fault;
-		cpu.registers[3] = store_value;
-		const auto before = cpu.registers;
-		test::require(mapping.execute(pc, test::register_offset(
-			variant.size_code, variant.operation, 31, 3, false,
-			2, 2, 3, false), cpu) == gadgets::Event::memory_fault);
-		test::require(cpu.pc == pc);
-		test::require(cpu.registers == before);
-	}
-
-	for (const unsigned mode : {1U, 3U}) {
-		arm64::CpuState cpu{};
-		test::require(mapping.execute(pc, test::register_offset(
-			2, 1, 4, 3, false, mode, 2, 3, false), cpu) ==
-			gadgets::Event::illegal_instruction);
-		test::require(cpu.pc == pc);
-	}
-	for (const unsigned option : {0U, 1U, 4U, 5U}) {
-		arm64::CpuState cpu{};
-		test::require(mapping.execute(pc, test::register_offset(
-			2, 1, 4, option, false, 2, 2, 3, false), cpu) ==
-			gadgets::Event::illegal_instruction);
-	}
+void unaligned_and_cross_page(engine_tests::EngineHarness &harness) {
+  for (unsigned variant_index = 0;
+       variant_index < test::integer_variants.size(); ++variant_index) {
+    const auto &variant = test::integer_variants[variant_index];
+    for (const auto option : test::legal_options)
+      for (const bool scaled : {false, true}) {
+        for (unsigned residue = 0; residue < variant.size; ++residue) {
+          const Registers registers{4, 2, 3};
+          auto initial = make_initial(
+              variant, variant_index, option, scaled, registers,
+              matrix_raw(option, residue), test::data_base + 0x1800U + residue,
+              0x6000'0000'0000'0000ULL |
+                  (static_cast<std::uint64_t>(variant_index) << 32) |
+                  (option << 16) | (static_cast<unsigned>(scaled) << 8) |
+                  residue);
+          char name[120];
+          std::snprintf(
+              name, sizeof(name), "%.*s option=%u scaled=%u residue=%u",
+              static_cast<int>(variant.name.size()), variant.name.data(),
+              option, static_cast<unsigned>(scaled), residue);
+          check_transfer(harness, name, variant, option, scaled, registers,
+                         initial, variant_index * 41U + residue);
+        }
+        if (variant.size == 1U)
+          continue;
+        const Registers registers{4, 2, 3};
+        const auto target =
+            test::data_base + test::page_size - variant.size / 2U;
+        auto initial = make_initial(
+            variant, variant_index, option, scaled, registers,
+            matrix_raw(option, variant_index), target,
+            0x7000'0000'0000'0000ULL |
+                (static_cast<std::uint64_t>(variant_index) << 32) |
+                (option << 16) | (static_cast<unsigned>(scaled) << 8));
+        char name[112];
+        std::snprintf(name, sizeof(name), "%.*s option=%u scaled=%u cross-page",
+                      static_cast<int>(variant.name.size()),
+                      variant.name.data(), option,
+                      static_cast<unsigned>(scaled));
+        check_transfer(harness, name, variant, option, scaled, registers,
+                       initial, variant_index * 43U);
+      }
+  }
 }
 
 } // namespace
 
-int main()
-{
-	exhaustive_extensions_and_fields();
-	aliases_and_special_registers();
-	reserved_encodings_are_illegal();
-	fault_atomicity();
-	gadget_register_matrix();
-	gadget_special_cross_page_fault_and_illegal();
+int main() {
+  engine_tests::EngineHarness harness;
+  operation_extension_shift_and_register_fields(harness);
+  extension_boundaries(harness);
+  transfer_value_boundaries(harness);
+  explicit_aliases(harness);
+  aligned_sp_effective_addresses(harness);
+  unaligned_and_cross_page(harness);
+  test::require_engine_counts(harness, 12668U);
+  harness.print_summary("arm64-base-load-store-register");
+  return 0;
 }

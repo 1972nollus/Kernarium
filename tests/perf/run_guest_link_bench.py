@@ -7,6 +7,7 @@ import argparse
 import base64
 import os
 import pathlib
+import re
 import shlex
 import statistics
 import sys
@@ -31,6 +32,22 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--memory", default="1024M")
     parser.add_argument("--boot-timeout", type=int, default=180)
+    parser.add_argument(
+        "--command-timeout",
+        type=int,
+        default=30,
+        help="seconds allowed for each measured guest repetition",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=("jit", "gadgets", "interpreter"),
+        default="jit",
+    )
+    parser.add_argument(
+        "--shell-init",
+        action="store_true",
+        help="boot /bin/sh directly and mount disposable runtime filesystems",
+    )
     parser.add_argument(
         "--systemd-overlay",
         action="store_true",
@@ -88,6 +105,8 @@ def main() -> int:
         raise ValueError("--workers must be between 1 and --cpus")
     if arguments.repetitions < 1:
         raise ValueError("--repetitions must be positive")
+    if arguments.command_timeout < 1:
+        raise ValueError("--command-timeout must be positive")
 
     guest = Guest(
         arguments.emulator.resolve(),
@@ -97,19 +116,34 @@ def main() -> int:
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
+            f"--execution-engine={arguments.engine}",
         ),
-        systemd_overlay=arguments.systemd_overlay,
+        systemd_overlay=arguments.systemd_overlay or arguments.shell_init,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
     try:
-        guest.boot_and_login(arguments.boot_timeout)
+        if arguments.shell_init:
+            guest._read_until(
+                re.compile(rb"(?:^|\r?\n)# $"), arguments.boot_timeout
+            )
+            mounts = guest.run_command(
+                "mount -t proc proc /proc && "
+                "mount -t tmpfs -o mode=1777 tmpfs /tmp",
+                30,
+            )
+            if mounts.return_code != 0:
+                raise RuntimeError(
+                    f"guest mount setup failed\n{mounts.output}"
+                )
+        else:
+            guest.boot_and_login(arguments.boot_timeout)
         upload(guest, arguments.binary)
         command = workload_command(arguments.workers)
         for repetition in range(arguments.repetitions):
             before_cpu = cpu_time_seconds(guest.process_id)
             before_wall = time.monotonic()
-            result = guest.run_command(command)
+            result = guest.run_command(command, arguments.command_timeout)
             elapsed = time.monotonic() - before_wall
             consumed = cpu_time_seconds(guest.process_id) - before_cpu
             if result.return_code != 0:

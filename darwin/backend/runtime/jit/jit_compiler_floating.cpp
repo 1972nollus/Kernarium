@@ -1,0 +1,709 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "jit_compiler_families.hpp"
+
+#include "cpu/arm64/detail/bfloat_conversion.hpp"
+#include "cpu/arm64/detail/fp8.hpp"
+#include "cpu/arm64/detail/floating_arithmetic.hpp"
+#include "cpu/arm64/detail/floating_conversion.hpp"
+#include "cpu/arm64/detail/floating_fused.hpp"
+#include "cpu/arm64/detail/floating_horizontal.hpp"
+#include "cpu/arm64/detail/floating_integer_conversion.hpp"
+#include "cpu/arm64/detail/floating_reciprocal.hpp"
+#include "cpu/arm64/detail/floating_round.hpp"
+#include "cpu/arm64/detail/floating_scale.hpp"
+#include "runtime/host_features.hpp"
+
+#include <cstddef>
+
+namespace uml::backend::jit {
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_basic_floating(std::uint32_t instruction) {
+  const auto decoded =
+      arm64::detail::decode_basic_floating_arithmetic(instruction);
+  if (!decoded.recognized || !decoded.valid)
+    return false;
+  const auto &host = host_arm_features();
+  if (!host.floating_point || (!decoded.scalar && !host.advanced_simd) ||
+      (decoded.width == 16U && !host.fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  /*
+   * Scalar binary forms merge inactive bits from the first source under
+   * FPCR.NEP, so the native instruction does not read its destination.
+   * Scalar FSQRT is the one basic form whose merging source is the old
+   * destination. Vector forms always overwrite or architecturally zero every
+   * destination bit outside their active lanes.
+   */
+  const auto native_left = read_native_vector(left, 1);
+  const auto native_right =
+      decoded.unary
+          ? NativeVector{}
+          : right == left ? native_left
+                          : read_native_vector(right, 2);
+  const auto native_destination = write_native_vector(
+      destination, decoded.scalar && decoded.unary && host.afp, 0);
+  auto native = instruction & ~(31U | (31U << 5));
+  native |= native_destination.host | (native_left.host << 5);
+  if (!decoded.unary) {
+    native &= ~(31U << 16);
+    native |= native_right.host << 16;
+  }
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
+  const auto decoded =
+      arm64::detail::decode_fused_floating_arithmetic(instruction);
+  if (!decoded.recognized || !decoded.valid ||
+      !host_arm_features().floating_point ||
+      (!decoded.scalar && !host_arm_features().advanced_simd) ||
+      (decoded.width == 16U && !host_arm_features().fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  const auto native_left = read_native_vector(left, 0);
+  const auto native_right =
+      right == left ? native_left : read_native_vector(right, 1);
+  auto native = instruction & ~((31U << 16) | (31U << 5) | 31U);
+  native |= (native_right.host << 16) | (native_left.host << 5);
+  if (decoded.scalar) {
+    const unsigned addend = (instruction >> 10) & 31U;
+    const auto native_addend =
+        addend == left
+            ? native_left
+            : addend == right
+                  ? native_right
+                  : read_native_vector(addend, 2);
+    const auto native_destination =
+        write_native_vector(destination, false, 3);
+    native &= ~(31U << 10);
+    native |= (native_addend.host << 10) | native_destination.host;
+    emit(native);
+    commit_native_vector(native_destination, destination);
+  } else {
+    const auto native_destination =
+        write_native_vector(destination, true, 2);
+    native |= native_destination.host;
+    emit(native);
+    commit_native_vector(native_destination, destination);
+  }
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool JitCompilerFamilies::emit_simd_integer_float_convert(
+    std::uint32_t instruction) {
+  const auto operation = instruction & 0xafbb'fc00U;
+  if (operation != 0x0e21'd800U && operation != 0x2e21'd800U &&
+      operation != 0x0ea1'b800U && operation != 0x2ea1'b800U)
+    return false;
+  const bool is_double = (instruction & 0x0040'0000U) != 0;
+  const bool scalar = (instruction & 0x1000'0000U) != 0;
+  const bool q = (instruction & 0x4000'0000U) != 0;
+  if ((is_double && !q && !scalar) || !host_arm_features().floating_point ||
+      !host_arm_features().advanced_simd)
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_source = read_native_vector(source, 1);
+  const auto native_destination =
+      write_native_vector(destination, false, 0);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_integer_to_floating(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_integer_to_floating(instruction);
+  if (!decoded.recognized || !decoded.valid)
+    return false;
+  const auto &host = host_arm_features();
+  const bool cross_width =
+      !decoded.source_gpr &&
+      decoded.integer_width != decoded.destination_width;
+  if ((cross_width && !host.has(ArmFeature::fprcvt)) ||
+      (!cross_width && decoded.source_gpr && !host.floating_point) ||
+      (!cross_width && !decoded.source_gpr && !host.advanced_simd) ||
+      (!cross_width && decoded.destination_width == 16U && !host.fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  if (decoded.source_gpr) {
+    const auto native_source =
+        read_native_gpr(source, false, 8);
+    const auto native_destination =
+        write_native_vector(destination, decoded.scalar && host.afp, 0);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+  } else {
+    /*
+     * Import Rn before defining Rd. This ordering is architecturally relevant
+     * when Rd == Rn and the zeroing form does not otherwise need an old
+     * destination live-in.
+     */
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, decoded.scalar && host.afp, 0);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+  }
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_floating_to_integer(instruction);
+  if (!decoded.recognized || !decoded.valid)
+    return false;
+  const auto &host = host_arm_features();
+  const bool cross_width =
+      !decoded.destination_gpr &&
+      decoded.source_width != decoded.integer_width;
+  if ((cross_width && !host.has(ArmFeature::fprcvt)) ||
+      (!cross_width && decoded.destination_gpr && !host.floating_point) ||
+      (!cross_width && !decoded.destination_gpr && !host.advanced_simd) ||
+      (!cross_width && decoded.source_width == 16U && !host.fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_source = read_native_vector(source, 1);
+  if (decoded.destination_gpr) {
+    const auto native_destination =
+        write_native_gpr(destination, false, false, 8);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_gpr(native_destination, destination, false);
+  } else {
+    const auto native_destination =
+        write_native_vector(destination, decoded.scalar && host.afp, 0);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+  }
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_fp8_convert_up(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_fp8(instruction);
+  if (!decoded.recognized || !decoded.valid ||
+      (decoded.operation != arm64::detail::Fp8Operation::convert_to_half &&
+       decoded.operation != arm64::detail::Fp8Operation::convert_to_bfloat) ||
+      !host_arm_features().has(ArmFeature::fp8))
+    return false;
+
+  /*
+   * The source/destination allocation and complete shape are resolved while
+   * translating. Import the source before defining the destination so an
+   * aliased zeroing form keeps its old input even when the resident cache is
+   * exhausted.
+   */
+  const auto native_source = read_native_vector(decoded.first, 1);
+  const auto native_destination =
+      write_native_vector(decoded.destination, false, 0);
+  const auto native = (instruction & ~(31U | (31U << 5))) |
+                      native_destination.host |
+                      (native_source.host << 5);
+  emit(native);
+  commit_native_vector(native_destination, decoded.destination);
+  mark_native_fp();
+  mark_native_fpmr();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_fp8_convert_down(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_fp8(instruction);
+  if (!decoded.recognized || !decoded.valid ||
+      (decoded.operation != arm64::detail::Fp8Operation::convert_from_half &&
+       decoded.operation != arm64::detail::Fp8Operation::convert_from_single) ||
+      !host_arm_features().has(ArmFeature::fp8))
+    return false;
+
+  /*
+   * Register allocation and upper-half merging are resolved here. The
+   * generated operation directly names resident source and destination
+   * registers; FPMR activation is performed once at the block boundary.
+   * Sources are imported before defining an aliased destination.
+   */
+  const auto native_first = read_native_vector(decoded.first, 1);
+  const auto native_second =
+      decoded.second == decoded.first
+          ? native_first
+          : read_native_vector(decoded.second, 2);
+  const bool reads_destination =
+      decoded.operation ==
+          arm64::detail::Fp8Operation::convert_from_single &&
+      decoded.upper;
+  const auto native_destination =
+      write_native_vector(decoded.destination, reads_destination, 0);
+  const auto native =
+      (instruction & ~(31U | (31U << 5) | (31U << 16))) |
+      native_destination.host | (native_first.host << 5) |
+      (native_second.host << 16);
+  emit(native);
+  commit_native_vector(native_destination, decoded.destination);
+  mark_native_fp();
+  mark_native_fpmr();
+  return true;
+}
+
+[[nodiscard]] bool JitCompilerFamilies::emit_floating_javascript_convert(
+    std::uint32_t instruction) {
+  if ((instruction & 0xffff'fc00U) != 0x1e7e'0000U ||
+      !host_arm_features().has(ArmFeature::jscvt))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_source = read_native_vector(source, 1);
+  const auto native_destination =
+      write_native_gpr(destination, false, false, 8);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  if (!host_arm_features().jscvt_subnormal_flags_correct) {
+    /*
+     * Translation-time host characterization keeps unaffected machines at
+     * one native semantic word. Affected hosts retain the contained status
+     * correction without an engine fallback or a runtime feature check.
+     */
+    const auto indicator_done = make_label();
+    emit(0x9e66'000aU |
+         (native_source.host << 5)); // fmov x10, d<native source>
+    emit(0xd374'f94bU); // ubfx x11, x10, #52, #11
+    compare_zero(indicator_done, 11U, true, true);
+    emit(0xd374'cd4bU); // lsl x11, x10, #12
+    compare_zero(indicator_done, 11U, true, false);
+    emit(0xd51b'421fU); // msr nzcv, xzr
+    bind(indicator_done);
+  }
+  commit_native_gpr(native_destination, destination, false);
+  store_flags();
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool JitCompilerFamilies::emit_floating_precision_convert(
+    std::uint32_t instruction) {
+  const auto reduced =
+      arm64::detail::decode_bfloat_conversion(instruction);
+  if (reduced.recognized) {
+    if (!host_arm_features().has(ArmFeature::bf16))
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto &host = host_arm_features();
+    const auto native_destination = write_native_vector(
+        destination, reduced.upper || (reduced.scalar && host.afp), 0);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+    mark_native_fp();
+    return true;
+  }
+  const auto vector =
+      arm64::detail::decode_simd_floating_precision_vector(instruction);
+  if (vector.recognized) {
+    const auto &host = host_arm_features();
+    if (!vector.valid || !host.advanced_simd)
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    /*
+     * Narrowing upper forms preserve the lower half. Widening upper forms
+     * merely select the upper source half and overwrite the destination.
+     * Scalar FCVTXN can preserve inactive lanes under FPCR.NEP.
+     */
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination = write_native_vector(
+        destination, (vector.narrow && vector.upper) ||
+                         (vector.scalar && host.afp),
+        0);
+    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+    mark_native_fp();
+    return true;
+  }
+  if ((instruction & 0xff20'7c00U) != 0x1e20'4000U)
+    return false;
+  const unsigned operation = (instruction >> 15) & 63U;
+  if (operation < 4U || operation > 7U)
+    return false;
+  const unsigned source_type = (instruction >> 22) & 3U;
+  const unsigned destination_type = (instruction >> 15) & 3U;
+  if (source_type == 2U || destination_type == 2U ||
+      source_type == destination_type || !host_arm_features().floating_point ||
+      ((source_type == 3U || destination_type == 3U) &&
+       !host_arm_features().fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  /*
+   * On an AFP host the scalar instruction can observe FPCR.NEP and preserve
+   * the old inactive lanes. Hosts without AFP always use the zeroing form.
+   */
+  const auto &host = host_arm_features();
+  const auto native_source = read_native_vector(source, 1);
+  const auto native_destination =
+      write_native_vector(destination, host.afp, 0);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_fp8_dot(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_fp8(instruction);
+  if (!decoded.recognized || !decoded.valid ||
+      (decoded.operation != arm64::detail::Fp8Operation::dot_half &&
+       decoded.operation != arm64::detail::Fp8Operation::dot_single))
+    return false;
+  const auto feature =
+      decoded.operation == arm64::detail::Fp8Operation::dot_half
+          ? ArmFeature::fp8dot2
+          : ArmFeature::fp8dot4;
+  if (!host_arm_features().has(feature))
+    return false;
+
+  NativeVector native_first{};
+  NativeVector native_second{};
+  if (decoded.by_element &&
+      decoded.operation == arm64::detail::Fp8Operation::dot_half) {
+    native_second =
+        read_constrained_native_vector(decoded.second, 2);
+    native_first =
+        decoded.first == decoded.second
+            ? native_second
+            : read_native_vector(decoded.first, 1);
+  } else {
+    native_first = read_native_vector(decoded.first, 1);
+    native_second =
+        decoded.second == decoded.first
+            ? native_first
+            : read_native_vector(decoded.second, 2);
+  }
+  const auto native_destination =
+      write_native_vector(decoded.destination, true, 0);
+  const std::uint32_t second_mask =
+      decoded.by_element &&
+              decoded.operation == arm64::detail::Fp8Operation::dot_half
+          ? 15U << 16
+          : 31U << 16;
+  const auto native =
+      (instruction & ~(31U | (31U << 5) | second_mask)) |
+      native_destination.host | (native_first.host << 5) |
+      (native_second.host << 16);
+  emit(native);
+  commit_native_vector(native_destination, decoded.destination);
+  mark_native_fp();
+  mark_native_fpmr();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_fp8_multiply_matrix(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_fp8(instruction);
+  if (!decoded.recognized || !decoded.valid)
+    return false;
+
+  using Operation = arm64::detail::Fp8Operation;
+  ArmFeature feature;
+  switch (decoded.operation) {
+  case Operation::multiply_half:
+  case Operation::multiply_single:
+    feature = ArmFeature::fp8fma;
+    break;
+  case Operation::matrix_half:
+    feature = ArmFeature::f8f16mm;
+    break;
+  case Operation::matrix_single:
+    feature = ArmFeature::f8f32mm;
+    break;
+  default:
+    return false;
+  }
+  if (!host_arm_features().has(feature))
+    return false;
+
+  NativeVector native_first{};
+  NativeVector native_second{};
+  if (decoded.by_element) {
+    native_second =
+        read_constrained_native_vector(decoded.second, 2);
+    native_first =
+        decoded.first == decoded.second
+            ? native_second
+            : read_native_vector(decoded.first, 1);
+  } else {
+    native_first = read_native_vector(decoded.first, 1);
+    native_second =
+        decoded.second == decoded.first
+            ? native_first
+            : read_native_vector(decoded.second, 2);
+  }
+  const auto native_destination =
+      write_native_vector(decoded.destination, true, 0);
+  const std::uint32_t second_mask = decoded.by_element
+                                        ? 7U << 16
+                                        : 31U << 16;
+  const auto native =
+      (instruction & ~(31U | (31U << 5) | second_mask)) |
+      native_destination.host | (native_first.host << 5) |
+      (native_second.host << 16);
+  emit(native);
+  commit_native_vector(native_destination, decoded.destination);
+  mark_native_fp();
+  mark_native_fpmr();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_round(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_floating_round(instruction);
+  const auto &host = host_arm_features();
+  if (!decoded.recognized || !decoded.valid || !host.floating_point ||
+      (!decoded.scalar && !host.advanced_simd) ||
+      (decoded.width == 16U && !host.fp16) ||
+      (arm64::detail::is_sized_round(decoded.operation) &&
+       !host.has(ArmFeature::frintts)))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_source = read_native_vector(source, 1);
+  const auto native_destination = write_native_vector(
+      destination, decoded.scalar && host.afp, 0);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_unary(std::uint32_t instruction) {
+  const auto &host = host_arm_features();
+  if (!host.floating_point)
+    return false;
+  bool valid = false;
+  bool vector = false;
+  bool fp16 = false;
+  if ((instruction & 0xff20'7c00U) == 0x1e20'4000U) {
+    const unsigned operation = (instruction >> 15) & 63U;
+    const unsigned type = (instruction >> 22) & 3U;
+    valid = (operation == 1U || operation == 2U) && type != 2U;
+    fp16 = type == 3U;
+  } else {
+    vector = true;
+    const bool q = (instruction & 0x4000'0000U) != 0;
+    const auto half_operation = instruction & 0xbfff'fc00U;
+    const auto ordinary_operation = instruction & 0xbf3f'fc00U;
+    if (half_operation == 0x0ef8'f800U || half_operation == 0x2ef8'f800U) {
+      valid = true;
+      fp16 = true;
+    } else if (ordinary_operation == 0x0e20'f800U ||
+               ordinary_operation == 0x2e20'f800U) {
+      const bool is_double = (instruction & 0x0040'0000U) != 0;
+      valid = (instruction & 0x0080'0000U) != 0 && (!is_double || q);
+    } else if (ordinary_operation == 0x2e21'f800U) {
+      const bool is_double = (instruction & 0x0040'0000U) != 0;
+      valid = (instruction & 0x0080'0000U) != 0 && (!is_double || q);
+    }
+  }
+  if (!valid || (vector && !host.advanced_simd) || (fp16 && !host.fp16))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  /* Only scalar AFP forms can preserve the old upper lanes through NEP. */
+  const auto native_source = read_native_vector(source, 1);
+  const auto native_destination =
+      write_native_vector(destination, !vector && host.afp, 0);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_horizontal(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_floating_horizontal(instruction);
+  const auto &host = host_arm_features();
+  const bool absolute =
+      decoded.operation ==
+          arm64::detail::FloatingHorizontalOperation::absolute_maximum ||
+      decoded.operation ==
+          arm64::detail::FloatingHorizontalOperation::absolute_minimum;
+  const bool scalar_fp =
+      decoded.form ==
+          arm64::detail::FloatingHorizontalForm::scalar_binary &&
+      decoded.operation !=
+          arm64::detail::FloatingHorizontalOperation::absolute_difference;
+  if (!decoded.recognized || !decoded.valid ||
+      (scalar_fp ? !host.floating_point : !host.advanced_simd) ||
+      (decoded.width == 16U && !absolute && !host.fp16) ||
+      (absolute && !host.has(ArmFeature::faminmax)))
+    return false;
+
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const auto native_left = read_native_vector(left, 1);
+  auto native =
+      (instruction & ~(31U | (31U << 5))) | (native_left.host << 5);
+  if (decoded.form == arm64::detail::FloatingHorizontalForm::scalar_binary ||
+      decoded.form == arm64::detail::FloatingHorizontalForm::vector_binary ||
+      decoded.form == arm64::detail::FloatingHorizontalForm::vector_pairwise) {
+    const unsigned right = (instruction >> 16) & 31U;
+    const auto native_right =
+        right == left ? native_left : read_native_vector(right, 2);
+    native =
+        (native & ~(31U << 16)) | (native_right.host << 16);
+  }
+  const auto native_destination =
+      write_native_vector(destination, false, 0);
+  native |= native_destination.host;
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_reciprocal(std::uint32_t instruction) {
+  const auto decoded =
+      arm64::detail::decode_floating_reciprocal(instruction);
+  const auto &host = host_arm_features();
+  if (!decoded.recognized || !decoded.valid || !host.advanced_simd ||
+      (decoded.width == 16U && !host.fp16))
+    return false;
+
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const unsigned second = (instruction >> 16) & 31U;
+
+  /*
+   * Only scalar unary forms merge from the old destination under FPCR.NEP.
+   * Scalar binary forms merge from the first source, and vector forms do not
+   * read the old destination.
+   */
+  const auto native_first = read_native_vector(first, 1);
+  const auto native_second =
+      decoded.unary
+          ? NativeVector{}
+          : second == first ? native_first
+                            : read_native_vector(second, 2);
+  const auto native_destination = write_native_vector(
+      destination, decoded.scalar && decoded.unary && host.afp, 0);
+  auto native = (instruction & ~(31U | (31U << 5))) |
+                native_destination.host | (native_first.host << 5);
+  if (!decoded.unary) {
+    native &= ~(31U << 16);
+    native |= native_second.host << 16;
+  }
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_floating_scale(std::uint32_t instruction) {
+  const auto decoded = arm64::detail::decode_floating_scale(instruction);
+  if (!decoded.recognized || !decoded.valid ||
+      !host_arm_features().has(ArmFeature::fp8))
+    return false;
+
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const unsigned second = (instruction >> 16) & 31U;
+  const auto native_first = read_native_vector(first, 1);
+  const auto native_second =
+      second == first ? native_first : read_native_vector(second, 2);
+  const auto native_destination =
+      write_native_vector(destination, false, 0);
+  const auto native =
+      (instruction & ~(31U | (31U << 5) | (31U << 16))) |
+      native_destination.host | (native_first.host << 5) |
+      (native_second.host << 16);
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  mark_native_fp();
+  return true;
+}
+
+[[nodiscard]] bool JitCompilerFamilies::host_supports_floating_type(
+    std::uint32_t instruction) const {
+  const unsigned type = (instruction >> 22) & 3U;
+  return type != 2U && host_arm_features().floating_point &&
+         (type != 3U || host_arm_features().fp16);
+}
+
+void JitCompilerFamilies::emit_floating_compare(std::uint32_t instruction,
+                                                bool conditional) {
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  const auto native_left = read_native_vector(left, 0);
+  if (conditional)
+    load_flags();
+  auto native =
+      (instruction & ~(31U << 5)) | (native_left.host << 5);
+  if (conditional || (instruction & 8U) == 0U) {
+    const auto native_right =
+        right == left ? native_left : read_native_vector(right, 1);
+    native = (native & ~(31U << 16)) | (native_right.host << 16);
+  }
+  emit(native);
+  store_flags();
+  mark_native_fp();
+}
+
+void JitCompilerFamilies::emit_floating_select(std::uint32_t instruction) {
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  const auto native_left = read_native_vector(left, 1);
+  const auto native_right =
+      right == left ? native_left : read_native_vector(right, 2);
+  const auto native_destination =
+      write_native_vector(destination, false, 0);
+  load_flags();
+  emit((instruction & ~((31U << 16) | (31U << 5) | 31U)) |
+       (native_right.host << 16) | (native_left.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+}
+
+void JitCompilerFamilies::emit_floating_move(std::uint32_t instruction,
+                                             bool immediate) {
+  const unsigned destination = instruction & 31U;
+  auto native = instruction & ~31U;
+  if (!immediate) {
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    native = (native & ~(31U << 5)) | (native_source.host << 5);
+  }
+  const auto native_destination =
+      write_native_vector(destination, false, 0);
+  native |= native_destination.host;
+  emit(native);
+  commit_native_vector(native_destination, destination);
+}
+
+} // namespace uml::backend::jit

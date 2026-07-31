@@ -13,8 +13,11 @@ a separate writable ext2 image named `rootfs.ext2`.
 - `backend/include/` is the stable C ABI. `backend/src/` owns backend lifecycle,
   native-kernel entry, and platform capabilities.
 - `backend/cpu/arm64/` ports iSH Asbestos's precompiled ARM64 gadget model.
-  Runtime programs contain gadget addresses and guest data, never generated
-  host instructions.
+  Gadget runtime programs contain only precompiled gadget addresses and guest
+  data.
+- `backend/runtime/jit/` contains the optional Apple ARM64 native JIT, its
+  fixed-size block cache, direct instruction emitters, and inline software-TLB
+  lookup.
 - `backend/runtime/static/` contains the guest executor, 8,192-entry TLB,
   data-only block cache, and optional differential verification.
 - `runtime/mmu/address_space.cpp` models independent build-selected userspace
@@ -95,15 +98,24 @@ built-in SLiRP provider when no callbacks are supplied.
 
 The UML kernel executes natively as arm64 code. All Linux userspace processes
 remain inside that same host process; Linux task switches select an MMU
-generation and execute the task on Darwin pthreads. Guest application code is
-never entered natively.
+generation and execute the task on Darwin pthreads. Select the userspace engine
+with `--execution-engine=jit`, `--execution-engine=gadgets`, or
+`--execution-engine=interpreter`. macOS defaults to JIT, while iOS defaults to
+gadgets. The interpreter is a correctness/debug path.
 
-The userspace executor translates each 4-byte instruction to a data-only
-program of fixed precompiled gadgets. Common operations use specialized
-gadgets; the fixed decoded-instruction gadget handles the remaining supported
-opcodes. `svc #0`, signal return, faults, and interrupts return structured
-events to the native kernel. There is no decoder-loop fallback, runtime
-assembler, binary patching, or JIT cache.
+The gadget engine translates each 4-byte instruction to a data-only program of
+fixed precompiled gadgets. The JIT engine places generated ARM64 blocks in a
+`MAP_JIT` arena and directly emits covered Base/FP/SIMD operations. It never
+falls back to gadget execution: an instruction without a verified native
+emitter is a fatal JIT event. Guest memory operations still use the software MMU;
+guest virtual addresses are never used as unchecked host pointers. `svc #0`,
+signal return, faults, and interrupts return structured events to the native
+kernel.
+
+Guest `AT_HWCAP`, `AT_HWCAP2`, and `/proc/cpuinfo` are derived from Darwin host
+features. Optional crypto and direct JIT instruction families are advertised
+only when the host supports them, preventing compliant guest runtimes from
+generating unsupported native instructions.
 
 `UML_STATIC_TRACE=1` prints a bounded block trace.
 `UML_STATIC_VERIFY_GADGETS=1` checks each gadget block against the fixed decoder

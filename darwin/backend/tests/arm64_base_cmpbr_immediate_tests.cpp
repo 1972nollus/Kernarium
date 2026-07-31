@@ -134,9 +134,6 @@ void reserved_encodings(test::Harness &harness)
 
 void production_specialization()
 {
-#if UML_TEST_GADGET_INTERPRETER_RUNPATH
-	return;
-#else
 	std::set<std::uintptr_t> entries;
 	std::set<std::uintptr_t> constants;
 	for (const bool wide : {false, true})
@@ -154,7 +151,6 @@ void production_specialization()
 			constants.insert(folded.program.words().front());
 		}
 	test::require(entries.size() == 12 && constants.size() == 1);
-#endif
 }
 
 } // namespace
@@ -168,4 +164,6 @@ int main()
 	aliases();
 	reserved_encodings(harness);
 	production_specialization();
+	harness.print_summary("arm64-base-cmpbr-immediate");
+	return 0;
 }

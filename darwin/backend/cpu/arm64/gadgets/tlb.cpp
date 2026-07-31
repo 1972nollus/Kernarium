@@ -17,6 +17,13 @@ namespace {
 
 constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
+[[nodiscard]] std::uint64_t &cpu_slot(
+	CpuState *cpu, std::uint16_t offset) noexcept
+{
+	return *reinterpret_cast<std::uint64_t *>(
+		reinterpret_cast<std::byte *>(cpu) + offset);
+}
+
 enum class Ls64Operation {
 	load,
 	store,
@@ -47,11 +54,19 @@ template <Ls64Operation operation, bool base_sp, bool status_discard = false>
 	/* The gadget engine owns both pointers and guarantees that they are valid.
 	 * Keep debug-grade pointer validation in the interpreter rather than adding
 	 * two always-not-taken branches to every production LS64 transfer.
+	 * Translation also packs direct CpuState byte offsets, so the hot helper
+	 * does not decode architectural register numbers.
 	 */
-	const unsigned first = operand & 31U;
-	const unsigned base = (operand >> 8) & 31U;
-	const unsigned status = (operand >> 16) & 31U;
-	const auto address = base_sp ? cpu->sp : cpu->registers[base];
+	const auto first_offset = static_cast<std::uint16_t>(operand);
+	const auto base_offset = static_cast<std::uint16_t>(operand >> 16);
+	const auto status_offset = static_cast<std::uint16_t>(operand >> 32);
+	auto *const transfer = reinterpret_cast<std::byte *>(cpu) + first_offset;
+	const auto tagged_address =
+		base_sp ? cpu->sp : cpu_slot(cpu, base_offset);
+	const bool tagged = !base_sp && cpu->mte_enabled;
+	const bool tagchecked = tagged && !cpu->pstate_tco;
+	const auto address = tagged ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	constexpr bool load = operation == Ls64Operation::load;
 	if ((address & 63U) != 0) {
 		tlb->fault_address = address;
@@ -59,35 +74,47 @@ template <Ls64Operation operation, bool base_sp, bool status_discard = false>
 		return 0;
 	}
 
-	std::array<std::byte, 64> bytes{};
-	if constexpr (!load) {
-		for (unsigned index = 0; index < 8; ++index) {
-			auto value = cpu->registers[first + index];
-			if constexpr (operation == Ls64Operation::store_status_accdata) {
-				if (index == 0)
-					value = (value & 0xffff'ffff'0000'0000ULL) |
-						cpu->accdata;
-			}
-			std::memcpy(bytes.data() + index * 8, &value, sizeof(value));
-		}
-	}
-
 	Ls64Lock lock;
 	auto *pointer = tlb->translate(
 		address, load ? Access::read : Access::write);
 	if (pointer == nullptr)
 		return 0;
+	if (tagchecked) {
+		const auto logical_tag =
+			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
+		for (unsigned offset = 0; offset < 64; offset += 16) {
+			std::uint8_t allocation_tag{};
+			if (!tlb->read_allocation_tag(
+				    address + offset, allocation_tag)) {
+				tlb->fault_access =
+					load ? Access::read : Access::write;
+				return 0;
+			}
+			if (allocation_tag != logical_tag) {
+				tlb->fault_address = address + offset;
+				tlb->fault_access =
+					load ? Access::read : Access::write;
+				return 0;
+			}
+		}
+	}
 	if constexpr (load) {
-		std::memcpy(bytes.data(), pointer, bytes.size());
-		for (unsigned index = 0; index < 8; ++index)
-			std::memcpy(&cpu->registers[first + index],
-				bytes.data() + index * 8, sizeof(std::uint64_t));
+		std::memcpy(transfer, pointer, 64);
 	} else {
-		std::memcpy(pointer, bytes.data(), bytes.size());
+		if constexpr (operation ==
+			      Ls64Operation::store_status_accdata) {
+			std::array<std::byte, 64> bytes;
+			std::memcpy(bytes.data(), transfer, bytes.size());
+			std::memcpy(
+				bytes.data(), &cpu->accdata, sizeof(cpu->accdata));
+			std::memcpy(pointer, bytes.data(), bytes.size());
+		} else {
+			std::memcpy(pointer, transfer, 64);
+		}
 		if constexpr (operation == Ls64Operation::store_status ||
 			      operation == Ls64Operation::store_status_accdata) {
 			if constexpr (!status_discard)
-				cpu->registers[status] = 0;
+				cpu_slot(cpu, status_offset) = 0;
 		}
 	}
 	return 1;
@@ -113,13 +140,6 @@ enum class MteAddressMode {
 	signed_offset,
 	pre_index,
 };
-
-[[nodiscard]] std::uint64_t &cpu_slot(
-	CpuState *cpu, std::uint16_t offset) noexcept
-{
-	return *reinterpret_cast<std::uint64_t *>(
-		reinterpret_cast<std::byte *>(cpu) + offset);
-}
 
 void mte_fault(Tlb *tlb, std::uint64_t address, Access access) noexcept
 {
@@ -200,13 +220,13 @@ template <MteMemoryOperation operation, MteAddressMode mode,
 	}
 
 	const auto address = tagged_address & 0x00ff'ffff'ffff'ffffULL;
-	if constexpr (operation == MteMemoryOperation::store_zero_tag ||
-		      operation == MteMemoryOperation::store_zero_two_tags ||
-		      operation == MteMemoryOperation::store_pair_tag) {
-		if ((address & 15U) != 0) {
-			mte_fault(tlb, address, Access::write);
-			return 0;
-		}
+	/* The static allocation-tag API accepts an address anywhere in a
+	 * granule. Every architectural allocation-tag store is stricter and
+	 * faults before translation unless the effective address is aligned.
+	 */
+	if ((address & 15U) != 0) {
+		mte_fault(tlb, address, Access::write);
+		return 0;
 	}
 
 	if constexpr (operation == MteMemoryOperation::store_zero_tag ||
@@ -256,23 +276,26 @@ void mops_prologue(CpuState *cpu, std::uintptr_t operand) noexcept
 {
 	constexpr std::uint64_t max_block = 0x7fff'ffff'ffff'ffffULL;
 	constexpr std::uint64_t max_copy = 0x007f'ffff'ffff'ffffULL;
-	const unsigned destination = operand & 31U;
-	const unsigned count = (operand >> 8) & 31U;
-	const unsigned source = (operand >> 16) & 31U;
-	auto remaining = cpu->registers[count];
+	const auto destination_offset = static_cast<std::uint16_t>(operand);
+	const auto count_offset = static_cast<std::uint16_t>(operand >> 16);
+	const auto source_offset = static_cast<std::uint16_t>(operand >> 32);
+	auto &count = cpu_slot(cpu, count_offset);
+	auto remaining = count;
 	if constexpr (operation == MopsOperation::copy_general) {
 		if (remaining > max_copy)
 			remaining = max_copy;
-		const auto from = cpu->registers[source];
-		const auto to = cpu->registers[destination];
+		auto &source = cpu_slot(cpu, source_offset);
+		auto &destination = cpu_slot(cpu, destination_offset);
+		const auto from = source;
+		const auto to = destination;
 		const auto from_low = from & 0x00ff'ffff'ffff'ffffULL;
 		const auto to_low = to & 0x00ff'ffff'ffff'ffffULL;
 		const auto from_end = static_cast<unsigned __int128>(from_low) +
 			remaining;
 		const bool backward = from_low < to_low && from_end > to_low;
 		if (backward) {
-			cpu->registers[source] = from + remaining;
-			cpu->registers[destination] = to + remaining;
+			source = from + remaining;
+			destination = to + remaining;
 			cpu->nzcv = 0xa000'0000U;
 		} else {
 			cpu->nzcv = 0x2000'0000U;
@@ -282,7 +305,7 @@ void mops_prologue(CpuState *cpu, std::uintptr_t operand) noexcept
 			remaining = max_block;
 		cpu->nzcv = 0x2000'0000U;
 	}
-	cpu->registers[count] = remaining;
+	count = remaining;
 }
 
 template <MopsOperation operation, bool source_zero = false>
@@ -291,31 +314,32 @@ template <MopsOperation operation, bool source_zero = false>
 {
 	constexpr std::uint64_t max_block = 0x7fff'ffff'ffff'ffffULL;
 	constexpr std::uint64_t max_copy = 0x007f'ffff'ffff'ffffULL;
-	const unsigned destination = operand & 31U;
-	const unsigned count = (operand >> 8) & 31U;
-	const unsigned source = (operand >> 16) & 31U;
-	auto remaining = cpu->registers[count];
+	constexpr std::size_t max_transfer_block = 64;
+	const auto destination_offset = static_cast<std::uint16_t>(operand);
+	const auto count_offset = static_cast<std::uint16_t>(operand >> 16);
+	const auto source_offset = static_cast<std::uint16_t>(operand >> 32);
+	auto &destination = cpu_slot(cpu, destination_offset);
+	auto &count = cpu_slot(cpu, count_offset);
+	auto remaining = count;
 	const auto limit = operation == MopsOperation::copy_general ?
 		max_copy : max_block;
 	const bool backward = operation == MopsOperation::copy_general &&
 		(cpu->nzcv & 0x8000'0000U) != 0;
 	if (remaining > limit ||
-	    (remaining != 0 && (cpu->nzcv & 0x2000'0000U) == 0) ||
-	    (remaining != 0 && operation != MopsOperation::copy_general &&
-	     (cpu->nzcv & 0x8000'0000U) != 0))
+	    (remaining != 0 && (cpu->nzcv & 0x2000'0000U) == 0))
 		return 2;
 
-	auto to = cpu->registers[destination];
+	auto to = destination;
 	auto from = operation == MopsOperation::set ? std::uint64_t{} :
-		cpu->registers[source];
+		cpu_slot(cpu, source_offset);
 	int fill = 0;
 	if constexpr (operation == MopsOperation::set && !source_zero)
-		fill = static_cast<int>(cpu->registers[source] & 0xffU);
+		fill = static_cast<int>(cpu_slot(cpu, source_offset) & 0xffU);
 	const auto commit = [&] {
-		cpu->registers[count] = remaining;
-		cpu->registers[destination] = to;
+		count = remaining;
+		destination = to;
 		if constexpr (operation != MopsOperation::set)
-			cpu->registers[source] = from;
+			cpu_slot(cpu, source_offset) = from;
 	};
 	while (remaining != 0) {
 		std::size_t amount;
@@ -334,7 +358,7 @@ template <MopsOperation operation, bool source_zero = false>
 						from_available);
 			}
 			amount = static_cast<std::size_t>(std::min<std::uint64_t>(
-				remaining, amount));
+				remaining, std::min(amount, max_transfer_block)));
 			to_address = to - amount;
 			if constexpr (operation != MopsOperation::set)
 				from_address = from - amount;
@@ -347,7 +371,7 @@ template <MopsOperation operation, bool source_zero = false>
 					static_cast<std::size_t>(
 						from & (page_size - 1)));
 			amount = static_cast<std::size_t>(std::min<std::uint64_t>(
-				remaining, amount));
+				remaining, std::min(amount, max_transfer_block)));
 			to_address = to;
 			if constexpr (operation != MopsOperation::set)
 				from_address = from;
@@ -357,12 +381,20 @@ template <MopsOperation operation, bool source_zero = false>
 		if constexpr (operation != MopsOperation::set) {
 			read_pointer = tlb->translate(from_address, Access::read);
 			if (read_pointer == nullptr) {
+				if (backward) {
+					tlb->fault_address = from - 1;
+					tlb->fault_access = Access::read;
+				}
 				commit();
 				return 0;
 			}
 		}
 		auto *write_pointer = tlb->translate(to_address, Access::write);
 		if (write_pointer == nullptr) {
+			if (backward) {
+				tlb->fault_address = to - 1;
+				tlb->fault_access = Access::write;
+			}
 			commit();
 			return 0;
 		}
@@ -389,18 +421,20 @@ template <MopsOperation operation, bool source_zero = false>
 	CpuState *cpu, Tlb *tlb, std::uintptr_t operand) noexcept
 {
 	constexpr std::uint64_t limit = 0x7fff'ffff'ffff'fff0ULL;
-	const unsigned destination = operand & 31U;
-	const unsigned count = (operand >> 8) & 31U;
-	auto remaining = cpu->registers[count];
+	const auto destination_offset = static_cast<std::uint16_t>(operand);
+	const auto count_offset = static_cast<std::uint16_t>(operand >> 16);
+	auto &destination = cpu_slot(cpu, destination_offset);
+	auto &count = cpu_slot(cpu, count_offset);
+	auto remaining = count;
 	if ((remaining >> 63) != 0)
 		remaining = limit;
-	const auto address = cpu->registers[destination];
+	const auto address = destination;
 	if ((remaining & 15U) != 0 ||
 	    (remaining != 0 && (address & 15U) != 0)) {
 		mte_fault(tlb, address, Access::write);
 		return 0;
 	}
-	cpu->registers[count] = remaining;
+	count = remaining;
 	cpu->nzcv = 0x2000'0000U;
 	return 1;
 }
@@ -411,14 +445,15 @@ template <bool source_zero>
 {
 	constexpr std::uint64_t limit = 0x7fff'ffff'ffff'fff0ULL;
 	constexpr std::size_t max_block = 64;
-	const unsigned destination = operand & 31U;
-	const unsigned count = (operand >> 8) & 31U;
-	const unsigned source = (operand >> 16) & 31U;
-	auto remaining = cpu->registers[count];
-	auto to = cpu->registers[destination];
+	const auto destination_offset = static_cast<std::uint16_t>(operand);
+	const auto count_offset = static_cast<std::uint16_t>(operand >> 16);
+	const auto source_offset = static_cast<std::uint16_t>(operand >> 32);
+	auto &destination = cpu_slot(cpu, destination_offset);
+	auto &count = cpu_slot(cpu, count_offset);
+	auto remaining = count;
+	auto to = destination;
 	if (remaining > limit ||
-	    (remaining != 0 && (cpu->nzcv & 0x2000'0000U) == 0) ||
-	    (remaining != 0 && (cpu->nzcv & 0x8000'0000U) != 0))
+	    (remaining != 0 && (cpu->nzcv & 0x2000'0000U) == 0))
 		return 2;
 	if (remaining != 0 && ((remaining | to) & 15U) != 0) {
 		mte_fault(tlb, to, Access::write);
@@ -426,10 +461,10 @@ template <bool source_zero>
 	}
 	int fill = 0;
 	if constexpr (!source_zero)
-		fill = static_cast<int>(cpu->registers[source] & 0xffU);
+		fill = static_cast<int>(cpu_slot(cpu, source_offset) & 0xffU);
 	const auto commit = [&] {
-		cpu->registers[count] = remaining;
-		cpu->registers[destination] = to;
+		count = remaining;
+		destination = to;
 	};
 	while (remaining != 0) {
 		const auto address = to & 0x00ff'ffff'ffff'ffffULL;
@@ -463,6 +498,206 @@ template <bool source_zero>
 	return 1;
 }
 
+enum class GcsStatus : std::uint32_t {
+	success,
+	memory_fault,
+	illegal,
+	gcs_fault,
+};
+
+void gcs_memory_fault(Tlb *tlb, std::uint64_t address,
+	Access access) noexcept
+{
+	tlb->fault_address = address;
+	tlb->fault_access = access;
+}
+
+[[nodiscard]] bool gcs_read_u64(Tlb *tlb, std::uint64_t address,
+	std::uint64_t &value) noexcept
+{
+	auto *pointer = tlb->translate(address, Access::read);
+	if (pointer == nullptr)
+		return false;
+	const auto available = page_size -
+		static_cast<std::size_t>(address & (page_size - 1));
+	if (available >= sizeof(value)) {
+		std::memcpy(&value, pointer, sizeof(value));
+		return true;
+	}
+	auto *second = tlb->translate(address + available, Access::read);
+	if (second == nullptr)
+		return false;
+	std::array<std::byte, sizeof(value)> bytes{};
+	std::memcpy(bytes.data(), pointer, available);
+	std::memcpy(bytes.data() + available, second, sizeof(value) - available);
+	std::memcpy(&value, bytes.data(), sizeof(value));
+	return true;
+}
+
+[[nodiscard]] bool gcs_write_u64(Tlb *tlb, std::uint64_t address,
+	std::uint64_t value) noexcept
+{
+	auto *pointer = tlb->translate(address, Access::write);
+	if (pointer == nullptr)
+		return false;
+	const auto available = page_size -
+		static_cast<std::size_t>(address & (page_size - 1));
+	if (available >= sizeof(value)) {
+		std::memcpy(pointer, &value, sizeof(value));
+		return true;
+	}
+	/* Validate both pages before the first write so a faulting GCSSTR never
+	 * leaves a partial architectural store. */
+	auto *second = tlb->translate(address + available, Access::write);
+	if (second == nullptr)
+		return false;
+	std::memcpy(pointer, &value, available);
+	std::memcpy(second,
+		reinterpret_cast<const std::byte *>(&value) + available,
+		sizeof(value) - available);
+	return true;
+}
+
+[[nodiscard]] std::uint32_t guarded_call_record(CpuState *cpu, Tlb *tlb,
+	std::uint64_t return_address) noexcept
+{
+	if (!cpu->gcs_implemented || !cpu->gcs_push_enabled)
+		return static_cast<std::uint32_t>(GcsStatus::success);
+	const auto address = cpu->gcs_pointer - sizeof(return_address);
+	if (!gcs_write_u64(tlb, address, return_address))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	cpu->gcs_pointer = address & ~std::uint64_t{7};
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+[[nodiscard]] std::uint32_t guarded_return_record(CpuState *cpu, Tlb *tlb,
+	std::uint64_t target) noexcept
+{
+	cpu->gadget_zero = target;
+	if (!cpu->gcs_implemented || !cpu->gcs_push_enabled)
+		return static_cast<std::uint32_t>(GcsStatus::success);
+	const auto address = cpu->gcs_pointer;
+	std::uint64_t recorded;
+	if (!gcs_read_u64(tlb, address, recorded))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	if (recorded != target)
+		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
+	cpu->gadget_zero = recorded;
+	cpu->gcs_pointer = (address + sizeof(recorded)) & ~std::uint64_t{7};
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+template<bool discard>
+[[nodiscard]] std::uint32_t gcs_pop_main(CpuState *cpu, Tlb *tlb,
+	std::uintptr_t operand) noexcept
+{
+	if (!cpu->gcs_implemented)
+		return static_cast<std::uint32_t>(GcsStatus::illegal);
+	const auto address = cpu->gcs_pointer;
+	std::uint64_t value;
+	if (!gcs_read_u64(tlb, address, value))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	if ((value & 3U) != 0)
+		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
+	cpu->gcs_pointer = (address + 8) & ~std::uint64_t{7};
+	if constexpr (!discard)
+		cpu_slot(cpu, static_cast<std::uint16_t>(operand)) = value;
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+template<bool source_zero>
+[[nodiscard]] std::uint32_t gcs_push_main(CpuState *cpu, Tlb *tlb,
+	std::uintptr_t operand) noexcept
+{
+	if (!cpu->gcs_implemented || !cpu->gcs_push_enabled)
+		return static_cast<std::uint32_t>(GcsStatus::illegal);
+	const auto address = cpu->gcs_pointer - 8;
+	const auto value = source_zero ? std::uint64_t{} :
+		cpu_slot(cpu, static_cast<std::uint16_t>(operand));
+	if (!gcs_write_u64(tlb, address, value))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	cpu->gcs_pointer = address & ~std::uint64_t{7};
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+template<bool source_zero>
+[[nodiscard]] std::uint32_t gcs_switch_stack_1(CpuState *cpu, Tlb *tlb,
+	std::uintptr_t operand) noexcept
+{
+	if (!cpu->gcs_implemented)
+		return static_cast<std::uint32_t>(GcsStatus::illegal);
+	const auto incoming = source_zero ? std::uint64_t{} :
+		cpu_slot(cpu, static_cast<std::uint16_t>(operand));
+	if ((incoming & 7U) != 0) {
+		gcs_memory_fault(tlb, incoming, Access::write);
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	}
+	auto *pointer = tlb->translate(incoming, Access::write);
+	if (pointer == nullptr)
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	const auto compare = (incoming & ~std::uint64_t{0xfff}) | 1U;
+	const auto replacement =
+		(cpu->gcs_pointer & ~std::uint64_t{7}) | 5U;
+	auto expected = compare;
+	auto &storage = *reinterpret_cast<std::uint64_t *>(pointer);
+	(void)std::atomic_ref<std::uint64_t>{storage}.compare_exchange_strong(
+		expected, replacement, std::memory_order_relaxed,
+		std::memory_order_relaxed);
+	if (expected != compare)
+		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
+	cpu->gcs_pointer = incoming & ~std::uint64_t{7};
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+template<bool discard>
+[[nodiscard]] std::uint32_t gcs_switch_stack_2(CpuState *cpu, Tlb *tlb,
+	std::uintptr_t operand) noexcept
+{
+	if (!cpu->gcs_implemented)
+		return static_cast<std::uint32_t>(GcsStatus::illegal);
+	const auto incoming = cpu->gcs_pointer;
+	std::uint64_t outgoing_value;
+	if (!gcs_read_u64(tlb, incoming, outgoing_value))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	if ((outgoing_value & 7U) != 5U)
+		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
+	const auto outgoing =
+		(outgoing_value & ~std::uint64_t{7}) - 8;
+	const auto replacement =
+		(outgoing & ~std::uint64_t{0xfff}) | 1U;
+	if (!gcs_write_u64(tlb, outgoing, replacement))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	cpu->gcs_pointer = (incoming + 8) & ~std::uint64_t{7};
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	if constexpr (!discard)
+		cpu_slot(cpu, static_cast<std::uint16_t>(operand)) = outgoing;
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
+template<bool base_sp, bool source_zero>
+[[nodiscard]] std::uint32_t gcs_store(CpuState *cpu, Tlb *tlb,
+	std::uintptr_t operand) noexcept
+{
+	if (!cpu->gcs_implemented)
+		return static_cast<std::uint32_t>(GcsStatus::illegal);
+	if (!cpu->gcs_store_enabled)
+		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
+	const auto base_offset = static_cast<std::uint16_t>(operand);
+	const auto source_offset = static_cast<std::uint16_t>(operand >> 16);
+	const auto address = base_sp ? cpu->sp : cpu_slot(cpu, base_offset);
+	if constexpr (base_sp) {
+		if ((address & 15U) != 0) {
+			gcs_memory_fault(tlb, address, Access::write);
+			return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+		}
+	}
+	const auto value = source_zero ? std::uint64_t{} :
+		cpu_slot(cpu, source_offset);
+	if (!gcs_write_u64(tlb, address, value))
+		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
+	return static_cast<std::uint32_t>(GcsStatus::success);
+}
+
 [[nodiscard]] constexpr std::size_t index_for(std::uint64_t address) noexcept
 {
 	const auto page = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
@@ -477,8 +712,8 @@ template <bool source_zero>
 
 static_assert(sizeof(TlbEntry) == 32);
 static_assert(offsetof(TlbEntry, read_page) == 0);
-static_assert(offsetof(TlbEntry, write_page) == 8);
-static_assert(offsetof(TlbEntry, read_data_minus_address) == 16);
+static_assert(offsetof(TlbEntry, read_data_minus_address) == 8);
+static_assert(offsetof(TlbEntry, write_page) == 16);
 static_assert(offsetof(TlbEntry, write_data_minus_address) == 24);
 static_assert(offsetof(Tlb, entries) == 0);
 static_assert(offsetof(Tlb, generation) ==
@@ -530,6 +765,11 @@ void Tlb::prepare(
 	if (changes == next_changes)
 		return;
 	reconcile_changes(next_generation, next_changes);
+}
+
+void Tlb::discard(std::uint64_t address)
+{
+	invalidate(address, 1);
 }
 
 /* Keep the mapping-change buffer out of prepare()'s steady-state stack frame.
@@ -643,6 +883,62 @@ bool Tlb::write_allocation_tag(std::uint64_t address, std::uint8_t tag)
 	return false;
 }
 } // namespace uml::backend::arm64::gadgets
+
+extern "C" std::uint32_t uml_arm64_guarded_call_record(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb,
+	std::uint64_t return_address) noexcept
+{
+	using namespace uml::backend::arm64::gadgets;
+	return guarded_call_record(cpu, tlb, return_address);
+}
+
+extern "C" std::uint32_t uml_arm64_guarded_return_record(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb,
+	std::uint64_t target) noexcept
+{
+	using namespace uml::backend::arm64::gadgets;
+	return guarded_return_record(cpu, tlb, target);
+}
+
+#define UML_GCS_WRAPPER(name, helper, specialized) \
+extern "C" std::uint32_t uml_arm64_gadget_gcs_transfer_##name( \
+	uml::backend::arm64::CpuState *cpu, \
+	uml::backend::arm64::gadgets::Tlb *tlb, \
+	std::uintptr_t operand) noexcept \
+{ \
+	using namespace uml::backend::arm64::gadgets; \
+	return helper<specialized>(cpu, tlb, operand); \
+}
+
+UML_GCS_WRAPPER(popm_r, gcs_pop_main, false)
+UML_GCS_WRAPPER(popm_z, gcs_pop_main, true)
+UML_GCS_WRAPPER(pushm_r, gcs_push_main, false)
+UML_GCS_WRAPPER(pushm_z, gcs_push_main, true)
+UML_GCS_WRAPPER(ss1_r, gcs_switch_stack_1, false)
+UML_GCS_WRAPPER(ss1_z, gcs_switch_stack_1, true)
+UML_GCS_WRAPPER(ss2_r, gcs_switch_stack_2, false)
+UML_GCS_WRAPPER(ss2_z, gcs_switch_stack_2, true)
+
+#undef UML_GCS_WRAPPER
+
+#define UML_GCS_STORE_WRAPPER(name, base_sp, source_zero) \
+extern "C" std::uint32_t uml_arm64_gadget_gcs_transfer_store_##name( \
+	uml::backend::arm64::CpuState *cpu, \
+	uml::backend::arm64::gadgets::Tlb *tlb, \
+	std::uintptr_t operand) noexcept \
+{ \
+	using namespace uml::backend::arm64::gadgets; \
+	return gcs_store<base_sp, source_zero>(cpu, tlb, operand); \
+}
+
+UML_GCS_STORE_WRAPPER(rr, false, false)
+UML_GCS_STORE_WRAPPER(rz, false, true)
+UML_GCS_STORE_WRAPPER(sr, true, false)
+UML_GCS_STORE_WRAPPER(sz, true, true)
+
+#undef UML_GCS_STORE_WRAPPER
 
 #define UML_LS64_WRAPPER(name, operation, base_sp, status_discard) \
 extern "C" std::uint32_t uml_arm64_gadget_ls64_transfer_##name( \
@@ -826,6 +1122,126 @@ extern "C" std::uint32_t uml_arm64_gadget_memory_transfer(
 		completed += lengths[index];
 	}
 	return 1;
+}
+
+extern "C" std::uint32_t uml_arm64_gadget_simd_structure_memory_transfer(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb, std::uint64_t tagged_address,
+	void *data, std::size_t size, std::uint32_t access,
+	std::uint32_t base_sp, std::uint32_t options) noexcept
+{
+	using uml::backend::arm64::gadgets::Access;
+	if (cpu == nullptr || tlb == nullptr)
+		return 0;
+	const auto direction =
+		access == static_cast<std::uint32_t>(Access::write) ?
+			Access::write : Access::read;
+	const bool tagged = base_sp == 0U && cpu->mte_enabled;
+	const auto address = tagged ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+	const auto element_size = static_cast<std::size_t>(options >> 8);
+	const bool tagchecked = (options & 1U) != 0U;
+	if (element_size == 0U || element_size > 32U)
+		return 0;
+	if (tagchecked && cpu->mte_enabled && !cpu->pstate_tco) {
+		const auto logical_tag = tagged ?
+			static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
+		for (std::size_t completed = 0; completed < size;
+		     completed += element_size) {
+			const auto current = address + completed;
+			const auto access_size =
+				std::min(element_size, size - completed);
+			for (std::size_t translated = 0;
+			     translated < access_size;) {
+				const auto translated_address = current + translated;
+				if (tlb->translate(
+					    translated_address, direction) == nullptr)
+					return 0;
+				translated += std::min<std::size_t>(
+					access_size - translated,
+					DARWIN_UML_GUEST_PAGE_SIZE -
+						(translated_address &
+						 (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
+			}
+			for (std::size_t checked = 0; checked < access_size;) {
+				const auto tagged_current = current + checked;
+				std::uint8_t allocation_tag{};
+				if (!tlb->read_allocation_tag(
+					    tagged_current, allocation_tag) ||
+				    allocation_tag != logical_tag) {
+					tlb->fault_address = tagged_current;
+					tlb->fault_access = direction;
+					return 0;
+				}
+				checked += std::min<std::size_t>(
+					access_size - checked,
+					16U - (tagged_current & 15U));
+			}
+		}
+	}
+	const auto transferred = uml_arm64_gadget_memory_transfer(
+		tlb, address, data, size, access);
+	if (transferred != 0U && direction == Access::write)
+		cpu->exclusive_size = 0;
+	return transferred;
+}
+
+extern "C" std::byte *uml_arm64_gadget_atomic_floating_pointer(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb, std::uint64_t tagged_address,
+	std::size_t size, std::uint32_t base_sp) noexcept
+{
+	using uml::backend::arm64::gadgets::Access;
+	if (cpu == nullptr || tlb == nullptr ||
+	    (size != 2U && size != 4U && size != 8U))
+		return nullptr;
+
+	/* Rn==31 selects SP and CheckSPAlignment has priority over every other
+	 * fault. GPR bases participate in tagged-address checking only while MTE
+	 * is enabled; the untagged hot path never calls this helper. */
+	if (base_sp != 0U && (tagged_address & 15U) != 0U) {
+		tlb->fault_address = tagged_address;
+		tlb->fault_access = Access::write;
+		return nullptr;
+	}
+	const bool tagged = base_sp == 0U && cpu->mte_enabled;
+	const auto address = tagged ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+	if ((address & (size - 1U)) != 0U) {
+		tlb->fault_address = address;
+		tlb->fault_access = Access::write;
+		return nullptr;
+	}
+
+	auto *pointer = tlb->translate(address, Access::write);
+	if (pointer == nullptr)
+		return nullptr;
+	if (base_sp == 0U && cpu->mte_enabled && !cpu->pstate_tco) {
+		std::uint8_t allocation_tag{};
+		if (!tlb->read_allocation_tag(address, allocation_tag))
+			return nullptr;
+		const auto logical_tag =
+			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
+		if (allocation_tag != logical_tag) {
+			tlb->fault_address = address;
+			tlb->fault_access = Access::write;
+			return nullptr;
+		}
+	}
+	return pointer;
+}
+
+extern "C" void uml_arm64_gadget_alignment_fault(
+	uml::backend::arm64::gadgets::Tlb *tlb, std::uint64_t address,
+	std::uint32_t access) noexcept
+{
+	if (tlb == nullptr)
+		return;
+	tlb->fault_address = address;
+	tlb->fault_access = access == static_cast<std::uint32_t>(
+		uml::backend::arm64::gadgets::Access::write) ?
+		uml::backend::arm64::gadgets::Access::write :
+		uml::backend::arm64::gadgets::Access::read;
 }
 
 extern "C" void *uml_arm64_gadget_tlb_miss(

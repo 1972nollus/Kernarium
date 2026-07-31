@@ -1,101 +1,64 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_shift_immediate_test_support.hpp"
 
-#include <bit>
+#include <array>
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_shift_immediate_test;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t shift_instruction(bool scalar, bool q,
-	bool alternate, unsigned opcode, unsigned encoded)
-{
-	return (scalar ? 0x5f00'0400U : 0x0f00'0400U) |
-		(!scalar && q ? 0x4000'0000U : 0U) |
-		(alternate ? 0x2000'0000U : 0U) | ((encoded & 127U) << 16) |
-		((opcode & 31U) << 11) | (3U << 5) | 2U;
-}
+constexpr std::array forms{
+	test::Form::vector_64,
+	test::Form::vector_128,
+	test::Form::scalar,
+};
 
-[[nodiscard]] constexpr bool valid_shape(
-	bool scalar, bool q, unsigned encoded)
+void every_owned_allocation()
 {
-	if (encoded < 8U)
-		return false;
-	const unsigned lane_bits = std::bit_floor(encoded);
-	return lane_bits <= 64U && (!scalar || lane_bits == 64U) &&
-		(scalar || q || lane_bits != 64U);
-}
-
-void right_shift_allocations()
-{
-	test::Harness harness;
-	for (unsigned encoded = 8; encoded < 128; ++encoded)
-		for (const bool scalar : {false, true})
-			for (const bool q : {false, true}) {
-				if (scalar && q)
-					continue;
-				const bool shape_valid = valid_shape(scalar, q, encoded);
-				for (const unsigned opcode : {0U, 2U, 4U, 6U, 8U})
-					for (const bool alternate : {false, true}) {
-						const auto instruction = shift_instruction(scalar, q,
-							alternate, opcode, encoded);
-						const bool valid = shape_valid &&
-							(opcode != 8U || alternate);
-						if (valid)
-							harness.require_differential(instruction,
-								test::state(encoded + opcode));
-						else
-							harness.require_illegal(instruction,
-								test::state(encoded + opcode));
+	test::engine_tests::EngineHarness harness;
+	for (const auto form : forms) {
+		const unsigned first_encoded =
+			form == test::Form::scalar ? 0U : 8U;
+		for (unsigned encoded = first_encoded; encoded < 128U; ++encoded)
+			for (const bool unsigned_group : {false, true})
+				for (unsigned opcode = 0; opcode < 32U; ++opcode) {
+					/* Opcode 20 is the vector shift-left-long family.
+					 * Opcodes 28 and 31 are fixed-point conversions. Their
+					 * allocations are owned by separate suites. */
+					if ((opcode == 20U &&
+					     form != test::Form::scalar) ||
+					    opcode == 28U || opcode == 31U)
+						continue;
+					const auto instruction = test::raw_instruction(form,
+						unsigned_group, opcode, encoded, 2U, 3U);
+					const auto initial = test::state(encoded +
+						opcode * 7U + unsigned_group * 29U +
+						static_cast<unsigned>(form) * 53U);
+					const auto operation =
+						test::operation_for(unsigned_group, opcode);
+					if (operation &&
+					    test::valid(*operation, form, encoded)) {
+						harness.check_one(
+							"shift-immediate allocated encoding",
+							instruction, initial,
+							test::expected_state(initial, form,
+								*operation, encoded, 2U, 3U),
+							test::native_requirements());
+					} else {
+						harness.check_illegal(
+							"shift-immediate reserved encoding",
+							instruction, initial,
+							test::native_requirements());
 					}
-			}
-}
-
-void left_shift_allocations()
-{
-	test::Harness harness;
-	for (unsigned encoded = 8; encoded < 128; ++encoded)
-		for (const bool scalar : {false, true})
-			for (const bool q : {false, true}) {
-				if (scalar && q)
-					continue;
-				for (const bool insert : {false, true}) {
-					const auto instruction = shift_instruction(
-						scalar, q, insert, 10, encoded);
-					if (valid_shape(scalar, q, encoded))
-						harness.require_differential(instruction,
-							test::state(encoded + insert));
-					else
-						harness.require_illegal(instruction,
-							test::state(encoded + insert));
 				}
-			}
-}
-
-void narrow_allocations()
-{
-	test::Harness harness;
-	for (unsigned encoded = 8; encoded < 128; ++encoded)
-		for (const bool high : {false, true})
-			for (const bool rounding : {false, true}) {
-				const auto instruction = shift_instruction(false, high, false,
-					rounding ? 17U : 16U, encoded);
-				const bool valid = encoded >= 8U && encoded < 64U;
-				if (valid)
-					harness.require_differential(instruction,
-						test::state(encoded + high + rounding));
-				else
-					harness.require_illegal(instruction,
-						test::state(encoded + high + rounding));
-			}
+	}
+	harness.print_summary("simd-shift-immediate-allocation");
 }
 
 } // namespace
 
 int main()
 {
-	right_shift_allocations();
-	left_shift_allocations();
-	narrow_allocations();
+	every_owned_allocation();
 	return 0;
 }

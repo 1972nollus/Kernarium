@@ -1,51 +1,83 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_fcsel_test_support.hpp"
 
+#include <array>
+
 namespace test = arm64_simd_fcsel_test;
-namespace base = arm64_simd_test;
-namespace move = arm64_simd_fmov_test;
 
 namespace {
 
-void every_nzcv_result_for_every_condition()
+struct Registers final {
+	unsigned destination;
+	unsigned first;
+	unsigned second;
+};
+
+constexpr std::array register_aliases{
+	Registers{28U, 29U, 30U},
+	Registers{29U, 29U, 30U},
+	Registers{30U, 29U, 30U},
+	Registers{28U, 29U, 29U},
+	Registers{29U, 29U, 29U},
+};
+
+void every_precision_condition_flags_alias_and_control_mode()
 {
-	base::Harness harness;
+	test::engine_tests::EngineHarness harness;
 	for (const unsigned bytes : {2U, 4U, 8U})
 		for (unsigned condition = 0; condition < 16U; ++condition)
-			for (unsigned flags = 0; flags < 16U; ++flags) {
-				auto initial = base::state(bytes * 31U + condition + flags);
-				initial.nzcv = flags << 28;
-				initial.fpsr = 0x0800'0090U;
-				move::write_bits(initial.vectors[29].bytes, 0U, bytes,
-					0x0123'4567'89ab'cdefULL);
-				move::write_bits(initial.vectors[30].bytes, 0U, bytes,
-					0xfedc'ba98'7654'3210ULL);
-				test::require_result(test::instruction(bytes, condition,
-					28U, 29U, 30U), bytes, 28U, 29U, 30U,
-					initial, harness);
-			}
-}
-
-void destination_aliases_either_source_safely()
-{
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const unsigned destination : {29U, 30U})
-			for (const unsigned condition : {0U, 1U, 14U, 15U}) {
-				auto initial = base::state(bytes + destination + condition);
-				initial.nzcv = 0x4000'0000U;
-				initial.fpsr = 0x80U;
-				test::require_result(test::instruction(bytes, condition,
-					destination, 29U, 30U), bytes, destination,
-					29U, 30U, initial, harness);
-			}
+			for (unsigned flags = 0; flags < 16U; ++flags)
+				for (const auto registers : register_aliases)
+					for (unsigned control_mode = 0;
+					     control_mode < 4U; ++control_mode) {
+						auto initial = test::state(bytes * 31U +
+							condition * 17U + flags * 7U +
+							control_mode * 43U +
+							registers.destination);
+						initial.nzcv = flags << 28;
+						initial.fpcr = 0x0008'0000U |
+							(control_mode << 22);
+						/*
+						 * Preserve unusual payloads verbatim. FCSEL does not
+						 * classify, round, quiet, or otherwise interpret them.
+						 */
+						initial.vectors[29].bytes = {
+							std::byte{0x01}, std::byte{0x7e},
+							std::byte{0x01}, std::byte{0x00},
+							std::byte{0x00}, std::byte{0x00},
+							std::byte{0xf8}, std::byte{0x7f},
+							std::byte{0xa5}, std::byte{0x5a},
+							std::byte{0xc3}, std::byte{0x3c},
+							std::byte{0x96}, std::byte{0x69},
+							std::byte{0x87}, std::byte{0x78},
+						};
+						initial.vectors[30].bytes = {
+							std::byte{0x00}, std::byte{0x80},
+							std::byte{0x00}, std::byte{0x00},
+							std::byte{0x80}, std::byte{0xff},
+							std::byte{0xff}, std::byte{0xff},
+							std::byte{0x5a}, std::byte{0xa5},
+							std::byte{0x3c}, std::byte{0xc3},
+							std::byte{0x69}, std::byte{0x96},
+							std::byte{0x78}, std::byte{0x87},
+						};
+						harness.check_one("FCSEL behavior",
+							test::instruction(bytes, condition,
+								registers.destination,
+								registers.first, registers.second),
+							initial,
+							test::expected_state(initial, bytes,
+								condition, registers.destination,
+								registers.first, registers.second),
+							test::native_requirements(bytes));
+					}
+	harness.print_summary("simd-fcsel-behavior");
 }
 
 } // namespace
 
 int main()
 {
-	every_nzcv_result_for_every_condition();
-	destination_aliases_either_source_safely();
+	every_precision_condition_flags_alias_and_control_mode();
 	return 0;
 }

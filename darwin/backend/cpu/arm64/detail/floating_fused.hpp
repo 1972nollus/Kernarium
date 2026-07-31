@@ -42,21 +42,4 @@ decode_fused_floating_arithmetic(std::uint32_t instruction) noexcept
 	return {};
 }
 
-[[nodiscard]] constexpr std::uintptr_t scalar_fused_operand(
-	std::uint32_t instruction) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 10) & 31U) << 16) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 24);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_fused_operand(
-	std::uint32_t instruction) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
-}
-
 } // namespace uml::backend::arm64::detail

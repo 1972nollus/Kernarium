@@ -1,95 +1,140 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_widening_test_support.hpp"
 
-namespace test = arm64_simd_test;
+#include <array>
+#include <limits>
+
+namespace test = arm64_simd_widening_test;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t widening(bool scalar, bool upper,
-	bool unsigned_values, unsigned size, unsigned operation)
+[[nodiscard]] unsigned pick_register(unsigned first,
+	unsigned second = std::numeric_limits<unsigned>::max())
 {
-	return (scalar ? 0x5e20'0000U : 0x0e20'0000U) |
-		(!scalar && upper ? 0x4000'0000U : 0U) |
-		(unsigned_values ? 0x2000'0000U : 0U) |
-		((size & 3U) << 22) | ((operation & 15U) << 12) |
-		(2U << 16) | (1U << 5);
+	for (unsigned reg = 0; reg < 32U; ++reg)
+		if (reg != first && reg != second)
+			return reg;
+	std::abort();
 }
 
-[[nodiscard]] constexpr bool valid_widening(bool scalar,
-	bool unsigned_values, unsigned size, unsigned operation)
+[[nodiscard]] test::Registers destination_case(unsigned destination)
 {
-	if (size >= 3U)
-		return false;
-	const bool saturating = operation == 9U || operation == 11U ||
-		operation == 13U;
-	if (scalar)
-		return saturating && !unsigned_values && size != 0U;
-	if (saturating)
-		return !unsigned_values && size != 0U;
-	return operation <= 3U || operation == 5U || operation == 7U ||
-		operation == 8U || operation == 10U || operation == 12U;
+	const auto left = pick_register(destination);
+	return {destination, left, pick_register(destination, left)};
 }
 
-[[nodiscard]] constexpr std::uint32_t high_narrow(bool upper, bool rounding,
-	bool subtract, unsigned size)
+[[nodiscard]] test::Registers left_case(unsigned left)
 {
-	return 0x0e20'4000U | (upper ? 0x4000'0000U : 0U) |
-		(rounding ? 0x2000'0000U : 0U) | ((size & 3U) << 22) |
-		(subtract ? 0x2000U : 0U) | (2U << 16) | (1U << 5);
+	const auto destination = pick_register(left);
+	return {destination, left, pick_register(destination, left)};
 }
 
-void complete_widening_allocation()
+[[nodiscard]] test::Registers right_case(unsigned right)
 {
-	test::Harness harness;
-	for (const bool scalar : {false, true}) {
-		for (const bool upper : {false, true}) {
-			if (scalar && upper)
-				continue;
-			for (const bool unsigned_values : {false, true}) {
-				for (unsigned size = 0; size < 4; ++size) {
-					for (unsigned operation = 0; operation < 16; ++operation) {
-						/* Operations 4/6 are ADDHN/SUBHN below. Operation
-						 * 14 overlaps the separately tested PMULL allocation. */
-						if (operation == 4U || operation == 6U ||
-						    operation == 14U)
-							continue;
-						const auto instruction = widening(scalar, upper,
-							unsigned_values, size, operation);
-						if (valid_widening(scalar, unsigned_values,
-						    size, operation))
-							harness.require_differential(instruction,
-								test::state(operation + size));
-						else
-							harness.require_illegal(instruction);
-					}
-				}
+	const auto destination = pick_register(right);
+	return {destination, pick_register(destination, right), right};
+}
+
+void encoding_examples()
+{
+	test::require(test::instruction(test::Operation::add_long, false,
+		{0U, false}, {0U, 1U, 2U}) == 0x0e22'0020U,
+		"SADDL encoding mismatch");
+	test::require(test::instruction(test::Operation::add_wide, true,
+		{1U, true}, {3U, 4U, 5U}) == 0x6e65'1083U,
+		"UADDW2 encoding mismatch");
+	test::require(test::instruction(test::Operation::subtract_long, false,
+		{2U, true}, {31U, 30U, 29U}) == 0x4ebd'23dfU,
+		"SSUBL2 encoding mismatch");
+	test::require(test::instruction(test::Operation::subtract_wide, true,
+		{0U, false}, {12U, 13U, 14U}) == 0x2e2e'31acU,
+		"USUBW encoding mismatch");
+	test::require(test::instruction(
+		test::Operation::absolute_accumulate, false, {1U, false},
+		{3U, 4U, 5U}) == 0x0e65'5083U,
+		"SABAL encoding mismatch");
+	test::require(test::instruction(test::Operation::absolute_long, true,
+		{2U, true}, {31U, 30U, 29U}) == 0x6ebd'73dfU,
+		"UABDL2 encoding mismatch");
+}
+
+void check_valid(test::engine_tests::EngineHarness &harness,
+	test::Operation operation, bool unsigned_values, test::Shape shape,
+	test::Registers registers, unsigned seed)
+{
+	const auto initial = test::state(seed);
+	harness.check_one("simd-widening-valid-allocation",
+		test::instruction(operation, unsigned_values, shape, registers),
+		initial,
+		test::expected_state(initial, operation, unsigned_values,
+			shape, registers),
+		test::native_requirements());
+}
+
+void every_register_field_arrangement_and_alias(
+	test::engine_tests::EngineHarness &harness)
+{
+	constexpr std::array aliases{
+		test::Registers{3U, 3U, 4U},
+		test::Registers{3U, 4U, 3U},
+		test::Registers{3U, 4U, 4U},
+		test::Registers{3U, 3U, 3U},
+		test::Registers{31U, 30U, 29U},
+	};
+	unsigned seed = 1000U;
+	for (const auto operation : test::operations)
+		for (const bool unsigned_values : {false, true})
+			for (const auto shape : test::shapes) {
+				for (unsigned destination = 0; destination < 32U;
+				     ++destination)
+					check_valid(harness, operation, unsigned_values,
+						shape, destination_case(destination), ++seed);
+				for (unsigned left = 0; left < 32U; ++left)
+					check_valid(harness, operation, unsigned_values,
+						shape, left_case(left), ++seed);
+				for (unsigned right = 0; right < 32U; ++right)
+					check_valid(harness, operation, unsigned_values,
+						shape, right_case(right), ++seed);
+				for (const auto registers : aliases)
+					check_valid(harness, operation, unsigned_values,
+						shape, registers, ++seed);
 			}
-		}
-	}
 }
 
-void complete_high_narrow_allocation()
+void every_reserved_arrangement(test::engine_tests::EngineHarness &harness)
 {
-	test::Harness harness;
-	for (const bool upper : {false, true})
-		for (const bool rounding : {false, true})
-			for (const bool subtract : {false, true})
-				for (unsigned size = 0; size < 4; ++size) {
-					const auto instruction = high_narrow(upper, rounding,
-						subtract, size);
-					if (size < 3U)
-						harness.require_differential(instruction,
-							test::state(size + 7U));
-					else
-						harness.require_illegal(instruction);
-				}
+	constexpr test::Registers registers{31U, 30U, 29U};
+	unsigned seed = 20'000U;
+	for (const auto operation : test::operations)
+		for (const bool unsigned_values : {false, true}) {
+			for (const bool upper : {false, true})
+				harness.check_illegal(
+					"simd-widening-reserved-size",
+					test::instruction(operation, unsigned_values,
+						{3U, upper}, registers),
+					test::state(++seed),
+					test::native_requirements());
+			for (unsigned size = 0; size < 4U; ++size)
+				harness.check_illegal(
+					"simd-widening-reserved-scalar",
+					test::scalar_instruction(operation,
+						unsigned_values, size, registers),
+					test::state(++seed),
+					test::native_requirements());
+		}
 }
 
 } // namespace
 
 int main()
 {
-	complete_widening_allocation();
-	complete_high_narrow_allocation();
+	encoding_examples();
+	test::engine_tests::EngineHarness harness;
+	every_register_field_arrangement_and_alias(harness);
+	every_reserved_arrangement(harness);
+	/* The 7,272 allocated vector cases need Advanced SIMD. The 72
+	 * architecturally invalid encodings still exercise JIT rejection. */
+	test::require_engine_counts(harness, 7344U, 7272U);
+	harness.print_summary("arm64-simd-widening-allocation");
 	return 0;
 }

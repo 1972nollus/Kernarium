@@ -1,65 +1,123 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_bfloat_conversion_test_support.hpp"
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+
 namespace test = arm64_bfloat_conversion_test;
 
 namespace {
 
-constexpr test::Registers registers{0, 1};
-constexpr std::array inputs{0x3f80'0000U, 0xbfc0'0000U,
-	0x4000'0000U, 0x8000'0000U};
-constexpr std::array outputs{std::uint16_t{0x3f80U}, std::uint16_t{0xbfc0U},
-	std::uint16_t{0x4000U}, std::uint16_t{0x8000U}};
+struct ExactCase final {
+	std::uint32_t input;
+	std::uint16_t output;
+	std::uint32_t flags;
+};
 
-test::common::arm64::CpuState prepared(unsigned seed)
+void require_oracle(const ExactCase &entry)
 {
-	auto state = test::common::state(seed);
-	state.fpsr = 0;
-	for (unsigned lane = 0; lane < inputs.size(); ++lane)
-		test::set_single(state, registers.source, lane, inputs[lane]);
-	return state;
+	const auto actual = test::convert(entry.input, 0U);
+	if (actual.bits == entry.output && actual.flags == entry.flags)
+		return;
+	std::fprintf(stderr,
+		"reduced-precision oracle mismatch input=%08x "
+		"expected=%04x/%08x actual=%04x/%08x\n",
+		entry.input, entry.output, entry.flags,
+		actual.bits, actual.flags);
+	std::abort();
 }
 
-void scalar_zeroes_inactive_bits()
+void exact_finite_zero_special_and_denormal_values(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	const auto actual = harness.run_interpreter(
-		test::instruction(test::Form::scalar, registers), prepared(10));
-	test::common::require(test::bfloat_lane(actual, registers.destination, 0) ==
-		outputs[0]);
-	for (unsigned byte = 2; byte < 16U; ++byte)
-		test::common::require(actual.vectors[registers.destination].bytes[byte] ==
-			std::byte{});
+	const std::array cases{
+		ExactCase{0x0000'0000U, 0x0000U, 0U},
+		ExactCase{0x8000'0000U, 0x8000U, 0U},
+		ExactCase{0x3f80'0000U, 0x3f80U, 0U},
+		ExactCase{0xbfc0'0000U, 0xbfc0U, 0U},
+		ExactCase{0x4000'0000U, 0x4000U, 0U},
+		ExactCase{0x0001'0000U, 0x0001U, 0U},
+		ExactCase{0x7f80'0000U, 0x7f80U, 0U},
+		ExactCase{0xff80'0000U, 0xff80U, 0U},
+		ExactCase{0x7fc1'2345U, 0x7fc1U, 0U},
+		ExactCase{0x7f81'2345U, 0x7fc1U,
+			test::floating::fpsr_invalid},
+	};
+	for (unsigned index = 0U; index < cases.size(); ++index) {
+		const auto &entry = cases[index];
+		require_oracle(entry);
+		for (const auto form : test::forms) {
+			auto initial = test::state(index +
+				static_cast<unsigned>(form) * 100U);
+			initial.fpsr = 0x0800'0090U;
+			for (unsigned lane = 0U; lane < 4U; ++lane)
+				test::write_single(
+					initial.vectors[29].bytes, lane,
+					entry.input);
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"reduced-precision-exact form=%u index=%u",
+				static_cast<unsigned>(form), index);
+			test::check(harness, name, form, {28U, 29U}, initial);
+		}
+	}
 }
 
-void lower_and_upper_vector_placement()
+void every_representative_floating_class(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto initial = prepared(11);
-	const auto lower = harness.run_interpreter(
-		test::instruction(test::Form::lower, registers), initial);
-	for (unsigned lane = 0; lane < outputs.size(); ++lane)
-		test::common::require(test::bfloat_lane(lower,
-			registers.destination, lane) == outputs[lane]);
-	for (unsigned byte = 8; byte < 16U; ++byte)
-		test::common::require(lower.vectors[registers.destination].bytes[byte] ==
-			std::byte{});
+	unsigned seed = 1000U;
+	for (const auto form : test::forms)
+		for (unsigned index = 0U;
+		     index < test::representative_inputs.size(); ++index) {
+			auto initial = test::state(++seed);
+			for (unsigned lane = 0U; lane < 4U; ++lane)
+				test::write_single(
+					initial.vectors[29].bytes, lane,
+					test::representative_inputs[
+						(index + lane * 3U) %
+						test::representative_inputs.size()]);
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"reduced-precision-class form=%u input=%u",
+				static_cast<unsigned>(form), index);
+			test::check(harness, name, form, {28U, 29U}, initial);
+		}
+}
 
-	const auto before = initial.vectors[registers.destination].bytes;
-	const auto upper = harness.run_interpreter(
-		test::instruction(test::Form::upper, registers), initial);
-	for (unsigned byte = 0; byte < 8U; ++byte)
-		test::common::require(upper.vectors[registers.destination].bytes[byte] ==
-			before[byte]);
-	for (unsigned lane = 0; lane < outputs.size(); ++lane)
-		test::common::require(test::bfloat_lane(upper,
-			registers.destination, lane + 4U) == outputs[lane]);
+void deterministic_bit_pattern_samples(
+	test::engine_tests::EngineHarness &harness)
+{
+	std::uint64_t random = 0xa409'3822'299f'31d0ULL;
+	unsigned seed = 2000U;
+	for (const auto form : test::forms)
+		for (unsigned sample = 0U; sample < 256U; ++sample) {
+			auto initial = test::state(++seed);
+			for (unsigned lane = 0U; lane < 4U; ++lane) {
+				random ^= random << 13U;
+				random ^= random >> 7U;
+				random ^= random << 17U;
+				test::write_single(
+					initial.vectors[29].bytes, lane,
+					static_cast<std::uint32_t>(random));
+			}
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"reduced-precision-pattern form=%u sample=%u",
+				static_cast<unsigned>(form), sample);
+			test::check(harness, name, form, {28U, 29U}, initial);
+		}
 }
 
 } // namespace
 
 int main()
 {
-	scalar_zeroes_inactive_bits();
-	lower_and_upper_vector_placement();
+	test::engine_tests::EngineHarness harness;
+	exact_finite_zero_special_and_denormal_values(harness);
+	every_representative_floating_class(harness);
+	deterministic_bit_pattern_samples(harness);
+	harness.print_summary("arm64-bfloat-conversion-behavior");
+	return 0;
 }

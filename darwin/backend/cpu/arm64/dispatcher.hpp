@@ -15,8 +15,10 @@ enum class StopReason {
 	system_call,
 	breakpoint,
 	memory_fault,
+	gcs_fault,
 	illegal_instruction,
 	unsupported_instruction,
+	floating_point_trap,
 };
 
 struct RunResult final {
@@ -25,6 +27,8 @@ struct RunResult final {
 	std::uint32_t instruction{};
 	std::size_t instructions{};
 	bool write{};
+	/* ESR-shaped metadata for StopReason::floating_point_trap. */
+	std::uint32_t syndrome{};
 };
 
 class Dispatcher final {
@@ -44,6 +48,8 @@ private:
 		Handler handler;
 	};
 
+	[[nodiscard]] RunResult execute_decoded(CpuState &, GuestMemory &,
+						std::uint32_t) const;
 	[[nodiscard]] RunResult exception(CpuState &, GuestMemory &,
 					 std::uint32_t) const;
 	[[nodiscard]] RunResult branch_immediate(CpuState &, GuestMemory &,
@@ -148,6 +154,8 @@ private:
 	[[nodiscard]] RunResult pointer_auth_code(CpuState &, GuestMemory &,
 		std::uint32_t) const;
 	[[nodiscard]] RunResult pointer_auth_generic(CpuState &, GuestMemory &,
+		std::uint32_t) const;
+	[[nodiscard]] RunResult guarded_control_stack(CpuState &, GuestMemory &,
 		std::uint32_t) const;
 	[[nodiscard]] RunResult unavailable_extension(CpuState &, GuestMemory &,
 		std::uint32_t) const;

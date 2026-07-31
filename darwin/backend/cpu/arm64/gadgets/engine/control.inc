@@ -12,12 +12,14 @@ gadget interrupt
 
 gadget fatal
 	ldr x8, [_stream]
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
 	mvn w0, wzr
 	b uml_arm64_gadget_leave
 
 gadget illegal
 	ldr x8, [_stream]
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_ILLEGAL
 	b uml_arm64_gadget_leave
@@ -26,6 +28,13 @@ gadget breakpoint
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
+	b uml_arm64_gadget_leave
+
+gadget gcs_fault
+	ldr x8, [_stream]
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, #UML_GADGET_EVENT_GCS_FAULT
 	b uml_arm64_gadget_leave
 
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
@@ -73,42 +82,6 @@ gadget fp_link_entry
 	bl NAME(uml_arm64_gadget_access_fp_state)
 	ldp x1, x2, [sp], #16
 	b 98b
-
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-/* Explicit debug-only interpreter fallback. Production builds do not contain
- * this gadget or its C++ dispatcher bridge.
- */
-gadget decoded
-	ldr w3, [_stream], #8
-	ldr x4, [_stream], #8
-	str x4, [_cpu, #UML_GADGET_CPU_PC]
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov w2, w3
-	bl NAME(uml_arm64_gadget_execute_decoded)
-	ldp x1, x2, [sp], #16
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	cbz w0, 1f
-	b uml_arm64_gadget_leave
-1:	next_gadget
-
-/* Debug-only decoded control-flow instructions terminate the translated
- * block so the interpreter-selected PC cannot be overwritten by its trailer.
- */
-gadget decoded_control
-	ldr w3, [_stream], #8
-	ldr x4, [_stream], #8
-	str x4, [_cpu, #UML_GADGET_CPU_PC]
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov w2, w3
-	bl NAME(uml_arm64_gadget_execute_decoded)
-	ldp x1, x2, [sp], #16
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	b uml_arm64_gadget_leave
-#endif
 
 gadget branch
 	ldr x8, [_stream]
@@ -198,23 +171,28 @@ gadget return_cached
 /* Authenticated indirect branches. Key, link behavior, zero modifier, and
  * XZR target are fixed by the builder. The ordinary register/register path
  * is straight-line and contains no guest-state validity branch. */
-.macro pauth_branch name, authentication, zero_authentication, link, target_zero, modifier_zero
+.macro pauth_branch name, operation, link, target_zero, modifier_zero
 gadget pauth_branch_\name
 	.if !\target_zero || !\modifier_zero
 	ldr x8, [_stream], #8
 	.endif
 	.if \target_zero
 	mov x9, xzr
+	.elseif \modifier_zero
+	ldr x9, [_cpu, x8]
 	.else
 	and w10, w8, #0xffff
 	ldr x9, [_cpu, x10]
 	.endif
 	.if \modifier_zero
-	\zero_authentication x9
+	software_pointer_auth x9, xzr, \operation
+	.elseif \target_zero
+	ldr x12, [_cpu, x8]
+	software_pointer_auth x9, x12, \operation
 	.else
 	ubfx w11, w8, #16, #16
 	ldr x12, [_cpu, x11]
-	\authentication x9, x12
+	software_pointer_auth x9, x12, \operation
 	.endif
 	.if \link
 	ldr x13, [_stream]
@@ -225,24 +203,124 @@ gadget pauth_branch_\name
 	b uml_arm64_gadget_leave
 .endm
 
-pauth_branch bra_a_rr, autia, autiza, 0, 0, 0
-pauth_branch bra_a_rz, autia, autiza, 0, 0, 1
-pauth_branch bra_a_zr, autia, autiza, 0, 1, 0
-pauth_branch bra_a_zz, autia, autiza, 0, 1, 1
-pauth_branch bra_b_rr, autib, autizb, 0, 0, 0
-pauth_branch bra_b_rz, autib, autizb, 0, 0, 1
-pauth_branch bra_b_zr, autib, autizb, 0, 1, 0
-pauth_branch bra_b_zz, autib, autizb, 0, 1, 1
-pauth_branch blra_a_rr, autia, autiza, 1, 0, 0
-pauth_branch blra_a_rz, autia, autiza, 1, 0, 1
-pauth_branch blra_a_zr, autia, autiza, 1, 1, 0
-pauth_branch blra_a_zz, autia, autiza, 1, 1, 1
-pauth_branch blra_b_rr, autib, autizb, 1, 0, 0
-pauth_branch blra_b_rz, autib, autizb, 1, 0, 1
-pauth_branch blra_b_zr, autib, autizb, 1, 1, 0
-pauth_branch blra_b_zz, autib, autizb, 1, 1, 1
+pauth_branch bra_a_rr, 4, 0, 0, 0
+pauth_branch bra_a_rz, 4, 0, 0, 1
+pauth_branch bra_a_zr, 4, 0, 1, 0
+pauth_branch bra_a_zz, 4, 0, 1, 1
+pauth_branch bra_b_rr, 5, 0, 0, 0
+pauth_branch bra_b_rz, 5, 0, 0, 1
+pauth_branch bra_b_zr, 5, 0, 1, 0
+pauth_branch bra_b_zz, 5, 0, 1, 1
+pauth_branch blra_a_rr, 4, 1, 0, 0
+pauth_branch blra_a_rz, 4, 1, 0, 1
+pauth_branch blra_a_zr, 4, 1, 1, 0
+pauth_branch blra_a_zz, 4, 1, 1, 1
+pauth_branch blra_b_rr, 5, 1, 0, 0
+pauth_branch blra_b_rz, 5, 1, 0, 1
+pauth_branch blra_b_zr, 5, 1, 1, 0
+pauth_branch blra_b_zz, 5, 1, 1, 1
 
 .purgem pauth_branch
+
+/* Guarded authenticated calls are selected only for a guest profile which
+ * exposes the optional control stack. Translation still fixes the key and
+ * zero-register forms, while the normal call entries above remain unchanged.
+ * The helper validates all pages before committing a record.
+ */
+.macro pauth_guarded_call name, operation, target_zero, modifier_zero
+gadget pauth_branch_blra_gcs_\name
+	.if !\target_zero || !\modifier_zero
+	ldr x8, [_stream], #8
+	.endif
+	.if \target_zero
+	mov x9, xzr
+	.elseif \modifier_zero
+	ldr x9, [_cpu, x8]
+	.else
+	and w10, w8, #0xffff
+	ldr x9, [_cpu, x10]
+	.endif
+	.if \modifier_zero
+	software_pointer_auth x9, xzr, \operation
+	.elseif \target_zero
+	ldr x12, [_cpu, x8]
+	software_pointer_auth x9, x12, \operation
+	.else
+	ubfx w11, w8, #16, #16
+	ldr x12, [_cpu, x11]
+	software_pointer_auth x9, x12, \operation
+	.endif
+	str x9, [_cpu, #UML_GADGET_CPU_ZERO]
+	ldr x13, [_stream]
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x2
+	mov x2, x13
+	bl NAME(uml_arm64_guarded_call_record)
+	ldp x1, x2, [sp], #16
+	cbnz w0, 97f
+	ldr x9, [_cpu, #UML_GADGET_CPU_ZERO]
+	ldr x13, [_stream]
+	str x13, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+97:
+	ldr x8, [_stream]
+	sub x8, x8, #4
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	cmp w0, #1
+	mov w8, #UML_GADGET_EVENT_MEMORY_FAULT
+	mov w9, #UML_GADGET_EVENT_GCS_FAULT
+	csel w0, w8, w9, eq
+	b uml_arm64_gadget_leave
+.endm
+
+pauth_guarded_call a_rr, 4, 0, 0
+pauth_guarded_call a_rz, 4, 0, 1
+pauth_guarded_call a_zr, 4, 1, 0
+pauth_guarded_call a_zz, 4, 1, 1
+pauth_guarded_call b_rr, 5, 0, 0
+pauth_guarded_call b_rz, 5, 0, 1
+pauth_guarded_call b_zr, 5, 1, 0
+pauth_guarded_call b_zz, 5, 1, 1
+
+.purgem pauth_guarded_call
+
+/* Guarded authenticated returns always use LR and SP. The checked target is
+ * kept in the private zero slot across the helper call. On a failed read or
+ * record comparison, _stream already addresses the faulting guest PC.
+ */
+.macro pauth_guarded_return name, operation
+gadget pauth_return_gcs_\name
+	ldr x8, [_stream], #8
+	and w10, w8, #0xffff
+	ldr x9, [_cpu, x10]
+	ubfx w11, w8, #16, #16
+	ldr x12, [_cpu, x11]
+	software_pointer_auth x9, x12, \operation
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x2
+	mov x2, x9
+	bl NAME(uml_arm64_guarded_return_record)
+	ldp x1, x2, [sp], #16
+	cbnz w0, 97f
+	ldr x9, [_cpu, #UML_GADGET_CPU_ZERO]
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+97:
+	cmp w0, #1
+	b.eq uml_arm64_gadget_memory_fault
+	b NAME(uml_arm64_gadget_gcs_fault)
+.endm
+
+pauth_guarded_return a, 4
+pauth_guarded_return b, 5
+
+.purgem pauth_guarded_return
 
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop
@@ -416,104 +494,61 @@ gadget branch_always_linked
 	ldr x8, [_stream]
 	follow_block_link x8
 
-gadget compare_branch
+/* CBZ/CBNZ width, polarity, source offset, and both successors are fixed by
+ * translation.  The valid runtime path is straight-line and contains no
+ * opcode extraction, register-number test, or conditional branch. */
+.macro compare_branch width_name, width, polarity, condition
+gadget compare_branch_\width_name\()_\polarity
 	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #1
-	ubfx x11, x8, #9, #1
-	add x12, _cpu, #UML_GADGET_CPU_X0
-	cmp x9, #31
-	b.eq 1f
-	ldr x13, [x12, x9, lsl #3]
-	b 2f
-1:	mov x13, xzr
-2:	cbnz x10, 3f
-	and x13, x13, #0xffffffff
-3:	cmp x13, #0
-	cset w14, eq
-	cmp w11, #0
-	csel w14, w14, wzr, eq
-	/* nonzero branches invert the zero result */
-	cbz w11, 4f
-	cmp x13, #0
-	cset w14, ne
-4:	cmp w14, #0
-	csel x15, x19, x20, ne
-	str x15, [_cpu, #UML_GADGET_CPU_PC]
+	ldp x19, x20, [_stream]
+	ldr \width\()9, [_cpu, x8]
+	cmp \width\()9, #0
+	csel x10, x19, x20, \condition
+	str x10, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-gadget compare_branch_linked
+gadget compare_branch_\width_name\()_\polarity\()_linked
 	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #1
-	ubfx x11, x8, #9, #1
-	add x12, _cpu, #UML_GADGET_CPU_X0
-	cmp x9, #31
-	b.eq 1f
-	ldr x13, [x12, x9, lsl #3]
-	b 2f
-1:	mov x13, xzr
-2:	cbnz x10, 3f
-	and x13, x13, #0xffffffff
-3:	cmp x13, #0
-	cset w14, eq
-	cmp w11, #0
-	csel w14, w14, wzr, eq
-	cbz w11, 4f
-	cmp x13, #0
-	cset w14, ne
-4:	cmp w14, #0
-	csel x8, x19, x20, ne
+	ldp x19, x20, [_stream]
+	ldr \width\()9, [_cpu, x8]
+	cmp \width\()9, #0
+	csel x8, x19, x20, \condition
 	follow_block_link x8
+.endm
 
-gadget test_branch
-	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #6
-	ubfx x11, x8, #16, #1
-	cmp x9, #31
-	b.eq 1f
-	add x12, _cpu, #UML_GADGET_CPU_X0
-	ldr x13, [x12, x9, lsl #3]
-	b 2f
-1:	mov x13, xzr
-2:	lsr x13, x13, x10
-	and x13, x13, #1
-	cmp x11, #0
-	cset w14, ne
-	cmp x13, x14
-	csel x15, x19, x20, eq
-	str x15, [_cpu, #UML_GADGET_CPU_PC]
+compare_branch w, w, z, eq
+compare_branch w, w, nz, ne
+compare_branch x, x, z, eq
+compare_branch x, x, nz, ne
+
+/* TBZ/TBNZ use a translation-computed one-bit mask.  This removes all
+ * instruction-field extraction and the variable shift from the hot path. */
+.macro test_branch polarity, condition
+gadget test_branch_\polarity
+	ldp x8, x9, [_stream], #16
+	ldp x19, x20, [_stream]
+	ldr x10, [_cpu, x8]
+	tst x10, x9
+	csel x11, x19, x20, \condition
+	str x11, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-gadget test_branch_linked
-	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	and x9, x8, #0x1f
-	ubfx x10, x8, #8, #6
-	ubfx x11, x8, #16, #1
-	cmp x9, #31
-	b.eq 1f
-	add x12, _cpu, #UML_GADGET_CPU_X0
-	ldr x13, [x12, x9, lsl #3]
-	b 2f
-1:	mov x13, xzr
-2:	lsr x13, x13, x10
-	and x13, x13, #1
-	cmp x11, #0
-	cset w14, ne
-	cmp x13, x14
-	csel x8, x19, x20, eq
+gadget test_branch_\polarity\()_linked
+	ldp x8, x9, [_stream], #16
+	ldp x19, x20, [_stream]
+	ldr x10, [_cpu, x8]
+	tst x10, x9
+	csel x8, x19, x20, \condition
 	follow_block_link x8
+.endm
+
+test_branch z, eq
+test_branch nz, ne
+
+.purgem test_branch
+.purgem compare_branch
 
 .purgem conditional_branch_linked
 .purgem follow_block_link

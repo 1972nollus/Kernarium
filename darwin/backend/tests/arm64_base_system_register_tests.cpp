@@ -1,277 +1,387 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/dispatcher.hpp"
-#include "cpu/arm64/gadgets/program.hpp"
-
-#include "uml_darwin_static_mmu.h"
+#include "arm64_system_test_support.hpp"
+#include "cpu/arm64/detail/host_counter.hpp"
 
 #include <array>
-#include <cstdio>
-#include <cstdlib>
-#include <memory>
-#include <source_location>
+#include <cstdint>
+#include <cstring>
+#include <span>
+#include <string_view>
 
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine_tests = uml::backend::tests;
+namespace test = arm64_system_test;
 
 namespace {
 
-constexpr std::uint64_t pc = 0x4a0'0000;
 constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
+constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
+constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
-class NullMemory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t, std::span<std::byte>) override
-	{
-		++reads;
-		return false;
-	}
-	[[nodiscard]] bool write(
-		std::uint64_t, std::span<const std::byte>) override
-	{
-		++writes;
-		return false;
-	}
-	std::size_t reads{};
-	std::size_t writes{};
+struct CounterBounds final {
+	std::uint64_t before{};
+	std::uint64_t after{};
 };
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
+CounterBounds counter_bounds;
+
+void sample_counter_before(void *context, std::string_view,
+	unsigned long)
 {
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
+	auto &bounds = *static_cast<CounterBounds *>(context);
+	bounds.before = arm64::detail::read_host_virtual_counter();
 }
 
-[[nodiscard]] arm64::CpuState initial_state()
+void sample_counter_after(void *context, std::string_view,
+	unsigned long)
 {
-	arm64::CpuState cpu{};
-	for (unsigned index = 0; index < cpu.registers.size(); ++index)
-		cpu.registers[index] = 0x8102'0304'0506'0708ULL ^
-			(static_cast<std::uint64_t>(index) * 0x0101'0101'0101'0101ULL);
-	cpu.sp = 0xfeed'face'cafe'bee0ULL;
-	cpu.nzcv = 0xa000'0000U;
-	cpu.fpcr = 0xffff'ffffU;
-	cpu.fpsr = 0xffff'ffffU;
-	cpu.tls = 0x1234'5678'9abc'def0ULL;
-	cpu.exclusive_address = 0x2000;
-	cpu.exclusive_key = 0x3456;
-	cpu.exclusive_size = 8;
-	return cpu;
+	auto &bounds = *static_cast<CounterBounds *>(context);
+	bounds.after = arm64::detail::read_host_virtual_counter();
 }
 
-struct Results final {
-	arm64::CpuState interpreter;
-	arm64::CpuState gadget;
-};
-
-[[nodiscard]] Results run(std::uint32_t instruction,
-	const arm64::CpuState &initial)
+void validate_host_counter(
+	const arm64::CpuState &, const arm64::CpuState &expected_template,
+	const arm64::CpuState &actual, std::string_view case_name,
+	std::string_view engine, std::uint32_t instruction)
 {
-	NullMemory memory;
-	auto interpreted = initial;
-	interpreted.pc = pc;
-	require(arm64::Dispatcher{}.execute(interpreted, memory, instruction).reason ==
-		arm64::StopReason::continued);
-	require(memory.reads == 0 && memory.writes == 0);
-
-	const std::array stream{instruction, 0xd400'0001U};
-	const auto built = gadgets::Builder{}.build(pc, stream);
-	require(built.complete);
-	auto gadget = initial;
-	gadget.pc = pc;
-	auto tlb = std::make_unique<gadgets::Tlb>();
-	tlb->prepare(0, darwin_uml_static_vm_changes(0));
-	require(gadgets::execute(built.program, gadget, *tlb) ==
-		gadgets::Event::system_call);
-	require(interpreted.pc == pc + 4 && gadget.pc == pc + 8);
-	return {interpreted, gadget};
+	const auto value = actual.registers[6];
+	test::require(counter_bounds.before <= value);
+	test::require(value <= counter_bounds.after);
+	auto expected = expected_template;
+	expected.registers[6] = value;
+	engine_tests::require_architecture_equal(
+		expected, actual, case_name, engine, instruction);
 }
 
-void require_illegal(std::uint32_t instruction)
-{
-	NullMemory memory;
-	const auto initial = initial_state();
-	auto interpreted = initial;
-	interpreted.pc = pc;
-	const auto result = arm64::Dispatcher{}.execute(
-		interpreted, memory, instruction);
-	require(result.reason == arm64::StopReason::illegal_instruction);
-	require(result.address == pc && result.instruction == instruction);
-	require(interpreted.pc == pc && interpreted.registers == initial.registers);
-	require(interpreted.sp == initial.sp && interpreted.tls == initial.tls);
-	require(interpreted.fpcr == initial.fpcr &&
-		interpreted.fpsr == initial.fpsr && interpreted.nzcv == initial.nzcv);
-	require(memory.reads == 0 && memory.writes == 0);
-
-	const std::array stream{instruction, 0xd400'0001U};
-	const auto built = gadgets::Builder{}.build(pc, stream);
-	require(built.complete);
-	auto gadget = initial;
-	gadget.pc = pc;
-	auto tlb = std::make_unique<gadgets::Tlb>();
-	tlb->prepare(0, darwin_uml_static_vm_changes(0));
-	require(gadgets::execute(built.program, gadget, *tlb) ==
-		gadgets::Event::illegal_instruction);
-	require(gadget.pc == pc && gadget.registers == initial.registers);
-	require(gadget.sp == initial.sp && gadget.tls == initial.tls);
-	require(gadget.fpcr == initial.fpcr && gadget.fpsr == initial.fpsr &&
-		gadget.nzcv == initial.nzcv);
-}
-
-void thread_pointer()
+void check_read(test::Harness &harness, std::string_view name,
+	std::uint32_t instruction_base, std::uint64_t value,
+	engine_tests::NativeRequirements native)
 {
 	for (unsigned transfer = 0; transfer < 32; ++transfer) {
-		auto initial = initial_state();
-		const auto read = run(0xd53b'd040U | transfer, initial);
-		for (const auto *cpu : {&read.interpreter, &read.gadget}) {
-			if (transfer != 31)
-				require(cpu->registers[transfer] == initial.tls);
-			else
-				require(cpu->registers == initial.registers);
-			require(cpu->tls == initial.tls);
-		}
-
-		initial = initial_state();
-		const auto expected = transfer == 31 ? 0 : initial.registers[transfer];
-		const auto write = run(0xd51b'd040U | transfer, initial);
-		require(write.interpreter.tls == expected);
-		require(write.gadget.tls == expected);
+		const auto initial = test::state();
+		auto expected = initial;
+		if (transfer != 31)
+			expected.registers[transfer] = value;
+		harness.check(name, instruction_base | transfer, initial, expected,
+			native);
 	}
 }
 
-void floating_control_status()
+template <typename Apply>
+void check_write(test::Harness &harness, std::string_view name,
+	std::uint32_t instruction_base,
+	engine_tests::NativeRequirements native, Apply apply)
 {
 	for (unsigned transfer = 0; transfer < 32; ++transfer) {
-		for (const auto [read_opcode, write_opcode, mask] :
-			{std::array<std::uint32_t, 3>{
-				0xd53b'4400U, 0xd51b'4400U, fpcr_mask},
-			 std::array<std::uint32_t, 3>{
-				0xd53b'4420U, 0xd51b'4420U, fpsr_mask}}) {
-			auto initial = initial_state();
-			const auto read = run(read_opcode | transfer, initial);
-			if (transfer != 31) {
-				require(read.interpreter.registers[transfer] == mask);
-				require(read.gadget.registers[transfer] == mask);
-			} else {
-				require(read.interpreter.registers == initial.registers);
-				require(read.gadget.registers == initial.registers);
-			}
-
-			initial = initial_state();
-			const auto source = transfer == 31 ? 0U :
-				static_cast<std::uint32_t>(initial.registers[transfer]);
-			const auto write = run(write_opcode | transfer, initial);
-			if (write_opcode == 0xd51b'4400U) {
-				require(write.interpreter.fpcr == (source & mask));
-				require(write.gadget.fpcr == (source & mask));
-			} else {
-				require(write.interpreter.fpsr == (source & mask));
-				require(write.gadget.fpsr == (source & mask));
-			}
-		}
+		const auto initial = test::state();
+		auto expected = initial;
+		const auto source = transfer == 31 ?
+			std::uint64_t{0} : initial.registers[transfer];
+		apply(expected, source);
+		harness.check(name, instruction_base | transfer, initial, expected,
+			native);
 	}
 }
 
-void condition_flags()
+void thread_pointer(test::Harness &harness)
 {
+	check_read(harness, "base-read-thread-pointer", 0xd53b'd040U,
+		test::state().tls, engine_tests::NativeRequirements::baseline());
+	check_write(harness, "base-write-thread-pointer", 0xd51b'd040U,
+		engine_tests::NativeRequirements::baseline(),
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.tls = source;
+		});
+	check_read(harness, "base-read-only-thread-pointer", 0xd53b'd060U, 0,
+		engine_tests::NativeRequirements::baseline());
+}
+
+void floating_control_status(test::Harness &harness)
+{
+	const auto floating =
+		engine_tests::NativeRequirements::features(
+			uml::backend::ArmFeature::floating_point);
+	check_read(harness, "base-read-floating-control", 0xd53b'4400U,
+		test::state().fpcr & fpcr_mask, floating);
+	check_write(harness, "base-write-floating-control", 0xd51b'4400U,
+		floating,
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.fpcr = static_cast<std::uint32_t>(source) &
+				fpcr_mask;
+		});
+	check_read(harness, "base-read-floating-status", 0xd53b'4420U,
+		test::state().fpsr & fpsr_mask, floating);
+	check_write(harness, "base-write-floating-status", 0xd51b'4420U,
+		floating,
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.fpsr = static_cast<std::uint32_t>(source) &
+				fpsr_mask;
+		});
+}
+
+void floating_status_boundary_round_trips(test::Harness &harness)
+{
+	const auto floating =
+		engine_tests::NativeRequirements::features(
+			uml::backend::ArmFeature::floating_point);
+
+	for (const auto condition_bit : {
+		0x8000'0000U, 0x4000'0000U, 0x2000'0000U, 0x1000'0000U,
+	}) {
+		auto initial = test::state();
+		initial.fpcr = 0;
+		initial.fpsr = condition_bit;
+		initial.registers[4] = 0;
+		auto expected = initial;
+		harness.check("base-preserve-floating-status-condition",
+			0xd51b'4404U, initial, expected, floating);
+	}
+
+	for (const auto mutable_flag : {
+		0x0800'0000U, 0x0000'0080U, 0x0000'0010U, 0x0000'0008U,
+		0x0000'0004U, 0x0000'0002U, 0x0000'0001U,
+	}) {
+		auto initial = test::state();
+		initial.fpcr = 0;
+		initial.fpsr = 0;
+		initial.registers[4] = mutable_flag;
+		auto expected = initial;
+		expected.fpsr = mutable_flag;
+		harness.check("base-round-trip-floating-status-flag",
+			0xd51b'4424U, initial, expected, floating);
+	}
+
+	const std::array code{
+		engine_tests::ProgramWord{
+			.offset = 0,
+			.instruction = 0xd51b'443fU, // MSR FPSR, XZR
+		},
+		engine_tests::ProgramWord{
+			.offset = 4,
+			.instruction = 0x1e62'2020U, // FCMP D1, D2
+		},
+		engine_tests::ProgramWord{
+			.offset = 8,
+			.instruction = terminal_system_call,
+		},
+	};
+	auto initial = test::state();
+	initial.fpcr = 0;
+	initial.fpsr = 0;
+	const std::uint64_t exceptional = 0x7ff0'0000'0000'0001ULL;
+	const std::uint64_t ordinary = 0x3ff0'0000'0000'0000ULL;
+	std::memcpy(initial.vectors[1].bytes.data(), &exceptional,
+		sizeof(exceptional));
+	std::memcpy(initial.vectors[2].bytes.data(), &ordinary,
+		sizeof(ordinary));
+	auto expected = initial;
+	expected.fpsr = 1;
+	expected.nzcv = 0x3000'0000U;
+	expected.pc = engine_tests::engine_test_code_base + 12;
+	harness.engines().check_program({
+		.name = "base-native-floating-status-update",
+		.code = std::span<const engine_tests::ProgramWord>{code},
+		.initial = initial,
+		.expected = expected,
+		.event = engine_tests::ExpectedEvent::system_call,
+		.native = floating,
+	});
+}
+
+void floating_mode(test::Harness &harness)
+{
+	const auto mode_feature =
+		engine_tests::NativeRequirements::features(
+			uml::backend::ArmFeature::fp8);
+	check_read(harness, "base-read-floating-mode", 0xd53b'4440U,
+		test::state().fpmr & fpmr_mask, mode_feature);
+	check_write(harness, "base-write-floating-mode", 0xd51b'4440U,
+		mode_feature,
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.fpmr = source & fpmr_mask;
+		});
+}
+
+void condition_flags(test::Harness &harness)
+{
+	check_read(harness, "base-read-condition-flags", 0xd53b'4200U,
+		test::state().nzcv, engine_tests::NativeRequirements::baseline());
+	check_write(harness, "base-write-condition-flags", 0xd51b'4200U,
+		engine_tests::NativeRequirements::baseline(),
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.nzcv = static_cast<std::uint32_t>(source) &
+				0xf000'0000U;
+		});
+}
+
+void fixed_read_only_registers(test::Harness &harness)
+{
+	check_read(harness, "base-read-cache-zero-identification",
+		0xd53b'00e0U, 4U,
+		engine_tests::NativeRequirements::baseline());
+	check_read(harness, "base-read-cache-type", 0xd53b'0020U,
+		0x8444'8004U,
+		engine_tests::NativeRequirements::baseline());
+	check_read(harness, "base-read-counter-frequency", 0xd53b'e000U,
+		arm64::detail::read_host_counter_frequency(),
+		engine_tests::NativeRequirements::baseline());
+}
+
+void virtual_counter(test::Harness &harness)
+{
+	{
+		const auto initial = test::state();
+		const auto expected = initial;
+		harness.engines().check({
+			.name = "base-read-host-virtual-counter",
+			.instruction = 0xd53b'e046U, // MRS X6, CNTVCT_EL0
+			.initial = initial,
+			.expected = expected,
+			.native =
+				engine_tests::NativeRequirements::baseline(),
+			.validator = validate_host_counter,
+			.execution_context = &counter_bounds,
+			.before_engine = sample_counter_before,
+			.after_engine = sample_counter_after,
+		});
+	}
+
 	for (unsigned transfer = 0; transfer < 32; ++transfer) {
-		auto initial = initial_state();
-		const auto read = run(0xd53b'4200U | transfer, initial);
-		if (transfer != 31) {
-			require(read.interpreter.registers[transfer] == initial.nzcv);
-			require(read.gadget.registers[transfer] == initial.nzcv);
+		const auto counter = 0xd53b'e040U | transfer;
+		if (transfer == 31) {
+			harness.check_unchanged("base-discard-virtual-counter",
+				counter);
+			continue;
 		}
 
-		initial = initial_state();
-		const auto source = transfer == 31 ? 0U :
-			static_cast<std::uint32_t>(initial.registers[transfer]);
-		const auto write = run(0xd51b'4200U | transfer, initial);
-		require(write.interpreter.nzcv == (source & 0xf000'0000U));
-		require(write.gadget.nzcv == (source & 0xf000'0000U));
+		const std::array code{
+			engine_tests::ProgramWord{
+				.offset = 0,
+				.instruction = counter,
+			},
+			engine_tests::ProgramWord{
+				.offset = 4,
+				/* CMP Xtransfer, #0. */
+				.instruction = 0xf100'001fU |
+					(transfer << 5),
+			},
+			engine_tests::ProgramWord{
+				.offset = 8,
+				/* CSET Xtransfer, NE. */
+				.instruction = 0x9a9f'07e0U | transfer,
+			},
+			engine_tests::ProgramWord{
+				.offset = 12,
+				.instruction = terminal_system_call,
+			},
+		};
+		const auto initial = test::state();
+		auto expected = initial;
+		expected.registers[transfer] = 1;
+		expected.nzcv = 0x2000'0000U;
+		expected.pc = engine_tests::engine_test_code_base + 16;
+		harness.engines().check_program({
+			.name = "base-read-virtual-counter",
+			.code = std::span<const engine_tests::ProgramWord>{code},
+			.initial = initial,
+			.expected = expected,
+			.event = engine_tests::ExpectedEvent::system_call,
+			.native =
+				engine_tests::NativeRequirements::baseline(),
+		});
 	}
 }
 
-void read_only_registers()
+void virtual_counter_is_monotonic(test::Harness &harness)
 {
-	for (const auto [instruction, expected] : {
-		std::array<std::uint64_t, 2>{0xd53b'd067U, 0U},
-		std::array<std::uint64_t, 2>{0xd53b'00e7U, 4U},
-		std::array<std::uint64_t, 2>{0xd53b'0027U, 0x8444'8004U},
-		std::array<std::uint64_t, 2>{0xd53b'e007U, 1'000'000'000U}}) {
-		const auto result = run(static_cast<std::uint32_t>(instruction),
-			initial_state());
-		require(result.interpreter.registers[7] == expected);
-		require(result.gadget.registers[7] == expected);
-	}
-
-	const auto counter = run(0xd53b'e047U, initial_state());
-	require(counter.interpreter.registers[7] != 0);
-	require(counter.gadget.registers[7] != 0);
-
-	/* MRS Xt==XZR remains a valid discarded read for every supported source. */
-	for (const auto instruction : {0xd53b'd07fU, 0xd53b'00ffU, 0xd53b'003fU,
-		0xd53b'e01fU, 0xd53b'e05fU}) {
-		const auto initial = initial_state();
-		const auto result = run(instruction, initial);
-		require(result.interpreter.registers == initial.registers);
-		require(result.gadget.registers == initial.registers);
-	}
+	const std::array code{
+		engine_tests::ProgramWord{
+			.offset = 0,
+			.instruction = 0xd53b'e040U, // MRS X0, CNTVCT_EL0
+		},
+		engine_tests::ProgramWord{
+			.offset = 4,
+			.instruction = 0xd53b'e041U, // MRS X1, CNTVCT_EL0
+		},
+		engine_tests::ProgramWord{
+			.offset = 8,
+			.instruction = 0xeb00'003fU, // CMP X1, X0
+		},
+		engine_tests::ProgramWord{
+			.offset = 12,
+			.instruction = 0x9a9f'37e2U, // CSET X2, CS
+		},
+		engine_tests::ProgramWord{
+			.offset = 16,
+			.instruction = 0xaa1f'03e0U, // MOV X0, XZR
+		},
+		engine_tests::ProgramWord{
+			.offset = 20,
+			.instruction = 0xaa1f'03e1U, // MOV X1, XZR
+		},
+		engine_tests::ProgramWord{
+			.offset = 24,
+			.instruction = 0xf100'001fU, // CMP X0, #0
+		},
+		engine_tests::ProgramWord{
+			.offset = 28,
+			.instruction = terminal_system_call,
+		},
+	};
+	const auto initial = test::state();
+	auto expected = initial;
+	expected.registers[0] = 0;
+	expected.registers[1] = 0;
+	expected.registers[2] = 1;
+	expected.nzcv = 0x6000'0000U;
+	expected.pc = engine_tests::engine_test_code_base + 32;
+	harness.engines().check_program({
+		.name = "base-virtual-counter-monotonic",
+		.code = std::span<const engine_tests::ProgramWord>{code},
+		.initial = initial,
+		.expected = expected,
+		.event = engine_tests::ExpectedEvent::system_call,
+		.native = engine_tests::NativeRequirements::baseline(),
+	});
 }
 
-void inaccessible_and_reserved()
+void inaccessible_and_reserved(test::Harness &harness)
 {
-	/* SCTLR_EL1 is inaccessible at EL0 in both directions. Numeric encodings
-	 * in the same allocation must take the same early Undefined path. */
-	for (const auto instruction : {0xd538'1000U, 0xd518'1000U,
-		0xd53f'ffe3U, 0xd51f'ffe3U})
-		require_illegal(instruction);
+	for (const auto instruction : {
+		0xd538'1000U, 0xd518'1000U, // SCTLR_EL1
+		0xd53f'ffe3U, 0xd51f'ffe3U,
+		0xd550'0000U, 0xd570'0000U, // system-register pair
+		0xd550'0001U, 0xd570'0001U, // reserved odd Rt
+		0xd55f'ffe2U, 0xd57f'ffe2U,
+	})
+		harness.require_illegal(instruction);
 
-	/* The current EL0 profile exposes no FEAT_SYSREG128 register. Cover both
-	 * directions and the architecturally reserved odd-Rt forms. */
-	for (const auto instruction : {0xd550'0000U, 0xd570'0000U,
-		0xd550'0001U, 0xd570'0001U, 0xd55f'ffe2U, 0xd57f'ffe2U})
-		require_illegal(instruction);
-
-	/* FEAT_SYSINSTR128 is likewise absent. Exercise low/high numeric fields and
-	 * both a real source and XZR across the SYSP encoding space. */
 	for (const unsigned op1 : {0U, 7U})
 		for (const unsigned crn : {0U, 8U, 9U, 15U})
 			for (const unsigned crm : {0U, 15U})
 				for (const unsigned op2 : {0U, 7U})
 					for (const unsigned transfer : {0U, 31U})
-						require_illegal(0xd548'0000U |
-							(op1 << 16) | (crn << 12) | (crm << 8) |
-							(op2 << 5) | transfer);
-}
-
-void production_specialization()
-{
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
-	const auto tls = gadgets::Builder{}.build(pc,
-		std::array{0xd53b'd040U, 0xd400'0001U});
-	const auto fpcr = gadgets::Builder{}.build(pc,
-		std::array{0xd53b'4400U, 0xd400'0001U});
-	const auto counter = gadgets::Builder{}.build(pc,
-		std::array{0xd53b'e040U, 0xd400'0001U});
-	require(tls.program.words().front() != fpcr.program.words().front());
-	require(tls.program.words().front() != counter.program.words().front());
-	require(fpcr.program.words().front() != counter.program.words().front());
-#endif
+						harness.require_illegal(0xd548'0000U |
+							(op1 << 16) | (crn << 12) |
+							(crm << 8) | (op2 << 5) |
+							transfer);
 }
 
 } // namespace
 
 int main()
 {
-	thread_pointer();
-	floating_control_status();
-	condition_flags();
-	read_only_registers();
-	inaccessible_and_reserved();
-	production_specialization();
+	test::Harness harness;
+	thread_pointer(harness);
+	floating_control_status(harness);
+	floating_status_boundary_round_trips(harness);
+	floating_mode(harness);
+	condition_flags(harness);
+	fixed_read_only_registers(harness);
+	virtual_counter(harness);
+	virtual_counter_is_monotonic(harness);
+	inaccessible_and_reserved(harness);
+	harness.print_summary("arm64-base-system-registers");
 	return 0;
 }

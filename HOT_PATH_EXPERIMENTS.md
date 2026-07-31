@@ -1977,3 +1977,1320 @@ not survive a reboot.
 - [x] Pass 308/308 production non-VNC tests plus standalone VNC.
 - [x] Pass 306/306 debug-interpreter non-VNC tests plus standalone VNC.
 - [x] Pass 307/307 4 KiB fallback non-VNC tests plus standalone VNC.
+
+## G43: native JIT bring-up and host-safe CPU features
+
+Started 2026-07-27. Execution-engine selection is now a runtime CLI decision:
+`--execution-engine=jit`, `gadgets`, or `interpreter`. macOS defaults to JIT
+when the option is omitted; iOS defaults to gadgets. The interpreter remains
+a correctness/debug path. The ARM64 JIT uses a `MAP_JIT` arena, generated
+native blocks, a four-way fixed-size cache, direct Base/FP/SIMD emitters, and
+inline 16 KiB software-TLB lookups. The JIT is strict: unsupported block
+starts are fatal and there is no JIT-to-gadget fallback state, API, compiled
+block type, or CLI switch. Supported native prefixes are retained.
+
+Guest feature reporting now has one host-derived contract. `AT_HWCAP`,
+`AT_HWCAP2`, and `/proc/cpuinfo` advertise mandatory FP/ASIMD plus only the
+optional AES, PMULL, SHA1, SHA2, CRC32, SHA3, and SHA512 features reported by
+Darwin `sysctlbyname`. HWCAP2 is zero. Direct JIT emission also gates optional
+CSSC and FP16 instructions on the same host feature source. This prevents
+compliant guest JITs from generating instructions the Darwin ARM64 host cannot
+execute. Direct JIT emitters cover every advertised optional family: AES,
+PMULL, SHA1, SHA2, CRC32, SHA3, and SHA512.
+
+The standalone `tests/jit/run_guest_jit_smoke.py` boots the real rootfs and
+checks the auxiliary vector against host sysctls, exact `/proc/cpuinfo`
+agreement, V8 dynamic code generation, WebAssembly, and repeated Node process
+teardown. Focused JIT tests are split into integer, memory, SIMD, and crypto
+files. The JIT compiler implementation is split into independently compiled
+integer, floating-point, SIMD-arithmetic, and crypto `.cpp` translation units
+behind a narrow internal family interface, while executor/cache/MMU
+orchestration remains in `jit_executor.cpp`.
+
+Strict integration qualification uses a separate `.build/kernel-4k` and
+`.build/cmake-macos-4k` compatibility tree; the default `.build/kernel`
+remains the 16 KiB production configuration. Full non-pressure LTP found two
+real strict-JIT gaps. Scalar/vector floating-horizontal instructions now lower
+directly, including the exact high-register FABD words `0x7ebfd7df` and
+`0x7efed5fe`. `UDF #imm16` now exits generated code with the unchanged fault
+PC and delivers architectural SIGILL instead of being treated as an
+unsupported JIT block.
+
+The final campaign executed all 2,142 selected cases in 1,480.7 seconds
+without a JIT fatal. `mmap18` passed in the full campaign and in 16 concurrent
+focused guests. The only initial harness rejection was the documented
+timing-dependent legacy-cgroup `memcg_stat` matrix; its contract now accepts
+clean, warning-only, and mixed userspace outcomes while requiring a real
+TPASS. The isolated control produced four TPASS before the known BusyBox
+cleanup break. The standalone 10-vCPU integration control also passed with
+39.66 host-CPU seconds over 4.01 seconds wall time, or 9.90 effective cores.
+
+- [x] Add runtime engine selection and platform-specific defaults.
+- [x] Add the initial native ARM64 JIT, W^X handling, cache, TLB, and split
+  unit suites.
+- [x] Propagate a conservative host-safe CPU feature mask through both ELF
+  auxiliary vectors and `/proc/cpuinfo`.
+- [x] Pass `backend-native-entry-api`, `arm64-jit-integer`,
+  `arm64-jit-memory`, and `arm64-jit-simd`.
+- [x] Pass the expanded real-guest JIT/Node/WebAssembly smoke:
+  `AT_HWCAP=0x2200fb`, `AT_HWCAP2=0`.
+- [x] Audit and complete strict removal of the gadget fallback. Extended
+  register arithmetic, pair/ordered/exclusive memory helpers, SIMD structure
+  transfers, literal loads, and the FP/SIMD families reached by a normal Node
+  process now have direct JIT or correctness-preserving JIT slow paths. Strict
+  Node prints `42` and exits normally.
+- [x] Add and retain direct extended-register add/sub. A split unit test covers
+  all 320 width/op/flag/extension/shift combinations plus SP semantics.
+  Differential verification and eight consecutive one-vCPU Node runs pass;
+  median startup improved from 1.384 s to 1.344 s (approximately 2.9%).
+- [x] Reject and remove both direct pair-memory trials. Rewriting to host
+  `LDP/STP` initially improved startup approximately 3.3%, but the second Node
+  process hung during teardown. A safer one-span/two-scalar-transfer emitter
+  passed full guest differential verification and eight Node runs, but
+  regressed the median from 1.344 s to 1.413 s (approximately 5.1%).
+- [x] Complete the native-pair stability audit before removal. The fast trial
+  remained unstable in a one-vCPU guest even when limited to integer stores
+  and when the dispatch budget was reduced from 64 Ki to 8 Ki instructions.
+  Two-vCPU and CPU-pinned controls were stable, while Mach thread sampling
+  showed live UML task carriers switching through the scheduler rather than a
+  stale task-retirement pointer. All pair emitters and temporary diagnostics
+  were removed. The restored build passed 20 consecutive one-vCPU Node runs
+  with a 1.388 s median.
+- [x] Fix JIT differential verification so an early cross-page cold-path exit
+  is compared only when the entire generated block completed; equal completed
+  instruction counts alone do not imply equal architectural boundaries.
+- [x] Remove `--jit-gadget-fallback`, its runtime API/state, decoded gadget
+  call, cached gadget block, and gadget builder path. The obsolete option is
+  rejected. Engine selection is now the only way to choose gadgets.
+- [x] Add direct native CRC32, PMULL, SHA1, SHA2, SHA3, and SHA512 emitters
+  alongside AES. The split `arm64-jit-crypto` suite compares every operation
+  in all seven advertised optional families with the interpreter, including
+  destructive aliases; all host feature sysctls are `1` on the test host and
+  the native suite passes.
+- [x] Pass the final **314/314** standard production suite, including the VNC
+  smoke test and all four split native-JIT instruction suites.
+  `guest-ltp-verified` and the guest SMP integration runner remain absent from
+  the standard CTest suite.
+- [x] Split every JIT compiler family into a real independently compiled
+  `.cpp` translation unit; retain no `.inc` implementation fragments.
+- [x] Pass strict-JIT SMP at 9.90 effective host cores.
+- [x] Complete full non-pressure strict-JIT LTP, fix FABD and UDF gaps, and
+  qualify the variable legacy-cgroup result contract.
+- [ ] Expand the strict direct-JIT instruction corpus beyond the families
+  exercised by boot, Node, and the advertised-extension suite.
+- [ ] Run and profile full 10-core Geekbench with the accepted JIT, compare
+  against G42, and retain only measured improvements.
+
+## G44: JIT code-expansion and cache-validity audit
+
+Started 2026-07-29 after Geekbench showed that native JIT remained slower than
+the gadget engine. Opt-in compile diagnostics now report guest block length,
+generated hot-section words, total words including appended cold paths, cache
+evictions, arena resets, and code-sequence transitions. The diagnostics run
+only while compiling or replacing a block and add no checks to generated
+production code. `UML_JIT_DUMP_EXPANSION=1` dumps up to 32 worst-expansion
+blocks per host thread; its output is serialized so multi-vCPU dumps remain
+decodable.
+
+The audit confirms **both excessive generated code and a more urgent cache
+validity defect**:
+
+- A controlled one-instruction `STR X1, [X0]` block emits **48 hot host
+  instructions** and **71 total**. Disassembly shows that even a first-way TLB
+  hit executes approximately **30 host instructions**: six for the per-block
+  entry, address/range and TLB checks, the actual load/store, local-monitor
+  maintenance, PC materialization, result materialization, and return.
+- A controlled six-instruction block containing five ordinary memory accesses
+  and a system call emits **191 hot** and **306 total host instructions**.
+- A real one-vCPU boot plus `geekbench6 --help` control compiled 314,368 blocks
+  covering 1,806,979 guest instructions: **5.75 guest instructions per
+  block**, **24.70 hot generated words per guest instruction**, and **34.08
+  total generated words per guest instruction**.
+- Temporary lookup instrumentation observed 4,737,523 outer cache lookups and
+  315,215 misses. Of those misses, **245,339 (77.8%)** found the same
+  generation and PC already cached under an older address-space code sequence.
+  They were direct stale-sequence retranslations, not first-time compilation.
+  The same short control observed 1,713 code-sequence transitions, 230,171
+  occupied-way evictions, and three 64 MiB arena resets. The temporary
+  per-lookup instrumentation was removed immediately after this measurement.
+
+The generated-code expansion has four structural causes:
+
+1. There is no block register allocator. Each ordinary arithmetic operation
+   reloads its guest operands from `CpuState`, executes one native operation,
+   then stores its result back even when the next guest instruction consumes
+   it.
+2. Each guest memory operation independently emits the complete range check,
+   two-way software-TLB probe, inline miss-helper call setup, context reload,
+   fault branch, and address adjustment. Adjacent accesses to the same stack
+   page do not share a translated page or host base.
+3. Every block emits a six-instruction entry and a return/tail-exit sequence.
+   A successful linked control-flow exit itself is approximately 27 host
+   instructions because it selects a publication-safe target, checks the
+   fairness budget, updates chain metadata and guest PC, restores arguments,
+   and tail-calls the successor.
+4. Blocks are short. The real controls average roughly 4.5-5.8 guest
+   instructions, so entry/exit and PC materialization are paid frequently.
+
+The cache-validity problem comes from the address-space-wide `code_changes`
+counter. Any write into a mapping marked as guest code, executable mapping
+change, or explicit code invalidation increments one global sequence. JIT
+cache entries require exact `{generation, code_changes, PC}` equality, and
+every sequence change also deactivates all links. Loading or faulting one new
+executable page therefore makes unrelated library and loader blocks
+unfindable. Since each host task thread owns a separate `JitExecutor`, the same
+immutable block can then be retranslated independently on several host
+threads.
+
+macOS `sample` cannot unwind or symbolize the anonymous `MAP_JIT` ranges
+reliably. Samples attributed to the C++ call-return site inside `run_block`
+mostly represent time executing generated code, not time in that C++ branch.
+The profiles still identify two independent issues: the reservation
+publication gate consumed about 7% of Multi-Core Clang samples, while
+Multi-Core Text Processing used only about 1.3 host cores and needs a separate
+guest-workload/synchronization investigation.
+
+Increasing the main arena from 32 MiB to 64 MiB is retained provisionally
+because it reduced Single-Core Clang from 182.71 s to 137.06 s and the partial
+Multi-Core Clang control from more than 424 s to 325.82 s. It treats the
+retranslation symptom rather than the cause, raises peak RSS to approximately
+10.2 GiB in the ten-vCPU compiler workload, and should not be increased again
+before cache validity and sharing are fixed.
+
+The measured optimization order is:
+
+- [x] Measure generated footprint and disassemble representative hot paths.
+- [x] Distinguish anonymous generated execution from C++ return-site samples.
+- [x] Prove stale-sequence misses with temporary lookup instrumentation, then
+  remove that instrumentation from the runtime hot path.
+- [x] Retain exact-byte validation of same-generation, same-PC stale entries.
+  A candidate is reactivated only after every saved guest word still matches
+  and the mapping/code sequences remain unchanged through the proof.
+- [ ] Replace global code-sequence cache validity with page-granular code
+  epochs and invalidate only blocks and links covering changed code pages.
+- [ ] Share immutable compiled blocks per address space across host task
+  threads while keeping mutable execution state thread-local.
+- [x] Add block-level guest-register allocation with lazy `CpuState`
+  writeback at observable exits.
+- [x] Reuse page translations across adjacent same-page homogeneous SP and
+  allocated-base scalar memory operations, with proof and fault edges emitted
+  before any architectural destination is changed.
+- [x] Introduce a persistent linked-block ABI so CPU, TLB, and chain pointers
+  remain resident and successful linked exits become substantially smaller.
+- [ ] Re-profile the reservation publication gate and the underutilized
+  Multi-Core Text Processing workload after eliminating retranslation noise.
+
+Reproducible diagnostic logs are
+`/private/tmp/jit-runtime-expansion-final.log` and
+`/private/tmp/jit-cache-lookup-audit.log`; temporary paths may not survive a
+reboot.
+
+### G44 continuation: retained direct-code reductions
+
+The following independently measured changes are now retained:
+
+- The direct-link selector uses one host-owned indexed load instead of two
+  candidate loads plus a conditional select. Guest state cannot supply a
+  native target.
+- Generated-code invalidation now treats the instruction-side cache operation
+  as a synchronization boundary and terminates the current block. The
+  data-side clean operation remains a no-op. Self-modifying-code tests cover
+  both JIT and gadget execution.
+- The block compiler retains eight guest GPRs and sixteen guest vector
+  registers in translation-time-selected host registers. Ordinary supported
+  integer and vector compute instructions therefore emit one remapped native
+  instruction after the first live-in; x18 and the executor-owned x19-x21
+  range are excluded.
+- Two-to-four same-direction SP scalar unsigned-offset accesses now share one
+  alignment proof and one permission translation. The translated operations
+  preserve their original native encodings with only base/transfer registers
+  remapped.
+- Linked blocks use a persistent host-owned ABI: x15 holds `CpuState`, x14 the
+  TLB, x19 the chain record, x20 the committed instruction count, and x21 the
+  publication selector. A linked successor enters after the outer prologue.
+  Successful direct and indirect links no longer restore and reconstruct this
+  state at every block boundary.
+- Two-to-four same-direction allocated-base scalar unsigned-offset accesses
+  now share one exact same-page proof and one permission translation.
+  Translation rejects load/base aliases and tracked-store builds up front;
+  the generated valid path contains no opcode or validity checks. Every
+  retained guest transfer remains one remapped native instruction through the
+  checked host address.
+
+The persistent ABI reduced the direct-link control from 2.233 s to 1.209 s
+(45.9%) with one worker and from 2.313 s to 1.265 s (45.3%) with ten workers.
+The indirect-link control improved from 0.370 s to 0.189 s (48.9%) and from
+0.406 s to 0.222 s (45.3%), respectively. The SP-memory loop improved a
+further 16.3%, from 0.529 s to 0.443 s, while 1,000 `/bin/true` executions
+remained neutral/slightly better at 8.718 s versus 8.674 s.
+
+The allocated-base memory-run trial reduced its dedicated one-worker loop
+from 0.780 s to 0.442 s (43.3%) and its ten-worker loop from 0.834 s to
+0.484 s (42.0%). The unrelated SP control was exactly unchanged at 0.440 s;
+the register-only control was neutral at 3.922 s versus 3.918 s. It is
+therefore retained.
+
+The current retained executable is
+`.build/bench/uml-darwin-jit-gpr-memory-runs`, SHA-256
+`bb6215a186bda050c2d7f6526b5dae65854e177472b8b8ef64996a967ed69a0a`.
+Its predecessor `.build/bench/uml-darwin-jit-persistent-chain-abi` has
+SHA-256
+`b452060fe38771a1b64eae84492923156103e8ecb3f3db5173622f689d022518`.
+
+Focused qualification currently passes all 26 JIT and scalar
+immediate-memory suites in each of four configurations: default 16 KiB and
+4 KiB compatibility builds, each with ordinary execution and
+`UML_VERIFY_JIT=1`. The newly split allocated-base codegen/runtime suites
+cover all 13 scalar unsigned-offset allocation cells, run lengths, register
+aliases, page edges, 4 KiB quarter-page behavior, permission and translation
+faults, dirty-prefix state, store masks, monitor clearing, and reservation
+overlap. Runtime behavior is checked against expected architectural results
+through interpreter, gadgets, and JIT in one shared harness.
+
+### G44 continuation: vector remapping and shared SIMD memory translation
+
+The single-register structure-transfer trial is retained provisionally.
+Full-register, lane, and replicate forms now keep a resident guest vector
+register mapped to its host vector register instead of staging every transfer
+through `CpuState`. The one-worker control improved from 0.937 s to 0.922 s
+(1.6%), and the ten-worker control improved from 0.982 s to 0.973 s (0.9%).
+This removes nine staging instructions per loop iteration without changing
+unrelated controls. The retained artifact is
+`.build/bench/uml-darwin-jit-single-structure-remap`, SHA-256
+`9e77a53c782b0373a78f838e69db034a3af9c1bfe2ebb4006a54b2a450d6a005`.
+
+Two-to-eight same-direction FP/SIMD unsigned-offset accesses now share one
+alignment/tag-state decision, one exact same-page proof, and one permission
+translation. Translation accepts all valid B/H/S/D/Q allocation cells, SP or
+X0-X30 bases, and V0-V31 transfers. Each retained guest access remains one
+native memory instruction whose base is rewritten to the software-MMU result
+in x8 and whose transfer register is translation-time remapped. Reserved
+cells, mixed bases or directions, tracked-store translations, and optional
+tagged-address state take the existing semantic path before any architectural
+state is changed.
+
+The dedicated vector-memory loop improved from 0.940 s to 0.850 s with one
+worker (9.6%) and from 0.978 s to 0.896 s with ten workers (8.4%). The
+allocated-base scalar control was neutral at 0.442 s versus 0.443 s, while
+the structure-transfer control improved from 0.930 s to 0.921 s. The trial is
+therefore retained. The current qualified artifact is
+`.build/bench/uml-darwin-jit-simd-unsigned-memory-runs`, SHA-256
+`df019f2b33bbc0b79b75a4aee4086f73231dcb1c2ea0383d0ab9925617846157`.
+
+The generated path keeps the host security boundary even though it omits
+guest-validity checks:
+
+- Every native memory instruction uses only the software-MMU-translated x8
+  base after an exact one-page proof and permission lookup.
+- No guest value becomes a native branch target. Direct and indirect links
+  select only host-owned compiled-code addresses.
+- Privileged, stateful, reserved, and unsupported encodings are filtered
+  while translating, and executable arenas remain MAP_JIT/W^X managed.
+- The resident register pools exclude host platform and executor-owned
+  registers. TLB helpers preserve the bindings needed after a miss.
+
+Ordinary integer and vector compute already meet the desired shape inside a
+block: after a first live-in, most supported guest operations emit one native
+instruction with registers remapped. The irreducible exceptions are
+PC-relative constant construction, guest-to-host branch target translation,
+the first flags import, a small number of constrained-register forms, and
+memory/MMU or architecturally stateful operations. Block boundaries still
+flush and reload resident values; removing that cost safely requires a
+cross-block register contract rather than copying guest branches directly.
+
+One dormant semantic gap was recorded during the security audit. Scalar
+ordinary-memory paths in all three engines do not perform the optional
+allocation-tag check when `CpuState::mte_enabled`; differential testing alone
+cannot expose a defect shared by every engine. The current Darwin host
+feature contract fails this feature closed and does not advertise it, so this
+cannot be reached by a compliant guest and does not bypass page permissions
+or allow guest privilege escalation. All three engines must gain a common
+architectural test and implementation before this feature is ever advertised.
+
+Final qualification after the SIMD-memory change:
+
+- Default 16 KiB build: **543/543** standard non-VNC tests passed.
+- 4 KiB compatibility build: **544/544** standard non-VNC tests passed.
+- Standalone production VNC integration suites: **2/2** passed.
+- Focused JIT/scalar/vector memory set: **14/14** passed in each page-size
+  build both normally and with `UML_VERIFY_JIT=1`.
+- Strict code-sign verification passed for the production binary.
+
+The focused code-generation audit also fixed undefined behavior in three
+test helpers: a span was returned into a temporary `CompiledCode` object.
+All 24 temporary call sites now receive an owned hot-word vector, so the
+generated-code assertions test stable storage.
+
+The successful-link profiler is enabled only with
+`-DDARWIN_UML_JIT_GPR_LINK_PROFILE=ON`. Set
+`UML_JIT_GPR_LINK_PROFILE_PATH=/path/to/profile.log` for a capture, then rank
+the result with:
+
+```sh
+python3 tests/perf/analyze_jit_gpr_link_profile.py \
+    /path/to/profile.log --top 20
+```
+
+The 32 candidates are X0-X30 plus architectural SP; XZR remains excluded even
+though it shares encoding number 31. The analyzer charges four native words
+per outer invocation to adjacent `CpuState` pairs, including X30+SP, because
+they can use paired boundary transfers. Non-adjacent pairs cost six by
+default. `--pair-boundary-cost=N` remains available for a uniform experimental
+override.
+
+Diagnostic successful-link counters use one literal pointer load followed by
+load/add/store. The diagnostic emitter has four fixed pointer-patch slots for
+the two link and two counter pointers of a conditional block; production
+retains its proved two-slot array and identical generated bytes. Counters are
+drained before PIC-slot reuse, link/code clearing, and executor destruction.
+Ordinary `end_execution()` no longer walks every compiled edge or acquires the
+global reporting lock. A normal frontend shutdown collects any still-live TLS
+executors and writes exactly one parseable snapshot before its intentional
+`std::_Exit`. Forced `SIGTERM` or `SIGKILL` can lose the unreported tail;
+reporting from the signal exit bridge is intentionally avoided because its
+mutex, allocation, and stdio work would not be async-signal-safe.
+
+Next measured steps:
+
+- [x] Retain block-local GPR/vector remapping and shared scalar/SP/SIMD
+  same-page translations only after targeted and control benchmarks.
+- [x] Rebuild and run the complete 16 KiB and 4 KiB suites after the latest
+  JIT changes; do not rely on stale CTest executables.
+- [x] Add a diagnostic-build-only successful-link profiler with literally
+  byte-identical production code when disabled. Count taken direct/PIC edges
+  and combine source dirty-live-out with target read-before-write masks.
+- [ ] Use two short, diverse Geekbench captures to rank all fixed two-register
+  cross-block banks. Proceed only if the winning pair is stable across
+  workloads and remains positive after outer-entry/terminal publication cost.
+- [ ] Prototype the selected fixed bank across successful links, retaining
+  precise publication on syscall, fault, fairness, and fallback exits.
+- [ ] Replace global sequence validity with page-granular code epochs, then
+  share immutable compiled programs across vCPUs without sharing mutable
+  execution state.
+- [ ] Run the full 10-core Geekbench JIT/gadget comparison after the bounded
+  link-boundary experiment, profile every workload, and investigate rather
+  than automatically reject isolated regressions when the total improves.
+
+### G45 continuation: stateful native links and compact block boundaries
+
+The direct-remapping audit now covers the complete ordinary Base and FP/SIMD
+compute lowering surface. **74 of 75** methods emit exactly one remapped
+native semantic instruction after their first live-in: 14/14 integer, 18/19
+scalar floating-point, 25/25 SIMD arithmetic, 7/7 fixed transforms, and all
+ten additional vector-compute cases in the executor. The sole exception,
+`emit_floating_javascript_convert`, emits its native operation followed by a
+six-word status correction containing two data-dependent branches. A
+temporary native probe confirmed that the current host needs this correction:
+under flush control, positive nonzero subnormal inputs produce the correct
+integer and exception but the wrong zero indicator. The probe was removed
+after the result was recorded. Remaining expansions are architecturally
+required memory translation, flags import/publication, PC-relative
+construction, or constrained-register staging. The dominant performance
+cost is therefore block handoff rather than instruction-body emulation.
+
+Stateful native blocks can now remain inside the assembly engine. Each outer
+entry selects one of ten host-owned capability combinations covering direct
+store publication, materialized vector state, and the two native execution
+environments. A successor is published only in entries whose setup satisfies
+its translation-time requirements. Guest branch data can equality-select a
+PIC record, but the final native branch still consumes only a host-published
+internal entry.
+
+The first retained stateful-link artifact,
+`.build/bench/uml-darwin-jit-capability-links-16-entry`, has SHA-256
+`d21410ba19ffbddd197eb55d7d8d3e00ab5b8695798106345efa2ca08ac6a314`.
+Against the preceding
+`.build/bench/uml-darwin-jit-gpr-profile-off-arena-recompile` artifact, the
+one-worker vector-link control improved from **0.636 s to 0.183 s (71.2%)**,
+and the ten-worker control improved from **0.704 s to 0.238 s (66.2%)**.
+
+Three independently qualified boundary reductions are retained on top:
+
+1. Dense selector states place PC, instruction count, and all ten native
+   entries in one aligned 128-byte descriptor. One paired metadata load
+   replaces two scalar loads, reducing the successful selector-to-branch path
+   from 12 to 11 instructions.
+2. Stable descriptor and PIC pointers use one PC-relative literal load.
+   Pointer data is 8-byte aligned after all executable paths, no generated
+   branch targets it, and an out-of-range translation uses a cold
+   translation-owned absolute-materialization stub. This removes two executed
+   instructions without increasing ordinary arena footprint.
+3. The host-owned fairness state is a remaining budget. Its subtraction is
+   scheduled immediately after the pointer load to overlap that dependency;
+   rejected links undo it only on the cold path. This removes two more
+   instructions while preserving exact 4,096-instruction fairness and
+   non-dividing block quantization.
+
+The final successful direct boundary is **10 executed host instructions**
+from its pointer load through `BR x13`, down from 15 before these three
+changes. The matched first-way PIC path is 13. Exact code-generation tests
+also prove that the only native indirect branch remains `BR x13`.
+
+Measured medians for the final
+`.build/bench/uml-darwin-jit-remaining-budget` artifact (SHA-256
+`5e86bc0bd047be930d40aa53b166b4b574d95d93325b46434ebbb8c8c284e142`)
+are:
+
+| Control | Pre-capability | Final | Change |
+|---|---:|---:|---:|
+| Direct link, 1 worker | 0.421 s | 0.403 s | 4.3% faster |
+| Direct link, 10 workers | 0.485 s | 0.471 s | 2.9% faster |
+| Stateful vector link, 1 worker | 0.636 s | 0.185 s | 70.9% faster |
+| Stateful vector link, 10 workers | 0.704 s | 0.243 s | 65.5% faster |
+| Indirect link, 1 worker, compact-layout baseline | 0.220 s | 0.201 s | 8.6% faster |
+
+The shortest vector control remains about 0.5% slower with one worker and
+3.8% slower with ten workers than the intermediate descriptor-layout build,
+even though it is dramatically faster than the pre-capability baseline.
+This workload-dependent loss is not grounds to discard the overall
+improvement. The pointer load is now interleaved with independent arithmetic;
+the remaining difference will be checked against per-workload Geekbench
+profiles instead of overfitting another special-case path to one synthetic
+loop.
+
+Focused qualification currently passes:
+
+- 16 KiB and 4 KiB builds, seven direct/PIC/fairness/state suites each;
+- the same suites with `UML_VERIFY_JIT=1`;
+- profile-enabled 16 KiB and 4 KiB builds, nine suites each, normally and
+  with verification;
+- strict code-sign verification, with no diagnostic profiler symbols or
+  strings in the production artifact.
+
+The post-change isolation audit found no guest-to-host pointer injection,
+native branch injection, host-memory permission bypass, or guest privilege
+escape.
+
+#### Translation-boundary hardening
+
+Both availability findings are resolved in the retained
+`.build/bench/uml-darwin-jit-translation-boundary-hardening` artifact,
+SHA-256
+`47b661c170ecca90ff813fc0233c6ecd671cc4bd935db8cc484714fd5b2dbcd0`.
+Optional standalone barrier encodings are selected entirely at translation:
+a supported host receives one native word and another host receives the
+stronger baseline substitute. There is no runtime feature test or opcode
+branch. An unavailable or unsupported first word now raises the precise
+guest illegal-instruction event with unchanged PC and zero retired
+instructions instead of falling back to gadgets or terminating the emulator.
+A supported prefix stops immediately before a later unsupported word.
+
+The split barrier code-generation/runtime and illegal-runtime suites pass in
+16 KiB and 4 KiB builds, normally and with `UML_VERIFY_JIT=1`; their
+profile-enabled variants pass as well. The host fault bridge was hardened at
+the same boundary: it formats a bounded message on the stack, performs one
+`write`, and exits without invoking non-async-signal-safe formatting.
+
+The deliberately lean valid hot path remains confined by these non-negotiable
+translation and memory boundaries:
+
+- Every guest memory access uses permission-tagged software-MMU/TLB
+  translation or an exact same-page proof before a native load or store.
+- Generated arenas and link descriptors are not guest-mapped.
+- Privileged system encodings are rejected or virtualized, while reserved and
+  host-unsupported encodings are resolved before execution.
+- Literal link pointers are host-owned data placed after terminal code.
+  Direct and PIC links can end only in the host-owned `BR x13` target.
+- Executable storage remains under bounded MAP_JIT/W^X write toggling.
+
+#### Fixed pointer-patch metadata
+
+A complete emitted-shape audit proved that a production block needs at most
+two stable pointer patches: one for an unconditional direct or indirect exit
+and two for the two successor exits of a conditional branch. Cold paths emit
+none. Production translation metadata therefore uses a fixed two-entry array
+plus a count and an eight-bit literal mask. The separately enabled link
+profiler uses four fixed entries so each successor can also load its
+translation-owned counter in one word. Exceeding the applicable proved bound
+aborts during translation; no validity check was added to generated code.
+Production emitted bytes are unchanged.
+
+The retained artifact is
+`.build/bench/uml-darwin-jit-literal-fixed-metadata`, SHA-256
+`4bab12e9db02c5989d673d89307211cb401f5339696d9f7a85acf4d470719499`.
+Focused tests cover the exact two-literal pool, two independent out-of-range
+fallbacks, and the production conditional shape with exactly two aligned
+literals and no hot absolute-materialization sequence. The 16 KiB focused
+set passes 9/9 normally and 9/9 with verification.
+
+In a matched 1,000-run cold `/bin/true` test, the remaining-budget baseline
+median was 8.901 s and the fixed-metadata build was 8.498 s, a **4.5%**
+improvement that fully recovered the literal-patch cold regression. Its hot
+controls remained:
+
+| Control | Median |
+|---|---:|
+| Direct link, 1 worker | 0.384 s |
+| Direct link, 10 workers | 0.412 s |
+| Indirect link, 1 worker | 0.181 s |
+| Stateful vector link, 1 worker | 0.166 s |
+| Stateful vector link, 10 workers | 0.181 s |
+
+#### Exact-retirement link ABI
+
+The linked-block return ABI now packs the event in the low 32 bits and the
+exact block-local retired count in the high 32 bits. Translation performs the
+non-retiring-terminal subtraction for constant exits. The seven dynamic
+helpers return an exact packed 0/1 result or their dispatcher result, and
+dynamic prefix composition uses an addition; a zero prefix emits neither the
+load nor the addition. This removes the post-return terminal-count correction
+and both of its per-edge metadata stores.
+
+`JitChainState` is now 40 bytes: remaining budget at offset 0, store state at
+8, indirect-miss state at 16, selector at 24, and indirect source PC at 32.
+The successful direct persistent path falls from 10 to **8** instructions
+(the memory ABI from 14 to 12), while the first-way PIC persistent path falls
+from 16 to **14** (the memory ABI from 20 to 18). Split code-generation and
+runtime tests cover direct and PIC syscall, breakpoint, and illegal exits,
+plus odd-prefix cross-page dynamic success/fault behavior and the absence of
+the retired metadata stores. The 16 KiB and 4 KiB normal suites pass 11/11,
+their verification suites pass 7/7, and both profile-enabled code-shape
+suites pass 4/4.
+
+The retained artifact is
+`.build/bench/uml-darwin-jit-exact-retirement`, SHA-256
+`75ccd2b3c7ab0a55df10c5eb387bf4eb335612387478d654f694d8e375682c89`.
+Matched results against the fixed-metadata artifact are:
+
+| Control | Fixed metadata | Exact retirement | Change |
+|---|---:|---:|---:|
+| Cold `/bin/true`, 1,000 runs | 8.498 s | 8.507 s | 0.1% slower |
+| Direct link, 1 worker | 0.384 s | 0.330 s | 14.1% faster |
+| Direct link, 10 workers | 0.412 s | 0.350 s | 15.0% faster |
+| Indirect link, 1 worker | 0.181 s | 0.168 s | 7.2% faster |
+| Stateful vector link, 1 worker | 0.166 s | 0.170 s | 2.4% slower |
+| Stateful vector link, 10 workers | 0.181 s | 0.178 s | 1.7% faster |
+
+The build is retained because it is substantially positive overall. The
+isolated one-worker vector result will be investigated in real per-workload
+profiles rather than used to reject the improvement.
+
+Current continuation checklist:
+
+- [x] Resolve optional barriers and unsupported first-word events entirely at
+  the translation boundary, with no gadget fallback.
+- [x] Replace variable pointer-patch containers with proved fixed metadata and
+  recover the cold-translation regression.
+- [x] Replace inferred terminal retirement with the exact packed return ABI
+  and remove the hot per-edge metadata stores.
+- [x] Audit all ordinary Base and FP/SIMD compute lowerers: 74/75 are
+  one-to-one after first live-in, and the current host requires the sole
+  conversion-status exception.
+- [ ] Finish and strictly code-sign the production-equivalent
+  exact-retirement profiling artifact.
+- [ ] Capture a current 10-core, 8 GiB JIT Geekbench run through every
+  workload with five-second samples, using
+  `/private/tmp/geekbench-g45-current-profile`,
+  `/private/tmp/geekbench-g45-current-console.log`, and
+  `/private/tmp/geekbench-g45-current-gpr-links.log`.
+- [ ] Rank successful-link register pairs from the current capture, then
+  prototype a fixed cross-block GPR bank only if the evidence is stable across
+  workloads.
+- [ ] Evaluate the two-register low native vector bank for constrained source
+  forms only after the current profile establishes that staging is material;
+  preserve the bindings across the rare TLB-miss bridge.
+- [ ] Rebuild and run the complete 16 KiB and 4 KiB standard suites, then run
+  non-pressure LTP, UnixBench, and the final 10-core JIT/gadget Geekbench
+  comparison.
+
+### G46: deferred architectural state and strict one-to-one code shape
+
+Ordinary generated compute now defers the architectural floating-point status
+read/mask/merge until an actual observer or semantic boundary. The removed
+sequence was 15 host instructions after every generated invocation. Native
+state is materialized before semantic helpers, CPU switches, differential
+verification, execution end, and destruction, so the production hot path no
+longer pays for state that a linked successor can continue to own.
+
+The isolated artifact is
+`.build/bench/uml-darwin-jit-deferred-fp-only`, SHA-256
+`cb69a4e092fdeea5d45cb220014412e8f6d5d8032b919cbf5c2f14e736704edb`.
+Focused lifecycle, observer, helper, CPU-switch, and real verification-mode
+tests pass in 16 KiB and 4 KiB builds, both normally and with
+`UML_VERIFY_JIT=1`.
+
+The first profiled comparison was deliberately treated as diagnostic rather
+than performance evidence. Its baseline used five-second `sample` captures
+while the isolated run used two seconds. On this large multi-threaded process,
+report generation can outlive the requested capture window and materially
+perturb a workload. The apparent 24.9% single-core gain was therefore invalid.
+The call-tree result remains useful: the removed status offsets had zero
+samples in all 16 new profiles; 57.97% of dominant-carrier self samples were
+inside anonymous generated code and 8.79% were in helpers explicitly called by
+generated code. The apparent generated-call return site itself had zero self
+samples.
+
+A matched clean comparison replaced the sample command with `/usr/bin/true`
+in both runs while retaining identical 8 GiB memory, ten-core topology,
+network, overlay root, and engine settings:
+
+| Single-core aggregate | Time |
+|---|---:|
+| Exact-retirement baseline | 1001.636 s |
+| Deferred-state artifact | 994.563 s |
+| Change | **0.71% faster** |
+
+The largest clean gains were PDF Renderer (5.48%) and HDR (6.34%). Photo
+Library was 9.70% slower in this ordering, but recent values span 31.3-35.3 s,
+its host utilization was unchanged, and no translation/cache regression was
+visible. Clang, Asset Compression, Background Blur, and Structure from Motion
+had smaller regressions while the aggregate remained positive. The change is
+retained provisionally and the combined artifact's clean pass is the
+reverse-order repeat.
+
+The one-to-one code-generation contract is now enforced by two split suites:
+Base and FP/SIMD. Each case compiles a target plus a distinct ordinary
+successor, so a helper or runtime decision is detectable both before and after
+the semantic word. The tests verify translation-selected metadata, exact
+register-field remapping, GPR/SP/XZR and vector operand roles, alias
+consistency, exclusion of host-reserved registers, and the absence of runtime
+control transfers around ordinary valid operations. Coverage now includes the
+previously missing register-move, compare-zero, conditional-compare,
+integer-indexed, lane-transfer, and flag-manipulation lowering shapes. The one
+documented host-status correction is locked to its exact bounded sequence so
+the exception cannot spread silently. Both suites pass with `-Werror` in 16
+KiB and 4 KiB builds.
+
+### G47: reservation-helper convoy removal
+
+The multi-core baseline exposed a publication-gate convoy rather than a
+guest-scheduler problem. In steady Horizon Detection, every carrier spent
+69-75% of its samples spinning while multiple reservation-sensitive helpers
+simultaneously announced themselves active and rescanned every vCPU
+participant.
+
+The candidate serializes those helpers before they increment the active
+counter. Queued helpers park in the host mutex implementation and remain
+outside the participant scan; the one owner performs the unchanged
+publication handshake. The normal direct-store generated path gains no
+instruction, validity check, conditional branch, or mutex operation. This
+mostly narrows a region already serialized by the architectural exclusive
+memory mutex.
+
+Reservation identity is also separated from fault-safe access. The semantic
+memory bridge returns the stable translated host-backing identity used by the
+reservation protocol without allowing unchecked direct native access.
+Tracked native stores publish translated host ranges, so two guest virtual
+aliases of the same backing invalidate one another while non-overlapping
+ranges remain independent. `CpuState` stores the stable reservation key
+separately from the architectural address.
+
+Focused publication, alias, runtime, and scalar/vector memory suites passed in
+16 KiB and 4 KiB builds, normally and with verification. The publication-gate
+tests also passed 1,000 consecutive ordinary and 1,000 verified repetitions in
+each page-size build.
+
+The combined candidate is
+`.build/bench/uml-darwin-jit-deferred-fp-reservation-turn`, SHA-256
+`6c588b4fb0c98c3fda4b7809d35b36329667ff27598db4cde6cddbf902368573`;
+strict code-sign verification passes.
+
+The `std::mutex` implementation is **rejected** even though its focused
+correctness tests pass. An equal-duration profiled run was stopped when PDF
+Renderer appeared 16.45% slower; a clean repeat proved that result was a
+sampling artifact and completed single-core 0.82% faster than the isolated
+deferred-state artifact. Single-core Horizon nevertheless consumed 6.35% more
+host CPU work and was 5.96% slower, exposing an uncontended helper-turn tax.
+
+The clean run was stopped during multi-core after two confirmed regressions:
+HTML5 Browser consumed about 43% more host CPU work and became the slowest
+recent run, while PDF Renderer was at least 12.64% slower than the older
+profiled baseline. This rejects the mutex, not the required serialization
+semantics. The next isolated candidate is a FIFO ticket turn whose contended
+waiters park with atomic wait/notify. A store joins the phase protocol only
+after it actually observes an active helper, leaving the ordinary
+no-contention store path unchanged. The next ticket owner yields to those
+published stores before announcing itself active.
+
+Current continuation checklist:
+
+- [x] Remove the eager 15-instruction state merge and prove every observer
+  materializes state before using it.
+- [x] Strengthen the split one-to-one code-shape suites and pass both page-size
+  configurations.
+- [x] Prove reservation-helper serialization and virtual-alias invalidation in
+  focused normal and verified tests.
+- [x] Run a clean matched isolated single-core comparison; retain the 0.71%
+  aggregate gain provisionally and investigate regressed subtests.
+- [x] Reject the `std::mutex` turn after clean single-core Horizon and
+  multi-core HTML/PDF regressions; do not confuse the earlier profiled PDF
+  artifact with the clean result.
+- [ ] Implement and qualify the parked ticket/store-phase turn, then repeat
+  the clean multi-core gate workloads before another full run.
+- [ ] Run the accepted combined artifact without host sampling for the repeat
+  single-core table and final score.
+- [ ] Trial the measured next optimizations one at a time: inline the common
+  reservation-reconciliation predicate; translation-select dedicated
+  pointer-integrity helpers; reduce the dominant software permutation leaf.
+- [ ] Capture a current realistic generated-code expansion ratio with
+  compile-only diagnostics; keep all decode, host-feature, and legality
+  decisions at translation.
+- [ ] Rebuild and run complete 16 KiB and 4 KiB suites, non-pressure LTP,
+  UnixBench, and the final JIT/gadget Geekbench comparison.
+
+### G48: native-remap contract and cold translation paths
+
+The JIT contract is now explicit: an ordinary valid guest compute operation
+must become one native semantic instruction after its first live-in, with
+register fields remapped during translation. Decode, allocation legality, and
+host-feature selection must not survive into the generated hot path. This
+permission to omit guest-validity checks does not extend to the host boundary:
+native memory operands still come only from permission-specific software-MMU
+translations, native branch targets remain host-owned, privileged/stateful
+encodings are filtered while translating, and executable storage remains
+MAP_JIT/W^X managed.
+
+The split Base and FP/SIMD one-to-one suites now independently classify the
+emitted semantic word's top-level opcode class. Every matrix case rejects a
+remap that becomes native memory, control flow, exception, or system state.
+Every hot direct branch must target the same translation, and the only
+permitted indirect transfers are the host return or a helper call through x16
+loaded from an aligned immutable literal-pool entry. The ordinary lowering
+audit remains **74/75** one-to-one; the sole bounded exception on this host is
+the required status correction for one conversion operation.
+
+Additional translation-only reductions are retained:
+
+- ADR and ADRP now load their fully resolved guest address with one native
+  literal load rather than a two-to-four-word MOV-wide sequence.
+- Fixed helper pointers, guest-PC stores, and fixed guest link-register values
+  share the immutable literal tail. This shortens generated call and exit
+  sites without allowing literal data to become a native branch target.
+- The TLB ABI stores each access-specific page tag adjacent to its host
+  backing delta. JIT and gadget lookups use one paired load rather than
+  separate tag and delta loads.
+- The common JIT way-0 hit is now
+  `LDP/EOR/CBNZ(not-taken)/ADD` after index formation. The 16 KiB second-way
+  probe and the preserving miss bridge are emitted after `hot_words` and
+  branch back to the exact access continuation. A one-store block measures
+  **32 hot / 76 total words** at 16 KiB and **34 hot / 74 total words** at
+  4 KiB; the former hot ceiling was 52 words.
+
+The cold bridge continues to preserve every resident GPR and vector binding,
+NZCV, the floating-point environment, CPU/TLB context, and LR. Runtime tests
+force a first miss with all eight GPR and all sixteen vector slots occupied.
+A separate 16 KiB collision test fills both ways, takes way 1, rejoins before
+the native memory operation, and proves that an intervening architectural
+operation executes exactly once. Focused memory/runtime qualification passed
+8/8 in both page-size builds.
+
+The contained system-state policy gaps found during the security review are
+also closed. FPMR MRS/MSR now require the corresponding host capability;
+SSBS, DIT, SM/ZA, and TCO aliases require their respective host features.
+These checks occur only while translating. Forced feature-off/on matrices
+cover all relevant immediates and all 32 transfer-register variants, and the
+focused system/PSTATE set passes in both page-size builds.
+
+Two signed artifacts bracket the cold-translation trial:
+
+- pre-outline literal/paired-TLB artifact:
+  `.build/bench/uml-darwin-jit-literals-paired-tlb`, SHA-256
+  `69e53815cbf2a474cb2ef0901a6abb18466b38a6edf9f76ffb287a99ea2e68b9`;
+- cold-way1/miss candidate:
+  `.build/bench/uml-darwin-jit-cold-tlb-literals`, SHA-256
+  `e0665f2fe1209130c49ee09e03f1938f82162853a062a232a3fc7a60d9897cfd`.
+
+A short real-guest compile-shape capture reached `geekbench6 --help`. It is
+not a wall-time comparison because the old and current captures differ in
+length and block mix. Normalized emitted shape changed from 25.960 to 19.208
+hot words per guest instruction (-26.01%) and from 35.142 to 33.223 total
+words (-5.46%); the non-hot tail grew because work and literals deliberately
+moved out of the executed prefix.
+
+The first matched runtime control could not be completed: the 1 GiB systemd
+guest timed out during boot, and the standard 8 GiB retry was rejected by the
+host execution-approval usage limit. No alternate launch path was attempted.
+The candidate remains provisional until the matched memory controls and
+Geekbench workloads can run.
+
+Current continuation checklist:
+
+- [x] Enforce ordinary-compute opcode-class and host-owned-target invariants.
+- [x] Reduce PC-relative, helper-pointer, guest-PC, and fixed-LR
+  materialization to one immutable literal load when in range.
+- [x] Pair TLB tag/delta loads and move way 1 plus the preserving miss bridge
+  out of the hot prefix.
+- [x] Force feature-specific state instructions through translation-time
+  on/off tests with no generated runtime feature branch.
+- [x] Add diagnostic-only register-pressure counters with byte-identical
+  production code; trial only x22/x23 if dynamic reuse clears its two-word
+  outer-boundary break-even.
+- [x] Preallocate q6/q7 for constrained indexed sources, then make any
+  unbound low slot available to ordinary allocation only after q16-q31 fill;
+  alias and helper-boundary preservation tests remain exact.
+- [ ] Complete matched memory-loop and realistic workload measurements once
+  local emulator execution is available, then retain or reject the cold TLB
+  candidate from measured results.
+- [ ] Run complete 16 KiB and 4 KiB suites, non-pressure LTP, UnixBench, and
+  the final JIT/gadget Geekbench comparison.
+
+### G49: exact constants and constrained vector prebinding
+
+Constant construction now chooses its first MOV-wide operation at the first
+non-default 16-bit half instead of first constructing a zero low half. The
+translator counts the zero-filled and one-filled alternatives, chooses the
+one-filled form only when it is strictly shorter, and keeps the zero-filled
+form for ties so that generated shape remains deterministic. Exact tests cover
+zero, upper-only and sparse values, all-ones and sparse-complement values, and
+the tie rule. The all-ones continuation sentinel falls from four instructions
+to one, removing three executed instructions from that path.
+
+The resulting exact hot-word reductions are 33 to 32 for a scalar store, 34 to
+33 for an SP pair, 35 to 34 for a GPR pair, 34 to 33 for a vector pair, 25 to
+24 for an ordinary-compute pair, 28 to 27 for a directly linked block, 40 to
+39 for an indirect-cache link, and 49 to 47 for a conditional direct link.
+Successful link paths remain 8 and 14 words. At 16 KiB, total generated sizes
+for the scalar, SP, GPR, vector, and ordinary-compute cases fall from
+78/86/70/86/28 to 76/84/68/84/26 words. The canonical one-store TLB shape is
+therefore **32 hot / 76 total words** at 16 KiB and **34 hot / 74 total
+words** at 4 KiB, matching the corrected G48 record.
+
+A build-time-only GPR-pressure profile now measures resident-slot high-water,
+allocation refusals after the eight-slot bank fills, overflow reads and
+writes, repeated overflow accesses, and estimated avoided accesses at
+capacities 10, 12, and 15. Its saturation control reports high-water 8,
+16 refusals, 8 reads, 8 writes, 8 repeated accesses, and estimated avoided
+accesses **2/4/7**. Its nonallocating post-index control reports no refusal,
+2 reads, 1 write, 2 repeated accesses, and **1/1/1** estimated avoided
+accesses. The no-pressure and cache-disabled controls remain zero. Enabling
+the counters does not change generated words or metadata, and ordinary
+production binaries contain neither the diagnostic environment hook nor its
+reporting strings.
+
+Translation now counts the constrained source identities used by indexed
+vector forms and prebinds the two most frequent identities to q6 and q7, with
+first encounter breaking a frequency tie. Planning stops at the first
+translated terminal, so fetched words beyond the actual block cannot affect
+the live prefix. An earlier producer of a selected identity receives the same
+low host register immediately; its later constrained use is consequently the
+single remapped native semantic instruction, with no staging move, runtime
+decode, feature test, or validity branch. A third distinct constrained
+identity retains the bounded, cache-aware q2 staging path and does not split
+the block.
+
+The preserving TLB miss bridge now saves and restores q6 and q7 in addition
+to the existing resident bank. This expands only the cold bridge frame from
+368 to 400 bytes; the TLB-hit prefix is unchanged. Forced-miss, direct-link,
+alias, full-bank, third-identity, terminal-boundary, and cold-fault controls
+exercise the low-bank mask bits and state publication paths.
+
+Ordinary vector allocation preserves the existing q16-q31-first order and,
+only after that bank fills, consumes any q6/q7 slot not prebound to a
+constrained identity. Blocks with zero, one, or two constrained pins therefore
+gain two, one, or zero additional ordinary resident slots without changing
+low-pressure register assignments. Selection is completed by the translator:
+the generated path gains no runtime branch, validity check, decode, or
+entry/helper/exit boundary work. The existing cold bridge already preserves
+both low registers.
+
+An 18-vector pressure block falls from **58 hot / 60 total words** to **55 hot
+/ 58 total words**. Its low-pressure control remains exactly **22 hot / 24
+total words**, proving that the extra capacity is dormant until q16-q31 are
+full.
+
+Two stale exact-shape tests were corrected without changing production code:
+
+- `arm64-jit-lazy-flags-codegen` still expected the second TLB way and the
+  returning miss call in the hot prefix after those paths had been outlined
+  into the cold tail.
+- `arm64-jit-pair-remap-codegen` matched the internal paired TLB tag/delta
+  load rather than the semantic checked-address pair load.
+
+The focused JIT set passes **35/35** in each of the 16 KiB and 4 KiB builds.
+It includes exact-retirement, one-to-one FP/SIMD, vector-remapping, TLB-miss
+preservation, linked-vector runtime, lazy-flags, and pair-remapping suites,
+plus ordinary-capacity cases with zero, one, and two constrained pins, a
+full-cache fallback, preservation across the TLB helper, terminal
+materialization, and a direct cold memory fault. The structure-remapping
+codegen/runtime saturation fixture was also expanded from the old 16-vector
+bank to all 18 resident slots; both repaired tests pass in both page-size
+builds.
+
+The then-current sandboxed matrices passed **555/555** at 16 KiB and
+**554/554** at 4 KiB after excluding only `virtio-gpu-vnc-smoke`. That host
+integration test could not bind its localhost listener in the managed sandbox
+(`PermissionError: [Errno 1]`). It remained registered and subsequently
+passed in both page-size builds with explicit permission outside the socket
+restriction. The verified guest LTP campaign and guest SMP runner remain
+standalone integration suites and are not part of standard CTest.
+
+Matched guest performance measurements are deferred. The 1 GiB control timed
+out during boot, and the 8 GiB retry was rejected by the explicit host
+execution-approval usage limit through **2026-08-05 13:09**. No alternate
+launch path was attempted, so this phase does not claim a measured runtime
+gain.
+
+Current continuation checklist:
+
+- [x] Shorten exact constant construction without changing its value or
+  deterministic tie behavior.
+- [x] Add diagnostic-only GPR-pressure metrics while preserving production
+  generated bytes and metadata.
+- [x] Prebind two constrained vector identities to q6/q7 entirely at
+  translation and preserve them on every cold/helper boundary.
+- [x] Bound frequency planning at translated terminals and retain q2 as the
+  no-split third-identity fallback.
+- [x] Let ordinary allocation use unbound q6/q7 only after q16-q31 fill,
+  reducing the 18-vector pressure shape without changing its low-pressure
+  control or adding generated/boundary work.
+- [x] Correct the two stale test-only shape expectations and pass the focused
+  **35/35** JIT tests in each page-size build.
+- [x] Expand the structure-remapping saturation fixtures to all 18 resident
+  vector slots and pass the complete runnable standard matrices:
+  **555/555** at 16 KiB and **554/554** at 4 KiB.
+- [ ] Use the pressure measurements to evaluate frequency/liveness-based GPR
+  selection, or x22/x23 only when its outer-boundary cost clears the measured
+  break-even.
+- [x] Evaluate translation-time contiguous prebinding for nonconsecutive
+  table lists and eliminate their staging moves when a conflict-free host
+  register run is available.
+- [x] Rerun the socket-restricted VNC smoke with explicit permission and pass
+  it in both page-size builds.
+- [ ] Rerun the standalone integrations, then perform matched memory and
+  realistic workload measurements after host emulator execution is available.
+
+### G50: translation-time consecutive vector-list planning
+
+Multi-register vector lookup operations now receive a consecutive host
+register run while the block is translated. The planner recognizes only exact,
+valid lookup encodings that the host can execute natively, ignores the
+single-register form that is already direct, and stops at reservation
+boundaries and translated terminals. It runs after the constrained q6/q7
+selection from G49, then allocates from the high end of q16-q31. This preserves
+the ordinary q16-first assignment order while reserving conflict-free
+consecutive runs for lists of two through four registers.
+
+The generated guest hot path contains no planning check, opcode check, feature
+branch, or list-staging decision. A compatible lookup is emitted as its single
+remapped native semantic instruction after the required live-ins. Wrapped
+guest lists, destination/table aliases, and multiple disjoint lists are
+planned explicitly. If an earlier binding makes a consecutive assignment
+impossible, translation retains the existing bounded staging path rather than
+changing semantics or splitting the block.
+
+A dedicated code-shape suite compares the same interleaved four-register block
+with planning enabled and disabled. The planned form falls from **41 hot / 44
+total words** to **37 hot / 40 total words**, removing exactly four vector
+staging moves. Its architectural metadata is byte-for-byte identical. Exact
+checks also cover one list, two independent four-register lists, wrapped
+aliases, the host-optional two-register form, and planning termination at a
+system-call boundary.
+
+The behavior coverage is split into a separate shared three-engine runtime
+file. On this host the interpreter ran 3 cases, gadgets ran 3, and JIT ran 2;
+the remaining optional case was skipped only for its missing native host
+capability. The focused JIT matrix now passes **37/37** in both page-size
+builds. The ordinary sandboxed matrices pass **557/557** at 16 KiB and
+**556/556** at 4 KiB; the registered VNC smoke passes separately with explicit
+socket permission in both builds. The complete standard totals are therefore
+**558/558** at 16 KiB and **557/557** at 4 KiB. Guest LTP and SMP remain
+standalone integration suites.
+
+The change affects translation-time register assignment only. Guest-memory
+access still crosses the checked software-MMU boundary, native branch targets
+remain host-owned, stateful and privileged encodings retain translation-time
+policy checks, and executable storage remains MAP_JIT/W^X managed.
+
+Matched guest performance measurements remain deferred through
+**2026-08-05 13:09** by the explicit host execution-approval usage limit. No
+runtime-performance claim is made from code shape alone, and no alternate
+emulator launch path was attempted.
+
+Current continuation checklist:
+
+- [x] Allocate conflict-free two-, three-, and four-register lookup lists
+  consecutively at translation time.
+- [x] Preserve q6/q7 constrained-source priority and the ordinary q16-first
+  low-pressure assignment order.
+- [x] Keep the valid planned hot path free of runtime checks, decisions, and
+  staging moves.
+- [x] Add split exact-codegen and shared three-engine behavior suites.
+- [x] Pass focused **37/37** JIT tests, the socket-restricted VNC smoke in
+  both builds, and complete **558/558** 16 KiB plus **557/557** 4 KiB
+  standard matrices.
+- [ ] Use the existing pressure measurements to evaluate GPR
+  frequency/liveness selection.
+- [ ] Rerun the standalone integrations, then perform matched memory and
+  realistic workload measurements after host emulator execution is available.
+
+### G51: translation-observed GPR residency selection
+
+The native compiler now observes the actual GPR reads and writes performed by
+the normal lowering pass. When more than eight guest identities compete for
+the fixed resident bank, translation estimates the state accesses avoided by
+each identity and chooses the best stable eight, with first access breaking a
+tie. It charges each selected identity for its required initial read and final
+dirty publication, so a retry is attempted only when the projected traffic is
+strictly better than the existing first-use assignment.
+
+The original compilation remains the default result. A candidate translation
+must reproduce all architectural metadata exactly, make the hot prefix
+strictly shorter, and keep total generated code no larger. Otherwise it is
+discarded. Resident identities do not change within a block, preserving the
+existing cold-exit dirty masks and snapshots. Low-pressure blocks compile only
+once and remain byte-identical.
+
+A representative pressure sequence first touches eight single-use identities,
+then repeatedly uses x8 and x9. The selected form removes exactly six state
+loads and three intermediate stores, reducing its hot path by **nine words**;
+the translation estimate is also nine avoided state accesses. Every guest
+arithmetic operation remains one remapped native semantic instruction after
+its live-in. No runtime opcode check, feature check, validity branch,
+selection branch, or eviction logic was added.
+
+Coverage is split between an exact-codegen file and a shared three-engine
+runtime file. It proves the profitable selection, byte-identical low-pressure
+and zero-benefit controls, terminal-bounded observation, and linked-block
+metadata. The runtime oracle executes the same pressure program in
+interpreter, gadgets, and JIT; this host reports **1/1/1** executions with no
+feature skip. The build-time pressure and link-profile diagnostics also pass
+unchanged in both page-size modes. One stale diagnostic-only literal-count
+expectation was corrected to distinguish four link-metadata literals from two
+guest-PC literals introduced by the earlier literal-loading work.
+
+The focused JIT matrix passes **39/39** in both page-size builds. The ordinary
+matrices pass **559/559** at 16 KiB and **558/558** at 4 KiB after excluding
+only the registered VNC smoke. With explicit permission for its local endpoint
+binds, VNC passes in both builds, making the complete standard totals
+**560/560** and **559/559**, respectively. The verified guest LTP campaign and
+guest SMP runner remain standalone integration suites.
+
+Guest performance measurement remains deferred through
+**2026-08-05 13:09** by the explicit host execution-approval usage limit. The
+source candidate is retained because its gate proves a strict generated hot
+path reduction with unchanged metadata and no total-size growth, but no
+runtime-performance claim is made until a matched guest measurement is
+available.
+
+Current continuation checklist:
+
+- [x] Replace first-use GPR selection under real pressure with
+  translation-observed benefit ranking.
+- [x] Keep resident identities stable and add no generated runtime checks,
+  branches, or eviction work.
+- [x] Retain the baseline unless a candidate has identical metadata, a
+  strictly smaller hot prefix, and no total-size growth.
+- [x] Add split codegen and shared three-engine runtime suites, including
+  low-pressure, zero-benefit, terminal, and linked-block controls.
+- [x] Pass focused **39/39** JIT tests, both diagnostic configurations, and
+  complete **560/560** 16 KiB plus **559/559** 4 KiB standard matrices,
+  including the permissioned VNC smoke.
+- [ ] Consider x22/x23 only if matched runtime evidence exceeds their
+  outer-boundary cost.
+- [x] Run matched 10-core Geekbench workloads after guest benchmark execution
+  became available.
+
+### G52: matched 10-core JIT versus gadgets Geekbench
+
+On 2026-07-30, the same production executable was run twice through the
+network-enabled OverlayFS launcher, changing only
+`--execution-engine={jit,gadgets}`. Both guests used 10 vCPUs, 8 GiB of memory,
+systemd, DHCP, `/dev/ubda1`, and the same read-only lower image. The executable
+SHA-256 was
+`14b9b01d4383f395d5f76205297bfd92b6ab3b4c8cc692789cfc95c76877f431`.
+The lower image SHA-256 remained
+`501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`
+after both runs.
+
+Official results:
+
+- JIT: (result)
+- gadgets: (result)
+
+| Engine | Single-core | Multi-core | Profile wall | Single-core phase | Multi-core phase |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JIT | 214 | 491 | 35m 19.2s | 15m 55.6s | 19m 20.5s |
+| gadgets | 77 | 495 | 55m 13.2s | 38m 16.7s | 16m 52.4s |
+| JIT delta | **+177.9%** | **-0.8%** | **-36.0%** | **-58.4%** | **+14.6%** |
+
+JIT won 15 of 16 single-core scores. Its largest gains were File Compression
+(+367.4%), Photo Library (+366.7%), Object Detection (+350.0%), Ray Tracer
+(+304.2%), and Object Remover (+279.7%). PDF Renderer was the only single-core
+regression at -1.2%. This confirms that the direct engine is materially faster
+for ordinary serial execution, rather than merely reducing launch overhead.
+
+The multi-core aggregate was effectively tied because eight wins were offset
+by eight losses:
+
+| Multi-core workload | gadgets | JIT | JIT score delta | JIT wall delta | gadgets cores | JIT cores |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| File Compression | 584 | 1544 | +164.4% | -56.3% | 5.76 | 4.82 |
+| Navigation | 1162 | 2394 | +106.0% | -46.0% | 5.64 | 4.28 |
+| HTML5 Browser | 530 | 246 | -53.6% | +67.4% | 5.86 | 7.68 |
+| PDF Renderer | 505 | 745 | +47.5% | -29.4% | 5.86 | 6.67 |
+| Photo Library | 619 | 1795 | +190.0% | -64.2% | 4.68 | 4.43 |
+| Clang | 377 | 219 | -41.9% | +70.6% | 8.99 | 9.45 |
+| Text Processing | 59 | 94 | +59.3% | -36.9% | 1.45 | 4.24 |
+| Asset Compression | 720 | 716 | -0.6% | +2.6% | 7.64 | 7.23 |
+| Object Detection | 229 | 333 | +45.4% | -22.5% | 6.63 | 6.63 |
+| Background Blur | 557 | 219 | -60.7% | +106.6% | 7.20 | 7.52 |
+| Horizon Detection | 811 | 77 | -90.5% | +553.2% | 4.98 | 8.29 |
+| Object Remover | 701 | 303 | -56.8% | +83.6% | 5.11 | 8.57 |
+| HDR | 767 | 913 | +19.0% | -10.5% | 6.14 | 5.33 |
+| Photo Filter | 415 | 388 | -6.5% | -20.3% | 3.16 | 3.16 |
+| Ray Tracer | 944 | 1301 | +37.8% | -23.5% | 2.23 | 2.50 |
+| Structure from Motion | 622 | 457 | -26.5% | +25.5% | 6.10 | 6.98 |
+
+The regressions are not explained by a failure to schedule guest vCPUs. The
+JIT compiler workload sustained 9.45 effective host cores, and the largest
+image-workload regressions used 7.5--8.6 cores. Per-workload samples instead
+identify a shared coordination bottleneck:
+
+- HTML5 Browser spent 56.1% in `wait_for_jit_store_phase`, 17.5% in the
+  exclusive helper, and 11.7% invalidating published store ranges.
+- Clang spent 46.1%, 9.7%, and 3.7% in those paths, respectively.
+- Background Blur spent 48.6%, 14.8%, and 11.7% there.
+- Object Remover spent 44.0%, 28.7%, and 10.6% there.
+
+Those four workloads therefore spend about 60--85% of sampled emulator time
+coordinating the global direct-JIT store/exclusive-operation publication
+protocol. Horizon Detection has a separate profile: 63.6% is attributed to
+JIT block execution/entry while only 8.2% reaches the publication/exclusive
+symbols in its top eight samples. It should be diagnosed independently.
+
+The next performance trial should reduce the global publication protocol's
+cross-vCPU serialization while preserving the existing reservation and
+self-modifying-code tests. It should then rerun the affected focused
+multi-core workloads before another full Geekbench comparison. The Horizon
+Detection path should be inspected for frequent cold exits, helper lowering,
+or short-block entry overhead as a separate proposal.
+
+### G53-G79: publication scaling and gadget-regression recovery
+
+The direct-engine publication protocol was progressively changed from the
+globally serialized G52 design to a lock-free ordinary-store fast path.
+Translation decides whether a block can publish stores directly. At runtime,
+each vCPU publishes a small host-owned participant state; the uncommon
+reservation helper closes the phase and waits for already-published stores
+instead of making every ordinary store acquire the old global gate. Store
+ranges use host backing identities, bounded overlap filtering, and the shared
+reservation-version table so aliases remain correct. Generated valid paths do
+not inspect guest opcodes or repeat translation-time validity checks.
+
+The focused concurrency, reservation-alias, native-store, link, and SMP tests
+were expanded alongside these trials. The accepted direct-engine result,
+G68, scored **251 single-core / 875 multi-core** at
+(result), a **3.49x** aggregate scaling
+factor. Its 10-vCPU compiler section sustained **9.08 effective host cores**.
+
+Later trials bounded participant scans and corrected ownership/lifetime
+details shared with the gadget engine. The final G79 gadget build recovered
+the earlier regression and scored **79 / 506** at
+(result), a **6.41x** scaling factor.
+The repaired gadget result is the final gadget comparison point; later
+accepted changes in this campaign are confined to the direct engine or
+semantically neutral code-publication cleanup.
+
+### G80-G94: JIT cache-layout regression audit
+
+A later full run exposed a direct-engine regression at **238 / 701**
+(G85, (result)). Profiles and binary
+layout comparison showed that the regression was not failed vCPU scheduling:
+the implementation object had grown from G68's approximately 1 MiB to about
+12.9 MiB per vCPU, placing large cache tables inline and increasing
+initialization and working-set pressure.
+
+The following proposals were evaluated independently:
+
+- G80-G84 shared-template and alternative flat-cache layouts were rejected.
+  Sharing introduced mutable-lifetime and ownership costs without a decisive
+  workload gain; all dead implementations were removed.
+- G86 restored G68's cache hash. G87-G88 restored the compact
+  **104-byte descriptor / 416-byte four-way set** and removed page-epoch
+  metadata that duplicated exact saved-word validation. G88 reached
+  **244 / 806** at (result).
+- G89 reduced the maximum translated block from 64 to eight instructions.
+  File Compression exceeded 135 seconds versus approximately 53 seconds, so
+  the run was stopped and the 64-instruction limit restored.
+- G90-G91 moved the descriptor table and saved-word table to overwrite-
+  allocated heap storage. This restored the complete implementation object to
+  G68's `0x104780` bytes while preserving exact byte validation. G91 scored
+  **248 / 795** at (result); many
+  individual sections improved even though the multi-core aggregate varied.
+- G92 removed polling for the obsolete dynamic verifier trigger. Verification
+  remains selected once by `UML_VERIFY_JIT`; production cache misses no longer
+  call the trigger parser.
+- G93 removed early translated-terminal detection and always fetched 64
+  words. File Compression improved, but Photo Library regressed from roughly
+  30.2 to 44.4 seconds. The proposal was rejected immediately and early
+  termination restored.
+- G94 replaced the six direct high-byte checks with a 256-byte lookup table.
+  Its full diagnostic run scored **250 / 932** at
+  (result), the best multi-core result
+  in this campaign. A matched 10-worker, 10,000-exec table/direct/table
+  control then measured **19.312 / 19.137 / 19.501 seconds**. The table was
+  therefore rejected and removed; the faster direct checks are final.
+
+G94's per-workload telemetry resolves the apparent scaling concern. Compared
+with the original G68 capture, all 16 completed multi-core sections used less
+or equal wall time except HDR by 0.27%. Representative improvements were
+Object Detection **-28.6%**, Object Remover **-33.2%**, Photo Filter
+**-59.2%**, and Ray Tracer **-45.3%**. Clang used **9.00 host cores**; the
+remaining low-utilization Text Processing section used **1.22**, matching the
+workload-specific behavior seen in earlier engines rather than a vCPU
+scheduler limit. Official sub-scores still vary because the benchmark
+adapts work units between runs, so isolated score drops with substantially
+shorter wall time are not evidence of an emulator regression.
+
+Final retained direct-engine state:
+
+- [x] G68 cache hash and compact four-way descriptors.
+- [x] Heap-backed cache and lazy saved-word storage; no large per-vCPU inline
+  table initialization.
+- [x] Exact saved-word cache validation with no duplicate page epochs.
+- [x] One release publication for each mapping-side code change.
+- [x] Construction-time verification selection with no dynamic production
+  polling.
+- [x] Early terminal-bounded 64-instruction translation using direct checks.
+- [x] No shared-template, page-epoch, eight-word-block, full-fetch, lookup-
+  table, or other rejected implementation remains.
+
+### G95: final direct-check qualification and desktop graphics baseline
+
+The accepted direct-check source was rebuilt as
+`.build/cmake-macos/bin/uml-darwin`, SHA-256
+`9320cb9f5c2a3d1ab3b5238c6a0cf3c660e870344fe303789f095dba42c61bbf`.
+The final network-enabled 10-vCPU, 8 GiB Geekbench run scored
+**251 single-core / 843 multi-core**:
+(result).
+
+This exactly matches G68's best single-core aggregate. The multi-core result
+is 3.7% below G68 and 9.5% below the G94 lookup-table diagnostic, but remains
+66.6% above the repaired final gadget result. A live compiler-workload
+snapshot measured approximately 800% host CPU, confirming that the earlier
+one-core scheduling failure is absent. G94's per-section profiles also showed
+that every completed multi-core section except one 0.27% tie/noise case used
+less or equal wall time than G68. The benchmark changes work units
+between runs, so its aggregate and sub-scores are not a stable substitute for
+the matched table/direct/table cold-path control. That control selected the
+direct checks (19.137 seconds versus 19.312 and 19.501 seconds for the table),
+so the lookup table remains rejected.
+
+Final correctness and integration qualification:
+
+- production 16 KiB: **562/562** non-VNC tests plus the standalone VNC smoke;
+- debug interpreter: **560/560** non-VNC tests plus the standalone VNC smoke;
+- 4 KiB compatibility: **563/563** non-VNC tests plus the standalone VNC
+  smoke;
+- register-pressure instrumentation: focused tests pass in both 16 KiB and
+  4 KiB builds;
+- standalone non-pressure LTP: **2,142/2,142 accepted** in 631.1 seconds,
+  with all 374 host-pressure cases excluded as intended.
+
+The stale boundary-state test was corrected to use ordinary production-profile
+instructions. Optional feature-family behavior remains covered by its
+dedicated feature-enabled suites; the boundary test now exclusively validates
+guest-owned key-state initialization and persistence.
+
+The requested desktop-mode WebGL Aquarium run used JIT, 10 vCPUs, 8 GiB,
+networking, KDE/SDDM, Chromium, VNC capture, and the read-only first partition
+of `rootfs.img` beneath a tmpfs OverlayFS. After a 15-second warm-up, 30
+steady-state samples measured **13.933 average FPS**, **7 minimum**, and
+**17 maximum**. The validation gate confirmed **113/113 resources**, **500
+fish**, a **1024x1024** canvas, and WebGL 2.0. The captured framebuffer shows
+the complete textured scene. Artifacts are under
+`/private/tmp/aquarium-final-jit/20260731-131241/`.
+
+The canonical `rootfs.img` SHA-256 remained
+`501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`
+after Geekbench and Aquarium, proving that guest changes remained volatile.

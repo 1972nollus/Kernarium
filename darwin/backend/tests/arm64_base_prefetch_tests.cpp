@@ -1,50 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/dispatcher.hpp"
-#include "cpu/arm64/gadgets/program.hpp"
+#include "arm64_engine_test_support.hpp"
 
-#include "uml_darwin_static_mmu.h"
-
-#include <array>
-#include <cstdio>
-#include <cstdlib>
-#include <memory>
-#include <source_location>
+#include <algorithm>
+#include <span>
 #include <vector>
 
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine_tests = uml::backend::tests;
 
 namespace {
 
-class CountingMemory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t, std::span<std::byte>) override
-	{
-		++reads;
-		return false;
-	}
-	[[nodiscard]] bool write(
-		std::uint64_t, std::span<const std::byte>) override
-	{
-		++writes;
-		return false;
-	}
-
-	std::size_t reads{};
-	std::size_t writes{};
-};
-
-void require(bool condition,
-	     const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
-
-constexpr std::uint64_t base = 0x4'0000;
+constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
+constexpr std::size_t batch_size = 63;
 
 [[nodiscard]] arm64::CpuState state()
 {
@@ -57,18 +24,6 @@ constexpr std::uint64_t base = 0x4'0000;
 	cpu.fpsr = 0x0800'0000U;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
 	return cpu;
-}
-
-void require_state(const arm64::CpuState &actual,
-		   const arm64::CpuState &initial, std::uint64_t pc)
-{
-	require(actual.registers == initial.registers);
-	require(actual.sp == initial.sp);
-	require(actual.pc == pc);
-	require(actual.nzcv == initial.nzcv);
-	require(actual.fpcr == initial.fpcr);
-	require(actual.fpsr == initial.fpsr);
-	require(actual.tls == initial.tls);
 }
 
 [[nodiscard]] constexpr std::uint32_t immediate(
@@ -126,42 +81,47 @@ void append_valid_encodings(std::vector<std::uint32_t> &stream)
 				stream.push_back(unscaled(offset, rn, operation));
 }
 
-void valid_prefetches()
+void check_valid_batch(engine_tests::EngineHarness &harness,
+	std::span<const std::uint32_t> instructions)
+{
+	std::vector<engine_tests::ProgramWord> code;
+	code.reserve(instructions.size() + 1);
+	for (std::size_t index = 0; index < instructions.size(); ++index)
+		code.push_back({
+			.offset = index * sizeof(std::uint32_t),
+			.instruction = instructions[index],
+		});
+	code.push_back({
+		.offset = instructions.size() * sizeof(std::uint32_t),
+		.instruction = terminal_system_call,
+	});
+	const auto initial = state();
+	auto expected = initial;
+	expected.pc = engine_tests::engine_test_code_base +
+		code.size() * sizeof(std::uint32_t);
+	harness.check_program({
+		.name = "prefetch-valid-variants",
+		.code = std::span<const engine_tests::ProgramWord>{code},
+		.initial = initial,
+		.expected = expected,
+		.native = engine_tests::NativeRequirements::baseline(),
+	});
+}
+
+void valid_prefetches(engine_tests::EngineHarness &harness)
 {
 	std::vector<std::uint32_t> stream;
 	stream.reserve(1'500'000);
 	append_valid_encodings(stream);
 
-	CountingMemory memory;
-	const auto initial = state();
-	auto interpreted = initial;
-	interpreted.pc = base;
-	for (const auto instruction : stream)
-		require(arm64::Dispatcher{}.execute(
-			interpreted, memory, instruction).reason ==
-			arm64::StopReason::continued);
-	require(memory.reads == 0);
-	require(memory.writes == 0);
-	require_state(
-		interpreted, initial, base + stream.size() * sizeof(std::uint32_t));
-
-	stream.push_back(0xd400'0001U);
-	const auto built = gadgets::Builder{}.build(base, stream);
-	require(built.complete);
-	require(built.program.instruction_count() == stream.size());
-	auto gadget = initial;
-	gadget.pc = base;
-	auto tlb = std::make_unique<gadgets::Tlb>();
-	tlb->prepare(0, darwin_uml_static_vm_changes(0));
-	require(gadgets::execute(built.program, gadget, *tlb) ==
-		gadgets::Event::system_call);
-	require_state(
-		gadget, initial, base + stream.size() * sizeof(std::uint32_t));
+	for (std::size_t first = 0; first < stream.size(); first += batch_size)
+		check_valid_batch(harness, std::span<const std::uint32_t>{stream}
+			.subspan(first, std::min(batch_size, stream.size() - first)));
 }
 
-void reserved_register_offsets()
+void reserved_register_offsets(engine_tests::EngineHarness &harness)
 {
-	CountingMemory memory;
+	const auto initial = state();
 	for (const unsigned option : {0U, 1U, 4U, 5U})
 		for (const bool scaled : {false, true})
 			for (unsigned rm = 0; rm < 32; ++rm)
@@ -170,45 +130,25 @@ void reserved_register_offsets()
 					     ++operation) {
 						const auto instruction = register_offset(
 							rm, option, scaled, rn, operation);
-						auto cpu = state();
-						cpu.pc = base;
-						require(arm64::Dispatcher{}.execute(
-							cpu, memory, instruction).reason ==
-							arm64::StopReason::illegal_instruction);
-						require(cpu.pc == base);
+						harness.check_illegal(
+							"prefetch-reserved-register-offset",
+							instruction, initial);
 					}
 	for (const unsigned mode : {1U, 3U})
 		for (unsigned offset = 0; offset < 512; ++offset) {
 			const auto instruction = unscaled(offset, 1, 2, mode);
-			auto cpu = state();
-			cpu.pc = base;
-			require(arm64::Dispatcher{}.execute(
-				cpu, memory, instruction).reason ==
-				arm64::StopReason::illegal_instruction);
+			harness.check_illegal("prefetch-reserved-writeback",
+				instruction, initial);
 		}
-	require(memory.reads == 0);
-	require(memory.writes == 0);
-
-	auto tlb = std::make_unique<gadgets::Tlb>();
-	for (const unsigned option : {0U, 1U, 4U, 5U}) {
-		const auto instruction = register_offset(31, option, true, 31, 31);
-		const auto built = gadgets::Builder{}.build(
-			base, std::array{instruction});
-		require(built.complete);
-		auto cpu = state();
-		cpu.pc = base;
-		tlb->prepare(0, darwin_uml_static_vm_changes(0));
-		require(gadgets::execute(built.program, cpu, *tlb) ==
-			gadgets::Event::illegal_instruction);
-		require(cpu.pc == base);
-	}
 }
 
 } // namespace
 
 int main()
 {
-	valid_prefetches();
-	reserved_register_offsets();
+	engine_tests::EngineHarness harness;
+	valid_prefetches(harness);
+	reserved_register_offsets(harness);
+	harness.print_summary("arm64-base-prefetch");
 	return 0;
 }

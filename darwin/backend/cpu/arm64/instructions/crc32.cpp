@@ -33,7 +33,7 @@ RunResult Dispatcher::crc32(CpuState &cpu, GuestMemory &,
 	const unsigned size = operation & 0x3U;
 	const bool is_64_bit = (instruction & 0x8000'0000U) != 0;
 	if (is_64_bit != (size == 3))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 
 	const auto accumulator = static_cast<std::uint32_t>(

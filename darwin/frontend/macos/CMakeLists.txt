@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-set(UML_KERNEL_IMAGE "${PROJECT_SOURCE_DIR}/.build/kernel/vmlinux" CACHE FILEPATH
+set(UML_KERNEL_BUILD_DIR "${PROJECT_SOURCE_DIR}/.build/kernel" CACHE PATH
+    "Out-of-tree Linux UML kernel build directory")
+set(UML_KERNEL_IMAGE "${UML_KERNEL_BUILD_DIR}/vmlinux" CACHE FILEPATH
     "Linux UML kernel ELF embedded in the transitional macOS CLI")
 set(UML_LTP_JOBS 16 CACHE STRING
     "Concurrent isolated guest workers for the host LTP regression suite")
 
 find_program(GMAKE_EXECUTABLE gmake REQUIRED)
 
-set(UML_KERNEL_BUILD_DIR "${PROJECT_SOURCE_DIR}/.build/kernel")
 set(UML_KERNEL_DEFCONFIG
     "${PROJECT_SOURCE_DIR}/linux-6.18/arch/um/configs/arm64_defconfig")
 if(UML_GUEST_16K_PAGES)
@@ -68,7 +69,7 @@ if(DEBUGFS_EXECUTABLE)
     add_custom_target(uml_rootfs_kernel_metadata
         COMMAND ${CMAKE_COMMAND}
             -DROOTFS=${PROJECT_SOURCE_DIR}/rootfs.ext2
-            -DKERNEL_BUILD=${PROJECT_SOURCE_DIR}/.build/kernel
+            -DKERNEL_BUILD=${UML_KERNEL_BUILD_DIR}
             -DDEBUGFS=${DEBUGFS_EXECUTABLE}
             -P ${PROJECT_SOURCE_DIR}/cmake/UpdateRootfsKernelMetadata.cmake
         DEPENDS uml_kernel
@@ -99,6 +100,16 @@ if(UML_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/ltp/run_guest_ltp_tests.py)
     set_tests_properties(ltp-runner-parser PROPERTIES LABELS "host;ltp")
+    if(UML_GUEST_16K_PAGES)
+        set(UML_SMP_ROOTFS ${PROJECT_SOURCE_DIR}/rootfs.img)
+        set(UML_SMP_ROOTFS_ARGUMENTS
+            --root-device /dev/ubda1
+            --systemd-overlay)
+    else()
+        set(UML_SMP_ROOTFS ${PROJECT_SOURCE_DIR}/rootfs.ext2)
+        set(UML_SMP_ROOTFS_ARGUMENTS)
+    endif()
+
     # Guest boot/process-topology checks are integration tests. Keep them out
     # of ordinary `ctest`; invoke this suite explicitly with
     # `cmake --build <build-dir> --target guest-smp-parallel`.
@@ -106,7 +117,8 @@ if(UML_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/smp/run_guest_smp.py
             --emulator $<TARGET_FILE:uml-darwin>
-            --rootfs ${PROJECT_SOURCE_DIR}/rootfs.ext2
+            --rootfs ${UML_SMP_ROOTFS}
+            ${UML_SMP_ROOTFS_ARGUMENTS}
         DEPENDS uml-darwin
         COMMENT "Running standalone guest SMP integration suite"
         USES_TERMINAL

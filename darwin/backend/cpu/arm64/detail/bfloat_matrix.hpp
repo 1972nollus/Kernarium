@@ -17,14 +17,6 @@ namespace uml::backend::arm64::detail {
 	return (instruction & 0xffe0'fc00U) == 0x6e40'ec00U;
 }
 
-[[nodiscard]] constexpr std::uintptr_t bfloat_matrix_operand(
-	std::uint32_t instruction) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
-}
-
 [[nodiscard]] inline std::array<std::byte, 16> bfloat_matrix_multiply_add(
 	const std::array<std::byte, 16> &addends,
 	const std::array<std::byte, 16> &left,

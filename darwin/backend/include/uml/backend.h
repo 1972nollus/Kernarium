@@ -32,7 +32,10 @@ enum uml_backend_error {
 };
 
 enum uml_backend_execution_model {
+	UML_BACKEND_EXECUTION_AUTO = 0,
 	UML_BACKEND_STATIC_GADGETS = 1,
+	UML_BACKEND_NATIVE_JIT = 2,
+	UML_BACKEND_INTERPRETER = 3,
 };
 
 struct uml_backend_config {
@@ -65,6 +68,9 @@ int uml_backend_get_capabilities(const struct uml_backend *backend,
 int uml_backend_run(struct uml_backend *backend, int argc,
 		    const char *const argv[], const char *const envp[]);
 void uml_backend_request_stop(struct uml_backend *backend);
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+void uml_backend_report_jit_gpr_link_profile(void);
+#endif
 
 #ifdef __cplusplus
 }

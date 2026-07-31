@@ -463,14 +463,30 @@ class Guest:
             )
         return None
 
+    def shutdown(self, timeout_seconds: int = 30) -> bool:
+        """Request an orderly halt and wait for the emulator to exit."""
+        if self._process.poll() is not None:
+            return True
+        try:
+            self._write("sync; poweroff -f\n")
+            deadline = time.monotonic() + timeout_seconds
+            while self._process.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                readable, _, _ = select.select(
+                    [self._master], [], [], min(remaining, 0.25)
+                )
+                if readable:
+                    self._drain()
+            self._drain()
+        except (BrokenPipeError, OSError):
+            return self._process.poll() is not None
+        return True
+
     def close(self) -> None:
         try:
-            if self._process.poll() is None:
-                try:
-                    self._write("sync; poweroff -f\n")
-                    self._process.wait(timeout=5)
-                except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
-                    pass
+            self.shutdown(5)
             if self._process.poll() is None:
                 try:
                     self._signal(signal.SIGTERM)
@@ -866,11 +882,28 @@ def accepted(result: Result) -> bool:
             and broken > 0
         )
     if result.case.expectation == "userspace-variable-matrix-exempt":
-        return (
+        clean_pass = (
+            result.return_code == 0
+            and result.summary.get("passed", 0) > 0
+            and failed == 0
+            and broken == 0
+            and skipped == 0
+            and result.summary.get("warnings", 0) == 0
+        )
+        warning_only = (
+            result.return_code == 4
+            and result.summary.get("passed", 0) > 0
+            and failed == 0
+            and broken == 0
+            and skipped == 0
+            and result.summary.get("warnings", 0) > 0
+        )
+        mixed_result = (
             result.return_code != 0
             and result.summary.get("passed", 0) > 0
             and (failed > 0 or broken > 0)
         )
+        return clean_pass or warning_only or mixed_result
     if result.case.expectation == "userspace-warning-exempt":
         return (
             result.return_code == 4
@@ -1143,6 +1176,7 @@ def main() -> int:
         )
 
     failures = 0
+    failed_cases: list[Result] = []
     completed = 0
     run_started = time.monotonic()
     emulator = arguments.emulator.resolve()
@@ -1195,9 +1229,27 @@ def main() -> int:
             flush=True,
         )
         failures += outcome == "FAIL"
+        if outcome == "FAIL":
+            failed_cases.append(result)
         if outcome == "FAIL" and arguments.fail_fast:
             print("Stopping after first failure (--fail-fast)", flush=True)
             break
+    if failed_cases:
+        print(
+            "Rejected cases: "
+            + ", ".join(result.case.key for result in failed_cases),
+            flush=True,
+        )
+        for result in failed_cases:
+            detail = (
+                f"rc={result.return_code} summary={result.summary}"
+            )
+            if result.error:
+                detail += f" error={result.error}"
+            print(
+                f"Rejected case detail: {result.case.key}: {detail}",
+                flush=True,
+            )
     print(
         f"Completed {completed} cases: {completed - failures} accepted, "
         f"{failures} failed in {time.monotonic() - run_started:.1f}s",

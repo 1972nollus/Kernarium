@@ -1,528 +1,333 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_load_store_test_support.hpp"
+#include "arm64_atomic_engine_test_support.hpp"
 
 #include <array>
-#include <cstring>
+#include <cstddef>
+#include <cstdint>
+#include <span>
 
-namespace test = arm64_load_store_test;
+namespace atomic = arm64_atomic_engine_test;
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine = uml::backend::tests;
 
 namespace {
 
-constexpr std::uint64_t pc = 0x330'0000;
-constexpr std::uint64_t base = 0xd0'0080;
 constexpr std::array initial_values{
 	std::uint64_t{0xf1e2'd3c4'b5a6'9788},
-	std::uint64_t{0x8071'6253'4435'2617}};
+	std::uint64_t{0x8071'6253'4435'2617},
+};
 constexpr std::array stored_values{
 	std::uint64_t{0x1021'3243'5465'7687},
-	std::uint64_t{0x899a'abbc'cdde'eff0}};
-
-[[nodiscard]] constexpr std::uint32_t pair_exclusive(bool wide, bool load,
-	bool acquire_release, unsigned rn, unsigned rt, unsigned rt2,
-	unsigned status = 31)
-{
-	return 0x8820'0000U | (static_cast<unsigned>(wide) << 30) |
-		(static_cast<unsigned>(load) << 22) |
-		((status & 31U) << 16) |
-		(static_cast<unsigned>(acquire_release) << 15) |
-		((rt2 & 31U) << 10) | ((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t scalar_exclusive(unsigned size_code,
-	bool load, unsigned rn, unsigned rt, unsigned status = 31)
-{
-	return 0x0800'0000U | ((size_code & 3U) << 30) |
-		(static_cast<unsigned>(load) << 22) | ((status & 31U) << 16) |
-		(31U << 10) | ((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint64_t size_mask(std::size_t size)
-{
-	return size == 8 ? ~std::uint64_t{0} : 0xffff'ffffU;
-}
-
-class alignas(64) AtomicMemory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t address,
-		std::span<std::byte> output) override
-	{
-		++reads;
-		if (fault || !range_valid(address, output.size()))
-			return false;
-		std::copy_n(pointer(address), output.size(), output.begin());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-		std::span<const std::byte> input) override
-	{
-		++writes;
-		if (fault || !range_valid(address, input.size()))
-			return false;
-		std::copy(input.begin(), input.end(), pointer(address));
-		return true;
-	}
-
-	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
-		std::size_t size, arm64::MemoryAccess) override
-	{
-		++atomic_pointers;
-		return direct && !fault && range_valid(address, size) ?
-			pointer(address) : nullptr;
-	}
-
-	void put_pair(std::uint64_t address,
-		const std::array<std::uint64_t, 2> &values, std::size_t element_size)
-	{
-		std::memcpy(pointer(address), &values[0], element_size);
-		std::memcpy(pointer(address) + element_size, &values[1], element_size);
-	}
-
-	[[nodiscard]] std::array<std::uint64_t, 2> get_pair(
-		std::uint64_t address, std::size_t element_size) const
-	{
-		std::array<std::uint64_t, 2> result{};
-		std::memcpy(&result[0], pointer(address), element_size);
-		std::memcpy(&result[1], pointer(address) + element_size, element_size);
-		return result;
-	}
-
-	bool direct{true};
-	bool fault{};
-	unsigned reads{};
-	unsigned writes{};
-	unsigned atomic_pointers{};
-
-private:
-	[[nodiscard]] bool range_valid(std::uint64_t address,
-		std::size_t size) const
-	{
-		return address >= base - 128 &&
-			address - (base - 128) <= bytes.size() &&
-			size <= bytes.size() - (address - (base - 128));
-	}
-
-	[[nodiscard]] std::byte *pointer(std::uint64_t address)
-	{
-		return bytes.data() + (address - (base - 128));
-	}
-
-	[[nodiscard]] const std::byte *pointer(std::uint64_t address) const
-	{
-		return bytes.data() + (address - (base - 128));
-	}
-
-	alignas(64) std::array<std::byte, 512> bytes{};
+	std::uint64_t{0x899a'abbc'cdde'eff0},
 };
 
-void run_interpreter_variant(bool wide, bool acquire_release, bool direct)
+void put_pair(atomic::Page &page, const std::array<std::uint64_t, 2> &values,
+	std::size_t element_size)
+{
+	atomic::put(page, atomic::data_offset, values[0], element_size);
+	atomic::put(page, atomic::data_offset + element_size, values[1],
+		element_size);
+}
+
+void check_load(engine::EngineHarness &harness, bool wide, bool ordered,
+	unsigned base, unsigned first, unsigned second)
 {
 	const auto element_size = wide ? 8U : 4U;
-	const auto mask = size_mask(element_size);
-	AtomicMemory memory;
-	memory.direct = direct;
-	memory.put_pair(base, initial_values, element_size);
-	arm64::CpuState cpu{};
-	test::fill_registers(cpu);
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[5] = stored_values[0];
-	cpu.registers[6] = stored_values[1];
-	cpu.registers[7] = ~std::uint64_t{0};
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(wide, true, acquire_release, 2, 3, 4)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[3] == (initial_values[0] & mask));
-	test::require(cpu.registers[4] == (initial_values[1] & mask));
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(wide, false, acquire_release, 2, 5, 6, 7)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[7] == 0);
-	const auto actual = memory.get_pair(base, element_size);
-	test::require(actual[0] == (stored_values[0] & mask));
-	test::require(actual[1] == (stored_values[1] & mask));
-
-	/* No reservation: status is one and the pair remains unchanged. */
-	memory.put_pair(base, initial_values, element_size);
-	cpu = {};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[5] = stored_values[0];
-	cpu.registers[6] = stored_values[1];
-	cpu.registers[7] = ~std::uint64_t{0};
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(wide, false, acquire_release, 2, 5, 6, 7)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[7] == 1);
-	const auto unchanged = memory.get_pair(base, element_size);
-	test::require(unchanged[0] == (initial_values[0] & mask));
-	test::require(unchanged[1] == (initial_values[1] & mask));
+	atomic::Page page{};
+	put_pair(page, initial_values, element_size);
+	const auto memory = atomic::region(page, page);
+	const std::array code{
+		engine::ProgramWord{0, atomic::pair_exclusive(wide, true, ordered,
+			base, first, second)},
+		engine::ProgramWord{4, atomic::clrex(3)},
+		engine::ProgramWord{8, atomic::terminal_system_call},
+	};
+	auto initial = atomic::state(10);
+	atomic::write_register(initial, base, atomic::data_address, true);
+	auto expected = initial;
+	const auto mask = atomic::mask_for_size(element_size);
+	atomic::write_register(expected, first, initial_values[0] & mask);
+	atomic::write_register(expected, second, initial_values[1] & mask);
+	atomic::clear_monitor(expected);
+	expected.pc = engine::engine_test_code_base + 12;
+	harness.check_program({
+		.name = "pair exclusive load",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::baseline(),
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+	});
 }
 
-void exhaustive_interpreter_variants()
+void check_failed_store(engine::EngineHarness &harness, bool wide,
+	bool ordered, unsigned base, unsigned first, unsigned second,
+	unsigned status)
 {
-	for (const bool direct : {false, true})
-		for (const bool wide : {false, true})
-			for (const bool acquire_release : {false, true})
-				run_interpreter_variant(wide, acquire_release, direct);
+	const auto element_size = wide ? 8U : 4U;
+	atomic::Page page{};
+	put_pair(page, initial_values, element_size);
+	const auto memory = atomic::region(page, page);
+	auto initial = atomic::state(11);
+	atomic::write_register(initial, base, atomic::data_address, true);
+	atomic::write_register(initial, first, stored_values[0]);
+	atomic::write_register(initial, second, stored_values[1]);
+	auto expected = initial;
+	atomic::write_register(expected, status, 1);
+	harness.check({
+		.name = "pair exclusive store without monitor",
+		.instruction = atomic::pair_exclusive(wide, false, ordered, base,
+			first, second, status),
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::baseline(),
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+	});
 }
 
-void interpreter_reservation_size_and_store_invalidation()
+void check_success(engine::EngineHarness &harness, bool wide,
+	bool load_ordered, bool store_ordered)
 {
-	for (const bool direct : {false, true}) {
-		AtomicMemory memory;
-		memory.direct = direct;
-		memory.put_pair(base, initial_values, 8);
-		arm64::CpuState cpu{};
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		cpu.registers[5] = stored_values[0];
-		cpu.registers[6] = stored_values[1];
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(true, true, false, 2, 3, 4)).reason ==
-			arm64::StopReason::continued);
-		cpu.registers[8] = initial_values[1];
-		cpu.registers[9] = base + 8;
-		/* An equal-value scalar store to the second element conflicts. */
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			test::unsigned_immediate(3, 0, 0, 9, 8)).reason ==
-			arm64::StopReason::continued);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(true, false, false, 2, 5, 6, 7)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[7] == 1);
-
-		/* Different monitored byte widths never satisfy one another. */
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(true, true, false, 2, 3, 4)).reason ==
-			arm64::StopReason::continued);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			scalar_exclusive(3, false, 2, 5, 7)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[7] == 1);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			scalar_exclusive(3, true, 2, 3)).reason ==
-			arm64::StopReason::continued);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(true, false, false, 2, 5, 6, 7)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[7] == 1);
-
-		/* The monitor records the byte range, not the syntactic shape: a
-		 * 32-bit pair and a 64-bit scalar both cover exactly eight bytes. */
-		memory.put_pair(base, initial_values, 4);
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		cpu.registers[5] = (stored_values[0] & 0xffff'ffffU) |
-			(stored_values[1] << 32);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(false, true, false, 2, 3, 4)).reason ==
-			arm64::StopReason::continued);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			scalar_exclusive(3, false, 2, 5, 7)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[7] == 0);
-
-		memory.put_pair(base, initial_values, 4);
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		cpu.registers[5] = stored_values[0];
-		cpu.registers[6] = stored_values[1];
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			scalar_exclusive(3, true, 2, 3)).reason ==
-			arm64::StopReason::continued);
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(false, false, false, 2, 5, 6, 7)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[7] == 0);
-	}
+	const auto element_size = wide ? 8U : 4U;
+	atomic::Page initial_page{};
+	put_pair(initial_page, initial_values, element_size);
+	auto expected_page = initial_page;
+	put_pair(expected_page, stored_values, element_size);
+	const auto memory = atomic::region(initial_page, expected_page);
+	const std::array code{
+		engine::ProgramWord{0, atomic::store_x(28, 26)},
+		engine::ProgramWord{4, atomic::load_x(28, 27)},
+		engine::ProgramWord{8, atomic::pair_exclusive(wide, true,
+			load_ordered, 2, 3, 4)},
+		engine::ProgramWord{12, atomic::pair_exclusive(wide, false,
+			store_ordered, 2, 5, 6, 7)},
+		engine::ProgramWord{16, atomic::cbnz_w(7, -8)},
+		engine::ProgramWord{20, atomic::clrex(9)},
+		engine::ProgramWord{24, atomic::terminal_system_call},
+	};
+	auto initial = atomic::state(12);
+	initial.registers[28] = atomic::data_address;
+	initial.registers[26] = atomic::get(initial_page, atomic::data_offset, 8);
+	initial.registers[2] = atomic::data_address;
+	initial.registers[5] = stored_values[0];
+	initial.registers[6] = stored_values[1];
+	initial.registers[7] = ~std::uint64_t{0};
+	auto expected = initial;
+	expected.registers[27] = initial.registers[26];
+	const auto mask = atomic::mask_for_size(element_size);
+	expected.registers[3] = initial_values[0] & mask;
+	expected.registers[4] = initial_values[1] & mask;
+	expected.registers[7] = 0;
+	atomic::clear_monitor(expected);
+	expected.pc = engine::engine_test_code_base + 28;
+	harness.check_program({
+		.name = "pair exclusive successful sequence",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::baseline(),
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+		.expected_instruction_pattern = atomic::exclusive_retry_count,
+	});
 }
 
-void interpreter_edges_faults_and_constraints()
+void variants(engine::EngineHarness &harness)
 {
 	for (const bool wide : {false, true}) {
-		const auto element_size = wide ? 8U : 4U;
-		const auto total_size = element_size * 2;
-		const auto mask = size_mask(element_size);
-		AtomicMemory memory;
-		memory.put_pair(base, initial_values, element_size);
-		arm64::CpuState cpu{};
-		cpu.pc = pc;
-		cpu.sp = base;
-		/* XZR can independently discard/supply either element and status. */
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(wide, true, true, 31, 31, 4)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.registers[4] == (initial_values[1] & mask));
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			pair_exclusive(wide, false, true, 31, 31, 4, 31)).reason ==
-			arm64::StopReason::continued);
-		const auto zero_first = memory.get_pair(base, element_size);
-		test::require(zero_first[0] == 0 &&
-			zero_first[1] == (initial_values[1] & mask));
-		test::require(cpu.sp == base);
-
-		memory = {};
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[2] = base + element_size;
-		cpu.registers[5] = stored_values[0];
-		cpu.registers[6] = stored_values[1];
-		const auto before = cpu;
-		for (const bool load : {false, true}) {
-			const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-				pair_exclusive(wide, load, true, 2, 5, 6,
-					load ? 31U : 7U));
-			test::require(result.reason == arm64::StopReason::memory_fault);
-			test::require(result.address == base + element_size &&
-				result.write == !load);
-			test::require(cpu.pc == before.pc &&
-				cpu.registers == before.registers);
+		for (const bool load_ordered : {false, true}) {
+			for (const unsigned base : {2U, 31U})
+				for (const auto pair : {
+					std::array{3U, 4U},
+					std::array{31U, 4U},
+					std::array{3U, 31U},
+				})
+					check_load(harness, wide, load_ordered, base,
+						pair[0], pair[1]);
+			for (const bool store_ordered : {false, true})
+				check_success(harness, wide, load_ordered, store_ordered);
 		}
-		test::require(total_size == (wide ? 16U : 8U));
+		for (const bool store_ordered : {false, true})
+			for (const auto registers : {
+				std::array{2U, 5U, 6U, 7U},
+				std::array{31U, 31U, 6U, 7U},
+				std::array{2U, 5U, 31U, 7U},
+				std::array{2U, 5U, 6U, 31U},
+			})
+				check_failed_store(harness, wide, store_ordered,
+					registers[0], registers[1], registers[2],
+					registers[3]);
 	}
 
-	/* The selected LDPOVERLAP constraint is UNDEFINED; a non-31 Rs on a load
-	 * is also reserved. Neither case may touch memory. */
-	for (const auto instruction : {
-		pair_exclusive(false, true, false, 2, 3, 3),
-		pair_exclusive(true, true, true, 2, 3, 4, 30),
-		pair_exclusive(true, true, true, 2, 3, 3, 30),
-		pair_exclusive(false, true, false, 2, 3, 4) & 0x7fff'ffffU}) {
-		AtomicMemory memory;
-		arm64::CpuState cpu{};
-		cpu.pc = pc;
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			instruction).reason == arm64::StopReason::illegal_instruction);
-		test::require(cpu.pc == pc && memory.atomic_pointers == 0);
+	for (unsigned first = 0; first < 32; ++first) {
+		const unsigned second = first == 4U ? 5U : 4U;
+		check_load(harness, true, false, 2, first, second);
 	}
-
-	/* DATAOVERLAP and BASEOVERLAP select UNKNOWN. This implementation's
-	 * permitted deterministic choice uses the original address/data. */
-	AtomicMemory memory;
-	memory.put_pair(base, initial_values, 8);
-	arm64::CpuState cpu{};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[5] = stored_values[0];
-	cpu.registers[6] = stored_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, true, false, 2, 3, 4)).reason ==
-		arm64::StopReason::continued);
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, false, false, 2, 5, 6, 5)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[5] == 0);
-	const auto data_overlap = memory.get_pair(base, 8);
-	test::require(data_overlap[0] == stored_values[0] &&
-		data_overlap[1] == stored_values[1]);
-
-	memory.put_pair(base, initial_values, 8);
-	cpu = {};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[5] = stored_values[0];
-	cpu.registers[6] = stored_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, true, false, 2, 3, 4)).reason ==
-		arm64::StopReason::continued);
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, false, false, 2, 5, 6, 2)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[2] == 0);
-	const auto base_overlap = memory.get_pair(base, 8);
-	test::require(base_overlap[0] == stored_values[0] &&
-		base_overlap[1] == stored_values[1]);
-
-	memory = {};
-	memory.put_pair(base, initial_values, 8);
-	cpu = {};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, true, false, 2, 3, 4)).reason ==
-		arm64::StopReason::continued);
-	memory.fault = true;
-	const auto before = cpu;
-	const auto fault = arm64::Dispatcher{}.execute(cpu, memory,
-		pair_exclusive(true, false, false, 2, 5, 6, 7));
-	test::require(fault.reason == arm64::StopReason::memory_fault &&
-		fault.address == base && fault.write);
-	test::require(cpu.pc == before.pc && cpu.registers == before.registers);
+	for (unsigned second = 0; second < 32; ++second) {
+		const unsigned first = second == 3U ? 4U : 3U;
+		check_load(harness, false, true, 2, first, second);
+	}
+	for (unsigned base = 0; base < 32; ++base)
+		check_load(harness, true, true, base, 3, 4);
 }
 
-void run_gadget_variant(test::StaticMapping &mapping, std::uint64_t map_base,
-	bool wide, bool acquire_release)
+void cross_shape_monitor(engine::EngineHarness &harness)
 {
-	const auto element_size = wide ? 8U : 4U;
-	const auto mask = size_mask(element_size);
-	arm64::CpuState cpu{};
-	const std::array stream{
-		pair_exclusive(wide, true, acquire_release, 2, 3, 4),
-		pair_exclusive(wide, false, acquire_release, 2, 5, 6, 7),
-		0xd400'0001U};
-	bool stored = false;
-	for (unsigned attempt = 0; attempt < 16 && !stored; ++attempt) {
-		std::memcpy(mapping.at(map_base), &initial_values[0], element_size);
-		std::memcpy(mapping.at(map_base + element_size), &initial_values[1],
-			element_size);
-		cpu = {};
-		cpu.registers[2] = map_base;
-		cpu.registers[5] = stored_values[0];
-		cpu.registers[6] = stored_values[1];
-		cpu.registers[7] = ~std::uint64_t{0};
-		test::require(mapping.execute(pc,
-			std::span<const std::uint32_t>{stream}, cpu) ==
-			gadgets::Event::system_call);
-		test::require(cpu.registers[3] == (initial_values[0] & mask));
-		test::require(cpu.registers[4] == (initial_values[1] & mask));
-		stored = cpu.registers[7] == 0;
-	}
-	test::require(stored);
-	std::array<std::uint64_t, 2> actual{};
-	std::memcpy(&actual[0], mapping.at(map_base), element_size);
-	std::memcpy(&actual[1], mapping.at(map_base + element_size), element_size);
-	test::require(actual[0] == (stored_values[0] & mask));
-	test::require(actual[1] == (stored_values[1] & mask));
-
-	cpu.registers[7] = ~std::uint64_t{0};
-	test::require(mapping.execute(pc,
-		pair_exclusive(wide, false, acquire_release, 2, 5, 6, 7), cpu) ==
-		gadgets::Event::system_call);
-	test::require(cpu.registers[7] == 1);
-}
-
-void gadget_variants_and_edges()
-{
-	test::StaticMapping mapping{0x350'0000, 163,
-		"/private/tmp/uml-base-exclusive-pair.XXXXXX"};
-	const auto map_base = mapping.guest() +
-		4 * test::StaticMapping::page_size;
-	arm64::CpuState warm{};
-	warm.registers[2] = map_base;
-	warm.registers[3] = initial_values[0];
-	test::require(mapping.execute(pc,
-		test::unsigned_immediate(3, 1, 0, 2, 4), warm) ==
-		gadgets::Event::system_call);
-	test::require(mapping.execute(pc,
-		test::unsigned_immediate(3, 0, 0, 2, 3), warm) ==
-		gadgets::Event::system_call);
-	for (const bool wide : {false, true})
-		for (const bool acquire_release : {false, true})
-			run_gadget_variant(mapping, map_base, wide, acquire_release);
-
-	std::memcpy(mapping.at(map_base), initial_values.data(),
-		sizeof(initial_values));
-	arm64::CpuState cpu{};
-	cpu.registers[2] = map_base;
-	cpu.registers[5] = stored_values[0];
-	cpu.registers[6] = stored_values[1];
-	cpu.registers[8] = initial_values[1];
-	cpu.registers[9] = map_base + 8;
-	const std::array invalidate_stream{
-		pair_exclusive(true, true, false, 2, 3, 4),
-		test::unsigned_immediate(3, 0, 0, 9, 8),
-		pair_exclusive(true, false, false, 2, 5, 6, 7),
-		0xd400'0001U};
-	test::require(mapping.execute(pc,
-		std::span<const std::uint32_t>{invalidate_stream}, cpu) ==
-		gadgets::Event::system_call);
-	test::require(cpu.registers[7] == 1);
-
-	/* Same eight-byte monitor range across pair-W and scalar-X forms. */
-	const std::array pair_to_scalar{
-		pair_exclusive(false, true, false, 2, 3, 4),
-		scalar_exclusive(3, false, 2, 5, 7), 0xd400'0001U};
-	const auto scalar_replacement = (stored_values[0] & 0xffff'ffffU) |
+	atomic::Page initial_page{};
+	put_pair(initial_page, initial_values, 4);
+	auto expected_page = initial_page;
+	const auto packed = (stored_values[0] & 0xffff'ffffU) |
 		((stored_values[1] & 0xffff'ffffU) << 32);
-	bool pair_to_scalar_succeeded = false;
-	for (unsigned attempt = 0; attempt < 16; ++attempt) {
-		std::memcpy(mapping.at(map_base), initial_values.data(), 8);
-		cpu = {};
-		cpu.registers[2] = map_base;
-		cpu.registers[5] = scalar_replacement;
-		test::require(mapping.execute(pc,
-			std::span<const std::uint32_t>{pair_to_scalar}, cpu) ==
-			gadgets::Event::system_call);
-		if (cpu.registers[7] == 0) {
-			pair_to_scalar_succeeded = true;
-			break;
-		}
-		std::uint64_t unchanged{};
-		std::memcpy(&unchanged, mapping.at(map_base), 8);
-		test::require(unchanged == initial_values[0]);
-	}
-	test::require(pair_to_scalar_succeeded);
-	std::uint64_t scalar_actual{};
-	std::memcpy(&scalar_actual, mapping.at(map_base), 8);
-	test::require(scalar_actual == scalar_replacement);
+	atomic::put(expected_page, atomic::data_offset, packed, 8);
+	const auto memory = atomic::region(initial_page, expected_page);
+	const std::array pair_to_scalar{
+		engine::ProgramWord{0, atomic::store_x(28, 26)},
+		engine::ProgramWord{4, atomic::load_x(28, 27)},
+		engine::ProgramWord{8, atomic::pair_exclusive(false, true, false,
+			2, 3, 4)},
+		engine::ProgramWord{12, atomic::scalar_exclusive(3, false, false,
+			2, 5, 7)},
+		engine::ProgramWord{16, atomic::cbnz_w(7, -8)},
+		engine::ProgramWord{20, atomic::clrex(1)},
+		engine::ProgramWord{24, atomic::terminal_system_call},
+	};
+	auto initial = atomic::state(13);
+	initial.registers[28] = atomic::data_address;
+	initial.registers[26] = atomic::get(initial_page, atomic::data_offset, 8);
+	initial.registers[2] = atomic::data_address;
+	initial.registers[5] = packed;
+	initial.registers[7] = ~std::uint64_t{0};
+	auto expected = initial;
+	expected.registers[27] = initial.registers[26];
+	expected.registers[3] = initial_values[0] & 0xffff'ffffU;
+	expected.registers[4] = initial_values[1] & 0xffff'ffffU;
+	expected.registers[7] = 0;
+	atomic::clear_monitor(expected);
+	expected.pc = engine::engine_test_code_base + 28;
+	harness.check_program({
+		.name = "pair load to scalar store monitor range",
+		.code = pair_to_scalar,
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::baseline(),
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+		.expected_instruction_pattern = atomic::exclusive_retry_count,
+	});
 
+	auto second_expected_page = initial_page;
+	put_pair(second_expected_page, stored_values, 4);
+	const auto second_memory =
+		atomic::region(initial_page, second_expected_page);
 	const std::array scalar_to_pair{
-		scalar_exclusive(3, true, 2, 3),
-		pair_exclusive(false, false, false, 2, 5, 6, 7),
-		0xd400'0001U};
-	bool scalar_to_pair_succeeded = false;
-	for (unsigned attempt = 0; attempt < 16; ++attempt) {
-		std::memcpy(mapping.at(map_base), initial_values.data(), 8);
-		cpu = {};
-		cpu.registers[2] = map_base;
-		cpu.registers[5] = stored_values[0];
-		cpu.registers[6] = stored_values[1];
-		test::require(mapping.execute(pc,
-			std::span<const std::uint32_t>{scalar_to_pair}, cpu) ==
-			gadgets::Event::system_call);
-		if (cpu.registers[7] == 0) {
-			scalar_to_pair_succeeded = true;
-			break;
-		}
-		std::uint64_t unchanged{};
-		std::memcpy(&unchanged, mapping.at(map_base), 8);
-		test::require(unchanged == initial_values[0]);
-	}
-	test::require(scalar_to_pair_succeeded);
-	std::array<std::uint32_t, 2> pair_actual{};
-	std::memcpy(pair_actual.data(), mapping.at(map_base), 8);
-	test::require(pair_actual[0] == static_cast<std::uint32_t>(stored_values[0]) &&
-		pair_actual[1] == static_cast<std::uint32_t>(stored_values[1]));
+		engine::ProgramWord{0, atomic::store_x(28, 26)},
+		engine::ProgramWord{4, atomic::load_x(28, 27)},
+		engine::ProgramWord{8, atomic::scalar_exclusive(3, true, false,
+			2, 3)},
+		engine::ProgramWord{12, atomic::pair_exclusive(false, false, false,
+			2, 5, 6, 7)},
+		engine::ProgramWord{16, atomic::cbnz_w(7, -8)},
+		engine::ProgramWord{20, atomic::clrex(2)},
+		engine::ProgramWord{24, atomic::terminal_system_call},
+	};
+	initial = atomic::state(14);
+	initial.registers[28] = atomic::data_address;
+	initial.registers[26] = atomic::get(initial_page, atomic::data_offset, 8);
+	initial.registers[2] = atomic::data_address;
+	initial.registers[5] = stored_values[0];
+	initial.registers[6] = stored_values[1];
+	initial.registers[7] = ~std::uint64_t{0};
+	expected = initial;
+	expected.registers[27] = initial.registers[26];
+	expected.registers[3] =
+		atomic::get(initial_page, atomic::data_offset, 8);
+	expected.registers[7] = 0;
+	atomic::clear_monitor(expected);
+	expected.pc = engine::engine_test_code_base + 28;
+	harness.check_program({
+		.name = "scalar load to pair store monitor range",
+		.code = scalar_to_pair,
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::baseline(),
+		.memory = std::span<const engine::MemoryRegion>{&second_memory, 1},
+		.expected_instruction_pattern = atomic::exclusive_retry_count,
+	});
+}
 
-	cpu = {};
-	cpu.sp = map_base;
-	const std::array zero_stream{
-		pair_exclusive(true, true, true, 31, 31, 4),
-		pair_exclusive(true, false, true, 31, 31, 4, 31),
-		0xd400'0001U};
-	test::require(mapping.execute(pc,
-		std::span<const std::uint32_t>{zero_stream}, cpu) ==
-		gadgets::Event::system_call);
-	test::require(cpu.sp == map_base);
-
+void faults(engine::EngineHarness &harness)
+{
+	atomic::Page page{};
+	put_pair(page, initial_values, 8);
+	const auto memory = atomic::region(page, page);
 	for (const bool wide : {false, true}) {
 		const auto element_size = wide ? 8U : 4U;
 		for (const bool load : {false, true}) {
-			cpu = {};
-			cpu.registers[2] = map_base + element_size;
-			cpu.registers[5] = stored_values[0];
-			cpu.registers[6] = stored_values[1];
-			const auto before = cpu.registers;
-			test::require(mapping.execute(pc,
-				pair_exclusive(wide, load, true, 2, 5, 6,
-					load ? 31U : 7U), cpu) ==
-				gadgets::Event::memory_fault);
-			test::require(cpu.pc == pc && cpu.registers == before);
+			auto initial = atomic::state(15);
+			initial.sp = atomic::data_address + 8;
+			initial.registers[5] = stored_values[0];
+			initial.registers[6] = stored_values[1];
+			harness.check({
+				.name = "pair exclusive SP alignment",
+				.instruction = atomic::pair_exclusive(wide, load, true,
+					31, 5, 6, load ? 31U : 7U),
+				.initial = initial,
+				.expected = initial,
+				.event = engine::ExpectedEvent::memory_fault,
+				.native = atomic::baseline(),
+				.fault = {
+					.address = atomic::data_address + 8,
+					.access = load ? arm64::MemoryAccess::read :
+						arm64::MemoryAccess::write,
+				},
+				.compare_fault = true,
+				.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+			});
+
+			initial = atomic::state(16);
+			initial.registers[2] = atomic::data_address + element_size;
+			harness.check({
+				.name = "pair exclusive transfer alignment",
+				.instruction = atomic::pair_exclusive(wide, load, true,
+					2, 5, 6, load ? 31U : 7U),
+				.initial = initial,
+				.expected = initial,
+				.event = engine::ExpectedEvent::memory_fault,
+				.native = atomic::baseline(),
+				.fault = {
+					.address = atomic::data_address + element_size,
+					.access = load ? arm64::MemoryAccess::read :
+						arm64::MemoryAccess::write,
+				},
+				.compare_fault = true,
+				.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+			});
 		}
 	}
+}
 
+void allocation(engine::EngineHarness &harness)
+{
+	auto initial = atomic::state(17);
+	initial.registers[2] = atomic::data_address;
+	for (const bool wide : {false, true}) {
+		for (const unsigned duplicate : {0U, 1U, 15U, 30U, 31U})
+			harness.check_illegal("pair exclusive duplicate load",
+				atomic::pair_exclusive(wide, true, false, 2,
+					duplicate, duplicate),
+				initial, atomic::baseline());
+		for (const unsigned status : {0U, 1U, 15U, 30U})
+			harness.check_illegal("pair exclusive reserved load status",
+				atomic::pair_exclusive(wide, true, true, 2, 3, 4,
+					status),
+				initial, atomic::baseline());
+	}
 	for (const auto instruction : {
-		pair_exclusive(false, true, false, 2, 3, 3),
-		pair_exclusive(true, true, true, 2, 3, 4, 30),
-		pair_exclusive(true, true, true, 2, 3, 3, 30)}) {
-		cpu = {};
-		test::require(mapping.execute(pc, instruction, cpu) ==
-			gadgets::Event::illegal_instruction);
+		atomic::pair_exclusive(false, true, false, 2, 3, 4) &
+			0x7fff'ffffU,
+		atomic::pair_exclusive(true, false, false, 2, 3, 4, 5) &
+			0x7fff'ffffU,
+	}) {
+		harness.check_illegal("pair exclusive unallocated size",
+			instruction, initial, atomic::baseline());
 	}
 }
 
@@ -530,8 +335,11 @@ void gadget_variants_and_edges()
 
 int main()
 {
-	exhaustive_interpreter_variants();
-	interpreter_reservation_size_and_store_invalidation();
-	interpreter_edges_faults_and_constraints();
-	gadget_variants_and_edges();
+	engine::EngineHarness harness;
+	variants(harness);
+	cross_shape_monitor(harness);
+	faults(harness);
+	allocation(harness);
+	harness.print_summary("arm64-base-exclusive-pair");
+	return 0;
 }

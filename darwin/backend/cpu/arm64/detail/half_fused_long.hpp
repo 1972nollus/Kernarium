@@ -2,6 +2,7 @@
 #pragma once
 
 #include "bfloat_multiply.hpp"
+#include "floating_exception.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -37,18 +38,21 @@ struct HalfFusedLong final {
 	return {};
 }
 
-[[nodiscard]] constexpr std::uintptr_t half_fused_long_operand(
-	std::uint32_t instruction, const HalfFusedLong &decoded) noexcept
+[[nodiscard]] constexpr bool reserved_half_fused_long(
+	std::uint32_t instruction) noexcept
 {
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) &
-			(decoded.by_element ? 15U : 31U)) << 16) |
-		(static_cast<std::uintptr_t>(decoded.by_element) << 24) |
-		(static_cast<std::uintptr_t>(decoded.subtract) << 25) |
-		(static_cast<std::uintptr_t>(decoded.upper) << 26) |
-		(static_cast<std::uintptr_t>(decoded.wide) << 27) |
-		(static_cast<std::uintptr_t>(decoded.index) << 28);
+	const auto vector_without_size =
+		instruction & ~0x0040'0000U;
+	const auto vector = decode_half_fused_long(vector_without_size);
+	if ((instruction & 0x0040'0000U) != 0U &&
+	    vector.recognized && !vector.by_element)
+		return true;
+	const auto indexed_without_opcode =
+		instruction & ~0x0000'0400U;
+	const auto indexed =
+		decode_half_fused_long(indexed_without_opcode);
+	return (instruction & 0x0000'0400U) != 0U &&
+		indexed.recognized && indexed.by_element;
 }
 
 struct HalfFusedLongResult final {
@@ -95,7 +99,7 @@ namespace half_fused_long_detail {
 	std::uint64_t saved_fpsr;
 	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
 	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = fpcr;
+	const std::uint64_t local_fpcr = host_fpcr(fpcr);
 	const std::uint64_t clear = 0U;
 	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
 	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");

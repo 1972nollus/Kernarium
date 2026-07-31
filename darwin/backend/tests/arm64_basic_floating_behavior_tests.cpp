@@ -1,51 +1,115 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_basic_floating_test_support.hpp"
 
+#include <array>
+
 namespace test = arm64_basic_floating_test;
 
 namespace {
 
-template<typename Floating>
-void check_form(test::common::Harness &harness, const test::Form &form,
-	unsigned seed)
+struct LaneCase final {
+	std::uint64_t left;
+	std::uint64_t right;
+	std::uint64_t result;
+};
+
+[[nodiscard]] LaneCase lane_case(const test::FormatBits &format,
+	test::Operation operation, bool alternate)
 {
-	constexpr test::Registers registers{0, 1, 2};
-	auto initial = test::common::state(seed);
-	initial.fpsr = 0;
-	test::prepare_exact<Floating>(initial, form, registers);
-	const auto actual = harness.run_interpreter(
-		test::instruction(form, registers), initial);
-	const unsigned lanes = form.scalar ? 1U :
-		form.vector_bytes / sizeof(Floating);
-	for (unsigned lane = 0; lane < lanes; ++lane)
-		test::common::require(test::lane_bits<Floating>(actual,
-			registers.destination, lane) ==
-			std::bit_cast<test::FloatingInteger<Floating>>(
-				test::exact_result<Floating>(form.operation, lane)));
-	for (unsigned byte = form.scalar ? sizeof(Floating) : form.vector_bytes;
-	     byte < 16U; ++byte)
-		test::common::require(actual.vectors[registers.destination].bytes[byte] ==
-			std::byte{});
-	test::common::require(actual.fpsr == 0U);
+	switch (operation) {
+	case test::Operation::multiply:
+		return alternate ?
+			LaneCase{format.two, format.two_and_half, format.five} :
+			LaneCase{format.one_and_half, format.two, format.three};
+	case test::Operation::divide:
+		return alternate ?
+			LaneCase{format.five, format.two_and_half, format.two} :
+			LaneCase{format.seven_and_half, format.two_and_half,
+				format.three};
+	case test::Operation::add:
+		return alternate ?
+			LaneCase{format.two, format.two, format.four} :
+			LaneCase{format.one_and_half, format.two,
+				format.three_and_half};
+	case test::Operation::subtract:
+		return alternate ?
+			LaneCase{format.five, format.two, format.three} :
+			LaneCase{format.five_and_half, format.two_and_quarter,
+				format.three_and_quarter};
+	case test::Operation::negative_multiply:
+		return alternate ?
+			LaneCase{format.two, format.two_and_half,
+				test::negate_bits(format, format.five)} :
+			LaneCase{format.one_and_half, format.two,
+				test::negate_bits(format, format.three)};
+	case test::Operation::square_root:
+		return alternate ?
+			LaneCase{format.four, 0, format.two} :
+			LaneCase{format.nine, 0, format.three};
+	}
+	__builtin_unreachable();
 }
 
-void exact_results_and_inactive_zeroing()
+void every_operation_precision_and_lane()
 {
-	test::common::Harness harness;
+	test::engine_tests::EngineHarness harness;
 	unsigned seed{};
 	test::for_each_form([&](const test::Form &form) {
-		if (form.width == 16U)
-			check_form<_Float16>(harness, form, ++seed);
-		else if (form.width == 32U)
-			check_form<float>(harness, form, ++seed);
-		else
-			check_form<double>(harness, form, ++seed);
+		constexpr test::Registers registers{0, 1, 2};
+		auto initial = test::state(++seed);
+		initial.fpsr = (1U << 27) | test::fpsr_input_denormal;
+		const auto &format = test::format_bits(form.width);
+		std::array<std::uint64_t, 8> results{};
+		for (unsigned lane = 0; lane < test::active_lanes(form); ++lane) {
+			const auto values =
+				lane_case(format, form.operation, (lane & 1U) != 0U);
+			test::set_lane_bits(initial, registers.left, lane,
+				form.width, values.left);
+			if (form.operation != test::Operation::square_root)
+				test::set_lane_bits(initial, registers.right, lane,
+					form.width, values.right);
+			results[lane] = values.result;
+		}
+		harness.check_one("basic-floating-lane-behavior",
+			test::instruction(form, registers), initial,
+			test::expected_with_lane_results(initial, form, registers,
+				std::span<const std::uint64_t>{
+					results.data(), test::active_lanes(form)}),
+			test::native_requirements(form));
 	});
+	harness.print_summary("arm64-basic-floating-behavior");
+}
+
+void vector_upper_half_is_zeroed()
+{
+	test::engine_tests::EngineHarness harness;
+	unsigned seed = 1000;
+	for (const auto operation : test::vector_operations)
+		for (const unsigned width : {16U, 32U}) {
+			const test::Form form{operation, false, width, 8U};
+			constexpr test::Registers registers{0, 1, 2};
+			auto initial = test::state(++seed);
+			initial.fpcr = 4U;
+			initial.fpsr = 0;
+			test::prepare_exact(initial, form, registers);
+			const auto expected =
+				test::expected_exact(initial, form, registers);
+			for (unsigned byte = 8; byte < 16; ++byte)
+				test::common::require(
+					expected.vectors[registers.destination]
+						.bytes[byte] == std::byte{});
+			harness.check_one("basic-floating-vector-inactive-zero",
+				test::instruction(form, registers), initial, expected,
+				test::native_requirements(form));
+		}
+	harness.print_summary("arm64-basic-floating-inactive-zero");
 }
 
 } // namespace
 
 int main()
 {
-	exact_results_and_inactive_zeroing();
+	every_operation_precision_and_lane();
+	vector_upper_half_is_zeroed();
+	return 0;
 }

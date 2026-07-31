@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_fused.hpp"
 #include "half_matrix.hpp"
 
 #include <array>
@@ -30,16 +31,19 @@ struct HalfDot final {
 	return {};
 }
 
-[[nodiscard]] constexpr std::uintptr_t half_dot_operand(
-	std::uint32_t instruction, const HalfDot &decoded) noexcept
+[[nodiscard]] constexpr bool reserved_half_dot_scalar_class(
+	std::uint32_t instruction) noexcept
 {
-	const unsigned second = (instruction >> 16) & 31U;
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>(second) << 16) |
-		(static_cast<std::uintptr_t>(decoded.by_element) << 24) |
-		(static_cast<std::uintptr_t>(decoded.wide) << 25) |
-		(static_cast<std::uintptr_t>(decoded.index) << 26);
+	/*
+	 * Bit 28 is fixed low in the vector family, but setting it does not make
+	 * every otherwise matching word unallocated. Indexed narrow forms then
+	 * enter the scalar three-source class, where the same fields encode an
+	 * allocated fused operation. Let that complete decoder own both its valid
+	 * and reserved precision cells.
+	 */
+	return (instruction & 0x1000'0000U) != 0U &&
+		decode_half_dot(instruction & ~0x1000'0000U).recognized &&
+		!decode_fused_floating_arithmetic(instruction).recognized;
 }
 
 [[nodiscard]] inline HalfMatrixResult half_dot_add(

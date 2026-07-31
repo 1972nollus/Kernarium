@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/dispatcher.hpp"
+#include "arm64_engine_test_support.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
-
-#include "uml_darwin_static_mmu.h"
 
 #include <array>
 #include <bit>
@@ -10,11 +8,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <memory>
 #include <set>
 #include <source_location>
 
 namespace arm64 = uml::backend::arm64;
+namespace engine_tests = uml::backend::tests;
 namespace gadgets = uml::backend::arm64::gadgets;
 
 namespace {
@@ -30,23 +28,6 @@ void require(bool condition,
 		std::abort();
 	}
 }
-
-class RejectingMemory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t, std::span<std::byte>) override
-	{
-		++reads;
-		return false;
-	}
-	[[nodiscard]] bool write(
-		std::uint64_t, std::span<const std::byte>) override
-	{
-		++writes;
-		return false;
-	}
-	std::size_t reads{};
-	std::size_t writes{};
-};
 
 [[nodiscard]] constexpr std::uint32_t multiply_instruction(bool subtract,
 	unsigned destination, unsigned left, unsigned right, unsigned addend)
@@ -115,38 +96,6 @@ struct ArithmeticResult final {
 	return cpu;
 }
 
-void require_state(const arm64::CpuState &actual,
-	const arm64::CpuState &expected, std::uint64_t expected_pc)
-{
-	require(actual.registers == expected.registers && actual.sp == expected.sp &&
-		actual.pc == expected_pc && actual.nzcv == expected.nzcv &&
-		actual.fpcr == expected.fpcr && actual.fpsr == expected.fpsr &&
-		actual.tls == expected.tls &&
-		actual.mte_enabled == expected.mte_enabled &&
-		actual.mte_exclude == expected.mte_exclude &&
-		actual.mte_tag_choices == expected.mte_tag_choices &&
-		actual.mte_random_tags == expected.mte_random_tags &&
-		actual.mte_seed == expected.mte_seed &&
-		actual.mte_tag == expected.mte_tag &&
-		actual.mte_random_state == expected.mte_random_state &&
-		actual.cpa_enabled == expected.cpa_enabled &&
-		actual.cpa_multiply_enabled == expected.cpa_multiply_enabled &&
-		actual.accdata == expected.accdata &&
-		actual.exclusive_address == expected.exclusive_address &&
-		actual.exclusive_key == expected.exclusive_key &&
-		actual.exclusive_value == expected.exclusive_value &&
-		actual.exclusive_value2 == expected.exclusive_value2 &&
-		actual.exclusive_version == expected.exclusive_version &&
-		actual.exclusive_size == expected.exclusive_size &&
-		actual.deferred_vectors == expected.deferred_vectors &&
-		actual.deferred_fpcr == expected.deferred_fpcr &&
-		actual.deferred_fpsr == expected.deferred_fpsr &&
-		actual.fp_loaded == expected.fp_loaded &&
-		actual.fp_dirty == expected.fp_dirty);
-	for (unsigned index = 0; index < actual.vectors.size(); ++index)
-		require(actual.vectors[index].bytes == expected.vectors[index].bytes);
-}
-
 [[nodiscard]] arm64::CpuState expected_result(const arm64::CpuState &initial,
 	bool subtract, unsigned destination, unsigned left_register,
 	unsigned right_register, unsigned addend_register)
@@ -169,11 +118,6 @@ void require_state(const arm64::CpuState &actual,
 
 class Harness final {
 public:
-	Harness() : tlb_{std::make_unique<gadgets::Tlb>()}
-	{
-		tlb_->prepare(0, darwin_uml_static_vm_changes(0));
-	}
-
 	void check(bool subtract, unsigned destination, unsigned left,
 		unsigned right, unsigned addend, const arm64::CpuState &initial)
 	{
@@ -181,29 +125,19 @@ public:
 			subtract, destination, left, right, addend);
 		const auto expected = expected_result(
 			initial, subtract, destination, left, right, addend);
-		auto interpreted = initial;
-		interpreted.pc = pc;
-		const auto result = arm64::Dispatcher{}.execute(
-			interpreted, memory_, instruction);
-		require(result.reason == arm64::StopReason::continued &&
-			result.instructions == 1 && result.address == pc &&
-			result.instruction == instruction && !result.write);
-		require_state(interpreted, expected, pc + 4);
+		engines_.check_one("checked multiply-add/subtract", instruction,
+			initial, expected,
+			engine_tests::NativeRequirements::features(
+				uml::backend::ArmFeature::cpa));
+	}
 
-		const auto built = gadgets::Builder{}.build(pc,
-			std::array{instruction, 0xd400'0001U});
-		require(built.complete && built.program.instruction_count() == 2);
-		auto gadget = initial;
-		gadget.pc = pc;
-		require(gadgets::execute(built.program, gadget, *tlb_) ==
-			gadgets::Event::system_call);
-		require_state(gadget, expected, pc + 8);
-		require(memory_.reads == 0 && memory_.writes == 0);
+	void print_summary() const
+	{
+		engines_.print_summary("arm64-base-cpa-multiply");
 	}
 
 private:
-	RejectingMemory memory_;
-	std::unique_ptr<gadgets::Tlb> tlb_;
+	engine_tests::EngineHarness engines_;
 };
 
 void encoding_examples()
@@ -260,9 +194,6 @@ void overflow_and_control_edges(Harness &harness)
 
 void production_specialization()
 {
-#if UML_TEST_GADGET_INTERPRETER_RUNPATH
-	return;
-#else
 	std::set<std::uintptr_t> entries;
 	for (const bool subtract : {false, true})
 		for (const bool left_zero : {false, true})
@@ -290,7 +221,6 @@ void production_specialization()
 						entries.insert(built.program.words().front());
 					}
 	require(entries.size() == 32);
-#endif
 }
 
 } // namespace
@@ -302,4 +232,6 @@ int main()
 	exhaustive_encodings(harness);
 	overflow_and_control_edges(harness);
 	production_specialization();
+	harness.print_summary();
+	return 0;
 }

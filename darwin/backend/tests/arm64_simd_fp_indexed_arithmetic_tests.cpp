@@ -1,86 +1,83 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_fp_indexed_test_support.hpp"
 
+#include <array>
+
 namespace test = arm64_simd_fp_indexed_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-[[nodiscard]] double expected_value(test::Operation operation)
+void every_operation_shape_and_index_selects_the_specified_element(
+	test::engine_tests::EngineHarness &harness)
 {
-	if (operation == test::Operation::fmla)
-		return 7.0;
-	if (operation == test::Operation::fmls)
-		return -5.0;
-	return 6.0;
-}
-
-void exact_results_for_every_shape_and_index()
-{
-	base::Harness harness;
-	for (const auto operation : {test::Operation::fmla, test::Operation::fmls,
-	     test::Operation::fmul})
+	unsigned seed = 30'000U;
+	for (const auto operation : test::operations)
 		for (const auto shape : test::shapes)
 			for (unsigned index = 0; index < shape.indexes; ++index) {
-				const unsigned element_register = shape.size == 0U ? 13U : 19U;
-				auto initial = base::state(0U);
-				initial.fpsr = 0x80U;
-				test::fill_bits(initial.vectors[28].bytes, shape.lane_bytes,
-					test::floating_bits(shape.lane_bytes, 1.0));
-				test::fill_bits(initial.vectors[29].bytes, shape.lane_bytes,
-					test::floating_bits(shape.lane_bytes, 2.0));
-				test::fill_bits(initial.vectors[element_register].bytes,
-					shape.lane_bytes,
-					test::floating_bits(shape.lane_bytes, -4.0));
-				test::write_bits(initial.vectors[element_register].bytes,
-					shape.lane_bytes, index,
-					test::floating_bits(shape.lane_bytes, 3.0));
-				const auto encoded = test::instruction(operation, shape, 28U,
-					29U, element_register, index);
-				test::require_uniform_result(encoded, shape, operation, 28U,
-					29U, initial, test::floating_bits(shape.lane_bytes,
-						expected_value(operation)), 0x80U, harness);
+				const test::Registers registers{
+					28U, 29U, shape.size == 0U ? 13U : 19U};
+				auto initial = test::state(++seed);
+				test::prepare_exact_inputs(initial, shape, registers,
+					index);
+				test::check_exact(harness,
+					"fp-indexed-element-selection", operation,
+					shape, registers, index, initial);
 			}
 }
 
-void source_destination_and_element_aliases_use_original_values()
+void every_source_destination_alias_reads_original_values(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
-	for (const auto operation : {test::Operation::fmla, test::Operation::fmls,
-	     test::Operation::fmul})
-		for (const auto shape : {test::shapes[5], test::shapes[6]}) {
-			auto initial = base::state(0U);
-			initial.fpsr = 0x80U;
-			test::fill_bits(initial.vectors[3].bytes, shape.lane_bytes,
-				test::floating_bits(shape.lane_bytes, 2.0));
-			const double output = operation == test::Operation::fmla ? 6.0 :
-				operation == test::Operation::fmls ? -2.0 : 4.0;
-			const auto encoded = test::instruction(operation, shape,
-				3U, 3U, 3U, shape.indexes - 1U);
-			test::require_uniform_result(encoded, shape, operation, 3U, 3U,
-				initial, test::floating_bits(shape.lane_bytes, output),
-				0x80U, harness);
+	unsigned seed = 40'000U;
+	for (const auto operation : test::operations)
+		for (const auto shape : test::shapes) {
+			const std::array aliases{
+				test::Registers{3U, 3U, 4U},
+				test::Registers{3U, 4U, 3U},
+				test::Registers{3U, 4U, 4U},
+				test::Registers{3U, 3U, 3U},
+				test::Registers{31U, 30U,
+					shape.size == 0U ? 15U : 29U},
+			};
+			for (const auto registers : aliases) {
+				const auto index = shape.indexes - 1U;
+				auto initial = test::state(++seed);
+				test::prepare_exact_inputs(initial, shape, registers,
+					index);
+				test::check_exact(harness,
+					"fp-indexed-register-alias", operation,
+					shape, registers, index, initial);
+			}
 		}
 }
 
-void multiply_add_is_fused()
+void multiply_add_and_subtract_round_only_once(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
-	for (const auto operation : {test::Operation::fmla, test::Operation::fmls})
+	constexpr test::Registers registers{28U, 29U, 19U};
+	for (const auto operation :
+	     {test::Operation::fmla, test::Operation::fmls})
 		for (const auto shape : {test::shapes[3], test::shapes[5]}) {
-			auto initial = base::state(0U);
-			initial.fpsr = 0;
-			test::fill_bits(initial.vectors[29].bytes, 4U, 0x3f80'0001U);
-			test::fill_bits(initial.vectors[19].bytes, 4U, 0x3f80'0001U);
-			const auto accumulator = operation == test::Operation::fmla ?
-				0xbf80'0002U : 0x3f80'0002U;
-			test::fill_bits(initial.vectors[28].bytes, 4U, accumulator);
-			const auto expected = operation == test::Operation::fmla ?
-				0x2880'0000U : 0xa880'0000U;
-			const auto encoded = test::instruction(operation, shape,
-				28U, 29U, 19U, 3U);
-			test::require_uniform_result(encoded, shape, operation, 28U, 29U,
-				initial, expected, 0U, harness);
+			auto initial = test::state(50'000U +
+				static_cast<unsigned>(operation) + shape.q);
+			initial.fpcr = 0U;
+			initial.fpsr = test::fpsr_saturation;
+			test::fill_bits(initial.vectors[registers.left].bytes, 4U,
+				0x3f80'0001U);
+			test::fill_bits(initial.vectors[registers.element].bytes, 4U,
+				0x3f80'0001U);
+			const auto accumulator =
+				operation == test::Operation::fmla ?
+					0xbf80'0002U : 0x3f80'0002U;
+			test::fill_bits(
+				initial.vectors[registers.destination].bytes,
+				4U, accumulator);
+			const auto expected =
+				operation == test::Operation::fmla ?
+					0x2880'0000U : 0xa880'0000U;
+			test::check_uniform(harness,
+				"fp-indexed-single-rounding", operation, shape,
+				registers, 3U, initial, expected);
 		}
 }
 
@@ -88,8 +85,12 @@ void multiply_add_is_fused()
 
 int main()
 {
-	exact_results_for_every_shape_and_index();
-	source_destination_and_element_aliases_use_original_values();
-	multiply_add_is_fused();
+	test::engine_tests::EngineHarness harness;
+	every_operation_shape_and_index_selects_the_specified_element(harness);
+	every_source_destination_alias_reads_original_values(harness);
+	multiply_add_and_subtract_round_only_once(harness);
+	test::base::require(harness.counts().interpreter == 324U);
+	test::base::require(harness.counts().gadgets == 324U);
+	harness.print_summary("arm64-simd-fp-indexed-arithmetic");
 	return 0;
 }

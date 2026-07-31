@@ -4,87 +4,126 @@
 #include <array>
 
 namespace test = arm64_simd_indexed_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-struct Registers final {
-	unsigned destination;
-	unsigned source;
-	unsigned element;
+struct Values final {
+	std::uint64_t accumulator;
+	std::uint64_t left;
+	std::uint64_t right;
 };
 
-void require_oracle(std::uint32_t encoded, unsigned size, bool q,
-	unsigned operation, unsigned destination, unsigned source,
-	unsigned element_register, unsigned element_index,
-	const uml::backend::arm64::CpuState &initial,
-	base::Harness &harness)
+void modular_products_accumulation_and_lane_selection(
+	test::engine_tests::EngineHarness &harness,
+	test::ExpectedCounts &counts)
 {
-	const unsigned lane_bytes = 1U << size;
-	const unsigned lane_bits = lane_bytes * 8U;
-	const unsigned vector_bytes = q ? 16U : 8U;
-	const auto old_destination = initial.vectors[destination].bytes;
-	const auto old_source = initial.vectors[source].bytes;
-	const auto old_element = initial.vectors[element_register].bytes;
-	const auto multiplier = test::read_lane(old_element,
-		element_index * lane_bytes, lane_bytes);
-	std::array<std::byte, 16> expected{};
-	for (unsigned offset = 0; offset < vector_bytes; offset += lane_bytes) {
-		const auto left = test::read_lane(old_source, offset, lane_bytes);
-		const auto accumulator = test::read_lane(
-			old_destination, offset, lane_bytes);
-		unsigned __int128 value =
-			static_cast<unsigned __int128>(left) * multiplier;
-		if (operation == 0U)
-			value += accumulator;
-		else if (operation == 4U)
-			value = static_cast<unsigned __int128>(accumulator) - value;
-		test::write_lane(expected, offset, lane_bytes,
-			static_cast<std::uint64_t>(value & test::mask(lane_bits)));
-	}
-	auto expected_state = initial;
-	expected_state.pc = base::pc + 4U;
-	expected_state.vectors[destination].bytes = expected;
-	const auto interpreted = harness.run_interpreter(encoded, initial);
-	base::require_architecture_equal(expected_state, interpreted);
-	harness.require_differential(encoded, initial);
+	unsigned seed = 50'000U;
+	for (const auto family : test::indexed_same_families)
+		for (const auto shape : test::indexed_vector_shapes) {
+			const unsigned lane_bytes = 1U << shape.size;
+			const unsigned bits = lane_bytes * 8U;
+			const auto maximum = test::mask(bits);
+			const std::array values{
+				Values{0U, 0U, maximum},
+				Values{maximum, maximum, maximum},
+				Values{1U, maximum, 2U},
+				Values{maximum >> 1U,
+					std::uint64_t{1} << (bits - 1U), 3U},
+			};
+			for (const auto value : values) {
+				auto initial = test::state(++seed);
+				test::fill_lanes(initial, 28U, lane_bytes,
+					value.accumulator);
+				test::fill_lanes(initial, 29U, lane_bytes,
+					value.left);
+				test::fill_lanes(initial, 15U, lane_bytes,
+					value.right);
+				test::check_one(harness,
+					"simd-indexed-same-modular",
+					family, shape, {28U, 29U, 15U, 0U},
+					initial, counts);
+			}
+			const unsigned indices =
+				test::lane_count(family, shape);
+			for (unsigned index = 0; index < indices; ++index) {
+				auto initial = test::state(++seed);
+				test::fill_lanes(initial, 28U, lane_bytes, 0U);
+				test::fill_lanes(initial, 29U, lane_bytes, 1U);
+				for (unsigned lane = 0; lane < indices; ++lane)
+					test::set_lane(initial, 15U, lane_bytes,
+						lane, lane * 0x1111U + 7U);
+				test::check_one(harness,
+					"simd-indexed-same-lane",
+					family, shape, {28U, 29U, 15U, index},
+					initial, counts);
+			}
+		}
 }
 
-void every_operation_shape_index_and_alias()
+void third_constrained_source_reads_the_dirty_resident_value(
+	test::engine_tests::EngineHarness &harness,
+	test::ExpectedCounts &counts)
 {
-	base::Harness harness;
-	for (const unsigned operation : {0U, 4U, 8U}) {
-		const bool unsigned_group = operation != 8U;
-		for (unsigned size : {1U, 2U}) {
-			const unsigned index_count = size == 1U ? 8U : 4U;
-			for (const bool q : {false, true})
-				for (unsigned index = 0; index < index_count; ++index) {
-					const std::array registers{
-						Registers{28U, 29U, size == 1U ? 15U : 19U},
-						Registers{1U, 1U, 2U},
-						Registers{2U, 1U, 2U},
-						Registers{1U, 2U, 2U},
-						Registers{3U, 3U, 3U}};
-					for (const auto regs : registers) {
-						auto initial = base::state(
-							operation * 19U + size * 7U + index + q);
-						initial.fpsr = 0x84U;
-						const auto encoded = test::instruction(false, q,
-							unsigned_group, size, operation, regs.destination,
-							regs.source, regs.element, index);
-						require_oracle(encoded, size, q, operation,
-							regs.destination, regs.source, regs.element, index,
-							initial, harness);
-					}
-				}
-		}
-	}
+	constexpr auto family = test::indexed_same_families[0];
+	constexpr test::Shape constrained_shape{1U, false, true};
+	constexpr test::Shape unrestricted_shape{2U, false, true};
+	constexpr test::Registers first_pin{13U, 13U, 13U, 1U};
+	constexpr test::Registers second_pin{14U, 14U, 14U, 2U};
+	constexpr test::Registers dirty_unpinned{15U, 15U, 15U, 1U};
+	constexpr test::Registers third_source{15U, 15U, 15U, 3U};
+	constexpr std::array code{
+		test::engine_tests::ProgramWord{
+			.offset = 0U,
+			.instruction = test::instruction(
+				family, constrained_shape, first_pin)},
+		test::engine_tests::ProgramWord{
+			.offset = 4U,
+			.instruction = test::instruction(
+				family, constrained_shape, second_pin)},
+		test::engine_tests::ProgramWord{
+			.offset = 8U,
+			.instruction = test::instruction(
+				family, unrestricted_shape, dirty_unpinned)},
+		test::engine_tests::ProgramWord{
+			.offset = 12U,
+			.instruction = test::instruction(
+				family, constrained_shape, third_source)},
+		test::engine_tests::ProgramWord{
+			.offset = 16U, .instruction = 0xd400'0001U},
+	};
+
+	auto initial = test::state(0x71a3U);
+	auto expected = test::expected_state(
+		initial, family, constrained_shape, first_pin);
+	expected = test::expected_state(
+		expected, family, constrained_shape, second_pin);
+	expected = test::expected_state(
+		expected, family, unrestricted_shape, dirty_unpinned);
+	expected = test::expected_state(
+		expected, family, constrained_shape, third_source);
+	expected.pc = test::engine_tests::engine_test_code_base + 20U;
+
+	const auto requirements = test::native_requirements(family);
+	harness.check_program({
+		.name = "simd-indexed-third-constrained-dirty-resident",
+		.code = std::span<const test::engine_tests::ProgramWord>{code},
+		.initial = initial,
+		.expected = expected,
+		.native = requirements,
+		.expected_instructions = code.size(),
+	});
+	counts.add(requirements);
 }
 
 } // namespace
 
 int main()
 {
-	every_operation_shape_index_and_alias();
+	test::engine_tests::EngineHarness harness;
+	test::ExpectedCounts counts;
+	modular_products_accumulation_and_lane_selection(harness, counts);
+	third_constrained_source_reads_the_dirty_resident_value(harness, counts);
+	test::require_counts(harness, counts);
+	harness.print_summary("arm64-simd-indexed-same");
 	return 0;
 }

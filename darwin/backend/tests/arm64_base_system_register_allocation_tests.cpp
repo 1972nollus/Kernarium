@@ -2,6 +2,8 @@
 #include "arm64_system_test_support.hpp"
 
 #include <array>
+#include <cstdlib>
+#include <optional>
 
 namespace test = arm64_system_test;
 
@@ -32,15 +34,18 @@ namespace {
 	return false;
 }
 
-void complete_interpreter_allocation()
+void complete_allocation(
+	test::Harness &harness, std::optional<unsigned> selected_op1)
 {
-	test::Harness harness;
 	/* MRS/MSR has one o0 bit and a complete 15-bit system-register selector.
 	 * Check every selector and every transfer register. Unsupported registers
-	 * must fail without observing or modifying any state. */
+	 * must fail without observing or modifying any state in all three engines.
+	 * The supported selectors are covered for every transfer register by the
+	 * behavior suite. */
 	for (const bool read : {false, true})
 		for (unsigned o0 = 0; o0 < 2; ++o0)
 			for (unsigned op1 = 0; op1 < 8; ++op1)
+				if (!selected_op1 || *selected_op1 == op1)
 				for (unsigned crn = 0; crn < 16; ++crn)
 					for (unsigned crm = 0; crm < 16; ++crm)
 						for (unsigned op2 = 0; op2 < 8; ++op2)
@@ -48,43 +53,13 @@ void complete_interpreter_allocation()
 							     ++transfer) {
 								const auto instruction = test::system_register(
 									read, o0, op1, crn, crm, op2, transfer);
-								if (supported(instruction)) {
-									auto [cpu, memory] =
-										harness.run_interpreter(instruction);
-									(void)cpu;
-									test::require(memory.reads == 0 &&
-										memory.writes == 0 &&
-										memory.invalidations.empty());
-								} else {
-									harness.require_interpreter_illegal(instruction);
-								}
+								if (!supported(instruction))
+									harness.require_illegal(instruction);
 							}
 }
 
-void complete_gadget_allocation()
+void named_inaccessible_registers(test::Harness &harness)
 {
-	test::Harness harness;
-	/* Translation specializes the system register and the XZR choice. Check
-	 * every selector with both a real register and XZR in the gadget runpath. */
-	for (const bool read : {false, true})
-		for (unsigned o0 = 0; o0 < 2; ++o0)
-			for (unsigned op1 = 0; op1 < 8; ++op1)
-				for (unsigned crn = 0; crn < 16; ++crn)
-					for (unsigned crm = 0; crm < 16; ++crm)
-						for (unsigned op2 = 0; op2 < 8; ++op2)
-							for (const unsigned transfer : {0U, 31U}) {
-								const auto instruction = test::system_register(
-									read, o0, op1, crn, crm, op2, transfer);
-								if (supported(instruction))
-									(void)harness.run_gadget(instruction);
-								else
-									harness.require_gadget_illegal(instruction);
-							}
-}
-
-void named_inaccessible_registers()
-{
-	test::Harness harness;
 	/* CurrentEL is privileged. CNTPCT_EL0 is gated off while CNTVCT_EL0 is the
 	 * profile's userspace counter. SME/RNG/context-number registers are absent,
 	 * and control/ID registers remain privileged. */
@@ -104,10 +79,18 @@ void named_inaccessible_registers()
 
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
-	complete_interpreter_allocation();
-	complete_gadget_allocation();
-	named_inaccessible_registers();
+	std::optional<unsigned> selected_op1;
+	if (argc > 1) {
+		const auto value = std::strtoul(argv[1], nullptr, 10);
+		test::require(value < 8);
+		selected_op1 = static_cast<unsigned>(value);
+	}
+	test::Harness harness;
+	complete_allocation(harness, selected_op1);
+	if (!selected_op1 || *selected_op1 == 0)
+		named_inaccessible_registers(harness);
+	harness.print_summary("arm64-base-system-register-allocation");
 	return 0;
 }

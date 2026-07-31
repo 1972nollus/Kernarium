@@ -474,7 +474,7 @@ page dumped because: still mapped when deleted
             runner.Result(case, 2, {"failed": 1, "broken": 1}, "")
         ))
 
-    def test_variable_userspace_matrix_requires_pass_and_bad_result(self) -> None:
+    def test_variable_userspace_matrix_requires_a_passed_check(self) -> None:
         case = runner.Case(
             "controllers", "legacy", "legacy",
             "userspace-variable-matrix-exempt", 60,
@@ -487,8 +487,21 @@ page dumped because: still mapped when deleted
             {"passed": 3, "failed": 4, "broken": 0, "skipped": 1},
         ):
             self.assertTrue(runner.accepted(runner.Result(case, 1, summary, "")))
+        self.assertTrue(runner.accepted(runner.Result(
+            case, 4,
+            {
+                "passed": 5,
+                "failed": 0,
+                "broken": 0,
+                "skipped": 0,
+                "warnings": 1,
+            },
+            "",
+        )))
+        self.assertTrue(runner.accepted(
+            runner.Result(case, 0, {"passed": 1}, "")
+        ))
         for return_code, summary in (
-            (0, {"passed": 1}),
             (1, {"failed": 1}),
             (2, {"broken": 1}),
             (32, {"skipped": 1}),

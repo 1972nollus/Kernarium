@@ -25,6 +25,16 @@ public:
 					std::span<std::byte> destination) = 0;
 	[[nodiscard]] virtual bool write(std::uint64_t address,
 					 std::span<const std::byte> source) = 0;
+	/* Validate an access without changing guest memory. Backends with
+	 * protection-aware mappings override this so instructions that perform
+	 * allocation-tag checks can preserve the architectural fault priority:
+	 * translation/permission first, then the tag check for that access.
+	 */
+	[[nodiscard]] virtual bool validate_access(
+		std::uint64_t, std::size_t, MemoryAccess)
+	{
+		return true;
+	}
 	[[nodiscard]] virtual bool fetch(std::uint64_t address,
 					 std::span<std::byte> destination)
 	{
@@ -39,6 +49,16 @@ public:
 		std::uint64_t, std::size_t, MemoryAccess)
 	{
 		return nullptr;
+	}
+	/* Return a stable host identity for reservation bookkeeping without
+	 * selecting direct host atomic execution. Backends whose direct atomic
+	 * pointer is already stable inherit it; fault-tolerant backends may
+	 * override only this identity path and retain read()/write() semantics.
+	 */
+	[[nodiscard]] virtual std::byte *reservation_pointer(
+		std::uint64_t address, std::size_t size, MemoryAccess access)
+	{
+		return atomic_pointer(address, size, access);
 	}
 	[[nodiscard]] virtual bool read_allocation_tag(
 		std::uint64_t, std::uint8_t &)

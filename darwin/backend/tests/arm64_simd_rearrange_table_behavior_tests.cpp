@@ -1,86 +1,112 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_simd_rearrange_test_support.hpp"
 #include "arm64_simd_test_support.hpp"
 
 #include <array>
 #include <cstddef>
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_rearrange_test;
+namespace base = arm64_simd_test;
 
 namespace {
 
-struct Registers final {
-	unsigned destination;
-	unsigned first;
-	unsigned indices;
+constexpr std::array boundary_patterns{
+	std::array<unsigned, 8>{0U, 15U, 16U, 31U, 32U, 47U, 48U, 255U},
+	std::array<unsigned, 8>{14U, 15U, 16U, 17U, 30U, 31U, 32U, 33U},
+	std::array<unsigned, 8>{46U, 47U, 48U, 49U, 62U, 63U, 64U, 65U},
 };
 
-constexpr std::array register_cases{
-	Registers{0, 1, 6}, Registers{1, 1, 6}, Registers{6, 1, 6},
-	Registers{31, 30, 29},
-};
-
-[[nodiscard]] constexpr std::uint32_t table_lookup(bool q, bool extend,
-	unsigned count, Registers registers)
+void set_boundary_indices(uml::backend::arm64::CpuState &initial,
+	unsigned indices, unsigned count, unsigned pattern)
 {
-	return 0x0e00'0000U | (q ? 0x4000'0000U : 0U) |
-		((registers.indices & 31U) << 16) |
-		(((count - 1U) & 3U) << 13) | (extend ? 0x1000U : 0U) |
-		((registers.first & 31U) << 5) |
-		(registers.destination & 31U);
+	const auto limit = count * 16U;
+	const auto &first = boundary_patterns[pattern % boundary_patterns.size()];
+	for (unsigned lane = 0; lane < first.size(); ++lane)
+		initial.vectors[indices].bytes[lane] =
+			static_cast<std::byte>(first[lane]);
+	const std::array<unsigned, 8> second{
+		0U, limit - 2U, limit - 1U, limit,
+		limit + 1U, 63U, 64U, 255U,
+	};
+	for (unsigned lane = 0; lane < second.size(); ++lane)
+		initial.vectors[indices].bytes[lane + 8U] =
+			static_cast<std::byte>(second[lane]);
 }
 
-[[nodiscard]] test::arm64::VectorRegister expected_result(
-	const test::arm64::CpuState &initial, bool q, bool extend,
-	unsigned count, Registers registers)
+void check(test::engine_tests::EngineHarness &harness, bool q, bool extend,
+	unsigned count, test::TableRegisters registers, unsigned pattern,
+	unsigned seed)
 {
-	const auto indices = initial.vectors[registers.indices].bytes;
-	test::arm64::VectorRegister result = extend ?
-		initial.vectors[registers.destination] :
-		test::arm64::VectorRegister{};
-	const unsigned bytes = q ? 16U : 8U;
-	for (unsigned output = 0; output < bytes; ++output) {
-		const unsigned index = std::to_integer<unsigned>(indices[output]);
-		if (index < count * 16U) {
-			const unsigned table =
-				(registers.first + index / 16U) & 31U;
-			result.bytes[output] = initial.vectors[table].bytes[index & 15U];
-		}
-	}
-	for (unsigned output = bytes; output < 16; ++output)
-		result.bytes[output] = std::byte{};
-	return result;
+	auto initial = test::state(seed);
+	set_boundary_indices(initial, registers.indices, count, pattern);
+	harness.check_one(test::table_name(extend),
+		test::table_instruction(q, extend, count, registers), initial,
+		test::expected_table_state(initial, q, extend, count, registers),
+		test::native_requirements());
 }
 
-void every_index_count_width_and_alias()
+void every_width_operation_count_register_field_alias_and_boundary()
 {
-	test::Harness harness;
+	test::engine_tests::EngineHarness harness;
+	unsigned seed = 0;
 	for (const bool q : {false, true})
 		for (const bool extend : {false, true})
-			for (unsigned count = 1; count <= 4; ++count)
-				for (const auto registers : register_cases)
-					for (unsigned first_index = 0; first_index < 256;
-					     ++first_index) {
-						auto initial = test::state(
-							first_index + count * 23U + extend * 7U);
-						for (unsigned lane = 0; lane < 16; ++lane)
-							initial.vectors[registers.indices].bytes[lane] =
-								static_cast<std::byte>(first_index + lane * 17U);
-						const auto expected = expected_result(
-							initial, q, extend, count, registers);
-						const auto instruction = table_lookup(
-							q, extend, count, registers);
-						const auto result = harness.run_interpreter(
-							instruction, initial);
-						test::require(result.vectors[registers.destination].bytes ==
-							expected.bytes);
-						harness.require_differential(instruction, initial);
+			for (unsigned count = 1; count <= 4; ++count) {
+				/* Exhaust Rd, Rn, and Rm independently. Cycling the
+				 * boundary vectors covers every 16-byte table edge,
+				 * the final valid index, and out-of-range indices.
+				 */
+				for (unsigned reg = 0; reg < 32U; ++reg) {
+					check(harness, q, extend, count,
+						{reg, 5U, 21U}, reg, ++seed);
+					check(harness, q, extend, count,
+						{9U, reg, 21U}, reg + 1U, ++seed);
+					check(harness, q, extend, count,
+						{9U, 5U, reg}, reg + 2U, ++seed);
+				}
+
+				/* Lists starting at 29--31 exercise architectural
+				 * modulo-32 table-register wrapping. Each possible
+				 * table member aliases both Rd and Rm in separate
+				 * read-before-write cases.
+				 */
+				for (unsigned first : {29U, 30U, 31U}) {
+					check(harness, q, extend, count,
+						{7U, first, 23U}, 0U, ++seed);
+					check(harness, q, extend, count,
+						{7U, first, 7U}, 1U, ++seed);
+					check(harness, q, extend, count,
+						{first, first, first}, 2U, ++seed);
+					for (unsigned member = 0; member < count;
+					     ++member) {
+						const unsigned table_register =
+							(first + member) & 31U;
+						check(harness, q, extend, count,
+							{table_register, first, 23U},
+							member, ++seed);
+						check(harness, q, extend, count,
+							{7U, first, table_register},
+							member + 1U, ++seed);
 					}
+				}
+			}
+
+	constexpr std::size_t field_cases = 2U * 2U * 4U * 32U * 3U;
+	constexpr std::size_t alias_cases =
+		2U * 2U * 3U * (4U * 3U + 2U * (1U + 2U + 3U + 4U));
+	constexpr std::size_t cases = field_cases + alias_cases;
+	static_assert(cases == 1920U);
+	base::require(harness.counts().interpreter == cases);
+	base::require(harness.counts().gadgets == cases);
+	base::require(
+		harness.counts().jit + harness.counts().jit_skipped == cases);
+	harness.print_summary("arm64-simd-rearrange-table");
 }
 
 } // namespace
 
 int main()
 {
-	every_index_count_width_and_alias();
+	every_width_operation_count_register_field_alias_and_boundary();
 	return 0;
 }

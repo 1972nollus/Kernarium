@@ -32,12 +32,16 @@ endif()
 option(UML_BUILD_TESTS "Build host-runnable backend unit tests" ${UML_TARGET_MACOS})
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
-option(UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-    "Route non-control gadget instructions through the interpreter for debugging" OFF)
-if(UML_ENABLE_GADGET_INTERPRETER_RUNPATH AND
-   NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    message(FATAL_ERROR
-        "UML_ENABLE_GADGET_INTERPRETER_RUNPATH is debug-only; configure with CMAKE_BUILD_TYPE=Debug")
+option(DARWIN_UML_JIT_GPR_LINK_PROFILE
+    "Instrument successful JIT links for guest-GPR traffic profiling" OFF)
+option(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE
+    "Instrument JIT translation for resident-GPR pressure profiling" OFF)
+
+if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    add_compile_definitions(DARWIN_UML_JIT_GPR_LINK_PROFILE=1)
+endif()
+if(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    add_compile_definitions(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE=1)
 endif()
 
 if(UML_GUEST_16K_PAGES)
@@ -66,6 +70,14 @@ if(UML_BUILD_TESTS)
     add_test(NAME kde-vnc-launcher-options
         COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/gpu/test_boot_kde_vnc.py)
+    add_test(NAME chromium-webgl-aquarium-metrics
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/gpu/test_run_chromium_webgl.py)
+    add_test(NAME jit-gpr-link-profile-analysis
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/perf/analyze_jit_gpr_link_profile_tests.py)
+    set_tests_properties(jit-gpr-link-profile-analysis PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/perf)
 endif()
 
 add_subdirectory(darwin/backend)

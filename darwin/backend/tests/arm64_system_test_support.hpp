@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "cpu/arm64/dispatcher.hpp"
-#include "cpu/arm64/gadgets/program.hpp"
+#include "arm64_engine_test_support.hpp"
 
-#include "uml_darwin_static_mmu.h"
-
-#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <memory>
 #include <source_location>
-#include <utility>
-#include <vector>
+#include <string_view>
 
 namespace arm64_system_test {
 
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine_tests = uml::backend::tests;
 
-inline constexpr std::uint64_t pc = 0x6a0'0000;
-
-inline void require(bool condition,
+inline void require(
+	bool condition,
 	const std::source_location location = std::source_location::current())
 {
 	if (!condition) {
@@ -31,45 +26,36 @@ inline void require(bool condition,
 	}
 }
 
-class Memory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t, std::span<std::byte>) override
-	{
-		++reads;
-		return false;
-	}
-
-	[[nodiscard]] bool write(
-		std::uint64_t, std::span<const std::byte>) override
-	{
-		++writes;
-		return false;
-	}
-
-	void invalidate_code(std::uint64_t address) override
-	{
-		invalidations.push_back(address);
-	}
-
-	std::size_t reads{};
-	std::size_t writes{};
-	std::vector<std::uint64_t> invalidations;
-};
-
 [[nodiscard]] inline arm64::CpuState state()
 {
 	arm64::CpuState cpu{};
-	for (unsigned index = 0; index < cpu.registers.size(); ++index)
+	for (std::size_t index = 0; index < cpu.registers.size(); ++index)
 		cpu.registers[index] = 0x9182'7364'5546'3728ULL ^
-			(static_cast<std::uint64_t>(index) * 0x0101'0101'0101'0101ULL);
+			(static_cast<std::uint64_t>(index) *
+				0x0101'0101'0101'0101ULL);
+	for (std::size_t reg = 0; reg < cpu.vectors.size(); ++reg)
+		for (std::size_t byte = 0;
+		     byte < cpu.vectors[reg].bytes.size(); ++byte)
+			cpu.vectors[reg].bytes[byte] =
+				static_cast<std::byte>(reg * 11U + byte * 23U);
 	cpu.sp = 0xfeed'face'cafe'bee0ULL;
 	cpu.nzcv = 0xa000'0000U;
-	cpu.fpcr = 0x0004'0000U;
-	cpu.fpsr = 0x0800'0001U;
+	cpu.fpcr = 0x07f7'9f07U;
+	cpu.fpsr = 0xf800'009fU;
+	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
+	cpu.set_mte_configuration(true, 0x8421U);
+	cpu.set_mte_generator(true, 0xace1U, 7,
+		0xfeed'face'0123'4567ULL);
+	cpu.cpa_enabled = true;
+	cpu.cpa_multiply_enabled = true;
+	cpu.accdata = 0xa1b2'c3d4U;
 	cpu.pstate_ssbs = true;
 	cpu.pstate_dit = true;
 	cpu.pstate_tco = true;
+	cpu.pstate_sm = true;
+	cpu.pstate_za = true;
+	cpu.pstate_daif = 0xaU;
 	cpu.exclusive_address = 0x2000;
 	cpu.exclusive_key = 0x3456;
 	cpu.exclusive_value = 0x1020'3040'5060'7080ULL;
@@ -79,94 +65,41 @@ public:
 	return cpu;
 }
 
-inline void require_unchanged(const arm64::CpuState &before,
-	const arm64::CpuState &after)
-{
-	require(after.registers == before.registers);
-	require(after.sp == before.sp && after.pc == before.pc);
-	require(after.nzcv == before.nzcv && after.fpcr == before.fpcr &&
-		after.fpsr == before.fpsr && after.tls == before.tls);
-	require(after.pstate_ssbs == before.pstate_ssbs &&
-		after.pstate_dit == before.pstate_dit &&
-		after.pstate_tco == before.pstate_tco &&
-		after.pstate_sm == before.pstate_sm &&
-		after.pstate_za == before.pstate_za &&
-		after.pstate_daif == before.pstate_daif);
-	require(after.exclusive_address == before.exclusive_address &&
-		after.exclusive_key == before.exclusive_key &&
-		after.exclusive_value == before.exclusive_value &&
-		after.exclusive_value2 == before.exclusive_value2 &&
-		after.exclusive_version == before.exclusive_version &&
-		after.exclusive_size == before.exclusive_size);
-}
-
 class Harness final {
 public:
-	Harness() : tlb{std::make_unique<gadgets::Tlb>()}
+	void check(std::string_view name, std::uint32_t instruction,
+		const arm64::CpuState &initial, const arm64::CpuState &expected,
+		engine_tests::NativeRequirements native)
 	{
-		tlb->prepare(0, darwin_uml_static_vm_changes(0));
+		engines_.check_one(name, instruction, initial, expected, native);
 	}
 
-	void require_interpreter_illegal(std::uint32_t instruction)
+	void check_unchanged(std::string_view name, std::uint32_t instruction,
+		engine_tests::NativeRequirements native =
+			engine_tests::NativeRequirements::baseline())
 	{
-		Memory memory;
-		auto cpu = state();
-		cpu.pc = pc;
-		const auto before = cpu;
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
-		require(result.reason == arm64::StopReason::illegal_instruction);
-		require(result.address == pc && result.instruction == instruction);
-		require_unchanged(before, cpu);
-		require(memory.reads == 0 && memory.writes == 0 &&
-			memory.invalidations.empty());
-	}
-
-	void require_gadget_illegal(std::uint32_t instruction)
-	{
-		const std::array stream{instruction, 0xd400'0001U};
-		const auto built = gadgets::Builder{}.build(pc, stream);
-		require(built.complete);
-		auto cpu = state();
-		cpu.pc = pc;
-		const auto before = cpu;
-		require(gadgets::execute(built.program, cpu, *tlb) ==
-			gadgets::Event::illegal_instruction);
-		require_unchanged(before, cpu);
+		const auto initial = state();
+		check(name, instruction, initial, initial, native);
 	}
 
 	void require_illegal(std::uint32_t instruction)
 	{
-		require_interpreter_illegal(instruction);
-		require_gadget_illegal(instruction);
+		const auto initial = state();
+		engines_.check_illegal("base-system-illegal", instruction, initial);
 	}
 
-	[[nodiscard]] std::pair<arm64::CpuState, Memory>
-	run_interpreter(std::uint32_t instruction)
+	void print_summary(std::string_view name) const
 	{
-		Memory memory;
-		auto cpu = state();
-		cpu.pc = pc;
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory, instruction);
-		require(result.reason == arm64::StopReason::continued);
-		require(cpu.pc == pc + 4);
-		return {cpu, std::move(memory)};
+		engines_.print_summary(name);
 	}
 
-	[[nodiscard]] arm64::CpuState run_gadget(std::uint32_t instruction)
+	engine_tests::EngineHarness &engines()
 	{
-		const std::array stream{instruction, 0xd400'0001U};
-		const auto built = gadgets::Builder{}.build(pc, stream);
-		require(built.complete);
-		auto cpu = state();
-		cpu.pc = pc;
-		require(gadgets::execute(built.program, cpu, *tlb) ==
-			gadgets::Event::system_call);
-		require(cpu.pc == pc + 8);
-		return cpu;
+		return engines_;
 	}
 
 private:
-	std::unique_ptr<gadgets::Tlb> tlb;
+	engine_tests::EngineHarness engines_;
 };
 
 [[nodiscard]] constexpr std::uint32_t system_instruction(bool result,
@@ -175,6 +108,23 @@ private:
 	return (result ? 0xd528'0000U : 0xd508'0000U) |
 		((op1 & 7U) << 16) | ((crn & 15U) << 12) |
 		((crm & 15U) << 8) | ((op2 & 7U) << 5) | (rt & 31U);
+}
+
+[[nodiscard]] constexpr bool gcs_system_instruction(
+	std::uint32_t instruction)
+{
+	switch (instruction & 0xffff'ffe0U) {
+	case 0xd508'77a0U:
+	case 0xd52b'7720U:
+	case 0xd508'77c0U:
+	case 0xd50b'7700U:
+	case 0xd508'7780U:
+	case 0xd50b'7740U:
+	case 0xd52b'7760U:
+		return true;
+	default:
+		return false;
+	}
 }
 
 [[nodiscard]] constexpr std::uint32_t system_register(bool read,

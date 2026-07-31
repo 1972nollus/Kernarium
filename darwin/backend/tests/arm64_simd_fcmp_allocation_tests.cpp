@@ -2,79 +2,118 @@
 #include "arm64_simd_fcmp_test_support.hpp"
 
 namespace test = arm64_simd_fcmp_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-void every_direct_encoding()
+void every_direct_allocation()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool signaling : {false, true})
-			for (const bool zero : {false, true}) {
-				auto initial = base::state(bytes + signaling + zero);
-				initial.fpsr = 0x0800'0010U;
-				test::put(initial, 29U, bytes, test::positive_one(bytes));
-				test::put(initial, 30U, bytes, test::positive_two(bytes));
-				test::require_result(test::direct_instruction(bytes,
-					signaling, zero, 29U, zero ? 0U : 30U),
-					zero ? 0x2000'0000U : 0x8000'0000U, 0U,
-					initial, harness);
+	test::engine_tests::EngineHarness harness;
+	for (unsigned type = 0; type < 4U; ++type)
+		for (unsigned low = 0; low < 32U; ++low)
+			for (unsigned field = 0; field < 32U; ++field) {
+				const unsigned left = field;
+				const unsigned right = (low & 8U) != 0U ? 0U :
+					(field * 13U + low * 7U + type) & 31U;
+				const auto instruction =
+					test::direct_raw_instruction(
+						type, right, left, low);
+				auto initial = test::state(
+					type * 131U + right * 17U +
+					left * 5U + low);
+				if (!test::direct_valid(type, right, low)) {
+					harness.check_illegal(
+						"FCMP/FCMPE reserved allocation",
+						instruction, initial);
+					continue;
+				}
+				const auto &format = test::format_for_type(type);
+				test::put(initial, left, format,
+					format.positive_one);
+				if ((low & 8U) == 0U)
+					test::put(initial, right, format,
+						left == right ?
+							format.positive_one :
+							format.positive_two);
+				test::check_direct(harness,
+					"FCMP/FCMPE valid allocation",
+					format, (low & 16U) != 0U,
+					(low & 8U) != 0U, left, right,
+					initial);
 			}
+
+	/*
+	 * The zero form reserves every nonzero Rm value. Cover that complete
+	 * range separately because valid zero encodings above necessarily fix
+	 * Rm to zero.
+	 */
+	for (unsigned type = 0; type < 4U; ++type)
+		for (const unsigned low : {8U, 24U})
+			for (unsigned right = 1U; right < 32U; ++right) {
+				const unsigned left =
+					(right * 11U + low + type) & 31U;
+				const auto instruction =
+					test::direct_raw_instruction(
+						type, right, left, low);
+				auto initial = test::state(
+					type * 131U + right * 17U +
+					left * 5U + low);
+				harness.check_illegal(
+					"FCMP/FCMPE reserved zero Rm",
+					instruction, initial);
+			}
+	harness.print_summary("arm64-simd-fcmp-allocation-direct");
 }
 
-void every_conditional_encoding()
+void every_conditional_allocation()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool signaling : {false, true})
-			for (unsigned condition = 0; condition < 16U; ++condition) {
-				auto initial = base::state(bytes * 17U + condition + signaling);
-				initial.nzcv = ((condition * 7U) & 15U) << 28;
-				initial.fpsr = 0x0800'0010U;
-				test::put(initial, 29U, bytes, test::positive_one(bytes));
-				test::put(initial, 30U, bytes, test::positive_two(bytes));
-				const unsigned fallback = (condition * 5U + 3U) & 15U;
-				const bool passed = uml::backend::arm64::detail::condition_holds(
-					initial.nzcv, condition);
-				test::require_result(test::conditional_instruction(bytes,
-					signaling, condition, fallback, 29U, 30U),
-					passed ? 0x8000'0000U : fallback << 28, 0U,
-					initial, harness);
-			}
-}
-
-void reserved_encodings_are_early_illegal()
-{
-	base::Harness harness;
-	for (const bool signaling : {false, true}) {
-		for (const bool zero : {false, true}) {
-			const auto type_reserved = 0x1e20'2000U | (2U << 22) |
-				(29U << 5) | (signaling ? 16U : 0U) |
-				(zero ? 8U : 0U);
-			harness.require_illegal(type_reserved, base::state(40U));
-		}
-		const auto conditional_reserved = 0x1e20'0400U | (2U << 22) |
-			(30U << 16) | (9U << 12) | (29U << 5) |
-			(signaling ? 16U : 0U) | 7U;
-		harness.require_illegal(conditional_reserved, base::state(41U));
-	}
-	for (unsigned bit = 0; bit < 3U; ++bit)
-		harness.require_illegal(
-			test::direct_instruction(4U, false, false, 29U, 30U) |
-				(1U << bit),
-			base::state(42U + bit));
-	harness.require_illegal(
-		test::direct_instruction(8U, true, true, 29U, 30U),
-		base::state(46U));
+	test::engine_tests::EngineHarness harness;
+	for (unsigned type = 0; type < 4U; ++type)
+		for (unsigned condition = 0; condition < 16U; ++condition)
+			for (unsigned low = 0; low < 32U; ++low)
+				for (unsigned field = 0; field < 32U; ++field) {
+					const unsigned left = field;
+					const unsigned right =
+						(field * 13U + condition * 7U +
+						 low * 3U + type) & 31U;
+					const auto instruction =
+						test::conditional_raw_instruction(
+							type, right, condition,
+							left, low);
+					auto initial = test::state(
+						type * 137U + right * 19U +
+						condition * 11U + left * 7U +
+						low);
+					initial.nzcv =
+						((condition * 5U + low) & 15U)
+						<< 28;
+					if (!test::conditional_valid(type)) {
+						harness.check_illegal(
+							"FCCMP/FCCMPE reserved allocation",
+							instruction, initial);
+						continue;
+					}
+					const auto &format =
+						test::format_for_type(type);
+					test::put(initial, left, format,
+						format.positive_one);
+					test::put(initial, right, format,
+						left == right ?
+							format.positive_one :
+							format.positive_two);
+					test::check_conditional(harness,
+						"FCCMP/FCCMPE valid allocation",
+						format, (low & 16U) != 0U,
+						condition, low & 15U, left,
+						right, initial);
+				}
+	harness.print_summary("arm64-simd-fcmp-allocation-conditional");
 }
 
 } // namespace
 
 int main()
 {
-	every_direct_encoding();
-	every_conditional_encoding();
-	reserved_encodings_are_early_illegal();
+	every_direct_allocation();
+	every_conditional_allocation();
 	return 0;
 }

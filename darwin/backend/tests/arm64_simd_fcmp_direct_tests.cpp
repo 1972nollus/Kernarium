@@ -4,110 +4,91 @@
 #include <array>
 
 namespace test = arm64_simd_fcmp_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-struct OrderedCase final {
-	std::uint64_t left;
-	std::uint64_t right;
-	std::uint32_t nzcv;
-};
-
-void ordered_register_comparisons()
+[[nodiscard]] constexpr std::array<std::uint64_t, 16> values(
+	const test::Format &format)
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U}) {
-		const std::array cases{
-			OrderedCase{test::positive_zero(bytes), test::negative_zero(bytes),
-				0x6000'0000U},
-			OrderedCase{test::negative_zero(bytes), test::positive_zero(bytes),
-				0x6000'0000U},
-			OrderedCase{test::positive_one(bytes), test::positive_one(bytes),
-				0x6000'0000U},
-			OrderedCase{test::positive_one(bytes), test::positive_two(bytes),
-				0x8000'0000U},
-			OrderedCase{test::positive_two(bytes), test::positive_one(bytes),
-				0x2000'0000U},
-			OrderedCase{test::negative_two(bytes), test::negative_one(bytes),
-				0x8000'0000U},
-			OrderedCase{test::negative_one(bytes), test::negative_two(bytes),
-				0x2000'0000U},
-			OrderedCase{test::negative_infinity(bytes), test::negative_two(bytes),
-				0x8000'0000U},
-			OrderedCase{test::positive_infinity(bytes), test::positive_two(bytes),
-				0x2000'0000U},
-		};
+	return {
+		0U,
+		format.sign,
+		format.positive_one,
+		format.positive_one | format.sign,
+		format.positive_two,
+		format.positive_two | format.sign,
+		format.positive_infinity,
+		format.positive_infinity | format.sign,
+		format.maximum_finite,
+		format.maximum_finite | format.sign,
+		format.minimum_normal,
+		format.minimum_normal | format.sign,
+		format.minimum_subnormal,
+		format.minimum_subnormal | format.sign,
+		format.quiet_nan,
+		format.signaling_nan,
+	};
+}
+
+void every_value_class_pair_and_form()
+{
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
 		for (const bool signaling : {false, true})
-			for (unsigned index = 0; index < cases.size(); ++index) {
-				auto initial = base::state(bytes * 23U + index + signaling);
-				initial.fpsr = 0x0800'0090U;
-				test::put(initial, 29U, bytes, cases[index].left);
-				test::put(initial, 30U, bytes, cases[index].right);
-				test::require_result(test::direct_instruction(bytes,
-					signaling, false, 29U, 30U), cases[index].nzcv,
-					0U, initial, harness);
-			}
-	}
+			for (const bool zero : {false, true})
+				for (const auto left_value : values(format))
+					for (const auto right_value : values(format)) {
+						auto initial = test::state(
+							format.bytes * 29U +
+							signaling * 17U + zero * 11U +
+							static_cast<unsigned>(left_value) +
+							static_cast<unsigned>(right_value));
+						initial.fpsr =
+							0x0800'0010U |
+							(static_cast<std::uint32_t>(
+								left_value ^ right_value) &
+							 0x1fU);
+						test::put(initial, 29U, format,
+							left_value);
+						test::put(initial, 30U, format,
+							right_value);
+						test::check_direct(harness,
+							"FCMP/FCMPE value classes",
+							format, signaling, zero, 29U,
+							30U, initial);
+					}
+	harness.print_summary("arm64-simd-fcmp-direct-values");
 }
 
-void compare_with_zero_variants()
+void both_nan_classes_and_register_aliases()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool signaling : {false, true}) {
-			const std::array cases{
-				OrderedCase{test::negative_one(bytes), 0U, 0x8000'0000U},
-				OrderedCase{test::negative_zero(bytes), 0U, 0x6000'0000U},
-				OrderedCase{test::positive_one(bytes), 0U, 0x2000'0000U},
-			};
-			for (unsigned index = 0; index < cases.size(); ++index) {
-				auto initial = base::state(bytes + index + signaling);
-				initial.fpsr = 0x10U;
-				test::put(initial, 29U, bytes, cases[index].left);
-				test::require_result(test::direct_instruction(bytes,
-					signaling, true, 29U), cases[index].nzcv, 0U,
-					initial, harness);
-			}
-		}
-}
-
-void nan_signaling_and_exception_accumulation()
-{
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool zero : {false, true})
-			for (const bool quiet_source : {false, true})
-				for (const bool signaling_compare : {false, true}) {
-					auto initial = base::state(bytes * 13U + zero + quiet_source);
-					initial.fpsr = 0x0800'0090U;
-					const auto nan = quiet_source ? test::quiet_nan(bytes) :
-						test::signaling_nan(bytes);
-					test::put(initial, 29U, bytes, nan);
-					test::put(initial, 30U, bytes, test::positive_one(bytes));
-					const std::uint32_t expected_ioc =
-						(!quiet_source || signaling_compare) ? 1U : 0U;
-					test::require_result(test::direct_instruction(bytes,
-						signaling_compare, zero, 29U, zero ? 0U : 30U),
-						0x3000'0000U, expected_ioc, initial, harness);
-				}
-
-	for (const unsigned bytes : {2U, 4U, 8U}) {
-		auto initial = base::state(bytes * 19U);
-		initial.fpsr = 0x80U;
-		test::put(initial, 29U, bytes, test::positive_one(bytes));
-		test::put(initial, 30U, bytes, test::signaling_nan(bytes));
-		test::require_result(test::direct_instruction(bytes, false, false,
-			29U, 30U), 0x3000'0000U, 1U, initial, harness);
-	}
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
+		for (const bool signaling : {false, true})
+			for (const auto left : {
+				format.quiet_nan, format.signaling_nan})
+				for (const auto right : {
+					format.quiet_nan, format.signaling_nan})
+					for (unsigned reg = 0; reg < 32U; ++reg) {
+						auto initial = test::state(
+							format.bytes * 31U + reg * 7U +
+							signaling);
+						initial.fpsr = 0x0800'0090U;
+						test::put(initial, reg, format,
+							left == right ? left : right);
+						test::check_direct(harness,
+							"FCMP/FCMPE both NaNs and alias",
+							format, signaling, false, reg,
+							reg, initial);
+					}
+	harness.print_summary("arm64-simd-fcmp-direct-nan-alias");
 }
 
 } // namespace
 
 int main()
 {
-	ordered_register_comparisons();
-	compare_with_zero_variants();
-	nan_signaling_and_exception_accumulation();
+	every_value_class_pair_and_form();
+	both_nan_classes_and_register_aliases();
 	return 0;
 }

@@ -15,34 +15,131 @@
 #include "../detail/floating_conversion.hpp"
 #include "../detail/floating_fused.hpp"
 #include "../detail/floating_horizontal.hpp"
+#include "../detail/floating_indexed.hpp"
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
+#include "../detail/floating_reciprocal_software.hpp"
 #include "../detail/floating_round.hpp"
 #include "../detail/floating_scale.hpp"
+#include "../detail/fp_state_access.hpp"
 #include "../detail/fp8.hpp"
+#include "../detail/gcs.hpp"
 #include "../detail/instruction_helpers.hpp"
+#include "../detail/integer_multiply.hpp"
+#include "../detail/pointer_auth.hpp"
+#include "runtime/host_features.hpp"
+#include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
-#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <span>
-#include <sys/sysctl.h>
 #include <type_traits>
 #include <utility>
 
+extern "C" [[gnu::noinline]] void
+uml_arm64_guest_code_synchronize(std::uint64_t address) noexcept
+{
+	/*
+	 * Guest data and instruction views share one physical backing, but
+	 * translated programs still need an explicit sequence change at the
+	 * architectural synchronization point.  Keep this uncommon operation in
+	 * one cold helper rather than adding work to ordinary stores.
+	 */
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	darwin_uml_static_vm_invalidate_code(
+		static_cast<unsigned long>(address));
+}
+
+extern "C" [[gnu::noinline]] std::uint64_t
+uml_arm64_guest_pointer_auth(
+	uml::backend::arm64::CpuState *cpu, std::uint64_t value,
+	std::uint64_t modifier, unsigned operation) noexcept
+{
+	return uml::backend::arm64::detail::execute_pointer_auth(
+		*cpu, value, modifier,
+		static_cast<uml::backend::arm64::detail::PointerAuthOperation>(
+			operation));
+}
+
 namespace {
+
+using uml::backend::ArmFeature;
+using uml::backend::host_arm_features;
 
 using uml::backend::arm64::CpuState;
 using uml::backend::arm64::detail::Fp8Operation;
+
+[[nodiscard]] constexpr std::uintptr_t fp8_vector_offset(
+	unsigned reg) noexcept
+{
+	return offsetof(CpuState, vectors) +
+		reg * sizeof(uml::backend::arm64::VectorRegister);
+}
+
+static_assert(fp8_vector_offset(31U) <= 0xffffU);
+
+[[nodiscard]] constexpr std::uintptr_t fp8_operand(
+	const uml::backend::arm64::detail::Fp8Instruction &decoded) noexcept
+{
+	const bool one_source =
+		decoded.operation == Fp8Operation::convert_to_half ||
+		decoded.operation == Fp8Operation::convert_to_bfloat;
+	return fp8_vector_offset(decoded.destination) |
+		(fp8_vector_offset(decoded.first) << 16) |
+		((one_source ? 0U : fp8_vector_offset(decoded.second)) << 32) |
+		(static_cast<std::uintptr_t>(
+			decoded.by_element ? decoded.index : 0U) << 48);
+}
 
 extern "C" [[gnu::noinline]] void uml_arm64_gadget_access_fp_state(
 	CpuState *cpu) noexcept
 {
 	cpu->access_fp_state();
+}
+
+extern "C" [[gnu::noinline]] void
+uml_arm64_simd_rdm_software(CpuState *cpu,
+	std::uint32_t instruction) noexcept
+{
+	if (!uml::backend::arm64::detail::
+		    execute_saturating_rounding_multiply_accumulate(
+			    *cpu, instruction))
+		__builtin_trap();
+}
+
+extern "C" [[gnu::noinline]] void
+uml_arm64_floating_reciprocal_software(CpuState *cpu,
+	std::uintptr_t operand, unsigned descriptor) noexcept
+{
+	constexpr auto vector_base = offsetof(CpuState, vectors);
+	const auto decode_register = [](std::uintptr_t offset) {
+		return static_cast<unsigned>(
+			(offset - vector_base) / sizeof(uml::backend::arm64::VectorRegister));
+	};
+	const auto operation = static_cast<
+		uml::backend::arm64::detail::FloatingReciprocalOperation>(
+			descriptor & 7U);
+	const bool scalar = (descriptor & 8U) != 0U;
+	const unsigned width_code = (descriptor >> 4) & 3U;
+	const unsigned width = width_code == 0U ? 16U :
+		width_code == 1U ? 32U : 64U;
+	const unsigned vector_bytes =
+		scalar || (descriptor & 64U) != 0U ? 16U : 8U;
+	const bool unary =
+		operation != uml::backend::arm64::detail::
+				FloatingReciprocalOperation::reciprocal_step &&
+		operation != uml::backend::arm64::detail::
+				FloatingReciprocalOperation::reciprocal_sqrt_step;
+	const uml::backend::arm64::detail::FloatingReciprocal decoded{
+		true, true, scalar, unary, width, vector_bytes, operation};
+	uml::backend::arm64::detail::execute_floating_reciprocal_software(
+		*cpu, decoded, decode_register(operand & 0xffffU),
+		decode_register((operand >> 16) & 0xffffU),
+		unary ? 0U : decode_register((operand >> 32) & 0xffffU));
 }
 
 [[nodiscard]] std::uint32_t fp8_read_lane(
@@ -82,13 +179,22 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 [[gnu::noinline]] void fp8_software_transfer(
 	CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const unsigned index = (operand >> 24) & 15U;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
-	auto result = cpu->vectors[destination].bytes;
+	const auto destination_offset = operand & 0xffffU;
+	const auto first_offset = (operand >> 16) & 0xffffU;
+	const auto second_offset = (operand >> 32) & 0xffffU;
+	const unsigned index = (operand >> 48) & 15U;
+	const auto *base = reinterpret_cast<const std::byte *>(cpu);
+	auto *writable_base = reinterpret_cast<std::byte *>(cpu);
+	const auto first = reinterpret_cast<
+		const uml::backend::arm64::VectorRegister *>(
+			base + first_offset)->bytes;
+	const auto second = reinterpret_cast<
+		const uml::backend::arm64::VectorRegister *>(
+			base + second_offset)->bytes;
+	auto &destination = *reinterpret_cast<
+		uml::backend::arm64::VectorRegister *>(
+			writable_base + destination_offset);
+	auto result = destination.bytes;
 
 	if constexpr (Operation == Fp8Operation::convert_to_half ||
 		Operation == Fp8Operation::convert_to_bfloat) {
@@ -183,7 +289,7 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 						32U, first, row * 8U, second, column * 8U, *cpu));
 			}
 	}
-	cpu->vectors[destination].bytes = result;
+	destination.bytes = result;
 }
 
 using Fp8Software = void (*)(CpuState *, std::uintptr_t) noexcept;
@@ -358,17 +464,26 @@ UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(d, std::uint64_t, 64U, false)
 extern "C" [[gnu::noinline]] void uml_arm64_simd_lut_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned table_register = (operand >> 8) & 31U;
-	const unsigned indices_register = (operand >> 16) & 31U;
-	const unsigned shape = (operand >> 24) & 3U;
-	const unsigned part = (operand >> 26) & 7U;
+	const auto vector_at = [cpu, operand](unsigned shift)
+		-> const uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0x7ffU;
+		return *reinterpret_cast<const uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<const std::byte *>(cpu) + offset);
+	};
+	const auto vector_at_mutable = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0x7ffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	const unsigned shape = (operand >> 44) & 3U;
+	const unsigned part = (operand >> 46) & 7U;
 	const unsigned index_bits = shape < 2U ? 2U : 4U;
 	const unsigned element_bytes = (shape & 1U) != 0U ? 2U : 1U;
 	const unsigned elements = 16U / element_bytes;
-	const auto indices = cpu->vectors[indices_register].bytes;
-	const auto table1 = cpu->vectors[table_register].bytes;
-	const auto table2 = cpu->vectors[(table_register + 1U) & 31U].bytes;
+	const auto indices = vector_at(33).bytes;
+	const auto table1 = vector_at(11).bytes;
+	const auto table2 = vector_at(22).bytes;
 	std::array<std::byte, 16> result{};
 	const unsigned mask = (1U << index_bits) - 1U;
 	const unsigned first_index = elements * part;
@@ -383,7 +498,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_simd_lut_software(
 		std::copy_n(table.begin() + table_index * element_bytes,
 			element_bytes, result.begin() + element * element_bytes);
 	}
-	cpu->vectors[destination].bytes = result;
+	vector_at_mutable(0).bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_floating_round_sized_software(
@@ -447,30 +562,30 @@ void encode_horizontal_lane(std::array<std::byte, 16> &destination,
 }
 
 template<typename Floating>
-[[nodiscard]] Floating native_horizontal_minmax(
+[[nodiscard]] Floating native_horizontal_arithmetic(
 	uml::backend::arm64::detail::FloatingHorizontalOperation operation,
 	Floating first, Floating second) noexcept
 {
 	Floating result;
-#define UML_HORIZONTAL_MINMAX_ASM(suffix, instruction) \
+#define UML_HORIZONTAL_ARITHMETIC_ASM(suffix, instruction) \
 	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1, %" #suffix \
 		"2" : "=w"(result) : "w"(first), "w"(second))
-#define UML_HORIZONTAL_MINMAX_WIDTH(suffix) \
+#define UML_HORIZONTAL_ARITHMETIC_WIDTH(suffix) \
 	do { \
 		if (operation == uml::backend::arm64::detail:: \
-			FloatingHorizontalOperation::maximum) \
-			UML_HORIZONTAL_MINMAX_ASM(suffix, fmax); \
+			FloatingHorizontalOperation::absolute_difference) \
+			UML_HORIZONTAL_ARITHMETIC_ASM(suffix, fabd); \
 		else \
-			UML_HORIZONTAL_MINMAX_ASM(suffix, fmin); \
+			UML_HORIZONTAL_ARITHMETIC_ASM(suffix, fadd); \
 	} while (false)
-	if constexpr (sizeof(Floating) == 2)
-		UML_HORIZONTAL_MINMAX_WIDTH(h);
-	else if constexpr (sizeof(Floating) == 4)
-		UML_HORIZONTAL_MINMAX_WIDTH(s);
+	if constexpr (sizeof(Floating) == 2U)
+		UML_HORIZONTAL_ARITHMETIC_WIDTH(h);
+	else if constexpr (sizeof(Floating) == 4U)
+		UML_HORIZONTAL_ARITHMETIC_WIDTH(s);
 	else
-		UML_HORIZONTAL_MINMAX_WIDTH(d);
-#undef UML_HORIZONTAL_MINMAX_WIDTH
-#undef UML_HORIZONTAL_MINMAX_ASM
+		UML_HORIZONTAL_ARITHMETIC_WIDTH(d);
+#undef UML_HORIZONTAL_ARITHMETIC_WIDTH
+#undef UML_HORIZONTAL_ARITHMETIC_ASM
 	return result;
 }
 
@@ -484,6 +599,50 @@ template<typename Floating>
 	const auto first_bits = std::bit_cast<Integer>(first);
 	const auto second_bits = std::bit_cast<Integer>(second);
 	if (operation == uml::backend::arm64::detail::
+			FloatingHorizontalOperation::absolute_difference ||
+	    operation == uml::backend::arm64::detail::
+			FloatingHorizontalOperation::add) {
+		const auto prepared =
+			uml::backend::arm64::detail::
+				prepare_floating_controlled_arithmetic(
+					first_bits, second_bits, cpu.fpcr,
+					operation == uml::backend::arm64::detail::
+						FloatingHorizontalOperation::
+							absolute_difference);
+		cpu.fpsr |= prepared.exceptions;
+		if (prepared.complete)
+			return std::bit_cast<Floating>(prepared.bits);
+		first = std::bit_cast<Floating>(prepared.first);
+		second = std::bit_cast<Floating>(prepared.second);
+		std::uint64_t saved_fpcr{};
+		std::uint64_t saved_fpsr{};
+		__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
+		__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
+		const auto local_fpcr = (cpu.fpcr & 2U) != 0U ?
+			saved_fpcr & ~((std::uint64_t{1} << 24) |
+				(std::uint64_t{1} << 19)) : saved_fpcr;
+		if (local_fpcr != saved_fpcr)
+			__asm__ volatile("msr fpcr, %0" : :
+				"r"(local_fpcr) : "memory");
+		__asm__ volatile("msr fpsr, xzr" : : : "memory");
+		const auto result =
+			native_horizontal_arithmetic(operation, first, second);
+		std::uint64_t raised{};
+		__asm__ volatile("mrs %0, fpsr" : "=r"(raised) : : "memory");
+		__asm__ volatile("msr fpsr, %0" : :
+			"r"(saved_fpsr) : "memory");
+		if (local_fpcr != saved_fpcr)
+			__asm__ volatile("msr fpcr, %0" : :
+				"r"(saved_fpcr) : "memory");
+		const auto completed =
+			uml::backend::arm64::detail::
+				complete_floating_controlled_arithmetic(
+					std::bit_cast<Integer>(result), cpu.fpcr,
+					static_cast<std::uint32_t>(raised));
+		cpu.fpsr |= completed.exceptions;
+		return std::bit_cast<Floating>(completed.bits);
+	}
+	if (operation == uml::backend::arm64::detail::
 			FloatingHorizontalOperation::absolute_maximum ||
 	    operation == uml::backend::arm64::detail::
 			FloatingHorizontalOperation::absolute_minimum) {
@@ -496,28 +655,20 @@ template<typename Floating>
 		cpu.fpsr |= result.exceptions;
 		return std::bit_cast<Floating>(result.bits);
 	}
-	constexpr unsigned bits = sizeof(Floating) * 8U;
-	constexpr unsigned fraction_bits = sizeof(Floating) == 2 ? 10U :
-		sizeof(Floating) == 4 ? 23U : 52U;
-	constexpr Integer fraction_mask = (Integer{1} << fraction_bits) - 1U;
-	constexpr Integer exponent_mask = ((Integer{1} <<
-		(bits - fraction_bits - 1U)) - 1U) << fraction_bits;
-	constexpr Integer quiet_bit = Integer{1} << (fraction_bits - 1U);
-	constexpr Integer magnitude_mask = (Integer{1} << (bits - 1U)) - 1U;
-	const auto is_nan = [](Integer value) {
-		return (value & exponent_mask) == exponent_mask &&
-			(value & fraction_mask) != 0U;
-	};
-	const auto is_signaling_nan = [&](Integer value) {
-		return is_nan(value) && (value & quiet_bit) == 0U;
-	};
-	if (is_signaling_nan(first_bits) || is_signaling_nan(second_bits))
-		cpu.fpsr |= 1U;
-	if (is_nan(first_bits) || is_nan(second_bits) ||
-	    ((first_bits & magnitude_mask) == 0U &&
-	     (second_bits & magnitude_mask) == 0U))
-		return second;
-	return native_horizontal_minmax(operation, first, second);
+	const auto result =
+		uml::backend::arm64::detail::floating_alternate_minmax(
+			first_bits, second_bits,
+			operation == uml::backend::arm64::detail::
+					FloatingHorizontalOperation::maximum ||
+				operation == uml::backend::arm64::detail::
+					FloatingHorizontalOperation::maximum_number,
+			cpu.fpcr,
+			operation == uml::backend::arm64::detail::
+					FloatingHorizontalOperation::maximum_number ||
+				operation == uml::backend::arm64::detail::
+					FloatingHorizontalOperation::minimum_number);
+	cpu.fpsr |= result.exceptions;
+	return std::bit_cast<Floating>(result.bits);
 }
 
 template<typename Floating>
@@ -559,10 +710,8 @@ void floating_horizontal_ah_software(uml::backend::arm64::CpuState &cpu,
 		cpu.vectors[destination].bytes = result;
 		return;
 	}
-	if ((form == uml::backend::arm64::detail::
-			FloatingHorizontalForm::scalar_binary ||
-	     form == uml::backend::arm64::detail::
-			FloatingHorizontalForm::scalar_pairwise) &&
+	if (form == uml::backend::arm64::detail::
+			FloatingHorizontalForm::scalar_binary &&
 	    (cpu.fpcr & 4U) != 0U)
 		result = first_source;
 	const auto apply = [&](Floating first, Floating second) {
@@ -607,6 +756,37 @@ void floating_horizontal_ah_software(uml::backend::arm64::CpuState &cpu,
 	cpu.vectors[destination].bytes = result;
 }
 
+template<typename Integer, unsigned VectorBytes>
+void floating_scale_software(uml::backend::arm64::CpuState &cpu,
+	std::uintptr_t operand) noexcept
+{
+	const unsigned destination = operand & 31U;
+	const unsigned first_register = (operand >> 8) & 31U;
+	const unsigned second_register = (operand >> 16) & 31U;
+	const auto first = cpu.vectors[first_register].bytes;
+	const auto second = cpu.vectors[second_register].bytes;
+	std::array<std::byte, 16> result{};
+	using Signed = std::make_signed_t<Integer>;
+	for (unsigned lane = 0; lane < VectorBytes / sizeof(Integer); ++lane) {
+		const auto value = static_cast<Integer>(
+			uml::backend::arm64::detail::decode_little_endian(
+				std::span{first}.subspan(
+					lane * sizeof(Integer), sizeof(Integer))));
+		const auto scale_bits = static_cast<Integer>(
+			uml::backend::arm64::detail::decode_little_endian(
+				std::span{second}.subspan(
+					lane * sizeof(Integer), sizeof(Integer))));
+		const auto scaled = uml::backend::arm64::detail::scale_floating(
+			value, sizeof(Integer) * 8U, static_cast<std::int64_t>(
+				std::bit_cast<Signed>(scale_bits)), cpu.fpcr);
+		uml::backend::arm64::detail::encode_little_endian(scaled.bits,
+			std::span{result}.subspan(
+				lane * sizeof(Integer), sizeof(Integer)));
+		cpu.fpsr |= scaled.exceptions;
+	}
+	cpu.vectors[destination].bytes = result;
+}
+
 } // namespace
 
 extern "C" [[gnu::noinline]] void uml_arm64_floating_horizontal_ah_software(
@@ -634,61 +814,139 @@ extern "C" [[gnu::noinline]] void uml_arm64_floating_horizontal_ah_software(
 			first_register, second_register, operation, form, vector_bytes);
 }
 
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software(
+namespace {
+
+template<typename Floating>
+void simd_indexed_floating_software(
+	uml::backend::arm64::CpuState &cpu,
+	std::uint32_t instruction) noexcept
+{
+	using Integer = std::conditional_t<sizeof(Floating) == 2U,
+		std::uint16_t, std::conditional_t<sizeof(Floating) == 4U,
+			std::uint32_t, std::uint64_t>>;
+	using Operation =
+		uml::backend::arm64::detail::IndexedFloatingOperation;
+	const unsigned destination = instruction & 31U;
+	const unsigned left_register = (instruction >> 5) & 31U;
+	unsigned element_register = (instruction >> 16) & 15U;
+	const bool scalar = (instruction & 0x1000'0000U) != 0U;
+	const bool q = (instruction & 0x4000'0000U) != 0U;
+	const bool extended = (instruction & 0x2000'0000U) != 0U;
+	const unsigned operation_bits = (instruction >> 12) & 15U;
+	unsigned index;
+	if constexpr (sizeof(Floating) == 2U) {
+		index = ((instruction >> 9) & 4U) |
+			((instruction >> 20) & 1U) |
+			((instruction >> 20) & 2U);
+	} else {
+		element_register |= ((instruction >> 20) & 1U) << 4;
+		if constexpr (sizeof(Floating) == 4U)
+			index = ((instruction >> 10) & 2U) |
+				((instruction >> 21) & 1U);
+		else
+			index = (instruction >> 11) & 1U;
+	}
+	const auto left_source = cpu.vectors[left_register].bytes;
+	const auto element_source = cpu.vectors[element_register].bytes;
+	const auto accumulator = cpu.vectors[destination].bytes;
+	std::array<std::byte, 16> result{};
+	const bool accumulating = operation_bits == 1U ||
+		operation_bits == 5U;
+	if (scalar && (cpu.fpcr & 4U) != 0U)
+		result = accumulating ? accumulator : left_source;
+	const auto selected_bits = static_cast<Integer>(
+		uml::backend::arm64::detail::decode_little_endian(
+			std::span{element_source}.subspan(
+				index * sizeof(Floating), sizeof(Floating))));
+	const auto selected = std::bit_cast<Floating>(selected_bits);
+	const unsigned active_bytes = scalar ? sizeof(Floating) : q ? 16U : 8U;
+	const auto operation = operation_bits == 1U ? Operation::add :
+		operation_bits == 5U ? Operation::subtract :
+		extended ? Operation::multiply_extended : Operation::multiply;
+	for (unsigned lane = 0; lane < active_bytes / sizeof(Floating); ++lane) {
+		const auto left_bits = static_cast<Integer>(
+			uml::backend::arm64::detail::decode_little_endian(
+				std::span{left_source}.subspan(
+					lane * sizeof(Floating), sizeof(Floating))));
+		const auto addend_bits = static_cast<Integer>(
+			uml::backend::arm64::detail::decode_little_endian(
+				std::span{accumulator}.subspan(
+					lane * sizeof(Floating), sizeof(Floating))));
+		const auto lane_result =
+			uml::backend::arm64::detail::indexed_floating_software(
+				std::bit_cast<Floating>(addend_bits),
+				std::bit_cast<Floating>(left_bits), selected,
+				operation, cpu.fpcr);
+		uml::backend::arm64::detail::encode_little_endian(
+			lane_result.bits, std::span{result}.subspan(
+				lane * sizeof(Floating), sizeof(Floating)));
+		cpu.fpsr |= lane_result.exceptions;
+	}
+	cpu.vectors[destination].bytes = result;
+}
+
+} // namespace
+
+extern "C" [[gnu::noinline]] void
+uml_arm64_simd_indexed_floating_software(
+	uml::backend::arm64::CpuState *cpu,
+	std::uint32_t instruction) noexcept
+{
+	const unsigned size = (instruction >> 22) & 3U;
+	if (size == 0U)
+		simd_indexed_floating_software<_Float16>(*cpu, instruction);
+	else if (size == 2U)
+		simd_indexed_floating_software<float>(*cpu, instruction);
+	else
+		simd_indexed_floating_software<double>(*cpu, instruction);
+}
+
+extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_4h(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const unsigned width_code = (operand >> 24) & 3U;
-	const unsigned width = width_code == 0U ? 16U :
-		width_code == 1U ? 32U : 64U;
-	const unsigned vector_bytes = (operand & (std::uintptr_t{1} << 26)) != 0U ?
-		16U : 8U;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
-	std::array<std::byte, 16> result{};
-	const auto execute = [&]<typename Integer>() {
-		using Signed = std::make_signed_t<Integer>;
-		const unsigned lanes = vector_bytes / sizeof(Integer);
-		for (unsigned lane = 0; lane < lanes; ++lane) {
-			const auto value = static_cast<Integer>(
-				uml::backend::arm64::detail::decode_little_endian(
-					std::span{first}.subspan(
-						lane * sizeof(Integer), sizeof(Integer))));
-			const auto scale_bits = static_cast<Integer>(
-				uml::backend::arm64::detail::decode_little_endian(
-					std::span{second}.subspan(
-						lane * sizeof(Integer), sizeof(Integer))));
-			const auto scaled = uml::backend::arm64::detail::scale_floating(
-				value, width, static_cast<std::int64_t>(
-					std::bit_cast<Signed>(scale_bits)), cpu->fpcr);
-			uml::backend::arm64::detail::encode_little_endian(scaled.bits,
-				std::span{result}.subspan(
-					lane * sizeof(Integer), sizeof(Integer)));
-			cpu->fpsr |= scaled.exceptions;
-		}
-	};
-	if (width == 16U)
-		execute.template operator()<std::uint16_t>();
-	else if (width == 32U)
-		execute.template operator()<std::uint32_t>();
-	else
-		execute.template operator()<std::uint64_t>();
-	cpu->vectors[destination].bytes = result;
+	floating_scale_software<std::uint16_t, 8U>(*cpu, operand);
+}
+
+extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_8h(
+	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
+{
+	floating_scale_software<std::uint16_t, 16U>(*cpu, operand);
+}
+
+extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_2s(
+	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
+{
+	floating_scale_software<std::uint32_t, 8U>(*cpu, operand);
+}
+
+extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_4s(
+	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
+{
+	floating_scale_software<std::uint32_t, 16U>(*cpu, operand);
+}
+
+extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_2d(
+	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
+{
+	floating_scale_software<std::uint64_t, 16U>(*cpu, operand);
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_bfloat_conversion_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned source_register = (operand >> 8) & 31U;
-	const bool scalar = (operand & (std::uintptr_t{1} << 16)) != 0U;
-	const bool upper = (operand & (std::uintptr_t{1} << 17)) != 0U;
-	const auto source = cpu->vectors[source_register].bytes;
+	const auto destination_offset = operand & 0xffffU;
+	const auto source_offset = (operand >> 16) & 0xffffU;
+	const bool scalar = (operand & (std::uintptr_t{1} << 32)) != 0U;
+	const bool upper = (operand & (std::uintptr_t{1} << 33)) != 0U;
+	auto *const base = reinterpret_cast<std::byte *>(cpu);
+	auto &destination = *reinterpret_cast<
+		uml::backend::arm64::VectorRegister *>(base + destination_offset);
+	const auto source = reinterpret_cast<
+		const uml::backend::arm64::VectorRegister *>(
+			base + source_offset)->bytes;
 	auto result = scalar && (cpu->fpcr & 4U) != 0U ?
-		cpu->vectors[destination].bytes :
-		upper ? cpu->vectors[destination].bytes :
+		destination.bytes :
+		upper ? destination.bytes :
 			std::array<std::byte, 16>{};
 	const unsigned lanes = scalar ? 1U : 4U;
 	const unsigned first_lane = upper ? 4U : 0U;
@@ -702,21 +960,25 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_conversion_software(
 			std::span{result}.subspan((first_lane + lane) * 2U, 2U));
 		cpu->fpsr |= converted.exceptions;
 	}
-	cpu->vectors[destination].bytes = result;
+	destination.bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_bfloat_multiply_long_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool top = (operand & (std::uintptr_t{1} << 24)) != 0U;
-	const bool by_element = (operand & (std::uintptr_t{1} << 25)) != 0U;
-	const unsigned index = (operand >> 26) & 7U;
-	const auto addends = cpu->vectors[destination].bytes;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
+	const auto vector = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0xffffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	auto &destination = vector(0U);
+	const auto addends = destination.bytes;
+	const auto first = vector(16U).bytes;
+	const auto second = vector(32U).bytes;
+	const bool top = (operand & (std::uintptr_t{1} << 48)) != 0U;
+	const bool by_element = (operand & (std::uintptr_t{1} << 49)) != 0U;
+	const unsigned index = (operand >> 50) & 7U;
 	auto result = addends;
 	for (unsigned lane = 0; lane < 4U; ++lane) {
 		const unsigned first_lane = lane * 2U + top;
@@ -735,21 +997,25 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_multiply_long_software(
 				addend, left, right, cpu->fpcr),
 			std::span{result}.subspan(lane * 4U, 4U));
 	}
-	cpu->vectors[destination].bytes = result;
+	destination.bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_bfloat_dot_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool by_element = (operand & (std::uintptr_t{1} << 24)) != 0U;
-	const bool wide = (operand & (std::uintptr_t{1} << 25)) != 0U;
-	const unsigned index = (operand >> 26) & 3U;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
-	const auto addends = cpu->vectors[destination].bytes;
+	const auto vector = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0xffffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	auto &destination = vector(0U);
+	const auto addends = destination.bytes;
+	const auto first = vector(16U).bytes;
+	const auto second = vector(32U).bytes;
+	const bool by_element = (operand & (std::uintptr_t{1} << 48)) != 0U;
+	const bool wide = (operand & (std::uintptr_t{1} << 49)) != 0U;
+	const unsigned index = (operand >> 50) & 3U;
 	std::array<std::byte, 16> result{};
 	const unsigned lanes = wide ? 4U : 2U;
 	for (unsigned lane = 0; lane < lanes; ++lane) {
@@ -771,19 +1037,23 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_dot_software(
 				read_bfloat(second, second_pair + 1U), cpu->fpcr),
 			std::span{result}.subspan(lane * 4U, 4U));
 	}
-	cpu->vectors[destination].bytes = result;
+	destination.bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_bfloat_matrix_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const auto addends = cpu->vectors[destination].bytes;
-	const auto left = cpu->vectors[first_register].bytes;
-	const auto right = cpu->vectors[second_register].bytes;
-	cpu->vectors[destination].bytes =
+	const auto vector = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0xffffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	auto &destination = vector(0U);
+	const auto addends = destination.bytes;
+	const auto left = vector(16U).bytes;
+	const auto right = vector(32U).bytes;
+	destination.bytes =
 		uml::backend::arm64::detail::bfloat_matrix_multiply_add(
 			addends, left, right, cpu->fpcr);
 }
@@ -791,17 +1061,22 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_matrix_software(
 extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool by_element = (operand & (std::uintptr_t{1} << 24)) != 0U;
-	const bool subtract = (operand & (std::uintptr_t{1} << 25)) != 0U;
-	const bool upper = (operand & (std::uintptr_t{1} << 26)) != 0U;
-	const bool wide = (operand & (std::uintptr_t{1} << 27)) != 0U;
-	const unsigned index = (operand >> 28) & 7U;
-	const auto addends = cpu->vectors[destination].bytes;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
+	const auto vector = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0xffffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	const unsigned descriptor = operand >> 48U;
+	const bool by_element = (descriptor & 1U) != 0U;
+	const bool subtract = (descriptor & 2U) != 0U;
+	const bool upper = (descriptor & 4U) != 0U;
+	const bool wide = (descriptor & 8U) != 0U;
+	const unsigned index = (descriptor >> 4U) & 7U;
+	auto &destination = vector(0U);
+	const auto addends = destination.bytes;
+	const auto first = vector(16U).bytes;
+	const auto second = vector(32U).bytes;
 	std::array<std::byte, 16> result{};
 	const unsigned lanes = wide ? 4U : 2U;
 	const unsigned first_lane = upper ? lanes : 0U;
@@ -822,40 +1097,50 @@ extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(
 			std::span{result}.subspan(lane * 4U, 4U));
 		cpu->fpsr |= fused.exceptions;
 	}
-	cpu->vectors[destination].bytes = result;
+	destination.bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_half_matrix_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool widening = (operand & (std::uintptr_t{1} << 24)) != 0U;
-	const auto addends = cpu->vectors[destination].bytes;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
+	const auto vector = [cpu, operand](unsigned shift)
+		-> uml::backend::arm64::VectorRegister & {
+		const auto offset = (operand >> shift) & 0xffffU;
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	auto &destination = vector(0U);
+	const auto addends = destination.bytes;
+	const auto first = vector(16U).bytes;
+	const auto second = vector(32U).bytes;
+	const bool widening = (operand >> 48U) != 0U;
 	const auto result = uml::backend::arm64::detail::half_matrix_multiply_add(
 		addends, first, second, widening, cpu->fpcr);
-	cpu->vectors[destination].bytes = result.bytes;
+	destination.bytes = result.bytes;
 	cpu->fpsr |= result.exceptions;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_half_dot_software(
 	uml::backend::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool by_element = (operand & (std::uintptr_t{1} << 24)) != 0U;
-	const bool wide = (operand & (std::uintptr_t{1} << 25)) != 0U;
-	const unsigned index = (operand >> 26) & 3U;
-	const auto addends = cpu->vectors[destination].bytes;
-	const auto first = cpu->vectors[first_register].bytes;
-	const auto second = cpu->vectors[second_register].bytes;
+	const auto vector = [cpu](unsigned offset)
+		-> uml::backend::arm64::VectorRegister & {
+		return *reinterpret_cast<uml::backend::arm64::VectorRegister *>(
+			reinterpret_cast<std::byte *>(cpu) + offset);
+	};
+	const unsigned destination = operand & 0xffffU;
+	const unsigned first_offset = (operand >> 16U) & 0xffffU;
+	const unsigned second_offset = (operand >> 32U) & 0xffffU;
+	const unsigned descriptor = operand >> 48U;
+	const bool by_element = (descriptor & 1U) != 0U;
+	const bool wide = (descriptor & 2U) != 0U;
+	const unsigned index = (descriptor >> 2U) & 3U;
+	const auto addends = vector(destination).bytes;
+	const auto first = vector(first_offset).bytes;
+	const auto second = vector(second_offset).bytes;
 	const auto result = uml::backend::arm64::detail::half_dot_add(addends,
 		first, second, {true, by_element, wide, index}, cpu->fpcr);
-	cpu->vectors[destination].bytes = result.bytes;
+	vector(destination).bytes = result.bytes;
 	cpu->fpsr |= result.exceptions;
 }
 
@@ -1109,6 +1394,7 @@ EngineResult uml_arm64_gadget_enter(const std::uintptr_t *program,
 				    CpuState *cpu, Tlb *tlb,
 				    std::size_t initial_instructions);
 void uml_arm64_gadget_restore_native_fp_environment(CpuState *cpu);
+void uml_arm64_gadget_restore_native_fpmr_environment(CpuState *cpu);
 void uml_arm64_gadget_move_wide_constant();
 void uml_arm64_gadget_move_wide_keep_w0();
 void uml_arm64_gadget_move_wide_keep_w1();
@@ -1180,24 +1466,36 @@ UML_DECLARE_ADD_SUB_REGISTER_ALL(x_sub_s)
 #undef UML_DECLARE_ADD_SUB_SHIFTED_TRANSFORMS
 #undef UML_DECLARE_ADD_SUB_SHIFTED_SOURCES
 #undef UML_DECLARE_ADD_SUB_REGISTER_DESTINATIONS
-#define UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS(prefix) \
-	void uml_arm64_gadget_add_sub_carry_##prefix##_r(); \
+#define UML_DECLARE_ADD_SUB_CARRY_RESULT(prefix) \
+	void uml_arm64_gadget_add_sub_carry_##prefix##_r();
+#define UML_DECLARE_ADD_SUB_CARRY_FLAGS(prefix) \
+	UML_DECLARE_ADD_SUB_CARRY_RESULT(prefix) \
 	void uml_arm64_gadget_add_sub_carry_##prefix##_z();
-#define UML_DECLARE_ADD_SUB_CARRY_SOURCES(prefix) \
-	UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS(prefix##_rr) \
-	UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS(prefix##_rz) \
-	UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS(prefix##_zr) \
-	UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS(prefix##_zz)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_adc_n)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_adc_s)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_sbc_n)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_sbc_s)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_adc_n)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_adc_s)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_sbc_n)
-UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_sbc_s)
+#define UML_DECLARE_ADD_SUB_CARRY_SOURCES(prefix, result) \
+	result(prefix##_rr) \
+	result(prefix##_eq) \
+	result(prefix##_rz) \
+	result(prefix##_zr) \
+	result(prefix##_zz)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_adc_n,
+	UML_DECLARE_ADD_SUB_CARRY_RESULT)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_adc_s,
+	UML_DECLARE_ADD_SUB_CARRY_FLAGS)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_sbc_n,
+	UML_DECLARE_ADD_SUB_CARRY_RESULT)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(w_sbc_s,
+	UML_DECLARE_ADD_SUB_CARRY_FLAGS)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_adc_n,
+	UML_DECLARE_ADD_SUB_CARRY_RESULT)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_adc_s,
+	UML_DECLARE_ADD_SUB_CARRY_FLAGS)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_sbc_n,
+	UML_DECLARE_ADD_SUB_CARRY_RESULT)
+UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_sbc_s,
+	UML_DECLARE_ADD_SUB_CARRY_FLAGS)
 #undef UML_DECLARE_ADD_SUB_CARRY_SOURCES
-#undef UML_DECLARE_ADD_SUB_CARRY_DESTINATIONS
+#undef UML_DECLARE_ADD_SUB_CARRY_FLAGS
+#undef UML_DECLARE_ADD_SUB_CARRY_RESULT
 #define UML_DECLARE_MTE_POINTER_VARIANTS(operation) \
 	void uml_arm64_gadget_mte_##operation##_rrr(); \
 	void uml_arm64_gadget_mte_##operation##_rrz(); \
@@ -1272,17 +1570,14 @@ UML_DECLARE_CPA_SHIFTS(subpt)
 UML_DECLARE_CPA_MULTIPLY_MODES(maddpt)
 UML_DECLARE_CPA_MULTIPLY_MODES(msubpt)
 #undef UML_DECLARE_CPA_MULTIPLY_MODES
-#define UML_DECLARE_MULTIPLY_DESTINATIONS(prefix) \
-	void uml_arm64_gadget_multiply_add_##prefix##_r(); \
-	void uml_arm64_gadget_multiply_add_##prefix##_z();
+#define UML_DECLARE_MULTIPLY_RESULT(prefix) \
+	void uml_arm64_gadget_multiply_add_##prefix##_r();
 #define UML_DECLARE_MULTIPLY_ADDENDS(prefix) \
-	UML_DECLARE_MULTIPLY_DESTINATIONS(prefix##_r) \
-	UML_DECLARE_MULTIPLY_DESTINATIONS(prefix##_z)
+	UML_DECLARE_MULTIPLY_RESULT(prefix##_r) \
+	UML_DECLARE_MULTIPLY_RESULT(prefix##_z)
 #define UML_DECLARE_MULTIPLY_SOURCES(prefix) \
-	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_rr) \
-	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_rz) \
-	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_zr) \
-	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_zz)
+	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_p) \
+	UML_DECLARE_MULTIPLY_ADDENDS(prefix##_z)
 UML_DECLARE_MULTIPLY_SOURCES(w_madd)
 UML_DECLARE_MULTIPLY_SOURCES(w_msub)
 UML_DECLARE_MULTIPLY_SOURCES(x_madd)
@@ -1291,19 +1586,21 @@ UML_DECLARE_MULTIPLY_SOURCES(smaddl)
 UML_DECLARE_MULTIPLY_SOURCES(smsubl)
 UML_DECLARE_MULTIPLY_SOURCES(umaddl)
 UML_DECLARE_MULTIPLY_SOURCES(umsubl)
-UML_DECLARE_MULTIPLY_SOURCES(smulh)
-UML_DECLARE_MULTIPLY_SOURCES(umulh)
 #undef UML_DECLARE_MULTIPLY_SOURCES
 #undef UML_DECLARE_MULTIPLY_ADDENDS
-#undef UML_DECLARE_MULTIPLY_DESTINATIONS
-#define UML_DECLARE_BINARY_DESTINATIONS(kind, prefix) \
-	void uml_arm64_gadget_##kind##_##prefix##_r(); \
-	void uml_arm64_gadget_##kind##_##prefix##_z();
+#define UML_DECLARE_MULTIPLY_HIGH_SOURCES(prefix) \
+	UML_DECLARE_MULTIPLY_RESULT(prefix##_p_z) \
+	UML_DECLARE_MULTIPLY_RESULT(prefix##_z_z)
+UML_DECLARE_MULTIPLY_HIGH_SOURCES(smulh)
+UML_DECLARE_MULTIPLY_HIGH_SOURCES(umulh)
+#undef UML_DECLARE_MULTIPLY_HIGH_SOURCES
+#undef UML_DECLARE_MULTIPLY_RESULT
 #define UML_DECLARE_BINARY_SOURCES(kind, prefix) \
-	UML_DECLARE_BINARY_DESTINATIONS(kind, prefix##_rr) \
-	UML_DECLARE_BINARY_DESTINATIONS(kind, prefix##_rz) \
-	UML_DECLARE_BINARY_DESTINATIONS(kind, prefix##_zr) \
-	UML_DECLARE_BINARY_DESTINATIONS(kind, prefix##_zz)
+	void uml_arm64_gadget_##kind##_##prefix##_rr_r(); \
+	void uml_arm64_gadget_##kind##_##prefix##_eq_r(); \
+	void uml_arm64_gadget_##kind##_##prefix##_rz_r(); \
+	void uml_arm64_gadget_##kind##_##prefix##_zr_r(); \
+	void uml_arm64_gadget_##kind##_##prefix##_zz_r();
 UML_DECLARE_BINARY_SOURCES(variable_shift, w_lsl)
 UML_DECLARE_BINARY_SOURCES(variable_shift, w_lsr)
 UML_DECLARE_BINARY_SOURCES(variable_shift, w_asr)
@@ -1317,15 +1614,17 @@ UML_DECLARE_BINARY_SOURCES(divide, w_s)
 UML_DECLARE_BINARY_SOURCES(divide, x_u)
 UML_DECLARE_BINARY_SOURCES(divide, x_s)
 #undef UML_DECLARE_BINARY_SOURCES
-#undef UML_DECLARE_BINARY_DESTINATIONS
-#define UML_DECLARE_CRC_DESTINATIONS(prefix) \
-	void uml_arm64_gadget_crc32_##prefix##_r(); \
-	void uml_arm64_gadget_crc32_##prefix##_z();
 #define UML_DECLARE_CRC_SOURCES(prefix) \
-	UML_DECLARE_CRC_DESTINATIONS(prefix##_rr) \
-	UML_DECLARE_CRC_DESTINATIONS(prefix##_rz) \
-	UML_DECLARE_CRC_DESTINATIONS(prefix##_zr) \
-	UML_DECLARE_CRC_DESTINATIONS(prefix##_zz)
+	void uml_arm64_gadget_crc32_##prefix##_rr(); \
+	void uml_arm64_gadget_crc32_##prefix##_same(); \
+	void uml_arm64_gadget_crc32_##prefix##_rz(); \
+	void uml_arm64_gadget_crc32_##prefix##_zr(); \
+	void uml_arm64_gadget_crc32_##prefix##_zz(); \
+	void uml_arm64_gadget_crc32_software_##prefix##_rr(); \
+	void uml_arm64_gadget_crc32_software_##prefix##_same(); \
+	void uml_arm64_gadget_crc32_software_##prefix##_rz(); \
+	void uml_arm64_gadget_crc32_software_##prefix##_zr(); \
+	void uml_arm64_gadget_crc32_software_##prefix##_zz();
 UML_DECLARE_CRC_SOURCES(b)
 UML_DECLARE_CRC_SOURCES(h)
 UML_DECLARE_CRC_SOURCES(w)
@@ -1335,7 +1634,6 @@ UML_DECLARE_CRC_SOURCES(ch)
 UML_DECLARE_CRC_SOURCES(cw)
 UML_DECLARE_CRC_SOURCES(cx)
 #undef UML_DECLARE_CRC_SOURCES
-#undef UML_DECLARE_CRC_DESTINATIONS
 #define UML_DECLARE_EXTRACT_DESTINATIONS(prefix) \
 	void uml_arm64_gadget_extract_register_##prefix##_r(); \
 	void uml_arm64_gadget_extract_register_##prefix##_z();
@@ -1373,8 +1671,9 @@ UML_DECLARE_CONDITIONAL_SELECT_FAST(ge)
 UML_DECLARE_CONDITIONAL_SELECT_FAST(lt)
 UML_DECLARE_CONDITIONAL_SELECT_FAST(gt)
 UML_DECLARE_CONDITIONAL_SELECT_FAST(le)
-UML_DECLARE_CONDITIONAL_SELECT_FAST(always)
 #undef UML_DECLARE_CONDITIONAL_SELECT_FAST
+void uml_arm64_gadget_conditional_select_fast_always_w();
+void uml_arm64_gadget_conditional_select_fast_always_x();
 #define UML_DECLARE_CONDITIONAL_COMPARE_FAST(name) \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_r(); \
 	void uml_arm64_gadget_conditional_compare_fast_##name##_w_cmn_i(); \
@@ -1400,39 +1699,52 @@ UML_DECLARE_CONDITIONAL_COMPARE_FAST(gt)
 UML_DECLARE_CONDITIONAL_COMPARE_FAST(le)
 UML_DECLARE_CONDITIONAL_COMPARE_FAST(always)
 #undef UML_DECLARE_CONDITIONAL_COMPARE_FAST
-#define UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS(prefix) \
+#define UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix) \
+	void uml_arm64_gadget_logical_shifted_##prefix##_rr_r(); \
+	void uml_arm64_gadget_logical_shifted_##prefix##_rz_r(); \
+	void uml_arm64_gadget_logical_shifted_##prefix##_zr_r(); \
+	void uml_arm64_gadget_logical_shifted_##prefix##_zz_r();
+#define UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(prefix) \
+	UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_n) \
+	UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_l) \
+	UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_r) \
+	UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_a) \
+	UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_o)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_and_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_and_n)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_orr_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_orr_n)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_eor_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(w_eor_n)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_and_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_and_n)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_orr_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_orr_n)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_eor_p)
+UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS(x_eor_n)
+#undef UML_DECLARE_LOGICAL_SHIFTED_RESULT_SHIFTS
+#undef UML_DECLARE_LOGICAL_SHIFTED_RESULT_SOURCES
+#define UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS(prefix) \
 	void uml_arm64_gadget_logical_shifted_##prefix##_r(); \
 	void uml_arm64_gadget_logical_shifted_##prefix##_z();
-#define UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix) \
-	UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS(prefix##_rr) \
-	UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS(prefix##_rz) \
-	UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS(prefix##_zr) \
-	UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS(prefix##_zz)
-#define UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(prefix) \
-	UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix##_n) \
-	UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix##_l) \
-	UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix##_r) \
-	UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix##_a) \
-	UML_DECLARE_LOGICAL_SHIFTED_SOURCES(prefix##_o)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_and_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_and_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_orr_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_orr_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_eor_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_eor_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_ands_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(w_ands_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_and_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_and_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_orr_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_orr_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_eor_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_eor_n)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_ands_p)
-UML_DECLARE_LOGICAL_SHIFTED_SHIFTS(x_ands_n)
-#undef UML_DECLARE_LOGICAL_SHIFTED_SHIFTS
-#undef UML_DECLARE_LOGICAL_SHIFTED_SOURCES
-#undef UML_DECLARE_LOGICAL_SHIFTED_DESTINATIONS
+#define UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS(prefix##_rr) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS(prefix##_rz) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS(prefix##_zr) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS(prefix##_zz)
+#define UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS(prefix) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_n) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_l) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_r) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_a) \
+	UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_o)
+UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS(w_ands_p)
+UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS(w_ands_n)
+UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS(x_ands_p)
+UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS(x_ands_n)
+#undef UML_DECLARE_LOGICAL_SHIFTED_FLAG_SHIFTS
+#undef UML_DECLARE_LOGICAL_SHIFTED_FLAG_SOURCES
+#undef UML_DECLARE_LOGICAL_SHIFTED_FLAG_DESTINATIONS
 #define UML_DECLARE_LOGICAL_IMMEDIATE_MODES(prefix) \
 	void uml_arm64_gadget_logical_immediate_##prefix##_rr(); \
 	void uml_arm64_gadget_logical_immediate_##prefix##_rs(); \
@@ -1459,29 +1771,32 @@ UML_DECLARE_BITFIELD_SOURCES(x_s)
 UML_DECLARE_BITFIELD_SOURCES(x_b)
 UML_DECLARE_BITFIELD_SOURCES(x_u)
 #undef UML_DECLARE_BITFIELD_SOURCES
-#define UML_DECLARE_BIT_REVERSE_COUNT_MODES(prefix) \
-	void uml_arm64_gadget_bit_reverse_count_##prefix##_rr(); \
-	void uml_arm64_gadget_bit_reverse_count_##prefix##_rz(); \
-	void uml_arm64_gadget_bit_reverse_count_##prefix##_zr(); \
-	void uml_arm64_gadget_bit_reverse_count_##prefix##_zz();
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_rbit)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_rev16)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_rev)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_clz)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_cls)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_ctz)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_cnt)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(w_abs)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_rbit)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_rev16)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_rev32)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_rev)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_clz)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_cls)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_ctz)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_cnt)
-UML_DECLARE_BIT_REVERSE_COUNT_MODES(x_abs)
-#undef UML_DECLARE_BIT_REVERSE_COUNT_MODES
+#define UML_DECLARE_BIT_REVERSE_COUNT(prefix) \
+	void uml_arm64_gadget_bit_reverse_count_##prefix();
+UML_DECLARE_BIT_REVERSE_COUNT(w_rbit)
+UML_DECLARE_BIT_REVERSE_COUNT(w_rev16)
+UML_DECLARE_BIT_REVERSE_COUNT(w_rev)
+UML_DECLARE_BIT_REVERSE_COUNT(w_clz)
+UML_DECLARE_BIT_REVERSE_COUNT(w_cls)
+UML_DECLARE_BIT_REVERSE_COUNT(w_ctz)
+UML_DECLARE_BIT_REVERSE_COUNT(w_cnt)
+UML_DECLARE_BIT_REVERSE_COUNT(w_abs)
+UML_DECLARE_BIT_REVERSE_COUNT(x_rbit)
+UML_DECLARE_BIT_REVERSE_COUNT(x_rev16)
+UML_DECLARE_BIT_REVERSE_COUNT(x_rev32)
+UML_DECLARE_BIT_REVERSE_COUNT(x_rev)
+UML_DECLARE_BIT_REVERSE_COUNT(x_clz)
+UML_DECLARE_BIT_REVERSE_COUNT(x_cls)
+UML_DECLARE_BIT_REVERSE_COUNT(x_ctz)
+UML_DECLARE_BIT_REVERSE_COUNT(x_cnt)
+UML_DECLARE_BIT_REVERSE_COUNT(x_abs)
+UML_DECLARE_BIT_REVERSE_COUNT(w_ctz_native)
+UML_DECLARE_BIT_REVERSE_COUNT(w_cnt_native)
+UML_DECLARE_BIT_REVERSE_COUNT(w_abs_native)
+UML_DECLARE_BIT_REVERSE_COUNT(x_ctz_native)
+UML_DECLARE_BIT_REVERSE_COUNT(x_cnt_native)
+UML_DECLARE_BIT_REVERSE_COUNT(x_abs_native)
+#undef UML_DECLARE_BIT_REVERSE_COUNT
 void uml_arm64_gadget_xpaci();
 void uml_arm64_gadget_xpacd();
 void uml_arm64_gadget_xpaclri();
@@ -1509,12 +1824,19 @@ UML_DECLARE_INTEGER_MIN_MAX_FAST(umax)
 UML_DECLARE_INTEGER_MIN_MAX_FAST(smin)
 UML_DECLARE_INTEGER_MIN_MAX_FAST(umin)
 #undef UML_DECLARE_INTEGER_MIN_MAX_FAST
+void uml_arm64_gadget_integer_min_max_copy_w();
+void uml_arm64_gadget_integer_min_max_copy_x();
 void uml_arm64_gadget_cfinv();
 void uml_arm64_gadget_axflag();
+void uml_arm64_gadget_axflag_native();
 void uml_arm64_gadget_xaflag();
+void uml_arm64_gadget_xaflag_native();
 void uml_arm64_gadget_rmif_fast();
+void uml_arm64_gadget_rmif_zero();
 void uml_arm64_gadget_setf_fast_8();
 void uml_arm64_gadget_setf_fast_16();
+void uml_arm64_gadget_setf_native_8();
+void uml_arm64_gadget_setf_native_16();
 void uml_arm64_gadget_floating_move_immediate();
 void uml_arm64_gadget_floating_move_half();
 void uml_arm64_gadget_floating_move_single();
@@ -1587,6 +1909,8 @@ UML_DECLARE_FLOATING_CONVERT(d, s)
 #undef UML_DECLARE_FLOATING_CONVERT
 void uml_arm64_gadget_floating_javascript_convert();
 void uml_arm64_gadget_floating_javascript_convert_discard();
+void uml_arm64_gadget_floating_javascript_convert_software_fallback();
+void uml_arm64_gadget_floating_to_integer_software_fallback();
 #define UML_DECLARE_FLOATING_ROUND_SCALAR(name) \
 	void uml_arm64_gadget_floating_round_##name##_h(); \
 	void uml_arm64_gadget_floating_round_##name##_s(); \
@@ -1639,12 +1963,16 @@ void uml_arm64_gadget_floating_round_sized_software();
 	UML_DECLARE_FLOATING_HORIZONTAL_SCALAR(name##_scalar) \
 	UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(name##_vector)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fabd)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fabd_checked)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(faddp_checked)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmax)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnm)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmin)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnm)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmax_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnm_ah)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmin_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnm_ah)
 UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famax_native)
 UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famin_native)
 void uml_arm64_gadget_floating_horizontal_absolute_software();
@@ -1653,7 +1981,11 @@ void uml_arm64_gadget_floating_scale_native_8h();
 void uml_arm64_gadget_floating_scale_native_2s();
 void uml_arm64_gadget_floating_scale_native_4s();
 void uml_arm64_gadget_floating_scale_native_2d();
-void uml_arm64_gadget_floating_scale_software();
+void uml_arm64_gadget_floating_scale_software_4h();
+void uml_arm64_gadget_floating_scale_software_8h();
+void uml_arm64_gadget_floating_scale_software_2s();
+void uml_arm64_gadget_floating_scale_software_4s();
+void uml_arm64_gadget_floating_scale_software_2d();
 void uml_arm64_gadget_bfloat_convert_scalar_native();
 void uml_arm64_gadget_bfloat_convert_lower_native();
 void uml_arm64_gadget_bfloat_convert_upper_native();
@@ -1675,8 +2007,7 @@ void uml_arm64_gadget_bfloat_dot_software();
 void uml_arm64_gadget_bfloat_matrix_native();
 void uml_arm64_gadget_bfloat_matrix_software();
 #define UML_DECLARE_HALF_FUSED_LONG_VARIANTS(name) \
-	void uml_arm64_gadget_half_fused_long_native_##name(); \
-	void uml_arm64_gadget_half_fused_long_checked_##name();
+	void uml_arm64_gadget_half_fused_long_native_##name();
 UML_DECLARE_HALF_FUSED_LONG_VARIANTS(vector_add_lower_2s)
 UML_DECLARE_HALF_FUSED_LONG_VARIANTS(vector_add_lower_4s)
 UML_DECLARE_HALF_FUSED_LONG_VARIANTS(vector_add_upper_2s)
@@ -1706,13 +2037,10 @@ UML_DECLARE_HALF_FUSED_LONG_INDEXED(sub, upper, 4s)
 #undef UML_DECLARE_HALF_FUSED_LONG_VARIANTS
 void uml_arm64_gadget_half_fused_long_software();
 void uml_arm64_gadget_half_matrix_native_non_widening();
-void uml_arm64_gadget_half_matrix_checked_non_widening();
 void uml_arm64_gadget_half_matrix_native_widening();
-void uml_arm64_gadget_half_matrix_checked_widening();
 void uml_arm64_gadget_half_matrix_software();
 #define UML_DECLARE_HALF_DOT_VARIANTS(name) \
-	void uml_arm64_gadget_half_dot_native_##name(); \
-	void uml_arm64_gadget_half_dot_checked_##name();
+	void uml_arm64_gadget_half_dot_native_##name();
 UML_DECLARE_HALF_DOT_VARIANTS(vector_2s)
 UML_DECLARE_HALF_DOT_VARIANTS(vector_4s)
 #define UML_DECLARE_HALF_DOT_INDEXED(shape, index) \
@@ -1760,7 +2088,9 @@ UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxnmp)
 UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminp)
 UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminnmp)
 UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxp_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fmaxnmp_ah)
 UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminp_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_PAIR(fminnmp_ah)
 #undef UML_DECLARE_FLOATING_HORIZONTAL_PAIR
 #define UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(name) \
 	void uml_arm64_gadget_floating_horizontal_##name##_4h(); \
@@ -1771,29 +2101,39 @@ UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fmaxnmv)
 UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fminv)
 UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fminnmv)
 UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fmaxv_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fmaxnmv_ah)
 UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fminv_ah)
+UML_DECLARE_FLOATING_HORIZONTAL_REDUCE(fminnmv_ah)
 #undef UML_DECLARE_FLOATING_HORIZONTAL_REDUCE
 #undef UML_DECLARE_FLOATING_HORIZONTAL_VECTOR
 #undef UML_DECLARE_FLOATING_HORIZONTAL_SCALAR
-#define UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(name) \
-	void uml_arm64_gadget_floating_reciprocal_##name##_scalar_h(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_scalar_s(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_scalar_d();
-#define UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(name) \
-	void uml_arm64_gadget_floating_reciprocal_##name##_vector_4h(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_vector_8h(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_vector_2s(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_vector_4s(); \
-	void uml_arm64_gadget_floating_reciprocal_##name##_vector_2d();
-UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(frecpe)
-UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(frecpe)
-UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(frecps)
-UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(frecps)
-UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(frecpx)
-UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(frsqrte)
-UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(frsqrte)
-UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(frsqrts)
-UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(frsqrts)
+#define UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(host, name) \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_h(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_s(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_d();
+#define UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(host, name) \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4h(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_8h(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2s(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4s(); \
+	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2d();
+#define UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(name) \
+	UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(native, name) \
+	UML_DECLARE_FLOATING_RECIPROCAL_SCALAR(checked, name)
+#define UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR(name) \
+	UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(native, name) \
+	UML_DECLARE_FLOATING_RECIPROCAL_VECTOR(checked, name)
+UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(frecpe)
+UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR(frecpe)
+UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(frecps)
+UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR(frecps)
+UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(frecpx)
+UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(frsqrte)
+UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR(frsqrte)
+UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR(frsqrts)
+UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR(frsqrts)
+#undef UML_DECLARE_FLOATING_RECIPROCAL_VECTOR_PAIR
+#undef UML_DECLARE_FLOATING_RECIPROCAL_SCALAR_PAIR
 #undef UML_DECLARE_FLOATING_RECIPROCAL_VECTOR
 #undef UML_DECLARE_FLOATING_RECIPROCAL_SCALAR
 #define UML_DECLARE_FLOATING_COMPLEX_ROTATIONS(name, shape) \
@@ -1994,6 +2334,7 @@ UML_DECLARE_GPR_TO_FLOATING_VARIANTS(ucvtf)
 #undef UML_DECLARE_GPR_TO_FLOATING_VARIANTS
 #undef UML_DECLARE_GPR_TO_FLOATING_WIDTHS
 #undef UML_DECLARE_GPR_TO_FLOATING
+void uml_arm64_gadget_integer_to_floating_software_fallback();
 #define UML_DECLARE_SIMD_INTEGER_TO_FLOATING(operation) \
 	void uml_arm64_gadget_simd_##operation##_h(); \
 	void uml_arm64_gadget_simd_##operation##_s(); \
@@ -2055,6 +2396,8 @@ UML_DECLARE_SIMD_BITWISE(simd_bsl)
 UML_DECLARE_SIMD_BITWISE(simd_bit)
 UML_DECLARE_SIMD_BITWISE(simd_bif)
 #undef UML_DECLARE_SIMD_BITWISE
+void uml_arm64_gadget_simd_mov_8b();
+void uml_arm64_gadget_simd_mov_16b();
 #define UML_DECLARE_SIMD_IMMEDIATE(name) \
 	void uml_arm64_gadget_simd_immediate_##name##_8b(); \
 	void uml_arm64_gadget_simd_immediate_##name##_16b();
@@ -2302,24 +2645,42 @@ UML_DECLARE_SIMD_FLOATING_SIGN(fneg_4s)
 UML_DECLARE_SIMD_FLOATING_SIGN(fneg_2d)
 #undef UML_DECLARE_SIMD_FLOATING_SIGN
 void uml_arm64_gadget_simd_addp_scalar();
-void uml_arm64_gadget_simd_aese();
-void uml_arm64_gadget_simd_aesd();
-void uml_arm64_gadget_simd_aesmc();
-void uml_arm64_gadget_simd_aesimc();
+void uml_arm64_gadget_simd_aese_native();
+void uml_arm64_gadget_simd_aese_soft();
+void uml_arm64_gadget_simd_aesd_native();
+void uml_arm64_gadget_simd_aesd_soft();
+void uml_arm64_gadget_simd_aesmc_native();
+void uml_arm64_gadget_simd_aesmc_soft();
+void uml_arm64_gadget_simd_aesimc_native();
+void uml_arm64_gadget_simd_aesimc_soft();
 void uml_arm64_gadget_simd_sha1c();
+void uml_arm64_gadget_simd_sha1c_soft();
 void uml_arm64_gadget_simd_sha1p();
+void uml_arm64_gadget_simd_sha1p_soft();
 void uml_arm64_gadget_simd_sha1m();
+void uml_arm64_gadget_simd_sha1m_soft();
 void uml_arm64_gadget_simd_sha1su0();
+void uml_arm64_gadget_simd_sha1su0_soft();
 void uml_arm64_gadget_simd_sha256h();
+void uml_arm64_gadget_simd_sha256h_soft();
 void uml_arm64_gadget_simd_sha256h2();
+void uml_arm64_gadget_simd_sha256h2_soft();
 void uml_arm64_gadget_simd_sha256su1();
+void uml_arm64_gadget_simd_sha256su1_soft();
 void uml_arm64_gadget_simd_sha1h();
+void uml_arm64_gadget_simd_sha1h_soft();
 void uml_arm64_gadget_simd_sha1su1();
+void uml_arm64_gadget_simd_sha1su1_soft();
 void uml_arm64_gadget_simd_sha256su0();
+void uml_arm64_gadget_simd_sha256su0_soft();
 void uml_arm64_gadget_simd_sha512h();
+void uml_arm64_gadget_simd_sha512h_soft();
 void uml_arm64_gadget_simd_sha512h2();
+void uml_arm64_gadget_simd_sha512h2_soft();
 void uml_arm64_gadget_simd_sha512su0();
+void uml_arm64_gadget_simd_sha512su0_soft();
 void uml_arm64_gadget_simd_sha512su1();
+void uml_arm64_gadget_simd_sha512su1_soft();
 void uml_arm64_gadget_simd_sm3partw1();
 void uml_arm64_gadget_simd_sm3partw2();
 void uml_arm64_gadget_simd_sm3ss1();
@@ -2409,6 +2770,10 @@ UML_DECLARE_SIMD_INDEXED_FLOATING(fmla)
 UML_DECLARE_SIMD_INDEXED_FLOATING(fmls)
 UML_DECLARE_SIMD_INDEXED_FLOATING(fmul)
 UML_DECLARE_SIMD_INDEXED_FLOATING(fmulx)
+UML_DECLARE_SIMD_INDEXED_FLOATING(fmla_checked)
+UML_DECLARE_SIMD_INDEXED_FLOATING(fmls_checked)
+UML_DECLARE_SIMD_INDEXED_FLOATING(fmul_checked)
+UML_DECLARE_SIMD_INDEXED_FLOATING(fmulx_checked)
 #undef UML_DECLARE_SIMD_INDEXED_FLOATING
 void uml_arm64_gadget_simd_fmulx_h();
 void uml_arm64_gadget_simd_fmulx_4h();
@@ -2422,14 +2787,21 @@ void uml_arm64_gadget_simd_fmulx_2d();
 #undef UML_DECLARE_SIMD_INDEXED_4
 #undef UML_DECLARE_SIMD_INDEXED_2
 #undef UML_DECLARE_SIMD_INDEXED_ONE
-void uml_arm64_gadget_simd_eor3();
-void uml_arm64_gadget_simd_bcax();
-void uml_arm64_gadget_simd_rax1();
-void uml_arm64_gadget_simd_pmull_8b();
-void uml_arm64_gadget_simd_pmull_8b2();
-void uml_arm64_gadget_simd_pmull_1d();
-void uml_arm64_gadget_simd_pmull_1d2();
-#define UML_DECLARE_SIMD_XAR(rotate) void uml_arm64_gadget_simd_xar_##rotate();
+void uml_arm64_gadget_simd_eor3_native();
+void uml_arm64_gadget_simd_eor3_soft();
+void uml_arm64_gadget_simd_bcax_native();
+void uml_arm64_gadget_simd_bcax_soft();
+void uml_arm64_gadget_simd_rax1_native();
+void uml_arm64_gadget_simd_rax1_soft();
+void uml_arm64_gadget_simd_pmull_8b_direct();
+void uml_arm64_gadget_simd_pmull_8b2_direct();
+void uml_arm64_gadget_simd_pmull_1d_native_direct();
+void uml_arm64_gadget_simd_pmull_1d2_native_direct();
+void uml_arm64_gadget_simd_pmull_1d_soft_direct();
+void uml_arm64_gadget_simd_pmull_1d2_soft_direct();
+#define UML_DECLARE_SIMD_XAR(rotate) \
+	void uml_arm64_gadget_simd_xar_native_##rotate(); \
+	void uml_arm64_gadget_simd_xar_soft_##rotate();
 UML_DECLARE_SIMD_XAR(0) UML_DECLARE_SIMD_XAR(1)
 UML_DECLARE_SIMD_XAR(2) UML_DECLARE_SIMD_XAR(3)
 UML_DECLARE_SIMD_XAR(4) UML_DECLARE_SIMD_XAR(5)
@@ -2564,12 +2936,17 @@ void uml_arm64_gadget_simd_three_same_sqrdmulh_s();
 UML_DECLARE_SIMD_RDM(sqrdmlah)
 UML_DECLARE_SIMD_RDM(sqrdmlsh)
 #undef UML_DECLARE_SIMD_RDM
+void uml_arm64_gadget_simd_rdm_software();
 void uml_arm64_gadget_simd_dot_vector_sdot_2s();
 void uml_arm64_gadget_simd_dot_vector_sdot_4s();
 void uml_arm64_gadget_simd_dot_vector_udot_2s();
 void uml_arm64_gadget_simd_dot_vector_udot_4s();
 void uml_arm64_gadget_simd_dot_vector_usdot_2s();
 void uml_arm64_gadget_simd_dot_vector_usdot_4s();
+void uml_arm64_gadget_simd_dot_vector_sdot_2s_soft();
+void uml_arm64_gadget_simd_dot_vector_sdot_4s_soft();
+void uml_arm64_gadget_simd_dot_vector_udot_2s_soft();
+void uml_arm64_gadget_simd_dot_vector_udot_4s_soft();
 void uml_arm64_gadget_simd_dot_vector_usdot_2s_soft();
 void uml_arm64_gadget_simd_dot_vector_usdot_4s_soft();
 void uml_arm64_gadget_simd_matrix_smmla();
@@ -2595,6 +2972,10 @@ UML_DECLARE_SIMD_DOT_INDEXED(usdot)
 	void uml_arm64_gadget_simd_dot_indexed_##name##_##shape##_1_soft(); \
 	void uml_arm64_gadget_simd_dot_indexed_##name##_##shape##_2_soft(); \
 	void uml_arm64_gadget_simd_dot_indexed_##name##_##shape##_3_soft();
+UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(sdot, 2s)
+UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(sdot, 4s)
+UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(udot, 2s)
+UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(udot, 4s)
 UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(sudot, 2s)
 UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(sudot, 4s)
 UML_DECLARE_SIMD_DOT_INDEXED_SOFT_SHAPE(usdot, 2s)
@@ -2830,10 +3211,53 @@ void uml_arm64_gadget_sysreg_cntfrq_read();
 void uml_arm64_gadget_sysreg_cntvct_read();
 void uml_arm64_gadget_cache_zero_r();
 void uml_arm64_gadget_cache_zero_z();
-void uml_arm64_gadget_pstate_store();
-void uml_arm64_gadget_pstate_smza_store();
-void uml_arm64_gadget_pstate_daif_set();
-void uml_arm64_gadget_pstate_daif_clear();
+void uml_arm64_gadget_code_synchronize_r();
+void uml_arm64_gadget_code_synchronize_z();
+void uml_arm64_gadget_gcs_popm_r();
+void uml_arm64_gadget_gcs_popm_z();
+void uml_arm64_gadget_gcs_pushm_r();
+void uml_arm64_gadget_gcs_pushm_z();
+void uml_arm64_gadget_gcs_ss1_r();
+void uml_arm64_gadget_gcs_ss1_z();
+void uml_arm64_gadget_gcs_ss2_r();
+void uml_arm64_gadget_gcs_ss2_z();
+void uml_arm64_gadget_gcs_store_rr();
+void uml_arm64_gadget_gcs_store_rz();
+void uml_arm64_gadget_gcs_store_sr();
+void uml_arm64_gadget_gcs_store_sz();
+#define UML_DECLARE_PSTATE_FIELD(name) \
+	void uml_arm64_gadget_pstate_##name##_0(); \
+	void uml_arm64_gadget_pstate_##name##_1();
+UML_DECLARE_PSTATE_FIELD(ssbs)
+UML_DECLARE_PSTATE_FIELD(dit)
+UML_DECLARE_PSTATE_FIELD(tco)
+UML_DECLARE_PSTATE_FIELD(sm)
+UML_DECLARE_PSTATE_FIELD(za)
+UML_DECLARE_PSTATE_FIELD(smza)
+#undef UML_DECLARE_PSTATE_FIELD
+#define UML_DECLARE_PSTATE_DAIF(name, immediate) \
+	void uml_arm64_gadget_pstate_daif_##name##_##immediate();
+#define UML_DECLARE_PSTATE_DAIF_IMMEDIATE(immediate) \
+	UML_DECLARE_PSTATE_DAIF(set, immediate) \
+	UML_DECLARE_PSTATE_DAIF(clear, immediate)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(0)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(1)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(2)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(3)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(4)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(5)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(6)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(7)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(8)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(9)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(10)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(11)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(12)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(13)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(14)
+UML_DECLARE_PSTATE_DAIF_IMMEDIATE(15)
+#undef UML_DECLARE_PSTATE_DAIF_IMMEDIATE
+#undef UML_DECLARE_PSTATE_DAIF
 #define DECLARE_MEMORY_BARRIER(kind, option) \
 	void uml_arm64_gadget_##kind##_##option();
 #define DECLARE_MEMORY_BARRIER_OPTION(option) \
@@ -2859,23 +3283,33 @@ DECLARE_MEMORY_BARRIER_OPTION(15)
 #undef DECLARE_MEMORY_BARRIER
 void uml_arm64_gadget_isb();
 void uml_arm64_gadget_speculation_barrier();
+void uml_arm64_gadget_speculation_barrier_fallback();
+#define DECLARE_NXS_BARRIER(option) \
+	void uml_arm64_gadget_dsb_nxs_##option();
+DECLARE_NXS_BARRIER(0)
+DECLARE_NXS_BARRIER(1)
+DECLARE_NXS_BARRIER(2)
+DECLARE_NXS_BARRIER(3)
+#undef DECLARE_NXS_BARRIER
 void uml_arm64_gadget_clear_exclusive();
+void uml_arm64_gadget_atomic_sp_alignment_read();
+void uml_arm64_gadget_atomic_sp_alignment_write();
 void uml_arm64_gadget_yield();
 void uml_arm64_gadget_csdb();
 void uml_arm64_gadget_dgh();
 void uml_arm64_gadget_clrbhb();
 void uml_arm64_gadget_nop();
-void uml_arm64_gadget_load32_unsigned_fast_r();
-void uml_arm64_gadget_load32_unsigned_fast_z();
-void uml_arm64_gadget_load64_unsigned_fast_r();
-void uml_arm64_gadget_load64_unsigned_fast_z();
-void uml_arm64_gadget_store32_unsigned_fast_r();
-void uml_arm64_gadget_store32_unsigned_fast_z();
-void uml_arm64_gadget_store64_unsigned_fast_r();
-void uml_arm64_gadget_store64_unsigned_fast_z();
-#define UML_DECLARE_SCALAR_UNSIGNED_NARROW(name) \
+#define UML_DECLARE_SCALAR_UNSIGNED(name) \
 	void uml_arm64_gadget_##name##_r(); \
-	void uml_arm64_gadget_##name##_z();
+	void uml_arm64_gadget_##name##_z(); \
+	void uml_arm64_gadget_##name##_r_sp(); \
+	void uml_arm64_gadget_##name##_z_sp();
+UML_DECLARE_SCALAR_UNSIGNED(load32_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED(load64_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED(store32_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED(store64_unsigned_fast)
+#define UML_DECLARE_SCALAR_UNSIGNED_NARROW(name) \
+	UML_DECLARE_SCALAR_UNSIGNED(name)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load8_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load16_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load8_signed_w_fast)
@@ -2886,46 +3320,61 @@ UML_DECLARE_SCALAR_UNSIGNED_NARROW(load32_signed_x_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(store8_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(store16_unsigned_fast)
 #undef UML_DECLARE_SCALAR_UNSIGNED_NARROW
+#undef UML_DECLARE_SCALAR_UNSIGNED
 #define UML_DECLARE_VECTOR_UNSIGNED(width) \
 	void uml_arm64_gadget_vector_load##width##_unsigned_fast(); \
-	void uml_arm64_gadget_vector_store##width##_unsigned_fast();
+	void uml_arm64_gadget_vector_load##width##_unsigned_fast_sp(); \
+	void uml_arm64_gadget_vector_store##width##_unsigned_fast(); \
+	void uml_arm64_gadget_vector_store##width##_unsigned_fast_sp();
 UML_DECLARE_VECTOR_UNSIGNED(8)
 UML_DECLARE_VECTOR_UNSIGNED(16)
 UML_DECLARE_VECTOR_UNSIGNED(32)
 UML_DECLARE_VECTOR_UNSIGNED(64)
 UML_DECLARE_VECTOR_UNSIGNED(128)
 #undef UML_DECLARE_VECTOR_UNSIGNED
-#define UML_DECLARE_SCALAR_OTHER_MODE(name, mode) \
+#define UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, mode) \
 	void uml_arm64_gadget_scalar_other_##name##_##mode##_r(); \
-	void uml_arm64_gadget_scalar_other_##name##_##mode##_z();
-#define UML_DECLARE_SCALAR_OTHER(name) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, offset) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, pre) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, post) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, post_suppress) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, uxtw_0) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, x_0) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, sxtw_0) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, uxtw_1) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, x_1) \
-	UML_DECLARE_SCALAR_OTHER_MODE(name, sxtw_1)
-UML_DECLARE_SCALAR_OTHER(store8)
-UML_DECLARE_SCALAR_OTHER(load8u)
-UML_DECLARE_SCALAR_OTHER(load8sx)
-UML_DECLARE_SCALAR_OTHER(load8sw)
-UML_DECLARE_SCALAR_OTHER(store16)
-UML_DECLARE_SCALAR_OTHER(load16u)
-UML_DECLARE_SCALAR_OTHER(load16sx)
-UML_DECLARE_SCALAR_OTHER(load16sw)
-UML_DECLARE_SCALAR_OTHER(store32)
-UML_DECLARE_SCALAR_OTHER(load32u)
-UML_DECLARE_SCALAR_OTHER(load32sx)
-UML_DECLARE_SCALAR_OTHER(store64)
-UML_DECLARE_SCALAR_OTHER(load64u)
-#undef UML_DECLARE_SCALAR_OTHER
-#undef UML_DECLARE_SCALAR_OTHER_MODE
+	void uml_arm64_gadget_scalar_other_##name##_##mode##_z(); \
+	void uml_arm64_gadget_scalar_other_##name##_##mode##_r_sp(); \
+	void uml_arm64_gadget_scalar_other_##name##_##mode##_z_sp();
+#define UML_DECLARE_SCALAR_OTHER_IMMEDIATE_MODE(name, mode) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, mode)
+#define UML_DECLARE_SCALAR_OTHER_COMMON(name) \
+	UML_DECLARE_SCALAR_OTHER_IMMEDIATE_MODE(name, offset) \
+	UML_DECLARE_SCALAR_OTHER_IMMEDIATE_MODE(name, pre) \
+	UML_DECLARE_SCALAR_OTHER_IMMEDIATE_MODE(name, post) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, uxtw_0) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, x_0) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, sxtw_0) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, uxtw_1) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, x_1) \
+	UML_DECLARE_SCALAR_OTHER_REGISTER_MODE(name, sxtw_1)
+#define UML_DECLARE_SCALAR_OTHER_STORE(name) \
+	UML_DECLARE_SCALAR_OTHER_COMMON(name)
+#define UML_DECLARE_SCALAR_OTHER_LOAD(name) \
+	UML_DECLARE_SCALAR_OTHER_COMMON(name) \
+	void uml_arm64_gadget_scalar_other_##name##_post_suppress_r();
+UML_DECLARE_SCALAR_OTHER_STORE(store8)
+UML_DECLARE_SCALAR_OTHER_LOAD(load8u)
+UML_DECLARE_SCALAR_OTHER_LOAD(load8sx)
+UML_DECLARE_SCALAR_OTHER_LOAD(load8sw)
+UML_DECLARE_SCALAR_OTHER_STORE(store16)
+UML_DECLARE_SCALAR_OTHER_LOAD(load16u)
+UML_DECLARE_SCALAR_OTHER_LOAD(load16sx)
+UML_DECLARE_SCALAR_OTHER_LOAD(load16sw)
+UML_DECLARE_SCALAR_OTHER_STORE(store32)
+UML_DECLARE_SCALAR_OTHER_LOAD(load32u)
+UML_DECLARE_SCALAR_OTHER_LOAD(load32sx)
+UML_DECLARE_SCALAR_OTHER_STORE(store64)
+UML_DECLARE_SCALAR_OTHER_LOAD(load64u)
+#undef UML_DECLARE_SCALAR_OTHER_LOAD
+#undef UML_DECLARE_SCALAR_OTHER_STORE
+#undef UML_DECLARE_SCALAR_OTHER_COMMON
+#undef UML_DECLARE_SCALAR_OTHER_IMMEDIATE_MODE
+#undef UML_DECLARE_SCALAR_OTHER_REGISTER_MODE
 #define UML_DECLARE_VECTOR_OTHER_MODE(name, mode) \
-	void uml_arm64_gadget_vector_other_##name##_##mode();
+	void uml_arm64_gadget_vector_other_##name##_##mode(); \
+	void uml_arm64_gadget_vector_other_##name##_##mode##_sp();
 #define UML_DECLARE_VECTOR_OTHER(name) \
 	UML_DECLARE_VECTOR_OTHER_MODE(name, offset) \
 	UML_DECLARE_VECTOR_OTHER_MODE(name, pre) \
@@ -2952,23 +3401,33 @@ UML_DECLARE_VECTOR_OTHER(load128)
 	void uml_arm64_gadget_integer_pair_##name##_##mode##_rr(); \
 	void uml_arm64_gadget_integer_pair_##name##_##mode##_rz(); \
 	void uml_arm64_gadget_integer_pair_##name##_##mode##_zr(); \
-	void uml_arm64_gadget_integer_pair_##name##_##mode##_zz();
-#define UML_DECLARE_INTEGER_PAIR(name) \
+	void uml_arm64_gadget_integer_pair_##name##_##mode##_zz(); \
+	void uml_arm64_gadget_integer_pair_##name##_##mode##_rr_sp(); \
+	void uml_arm64_gadget_integer_pair_##name##_##mode##_rz_sp(); \
+	void uml_arm64_gadget_integer_pair_##name##_##mode##_zr_sp(); \
+	void uml_arm64_gadget_integer_pair_##name##_##mode##_zz_sp();
+#define UML_DECLARE_INTEGER_PAIR_STORE(name) \
 	UML_DECLARE_INTEGER_PAIR_MODE(name, 0) \
 	UML_DECLARE_INTEGER_PAIR_MODE(name, 1) \
-	UML_DECLARE_INTEGER_PAIR_MODE(name, 2) \
+	UML_DECLARE_INTEGER_PAIR_MODE(name, 2)
+#define UML_DECLARE_INTEGER_PAIR_LOAD(name) \
+	UML_DECLARE_INTEGER_PAIR_STORE(name) \
 	UML_DECLARE_INTEGER_PAIR_MODE(name, 3)
-UML_DECLARE_INTEGER_PAIR(store32)
-UML_DECLARE_INTEGER_PAIR(load32)
-UML_DECLARE_INTEGER_PAIR(load32s)
-UML_DECLARE_INTEGER_PAIR(store64)
-UML_DECLARE_INTEGER_PAIR(load64)
-#undef UML_DECLARE_INTEGER_PAIR
+UML_DECLARE_INTEGER_PAIR_STORE(store32)
+UML_DECLARE_INTEGER_PAIR_LOAD(load32)
+UML_DECLARE_INTEGER_PAIR_LOAD(load32s)
+UML_DECLARE_INTEGER_PAIR_STORE(store64)
+UML_DECLARE_INTEGER_PAIR_LOAD(load64)
+#undef UML_DECLARE_INTEGER_PAIR_LOAD
+#undef UML_DECLARE_INTEGER_PAIR_STORE
 #undef UML_DECLARE_INTEGER_PAIR_MODE
 #define UML_DECLARE_VECTOR_PAIR(name) \
 	void uml_arm64_gadget_vector_pair_##name##_0(); \
 	void uml_arm64_gadget_vector_pair_##name##_1(); \
-	void uml_arm64_gadget_vector_pair_##name##_2();
+	void uml_arm64_gadget_vector_pair_##name##_2(); \
+	void uml_arm64_gadget_vector_pair_##name##_0_sp(); \
+	void uml_arm64_gadget_vector_pair_##name##_1_sp(); \
+	void uml_arm64_gadget_vector_pair_##name##_2_sp();
 UML_DECLARE_VECTOR_PAIR(store32)
 UML_DECLARE_VECTOR_PAIR(load32)
 UML_DECLARE_VECTOR_PAIR(store64)
@@ -2989,7 +3448,10 @@ DECLARE_POINTER_AUTH_LOAD_MODES(b, w)
 #define UML_DECLARE_SIMD_STRUCTURE_DIRECTION(base, direction) \
 	void uml_arm64_gadget_simd_structure_##base##_##direction##_0(); \
 	void uml_arm64_gadget_simd_structure_##base##_##direction##_1(); \
-	void uml_arm64_gadget_simd_structure_##base##_##direction##_2();
+	void uml_arm64_gadget_simd_structure_##base##_##direction##_2(); \
+	void uml_arm64_gadget_simd_structure_##base##_##direction##_s0(); \
+	void uml_arm64_gadget_simd_structure_##base##_##direction##_s1(); \
+	void uml_arm64_gadget_simd_structure_##base##_##direction##_s2();
 #define UML_DECLARE_SIMD_STRUCTURE(base) \
 	UML_DECLARE_SIMD_STRUCTURE_DIRECTION(base, store) \
 	UML_DECLARE_SIMD_STRUCTURE_DIRECTION(base, load)
@@ -3018,7 +3480,10 @@ UML_DECLARE_SIMD_STRUCTURE_INTERLEAVED(4)
 #define UML_DECLARE_SIMD_REPLICATE_COUNT(type, count) \
 	void uml_arm64_gadget_simd_replicate_##type##_##count##_0(); \
 	void uml_arm64_gadget_simd_replicate_##type##_##count##_1(); \
-	void uml_arm64_gadget_simd_replicate_##type##_##count##_2();
+	void uml_arm64_gadget_simd_replicate_##type##_##count##_2(); \
+	void uml_arm64_gadget_simd_replicate_##type##_##count##_s0(); \
+	void uml_arm64_gadget_simd_replicate_##type##_##count##_s1(); \
+	void uml_arm64_gadget_simd_replicate_##type##_##count##_s2();
 #define UML_DECLARE_SIMD_REPLICATE(type) \
 	UML_DECLARE_SIMD_REPLICATE_COUNT(type, 1) \
 	UML_DECLARE_SIMD_REPLICATE_COUNT(type, 2) \
@@ -3037,7 +3502,10 @@ UML_DECLARE_SIMD_REPLICATE(d_q)
 #define UML_DECLARE_SIMD_LANE_DIRECTION(type, count, direction) \
 	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_0(); \
 	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_1(); \
-	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_2();
+	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_2(); \
+	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s0(); \
+	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s1(); \
+	void uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s2();
 #define UML_DECLARE_SIMD_LANE_COUNT(type, count) \
 	UML_DECLARE_SIMD_LANE_DIRECTION(type, count, store) \
 	UML_DECLARE_SIMD_LANE_DIRECTION(type, count, load)
@@ -3228,16 +3696,19 @@ UML_DECLARE_COMPARE_SWAP_SIZES(acquire)
 UML_DECLARE_COMPARE_SWAP_SIZES(acquire_release)
 #undef UML_DECLARE_COMPARE_SWAP_SIZES
 #undef UML_DECLARE_COMPARE_SWAP_REGISTER_VARIANTS
-#define UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS(operation, soft, ordering) \
+#define UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, ordering) \
 	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
 	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rz(); \
 	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr(); \
 	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zz();
+#define UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, ordering) \
+	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
+	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr();
 #define UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft) \
-	UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS(operation, soft, relaxed) \
-	UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS(operation, soft, release) \
-	UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS(operation, soft, acquire) \
-	UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS(operation, soft, acquire_release)
+	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, relaxed) \
+	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, release) \
+	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire) \
+	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire_release)
 #define UML_DECLARE_RCW_SCALAR_SOFTNESS(operation) \
 	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, hard) \
 	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft)
@@ -3247,7 +3718,8 @@ UML_DECLARE_RCW_SCALAR_SOFTNESS(swp)
 UML_DECLARE_RCW_SCALAR_SOFTNESS(orr)
 #undef UML_DECLARE_RCW_SCALAR_SOFTNESS
 #undef UML_DECLARE_RCW_SCALAR_ORDERINGS
-#undef UML_DECLARE_RCW_SCALAR_REGISTER_VARIANTS
+#undef UML_DECLARE_RCW_SCALAR_LIVE_RESULT
+#undef UML_DECLARE_RCW_SCALAR_FULL_VARIANTS
 #define UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, ordering) \
 	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rr(); \
 	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rz(); \
@@ -3372,11 +3844,17 @@ UML_DECLARE_ATOMIC_ORDERS(swp)
 #undef UML_DECLARE_ATOMIC_REGISTER_VARIANTS
 #define UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, operation) \
 	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed_sp(); \
 	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release_sp(); \
 	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_sp(); \
 	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release_sp(); \
 	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release();
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed_sp(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release(); \
+	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release_sp();
 #define UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, size) \
 	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, add) \
 	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, max) \
@@ -3420,6 +3898,7 @@ void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_fatal();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_breakpoint();
+void uml_arm64_gadget_gcs_fault();
 void uml_arm64_gadget_branch();
 void uml_arm64_gadget_branch_linked();
 void uml_arm64_gadget_branch_link();
@@ -3438,7 +3917,11 @@ DECLARE_POINTER_AUTH_BRANCH(bra, a)
 DECLARE_POINTER_AUTH_BRANCH(bra, b)
 DECLARE_POINTER_AUTH_BRANCH(blra, a)
 DECLARE_POINTER_AUTH_BRANCH(blra, b)
+DECLARE_POINTER_AUTH_BRANCH(blra_gcs, a)
+DECLARE_POINTER_AUTH_BRANCH(blra_gcs, b)
 #undef DECLARE_POINTER_AUTH_BRANCH
+void uml_arm64_gadget_pauth_return_gcs_a();
+void uml_arm64_gadget_pauth_return_gcs_b();
 void uml_arm64_gadget_return();
 void uml_arm64_gadget_branch_eq();
 void uml_arm64_gadget_branch_ne();
@@ -3500,22 +3983,21 @@ UML_DECLARE_CMPBR_R_SIZE(x)
 #undef UML_DECLARE_CMPBR_R_MODES
 void uml_arm64_gadget_branch_always();
 void uml_arm64_gadget_branch_always_linked();
-void uml_arm64_gadget_compare_branch();
-void uml_arm64_gadget_compare_branch_linked();
-void uml_arm64_gadget_test_branch();
-void uml_arm64_gadget_test_branch_linked();
+#define UML_DECLARE_COMPARE_BRANCH(width, polarity) \
+	void uml_arm64_gadget_compare_branch_##width##_##polarity(); \
+	void uml_arm64_gadget_compare_branch_##width##_##polarity##_linked();
+UML_DECLARE_COMPARE_BRANCH(w, z)
+UML_DECLARE_COMPARE_BRANCH(w, nz)
+UML_DECLARE_COMPARE_BRANCH(x, z)
+UML_DECLARE_COMPARE_BRANCH(x, nz)
+#undef UML_DECLARE_COMPARE_BRANCH
+#define UML_DECLARE_TEST_BRANCH(polarity) \
+	void uml_arm64_gadget_test_branch_##polarity(); \
+	void uml_arm64_gadget_test_branch_##polarity##_linked();
+UML_DECLARE_TEST_BRANCH(z)
+UML_DECLARE_TEST_BRANCH(nz)
+#undef UML_DECLARE_TEST_BRANCH
 void uml_arm64_gadget_link_exit();
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-void uml_arm64_gadget_decoded();
-void uml_arm64_gadget_decoded_control();
-#endif
-}
-
-extern "C" std::uint64_t uml_arm64_gadget_counter_read()
-{
-	return static_cast<std::uint64_t>(
-		std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 using Gadget = void (*)();
@@ -3542,107 +4024,126 @@ using Gadget = void (*)();
 }
 
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned size,
-	unsigned operation, bool transfer_zero) noexcept
+	unsigned operation, bool base_sp, bool transfer_zero) noexcept
 {
-	using Modes = std::array<Gadget, 2>;
+	using Registers = std::array<Gadget, 2>;
+	using Bases = std::array<Registers, 2>;
+#define UML_SCALAR_UNSIGNED_BASES(name) Bases{ \
+	Registers{uml_arm64_gadget_##name##_r, \
+		uml_arm64_gadget_##name##_z}, \
+	Registers{uml_arm64_gadget_##name##_r_sp, \
+		uml_arm64_gadget_##name##_z_sp}}
 	static constexpr std::array stores{
-		Modes{uml_arm64_gadget_store8_unsigned_fast_r,
-			uml_arm64_gadget_store8_unsigned_fast_z},
-		Modes{uml_arm64_gadget_store16_unsigned_fast_r,
-			uml_arm64_gadget_store16_unsigned_fast_z},
-		Modes{uml_arm64_gadget_store32_unsigned_fast_r,
-			uml_arm64_gadget_store32_unsigned_fast_z},
-		Modes{uml_arm64_gadget_store64_unsigned_fast_r,
-			uml_arm64_gadget_store64_unsigned_fast_z}};
+		UML_SCALAR_UNSIGNED_BASES(store8_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(store16_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(store32_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(store64_unsigned_fast)};
 	static constexpr std::array loads{
-		Modes{uml_arm64_gadget_load8_unsigned_fast_r,
-			uml_arm64_gadget_load8_unsigned_fast_z},
-		Modes{uml_arm64_gadget_load16_unsigned_fast_r,
-			uml_arm64_gadget_load16_unsigned_fast_z},
-		Modes{uml_arm64_gadget_load32_unsigned_fast_r,
-			uml_arm64_gadget_load32_unsigned_fast_z},
-		Modes{uml_arm64_gadget_load64_unsigned_fast_r,
-			uml_arm64_gadget_load64_unsigned_fast_z}};
+		UML_SCALAR_UNSIGNED_BASES(load8_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(load16_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(load32_unsigned_fast),
+		UML_SCALAR_UNSIGNED_BASES(load64_unsigned_fast)};
 	static constexpr std::array signed_x{
-		Modes{uml_arm64_gadget_load8_signed_x_fast_r,
-			uml_arm64_gadget_load8_signed_x_fast_z},
-		Modes{uml_arm64_gadget_load16_signed_x_fast_r,
-			uml_arm64_gadget_load16_signed_x_fast_z},
-		Modes{uml_arm64_gadget_load32_signed_x_fast_r,
-			uml_arm64_gadget_load32_signed_x_fast_z},
-		Modes{nullptr, nullptr}};
+		UML_SCALAR_UNSIGNED_BASES(load8_signed_x_fast),
+		UML_SCALAR_UNSIGNED_BASES(load16_signed_x_fast),
+		UML_SCALAR_UNSIGNED_BASES(load32_signed_x_fast),
+		Bases{}};
 	static constexpr std::array signed_w{
-		Modes{uml_arm64_gadget_load8_signed_w_fast_r,
-			uml_arm64_gadget_load8_signed_w_fast_z},
-		Modes{uml_arm64_gadget_load16_signed_w_fast_r,
-			uml_arm64_gadget_load16_signed_w_fast_z},
-		Modes{nullptr, nullptr}, Modes{nullptr, nullptr}};
+		UML_SCALAR_UNSIGNED_BASES(load8_signed_w_fast),
+		UML_SCALAR_UNSIGNED_BASES(load16_signed_w_fast),
+		Bases{}, Bases{}};
+#undef UML_SCALAR_UNSIGNED_BASES
 	const auto &gadgets = operation == 0U ? stores : operation == 1U ? loads :
 		operation == 2U ? signed_x : signed_w;
-	return size < 4U ? gadgets[size][transfer_zero] : nullptr;
+	return size < 4U ? gadgets[size][base_sp][transfer_zero] : nullptr;
 }
 
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(
-	unsigned size, unsigned operation) noexcept
+	unsigned size, unsigned operation, bool base_sp) noexcept
 {
+	using Bases = std::array<Gadget, 2>;
+#define UML_VECTOR_UNSIGNED_BASES(name) Bases{ \
+	uml_arm64_gadget_vector_##name##_unsigned_fast, \
+	uml_arm64_gadget_vector_##name##_unsigned_fast_sp}
 	static constexpr std::array loads{
-		uml_arm64_gadget_vector_load8_unsigned_fast,
-		uml_arm64_gadget_vector_load16_unsigned_fast,
-		uml_arm64_gadget_vector_load32_unsigned_fast,
-		uml_arm64_gadget_vector_load64_unsigned_fast,
-		uml_arm64_gadget_vector_load128_unsigned_fast};
+		UML_VECTOR_UNSIGNED_BASES(load8),
+		UML_VECTOR_UNSIGNED_BASES(load16),
+		UML_VECTOR_UNSIGNED_BASES(load32),
+		UML_VECTOR_UNSIGNED_BASES(load64),
+		UML_VECTOR_UNSIGNED_BASES(load128)};
 	static constexpr std::array stores{
-		uml_arm64_gadget_vector_store8_unsigned_fast,
-		uml_arm64_gadget_vector_store16_unsigned_fast,
-		uml_arm64_gadget_vector_store32_unsigned_fast,
-		uml_arm64_gadget_vector_store64_unsigned_fast,
-		uml_arm64_gadget_vector_store128_unsigned_fast};
+		UML_VECTOR_UNSIGNED_BASES(store8),
+		UML_VECTOR_UNSIGNED_BASES(store16),
+		UML_VECTOR_UNSIGNED_BASES(store32),
+		UML_VECTOR_UNSIGNED_BASES(store64),
+		UML_VECTOR_UNSIGNED_BASES(store128)};
+#undef UML_VECTOR_UNSIGNED_BASES
 	const unsigned width = operation >= 2U ? 4U : size;
 	return width < loads.size() ?
-		((operation & 1U) != 0U ? loads : stores)[width] : nullptr;
+		((operation & 1U) != 0U ? loads : stores)[width][base_sp] : nullptr;
 }
 
-using ScalarOtherImmediateModes = std::array<std::array<Gadget, 2>, 4>;
-using ScalarOtherRegisterModes = std::array<std::array<Gadget, 2>, 6>;
+using ScalarOtherRegisterChoices = std::array<Gadget, 2>;
+using ScalarOtherBaseChoices = std::array<ScalarOtherRegisterChoices, 2>;
+using ScalarOtherImmediateModes = std::array<ScalarOtherBaseChoices, 4>;
+using ScalarOtherRegisterModes = std::array<ScalarOtherBaseChoices, 6>;
 
 struct ScalarOtherGadgets final {
 	ScalarOtherImmediateModes immediate;
 	ScalarOtherRegisterModes register_offset;
 };
 
-#define UML_SCALAR_OTHER_MODE(name, mode) std::array<Gadget, 2>{ \
+#define UML_SCALAR_OTHER_REGISTER_CHOICES(name, mode) \
+	ScalarOtherRegisterChoices{ \
 	uml_arm64_gadget_scalar_other_##name##_##mode##_r, \
 	uml_arm64_gadget_scalar_other_##name##_##mode##_z}
-#define UML_SCALAR_OTHER_GADGETS(name) ScalarOtherGadgets{ \
+#define UML_SCALAR_OTHER_BASE_CHOICES(name, mode) ScalarOtherBaseChoices{ \
+	UML_SCALAR_OTHER_REGISTER_CHOICES(name, mode), \
+	ScalarOtherRegisterChoices{ \
+		uml_arm64_gadget_scalar_other_##name##_##mode##_r_sp, \
+		uml_arm64_gadget_scalar_other_##name##_##mode##_z_sp}}
+#define UML_SCALAR_OTHER_REGISTERS(name) ScalarOtherRegisterModes{ \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, uxtw_0), \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, x_0), \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, sxtw_0), \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, uxtw_1), \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, x_1), \
+	UML_SCALAR_OTHER_BASE_CHOICES(name, sxtw_1)}
+#define UML_SCALAR_OTHER_STORE_GADGETS(name) ScalarOtherGadgets{ \
 	ScalarOtherImmediateModes{ \
-		UML_SCALAR_OTHER_MODE(name, offset), \
-		UML_SCALAR_OTHER_MODE(name, pre), \
-		UML_SCALAR_OTHER_MODE(name, post), \
-		UML_SCALAR_OTHER_MODE(name, post_suppress)}, \
-	ScalarOtherRegisterModes{ \
-		UML_SCALAR_OTHER_MODE(name, uxtw_0), \
-		UML_SCALAR_OTHER_MODE(name, x_0), \
-		UML_SCALAR_OTHER_MODE(name, sxtw_0), \
-		UML_SCALAR_OTHER_MODE(name, uxtw_1), \
-		UML_SCALAR_OTHER_MODE(name, x_1), \
-		UML_SCALAR_OTHER_MODE(name, sxtw_1)}}
+		UML_SCALAR_OTHER_BASE_CHOICES(name, offset), \
+		UML_SCALAR_OTHER_BASE_CHOICES(name, pre), \
+		UML_SCALAR_OTHER_BASE_CHOICES(name, post), \
+		ScalarOtherBaseChoices{}}, \
+	UML_SCALAR_OTHER_REGISTERS(name)}
+#define UML_SCALAR_OTHER_LOAD_GADGETS(name) ScalarOtherGadgets{ \
+	ScalarOtherImmediateModes{ \
+		UML_SCALAR_OTHER_BASE_CHOICES(name, offset), \
+		UML_SCALAR_OTHER_BASE_CHOICES(name, pre), \
+		UML_SCALAR_OTHER_BASE_CHOICES(name, post), \
+		ScalarOtherBaseChoices{ \
+			ScalarOtherRegisterChoices{ \
+				uml_arm64_gadget_scalar_other_##name##_post_suppress_r, \
+				nullptr}, \
+			ScalarOtherRegisterChoices{}}}, \
+	UML_SCALAR_OTHER_REGISTERS(name)}
 
 [[nodiscard]] const ScalarOtherGadgets *scalar_other_gadgets(
 	unsigned size, unsigned operation) noexcept
 {
-	static constexpr auto store8 = UML_SCALAR_OTHER_GADGETS(store8);
-	static constexpr auto load8u = UML_SCALAR_OTHER_GADGETS(load8u);
-	static constexpr auto load8sx = UML_SCALAR_OTHER_GADGETS(load8sx);
-	static constexpr auto load8sw = UML_SCALAR_OTHER_GADGETS(load8sw);
-	static constexpr auto store16 = UML_SCALAR_OTHER_GADGETS(store16);
-	static constexpr auto load16u = UML_SCALAR_OTHER_GADGETS(load16u);
-	static constexpr auto load16sx = UML_SCALAR_OTHER_GADGETS(load16sx);
-	static constexpr auto load16sw = UML_SCALAR_OTHER_GADGETS(load16sw);
-	static constexpr auto store32 = UML_SCALAR_OTHER_GADGETS(store32);
-	static constexpr auto load32u = UML_SCALAR_OTHER_GADGETS(load32u);
-	static constexpr auto load32sx = UML_SCALAR_OTHER_GADGETS(load32sx);
-	static constexpr auto store64 = UML_SCALAR_OTHER_GADGETS(store64);
-	static constexpr auto load64u = UML_SCALAR_OTHER_GADGETS(load64u);
+	static constexpr auto store8 = UML_SCALAR_OTHER_STORE_GADGETS(store8);
+	static constexpr auto load8u = UML_SCALAR_OTHER_LOAD_GADGETS(load8u);
+	static constexpr auto load8sx = UML_SCALAR_OTHER_LOAD_GADGETS(load8sx);
+	static constexpr auto load8sw = UML_SCALAR_OTHER_LOAD_GADGETS(load8sw);
+	static constexpr auto store16 = UML_SCALAR_OTHER_STORE_GADGETS(store16);
+	static constexpr auto load16u = UML_SCALAR_OTHER_LOAD_GADGETS(load16u);
+	static constexpr auto load16sx = UML_SCALAR_OTHER_LOAD_GADGETS(load16sx);
+	static constexpr auto load16sw = UML_SCALAR_OTHER_LOAD_GADGETS(load16sw);
+	static constexpr auto store32 = UML_SCALAR_OTHER_STORE_GADGETS(store32);
+	static constexpr auto load32u = UML_SCALAR_OTHER_LOAD_GADGETS(load32u);
+	static constexpr auto load32sx = UML_SCALAR_OTHER_LOAD_GADGETS(load32sx);
+	static constexpr auto store64 = UML_SCALAR_OTHER_STORE_GADGETS(store64);
+	static constexpr auto load64u = UML_SCALAR_OTHER_LOAD_GADGETS(load64u);
 	switch (size * 4U + operation) {
 	case 0: return &store8;
 	case 1: return &load8u;
@@ -3661,11 +4162,15 @@ struct ScalarOtherGadgets final {
 	}
 }
 
-#undef UML_SCALAR_OTHER_GADGETS
-#undef UML_SCALAR_OTHER_MODE
+#undef UML_SCALAR_OTHER_LOAD_GADGETS
+#undef UML_SCALAR_OTHER_STORE_GADGETS
+#undef UML_SCALAR_OTHER_REGISTERS
+#undef UML_SCALAR_OTHER_BASE_CHOICES
+#undef UML_SCALAR_OTHER_REGISTER_CHOICES
 
-using VectorOtherImmediateModes = std::array<Gadget, 3>;
-using VectorOtherRegisterModes = std::array<Gadget, 6>;
+using VectorOtherBaseModes = std::array<Gadget, 2>;
+using VectorOtherImmediateModes = std::array<VectorOtherBaseModes, 3>;
+using VectorOtherRegisterModes = std::array<VectorOtherBaseModes, 6>;
 
 struct VectorOtherGadgets final {
 	VectorOtherImmediateModes immediate;
@@ -3674,16 +4179,34 @@ struct VectorOtherGadgets final {
 
 #define UML_VECTOR_OTHER_GADGETS(name) VectorOtherGadgets{ \
 	VectorOtherImmediateModes{ \
-		uml_arm64_gadget_vector_other_##name##_offset, \
-		uml_arm64_gadget_vector_other_##name##_pre, \
-		uml_arm64_gadget_vector_other_##name##_post}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_offset, \
+			uml_arm64_gadget_vector_other_##name##_offset_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_pre, \
+			uml_arm64_gadget_vector_other_##name##_pre_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_post, \
+			uml_arm64_gadget_vector_other_##name##_post_sp}}, \
 	VectorOtherRegisterModes{ \
-		uml_arm64_gadget_vector_other_##name##_uxtw_0, \
-		uml_arm64_gadget_vector_other_##name##_x_0, \
-		uml_arm64_gadget_vector_other_##name##_sxtw_0, \
-		uml_arm64_gadget_vector_other_##name##_uxtw_1, \
-		uml_arm64_gadget_vector_other_##name##_x_1, \
-		uml_arm64_gadget_vector_other_##name##_sxtw_1}}
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_uxtw_0, \
+			uml_arm64_gadget_vector_other_##name##_uxtw_0_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_x_0, \
+			uml_arm64_gadget_vector_other_##name##_x_0_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_sxtw_0, \
+			uml_arm64_gadget_vector_other_##name##_sxtw_0_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_uxtw_1, \
+			uml_arm64_gadget_vector_other_##name##_uxtw_1_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_x_1, \
+			uml_arm64_gadget_vector_other_##name##_x_1_sp}, \
+		VectorOtherBaseModes{ \
+			uml_arm64_gadget_vector_other_##name##_sxtw_1, \
+			uml_arm64_gadget_vector_other_##name##_sxtw_1_sp}}}
 
 [[nodiscard]] const VectorOtherGadgets *vector_other_gadgets(
 	unsigned size, unsigned operation) noexcept
@@ -3710,7 +4233,8 @@ struct VectorOtherGadgets final {
 #undef UML_VECTOR_OTHER_GADGETS
 
 using IntegerPairRegisterModes = std::array<Gadget, 4>;
-using IntegerPairAddressModes = std::array<IntegerPairRegisterModes, 4>;
+using IntegerPairBaseModes = std::array<IntegerPairRegisterModes, 2>;
+using IntegerPairAddressModes = std::array<IntegerPairBaseModes, 4>;
 
 #define UML_INTEGER_PAIR_REGISTER_MODES(name, mode) \
 	IntegerPairRegisterModes{ \
@@ -3718,20 +4242,36 @@ using IntegerPairAddressModes = std::array<IntegerPairRegisterModes, 4>;
 		uml_arm64_gadget_integer_pair_##name##_##mode##_rz, \
 		uml_arm64_gadget_integer_pair_##name##_##mode##_zr, \
 		uml_arm64_gadget_integer_pair_##name##_##mode##_zz}
-#define UML_INTEGER_PAIR_GADGETS(name) IntegerPairAddressModes{ \
-	UML_INTEGER_PAIR_REGISTER_MODES(name, 0), \
-	UML_INTEGER_PAIR_REGISTER_MODES(name, 1), \
-	UML_INTEGER_PAIR_REGISTER_MODES(name, 2), \
-	UML_INTEGER_PAIR_REGISTER_MODES(name, 3)}
+#define UML_INTEGER_PAIR_SP_REGISTER_MODES(name, mode) \
+	IntegerPairRegisterModes{ \
+		uml_arm64_gadget_integer_pair_##name##_##mode##_rr_sp, \
+		uml_arm64_gadget_integer_pair_##name##_##mode##_rz_sp, \
+		uml_arm64_gadget_integer_pair_##name##_##mode##_zr_sp, \
+		uml_arm64_gadget_integer_pair_##name##_##mode##_zz_sp}
+#define UML_INTEGER_PAIR_BASE_MODES(name, mode) IntegerPairBaseModes{ \
+	UML_INTEGER_PAIR_REGISTER_MODES(name, mode), \
+	UML_INTEGER_PAIR_SP_REGISTER_MODES(name, mode)}
+/* Address-mode index 3 is load-only. Reuse index 0 in store tables instead
+ * of emitting a symbol the translator can never select. */
+#define UML_INTEGER_PAIR_STORE_GADGETS(name) IntegerPairAddressModes{ \
+	UML_INTEGER_PAIR_BASE_MODES(name, 0), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 1), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 2), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 0)}
+#define UML_INTEGER_PAIR_LOAD_GADGETS(name) IntegerPairAddressModes{ \
+	UML_INTEGER_PAIR_BASE_MODES(name, 0), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 1), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 2), \
+	UML_INTEGER_PAIR_BASE_MODES(name, 3)}
 
 [[nodiscard]] const IntegerPairAddressModes *integer_pair_gadgets(
 	unsigned operation, bool load) noexcept
 {
-	static constexpr auto store32 = UML_INTEGER_PAIR_GADGETS(store32);
-	static constexpr auto load32 = UML_INTEGER_PAIR_GADGETS(load32);
-	static constexpr auto load32s = UML_INTEGER_PAIR_GADGETS(load32s);
-	static constexpr auto store64 = UML_INTEGER_PAIR_GADGETS(store64);
-	static constexpr auto load64 = UML_INTEGER_PAIR_GADGETS(load64);
+	static constexpr auto store32 = UML_INTEGER_PAIR_STORE_GADGETS(store32);
+	static constexpr auto load32 = UML_INTEGER_PAIR_LOAD_GADGETS(load32);
+	static constexpr auto load32s = UML_INTEGER_PAIR_LOAD_GADGETS(load32s);
+	static constexpr auto store64 = UML_INTEGER_PAIR_STORE_GADGETS(store64);
+	static constexpr auto load64 = UML_INTEGER_PAIR_LOAD_GADGETS(load64);
 	if (operation == 1U)
 		return load ? &load32s : nullptr;
 	if (operation >= 2U)
@@ -3739,15 +4279,22 @@ using IntegerPairAddressModes = std::array<IntegerPairRegisterModes, 4>;
 	return load ? &load32 : &store32;
 }
 
-#undef UML_INTEGER_PAIR_GADGETS
+#undef UML_INTEGER_PAIR_LOAD_GADGETS
+#undef UML_INTEGER_PAIR_STORE_GADGETS
+#undef UML_INTEGER_PAIR_BASE_MODES
+#undef UML_INTEGER_PAIR_SP_REGISTER_MODES
 #undef UML_INTEGER_PAIR_REGISTER_MODES
 
-using VectorPairAddressModes = std::array<Gadget, 3>;
+using VectorPairBaseModes = std::array<Gadget, 2>;
+using VectorPairAddressModes = std::array<VectorPairBaseModes, 3>;
 
 #define UML_VECTOR_PAIR_GADGETS(name) VectorPairAddressModes{ \
-	uml_arm64_gadget_vector_pair_##name##_0, \
-	uml_arm64_gadget_vector_pair_##name##_1, \
-	uml_arm64_gadget_vector_pair_##name##_2}
+	VectorPairBaseModes{uml_arm64_gadget_vector_pair_##name##_0, \
+		uml_arm64_gadget_vector_pair_##name##_0_sp}, \
+	VectorPairBaseModes{uml_arm64_gadget_vector_pair_##name##_1, \
+		uml_arm64_gadget_vector_pair_##name##_1_sp}, \
+	VectorPairBaseModes{uml_arm64_gadget_vector_pair_##name##_2, \
+		uml_arm64_gadget_vector_pair_##name##_2_sp}}
 
 [[nodiscard]] const VectorPairAddressModes &vector_pair_gadgets(
 	unsigned operation, bool load) noexcept
@@ -3768,16 +4315,22 @@ using VectorPairAddressModes = std::array<Gadget, 3>;
 #undef UML_VECTOR_PAIR_GADGETS
 
 using SimdStructureAddressModes = std::array<Gadget, 3>;
+using SimdStructureBases = std::array<SimdStructureAddressModes, 2>;
 struct SimdStructureGadgets final {
-	SimdStructureAddressModes store;
-	SimdStructureAddressModes load;
+	SimdStructureBases store;
+	SimdStructureBases load;
 };
 
 #define UML_SIMD_STRUCTURE_DIRECTION(base, direction) \
-	SimdStructureAddressModes{ \
-		uml_arm64_gadget_simd_structure_##base##_##direction##_0, \
-		uml_arm64_gadget_simd_structure_##base##_##direction##_1, \
-		uml_arm64_gadget_simd_structure_##base##_##direction##_2}
+	SimdStructureBases{ \
+		SimdStructureAddressModes{ \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_0, \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_1, \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_2}, \
+		SimdStructureAddressModes{ \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_s0, \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_s1, \
+			uml_arm64_gadget_simd_structure_##base##_##direction##_s2}}
 #define UML_SIMD_STRUCTURE_GADGETS(base) SimdStructureGadgets{ \
 	UML_SIMD_STRUCTURE_DIRECTION(base, store), \
 	UML_SIMD_STRUCTURE_DIRECTION(base, load)}
@@ -3830,12 +4383,18 @@ struct SimdStructureGadgets final {
 #undef UML_SIMD_STRUCTURE_DIRECTION
 
 using SimdReplicateAddressModes = std::array<Gadget, 3>;
-using SimdReplicateCounts = std::array<SimdReplicateAddressModes, 4>;
+using SimdReplicateBases = std::array<SimdReplicateAddressModes, 2>;
+using SimdReplicateCounts = std::array<SimdReplicateBases, 4>;
 
-#define UML_SIMD_REPLICATE_MODES(type, count) SimdReplicateAddressModes{ \
-	uml_arm64_gadget_simd_replicate_##type##_##count##_0, \
-	uml_arm64_gadget_simd_replicate_##type##_##count##_1, \
-	uml_arm64_gadget_simd_replicate_##type##_##count##_2}
+#define UML_SIMD_REPLICATE_MODES(type, count) SimdReplicateBases{ \
+	SimdReplicateAddressModes{ \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_0, \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_1, \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_2}, \
+	SimdReplicateAddressModes{ \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_s0, \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_s1, \
+		uml_arm64_gadget_simd_replicate_##type##_##count##_s2}}
 #define UML_SIMD_REPLICATE_GADGETS(type) SimdReplicateCounts{ \
 	UML_SIMD_REPLICATE_MODES(type, 1), \
 	UML_SIMD_REPLICATE_MODES(type, 2), \
@@ -3862,17 +4421,23 @@ using SimdReplicateCounts = std::array<SimdReplicateAddressModes, 4>;
 #undef UML_SIMD_REPLICATE_MODES
 
 using SimdLaneAddressModes = std::array<Gadget, 3>;
+using SimdLaneBases = std::array<SimdLaneAddressModes, 2>;
 struct SimdLaneGadgets final {
-	SimdLaneAddressModes store;
-	SimdLaneAddressModes load;
+	SimdLaneBases store;
+	SimdLaneBases load;
 };
 using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 
 #define UML_SIMD_LANE_DIRECTION(type, count, direction) \
-	SimdLaneAddressModes{ \
-		uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_0, \
-		uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_1, \
-		uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_2}
+	SimdLaneBases{ \
+		SimdLaneAddressModes{ \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_0, \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_1, \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_2}, \
+		SimdLaneAddressModes{ \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s0, \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s1, \
+			uml_arm64_gadget_simd_lane_##type##_##count##_##direction##_s2}}
 #define UML_SIMD_LANE_COUNT(type, count) SimdLaneGadgets{ \
 	UML_SIMD_LANE_DIRECTION(type, count, store), \
 	UML_SIMD_LANE_DIRECTION(type, count, load)}
@@ -3897,162 +4462,173 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 #undef UML_SIMD_LANE_COUNT
 #undef UML_SIMD_LANE_DIRECTION
 
-[[nodiscard]] bool host_arm_feature(const char *name) noexcept
-{
-	int enabled = 0;
-	std::size_t size = sizeof(enabled);
-	return sysctlbyname(name, &enabled, &size, nullptr, 0) == 0 && enabled != 0;
-}
-
 [[nodiscard]] bool host_has_sm3() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_SM3");
-	return enabled;
+	return host_arm_features().has(ArmFeature::sm3);
 }
 
 [[nodiscard]] bool host_has_sm4() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_SM4");
-	return enabled;
+	return host_arm_features().has(ArmFeature::sm4);
+}
+
+[[nodiscard]] bool host_has_sha1() noexcept
+{
+	return host_arm_features().has(ArmFeature::sha1);
+}
+
+[[nodiscard]] bool host_has_sha256() noexcept
+{
+	return host_arm_features().has(ArmFeature::sha256);
+}
+
+[[nodiscard]] bool host_has_sha512() noexcept
+{
+	return host_arm_features().has(ArmFeature::sha512);
+}
+
+[[nodiscard]] bool host_has_sha3() noexcept
+{
+	return host_arm_features().has(ArmFeature::sha3);
+}
+
+[[nodiscard]] bool host_has_aes() noexcept
+{
+	return host_arm_features().has(ArmFeature::advanced_simd) &&
+		host_arm_features().has(ArmFeature::aes);
+}
+
+[[nodiscard]] bool host_has_pmull() noexcept
+{
+	return host_arm_features().has(ArmFeature::pmull);
+}
+
+[[nodiscard]] bool host_has_rdm() noexcept
+{
+	return host_arm_features().has(ArmFeature::rdm);
+}
+
+[[nodiscard]] bool host_has_dotprod() noexcept
+{
+	return host_arm_features().has(ArmFeature::dotprod);
 }
 
 [[nodiscard]] bool host_has_i8mm() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_I8MM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::i8mm);
 }
 
 [[nodiscard]] bool host_has_lrcpc3() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_LRCPC3");
-	return enabled;
+	return host_arm_features().has(ArmFeature::lrcpc3);
 }
 
 [[nodiscard]] bool host_has_lut() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_LUT");
-	return enabled;
+	return host_arm_features().has(ArmFeature::lut);
 }
 
 [[nodiscard]] bool host_has_frintts() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_FRINTTS");
-	return enabled;
+	return host_arm_features().has(ArmFeature::frintts);
 }
 
 [[nodiscard]] bool host_has_afp() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_AFP");
-	return enabled;
+	return host_arm_features().afp;
 }
 
 [[nodiscard]] bool host_has_faminmax() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_FAMINMAX");
-	return enabled;
+	return host_arm_features().has(ArmFeature::faminmax);
 }
 
 [[nodiscard]] bool host_has_fp8() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_FP8");
-	return enabled;
+	return host_arm_features().has(ArmFeature::fp8);
 }
 
 [[nodiscard]] bool host_has_fp8dot2() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_FP8DOT2");
-	return enabled;
+	return host_arm_features().has(ArmFeature::fp8dot2);
 }
 
 [[nodiscard]] bool host_has_fp8dot4() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_FP8DOT4");
-	return enabled;
+	return host_arm_features().has(ArmFeature::fp8dot4);
 }
 
 [[nodiscard]] bool host_has_fp8fma() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_FP8FMA");
-	return enabled;
+	return host_arm_features().has(ArmFeature::fp8fma);
 }
 
 [[nodiscard]] bool host_has_f8f16mm() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_F8F16MM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::f8f16mm);
 }
 
 [[nodiscard]] bool host_has_f8f32mm() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_F8F32MM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::f8f32mm);
 }
 
 [[nodiscard]] bool host_has_bf16() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_BF16");
-	return enabled;
+	return host_arm_features().has(ArmFeature::bf16);
 }
 
 [[nodiscard]] bool host_has_ebf16() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_EBF16");
-	return enabled;
+	return host_arm_features().has(ArmFeature::ebf16);
 }
 
 [[nodiscard]] bool host_has_fhm() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_FHM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::fhm);
 }
 
 [[nodiscard]] bool host_has_f16mm() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_F16MM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::f16mm);
 }
 
 [[nodiscard]] bool host_has_f16f32mm() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_F16F32MM");
-	return enabled;
+	return host_arm_features().has(ArmFeature::f16f32mm);
 }
 
 [[nodiscard]] bool host_has_f16f32dot() noexcept
 {
-	static const bool enabled =
-		host_arm_feature("hw.optional.arm.FEAT_F16F32DOT");
-	return enabled;
+	return host_arm_features().has(ArmFeature::f16f32dot);
 }
 
 [[nodiscard]] bool host_has_lsfe() noexcept
 {
-	static const bool enabled = host_arm_feature("hw.optional.arm.FEAT_LSFE");
-	return enabled;
+	return host_arm_features().has(ArmFeature::lsfe);
 }
 
 using AtomicFloatingVariants = std::array<Gadget, 6>;
-using AtomicFloatingOperations = std::array<AtomicFloatingVariants, 5>;
+using AtomicFloatingBases = std::array<AtomicFloatingVariants, 2>;
+using AtomicFloatingOperations = std::array<AtomicFloatingBases, 5>;
 using AtomicFloatingGadgets = std::array<AtomicFloatingOperations, 4>;
 
 #define UML_ATOMIC_FLOATING_VARIANTS(implementation, size, operation) \
-	AtomicFloatingVariants{ \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed, \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release, \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire, \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release, \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed, \
-		uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release}
+	AtomicFloatingBases{ \
+		AtomicFloatingVariants{ \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release}, \
+		AtomicFloatingVariants{ \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed_sp, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release_sp, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_sp, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release_sp, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed_sp, \
+			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release_sp}}
 #define UML_ATOMIC_FLOATING_OPERATIONS(implementation, size) \
 	AtomicFloatingOperations{ \
 		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, add), \
@@ -4164,12 +4740,20 @@ using RcwScalarGadgets = std::array<RcwScalarSoftGadgets, 4>;
 		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rz, \
 		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr, \
 		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zz}
+#define UML_RCW_SCALAR_ACQUIRE_GADGETS(operation, soft, ordering, suppressed) \
+	AtomicRegisterGadgets{ \
+		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr, \
+		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##suppressed##_rz, \
+		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr, \
+		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##suppressed##_zz}
 #define UML_RCW_SCALAR_ORDERING_GADGETS(operation, soft) \
 	RcwScalarOrderingGadgets{ \
 		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, relaxed), \
 		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, release), \
-		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, acquire), \
-		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, acquire_release)}
+		UML_RCW_SCALAR_ACQUIRE_GADGETS( \
+			operation, soft, acquire, relaxed), \
+		UML_RCW_SCALAR_ACQUIRE_GADGETS( \
+			operation, soft, acquire_release, release)}
 #define UML_RCW_SCALAR_SOFT_GADGETS(operation) RcwScalarSoftGadgets{ \
 	UML_RCW_SCALAR_ORDERING_GADGETS(operation, hard), \
 	UML_RCW_SCALAR_ORDERING_GADGETS(operation, soft)}
@@ -4181,6 +4765,7 @@ constexpr RcwScalarGadgets rcw_scalar_gadgets{
 };
 #undef UML_RCW_SCALAR_SOFT_GADGETS
 #undef UML_RCW_SCALAR_ORDERING_GADGETS
+#undef UML_RCW_SCALAR_ACQUIRE_GADGETS
 #undef UML_RCW_SCALAR_REGISTER_GADGETS
 
 using RcwPairCasOrderingGadgets = std::array<AtomicRegisterGadgets, 4>;
@@ -4506,6 +5091,12 @@ static_assert(offsetof(CpuState, pstate_sm) == 1091);
 static_assert(offsetof(CpuState, pstate_za) == 1092);
 static_assert(offsetof(CpuState, pstate_daif_access) == 1093);
 static_assert(offsetof(CpuState, pstate_daif) == 1094);
+static_assert(offsetof(CpuState, exclusive_address) == 1096);
+static_assert(offsetof(CpuState, exclusive_key) == 1104);
+static_assert(offsetof(CpuState, exclusive_value) == 1112);
+static_assert(offsetof(CpuState, exclusive_value2) == 1120);
+static_assert(offsetof(CpuState, exclusive_version) == 1128);
+static_assert(offsetof(CpuState, exclusive_size) == 1136);
 static_assert(offsetof(CpuState, deferred_vectors) == 1144);
 static_assert(offsetof(CpuState, deferred_fpcr) == 1152);
 static_assert(offsetof(CpuState, deferred_fpsr) == 1156);
@@ -4517,6 +5108,81 @@ static_assert(offsetof(CpuState, gadget_host_fpcr) == 1184);
 static_assert(offsetof(CpuState, gadget_host_fpsr) == 1192);
 static_assert(offsetof(CpuState, gadget_fp_active) == 1200);
 static_assert(offsetof(CpuState, gadget_indirect_miss) == 1208);
+static_assert(offsetof(CpuState, gadget_host_fpmr) == 1216);
+static_assert(offsetof(CpuState, gadget_fpmr_active) == 1224);
+static_assert(offsetof(CpuState, gcs_pointer) == 1232);
+static_assert(offsetof(CpuState, gcs_implemented) == 1240);
+static_assert(offsetof(CpuState, gcs_push_enabled) == 1241);
+static_assert(offsetof(CpuState, gcs_store_enabled) == 1242);
+
+struct GcsGadget final {
+	Gadget entry{};
+	std::uintptr_t operand{};
+	bool has_operand{};
+	bool always_traps{};
+};
+
+[[nodiscard, maybe_unused]] constexpr std::optional<GcsGadget>
+gcs_gadget(std::uint32_t instruction) noexcept
+{
+	using uml::backend::arm64::detail::GcsOperation;
+	const auto decoded = uml::backend::arm64::detail::decode_gcs(instruction);
+	if (!decoded)
+		return std::nullopt;
+	if (uml::backend::arm64::detail::
+	    gcs_is_privileged_exception_operation(decoded.operation))
+		return GcsGadget{uml_arm64_gadget_illegal, 0, false, true};
+
+	const auto register_offset = [](unsigned index) constexpr {
+		return static_cast<std::uintptr_t>(
+			offsetof(CpuState, registers) + index * sizeof(std::uint64_t));
+	};
+	const bool zero = decoded.transfer == 31U;
+	switch (decoded.operation) {
+	case GcsOperation::pop_main:
+		return GcsGadget{
+			zero ? uml_arm64_gadget_gcs_popm_z :
+				uml_arm64_gadget_gcs_popm_r,
+			zero ? 0 : register_offset(decoded.transfer), !zero, false};
+	case GcsOperation::push_main:
+		return GcsGadget{
+			zero ? uml_arm64_gadget_gcs_pushm_z :
+				uml_arm64_gadget_gcs_pushm_r,
+			zero ? 0 : register_offset(decoded.transfer), !zero, false};
+	case GcsOperation::switch_stack_1:
+		return GcsGadget{
+			zero ? uml_arm64_gadget_gcs_ss1_z :
+				uml_arm64_gadget_gcs_ss1_r,
+			zero ? 0 : register_offset(decoded.transfer), !zero, false};
+	case GcsOperation::switch_stack_2:
+		return GcsGadget{
+			zero ? uml_arm64_gadget_gcs_ss2_z :
+				uml_arm64_gadget_gcs_ss2_r,
+			zero ? 0 : register_offset(decoded.transfer), !zero, false};
+	case GcsOperation::store:
+	case GcsOperation::store_unprivileged: {
+		const bool stack = decoded.base == 31U;
+		const std::array<std::array<Gadget, 2>, 2> stores{{
+			{uml_arm64_gadget_gcs_store_rr,
+			 uml_arm64_gadget_gcs_store_rz},
+			{uml_arm64_gadget_gcs_store_sr,
+			 uml_arm64_gadget_gcs_store_sz},
+		}};
+		const auto base_offset = stack ? offsetof(CpuState, sp) :
+			register_offset(decoded.base);
+		const auto source_offset = zero ? 0 :
+			register_offset(decoded.transfer);
+		return GcsGadget{stores[stack][zero],
+			base_offset | (source_offset << 16), true, false};
+	}
+	case GcsOperation::none:
+	case GcsOperation::pop_exception_context:
+	case GcsOperation::pop_exception:
+	case GcsOperation::push_exception:
+		break;
+	}
+	return std::nullopt;
+}
 
 /* Rows are PACIA, PACIB, PACDA, PACDB, AUTIA, AUTIB, AUTDA, AUTDB;
  * columns are register/SP modifier and architecturally-zero modifier. */
@@ -4611,6 +5277,31 @@ decode_pointer_auth_hint(std::uint32_t instruction) noexcept
 		(key_b ? bra_b : bra_a)[variant];
 }
 
+[[nodiscard]] Gadget pointer_auth_guarded_call_gadget(bool key_b,
+	bool zero_modifier, bool zero_target) noexcept
+{
+	const unsigned variant = (static_cast<unsigned>(zero_target) << 1) |
+		static_cast<unsigned>(zero_modifier);
+	static constexpr std::array<Gadget, 4> key_a{
+		uml_arm64_gadget_pauth_branch_blra_gcs_a_rr,
+		uml_arm64_gadget_pauth_branch_blra_gcs_a_rz,
+		uml_arm64_gadget_pauth_branch_blra_gcs_a_zr,
+		uml_arm64_gadget_pauth_branch_blra_gcs_a_zz};
+	static constexpr std::array<Gadget, 4> key_b_entries{
+		uml_arm64_gadget_pauth_branch_blra_gcs_b_rr,
+		uml_arm64_gadget_pauth_branch_blra_gcs_b_rz,
+		uml_arm64_gadget_pauth_branch_blra_gcs_b_zr,
+		uml_arm64_gadget_pauth_branch_blra_gcs_b_zz};
+	return (key_b ? key_b_entries : key_a)[variant];
+}
+
+[[nodiscard]] Gadget pointer_auth_guarded_return_gadget(
+	bool key_b) noexcept
+{
+	return key_b ? uml_arm64_gadget_pauth_return_gcs_b :
+		uml_arm64_gadget_pauth_return_gcs_a;
+}
+
 [[nodiscard]] Gadget pointer_auth_load_gadget(bool key_b, bool writeback,
 	bool base_sp, bool discard) noexcept
 {
@@ -4652,13 +5343,9 @@ decode_pointer_auth_hint(std::uint32_t instruction) noexcept
 [[nodiscard]] constexpr bool pointer_auth_lr_unavailable(
 	std::uint32_t instruction) noexcept
 {
-	return (instruction & 0xffff'fbffU) == 0xdac1'8bfeU ||
-		(instruction & 0xffff'fbffU) == 0xdac1'bbfeU ||
-		(instruction & 0xffff'fbffU) == 0xdac1'a3feU ||
-		(instruction & 0xffff'fbffU) == 0xdac1'83feU ||
-		(instruction & 0xffff'f81fU) == 0xdac1'901eU ||
-		(instruction & 0xffc0'001fU) == 0xf380'001fU ||
-		(instruction & 0xffc0'001fU) == 0x5500'001fU ||
+	return (instruction & 0xffff'c000U) == 0xdac1'8000U ||
+		(instruction & 0xffc0'0000U) == 0xf380'0000U ||
+		(instruction & 0xffc0'0000U) == 0x5500'0000U ||
 		((instruction & 0xffff'fbe0U) == 0xd65f'0be0U &&
 		 (instruction & 31U) != 31U);
 }
@@ -4677,17 +5364,10 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 }
 
 template<typename Allocator>
-void emit_interpreter_or_fatal(
-	std::vector<std::uintptr_t, Allocator> &words,
-	std::uint32_t instruction, std::uint64_t address)
+void emit_fatal(std::vector<std::uintptr_t, Allocator> &words,
+	std::uint64_t address)
 {
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	emit(words, uml_arm64_gadget_decoded);
-	emit(words, instruction);
-#else
-	(void)instruction;
 	emit(words, uml_arm64_gadget_fatal);
-#endif
 	emit(words, address);
 }
 
@@ -4732,6 +5412,35 @@ void emit_interpreter_or_fatal(
 	case 13: return uml_arm64_gadget_branch_le_linked;
 	default: return uml_arm64_gadget_branch_always_linked;
 	}
+}
+
+[[nodiscard]] Gadget compare_branch_gadget(bool wide, bool nonzero,
+	bool linked) noexcept
+{
+	static constexpr std::array table{
+		std::array{
+			std::array{uml_arm64_gadget_compare_branch_w_z,
+				uml_arm64_gadget_compare_branch_w_z_linked},
+			std::array{uml_arm64_gadget_compare_branch_w_nz,
+				uml_arm64_gadget_compare_branch_w_nz_linked}},
+		std::array{
+			std::array{uml_arm64_gadget_compare_branch_x_z,
+				uml_arm64_gadget_compare_branch_x_z_linked},
+			std::array{uml_arm64_gadget_compare_branch_x_nz,
+				uml_arm64_gadget_compare_branch_x_nz_linked}},
+	};
+	return table[wide][nonzero][linked];
+}
+
+[[nodiscard]] Gadget test_branch_gadget(bool nonzero, bool linked) noexcept
+{
+	static constexpr std::array table{
+		std::array{uml_arm64_gadget_test_branch_z,
+			uml_arm64_gadget_test_branch_z_linked},
+		std::array{uml_arm64_gadget_test_branch_nz,
+			uml_arm64_gadget_test_branch_nz_linked},
+	};
+	return table[nonzero][linked];
 }
 
 #define UML_CMPBR_I_GADGETS(size) \
@@ -4828,6 +5537,27 @@ void emit_interpreter_or_fatal(
 		[base_sp][status_discard];
 }
 
+[[nodiscard]] constexpr std::uint16_t ls64_register_offset(
+	unsigned index) noexcept
+{
+	static_assert(offsetof(CpuState, registers) == 0);
+	return static_cast<std::uint16_t>(
+		offsetof(CpuState, registers) + index * sizeof(std::uint64_t));
+}
+
+[[nodiscard]] constexpr std::uintptr_t ls64_operand(unsigned first,
+	unsigned base, unsigned status, bool base_sp,
+	bool status_discard) noexcept
+{
+	const auto base_offset =
+		base_sp ? 0U : ls64_register_offset(base);
+	const auto status_offset =
+		status_discard ? 0U : ls64_register_offset(status);
+	return static_cast<std::uintptr_t>(ls64_register_offset(first)) |
+		(static_cast<std::uintptr_t>(base_offset) << 16) |
+		(static_cast<std::uintptr_t>(status_offset) << 32);
+}
+
 [[nodiscard]] Gadget mops_gadget(
 	unsigned family, unsigned stage, bool source_zero) noexcept
 {
@@ -4866,9 +5596,52 @@ struct SystemRegisterGadget final {
 
 struct PstateImmediateGadget final {
 	Gadget gadget;
-	std::uintptr_t operand;
 	bool valid;
 	bool fault_address;
+};
+
+[[nodiscard]] constexpr PstateImmediateGadget pstate_boolean_gadget(
+	Gadget zero, Gadget one, unsigned immediate) noexcept
+{
+	return {(immediate & 1U) != 0 ? one : zero, true, false};
+}
+
+constexpr std::array<Gadget, 16> pstate_daif_set_gadgets{
+	uml_arm64_gadget_pstate_daif_set_0,
+	uml_arm64_gadget_pstate_daif_set_1,
+	uml_arm64_gadget_pstate_daif_set_2,
+	uml_arm64_gadget_pstate_daif_set_3,
+	uml_arm64_gadget_pstate_daif_set_4,
+	uml_arm64_gadget_pstate_daif_set_5,
+	uml_arm64_gadget_pstate_daif_set_6,
+	uml_arm64_gadget_pstate_daif_set_7,
+	uml_arm64_gadget_pstate_daif_set_8,
+	uml_arm64_gadget_pstate_daif_set_9,
+	uml_arm64_gadget_pstate_daif_set_10,
+	uml_arm64_gadget_pstate_daif_set_11,
+	uml_arm64_gadget_pstate_daif_set_12,
+	uml_arm64_gadget_pstate_daif_set_13,
+	uml_arm64_gadget_pstate_daif_set_14,
+	uml_arm64_gadget_pstate_daif_set_15,
+};
+
+constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
+	uml_arm64_gadget_pstate_daif_clear_0,
+	uml_arm64_gadget_pstate_daif_clear_1,
+	uml_arm64_gadget_pstate_daif_clear_2,
+	uml_arm64_gadget_pstate_daif_clear_3,
+	uml_arm64_gadget_pstate_daif_clear_4,
+	uml_arm64_gadget_pstate_daif_clear_5,
+	uml_arm64_gadget_pstate_daif_clear_6,
+	uml_arm64_gadget_pstate_daif_clear_7,
+	uml_arm64_gadget_pstate_daif_clear_8,
+	uml_arm64_gadget_pstate_daif_clear_9,
+	uml_arm64_gadget_pstate_daif_clear_10,
+	uml_arm64_gadget_pstate_daif_clear_11,
+	uml_arm64_gadget_pstate_daif_clear_12,
+	uml_arm64_gadget_pstate_daif_clear_13,
+	uml_arm64_gadget_pstate_daif_clear_14,
+	uml_arm64_gadget_pstate_daif_clear_15,
 };
 
 [[nodiscard]] constexpr PstateImmediateGadget pstate_immediate_gadget(
@@ -4878,33 +5651,46 @@ struct PstateImmediateGadget final {
 	const unsigned immediate = (instruction >> 8) & 15U;
 	const unsigned op2 = (instruction >> 5) & 7U;
 	if (op1 != 3U)
-		return {uml_arm64_gadget_illegal, 0, false, false};
-	const auto store = [immediate](std::size_t offset) {
-		return PstateImmediateGadget{uml_arm64_gadget_pstate_store,
-			offset | (static_cast<std::uintptr_t>(immediate & 1U) << 16),
-			true, false};
-	};
+		return {uml_arm64_gadget_illegal, false, false};
 	switch (op2) {
-	case 1: return store(offsetof(CpuState, pstate_ssbs));
-	case 2: return store(offsetof(CpuState, pstate_dit));
+	case 1:
+		return pstate_boolean_gadget(
+			uml_arm64_gadget_pstate_ssbs_0,
+			uml_arm64_gadget_pstate_ssbs_1, immediate);
+	case 2:
+		return pstate_boolean_gadget(
+			uml_arm64_gadget_pstate_dit_0,
+			uml_arm64_gadget_pstate_dit_1, immediate);
 	case 3:
+		if ((immediate & 8U) != 0)
+			break;
 		switch ((immediate >> 1) & 3U) {
-		case 1: return store(offsetof(CpuState, pstate_sm));
-		case 2: return store(offsetof(CpuState, pstate_za));
+		case 1:
+			return pstate_boolean_gadget(
+				uml_arm64_gadget_pstate_sm_0,
+				uml_arm64_gadget_pstate_sm_1, immediate);
+		case 2:
+			return pstate_boolean_gadget(
+				uml_arm64_gadget_pstate_za_0,
+				uml_arm64_gadget_pstate_za_1, immediate);
 		case 3:
-			return {uml_arm64_gadget_pstate_smza_store,
-				immediate & 1U, true, false};
+			return pstate_boolean_gadget(
+				uml_arm64_gadget_pstate_smza_0,
+				uml_arm64_gadget_pstate_smza_1, immediate);
 		default: break;
 		}
 		break;
-	case 4: return store(offsetof(CpuState, pstate_tco));
+	case 4:
+		return pstate_boolean_gadget(
+			uml_arm64_gadget_pstate_tco_0,
+			uml_arm64_gadget_pstate_tco_1, immediate);
 	case 6:
-		return {uml_arm64_gadget_pstate_daif_set, immediate, true, true};
+		return {pstate_daif_set_gadgets[immediate], true, true};
 	case 7:
-		return {uml_arm64_gadget_pstate_daif_clear, immediate, true, true};
+		return {pstate_daif_clear_gadgets[immediate], true, true};
 	default: break;
 	}
-	return {uml_arm64_gadget_illegal, 0, false, false};
+	return {uml_arm64_gadget_illegal, false, false};
 }
 
 [[nodiscard]] constexpr SystemRegisterGadget system_register_gadget(
@@ -5118,10 +5904,12 @@ struct PstateImmediateGadget final {
 		UML_CONDITIONAL_SELECT_FAST_ROW(ge),
 		UML_CONDITIONAL_SELECT_FAST_ROW(lt),
 		UML_CONDITIONAL_SELECT_FAST_ROW(gt),
-		UML_CONDITIONAL_SELECT_FAST_ROW(le),
-		UML_CONDITIONAL_SELECT_FAST_ROW(always)};
-	return table[condition < 14U ? condition : 14U]
-		[operation * 2U + is_64_bit];
+		UML_CONDITIONAL_SELECT_FAST_ROW(le)};
+	if (condition >= 14U)
+		return is_64_bit ?
+			uml_arm64_gadget_conditional_select_fast_always_x :
+			uml_arm64_gadget_conditional_select_fast_always_w;
+	return table[condition][operation * 2U + is_64_bit];
 }
 
 #undef UML_CONDITIONAL_SELECT_FAST_ROW
@@ -5153,12 +5941,20 @@ struct PstateImmediateGadget final {
 [[nodiscard]] Gadget memory_barrier_gadget(std::uint32_t instruction) noexcept
 {
 	if (instruction == 0xd503'30ffU)
-		return uml_arm64_gadget_speculation_barrier;
+		return host_arm_features().has(ArmFeature::sb) ?
+			uml_arm64_gadget_speculation_barrier :
+			uml_arm64_gadget_speculation_barrier_fallback;
 	if ((instruction & 0xffff'f3ffU) == 0xd503'323fU) {
+		if (host_arm_features().has(ArmFeature::xs)) {
+			static constexpr std::array<Gadget, 4> native{
+				uml_arm64_gadget_dsb_nxs_0,
+				uml_arm64_gadget_dsb_nxs_1,
+				uml_arm64_gadget_dsb_nxs_2,
+				uml_arm64_gadget_dsb_nxs_3};
+			return native[(instruction >> 10) & 3U];
+		}
 		/* A full DSB is stronger than its nXS counterpart. Preserve the
-		 * requested shareability scope while remaining safe on hosts without
-		 * FEAT_XS.
-		 */
+		 * requested shareability scope on hosts without FEAT_XS. */
 		static constexpr std::array<unsigned, 4> options{3, 7, 11, 15};
 		return data_memory_barrier_gadget(
 			true, options[(instruction >> 10) & 3U]);
@@ -5337,72 +6133,89 @@ struct PstateImmediateGadget final {
 #undef UML_SELECT_ADD_SUB_SHIFTED_SOURCES
 #undef UML_SELECT_ADD_SUB_REGISTER_DESTINATION
 
-#define UML_SELECT_ADD_SUB_CARRY_DESTINATIONS(prefix) \
+#define UML_SELECT_ADD_SUB_CARRY_FLAGS(prefix) \
 	return destination_zero ? \
 		uml_arm64_gadget_add_sub_carry_##prefix##_z : \
 		uml_arm64_gadget_add_sub_carry_##prefix##_r
 
-#define UML_SELECT_ADD_SUB_CARRY_SOURCES(prefix) \
+#define UML_SELECT_ADD_SUB_CARRY_SOURCES(prefix, result) \
 	if (left_zero) { \
 		if (right_zero) { \
-			UML_SELECT_ADD_SUB_CARRY_DESTINATIONS(prefix##_zz); \
+			result(prefix##_zz); \
 		} \
-		UML_SELECT_ADD_SUB_CARRY_DESTINATIONS(prefix##_zr); \
+		result(prefix##_zr); \
 	} \
 	if (right_zero) { \
-		UML_SELECT_ADD_SUB_CARRY_DESTINATIONS(prefix##_rz); \
+		result(prefix##_rz); \
 	} \
-	UML_SELECT_ADD_SUB_CARRY_DESTINATIONS(prefix##_rr)
+	if (same_source) { \
+		result(prefix##_eq); \
+	} \
+	result(prefix##_rr)
+
+#define UML_SELECT_ADD_SUB_CARRY_RESULT(prefix) \
+	return uml_arm64_gadget_add_sub_carry_##prefix##_r
 
 [[nodiscard]] Gadget add_sub_carry_gadget(bool is_64_bit, bool subtract,
 	bool set_flags, bool left_zero, bool right_zero,
-	bool destination_zero) noexcept
+	bool same_source, bool destination_zero) noexcept
 {
+	if (destination_zero && !set_flags)
+		return uml_arm64_gadget_nop;
 	if (is_64_bit) {
 		if (subtract) {
 			if (set_flags) {
-				UML_SELECT_ADD_SUB_CARRY_SOURCES(x_sbc_s);
+				UML_SELECT_ADD_SUB_CARRY_SOURCES(x_sbc_s,
+					UML_SELECT_ADD_SUB_CARRY_FLAGS);
 			}
-			UML_SELECT_ADD_SUB_CARRY_SOURCES(x_sbc_n);
+			UML_SELECT_ADD_SUB_CARRY_SOURCES(x_sbc_n,
+				UML_SELECT_ADD_SUB_CARRY_RESULT);
 		}
 		if (set_flags) {
-			UML_SELECT_ADD_SUB_CARRY_SOURCES(x_adc_s);
+			UML_SELECT_ADD_SUB_CARRY_SOURCES(x_adc_s,
+				UML_SELECT_ADD_SUB_CARRY_FLAGS);
 		}
-		UML_SELECT_ADD_SUB_CARRY_SOURCES(x_adc_n);
+		UML_SELECT_ADD_SUB_CARRY_SOURCES(x_adc_n,
+			UML_SELECT_ADD_SUB_CARRY_RESULT);
 	}
 	if (subtract) {
 		if (set_flags) {
-			UML_SELECT_ADD_SUB_CARRY_SOURCES(w_sbc_s);
+			UML_SELECT_ADD_SUB_CARRY_SOURCES(w_sbc_s,
+				UML_SELECT_ADD_SUB_CARRY_FLAGS);
 		}
-		UML_SELECT_ADD_SUB_CARRY_SOURCES(w_sbc_n);
+		UML_SELECT_ADD_SUB_CARRY_SOURCES(w_sbc_n,
+			UML_SELECT_ADD_SUB_CARRY_RESULT);
 	}
 	if (set_flags) {
-		UML_SELECT_ADD_SUB_CARRY_SOURCES(w_adc_s);
+		UML_SELECT_ADD_SUB_CARRY_SOURCES(w_adc_s,
+			UML_SELECT_ADD_SUB_CARRY_FLAGS);
 	}
-	UML_SELECT_ADD_SUB_CARRY_SOURCES(w_adc_n);
+	UML_SELECT_ADD_SUB_CARRY_SOURCES(w_adc_n,
+		UML_SELECT_ADD_SUB_CARRY_RESULT);
 }
 
+#undef UML_SELECT_ADD_SUB_CARRY_RESULT
 #undef UML_SELECT_ADD_SUB_CARRY_SOURCES
-#undef UML_SELECT_ADD_SUB_CARRY_DESTINATIONS
+#undef UML_SELECT_ADD_SUB_CARRY_FLAGS
 
-#define UML_SELECT_BINARY_DESTINATION(kind, prefix) \
-	return destination_zero ? uml_arm64_gadget_##kind##_##prefix##_z : \
-		uml_arm64_gadget_##kind##_##prefix##_r
 #define UML_SELECT_BINARY_SOURCES(kind, prefix) \
 	if (left_zero) { \
 		if (right_zero) { \
-			UML_SELECT_BINARY_DESTINATION(kind, prefix##_zz); \
+			return uml_arm64_gadget_##kind##_##prefix##_zz_r; \
 		} \
-		UML_SELECT_BINARY_DESTINATION(kind, prefix##_zr); \
+		return uml_arm64_gadget_##kind##_##prefix##_zr_r; \
 	} \
 	if (right_zero) { \
-		UML_SELECT_BINARY_DESTINATION(kind, prefix##_rz); \
+		return uml_arm64_gadget_##kind##_##prefix##_rz_r; \
 	} \
-	UML_SELECT_BINARY_DESTINATION(kind, prefix##_rr)
+	if (same_source) { \
+		return uml_arm64_gadget_##kind##_##prefix##_eq_r; \
+	} \
+	return uml_arm64_gadget_##kind##_##prefix##_rr_r
 
 [[nodiscard]] Gadget variable_shift_gadget(bool is_64_bit,
 	unsigned operation, bool left_zero, bool right_zero,
-	bool destination_zero) noexcept
+	bool same_source) noexcept
 {
 	if (is_64_bit) {
 		switch (operation) {
@@ -5421,7 +6234,7 @@ struct PstateImmediateGadget final {
 }
 
 [[nodiscard]] Gadget divide_gadget(bool is_64_bit, bool is_signed,
-	bool left_zero, bool right_zero, bool destination_zero) noexcept
+	bool left_zero, bool right_zero, bool same_source) noexcept
 {
 	if (is_64_bit) {
 		if (is_signed) {
@@ -5436,7 +6249,6 @@ struct PstateImmediateGadget final {
 }
 
 #undef UML_SELECT_BINARY_SOURCES
-#undef UML_SELECT_BINARY_DESTINATION
 
 #define UML_SELECT_LOGICAL_IMMEDIATE_MODES(prefix) \
 	if (source_zero) \
@@ -5468,28 +6280,45 @@ struct PstateImmediateGadget final {
 
 #undef UML_SELECT_LOGICAL_IMMEDIATE_MODES
 
-#define UML_SELECT_LOGICAL_SHIFTED_DESTINATION(prefix) \
+#define UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix) \
+	if (left_zero) { \
+		if (right_zero) \
+			return uml_arm64_gadget_logical_shifted_##prefix##_zz_r; \
+		return uml_arm64_gadget_logical_shifted_##prefix##_zr_r; \
+	} \
+	if (right_zero) \
+		return uml_arm64_gadget_logical_shifted_##prefix##_rz_r; \
+	return uml_arm64_gadget_logical_shifted_##prefix##_rr_r
+#define UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(prefix) \
+	switch (shift_kind) { \
+	case 0: UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_n); \
+	case 1: UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_l); \
+	case 2: UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_r); \
+	case 3: UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_a); \
+	default: UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES(prefix##_o); \
+	}
+#define UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION(prefix) \
 	return destination_zero ? \
 		uml_arm64_gadget_logical_shifted_##prefix##_z : \
 		uml_arm64_gadget_logical_shifted_##prefix##_r
-#define UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix) \
+#define UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix) \
 	if (left_zero) { \
 		if (right_zero) { \
-			UML_SELECT_LOGICAL_SHIFTED_DESTINATION(prefix##_zz); \
+			UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION(prefix##_zz); \
 		} \
-		UML_SELECT_LOGICAL_SHIFTED_DESTINATION(prefix##_zr); \
+		UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION(prefix##_zr); \
 	} \
 	if (right_zero) { \
-		UML_SELECT_LOGICAL_SHIFTED_DESTINATION(prefix##_rz); \
+		UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION(prefix##_rz); \
 	} \
-	UML_SELECT_LOGICAL_SHIFTED_DESTINATION(prefix##_rr)
-#define UML_SELECT_LOGICAL_SHIFTED_SHIFT(prefix) \
+	UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION(prefix##_rr)
+#define UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT(prefix) \
 	switch (shift_kind) { \
-	case 0: UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix##_n); \
-	case 1: UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix##_l); \
-	case 2: UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix##_r); \
-	case 3: UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix##_a); \
-	default: UML_SELECT_LOGICAL_SHIFTED_SOURCES(prefix##_o); \
+	case 0: UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_n); \
+	case 1: UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_l); \
+	case 2: UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_r); \
+	case 3: UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_a); \
+	default: UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES(prefix##_o); \
 	}
 
 [[nodiscard]] Gadget logical_shifted_gadget(bool is_64_bit,
@@ -5500,79 +6329,77 @@ struct PstateImmediateGadget final {
 		switch (operation) {
 		case 0:
 			if (invert) {
-				UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_and_n);
+				UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_and_n);
 			}
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_and_p);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_and_p);
 		case 1:
 			if (invert) {
-				UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_orr_n);
+				UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_orr_n);
 			}
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_orr_p);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_orr_p);
 		case 2:
 			if (invert) {
-				UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_eor_n);
+				UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_eor_n);
 			}
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_eor_p);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(x_eor_p);
 		default:
 			if (invert) {
-				UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_ands_n);
+				UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT(x_ands_n);
 			}
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(x_ands_p);
+			UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT(x_ands_p);
 		}
 	}
 	switch (operation) {
 	case 0:
 		if (invert) {
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_and_n);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_and_n);
 		}
-		UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_and_p);
+		UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_and_p);
 	case 1:
 		if (invert) {
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_orr_n);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_orr_n);
 		}
-		UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_orr_p);
+		UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_orr_p);
 	case 2:
 		if (invert) {
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_eor_n);
+			UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_eor_n);
 		}
-		UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_eor_p);
+		UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT(w_eor_p);
 	default:
 		if (invert) {
-			UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_ands_n);
+			UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT(w_ands_n);
 		}
-		UML_SELECT_LOGICAL_SHIFTED_SHIFT(w_ands_p);
+		UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT(w_ands_p);
 	}
 }
 
-#undef UML_SELECT_LOGICAL_SHIFTED_SHIFT
-#undef UML_SELECT_LOGICAL_SHIFTED_SOURCES
-#undef UML_SELECT_LOGICAL_SHIFTED_DESTINATION
+#undef UML_SELECT_LOGICAL_SHIFTED_FLAG_SHIFT
+#undef UML_SELECT_LOGICAL_SHIFTED_FLAG_SOURCES
+#undef UML_SELECT_LOGICAL_SHIFTED_FLAG_DESTINATION
+#undef UML_SELECT_LOGICAL_SHIFTED_RESULT_SHIFT
+#undef UML_SELECT_LOGICAL_SHIFTED_RESULT_SOURCES
 
-#define UML_SELECT_MULTIPLY_DESTINATION(prefix) \
-	return destination_zero ? uml_arm64_gadget_multiply_add_##prefix##_z : \
-		uml_arm64_gadget_multiply_add_##prefix##_r
+#define UML_SELECT_MULTIPLY_RESULT(prefix) \
+	return uml_arm64_gadget_multiply_add_##prefix##_r
 #define UML_SELECT_MULTIPLY_ADDEND(prefix) \
 	if (addend_zero) { \
-		UML_SELECT_MULTIPLY_DESTINATION(prefix##_z); \
+		UML_SELECT_MULTIPLY_RESULT(prefix##_z); \
 	} \
-	UML_SELECT_MULTIPLY_DESTINATION(prefix##_r)
-#define UML_SELECT_MULTIPLY_RIGHT(prefix) \
-	if (right_zero) { \
-		UML_SELECT_MULTIPLY_ADDEND(prefix##_rz); \
-	} \
-	UML_SELECT_MULTIPLY_ADDEND(prefix##_rr)
+	UML_SELECT_MULTIPLY_RESULT(prefix##_r)
 #define UML_SELECT_MULTIPLY_SOURCES(prefix) \
-	if (left_zero) { \
-		if (right_zero) { \
-			UML_SELECT_MULTIPLY_ADDEND(prefix##_zz); \
-		} \
-		UML_SELECT_MULTIPLY_ADDEND(prefix##_zr); \
+	if (left_zero || right_zero) { \
+		UML_SELECT_MULTIPLY_ADDEND(prefix##_z); \
 	} \
-	UML_SELECT_MULTIPLY_RIGHT(prefix)
+	UML_SELECT_MULTIPLY_ADDEND(prefix##_p)
+#define UML_SELECT_MULTIPLY_HIGH_SOURCES(prefix) \
+	if (left_zero || right_zero) { \
+		UML_SELECT_MULTIPLY_RESULT(prefix##_z_z); \
+	} \
+	UML_SELECT_MULTIPLY_RESULT(prefix##_p_z)
 
 [[nodiscard]] Gadget multiply_add_gadget(unsigned operation, bool subtract,
-	bool is_64_bit, bool left_zero, bool right_zero, bool addend_zero,
-	bool destination_zero) noexcept
+	bool is_64_bit, bool left_zero, bool right_zero,
+	bool addend_zero) noexcept
 {
 	switch (operation) {
 	case 0:
@@ -5592,21 +6419,21 @@ struct PstateImmediateGadget final {
 		}
 		UML_SELECT_MULTIPLY_SOURCES(smaddl);
 	case 2:
-		UML_SELECT_MULTIPLY_SOURCES(smulh);
+		UML_SELECT_MULTIPLY_HIGH_SOURCES(smulh);
 	case 5:
 		if (subtract) {
 			UML_SELECT_MULTIPLY_SOURCES(umsubl);
 		}
 		UML_SELECT_MULTIPLY_SOURCES(umaddl);
 	default:
-		UML_SELECT_MULTIPLY_SOURCES(umulh);
+		UML_SELECT_MULTIPLY_HIGH_SOURCES(umulh);
 	}
 }
 
+#undef UML_SELECT_MULTIPLY_HIGH_SOURCES
 #undef UML_SELECT_MULTIPLY_SOURCES
-#undef UML_SELECT_MULTIPLY_RIGHT
 #undef UML_SELECT_MULTIPLY_ADDEND
-#undef UML_SELECT_MULTIPLY_DESTINATION
+#undef UML_SELECT_MULTIPLY_RESULT
 
 #define UML_SELECT_BITFIELD_SOURCES(prefix) \
 	if (rotate_nonzero) \
@@ -5668,23 +6495,24 @@ struct PstateImmediateGadget final {
 #undef UML_SELECT_EXTRACT_SOURCES
 #undef UML_SELECT_EXTRACT_DESTINATION
 
-#define UML_SELECT_CRC_DESTINATION(prefix) \
-	return destination_zero ? uml_arm64_gadget_crc32_##prefix##_z : \
-		uml_arm64_gadget_crc32_##prefix##_r
+#define UML_CRC_GADGET(prefix, suffix) \
+	(native ? uml_arm64_gadget_crc32_##prefix##_##suffix : \
+		uml_arm64_gadget_crc32_software_##prefix##_##suffix)
 #define UML_SELECT_CRC_SOURCES(prefix) \
 	if (left_zero) { \
 		if (right_zero) { \
-			UML_SELECT_CRC_DESTINATION(prefix##_zz); \
+			return UML_CRC_GADGET(prefix, zz); \
 		} \
-		UML_SELECT_CRC_DESTINATION(prefix##_zr); \
+		return UML_CRC_GADGET(prefix, zr); \
 	} \
 	if (right_zero) { \
-		UML_SELECT_CRC_DESTINATION(prefix##_rz); \
+		return UML_CRC_GADGET(prefix, rz); \
 	} \
-	UML_SELECT_CRC_DESTINATION(prefix##_rr)
+	return same_source ? UML_CRC_GADGET(prefix, same) : \
+		UML_CRC_GADGET(prefix, rr)
 
 [[nodiscard]] Gadget crc32_gadget(unsigned operation, bool left_zero,
-	bool right_zero, bool destination_zero) noexcept
+	bool right_zero, bool same_source, bool native) noexcept
 {
 	switch (operation) {
 	case 0: UML_SELECT_CRC_SOURCES(b);
@@ -5699,46 +6527,48 @@ struct PstateImmediateGadget final {
 }
 
 #undef UML_SELECT_CRC_SOURCES
-#undef UML_SELECT_CRC_DESTINATION
-
-#define UML_SELECT_BIT_REVERSE_COUNT_MODES(prefix) \
-	if (source_zero) \
-		return destination_zero ? \
-			uml_arm64_gadget_bit_reverse_count_##prefix##_zz : \
-			uml_arm64_gadget_bit_reverse_count_##prefix##_zr; \
-	return destination_zero ? \
-		uml_arm64_gadget_bit_reverse_count_##prefix##_rz : \
-		uml_arm64_gadget_bit_reverse_count_##prefix##_rr
+#undef UML_CRC_GADGET
 
 [[nodiscard]] Gadget bit_reverse_count_gadget(bool is_64_bit,
-	unsigned operation, bool source_zero, bool destination_zero) noexcept
+	unsigned operation) noexcept
 {
+	const bool native = operation >= 6U && host_arm_features().cssc;
 	if (is_64_bit) {
 		switch (operation) {
-		case 0: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_rbit);
-		case 1: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_rev16);
-		case 2: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_rev32);
-		case 3: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_rev);
-		case 4: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_clz);
-		case 5: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_cls);
-		case 6: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_ctz);
-		case 7: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_cnt);
-		default: UML_SELECT_BIT_REVERSE_COUNT_MODES(x_abs);
+		case 0: return uml_arm64_gadget_bit_reverse_count_x_rbit;
+		case 1: return uml_arm64_gadget_bit_reverse_count_x_rev16;
+		case 2: return uml_arm64_gadget_bit_reverse_count_x_rev32;
+		case 3: return uml_arm64_gadget_bit_reverse_count_x_rev;
+		case 4: return uml_arm64_gadget_bit_reverse_count_x_clz;
+		case 5: return uml_arm64_gadget_bit_reverse_count_x_cls;
+		case 6: return native ?
+			uml_arm64_gadget_bit_reverse_count_x_ctz_native :
+			uml_arm64_gadget_bit_reverse_count_x_ctz;
+		case 7: return native ?
+			uml_arm64_gadget_bit_reverse_count_x_cnt_native :
+			uml_arm64_gadget_bit_reverse_count_x_cnt;
+		default: return native ?
+			uml_arm64_gadget_bit_reverse_count_x_abs_native :
+			uml_arm64_gadget_bit_reverse_count_x_abs;
 		}
 	}
 	switch (operation) {
-	case 0: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_rbit);
-	case 1: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_rev16);
-	case 2: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_rev);
-	case 4: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_clz);
-	case 5: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_cls);
-	case 6: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_ctz);
-	case 7: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_cnt);
-	default: UML_SELECT_BIT_REVERSE_COUNT_MODES(w_abs);
+	case 0: return uml_arm64_gadget_bit_reverse_count_w_rbit;
+	case 1: return uml_arm64_gadget_bit_reverse_count_w_rev16;
+	case 2: return uml_arm64_gadget_bit_reverse_count_w_rev;
+	case 4: return uml_arm64_gadget_bit_reverse_count_w_clz;
+	case 5: return uml_arm64_gadget_bit_reverse_count_w_cls;
+	case 6: return native ?
+		uml_arm64_gadget_bit_reverse_count_w_ctz_native :
+		uml_arm64_gadget_bit_reverse_count_w_ctz;
+	case 7: return native ?
+		uml_arm64_gadget_bit_reverse_count_w_cnt_native :
+		uml_arm64_gadget_bit_reverse_count_w_cnt;
+	default: return native ?
+		uml_arm64_gadget_bit_reverse_count_w_abs_native :
+		uml_arm64_gadget_bit_reverse_count_w_abs;
 	}
 }
-
-#undef UML_SELECT_BIT_REVERSE_COUNT_MODES
 
 #define UML_MTE_POINTER_GADGETS(operation) \
 	std::array<Gadget, 8>{ \
@@ -6059,14 +6889,20 @@ enum class SimdDotSignedness {
 };
 
 [[nodiscard]] Gadget simd_dot_vector_gadget(
-	SimdDotSignedness signedness, bool q) noexcept
+	SimdDotSignedness signedness, bool q, bool force_software) noexcept
 {
 	static constexpr std::array<Gadget, 2> signed_signed{
 		uml_arm64_gadget_simd_dot_vector_sdot_2s,
 		uml_arm64_gadget_simd_dot_vector_sdot_4s};
+	static constexpr std::array<Gadget, 2> signed_signed_software{
+		uml_arm64_gadget_simd_dot_vector_sdot_2s_soft,
+		uml_arm64_gadget_simd_dot_vector_sdot_4s_soft};
 	static constexpr std::array<Gadget, 2> unsigned_unsigned{
 		uml_arm64_gadget_simd_dot_vector_udot_2s,
 		uml_arm64_gadget_simd_dot_vector_udot_4s};
+	static constexpr std::array<Gadget, 2> unsigned_unsigned_software{
+		uml_arm64_gadget_simd_dot_vector_udot_2s_soft,
+		uml_arm64_gadget_simd_dot_vector_udot_4s_soft};
 	static constexpr std::array<Gadget, 2> unsigned_signed_native{
 		uml_arm64_gadget_simd_dot_vector_usdot_2s,
 		uml_arm64_gadget_simd_dot_vector_usdot_4s};
@@ -6074,10 +6910,15 @@ enum class SimdDotSignedness {
 		uml_arm64_gadget_simd_dot_vector_usdot_2s_soft,
 		uml_arm64_gadget_simd_dot_vector_usdot_4s_soft};
 	switch (signedness) {
-	case SimdDotSignedness::signed_signed: return signed_signed[q];
-	case SimdDotSignedness::unsigned_unsigned: return unsigned_unsigned[q];
+	case SimdDotSignedness::signed_signed:
+		return (!force_software && host_has_dotprod() ? signed_signed :
+			signed_signed_software)[q];
+	case SimdDotSignedness::unsigned_unsigned:
+		return (!force_software && host_has_dotprod() ? unsigned_unsigned :
+			unsigned_unsigned_software)[q];
 	case SimdDotSignedness::unsigned_signed:
-		return (host_has_i8mm() ? unsigned_signed_native :
+		return (!force_software && host_has_i8mm() ?
+			unsigned_signed_native :
 			unsigned_signed_software)[q];
 	case SimdDotSignedness::signed_unsigned: return nullptr;
 	}
@@ -6104,10 +6945,15 @@ enum class SimdDotSignedness {
 	uml_arm64_gadget_simd_dot_indexed_##name##_4s_3_soft}
 
 [[nodiscard]] Gadget simd_dot_indexed_gadget(
-	SimdDotSignedness signedness, bool q, unsigned index) noexcept
+	SimdDotSignedness signedness, bool q, unsigned index,
+	bool force_software) noexcept
 {
 	static constexpr auto signed_signed = UML_SIMD_DOT_INDEXED_ARRAY(sdot);
 	static constexpr auto unsigned_unsigned = UML_SIMD_DOT_INDEXED_ARRAY(udot);
+	static constexpr auto signed_signed_software =
+		UML_SIMD_DOT_INDEXED_SOFT_ARRAY(sdot);
+	static constexpr auto unsigned_unsigned_software =
+		UML_SIMD_DOT_INDEXED_SOFT_ARRAY(udot);
 	static constexpr auto signed_unsigned_native =
 		UML_SIMD_DOT_INDEXED_ARRAY(sudot);
 	static constexpr auto unsigned_signed_native =
@@ -6118,13 +6964,19 @@ enum class SimdDotSignedness {
 		UML_SIMD_DOT_INDEXED_SOFT_ARRAY(usdot);
 	const unsigned shape = (q ? 4U : 0U) + index;
 	switch (signedness) {
-	case SimdDotSignedness::signed_signed: return signed_signed[shape];
-	case SimdDotSignedness::unsigned_unsigned: return unsigned_unsigned[shape];
+	case SimdDotSignedness::signed_signed:
+		return (!force_software && host_has_dotprod() ? signed_signed :
+			signed_signed_software)[shape];
+	case SimdDotSignedness::unsigned_unsigned:
+		return (!force_software && host_has_dotprod() ? unsigned_unsigned :
+			unsigned_unsigned_software)[shape];
 	case SimdDotSignedness::signed_unsigned:
-		return (host_has_i8mm() ? signed_unsigned_native :
+		return (!force_software && host_has_i8mm() ?
+			signed_unsigned_native :
 			signed_unsigned_software)[shape];
 	case SimdDotSignedness::unsigned_signed:
-		return (host_has_i8mm() ? unsigned_signed_native :
+		return (!force_software && host_has_i8mm() ?
+			unsigned_signed_native :
 			unsigned_signed_software)[shape];
 	}
 	return nullptr;
@@ -6134,7 +6986,7 @@ enum class SimdDotSignedness {
 #undef UML_SIMD_DOT_INDEXED_ARRAY
 
 [[nodiscard]] Gadget simd_matrix_gadget(
-	SimdDotSignedness signedness) noexcept
+	SimdDotSignedness signedness, bool force_software) noexcept
 {
 	static constexpr std::array<Gadget, 3> native{
 		uml_arm64_gadget_simd_matrix_smmla,
@@ -6151,7 +7003,8 @@ enum class SimdDotSignedness {
 	case SimdDotSignedness::unsigned_signed: index = 2U; break;
 	case SimdDotSignedness::signed_unsigned: return nullptr;
 	}
-	return (host_has_i8mm() ? native : software)[index];
+	return (!force_software && host_has_i8mm() ?
+		native : software)[index];
 }
 
 using SimdWideningGadgets = std::array<Gadget, 6>;
@@ -6260,6 +7113,35 @@ using SimdWideningGadgets = std::array<Gadget, 6>;
 #undef UML_SIMD_HIGH_NARROW
 
 using SimdUnaryGadgets = std::array<Gadget, 11>;
+
+[[nodiscard]] constexpr std::uintptr_t simd_unary_operand(
+	unsigned destination, unsigned source) noexcept
+{
+	const auto vector_offset = [](unsigned index) {
+		return offsetof(CpuState, vectors) +
+			index * sizeof(VectorRegister);
+	};
+	static_assert(offsetof(CpuState, vectors) +
+		31U * sizeof(VectorRegister) <= 0xffffU);
+	return vector_offset(destination) |
+		(static_cast<std::uintptr_t>(vector_offset(source)) << 16U);
+}
+
+[[nodiscard]] constexpr std::uintptr_t simd_ternary_operand(
+	unsigned destination, unsigned first, unsigned second,
+	unsigned descriptor = 0U) noexcept
+{
+	const auto vector_offset = [](unsigned index) {
+		return offsetof(CpuState, vectors) +
+			index * sizeof(VectorRegister);
+	};
+	static_assert(offsetof(CpuState, vectors) +
+		31U * sizeof(VectorRegister) <= 0xffffU);
+	return vector_offset(destination) |
+		(static_cast<std::uintptr_t>(vector_offset(first)) << 16U) |
+		(static_cast<std::uintptr_t>(vector_offset(second)) << 32U) |
+		(static_cast<std::uintptr_t>(descriptor) << 48U);
+}
 
 #define UML_SIMD_UNARY_V6(name) SimdUnaryGadgets{ \
 	uml_arm64_gadget_simd_unary_##name##_8b, \
@@ -6463,6 +7345,8 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget floating_to_integer_gadget(
 	const detail::FloatingToIntegerDecode &decoded, bool discard) noexcept
 {
+	if (decoded.source_width == 16U && !host_arm_features().fp16)
+		return uml_arm64_gadget_floating_to_integer_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
 		const auto first = reinterpret_cast<std::uintptr_t>(begin);
@@ -6620,6 +7504,12 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget integer_to_floating_gadget(
 	const detail::IntegerToFloatingDecode &decoded, bool zero_source) noexcept
 {
+	const bool cross_width = !decoded.source_gpr &&
+		decoded.integer_width != decoded.destination_width;
+	const auto &host = host_arm_features();
+	if ((cross_width && !host.has(ArmFeature::fprcvt)) ||
+	    (!cross_width && decoded.destination_width == 16U && !host.fp16))
+		return uml_arm64_gadget_integer_to_floating_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
 		const auto first = reinterpret_cast<std::uintptr_t>(begin);
@@ -7090,33 +7980,52 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_HORIZONTAL_VECTOR(fmaxnmp_vector),
 		UML_HORIZONTAL_VECTOR(fminp_vector),
 		UML_HORIZONTAL_VECTOR(fminnmp_vector)};
-	static constexpr std::array max_scalar_ah{
-		UML_HORIZONTAL_SCALAR(fmax_ah_scalar),
-		UML_HORIZONTAL_SCALAR(fmaxp_ah_scalar)};
-	static constexpr std::array min_scalar_ah{
-		UML_HORIZONTAL_SCALAR(fmin_ah_scalar),
-		UML_HORIZONTAL_SCALAR(fminp_ah_scalar)};
-	static constexpr std::array max_vector_ah{
-		UML_HORIZONTAL_VECTOR(fmax_ah_vector),
-		UML_HORIZONTAL_VECTOR(fmaxp_ah_vector)};
-	static constexpr std::array min_vector_ah{
-		UML_HORIZONTAL_VECTOR(fmin_ah_vector),
-		UML_HORIZONTAL_VECTOR(fminp_ah_vector)};
+	static constexpr std::array scalar_arithmetic_checked{
+		UML_HORIZONTAL_SCALAR(fabd_checked_scalar),
+		UML_HORIZONTAL_SCALAR(faddp_checked_scalar)};
+	static constexpr std::array vector_arithmetic_checked{
+		UML_HORIZONTAL_VECTOR(fabd_checked_vector),
+		UML_HORIZONTAL_VECTOR(faddp_checked_vector)};
+	static constexpr std::array scalar_ah{
+		std::array{UML_HORIZONTAL_SCALAR(fmax_ah_scalar),
+			UML_HORIZONTAL_SCALAR(fmaxp_ah_scalar)},
+		std::array{UML_HORIZONTAL_SCALAR(fmaxnm_ah_scalar),
+			UML_HORIZONTAL_SCALAR(fmaxnmp_ah_scalar)},
+		std::array{UML_HORIZONTAL_SCALAR(fmin_ah_scalar),
+			UML_HORIZONTAL_SCALAR(fminp_ah_scalar)},
+		std::array{UML_HORIZONTAL_SCALAR(fminnm_ah_scalar),
+			UML_HORIZONTAL_SCALAR(fminnmp_ah_scalar)}};
+	static constexpr std::array vector_ah{
+		std::array{UML_HORIZONTAL_VECTOR(fmax_ah_vector),
+			UML_HORIZONTAL_VECTOR(fmaxp_ah_vector)},
+		std::array{UML_HORIZONTAL_VECTOR(fmaxnm_ah_vector),
+			UML_HORIZONTAL_VECTOR(fmaxnmp_ah_vector)},
+		std::array{UML_HORIZONTAL_VECTOR(fmin_ah_vector),
+			UML_HORIZONTAL_VECTOR(fminp_ah_vector)},
+		std::array{UML_HORIZONTAL_VECTOR(fminnm_ah_vector),
+			UML_HORIZONTAL_VECTOR(fminnmp_ah_vector)}};
 #undef UML_HORIZONTAL_VECTOR
 #undef UML_HORIZONTAL_SCALAR
 
 	using Form = detail::FloatingHorizontalForm;
 	using Operation = detail::FloatingHorizontalOperation;
+	if (!host_has_afp() && operation <=
+			static_cast<unsigned>(Operation::add)) {
+		if (decoded.form == Form::scalar_binary ||
+		    decoded.form == Form::scalar_pairwise)
+			return scalar_arithmetic_checked[operation][scalar_shape];
+		return vector_arithmetic_checked[operation][vector_shape];
+	}
 	if (decoded.form != Form::reduction &&
 	    detail::floating_horizontal_uses_ah(decoded) && !host_has_afp()) {
 		const unsigned pair = decoded.form == Form::scalar_pairwise ||
 			decoded.form == Form::vector_pairwise;
+		const unsigned ah_operation = operation -
+			static_cast<unsigned>(Operation::maximum);
 		if (decoded.form == Form::scalar_binary ||
 		    decoded.form == Form::scalar_pairwise)
-			return (decoded.operation == Operation::maximum ?
-				max_scalar_ah : min_scalar_ah)[pair][scalar_shape];
-		return (decoded.operation == Operation::maximum ?
-			max_vector_ah : min_vector_ah)[pair][vector_shape];
+			return scalar_ah[ah_operation][pair][scalar_shape];
+		return vector_ah[ah_operation][pair][vector_shape];
 	}
 	if (decoded.form == Form::scalar_binary)
 		return scalar_binary[operation][scalar_shape];
@@ -7137,35 +8046,40 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_HORIZONTAL_REDUCE(fmaxnmv),
 		UML_HORIZONTAL_REDUCE(fminv),
 		UML_HORIZONTAL_REDUCE(fminnmv)};
-	static constexpr auto max_reduction_ah =
-		UML_HORIZONTAL_REDUCE(fmaxv_ah);
-	static constexpr auto min_reduction_ah =
-		UML_HORIZONTAL_REDUCE(fminv_ah);
+	static constexpr std::array reduction_ah{
+		UML_HORIZONTAL_REDUCE(fmaxv_ah),
+		UML_HORIZONTAL_REDUCE(fmaxnmv_ah),
+		UML_HORIZONTAL_REDUCE(fminv_ah),
+		UML_HORIZONTAL_REDUCE(fminnmv_ah)};
 #undef UML_HORIZONTAL_REDUCE
 	const unsigned shape = decoded.width == 32U ? 2U :
 		decoded.vector_bytes == 16U ? 1U : 0U;
 	if (detail::floating_horizontal_uses_ah(decoded) && !host_has_afp())
-		return (decoded.operation == Operation::maximum ?
-			max_reduction_ah : min_reduction_ah)[shape];
+		return reduction_ah[operation -
+			static_cast<unsigned>(Operation::maximum)][shape];
 	return reduction[operation][shape];
 }
 
 [[nodiscard]] Gadget floating_scale_gadget(
 	const detail::FloatingScale &decoded) noexcept
 {
-	if (!host_has_fp8())
-		return uml_arm64_gadget_floating_scale_software;
 	static constexpr std::array native{
 		uml_arm64_gadget_floating_scale_native_4h,
 		uml_arm64_gadget_floating_scale_native_8h,
 		uml_arm64_gadget_floating_scale_native_2s,
 		uml_arm64_gadget_floating_scale_native_4s,
 		uml_arm64_gadget_floating_scale_native_2d};
+	static constexpr std::array software{
+		uml_arm64_gadget_floating_scale_software_4h,
+		uml_arm64_gadget_floating_scale_software_8h,
+		uml_arm64_gadget_floating_scale_software_2s,
+		uml_arm64_gadget_floating_scale_software_4s,
+		uml_arm64_gadget_floating_scale_software_2d};
 	const unsigned shape = decoded.width == 16U ?
 		(decoded.vector_bytes == 16U ? 1U : 0U) :
 		decoded.width == 32U ?
 			(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-	return native[shape];
+	return (host_has_fp8() ? native : software)[shape];
 }
 
 [[nodiscard]] Gadget fp8_gadget(const detail::Fp8Instruction &decoded) noexcept
@@ -7189,7 +8103,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		return uml_arm64_fp8_native_down_table[index];
 	}
 	if (decoded.operation == Operation::dot_half) {
-		if (!host_has_fp8dot2())
+		if (!host_has_fp8dot2() || !host_has_afp())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 8U;
 		return decoded.by_element ?
@@ -7197,7 +8111,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_h_vector_table[q];
 	}
 	if (decoded.operation == Operation::dot_single) {
-		if (!host_has_fp8dot4())
+		if (!host_has_fp8dot4() || !host_has_afp())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 4U;
 		return decoded.by_element ?
@@ -7205,7 +8119,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_s_vector_table[q];
 	}
 	if (decoded.operation == Operation::multiply_half) {
-		if (!host_has_fp8fma())
+		if (!host_has_fp8fma() || !host_has_afp())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_h_indexed_table[
@@ -7213,7 +8127,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_h_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::multiply_single) {
-		if (!host_has_fp8fma())
+		if (!host_has_fp8fma() || !host_has_afp())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_s_indexed_table[
@@ -7221,9 +8135,11 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_s_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::matrix_half)
-		return host_has_f8f16mm() ? uml_arm64_fp8_native_matrix_table[0] :
+		return host_has_f8f16mm() && host_has_afp() ?
+			uml_arm64_fp8_native_matrix_table[0] :
 			uml_arm64_gadget_fp8_software;
-	return host_has_f8f32mm() ? uml_arm64_fp8_native_matrix_table[1] :
+	return host_has_f8f32mm() && host_has_afp() ?
+		uml_arm64_fp8_native_matrix_table[1] :
 		uml_arm64_gadget_fp8_software;
 }
 
@@ -7301,29 +8217,28 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget half_fused_long_gadget(
 	const detail::HalfFusedLong &decoded) noexcept
 {
-	if (!host_has_fhm())
+	if (!host_has_fhm() || !host_has_afp())
 		return uml_arm64_gadget_half_fused_long_software;
-#define UML_HALF_FUSED_LONG_PAIR(name) std::array<Gadget, 2>{ \
-	uml_arm64_gadget_half_fused_long_native_##name, \
-	uml_arm64_gadget_half_fused_long_checked_##name}
+#define UML_HALF_FUSED_LONG_NATIVE(name) \
+	uml_arm64_gadget_half_fused_long_native_##name
 	static constexpr std::array vector{
-		UML_HALF_FUSED_LONG_PAIR(vector_add_lower_2s),
-		UML_HALF_FUSED_LONG_PAIR(vector_add_lower_4s),
-		UML_HALF_FUSED_LONG_PAIR(vector_add_upper_2s),
-		UML_HALF_FUSED_LONG_PAIR(vector_add_upper_4s),
-		UML_HALF_FUSED_LONG_PAIR(vector_sub_lower_2s),
-		UML_HALF_FUSED_LONG_PAIR(vector_sub_lower_4s),
-		UML_HALF_FUSED_LONG_PAIR(vector_sub_upper_2s),
-		UML_HALF_FUSED_LONG_PAIR(vector_sub_upper_4s)};
+		UML_HALF_FUSED_LONG_NATIVE(vector_add_lower_2s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_add_lower_4s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_add_upper_2s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_add_upper_4s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_sub_lower_2s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_sub_lower_4s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_sub_upper_2s),
+		UML_HALF_FUSED_LONG_NATIVE(vector_sub_upper_4s)};
 #define UML_HALF_FUSED_LONG_INDEXED(operation, half, shape) \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_0), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_1), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_2), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_3), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_4), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_5), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_6), \
-	UML_HALF_FUSED_LONG_PAIR(indexed_##operation##_##half##_##shape##_7)
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_0), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_1), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_2), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_3), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_4), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_5), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_6), \
+	UML_HALF_FUSED_LONG_NATIVE(indexed_##operation##_##half##_##shape##_7)
 	static constexpr std::array indexed{
 		UML_HALF_FUSED_LONG_INDEXED(add, lower, 2s),
 		UML_HALF_FUSED_LONG_INDEXED(add, lower, 4s),
@@ -7334,93 +8249,95 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_HALF_FUSED_LONG_INDEXED(sub, upper, 2s),
 		UML_HALF_FUSED_LONG_INDEXED(sub, upper, 4s)};
 #undef UML_HALF_FUSED_LONG_INDEXED
-#undef UML_HALF_FUSED_LONG_PAIR
+#undef UML_HALF_FUSED_LONG_NATIVE
 	const unsigned operation = static_cast<unsigned>(decoded.subtract) * 4U +
 		static_cast<unsigned>(decoded.upper) * 2U + decoded.wide;
-	const unsigned host_variant = host_has_afp() ? 0U : 1U;
 	return decoded.by_element ?
-		indexed[operation * 8U + decoded.index][host_variant] :
-		vector[operation][host_variant];
+		indexed[operation * 8U + decoded.index] :
+		vector[operation];
 }
 
 [[nodiscard]] Gadget half_matrix_gadget(const detail::HalfMatrix &decoded) noexcept
 {
-	const bool native = decoded.widening ? host_has_f16f32mm() : host_has_f16mm();
+	const bool native = host_has_afp() &&
+		(decoded.widening ? host_has_f16f32mm() : host_has_f16mm());
 	if (!native)
 		return uml_arm64_gadget_half_matrix_software;
 	static constexpr std::array gadgets{
-		std::array<Gadget, 2>{
-			uml_arm64_gadget_half_matrix_native_non_widening,
-			uml_arm64_gadget_half_matrix_checked_non_widening},
-		std::array<Gadget, 2>{
-			uml_arm64_gadget_half_matrix_native_widening,
-			uml_arm64_gadget_half_matrix_checked_widening}};
-	return gadgets[decoded.widening][host_has_afp() ? 0U : 1U];
+		uml_arm64_gadget_half_matrix_native_non_widening,
+		uml_arm64_gadget_half_matrix_native_widening};
+	return gadgets[decoded.widening];
 }
 
 [[nodiscard]] Gadget half_dot_gadget(const detail::HalfDot &decoded) noexcept
 {
-	if (!host_has_f16f32dot())
+	if (!host_has_f16f32dot() || !host_has_afp())
 		return uml_arm64_gadget_half_dot_software;
-#define UML_HALF_DOT_PAIR(name) std::array<Gadget, 2>{ \
-	uml_arm64_gadget_half_dot_native_##name, \
-	uml_arm64_gadget_half_dot_checked_##name}
 	static constexpr std::array vector{
-		UML_HALF_DOT_PAIR(vector_2s), UML_HALF_DOT_PAIR(vector_4s)};
+		uml_arm64_gadget_half_dot_native_vector_2s,
+		uml_arm64_gadget_half_dot_native_vector_4s};
 #define UML_HALF_DOT_INDEXED(shape) \
-	UML_HALF_DOT_PAIR(indexed_##shape##_0), \
-	UML_HALF_DOT_PAIR(indexed_##shape##_1), \
-	UML_HALF_DOT_PAIR(indexed_##shape##_2), \
-	UML_HALF_DOT_PAIR(indexed_##shape##_3)
+	uml_arm64_gadget_half_dot_native_indexed_##shape##_0, \
+	uml_arm64_gadget_half_dot_native_indexed_##shape##_1, \
+	uml_arm64_gadget_half_dot_native_indexed_##shape##_2, \
+	uml_arm64_gadget_half_dot_native_indexed_##shape##_3
 	static constexpr std::array indexed{
 		UML_HALF_DOT_INDEXED(2s), UML_HALF_DOT_INDEXED(4s)};
 #undef UML_HALF_DOT_INDEXED
-#undef UML_HALF_DOT_PAIR
-	const unsigned host_variant = host_has_afp() ? 0U : 1U;
 	return decoded.by_element ?
 		indexed[static_cast<unsigned>(decoded.wide) * 4U +
-			decoded.index][host_variant] :
-		vector[decoded.wide][host_variant];
+			decoded.index] :
+		vector[decoded.wide];
 }
 
 [[nodiscard]] Gadget floating_reciprocal_gadget(
 	const detail::FloatingReciprocal &decoded) noexcept
 {
-#define UML_RECIPROCAL_SCALAR(name) std::array<Gadget, 3>{ \
-	uml_arm64_gadget_floating_reciprocal_##name##_scalar_h, \
-	uml_arm64_gadget_floating_reciprocal_##name##_scalar_s, \
-	uml_arm64_gadget_floating_reciprocal_##name##_scalar_d}
-#define UML_RECIPROCAL_VECTOR(name) std::array<Gadget, 5>{ \
-	uml_arm64_gadget_floating_reciprocal_##name##_vector_4h, \
-	uml_arm64_gadget_floating_reciprocal_##name##_vector_8h, \
-	uml_arm64_gadget_floating_reciprocal_##name##_vector_2s, \
-	uml_arm64_gadget_floating_reciprocal_##name##_vector_4s, \
-	uml_arm64_gadget_floating_reciprocal_##name##_vector_2d}
+#define UML_RECIPROCAL_SCALAR(host, name) std::array<Gadget, 3>{ \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_h, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_s, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_scalar_d}
+#define UML_RECIPROCAL_VECTOR(host, name) std::array<Gadget, 5>{ \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4h, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_8h, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2s, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4s, \
+	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2d}
+#define UML_RECIPROCAL_SCALAR_PAIR(name) std::array{ \
+	UML_RECIPROCAL_SCALAR(native, name), \
+	UML_RECIPROCAL_SCALAR(checked, name)}
+#define UML_RECIPROCAL_VECTOR_PAIR(name) std::array{ \
+	UML_RECIPROCAL_VECTOR(native, name), \
+	UML_RECIPROCAL_VECTOR(checked, name)}
 	static constexpr std::array scalar{
-		UML_RECIPROCAL_SCALAR(frecpe),
-		UML_RECIPROCAL_SCALAR(frecps),
-		UML_RECIPROCAL_SCALAR(frecpx),
-		UML_RECIPROCAL_SCALAR(frsqrte),
-		UML_RECIPROCAL_SCALAR(frsqrts)};
+		UML_RECIPROCAL_SCALAR_PAIR(frecpe),
+		UML_RECIPROCAL_SCALAR_PAIR(frecps),
+		UML_RECIPROCAL_SCALAR_PAIR(frecpx),
+		UML_RECIPROCAL_SCALAR_PAIR(frsqrte),
+		UML_RECIPROCAL_SCALAR_PAIR(frsqrts)};
 	static constexpr std::array vector{
-		UML_RECIPROCAL_VECTOR(frecpe),
-		UML_RECIPROCAL_VECTOR(frecps),
-		std::array<Gadget, 5>{},
-		UML_RECIPROCAL_VECTOR(frsqrte),
-		UML_RECIPROCAL_VECTOR(frsqrts)};
+		UML_RECIPROCAL_VECTOR_PAIR(frecpe),
+		UML_RECIPROCAL_VECTOR_PAIR(frecps),
+		std::array{std::array<Gadget, 5>{},
+			std::array<Gadget, 5>{}},
+		UML_RECIPROCAL_VECTOR_PAIR(frsqrte),
+		UML_RECIPROCAL_VECTOR_PAIR(frsqrts)};
+#undef UML_RECIPROCAL_VECTOR_PAIR
+#undef UML_RECIPROCAL_SCALAR_PAIR
 #undef UML_RECIPROCAL_VECTOR
 #undef UML_RECIPROCAL_SCALAR
 	const unsigned operation = static_cast<unsigned>(decoded.operation);
+	const unsigned host_variant = host_has_afp() ? 0U : 1U;
 	if (decoded.scalar) {
 		const unsigned shape = decoded.width == 16U ? 0U :
 			decoded.width == 32U ? 1U : 2U;
-		return scalar[operation][shape];
+		return scalar[operation][host_variant][shape];
 	}
 	const unsigned shape = decoded.width == 16U ?
 		(decoded.vector_bytes == 16U ? 1U : 0U) :
 		decoded.width == 32U ?
 		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-	return vector[operation][shape];
+	return vector[operation][host_variant][shape];
 }
 
 [[nodiscard]] Gadget floating_complex_gadget(
@@ -7469,6 +8386,23 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		return single128[decoded.index][decoded.rotation];
 	return (decoded.vector_bytes == 16U ? half128[decoded.index] :
 		half64[decoded.index])[decoded.rotation];
+}
+
+[[nodiscard]] constexpr std::uintptr_t floating_complex_operand(
+	std::uint32_t instruction,
+	const detail::FloatingComplex &decoded) noexcept
+{
+	const auto vector_offset = [](unsigned index) {
+		return offsetof(CpuState, vectors) +
+			index * sizeof(VectorRegister);
+	};
+	static_assert(offsetof(CpuState, vectors) +
+		31U * sizeof(VectorRegister) <= 0xffffU);
+	return vector_offset(instruction & 31U) |
+		(static_cast<std::uintptr_t>(vector_offset(
+			(instruction >> 5) & 31U)) << 16U) |
+		(static_cast<std::uintptr_t>(vector_offset(
+			decoded.second_register)) << 32U);
 }
 
 [[nodiscard]] constexpr std::uint64_t expand_vfp_immediate(
@@ -7580,6 +8514,12 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	case 6: return insert_true[shape];
 	default: return insert_false[shape];
 	}
+}
+
+[[nodiscard]] Gadget simd_move_gadget(bool q) noexcept
+{
+	return q ? uml_arm64_gadget_simd_mov_16b :
+		uml_arm64_gadget_simd_mov_8b;
 }
 
 [[nodiscard]] Gadget simd_modified_immediate_gadget(
@@ -8138,11 +9078,16 @@ enum class SimdSaturatingShiftLeft {
 		UML_SIMD_INDEXED_ARRAY_4(name, 4s), \
 		UML_SIMD_INDEXED_ARRAY_2(name, d), \
 		UML_SIMD_INDEXED_ARRAY_2(name, 2d)}
-	static constexpr std::array families{
+	static constexpr std::array native_families{
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmla),
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmls),
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmul),
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmulx)};
+	static constexpr std::array checked_families{
+		UML_SIMD_INDEXED_FLOATING_FAMILY(fmla_checked),
+		UML_SIMD_INDEXED_FLOATING_FAMILY(fmls_checked),
+		UML_SIMD_INDEXED_FLOATING_FAMILY(fmul_checked),
+		UML_SIMD_INDEXED_FLOATING_FAMILY(fmulx_checked)};
 #undef UML_SIMD_INDEXED_FLOATING_FAMILY
 	unsigned family;
 	if (operation == 1U && !extended)
@@ -8162,6 +9107,8 @@ enum class SimdSaturatingShiftLeft {
 		shape = scalar ? 6U : 7U;
 	else
 		return nullptr;
+	const auto &families = host_has_afp() ?
+		native_families : checked_families;
 	return index < 8U ? families[family][shape][index] : nullptr;
 }
 
@@ -8370,149 +9317,216 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	static constexpr std::array<Gadget, 2> luti4_b{
 		uml_arm64_gadget_simd_lut_native_luti4_b_0,
 		uml_arm64_gadget_simd_lut_native_luti4_b_1};
-	static constexpr std::array<Gadget, 4> luti4_h{
-		uml_arm64_gadget_simd_lut_native_luti4_h_0,
-		uml_arm64_gadget_simd_lut_native_luti4_h_1,
-		uml_arm64_gadget_simd_lut_native_luti4_h_2,
-		uml_arm64_gadget_simd_lut_native_luti4_h_3};
-	switch (shape) {
-	case 0: return part < luti2_b.size() ? luti2_b[part] : nullptr;
-	case 1: return part < luti2_h.size() ? luti2_h[part] : nullptr;
-	case 2: return part < luti4_b.size() ? luti4_b[part] : nullptr;
-	case 3: return part < luti4_h.size() ? luti4_h[part] : nullptr;
-	default: return nullptr;
-	}
+        static constexpr std::array<Gadget, 4> luti4_h{
+            uml_arm64_gadget_simd_lut_native_luti4_h_0,
+            uml_arm64_gadget_simd_lut_native_luti4_h_1,
+            uml_arm64_gadget_simd_lut_native_luti4_h_2,
+            uml_arm64_gadget_simd_lut_native_luti4_h_3};
+        switch (shape) {
+        case 0:
+          return part < luti2_b.size() ? luti2_b[part] : nullptr;
+        case 1:
+          return part < luti2_h.size() ? luti2_h[part] : nullptr;
+        case 2:
+          return part < luti4_b.size() ? luti4_b[part] : nullptr;
+        case 3:
+          return part < luti4_h.size() ? luti4_h[part] : nullptr;
+        default:
+          return nullptr;
+        }
 }
 
-[[nodiscard]] Gadget simd_aes_gadget(unsigned operation) noexcept
+[[nodiscard]] Gadget simd_aes_gadget(unsigned operation,
+                                     bool force_software) noexcept {
+  const bool native = !force_software && host_has_aes();
+  switch (operation) {
+  case 4:
+    return native ? uml_arm64_gadget_simd_aese_native
+                  : uml_arm64_gadget_simd_aese_soft;
+  case 5:
+    return native ? uml_arm64_gadget_simd_aesd_native
+                  : uml_arm64_gadget_simd_aesd_soft;
+  case 6:
+    return native ? uml_arm64_gadget_simd_aesmc_native
+                  : uml_arm64_gadget_simd_aesmc_soft;
+  case 7:
+    return native ? uml_arm64_gadget_simd_aesimc_native
+                  : uml_arm64_gadget_simd_aesimc_soft;
+  default:
+    return nullptr;
+  }
+}
+
+[[nodiscard]] Gadget simd_sha_three_gadget(unsigned operation,
+                                           bool force_software) noexcept {
+  static constexpr std::array<Gadget, 7> native{
+      uml_arm64_gadget_simd_sha1c,    uml_arm64_gadget_simd_sha1p,
+      uml_arm64_gadget_simd_sha1m,    uml_arm64_gadget_simd_sha1su0,
+      uml_arm64_gadget_simd_sha256h,  uml_arm64_gadget_simd_sha256h2,
+      uml_arm64_gadget_simd_sha256su1};
+  static constexpr std::array<Gadget, 7> software{
+      uml_arm64_gadget_simd_sha1c_soft,    uml_arm64_gadget_simd_sha1p_soft,
+      uml_arm64_gadget_simd_sha1m_soft,    uml_arm64_gadget_simd_sha1su0_soft,
+      uml_arm64_gadget_simd_sha256h_soft,  uml_arm64_gadget_simd_sha256h2_soft,
+      uml_arm64_gadget_simd_sha256su1_soft};
+  if (operation >= native.size())
+    return nullptr;
+  const bool supported = operation <= 3U ? host_has_sha1() : host_has_sha256();
+  return (!force_software && supported ? native : software)[operation];
+}
+
+[[nodiscard]] Gadget simd_sha_two_gadget(unsigned operation,
+                                         bool force_software) noexcept {
+  static constexpr std::array<Gadget, 3> native{
+      uml_arm64_gadget_simd_sha1h, uml_arm64_gadget_simd_sha1su1,
+      uml_arm64_gadget_simd_sha256su0};
+  static constexpr std::array<Gadget, 3> software{
+      uml_arm64_gadget_simd_sha1h_soft, uml_arm64_gadget_simd_sha1su1_soft,
+      uml_arm64_gadget_simd_sha256su0_soft};
+  if (operation >= native.size())
+    return nullptr;
+  const bool supported = operation <= 1U ? host_has_sha1() : host_has_sha256();
+  return (!force_software && supported ? native : software)[operation];
+}
+
+[[nodiscard]] Gadget simd_sha512_three_gadget(std::uint32_t instruction,
+                                              bool force_software) noexcept {
+  const bool native = !force_software && host_has_sha512();
+  switch (instruction & 0xffe0'fc00U) {
+  case 0xce60'8000U:
+    return native ? uml_arm64_gadget_simd_sha512h
+                  : uml_arm64_gadget_simd_sha512h_soft;
+  case 0xce60'8400U:
+    return native ? uml_arm64_gadget_simd_sha512h2
+                  : uml_arm64_gadget_simd_sha512h2_soft;
+  case 0xce60'8800U:
+    return native ? uml_arm64_gadget_simd_sha512su1
+                  : uml_arm64_gadget_simd_sha512su1_soft;
+  default:
+    return nullptr;
+  }
+}
+
+[[nodiscard]] Gadget simd_sm3tt_gadget(unsigned operation, unsigned index,
+                                       bool force_software) noexcept {
+  static constexpr std::array<Gadget, 16> native{
+      uml_arm64_gadget_simd_sm3tt1a_0, uml_arm64_gadget_simd_sm3tt1a_1,
+      uml_arm64_gadget_simd_sm3tt1a_2, uml_arm64_gadget_simd_sm3tt1a_3,
+      uml_arm64_gadget_simd_sm3tt1b_0, uml_arm64_gadget_simd_sm3tt1b_1,
+      uml_arm64_gadget_simd_sm3tt1b_2, uml_arm64_gadget_simd_sm3tt1b_3,
+      uml_arm64_gadget_simd_sm3tt2a_0, uml_arm64_gadget_simd_sm3tt2a_1,
+      uml_arm64_gadget_simd_sm3tt2a_2, uml_arm64_gadget_simd_sm3tt2a_3,
+      uml_arm64_gadget_simd_sm3tt2b_0, uml_arm64_gadget_simd_sm3tt2b_1,
+      uml_arm64_gadget_simd_sm3tt2b_2, uml_arm64_gadget_simd_sm3tt2b_3};
+  static constexpr std::array<Gadget, 16> software{
+      uml_arm64_gadget_simd_sm3tt1a_0_soft,
+      uml_arm64_gadget_simd_sm3tt1a_1_soft,
+      uml_arm64_gadget_simd_sm3tt1a_2_soft,
+      uml_arm64_gadget_simd_sm3tt1a_3_soft,
+      uml_arm64_gadget_simd_sm3tt1b_0_soft,
+      uml_arm64_gadget_simd_sm3tt1b_1_soft,
+      uml_arm64_gadget_simd_sm3tt1b_2_soft,
+      uml_arm64_gadget_simd_sm3tt1b_3_soft,
+      uml_arm64_gadget_simd_sm3tt2a_0_soft,
+      uml_arm64_gadget_simd_sm3tt2a_1_soft,
+      uml_arm64_gadget_simd_sm3tt2a_2_soft,
+      uml_arm64_gadget_simd_sm3tt2a_3_soft,
+      uml_arm64_gadget_simd_sm3tt2b_0_soft,
+      uml_arm64_gadget_simd_sm3tt2b_1_soft,
+      uml_arm64_gadget_simd_sm3tt2b_2_soft,
+      uml_arm64_gadget_simd_sm3tt2b_3_soft};
+  return (!force_software && host_has_sm3() ? native
+                                            : software)[operation * 4U + index];
+}
+
+[[nodiscard]] Gadget simd_xar_gadget(
+	unsigned rotate, bool native_path) noexcept
 {
-	switch (operation) {
-	case 4: return uml_arm64_gadget_simd_aese;
-	case 5: return uml_arm64_gadget_simd_aesd;
-	case 6: return uml_arm64_gadget_simd_aesmc;
-	case 7: return uml_arm64_gadget_simd_aesimc;
-	default: return nullptr;
-	}
+#define UML_SIMD_XAR_GADGETS(implementation) std::array<Gadget, 64>{ \
+	uml_arm64_gadget_simd_xar_##implementation##_0, \
+	uml_arm64_gadget_simd_xar_##implementation##_1, \
+	uml_arm64_gadget_simd_xar_##implementation##_2, \
+	uml_arm64_gadget_simd_xar_##implementation##_3, \
+	uml_arm64_gadget_simd_xar_##implementation##_4, \
+	uml_arm64_gadget_simd_xar_##implementation##_5, \
+	uml_arm64_gadget_simd_xar_##implementation##_6, \
+	uml_arm64_gadget_simd_xar_##implementation##_7, \
+	uml_arm64_gadget_simd_xar_##implementation##_8, \
+	uml_arm64_gadget_simd_xar_##implementation##_9, \
+	uml_arm64_gadget_simd_xar_##implementation##_10, \
+	uml_arm64_gadget_simd_xar_##implementation##_11, \
+	uml_arm64_gadget_simd_xar_##implementation##_12, \
+	uml_arm64_gadget_simd_xar_##implementation##_13, \
+	uml_arm64_gadget_simd_xar_##implementation##_14, \
+	uml_arm64_gadget_simd_xar_##implementation##_15, \
+	uml_arm64_gadget_simd_xar_##implementation##_16, \
+	uml_arm64_gadget_simd_xar_##implementation##_17, \
+	uml_arm64_gadget_simd_xar_##implementation##_18, \
+	uml_arm64_gadget_simd_xar_##implementation##_19, \
+	uml_arm64_gadget_simd_xar_##implementation##_20, \
+	uml_arm64_gadget_simd_xar_##implementation##_21, \
+	uml_arm64_gadget_simd_xar_##implementation##_22, \
+	uml_arm64_gadget_simd_xar_##implementation##_23, \
+	uml_arm64_gadget_simd_xar_##implementation##_24, \
+	uml_arm64_gadget_simd_xar_##implementation##_25, \
+	uml_arm64_gadget_simd_xar_##implementation##_26, \
+	uml_arm64_gadget_simd_xar_##implementation##_27, \
+	uml_arm64_gadget_simd_xar_##implementation##_28, \
+	uml_arm64_gadget_simd_xar_##implementation##_29, \
+	uml_arm64_gadget_simd_xar_##implementation##_30, \
+	uml_arm64_gadget_simd_xar_##implementation##_31, \
+	uml_arm64_gadget_simd_xar_##implementation##_32, \
+	uml_arm64_gadget_simd_xar_##implementation##_33, \
+	uml_arm64_gadget_simd_xar_##implementation##_34, \
+	uml_arm64_gadget_simd_xar_##implementation##_35, \
+	uml_arm64_gadget_simd_xar_##implementation##_36, \
+	uml_arm64_gadget_simd_xar_##implementation##_37, \
+	uml_arm64_gadget_simd_xar_##implementation##_38, \
+	uml_arm64_gadget_simd_xar_##implementation##_39, \
+	uml_arm64_gadget_simd_xar_##implementation##_40, \
+	uml_arm64_gadget_simd_xar_##implementation##_41, \
+	uml_arm64_gadget_simd_xar_##implementation##_42, \
+	uml_arm64_gadget_simd_xar_##implementation##_43, \
+	uml_arm64_gadget_simd_xar_##implementation##_44, \
+	uml_arm64_gadget_simd_xar_##implementation##_45, \
+	uml_arm64_gadget_simd_xar_##implementation##_46, \
+	uml_arm64_gadget_simd_xar_##implementation##_47, \
+	uml_arm64_gadget_simd_xar_##implementation##_48, \
+	uml_arm64_gadget_simd_xar_##implementation##_49, \
+	uml_arm64_gadget_simd_xar_##implementation##_50, \
+	uml_arm64_gadget_simd_xar_##implementation##_51, \
+	uml_arm64_gadget_simd_xar_##implementation##_52, \
+	uml_arm64_gadget_simd_xar_##implementation##_53, \
+	uml_arm64_gadget_simd_xar_##implementation##_54, \
+	uml_arm64_gadget_simd_xar_##implementation##_55, \
+	uml_arm64_gadget_simd_xar_##implementation##_56, \
+	uml_arm64_gadget_simd_xar_##implementation##_57, \
+	uml_arm64_gadget_simd_xar_##implementation##_58, \
+	uml_arm64_gadget_simd_xar_##implementation##_59, \
+	uml_arm64_gadget_simd_xar_##implementation##_60, \
+	uml_arm64_gadget_simd_xar_##implementation##_61, \
+	uml_arm64_gadget_simd_xar_##implementation##_62, \
+	uml_arm64_gadget_simd_xar_##implementation##_63}
+	static constexpr auto native_gadgets = UML_SIMD_XAR_GADGETS(native);
+	static constexpr auto software_gadgets = UML_SIMD_XAR_GADGETS(soft);
+#undef UML_SIMD_XAR_GADGETS
+	return (native_path ? native_gadgets : software_gadgets)[rotate];
 }
 
-[[nodiscard]] Gadget simd_sha_three_gadget(unsigned operation) noexcept
-{
-	static constexpr std::array<Gadget, 7> gadgets{
-		uml_arm64_gadget_simd_sha1c,
-		uml_arm64_gadget_simd_sha1p,
-		uml_arm64_gadget_simd_sha1m,
-		uml_arm64_gadget_simd_sha1su0,
-		uml_arm64_gadget_simd_sha256h,
-		uml_arm64_gadget_simd_sha256h2,
-		uml_arm64_gadget_simd_sha256su1};
-	return operation < gadgets.size() ? gadgets[operation] : nullptr;
-}
-
-[[nodiscard]] Gadget simd_sha_two_gadget(unsigned operation) noexcept
-{
-	static constexpr std::array<Gadget, 3> gadgets{
-		uml_arm64_gadget_simd_sha1h,
-		uml_arm64_gadget_simd_sha1su1,
-		uml_arm64_gadget_simd_sha256su0};
-	return operation < gadgets.size() ? gadgets[operation] : nullptr;
-}
-
-[[nodiscard]] Gadget simd_sha512_three_gadget(std::uint32_t instruction) noexcept
-{
-	switch (instruction & 0xffe0'fc00U) {
-	case 0xce60'8000U: return uml_arm64_gadget_simd_sha512h;
-	case 0xce60'8400U: return uml_arm64_gadget_simd_sha512h2;
-	case 0xce60'8800U: return uml_arm64_gadget_simd_sha512su1;
-	default: return nullptr;
-	}
-}
-
-[[nodiscard]] Gadget simd_sm3tt_gadget(
-	unsigned operation, unsigned index) noexcept
-{
-	static constexpr std::array<Gadget, 16> native{
-		uml_arm64_gadget_simd_sm3tt1a_0,
-		uml_arm64_gadget_simd_sm3tt1a_1,
-		uml_arm64_gadget_simd_sm3tt1a_2,
-		uml_arm64_gadget_simd_sm3tt1a_3,
-		uml_arm64_gadget_simd_sm3tt1b_0,
-		uml_arm64_gadget_simd_sm3tt1b_1,
-		uml_arm64_gadget_simd_sm3tt1b_2,
-		uml_arm64_gadget_simd_sm3tt1b_3,
-		uml_arm64_gadget_simd_sm3tt2a_0,
-		uml_arm64_gadget_simd_sm3tt2a_1,
-		uml_arm64_gadget_simd_sm3tt2a_2,
-		uml_arm64_gadget_simd_sm3tt2a_3,
-		uml_arm64_gadget_simd_sm3tt2b_0,
-		uml_arm64_gadget_simd_sm3tt2b_1,
-		uml_arm64_gadget_simd_sm3tt2b_2,
-		uml_arm64_gadget_simd_sm3tt2b_3};
-	static constexpr std::array<Gadget, 16> software{
-		uml_arm64_gadget_simd_sm3tt1a_0_soft,
-		uml_arm64_gadget_simd_sm3tt1a_1_soft,
-		uml_arm64_gadget_simd_sm3tt1a_2_soft,
-		uml_arm64_gadget_simd_sm3tt1a_3_soft,
-		uml_arm64_gadget_simd_sm3tt1b_0_soft,
-		uml_arm64_gadget_simd_sm3tt1b_1_soft,
-		uml_arm64_gadget_simd_sm3tt1b_2_soft,
-		uml_arm64_gadget_simd_sm3tt1b_3_soft,
-		uml_arm64_gadget_simd_sm3tt2a_0_soft,
-		uml_arm64_gadget_simd_sm3tt2a_1_soft,
-		uml_arm64_gadget_simd_sm3tt2a_2_soft,
-		uml_arm64_gadget_simd_sm3tt2a_3_soft,
-		uml_arm64_gadget_simd_sm3tt2b_0_soft,
-		uml_arm64_gadget_simd_sm3tt2b_1_soft,
-		uml_arm64_gadget_simd_sm3tt2b_2_soft,
-		uml_arm64_gadget_simd_sm3tt2b_3_soft};
-	return (host_has_sm3() ? native : software)[operation * 4U + index];
-}
-
-[[nodiscard]] Gadget simd_xar_gadget(unsigned rotate) noexcept
-{
-	static constexpr std::array<Gadget, 64> gadgets{
-		uml_arm64_gadget_simd_xar_0, uml_arm64_gadget_simd_xar_1,
-		uml_arm64_gadget_simd_xar_2, uml_arm64_gadget_simd_xar_3,
-		uml_arm64_gadget_simd_xar_4, uml_arm64_gadget_simd_xar_5,
-		uml_arm64_gadget_simd_xar_6, uml_arm64_gadget_simd_xar_7,
-		uml_arm64_gadget_simd_xar_8, uml_arm64_gadget_simd_xar_9,
-		uml_arm64_gadget_simd_xar_10, uml_arm64_gadget_simd_xar_11,
-		uml_arm64_gadget_simd_xar_12, uml_arm64_gadget_simd_xar_13,
-		uml_arm64_gadget_simd_xar_14, uml_arm64_gadget_simd_xar_15,
-		uml_arm64_gadget_simd_xar_16, uml_arm64_gadget_simd_xar_17,
-		uml_arm64_gadget_simd_xar_18, uml_arm64_gadget_simd_xar_19,
-		uml_arm64_gadget_simd_xar_20, uml_arm64_gadget_simd_xar_21,
-		uml_arm64_gadget_simd_xar_22, uml_arm64_gadget_simd_xar_23,
-		uml_arm64_gadget_simd_xar_24, uml_arm64_gadget_simd_xar_25,
-		uml_arm64_gadget_simd_xar_26, uml_arm64_gadget_simd_xar_27,
-		uml_arm64_gadget_simd_xar_28, uml_arm64_gadget_simd_xar_29,
-		uml_arm64_gadget_simd_xar_30, uml_arm64_gadget_simd_xar_31,
-		uml_arm64_gadget_simd_xar_32, uml_arm64_gadget_simd_xar_33,
-		uml_arm64_gadget_simd_xar_34, uml_arm64_gadget_simd_xar_35,
-		uml_arm64_gadget_simd_xar_36, uml_arm64_gadget_simd_xar_37,
-		uml_arm64_gadget_simd_xar_38, uml_arm64_gadget_simd_xar_39,
-		uml_arm64_gadget_simd_xar_40, uml_arm64_gadget_simd_xar_41,
-		uml_arm64_gadget_simd_xar_42, uml_arm64_gadget_simd_xar_43,
-		uml_arm64_gadget_simd_xar_44, uml_arm64_gadget_simd_xar_45,
-		uml_arm64_gadget_simd_xar_46, uml_arm64_gadget_simd_xar_47,
-		uml_arm64_gadget_simd_xar_48, uml_arm64_gadget_simd_xar_49,
-		uml_arm64_gadget_simd_xar_50, uml_arm64_gadget_simd_xar_51,
-		uml_arm64_gadget_simd_xar_52, uml_arm64_gadget_simd_xar_53,
-		uml_arm64_gadget_simd_xar_54, uml_arm64_gadget_simd_xar_55,
-		uml_arm64_gadget_simd_xar_56, uml_arm64_gadget_simd_xar_57,
-		uml_arm64_gadget_simd_xar_58, uml_arm64_gadget_simd_xar_59,
-		uml_arm64_gadget_simd_xar_60, uml_arm64_gadget_simd_xar_61,
-		uml_arm64_gadget_simd_xar_62, uml_arm64_gadget_simd_xar_63};
-	return gadgets[rotate];
-}
-
-[[nodiscard]] Gadget simd_pmull_gadget(bool high, unsigned size) noexcept
+[[nodiscard]] Gadget simd_pmull_gadget(
+	bool high, unsigned size, bool force_software) noexcept
 {
 	if (size == 0U)
-		return high ? uml_arm64_gadget_simd_pmull_8b2 :
-			uml_arm64_gadget_simd_pmull_8b;
-	if (size == 3U)
-		return high ? uml_arm64_gadget_simd_pmull_1d2 :
-			uml_arm64_gadget_simd_pmull_1d;
+		return high ? uml_arm64_gadget_simd_pmull_8b2_direct :
+			uml_arm64_gadget_simd_pmull_8b_direct;
+	if (size == 3U) {
+		const bool native = !force_software && host_has_pmull();
+		if (native)
+			return high ? uml_arm64_gadget_simd_pmull_1d2_native_direct :
+				uml_arm64_gadget_simd_pmull_1d_native_direct;
+		return high ? uml_arm64_gadget_simd_pmull_1d2_soft_direct :
+			uml_arm64_gadget_simd_pmull_1d_soft_direct;
+	}
 	return nullptr;
 }
 
@@ -8631,11 +9645,19 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 [[nodiscard]] constexpr std::uintptr_t simd_lut_operand(
 	std::uint32_t instruction, unsigned shape, unsigned part) noexcept
 {
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>(shape) << 24) |
-		(static_cast<std::uintptr_t>(part) << 26);
+	const auto vector_offset = [](unsigned index) {
+		return offsetof(CpuState, vectors) +
+			index * sizeof(VectorRegister);
+	};
+	const unsigned table = (instruction >> 5) & 31U;
+	return vector_offset(instruction & 31U) |
+		(static_cast<std::uintptr_t>(vector_offset(table)) << 11) |
+		(static_cast<std::uintptr_t>(
+			vector_offset((table + 1U) & 31U)) << 22) |
+		(static_cast<std::uintptr_t>(
+			vector_offset((instruction >> 16) & 31U)) << 33) |
+		(static_cast<std::uintptr_t>(shape) << 44) |
+		(static_cast<std::uintptr_t>(part) << 46);
 }
 
 [[nodiscard]] constexpr std::uintptr_t ordered_pair_operand(
@@ -8653,25 +9675,85 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	const unsigned second = instruction & 31U;
 	const unsigned source = compare_swap ? second : first;
 	const unsigned result = compare_swap ? first : second;
-	return ((instruction >> 5) & 31U) |
-		(static_cast<std::uintptr_t>(source) << 8) |
-		(static_cast<std::uintptr_t>(result) << 16);
+	const unsigned base = (instruction >> 5) & 31U;
+	const auto base_offset = base < 31U ?
+		base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+	const auto source_offset = source < 31U ?
+		source * sizeof(std::uint64_t) : 0U;
+	const auto result_offset = result < 31U ?
+		result * sizeof(std::uint64_t) : 0U;
+	return base_offset |
+		(static_cast<std::uintptr_t>(source_offset) << 16) |
+		(static_cast<std::uintptr_t>(result_offset) << 32);
 }
 
 [[nodiscard]] constexpr std::uintptr_t rcw_pair_operand(
 	std::uint32_t instruction) noexcept
 {
-	return ((instruction >> 5) & 31U) |
-		(static_cast<std::uintptr_t>(instruction & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
+	const unsigned base = (instruction >> 5) & 31U;
+	const unsigned first = instruction & 31U;
+	const unsigned second = (instruction >> 16) & 31U;
+	const auto base_offset = base < 31U ?
+		base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+	const auto first_offset = first < 31U ?
+		first * sizeof(std::uint64_t) : 0U;
+	const auto second_offset = second < 31U ?
+		second * sizeof(std::uint64_t) : 0U;
+	return base_offset |
+		(static_cast<std::uintptr_t>(first_offset) << 16) |
+		(static_cast<std::uintptr_t>(second_offset) << 32);
+}
+
+[[nodiscard]] constexpr std::uintptr_t mte_register_offset(
+	unsigned index) noexcept
+{
+	static_assert(offsetof(CpuState, registers) == 0);
+	static_assert(offsetof(CpuState, sp) <= 0xffffU);
+	return index == 31U ? offsetof(CpuState, sp) :
+		index * sizeof(std::uint64_t);
 }
 
 [[nodiscard]] constexpr std::uintptr_t mte_pointer_operand(
 	std::uint32_t instruction) noexcept
 {
+	return mte_register_offset(instruction & 31U) |
+		(mte_register_offset((instruction >> 5) & 31U) << 16) |
+		(mte_register_offset((instruction >> 16) & 31U) << 32);
+}
+
+[[nodiscard]] constexpr std::uintptr_t cpa_pointer_operand(
+	std::uint32_t instruction) noexcept
+{
 	return (instruction & 31U) |
 		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
 		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
+}
+
+[[nodiscard]] constexpr std::uintptr_t arithmetic_register_offset(
+	unsigned index) noexcept
+{
+	static_assert(offsetof(CpuState, registers) == 0);
+	static_assert(offsetof(CpuState, gadget_zero) <= 0xffffU);
+	return index == 31U ? offsetof(CpuState, gadget_zero) :
+		index * sizeof(std::uint64_t);
+}
+
+[[nodiscard]] constexpr std::uintptr_t arithmetic_binary_operand(
+	std::uint32_t instruction) noexcept
+{
+	return arithmetic_register_offset(instruction & 31U) |
+		(arithmetic_register_offset((instruction >> 5) & 31U) << 16) |
+		(arithmetic_register_offset((instruction >> 16) & 31U) << 32);
+}
+
+[[nodiscard]] constexpr std::uintptr_t mops_operand(
+	std::uint32_t instruction) noexcept
+{
+	/* MOPS never treats register 31 as SP. The only valid use is SET/SETG
+	 * source XZR, which translation maps to the immutable zero slot. */
+	return arithmetic_register_offset(instruction & 31U) |
+		(arithmetic_register_offset((instruction >> 5) & 31U) << 16) |
+		(arithmetic_register_offset((instruction >> 16) & 31U) << 32);
 }
 
 [[nodiscard]] constexpr std::uintptr_t cpa_multiply_operand(
@@ -8686,40 +9768,12 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 [[nodiscard]] constexpr std::uintptr_t mte_tag_operand(
 	std::uint32_t instruction) noexcept
 {
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 10) & 15U) << 16) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 63U) << 24);
+	return mte_register_offset(instruction & 31U) |
+		(mte_register_offset((instruction >> 5) & 31U) << 16) |
+		(static_cast<std::uintptr_t>((instruction >> 10) & 15U) << 32) |
+		(static_cast<std::uintptr_t>((instruction >> 16) & 63U) << 40);
 }
 
-[[nodiscard]] constexpr bool accesses_fp_state(
-	std::uint32_t instruction) noexcept
-{
-	/* A64 assigns all scalar FP/Advanced SIMD data processing encodings to
-	 * op0=x111. SIMD loads/stores use the ordinary load/store classes with
-	 * their V bit set. Include FPCR/FPSR system-register accesses as well.
-	 * Conservatively treating reads and vector stores as writes keeps the lazy
-	 * boundary state simple while scalar syscall paths avoid the 528-byte copy.
-	 */
-	const bool data_processing =
-		(instruction & 0x0e00'0000U) == 0x0e00'0000U;
-	const bool memory_copy_set =
-		(instruction & 0x3f20'0c00U) == 0x1900'0400U ||
-		(instruction & 0x3f20'0c00U) == 0x1d00'0400U ||
-		(instruction & 0x3fe0'0c00U) == 0x19c0'0400U ||
-		(instruction & 0x3fe0'0c00U) == 0x1dc0'0400U;
-	const bool vector_load_store =
-		(instruction & 0x0a00'0000U) == 0x0800'0000U &&
-		(instruction & 0x0400'0000U) != 0 && !memory_copy_set;
-	const auto system = instruction & 0xffff'ffe0U;
-	const bool fp_system_register =
-		system == 0xd53b'4400U || system == 0xd51b'4400U ||
-		system == 0xd53b'4420U || system == 0xd51b'4420U ||
-		system == 0xd53b'4440U || system == 0xd51b'4440U;
-	return data_processing || vector_load_store || fp_system_register;
-}
-
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 enum class ProductionDecodeStart : std::uint8_t {
 	branch_system,
 	data_processing_immediate,
@@ -8782,7 +9836,6 @@ make_production_decode_starts()
 
 inline constexpr auto production_decode_starts =
 	make_production_decode_starts();
-#endif
 
 } // namespace
 
@@ -8798,7 +9851,7 @@ BuildResult Builder::build(
 	std::uint64_t guest_address,
 	std::span<const std::uint32_t> instructions,
 	LinkResolver resolve_link, std::pmr::memory_resource *storage,
-	IndirectLinkResolver resolve_indirect_link) const
+	IndirectLinkResolver resolve_indirect_link, BuildOptions options) const
 {
 	std::pmr::vector<std::uintptr_t> words{storage};
 	words.reserve(std::min<std::size_t>(
@@ -8807,7 +9860,8 @@ BuildResult Builder::build(
 	bool program_accesses_fp_state = false;
 	for (const auto instruction : instructions) {
 		program_accesses_fp_state = program_accesses_fp_state ||
-			accesses_fp_state(instruction);
+			uml::backend::arm64::detail::
+				instruction_accesses_fp_state(instruction);
 		const auto address = guest_address + compiled * sizeof(instruction);
 		if ((instruction & 0xffff'0000U) == 0) {
 			emit(words, uml_arm64_gadget_illegal);
@@ -8816,30 +9870,6 @@ BuildResult Builder::build(
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-		} else if ((instruction & 0x7e00'0000U) == 0x7400'0000U ||
-			   (instruction & 0xfedf'f800U) == 0xd61f'0800U ||
-			   (instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-			emit(words, uml_arm64_gadget_decoded_control);
-			emit(words, instruction);
-			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state},
-				true, address, instruction};
-		} else if ((instruction & 0x7c00'0000U) != 0x1400'0000U &&
-			   (instruction & 0xff00'0000U) != 0x5400'0000U &&
-			   (instruction & 0x7e00'0000U) != 0x3400'0000U &&
-			   (instruction & 0x7e00'0000U) != 0x3600'0000U &&
-			   (instruction & 0xffff'fc1fU) != 0xd61f'0000U &&
-			   (instruction & 0xffff'fc1fU) != 0xd63f'0000U &&
-			   (instruction & 0xffff'fc1fU) != 0xd65f'0000U &&
-			   (instruction & 0xffe0'001fU) != 0xd400'0001U) {
-			emit(words, uml_arm64_gadget_decoded);
-			emit(words, instruction);
-			emit(words, address);
-#endif
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 		} else {
 			switch (production_decode_starts[instruction >> 24]) {
 			case ProductionDecodeStart::branch_system:
@@ -8865,24 +9895,28 @@ BuildResult Builder::build(
 		}
 
 decode_load_store_guard:
-		if ((instruction & 0xffff'fc00U) == 0xd91f'0c00U ||
-		    (instruction & 0xffff'fc00U) == 0xd91f'1c00U) {
-			/* FEAT_GCS is absent. Keep this ahead of broad load/store
-			 * lowering and never observe the encoded address or source. */
-			emit(words, uml_arm64_gadget_illegal);
+		if (const auto selected = gcs_gadget(instruction); selected) {
+			emit(words, selected->entry);
+			if (selected->has_operand)
+				emit(words, selected->operand);
 			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state},
-				true, address, instruction};
+			goto instruction_decoded;
 		}
 		goto decode_load_store;
 
 decode_branch_system:
-		if (pointer_auth_lr_unavailable(instruction)) {
-#else
+		if (const auto selected = gcs_gadget(instruction); selected) {
+			emit(words, selected->entry);
+			if (selected->has_operand)
+				emit(words, selected->operand);
+			emit(words, address);
+			if (selected->always_traps) {
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 		} else if (pointer_auth_lr_unavailable(instruction)) {
-#endif
 			/* FEAT_PAuth_LR is not advertised by the static guest profile.
 			 * Its non-HINT encodings are architecturally UNDEFINED. */
 			emit(words, uml_arm64_gadget_illegal);
@@ -8891,19 +9925,6 @@ decode_branch_system:
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-		} else if ((instruction & 0xffff'fc00U) == 0xd91f'0c00U ||
-			   (instruction & 0xffff'fc00U) == 0xd91f'1c00U) {
-			/* FEAT_GCS is absent.  Keep this ahead of broad load/store
-			 * lowering so the production path has one unconditional illegal
-			 * gadget and never observes the encoded address or source. */
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state},
-				true, address, instruction};
-#endif
 		} else if ((instruction & 0x7c00'0000U) == 0x1400'0000U) {
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>(instruction & 0x03ff'ffffU) << 2,
@@ -8959,11 +9980,12 @@ decode_branch_system:
 				(narrow_control == 0 ||
 				 (((instruction >> 31) == 0) && narrow_control >= 2));
 			if (!valid_form || cc == 4 || cc == 5) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>(
@@ -9020,22 +10042,35 @@ decode_branch_system:
 			const auto displacement = sign_extend(
 				static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
 				21);
-			emit(words, resolve_link ? uml_arm64_gadget_compare_branch_linked :
-				uml_arm64_gadget_compare_branch);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>(instruction >> 31) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 24) & 1U) << 9));
 			const auto target = static_cast<std::uint64_t>(
 				static_cast<std::int64_t>(address) + displacement);
 			const auto fallthrough = address + sizeof(instruction);
-			if (resolve_link) {
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(target)));
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(fallthrough)));
+			const unsigned source = instruction & 31U;
+			const bool nonzero = (instruction & 0x0100'0000U) != 0;
+			if (source == 31U) {
+				const auto selected = nonzero ? fallthrough : target;
+				if (resolve_link) {
+					emit(words, uml_arm64_gadget_branch_always_linked);
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(selected)));
+				} else {
+					emit(words, uml_arm64_gadget_branch_always);
+					emit(words, selected);
+				}
 			} else {
-				emit(words, target);
-				emit(words, fallthrough);
+				emit(words, compare_branch_gadget(
+					(instruction >> 31) != 0, nonzero,
+					static_cast<bool>(resolve_link)));
+				emit(words, offsetof(CpuState, registers) + source * 8U);
+				if (resolve_link) {
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(target)));
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(fallthrough)));
+				} else {
+					emit(words, target);
+					emit(words, fallthrough);
+				}
 			}
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
@@ -9047,28 +10082,49 @@ decode_branch_system:
 				16);
 			const auto bit = ((instruction >> 31) << 5) |
 				((instruction >> 19) & 31U);
-			emit(words, resolve_link ? uml_arm64_gadget_test_branch_linked :
-				uml_arm64_gadget_test_branch);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>(bit) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 24) & 1U) << 16));
 			const auto target = static_cast<std::uint64_t>(
 				static_cast<std::int64_t>(address) + displacement);
 			const auto fallthrough = address + sizeof(instruction);
-			if (resolve_link) {
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(target)));
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(fallthrough)));
+			const unsigned source = instruction & 31U;
+			const bool nonzero = (instruction & 0x0100'0000U) != 0;
+			if (source == 31U) {
+				const auto selected = nonzero ? fallthrough : target;
+				if (resolve_link) {
+					emit(words, uml_arm64_gadget_branch_always_linked);
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(selected)));
+				} else {
+					emit(words, uml_arm64_gadget_branch_always);
+					emit(words, selected);
+				}
 			} else {
-				emit(words, target);
-				emit(words, fallthrough);
+				emit(words, test_branch_gadget(nonzero,
+					static_cast<bool>(resolve_link)));
+				emit(words, offsetof(CpuState, registers) + source * 8U);
+				emit(words, std::uintptr_t{1} << bit);
+				if (resolve_link) {
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(target)));
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(fallthrough)));
+				} else {
+					emit(words, target);
+					emit(words, fallthrough);
+				}
 			}
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
 		} else if ((instruction & 0xfedf'f800U) == 0xd61f'0800U) {
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const bool zero_modifier =
 				(instruction & 0x0100'0000U) == 0;
 			const unsigned modifier = instruction & 31U;
@@ -9082,11 +10138,25 @@ decode_branch_system:
 					true, address, instruction};
 			}
 			const bool link = (instruction & 0x0020'0000U) != 0;
-			emit(words, pointer_auth_branch_gadget(link,
-				(instruction & 0x400U) != 0, zero_modifier,
-				target == 31U));
-			if (target != 31U || !zero_modifier)
-				emit(words, pointer_auth_operand(target, modifier));
+			const bool key_b = (instruction & 0x400U) != 0;
+			emit(words,
+				link && options.enable_guarded_control_flow ?
+					pointer_auth_guarded_call_gadget(
+						key_b, zero_modifier,
+						target == 31U) :
+					pointer_auth_branch_gadget(
+						link, key_b, zero_modifier,
+						target == 31U));
+			if (target != 31U || !zero_modifier) {
+				const auto operand = target == 31U ?
+					(modifier < 31U ?
+						modifier * sizeof(std::uint64_t) :
+						offsetof(CpuState, sp)) :
+					zero_modifier ?
+						target * sizeof(std::uint64_t) :
+						pointer_auth_operand(target, modifier);
+				emit(words, operand);
+			}
 			if (link)
 				emit(words, address + sizeof(instruction));
 			++compiled;
@@ -9094,9 +10164,22 @@ decode_branch_system:
 				program_accesses_fp_state},
 				true, address, instruction};
 		} else if ((instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-			emit(words, pointer_auth_branch_gadget(false,
-				(instruction & 0x400U) != 0, false, false));
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
+			const bool key_b = (instruction & 0x400U) != 0;
+			emit(words, options.enable_guarded_control_flow ?
+				pointer_auth_guarded_return_gadget(key_b) :
+				pointer_auth_branch_gadget(
+					false, key_b, false, false));
 			emit(words, pointer_auth_operand(30, 31));
+			if (options.enable_guarded_control_flow)
+				emit(words, address);
 			++compiled;
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
@@ -9148,9 +10231,15 @@ decode_branch_system:
 		} else if (instruction == 0xd500'401fU) {
 			emit(words, uml_arm64_gadget_cfinv);
 		} else if (instruction == 0xd500'405fU) {
-			emit(words, uml_arm64_gadget_axflag);
+			emit(words, !options.force_software_flags &&
+					host_arm_features().has(ArmFeature::flag_m2) ?
+				uml_arm64_gadget_axflag_native :
+				uml_arm64_gadget_axflag);
 		} else if (instruction == 0xd500'403fU) {
-			emit(words, uml_arm64_gadget_xaflag);
+			emit(words, !options.force_software_flags &&
+					host_arm_features().has(ArmFeature::flag_m2) ?
+				uml_arm64_gadget_xaflag_native :
+				uml_arm64_gadget_xaflag);
 		} else if ((instruction & 0xfff8'f01fU) == 0xd500'401fU) {
 			const auto selected = pstate_immediate_gadget(instruction);
 			if (!selected.valid) {
@@ -9162,7 +10251,6 @@ decode_branch_system:
 					true, address, instruction};
 			}
 			emit(words, selected.gadget);
-			emit(words, selected.operand);
 			if (selected.fault_address)
 				emit(words, address);
 		} else if ((instruction & 0xffff'ffe0U) == 0xd53b'd040U ||
@@ -9185,6 +10273,15 @@ decode_branch_system:
 			if (selected.operand)
 				emit(words, static_cast<std::uintptr_t>(
 					(instruction & 31U) * sizeof(std::uint64_t)));
+			/* A register-sourced FPCR write may enable synchronous exception
+			 * reporting. Supply its already-known fallthrough PC so the
+			 * rare enabled case can leave the block immediately; ordinary
+			 * control-only writes remain straight through.
+			 */
+			if ((instruction & 0xffff'ffe0U) == 0xd51b'4400U &&
+			    (instruction & 31U) != 31U) {
+				emit(words, address + sizeof(instruction));
+			}
 		} else if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
 			   (instruction & 0xffd0'0000U) == 0xd550'0000U ||
 			   (instruction & 0xfff8'0000U) == 0xd548'0000U) {
@@ -9209,11 +10306,22 @@ decode_branch_system:
 					emit(words, static_cast<std::uintptr_t>(
 						source * sizeof(std::uint64_t)));
 				emit(words, address);
-			} else if (operation == 0xd50b'7b20U ||
-			    operation == 0xd50b'7520U) {
-				/* The static VM invalidation path tracks guest executable
-				 * writes, so the production cache operation needs no work. */
+			} else if (operation == 0xd50b'7b20U) {
+				/* Guest writes already update the coherent backing. */
 				emit(words, uml_arm64_gadget_nop);
+			} else if (operation == 0xd50b'7520U) {
+				const unsigned source = instruction & 31U;
+				emit(words, source == 31U ?
+					uml_arm64_gadget_code_synchronize_z :
+					uml_arm64_gadget_code_synchronize_r);
+				if (source != 31U)
+					emit(words, static_cast<std::uintptr_t>(
+						source * sizeof(std::uint64_t)));
+				emit(words, address + sizeof(instruction));
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
 			} else {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
@@ -9230,15 +10338,27 @@ decode_branch_system:
 			   (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
 			   instruction == 0xd503'30ffU) {
 			emit(words, memory_barrier_gadget(instruction));
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+		} else if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
 		} else if (instruction == 0xd503'20ffU) {
-			emit(words, uml_arm64_gadget_xpaclri);
+			emit(words, options.enable_pointer_authentication ?
+				uml_arm64_gadget_xpaclri : uml_arm64_gadget_nop);
 		} else if (const auto pointer_auth =
 			decode_pointer_auth_hint(instruction); pointer_auth) {
-			emit(words, pointer_auth_gadgets[pointer_auth->operation]
-				[pointer_auth->zero_modifier]);
-			emit(words, pointer_auth_operand(pointer_auth->destination,
-				pointer_auth->modifier));
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				emit(words, pointer_auth_gadgets[pointer_auth->operation]
+					[pointer_auth->zero_modifier]);
+				emit(words, pointer_auth_operand(
+					pointer_auth->destination,
+					pointer_auth->modifier));
+			}
 		} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
 			emit(words, architectural_hint_gadget(instruction));
 		} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||
@@ -9256,26 +10376,24 @@ decode_branch_system:
 				program_accesses_fp_state},
 				true, address, instruction};
 		} else {
-			emit_interpreter_or_fatal(words, instruction, address);
+			emit_fatal(words, address);
 		}
 		goto instruction_decoded;
 
 decode_data_processing_immediate:
 		if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
-#else
-		} else if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
-#endif
 			const unsigned operation = (instruction >> 29) & 3U;
 			const unsigned halfword = (instruction >> 21) & 3U;
 			const bool is_64_bit = (instruction >> 31) != 0;
 			const unsigned destination = instruction & 31U;
 			if (operation == 1 ||
 			    (!is_64_bit && halfword >= 2)) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			if (destination == 31U) {
 				emit(words, uml_arm64_gadget_nop);
@@ -9308,16 +10426,44 @@ decode_data_processing_immediate:
 				emit(words, uml_arm64_gadget_nop);
 			} else {
 				const unsigned source = (instruction >> 5) & 31U;
+				const unsigned operation =
+					(instruction >> 18) & 3U;
+				const unsigned encoded =
+					(instruction >> 10) & 0xffU;
+				const bool is_64_bit =
+					(instruction & 0x8000'0000U) != 0;
 				const auto zero = offsetof(CpuState, gadget_zero);
 				const auto source_offset = source == 31U ? zero : source * 8U;
-				emit(words, integer_min_max_gadget(
-					(instruction >> 18) & 3U,
-					(instruction & 0x8000'0000U) != 0, true));
-				emit(words,
-					static_cast<std::uintptr_t>(destination * 8U) |
-					(static_cast<std::uintptr_t>(source_offset) << 16) |
-					(static_cast<std::uintptr_t>(
-						(instruction >> 10) & 0xffU) << 32));
+				/* UMAX #0 is an unconditional copy. */
+				if (operation == 1U && encoded == 0U) {
+					if (is_64_bit && destination == source) {
+						emit(words, uml_arm64_gadget_nop);
+					} else {
+						emit(words, is_64_bit ?
+							uml_arm64_gadget_integer_min_max_copy_x :
+							uml_arm64_gadget_integer_min_max_copy_w);
+						emit(words,
+							static_cast<std::uintptr_t>(
+								destination * 8U) |
+							(static_cast<std::uintptr_t>(
+								source_offset)
+							 << 16));
+					}
+				} else {
+					std::uint32_t immediate = encoded;
+					if ((operation & 1U) == 0U &&
+					    (encoded & 0x80U) != 0)
+						immediate |= 0xffff'ff00U;
+					emit(words, integer_min_max_gadget(
+						operation, is_64_bit, true));
+					emit(words,
+						static_cast<std::uintptr_t>(
+							destination * 8U) |
+						(static_cast<std::uintptr_t>(
+							source_offset) << 16) |
+						(static_cast<std::uintptr_t>(
+							immediate) << 32));
+				}
 			}
 		} else if ((instruction & 0xffc0'c000U) == 0x9180'0000U ||
 			   (instruction & 0xffc0'c000U) == 0xd180'0000U) {
@@ -9326,6 +10472,13 @@ decode_data_processing_immediate:
 				((instruction >> 5) & 31U) == 31U,
 				(instruction & 31U) == 31U));
 			emit(words, mte_tag_operand(instruction));
+		} else if ((instruction & 0x1f80'0000U) == 0x1180'0000U) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
 		} else if ((instruction & 0x1f80'0000U) == 0x1100'0000U) {
 			const bool set_flags = (instruction & 0x2000'0000U) != 0;
 			const unsigned destination = instruction & 31U;
@@ -9350,11 +10503,12 @@ decode_data_processing_immediate:
 			if ((extended && shift > 4) ||
 			    (!extended && (shift_type == 3 ||
 				(!is_64_bit && shift >= 32)))) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const unsigned destination = instruction & 31U;
 			const unsigned left = (instruction >> 5) & 31U;
@@ -9396,7 +10550,7 @@ decode_data_processing_immediate:
 				((instruction >> 5) & 31U) == 31U,
 				((instruction >> 16) & 31U) == 31U,
 				(instruction & 31U) == 31U));
-			emit(words, mte_pointer_operand(instruction));
+			emit(words, cpa_pointer_operand(instruction));
 		} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'0000U ||
 			   (instruction & 0xffe0'fc00U) == 0xbac0'0000U ||
 			   (instruction & 0xffe0'fc00U) == 0x9ac0'1400U) {
@@ -9412,31 +10566,65 @@ decode_data_processing_immediate:
 			const unsigned destination = instruction & 31U;
 			const unsigned left = (instruction >> 5) & 31U;
 			const unsigned right = (instruction >> 16) & 31U;
-			emit(words, add_sub_carry_gadget(
-				(instruction & 0x8000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction & 0x2000'0000U) != 0,
-				left == 31U, right == 31U, destination == 31U));
-			emit(words, destination |
-				(static_cast<std::uintptr_t>(left) << 8) |
-				(static_cast<std::uintptr_t>(right) << 16));
+			const bool set_flags =
+				(instruction & 0x2000'0000U) != 0;
+			if (destination == 31U && !set_flags) {
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				emit(words, add_sub_carry_gadget(
+					(instruction & 0x8000'0000U) != 0,
+					(instruction & 0x4000'0000U) != 0,
+					set_flags, left == 31U, right == 31U,
+					left == right && left != 31U,
+					destination == 31U));
+				emit(words,
+					arithmetic_binary_operand(instruction));
+			}
 		} else if ((instruction & 0xffe0'7c10U) == 0xba00'0400U) {
 			const unsigned source = (instruction >> 5) & 31U;
-			const auto source_offset = source == 31U ?
-				offsetof(CpuState, gadget_zero) : source * 8U;
-			emit(words, uml_arm64_gadget_rmif_fast);
-			emit(words, static_cast<std::uintptr_t>(source_offset) |
-				(static_cast<std::uintptr_t>(
-					(instruction >> 15) & 63U) << 16) |
-				(static_cast<std::uintptr_t>(instruction & 15U) << 24));
+			const auto shifted_mask =
+				static_cast<std::uintptr_t>(instruction & 15U) << 28;
+			if (shifted_mask == 0U) {
+				emit(words, uml_arm64_gadget_nop);
+			} else if (source == 31U) {
+				emit(words, uml_arm64_gadget_rmif_zero);
+				emit(words, shifted_mask);
+			} else {
+				emit(words, uml_arm64_gadget_rmif_fast);
+				emit(words, static_cast<std::uintptr_t>(source * 8U));
+				emit(words, static_cast<std::uintptr_t>(
+					(instruction >> 15) & 63U));
+				emit(words, shifted_mask);
+			}
 		} else if ((instruction & 0xffff'bc1fU) == 0x3a00'080dU) {
 			const unsigned source = (instruction >> 5) & 31U;
 			const auto source_offset = source == 31U ?
 				offsetof(CpuState, gadget_zero) : source * 8U;
-			emit(words, (instruction & 0x4000U) != 0 ?
-				uml_arm64_gadget_setf_fast_16 : uml_arm64_gadget_setf_fast_8);
+			const bool native = !options.force_software_flags &&
+				host_arm_features().has(ArmFeature::flag_m);
+			if ((instruction & 0x4000U) != 0)
+				emit(words, native ? uml_arm64_gadget_setf_native_16 :
+					uml_arm64_gadget_setf_fast_16);
+			else
+				emit(words, native ? uml_arm64_gadget_setf_native_8 :
+					uml_arm64_gadget_setf_fast_8);
 			emit(words, source_offset);
+		} else if ((instruction & 0xffe0'0400U) == 0xba00'0400U ||
+			   (instruction & 0xffff'0800U) == 0x3a00'0800U) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state}, true, address, instruction};
 		} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const unsigned destination = instruction & 31U;
 			const unsigned source = (instruction >> 5) & 31U;
 			const unsigned modifier = (instruction >> 16) & 31U;
@@ -9456,17 +10644,62 @@ decode_data_processing_immediate:
 			} else {
 				const unsigned left = (instruction >> 5) & 31U;
 				const unsigned right = (instruction >> 16) & 31U;
+				const unsigned operation =
+					(instruction >> 10) & 3U;
+				const bool is_64_bit =
+					(instruction & 0x8000'0000U) != 0;
 				const auto zero = offsetof(CpuState, gadget_zero);
 				const auto left_offset = left == 31U ? zero : left * 8U;
 				const auto right_offset = right == 31U ? zero : right * 8U;
-				emit(words, integer_min_max_gadget(
-					(instruction >> 10) & 3U,
-					(instruction & 0x8000'0000U) != 0, false));
-				emit(words,
-					static_cast<std::uintptr_t>(destination * 8U) |
-					(static_cast<std::uintptr_t>(left_offset) << 16) |
-					(static_cast<std::uintptr_t>(right_offset) << 32));
+				std::optional<unsigned> copy_source;
+				if (left == right)
+					copy_source = left;
+				else if (operation == 1U) {
+					if (left == 31U)
+						copy_source = right;
+					else if (right == 31U)
+						copy_source = left;
+				}
+				else if (operation == 3U &&
+					 (left == 31U || right == 31U))
+					copy_source = 31U;
+				if (copy_source) {
+					const auto source_offset =
+						*copy_source == 31U ? zero :
+							*copy_source * 8U;
+					if (is_64_bit &&
+					    destination == *copy_source) {
+						emit(words,
+							uml_arm64_gadget_nop);
+					} else {
+						emit(words, is_64_bit ?
+							uml_arm64_gadget_integer_min_max_copy_x :
+							uml_arm64_gadget_integer_min_max_copy_w);
+						emit(words,
+							static_cast<std::uintptr_t>(
+								destination * 8U) |
+							(static_cast<std::uintptr_t>(
+								source_offset)
+							 << 16));
+					}
+				} else {
+					emit(words, integer_min_max_gadget(
+						operation, is_64_bit, false));
+					emit(words,
+						static_cast<std::uintptr_t>(
+							destination * 8U) |
+						(static_cast<std::uintptr_t>(
+							left_offset) << 16) |
+						(static_cast<std::uintptr_t>(
+							right_offset) << 32));
+				}
 			}
+		} else if ((instruction & 0x5fe0'f000U) == 0x1ac0'6000U) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state}, true, address, instruction};
 		} else if ((instruction & 0xffe0'8000U) == 0x9b60'0000U ||
 			   (instruction & 0xffe0'8000U) == 0x9b60'8000U) {
 			emit(words, cpa_multiply_gadget(
@@ -9488,18 +10721,29 @@ decode_data_processing_immediate:
 				 ((instruction >> 10) & 0x1fU) == 0x1fU);
 			if (valid) {
 				const unsigned destination = instruction & 31U;
-				const unsigned left = (instruction >> 5) & 31U;
-				const unsigned addend = (instruction >> 10) & 31U;
-				const unsigned right = (instruction >> 16) & 31U;
-				emit(words, multiply_add_gadget(operation,
-					(instruction & 0x8000U) != 0, is_64_bit,
-					left == 31U, right == 31U, addend == 31U,
-					destination == 31U));
-				emit(words,
-					static_cast<std::uintptr_t>(destination * 8U) |
-					(static_cast<std::uintptr_t>(left * 8U) << 16) |
-					(static_cast<std::uintptr_t>(right * 8U) << 32) |
-					(static_cast<std::uintptr_t>(addend * 8U) << 48));
+				if (destination == 31U) {
+					emit(words, uml_arm64_gadget_nop);
+				} else {
+					const unsigned left =
+						(instruction >> 5) & 31U;
+					const unsigned addend =
+						(instruction >> 10) & 31U;
+					const unsigned right =
+						(instruction >> 16) & 31U;
+					emit(words, multiply_add_gadget(operation,
+						(instruction & 0x8000U) != 0,
+						is_64_bit, left == 31U,
+						right == 31U, addend == 31U));
+					emit(words,
+						static_cast<std::uintptr_t>(
+							destination * 8U) |
+						(static_cast<std::uintptr_t>(
+							left * 8U) << 16) |
+						(static_cast<std::uintptr_t>(
+							right * 8U) << 32) |
+						(static_cast<std::uintptr_t>(
+							addend * 8U) << 48));
+				}
 			} else {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
@@ -9511,43 +10755,81 @@ decode_data_processing_immediate:
 			const unsigned destination = instruction & 31U;
 			const unsigned left = (instruction >> 5) & 31U;
 			const unsigned right = (instruction >> 16) & 31U;
-			emit(words, variable_shift_gadget(
-				(instruction & 0x8000'0000U) != 0,
-				(instruction >> 10) & 3U, left == 31U,
-				right == 31U, destination == 31U));
-			emit(words, destination |
-				(static_cast<std::uintptr_t>(left) << 8) |
-				(static_cast<std::uintptr_t>(right) << 16));
+			if (destination == 31U) {
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				emit(words, variable_shift_gadget(
+					(instruction & 0x8000'0000U) != 0,
+					(instruction >> 10) & 3U,
+					left == 31U, right == 31U,
+					left == right && left != 31U));
+				emit(words,
+					arithmetic_binary_operand(instruction));
+			}
 		} else if ((instruction & 0x7fe0'f800U) == 0x1ac0'0800U) {
 			const unsigned destination = instruction & 31U;
 			const unsigned left = (instruction >> 5) & 31U;
 			const unsigned right = (instruction >> 16) & 31U;
-			emit(words, divide_gadget(
-				(instruction & 0x8000'0000U) != 0,
-				(instruction & 0x400U) != 0, left == 31U,
-				right == 31U, destination == 31U));
-			emit(words, destination |
-				(static_cast<std::uintptr_t>(left) << 8) |
-				(static_cast<std::uintptr_t>(right) << 16));
+			if (destination == 31U) {
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				emit(words, divide_gadget(
+					(instruction & 0x8000'0000U) != 0,
+					(instruction & 0x400U) != 0,
+					left == 31U, right == 31U,
+					left == right && left != 31U));
+				emit(words,
+					arithmetic_binary_operand(instruction));
+			}
 		} else if ((instruction & 0x7fe0'e000U) == 0x1ac0'4000U) {
 			const unsigned size = (instruction >> 10) & 3U;
 			if (((instruction >> 31) != 0) == (size == 3U)) {
 				const unsigned destination = instruction & 31U;
 				const unsigned left = (instruction >> 5) & 31U;
 				const unsigned right = (instruction >> 16) & 31U;
-				emit(words, crc32_gadget((instruction >> 10) & 7U,
-					left == 31U, right == 31U, destination == 31U));
-				emit(words, destination |
-					(static_cast<std::uintptr_t>(left) << 8) |
-					(static_cast<std::uintptr_t>(right) << 16));
+				if (destination == 31U) {
+					emit(words, uml_arm64_gadget_nop);
+				} else {
+					emit(words, crc32_gadget(
+						(instruction >> 10) & 7U,
+						left == 31U, right == 31U,
+						left == right && left != 31U,
+						!options.force_software_checksum &&
+							host_arm_features().crc32));
+					if (left != 31U)
+						emit(words, offsetof(CpuState, registers) +
+							left * 8U);
+					if (right != 31U && right != left)
+						emit(words, offsetof(CpuState, registers) +
+							right * 8U);
+					emit(words, offsetof(CpuState, registers) +
+						destination * 8U);
+				}
 			} else {
-				emit_interpreter_or_fatal(words, instruction, address);
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
 			}
-		} else if ((instruction & 0xffe0'0000U) == 0x93c0'0000U ||
-			   (instruction & 0xffe0'0000U) == 0x1380'0000U) {
+		} else if ((instruction & 0x5fe0'0000U) == 0x1ac0'0000U) {
+			/* Every allocated data-processing (2 source) member is selected
+			 * above. The remaining opcode combinations are reserved.
+			 */
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
+		} else if ((instruction & 0x1f80'0000U) == 0x1380'0000U) {
 			const bool is_64_bit = (instruction >> 31) != 0;
 			const unsigned shift = (instruction >> 10) & 0x3fU;
-			if (((instruction >> 22) & 1U) == is_64_bit &&
+			if (((instruction >> 29) & 3U) == 0U &&
+			    (instruction & 0x0020'0000U) == 0U &&
+			    ((instruction >> 22) & 1U) ==
+				    static_cast<unsigned>(is_64_bit) &&
 			    (is_64_bit || shift < 32U)) {
 				const unsigned destination = instruction & 31U;
 				const unsigned left = (instruction >> 5) & 31U;
@@ -9560,32 +10842,53 @@ decode_data_processing_immediate:
 					(static_cast<std::uintptr_t>(right) << 16) |
 					(static_cast<std::uintptr_t>(shift) << 24));
 			} else {
-				emit_interpreter_or_fatal(words, instruction, address);
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
 			}
 		} else if ((instruction & 0x1f00'0000U) == 0x0a00'0000U) {
 			const bool is_64_bit = (instruction >> 31) != 0;
 			const unsigned shift = (instruction >> 10) & 0x3fU;
 			if (!is_64_bit && shift >= 32) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const unsigned destination = instruction & 31U;
 			const unsigned left = (instruction >> 5) & 31U;
 			const unsigned right = (instruction >> 16) & 31U;
-			const unsigned shift_kind = shift == 0U ? 0U :
-				((instruction >> 22) & 3U) + 1U;
-			emit(words, logical_shifted_gadget(is_64_bit,
-				(instruction >> 29) & 3U,
-				(instruction & 0x0020'0000U) != 0, shift_kind,
-				left == 31U, right == 31U, destination == 31U));
-			emit(words, destination |
-				(static_cast<std::uintptr_t>(left) << 8) |
-				(static_cast<std::uintptr_t>(right) << 16) |
-				(static_cast<std::uintptr_t>(shift) << 24));
-		} else if ((instruction & 0x3fe0'0800U) == 0x1a80'0000U) {
+			const unsigned operation = (instruction >> 29) & 3U;
+			if (destination == 31U && operation != 3U) {
+				/* A non-flag-setting write to XZR/WZR has no effect. */
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				const unsigned shift_kind = shift == 0U ? 0U :
+					((instruction >> 22) & 3U) + 1U;
+				emit(words, logical_shifted_gadget(is_64_bit,
+					operation,
+					(instruction & 0x0020'0000U) != 0,
+					shift_kind, left == 31U, right == 31U,
+					destination == 31U));
+				emit(words, destination |
+					(static_cast<std::uintptr_t>(left) << 8) |
+					(static_cast<std::uintptr_t>(right) << 16) |
+					(static_cast<std::uintptr_t>(shift) << 24));
+			}
+		} else if ((instruction & 0x3fe0'0000U) == 0x1a80'0000U) {
+			if ((instruction & 0x0000'0800U) != 0) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const unsigned destination = instruction & 31U;
 			if (destination == 31U) {
 				emit(words, uml_arm64_gadget_nop);
@@ -9594,18 +10897,35 @@ decode_data_processing_immediate:
 				const unsigned right = (instruction >> 16) & 31U;
 				const unsigned operation = ((instruction >> 29) & 2U) |
 					((instruction >> 10) & 1U);
+				const unsigned condition =
+					(instruction >> 12) & 15U;
+				const bool unconditional_copy =
+					condition >= 14U ||
+					(operation == 0U && left == right);
 				const auto zero = offsetof(CpuState, gadget_zero);
 				const auto left_offset = left == 31U ? zero : left * 8U;
 				const auto right_offset = right == 31U ? zero : right * 8U;
 				emit(words, conditional_select_gadget(
-					(instruction >> 12) & 15U, operation,
+					unconditional_copy ? 14U : condition,
+					operation,
 					(instruction & 0x8000'0000U) != 0));
 				emit(words,
 					static_cast<std::uintptr_t>(destination * 8U) |
 					(static_cast<std::uintptr_t>(left_offset) << 16) |
-					(static_cast<std::uintptr_t>(right_offset) << 32));
+					(static_cast<std::uintptr_t>(
+						unconditional_copy ? 0U :
+							right_offset)
+					 << 32));
 			}
-		} else if ((instruction & 0x3fe0'0410U) == 0x3a40'0000U) {
+		} else if ((instruction & 0x3fe0'0000U) == 0x3a40'0000U) {
+			if ((instruction & 0x0000'0410U) != 0) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const bool immediate = (instruction & 0x800U) != 0;
 			const unsigned left = (instruction >> 5) & 31U;
 			const unsigned right = (instruction >> 16) & 31U;
@@ -9619,7 +10939,7 @@ decode_data_processing_immediate:
 				(instruction & 0x8000'0000U) != 0, immediate));
 			emit(words, static_cast<std::uintptr_t>(left_operand) |
 				(static_cast<std::uintptr_t>(right_operand) << 16) |
-				(static_cast<std::uintptr_t>(instruction & 15U) << 32));
+				(static_cast<std::uintptr_t>(instruction & 15U) << 60));
 		} else if ((instruction & 0x1f80'0000U) == 0x1200'0000U) {
 			const bool is_64_bit = (instruction >> 31) != 0;
 			const auto immediate = detail::decode_logical_immediate(
@@ -9627,11 +10947,12 @@ decode_data_processing_immediate:
 				(instruction >> 16) & 0x3fU,
 				(instruction >> 10) & 0x3fU);
 			if (!immediate) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const unsigned destination = instruction & 31U;
 			const unsigned source = (instruction >> 5) & 31U;
@@ -9652,11 +10973,12 @@ decode_data_processing_immediate:
 			if (operation == 3 || n != static_cast<unsigned>(is_64_bit) ||
 			    (!is_64_bit && ((rotate | imms) & 0x20U) != 0) ||
 			    !masks) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const unsigned destination = instruction & 31U;
 			if (destination == 31U) {
@@ -9674,6 +10996,14 @@ decode_data_processing_immediate:
 				emit(words, masks->test);
 			}
 		} else if ((instruction & 0xffff'c000U) == 0xdac1'0000U) {
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const unsigned encoded_operation = (instruction >> 10) & 15U;
 			const bool zero_modifier = encoded_operation >= 8U;
 			const unsigned modifier = (instruction >> 5) & 31U;
@@ -9694,9 +11024,19 @@ decode_data_processing_immediate:
 			} else {
 				emit(words, pointer_auth_gadgets[encoded_operation & 7U]
 					[zero_modifier]);
-				emit(words, pointer_auth_operand(destination, modifier));
+				emit(words, zero_modifier ?
+					destination * sizeof(std::uint64_t) :
+					pointer_auth_operand(destination, modifier));
 			}
 		} else if ((instruction & 0xffff'f800U) == 0xdac1'4000U) {
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			/* XPACI/XPACD require Rn==11111. D and Rd are the only
 			 * variable fields; discard-to-XZR is side-effect free. */
 			if (((instruction >> 5) & 31U) != 31U) {
@@ -9719,32 +11059,42 @@ decode_data_processing_immediate:
 			const bool is_64_bit = (instruction >> 31) != 0;
 			const auto operation = (instruction >> 10) & 0x1fU;
 			if (operation > 8 || (!is_64_bit && operation == 3)) {
-				emit(words, uml_arm64_gadget_fatal);
+				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
+				++compiled;
 				return {Program{guest_address, compiled, std::move(words),
 					program_accesses_fp_state},
-					false, address, instruction};
+					true, address, instruction};
 			}
 			const unsigned destination = instruction & 31U;
 			const unsigned source = (instruction >> 5) & 31U;
-			emit(words, bit_reverse_count_gadget(is_64_bit, operation,
-				source == 31U, destination == 31U));
-			emit(words, destination |
-				(static_cast<std::uintptr_t>(source) << 8));
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
+			if (destination == 31U) {
+				emit(words, uml_arm64_gadget_nop);
+			} else {
+				emit(words, bit_reverse_count_gadget(
+					is_64_bit, operation));
+				emit(words, source == 31U ?
+					offsetof(CpuState, gadget_zero) :
+					offsetof(CpuState, registers) +
+						source * sizeof(std::uint64_t));
+				emit(words, offsetof(CpuState, registers) +
+					destination * sizeof(std::uint64_t));
+			}
 		} else {
-			emit_interpreter_or_fatal(words, instruction, address);
+			emit_fatal(words, address);
 		}
 		goto instruction_decoded;
 
 decode_floating_simd:
 		if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
-#else
-		} else if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
-#endif
-			emit(words, (instruction & 31U) == 31U ?
-				uml_arm64_gadget_floating_javascript_convert_discard :
-				uml_arm64_gadget_floating_javascript_convert);
+			if (!host_arm_features().has(ArmFeature::jscvt)) {
+				emit(words,
+					uml_arm64_gadget_floating_javascript_convert_software_fallback);
+			} else {
+				emit(words, (instruction & 31U) == 31U ?
+					uml_arm64_gadget_floating_javascript_convert_discard :
+					uml_arm64_gadget_floating_javascript_convert);
+			}
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(
 					(instruction >> 5) & 31U) << 8));
@@ -9822,26 +11172,85 @@ decode_floating_simd:
 			if (selected == uml_arm64_gadget_fp8_software)
 				emit(words, reinterpret_cast<std::uintptr_t>(
 					fp8_software_function(fp8)));
-			emit(words, detail::fp8_operand(fp8));
+			emit(words, fp8_operand(fp8));
 		} else if (const auto bfloat =
 				detail::decode_bfloat_conversion(instruction);
 			   bfloat.recognized) {
 			emit(words, bfloat_conversion_gadget(bfloat));
-			emit(words, detail::bfloat_conversion_operand(
-				instruction, bfloat));
+			constexpr auto vector_base = offsetof(CpuState, vectors);
+			constexpr auto vector_size = sizeof(VectorRegister);
+			static_assert(vector_base + 31U * vector_size <= 0xffffU);
+			const auto destination = vector_base +
+				(instruction & 31U) * vector_size;
+			const auto source = vector_base +
+				((instruction >> 5) & 31U) * vector_size;
+			emit(words, destination |
+				(static_cast<std::uintptr_t>(source) << 16U) |
+				(static_cast<std::uintptr_t>(bfloat.scalar) << 32U) |
+				(static_cast<std::uintptr_t>(bfloat.upper) << 33U));
 		} else if (const auto bfloat_dot = detail::decode_bfloat_dot(instruction);
 			   bfloat_dot.recognized) {
 			emit(words, bfloat_dot_gadget(bfloat_dot));
-			emit(words, detail::bfloat_dot_operand(instruction, bfloat_dot));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) & 31U,
+				static_cast<unsigned>(bfloat_dot.by_element) |
+					(static_cast<unsigned>(bfloat_dot.wide) << 1U) |
+					(bfloat_dot.index << 2U)));
 		} else if (detail::decode_bfloat_matrix_multiply(instruction)) {
 			emit(words, bfloat_matrix_gadget());
-			emit(words, detail::bfloat_matrix_operand(instruction));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) & 31U));
+		} else if (const auto bfloat_multiply =
+				detail::decode_bfloat_multiply_long(instruction);
+			   bfloat_multiply.recognized) {
+			emit(words, bfloat_multiply_long_gadget(bfloat_multiply));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) &
+					(bfloat_multiply.by_element ? 15U : 31U),
+				static_cast<unsigned>(bfloat_multiply.top) |
+					(static_cast<unsigned>(
+						bfloat_multiply.by_element) << 1U) |
+					(bfloat_multiply.index << 2U)));
+		} else if (((instruction & 0xbf20'fc00U) ==
+				    0x2e00'fc00U &&
+			    ((((instruction >> 22) & 3U) == 0U) ||
+			     (((instruction >> 22) & 3U) == 2U))) ||
+			   ((instruction & 0xbf20'fc00U) ==
+				    0x2e00'ec00U &&
+			    ((((instruction & 0x4000'0000U) == 0U) &&
+			      (((instruction >> 22) & 3U) == 1U)) ||
+			     (((instruction & 0x4000'0000U) != 0U) &&
+			      (((instruction >> 22) & 3U) == 3U))))) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state}, true, address, instruction};
 		} else if (const auto half_fused =
 				detail::decode_half_fused_long(instruction);
 			   half_fused.recognized) {
 			emit(words, half_fused_long_gadget(half_fused));
-			emit(words, detail::half_fused_long_operand(
-				instruction, half_fused));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) &
+					(half_fused.by_element ? 15U : 31U),
+				static_cast<unsigned>(half_fused.by_element) |
+					(static_cast<unsigned>(half_fused.subtract)
+						<< 1U) |
+					(static_cast<unsigned>(half_fused.upper)
+						<< 2U) |
+					(static_cast<unsigned>(half_fused.wide)
+						<< 3U) |
+					(half_fused.index << 4U)));
+		} else if (detail::reserved_half_fused_long(instruction)) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state}, true, address, instruction};
 		} else if (const auto half_matrix = detail::decode_half_matrix(instruction);
 			   half_matrix.recognized) {
 			if (!half_matrix.valid) {
@@ -9852,17 +11261,25 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, half_matrix_gadget(half_matrix));
-			emit(words, detail::half_matrix_operand(instruction, half_matrix));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) & 31U,
+				static_cast<unsigned>(half_matrix.widening)));
 		} else if (const auto half_dot = detail::decode_half_dot(instruction);
 			   half_dot.recognized) {
 			emit(words, half_dot_gadget(half_dot));
-			emit(words, detail::half_dot_operand(instruction, half_dot));
-		} else if (const auto bfloat_multiply =
-				detail::decode_bfloat_multiply_long(instruction);
-			   bfloat_multiply.recognized) {
-			emit(words, bfloat_multiply_long_gadget(bfloat_multiply));
-			emit(words, detail::bfloat_multiply_long_operand(
-				instruction, bfloat_multiply));
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) & 31U,
+				static_cast<unsigned>(half_dot.by_element) |
+					(static_cast<unsigned>(half_dot.wide) << 1U) |
+					(half_dot.index << 2U)));
+			} else if (detail::reserved_half_dot_scalar_class(instruction)) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state}, true, address, instruction};
 		} else if ((instruction & 0xff20'7c00U) == 0x1e20'4000U &&
 			   ((instruction >> 15) & 0x3fU) >= 4U &&
 			   ((instruction >> 15) & 0x3fU) <= 7U) {
@@ -9878,8 +11295,8 @@ decode_floating_simd:
 			}
 			emit(words, floating_convert_precision_gadget(
 				source_type, destination_type));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
+			emit(words, simd_unary_operand(instruction & 31U,
+				(instruction >> 5) & 31U));
 		} else if ((instruction & 0xff20'1fe0U) == 0x1e20'1000U) {
 			const auto type = (instruction >> 22) & 3U;
 			if (type == 2U) {
@@ -9909,8 +11326,8 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-				emit(words, detail::floating_complex_operand(
-					instruction, floating_complex));
+			emit(words, floating_complex_operand(
+				instruction, floating_complex));
 		} else if (const auto floating_scale =
 				detail::decode_floating_scale(instruction);
 			   floating_scale.recognized) {
@@ -9937,7 +11354,8 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, detail::floating_reciprocal_operand(instruction));
+			emit(words, detail::floating_reciprocal_operand(
+				instruction, floating_reciprocal));
 		} else if (const auto floating_horizontal =
 				detail::decode_floating_horizontal(instruction);
 			   floating_horizontal.recognized) {
@@ -9951,8 +11369,55 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, detail::floating_horizontal_operand(
-				instruction, floating_horizontal));
+			const bool absolute_software =
+				(floating_horizontal.operation ==
+					detail::FloatingHorizontalOperation::
+						absolute_maximum ||
+				 floating_horizontal.operation ==
+					detail::FloatingHorizontalOperation::
+						absolute_minimum) &&
+				!host_has_faminmax();
+			const bool fp_controls_checked =
+				!host_has_afp() &&
+				(floating_horizontal.operation ==
+						detail::FloatingHorizontalOperation::
+							absolute_difference ||
+				 floating_horizontal.operation ==
+						detail::FloatingHorizontalOperation::add ||
+				 detail::floating_horizontal_uses_ah(
+						floating_horizontal));
+			if (absolute_software) {
+				emit(words, detail::floating_horizontal_operand(
+					instruction, floating_horizontal));
+			} else {
+				const auto vector_offset = [](unsigned index) {
+					return offsetof(CpuState, vectors) +
+						index * sizeof(
+							uml::backend::arm64::
+								VectorRegister);
+				};
+				emit(words, vector_offset(instruction & 31U));
+				emit(words, vector_offset(
+					(instruction >> 5) & 31U));
+				const bool uses_second =
+					floating_horizontal.form ==
+						detail::FloatingHorizontalForm::
+							scalar_binary ||
+				    floating_horizontal.form ==
+						detail::FloatingHorizontalForm::
+							vector_binary ||
+				    floating_horizontal.form ==
+						detail::FloatingHorizontalForm::
+							vector_pairwise;
+				if (uses_second)
+					emit(words, vector_offset(
+						(instruction >> 16) & 31U));
+				if (fp_controls_checked)
+					emit(words,
+						detail::floating_horizontal_operand(
+							instruction,
+							floating_horizontal));
+			}
 		} else if (const auto floating_round =
 				detail::decode_floating_round(instruction);
 			   floating_round.recognized) {
@@ -9981,9 +11446,16 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, fused_floating.scalar ?
-				detail::scalar_fused_operand(instruction) :
-				detail::vector_fused_operand(instruction));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(VectorRegister);
+			};
+			emit(words, vector_offset(instruction & 31U));
+			emit(words, vector_offset((instruction >> 5) & 31U));
+			emit(words, vector_offset((instruction >> 16) & 31U));
+			if (fused_floating.scalar)
+				emit(words, vector_offset(
+					(instruction >> 10) & 31U));
 		} else if (const auto basic_floating =
 				detail::decode_basic_floating_arithmetic(instruction);
 			   basic_floating.recognized) {
@@ -10038,7 +11510,7 @@ decode_floating_simd:
 					(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
 					(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
 			} else {
-				emit_interpreter_or_fatal(words, instruction, address);
+				emit_fatal(words, address);
 			}
 		} else if ((instruction & 0xff00'0000U) == 0x1f00'0000U &&
 			   ((instruction >> 22) & 3U) <= 1) {
@@ -10053,7 +11525,8 @@ decode_floating_simd:
 		} else if ((instruction & 0xbf20'fc00U) == 0x0e20'e000U) {
 			const auto gadget = simd_pmull_gadget(
 				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
+				(instruction >> 22) & 3U,
+				options.force_software_pmull);
 			if (gadget == nullptr) {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
@@ -10062,981 +11535,1307 @@ decode_floating_simd:
 					program_accesses_fp_state}, true, address, instruction};
 			}
 			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			constexpr auto vector_base = offsetof(CpuState, vectors);
+			constexpr auto vector_size =
+				sizeof(uml::backend::arm64::VectorRegister);
+			static_assert(vector_base + 31U * vector_size <= 0xffffU);
+			const auto destination = vector_base +
+				(instruction & 31U) * vector_size;
+			const auto left = vector_base +
+				((instruction >> 5) & 31U) * vector_size;
+			const auto right = vector_base +
+				((instruction >> 16) & 31U) * vector_size;
+			emit(words, destination | (left << 16) | (right << 32));
 		} else if ((instruction & 0xffe0'8000U) == 0xce00'0000U ||
 			   (instruction & 0xffe0'8000U) == 0xce20'0000U) {
-			emit(words, (instruction & 0x0020'0000U) != 0 ?
-				uml_arm64_gadget_simd_bcax : uml_arm64_gadget_simd_eor3);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-				(static_cast<std::uintptr_t>((instruction >> 10) & 31U) << 24));
+			const bool native =
+				!options.force_software_sha3 && host_has_sha3();
+			const bool bit_clear =
+				(instruction & 0x0020'0000U) != 0;
+			emit(words, bit_clear ?
+				(native ? uml_arm64_gadget_simd_bcax_native :
+				 uml_arm64_gadget_simd_bcax_soft) :
+				(native ? uml_arm64_gadget_simd_eor3_native :
+				 uml_arm64_gadget_simd_eor3_soft));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(
+						uml::backend::arm64::VectorRegister);
+			};
+			emit(words, vector_offset(instruction & 31U));
+			emit(words, vector_offset((instruction >> 5) & 31U));
+			emit(words, vector_offset((instruction >> 16) & 31U));
+			emit(words, vector_offset((instruction >> 10) & 31U));
 		} else if ((instruction & 0xffe0'fc00U) == 0xce60'8c00U) {
-			emit(words, uml_arm64_gadget_simd_rax1);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			emit(words, !options.force_software_sha3 &&
+					host_has_sha3() ?
+				uml_arm64_gadget_simd_rax1_native :
+				uml_arm64_gadget_simd_rax1_soft);
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(
+						uml::backend::arm64::VectorRegister);
+			};
+			emit(words, vector_offset(instruction & 31U));
+			emit(words, vector_offset((instruction >> 5) & 31U));
+			emit(words, vector_offset((instruction >> 16) & 31U));
 		} else if ((instruction & 0xffe0'0000U) == 0xce80'0000U) {
-			emit(words, simd_xar_gadget((instruction >> 10) & 63U));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
+			emit(words, simd_xar_gadget(
+				(instruction >> 10) & 63U,
+				!options.force_software_sha3 &&
+					host_has_sha3()));
+			const auto vector_offset = [](unsigned index) {
+				return offsetof(CpuState, vectors) +
+					index * sizeof(
+						uml::backend::arm64::VectorRegister);
+			};
+			emit(words, vector_offset(instruction & 31U));
+			emit(words, vector_offset((instruction >> 5) & 31U));
+			emit(words, vector_offset((instruction >> 16) & 31U));
 		} else if ((instruction & 0xffff'8c00U) == 0x4e28'0800U) {
-			const auto gadget = simd_aes_gadget((instruction >> 12) & 7U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xffe0'8c00U) == 0x5e00'0000U) {
-			const auto gadget = simd_sha_three_gadget(
-				(instruction >> 12) & 7U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xffff'8c00U) == 0x5e28'0800U) {
-			const auto gadget = simd_sha_two_gadget(
-				(instruction >> 12) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xffe0'fc00U) == 0xce60'8000U ||
-			   (instruction & 0xffe0'fc00U) == 0xce60'8400U ||
-			   (instruction & 0xffe0'fc00U) == 0xce60'8800U) {
-			emit(words, simd_sha512_three_gadget(instruction));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xffff'fc00U) == 0xcec0'8000U) {
-			emit(words, uml_arm64_gadget_simd_sha512su0);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xffe0'fc00U) == 0xce60'c000U ||
-			   (instruction & 0xffe0'fc00U) == 0xce60'c400U ||
-			   (instruction & 0xffe0'fc00U) == 0xce60'c800U) {
-			const auto operation = instruction & 0xffe0'fc00U;
-			const auto gadget = operation == 0xce60'c000U ?
-				(host_has_sm3() ? uml_arm64_gadget_simd_sm3partw1 :
-				 uml_arm64_gadget_simd_sm3partw1_soft) :
-				operation == 0xce60'c400U ?
-				(host_has_sm3() ? uml_arm64_gadget_simd_sm3partw2 :
-				 uml_arm64_gadget_simd_sm3partw2_soft) :
-				(host_has_sm4() ? uml_arm64_gadget_simd_sm4ekey :
-				 uml_arm64_gadget_simd_sm4ekey_soft);
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xffe0'8000U) == 0xce40'0000U) {
-			emit(words, host_has_sm3() ? uml_arm64_gadget_simd_sm3ss1 :
-				uml_arm64_gadget_simd_sm3ss1_soft);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-				(static_cast<std::uintptr_t>((instruction >> 10) & 31U) << 24));
-		} else if ((instruction & 0xffe0'c000U) == 0xce40'8000U) {
-			emit(words, simd_sm3tt_gadget((instruction >> 10) & 3U,
-				(instruction >> 12) & 3U));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xffff'fc00U) == 0xcec0'8400U) {
-			emit(words, host_has_sm4() ? uml_arm64_gadget_simd_sm4e :
-				uml_arm64_gadget_simd_sm4e_soft);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
-			   (instruction & 0xffe0'8000U) == 0xce60'0000U ||
-			   (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
-			   (instruction & 0xffff'fc00U) == 0xcec0'8c00U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state}, true, address, instruction};
-		} else if ((instruction & 0xbf60'fc00U) == 0x0e40'1c00U ||
-			   (instruction & 0xff60'fc00U) == 0x5e40'1c00U ||
-			   (instruction & 0xbf20'fc00U) == 0x0e20'dc00U ||
-			   (instruction & 0xff20'fc00U) == 0x5e20'dc00U) {
-			const bool scalar = (instruction & 0x1000'0000U) != 0;
-			const bool q = (instruction & 0x4000'0000U) != 0;
-			const bool half = (instruction & 0x00e0'0000U) ==
-				0x0040'0000U;
-			const auto gadget = simd_fmulx_gadget(scalar, q, half,
-				!half && (instruction & 0x0040'0000U) != 0);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0x9f20'fc00U) == 0x0e00'9400U ||
-			   (instruction & 0xbf20'fc00U) == 0x0e00'9c00U) {
-			const bool ordinary =
-				(instruction & 0x9f20'fc00U) == 0x0e00'9400U;
-			const auto signedness = ordinary ?
-				((instruction & 0x2000'0000U) != 0 ?
-				 SimdDotSignedness::unsigned_unsigned :
-				 SimdDotSignedness::signed_signed) :
-				SimdDotSignedness::unsigned_signed;
-			const auto gadget = ((instruction >> 22) & 3U) == 2U ?
-				simd_dot_vector_gadget(signedness,
-					(instruction & 0x4000'0000U) != 0) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xdfe0'fc00U) == 0x4e80'a400U ||
-			   (instruction & 0xffe0'fc00U) == 0x4e80'ac00U) {
-			const bool mixed =
-				(instruction & 0xffe0'fc00U) == 0x4e80'ac00U;
-			const auto signedness = mixed ?
-				SimdDotSignedness::unsigned_signed :
-				(instruction & 0x2000'0000U) != 0 ?
-				SimdDotSignedness::unsigned_unsigned :
-				SimdDotSignedness::signed_signed;
-			emit(words, simd_matrix_gadget(signedness));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xbf20'f400U) == 0x2e00'8400U ||
-			   (instruction & 0xff20'f400U) == 0x7e00'8400U) {
-			const bool scalar = (instruction & 0x1000'0000U) != 0;
-			const auto gadget = simd_rdm_three_same_gadget(
-				(instruction & 0x800U) != 0, scalar,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
-			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 16) & 31U)) << 32));
-		} else if (const auto floating_conversion =
-				detail::decode_simd_floating_precision_vector(instruction);
-			   floating_conversion.recognized) {
-			if (!floating_conversion.valid) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words,
-				simd_floating_precision_vector_gadget(floating_conversion));
-			emit(words, detail::simd_floating_precision_vector_operand(
-				instruction, floating_conversion));
-		} else if (const auto floating_compare =
-				detail::decode_simd_floating_compare(instruction);
-			   floating_compare.recognized) {
-			if (!floating_compare.valid) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, simd_floating_compare_gadget(floating_compare));
-			emit(words, detail::simd_floating_compare_operand(
-				instruction, floating_compare));
-		} else if ((((instruction & 0x9f20'0400U) == 0x0e20'0400U) ||
-			    ((instruction & 0xdf20'0400U) == 0x5e20'0400U)) &&
-			   ((instruction >> 11) & 0x1fU) < 24U &&
-			   ((instruction >> 11) & 0x1fU) != 3U) {
-			/* Integer three-same operations are fully validated and selected
-			 * while translating. Their native gadgets contain no opcode or
-			 * arrangement branches on the valid hot path. */
-			const bool scalar = (instruction & 0x1000'0000U) != 0;
-			const auto gadget = simd_three_same_gadget(
-				(instruction >> 11) & 0x1fU,
-				(instruction & 0x2000'0000U) != 0, scalar,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
-			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 16) & 31U)) << 32));
-		} else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
-			    (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
-			    (instruction & 0xbf20'fc00U) == 0x0e00'3800U ||
-			    (instruction & 0xbf20'fc00U) == 0x0e00'5800U ||
-			    (instruction & 0xbf20'fc00U) == 0x0e00'6800U ||
-			    (instruction & 0xbf20'fc00U) == 0x0e00'7800U)) {
-			const auto gadget = simd_permute_gadget(
+			const auto gadget = simd_aes_gadget(
 				(instruction >> 12) & 7U,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
+				options.force_software_aes);
 			if (gadget == nullptr) {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
 				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
-			   (instruction & 0x00c0'0000U) != 0U) {
-			/* FEAT_LUT allocation validity and the native instruction shape are
-			 * resolved once here. Native gadgets consequently have no valid-path
-			 * operation, element-size, or immediate branches. */
-			const unsigned op2 = (instruction >> 22) & 3U;
-			const unsigned len = (instruction >> 13) & 3U;
-			const unsigned op = (instruction >> 12) & 1U;
-			unsigned shape{};
-			unsigned part{};
-			bool valid = true;
-			if (op2 == 1U) {
-				valid = op != 0U || (len & 1U) != 0U;
-				shape = op != 0U ? 3U : 2U;
-				part = op != 0U ? len : len >> 1;
-			} else if (op2 == 2U) {
-				valid = op != 0U;
-				shape = 0U;
-				part = len;
-			} else if (op2 == 3U) {
-				shape = 1U;
-				part = (len << 1) | op;
-			} else {
-				valid = false;
-			}
-			const auto native = valid ?
-				simd_lut_native_gadget(shape, part) : nullptr;
-			if (native == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, host_has_lut() ? native :
-				uml_arm64_gadget_simd_lut_software);
-			emit(words, simd_lut_operand(instruction, shape, part));
-		} else if ((instruction & 0xbfe0'8c00U) == 0x0e00'0000U) {
-			const unsigned count =
-				((instruction >> 13) & 3U) + 1U;
-			emit(words, simd_table_lookup_gadget(
-				(instruction & 0x1000U) != 0,
-				count,
-				(instruction & 0x4000'0000U) != 0));
-			if (count == 1U) {
-				const auto vector_offset = [](unsigned index) {
-					return offsetof(CpuState, vectors) +
-						index * sizeof(VectorRegister);
-				};
-				emit(words,
-					vector_offset(instruction & 31U) |
-					(static_cast<std::uintptr_t>(vector_offset(
-						(instruction >> 5) & 31U)) << 16) |
-					(static_cast<std::uintptr_t>(vector_offset(
-						(instruction >> 16) & 31U)) << 32));
-			} else {
-				emit(words, (instruction & 31U) |
-					(static_cast<std::uintptr_t>(
-						(instruction >> 5) & 31U) << 8) |
-					(static_cast<std::uintptr_t>(
-						(instruction >> 16) & 31U) << 16));
-			}
-		} else if ((instruction & 0x9ff8'0400U) == 0x0f00'0400U) {
-			/* This allocation overlaps the broad shift-immediate masks below
-			 * in cmode bits, so it must be selected first. */
-			const auto decoded =
-				detail::decode_simd_modified_immediate(instruction);
-			if (decoded) {
-				emit(words, simd_modified_immediate_gadget(decoded->action,
-					(instruction & 0x4000'0000U) != 0));
-				emit(words, instruction & 31U);
-				emit(words, decoded->pattern);
-			} else {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-			}
-		} else if ((instruction & 0x8f80'fc00U) == 0x0f00'a400U) {
-			const auto encoded = (instruction >> 16) & 0x7fU;
-			const auto source_bits = std::bit_floor(encoded);
-			const auto gadget = simd_shift_left_long_gadget(source_bits,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction & 0x2000'0000U) != 0);
-			if (gadget == nullptr || encoded - source_bits >= source_bits) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(encoded - source_bits) << 16));
-		} else if ((((instruction & 0x9f20'0c00U) == 0x0e20'0000U) ||
-			    ((instruction & 0xdf20'0c00U) == 0x5e20'0000U)) &&
-			   ((instruction >> 12) & 15U) != 4U &&
-			   ((instruction >> 12) & 15U) != 6U) {
-			const bool scalar = (instruction & 0x1000'0000U) != 0;
-			const auto gadget = simd_widening_gadget(
-				(instruction >> 12) & 15U,
-				(instruction & 0x2000'0000U) != 0, scalar,
-				!scalar && (instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
-			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 16) & 31U)) << 32));
-		} else if ((instruction & 0xbfff'fc00U) == 0x0ef8'f800U ||
-			   (instruction & 0xbfff'fc00U) == 0x2ef8'f800U ||
-			   (instruction & 0xbf3f'fc00U) == 0x0e20'f800U ||
-			   (instruction & 0xbf3f'fc00U) == 0x2e20'f800U) {
-			const auto half_operation = instruction & 0xbfff'fc00U;
-			const bool half = half_operation == 0x0ef8'f800U ||
-				half_operation == 0x2ef8'f800U;
-			const bool negate = half ? half_operation == 0x2ef8'f800U :
-				(instruction & 0xbf3f'fc00U) == 0x2e20'f800U;
-			const bool allocated = half ||
-				(instruction & 0x0080'0000U) != 0U;
-			const auto gadget = allocated ?
-				simd_floating_sign_gadget(negate, half,
-					!half && (instruction & 0x0040'0000U) != 0U,
-					(instruction & 0x4000'0000U) != 0U) :
-				nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xbf20'fc00U) == 0x0e00'0400U ||
-			   (instruction & 0xff20'fc00U) == 0x5e00'0400U) {
-			const auto lane = detail::decode_simd_lane_index(
-				(instruction >> 16) & 31U);
-			const auto gadget = lane ? simd_duplicate_element_gadget(
-				(instruction & 0x1000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				lane->element_shift) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-				emit(words, (instruction & 31U) |
-					(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-					(static_cast<std::uintptr_t>(lane->offset) << 16));
-		} else if ((instruction & 0x9f00'0400U) == 0x0f00'0000U &&
-			   (((instruction >> 12) & 15U) == 14U ||
-			    (((instruction >> 12) & 15U) == 15U &&
-			     (instruction & 0x2000'0000U) == 0 &&
-			     (((instruction >> 22) & 3U) == 0U ||
-			      ((instruction >> 22) & 3U) == 2U)))) {
-			const unsigned operation = (instruction >> 12) & 15U;
-			const unsigned size = (instruction >> 22) & 3U;
-			const auto element = decode_simd_dot_indexed_element(instruction);
-			const auto signedness = operation == 14U ?
-				((instruction & 0x2000'0000U) != 0 ?
-				 SimdDotSignedness::unsigned_unsigned :
-				 SimdDotSignedness::signed_signed) : size == 0U ?
-				SimdDotSignedness::signed_unsigned :
-				SimdDotSignedness::unsigned_signed;
-			const auto gadget = (operation != 14U || size == 2U) ?
-				simd_dot_indexed_gadget(signedness,
-					(instruction & 0x4000'0000U) != 0,
-					element.lane_index) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(element.register_index) << 16));
-		} else if (((instruction & 0x9f00'0400U) == 0x0f00'0000U ||
-			    (instruction & 0xdf00'0400U) == 0x5f00'0000U) &&
-			   ((((instruction >> 12) & 15U) == 1U &&
-			     (instruction & 0x2000'0000U) == 0) ||
-			    (((instruction >> 12) & 15U) == 5U &&
-			     (instruction & 0x2000'0000U) == 0) ||
-			    ((instruction >> 12) & 15U) == 9U)) {
-			/* All FP by-element decode choices are fixed here.  Only the
-			 * architecturally data-dependent FP environment remains in the
-			 * selected native gadget. */
-			const auto element =
-				decode_simd_indexed_floating_element(instruction);
-			const auto gadget = element ? simd_indexed_floating_gadget(
-				(instruction >> 12) & 15U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x1000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U,
-				element->lane_index) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
-			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					element->register_index)) << 32));
-		} else if ((((instruction & 0x9f00'0400U) == 0x0f00'0000U) ||
-			    ((instruction & 0xdf00'0400U) == 0x5f00'0000U)) &&
-			   is_simd_indexed_integer_group(
-				(instruction >> 12) & 15U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x1000'0000U) != 0)) {
-			/* Integer by-element choices, including the lane and restricted
-			 * element-register field, are resolved once while translating. */
-			const auto element = decode_simd_indexed_element(instruction);
-			const auto gadget = element ? simd_indexed_integer_gadget(
-				(instruction >> 12) & 15U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x1000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U,
-				element->lane_index) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(element->register_index) << 16));
-		} else if ((instruction & 0xdf00'0400U) == 0x5f00'0000U &&
-			   is_simd_indexed_scalar_reserved(
-				(instruction >> 12) & 15U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction >> 22) & 3U)) {
-			/* Reject scalar indexed holes at translation time, before any
-			 * architectural register or FP state is observed. */
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state}, true, address, instruction};
-		} else if ((((instruction & 0x9f00'0400U) == 0x0f00'0400U) ||
-			    ((instruction & 0xdf00'0400U) == 0x5f00'0400U)) &&
-			   ((((instruction >> 11) & 31U) <= 8U) &&
-			    (((instruction >> 11) & 1U) == 0U))) {
-			const auto decoded = decode_simd_immediate_shift(instruction, false);
-			const unsigned opcode = (instruction >> 11) & 31U;
-			const auto gadget = decoded ? simd_shift_right_immediate_gadget(
-				opcode, (instruction & 0x2000'0000U) != 0,
-				decoded->shape) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(decoded->shift) << 16));
-			if (opcode == 8U)
-				emit(words, simd_shift_insert_mask(
-					decoded->lane_bits, decoded->shift, false));
-		} else if ((instruction & 0x9f00'fc00U) == 0x0f00'5400U ||
-			   (instruction & 0xdf00'fc00U) == 0x5f00'5400U) {
-			const auto decoded = decode_simd_immediate_shift(instruction, true);
-			const bool insert = (instruction & 0x2000'0000U) != 0;
-			const auto gadget = decoded ? simd_shift_left_immediate_gadget(
-				insert, decoded->shape) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(decoded->shift) << 16));
-			if (insert)
-				emit(words, simd_shift_insert_mask(
-					decoded->lane_bits, decoded->shift, true));
-		} else if ((instruction & 0x9f00'fc00U) == 0x0f00'7400U ||
-			   (instruction & 0xdf00'fc00U) == 0x5f00'7400U ||
-			   (instruction & 0x9f00'fc00U) == 0x0f00'6400U ||
-			   (instruction & 0xdf00'fc00U) == 0x5f00'6400U) {
-			const auto decoded =
-				decode_simd_saturating_shift_left(instruction);
-			const bool signed_to_unsigned =
-				((instruction >> 11) & 31U) == 12U;
-			const bool valid = !signed_to_unsigned ||
-				(instruction & 0x2000'0000U) != 0;
-			const auto operation = signed_to_unsigned ?
-				SimdSaturatingShiftLeft::signed_to_unsigned :
-				(instruction & 0x2000'0000U) != 0 ?
-				SimdSaturatingShiftLeft::unsigned_to_unsigned :
-				SimdSaturatingShiftLeft::signed_to_signed;
-			const auto gadget = decoded && valid ? simd_saturating_shift_left_gadget(
-				operation, decoded->shape, decoded->shift) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(signed_to_unsigned ? 0U :
-				 static_cast<std::uintptr_t>(decoded->shift) << 16));
-		} else if ((((instruction & 0x9f00'0400U) == 0x0f00'0400U) ||
-			    ((instruction & 0xdf00'0400U) == 0x5f00'0400U)) &&
-			   ((instruction >> 11) & 31U) >= 16U &&
-			   ((instruction >> 11) & 31U) <= 19U &&
-			   !(((instruction >> 11) & 31U) <= 17U &&
-			     (instruction & 0x2000'0000U) == 0 &&
-			     (instruction & 0x1000'0000U) == 0)) {
-			const unsigned opcode = (instruction >> 11) & 31U;
-			const unsigned encoded = (instruction >> 16) & 0x7fU;
-			const unsigned source_bits = encoded >= 32U && encoded < 64U ? 64U :
-				encoded >= 16U && encoded < 32U ? 32U :
-				encoded >= 8U && encoded < 16U ? 16U : 0U;
-			const unsigned shift = source_bits - encoded;
-			const bool scalar = (instruction & 0x1000'0000U) != 0;
-			const auto gadget = shift != 0U && shift <= source_bits / 2U ?
-				simd_saturating_narrow_gadget(opcode,
-					(instruction & 0x2000'0000U) != 0, source_bits,
-					scalar, !scalar &&
-						(instruction & 0x4000'0000U) != 0) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(shift) << 16));
-		} else if ((instruction & 0x9f20'fc00U) == 0x0e20'1c00U) {
-			const auto operation = ((instruction >> 22) & 3U) |
-				((instruction >> 27) & 4U);
-			emit(words, simd_bitwise_gadget(operation,
-				(instruction & 0x4000'0000U) != 0));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xbfe0'8400U) == 0x2e00'0000U) {
-			const bool q = (instruction & 0x4000'0000U) != 0;
-			const unsigned offset = (instruction >> 11) & 15U;
-			if (offset < (q ? 16U : 8U)) {
-				emit(words, simd_extract_gadget(q, offset));
-				emit(words, (instruction & 31U) |
-					(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-					(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-			} else {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-		} else if ((instruction & 0x9f30'0c00U) == 0x0e30'0800U &&
-			   (((instruction >> 12) & 31U) == 3U ||
-			    ((instruction >> 12) & 31U) == 10U ||
-			    ((instruction >> 12) & 31U) == 26U ||
-			    ((instruction >> 12) & 31U) == 27U)) {
-			const auto gadget = simd_integer_reduce_gadget(
-				(instruction >> 12) & 31U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0x9fbf'fc00U) == 0x0ea1'c800U) {
-			const auto gadget = simd_unsigned_estimate_gadget(
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction & 0x0040'0000U) != 0);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((((instruction & 0x9f30'0c00U) == 0x0e20'0800U) ||
-			    ((instruction & 0xdf30'0c00U) == 0x5e20'0800U)) &&
-			   (((instruction >> 12) & 31U) == 2U ||
-			    ((instruction >> 12) & 31U) == 3U ||
-			    ((instruction >> 12) & 31U) == 4U ||
-			    ((instruction >> 12) & 31U) == 6U ||
-			    ((instruction >> 12) & 31U) == 7U ||
-			    ((instruction >> 12) & 31U) == 11U ||
-			    ((instruction >> 12) & 31U) == 18U ||
-			    ((instruction >> 12) & 31U) == 19U ||
-			    ((instruction >> 12) & 31U) == 20U)) {
-			const auto gadget = simd_integer_unary_gadget(
-				(instruction >> 12) & 31U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x1000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xbf20'fc00U) == 0x0e20'0800U ||
-			   (instruction & 0xbf20'fc00U) == 0x2e20'0800U ||
-			   (instruction & 0xbf20'fc00U) == 0x0e20'1800U) {
-			const unsigned block_bits =
-				(instruction & 0x0000'1000U) != 0 ? 16U :
-				(instruction & 0x2000'0000U) != 0 ? 32U : 64U;
-			const auto gadget = simd_reverse_native_gadget(block_bits,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0x9f20'fc00U) == 0x0e20'5800U) {
-			const bool alternate = (instruction & 0x2000'0000U) != 0;
-			const unsigned size = (instruction >> 22) & 3U;
-			const unsigned operation = !alternate && size == 0U ? 0U :
-				alternate && size == 0U ? 1U :
-				alternate && size == 1U ? 2U : 3U;
-			if (operation == 3U) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, simd_byte_unary_gadget(operation,
-				(instruction & 0x4000'0000U) != 0));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xffff'fc00U) == 0x5ef1'b800U) {
-			emit(words, uml_arm64_gadget_simd_addp_scalar);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xbf00'fc00U) == 0x0f00'8400U ||
-			   (instruction & 0xbf00'fc00U) == 0x0f00'8c00U) {
-			const unsigned encoded = (instruction >> 16) & 0x7fU;
-			const unsigned source_bits = encoded >= 32U && encoded < 64U ? 64U :
-				encoded >= 16U && encoded < 32U ? 32U :
-				encoded >= 8U && encoded < 16U ? 16U : 0U;
-			const unsigned shift = source_bits - encoded;
-			const auto gadget = shift != 0U && shift <= source_bits / 2U ?
-				simd_shift_narrow_gadget(source_bits,
-					(instruction & 0x4000'0000U) != 0,
-					(instruction & 0x800U) != 0) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(shift) << 16));
-		} else if ((instruction & 0x9f20'fc00U) == 0x0e20'4000U ||
-			   (instruction & 0x9f20'fc00U) == 0x0e20'6000U) {
-			const auto gadget = simd_high_narrow_gadget(
-				((instruction >> 11) & 31U) == 12U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
-			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
-					(instruction >> 16) & 31U)) << 32));
-		} else if (((instruction & 0x9f3f'fc00U) == 0x0e20'8800U ||
-			    (instruction & 0x9f3f'fc00U) == 0x0e20'9800U ||
-			    (instruction & 0x9f3f'fc00U) == 0x0e20'a800U ||
-			    (instruction & 0x9f3f'fc00U) == 0x1e20'8800U ||
-			    (instruction & 0x9f3f'fc00U) == 0x1e20'9800U ||
-			    (instruction & 0x9f3f'fc00U) == 0x1e20'a800U)) {
-			const auto gadget = simd_compare_zero_native_gadget(
-				(instruction >> 12) & 31U,
-				(instruction & 0x2000'0000U) != 0,
-				(instruction & 0x1000'0000U) != 0,
-				(instruction & 0x4000'0000U) != 0,
-				(instruction >> 22) & 3U);
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-		} else if ((instruction & 0xbfe0'fc00U) == 0x0e00'3c00U ||
-			   (instruction & 0xbfe0'fc00U) == 0x0e00'2c00U) {
-			const auto lane = detail::decode_simd_lane_index(
-				(instruction >> 16) & 31U);
-			const auto gadget = lane ? simd_lane_to_gpr_gadget(
-				(instruction & 0x1000U) == 0,
-				(instruction & 0x4000'0000U) != 0,
-				lane->element_shift, (instruction & 31U) == 31U) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(lane->offset) << 16));
-		} else if ((instruction & 0xffe0'fc00U) == 0x4e00'1c00U) {
-			const auto lane = detail::decode_simd_lane_index(
-				(instruction >> 16) & 31U);
-			const auto gadget = lane ? simd_insert_general_gadget(
-				lane->element_shift,
-				((instruction >> 5) & 31U) == 31U) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(lane->offset) << 16));
-		} else if ((instruction & 0xffe0'8400U) == 0x6e00'0400U) {
-			const auto lane = detail::decode_simd_lane_index(
-				(instruction >> 16) & 31U);
-			const auto gadget = lane ?
-				simd_insert_element_gadget(lane->element_shift) : nullptr;
-			if (gadget == nullptr) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return {Program{guest_address, compiled, std::move(words),
-					program_accesses_fp_state}, true, address, instruction};
-			}
-			const auto source_offset = ((instruction >> 11) & 15U) &
-				~(lane->element_size - 1U);
-			emit(words, gadget);
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>(lane->offset) << 16) |
-				(static_cast<std::uintptr_t>(source_offset) << 24));
-		} else if ((instruction & 0xffff'fc00U) == 0x1ee6'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9ee6'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x1ee7'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9ee7'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9e66'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9e67'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x1e26'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x1e27'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9eae'0000U ||
-			   (instruction & 0xffff'fc00U) == 0x9eaf'0000U) {
-			const auto opcode = instruction & 0xffff'fc00U;
-			const bool to_gpr = opcode == 0x1ee6'0000U ||
-				opcode == 0x9ee6'0000U || opcode == 0x1e26'0000U ||
-				opcode == 0x9e66'0000U || opcode == 0x9eae'0000U;
-			if (to_gpr && (instruction & 31U) == 31U) {
-				emit(words, uml_arm64_gadget_nop);
-			} else {
-				const bool zero_source = ((instruction >> 5) & 31U) == 31U;
-				Gadget move;
-				if (opcode == 0x1ee6'0000U || opcode == 0x9ee6'0000U)
-					move = uml_arm64_gadget_vector_to_gpr_16_low;
-				else if (opcode == 0x1ee7'0000U || opcode == 0x9ee7'0000U)
-					move = zero_source ?
-						uml_arm64_gadget_gpr_to_vector_16_low_zero :
-						uml_arm64_gadget_gpr_to_vector_16_low;
-				else if (opcode == 0x9e66'0000U)
-					move = uml_arm64_gadget_vector_to_gpr_64_low;
-				else if (opcode == 0x9e67'0000U)
-					move = zero_source ?
-						uml_arm64_gadget_gpr_to_vector_64_low_zero :
-						uml_arm64_gadget_gpr_to_vector_64_low;
-				else if (opcode == 0x1e26'0000U)
-					move = uml_arm64_gadget_vector_to_gpr_32_low;
-				else if (opcode == 0x1e27'0000U)
-					move = zero_source ?
-						uml_arm64_gadget_gpr_to_vector_32_low_zero :
-						uml_arm64_gadget_gpr_to_vector_32_low;
-				else if (opcode == 0x9eae'0000U)
-					move = uml_arm64_gadget_vector_to_gpr_64_high;
-				else
-					move = zero_source ?
-						uml_arm64_gadget_gpr_to_vector_64_high_zero :
-						uml_arm64_gadget_gpr_to_vector_64_high;
-				emit(words, move);
-				emit(words, (instruction & 31U) |
-					(static_cast<std::uintptr_t>(
-						(instruction >> 5) & 31U) << 8));
-			}
-		} else if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U &&
-			   ((instruction >> 22) & 3U) != 2U) {
-			emit(words, floating_select_gadget((instruction >> 12) & 15U,
-				(instruction >> 22) & 3U));
-			emit(words, (instruction & 31U) |
-				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-				(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-		} else if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state}, true, address, instruction};
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-		} else if (instruction == 0xd503'20ffU) {
-			emit(words, uml_arm64_gadget_xpaclri);
-		} else if (const auto pointer_auth =
-			decode_pointer_auth_hint(instruction); pointer_auth) {
-			emit(words, pointer_auth_gadgets[pointer_auth->operation]
-				[pointer_auth->zero_modifier]);
-			emit(words, pointer_auth_operand(pointer_auth->destination,
-				pointer_auth->modifier));
-		} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
-			emit(words, architectural_hint_gadget(instruction));
-		} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||
-			   (instruction & 0xffff'ffe0U) == 0xd503'1000U ||
-			   (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
-			emit(words, uml_arm64_gadget_nop);
-#endif
+                                return {Program{guest_address, compiled,
+                                                std::move(words),
+                                                program_accesses_fp_state},
+                                        true, address, instruction};
+                        }
+                        emit(words, gadget);
+                        const auto vector_offset = [](unsigned index) {
+                          return offsetof(CpuState, vectors) +
+                                 index *
+                                     sizeof(
+                                         uml::backend::arm64::VectorRegister);
+                        };
+                        emit(words, vector_offset(instruction & 31U));
+                        emit(words, vector_offset((instruction >> 5) & 31U));
+                } else if ((instruction & 0xffe0'8c00U) == 0x5e00'0000U) {
+                  const auto gadget = simd_sha_three_gadget(
+                      (instruction >> 12) & 7U,
+                      options.force_software_fixed_transforms);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xffff'8c00U) == 0x5e28'0800U) {
+                  const auto gadget = simd_sha_two_gadget(
+                      (instruction >> 12) & 3U,
+                      options.force_software_fixed_transforms);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                } else if ((instruction & 0xffe0'fc00U) == 0xce60'8000U ||
+                           (instruction & 0xffe0'fc00U) == 0xce60'8400U ||
+                           (instruction & 0xffe0'fc00U) == 0xce60'8800U) {
+                  emit(words, simd_sha512_three_gadget(
+                                  instruction,
+                                  options.force_software_fixed_transforms));
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xffff'fc00U) == 0xcec0'8000U) {
+                  emit(words, !options.force_software_fixed_transforms &&
+                                      host_has_sha512()
+                                  ? uml_arm64_gadget_simd_sha512su0
+                                  : uml_arm64_gadget_simd_sha512su0_soft);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                } else if ((instruction & 0xffe0'fc00U) == 0xce60'c000U ||
+                           (instruction & 0xffe0'fc00U) == 0xce60'c400U ||
+                           (instruction & 0xffe0'fc00U) == 0xce60'c800U) {
+                  const auto operation = instruction & 0xffe0'fc00U;
+                  const auto gadget =
+                      operation == 0xce60'c000U
+                          ? (!options.force_software_fixed_transforms &&
+                                     host_has_sm3()
+                                 ? uml_arm64_gadget_simd_sm3partw1
+                                 : uml_arm64_gadget_simd_sm3partw1_soft)
+                      : operation == 0xce60'c400U
+                          ? (!options.force_software_fixed_transforms &&
+                                     host_has_sm3()
+                                 ? uml_arm64_gadget_simd_sm3partw2
+                                 : uml_arm64_gadget_simd_sm3partw2_soft)
+                          : (!options.force_software_fixed_transforms &&
+                                     host_has_sm4()
+                                 ? uml_arm64_gadget_simd_sm4ekey
+                                 : uml_arm64_gadget_simd_sm4ekey_soft);
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xffe0'8000U) == 0xce40'0000U) {
+                  emit(words, !options.force_software_fixed_transforms &&
+                                      host_has_sm3()
+                                  ? uml_arm64_gadget_simd_sm3ss1
+                                  : uml_arm64_gadget_simd_sm3ss1_soft);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_offset((instruction >> 10) & 31U));
+                } else if ((instruction & 0xffe0'c000U) == 0xce40'8000U) {
+                  emit(words,
+                       simd_sm3tt_gadget(
+                           (instruction >> 10) & 3U, (instruction >> 12) & 3U,
+                           options.force_software_fixed_transforms));
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xffff'fc00U) == 0xcec0'8400U) {
+                  emit(words, !options.force_software_fixed_transforms &&
+                                      host_has_sm4()
+                                  ? uml_arm64_gadget_simd_sm4e
+                                  : uml_arm64_gadget_simd_sm4e_soft);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                } else if ((instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
+                           (instruction & 0xffe0'8000U) == 0xce60'0000U ||
+                           (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
+                           (instruction & 0xffff'fc00U) == 0xcec0'8c00U) {
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return {Program{guest_address, compiled, std::move(words),
+                                  program_accesses_fp_state},
+                          true, address, instruction};
+                } else if ((instruction & 0xbf60'fc00U) == 0x0e40'1c00U ||
+                           (instruction & 0xff60'fc00U) == 0x5e40'1c00U ||
+                           (instruction & 0xbf20'fc00U) == 0x0e20'dc00U ||
+                           (instruction & 0xff20'fc00U) == 0x5e20'dc00U) {
+                  const bool scalar = (instruction & 0x1000'0000U) != 0;
+                  const bool q = (instruction & 0x4000'0000U) != 0;
+                  const bool half =
+                      (instruction & 0x00e0'0000U) == 0x0040'0000U;
+                  const auto gadget = simd_fmulx_gadget(
+                      scalar, q, half,
+                      !half && (instruction & 0x0040'0000U) != 0);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>((instruction >> 16) &
+                                                       31U)
+                           << 16));
+                } else if ((instruction & 0x9f20'fc00U) == 0x0e00'9400U ||
+                           (instruction & 0xbf20'fc00U) == 0x0e00'9c00U ||
+                           (instruction & 0xdf20'fc00U) == 0x5e00'9400U ||
+                           (instruction & 0xff20'fc00U) == 0x5e00'9c00U) {
+                  const bool scalar = (instruction & 0x1000'0000U) != 0U;
+                  const bool ordinary =
+                      (instruction & 0x9f20'fc00U) == 0x0e00'9400U;
+                  const auto signedness =
+                      ordinary ? ((instruction & 0x2000'0000U) != 0
+                                      ? SimdDotSignedness::unsigned_unsigned
+                                      : SimdDotSignedness::signed_signed)
+                               : SimdDotSignedness::unsigned_signed;
+                  const auto gadget =
+                      !scalar && ((instruction >> 22) & 3U) == 2U
+                          ? simd_dot_vector_gadget(
+                                signedness, (instruction & 0x4000'0000U) != 0,
+                                ordinary ? options.force_software_dotprod
+                                         : options.force_software_i8mm)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(uml::backend::arm64::VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0x9f20'f400U) == 0x0e00'a400U) {
+                  const bool q = (instruction & 0x4000'0000U) != 0;
+                  const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
+                  const unsigned size = (instruction >> 22) & 3U;
+                  const bool alternate = (instruction & 0x800U) != 0;
+                  if (!q || size != 2U || (unsigned_group && alternate)) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  const bool mixed = alternate;
+                  const auto signedness =
+                      mixed            ? SimdDotSignedness::unsigned_signed
+                      : unsigned_group ? SimdDotSignedness::unsigned_unsigned
+                                       : SimdDotSignedness::signed_signed;
+                  emit(words, simd_matrix_gadget(signedness,
+                                                 options.force_software_i8mm));
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xbf20'f400U) == 0x2e00'8400U ||
+                           (instruction & 0xff20'f400U) == 0x7e00'8400U) {
+                  const bool scalar = (instruction & 0x1000'0000U) != 0;
+                  const auto gadget = simd_rdm_three_same_gadget(
+                      (instruction & 0x800U) != 0, scalar,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  if (!host_has_rdm()) {
+                    emit(words, uml_arm64_gadget_simd_rdm_software);
+                    emit(words, instruction);
+                  } else {
+                    emit(words, gadget);
+                    const auto vector_offset = [](unsigned index) {
+                      return offsetof(CpuState, vectors) +
+                             index * sizeof(VectorRegister);
+                    };
+                    emit(words, vector_offset(instruction & 31U));
+                    emit(words, vector_offset((instruction >> 5) & 31U));
+                    emit(words, vector_offset((instruction >> 16) & 31U));
+                  }
+                } else if (const auto floating_conversion =
+                               detail::decode_simd_floating_precision_vector(
+                                   instruction);
+                           floating_conversion.recognized) {
+                  if (!floating_conversion.valid) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, simd_floating_precision_vector_gadget(
+                                  floating_conversion));
+                  emit(words, detail::simd_floating_precision_vector_operand(
+                                  instruction, floating_conversion));
+                } else if (const auto floating_compare =
+                               detail::decode_simd_floating_compare(
+                                   instruction);
+                           floating_compare.recognized) {
+                  if (!floating_compare.valid) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, simd_floating_compare_gadget(floating_compare));
+                  emit(words, detail::simd_floating_compare_operand(
+                                  instruction, floating_compare));
+                } else if ((((instruction & 0x9f20'0400U) == 0x0e20'0400U) ||
+                            ((instruction & 0xdf20'0400U) == 0x5e20'0400U)) &&
+                           ((instruction >> 11) & 0x1fU) < 24U &&
+                           ((instruction >> 11) & 0x1fU) != 3U) {
+                  /* Integer three-same operations are fully validated and
+                   * selected while translating. Their native gadgets contain no
+                   * opcode or arrangement branches on the valid hot path. */
+                  const bool scalar = (instruction & 0x1000'0000U) != 0;
+                  const auto gadget = simd_three_same_gadget(
+                      (instruction >> 11) & 0x1fU,
+                      (instruction & 0x2000'0000U) != 0, scalar,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset((instruction >> 5) & 31U))
+                                   << 16) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset((instruction >> 16) & 31U))
+                                   << 32));
+                } else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
+                            (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
+                            (instruction & 0xbf20'fc00U) == 0x0e00'3800U ||
+                            (instruction & 0xbf20'fc00U) == 0x0e00'5800U ||
+                            (instruction & 0xbf20'fc00U) == 0x0e00'6800U ||
+                            (instruction & 0xbf20'fc00U) == 0x0e00'7800U)) {
+                  const auto gadget =
+                      simd_permute_gadget((instruction >> 12) & 7U,
+                                          (instruction & 0x4000'0000U) != 0,
+                                          (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset((instruction >> 5) & 31U))
+                                   << 16) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset((instruction >> 16) & 31U))
+                                   << 32));
+                } else if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
+                           (instruction & 0x00c0'0000U) != 0U) {
+                  /* FEAT_LUT allocation validity and the native instruction
+                   * shape are resolved once here. Native gadgets consequently
+                   * have no valid-path operation, element-size, or immediate
+                   * branches. */
+                  const unsigned op2 = (instruction >> 22) & 3U;
+                  const unsigned len = (instruction >> 13) & 3U;
+                  const unsigned op = (instruction >> 12) & 1U;
+                  unsigned shape{};
+                  unsigned part{};
+                  bool valid = true;
+                  if (op2 == 1U) {
+                    valid = op != 0U || (len & 1U) != 0U;
+                    shape = op != 0U ? 3U : 2U;
+                    part = op != 0U ? len : len >> 1;
+                  } else if (op2 == 2U) {
+                    valid = op != 0U;
+                    shape = 0U;
+                    part = len;
+                  } else if (op2 == 3U) {
+                    shape = 1U;
+                    part = (len << 1) | op;
+                  } else {
+                    valid = false;
+                  }
+                  const auto native =
+                      valid ? simd_lut_native_gadget(shape, part) : nullptr;
+                  if (native == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, host_has_lut()
+                                  ? native
+                                  : uml_arm64_gadget_simd_lut_software);
+                  emit(words, simd_lut_operand(instruction, shape, part));
+                } else if ((instruction & 0xbfe0'8c00U) == 0x0e00'0000U) {
+                  const unsigned count = ((instruction >> 13) & 3U) + 1U;
+                  emit(words, simd_table_lookup_gadget(
+                                  (instruction & 0x1000U) != 0, count,
+                                  (instruction & 0x4000'0000U) != 0));
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  const unsigned first = (instruction >> 5) & 31U;
+                  emit(words,
+                       vector_offset(instruction & 31U) |
+                           (static_cast<std::uintptr_t>(
+                                vector_offset((instruction >> 16) & 31U))
+                            << 16) |
+                           (static_cast<std::uintptr_t>(vector_offset(first))
+                            << 32) |
+                           (static_cast<std::uintptr_t>(
+                                vector_offset((first + 1U) & 31U))
+                            << 48));
+                  if (count > 2U)
+                    emit(words, vector_offset((first + 2U) & 31U) |
+                                    (static_cast<std::uintptr_t>(
+                                         vector_offset((first + 3U) & 31U))
+                                     << 16));
+                } else if ((instruction & 0x9ff8'0400U) == 0x0f00'0400U) {
+                  /* This allocation overlaps the broad shift-immediate masks
+                   * below in cmode bits, so it must be selected first. */
+                  const auto decoded =
+                      detail::decode_simd_modified_immediate(instruction);
+                  if (decoded) {
+                    emit(words, simd_modified_immediate_gadget(
+                                    decoded->action,
+                                    (instruction & 0x4000'0000U) != 0));
+                    emit(words, instruction & 31U);
+                    emit(words, decoded->pattern);
+                  } else {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                  }
+                } else if ((instruction & 0x9f80'fc00U) == 0x0f00'a400U) {
+                  const auto encoded = (instruction >> 16) & 0x7fU;
+                  const auto source_bits = std::bit_floor(encoded);
+                  const auto gadget = simd_shift_left_long_gadget(
+                      source_bits, (instruction & 0x4000'0000U) != 0,
+                      (instruction & 0x2000'0000U) != 0);
+                  if (gadget == nullptr ||
+                      encoded - source_bits >= source_bits) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(encoded - source_bits)
+                           << 16));
+                } else if ((((instruction & 0x9f20'0c00U) == 0x0e20'0000U) ||
+                            ((instruction & 0xdf20'0c00U) == 0x5e20'0000U)) &&
+                           ((instruction >> 12) & 15U) != 4U &&
+                           ((instruction >> 12) & 15U) != 6U) {
+                  const bool scalar = (instruction & 0x1000'0000U) != 0;
+                  const auto gadget = simd_widening_gadget(
+                      (instruction >> 12) & 15U,
+                      (instruction & 0x2000'0000U) != 0, scalar,
+                      !scalar && (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if ((instruction & 0xbfff'fc00U) == 0x0ef8'f800U ||
+                           (instruction & 0xbfff'fc00U) == 0x2ef8'f800U ||
+                           (instruction & 0xbf3f'fc00U) == 0x0e20'f800U ||
+                           (instruction & 0xbf3f'fc00U) == 0x2e20'f800U) {
+                  const auto half_operation = instruction & 0xbfff'fc00U;
+                  const bool half = half_operation == 0x0ef8'f800U ||
+                                    half_operation == 0x2ef8'f800U;
+                  const bool negate =
+                      half ? half_operation == 0x2ef8'f800U
+                           : (instruction & 0xbf3f'fc00U) == 0x2e20'f800U;
+                  const bool allocated =
+                      half || (instruction & 0x0080'0000U) != 0U;
+                  const auto gadget =
+                      allocated
+                          ? simd_floating_sign_gadget(
+                                negate, half,
+                                !half && (instruction & 0x0040'0000U) != 0U,
+                                (instruction & 0x4000'0000U) != 0U)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8));
+                } else if ((instruction & 0xbf20'fc00U) == 0x0e00'0400U ||
+                           (instruction & 0xff20'fc00U) == 0x5e00'0400U) {
+                  const auto lane =
+                      detail::decode_simd_lane_index((instruction >> 16) & 31U);
+                  const auto gadget =
+                      lane ? simd_duplicate_element_gadget(
+                                 (instruction & 0x1000'0000U) != 0,
+                                 (instruction & 0x4000'0000U) != 0,
+                                 lane->element_shift)
+                           : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(lane->offset) << 16));
+                } else if ((instruction & 0x9f00'0400U) == 0x0f00'0000U &&
+                           (((instruction >> 12) & 15U) == 14U ||
+                            (((instruction >> 12) & 15U) == 15U &&
+                             (instruction & 0x2000'0000U) == 0 &&
+                             (((instruction >> 22) & 3U) == 0U ||
+                              ((instruction >> 22) & 3U) == 2U)))) {
+                  const unsigned operation = (instruction >> 12) & 15U;
+                  const unsigned size = (instruction >> 22) & 3U;
+                  const auto element =
+                      decode_simd_dot_indexed_element(instruction);
+                  const auto signedness =
+                      operation == 14U
+                          ? ((instruction & 0x2000'0000U) != 0
+                                 ? SimdDotSignedness::unsigned_unsigned
+                                 : SimdDotSignedness::signed_signed)
+                      : size == 0U ? SimdDotSignedness::signed_unsigned
+                                   : SimdDotSignedness::unsigned_signed;
+                  const auto gadget =
+                      (operation != 14U || size == 2U)
+                          ? simd_dot_indexed_gadget(
+                                signedness, (instruction & 0x4000'0000U) != 0,
+                                element.lane_index,
+                                operation == 14U
+                                    ? options.force_software_dotprod
+                                    : options.force_software_i8mm)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(uml::backend::arm64::VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset(element.register_index));
+                } else if (((instruction & 0x9f00'0400U) == 0x0f00'0000U ||
+                            (instruction & 0xdf00'0400U) == 0x5f00'0000U) &&
+                           ((((instruction >> 12) & 15U) == 1U &&
+                             (instruction & 0x2000'0000U) == 0) ||
+                            (((instruction >> 12) & 15U) == 5U &&
+                             (instruction & 0x2000'0000U) == 0) ||
+                            ((instruction >> 12) & 15U) == 9U)) {
+                  /* All decode choices are fixed here.  AFP hosts select a
+                   * branch-free native gadget; older hosts select a checked
+                   * gadget whose AH=0 path remains native. */
+                  const auto element =
+                      decode_simd_indexed_floating_element(instruction);
+                  const auto gadget =
+                      element
+                          ? simd_indexed_floating_gadget(
+                                (instruction >> 12) & 15U,
+                                (instruction & 0x2000'0000U) != 0,
+                                (instruction & 0x1000'0000U) != 0,
+                                (instruction & 0x4000'0000U) != 0,
+                                (instruction >> 22) & 3U, element->lane_index)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset((instruction >> 5) & 31U))
+                                   << 16) |
+                                  (static_cast<std::uintptr_t>(
+                                       vector_offset(element->register_index))
+                                   << 32));
+                  if (!host_has_afp())
+                    emit(words, instruction);
+                } else if ((((instruction & 0x9f00'0400U) == 0x0f00'0000U) ||
+                            ((instruction & 0xdf00'0400U) == 0x5f00'0000U)) &&
+                           is_simd_indexed_integer_group(
+                               (instruction >> 12) & 15U,
+                               (instruction & 0x2000'0000U) != 0,
+                               (instruction & 0x1000'0000U) != 0)) {
+                  /* Integer by-element choices, including the lane and
+                   * restricted element-register field, are resolved once while
+                   * translating. */
+                  const auto element = decode_simd_indexed_element(instruction);
+                  const bool rdm = (instruction & 0x2000'0000U) != 0 &&
+                                   (((instruction >> 12) & 15U) == 13U ||
+                                    ((instruction >> 12) & 15U) == 15U);
+                  const auto gadget =
+                      element
+                          ? simd_indexed_integer_gadget(
+                                (instruction >> 12) & 15U,
+                                (instruction & 0x2000'0000U) != 0,
+                                (instruction & 0x1000'0000U) != 0,
+                                (instruction & 0x4000'0000U) != 0,
+                                (instruction >> 22) & 3U, element->lane_index)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  if (rdm && !host_has_rdm()) {
+                    emit(words, uml_arm64_gadget_simd_rdm_software);
+                    emit(words, instruction);
+                  } else {
+                    const auto vector_offset = [](unsigned index) {
+                      return offsetof(CpuState, vectors) +
+                             index * sizeof(VectorRegister);
+                    };
+                    emit(words, gadget);
+                    emit(words, vector_offset(instruction & 31U));
+                    emit(words, vector_offset((instruction >> 5) & 31U));
+                    emit(words, vector_offset(element->register_index));
+                  }
+                } else if ((instruction & 0xdf00'0400U) == 0x5f00'0000U &&
+                           is_simd_indexed_scalar_reserved(
+                               (instruction >> 12) & 15U,
+                               (instruction & 0x2000'0000U) != 0,
+                               (instruction >> 22) & 3U)) {
+                  /* Reject scalar indexed holes at translation time, before any
+                   * architectural register or FP state is observed. */
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return {Program{guest_address, compiled, std::move(words),
+                                  program_accesses_fp_state},
+                          true, address, instruction};
+                } else if ((((instruction & 0x9f00'0400U) == 0x0f00'0400U) ||
+                            ((instruction & 0xdf00'0400U) == 0x5f00'0400U)) &&
+                           ((((instruction >> 11) & 31U) <= 8U) &&
+                            (((instruction >> 11) & 1U) == 0U))) {
+                  const auto decoded =
+                      decode_simd_immediate_shift(instruction, false);
+                  const unsigned opcode = (instruction >> 11) & 31U;
+                  const auto gadget =
+                      decoded ? simd_shift_right_immediate_gadget(
+                                    opcode, (instruction & 0x2000'0000U) != 0,
+                                    decoded->shape)
+                              : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(decoded->shift) << 16));
+                  if (opcode == 8U)
+                    emit(words, simd_shift_insert_mask(decoded->lane_bits,
+                                                       decoded->shift, false));
+                } else if ((instruction & 0x9f00'fc00U) == 0x0f00'5400U ||
+                           (instruction & 0xdf00'fc00U) == 0x5f00'5400U) {
+                  const auto decoded =
+                      decode_simd_immediate_shift(instruction, true);
+                  const bool insert = (instruction & 0x2000'0000U) != 0;
+                  const auto gadget =
+                      decoded ? simd_shift_left_immediate_gadget(insert,
+                                                                 decoded->shape)
+                              : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(decoded->shift) << 16));
+                  if (insert)
+                    emit(words, simd_shift_insert_mask(decoded->lane_bits,
+                                                       decoded->shift, true));
+                } else if ((instruction & 0x9f00'fc00U) == 0x0f00'7400U ||
+                           (instruction & 0xdf00'fc00U) == 0x5f00'7400U ||
+                           (instruction & 0x9f00'fc00U) == 0x0f00'6400U ||
+                           (instruction & 0xdf00'fc00U) == 0x5f00'6400U) {
+                  const auto decoded =
+                      decode_simd_saturating_shift_left(instruction);
+                  const bool signed_to_unsigned =
+                      ((instruction >> 11) & 31U) == 12U;
+                  const bool valid =
+                      !signed_to_unsigned || (instruction & 0x2000'0000U) != 0;
+                  const auto operation =
+                      signed_to_unsigned
+                          ? SimdSaturatingShiftLeft::signed_to_unsigned
+                      : (instruction & 0x2000'0000U) != 0
+                          ? SimdSaturatingShiftLeft::unsigned_to_unsigned
+                          : SimdSaturatingShiftLeft::signed_to_signed;
+                  const auto gadget =
+                      decoded && valid
+                          ? simd_saturating_shift_left_gadget(
+                                operation, decoded->shape, decoded->shift)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (signed_to_unsigned
+                               ? 0U
+                               : static_cast<std::uintptr_t>(decoded->shift)
+                                     << 16));
+                } else if ((((instruction & 0x9f00'0400U) == 0x0f00'0400U) ||
+                            ((instruction & 0xdf00'0400U) == 0x5f00'0400U)) &&
+                           ((instruction >> 11) & 31U) >= 16U &&
+                           ((instruction >> 11) & 31U) <= 19U &&
+                           !(((instruction >> 11) & 31U) <= 17U &&
+                             (instruction & 0x2000'0000U) == 0 &&
+                             (instruction & 0x1000'0000U) == 0)) {
+                  const unsigned opcode = (instruction >> 11) & 31U;
+                  const unsigned encoded = (instruction >> 16) & 0x7fU;
+                  const unsigned source_bits =
+                      encoded >= 32U && encoded < 64U   ? 64U
+                      : encoded >= 16U && encoded < 32U ? 32U
+                      : encoded >= 8U && encoded < 16U  ? 16U
+                                                        : 0U;
+                  const unsigned shift = source_bits - encoded;
+                  const bool scalar = (instruction & 0x1000'0000U) != 0;
+                  const auto gadget =
+                      shift != 0U && shift <= source_bits / 2U
+                          ? simd_saturating_narrow_gadget(
+                                opcode, (instruction & 0x2000'0000U) != 0,
+                                source_bits, scalar,
+                                !scalar && (instruction & 0x4000'0000U) != 0)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(shift) << 16));
+                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'1c00U) {
+                  const auto operation =
+                      ((instruction >> 22) & 3U) | ((instruction >> 27) & 4U);
+                  const bool q = (instruction & 0x4000'0000U) != 0;
+                  const unsigned destination = instruction & 31U;
+                  const unsigned left = (instruction >> 5) & 31U;
+                  const unsigned right = (instruction >> 16) & 31U;
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  if (operation == 2U && left == right && q &&
+                      destination == left) {
+                    emit(words, uml_arm64_gadget_nop);
+                  } else if (operation == 2U && left == right) {
+                    emit(words, simd_move_gadget(q));
+                    emit(words, vector_offset(destination));
+                    emit(words, vector_offset(left));
+                  } else {
+                    emit(words, simd_bitwise_gadget(operation, q));
+                    emit(words, vector_offset(destination));
+                    emit(words, vector_offset(left));
+                    emit(words, vector_offset(right));
+                  }
+                } else if ((instruction & 0xbfe0'8400U) == 0x2e00'0000U) {
+                  const bool q = (instruction & 0x4000'0000U) != 0;
+                  const unsigned offset = (instruction >> 11) & 15U;
+                  if (offset < (q ? 16U : 8U)) {
+                    emit(words, simd_extract_gadget(q, offset));
+                    emit(words, (instruction & 31U) |
+                                    (static_cast<std::uintptr_t>(
+                                         (instruction >> 5) & 31U)
+                                     << 8) |
+                                    (static_cast<std::uintptr_t>(
+                                         (instruction >> 16) & 31U)
+                                     << 16));
+                  } else {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                } else if ((instruction & 0x9f30'0c00U) == 0x0e30'0800U &&
+                           (((instruction >> 12) & 31U) == 3U ||
+                            ((instruction >> 12) & 31U) == 10U ||
+                            ((instruction >> 12) & 31U) == 26U ||
+                            ((instruction >> 12) & 31U) == 27U)) {
+                  const auto gadget = simd_integer_reduce_gadget(
+                      (instruction >> 12) & 31U,
+                      (instruction & 0x2000'0000U) != 0,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8));
+                } else if ((instruction & 0x9fbf'fc00U) == 0x0ea1'c800U) {
+                  const auto gadget = simd_unsigned_estimate_gadget(
+                      (instruction & 0x2000'0000U) != 0,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction & 0x0040'0000U) != 0);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(words, simd_unary_operand(instruction & 31U,
+                                                 (instruction >> 5) & 31U));
+                } else if ((((instruction & 0x9f30'0c00U) == 0x0e20'0800U) ||
+                            ((instruction & 0xdf30'0c00U) == 0x5e20'0800U)) &&
+                           (((instruction >> 12) & 31U) == 2U ||
+                            ((instruction >> 12) & 31U) == 3U ||
+                            ((instruction >> 12) & 31U) == 4U ||
+                            ((instruction >> 12) & 31U) == 6U ||
+                            ((instruction >> 12) & 31U) == 7U ||
+                            ((instruction >> 12) & 31U) == 11U ||
+                            ((instruction >> 12) & 31U) == 18U ||
+                            ((instruction >> 12) & 31U) == 19U ||
+                            ((instruction >> 12) & 31U) == 20U)) {
+                  const auto gadget = simd_integer_unary_gadget(
+                      (instruction >> 12) & 31U,
+                      (instruction & 0x2000'0000U) != 0,
+                      (instruction & 0x1000'0000U) != 0,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(words, simd_unary_operand(instruction & 31U,
+                                                 (instruction >> 5) & 31U));
+                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'0800U ||
+                           (instruction & 0x9f20'fc00U) == 0x0e20'1800U) {
+                  const bool reverse16 = (instruction & 0x0000'1000U) != 0;
+                  const bool alternate = (instruction & 0x2000'0000U) != 0;
+                  const unsigned block_bits = reverse16   ? 16U
+                                              : alternate ? 32U
+                                                          : 64U;
+                  const auto gadget =
+                      reverse16 && alternate
+                          ? nullptr
+                          : simd_reverse_native_gadget(
+                                block_bits, (instruction & 0x4000'0000U) != 0,
+                                (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(words, simd_unary_operand(instruction & 31U,
+                                                 (instruction >> 5) & 31U));
+                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'5800U) {
+                  const bool alternate = (instruction & 0x2000'0000U) != 0;
+                  const unsigned size = (instruction >> 22) & 3U;
+                  const unsigned operation = !alternate && size == 0U  ? 0U
+                                             : alternate && size == 0U ? 1U
+                                             : alternate && size == 1U ? 2U
+                                                                       : 3U;
+                  if (operation == 3U) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words,
+                       simd_byte_unary_gadget(
+                           operation, (instruction & 0x4000'0000U) != 0));
+                  emit(words, simd_unary_operand(instruction & 31U,
+                                                 (instruction >> 5) & 31U));
+                } else if ((instruction & 0xdf20'0c00U) == 0x5e20'0800U &&
+                           (((instruction >> 12) & 31U) == 0U ||
+                            ((instruction >> 12) & 31U) == 1U ||
+                            ((instruction >> 12) & 31U) == 5U)) {
+                  /* The reverse and byte-unary opcode slots are vector-only. */
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return {Program{guest_address, compiled, std::move(words),
+                                  program_accesses_fp_state},
+                          true, address, instruction};
+                } else if ((instruction & 0xffff'fc00U) == 0x5ef1'b800U) {
+                  emit(words, uml_arm64_gadget_simd_addp_scalar);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8));
+                } else if ((instruction & 0xbf00'fc00U) == 0x0f00'8400U ||
+                           (instruction & 0xbf00'fc00U) == 0x0f00'8c00U) {
+                  const unsigned encoded = (instruction >> 16) & 0x7fU;
+                  const unsigned source_bits =
+                      encoded >= 32U && encoded < 64U   ? 64U
+                      : encoded >= 16U && encoded < 32U ? 32U
+                      : encoded >= 8U && encoded < 16U  ? 16U
+                                                        : 0U;
+                  const unsigned shift = source_bits - encoded;
+                  const auto gadget =
+                      shift != 0U && shift <= source_bits / 2U
+                          ? simd_shift_narrow_gadget(
+                                source_bits, (instruction & 0x4000'0000U) != 0,
+                                (instruction & 0x800U) != 0)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(shift) << 16));
+                } else if (((instruction & 0xdf00'0400U) == 0x5f00'0400U ||
+                            ((instruction & 0x9f00'0400U) == 0x0f00'0400U &&
+                             ((instruction >> 16) & 0x7fU) >= 8U)) &&
+                           (((instruction >> 11) & 31U) < 20U ||
+                            (((instruction >> 11) & 31U) >= 21U &&
+                             ((instruction >> 11) & 31U) <= 27U) ||
+                            ((instruction >> 11) & 31U) == 29U ||
+                            ((instruction >> 11) & 31U) == 30U ||
+                            (((instruction & 0x1000'0000U) != 0) &&
+                             ((instruction >> 11) & 31U) == 20U))) {
+                  /* Every allocated operation in this part of the
+                   * immediate-shift class was selected above. Resolve its
+                   * reserved holes once during translation instead of reaching
+                   * the fatal fallback. */
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return {Program{guest_address, compiled, std::move(words),
+                                  program_accesses_fp_state},
+                          true, address, instruction};
+                } else if ((instruction & 0x9f20'fc00U) == 0x0e20'4000U ||
+                           (instruction & 0x9f20'fc00U) == 0x0e20'6000U) {
+                  const auto gadget = simd_high_narrow_gadget(
+                      ((instruction >> 11) & 31U) == 12U,
+                      (instruction & 0x2000'0000U) != 0,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  const auto vector_offset = [](unsigned index) {
+                    return offsetof(CpuState, vectors) +
+                           index * sizeof(VectorRegister);
+                  };
+                  emit(words, vector_offset(instruction & 31U));
+                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_offset((instruction >> 16) & 31U));
+                } else if (((instruction & 0x9f3f'fc00U) == 0x0e20'8800U ||
+                            (instruction & 0x9f3f'fc00U) == 0x0e20'9800U ||
+                            (instruction & 0x9f3f'fc00U) == 0x0e20'a800U ||
+                            (instruction & 0x9f3f'fc00U) == 0x1e20'8800U ||
+                            (instruction & 0x9f3f'fc00U) == 0x1e20'9800U ||
+                            (instruction & 0x9f3f'fc00U) == 0x1e20'a800U)) {
+                  const auto gadget = simd_compare_zero_native_gadget(
+                      (instruction >> 12) & 31U,
+                      (instruction & 0x2000'0000U) != 0,
+                      (instruction & 0x1000'0000U) != 0,
+                      (instruction & 0x4000'0000U) != 0,
+                      (instruction >> 22) & 3U);
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(words, simd_unary_operand(instruction & 31U,
+                                                 (instruction >> 5) & 31U));
+                } else if ((instruction & 0xbfe0'fc00U) == 0x0e00'3c00U ||
+                           (instruction & 0xbfe0'fc00U) == 0x0e00'2c00U) {
+                  const auto lane =
+                      detail::decode_simd_lane_index((instruction >> 16) & 31U);
+                  const auto gadget =
+                      lane
+                          ? simd_lane_to_gpr_gadget(
+                                (instruction & 0x1000U) == 0,
+                                (instruction & 0x4000'0000U) != 0,
+                                lane->element_shift, (instruction & 31U) == 31U)
+                          : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(lane->offset) << 16));
+                } else if ((instruction & 0xffe0'fc00U) == 0x4e00'1c00U) {
+                  const auto lane =
+                      detail::decode_simd_lane_index((instruction >> 16) & 31U);
+                  const auto gadget =
+                      lane ? simd_insert_general_gadget(
+                                 lane->element_shift,
+                                 ((instruction >> 5) & 31U) == 31U)
+                           : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(lane->offset) << 16));
+                } else if ((instruction & 0xffe0'8400U) == 0x6e00'0400U) {
+                  const auto lane =
+                      detail::decode_simd_lane_index((instruction >> 16) & 31U);
+                  const auto gadget =
+                      lane ? simd_insert_element_gadget(lane->element_shift)
+                           : nullptr;
+                  if (gadget == nullptr) {
+                    emit(words, uml_arm64_gadget_illegal);
+                    emit(words, address);
+                    ++compiled;
+                    return {Program{guest_address, compiled, std::move(words),
+                                    program_accesses_fp_state},
+                            true, address, instruction};
+                  }
+                  const auto source_offset =
+                      ((instruction >> 11) & 15U) & ~(lane->element_size - 1U);
+                  emit(words, gadget);
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>(lane->offset) << 16) |
+                          (static_cast<std::uintptr_t>(source_offset) << 24));
+                } else if ((instruction & 0xffff'fc00U) == 0x1ee6'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9ee6'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x1ee7'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9ee7'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9e66'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9e67'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x1e26'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x1e27'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9eae'0000U ||
+                           (instruction & 0xffff'fc00U) == 0x9eaf'0000U) {
+                  const auto opcode = instruction & 0xffff'fc00U;
+                  const bool to_gpr =
+                      opcode == 0x1ee6'0000U || opcode == 0x9ee6'0000U ||
+                      opcode == 0x1e26'0000U || opcode == 0x9e66'0000U ||
+                      opcode == 0x9eae'0000U;
+                  if (to_gpr && (instruction & 31U) == 31U) {
+                    emit(words, uml_arm64_gadget_nop);
+                  } else {
+                    const bool zero_source = ((instruction >> 5) & 31U) == 31U;
+                    Gadget move;
+                    if (opcode == 0x1ee6'0000U || opcode == 0x9ee6'0000U)
+                      move = uml_arm64_gadget_vector_to_gpr_16_low;
+                    else if (opcode == 0x1ee7'0000U || opcode == 0x9ee7'0000U)
+                      move = zero_source
+                                 ? uml_arm64_gadget_gpr_to_vector_16_low_zero
+                                 : uml_arm64_gadget_gpr_to_vector_16_low;
+                    else if (opcode == 0x9e66'0000U)
+                      move = uml_arm64_gadget_vector_to_gpr_64_low;
+                    else if (opcode == 0x9e67'0000U)
+                      move = zero_source
+                                 ? uml_arm64_gadget_gpr_to_vector_64_low_zero
+                                 : uml_arm64_gadget_gpr_to_vector_64_low;
+                    else if (opcode == 0x1e26'0000U)
+                      move = uml_arm64_gadget_vector_to_gpr_32_low;
+                    else if (opcode == 0x1e27'0000U)
+                      move = zero_source
+                                 ? uml_arm64_gadget_gpr_to_vector_32_low_zero
+                                 : uml_arm64_gadget_gpr_to_vector_32_low;
+                    else if (opcode == 0x9eae'0000U)
+                      move = uml_arm64_gadget_vector_to_gpr_64_high;
+                    else
+                      move = zero_source
+                                 ? uml_arm64_gadget_gpr_to_vector_64_high_zero
+                                 : uml_arm64_gadget_gpr_to_vector_64_high;
+                    emit(words, move);
+                    emit(words,
+                         (instruction & 31U) | (static_cast<std::uintptr_t>(
+                                                    (instruction >> 5) & 31U)
+                                                << 8));
+                  }
+                } else if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U &&
+                           ((instruction >> 22) & 3U) != 2U) {
+                  emit(words, floating_select_gadget((instruction >> 12) & 15U,
+                                                     (instruction >> 22) & 3U));
+                  emit(
+                      words,
+                      (instruction & 31U) |
+                          (static_cast<std::uintptr_t>((instruction >> 5) & 31U)
+                           << 8) |
+                          (static_cast<std::uintptr_t>((instruction >> 16) &
+                                                       31U)
+                           << 16));
+                } else if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U) {
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return {Program{guest_address, compiled, std::move(words),
+                                  program_accesses_fp_state},
+                          true, address, instruction};
 		} else if ((instruction & 0xbfe0'fc00U) == 0x0e00'0c00U) {
 			const auto lane = detail::decode_simd_lane_index(
 				(instruction >> 16) & 31U);
@@ -11054,17 +12853,13 @@ decode_floating_simd:
 			emit(words, gadget);
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 		} else {
-			emit_interpreter_or_fatal(words, instruction, address);
+			emit_fatal(words, address);
 		}
 		goto instruction_decoded;
 
 decode_load_store:
 		if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
-#else
-		} else if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
-#endif
 			/* PRFM (literal) is an implementation-defined performance hint. */
 			emit(words, uml_arm64_gadget_nop);
 		} else if ((instruction & 0x3b00'0000U) == 0x1800'0000U) {
@@ -11090,7 +12885,7 @@ decode_load_store:
 			emit(words, destination_offset |
 				(static_cast<std::uint64_t>(displacement) << 16));
 			emit(words, address);
-		} else if ((instruction & 0xbf3f'fc00U) == 0x0d01'8400U) {
+		} else if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U) {
 			const bool load = (instruction & 0x0040'0000U) != 0U;
 			const unsigned lane = instruction >> 30;
 			const bool sp_base = ((instruction >> 5) & 31U) == 31U;
@@ -11150,11 +12945,13 @@ decode_load_store:
 				const auto offset_register_offset = offset_register < 31U ?
 					offset_register * sizeof(std::uint64_t) : 0U;
 				emit(words, (load ? gadgets->load : gadgets->store)
-					[address_mode]);
+					[base == 31U][address_mode]);
 				emit(words, (instruction & 31U) |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
 					(static_cast<std::uintptr_t>(offset_register_offset)
-						<< 32));
+						<< 32) |
+					(static_cast<std::uintptr_t>(
+						std::size_t{1} << size) << 48));
 				emit(words, address);
 			} else {
 				emit(words, uml_arm64_gadget_illegal);
@@ -11194,7 +12991,8 @@ decode_load_store:
 					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 				const auto offset_register_offset = offset_register < 31U ?
 					offset_register * sizeof(std::uint64_t) : 0U;
-				emit(words, gadgets[count - 1U][address_mode]);
+				emit(words, gadgets[count - 1U][base == 31U]
+					[address_mode]);
 				emit(words, (instruction & 31U) |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
 					(static_cast<std::uintptr_t>(offset_register_offset)
@@ -11227,7 +13025,8 @@ decode_load_store:
 				const auto offset_register_offset = offset_register < 31U ?
 					offset_register * sizeof(std::uint64_t) : 0U;
 				emit(words, (load ? gadgets[count - 1U].load :
-					gadgets[count - 1U].store)[address_mode]);
+					gadgets[count - 1U].store)[base == 31U]
+					[address_mode]);
 				emit(words, (instruction & 31U) |
 					(static_cast<std::uintptr_t>(base_offset) << 16) |
 					(static_cast<std::uintptr_t>(offset_register_offset)
@@ -11243,6 +13042,14 @@ decode_load_store:
 					true, address, instruction};
 			}
 		} else if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
+			if (!options.enable_pointer_authentication) {
+				emit(words, uml_arm64_gadget_illegal);
+				emit(words, address);
+				++compiled;
+				return {Program{guest_address, compiled, std::move(words),
+					program_accesses_fp_state},
+					true, address, instruction};
+			}
 			const unsigned destination = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
 			const bool writeback = (instruction & 0x800U) != 0;
@@ -11269,22 +13076,14 @@ decode_load_store:
 			   (instruction & 0xffc0'0000U) == 0xf900'0000U) {
 			const auto opcode = instruction & 0xffc0'0000U;
 			const bool transfer_zero = (instruction & 31U) == 31U;
-			const auto gadget = opcode == 0xb940'0000U ?
-				(transfer_zero ? uml_arm64_gadget_load32_unsigned_fast_z :
-				 uml_arm64_gadget_load32_unsigned_fast_r) :
-				opcode == 0xf940'0000U ?
-				(transfer_zero ? uml_arm64_gadget_load64_unsigned_fast_z :
-				 uml_arm64_gadget_load64_unsigned_fast_r) :
-				opcode == 0xb900'0000U ?
-				(transfer_zero ? uml_arm64_gadget_store32_unsigned_fast_z :
-				 uml_arm64_gadget_store32_unsigned_fast_r) :
-				(transfer_zero ? uml_arm64_gadget_store64_unsigned_fast_z :
-				 uml_arm64_gadget_store64_unsigned_fast_r);
-			emit(words, gadget);
 			const auto reg = instruction & 31U;
 			const auto base = (instruction >> 5) & 31U;
 			const auto scale = opcode == 0xb940'0000U ||
 				opcode == 0xb900'0000U ? 2U : 3U;
+			const auto operation = opcode == 0xb940'0000U ||
+				opcode == 0xf940'0000U ? 1U : 0U;
+			emit(words, scalar_unsigned_memory_gadget(
+				scale, operation, base == 31U, transfer_zero));
 			const auto offset = ((instruction >> 10) & 0xfffU) << scale;
 			const auto reg_offset = reg < 31U ?
 				reg * sizeof(std::uint64_t) : 0U;
@@ -11500,22 +13299,29 @@ decode_load_store:
 			const unsigned operation = compare_swap ? 0U :
 				encoded_operation;
 			const unsigned soft = (instruction >> 30) & 1U;
+			const unsigned base = (instruction >> 5) & 31U;
+			if (base == 31U)
+				emit(words,
+					uml_arm64_gadget_atomic_sp_alignment_write);
 			emit(words, rcw_scalar_gadgets[operation][soft][ordering]
 				[registers]);
 			emit(words, rcw_scalar_operand(instruction, compare_swap));
 			emit(words, address);
 		} else if ((instruction & 0xbf20'fc00U) == 0x1920'0c00U ||
 			   ((instruction & 0xbf20'8c00U) == 0x1920'8000U &&
-			    ((instruction >> 12) & 7U) >= 1U &&
-			    ((instruction >> 12) & 7U) <= 3U)) {
+			    (((instruction >> 12) & 7U) != 0U ||
+			     (instruction & 0x4000'0000U) != 0U))) {
 			const bool compare_swap =
 				(instruction & 0xbf20'fc00U) == 0x1920'0c00U;
+			const unsigned operation = (instruction >> 12) & 7U;
 			const unsigned first = instruction & 31U;
 			const unsigned second = (instruction >> 16) & 31U;
+			const bool valid_operation = compare_swap ||
+				(operation >= 1U && operation <= 3U);
 			const bool valid_registers = compare_swap ?
 				(first & 1U) == 0 && (second & 1U) == 0 :
 				first != 31U && second != 31U && first != second;
-			if (!valid_registers) {
+			if (!valid_operation || !valid_registers) {
 				emit(words, uml_arm64_gadget_illegal);
 				emit(words, address);
 				++compiled;
@@ -11530,6 +13336,10 @@ decode_load_store:
 			const unsigned ordering =
 				(acquire ? 2U : 0U) | (release ? 1U : 0U);
 			const unsigned soft = (instruction >> 30) & 1U;
+			const unsigned base = (instruction >> 5) & 31U;
+			if (base == 31U)
+				emit(words,
+					uml_arm64_gadget_atomic_sp_alignment_write);
 			if (compare_swap) {
 				const unsigned registers =
 					(first == 30U ? 2U : 0U) |
@@ -11537,19 +13347,20 @@ decode_load_store:
 				emit(words,
 					rcw_pair_cas_gadgets[soft][ordering][registers]);
 			} else {
-				const unsigned operation = (instruction >> 12) & 7U;
 				emit(words, rcw_pair_modify_gadgets[operation - 1U]
 					[soft][ordering]);
 			}
 			emit(words, rcw_pair_operand(instruction));
 			emit(words, address);
-		} else if ((instruction & 0xff20'0c00U) == 0x1920'0000U) {
+		} else if ((instruction & 0xbf20'0c00U) == 0x1920'0000U) {
 			const unsigned first = instruction & 31U;
 			const unsigned second = (instruction >> 16) & 31U;
 			const unsigned o3 = (instruction >> 15) & 1U;
 			const unsigned opcode = (instruction >> 12) & 7U;
 			const unsigned operation = o3 ? 8U : opcode;
-			const bool valid_operation = (!o3 || opcode == 0U) &&
+			const bool valid_operation =
+				(instruction & 0x4000'0000U) == 0U &&
+				(!o3 || opcode == 0U) &&
 				(operation == 1U || operation == 3U || operation == 8U);
 			const bool valid_registers = first != 31U && second != 31U &&
 				first != second;
@@ -11615,9 +13426,7 @@ decode_load_store:
 				mops_set_tag_gadget(stage, source == 31U) :
 				mops_gadget(family, stage, source == 31U));
 			if (stage != 1) {
-				emit(words, destination |
-					(static_cast<std::uintptr_t>(count) << 8) |
-					(static_cast<std::uintptr_t>(source) << 16));
+				emit(words, mops_operand(instruction));
 				if (set_tag || stage == 2)
 					emit(words, address);
 			}
@@ -11692,10 +13501,11 @@ decode_load_store:
 				(atomic_floating.acquire ? 2U : 0U) |
 					(atomic_floating.release ? 1U : 0U) :
 				atomic_floating.release ? 5U : 4U;
+			const unsigned base = (instruction >> 5) & 31U;
 			const auto &gadgets = host_has_lsfe() ?
 				atomic_floating_native_gadgets :
 				atomic_floating_software_gadgets;
-			emit(words, gadgets[size][operation][variant]);
+			emit(words, gadgets[size][operation][base == 31U][variant]);
 			emit(words, detail::atomic_floating_operand(instruction));
 			emit(words, address);
 			program_accesses_fp_state = true;
@@ -11721,9 +13531,8 @@ decode_load_store:
 			const unsigned status = (instruction >> 16) & 31U;
 			emit(words, ls64_gadget(
 				operation, base == 31U, status == 31U));
-			emit(words, first |
-				(static_cast<std::uintptr_t>(base) << 8) |
-				(static_cast<std::uintptr_t>(status) << 16));
+			emit(words, ls64_operand(first, base, status,
+				base == 31U, status == 31U));
 			emit(words, address);
 		} else if ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
 			   (instruction & 0x3f20'0c00U) == 0x1920'0400U) {
@@ -11754,9 +13563,12 @@ decode_load_store:
 				const unsigned registers =
 					(source == 31U ? 2U : 0U) |
 					(destination == 31U ? 1U : 0U);
+				const unsigned base = (instruction >> 5) & 31U;
+				if (base == 31U)
+					emit(words,
+						uml_arm64_gadget_atomic_sp_alignment_write);
 				emit(words, atomic_rmw_gadgets[operation][ordering]
 					[size][registers]);
-				const unsigned base = (instruction >> 5) & 31U;
 				const auto source_offset = source < 31U ?
 					source * sizeof(std::uint64_t) : 0U;
 				const auto destination_offset = destination < 31U ?
@@ -11794,9 +13606,12 @@ decode_load_store:
 				const unsigned registers =
 					(compare == 30U ? 2U : 0U) |
 					(replacement == 30U ? 1U : 0U);
+				const unsigned base = (instruction >> 5) & 31U;
+				if (base == 31U)
+					emit(words,
+						uml_arm64_gadget_atomic_sp_alignment_write);
 				emit(words, compare_swap_pair_gadgets[ordering]
 					[size_code][registers]);
-				const unsigned base = (instruction >> 5) & 31U;
 				const auto compare_offset = compare * sizeof(std::uint64_t);
 				const auto replacement_offset =
 					replacement * sizeof(std::uint64_t);
@@ -11832,9 +13647,12 @@ decode_load_store:
 				const unsigned registers =
 					(compare == 31U ? 2U : 0U) |
 					(replacement == 31U ? 1U : 0U);
+				const unsigned base = (instruction >> 5) & 31U;
+				if (base == 31U)
+					emit(words,
+						uml_arm64_gadget_atomic_sp_alignment_write);
 				emit(words, compare_swap_gadgets[ordering]
 					[instruction >> 30][registers]);
-				const unsigned base = (instruction >> 5) & 31U;
 				const auto compare_offset = compare < 31U ?
 					compare * sizeof(std::uint64_t) : 0U;
 				const auto replacement_offset = replacement < 31U ?
@@ -11864,13 +13682,17 @@ decode_load_store:
 				const unsigned ordering =
 					(instruction & 0x0000'8000U) != 0;
 				const unsigned size = (instruction >> 30) - 2U;
+				const unsigned base = (instruction >> 5) & 31U;
+				if (base == 31U)
+					emit(words, load ?
+						uml_arm64_gadget_atomic_sp_alignment_read :
+						uml_arm64_gadget_atomic_sp_alignment_write);
 				if (load) {
 					const unsigned registers =
 						(first == 31U ? 2U : 0U) |
 						(second == 31U ? 1U : 0U);
 					emit(words, exclusive_pair_load_gadgets
 						[ordering][size][registers]);
-					const unsigned base = (instruction >> 5) & 31U;
 					const auto first_offset = first < 31U ?
 						first * sizeof(std::uint64_t) : 0U;
 					const auto second_offset = second < 31U ?
@@ -11887,7 +13709,6 @@ decode_load_store:
 						(status == 31U ? 1U : 0U);
 					emit(words, exclusive_pair_store_gadgets
 						[ordering][size][registers]);
-					const unsigned base = (instruction >> 5) & 31U;
 					const auto first_offset = first < 31U ?
 						first * sizeof(std::uint64_t) : 0U;
 					const auto second_offset = second < 31U ?
@@ -11921,10 +13742,14 @@ decode_load_store:
 				const unsigned ordering =
 					(instruction & 0x0000'8000U) != 0;
 				const unsigned size = instruction >> 30;
+				const unsigned base = (instruction >> 5) & 31U;
+				if (base == 31U)
+					emit(words, load ?
+						uml_arm64_gadget_atomic_sp_alignment_read :
+						uml_arm64_gadget_atomic_sp_alignment_write);
 				if (load) {
 					emit(words, exclusive_load_gadgets[ordering]
 						[size][transfer == 31U]);
-					const unsigned base = (instruction >> 5) & 31U;
 					const auto transfer_offset = transfer < 31U ?
 						transfer * sizeof(std::uint64_t) : 0U;
 					const auto base_offset = base < 31U ?
@@ -11937,7 +13762,6 @@ decode_load_store:
 						(status == 31U ? 1U : 0U);
 					emit(words, exclusive_store_gadgets[ordering]
 						[size][registers]);
-					const unsigned base = (instruction >> 5) & 31U;
 					const auto transfer_offset = transfer < 31U ?
 						transfer * sizeof(std::uint64_t) : 0U;
 					const auto status_offset = status < 31U ?
@@ -11976,7 +13800,7 @@ decode_load_store:
 				const unsigned transfer = instruction & 31U;
 				const unsigned base = (instruction >> 5) & 31U;
 				emit(words, scalar_unsigned_memory_gadget(size_code,
-					operation, transfer == 31U));
+					operation, base == 31U, transfer == 31U));
 				const auto transfer_offset = transfer < 31U ?
 					transfer * sizeof(std::uint64_t) : 0U;
 				const auto base_offset = base < 31U ?
@@ -12002,7 +13826,7 @@ decode_load_store:
 				const unsigned transfer = instruction & 31U;
 				const unsigned base = (instruction >> 5) & 31U;
 				emit(words, vector_unsigned_memory_gadget(
-					size_code, operation));
+					size_code, operation, base == 31U));
 				const auto transfer_offset = offsetof(CpuState, vectors) +
 					transfer * sizeof(VectorRegister);
 				const auto base_offset = base < 31U ?
@@ -12060,7 +13884,7 @@ decode_load_store:
 					const unsigned address_mode = extension +
 						((instruction & 0x1000U) != 0 ? 3U : 0U);
 					emit(words, gadgets->register_offset[address_mode]
-						[transfer == 31U]);
+						[base == 31U][transfer == 31U]);
 					emit(words, transfer_offset |
 						(static_cast<std::uintptr_t>(base_offset) << 16) |
 						(static_cast<std::uintptr_t>(
@@ -12072,7 +13896,7 @@ decode_load_store:
 						(overlap ? 3U : 2U) : mode == 3U ?
 						(overlap ? 0U : 1U) : 0U;
 					emit(words, gadgets->immediate[address_mode]
-						[transfer == 31U]);
+						[base == 31U][transfer == 31U]);
 					const auto displacement = sign_extend(
 						(instruction >> 12) & 0x1ffU, 9);
 					emit(words, transfer_offset |
@@ -12118,7 +13942,8 @@ decode_load_store:
 						option == 6U ? 2U : 1U;
 					const unsigned address_mode = extension +
 						((instruction & 0x1000U) != 0 ? 3U : 0U);
-					emit(words, gadgets->register_offset[address_mode]);
+					emit(words, gadgets->register_offset[address_mode]
+						[base == 31U]);
 					emit(words, transfer_offset |
 						(static_cast<std::uintptr_t>(base_offset) << 16) |
 						(static_cast<std::uintptr_t>(
@@ -12126,7 +13951,8 @@ decode_load_store:
 				} else {
 					const unsigned address_mode = mode == 1U ? 2U :
 						mode == 3U ? 1U : 0U;
-					emit(words, gadgets->immediate[address_mode]);
+					emit(words, gadgets->immediate[address_mode]
+						[base == 31U]);
 					const auto displacement = sign_extend(
 						(instruction >> 12) & 0x1ffU, 9);
 					emit(words, transfer_offset |
@@ -12173,7 +13999,8 @@ decode_load_store:
 				const auto displacement = sign_extend(
 					(instruction >> 15) & 0x7fU, 7) <<
 					(operation >= 2U ? 3U : 2U);
-				emit(words, (*gadgets)[address_mode][register_mode]);
+				emit(words, (*gadgets)[address_mode][base == 31U]
+					[register_mode]);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32) |
@@ -12210,7 +14037,7 @@ decode_load_store:
 				const auto displacement = sign_extend(
 					(instruction >> 15) & 0x7fU, 7) <<
 					(operation < 2U ? operation + 2U : 4U);
-				emit(words, gadgets[address_mode]);
+				emit(words, gadgets[address_mode][base == 31U]);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32) |
@@ -12225,17 +14052,13 @@ decode_load_store:
 					program_accesses_fp_state},
 					true, address, instruction};
 			}
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 		} else {
-			emit_interpreter_or_fatal(words, instruction, address);
+			emit_fatal(words, address);
 		}
 		goto instruction_decoded;
 
 decode_exception:
 		if ((instruction & 0xffe0'001fU) == 0xd420'0000U) {
-#else
-		} else if ((instruction & 0xffe0'001fU) == 0xd420'0000U) {
-#endif
 			emit(words, uml_arm64_gadget_breakpoint);
 			emit(words, address);
 			++compiled;
@@ -12266,11 +14089,9 @@ decode_exception:
 				program_accesses_fp_state},
 				true, address, instruction};
 		} else {
-			emit_interpreter_or_fatal(words, instruction, address);
+			emit_fatal(words, address);
 		}
-#if !UML_ENABLE_GADGET_INTERPRETER_RUNPATH
 instruction_decoded:
-#endif
 		++compiled;
 	}
 	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);
@@ -12304,7 +14125,7 @@ Event execute(const Program &program, CpuState &cpu, Tlb &tlb,
 	const auto result =
 		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
 			program.instruction_count());
-	uml_arm64_gadget_restore_native_fp_environment(&cpu);
+	restore_native_fp_environment(cpu);
 	executed = result.executed;
 	return static_cast<Event>(result.event);
 }
@@ -12328,6 +14149,12 @@ Event execute_preserving_native_fp_environment(
 void restore_native_fp_environment(CpuState &cpu) noexcept
 {
 	uml_arm64_gadget_restore_native_fp_environment(&cpu);
+	uml_arm64_gadget_restore_native_fpmr_environment(&cpu);
+}
+
+void restore_native_fpmr_environment(CpuState &cpu) noexcept
+{
+	uml_arm64_gadget_restore_native_fpmr_environment(&cpu);
 }
 
 } // namespace uml::backend::arm64::gadgets

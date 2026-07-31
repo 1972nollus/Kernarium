@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/backend.h"
+#include "uml_darwin_runtime.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -8,6 +9,8 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string_view>
+#include <sys/sysctl.h>
 
 extern "C" int darwin_uml_net_open(unsigned char mac[6], unsigned int *mtu);
 extern "C" int darwin_uml_net_irq_fd(void);
@@ -17,6 +20,7 @@ extern "C" int darwin_uml_net_write(const void *buffer, unsigned long length);
 namespace {
 
 bool native_arguments_valid;
+bool execution_option_was_stripped;
 #if UML_BACKEND_TEST_HAS_SLIRP
 bool dhcp_argument_present;
 #endif
@@ -31,6 +35,38 @@ void require(bool condition, const char *message)
 		throw std::runtime_error{message};
 }
 
+bool host_feature(const char *name)
+{
+	int enabled = 0;
+	std::size_t size = sizeof(enabled);
+	return sysctlbyname(name, &enabled, &size, nullptr, 0) == 0 &&
+		enabled != 0;
+}
+
+unsigned long expected_guest_hwcap()
+{
+	unsigned long result =
+		(1UL << 0) | (1UL << 1);
+	/* FP and ASIMD are the mandatory guest profile. */
+	const struct {
+		const char *sysctl;
+		unsigned bit;
+	} optional[]{
+		{"hw.optional.arm.FEAT_AES", 3},
+		{"hw.optional.arm.FEAT_PMULL", 4},
+		{"hw.optional.arm.FEAT_SHA1", 5},
+		{"hw.optional.arm.FEAT_SHA256", 6},
+		{"hw.optional.arm.FEAT_CRC32", 7},
+		{"hw.optional.arm.FEAT_LSE", 8},
+		{"hw.optional.arm.FEAT_SHA3", 17},
+		{"hw.optional.arm.FEAT_SHA512", 21},
+	};
+	for (const auto &feature : optional)
+		if (host_feature(feature.sysctl))
+			result |= 1UL << feature.bit;
+	return result;
+}
+
 int native_kernel(int argc, char *const argv[], char *const envp[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
@@ -42,6 +78,11 @@ int native_kernel(int argc, char *const argv[], char *const envp[])
 	});
 	const bool environment = envp != nullptr && envp[0] != nullptr &&
 		std::strcmp(envp[0], "UML_TEST=1") == 0;
+	execution_option_was_stripped = std::ranges::none_of(
+		arguments, [](const char *argument) {
+			return std::string_view{argument}.starts_with(
+				"--execution-engine");
+		});
 	native_arguments_valid = rootfs && root && environment;
 	unsigned char mac[6]{};
 	unsigned int mtu{};
@@ -84,6 +125,12 @@ int native_dhcp_kernel(int argc, char *const argv[], char *const[])
 
 void test_native_entry()
 {
+	const auto expected_hwcap = expected_guest_hwcap();
+	require(darwin_uml_guest_hwcap() == expected_hwcap,
+		"guest HWCAP does not match the host-safe virtual CPU");
+	require(darwin_uml_guest_hwcap2() == 0,
+		"guest exposed an unimplemented HWCAP2 extension");
+
 	NetworkState network_state;
 	const uml_backend_network_callbacks network{
 		.struct_size = sizeof(uml_backend_network_callbacks),
@@ -118,14 +165,36 @@ void test_native_entry()
 		"native entry was not reported as Mach-O");
 	require(capabilities.sandbox_safe == 1,
 		"native entry was not reported as sandbox safe");
-	const char *arguments[]{"uml-test"};
+	require(capabilities.userspace_execution == UML_BACKEND_NATIVE_JIT,
+		"macOS did not default to the native JIT");
+	const char *arguments[]{"uml-test", "--execution-engine=gadgets"};
 	const char *environment[]{"UML_TEST=1", nullptr};
-	require(uml_backend_run(backend.get(), 1, arguments, environment) == 73,
+	require(uml_backend_run(backend.get(), 2, arguments, environment) == 73,
 		"native entry result was not returned");
+	require(darwin_uml_get_execution_engine() ==
+		DARWIN_UML_EXECUTION_GADGETS,
+		"runtime gadget selection was not applied");
+	require(darwin_uml_guest_hwcap() == expected_hwcap,
+		"gadget selection changed the virtual CPU contract");
+	require(execution_option_was_stripped,
+		"host execution option leaked into kernel arguments");
 	require(native_arguments_valid,
 		"native entry arguments or network callbacks were invalid");
 	require(network_state.writes == 1,
 		"network callback was not invoked exactly once");
+
+	const char *invalid_arguments[]{
+		"uml-test", "--execution-engine=invalid"};
+	require(uml_backend_run(
+			backend.get(), 2, invalid_arguments, environment) ==
+		-UML_BACKEND_INVALID_ARGUMENT,
+		"invalid execution engine was accepted");
+	const char *invalid_fallback[]{
+		"uml-test", "--jit-gadget-fallback=off"};
+	require(uml_backend_run(
+			backend.get(), 2, invalid_fallback, environment) ==
+		-UML_BACKEND_INVALID_ARGUMENT,
+		"removed JIT gadget fallback option was accepted");
 }
 
 #if UML_BACKEND_TEST_HAS_SLIRP

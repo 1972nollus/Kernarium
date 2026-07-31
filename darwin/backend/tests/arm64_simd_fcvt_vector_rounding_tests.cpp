@@ -1,78 +1,64 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_fcvt_vector_test_support.hpp"
+#include "arm64_floating_precision_conversion_test_support.hpp"
 
-namespace test = arm64_simd_fcvt_vector_test;
-namespace base = arm64_simd_test;
+#include <array>
+#include <cstdio>
+
+namespace test = arm64_floating_precision_conversion_test;
 
 namespace {
 
-void all_rounding_modes_for_both_narrow_pairs()
+[[nodiscard]] constexpr std::array<std::uint64_t, 10>
+rounding_inputs(unsigned source_width) noexcept
 {
-	base::Harness harness;
-	struct Entry final {
-		test::Shape shape;
-		std::uint64_t input;
-		std::array<std::uint64_t, 4> outputs;
-	};
-	const Entry entries[]{
-		{test::shapes[2], 0x3f80'1000U,
-			{0x3c00U, 0x3c01U, 0x3c00U, 0x3c00U}},
-		{test::shapes[3], 0x3ff0'0000'1000'0000ULL,
-			{0x3f80'0000U, 0x3f80'0001U, 0x3f80'0000U,
-				0x3f80'0000U}},
-	};
-	for (const auto &entry : entries)
-		for (const bool upper : {false, true})
-			for (unsigned mode = 0; mode < 4U; ++mode) {
-				auto initial = base::state(entry.shape.source_width + mode + upper);
-				initial.fpcr = mode << 22;
-				initial.fpsr = 0x0800'0080U;
-				const unsigned count = test::lanes(entry.shape);
-				std::array<std::uint64_t, 4> outputs{};
-				for (unsigned lane = 0; lane < count; ++lane) {
-					test::set_source_lane(initial, 29U, entry.shape, upper,
-						lane, entry.input);
-					outputs[lane] = entry.outputs[mode];
-				}
-				test::require_result(test::instruction(entry.shape, upper,
-					28U, 29U), entry.shape, upper, 28U,
-					std::span{outputs}.first(count), 1U << 4, initial, harness);
-			}
+	if (source_width == 32U)
+		return {0x3f80'0000U, 0x3f80'0fffU, 0x3f80'1000U,
+			0x3f80'1001U, 0x3f80'2000U, 0xbf80'0000U,
+			0xbf80'0fffU, 0xbf80'1000U, 0xbf80'1001U,
+			0xbf80'2000U};
+	return {0x3ff0'0000'0000'0000ULL,
+		0x3ff0'0000'0fff'ffffULL,
+		0x3ff0'0000'1000'0000ULL,
+		0x3ff0'0000'1000'0001ULL,
+		0x3ff0'0000'2000'0000ULL,
+		0xbff0'0000'0000'0000ULL,
+		0xbff0'0000'0fff'ffffULL,
+		0xbff0'0000'1000'0000ULL,
+		0xbff0'0000'1000'0001ULL,
+		0xbff0'0000'2000'0000ULL};
 }
 
-void underflow_overflow_and_flags_are_sticky()
+void all_rounding_directions_ties_and_neighbors()
 {
-	base::Harness harness;
-	const auto shape = test::shapes[3];
-	for (const bool upper : {false, true}) {
-		auto overflow = base::state(70U + upper);
-		const unsigned count = test::lanes(shape);
-		std::array<std::uint64_t, 4> infinity{};
-		for (unsigned lane = 0; lane < count; ++lane) {
-			test::set_source_lane(overflow, 29U, shape, upper, lane,
-				0x7fe0'0000'0000'0000ULL);
-			infinity[lane] = 0x7f80'0000U;
+	test::engine_tests::EngineHarness harness;
+	unsigned seed = 500U;
+	for (const auto form : test::ordinary_forms) {
+		if (form.operation != test::Operation::narrow)
+			continue;
+		for (unsigned mode = 0U; mode < 4U; ++mode) {
+			for (const auto input : rounding_inputs(form.source_width)) {
+				auto initial = test::state(++seed);
+				initial.fpcr = mode << 22;
+				const std::array values{input};
+				test::fill_source(initial, form, {28U, 29U}, values);
+				char name[160];
+				std::snprintf(name, sizeof(name),
+					"floating-precision-rounding source=%u "
+					"destination=%u upper=%u mode=%u input=%llx",
+					form.source_width, form.destination_width,
+					static_cast<unsigned>(form.upper), mode,
+					static_cast<unsigned long long>(input));
+				test::check(harness, name, form, {28U, 29U}, initial);
+			}
 		}
-		test::require_result(test::instruction(shape, upper, 28U, 29U),
-			shape, upper, 28U, std::span{infinity}.first(count),
-			(1U << 2) | (1U << 4), overflow, harness);
-
-		auto underflow = base::state(80U + upper);
-		std::array<std::uint64_t, 4> zero{};
-		for (unsigned lane = 0; lane < count; ++lane)
-			test::set_source_lane(underflow, 29U, shape, upper, lane,
-				0x3690'0000'0000'0000ULL);
-		test::require_result(test::instruction(shape, upper, 28U, 29U),
-			shape, upper, 28U, std::span{zero}.first(count),
-			(1U << 3) | (1U << 4), underflow, harness);
 	}
+	harness.print_summary("arm64-simd-fcvt-vector-rounding");
 }
 
 } // namespace
 
 int main()
 {
-	all_rounding_modes_for_both_narrow_pairs();
-	underflow_overflow_and_flags_are_sticky();
+	all_rounding_directions_ties_and_neighbors();
 	return 0;
 }

@@ -1,330 +1,447 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_load_store_test_support.hpp"
+#include "arm64_load_store_pair_test_support.hpp"
 
+#include <algorithm>
 #include <array>
-#include <cstring>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <string_view>
+#include <vector>
 
-namespace test = arm64_load_store_test;
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine_tests = uml::backend::tests;
+namespace pair_test = arm64_load_store_pair_test;
 
 namespace {
 
-constexpr std::uint64_t pc = 0xf0'0000;
-constexpr std::uint64_t base = 0x90'0000;
+constexpr unsigned base_register = 28;
+constexpr unsigned first_register = 3;
+constexpr unsigned second_register = 17;
 
 struct Variant final {
 	unsigned operation;
 	std::size_t size;
 	bool load;
+	std::string_view name;
 };
 
 constexpr std::array variants{
-	Variant{0, 4, false}, Variant{0, 4, true},
-	Variant{1, 8, false}, Variant{1, 8, true},
-	Variant{2, 16, false}, Variant{2, 16, true},
-	Variant{3, 16, false}, Variant{3, 16, true},
+	Variant{0, 4, false, "vector-store-32"},
+	Variant{0, 4, true, "vector-load-32"},
+	Variant{1, 8, false, "vector-store-64"},
+	Variant{1, 8, true, "vector-load-64"},
+	Variant{2, 16, false, "vector-store-128"},
+	Variant{2, 16, true, "vector-load-128"},
 };
 
-[[nodiscard]] arm64::VectorRegister pattern(unsigned seed)
+[[nodiscard]] engine_tests::NativeRequirements native_requirement()
 {
-	arm64::VectorRegister value;
-	for (unsigned index = 0; index < value.bytes.size(); ++index)
-		value.bytes[index] = static_cast<std::byte>(seed + index * 17U);
-	return value;
+	return engine_tests::NativeRequirements::features(
+		uml::backend::ArmFeature::floating_point);
 }
 
-class PairMemory final : public arm64::GuestMemory {
-public:
-	PairMemory() : first{pattern(0x21).bytes}, second{pattern(0x92).bytes} {}
-
-	[[nodiscard]] bool read(std::uint64_t address,
-				std::span<std::byte> output) override
-	{
-		++reads;
-		read_addresses[reads - 1] = address;
-		if (fault_read == reads)
-			return false;
-		const auto &source = reads == 1 ? first : second;
-		std::copy_n(source.begin(), output.size(), output.begin());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-				 std::span<const std::byte> input) override
-	{
-		++writes;
-		write_address = address;
-		if (fault_write)
-			return false;
-		written.fill(std::byte{});
-		std::copy(input.begin(), input.end(), written.begin());
-		return true;
-	}
-
-	std::array<std::byte, 16> first{};
-	std::array<std::byte, 16> second{};
-	std::array<std::byte, 32> written{};
-	std::array<std::uint64_t, 2> read_addresses{};
-	std::uint64_t write_address{};
-	unsigned reads{};
-	unsigned writes{};
-	unsigned fault_read{};
-	bool fault_write{};
-};
-
-void require_loaded(const arm64::VectorRegister &actual,
-	const std::array<std::byte, 16> &source, std::size_t size)
+[[nodiscard]] constexpr bool writeback(unsigned mode)
 {
-	for (std::size_t index = 0; index < actual.bytes.size(); ++index)
-		test::require(actual.bytes[index] ==
-			(index < size ? source[index] : std::byte{}));
+	return mode == 1U || mode == 3U;
 }
 
-void check_interpreted(const Variant &variant, unsigned mode, unsigned imm7)
+[[nodiscard]] std::uint64_t effective_address(
+	std::uint64_t base, const Variant &variant, unsigned mode, unsigned imm7)
 {
-	PairMemory memory;
-	arm64::CpuState cpu{};
-	test::fill_registers(cpu);
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.vectors[3] = pattern(0x43);
-	cpu.vectors[4] = pattern(0x74);
-	const auto first_source = cpu.vectors[3];
-	const auto second_source = cpu.vectors[4];
-	const auto displacement = test::signed_imm7(imm7) *
-		static_cast<std::int64_t>(variant.size);
-	const auto adjusted = base + displacement;
-	const auto address = mode == 1 ? base : adjusted;
-	const bool writeback = mode == 1 || mode == 3;
-	const auto instruction = test::pair(variant.operation, true,
-		variant.load, mode, imm7, 2, 3, 4);
-	test::require(arm64::Dispatcher{}.execute(cpu, memory, instruction).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.pc == pc + 4);
-	test::require(cpu.registers[2] == (writeback ? adjusted : base));
-	if (variant.load) {
-		test::require(memory.reads == 2 && memory.writes == 0);
-		test::require(memory.read_addresses[0] == address);
-		test::require(memory.read_addresses[1] == address + variant.size);
-		require_loaded(cpu.vectors[3], memory.first, variant.size);
-		require_loaded(cpu.vectors[4], memory.second, variant.size);
-	} else {
-		test::require(memory.reads == 0 && memory.writes == 1);
-		test::require(memory.write_address == address);
-		test::require(std::memcmp(memory.written.data(),
-			first_source.bytes.data(), variant.size) == 0);
-		test::require(std::memcmp(memory.written.data() + variant.size,
-			second_source.bytes.data(), variant.size) == 0);
-	}
+	const auto adjusted = base + static_cast<std::uint64_t>(
+		pair_test::signed_imm7(imm7) *
+		static_cast<std::int64_t>(variant.size));
+	return mode == 1U ? base : adjusted;
 }
 
-void exhaustive_interpreter_variants()
+void load_vector(
+	arm64::VectorRegister &destination, std::span<const std::byte> memory,
+	std::size_t offset, std::size_t size)
 {
-	for (const auto &variant : variants)
+	destination.bytes.fill(std::byte{});
+	std::copy_n(memory.begin() + static_cast<std::ptrdiff_t>(offset),
+		size, destination.bytes.begin());
+}
+
+void store_vector(
+	std::span<std::byte> memory, std::size_t offset,
+	const arm64::VectorRegister &source, std::size_t size)
+{
+	std::copy_n(source.bytes.begin(), size,
+		memory.begin() + static_cast<std::ptrdiff_t>(offset));
+}
+
+void exhaustive_allocated_matrix(engine_tests::EngineHarness &harness)
+{
+	const auto base = pair_test::data_base + pair_test::page_size / 2U;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
 		for (unsigned mode = 0; mode < 4; ++mode)
-			for (unsigned imm7 = 0; imm7 < 128; ++imm7)
-				check_interpreted(variant, mode, imm7);
-}
-
-void vector_31_and_duplicate_load_constraints()
-{
-	for (const auto &variant : variants) {
-		PairMemory memory;
-		arm64::CpuState cpu{};
-		cpu.pc = pc;
-		cpu.sp = base;
-		cpu.vectors[31] = pattern(0x35);
-		cpu.vectors[30] = pattern(0xa3);
-		const auto first_source = cpu.vectors[31];
-		const auto second_source = cpu.vectors[30];
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			test::pair(variant.operation, true, variant.load,
-				3, 1, 31, 31, 30)).reason ==
-			arm64::StopReason::continued);
-		test::require(cpu.sp == base + variant.size);
-		if (variant.load) {
-			require_loaded(cpu.vectors[31], memory.first, variant.size);
-			require_loaded(cpu.vectors[30], memory.second, variant.size);
-		} else {
-			test::require(std::memcmp(memory.written.data(),
-				first_source.bytes.data(), variant.size) == 0);
-			test::require(std::memcmp(memory.written.data() + variant.size,
-				second_source.bytes.data(), variant.size) == 0);
-		}
-
-		if (!variant.load)
-			continue;
-		for (unsigned mode = 0; mode < 4; ++mode)
-			for (unsigned reg = 0; reg < 32; ++reg) {
-				memory = {};
-				cpu = {};
-				cpu.pc = pc;
-				test::require(arm64::Dispatcher{}.execute(cpu, memory,
-					test::pair(variant.operation, true, true,
-						mode, 0, 2, reg, reg)).reason ==
-					arm64::StopReason::illegal_instruction);
-				test::require(cpu.pc == pc && memory.reads == 0);
-			}
-	}
-}
-
-void interpreter_fault_atomicity()
-{
-	for (const auto &variant : variants) {
-		if (variant.load) {
-			for (const unsigned fault_read : {1U, 2U}) {
-				PairMemory memory;
-				memory.fault_read = fault_read;
-				arm64::CpuState cpu{};
-				test::fill_registers(cpu);
-				cpu.pc = pc;
-				cpu.registers[2] = base;
-				cpu.vectors[3] = pattern(0x44);
-				cpu.vectors[4] = pattern(0x55);
-				const auto before = cpu;
-				const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-					test::pair(variant.operation, true, true,
-						3, 3, 2, 3, 4));
-				test::require(result.reason == arm64::StopReason::memory_fault);
-				test::require(cpu.registers == before.registers);
-				test::require(cpu.vectors[3].bytes == before.vectors[3].bytes);
-				test::require(cpu.vectors[4].bytes == before.vectors[4].bytes);
-				test::require(cpu.pc == pc);
-			}
-		} else {
-			PairMemory memory;
-			memory.fault_write = true;
-			arm64::CpuState cpu{};
-			test::fill_registers(cpu);
-			cpu.pc = pc;
-			cpu.registers[2] = base;
-			cpu.vectors[3] = pattern(0x44);
-			cpu.vectors[4] = pattern(0x55);
-			const auto before = cpu;
-			const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-				test::pair(variant.operation, true, false,
-					3, 3, 2, 3, 4));
-			test::require(result.reason == arm64::StopReason::memory_fault);
-			test::require(cpu.registers == before.registers);
-			test::require(cpu.vectors[3].bytes == before.vectors[3].bytes);
-			test::require(cpu.vectors[4].bytes == before.vectors[4].bytes);
-			test::require(cpu.pc == pc);
-		}
-	}
-}
-
-void gadget_matrix()
-{
-	test::StaticMapping mapping{0x110'0000, 79,
-		"/private/tmp/uml-simd-pair.XXXXXX"};
-	const auto map_base = mapping.guest() +
-		6 * test::StaticMapping::page_size;
-	for (const auto &variant : variants)
-		for (unsigned mode = 0; mode < 4; ++mode)
-			for (const unsigned imm7 : {0U, 1U, 63U, 64U, 127U}) {
-				const auto adjusted = map_base + test::signed_imm7(imm7) *
-					static_cast<std::int64_t>(variant.size);
-				const auto address = mode == 1 ? map_base : adjusted;
-				PairMemory payload;
-				arm64::CpuState cpu{};
-				cpu.registers[2] = map_base;
-				cpu.vectors[3] = pattern(0x43);
-				cpu.vectors[4] = pattern(0x74);
-				const auto first_source = cpu.vectors[3];
-				const auto second_source = cpu.vectors[4];
+			for (unsigned imm7 = 0; imm7 < 128; ++imm7) {
+				auto memory = std::vector<std::byte>(pair_test::page_size);
+				pair_test::fill_memory(memory,
+					variant_index * 19U + mode * 7U + imm7);
+				auto expected_memory = memory;
+				auto initial = pair_test::seeded_state(
+					0x9100'0000'0000'0000ULL |
+					(static_cast<std::uint64_t>(variant_index) << 24) |
+					(mode << 16) | imm7);
+				initial.registers[base_register] = base;
+				auto expected = initial;
+				const auto address =
+					effective_address(base, variant, mode, imm7);
+				const auto offset =
+					static_cast<std::size_t>(address - pair_test::data_base);
 				if (variant.load) {
-					std::memcpy(mapping.at(address), payload.first.data(),
-						variant.size);
-					std::memcpy(mapping.at(address + variant.size),
-						payload.second.data(), variant.size);
-				}
-				test::require(mapping.execute(pc, test::pair(
-					variant.operation, true, variant.load, mode,
-					imm7, 2, 3, 4), cpu) == gadgets::Event::system_call);
-				if (variant.load) {
-					require_loaded(cpu.vectors[3], payload.first, variant.size);
-					require_loaded(cpu.vectors[4], payload.second, variant.size);
+					load_vector(expected.vectors[first_register], memory,
+						offset, variant.size);
+					load_vector(expected.vectors[second_register], memory,
+						offset + variant.size, variant.size);
 				} else {
-					test::require(std::memcmp(mapping.at(address),
-						first_source.bytes.data(), variant.size) == 0);
-					test::require(std::memcmp(mapping.at(address + variant.size),
-						second_source.bytes.data(), variant.size) == 0);
+					store_vector(expected_memory, offset,
+						initial.vectors[first_register], variant.size);
+					store_vector(expected_memory, offset + variant.size,
+						initial.vectors[second_register], variant.size);
 				}
-				test::require(cpu.registers[2] ==
-					(mode == 1 || mode == 3 ? adjusted : map_base));
+				if (writeback(mode))
+					expected.registers[base_register] =
+						base + static_cast<std::uint64_t>(
+							pair_test::signed_imm7(imm7) *
+							static_cast<std::int64_t>(variant.size));
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"%.*s mode=%u imm7=%u",
+					static_cast<int>(variant.name.size()),
+					variant.name.data(), mode, imm7);
+				pair_test::check_memory(
+					harness, name,
+					pair_test::pair(variant.operation, true, variant.load,
+						mode, imm7, base_register, first_register,
+						second_register),
+					initial, expected, native_requirement(), memory,
+					variant.load ?
+						std::span<const std::byte>{} :
+						std::span<const std::byte>{expected_memory});
 			}
-
-	for (const auto &variant : variants) {
-		if (!variant.load)
-			continue;
-		arm64::CpuState cpu{};
-		test::require(mapping.execute(pc, test::pair(variant.operation,
-			true, true, 0, 0, 2, 3, 3), cpu) ==
-			gadgets::Event::illegal_instruction);
-		test::require(cpu.pc == pc);
 	}
 }
 
-void gadget_page_edges_and_fault_atomicity()
+void duplicate_load_destinations(engine_tests::EngineHarness &harness)
 {
-	test::StaticMapping mapping{0x130'0000, 83,
-		"/private/tmp/uml-simd-pair-edge.XXXXXX"};
+	auto initial = pair_test::seeded_state(0x9300'0000'0000'0000ULL);
+	initial.registers[base_register] =
+		pair_test::data_base + pair_test::page_size / 2U;
 	for (const auto &variant : variants) {
-		PairMemory payload;
-		for (const auto address : {
-			mapping.guest() + 4 * test::StaticMapping::page_size - variant.size,
-			mapping.guest() + 6 * test::StaticMapping::page_size -
-				variant.size / 2}) {
-			arm64::CpuState cpu{};
-			cpu.registers[2] = address;
-			cpu.vectors[3] = pattern(0x43);
-			cpu.vectors[4] = pattern(0x74);
-			const auto first_source = cpu.vectors[3];
-			const auto second_source = cpu.vectors[4];
-			if (variant.load) {
-				std::memcpy(mapping.at(address), payload.first.data(),
-					variant.size);
-				std::memcpy(mapping.at(address + variant.size),
-					payload.second.data(), variant.size);
+		if (!variant.load)
+			continue;
+		for (unsigned mode = 0; mode < 4; ++mode)
+			for (unsigned destination = 0; destination < 32; ++destination) {
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"%.*s duplicate destination=%u mode=%u",
+					static_cast<int>(variant.name.size()),
+					variant.name.data(), destination, mode);
+				harness.check_illegal(name,
+					pair_test::pair(variant.operation, true, true, mode,
+						0, base_register, destination, destination),
+					initial, native_requirement());
 			}
-			test::require(mapping.execute(pc, test::pair(variant.operation,
-				true, variant.load, 0, 0, 2, 3, 4), cpu) ==
-				gadgets::Event::system_call);
-			if (variant.load) {
-				require_loaded(cpu.vectors[3], payload.first, variant.size);
-				require_loaded(cpu.vectors[4], payload.second, variant.size);
-			} else {
-				test::require(std::memcmp(mapping.at(address),
-					first_source.bytes.data(), variant.size) == 0);
-				test::require(std::memcmp(mapping.at(address + variant.size),
-					second_source.bytes.data(), variant.size) == 0);
-			}
-		}
+	}
+}
 
-		std::array<std::byte, 16> sentinel{};
-		sentinel.fill(std::byte{0x5a});
-		for (const auto fault_address : {
-			mapping.guest() + test::StaticMapping::length - variant.size,
-			mapping.guest() + test::StaticMapping::length - variant.size / 2}) {
-			const auto inside = static_cast<std::size_t>(
-				mapping.guest() + test::StaticMapping::length - fault_address);
-			std::memcpy(mapping.at(fault_address), sentinel.data(), inside);
-			arm64::CpuState cpu{};
-			cpu.registers[2] = fault_address;
-			cpu.vectors[3] = pattern(0x43);
-			cpu.vectors[4] = pattern(0x74);
-			const auto before = cpu;
-			test::require(mapping.execute(pc, test::pair(variant.operation,
-				true, variant.load, 0, 0, 2, 3, 4), cpu) ==
-				gadgets::Event::memory_fault);
-			test::require(cpu.pc == pc);
-			test::require(cpu.registers == before.registers);
-			test::require(cpu.vectors[3].bytes == before.vectors[3].bytes);
-			test::require(cpu.vectors[4].bytes == before.vectors[4].bytes);
-			if (!variant.load)
-				test::require(std::memcmp(mapping.at(fault_address),
-					sentinel.data(), inside) == 0);
+void stack_and_vector_31_mappings(engine_tests::EngineHarness &harness)
+{
+	const auto base = pair_test::data_base + pair_test::page_size / 2U;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode) {
+			for (unsigned register_31_position = 0;
+			     register_31_position < 2; ++register_31_position) {
+				auto memory = std::vector<std::byte>(pair_test::page_size);
+				pair_test::fill_memory(memory,
+					0x30U + variant_index * 11U + mode * 3U +
+						register_31_position);
+				auto expected_memory = memory;
+				auto initial = pair_test::seeded_state(
+					0x9400'0000'0000'0000ULL |
+					(static_cast<std::uint64_t>(variant_index) << 20) |
+					(mode << 12) | register_31_position);
+				initial.sp = base;
+				auto expected = initial;
+				const unsigned first =
+					register_31_position == 0U ? 31U : 30U;
+				const unsigned second =
+					register_31_position == 0U ? 30U : 31U;
+				constexpr unsigned imm7 = 3;
+				const auto address =
+					effective_address(base, variant, mode, imm7);
+				const auto offset =
+					static_cast<std::size_t>(address - pair_test::data_base);
+				if (variant.load) {
+					load_vector(expected.vectors[first], memory,
+						offset, variant.size);
+					load_vector(expected.vectors[second], memory,
+						offset + variant.size, variant.size);
+				} else {
+					store_vector(expected_memory, offset,
+						initial.vectors[first], variant.size);
+					store_vector(expected_memory, offset + variant.size,
+						initial.vectors[second], variant.size);
+				}
+				if (writeback(mode))
+					expected.sp = base + 3U * variant.size;
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"%.*s sp-base v31-position=%u mode=%u",
+					static_cast<int>(variant.name.size()),
+					variant.name.data(), register_31_position, mode);
+				pair_test::check_memory(
+					harness, name,
+					pair_test::pair(variant.operation, true, variant.load,
+						mode, imm7, 31, first, second),
+					initial, expected, native_requirement(), memory,
+					variant.load ?
+						std::span<const std::byte>{} :
+						std::span<const std::byte>{expected_memory});
+			}
+
+			if (variant.load)
+				continue;
+			auto memory = std::vector<std::byte>(pair_test::page_size);
+			pair_test::fill_memory(memory,
+				0x70U + variant_index * 7U + mode);
+			auto expected_memory = memory;
+			auto initial = pair_test::seeded_state(
+				0x9500'0000'0000'0000ULL |
+				(static_cast<std::uint64_t>(variant_index) << 16) | mode);
+			initial.sp = base;
+			auto expected = initial;
+			constexpr unsigned imm7 = 1;
+			const auto address =
+				effective_address(base, variant, mode, imm7);
+			const auto offset =
+				static_cast<std::size_t>(address - pair_test::data_base);
+			store_vector(expected_memory, offset, initial.vectors[31],
+				variant.size);
+			store_vector(expected_memory, offset + variant.size,
+				initial.vectors[31], variant.size);
+			if (writeback(mode))
+				expected.sp = base + variant.size;
+			char name[112];
+			std::snprintf(name, sizeof(name),
+				"%.*s sp-base duplicate-v31-store mode=%u",
+				static_cast<int>(variant.name.size()), variant.name.data(),
+				mode);
+			pair_test::check_memory(
+				harness, name,
+				pair_test::pair(variant.operation, true, false, mode,
+					imm7, 31, 31, 31),
+				initial, expected, native_requirement(), memory,
+				expected_memory);
+		}
+	}
+}
+
+void same_register_number_is_not_overlap(
+	engine_tests::EngineHarness &harness)
+{
+	const auto base = pair_test::data_base + pair_test::page_size / 2U;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode) {
+			auto memory = std::vector<std::byte>(pair_test::page_size);
+			pair_test::fill_memory(memory,
+				0xa0U + variant_index * 5U + mode);
+			auto expected_memory = memory;
+			auto initial = pair_test::seeded_state(
+				0x9600'0000'0000'0000ULL |
+				(static_cast<std::uint64_t>(variant_index) << 16) | mode);
+			initial.registers[5] = base;
+			auto expected = initial;
+			constexpr unsigned imm7 = 2;
+			const auto address =
+				effective_address(base, variant, mode, imm7);
+			const auto offset =
+				static_cast<std::size_t>(address - pair_test::data_base);
+			if (variant.load) {
+				load_vector(expected.vectors[5], memory,
+					offset, variant.size);
+				load_vector(expected.vectors[6], memory,
+					offset + variant.size, variant.size);
+			} else {
+				store_vector(expected_memory, offset,
+					initial.vectors[5], variant.size);
+				store_vector(expected_memory, offset + variant.size,
+					initial.vectors[6], variant.size);
+			}
+			if (writeback(mode))
+				expected.registers[5] = base + 2U * variant.size;
+			char name[112];
+			std::snprintf(name, sizeof(name),
+				"%.*s same-gpr-vector-number mode=%u",
+				static_cast<int>(variant.name.size()), variant.name.data(),
+				mode);
+			pair_test::check_memory(
+				harness, name,
+				pair_test::pair(variant.operation, true, variant.load,
+					mode, imm7, 5, 5, 6),
+				initial, expected, native_requirement(), memory,
+				variant.load ?
+					std::span<const std::byte>{} :
+					std::span<const std::byte>{expected_memory});
+		}
+	}
+}
+
+[[nodiscard]] std::uint64_t base_for_target(
+	std::uint64_t target, const Variant &variant, unsigned mode,
+	unsigned imm7)
+{
+	if (mode == 1U)
+		return target;
+	return target - static_cast<std::uint64_t>(
+		pair_test::signed_imm7(imm7) *
+		static_cast<std::int64_t>(variant.size));
+}
+
+void cross_page_success(engine_tests::EngineHarness &harness)
+{
+	const auto boundary = pair_test::data_base + pair_test::page_size;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode)
+			for (unsigned split = 0; split < 2; ++split) {
+				const auto target = boundary -
+					(split == 0U ? variant.size : variant.size / 2U);
+				constexpr unsigned imm7 = 1;
+				const auto base =
+					base_for_target(target, variant, mode, imm7);
+				auto memory =
+					std::vector<std::byte>(2U * pair_test::page_size);
+				pair_test::fill_memory(memory,
+					0xc0U + variant_index * 9U + mode * 2U + split);
+				auto expected_memory = memory;
+				auto initial = pair_test::seeded_state(
+					0x9700'0000'0000'0000ULL |
+					(static_cast<std::uint64_t>(variant_index) << 20) |
+					(mode << 12) | split);
+				initial.registers[base_register] = base;
+				auto expected = initial;
+				const auto offset =
+					static_cast<std::size_t>(target - pair_test::data_base);
+				if (variant.load) {
+					load_vector(expected.vectors[first_register], memory,
+						offset, variant.size);
+					load_vector(expected.vectors[second_register], memory,
+						offset + variant.size, variant.size);
+				} else {
+					store_vector(expected_memory, offset,
+						initial.vectors[first_register], variant.size);
+					store_vector(expected_memory, offset + variant.size,
+						initial.vectors[second_register], variant.size);
+				}
+				if (writeback(mode))
+					expected.registers[base_register] =
+						base + variant.size;
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"%.*s cross-page split=%u mode=%u",
+					static_cast<int>(variant.name.size()),
+					variant.name.data(), split, mode);
+				pair_test::check_memory(
+					harness, name,
+					pair_test::pair(variant.operation, true, variant.load,
+						mode, imm7, base_register, first_register,
+						second_register),
+					initial, expected, native_requirement(), memory,
+					variant.load ?
+						std::span<const std::byte>{} :
+						std::span<const std::byte>{expected_memory});
+			}
+	}
+}
+
+void cross_page_fault_atomicity(engine_tests::EngineHarness &harness)
+{
+	const auto boundary = pair_test::data_base + pair_test::page_size;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode)
+			for (unsigned split = 0; split < 2; ++split) {
+				const auto target = boundary -
+					(split == 0U ? variant.size : variant.size / 2U);
+				constexpr unsigned imm7 = 1;
+				const auto base =
+					base_for_target(target, variant, mode, imm7);
+				auto memory = std::vector<std::byte>(pair_test::page_size);
+				pair_test::fill_memory(memory,
+					0xe0U + variant_index * 7U + mode * 2U + split);
+				auto initial = pair_test::seeded_state(
+					0x9800'0000'0000'0000ULL |
+					(static_cast<std::uint64_t>(variant_index) << 20) |
+					(mode << 12) | split);
+				initial.registers[base_register] = base;
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"%.*s fault-atomic split=%u mode=%u",
+					static_cast<int>(variant.name.size()),
+					variant.name.data(), split, mode);
+				pair_test::check_memory(
+					harness, name,
+					pair_test::pair(variant.operation, true, variant.load,
+						mode, imm7, base_register, first_register,
+						second_register),
+					initial, initial, native_requirement(), memory, {},
+					engine_tests::ExpectedEvent::memory_fault,
+					{
+						.address = boundary,
+						.access = variant.load ?
+							arm64::MemoryAccess::read :
+							arm64::MemoryAccess::write,
+					},
+					true);
+			}
+	}
+}
+
+void stack_alignment_faults(engine_tests::EngineHarness &harness)
+{
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode) {
+			auto memory = std::vector<std::byte>(pair_test::page_size);
+			pair_test::fill_memory(memory,
+				0x20U + variant_index * 5U + mode);
+			auto initial = pair_test::seeded_state(
+				0x9900'0000'0000'0000ULL |
+				(static_cast<std::uint64_t>(variant_index) << 16) | mode);
+			initial.sp = pair_test::data_base + pair_test::page_size / 2U + 8U;
+			char name[112];
+			std::snprintf(name, sizeof(name),
+				"%.*s misaligned-sp mode=%u",
+				static_cast<int>(variant.name.size()), variant.name.data(),
+				mode);
+			pair_test::check_memory(
+				harness, name,
+				pair_test::pair(variant.operation, true, variant.load,
+					mode, 3, 31, first_register, second_register),
+				initial, initial, native_requirement(), memory, {},
+				engine_tests::ExpectedEvent::memory_fault,
+				{
+					.address = initial.sp,
+					.access = variant.load ?
+						arm64::MemoryAccess::read :
+						arm64::MemoryAccess::write,
+				},
+				true);
 		}
 	}
 }
@@ -333,9 +450,13 @@ void gadget_page_edges_and_fault_atomicity()
 
 int main()
 {
-	exhaustive_interpreter_variants();
-	vector_31_and_duplicate_load_constraints();
-	interpreter_fault_atomicity();
-	gadget_matrix();
-	gadget_page_edges_and_fault_atomicity();
+	engine_tests::EngineHarness harness;
+	exhaustive_allocated_matrix(harness);
+	duplicate_load_destinations(harness);
+	stack_and_vector_31_mappings(harness);
+	same_register_number_is_not_overlap(harness);
+	cross_page_success(harness);
+	cross_page_fault_atomicity(harness);
+	stack_alignment_faults(harness);
+	harness.print_summary("arm64-simd-load-store-pair");
 }

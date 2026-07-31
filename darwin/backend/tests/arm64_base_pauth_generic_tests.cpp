@@ -1,67 +1,95 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_pauth_test_support.hpp"
 
-namespace test = arm64_pauth_test;
+#include <set>
+
+namespace pauth = arm64_pauth_test;
+namespace test = uml::backend::tests;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t pacga(
-	unsigned destination, unsigned source, unsigned modifier)
+void every_register_encoding(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	return 0x9ac0'3000U | ((modifier & 31U) << 16) |
-		((source & 31U) << 5) | (destination & 31U);
+	for (unsigned destination = 0; destination < 32; ++destination) {
+		for (unsigned source = 0; source < 32; ++source) {
+			for (unsigned modifier = 0; modifier < 32; ++modifier) {
+				auto initial = pauth::initial_state(
+					destination * 1024 + source * 32 + modifier);
+				const pauth::CaseName name{
+					"pacga-d%u-n%u-m%u",
+					destination, source, modifier};
+				harness.check({
+					.name = name,
+					.instruction = pauth::pacga(
+						destination, source, modifier),
+					.initial = initial,
+					.expected = initial,
+					.native = pauth::native_pauth,
+					.validator =
+						&pauth::validate_generic_code,
+				});
+				++cases;
+			}
+		}
+	}
 }
 
-void every_register_encoding()
+void known_answer_across_engines(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	for (unsigned destination = 0; destination < 32; ++destination)
-		for (unsigned source = 0; source < 32; ++source)
-			for (unsigned modifier = 0; modifier < 32; ++modifier) {
-				auto initial = test::state(0xfeed'face'1234'5678ULL,
-					destination, modifier,
-					0x0123'4567'89ab'cdefULL);
-				if (source < 31)
-					initial.registers[source] =
-						0x89ab'cdef'7654'3210ULL ^ source;
-				/* Register overlap is intentional. The final architectural
-				 * values are what both sources must observe before Rd is
-				 * written. */
-				const auto result = test::execute_both(
-					pacga(destination, source, modifier), initial);
-				test::require_only_destination_changed(
-					initial, result.interpreted, destination);
-				if (destination < 31)
-					test::require((result.interpreted
-						.registers[destination] & 0xffff'ffffULL) == 0);
-			}
+	auto initial = pauth::initial_state(0x5a5a);
+	initial.pointer_auth_keys[4] = {
+		0xec28'02d4'e0a4'88e9ULL,
+		0x84be'85ce'9804'e94bULL,
+	};
+	initial.registers[5] = 0xfb62'3599'da6e'8127ULL;
+	initial.registers[7] = 0x477d'469d'ec0b'8762ULL;
+	auto expected = initial;
+	expected.registers[3] = 0xc003'b939'0000'0000ULL;
+	harness.check({
+		.name = "pacga-known-answer",
+		.instruction = pauth::pacga(3, 5, 7),
+		.initial = initial,
+		.expected = expected,
+		.native = pauth::native_pauth,
+	});
+	++cases;
 }
 
 void production_specialization()
 {
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
-	const auto registers = test::gadgets::Builder{}.build(test::pc,
-		std::array{pacga(3, 7, 11)});
-	const auto zero_source = test::gadgets::Builder{}.build(test::pc,
-		std::array{pacga(3, 31, 11)});
-	const auto stack_modifier = test::gadgets::Builder{}.build(test::pc,
-		std::array{pacga(3, 7, 31)});
-	test::require(registers.program.words().front() !=
-		zero_source.program.words().front());
-	test::require(registers.program.words().front() ==
-		stack_modifier.program.words().front());
-	const auto discard = test::gadgets::Builder{}.build(test::pc,
-		std::array{pacga(31, 7, 11)});
-	const auto nop = test::gadgets::Builder{}.build(test::pc,
-		std::array{test::hint(0)});
-	test::require(discard.program.words().front() == nop.program.words().front());
-#endif
+	std::set<std::uintptr_t> entries;
+	for (const bool source_zero : {false, true}) {
+		const auto built = pauth::gadgets::Builder{}.build(
+			pauth::pc,
+			std::array{pauth::pacga(
+				3, source_zero ? 31U : 7U, 11)});
+		pauth::require(
+			built.complete &&
+			built.program.instruction_count() == 1 &&
+			built.program.words().size() == 4);
+		entries.insert(built.program.words().front());
+	}
+	pauth::require(entries.size() == 2);
+	const auto discard = pauth::gadgets::Builder{}.build(
+		pauth::pc, std::array{pauth::pacga(31, 7, 11)});
+	const auto nop = pauth::gadgets::Builder{}.build(
+		pauth::pc, std::array{pauth::hint(0)});
+	pauth::require(discard.program.words().front() ==
+		nop.program.words().front());
 }
 
 } // namespace
 
 int main()
 {
-	every_register_encoding();
+	test::EngineHarness harness;
+	std::size_t cases = 0;
+	every_register_encoding(harness, cases);
+	known_answer_across_engines(harness, cases);
 	production_specialization();
+	pauth::require_counts(harness, cases);
+	harness.print_summary("arm64-base-pauth-generic");
 	return 0;
 }

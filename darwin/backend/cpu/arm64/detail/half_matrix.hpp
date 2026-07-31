@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_exception.hpp"
 #include "half_fused_long.hpp"
 #include "instruction_helpers.hpp"
 
@@ -30,15 +31,6 @@ struct HalfMatrix final {
 	if (operation == 0x0e40'ec00U)
 		return {true, q, true};
 	return {};
-}
-
-[[nodiscard]] constexpr std::uintptr_t half_matrix_operand(
-	std::uint32_t instruction, const HalfMatrix &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>(decoded.widening) << 24);
 }
 
 struct HalfMatrixResult final {
@@ -143,7 +135,7 @@ struct BinaryResult final {
 	std::uint64_t saved_fpsr;
 	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
 	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = fpcr;
+	const std::uint64_t local_fpcr = host_fpcr(fpcr);
 	const std::uint64_t clear = 0U;
 	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
 	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
@@ -218,7 +210,7 @@ struct BinaryResult final {
 	std::uint64_t saved_fpsr;
 	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
 	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = fpcr;
+	const std::uint64_t local_fpcr = host_fpcr(fpcr);
 	const std::uint64_t clear = 0U;
 	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
 	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
@@ -305,7 +297,8 @@ struct BinaryResult final {
 	std::uint64_t saved_fpsr;
 	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
 	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = fpcr & ~(2U | 1U | (1U << 24));
+	const std::uint64_t local_fpcr =
+		host_fpcr(fpcr) & ~(2U | 1U | (1U << 24));
 	const std::uint64_t clear = 0U;
 	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
 	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");

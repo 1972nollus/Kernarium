@@ -7,9 +7,9 @@ namespace fp = arm64_simd_fp_indexed_test;
 
 namespace {
 
-void mixed_lanes_ah_and_short_vector_zeroing()
+void mixed_lanes_ah_and_short_vector_zeroing(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
 	for (std::size_t shape_index = 3U; shape_index < test::shapes.size();
 	     ++shape_index) {
 		const auto shape = test::shapes[shape_index];
@@ -31,16 +31,15 @@ void mixed_lanes_ah_and_short_vector_zeroing()
 				for (unsigned lane = 0; lane < lanes; ++lane)
 					fp::write_bits(initial.vectors[29].bytes,
 						shape.lane_bytes, lane, values[lane % values.size()]);
-				test::require_result(test::instruction(operation, shape,
-					28U, 29U), shape, operation, 28U, 29U,
-					initial, harness);
+				test::check_result(harness, "fabs-fneg-vector-lanes",
+					test::instruction(operation, shape, 28U, 29U),
+					shape, operation, 28U, 29U, initial);
 			}
 	}
 }
 
-void source_destination_aliasing()
+void source_destination_aliasing(test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
 	for (std::size_t shape_index = 3U; shape_index < test::shapes.size();
 	     ++shape_index) {
 		const auto shape = test::shapes[shape_index];
@@ -51,17 +50,20 @@ void source_destination_aliasing()
 			initial.fpsr = 0x80U;
 			fp::fill_bits(initial.vectors[7].bytes, shape.lane_bytes,
 				fp::floating_bits(shape.lane_bytes, -4.0));
-			test::require_result(test::instruction(operation, shape, 7U, 7U),
-				shape, operation, 7U, 7U, initial, harness);
+			test::check_result(harness, "fabs-fneg-vector-alias",
+				test::instruction(operation, shape, 7U, 7U),
+				shape, operation, 7U, 7U, initial);
 		}
-	}
+}
 }
 
 } // namespace
 
 int main()
 {
-	mixed_lanes_ah_and_short_vector_zeroing();
-	source_destination_aliasing();
+	test::engine_tests::EngineHarness harness;
+	mixed_lanes_ah_and_short_vector_zeroing(harness);
+	source_destination_aliasing(harness);
+	harness.print_summary("arm64-simd-fabs-fneg-vector");
 	return 0;
 }

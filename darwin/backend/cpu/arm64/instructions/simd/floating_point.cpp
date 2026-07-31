@@ -15,6 +15,7 @@
 #include "../../detail/floating_fused.hpp"
 #include "../../detail/floating_horizontal.hpp"
 #include "../../detail/floating_reciprocal.hpp"
+#include "../../detail/floating_reciprocal_software.hpp"
 #include "../../detail/floating_round.hpp"
 #include "../../detail/floating_scale.hpp"
 #include "../../detail/instruction_helpers.hpp"
@@ -213,34 +214,70 @@ template<typename Floating>
 	using Integer = FloatingInteger<Floating>;
 	const auto first_bits = std::bit_cast<Integer>(first);
 	const auto second_bits = std::bit_cast<Integer>(second);
-	constexpr unsigned bits = sizeof(Floating) * 8U;
-	constexpr unsigned fraction_bits = sizeof(Floating) == 2 ? 10U :
-		sizeof(Floating) == 4 ? 23U : 52U;
-	constexpr Integer fraction_mask = (Integer{1} << fraction_bits) - 1U;
-	constexpr Integer exponent_mask = ((Integer{1} <<
-		(bits - fraction_bits - 1U)) - 1U) << fraction_bits;
-	constexpr Integer quiet_bit = Integer{1} << (fraction_bits - 1U);
-	constexpr Integer magnitude_mask = (Integer{1} << (bits - 1U)) - 1U;
-	const auto is_nan = [](Integer value) {
-		return (value & exponent_mask) == exponent_mask &&
-			(value & fraction_mask) != 0U;
-	};
-	const auto is_signaling_nan = [&](Integer value) {
-		return is_nan(value) && (value & quiet_bit) == 0U;
-	};
-	if (is_signaling_nan(first_bits) || is_signaling_nan(second_bits))
-		cpu.fpsr |= 1U;
-	if (is_nan(first_bits) || is_nan(second_bits) ||
-	    ((first_bits & magnitude_mask) == 0U &&
-	     (second_bits & magnitude_mask) == 0U))
-		return second;
-	return native_floating_horizontal(operation, first, second);
+	const auto result = detail::floating_alternate_minmax(
+		first_bits, second_bits,
+		operation == detail::FloatingHorizontalOperation::maximum ||
+			operation == detail::FloatingHorizontalOperation::
+				maximum_number,
+		cpu.fpcr,
+		operation == detail::FloatingHorizontalOperation::maximum_number ||
+			operation == detail::FloatingHorizontalOperation::
+				minimum_number);
+	cpu.fpsr |= result.exceptions;
+	return std::bit_cast<Floating>(result.bits);
+}
+
+template<typename Floating>
+[[nodiscard]] Floating controlled_floating_arithmetic(CpuState &cpu,
+	detail::FloatingHorizontalOperation operation, Floating first,
+	Floating second)
+{
+	using Integer = FloatingInteger<Floating>;
+	const auto prepared = detail::prepare_floating_controlled_arithmetic(
+		std::bit_cast<Integer>(first), std::bit_cast<Integer>(second),
+		cpu.fpcr,
+		operation == detail::FloatingHorizontalOperation::
+			absolute_difference);
+	cpu.fpsr |= prepared.exceptions;
+	if (prepared.complete)
+		return std::bit_cast<Floating>(prepared.bits);
+	first = std::bit_cast<Floating>(prepared.first);
+	second = std::bit_cast<Floating>(prepared.second);
+	std::uint64_t saved_fpcr{};
+	std::uint64_t saved_fpsr{};
+	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
+	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
+	const auto local_fpcr = (cpu.fpcr & 2U) != 0U ?
+		saved_fpcr & ~((std::uint64_t{1} << 24) |
+			(std::uint64_t{1} << 19)) : saved_fpcr;
+	if (local_fpcr != saved_fpcr)
+		__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
+	__asm__ volatile("msr fpsr, xzr" : : : "memory");
+	const auto result =
+		native_floating_horizontal(operation, first, second);
+	std::uint64_t raised{};
+	__asm__ volatile("mrs %0, fpsr" : "=r"(raised) : : "memory");
+	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
+	if (local_fpcr != saved_fpcr)
+		__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
+	const auto completed = detail::complete_floating_controlled_arithmetic(
+		std::bit_cast<Integer>(result), cpu.fpcr,
+		static_cast<std::uint32_t>(raised));
+	cpu.fpsr |= completed.exceptions;
+	return std::bit_cast<Floating>(completed.bits);
 }
 
 template<typename Floating>
 [[nodiscard]] Floating floating_horizontal_element(CpuState &cpu,
 	const detail::FloatingHorizontal &decoded, Floating first, Floating second)
 {
+	if ((decoded.operation ==
+			detail::FloatingHorizontalOperation::absolute_difference ||
+	     decoded.operation == detail::FloatingHorizontalOperation::add) &&
+	    ((cpu.fpcr & 2U) != 0U ||
+	     (decoded.width != 16U && (cpu.fpcr & 1U) != 0U)))
+		return controlled_floating_arithmetic(
+			cpu, decoded.operation, first, second);
 	if (decoded.operation ==
 			detail::FloatingHorizontalOperation::absolute_maximum ||
 	    decoded.operation ==
@@ -254,7 +291,9 @@ template<typename Floating>
 		cpu.fpsr |= result.exceptions;
 		return std::bit_cast<Floating>(result.bits);
 	}
-	if ((cpu.fpcr & 2U) != 0U && detail::floating_horizontal_uses_ah(decoded))
+	if (detail::floating_horizontal_uses_ah(decoded) &&
+	    ((cpu.fpcr & 2U) != 0U ||
+	     (decoded.width != 16U && (cpu.fpcr & 1U) != 0U)))
 		return alternate_floating_minmax(cpu, decoded.operation, first, second);
 	return native_floating_horizontal(decoded.operation, first, second);
 }
@@ -292,64 +331,6 @@ template<typename Floating>
 #undef UML_REDUCE_SWITCH
 #undef UML_REDUCE_ASM
 	return result;
-}
-
-template<typename Floating>
-[[nodiscard]] Floating native_floating_reciprocal(
-	detail::FloatingReciprocalOperation operation, Floating first,
-	Floating second)
-{
-	Floating result;
-#define UML_RECIPROCAL_UNARY(suffix, instruction) \
-	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1" : \
-		"=w"(result) : "w"(first))
-#define UML_RECIPROCAL_BINARY(suffix, instruction) \
-	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1, %" \
-		#suffix "2" : "=w"(result) : "w"(first), "w"(second))
-#define UML_RECIPROCAL_SWITCH(suffix) \
-	switch (operation) { \
-	case detail::FloatingReciprocalOperation::reciprocal_estimate: \
-		UML_RECIPROCAL_UNARY(suffix, frecpe); break; \
-	case detail::FloatingReciprocalOperation::reciprocal_step: \
-		UML_RECIPROCAL_BINARY(suffix, frecps); break; \
-	case detail::FloatingReciprocalOperation::reciprocal_exponent: \
-		UML_RECIPROCAL_UNARY(suffix, frecpx); break; \
-	case detail::FloatingReciprocalOperation::reciprocal_sqrt_estimate: \
-		UML_RECIPROCAL_UNARY(suffix, frsqrte); break; \
-	case detail::FloatingReciprocalOperation::reciprocal_sqrt_step: \
-		UML_RECIPROCAL_BINARY(suffix, frsqrts); break; \
-	}
-	if constexpr (sizeof(Floating) == 2)
-		UML_RECIPROCAL_SWITCH(h)
-	else if constexpr (sizeof(Floating) == 4)
-		UML_RECIPROCAL_SWITCH(s)
-	else
-		UML_RECIPROCAL_SWITCH(d)
-#undef UML_RECIPROCAL_SWITCH
-#undef UML_RECIPROCAL_BINARY
-#undef UML_RECIPROCAL_UNARY
-	return result;
-}
-
-template<typename Floating>
-void execute_floating_reciprocal(CpuState &cpu, std::uint32_t instruction,
-	const detail::FloatingReciprocal &decoded)
-{
-	const unsigned destination = instruction & 31U;
-	const auto first = cpu.vectors[(instruction >> 5) & 31U].bytes;
-	const auto second = decoded.unary ? std::array<std::byte, 16>{} :
-		cpu.vectors[(instruction >> 16) & 31U].bytes;
-	auto result = decoded.scalar && (cpu.fpcr & 4U) != 0U ?
-		(decoded.unary ? cpu.vectors[destination].bytes : first) :
-		std::array<std::byte, 16>{};
-	const unsigned lanes = decoded.scalar ? 1U :
-		decoded.vector_bytes / sizeof(Floating);
-	for (unsigned lane = 0; lane < lanes; ++lane)
-		encode_lane(result, lane, native_floating_reciprocal(
-			decoded.operation, decode_lane<Floating>(first, lane),
-			decoded.unary ? Floating{} :
-				decode_lane<Floating>(second, lane)));
-	cpu.vectors[destination].bytes = result;
 }
 
 void execute_floating_complex(CpuState &cpu, std::uint32_t instruction,
@@ -475,8 +456,7 @@ void execute_floating_horizontal(CpuState &cpu, std::uint32_t instruction,
 		cpu.vectors[destination].bytes = result;
 		return;
 	}
-	if ((decoded.form == detail::FloatingHorizontalForm::scalar_binary ||
-	     decoded.form == detail::FloatingHorizontalForm::scalar_pairwise) &&
+	if (decoded.form == detail::FloatingHorizontalForm::scalar_binary &&
 	    (cpu.fpcr & 4U) != 0U)
 		result = first_source;
 
@@ -1271,20 +1251,9 @@ RunResult Dispatcher::floating_reciprocal(CpuState &cpu, GuestMemory &,
 	if (!decoded.recognized || !decoded.valid)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
-	switch (decoded.width) {
-	case 16:
-		execute_floating_reciprocal<_Float16>(cpu, instruction, decoded);
-		break;
-	case 32:
-		execute_floating_reciprocal<float>(cpu, instruction, decoded);
-		break;
-	case 64:
-		execute_floating_reciprocal<double>(cpu, instruction, decoded);
-		break;
-	default:
-		return {StopReason::illegal_instruction, address, instruction, 0,
-			false};
-	}
+	detail::execute_floating_reciprocal_software(cpu, decoded,
+		instruction & 31U, (instruction >> 5) & 31U,
+		(instruction >> 16) & 31U);
 	cpu.pc += 4U;
 	return continue_after(address, instruction);
 }

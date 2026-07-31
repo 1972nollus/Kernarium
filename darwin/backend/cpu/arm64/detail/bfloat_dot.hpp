@@ -27,17 +27,6 @@ struct BFloatDot final {
 	return {};
 }
 
-[[nodiscard]] constexpr std::uintptr_t bfloat_dot_operand(
-	std::uint32_t instruction, const BFloatDot &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>(decoded.by_element) << 24) |
-		(static_cast<std::uintptr_t>(decoded.wide) << 25) |
-		(static_cast<std::uintptr_t>(decoded.index) << 26);
-}
-
 namespace bfloat_dot_detail {
 
 enum class Class : unsigned { zero, finite, infinity, nan };

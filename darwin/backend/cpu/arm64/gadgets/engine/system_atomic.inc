@@ -2,6 +2,76 @@
  * the real-register and XZR forms, and the 64-byte alignment guarantees that
  * one successful guest-page TLB lookup covers every store. Stream:
  * [register byte offset, when present][guest PC]. */
+
+/* FEAT_GCS helpers are fully selected by translation: operation, XZR
+ * discard/source, and GCSSTR SP addressing never reach the runtime decoder.
+ * The valid hot path retains one not-taken status branch. On any exception
+ * _stream still points at the immutable guest-PC word consumed by the common
+ * event gadgets. */
+.macro gcs name, operand
+gadget gcs_\name
+	.if \operand
+	ldr x8, [_stream], #8
+	.else
+	mov x8, xzr
+	.endif
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x2
+	mov x2, x8
+	bl NAME(uml_arm64_gadget_gcs_transfer_\name)
+	ldp x1, x2, [sp], #16
+	cbnz w0, 97f
+	add _stream, _stream, #8
+	next_gadget
+97:
+	cmp w0, #1
+	b.eq uml_arm64_gadget_memory_fault
+	tbz w0, #0, 98f
+	b NAME(uml_arm64_gadget_gcs_fault)
+98:
+	b NAME(uml_arm64_gadget_illegal)
+.endm
+
+gcs popm_r, 1
+gcs popm_z, 0
+gcs pushm_r, 1
+gcs pushm_z, 0
+gcs ss1_r, 1
+gcs ss1_z, 0
+gcs ss2_r, 1
+gcs ss2_z, 0
+
+.purgem gcs
+
+.macro gcs_store name
+gadget gcs_store_\name
+	ldr x8, [_stream], #8
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x2
+	mov x2, x8
+	bl NAME(uml_arm64_gadget_gcs_transfer_store_\name)
+	ldp x1, x2, [sp], #16
+	cbnz w0, 97f
+	add _stream, _stream, #8
+	next_gadget
+97:
+	cmp w0, #1
+	b.eq uml_arm64_gadget_memory_fault
+	tbz w0, #0, 98f
+	b NAME(uml_arm64_gadget_gcs_fault)
+98:
+	b NAME(uml_arm64_gadget_illegal)
+.endm
+
+gcs_store rr
+gcs_store rz
+gcs_store sr
+gcs_store sz
+
+.purgem gcs_store
+
 .macro cache_zero name, zero
 gadget cache_zero_\name
 	.if \zero
@@ -24,6 +94,35 @@ cache_zero r, 0
 cache_zero z, 1
 
 .purgem cache_zero
+
+/*
+ * The guest instruction-cache synchronization point is deliberately a cold
+ * execution boundary.  The helper publishes a translated-code sequence
+ * change, then the dispatcher resumes at the following guest instruction so
+ * no stale suffix from the current data-only program can execute.
+ * Stream: [register byte offset, when present][fallthrough guest PC].
+ */
+.macro code_synchronize name, zero
+gadget code_synchronize_\name
+	.if \zero
+	mov x0, xzr
+	.else
+	ldr x8, [_stream], #8
+	ldr x0, [_cpu, x8]
+	.endif
+	stp x1, x2, [sp, #-16]!
+	bl NAME(uml_arm64_guest_code_synchronize)
+	ldp x1, x2, [sp], #16
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+.endm
+
+code_synchronize r, 0
+code_synchronize z, 1
+
+.purgem code_synchronize
 
 /* FEAT_LS64 helpers serialize the 64-byte transaction and validate the TLB
  * before committing architectural state. Translation specializes operation,
@@ -58,8 +157,8 @@ ls64 st64bv0_sz
 
 /* FEAT_MOPS uses architectural option B. Translation specializes the family
  * and stage. Prologue formatting has no fault path; main is the ordinary nop
- * gadget; epilogues use page-sized host bulk operations and retain only the
- * fault and malformed-stage-state branches. */
+ * gadget; epilogues use the largest permitted 64-byte, page-contained host
+ * bulk operations and retain only fault and malformed-stage-state branches. */
 .macro mops_prologue name
 gadget mops_prologue_\name
 	ldr x8, [_stream], #8
@@ -265,28 +364,19 @@ gadget sysreg_ctr_read
 
 gadget sysreg_cntfrq_read
 	ldr x8, [_stream], #8
-	mov w9, #0xca00
-	movk w9, #0x3b9a, lsl #16
+	mrs x9, cntfrq_el0
 	str x9, [_cpu, x8]
 	next_gadget
 
 gadget sysreg_cntvct_read
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	stp x8, x28, [sp, #-16]!
-	bl NAME(uml_arm64_gadget_counter_read)
-	ldp x8, x28, [sp], #16
-	ldp x1, x2, [sp], #16
-	str x0, [_cpu, x8]
+	mrs x9, cntvct_el0
+	str x9, [_cpu, x8]
 	next_gadget
 
 gadget sysreg_fpsr_read
 	ldr x8, [_stream], #8
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	ldr x11, [sp, #0x78]
-#else
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
-#endif
 	cbz x11, 8f
 	mrs x9, fpsr
 	b 9f
@@ -299,48 +389,48 @@ gadget sysreg_fpsr_read
 	str x9, [_cpu, x8]
 	next_gadget
 
-.macro sysreg_fp_write name, field, system, low_mask, high_mask, update_stack
+.macro sysreg_fp_write name, field, system, low_mask, high_mask
 gadget sysreg_\name\()_write_r
 	ldr x8, [_stream], #8
+	.ifc \name,fpcr
+	ldr x13, [_stream], #8
+	mov w12, #0x9f00
+	.endif
 	ldr w9, [_cpu, x8]
 	mov w10, #\low_mask
 	movk w10, #\high_mask, lsl #16
 	and w9, w9, w10
 	str w9, [_cpu, #\field]
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	ldr x11, [sp, #0x78]
-#else
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
-#endif
 	cbz x11, 8f
+	.ifc \name,fpcr
+	bic w10, w9, w12
+	msr \system, x10
+	.else
 	msr \system, x9
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	.if \update_stack
-	str w9, [sp, #0x80]
 	.endif
-#endif
 8:
+	.ifc \name,fpcr
+	tst w9, w12
+	b.eq 9f
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x13, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+9:
+	.endif
 	next_gadget
 gadget sysreg_\name\()_write_z
 	str wzr, [_cpu, #\field]
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	ldr x11, [sp, #0x78]
-#else
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
-#endif
 	cbz x11, 9f
 	msr \system, xzr
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	.if \update_stack
-	str wzr, [sp, #0x80]
-	.endif
-#endif
 9:
 	next_gadget
 .endm
 
-sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, 0x9f07, 0x07f7, 1
-sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0x009f, 0xf800, 0
+sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, 0x9f07, 0x07f7
+sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0x009f, 0xf800
 
 .purgem sysreg_fp_write
 
@@ -382,37 +472,87 @@ gadget sysreg_nzcv_write_z
 	mov w27, wzr
 	next_gadget
 
-gadget pstate_store
-	ldr x8, [_stream], #8
-	and w9, w8, #0xffff
-	ubfx w10, w8, #16, #1
-	strb w10, [_cpu, x9]
+.macro pstate_store name, offset, value
+gadget pstate_\name\()_\value
+.if \value
+	mov w8, #1
+	strb w8, [_cpu, #\offset]
+.else
+	strb wzr, [_cpu, #\offset]
+.endif
 	next_gadget
+.endm
 
-gadget pstate_smza_store
-	ldr x8, [_stream], #8
-	and w8, w8, #1
+.macro pstate_store_field name, offset
+	pstate_store \name, \offset, 0
+	pstate_store \name, \offset, 1
+.endm
+
+pstate_store_field ssbs, UML_GADGET_CPU_PSTATE_SSBS
+pstate_store_field dit, UML_GADGET_CPU_PSTATE_DIT
+pstate_store_field tco, UML_GADGET_CPU_PSTATE_TCO
+pstate_store_field sm, UML_GADGET_CPU_PSTATE_SM
+pstate_store_field za, UML_GADGET_CPU_PSTATE_ZA
+
+.purgem pstate_store_field
+.purgem pstate_store
+
+.macro pstate_smza value
+gadget pstate_smza_\value
+.if \value
+	mov w8, #1
 	strb w8, [_cpu, #UML_GADGET_CPU_PSTATE_SM]
 	strb w8, [_cpu, #UML_GADGET_CPU_PSTATE_ZA]
+.else
+	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_SM]
+	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_ZA]
+.endif
 	next_gadget
+.endm
 
-.macro pstate_daif name, operation
-gadget pstate_daif_\name
-	ldr x8, [_stream], #8
+pstate_smza 0
+pstate_smza 1
+
+.purgem pstate_smza
+
+.macro pstate_daif name, operation, immediate
+gadget pstate_daif_\name\()_\immediate
 	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF_ACCESS]
 	cbz w9, NAME(uml_arm64_gadget_illegal)
+.if \immediate
 	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF]
-	\operation w9, w9, w8
-	and w9, w9, #0xf
+	mov w10, #\immediate
+	\operation w9, w9, w10
 	strb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DAIF]
+.endif
 	/* The following inline word is the fault PC used only by the gated path. */
 	add _stream, _stream, #8
 	next_gadget
 .endm
 
-pstate_daif set, orr
-pstate_daif clear, bic
+.macro pstate_daif_immediate immediate
+	pstate_daif set, orr, \immediate
+	pstate_daif clear, bic, \immediate
+.endm
 
+pstate_daif_immediate 0
+pstate_daif_immediate 1
+pstate_daif_immediate 2
+pstate_daif_immediate 3
+pstate_daif_immediate 4
+pstate_daif_immediate 5
+pstate_daif_immediate 6
+pstate_daif_immediate 7
+pstate_daif_immediate 8
+pstate_daif_immediate 9
+pstate_daif_immediate 10
+pstate_daif_immediate 11
+pstate_daif_immediate 12
+pstate_daif_immediate 13
+pstate_daif_immediate 14
+pstate_daif_immediate 15
+
+.purgem pstate_daif_immediate
 .purgem pstate_daif
 
 /* Barrier option is selected during translation, so each hot entry executes
@@ -453,14 +593,40 @@ gadget isb
 	next_gadget
 
 gadget speculation_barrier
-	/* SB. Keep the architectural encoding so older hosts retain HINT behavior. */
+	/* Native SB; selected only after host-feature detection at translation. */
 	.inst 0xd50330ff
 	next_gadget
 
+gadget speculation_barrier_fallback
+	/* Stronger branch-free sequence for hosts without native SB. */
+	dsb sy
+	isb
+	next_gadget
+
+.macro memory_nxs_barrier option
+gadget dsb_nxs_\option
+	.inst (0xd503323f | (\option << 10))
+	next_gadget
+.endm
+
+memory_nxs_barrier 0
+memory_nxs_barrier 1
+memory_nxs_barrier 2
+memory_nxs_barrier 3
+
+.purgem memory_nxs_barrier
+
 /* CLREX's CRm immediate is ignored, so all encodings share this branch-free
- * native implementation. */
+ * native implementation. Clear the contiguous software-monitor image with
+ * three paired stores; the final pair also covers exclusive_size and padding.
+ */
 gadget clear_exclusive
 	clrex
+	add x8, _cpu, #UML_GADGET_CPU_EXCLUSIVE_ADDRESS
+	mov x9, #-1
+	stp x9, xzr, [x8]
+	stp xzr, xzr, [x8, #16]
+	stp xzr, xzr, [x8, #32]
 	next_gadget
 
 gadget yield
@@ -487,9 +653,10 @@ gadget clrbhb
 /* Translation-specialized AdvSIMD multiple-structure transfers. The symbol
  * fixes direction, register count, contiguous versus interleaved layout,
  * arrangement, and writeback mode. The packed operand holds Rt in bits 4:0,
- * Rn's CpuState byte offset in 31:16, and Rm's offset in 47:32. Mode 0 has no
- * writeback, mode 1 uses the architecturally implied byte count, and mode 2
- * reads the post-index increment from Rm. */
+ * Rn's CpuState byte offset in 31:16, Rm's offset in 47:32, and the decoded
+ * architectural element size in 55:48. Mode 0 has no writeback, mode 1 uses
+ * the architecturally implied byte count, and mode 2 reads the post-index
+ * increment from Rm. */
 .macro simd_structure_cpu_load count
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
@@ -511,48 +678,24 @@ gadget clrbhb
 	.endif
 .endm
 
-.macro simd_structure_cpu_store count, q
+.macro simd_structure_cpu_store count
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
-	.if \q
 	str q0, [x8, x9, lsl #4]
-	.else
-	add x10, x8, x9, lsl #4
-	str d0, [x10]
-	str xzr, [x10, #8]
-	.endif
 	.if \count > 1
 	add w9, w9, #1
 	and w9, w9, #31
-		.if \q
 	str q1, [x8, x9, lsl #4]
-		.else
-	add x10, x8, x9, lsl #4
-	str d1, [x10]
-	str xzr, [x10, #8]
-		.endif
 	.endif
 	.if \count > 2
 	add w9, w9, #1
 	and w9, w9, #31
-		.if \q
 	str q2, [x8, x9, lsl #4]
-		.else
-	add x10, x8, x9, lsl #4
-	str d2, [x10]
-	str xzr, [x10, #8]
-		.endif
 	.endif
 	.if \count > 3
 	add w9, w9, #1
 	and w9, w9, #31
-		.if \q
 	str q3, [x8, x9, lsl #4]
-		.else
-	add x10, x8, x9, lsl #4
-	str d3, [x10]
-	str xzr, [x10, #8]
-		.endif
 	.endif
 .endm
 
@@ -732,17 +875,25 @@ gadget clrbhb
 	.endif
 .endm
 
-.macro simd_structure_fast name, load, count, elements, q, size, mode
+.macro simd_structure_fast name, load, count, elements, q, size, mode, base_sp
 gadget simd_structure_\name
 	ldr x19, [_stream], #8
 	ubfx x24, x19, #16, #16
 	ldr x20, [_cpu, x24]
+	.if \base_sp
+	tst x20, #0xf
+	b.ne .Lsimd_structure_alignment\@
+	.endif
+	.if \base_sp == 0 || \mode != 0
+	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w8, .Lsimd_structure_slow\@
+	.endif
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
 	mov x7, x20
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	simd_structure_memory_load \count, \elements, \q, \size
-	simd_structure_cpu_store \count, \q
+	simd_structure_cpu_store \count
 	.else
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	simd_structure_cpu_load \count
@@ -764,27 +915,41 @@ gadget simd_structure_\name
 	sub sp, sp, #80
 	stp x1, x2, [sp, #64]
 	.if \load
-	mov x0, x2
-	mov x1, x20
-	mov x2, sp
-	mov x3, #(\count * (8 << \q))
-	mov w4, #0
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	mov x0, x1
+	mov x1, x2
+	mov x2, x20
+	mov x3, sp
+	mov x4, #(\count * (8 << \q))
+	mov w5, #0
+	mov w6, #\base_sp
+	ubfx x7, x19, #48, #8
+	lsl w7, w7, #8
+	.if \base_sp == 0 || \mode != 0
+	orr w7, w7, #1
+	.endif
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	mov x7, sp
 	simd_structure_memory_load \count, \elements, \q, \size
-	simd_structure_cpu_store \count, \q
+	simd_structure_cpu_store \count
 	.else
 	mov x7, sp
 	simd_structure_cpu_load \count
 	simd_structure_memory_store \count, \elements, \q, \size
-	mov x0, x2
-	mov x1, x20
-	mov x2, sp
-	mov x3, #(\count * (8 << \q))
-	mov w4, #1
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	mov x0, x1
+	mov x1, x2
+	mov x2, x20
+	mov x3, sp
+	mov x4, #(\count * (8 << \q))
+	mov w5, #1
+	mov w6, #\base_sp
+	ubfx x7, x19, #48, #8
+	lsl w7, w7, #8
+	.if \base_sp == 0 || \mode != 0
+	orr w7, w7, #1
+	.endif
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	.endif
@@ -804,12 +969,25 @@ gadget simd_structure_\name
 .Lsimd_structure_fault\@:
 	add sp, sp, #80
 	b uml_arm64_gadget_memory_fault
+
+	.if \base_sp
+.Lsimd_structure_alignment\@:
+	mov x7, x20
+		.if \load
+	b uml_arm64_gadget_atomic_alignment_fault_read
+		.else
+	b uml_arm64_gadget_atomic_alignment_fault_write
+		.endif
+	.endif
 .endm
 
 .macro simd_structure_modes base, load, count, elements, q, size
-	simd_structure_fast \base\()_0, \load, \count, \elements, \q, \size, 0
-	simd_structure_fast \base\()_1, \load, \count, \elements, \q, \size, 1
-	simd_structure_fast \base\()_2, \load, \count, \elements, \q, \size, 2
+	simd_structure_fast \base\()_0, \load, \count, \elements, \q, \size, 0, 0
+	simd_structure_fast \base\()_1, \load, \count, \elements, \q, \size, 1, 0
+	simd_structure_fast \base\()_2, \load, \count, \elements, \q, \size, 2, 0
+	simd_structure_fast \base\()_s0, \load, \count, \elements, \q, \size, 0, 1
+	simd_structure_fast \base\()_s1, \load, \count, \elements, \q, \size, 1, 1
+	simd_structure_fast \base\()_s2, \load, \count, \elements, \q, \size, 2, 1
 .endm
 
 .macro simd_structure_directions base, count, elements, q, size
@@ -856,34 +1034,55 @@ simd_structure_interleaved 4
 .macro simd_replicate_one width, q
 	.if \width == 1
 	ldrb w9, [x7]
+		.if \q
 	dup v0.16b, w9
+		.else
+	dup v0.8b, w9
+		.endif
 	.elseif \width == 2
 	ldrh w9, [x7]
+		.if \q
 	dup v0.8h, w9
+		.else
+	dup v0.4h, w9
+		.endif
 	.elseif \width == 4
 	ldr w9, [x7]
+		.if \q
 	dup v0.4s, w9
+		.else
+	dup v0.2s, w9
+		.endif
 	.else
 	ldr x9, [x7]
+		.if \q
 	dup v0.2d, x9
+		.else
+	fmov d0, x9
+		.endif
 	.endif
 	and w9, w26, #31
 	add x10, _cpu, #UML_GADGET_CPU_V0
 	add x10, x10, x9, lsl #4
-	.if \q
 	str q0, [x10]
-	.else
-	str d0, [x10]
-	str xzr, [x10, #8]
-	.endif
 .endm
 
-.macro simd_replicate_fast name, count, width, q, mode
+.macro simd_replicate_fast name, count, width, q, mode, base_sp
 gadget simd_replicate_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ldr x21, [_cpu, x20]
+	.if \base_sp
+	tst x21, #0xf
+	b.ne .Lsimd_replicate_alignment\@
+	.endif
+	.if \base_sp == 0 || \mode != 0
+	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w8, .Lsimd_replicate_slow\@
+	.endif
+	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
+	.endif
 	mov x7, x21
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	and w26, w19, #31
@@ -918,12 +1117,15 @@ gadget simd_replicate_\name
 .Lsimd_replicate_slow\@:
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
-	mov x0, x2
-	mov x1, x21
-	mov x2, sp
-	mov x3, #(\count * \width)
-	mov w4, #0
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	mov x0, x1
+	mov x1, x2
+	mov x2, x21
+	mov x3, sp
+	mov x4, #(\count * \width)
+	mov w5, #0
+	mov w6, #\base_sp
+	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_replicate_fault\@
 	mov x7, sp
@@ -960,12 +1162,21 @@ gadget simd_replicate_\name
 .Lsimd_replicate_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
+
+	.if \base_sp
+.Lsimd_replicate_alignment\@:
+	mov x7, x21
+	b uml_arm64_gadget_atomic_alignment_fault_read
+	.endif
 .endm
 
 .macro simd_replicate_modes base, count, width, q
-	simd_replicate_fast \base\()_0, \count, \width, \q, 0
-	simd_replicate_fast \base\()_1, \count, \width, \q, 1
-	simd_replicate_fast \base\()_2, \count, \width, \q, 2
+	simd_replicate_fast \base\()_0, \count, \width, \q, 0, 0
+	simd_replicate_fast \base\()_1, \count, \width, \q, 1, 0
+	simd_replicate_fast \base\()_2, \count, \width, \q, 2, 0
+	simd_replicate_fast \base\()_s0, \count, \width, \q, 0, 1
+	simd_replicate_fast \base\()_s1, \count, \width, \q, 1, 1
+	simd_replicate_fast \base\()_s2, \count, \width, \q, 2, 1
 .endm
 
 .macro simd_replicate_counts type, width, q
@@ -1048,13 +1259,23 @@ simd_replicate_counts d_q, 8, 1
 	.endif
 .endm
 
-.macro simd_lane_fast name, load, count, width, mode
+.macro simd_lane_fast name, load, count, width, mode, base_sp
 gadget simd_lane_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #16, #16
 	ubfx x23, x19, #48, #16
 	ldr x21, [_cpu, x20]
+	.if \base_sp
+	tst x21, #0xf
+	b.ne .Lsimd_lane_alignment\@
+	.endif
+	.if \base_sp == 0 || \mode != 0
+	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w8, .Lsimd_lane_slow\@
+	.endif
+	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
+	.endif
 	mov x7, x21
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -1078,12 +1299,15 @@ gadget simd_lane_\name
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
 	.if \load
-	mov x0, x2
-	mov x1, x21
-	mov x2, sp
-	mov x3, #(\count * \width)
-	mov w4, #0
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	mov x0, x1
+	mov x1, x2
+	mov x2, x21
+	mov x3, sp
+	mov x4, #(\count * \width)
+	mov w5, #0
+	mov w6, #\base_sp
+	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	mov x7, sp
@@ -1091,12 +1315,15 @@ gadget simd_lane_\name
 	.else
 	mov x7, sp
 	simd_lane_transfer \load, \count, \width
-	mov x0, x2
-	mov x1, x21
-	mov x2, sp
-	mov x3, #(\count * \width)
-	mov w4, #1
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	mov x0, x1
+	mov x1, x2
+	mov x2, x21
+	mov x3, sp
+	mov x4, #(\count * \width)
+	mov w5, #1
+	mov w6, #\base_sp
+	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	.endif
@@ -1116,12 +1343,25 @@ gadget simd_lane_\name
 .Lsimd_lane_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
+
+	.if \base_sp
+.Lsimd_lane_alignment\@:
+	mov x7, x21
+		.if \load
+	b uml_arm64_gadget_atomic_alignment_fault_read
+		.else
+	b uml_arm64_gadget_atomic_alignment_fault_write
+		.endif
+	.endif
 .endm
 
 .macro simd_lane_modes base, load, count, width
-	simd_lane_fast \base\()_0, \load, \count, \width, 0
-	simd_lane_fast \base\()_1, \load, \count, \width, 1
-	simd_lane_fast \base\()_2, \load, \count, \width, 2
+	simd_lane_fast \base\()_0, \load, \count, \width, 0, 0
+	simd_lane_fast \base\()_1, \load, \count, \width, 1, 0
+	simd_lane_fast \base\()_2, \load, \count, \width, 2, 0
+	simd_lane_fast \base\()_s0, \load, \count, \width, 0, 1
+	simd_lane_fast \base\()_s1, \load, \count, \width, 1, 1
+	simd_lane_fast \base\()_s2, \load, \count, \width, 2, 1
 .endm
 
 .macro simd_lane_directions type, count, width
@@ -1155,7 +1395,7 @@ simd_lane_counts d, 8
  * materializing a full host vector. A host-RCPC3 Q transfer is selected at
  * build time; the portable Q fallback uses one stronger barrier. Stream:
  * packed destination/source, base, signed byte offset; guest PC. */
-.macro simd_ordered_address sp_base, alignment
+.macro simd_ordered_address sp_base, alignment, write
 	ldr x19, [_stream], #8
 	.if \sp_base
 	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
@@ -1168,13 +1408,17 @@ simd_lane_counts d, 8
 	add x7, x7, x8
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+		.if \write
+		b.ne uml_arm64_gadget_atomic_alignment_fault_write
+		.else
+		b.ne uml_arm64_gadget_atomic_alignment_fault_read
+		.endif
 	.endif
 .endm
 
 .macro simd_ordered_load_scalar name, instruction, host_register, alignment, sp_base
 gadget simd_ordered_load_\name
-	simd_ordered_address \sp_base, \alignment
+	simd_ordered_address \sp_base, \alignment, 0
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()9, [x7]
 	and w8, w19, #0x1f
@@ -1187,7 +1431,7 @@ gadget simd_ordered_load_\name
 
 .macro simd_ordered_store_scalar name, instruction, host_register, alignment, sp_base
 gadget simd_ordered_store_\name
-	simd_ordered_address \sp_base, \alignment
+	simd_ordered_address \sp_base, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and w8, w19, #0x1f
 	add x10, _cpu, #UML_GADGET_CPU_V0
@@ -1216,7 +1460,7 @@ simd_ordered_scalar_modes d, ldapr, stlr, x, 7
 
 .macro simd_ordered_load_q name, sp_base, native
 gadget simd_ordered_load_q_\name
-	simd_ordered_address \sp_base, 15
+	simd_ordered_address \sp_base, 15, 0
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	.if \native
 	/* LDAPUR Q0, [X7] (FEAT_LRCPC3). */
@@ -1239,7 +1483,7 @@ gadget simd_ordered_load_q_\name
 
 .macro simd_ordered_store_q name, sp_base, native
 gadget simd_ordered_store_q_\name
-	simd_ordered_address \sp_base, 15
+	simd_ordered_address \sp_base, 15, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and w8, w19, #0x1f
 	add x11, _cpu, #UML_GADGET_CPU_V0
@@ -1271,7 +1515,7 @@ simd_ordered_store_q s_native, 1, 1
 
 .macro simd_ordered_lane name, load, lane, sp_base
 gadget simd_ordered_\name
-	simd_ordered_address \sp_base, 7
+	simd_ordered_address \sp_base, 7, (1 - \load)
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	ldapr x9, [x7]
@@ -1324,7 +1568,11 @@ gadget ordered_writeback_\name
 	.endif
 	.if \bytes > 1
 	tst x7, #(\bytes - 1)
-	b.ne uml_arm64_gadget_memory_fault
+		.if \load
+		b.ne uml_arm64_gadget_atomic_alignment_fault_read
+		.else
+		b.ne uml_arm64_gadget_atomic_alignment_fault_write
+		.endif
 	.endif
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -1365,24 +1613,52 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
  * operation, ordering, and return/discard behavior. Native variants execute
  * one LSFE instruction after translation. Hosts without LSFE call an equally
  * specialized CAS helper; neither valid hot path decodes the guest opcode.
+ * Rn is specialized while the threaded program is built. GPR-base hot paths
+ * add only the effective-MTE test needed to select the checked tag/permission
+ * bridge; SP variants perform CheckSPAlignment without carrying that branch.
  * Stream: packed source/destination/base, guest PC.
  */
-.macro atomic_floating_address alignment
+.macro atomic_floating_address bytes, alignment, base_sp
 	ldr x19, [_stream], #8
-	ubfx w20, w19, #16, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	/* CpuState::sp immediately follows X0-X30. */
-	ldr x7, [x8, x20, lsl #3]
-	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
-	.endif
+	.if \base_sp
+	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
+	tst x7, #0xf
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	.else
+	ubfx w20, w19, #16, #5
+	ldr x7, [_cpu, x20, lsl #3]
+	/* Tagged-address handling is cold for normal untagged programs. */
+	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w8, 89f
+		.if \alignment
+	tst x7, #\alignment
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+		.endif
+	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
+	b 90f
+89:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x2
+	mov x2, x7
+	mov x3, #\bytes
+	mov w4, #0
+	bl NAME(uml_arm64_gadget_atomic_floating_pointer)
+	ldp x1, x2, [sp], #16
+	cbz x0, uml_arm64_gadget_memory_fault
+	mov x7, x0
+90:
+	.endif
 .endm
 
-.macro atomic_floating_software name, alignment
+.macro atomic_floating_software name, bytes, alignment, base_sp
+	.if \base_sp
+gadget atomic_floating_software_\name\()_sp
+	.else
 gadget atomic_floating_software_\name
-	atomic_floating_address \alignment
+	.endif
+	atomic_floating_address \bytes, \alignment, \base_sp
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x7
@@ -1393,9 +1669,13 @@ gadget atomic_floating_software_\name
 	next_gadget
 .endm
 
-.macro atomic_floating_native name, transfer, alignment, encoding, return_old
+.macro atomic_floating_native name, transfer, bytes, alignment, encoding, return_old, base_sp
+	.if \base_sp
+gadget atomic_floating_native_\name\()_sp
+	.else
 gadget atomic_floating_native_\name
-	atomic_floating_address \alignment
+	.endif
+	atomic_floating_address \bytes, \alignment, \base_sp
 	and w20, w19, #0x1f
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	add x8, x8, x20, lsl #4
@@ -1412,49 +1692,61 @@ gadget atomic_floating_native_\name
 	next_gadget
 .endm
 
-.macro atomic_floating_variant size_name, size_bits, transfer, alignment, operation_name, opc, variant, acquire, release, return_old
-	atomic_floating_software \size_name\()_\operation_name\()_\variant, \alignment
+.macro atomic_floating_variant size_name, size_bits, transfer, bytes, alignment, operation_name, opc, variant, acquire, release, return_old
+	atomic_floating_software \size_name\()_\operation_name\()_\variant, \
+		\bytes, \alignment, 0
+	atomic_floating_software \size_name\()_\operation_name\()_\variant, \
+		\bytes, \alignment, 1
 	.if \return_old
 	atomic_floating_native \size_name\()_\operation_name\()_\variant, \
-		\transfer, \alignment, \
+		\transfer, \bytes, \alignment, \
 		(0x3c200000 | \size_bits | (\acquire << 23) | \
 		 (\release << 22) | (15 << 16) | (\opc << 12) | \
-		 (7 << 5) | 16), 1
+		 (7 << 5) | 16), 1, 0
+	atomic_floating_native \size_name\()_\operation_name\()_\variant, \
+		\transfer, \bytes, \alignment, \
+		(0x3c200000 | \size_bits | (\acquire << 23) | \
+		 (\release << 22) | (15 << 16) | (\opc << 12) | \
+		 (7 << 5) | 16), 1, 1
 	.else
 	atomic_floating_native \size_name\()_\operation_name\()_\variant, \
-		\transfer, \alignment, \
+		\transfer, \bytes, \alignment, \
 		(0x3c200000 | \size_bits | (\release << 22) | (15 << 16) | \
-		 (1 << 15) | (\opc << 12) | (7 << 5) | 31), 0
+		 (1 << 15) | (\opc << 12) | (7 << 5) | 31), 0, 0
+	atomic_floating_native \size_name\()_\operation_name\()_\variant, \
+		\transfer, \bytes, \alignment, \
+		(0x3c200000 | \size_bits | (\release << 22) | (15 << 16) | \
+		 (1 << 15) | (\opc << 12) | (7 << 5) | 31), 0, 1
 	.endif
 .endm
 
-.macro atomic_floating_variants size_name, size_bits, transfer, alignment, operation_name, opc
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+.macro atomic_floating_variants size_name, size_bits, transfer, bytes, alignment, operation_name, opc
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, load_relaxed, 0, 0, 1
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, load_release, 0, 1, 1
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, load_acquire, 1, 0, 1
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, load_acquire_release, 1, 1, 1
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, store_relaxed, 0, 0, 0
-	atomic_floating_variant \size_name, \size_bits, \transfer, \alignment, \
+	atomic_floating_variant \size_name, \size_bits, \transfer, \bytes, \alignment, \
 		\operation_name, \opc, store_release, 0, 1, 0
 .endm
 
-.macro atomic_floating_operations size_name, size_bits, transfer, alignment
-	atomic_floating_variants \size_name, \size_bits, \transfer, \alignment, add, 0
-	atomic_floating_variants \size_name, \size_bits, \transfer, \alignment, max, 4
-	atomic_floating_variants \size_name, \size_bits, \transfer, \alignment, maxnm, 6
-	atomic_floating_variants \size_name, \size_bits, \transfer, \alignment, min, 5
-	atomic_floating_variants \size_name, \size_bits, \transfer, \alignment, minnm, 7
+.macro atomic_floating_operations size_name, size_bits, transfer, bytes, alignment
+	atomic_floating_variants \size_name, \size_bits, \transfer, \bytes, \alignment, add, 0
+	atomic_floating_variants \size_name, \size_bits, \transfer, \bytes, \alignment, max, 4
+	atomic_floating_variants \size_name, \size_bits, \transfer, \bytes, \alignment, maxnm, 6
+	atomic_floating_variants \size_name, \size_bits, \transfer, \bytes, \alignment, min, 5
+	atomic_floating_variants \size_name, \size_bits, \transfer, \bytes, \alignment, minnm, 7
 .endm
 
-atomic_floating_operations bf, 0x00000000, h, 1
-atomic_floating_operations h,  0x40000000, h, 1
-atomic_floating_operations s,  0x80000000, s, 3
-atomic_floating_operations d,  0xc0000000, d, 7
+atomic_floating_operations bf, 0x00000000, h, 2, 1
+atomic_floating_operations h,  0x40000000, h, 2, 1
+atomic_floating_operations s,  0x80000000, s, 4, 3
+atomic_floating_operations d,  0xc0000000, d, 8, 7
 
 .purgem atomic_floating_operations
 .purgem atomic_floating_variants
@@ -1462,6 +1754,52 @@ atomic_floating_operations d,  0xc0000000, d, 7
 .purgem atomic_floating_native
 .purgem atomic_floating_software
 .purgem atomic_floating_address
+
+/*
+ * CheckSPAlignment is selected solely from Rn at translation time. Ordinary
+ * GPR-base atomic gadgets retain their existing hot paths; SP forms receive
+ * this small prefix. The selected memory gadget and packed operand precede the
+ * guest PC, so a fault consumes those two words before entering the shared
+ * fault exit. SIMD structure gadgets fold this check into SP-specialized
+ * symbols to avoid an additional threaded dispatch.
+ */
+.macro atomic_sp_alignment name
+gadget atomic_sp_alignment_\name
+	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
+	tst x7, #0xf
+	b.eq 1f
+	/* _stream currently addresses the selected atomic gadget pointer,
+	 * followed by its packed operand and guest PC. */
+	add _stream, _stream, #16
+	b uml_arm64_gadget_atomic_alignment_fault_\name
+1:
+	next_gadget
+.endm
+
+atomic_sp_alignment read
+atomic_sp_alignment write
+
+.purgem atomic_sp_alignment
+
+.p2align 4
+uml_arm64_gadget_atomic_alignment_fault_read:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	mov x1, x7
+	mov w2, #0
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
+
+.p2align 4
+uml_arm64_gadget_atomic_alignment_fault_write:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	mov x1, x7
+	mov w2, #1
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
 
 /*
  * FEAT_LSE scalar atomic read-modify-write operations. Width, operation,
@@ -1477,7 +1815,7 @@ gadget atomic_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -1541,7 +1879,7 @@ gadget compare_swap_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \compare_zero
@@ -1594,32 +1932,29 @@ compare_swap_sizes acquire_release, casalb, casalh, casal, casal
  * Operation, hard/software checks, ordering, and ZR modes are all selected at
  * translation time. The valid hot path only branches for alignment/TLB,
  * architecturally meaningful compare/check outcomes, and exclusive retry.
- * Stream: packed base/source/result registers, guest PC.
+ * Stream: packed base/source/result CpuState offsets, guest PC.
  */
 .macro rcw_scalar_gadget name, operation, load_instruction, store_instruction, soft, source_zero, discard_result
 gadget rcw_scalar_\name
 	ldr x19, [_stream], #8
-	and w20, w19, #0x1f
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	/* CpuState::sp follows x0-x30, so Rn==31 needs no branch. */
-	ldr x7, [x8, x20, lsl #3]
+	and w20, w19, #0xffff
+	/* Translation packed the direct CpuState offset, including SP. */
+	ldr x7, [_cpu, x20]
 	tst x7, #7
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
 	mov x15, xzr
 	.else
-	ubfx w20, w19, #8, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	ldr x15, [x8, x20, lsl #3]
+	ubfx x20, x19, #16, #16
+	ldr x15, [_cpu, x20]
 	.endif
 	.if \operation == 0
 		.if \discard_result
 		mov x13, xzr
 		.else
-		ubfx w21, w19, #16, #5
-		add x8, _cpu, #UML_GADGET_CPU_X0
-		ldr x13, [x8, x21, lsl #3]
+		ubfx x21, x19, #32, #16
+		ldr x13, [_cpu, x21]
 		.endif
 	.endif
 1:	\load_instruction x16, [x7]
@@ -1664,27 +1999,31 @@ gadget rcw_scalar_\name
 	\store_instruction w11, x17, [x7]
 	cbnz w11, 1b
 	.if !\discard_result
-	ubfx w21, w19, #16, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	str x16, [x8, x21, lsl #3]
+	ubfx x21, x19, #32, #16
+	str x16, [_cpu, x21]
 	.endif
 	mov w27, w12
 	add _stream, _stream, #8
 	next_gadget
 .endm
 
-.macro rcw_scalar_register_modes name, operation, load_instruction, store_instruction, soft
+.macro rcw_scalar_full_modes name, operation, load_instruction, store_instruction, soft
 	rcw_scalar_gadget \name\()_rr, \operation, \load_instruction, \store_instruction, \soft, 0, 0
 	rcw_scalar_gadget \name\()_rz, \operation, \load_instruction, \store_instruction, \soft, 0, 1
 	rcw_scalar_gadget \name\()_zr, \operation, \load_instruction, \store_instruction, \soft, 1, 0
 	rcw_scalar_gadget \name\()_zz, \operation, \load_instruction, \store_instruction, \soft, 1, 1
 .endm
 
+.macro rcw_scalar_live_result_modes name, operation, load_instruction, store_instruction, soft
+	rcw_scalar_gadget \name\()_rr, \operation, \load_instruction, \store_instruction, \soft, 0, 0
+	rcw_scalar_gadget \name\()_zr, \operation, \load_instruction, \store_instruction, \soft, 1, 0
+.endm
+
 .macro rcw_scalar_orderings operation_name, operation, soft_name, soft
-	rcw_scalar_register_modes \operation_name\()_\soft_name\()_relaxed, \operation, ldxr, stxr, \soft
-	rcw_scalar_register_modes \operation_name\()_\soft_name\()_release, \operation, ldxr, stlxr, \soft
-	rcw_scalar_register_modes \operation_name\()_\soft_name\()_acquire, \operation, ldaxr, stxr, \soft
-	rcw_scalar_register_modes \operation_name\()_\soft_name\()_acquire_release, \operation, ldaxr, stlxr, \soft
+	rcw_scalar_full_modes \operation_name\()_\soft_name\()_relaxed, \operation, ldxr, stxr, \soft
+	rcw_scalar_full_modes \operation_name\()_\soft_name\()_release, \operation, ldxr, stlxr, \soft
+	rcw_scalar_live_result_modes \operation_name\()_\soft_name\()_acquire, \operation, ldaxr, stxr, \soft
+	rcw_scalar_live_result_modes \operation_name\()_\soft_name\()_acquire_release, \operation, ldaxr, stlxr, \soft
 .endm
 
 .macro rcw_scalar_family operation_name, operation
@@ -1699,7 +2038,8 @@ rcw_scalar_family orr, 3
 
 .purgem rcw_scalar_family
 .purgem rcw_scalar_orderings
-.purgem rcw_scalar_register_modes
+.purgem rcw_scalar_live_result_modes
+.purgem rcw_scalar_full_modes
 .purgem rcw_scalar_gadget
 
 /* FEAT_D128/FEAT_THE pair Read-Check-Write operations. A native CASP loop
@@ -1707,38 +2047,37 @@ rcw_scalar_family orr, 3
  * 128-bit write. Operation, hard/software checking, ordering, and implied
  * pair-ZR cases are selected at translation time. Compare/check outcomes use
  * conditional selects, leaving only the exclusive CAS retry in the mapped
- * hot path. Stream: packed base/source/result registers, guest PC. */
+ * hot path. Stream: packed base/source/result CpuState offsets, guest PC. */
 .macro rcw_pair_gadget name, operation, compare_swap, compare_exchange, soft, source_second_zero, result_second_zero
 gadget rcw_pair_\name
 	ldr x19, [_stream], #8
-	and w20, w19, #0x1f
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	/* CpuState::sp follows x0-x30, so Rn==31 remains branch-free. */
-	ldr x7, [x8, x20, lsl #3]
+	and w20, w19, #0xffff
+	/* Translation packed the direct CpuState offset, including SP. */
+	ldr x7, [_cpu, x20]
 	tst x7, #15
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
-	ubfx w20, w19, #8, #5
-	add x8, _cpu, #UML_GADGET_CPU_X0
-	ldr x24, [x8, x20, lsl #3]
+	ubfx x20, x19, #16, #16
 	.if \compare_swap
 		.if \source_second_zero
+		ldr x24, [_cpu, x20]
 		mov x25, xzr
 		.else
-		add w21, w20, #1
-		ldr x25, [x8, x21, lsl #3]
+		add x8, _cpu, x20
+		ldp x24, x25, [x8]
 		.endif
-		ubfx w20, w19, #16, #5
-		ldr x26, [x8, x20, lsl #3]
+		ubfx x20, x19, #32, #16
 		.if \result_second_zero
+		ldr x26, [_cpu, x20]
 		mov x6, xzr
 		.else
-		add w21, w20, #1
-		ldr x6, [x8, x21, lsl #3]
+		add x8, _cpu, x20
+		ldp x26, x6, [x8]
 		.endif
 	.else
-		ubfx w21, w19, #16, #5
-		ldr x25, [x8, x21, lsl #3]
+		ldr x24, [_cpu, x20]
+		ubfx x21, x19, #32, #16
+		ldr x25, [_cpu, x21]
 	.endif
 	ldp x12, x13, [x7]
 1:	mov x22, x12
@@ -1791,19 +2130,19 @@ gadget rcw_pair_\name
 	cmp x12, x22
 	ccmp x13, x23, #0, eq
 	b.ne 1b
-	add x8, _cpu, #UML_GADGET_CPU_X0
 	.if \compare_swap
-		ubfx w20, w19, #16, #5
-		str x12, [x8, x20, lsl #3]
+		ubfx x20, x19, #32, #16
 		.if !\result_second_zero
-		add w20, w20, #1
-		str x13, [x8, x20, lsl #3]
+		add x8, _cpu, x20
+		stp x12, x13, [x8]
+		.else
+		str x12, [_cpu, x20]
 		.endif
 	.else
-		ubfx w20, w19, #8, #5
-		ubfx w21, w19, #16, #5
-		str x12, [x8, x20, lsl #3]
-		str x13, [x8, x21, lsl #3]
+		ubfx x20, x19, #16, #16
+		ubfx x21, x19, #32, #16
+		str x12, [_cpu, x20]
+		str x13, [_cpu, x21]
 	.endif
 	mov w27, w11
 	add _stream, _stream, #8
@@ -1854,7 +2193,7 @@ gadget compare_swap_pair_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and x20, x19, #0xffff
 	ubfx x21, x19, #16, #16
@@ -1912,7 +2251,7 @@ gadget exclusive_load_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -1950,7 +2289,7 @@ gadget exclusive_store_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -1998,7 +2337,7 @@ gadget exclusive_pair_load_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, \host_register\()16, [x7]
 	.if !\discard_first
@@ -2038,7 +2377,7 @@ gadget exclusive_pair_store_\name
 	ubfx x20, x19, #48, #16
 	ldr x7, [_cpu, x20]
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \first_zero
 	mov x15, xzr
@@ -2092,7 +2431,7 @@ gadget ordered_load_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -2130,7 +2469,7 @@ gadget ordered_store_\name
 	ldr x7, [_cpu, x20]
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -2178,7 +2517,7 @@ gadget rcpc_load_\name
 	add x7, x7, x9
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -2230,7 +2569,7 @@ gadget rcpc_store_\name
 	add x7, x7, x9
 	.if \alignment
 	tst x7, #\alignment
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -2271,7 +2610,7 @@ gadget ordered_pair_load_\name
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
 	tst x7, #(\element_size - 1)
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	.if \postindex
 	add x24, x7, #(2 * \element_size)
 	.endif
@@ -2337,7 +2676,7 @@ gadget ordered_pair_store_\name
 	mov x7, x24
 	.endif
 	tst x7, #(\element_size - 1)
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	add x25, x7, #\element_size
 	eor x23, x7, x25
 	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
@@ -2415,7 +2754,7 @@ gadget consistent_pair_\name
 	/* CpuState::sp follows x30, so Rn==31 remains branch-free. */
 	ldr x7, [x8, x20, lsl #3]
 	tst x7, #7
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 	add x25, x7, #8
 	eor x23, x7, x25
 	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
@@ -2478,7 +2817,7 @@ gadget consistent_pair_\name
 	add x8, _cpu, #UML_GADGET_CPU_X0
 	ldr x7, [x8, x20, lsl #3]
 	tst x7, #7
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	add x25, x7, #8
 	eor x23, x7, x25
 	lsr x23, x23, #UML_GADGET_GUEST_PAGE_SHIFT
@@ -2541,7 +2880,7 @@ gadget atomic_pair128_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	tst x7, #15
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and x20, x19, #0xffff
 	ubfx x21, x19, #16, #16

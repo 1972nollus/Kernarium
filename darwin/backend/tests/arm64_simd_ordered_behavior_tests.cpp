@@ -1,121 +1,175 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_ordered_test_support.hpp"
 
-#include <algorithm>
-#include <cstring>
+#include <array>
+#include <cstdio>
 
-namespace test = arm64_simd_ordered_test;
-namespace arm64 = uml::backend::arm64;
+namespace ordered = arm64_simd_ordered_test;
+namespace engine = uml::backend::tests;
 
 namespace {
 
-void unscaled_load_store_shapes_and_offsets()
+void check_success(engine::EngineHarness &harness,
+	const ordered::SimdVariant &variant, int offset, unsigned rn,
+	unsigned rt, std::uint64_t seed)
 {
-	for (const auto &variant : test::variants)
-		for (const unsigned imm9 : {0U, 1U, 255U, 256U, 511U}) {
-			test::common::ProbeMemory memory;
-			arm64::CpuState cpu{};
-			test::initialize(cpu);
-			const auto source = cpu.vectors[3];
-			const auto offset = test::common::signed_imm9(imm9);
-			cpu.registers[2] = test::base -
-				static_cast<std::uint64_t>(offset);
-			const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-				test::unscaled(variant.size_code, variant.opc, imm9, 2, 3));
-			test::require(result.reason == arm64::StopReason::continued);
-			test::require(cpu.pc == test::pc + 4U);
-			test::require(memory.last_address == test::base);
-			if (variant.load) {
-				test::require(memory.reads == 1U && memory.writes == 0U);
-				test::require_loaded(cpu.vectors[3], memory, variant.size);
-			} else {
-				test::require(memory.reads == 0U && memory.writes == 1U);
-				test::require(std::memcmp(memory.written.data(),
-					source.bytes.data(), variant.size) == 0);
-				test::require(cpu.vectors[3].bytes == source.bytes);
-			}
+	std::vector<std::byte> initial_memory(ordered::page_size);
+	ordered::fill_page(initial_memory, static_cast<unsigned>(seed));
+	auto expected_memory = initial_memory;
+	auto initial = ordered::seeded_state(seed);
+	const auto base = ordered::address -
+		(variant.kind == ordered::SimdKind::unscaled ?
+			static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(offset)) : 0U);
+	ordered::set_base(initial, rn, base);
+	auto expected = initial;
+	const auto memory_offset =
+		static_cast<std::size_t>(ordered::address - ordered::page_base);
+	if (variant.load) {
+		if (variant.kind == ordered::SimdKind::unscaled) {
+			expected.vectors[rt].bytes.fill(std::byte{});
+			for (std::size_t index = 0; index < variant.size; ++index)
+				expected.vectors[rt].bytes[index] =
+					initial_memory[memory_offset + index];
+		} else {
+			const auto lane_offset = variant.upper ? 8U : 0U;
+			for (std::size_t index = 0; index < 8U; ++index)
+				expected.vectors[rt].bytes[lane_offset + index] =
+					initial_memory[memory_offset + index];
 		}
+	} else {
+		const auto lane_offset =
+			variant.kind == ordered::SimdKind::lane && variant.upper ?
+				8U : 0U;
+		for (std::size_t index = 0; index < variant.size; ++index)
+			expected_memory[memory_offset + index] =
+				initial.vectors[rt].bytes[lane_offset + index];
+	}
+	const std::array regions{
+		engine::MemoryRegion{
+			.address = ordered::page_base,
+			.initial = std::span<const std::byte>{initial_memory},
+			.expected = std::span<const std::byte>{expected_memory},
+		},
+	};
+	char name[136];
+	std::snprintf(name, sizeof(name),
+		"%.*s behavior offset=%d rn=%u rt=%u",
+		static_cast<int>(variant.name.size()), variant.name.data(),
+		offset, rn, rt);
+	harness.check({
+		.name = name,
+		.instruction =
+			ordered::simd_instruction(variant, offset, rn, rt),
+		.initial = initial,
+		.expected = expected,
+		.native = ordered::native(variant),
+		.memory = std::span<const engine::MemoryRegion>{regions},
+	});
 }
 
-void lane_loads_preserve_the_other_half_and_stores_select_the_lane()
+void every_immediate_and_register(engine::EngineHarness &harness)
 {
-	for (const bool upper : {false, true}) {
-		test::common::ProbeMemory memory;
-		arm64::CpuState cpu{};
-		test::initialize(cpu);
-		cpu.sp = test::base;
-		const auto before = cpu.vectors[31];
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			test::lane(true, upper, 31, 31)).reason ==
-			arm64::StopReason::continued);
-		const auto offset = upper ? 8U : 0U;
-		test::require(std::memcmp(cpu.vectors[31].bytes.data() + offset,
-			memory.payload.data(), 8U) == 0);
-		test::require(std::memcmp(cpu.vectors[31].bytes.data() + (8U - offset),
-			before.bytes.data() + (8U - offset), 8U) == 0);
-
-		memory = {};
-		cpu = {};
-		test::initialize(cpu);
-		cpu.registers[2] = test::base;
-		const auto source = cpu.vectors[3];
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			test::lane(false, upper, 2, 3)).reason ==
-			arm64::StopReason::continued);
-		test::require(std::memcmp(memory.written.data(),
-			source.bytes.data() + offset, 8U) == 0);
+	std::uint64_t seed = 0xb100'0000'0000'0000ULL;
+	for (const auto &variant : ordered::simd_unscaled_variants) {
+		for (unsigned imm9 = 0; imm9 < 512U; ++imm9) {
+			const auto offset = static_cast<int>(
+				static_cast<std::int16_t>(imm9 << 7) >> 7);
+			check_success(harness, variant, offset, 2, 3, seed++);
+		}
+		for (unsigned rn = 0; rn < 32U; ++rn)
+			check_success(harness, variant, 0, rn, 3, seed++);
+		for (unsigned rt = 0; rt < 32U; ++rt)
+			check_success(harness, variant, 0, 2, rt, seed++);
+	}
+	for (const auto &variant : ordered::simd_lane_variants) {
+		for (unsigned rn = 0; rn < 32U; ++rn)
+			check_success(harness, variant, 0, rn, 3, seed++);
+		for (unsigned rt = 0; rt < 32U; ++rt)
+			check_success(harness, variant, 0, 2, rt, seed++);
 	}
 }
 
-void faults_and_alignment_never_partially_commit()
+template <std::size_t Size>
+void store_variants_invalidate_reservations(
+	engine::EngineHarness &harness,
+	const std::array<ordered::SimdVariant, Size> &variants,
+	std::uint64_t &seed)
 {
-	for (const auto &variant : test::variants) {
-		test::common::ProbeMemory memory;
-		memory.fault_read = true;
-		memory.fault_write = true;
-		arm64::CpuState cpu{};
-		test::initialize(cpu);
-		cpu.registers[2] = test::base;
-		const auto before = cpu;
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-			test::unscaled(variant.size_code, variant.opc, 0, 2, 3));
-		test::require(result.reason == arm64::StopReason::memory_fault);
-		test::require(result.write == !variant.load);
-		test::require_state_unchanged(cpu, before);
+	for (const auto &variant : variants) {
+		if (variant.load)
+			continue;
+		std::vector<std::byte> initial_memory(ordered::page_size);
+		ordered::fill_page(initial_memory, static_cast<unsigned>(seed));
+		auto expected_memory = initial_memory;
+		auto initial = ordered::seeded_state(seed++);
+		initial.registers[2] = ordered::address;
+		initial.registers[3] = ordered::address;
+		const auto monitored = ordered::load_integer(
+			initial_memory, ordered::address - ordered::page_base, 8);
+		const auto lane_offset =
+			variant.kind == ordered::SimdKind::lane && variant.upper ?
+				8U : 0U;
+		for (std::size_t index = 0; index < variant.size; ++index)
+			expected_memory[ordered::address - ordered::page_base + index] =
+				initial.vectors[4].bytes[lane_offset + index];
 
-		if (variant.size > 1U) {
-			memory = {};
-			cpu = before;
-			cpu.registers[2] = test::base + 1U;
-			const auto misaligned_before = cpu;
-			const auto misaligned = arm64::Dispatcher{}.execute(cpu, memory,
-				test::unscaled(variant.size_code, variant.opc, 0, 2, 3));
-			test::require(misaligned.reason ==
-				arm64::StopReason::memory_fault);
-			test::require(memory.reads == 0U && memory.writes == 0U);
-			test::require_state_unchanged(cpu, misaligned_before);
-		}
-	}
+		auto expected = initial;
+		expected.registers[5] = monitored;
+		expected.registers[6] = 1;
+		expected.exclusive_address = ~std::uint64_t{0};
+		expected.exclusive_key = 0;
+		expected.exclusive_size = 0;
+		expected.pc = engine::engine_test_code_base + 16;
 
-	for (const bool load : {false, true}) {
-		test::common::ProbeMemory memory;
-		arm64::CpuState cpu{};
-		test::initialize(cpu);
-		cpu.registers[2] = test::base + 1U;
-		const auto before = cpu;
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-			test::lane(load, true, 2, 3));
-		test::require(result.reason == arm64::StopReason::memory_fault);
-		test::require(memory.reads == 0U && memory.writes == 0U);
-		test::require_state_unchanged(cpu, before);
+		const std::array code{
+			engine::ProgramWord{0,
+				ordered::scalar_exclusive(3, true, 2, 5)},
+			engine::ProgramWord{4,
+				ordered::simd_instruction(variant, 0, 3, 4)},
+			engine::ProgramWord{8,
+				ordered::scalar_exclusive(3, false, 2, 7, 6)},
+			engine::ProgramWord{12, ordered::terminal_system_call},
+		};
+		const std::array regions{
+			engine::MemoryRegion{
+				.address = ordered::page_base,
+				.initial = std::span<const std::byte>{initial_memory},
+				.expected = std::span<const std::byte>{expected_memory},
+			},
+		};
+		char name[128];
+		std::snprintf(name, sizeof(name),
+			"%.*s invalidates exclusive reservation",
+			static_cast<int>(variant.name.size()), variant.name.data());
+		harness.check_program({
+			.name = name,
+			.code = code,
+			.initial = initial,
+			.expected = expected,
+			.native = ordered::native(variant),
+			.memory = std::span<const engine::MemoryRegion>{regions},
+			.validator = &ordered::validate_failed_exclusive,
+		});
 	}
+}
+
+void stores_invalidate_reservations(engine::EngineHarness &harness)
+{
+	std::uint64_t seed = 0xb200'0000'0000'0000ULL;
+	store_variants_invalidate_reservations(
+		harness, ordered::simd_unscaled_variants, seed);
+	store_variants_invalidate_reservations(
+		harness, ordered::simd_lane_variants, seed);
 }
 
 } // namespace
 
 int main()
 {
-	unscaled_load_store_shapes_and_offsets();
-	lane_loads_preserve_the_other_half_and_stores_select_the_lane();
-	faults_and_alignment_never_partially_commit();
+	engine::EngineHarness harness;
+	every_immediate_and_register(harness);
+	stores_invalidate_reservations(harness);
+	harness.print_summary("arm64-simd-ordered-behavior");
+	return 0;
 }

@@ -1,95 +1,231 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_pauth_test_support.hpp"
 
-namespace test = arm64_pauth_test;
+namespace pauth = arm64_pauth_test;
+namespace test = uml::backend::tests;
 
 namespace {
 
 [[nodiscard]] constexpr std::uint32_t authenticate_sp_pc(
-	bool key_b, unsigned immediate)
+	bool key_b, unsigned immediate, unsigned destination = 31) noexcept
 {
-	return 0xf380'001fU | (static_cast<unsigned>(key_b) << 21) |
-		((immediate & 0xffffU) << 5);
+	return 0xf380'0000U | (static_cast<unsigned>(key_b) << 21) |
+		((immediate & 0xffffU) << 5) | (destination & 31U);
 }
 
 [[nodiscard]] constexpr std::uint32_t authenticate_sp_pc_register(
-	bool key_b, unsigned source)
+	bool key_b, unsigned source, unsigned destination = 30) noexcept
 {
-	return 0xdac1'901eU | (static_cast<unsigned>(key_b) << 10) |
-		((source & 31U) << 5);
+	return 0xdac1'9000U | (static_cast<unsigned>(key_b) << 10) |
+		((source & 31U) << 5) | (destination & 31U);
 }
 
-void fixed_undefined_forms()
+constexpr std::array fixed_encodings{
+	0xdac1'8bfeU, // PACIA171615
+	0xdac1'8ffeU, // PACIB171615
+	0xdac1'bbfeU, // AUTIA171615
+	0xdac1'bffeU, // AUTIB171615
+	0xdac1'a3feU, // PACIASPPC
+	0xdac1'a7feU, // PACIBSPPC
+	0xdac1'83feU, // PACNBIASPPC
+	0xdac1'87feU, // PACNBIBSPPC
+};
+
+void fixed_allocated_forms(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	/* PACIA/PACIB/AUTIA/AUTIB 171615, PACIASPPC/PACIBSPPC, and
-	 * PACNBIASPPC/PACNBIBSPPC. */
-	constexpr std::array encodings{
-		0xdac1'8bfeU, 0xdac1'8ffeU,
-		0xdac1'bbfeU, 0xdac1'bffeU,
-		0xdac1'a3feU, 0xdac1'a7feU,
-		0xdac1'83feU, 0xdac1'87feU,
-	};
-	for (const auto instruction : encodings)
-		test::require_illegal(instruction);
+	for (unsigned encoding = 0;
+	     encoding < fixed_encodings.size(); ++encoding) {
+		for (unsigned salt = 0; salt < 8; ++salt) {
+			const pauth::CaseName name{
+				"pauth-lr-fixed-%u-s%u", encoding, salt};
+			pauth::check_unavailable_pauth_lr(
+				harness, name, fixed_encodings[encoding],
+				pauth::initial_state(encoding * 16 + salt));
+			++cases;
+		}
+	}
 }
 
-void immediate_authentication_forms()
+void every_immediate_authentication(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	for (const bool key_b : {false, true})
-		for (const unsigned immediate :
-		     {0U, 1U, 0x7fffU, 0x8000U, 0xfffeU, 0xffffU})
-			test::require_illegal(
-				authenticate_sp_pc(key_b, immediate));
+	for (const bool key_b : {false, true}) {
+		for (unsigned immediate = 0;
+		     immediate <= 0xffffU; ++immediate) {
+			const pauth::CaseName name{
+				"aut%sppc-i%u",
+				key_b ? "ib" : "ia", immediate};
+			pauth::check_unavailable_pauth_lr(
+				harness, name,
+				authenticate_sp_pc(key_b, immediate),
+				pauth::initial_state(
+					static_cast<unsigned>(key_b) * 0x10000 +
+					immediate));
+			++cases;
+		}
+	}
 }
 
-void register_authentication_forms()
+void every_register_authentication(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	for (const bool key_b : {false, true})
-		for (unsigned source = 0; source < 32; ++source)
-			test::require_illegal(
-				authenticate_sp_pc_register(key_b, source));
+	for (const bool key_b : {false, true}) {
+		for (unsigned source = 0; source < 32; ++source) {
+			const pauth::CaseName name{
+				"aut%spcr-n%u",
+				key_b ? "ibspp" : "iaspp", source};
+			pauth::check_unavailable_pauth_lr(
+				harness, name,
+				authenticate_sp_pc_register(key_b, source),
+				pauth::initial_state(
+					static_cast<unsigned>(key_b) * 64 +
+					source));
+			++cases;
+		}
+	}
 }
 
-void pacm_feature_absent_hint()
+void pacm_feature_absent_hint(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-	const auto initial = test::state(0x1234'5678'9abcULL, 17, 16);
-	const auto result = test::execute_both(0xd503'24ffU, initial);
-	test::require(result.interpreted.registers == initial.registers);
-	test::require(result.interpreted.sp == initial.sp);
-	test::require(result.interpreted.nzcv == initial.nzcv);
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
-	const auto pacm = test::gadgets::Builder{}.build(
-		test::pc, std::array{0xd503'24ffU});
-	const auto nop = test::gadgets::Builder{}.build(
-		test::pc, std::array{test::hint(0)});
-	test::require(pacm.program.words().front() == nop.program.words().front());
-#endif
+	for (unsigned salt = 0; salt < 32; ++salt) {
+		const auto initial = pauth::initial_state(0x20000 + salt);
+		const pauth::CaseName name{"pacm-nop-s%u", salt};
+		harness.check_one(
+			name, 0xd503'24ffU, initial, initial,
+			pauth::native_pauth_lr);
+		++cases;
+	}
 }
 
-void production_undefined_specialization()
+void reserved_fixed_destinations(
+	test::EngineHarness &harness, std::size_t &cases)
 {
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
-	const auto unavailable = test::gadgets::Builder{}.build(
-		test::pc, std::array{0xdac1'8bfeU});
-	const auto reserved = test::gadgets::Builder{}.build(
-		test::pc, std::array{authenticate_sp_pc_register(false, 3)});
-	const auto illegal = test::gadgets::Builder{}.build(
-		test::pc, std::array{0U});
-	test::require(unavailable.program.words().front() ==
-		illegal.program.words().front());
-	test::require(reserved.program.words().front() ==
-		illegal.program.words().front());
-#endif
+	for (unsigned encoding = 0;
+	     encoding < fixed_encodings.size(); ++encoding) {
+		for (unsigned destination = 0;
+		     destination < 32; ++destination) {
+			if (destination == 30U)
+				continue;
+			const pauth::CaseName name{
+				"pauth-lr-fixed-reserved-%u-d%u",
+				encoding, destination};
+			harness.check_illegal(
+				name,
+				(fixed_encodings[encoding] & ~31U) |
+					destination,
+				pauth::initial_state(
+					0x30000 + encoding * 32 + destination),
+				pauth::native_pauth_lr);
+			++cases;
+		}
+	}
+}
+
+void reserved_immediate_destinations(
+	test::EngineHarness &harness, std::size_t &cases)
+{
+	constexpr std::array immediates{
+		0U, 1U, 0x7fffU, 0x8000U, 0xfffeU, 0xffffU};
+	for (const bool key_b : {false, true}) {
+		for (const unsigned immediate : immediates) {
+			for (unsigned destination = 0;
+			     destination < 31; ++destination) {
+				const pauth::CaseName name{
+					"aut%sppc-reserved-i%u-d%u",
+					key_b ? "ib" : "ia", immediate,
+					destination};
+				harness.check_illegal(
+					name,
+					authenticate_sp_pc(
+						key_b, immediate, destination),
+					pauth::initial_state(
+						0x40000 +
+						static_cast<unsigned>(key_b) *
+							1024 +
+						destination),
+					pauth::native_pauth_lr);
+				++cases;
+			}
+		}
+	}
+}
+
+void reserved_register_destinations(
+	test::EngineHarness &harness, std::size_t &cases)
+{
+	for (const bool key_b : {false, true}) {
+		for (unsigned source = 0; source < 32; ++source) {
+			for (unsigned destination = 0;
+			     destination < 32; ++destination) {
+				if (destination == 30U)
+					continue;
+				const pauth::CaseName name{
+					"aut%spcr-reserved-n%u-d%u",
+					key_b ? "ibspp" : "iaspp",
+					source, destination};
+				harness.check_illegal(
+					name,
+					authenticate_sp_pc_register(
+						key_b, source, destination),
+					pauth::initial_state(
+						0x50000 +
+						static_cast<unsigned>(key_b) *
+							2048 +
+						source * 32 + destination),
+					pauth::native_pauth_lr);
+				++cases;
+			}
+		}
+	}
+}
+
+void production_unavailable_specialization()
+{
+	const auto illegal = pauth::gadgets::Builder{}.build(
+		pauth::pc, std::array{std::uint32_t{0}});
+	for (const auto instruction : fixed_encodings) {
+		const auto built = pauth::gadgets::Builder{}.build(
+			pauth::pc, std::array{instruction});
+		pauth::require(
+			built.complete &&
+			built.program.words().front() ==
+				illegal.program.words().front());
+	}
+	for (const auto instruction :
+	     {authenticate_sp_pc(false, 0),
+	      authenticate_sp_pc_register(false, 3)}) {
+		const auto built = pauth::gadgets::Builder{}.build(
+			pauth::pc, std::array{instruction});
+		pauth::require(
+			built.complete &&
+			built.program.words().front() ==
+				illegal.program.words().front());
+	}
+	const auto pacm = pauth::gadgets::Builder{}.build(
+		pauth::pc, std::array{0xd503'24ffU});
+	const auto nop = pauth::gadgets::Builder{}.build(
+		pauth::pc, std::array{pauth::hint(0)});
+	pauth::require(pacm.program.words().front() ==
+		nop.program.words().front());
 }
 
 } // namespace
 
 int main()
 {
-	fixed_undefined_forms();
-	immediate_authentication_forms();
-	register_authentication_forms();
-	pacm_feature_absent_hint();
-	production_undefined_specialization();
+	test::EngineHarness harness;
+	std::size_t cases = 0;
+	fixed_allocated_forms(harness, cases);
+	every_immediate_authentication(harness, cases);
+	every_register_authentication(harness, cases);
+	pacm_feature_absent_hint(harness, cases);
+	reserved_fixed_destinations(harness, cases);
+	reserved_immediate_destinations(harness, cases);
+	reserved_register_destinations(harness, cases);
+	production_unavailable_specialization();
+	pauth::require_counts(harness, cases);
+	harness.print_summary("arm64-base-pauth-lr-data");
 	return 0;
 }

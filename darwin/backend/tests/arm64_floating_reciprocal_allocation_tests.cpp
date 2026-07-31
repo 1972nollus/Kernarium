@@ -3,21 +3,48 @@
 
 namespace test = arm64_floating_reciprocal_test;
 
+namespace {
+
+void every_valid_register_field(test::engine_tests::EngineHarness &harness)
+{
+	unsigned seed = 0;
+	test::for_each_form([&](const test::Form &form) {
+		for (unsigned first = 0; first < 32U; ++first)
+			for (unsigned second = 0;
+			     second < (test::unary(form.operation) ? 1U : 32U);
+			     ++second)
+				for (unsigned destination = 0; destination < 32U;
+				     ++destination) {
+					const test::Registers registers{
+						destination, first, second};
+					auto initial = test::state(++seed);
+					test::prepare_simple(initial, form, registers);
+					test::check_one(harness, form, registers, initial);
+				}
+	});
+}
+
+[[nodiscard]] test::ExpectedEngineCounts expected_counts()
+{
+	test::ExpectedEngineCounts expected;
+	test::for_each_form([&](const test::Form &form) {
+		const std::size_t register_allocations =
+			32U * 32U *
+			(test::unary(form.operation) ? 1U : 32U);
+		expected.add(form, 0U, register_allocations);
+	});
+	test::require(expected.total == 543'744U,
+		"reciprocal allocation formula omitted a valid field");
+	return expected;
+}
+
+} // namespace
+
 int main()
 {
-	test::common::Harness harness;
-	unsigned count{};
-	test::for_each_form([&](const test::Form &form) {
-		harness.require_differential(test::instruction(form, {31, 30, 29}),
-			test::common::state(++count));
-	});
-	test::common::require(count == 35U);
-	for (const auto operation : {test::Operation::reciprocal_estimate,
-		test::Operation::reciprocal_step,
-		test::Operation::reciprocal_sqrt_estimate,
-		test::Operation::reciprocal_sqrt_step}) {
-		auto encoded = test::instruction({operation, false, 64U, 16U});
-		encoded &= ~0x4000'0000U;
-		harness.require_illegal(encoded, test::common::state(100));
-	}
+	test::engine_tests::EngineHarness harness;
+	every_valid_register_field(harness);
+	test::require_engine_counts(harness, expected_counts());
+	harness.print_summary("arm64-floating-reciprocal-allocation");
+	return 0;
 }

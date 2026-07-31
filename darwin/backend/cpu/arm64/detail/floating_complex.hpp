@@ -58,12 +58,4 @@ struct FloatingComplex final {
 	return {};
 }
 
-[[nodiscard]] constexpr std::uintptr_t floating_complex_operand(
-	std::uint32_t instruction, const FloatingComplex &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>(decoded.second_register) << 16);
-}
-
 } // namespace uml::backend::arm64::detail

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "arm64_engine_test_support.hpp"
 #include "arm64_simd_test_support.hpp"
 #include "cpu/arm64/detail/instruction_helpers.hpp"
 
@@ -11,6 +12,7 @@
 namespace arm64_simd_fmov_test {
 
 namespace base = arm64_simd_test;
+namespace engine_tests = uml::backend::tests;
 
 [[nodiscard]] constexpr unsigned type_for_bytes(unsigned bytes)
 {
@@ -61,17 +63,33 @@ inline void write_bits(std::array<std::byte, 16> &bytes, unsigned offset,
 		std::span{bytes}.subspan(offset, width));
 }
 
-inline void require_scalar_result(std::uint32_t encoded, unsigned bytes,
-	unsigned destination, std::uint64_t expected_bits,
-	const uml::backend::arm64::CpuState &initial, base::Harness &harness)
+[[nodiscard]] inline engine_tests::NativeRequirements native_requirements(
+	unsigned bytes)
+{
+	using uml::backend::ArmFeature;
+	auto requirements =
+		engine_tests::NativeRequirements::features(ArmFeature::floating_point);
+	return bytes == 2U ? requirements | ArmFeature::fp16 : requirements;
+}
+
+[[nodiscard]] inline uml::backend::arm64::CpuState expected_scalar_result(
+	unsigned bytes, unsigned destination, std::uint64_t expected_bits,
+	const uml::backend::arm64::CpuState &initial)
 {
 	auto expected = initial;
-	expected.pc = base::pc + 4U;
 	expected.vectors[destination].bytes = {};
 	write_bits(expected.vectors[destination].bytes, 0U, bytes, expected_bits);
-	base::require_architecture_equal(expected,
-		harness.run_interpreter(encoded, initial));
-	harness.require_differential(encoded, initial);
+	return expected;
+}
+
+inline void check_scalar_result(engine_tests::EngineHarness &harness,
+	std::string_view name, std::uint32_t encoded, unsigned bytes,
+	unsigned destination, std::uint64_t expected_bits,
+	const uml::backend::arm64::CpuState &initial)
+{
+	harness.check_one(name, encoded, initial,
+		expected_scalar_result(bytes, destination, expected_bits, initial),
+		native_requirements(bytes));
 }
 
 } // namespace arm64_simd_fmov_test

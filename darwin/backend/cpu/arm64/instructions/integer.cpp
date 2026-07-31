@@ -2,6 +2,7 @@
 #include "../dispatcher.hpp"
 
 #include "../detail/instruction_helpers.hpp"
+#include "../detail/pointer_auth.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -22,7 +23,7 @@ RunResult Dispatcher::move_wide(CpuState &cpu, GuestMemory &,
 	const unsigned operation = (instruction >> 29) & 0x3U;
 	const unsigned shift = ((instruction >> 21) & 0x3U) * 16;
 	if ((!is_64_bit && shift >= 32) || operation == 1)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = width_mask(is_64_bit);
 	const auto immediate = static_cast<std::uint64_t>(
@@ -51,7 +52,7 @@ RunResult Dispatcher::logical_shifted(CpuState &cpu, GuestMemory &,
 	const unsigned width = is_64_bit ? 64 : 32;
 	const unsigned shift = (instruction >> 10) & 0x3fU;
 	if (shift >= width)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = width_mask(is_64_bit);
 	const auto left = cpu.read_register((instruction >> 5) & 0x1fU, false) &
@@ -61,12 +62,12 @@ RunResult Dispatcher::logical_shifted(CpuState &cpu, GuestMemory &,
 	case 0: right = (right << shift) & mask; break;
 	case 1: right >>= shift; break;
 	case 2:
-		if (is_64_bit)
-			right = static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(right) >> shift);
+		if (shift != 0U &&
+		    (right & (std::uint64_t{1} << (width - 1U))) != 0U)
+			right = (right >> shift) |
+				(mask & (~std::uint64_t{0} << (width - shift)));
 		else
-			right = static_cast<std::uint32_t>(
-				static_cast<std::int32_t>(right) >> shift);
+			right >>= shift;
 		break;
 	case 3:
 		right = is_64_bit ? std::rotr(right, shift) :
@@ -102,7 +103,7 @@ RunResult Dispatcher::logical_immediate(CpuState &cpu, GuestMemory &,
 		is_64_bit, (instruction >> 22) & 1U,
 		(instruction >> 16) & 0x3fU, (instruction >> 10) & 0x3fU);
 	if (!immediate)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto left = cpu.read_register((instruction >> 5) & 0x1fU, false);
 	const unsigned operation = (instruction >> 29) & 0x3U;
@@ -131,12 +132,12 @@ RunResult Dispatcher::bitfield(CpuState &cpu, GuestMemory &,
 	const unsigned operation = (instruction >> 29) & 0x3U;
 	if (operation == 3 || n != static_cast<unsigned>(is_64_bit) ||
 	    (!is_64_bit && ((rotate | imms) & 0x20U) != 0))
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto masks = decode_bit_masks(
 		is_64_bit, n, rotate, imms, false);
 	if (!masks)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned width = is_64_bit ? 64 : 32;
 	const auto width_bits = width_mask(is_64_bit);
@@ -167,8 +168,12 @@ RunResult Dispatcher::extract_register(CpuState &cpu, GuestMemory &,
 	const bool wide = (instruction & 0x8000'0000U) != 0;
 	const unsigned width = wide ? 64 : 32;
 	const unsigned shift = (instruction >> 10) & 0x3fU;
-	if (shift >= width)
-		return {StopReason::unsupported_instruction, address, instruction, 0,
+	const unsigned n = (instruction >> 22) & 1U;
+	const unsigned op21 = (instruction >> 29) & 3U;
+	const bool o0 = (instruction & 0x0020'0000U) != 0U;
+	if (op21 != 0U || o0 || n != static_cast<unsigned>(wide) ||
+	    shift >= width)
+		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const auto mask = wide ? ~std::uint64_t{0} : 0xffff'ffffULL;
 	const auto low = cpu.read_register((instruction >> 16) & 0x1fU, false) &
@@ -222,11 +227,14 @@ RunResult Dispatcher::bit_reverse_count(CpuState &cpu, GuestMemory &,
 	const auto address = cpu.pc;
 	const bool is_64_bit = (instruction >> 31) != 0;
 	const unsigned width = is_64_bit ? 64 : 32;
+	const unsigned operation = (instruction >> 10) & 0x1fU;
+	if (operation > 8U || (operation == 3U && !is_64_bit))
+		return {StopReason::illegal_instruction, address,
+			instruction, 0, false};
 	const auto mask = is_64_bit ? ~std::uint64_t{0} :
 		std::uint64_t{0xffff'ffffU};
 	const auto value = cpu.read_register((instruction >> 5) & 0x1fU, false) &
 		mask;
-	const unsigned operation = (instruction >> 10) & 0x1fU;
 	std::uint64_t result = 0;
 	if (operation == 0) {
 		for (unsigned bit = 0; bit < width; ++bit)
@@ -234,9 +242,6 @@ RunResult Dispatcher::bit_reverse_count(CpuState &cpu, GuestMemory &,
 	} else if (operation >= 1 && operation <= 3) {
 		const unsigned group_bytes = 1U << operation;
 		const unsigned total_bytes = width / 8;
-		if (group_bytes > total_bytes)
-			return {StopReason::unsupported_instruction, address,
-				instruction, 0, false};
 		for (unsigned group = 0; group < total_bytes;
 		     group += group_bytes)
 			for (unsigned byte = 0; byte < group_bytes; ++byte) {
@@ -267,9 +272,6 @@ RunResult Dispatcher::bit_reverse_count(CpuState &cpu, GuestMemory &,
 	} else if (operation == 8) {
 		const auto sign = value >> (width - 1);
 		result = sign == 0 ? value : (~value + 1) & mask;
-	} else {
-		return {StopReason::unsupported_instruction, address, instruction, 0,
-			false};
 	}
 	cpu.write_register(instruction & 0x1fU, result & mask, false);
 	cpu.pc += 4;
@@ -281,27 +283,24 @@ RunResult Dispatcher::pointer_auth_strip(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const bool link_register = instruction == 0xd503'20ffU;
+	if (!cpu.pointer_authentication_enabled) {
+		if (!link_register)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
 	if (!link_register && ((instruction >> 5) & 31U) != 31U)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const unsigned destination = link_register ? 30U : instruction & 31U;
 	const bool data = !link_register && (instruction & 0x400U) != 0;
 	const auto source = cpu.read_register(destination, false);
-	const bool upper_range = (source & (std::uint64_t{1} << 55)) != 0;
-	/* The Darwin-hosted static Linux profile uses a 47-bit user VA and
-	 * instruction TBID. Data TBI is enabled for the lower range (TBI0) and
-	 * disabled for the upper range (TBI1), selected by retained address bit 55.
-	 */
-	std::uint64_t result;
-	if (data && !upper_range) {
-		result = source & 0xff00'7fff'ffff'ffffULL;
-		if (upper_range)
-			result |= 0x00ff'8000'0000'0000ULL;
-	} else {
-		result = source & 0x0000'7fff'ffff'ffffULL;
-		if (upper_range)
-			result |= 0xffff'8000'0000'0000ULL;
-	}
+	const auto operation = data ?
+		detail::PointerAuthOperation::strip_data :
+		detail::PointerAuthOperation::strip_instruction;
+	const auto result =
+		detail::execute_pointer_auth(cpu, source, 0, operation);
 	cpu.write_register(destination, result, false);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
@@ -311,6 +310,15 @@ RunResult Dispatcher::pointer_auth_code(CpuState &cpu, GuestMemory &,
 	std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	const bool hint_encoding =
+		(instruction & 0xffff'f01fU) == 0xd503'201fU;
+	if (!cpu.pointer_authentication_enabled) {
+		if (!hint_encoding)
+			return {StopReason::illegal_instruction, address, instruction, 0,
+				false};
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
 	unsigned operation;
 	unsigned destination;
 	unsigned modifier;
@@ -356,29 +364,9 @@ RunResult Dispatcher::pointer_auth_code(CpuState &cpu, GuestMemory &,
 	auto value = cpu.read_register(destination, false);
 	const auto context = zero_modifier ? 0 :
 		cpu.read_register(modifier, true);
-	if (zero_modifier) {
-		switch (operation) {
-		case 0: __asm__ volatile("paciza %0" : "+r"(value)); break;
-		case 1: __asm__ volatile("pacizb %0" : "+r"(value)); break;
-		case 2: __asm__ volatile("pacdza %0" : "+r"(value)); break;
-		case 3: __asm__ volatile("pacdzb %0" : "+r"(value)); break;
-		case 4: __asm__ volatile("autiza %0" : "+r"(value)); break;
-		case 5: __asm__ volatile("autizb %0" : "+r"(value)); break;
-		case 6: __asm__ volatile("autdza %0" : "+r"(value)); break;
-		case 7: __asm__ volatile("autdzb %0" : "+r"(value)); break;
-		}
-	} else {
-		switch (operation) {
-		case 0: __asm__ volatile("pacia %0, %1" : "+r"(value) : "r"(context)); break;
-		case 1: __asm__ volatile("pacib %0, %1" : "+r"(value) : "r"(context)); break;
-		case 2: __asm__ volatile("pacda %0, %1" : "+r"(value) : "r"(context)); break;
-		case 3: __asm__ volatile("pacdb %0, %1" : "+r"(value) : "r"(context)); break;
-		case 4: __asm__ volatile("autia %0, %1" : "+r"(value) : "r"(context)); break;
-		case 5: __asm__ volatile("autib %0, %1" : "+r"(value) : "r"(context)); break;
-		case 6: __asm__ volatile("autda %0, %1" : "+r"(value) : "r"(context)); break;
-		case 7: __asm__ volatile("autdb %0, %1" : "+r"(value) : "r"(context)); break;
-		}
-	}
+	value = detail::execute_pointer_auth(
+		cpu, value, context,
+		static_cast<detail::PointerAuthOperation>(operation));
 	cpu.write_register(destination, value, false);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
@@ -388,15 +376,18 @@ RunResult Dispatcher::pointer_auth_generic(CpuState &cpu, GuestMemory &,
 	std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	if (!cpu.pointer_authentication_enabled)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const unsigned destination = instruction & 31U;
 	const auto source = cpu.read_register((instruction >> 5) & 31U, false);
 	const auto modifier = cpu.read_register((instruction >> 16) & 31U, true);
-	if (destination < 31U) {
-		std::uint64_t result;
-		__asm__ volatile("pacga %0, %1, %2" : "=&r"(result) :
-			"r"(source), "r"(modifier));
-		cpu.write_register(destination, result, false);
-	}
+	if (destination < 31U)
+		cpu.write_register(destination,
+			detail::execute_pointer_auth(
+				cpu, source, modifier,
+				detail::PointerAuthOperation::generic),
+			false);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -405,10 +396,16 @@ RunResult Dispatcher::integer_min_max(CpuState &cpu, GuestMemory &,
 				      std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	const bool immediate_encoding =
+		(instruction & 0x7ff0'0000U) == 0x11c0'0000U;
+	const bool register_encoding =
+		(instruction & 0x7fe0'f000U) == 0x1ac0'6000U;
+	if (!immediate_encoding && !register_encoding)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const bool is_64_bit = (instruction >> 31) != 0;
 	const auto mask = width_mask(is_64_bit);
-	const bool immediate =
-		(instruction & 0x7ff0'0000U) == 0x11c0'0000U;
+	const bool immediate = immediate_encoding;
 	const unsigned operation = immediate ? (instruction >> 18) & 3U :
 		(instruction >> 10) & 3U;
 	const bool is_unsigned = (operation & 1U) != 0;
@@ -418,8 +415,9 @@ RunResult Dispatcher::integer_min_max(CpuState &cpu, GuestMemory &,
 	std::uint64_t right;
 	if (immediate) {
 		const auto encoded = static_cast<std::uint8_t>(instruction >> 10);
-		right = is_unsigned ? encoded : static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(static_cast<std::int8_t>(encoded)));
+		right = encoded;
+		if (!is_unsigned && (encoded & 0x80U) != 0U)
+			right |= ~std::uint64_t{0xffU};
 		right &= mask;
 	} else {
 		right = cpu.read_register(
@@ -429,11 +427,13 @@ RunResult Dispatcher::integer_min_max(CpuState &cpu, GuestMemory &,
 	if (is_unsigned)
 		left_is_less = left < right;
 	else if (is_64_bit)
-		left_is_less = static_cast<std::int64_t>(left) <
-			static_cast<std::int64_t>(right);
+		left_is_less = std::bit_cast<std::int64_t>(left) <
+			std::bit_cast<std::int64_t>(right);
 	else
-		left_is_less = static_cast<std::int32_t>(left) <
-			static_cast<std::int32_t>(right);
+		left_is_less = std::bit_cast<std::int32_t>(
+			static_cast<std::uint32_t>(left)) <
+			std::bit_cast<std::int32_t>(
+				static_cast<std::uint32_t>(right));
 	const auto result = minimum ? (left_is_less ? left : right) :
 		(left_is_less ? right : left);
 	cpu.write_register(instruction & 0x1fU, result & mask, false);
@@ -468,7 +468,7 @@ RunResult Dispatcher::flag_manipulation(CpuState &cpu, GuestMemory &,
 		const auto mask = static_cast<std::uint32_t>(instruction & 15U) << 28;
 		cpu.nzcv = (cpu.nzcv & ~mask) |
 			((static_cast<std::uint32_t>(flags) << 28) & mask);
-	} else {
+	} else if ((instruction & 0xffff'bc1fU) == 0x3a00'080dU) {
 		const unsigned size = (instruction & 0x4000U) != 0 ? 16 : 8;
 		const auto value = static_cast<std::uint32_t>(cpu.read_register(
 			(instruction >> 5) & 31U, false));
@@ -479,6 +479,9 @@ RunResult Dispatcher::flag_manipulation(CpuState &cpu, GuestMemory &,
 			(n ? 0x8000'0000U : 0) |
 			(z ? 0x4000'0000U : 0) |
 			(v ? 0x1000'0000U : 0);
+	} else {
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	}
 	cpu.pc += 4;
 	return continue_after(address, instruction);
@@ -502,6 +505,9 @@ RunResult Dispatcher::pstate_immediate(CpuState &cpu, GuestMemory &,
 	case 1: cpu.pstate_ssbs = value; break;
 	case 2: cpu.pstate_dit = value; break;
 	case 3:
+		if ((immediate & 8U) != 0)
+			return {StopReason::illegal_instruction, address, instruction,
+				0, false};
 		switch ((immediate >> 1) & 3U) {
 		case 1: cpu.pstate_sm = value; break;
 		case 2: cpu.pstate_za = value; break;

@@ -1,454 +1,322 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_load_store_test_support.hpp"
+#include "arm64_atomic_engine_test_support.hpp"
 
-#include <atomic>
 #include <array>
-#include <cstring>
-#include <thread>
+#include <cstddef>
+#include <cstdint>
+#include <span>
 
-namespace test = arm64_load_store_test;
+namespace atomic = arm64_atomic_engine_test;
 namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine = uml::backend::tests;
 
 namespace {
 
-constexpr std::uint64_t pc = 0x3b0'0000;
-constexpr std::uint64_t base = 0xf0'0080;
-constexpr std::array initial_values{
+constexpr std::array observed_values{
 	std::uint64_t{0xf1e2'd3c4'b5a6'9788},
-	std::uint64_t{0x8071'6253'4435'2617}};
+	std::uint64_t{0x8071'6253'4435'2617},
+};
 constexpr std::array replacement_values{
 	std::uint64_t{0x1021'3243'5465'7687},
-	std::uint64_t{0x899a'abbc'cdde'eff0}};
-
-[[nodiscard]] constexpr std::uint32_t compare_swap_pair(bool wide,
-	bool acquire, bool release, unsigned rn, unsigned rs, unsigned rt,
-	unsigned rt2 = 31)
-{
-	return 0x0820'0000U | (static_cast<unsigned>(wide) << 30) |
-		(static_cast<unsigned>(acquire) << 22) | ((rs & 31U) << 16) |
-		(static_cast<unsigned>(release) << 15) | ((rt2 & 31U) << 10) |
-		((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t unprivileged_compare_swap_pair(
-	bool wide, bool acquire, bool release, unsigned rn, unsigned rs,
-	unsigned rt, unsigned rt2 = 31)
-{
-	return 0x0980'0000U | (static_cast<unsigned>(wide) << 30) |
-		(static_cast<unsigned>(acquire) << 22) | ((rs & 31U) << 16) |
-		(static_cast<unsigned>(release) << 15) | ((rt2 & 31U) << 10) |
-		((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t exclusive_pair(bool wide, bool load,
-	unsigned rn, unsigned rt, unsigned rt2, unsigned status = 31)
-{
-	return 0x8820'0000U | (static_cast<unsigned>(wide) << 30) |
-		(static_cast<unsigned>(load) << 22) | ((status & 31U) << 16) |
-		((rt2 & 31U) << 10) | ((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint64_t size_mask(std::size_t size)
-{
-	return size == 8 ? ~std::uint64_t{0} : 0xffff'ffffU;
-}
-
-class alignas(64) AtomicMemory final : public arm64::GuestMemory {
-public:
-	[[nodiscard]] bool read(std::uint64_t address,
-		std::span<std::byte> output) override
-	{
-		++reads;
-		if (fault || !range_valid(address, output.size()))
-			return false;
-		std::copy_n(pointer(address), output.size(), output.begin());
-		return true;
-	}
-
-	[[nodiscard]] bool write(std::uint64_t address,
-		std::span<const std::byte> input) override
-	{
-		++writes;
-		if (fault || !range_valid(address, input.size()))
-			return false;
-		std::copy(input.begin(), input.end(), pointer(address));
-		return true;
-	}
-
-	[[nodiscard]] std::byte *atomic_pointer(std::uint64_t address,
-		std::size_t size, arm64::MemoryAccess) override
-	{
-		++atomic_pointers;
-		return direct && !fault && range_valid(address, size) ?
-			pointer(address) : nullptr;
-	}
-
-	void put_pair(std::uint64_t address,
-		const std::array<std::uint64_t, 2> &values, std::size_t element_size)
-	{
-		std::memcpy(pointer(address), &values[0], element_size);
-		std::memcpy(pointer(address) + element_size, &values[1], element_size);
-	}
-
-	[[nodiscard]] std::array<std::uint64_t, 2> get_pair(
-		std::uint64_t address, std::size_t element_size) const
-	{
-		std::array<std::uint64_t, 2> result{};
-		std::memcpy(&result[0], pointer(address), element_size);
-		std::memcpy(&result[1], pointer(address) + element_size, element_size);
-		return result;
-	}
-
-	[[nodiscard]] std::uint64_t *host_pair(std::uint64_t address)
-	{
-		return reinterpret_cast<std::uint64_t *>(pointer(address));
-	}
-
-	bool direct{true};
-	bool fault{};
-	unsigned reads{};
-	unsigned writes{};
-	unsigned atomic_pointers{};
-
-private:
-	[[nodiscard]] bool range_valid(std::uint64_t address,
-		std::size_t size) const
-	{
-		return address >= base - 128 &&
-			address - (base - 128) <= bytes.size() &&
-			size <= bytes.size() - (address - (base - 128));
-	}
-
-	[[nodiscard]] std::byte *pointer(std::uint64_t address)
-	{
-		return bytes.data() + (address - (base - 128));
-	}
-
-	[[nodiscard]] const std::byte *pointer(std::uint64_t address) const
-	{
-		return bytes.data() + (address - (base - 128));
-	}
-
-	alignas(64) std::array<std::byte, 512> bytes{};
+	std::uint64_t{0x899a'abbc'cdde'eff0},
 };
 
-void native_store_pair(std::uint64_t *pointer,
-	const std::array<std::uint64_t, 2> &pair)
+void put_pair(atomic::Page &page, const std::array<std::uint64_t, 2> &values,
+	std::size_t element_size)
 {
-	std::uint64_t old_first;
-	std::uint64_t old_second;
-	std::uint32_t status;
-	__asm__ volatile(
-		"1:\n"
-		"ldxp %0, %1, [%3]\n"
-		"stlxp %w2, %4, %5, [%3]\n"
-		"cbnz %w2, 1b"
-		: "=&r"(old_first), "=&r"(old_second), "=&r"(status)
-		: "r"(pointer), "r"(pair[0]), "r"(pair[1])
-		: "memory");
-	(void)old_first;
-	(void)old_second;
+	atomic::put(page, atomic::data_offset, values[0], element_size);
+	atomic::put(page, atomic::data_offset + element_size, values[1],
+		element_size);
 }
 
-void run_interpreter_variant(std::uint32_t instruction,
-	std::size_t element_size, bool direct)
+void check_case(engine::EngineHarness &harness, std::uint32_t instruction,
+	std::size_t element_size, unsigned base, unsigned compare,
+	unsigned replacement, bool succeeds,
+	engine::NativeRequirements native)
 {
-	const auto mask = size_mask(element_size);
-	AtomicMemory memory;
-	memory.direct = direct;
-	memory.put_pair(base, initial_values, element_size);
-	arm64::CpuState cpu{};
-	test::fill_registers(cpu);
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[4] = initial_values[0];
-	cpu.registers[5] = initial_values[1];
-	cpu.registers[6] = replacement_values[0];
-	cpu.registers[7] = replacement_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		instruction).reason == arm64::StopReason::continued);
-	test::require(cpu.registers[4] == (initial_values[0] & mask));
-	test::require(cpu.registers[5] == (initial_values[1] & mask));
-	const auto replaced = memory.get_pair(base, element_size);
-	test::require(replaced[0] == (replacement_values[0] & mask));
-	test::require(replaced[1] == (replacement_values[1] & mask));
-
-	memory.put_pair(base, initial_values, element_size);
-	cpu.registers[4] = initial_values[0] ^ 1U;
-	cpu.registers[5] = initial_values[1];
-	cpu.registers[6] = replacement_values[0];
-	cpu.registers[7] = replacement_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		instruction).reason == arm64::StopReason::continued);
-	test::require(cpu.registers[4] == (initial_values[0] & mask));
-	test::require(cpu.registers[5] == (initial_values[1] & mask));
-	const auto unchanged = memory.get_pair(base, element_size);
-	test::require(unchanged[0] == (initial_values[0] & mask));
-	test::require(unchanged[1] == (initial_values[1] & mask));
-}
-
-void exhaustive_interpreter_variants()
-{
-	for (const bool direct : {false, true}) {
-		for (const bool wide : {false, true})
-			for (const bool acquire : {false, true})
-				for (const bool release : {false, true})
-					run_interpreter_variant(compare_swap_pair(wide,
-						acquire, release, 2, 4, 6), wide ? 8U : 4U,
-						direct);
-		for (const bool acquire : {false, true})
-			for (const bool release : {false, true})
-				run_interpreter_variant(unprivileged_compare_swap_pair(true,
-					acquire, release, 2, 4, 6), 8, direct);
+	const auto mask = atomic::mask_for_size(element_size);
+	atomic::Page initial_page{};
+	put_pair(initial_page, observed_values, element_size);
+	auto expected_page = initial_page;
+	auto initial = atomic::state(30);
+	atomic::write_register(initial, compare,
+		succeeds ? observed_values[0] : (observed_values[0] ^ 1U));
+	atomic::write_register(initial, compare + 1U, observed_values[1]);
+	atomic::write_register(initial, replacement, replacement_values[0]);
+	atomic::write_register(initial, replacement + 1U, replacement_values[1]);
+	/* Resolve a base/input alias as one architectural register value. */
+	atomic::write_register(initial, base, atomic::data_address, true);
+	const auto compare_first = atomic::read_register(initial, compare) & mask;
+	const auto compare_second =
+		atomic::read_register(initial, compare + 1U) & mask;
+	const auto replacement_first =
+		atomic::read_register(initial, replacement) & mask;
+	const auto replacement_second =
+		atomic::read_register(initial, replacement + 1U) & mask;
+	const bool actual_success =
+		compare_first == (observed_values[0] & mask) &&
+		compare_second == (observed_values[1] & mask);
+	if (actual_success) {
+		atomic::put(expected_page, atomic::data_offset,
+			replacement_first, element_size);
+		atomic::put(expected_page, atomic::data_offset + element_size,
+			replacement_second, element_size);
 	}
+	auto expected = initial;
+	atomic::write_register(expected, compare, observed_values[0] & mask);
+	atomic::write_register(expected, compare + 1U,
+		observed_values[1] & mask);
+	const auto memory = atomic::region(initial_page, expected_page);
+	harness.check({
+		.name = "pair compare-and-swap behavior",
+		.instruction = instruction,
+		.initial = initial,
+		.expected = expected,
+		.native = native,
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+	});
 }
 
-void interpreter_single_copy_atomicity()
+void standard_variants(engine::EngineHarness &harness)
 {
-	AtomicMemory memory;
-	memory.put_pair(base, initial_values, 8);
-	auto *host = memory.host_pair(base);
-	std::atomic<bool> running{true};
-	std::atomic<bool> ready{false};
-	std::thread writer{[&] {
-		ready.store(true, std::memory_order_release);
-		while (running.load(std::memory_order_acquire)) {
-			native_store_pair(host, replacement_values);
-			native_store_pair(host, initial_values);
-		}
-	}};
-	while (!ready.load(std::memory_order_acquire))
-		std::this_thread::yield();
-	for (unsigned iteration = 0; iteration < 5000; ++iteration) {
-		arm64::CpuState cpu{};
-		cpu.pc = pc;
-		cpu.registers[2] = base;
-		/* An impossible comparison turns CASP into an atomic observing load. */
-		cpu.registers[4] = 0;
-		cpu.registers[5] = 0;
-		cpu.registers[6] = ~std::uint64_t{0};
-		cpu.registers[7] = ~std::uint64_t{0};
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			compare_swap_pair(true, true, true, 2, 4, 6)).reason ==
-			arm64::StopReason::continued);
-		const std::array observed{cpu.registers[4], cpu.registers[5]};
-		test::require(observed == initial_values ||
-			observed == replacement_values);
-	}
-	running.store(false, std::memory_order_release);
-	writer.join();
-}
-
-void interpreter_edges_reservations_and_faults()
-{
-	AtomicMemory memory;
-	std::array<std::uint64_t, 2> with_zero{initial_values[0], 0};
-	memory.put_pair(base, with_zero, 8);
-	arm64::CpuState cpu{};
-	cpu.pc = pc;
-	cpu.sp = base;
-	cpu.registers[30] = initial_values[0];
-	cpu.registers[4] = replacement_values[0];
-	cpu.registers[5] = replacement_values[1];
-	/* Pair register 30 includes XZR as its second element. */
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		compare_swap_pair(true, true, true, 31, 30, 4)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[30] == initial_values[0] && cpu.sp == base);
-	const auto zr_compare = memory.get_pair(base, 8);
-	test::require(zr_compare[0] == replacement_values[0] &&
-		zr_compare[1] == replacement_values[1]);
-
-	/* A replacement pair starting at X30 supplies zero for its second value. */
-	memory.put_pair(base, initial_values, 8);
-	cpu = {};
-	cpu.pc = pc;
-	cpu.sp = base;
-	cpu.registers[4] = initial_values[0];
-	cpu.registers[5] = initial_values[1];
-	cpu.registers[30] = replacement_values[0];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		compare_swap_pair(true, false, false, 31, 4, 30)).reason ==
-		arm64::StopReason::continued);
-	const auto zr_replacement = memory.get_pair(base, 8);
-	test::require(zr_replacement[0] == replacement_values[0] &&
-		zr_replacement[1] == 0);
-
-	/* Input pairs are captured before an overlapping result pair is written. */
-	memory.put_pair(base, initial_values, 8);
-	cpu.registers[4] = initial_values[0];
-	cpu.registers[5] = initial_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		compare_swap_pair(true, false, false, 31, 4, 4)).reason ==
-		arm64::StopReason::continued);
-	const auto same_pair = memory.get_pair(base, 8);
-	test::require(same_pair == initial_values);
-
-	/* Failed pair CAS invalidates a pair-exclusive monitor. */
-	memory.put_pair(base, initial_values, 8);
-	cpu = {};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[4] = replacement_values[0];
-	cpu.registers[5] = replacement_values[1];
-	cpu.registers[6] = replacement_values[0];
-	cpu.registers[7] = replacement_values[1];
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		exclusive_pair(true, true, 2, 8, 9)).reason ==
-		arm64::StopReason::continued);
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		compare_swap_pair(true, false, false, 2, 4, 6)).reason ==
-		arm64::StopReason::continued);
-	test::require(arm64::Dispatcher{}.execute(cpu, memory,
-		exclusive_pair(true, false, 2, 6, 7, 10)).reason ==
-		arm64::StopReason::continued);
-	test::require(cpu.registers[10] == 1);
-
 	for (const bool wide : {false, true}) {
 		const auto element_size = wide ? 8U : 4U;
-		memory = {};
-		cpu = {};
-		cpu.pc = pc;
-		cpu.registers[2] = base + element_size;
-		cpu.registers[4] = initial_values[0];
-		cpu.registers[5] = initial_values[1];
-		cpu.registers[6] = replacement_values[0];
-		cpu.registers[7] = replacement_values[1];
-		const auto before = cpu;
-		const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-			compare_swap_pair(wide, true, true, 2, 4, 6));
-		test::require(result.reason == arm64::StopReason::memory_fault &&
-			result.address == base + element_size && result.write);
-		test::require(cpu.pc == pc && cpu.registers == before.registers &&
-			memory.atomic_pointers == 0);
-	}
-
-	memory = {};
-	memory.fault = true;
-	cpu = {};
-	cpu.pc = pc;
-	cpu.registers[2] = base;
-	cpu.registers[4] = initial_values[0];
-	cpu.registers[5] = initial_values[1];
-	cpu.registers[6] = replacement_values[0];
-	cpu.registers[7] = replacement_values[1];
-	const auto before = cpu;
-	const auto fault = arm64::Dispatcher{}.execute(cpu, memory,
-		compare_swap_pair(true, true, true, 2, 4, 6));
-	test::require(fault.reason == arm64::StopReason::memory_fault &&
-		fault.address == base && fault.write);
-	test::require(cpu.pc == pc && cpu.registers == before.registers);
-
-	for (const auto instruction : {
-		compare_swap_pair(true, false, false, 2, 5, 6),
-		compare_swap_pair(true, false, false, 2, 4, 7),
-		compare_swap_pair(true, false, false, 2, 4, 6, 30),
-		unprivileged_compare_swap_pair(false, false, false, 2, 4, 6),
-		unprivileged_compare_swap_pair(true, false, false, 2, 5, 6),
-		unprivileged_compare_swap_pair(true, false, false, 2, 4, 7)}) {
-		memory = {};
-		cpu = {};
-		cpu.pc = pc;
-		test::require(arm64::Dispatcher{}.execute(cpu, memory,
-			instruction).reason == arm64::StopReason::illegal_instruction);
-		test::require(cpu.pc == pc && memory.atomic_pointers == 0);
-	}
-}
-
-void run_gadget_variant(test::StaticMapping &mapping, std::uint64_t map_base,
-	std::uint32_t instruction, std::size_t element_size)
-{
-	const auto mask = size_mask(element_size);
-	std::memcpy(mapping.at(map_base), &initial_values[0], element_size);
-	std::memcpy(mapping.at(map_base + element_size), &initial_values[1],
-		element_size);
-	arm64::CpuState cpu{};
-	cpu.registers[2] = map_base;
-	cpu.registers[4] = initial_values[0];
-	cpu.registers[5] = initial_values[1];
-	cpu.registers[6] = replacement_values[0];
-	cpu.registers[7] = replacement_values[1];
-	test::require(mapping.execute(pc, instruction, cpu) ==
-		gadgets::Event::system_call);
-	test::require(cpu.registers[4] == (initial_values[0] & mask));
-	test::require(cpu.registers[5] == (initial_values[1] & mask));
-	std::array<std::uint64_t, 2> actual{};
-	std::memcpy(&actual[0], mapping.at(map_base), element_size);
-	std::memcpy(&actual[1], mapping.at(map_base + element_size), element_size);
-	test::require(actual[0] == (replacement_values[0] & mask));
-	test::require(actual[1] == (replacement_values[1] & mask));
-
-	std::memcpy(mapping.at(map_base), &initial_values[0], element_size);
-	std::memcpy(mapping.at(map_base + element_size), &initial_values[1],
-		element_size);
-	cpu.registers[4] = initial_values[0] ^ 1U;
-	cpu.registers[5] = initial_values[1];
-	test::require(mapping.execute(pc, instruction, cpu) ==
-		gadgets::Event::system_call);
-	test::require(cpu.registers[4] == (initial_values[0] & mask));
-	test::require(cpu.registers[5] == (initial_values[1] & mask));
-}
-
-void exhaustive_gadget_variants_and_reserved()
-{
-	test::StaticMapping mapping{0x3d0'0000, 181,
-		"/private/tmp/uml-base-compare-swap-pair.XXXXXX"};
-	const auto map_base = mapping.guest() +
-		4 * test::StaticMapping::page_size;
-	arm64::CpuState warm{};
-	warm.registers[2] = map_base;
-	warm.registers[3] = initial_values[0];
-	test::require(mapping.execute(pc,
-		test::unsigned_immediate(3, 0, 0, 2, 3), warm) ==
-		gadgets::Event::system_call);
-
-	for (const bool wide : {false, true})
 		for (const bool acquire : {false, true})
 			for (const bool release : {false, true})
-				run_gadget_variant(mapping, map_base,
-					compare_swap_pair(wide, acquire, release, 2, 4, 6),
-					wide ? 8U : 4U);
+				for (const bool succeeds : {false, true})
+					for (const auto registers : {
+						std::array{2U, 4U, 6U},
+						std::array{31U, 4U, 6U},
+						std::array{2U, 30U, 6U},
+						std::array{2U, 4U, 30U},
+						std::array{2U, 4U, 4U},
+						std::array{4U, 4U, 6U},
+					})
+						check_case(harness,
+							atomic::compare_swap_pair(wide, acquire,
+								release, registers[0], registers[1],
+								registers[2]),
+							element_size, registers[0], registers[1],
+							registers[2], succeeds, atomic::lse());
+	}
+
+	for (unsigned compare = 0; compare <= 30; compare += 2)
+		check_case(harness,
+			atomic::compare_swap_pair(true, true, false, 2, compare, 6),
+			8, 2, compare, 6, false, atomic::lse());
+	for (unsigned replacement = 0; replacement <= 30; replacement += 2)
+		check_case(harness,
+			atomic::compare_swap_pair(false, false, true, 2, 4,
+				replacement),
+			4, 2, 4, replacement, true, atomic::lse());
+	for (unsigned base = 0; base < 32; ++base)
+		check_case(harness,
+			atomic::compare_swap_pair(true, true, true, base, 4, 6),
+			8, base, 4, 6, true, atomic::lse());
+}
+
+void unprivileged_variants(engine::EngineHarness &harness)
+{
 	for (const bool acquire : {false, true})
 		for (const bool release : {false, true})
-			run_gadget_variant(mapping, map_base,
-				unprivileged_compare_swap_pair(true, acquire, release,
-					2, 4, 6), 8);
+			for (const bool succeeds : {false, true})
+				for (const auto registers : {
+					std::array{2U, 4U, 6U},
+					std::array{31U, 4U, 6U},
+					std::array{2U, 30U, 6U},
+					std::array{2U, 4U, 30U},
+					std::array{2U, 4U, 4U},
+				})
+					check_case(harness,
+						atomic::unprivileged_compare_swap_pair(true,
+							acquire, release, registers[0], registers[1],
+							registers[2]),
+						8, registers[0], registers[1], registers[2],
+						succeeds, atomic::lsui());
+}
 
-	arm64::CpuState cpu{};
+void invalidates_exclusive_monitor(engine::EngineHarness &harness)
+{
+	atomic::Page page{};
+	put_pair(page, observed_values, 8);
+	const auto memory = atomic::region(page, page);
+	const std::array code{
+		engine::ProgramWord{0, atomic::store_x(28, 26)},
+		engine::ProgramWord{4, atomic::load_x(28, 27)},
+		engine::ProgramWord{8, atomic::pair_exclusive(true, true, false,
+			2, 8, 9)},
+		engine::ProgramWord{12, atomic::compare_swap_pair(true, false,
+			false, 2, 4, 6)},
+		engine::ProgramWord{16, atomic::pair_exclusive(true, false, false,
+			2, 6, 7, 10)},
+		engine::ProgramWord{20, atomic::clrex(4)},
+		engine::ProgramWord{24, atomic::terminal_system_call},
+	};
+	auto initial = atomic::state(31);
+	initial.registers[28] = atomic::data_address;
+	initial.registers[26] = observed_values[0];
+	initial.registers[2] = atomic::data_address;
+	initial.registers[4] = observed_values[0] ^ 1U;
+	initial.registers[5] = observed_values[1];
+	initial.registers[6] = replacement_values[0];
+	initial.registers[7] = replacement_values[1];
+	initial.registers[10] = ~std::uint64_t{0};
+	auto expected = initial;
+	expected.registers[27] = observed_values[0];
+	expected.registers[8] = observed_values[0];
+	expected.registers[9] = observed_values[1];
+	expected.registers[4] = observed_values[0];
+	expected.registers[5] = observed_values[1];
+	expected.registers[10] = 1;
+	atomic::clear_monitor(expected);
+	expected.pc = engine::engine_test_code_base + 28;
+	harness.check_program({
+		.name = "pair compare-and-swap invalidates exclusive monitor",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.native = atomic::lse(),
+		.memory = std::span<const engine::MemoryRegion>{&memory, 1},
+	});
+}
+
+void faults(engine::EngineHarness &harness)
+{
+	atomic::Page page{};
+	put_pair(page, observed_values, 8);
+	const auto unchanged = atomic::region(page, page);
 	for (const bool wide : {false, true}) {
 		const auto element_size = wide ? 8U : 4U;
-		cpu = {};
-		cpu.registers[2] = map_base + element_size;
-		cpu.registers[4] = initial_values[0];
-		cpu.registers[5] = initial_values[1];
-		cpu.registers[6] = replacement_values[0];
-		cpu.registers[7] = replacement_values[1];
-		const auto before = cpu.registers;
-		test::require(mapping.execute(pc,
-			compare_swap_pair(wide, true, true, 2, 4, 6), cpu) ==
-			gadgets::Event::memory_fault);
-		test::require(cpu.pc == pc && cpu.registers == before);
+		auto initial = atomic::state(32);
+		initial.sp = atomic::data_address + 8;
+		initial.registers[4] = observed_values[0];
+		initial.registers[5] = observed_values[1];
+		initial.registers[6] = replacement_values[0];
+		initial.registers[7] = replacement_values[1];
+		harness.check({
+			.name = "pair compare-and-swap SP alignment",
+			.instruction = atomic::compare_swap_pair(wide, true, true,
+				31, 4, 6),
+			.initial = initial,
+			.expected = initial,
+			.event = engine::ExpectedEvent::memory_fault,
+			.native = atomic::lse(),
+			.fault = {
+				.address = atomic::data_address + 8,
+				.access = arm64::MemoryAccess::write,
+			},
+			.compare_fault = true,
+			.memory = std::span<const engine::MemoryRegion>{&unchanged, 1},
+		});
+
+		initial = atomic::state(33);
+		initial.registers[2] = atomic::data_address + element_size;
+		initial.registers[4] = observed_values[0];
+		initial.registers[5] = observed_values[1];
+		initial.registers[6] = replacement_values[0];
+		initial.registers[7] = replacement_values[1];
+		harness.check({
+			.name = "pair compare-and-swap transfer alignment",
+			.instruction = atomic::compare_swap_pair(wide, true, true,
+				2, 4, 6),
+			.initial = initial,
+			.expected = initial,
+			.event = engine::ExpectedEvent::memory_fault,
+			.native = atomic::lse(),
+			.fault = {
+				.address = atomic::data_address + element_size,
+				.access = arm64::MemoryAccess::write,
+			},
+			.compare_fault = true,
+			.memory = std::span<const engine::MemoryRegion>{&unchanged, 1},
+		});
 	}
-	for (const auto instruction : {
-		compare_swap_pair(true, false, false, 2, 5, 6),
-		compare_swap_pair(true, false, false, 2, 4, 7),
-		compare_swap_pair(true, false, false, 2, 4, 6, 30),
-		unprivileged_compare_swap_pair(false, false, false, 2, 4, 6),
-		unprivileged_compare_swap_pair(true, false, false, 2, 5, 6),
-		unprivileged_compare_swap_pair(true, false, false, 2, 4, 7)}) {
-		cpu = {};
-		test::require(mapping.execute(pc, instruction, cpu) ==
-			gadgets::Event::illegal_instruction);
+
+	for (const bool compare_matches : {false, true}) {
+		auto initial = atomic::state(34);
+		initial.registers[2] = atomic::data_address;
+		initial.registers[4] = compare_matches ? observed_values[0] :
+			(observed_values[0] ^ 1U);
+		initial.registers[5] = observed_values[1];
+		initial.registers[6] = replacement_values[0];
+		initial.registers[7] = replacement_values[1];
+		const auto read_only = atomic::region(page, page, true, false);
+		harness.check({
+			.name = "pair compare-and-swap write permission",
+			.instruction = atomic::compare_swap_pair(true, true, true,
+				2, 4, 6),
+			.initial = initial,
+			.expected = initial,
+			.event = engine::ExpectedEvent::memory_fault,
+			.native = atomic::lse(),
+			.fault = {
+				.address = atomic::data_address,
+				.access = arm64::MemoryAccess::write,
+			},
+			.compare_fault = true,
+			.memory = std::span<const engine::MemoryRegion>{&read_only, 1},
+		});
 	}
+}
+
+void allocation(engine::EngineHarness &harness)
+{
+	auto initial = atomic::state(35);
+	initial.registers[2] = atomic::data_address;
+	for (const bool wide : {false, true})
+		for (const bool acquire : {false, true})
+			for (const bool release : {false, true}) {
+				for (const unsigned odd : {1U, 3U, 15U, 29U, 31U}) {
+					harness.check_illegal(
+						"pair compare-and-swap odd compare",
+						atomic::compare_swap_pair(wide, acquire, release,
+							2, odd, 6),
+						initial, atomic::lse());
+					harness.check_illegal(
+						"pair compare-and-swap odd replacement",
+						atomic::compare_swap_pair(wide, acquire, release,
+							2, 4, odd),
+						initial, atomic::lse());
+				}
+				for (const unsigned rt2 : {0U, 1U, 15U, 30U})
+					harness.check_illegal(
+						"pair compare-and-swap reserved Rt2",
+						atomic::compare_swap_pair(wide, acquire, release,
+							2, 4, 6, rt2),
+						initial, atomic::lse());
+			}
+	for (const bool acquire : {false, true})
+		for (const bool release : {false, true}) {
+			harness.check_illegal(
+				"unprivileged pair compare-and-swap reserved width",
+				atomic::unprivileged_compare_swap_pair(false, acquire,
+					release, 2, 4, 6),
+				initial, atomic::lsui());
+			for (const unsigned odd : {1U, 3U, 15U, 29U, 31U}) {
+				harness.check_illegal(
+					"unprivileged pair compare-and-swap odd compare",
+					atomic::unprivileged_compare_swap_pair(true, acquire,
+						release, 2, odd, 6),
+					initial, atomic::lsui());
+				harness.check_illegal(
+					"unprivileged pair compare-and-swap odd replacement",
+					atomic::unprivileged_compare_swap_pair(true, acquire,
+						release, 2, 4, odd),
+					initial, atomic::lsui());
+			}
+		}
 }
 
 } // namespace
 
 int main()
 {
-	exhaustive_interpreter_variants();
-	interpreter_single_copy_atomicity();
-	interpreter_edges_reservations_and_faults();
-	exhaustive_gadget_variants_and_reserved();
+	engine::EngineHarness harness;
+	standard_variants(harness);
+	unprivileged_variants(harness);
+	invalidates_exclusive_monitor(harness);
+	faults(harness);
+	allocation(harness);
+	harness.print_summary("arm64-base-compare-swap-pair");
+	return 0;
 }

@@ -5,89 +5,72 @@ namespace test = arm64_half_matrix_test;
 
 namespace {
 
-[[nodiscard]] test::common::arm64::CpuState empty_state(unsigned seed,
+[[nodiscard]] test::arm64::CpuState empty_state(unsigned seed,
 	std::uint32_t fpcr)
 {
-	auto state = test::common::state(seed);
-	test::clear_vectors(state);
-	state.fpcr = fpcr;
-	state.fpsr = 0;
-	return state;
+	auto cpu = test::state(seed);
+	test::clear_vectors(cpu);
+	cpu.fpcr = fpcr;
+	cpu.fpsr = 0x0800'0000U;
+	return cpu;
 }
 
 } // namespace
 
 int main()
 {
-	test::common::Harness harness;
-	const auto narrow = test::instruction(false);
-	const auto wide = test::instruction(true);
+	test::engine_tests::EngineHarness harness;
+	test::ExpectedCounts counts{};
 
-	auto rounding = empty_state(300, 0U);
-	test::set_half(rounding, 1, 0, 0x3c01U);
-	test::set_half(rounding, 2, 0, 0x3c01U);
-	auto nearest = harness.run_interpreter(narrow, rounding);
-	test::common::require(test::half_lane(nearest, 0, 0) == 0x3c02U);
-	test::common::require((nearest.fpsr & (1U << 4)) != 0U);
-	harness.require_differential(narrow, rounding);
-	rounding.fpcr = 1U << 22;
-	auto plus = harness.run_interpreter(narrow, rounding);
-	test::common::require(test::half_lane(plus, 0, 0) == 0x3c03U);
-	harness.require_differential(narrow, rounding);
+	auto rounding = empty_state(500U, 0U);
+	test::write_half(rounding, 1U, 0U, 0x3c01U);
+	test::write_half(rounding, 2U, 0U, 0x3c01U);
+	test::check(harness, "half-matrix-nearest-rounding",
+		false, {0U, 1U, 2U}, rounding, counts);
+	rounding.fpcr = 1U << 22U;
+	test::check(harness, "half-matrix-upward-rounding",
+		false, {0U, 1U, 2U}, rounding, counts);
 
-	auto nan = empty_state(301, 2U);
-	test::set_half(nan, 1, 0, 0x7e01U);
-	test::set_half(nan, 2, 0, 0x7c02U);
-	auto nan_result = harness.run_interpreter(narrow, nan);
-	test::common::require(test::half_lane(nan_result, 0, 0) == 0x7e01U);
-	test::common::require((nan_result.fpsr & 1U) != 0U);
-	harness.require_differential(narrow, nan);
+	auto nan = empty_state(501U, test::shared::fpcr_ah);
+	test::write_half(nan, 1U, 0U, 0x7e01U);
+	test::write_half(nan, 2U, 0U, 0x7c02U);
+	test::check(harness, "half-matrix-alternative-nan",
+		false, {0U, 1U, 2U}, nan, counts);
 
-	auto flush_half = empty_state(302, 1U << 19);
-	test::set_half(flush_half, 1, 0, 0x0400U);
-	test::set_half(flush_half, 2, 0, 0x3800U);
-	auto standard_flush = harness.run_interpreter(narrow, flush_half);
-	test::common::require(test::half_lane(standard_flush, 0, 0) == 0U);
-	test::common::require((standard_flush.fpsr & ((1U << 3) | (1U << 4))) ==
-		(1U << 3));
-	harness.require_differential(narrow, flush_half);
-	flush_half.fpcr |= 2U;
-	auto alternative_flush = harness.run_interpreter(narrow, flush_half);
-	test::common::require(test::half_lane(alternative_flush, 0, 0) == 0U);
-	test::common::require((alternative_flush.fpsr &
-		((1U << 3) | (1U << 4))) == ((1U << 3) | (1U << 4)));
-	harness.require_differential(narrow, flush_half);
-	auto flush_input = empty_state(306, 2U | (1U << 19));
-	test::set_half(flush_input, 1, 0, 0x0001U);
-	test::set_half(flush_input, 2, 0, 0x7c00U);
-	auto flush_input_result = harness.run_interpreter(narrow, flush_input);
-	test::common::require(test::half_lane(flush_input_result, 0, 0) ==
-		0xfe00U);
-	test::common::require((flush_input_result.fpsr & 1U) != 0U);
-	harness.require_differential(narrow, flush_input);
+	auto flush_half = empty_state(
+		502U, test::shared::fpcr_fz16);
+	test::write_half(flush_half, 1U, 0U, 0x0400U);
+	test::write_half(flush_half, 2U, 0U, 0x3800U);
+	test::check(harness, "half-matrix-standard-half-flush",
+		false, {0U, 1U, 2U}, flush_half, counts);
+	flush_half.fpcr |= test::shared::fpcr_ah;
+	test::check(harness, "half-matrix-alternative-half-flush",
+		false, {0U, 1U, 2U}, flush_half, counts);
 
-	auto fiz = empty_state(303, 1U);
-	test::set_single(fiz, 0, 0, 1U);
-	auto fiz_result = harness.run_interpreter(wide, fiz);
-	test::common::require(test::single_lane(fiz_result, 0, 0) == 0U);
-	test::common::require((fiz_result.fpsr & (1U << 7)) == 0U);
-	harness.require_differential(wide, fiz);
+	auto invalid = empty_state(
+		503U, test::shared::fpcr_ah |
+			test::shared::fpcr_fz16);
+	test::write_half(invalid, 1U, 0U, 1U);
+	test::write_half(invalid, 2U, 0U, 0x7c00U);
+	test::check(harness, "half-matrix-invalid-product",
+		false, {0U, 1U, 2U}, invalid, counts);
 
-	auto ah_fz = empty_state(304, 2U | (1U << 24));
-	test::set_single(ah_fz, 0, 0, 1U);
-	auto ah_fz_result = harness.run_interpreter(wide, ah_fz);
-	test::common::require(test::single_lane(ah_fz_result, 0, 0) == 0U);
-	test::common::require((ah_fz_result.fpsr &
-		((1U << 7) | (1U << 3) | (1U << 4))) ==
-		((1U << 7) | (1U << 3) | (1U << 4)));
-	harness.require_differential(wide, ah_fz);
+	auto fiz = empty_state(504U, test::shared::fpcr_fiz);
+	test::write_single(fiz, 0U, 0U, 1U);
+	test::check(harness, "half-matrix-wide-input-zero",
+		true, {0U, 1U, 2U}, fiz, counts);
+	auto ah_fz = empty_state(505U, test::shared::fpcr_ah |
+		test::shared::fpcr_fz);
+	test::write_single(ah_fz, 0U, 0U, 1U);
+	test::check(harness, "half-matrix-wide-output-flush",
+		true, {0U, 1U, 2U}, ah_fz, counts);
+	auto dot_nan = empty_state(506U, test::shared::fpcr_ah |
+		test::shared::fpcr_dn);
+	test::write_half(dot_nan, 1U, 0U, 0x7c01U);
+	test::write_half(dot_nan, 2U, 0U, test::half(1.0F));
+	test::check(harness, "half-matrix-wide-default-nan",
+		true, {0U, 1U, 2U}, dot_nan, counts);
 
-	auto dot_nan = empty_state(305, 2U | (1U << 25));
-	test::set_half(dot_nan, 1, 0, 0x7c01U);
-	test::set_half(dot_nan, 2, 0, test::half(1.0F));
-	auto dot_nan_result = harness.run_interpreter(wide, dot_nan);
-	test::common::require(test::single_lane(dot_nan_result, 0, 0) ==
-		0xffc0'0000U);
-	test::common::require((dot_nan_result.fpsr & 1U) != 0U);
-	harness.require_differential(wide, dot_nan);
+	test::require_counts(harness, counts);
+	harness.print_summary("arm64-half-matrix-control");
 }

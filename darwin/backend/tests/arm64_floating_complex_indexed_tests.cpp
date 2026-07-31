@@ -6,65 +6,43 @@ namespace test = arm64_floating_complex_test;
 namespace {
 
 template<typename Floating>
-void check_indexed(test::common::Harness &harness, const test::Form &form,
-	unsigned seed)
+void check_form(test::engine_tests::EngineHarness &harness,
+	test::ExpectedCounts &counts, const test::Form &form,
+	unsigned form_index)
 {
-	constexpr test::Registers registers{0, 1, 2};
-	auto initial = test::common::state(seed);
-	const unsigned lanes = form.vector_bytes / sizeof(Floating);
-	const unsigned source_lanes = 16U / sizeof(Floating);
-	for (unsigned lane = 0; lane < lanes; lane += 2U) {
-		test::basic::set_lane(initial, registers.destination, lane,
-			static_cast<Floating>(10));
-		test::basic::set_lane(initial, registers.destination, lane + 1U,
-			static_cast<Floating>(20));
-		test::basic::set_lane(initial, registers.first, lane,
-			static_cast<Floating>(2));
-		test::basic::set_lane(initial, registers.first, lane + 1U,
-			static_cast<Floating>(5));
-	}
-	for (unsigned lane = 0; lane < source_lanes; lane += 2U) {
-		const auto complex = lane / 2U;
-		test::basic::set_lane(initial, registers.second, lane,
-			static_cast<Floating>(3U + complex * 2U));
-		test::basic::set_lane(initial, registers.second, lane + 1U,
-			static_cast<Floating>(4U + complex * 2U));
-	}
-	const auto actual = harness.run_interpreter(
-		test::instruction(form, registers), initial);
-	const auto second_real = static_cast<Floating>(3U + form.index * 2U);
-	const auto second_imaginary = static_cast<Floating>(4U + form.index * 2U);
-	Floating real;
-	Floating imaginary;
-	test::expected_multiply_pair(form.rotation, static_cast<Floating>(10),
-		static_cast<Floating>(20), static_cast<Floating>(2),
-		static_cast<Floating>(5), second_real, second_imaginary,
-		real, imaginary);
-	for (unsigned lane = 0; lane < lanes; lane += 2U) {
-		test::common::require(test::basic::lane_bits<Floating>(actual,
-			registers.destination, lane) ==
-			std::bit_cast<test::basic::FloatingInteger<Floating>>(real));
-		test::common::require(test::basic::lane_bits<Floating>(actual,
-			registers.destination, lane + 1U) ==
-			std::bit_cast<test::basic::FloatingInteger<Floating>>(imaginary));
-	}
-	for (unsigned byte = form.vector_bytes; byte < 16U; ++byte)
-		test::common::require(actual.vectors[registers.destination].bytes[byte] ==
-			std::byte{});
+	constexpr test::Registers registers{0, 1, 18};
+	auto initial = test::state(900U + form_index);
+	initial.fpcr = 0;
+	initial.fpsr = 1U << 27;
+	test::prepare_exact<Floating>(initial, form, registers);
+	char name[192];
+	std::snprintf(name, sizeof(name),
+		"FPSIMD-0067 complex indexed exact form=%u width=%u bytes=%u index=%u rotation=%u",
+		form_index, form.width, form.vector_bytes,
+		form.index, form.rotation);
+	test::check(harness, counts, name, form, registers, initial,
+		test::expected_exact<Floating>(initial, form, registers));
 }
 
 } // namespace
 
 int main()
 {
-	test::common::Harness harness;
-	unsigned seed = 200;
+	test::engine_tests::EngineHarness harness;
+	test::ExpectedCounts expected;
+	unsigned form_index{};
 	test::for_each_form([&](const test::Form &form) {
 		if (!form.by_element)
 			return;
 		if (form.width == 16U)
-			check_indexed<_Float16>(harness, form, ++seed);
+			check_form<_Float16>(
+				harness, expected, form, form_index);
 		else
-			check_indexed<float>(harness, form, ++seed);
+			check_form<float>(
+				harness, expected, form, form_index);
+		++form_index;
 	});
+	test::common::require(form_index == 32U);
+	test::require_counts(harness, expected);
+	harness.print_summary("arm64-floating-complex-indexed");
 }

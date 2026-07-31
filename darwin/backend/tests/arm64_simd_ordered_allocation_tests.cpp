@@ -1,81 +1,115 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_ordered_test_support.hpp"
 
-namespace test = arm64_simd_ordered_test;
-namespace arm64 = uml::backend::arm64;
+#include <array>
+#include <cstdio>
+
+namespace ordered = arm64_simd_ordered_test;
+namespace engine = uml::backend::tests;
 
 namespace {
 
-void every_unscaled_immediate_is_allocated()
+void check_allocated(engine::EngineHarness &harness,
+	const ordered::SimdVariant &variant, int offset, unsigned rn,
+	unsigned rt, std::uint64_t seed)
 {
-	for (const auto &variant : test::variants)
+	auto initial = ordered::seeded_state(seed);
+	ordered::set_base(initial, rn,
+		ordered::unmapped_address -
+			(variant.kind == ordered::SimdKind::unscaled ?
+				static_cast<std::uint64_t>(
+					static_cast<std::int64_t>(offset)) : 0U));
+	char name[128];
+	std::snprintf(name, sizeof(name),
+		"%.*s allocated offset=%d rn=%u rt=%u",
+		static_cast<int>(variant.name.size()), variant.name.data(),
+		offset, rn, rt);
+	harness.check({
+		.name = name,
+		.instruction =
+			ordered::simd_instruction(variant, offset, rn, rt),
+		.initial = initial,
+		.expected = initial,
+		.event = engine::ExpectedEvent::memory_fault,
+		.native = ordered::native(variant),
+		.fault = {
+			.address = ordered::unmapped_address,
+			.access = variant.load ?
+				ordered::arm64::MemoryAccess::read :
+				ordered::arm64::MemoryAccess::write,
+		},
+		.compare_fault = true,
+	});
+}
+
+void every_immediate_and_register_field(engine::EngineHarness &harness)
+{
+	std::uint64_t seed = 0xa100'0000'0000'0000ULL;
+	for (const auto &variant : ordered::simd_unscaled_variants) {
 		for (unsigned imm9 = 0; imm9 < 512U; ++imm9) {
-			test::common::ProbeMemory memory;
-			arm64::CpuState cpu{};
-			test::initialize(cpu);
-			const auto offset = test::common::signed_imm9(imm9);
-			cpu.registers[2] = test::base -
-				static_cast<std::uint64_t>(offset);
-			const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-				test::unscaled(variant.size_code, variant.opc, imm9, 2, 3));
-			test::require(result.reason == arm64::StopReason::continued);
-			test::require(memory.last_address == test::base);
-			test::require(memory.last_size == variant.size);
+			const auto offset = static_cast<int>(
+				static_cast<std::int16_t>(imm9 << 7) >> 7);
+			check_allocated(harness, variant, offset, 2, 3, seed++);
 		}
+		for (unsigned rn = 0; rn < 32U; ++rn)
+			check_allocated(harness, variant, 0, rn, 3, seed++);
+		for (unsigned rt = 0; rt < 32U; ++rt)
+			check_allocated(harness, variant, 0, 2, rt, seed++);
+	}
+	for (const auto &variant : ordered::simd_lane_variants) {
+		for (unsigned rn = 0; rn < 32U; ++rn)
+			check_allocated(harness, variant, 0, rn, 3, seed++);
+		for (unsigned rt = 0; rt < 32U; ++rt)
+			check_allocated(harness, variant, 0, 2, rt, seed++);
+	}
 }
 
-void every_lane_register_encoding_is_allocated()
+void reserved_vector_size_partitions(engine::EngineHarness &harness)
 {
-	for (const bool load : {false, true})
-		for (const bool upper : {false, true})
-			for (unsigned rn = 0; rn < 32U; ++rn)
-				for (unsigned rt = 0; rt < 32U; ++rt) {
-					test::common::ProbeMemory memory;
-					arm64::CpuState cpu{};
-					test::initialize(cpu);
-					if (rn == 31U)
-						cpu.sp = test::base;
-					else
-						cpu.registers[rn] = test::base;
-					const auto result = arm64::Dispatcher{}.execute(cpu, memory,
-						test::lane(load, upper, rn, rt));
-					test::require(result.reason ==
-						arm64::StopReason::continued);
-					test::require(memory.last_address == test::base);
-					test::require(memory.last_size == 8U);
-				}
-}
-
-void reserved_q_combinations_are_early_illegal()
-{
+	const auto initial =
+		ordered::seeded_state(0xa200'0000'0000'0000ULL);
 	for (unsigned size = 1; size < 4U; ++size)
-		for (const unsigned opc : {2U, 3U})
+		for (const unsigned operation : {2U, 3U}) {
 			for (unsigned imm9 = 0; imm9 < 512U; ++imm9) {
-				test::common::ProbeMemory memory;
-				arm64::CpuState cpu{};
-				test::initialize(cpu);
-				const auto before = cpu;
-				const auto instruction =
-					test::unscaled(size, opc, imm9, 31, 31);
-				const auto result = arm64::Dispatcher{}.execute(
-					cpu, memory, instruction);
-				test::require(result.reason ==
-					arm64::StopReason::illegal_instruction);
-				test::require(memory.reads == 0U && memory.writes == 0U);
-				test::require_state_unchanged(cpu, before);
-
-				const std::array stream{instruction, 0xd400'0001U};
-				const auto built = test::gadgets::Builder{}.build(
-					test::pc, stream);
-				test::require(built.complete);
+				const auto instruction = 0x1d00'0800U |
+					(size << 30) | (operation << 22) |
+					(imm9 << 12) | (2U << 5) | 3U;
+				char name[112];
+				std::snprintf(name, sizeof(name),
+					"reserved SIMD ordered size=%u opc=%u imm9=%u",
+					size, operation, imm9);
+				harness.check_illegal(name, instruction, initial,
+					engine::NativeRequirements::features({
+						uml::backend::ArmFeature::floating_point,
+						uml::backend::ArmFeature::lrcpc3,
+					}));
 			}
+			for (unsigned field = 0; field < 32U; ++field) {
+				const auto fixed = 0x1d00'0800U |
+					(size << 30) | (operation << 22);
+				char rn_name[104];
+				std::snprintf(rn_name, sizeof(rn_name),
+					"reserved SIMD ordered size=%u opc=%u rn=%u",
+					size, operation, field);
+				harness.check_illegal(rn_name,
+					fixed | (field << 5) | 3U, initial);
+				char rt_name[104];
+				std::snprintf(rt_name, sizeof(rt_name),
+					"reserved SIMD ordered size=%u opc=%u rt=%u",
+					size, operation, field);
+				harness.check_illegal(rt_name,
+					fixed | (2U << 5) | field, initial);
+			}
+		}
 }
 
 } // namespace
 
 int main()
 {
-	every_unscaled_immediate_is_allocated();
-	every_lane_register_encoding_is_allocated();
-	reserved_q_combinations_are_early_illegal();
+	engine::EngineHarness harness;
+	every_immediate_and_register_field(harness);
+	reserved_vector_size_partitions(harness);
+	harness.print_summary("arm64-simd-ordered-allocation");
+	return 0;
 }

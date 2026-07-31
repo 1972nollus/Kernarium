@@ -44,15 +44,18 @@ RunResult Dispatcher::simd_permute(CpuState &cpu, GuestMemory &,
 				   std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
-		16 : 8;
-	const std::size_t element_size =
-		std::size_t{1} << ((instruction >> 22) & 0x3U);
-	const std::size_t element_count = vector_size / element_size;
-	if (element_count < 2)
+	const bool q = (instruction & 0x4000'0000U) != 0;
+	const unsigned size = (instruction >> 22) & 0x3U;
+	const unsigned opcode = (instruction >> 12) & 0x7U;
+	const bool allocated_operation = opcode == 1U || opcode == 2U ||
+		opcode == 3U || opcode == 5U || opcode == 6U || opcode == 7U;
+	if (!allocated_operation || (!q && size == 3U))
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 
+	const std::size_t vector_size = q ? 16 : 8;
+	const std::size_t element_size = std::size_t{1} << size;
+	const std::size_t element_count = vector_size / element_size;
 	const auto left = cpu.vectors[(instruction >> 5) & 0x1fU].bytes;
 	const auto right = cpu.vectors[(instruction >> 16) & 0x1fU].bytes;
 	std::array<std::byte, 16> result{};
@@ -61,7 +64,6 @@ RunResult Dispatcher::simd_permute(CpuState &cpu, GuestMemory &,
 		std::copy_n(source.begin() + source_index * element_size,
 			element_size, result.begin() + destination * element_size);
 	};
-	const unsigned opcode = (instruction >> 12) & 0x7U;
 	for (std::size_t index = 0; index < element_count / 2; ++index) {
 		switch (opcode) {
 		case 1: // UZP1
@@ -84,9 +86,6 @@ RunResult Dispatcher::simd_permute(CpuState &cpu, GuestMemory &,
 			copy_element(index * 2 + 1, right,
 				index + (opcode == 7 ? element_count / 2 : 0));
 			break;
-		default:
-			return {StopReason::illegal_instruction, address,
-				instruction, 0, false};
 		}
 	}
 	cpu.vectors[instruction & 0x1fU].bytes = result;
@@ -103,14 +102,22 @@ RunResult Dispatcher::simd_table_lookup(CpuState &cpu, GuestMemory &,
 	const unsigned first_table = (instruction >> 5) & 0x1fU;
 	const unsigned table_count = ((instruction >> 13) & 0x3U) + 1;
 	const bool extend = (instruction & 0x1000U) != 0;
-	const auto &indices = cpu.vectors[(instruction >> 16) & 0x1fU].bytes;
-	const auto &old_destination = cpu.vectors[instruction & 0x1fU].bytes;
+	/* Snapshot every architectural input before producing any result. This
+	 * makes destructive aliases and wrapped table lists explicit in the safe
+	 * interpreter path.
+	 */
+	const auto indices = cpu.vectors[(instruction >> 16) & 0x1fU].bytes;
+	const auto old_destination = cpu.vectors[instruction & 0x1fU].bytes;
+	std::array<std::array<std::byte, 16>, 4> tables{};
+	for (unsigned table = 0; table < table_count; ++table)
+		tables[table] =
+			cpu.vectors[(first_table + table) & 0x1fU].bytes;
 	std::array<std::byte, 16> result{};
 	for (std::size_t output = 0; output < vector_size; ++output) {
 		const auto index = std::to_integer<unsigned>(indices[output]);
 		if (index < table_count * 16U) {
-			const unsigned table = (first_table + index / 16) & 0x1fU;
-			result[output] = cpu.vectors[table].bytes[index & 0xfU];
+			result[output] =
+				tables[index / 16U][index & 0xfU];
 		} else if (extend) {
 			result[output] = old_destination[output];
 		}

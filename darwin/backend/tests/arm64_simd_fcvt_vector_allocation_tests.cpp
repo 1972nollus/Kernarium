@@ -1,35 +1,47 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_fcvt_vector_test_support.hpp"
+#include "arm64_floating_precision_conversion_test_support.hpp"
 
-namespace test = arm64_simd_fcvt_vector_test;
-namespace base = arm64_simd_test;
+#include <array>
+#include <cstdio>
+
+namespace test = arm64_floating_precision_conversion_test;
 
 namespace {
 
-void every_pair_half_and_alias()
+[[nodiscard]] constexpr std::uint64_t one(unsigned width) noexcept
 {
-	base::Harness harness;
-	for (const auto shape : test::shapes)
-		for (const bool upper : {false, true})
-			for (const unsigned destination : {28U, 29U}) {
-				auto initial = base::state(shape.source_width + upper + destination);
-				const unsigned count = test::lanes(shape);
-				std::array<std::uint64_t, 4> outputs{};
-				for (unsigned lane = 0; lane < count; ++lane) {
-					test::set_source_lane(initial, 29U, shape, upper, lane,
-						test::scalar::one(shape.source_width));
-					outputs[lane] = test::scalar::one(shape.destination_width);
-				}
-				test::require_result(test::instruction(shape, upper,
-					destination, 29U), shape, upper, destination,
-					std::span{outputs}.first(count), 0U, initial, harness);
-			}
+	return width == 16U ? 0x3c00U :
+		width == 32U ? 0x3f80'0000U :
+			0x3ff0'0000'0000'0000ULL;
+}
+
+void every_vector_form_register_edge_and_alias()
+{
+	test::engine_tests::EngineHarness harness;
+	unsigned seed{};
+	for (const auto form : test::ordinary_forms) {
+		for (const auto registers : test::register_edges) {
+			auto initial = test::state(++seed);
+			const std::array values{one(form.source_width)};
+			test::fill_source(initial, form, registers, values);
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"floating-precision-allocation operation=%u source=%u "
+				"destination=%u upper=%u rd=%u rn=%u",
+				static_cast<unsigned>(form.operation),
+				form.source_width, form.destination_width,
+				static_cast<unsigned>(form.upper),
+				registers.destination, registers.source);
+			test::check(harness, name, form, registers, initial);
+		}
+	}
+	harness.print_summary("arm64-simd-fcvt-vector-allocation");
 }
 
 } // namespace
 
 int main()
 {
-	every_pair_half_and_alias();
+	every_vector_form_register_edge_and_alias();
 	return 0;
 }

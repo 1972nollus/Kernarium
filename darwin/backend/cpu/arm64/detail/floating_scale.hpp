@@ -27,14 +27,11 @@ struct FloatingScale final {
 }
 
 [[nodiscard]] constexpr std::uintptr_t floating_scale_operand(
-	std::uint32_t instruction, const FloatingScale &decoded) noexcept
+	std::uint32_t instruction, const FloatingScale &) noexcept
 {
 	return (instruction & 31U) |
 		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>(decoded.width == 32U ? 1U :
-			decoded.width == 64U ? 2U : 0U) << 24) |
-		(static_cast<std::uintptr_t>(decoded.vector_bytes == 16U) << 26);
+		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
 }
 
 } // namespace uml::backend::arm64::detail

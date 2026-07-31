@@ -20,9 +20,8 @@ namespace {
 		quiet_nan, quiet_nan | sign, signaling_nan, signaling_nan | sign};
 }
 
-void ieee_edges_nan_payloads_and_ah()
+void ieee_edges_nan_payloads_and_ah(test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
 	for (const auto shape : {test::shapes[0], test::shapes[1], test::shapes[2]})
 		for (const auto operation : {test::Operation::absolute,
 		     test::Operation::negate})
@@ -33,15 +32,15 @@ void ieee_edges_nan_payloads_and_ah()
 					initial.fpsr = 0x0800'0090U;
 					fp::write_bits(initial.vectors[29].bytes,
 						shape.lane_bytes, 0U, value);
-					test::require_result(test::instruction(operation, shape,
-						28U, 29U), shape, operation, 28U, 29U,
-						initial, harness);
+					test::check_result(harness, "fabs-fneg-scalar-edge",
+						test::instruction(operation, shape, 28U, 29U),
+						shape, operation, 28U, 29U, initial);
 				}
 }
 
-void nep_merges_old_destination_and_aliases_safely()
+void nep_merges_old_destination_and_aliases_safely(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
 	for (const auto shape : {test::shapes[0], test::shapes[1], test::shapes[2]})
 		for (const auto operation : {test::Operation::absolute,
 		     test::Operation::negate}) {
@@ -50,8 +49,9 @@ void nep_merges_old_destination_and_aliases_safely()
 			initial.fpsr = 0x80U;
 			fp::write_bits(initial.vectors[29].bytes, shape.lane_bytes, 0U,
 				fp::floating_bits(shape.lane_bytes, -3.5));
-			test::require_result(test::instruction(operation, shape, 28U, 29U),
-				shape, operation, 28U, 29U, initial, harness);
+			test::check_result(harness, "fabs-fneg-scalar-merging",
+				test::instruction(operation, shape, 28U, 29U),
+				shape, operation, 28U, 29U, initial);
 
 			auto alias = base::state(91U + shape.lane_bytes);
 			alias.fpcr = 6U;
@@ -63,8 +63,9 @@ void nep_merges_old_destination_and_aliases_safely()
 					0x7ff0'0000'0000'0000ULL;
 			fp::write_bits(alias.vectors[3].bytes, shape.lane_bytes, 0U,
 				infinity | sign | 0x55U);
-			test::require_result(test::instruction(operation, shape, 3U, 3U),
-				shape, operation, 3U, 3U, alias, harness);
+			test::check_result(harness, "fabs-fneg-scalar-alias",
+				test::instruction(operation, shape, 3U, 3U),
+				shape, operation, 3U, 3U, alias);
 		}
 }
 
@@ -72,7 +73,9 @@ void nep_merges_old_destination_and_aliases_safely()
 
 int main()
 {
-	ieee_edges_nan_payloads_and_ah();
-	nep_merges_old_destination_and_aliases_safely();
+	test::engine_tests::EngineHarness harness;
+	ieee_edges_nan_payloads_and_ah(harness);
+	nep_merges_old_destination_and_aliases_safely(harness);
+	harness.print_summary("arm64-simd-fabs-fneg-scalar");
 	return 0;
 }

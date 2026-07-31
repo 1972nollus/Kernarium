@@ -26,6 +26,7 @@ KDE_OVERLAY_COMMANDS = (
     "/home/plasma/Desktop /home/plasma/Documents /home/plasma/Downloads "
     "/home/plasma/Music /home/plasma/Pictures /home/plasma/Public "
     "/home/plasma/Templates /home/plasma/Videos /home/plasma/.config "
+    "/home/plasma/.local/share/pki "
     "/home/plasma/.local/share/Trash/files "
     "/home/plasma/.local/share/Trash/info",
     "printf '%s\\n' "
@@ -57,6 +58,13 @@ KDE_OVERLAY_COMMANDS = (
     "install -d -m 0755 /etc/sddm.conf.d",
     "printf '%s\\n' '[Autologin]' 'User=plasma' 'Session=plasma' "
     "'Relogin=false' > /etc/sddm.conf.d/uml-autologin.conf",
+    # A benchmark must remain visible and continuously rendered after its
+    # warm-up period. Disable Plasma's idle lock in the disposable overlay so
+    # long diagnostic or measurement runs cannot be replaced by the lock
+    # screen.
+    "printf '%s\\n' '[Daemon]' 'Autolock=false' 'LockOnResume=false' "
+    "'Timeout=0' > /home/plasma/.config/kscreenlockerrc; "
+    "chown plasma:plasma /home/plasma/.config/kscreenlockerrc",
 )
 
 
@@ -117,6 +125,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
+    parser.add_argument("--cpus", type=positive_integer, default=10)
+    parser.add_argument(
+        "--engine",
+        choices=("jit", "gadgets", "interpreter"),
+        default="jit",
+    )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
@@ -154,6 +168,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     command.extend(
         (
             "--",
+            f"ncpus={options.cpus}",
+            f"--execution-engine={options.engine}",
             "--gpu",
             f"--gpu-vnc-bind={options.bind}",
             f"--gpu-vnc-port={options.port}",

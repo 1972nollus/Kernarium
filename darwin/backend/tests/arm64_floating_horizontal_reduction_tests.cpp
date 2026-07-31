@@ -5,42 +5,62 @@ namespace test = arm64_floating_horizontal_test;
 
 namespace {
 
-template<typename Floating>
-void check_reduction(test::common::Harness &harness, const test::Form &form,
-	unsigned seed)
-{
-	constexpr test::Registers registers{0, 1, 2};
-	auto initial = test::common::state(seed);
-	const unsigned lanes = form.vector_bytes / sizeof(Floating);
-	for (unsigned lane = 0; lane < lanes; ++lane)
-		test::basic::set_lane(initial, registers.first, lane,
-			static_cast<Floating>(lane % 2U == 0U ? lane + 1.25 : 20.25 - lane));
-	auto expected = static_cast<Floating>(1.25);
-	for (unsigned lane = 1; lane < lanes; ++lane)
-		expected = test::finite_result(form.operation, expected,
-			static_cast<Floating>(lane % 2U == 0U ?
-				lane + 1.25 : 20.25 - lane));
-	const auto actual = harness.run_interpreter(
-		test::instruction(form, registers), initial);
-	test::common::require(test::basic::lane_bits<Floating>(actual,
-		registers.destination, 0) ==
-		std::bit_cast<test::basic::FloatingInteger<Floating>>(expected));
-	for (unsigned byte = sizeof(Floating); byte < 16U; ++byte)
-		test::common::require(actual.vectors[registers.destination].bytes[byte] ==
-			std::byte{});
-}
+constexpr test::Registers registers{0, 1, 2};
 
-void every_reduction_shape_and_operation()
+void every_reduction_uses_balanced_pair_order(
+	test::engine_tests::EngineHarness &harness,
+	test::ExpectedCounts &counts)
 {
-	test::common::Harness harness;
-	unsigned seed = 300;
+	unsigned seed{};
 	test::for_each_form([&](const test::Form &form) {
 		if (form.kind != test::Kind::reduction)
 			return;
-		if (form.width == 16U)
-			check_reduction<_Float16>(harness, form, ++seed);
-		else
-			check_reduction<float>(harness, form, ++seed);
+		auto initial = test::state(100U + seed++);
+		initial.fpcr = 0U;
+		initial.fpsr = test::basic::fpsr_underflow;
+		const auto &format = test::basic::format_bits(form.width);
+		const unsigned lanes = test::source_lanes(form);
+		for (unsigned lane = 0; lane < lanes; ++lane) {
+			const std::array values{
+				format.one, format.four,
+				format.three | format.sign, format.two,
+				format.negative_zero, format.positive_zero,
+				format.maximum_finite, format.one | format.sign};
+			test::set_lane_bits(initial, registers.first, lane,
+				form.width, values[lane]);
+		}
+		test::check_minmax(harness,
+			"across-vector reduction balanced order and scalar zeroing",
+			form, registers, initial, counts);
+	});
+}
+
+void alternate_reduction_order_with_nan_and_zero_pairs(
+	test::engine_tests::EngineHarness &harness,
+	test::ExpectedCounts &counts)
+{
+	unsigned seed{};
+	test::for_each_form([&](const test::Form &form) {
+		if (form.kind != test::Kind::reduction ||
+		    (form.operation != test::Operation::maximum &&
+		     form.operation != test::Operation::minimum))
+			return;
+		auto initial = test::state(500U + seed++);
+		initial.fpcr = 2U;
+		initial.fpsr = 0U;
+		const auto &format = test::basic::format_bits(form.width);
+		const unsigned lanes = test::source_lanes(form);
+		for (unsigned lane = 0; lane < lanes; ++lane) {
+			const auto bits = lane == 0U ? format.quiet_nan :
+				lane == 1U ? format.one :
+				(lane & 1U) == 0U ? format.negative_zero :
+					format.positive_zero;
+			test::set_lane_bits(initial, registers.first, lane,
+				form.width, bits);
+		}
+		test::check_minmax(harness,
+			"alternate reduction follows recursive adjacent pair order",
+			form, registers, initial, counts);
 	});
 }
 
@@ -48,5 +68,10 @@ void every_reduction_shape_and_operation()
 
 int main()
 {
-	every_reduction_shape_and_operation();
+	test::engine_tests::EngineHarness harness;
+	test::ExpectedCounts expected;
+	every_reduction_uses_balanced_pair_order(harness, expected);
+	alternate_reduction_order_with_nan_and_zero_pairs(harness, expected);
+	test::require_counts(harness, expected);
+	harness.print_summary("arm64-floating-horizontal-reduction");
 }

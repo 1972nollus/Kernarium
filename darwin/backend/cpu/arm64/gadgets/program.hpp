@@ -22,6 +22,8 @@ enum class Event : int {
 	interrupt = 3,
 	illegal_instruction = 4,
 	breakpoint = 5,
+	gcs_fault = 6,
+	floating_point_trap = 7,
 };
 
 class Program final {
@@ -59,6 +61,54 @@ struct BuildResult final {
 	bool complete{};
 	std::uint64_t stop_address{};
 	std::uint32_t stop_instruction{};
+};
+
+struct BuildOptions final {
+	/*
+	 * Resolve backward-compatible HINT encodings to NOP and reject the
+	 * non-HINT allocations when the virtual CPU does not expose the base
+	 * extension. Tests default to the complete software implementation;
+	 * production disables it once at translation time.
+	 */
+	bool enable_pointer_authentication{true};
+	/* The production guest profile does not currently expose guarded control
+	 * flow. Tests enable it explicitly so authenticated calls and returns use
+	 * dedicated precompiled entries without adding state checks to the normal
+	 * hot path.
+	 */
+	bool enable_guarded_control_flow{};
+	/* Test and portability validation can force optional checksum operations
+	 * through their precompiled software gadgets. Production leaves this
+	 * false and selects from detected host features.
+	 */
+	bool force_software_checksum{};
+	/* Exercise portable flag-manipulation bodies even on a capable host.
+	 * Production selects native fixed-form gadgets at translation time.
+	 */
+	bool force_software_flags{};
+	/* Exercise portable SIMD logical/rotation bodies while leaving the
+	 * interpreter and JIT portions of a shared conformance case unchanged.
+	 */
+	bool force_software_sha3{};
+	/* Exercise portable fixed-transform bodies on capable hosts. Production
+	 * resolves each optional host family once while translating.
+	 */
+	bool force_software_fixed_transforms{};
+	/* Exercise the portable 128-bit block-transform bodies on a capable
+	 * host. Production selects the native path once at translation time.
+	 */
+	bool force_software_aes{};
+	/* Exercise the portable 64-bit polynomial-multiply gadget even on a host
+	 * with the optional native instruction. Byte forms remain native because
+	 * they are part of baseline AdvSIMD.
+	 */
+	bool force_software_pmull{};
+	/* Exercise the portable integer dot-product bodies on capable hosts.
+	 * Production selects native bodies independently for the ordinary and
+	 * mixed-sign families from detected host features.
+	 */
+	bool force_software_dotprod{};
+	bool force_software_i8mm{};
 };
 
 /* Direct control-flow gadgets load these immutable-layout cells through the
@@ -107,7 +157,8 @@ public:
 		LinkResolver resolve_link = {},
 		std::pmr::memory_resource *storage =
 			std::pmr::get_default_resource(),
-		IndirectLinkResolver resolve_indirect_link = {}) const;
+		IndirectLinkResolver resolve_indirect_link = {},
+		BuildOptions options = {}) const;
 };
 
 [[nodiscard]] Event execute(const Program &program, CpuState &cpu,
@@ -118,5 +169,6 @@ public:
 	const Program &program, CpuState &cpu, Tlb &tlb,
 	std::size_t &executed) noexcept;
 void restore_native_fp_environment(CpuState &cpu) noexcept;
+void restore_native_fpmr_environment(CpuState &cpu) noexcept;
 
 } // namespace uml::backend::arm64::gadgets

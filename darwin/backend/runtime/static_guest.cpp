@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "runtime/static/gadget_executor.hpp"
 #include "runtime/static/guest_memory.hpp"
+#include "runtime/jit/jit_executor.hpp"
+#include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/dispatcher.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_runtime.h"
+#include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
 #include <array>
@@ -24,6 +28,20 @@ constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
 constexpr std::uint64_t svcr_sm = 1U;
 constexpr std::uint64_t svcr_za = 2U;
+constexpr std::uint32_t public_floating_point_flags =
+	DARWIN_UML_FLOATING_POINT_INVALID |
+	DARWIN_UML_FLOATING_POINT_DIVIDE_BY_ZERO |
+	DARWIN_UML_FLOATING_POINT_OVERFLOW |
+	DARWIN_UML_FLOATING_POINT_UNDERFLOW |
+	DARWIN_UML_FLOATING_POINT_INEXACT |
+	DARWIN_UML_FLOATING_POINT_INPUT_DENORMAL;
+static_assert(static_cast<int>(
+		      arm64::gadgets::Event::floating_point_trap) ==
+	      DARWIN_UML_EVENT_FLOATING_POINT_TRAP);
+static_assert(arm64::detail::fpsr_exception_cumulative_mask ==
+	      public_floating_point_flags);
+static_assert(arm64::detail::floating_exception_syndrome(0) ==
+	      DARWIN_UML_FLOATING_POINT_SYNDROME_BASE);
 
 enum class DispatchExit : std::size_t {
 	system_call,
@@ -32,6 +50,7 @@ enum class DispatchExit : std::size_t {
 	budget,
 	illegal_instruction,
 	breakpoint,
+	floating_point_trap,
 	fatal,
 	count,
 };
@@ -75,7 +94,7 @@ void profile_dispatch(DispatchClock::time_point started,
 	std::fprintf(stderr,
 		"Darwin dispatch profile calls=%llu average-us=%.1f max-us=%.1f "
 		"average-instructions=%.1f syscall=%llu fault=%llu interrupt=%llu "
-		"budget=%llu illegal=%llu fatal=%llu\n",
+		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu fatal=%llu\n",
 		static_cast<unsigned long long>(statistics.calls),
 		statistics.nanoseconds / (statistics.calls * 1000.0),
 		statistics.maximum_nanoseconds / 1000.0,
@@ -85,7 +104,9 @@ void profile_dispatch(DispatchClock::time_point started,
 		static_cast<unsigned long long>(statistics.exits[2]),
 		static_cast<unsigned long long>(statistics.exits[3]),
 		static_cast<unsigned long long>(statistics.exits[4]),
-		static_cast<unsigned long long>(statistics.exits[5]));
+		static_cast<unsigned long long>(statistics.exits[5]),
+		static_cast<unsigned long long>(statistics.exits[6]),
+		static_cast<unsigned long long>(statistics.exits[7]));
 }
 
 struct GuestInterruptSequence final {
@@ -107,10 +128,40 @@ GuestInterruptSequence &guest_interrupt_sequence() noexcept
 			interrupt.snapshot;
 }
 
+void ensure_pointer_auth_keys(
+	darwin_uml_guest_registers &registers) noexcept
+{
+	bool uninitialized = true;
+	for (const auto &key : registers.pointer_auth_keys)
+		for (const auto half : key)
+			uninitialized &= half == 0;
+	if (!uninitialized)
+		return;
+
+	arc4random_buf(registers.pointer_auth_keys,
+		       sizeof(registers.pointer_auth_keys));
+	for (std::size_t index = 0;
+	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
+		auto &low = registers.pointer_auth_keys[index][0];
+		auto &high = registers.pointer_auth_keys[index][1];
+		/*
+		 * An all-zero 128-bit key is valid but is also the ABI's
+		 * uninitialized marker. Avoid the vanishingly unlikely collision
+		 * so that task migration cannot regenerate a key.
+		 */
+		if (low == 0 && high == 0) {
+			low = arm64::deterministic_pointer_auth_keys[index].low;
+			high = arm64::deterministic_pointer_auth_keys[index].high;
+		}
+	}
+}
+
 void load_cpu(arm64::CpuState &cpu,
-	      const darwin_uml_guest_registers &registers,
+	      darwin_uml_guest_registers &registers,
 	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls)
 {
+	ensure_pointer_auth_keys(registers);
+	cpu.pointer_authentication_enabled = false;
 	std::copy(std::begin(registers.x), std::end(registers.x),
 		  cpu.registers.begin());
 	cpu.registers[29] = registers.fp;
@@ -126,6 +177,13 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
 	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
 	cpu.fpmr = registers.fpmr;
+	for (std::size_t index = 0;
+	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
+		cpu.pointer_auth_keys[index].low =
+			registers.pointer_auth_keys[index][0];
+		cpu.pointer_auth_keys[index].high =
+			registers.pointer_auth_keys[index][1];
+	}
 	cpu.tls = tls;
 	/* An exception return may clear the local monitor, and the backend has
 	 * no architectural reservation token in uml_pt_regs.  Clear every
@@ -140,6 +198,8 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.exclusive_size = 0;
 	cpu.gadget_zero = 0;
 	cpu.gadget_indirect_miss = nullptr;
+	cpu.gadget_host_fpmr = 0;
+	cpu.gadget_fpmr_active = false;
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 
@@ -166,12 +226,28 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.svcr =
 		(cpu.pstate_sm ? svcr_sm : 0U) |
 		(cpu.pstate_za ? svcr_za : 0U);
+	for (std::size_t index = 0;
+	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
+		registers.pointer_auth_keys[index][0] =
+			cpu.pointer_auth_keys[index].low;
+		registers.pointer_auth_keys[index][1] =
+			cpu.pointer_auth_keys[index].high;
+	}
 	tls = static_cast<unsigned long>(cpu.tls);
 	if (cpu.fp_dirty) {
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
 		fp.fpsr = cpu.fpsr;
 		fp.fpcr = cpu.fpcr;
 	}
+}
+
+void save_floating_point_trap(
+	darwin_uml_guest_registers &registers, std::uint64_t address,
+	std::uint32_t syndrome) noexcept
+{
+	registers.fault.error_code = static_cast<std::int32_t>(syndrome);
+	registers.fault.address = address;
+	registers.fault.trap_number = 0;
 }
 
 [[nodiscard]] bool prepare_signal_return(arm64::CpuState &cpu) noexcept
@@ -211,12 +287,92 @@ private:
 struct GuestThreadRuntime final {
 	arm64::CpuState cpu{};
 	StaticGuestMemory memory;
-	GadgetExecutor executor;
+	GadgetExecutor executor{arm64::gadgets::BuildOptions{
+		.enable_pointer_authentication = false,
+	}};
+};
+
+class InterpreterExecutionScope final {
+public:
+	InterpreterExecutionScope(unsigned long generation, std::uint64_t guest_pc)
+		: generation_{generation},
+		  context_{
+			darwin_uml_static_vm_execution_context_create(generation)}
+	{
+		entered_ = context_ != nullptr &&
+			darwin_uml_static_vm_execution_context_begin(
+				context_, guest_pc) == 0;
+	}
+
+	~InterpreterExecutionScope()
+	{
+		if (entered_)
+			(void)darwin_uml_static_vm_execution_context_end(context_);
+		darwin_uml_static_vm_execution_context_destroy(context_);
+	}
+
+	InterpreterExecutionScope(const InterpreterExecutionScope &) = delete;
+	InterpreterExecutionScope &operator=(const InterpreterExecutionScope &) =
+		delete;
+
+	[[nodiscard]] bool entered() const noexcept { return entered_; }
+	[[nodiscard]] darwin_uml_static_sequences sequences() const noexcept
+	{
+		return darwin_uml_static_vm_execution_context_sequences(context_);
+	}
+	[[nodiscard]] unsigned long generation() const noexcept
+	{
+		return generation_;
+	}
+
+private:
+	unsigned long generation_;
+	void *context_{};
+	bool entered_{};
+};
+
+class JitExecutionScope final {
+public:
+	JitExecutionScope(JitExecutor &executor, unsigned long generation,
+			  std::uint64_t guest_pc)
+		: executor_{executor},
+		  entered_{executor.begin_execution(generation, guest_pc)}
+	{
+	}
+
+	~JitExecutionScope()
+	{
+		if (entered_)
+			executor_.end_execution();
+	}
+
+	JitExecutionScope(const JitExecutionScope &) = delete;
+	JitExecutionScope &operator=(const JitExecutionScope &) = delete;
+
+	[[nodiscard]] bool entered() const noexcept { return entered_; }
+
+private:
+	JitExecutor &executor_;
+	bool entered_{};
 };
 
 GuestThreadRuntime &guest_thread_runtime()
 {
 	static thread_local GuestThreadRuntime runtime;
+	return runtime;
+}
+
+struct JitThreadRuntime final {
+	arm64::CpuState cpu{};
+	StaticGuestMemory memory;
+	JitExecutor executor{JitExecutorOptions{
+		.enable_pointer_authentication = false,
+	}};
+};
+
+JitThreadRuntime &jit_thread_runtime()
+{
+	static thread_local JitThreadRuntime runtime;
 	return runtime;
 }
 
@@ -229,6 +385,237 @@ extern "C" void darwin_uml_static_guest_interrupt_sequence(
 	auto &interrupt = uml::backend::guest_interrupt_sequence();
 	interrupt.sequence = sequence;
 	interrupt.snapshot = snapshot;
+}
+
+extern "C" int darwin_uml_interpreter_enter_guest(
+	void *register_pointer, void *fp_pointer, unsigned long fp_size,
+	unsigned long generation, unsigned long *tls)
+{
+	if (register_pointer == nullptr || fp_pointer == nullptr || tls == nullptr ||
+	    fp_size < sizeof(darwin_uml_guest_fp_registers))
+		return DARWIN_UML_EVENT_FATAL;
+	auto &registers = *static_cast<darwin_uml_guest_registers *>(
+		register_pointer);
+	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
+	if (registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
+		registers.x[8] = DARWIN_UML_NR_RT_SIGRETURN;
+		registers.pc += sizeof(std::uint32_t);
+		return DARWIN_UML_EVENT_SYSCALL;
+	}
+	/* The reference path is intentionally strict: malformed architectural
+	 * state is diagnosed here instead of becoming an obscure host fault.
+	 */
+	if ((registers.pc & (alignof(std::uint32_t) - 1U)) != 0)
+		return DARWIN_UML_EVENT_FATAL;
+
+	auto &runtime = uml::backend::guest_thread_runtime();
+	auto &cpu = runtime.cpu;
+	auto &memory = runtime.memory;
+	uml::backend::load_cpu(cpu, registers, fp, *tls);
+	/* The strict interpreter may reach any FP/SIMD instruction without a
+	 * translated-program metadata bit to trigger the deferred import. */
+	cpu.access_fp_state();
+	uml::backend::InterpreterExecutionScope execution{generation, cpu.pc};
+	if (!execution.entered())
+		return DARWIN_UML_EVENT_FATAL;
+	auto sequences = execution.sequences();
+	memory.prepare(generation, sequences.mapping_changes);
+	const auto dispatch_started = uml::backend::DispatchClock::now();
+	std::size_t instructions = 0;
+	const uml::backend::arm64::Dispatcher dispatcher;
+	for (;;) {
+		sequences = execution.sequences();
+		if (uml::backend::guest_interrupt_pending() ||
+		    sequences.execution_interrupt != 0 ||
+		    instructions == uml::backend::dispatch_budget) {
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::interrupt);
+			return DARWIN_UML_EVENT_INTERRUPT;
+		}
+		const auto result = dispatcher.step(cpu, memory);
+		instructions += result.instructions;
+		if (uml::backend::prepare_signal_return(cpu)) {
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::system_call);
+			return DARWIN_UML_EVENT_SYSCALL;
+		}
+		if (result.reason == uml::backend::arm64::StopReason::continued)
+			continue;
+
+		uml::backend::save_cpu(cpu, registers, fp, *tls);
+		switch (result.reason) {
+		case uml::backend::arm64::StopReason::system_call:
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::system_call);
+			return DARWIN_UML_EVENT_SYSCALL;
+		case uml::backend::arm64::StopReason::memory_fault: {
+			const auto fault = memory.last_fault();
+			registers.fault.error_code =
+				fault.access == uml::backend::arm64::MemoryAccess::write ?
+					DARWIN_UML_FAULT_WRITE : 0;
+			registers.fault.address = fault.address;
+			registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::memory_fault);
+			return DARWIN_UML_EVENT_FAULT;
+		}
+		case uml::backend::arm64::StopReason::gcs_fault:
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::memory_fault);
+			return DARWIN_UML_EVENT_GCS_FAULT;
+		case uml::backend::arm64::StopReason::illegal_instruction:
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::illegal_instruction);
+			return DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
+		case uml::backend::arm64::StopReason::breakpoint:
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::breakpoint);
+			return DARWIN_UML_EVENT_BREAKPOINT;
+		case uml::backend::arm64::StopReason::floating_point_trap:
+			uml::backend::save_floating_point_trap(
+				registers, result.address, result.syndrome);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::floating_point_trap);
+			return DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
+		case uml::backend::arm64::StopReason::budget_exhausted:
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::budget);
+			return DARWIN_UML_EVENT_INTERRUPT;
+		case uml::backend::arm64::StopReason::unsupported_instruction:
+			std::fprintf(stderr,
+				"Darwin interpreter unsupported instruction pc=%#llx value=%#x\n",
+				static_cast<unsigned long long>(result.address),
+				result.instruction);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::fatal);
+			return DARWIN_UML_EVENT_FATAL;
+		case uml::backend::arm64::StopReason::continued:
+			break;
+		}
+		return DARWIN_UML_EVENT_FATAL;
+	}
+}
+
+extern "C" int darwin_uml_jit_available(void)
+{
+	return uml::backend::native_jit_available() ? 1 : 0;
+}
+
+extern "C" int darwin_uml_jit_enter_guest(
+	void *register_pointer, void *fp_pointer, unsigned long fp_size,
+	unsigned long generation, unsigned long *tls)
+{
+	if (register_pointer == nullptr || fp_pointer == nullptr || tls == nullptr ||
+	    fp_size < sizeof(darwin_uml_guest_fp_registers) ||
+	    !uml::backend::native_jit_available())
+		return DARWIN_UML_EVENT_FATAL;
+	auto &registers = *static_cast<darwin_uml_guest_registers *>(
+		register_pointer);
+	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
+	if (registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
+		registers.x[8] = DARWIN_UML_NR_RT_SIGRETURN;
+		registers.pc += sizeof(std::uint32_t);
+		return DARWIN_UML_EVENT_SYSCALL;
+	}
+
+	auto &runtime = uml::backend::jit_thread_runtime();
+	auto &cpu = runtime.cpu;
+	auto &memory = runtime.memory;
+	auto &executor = runtime.executor;
+	uml::backend::load_cpu(cpu, registers, fp, *tls);
+	/*
+	 * Generated blocks can mix native instructions with reference fallbacks.
+	 * Materialize the deferred kernel frame before either path can observe
+	 * vectors.  Native-block metadata will make this lazy again once every
+	 * FP/SIMD family has a direct emitter.
+	 */
+	cpu.access_fp_state();
+	uml::backend::JitExecutionScope execution{
+		executor, generation, cpu.pc};
+	if (!execution.entered())
+		return DARWIN_UML_EVENT_FATAL;
+	const auto dispatch_started = uml::backend::DispatchClock::now();
+	std::size_t instructions = 0;
+	for (;;) {
+		if (uml::backend::guest_interrupt_pending()) {
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::interrupt);
+			return DARWIN_UML_EVENT_INTERRUPT;
+		}
+		std::size_t block_instructions = 0;
+		const auto event = executor.run_block(
+			cpu, memory, generation, block_instructions);
+		instructions += block_instructions;
+		if (executor.preempted()) {
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::interrupt);
+			return DARWIN_UML_EVENT_INTERRUPT;
+		}
+		if (uml::backend::prepare_signal_return(cpu)) {
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::system_call);
+			return DARWIN_UML_EVENT_SYSCALL;
+		}
+		switch (event) {
+		case uml::backend::arm64::gadgets::Event::system_call:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::system_call);
+			return DARWIN_UML_EVENT_SYSCALL;
+		case uml::backend::arm64::gadgets::Event::memory_fault:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			registers.fault.error_code =
+				executor.fault_access() ==
+					uml::backend::arm64::gadgets::Access::write ?
+					DARWIN_UML_FAULT_WRITE : 0;
+			registers.fault.address = executor.fault_address();
+			registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::memory_fault);
+			return DARWIN_UML_EVENT_FAULT;
+		case uml::backend::arm64::gadgets::Event::gcs_fault:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::memory_fault);
+			return DARWIN_UML_EVENT_GCS_FAULT;
+		case uml::backend::arm64::gadgets::Event::continued:
+		case uml::backend::arm64::gadgets::Event::interrupt:
+			if (instructions < uml::backend::dispatch_budget)
+				continue;
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::budget);
+			return DARWIN_UML_EVENT_INTERRUPT;
+		case uml::backend::arm64::gadgets::Event::illegal_instruction:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::illegal_instruction);
+			return DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
+		case uml::backend::arm64::gadgets::Event::breakpoint:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::breakpoint);
+			return DARWIN_UML_EVENT_BREAKPOINT;
+		case uml::backend::arm64::gadgets::Event::floating_point_trap:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::save_floating_point_trap(
+				registers, cpu.pc,
+				executor.floating_point_syndrome());
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::floating_point_trap);
+			return DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
+		case uml::backend::arm64::gadgets::Event::fatal:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started, instructions,
+				uml::backend::DispatchExit::fatal);
+			return DARWIN_UML_EVENT_FATAL;
+		}
+	}
 }
 
 extern "C" int darwin_uml_static_enter_guest(
@@ -310,6 +697,12 @@ extern "C" int darwin_uml_static_enter_guest(
 				gadget_instructions,
 				uml::backend::DispatchExit::memory_fault);
 			return DARWIN_UML_EVENT_FAULT;
+		case uml::backend::arm64::gadgets::Event::gcs_fault:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::profile_dispatch(dispatch_started,
+				gadget_instructions,
+				uml::backend::DispatchExit::memory_fault);
+			return DARWIN_UML_EVENT_GCS_FAULT;
 		case uml::backend::arm64::gadgets::Event::interrupt:
 		case uml::backend::arm64::gadgets::Event::continued:
 			if (gadget_instructions < uml::backend::dispatch_budget)
@@ -331,6 +724,15 @@ extern "C" int darwin_uml_static_enter_guest(
 				gadget_instructions,
 				uml::backend::DispatchExit::breakpoint);
 			return DARWIN_UML_EVENT_BREAKPOINT;
+		case uml::backend::arm64::gadgets::Event::floating_point_trap:
+			uml::backend::save_cpu(cpu, registers, fp, *tls);
+			uml::backend::save_floating_point_trap(
+				registers, cpu.pc,
+				executor.floating_point_syndrome());
+			uml::backend::profile_dispatch(dispatch_started,
+				gadget_instructions,
+				uml::backend::DispatchExit::floating_point_trap);
+			return DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		case uml::backend::arm64::gadgets::Event::fatal:
 			uml::backend::save_cpu(cpu, registers, fp, *tls);
 			uml::backend::profile_dispatch(dispatch_started,

@@ -1,69 +1,66 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_fcvt_precision_test_support.hpp"
 
-#include <array>
+#include <cstdio>
 
 namespace test = arm64_simd_fcvt_precision_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-struct Pair final {
-	unsigned source;
-	unsigned destination;
-};
-
-constexpr std::array pairs{
-	Pair{16U, 32U}, Pair{16U, 64U}, Pair{32U, 16U},
-	Pair{32U, 64U}, Pair{64U, 16U}, Pair{64U, 32U},
-};
-
-void every_precision_pair_and_nep_mode()
+void every_precision_pair_register_field_alias_and_merge_mode(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
-	for (const auto pair : pairs)
-		for (const bool merge : {false, true}) {
-			auto initial = base::state(pair.source + pair.destination + merge);
-			initial.fpcr = merge ? 4U : 0U;
-			initial.fpsr = 0x0800'0090U;
-			test::set_source(initial, 29U, pair.source, test::one(pair.source));
-			test::require_result(test::instruction(pair.source,
-				pair.destination, 28U, 29U), pair.destination, 28U,
-				test::one(pair.destination), 0U, initial, harness);
-		}
+	unsigned seed{};
+	for (const auto pair : test::pairs)
+		for (const bool merge : {false, true})
+			for (unsigned destination = 0U; destination < 32U;
+			     ++destination)
+				for (unsigned source = 0U; source < 32U; ++source) {
+					auto initial = test::state(++seed);
+					initial.fpcr = merge ?
+						test::oracle::fpcr_nep : 0U;
+					initial.fpsr = 0x0800'0090U;
+					test::set_source(initial, source,
+						pair.source_width,
+						test::one(pair.source_width));
+					char name[192];
+					std::snprintf(name, sizeof(name),
+						"scalar-precision-allocation source=%u "
+						"destination=%u merge=%u rd=%u rn=%u",
+						pair.source_width,
+						pair.destination_width,
+						static_cast<unsigned>(merge),
+						destination, source);
+					test::check(harness, name, pair,
+						{destination, source}, initial);
+				}
 }
 
-void destination_can_alias_source()
+void every_reserved_type_pair_and_register_field_is_illegal(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
-	for (const auto pair : pairs) {
-		auto initial = base::state(pair.source * 3U + pair.destination);
-		initial.fpsr = 0x10U;
-		test::set_source(initial, 29U, pair.source, test::one(pair.source));
-		test::require_result(test::instruction(pair.source, pair.destination,
-			29U, 29U), pair.destination, 29U, test::one(pair.destination),
-			0U, initial, harness);
-	}
-}
-
-void every_reserved_type_pair_is_early_illegal()
-{
-	base::Harness harness;
-	for (unsigned source_type = 0; source_type < 4U; ++source_type)
-		for (unsigned destination_type = 0; destination_type < 4U;
-		     ++destination_type) {
-			/* ftype=01/opcode type=10 is not a reserved scalar FCVT pair:
-			 * FEAT_BF16 assigns the complete allocation to BFCVT. */
-			if (source_type == 1U && destination_type == 2U)
+	unsigned seed = 0x10000U;
+	for (unsigned source_type = 0U; source_type < 4U; ++source_type)
+		for (unsigned destination_type = 0U;
+		     destination_type < 4U; ++destination_type) {
+			if (test::valid_type_pair(source_type, destination_type) ||
+			    test::belongs_to_bfloat_conversion(source_type,
+				    destination_type))
 				continue;
-			const bool valid = source_type != 2U && destination_type != 2U &&
-				source_type != destination_type;
-			if (valid)
-				continue;
-			const auto encoded = 0x1e22'4000U | (source_type << 22) |
-				(destination_type << 15) | (29U << 5) | 28U;
-			harness.require_illegal(encoded,
-				base::state(source_type * 4U + destination_type));
+			for (unsigned destination = 0U; destination < 32U;
+			     ++destination)
+				for (unsigned source = 0U; source < 32U; ++source) {
+					auto initial = test::state(++seed);
+					char name[192];
+					std::snprintf(name, sizeof(name),
+						"scalar-precision-reserved source-type=%u "
+						"destination-type=%u rd=%u rn=%u",
+						source_type, destination_type,
+						destination, source);
+					test::check_illegal(harness, name,
+						source_type, destination_type,
+						{destination, source}, initial);
+				}
 		}
 }
 
@@ -71,8 +68,9 @@ void every_reserved_type_pair_is_early_illegal()
 
 int main()
 {
-	every_precision_pair_and_nep_mode();
-	destination_can_alias_source();
-	every_reserved_type_pair_is_early_illegal();
+	test::engine_tests::EngineHarness harness;
+	every_precision_pair_register_field_alias_and_merge_mode(harness);
+	every_reserved_type_pair_and_register_field_is_illegal(harness);
+	harness.print_summary("arm64-simd-fcvt-precision-allocation");
 	return 0;
 }

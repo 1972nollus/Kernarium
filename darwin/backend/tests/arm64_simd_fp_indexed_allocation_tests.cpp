@@ -1,64 +1,150 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_fp_indexed_test_support.hpp"
-#include "cpu/arm64/detail/half_dot.hpp"
+
+#include <array>
+#include <cstdlib>
+#include <limits>
 
 namespace test = arm64_simd_fp_indexed_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-void every_allocated_shape_and_index()
+[[nodiscard]] unsigned pick_register(unsigned limit, unsigned first,
+	unsigned second = std::numeric_limits<unsigned>::max())
 {
-	base::Harness harness;
-	for (const auto operation : {test::Operation::fmla, test::Operation::fmls,
-	     test::Operation::fmul, test::Operation::fmulx})
+	for (unsigned reg = 0; reg < limit; ++reg)
+		if (reg != first && reg != second)
+			return reg;
+	std::abort();
+}
+
+[[nodiscard]] test::Registers destination_case(const test::Shape &shape,
+	unsigned destination)
+{
+	const auto left = pick_register(32U, destination);
+	return {destination, left,
+		pick_register(test::element_registers(shape), destination, left)};
+}
+
+[[nodiscard]] test::Registers left_case(const test::Shape &shape,
+	unsigned left)
+{
+	const auto destination = pick_register(32U, left);
+	return {destination, left,
+		pick_register(test::element_registers(shape), destination, left)};
+}
+
+[[nodiscard]] test::Registers element_case(unsigned element)
+{
+	const auto destination = pick_register(32U, element);
+	return {destination, pick_register(32U, destination, element), element};
+}
+
+void check_valid(test::engine_tests::EngineHarness &harness,
+	test::Operation operation, const test::Shape &shape,
+	test::Registers registers, unsigned index, unsigned seed)
+{
+	auto initial = test::state(seed);
+	test::prepare_exact_inputs(initial, shape, registers, index);
+	test::check_exact(harness, "fp-indexed-valid-allocation", operation,
+		shape, registers, index, initial);
+}
+
+void every_register_field_shape_and_index(
+	test::engine_tests::EngineHarness &harness)
+{
+	unsigned seed = 1000U;
+	for (const auto operation : test::operations)
 		for (const auto shape : test::shapes)
 			for (unsigned index = 0; index < shape.indexes; ++index) {
-				auto initial = base::state(index + shape.size * 13U +
-					static_cast<unsigned>(operation));
-				const auto one = test::floating_bits(shape.lane_bytes, 1.0);
-				test::fill_bits(initial.vectors[28].bytes,
-					shape.lane_bytes, one);
-				test::fill_bits(initial.vectors[29].bytes,
-					shape.lane_bytes, one);
-				test::fill_bits(initial.vectors[shape.size == 0U ? 13U : 19U].bytes,
-					shape.lane_bytes, one);
-				harness.require_differential(test::instruction(operation, shape,
-					28U, 29U, shape.size == 0U ? 13U : 19U, index), initial);
+				for (unsigned destination = 0; destination < 32U;
+				     ++destination)
+					check_valid(harness, operation, shape,
+						destination_case(shape, destination),
+						index, ++seed);
+				for (unsigned left = 0; left < 32U; ++left)
+					check_valid(harness, operation, shape,
+						left_case(shape, left), index, ++seed);
+				for (unsigned element = 0;
+				     element < test::element_registers(shape);
+				     ++element)
+					check_valid(harness, operation, shape,
+						element_case(element), index, ++seed);
+
+				const std::array aliases{
+					test::Registers{3U, 3U, 4U},
+					test::Registers{3U, 4U, 3U},
+					test::Registers{3U, 4U, 4U},
+					test::Registers{3U, 3U, 3U},
+					test::Registers{31U, 30U,
+						shape.size == 0U ? 15U : 29U},
+				};
+				for (const auto registers : aliases)
+					check_valid(harness, operation, shape,
+						registers, index, ++seed);
 			}
 }
 
-void reserved_sizes_and_indices_are_early_illegal()
+[[nodiscard]] std::uint32_t size_one_instruction(test::Operation operation,
+	bool scalar, bool q, unsigned raw_index)
 {
-	base::Harness harness;
-	for (const auto operation : {test::Operation::fmla, test::Operation::fmls,
-	     test::Operation::fmul, test::Operation::fmulx}) {
-		for (const bool scalar : {false, true})
-			for (const bool q : {false, true}) {
-				const test::Shape reserved{1U, 2U, 0U, scalar, q};
-				const auto encoded = test::instruction(operation, reserved,
-					28U, 29U, 13U, 0U);
-				/* FEAT_F16F32DOT allocated the vector size=01 FMUL
-				 * slot that older revisions reserved. */
-				if (base::arm64::detail::decode_half_dot(encoded).recognized)
-					harness.require_differential(encoded, base::state(41U));
-				else
-					harness.require_illegal(encoded, base::state(41U));
-			}
-		const test::Shape double_short{3U, 8U, 2U, false, false};
-		harness.require_illegal(test::instruction(operation, double_short,
-			28U, 29U, 19U, 0U), base::state(42U));
-		const test::Shape double_wide{3U, 8U, 2U, false, true};
-		harness.require_illegal(test::instruction(operation, double_wide,
-			28U, 29U, 19U, 0U) | 0x0020'0000U, base::state(43U));
-	}
+	const test::Shape reserved{1U, 2U, 0U, scalar, q};
+	auto encoded = test::instruction(operation, reserved, 28U, 29U, 13U, 0U);
+	encoded |= (raw_index & 1U) << 20;
+	encoded |= (raw_index & 2U) << 20;
+	encoded |= (raw_index & 4U) << 9;
+	return encoded;
+}
+
+void every_reserved_shape_is_rejected_at_translation(
+	test::engine_tests::EngineHarness &harness)
+{
+	unsigned seed = 20'000U;
+	for (const auto operation : test::operations)
+		for (unsigned raw_index = 0; raw_index < 8U; ++raw_index)
+			harness.check_illegal("fp-indexed-reserved-scalar-size",
+				size_one_instruction(operation, true, true, raw_index),
+				test::state(++seed));
+
+	for (const auto operation :
+	     {test::Operation::fmla, test::Operation::fmls,
+	      test::Operation::fmulx})
+		for (const bool q : {false, true})
+			for (unsigned raw_index = 0; raw_index < 8U; ++raw_index)
+				harness.check_illegal(
+					"fp-indexed-reserved-vector-size",
+					size_one_instruction(operation, false, q,
+						raw_index),
+					test::state(++seed));
+
+	const test::Shape short_double{3U, 8U, 2U, false, false};
+	for (const auto operation : test::operations)
+		for (unsigned index = 0; index < 2U; ++index)
+			harness.check_illegal("fp-indexed-reserved-short-double",
+				test::instruction(operation, short_double, 28U, 29U,
+					19U, index),
+				test::state(++seed));
+
+	for (const auto operation : test::operations)
+		for (const auto shape : {test::shapes[6], test::shapes[7]})
+			for (unsigned index = 0; index < 2U; ++index)
+				harness.check_illegal(
+					"fp-indexed-reserved-double-index",
+					test::instruction(operation, shape, 28U, 29U,
+						19U, index) |
+						0x0020'0000U,
+					test::state(++seed));
 }
 
 } // namespace
 
 int main()
 {
-	every_allocated_shape_and_index();
-	reserved_sizes_and_indices_are_early_illegal();
+	test::engine_tests::EngineHarness harness;
+	every_register_field_shape_and_index(harness);
+	every_reserved_shape_is_rejected_at_translation(harness);
+	test::base::require(harness.counts().interpreter == 14'728U);
+	test::base::require(harness.counts().gadgets == 14'728U);
+	harness.print_summary("arm64-simd-fp-indexed-allocation");
 	return 0;
 }

@@ -41,6 +41,20 @@ RunResult Dispatcher::add_sub_register(CpuState &cpu, GuestMemory &,
 	const bool subtract = (instruction & 0x4000'0000U) != 0;
 	const bool set_flags = (instruction & 0x2000'0000U) != 0;
 	const bool extended = (instruction & 0x0020'0000U) != 0;
+	const unsigned shift = (instruction >> 10) &
+		(extended ? 0x7U : 0x3fU);
+	const unsigned shift_type = (instruction >> 22) & 0x3U;
+	const unsigned width = is_64_bit ? 64U : 32U;
+	/*
+	 * Reject unallocated fields before observing any operand state.  The
+	 * interpreter is the diagnostic path, so invalid input should stop at
+	 * decode rather than flowing through a partial execution.
+	 */
+	if ((extended && shift > 4U) ||
+	    (!extended && (shift_type == 3U || shift >= width)))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+
 	const auto mask = width_mask(is_64_bit);
 	const auto left = cpu.read_register((instruction >> 5) & 0x1fU,
 		extended) & mask;
@@ -48,10 +62,6 @@ RunResult Dispatcher::add_sub_register(CpuState &cpu, GuestMemory &,
 		(instruction >> 16) & 0x1fU, false);
 	if (extended) {
 		const unsigned option = (instruction >> 13) & 0x7U;
-		const unsigned shift = (instruction >> 10) & 0x7U;
-		if (shift > 4)
-			return {StopReason::unsupported_instruction, address,
-				instruction, 0, false};
 		const unsigned source_width = 8U << (option & 0x3U);
 		const auto source_mask = source_width == 64 ? ~std::uint64_t{0} :
 			(std::uint64_t{1} << source_width) - 1;
@@ -61,12 +71,6 @@ RunResult Dispatcher::add_sub_register(CpuState &cpu, GuestMemory &,
 			right |= ~source_mask;
 		right = (right << shift) & mask;
 	} else {
-		const unsigned shift_type = (instruction >> 22) & 0x3U;
-		const unsigned shift = (instruction >> 10) & 0x3fU;
-		const unsigned width = is_64_bit ? 64 : 32;
-		if (shift_type == 3 || shift >= width)
-			return {StopReason::unsupported_instruction, address,
-				instruction, 0, false};
 		right &= mask;
 		if (shift_type == 0)
 			right = (right << shift) & mask;
@@ -129,6 +133,14 @@ RunResult Dispatcher::conditional_select(CpuState &cpu, GuestMemory &,
 					 std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	/*
+	 * Keep the diagnostic interpreter self-contained: reject every fixed or
+	 * reserved field before reading architectural state, even if a future
+	 * caller reaches this handler without the top-level decode table.
+	 */
+	if ((instruction & 0x3fe0'0800U) != 0x1a80'0000U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const bool is_64_bit = (instruction >> 31) != 0;
 	const auto mask = width_mask(is_64_bit);
 	const unsigned condition = (instruction >> 12) & 0xfU;
@@ -155,6 +167,9 @@ RunResult Dispatcher::conditional_compare(CpuState &cpu, GuestMemory &,
 					  std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	if ((instruction & 0x3fe0'0410U) != 0x3a40'0000U)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const bool is_64_bit = (instruction >> 31) != 0;
 	if (condition_holds(cpu.nzcv, (instruction >> 12) & 0xfU)) {
 		const auto mask = width_mask(is_64_bit);
@@ -188,33 +203,54 @@ RunResult Dispatcher::multiply_add(CpuState &cpu, GuestMemory &,
 	      (instruction & 0x0000'8000U) != 0)))
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
+	const unsigned destination = instruction & 0x1fU;
+	if (destination == 31U) {
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
 	const auto mask = width_mask(is_64_bit);
 	const auto left = cpu.read_register((instruction >> 5) & 0x1fU, false) &
 		mask;
 	const auto right = cpu.read_register((instruction >> 16) & 0x1fU, false) &
 		mask;
-	const auto addend = cpu.read_register((instruction >> 10) & 0x1fU, false) &
-		mask;
 	std::uint64_t result;
 	if (operation == 0) {
+		const auto addend = cpu.read_register(
+			(instruction >> 10) & 0x1fU, false) & mask;
 		const auto product = (left * right) & mask;
 		result = (instruction & 0x0000'8000U) != 0 ?
 			addend - product : addend + product;
 		result &= mask;
 	} else if (operation == 1 || operation == 5) {
+		const auto signed_word = [](std::uint64_t value) {
+			const auto bits = static_cast<std::uint32_t>(value);
+			if ((bits & 0x8000'0000U) == 0)
+				return static_cast<std::int64_t>(bits);
+			const auto magnitude =
+				static_cast<std::uint32_t>(~bits + 1U);
+			return -static_cast<std::int64_t>(magnitude);
+		};
 		const std::uint64_t product = operation == 1 ?
 			static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(static_cast<std::int32_t>(left)) *
-				static_cast<std::int64_t>(static_cast<std::int32_t>(right))) :
+				signed_word(left) * signed_word(right)) :
 			static_cast<std::uint64_t>(static_cast<std::uint32_t>(left)) *
 				static_cast<std::uint64_t>(static_cast<std::uint32_t>(right));
+		const auto addend = cpu.read_register(
+			(instruction >> 10) & 0x1fU, false);
 		result = (instruction & 0x0000'8000U) != 0 ?
 			addend - product : addend + product;
 	} else {
 		if (operation == 2) {
-			const __int128 product = static_cast<__int128>(
-				static_cast<std::int64_t>(left)) *
-				static_cast<__int128>(static_cast<std::int64_t>(right));
+			const auto signed_double_word = [](std::uint64_t value) {
+				constexpr auto sign = std::uint64_t{1} << 63;
+				if ((value & sign) == 0)
+					return static_cast<__int128>(value);
+				return static_cast<__int128>(value & (sign - 1U)) -
+					(static_cast<__int128>(1U) << 63);
+			};
+			const __int128 product =
+				signed_double_word(left) *
+				signed_double_word(right);
 			result = static_cast<std::uint64_t>(
 				static_cast<unsigned __int128>(product) >> 64);
 		} else {
@@ -223,7 +259,7 @@ RunResult Dispatcher::multiply_add(CpuState &cpu, GuestMemory &,
 			result = static_cast<std::uint64_t>(product >> 64);
 		}
 	}
-	cpu.write_register(instruction & 0x1fU, result, false);
+	cpu.write_register(destination, result, false);
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }

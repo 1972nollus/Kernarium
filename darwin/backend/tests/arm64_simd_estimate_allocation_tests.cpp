@@ -1,39 +1,47 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_estimate_test_support.hpp"
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_estimate_test;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t estimate(bool q, bool reciprocal_sqrt,
-	bool invalid_size, unsigned destination = 0, unsigned source = 1)
+void complete_allocation(test::engine_tests::EngineHarness &harness)
 {
-	return 0x0ea1'c800U | (q ? 0x4000'0000U : 0U) |
-		(reciprocal_sqrt ? 0x2000'0000U : 0U) |
-		(invalid_size ? 0x0040'0000U : 0U) |
-		((source & 31U) << 5) | (destination & 31U);
-}
-
-void complete_allocation()
-{
-	test::Harness harness;
 	for (const bool q : {false, true})
 		for (const bool reciprocal_sqrt : {false, true})
-			for (const bool invalid_size : {false, true}) {
-				const auto instruction = estimate(q, reciprocal_sqrt,
-					invalid_size);
-				if (invalid_size)
-					harness.require_illegal(instruction);
-				else
-					harness.require_differential(instruction,
-						test::state(7U + q + reciprocal_sqrt * 2U));
-			}
+			for (const bool reserved_size : {false, true})
+				for (unsigned source = 0; source < 32; ++source)
+					for (unsigned destination = 0; destination < 32;
+					     ++destination) {
+						const test::Registers registers{
+							destination, source};
+						const auto encoded = test::instruction(q,
+							reciprocal_sqrt, reserved_size, registers);
+						const auto initial = test::state(
+							destination + source * 37U + q * 71U +
+							reciprocal_sqrt * 113U +
+							reserved_size * 173U);
+						if (reserved_size) {
+							harness.check_illegal(
+								"unsigned-estimate-reserved-size",
+								encoded, initial);
+						} else {
+							harness.check_one(
+								test::operation_name(reciprocal_sqrt),
+								encoded, initial,
+								test::expected_state(initial, q,
+									reciprocal_sqrt, registers),
+								test::native_requirements());
+						}
+					}
 }
 
 } // namespace
 
 int main()
 {
-	complete_allocation();
+	test::engine_tests::EngineHarness harness;
+	complete_allocation(harness);
+	harness.print_summary("arm64-simd-estimate-allocation");
 	return 0;
 }

@@ -229,186 +229,203 @@ gadget floating_round_sized_software
 /* Horizontal/pairwise FP operations are completely specialized by operation
  * and shape. Hosts with FEAT_AFP use the branch-free native variants for
  * FMAX/FMIN; older hosts use variants with one rare FPCR.AH fallback branch. */
-.macro floating_horizontal_scalar_binary name, operation, source, destination, element, checked
+.macro floating_horizontal_scalar_binary name, operation, source, destination, control_mask
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	.if \checked
+	.if \control_mask
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lfloating_horizontal_ah_software
+	tst w16, #\control_mask
+	b.ne .Lfloating_horizontal_scalar_binary_software_\@
+	ldp x8, x9, [_stream], #16
+	/* Consume the second offset while skipping the cold descriptor. */
+	ldr x10, [_stream], #16
+	ldr q0, [_cpu, x9]
+	ldr \destination, [_cpu, x10]
+	.else
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr \destination, [_cpu, x10]
 	.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr \source, [x13]
-	ldr \destination, [x14]
-	movi v2.16b, #0
 	\operation \source, \source, \destination
-	ins v2.\element[0], v0.\element[0]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:	add x13, x12, x9, lsl #4
-	str q2, [x13]
+	str q0, [_cpu, x8]
 	next_gadget
+	.if \control_mask
+.Lfloating_horizontal_scalar_binary_software_\@:
+	ldr x8, [_stream, #24]
+	add _stream, _stream, #32
+	b .Lfloating_horizontal_ah_software
+	.endif
 .endm
 
 .macro floating_horizontal_scalar_binary_shapes name, operation, checked
-	floating_horizontal_scalar_binary \name\()_h, \operation, h0, h1, h, \checked
-	floating_horizontal_scalar_binary \name\()_s, \operation, s0, s1, s, \checked
-	floating_horizontal_scalar_binary \name\()_d, \operation, d0, d1, d, \checked
+	floating_horizontal_scalar_binary \name\()_h, \operation, h0, h1, (\checked * 6)
+	floating_horizontal_scalar_binary \name\()_s, \operation, s0, s1, (\checked * 7)
+	floating_horizontal_scalar_binary \name\()_d, \operation, d0, d1, (\checked * 7)
 .endm
 
-.macro floating_horizontal_vector name, operation, arrangement, checked
+.macro floating_horizontal_vector name, operation, arrangement, control_mask
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	.if \checked
+	.if \control_mask
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lfloating_horizontal_ah_software
+	tst w16, #\control_mask
+	b.ne .Lfloating_horizontal_vector_software_\@
+	ldp x8, x9, [_stream], #16
+	/* Consume the second offset while skipping the cold descriptor. */
+	ldr x10, [_stream], #16
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	.else
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
 	.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	movi v2.16b, #0
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	add x13, x12, x9, lsl #4
-	str q2, [x13]
+	str q2, [_cpu, x8]
 	next_gadget
+	.if \control_mask
+.Lfloating_horizontal_vector_software_\@:
+	ldr x8, [_stream, #24]
+	add _stream, _stream, #32
+	b .Lfloating_horizontal_ah_software
+	.endif
 .endm
 
 .macro floating_horizontal_vector_shapes name, operation, checked
-	floating_horizontal_vector \name\()_4h, \operation, 4h, \checked
-	floating_horizontal_vector \name\()_8h, \operation, 8h, \checked
-	floating_horizontal_vector \name\()_2s, \operation, 2s, \checked
-	floating_horizontal_vector \name\()_4s, \operation, 4s, \checked
-	floating_horizontal_vector \name\()_2d, \operation, 2d, \checked
+	floating_horizontal_vector \name\()_4h, \operation, 4h, (\checked * 2)
+	floating_horizontal_vector \name\()_8h, \operation, 8h, (\checked * 2)
+	floating_horizontal_vector \name\()_2s, \operation, 2s, (\checked * 3)
+	floating_horizontal_vector \name\()_4s, \operation, 4s, (\checked * 3)
+	floating_horizontal_vector \name\()_2d, \operation, 2d, (\checked * 3)
 .endm
 
-.macro floating_horizontal_scalar_pair name, operation, destination, arrangement, element, checked
+.macro floating_horizontal_scalar_pair name, operation, destination, arrangement, control_mask
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	.if \checked
+	.if \control_mask
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lfloating_horizontal_ah_software
+	tst w16, #\control_mask
+	b.ne .Lfloating_horizontal_scalar_pair_software_\@
+	ldp x8, x9, [_stream], #16
+	add _stream, _stream, #8
+	ldr q0, [_cpu, x9]
+	.else
+	ldp x8, x9, [_stream], #16
+	ldr q0, [_cpu, x9]
 	.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	ldr q0, [x12]
-	movi v2.16b, #0
 	\operation \destination, v0.\arrangement
-	ins v2.\element[0], v1.\element[0]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q3, [x12]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:	add x12, x11, x9, lsl #4
-	str q2, [x12]
+	str q1, [_cpu, x8]
 	next_gadget
+	.if \control_mask
+.Lfloating_horizontal_scalar_pair_software_\@:
+	ldr x8, [_stream, #16]
+	add _stream, _stream, #24
+	b .Lfloating_horizontal_ah_software
+	.endif
 .endm
 
 .macro floating_horizontal_scalar_pair_shapes name, operation, checked
-	floating_horizontal_scalar_pair \name\()_h, \operation, h1, 2h, h, \checked
-	floating_horizontal_scalar_pair \name\()_s, \operation, s1, 2s, s, \checked
-	floating_horizontal_scalar_pair \name\()_d, \operation, d1, 2d, d, \checked
+	floating_horizontal_scalar_pair \name\()_h, \operation, h1, 2h, (\checked * 2)
+	floating_horizontal_scalar_pair \name\()_s, \operation, s1, 2s, (\checked * 3)
+	floating_horizontal_scalar_pair \name\()_d, \operation, d1, 2d, (\checked * 3)
 .endm
 
-.macro floating_horizontal_reduce name, operation, destination, arrangement, element, checked
+.macro floating_horizontal_reduce name, operation, destination, arrangement, control_mask
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	.if \checked
+	.if \control_mask
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lfloating_horizontal_ah_software
+	tst w16, #\control_mask
+	b.ne .Lfloating_horizontal_reduce_software_\@
+	ldp x8, x9, [_stream], #16
+	add _stream, _stream, #8
+	ldr q0, [_cpu, x9]
+	.else
+	ldp x8, x9, [_stream], #16
+	ldr q0, [_cpu, x9]
 	.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	ldr q0, [x12]
-	movi v2.16b, #0
 	\operation \destination, v0.\arrangement
-	ins v2.\element[0], v1.\element[0]
-	add x12, x11, x9, lsl #4
-	str q2, [x12]
+	str q1, [_cpu, x8]
 	next_gadget
+	.if \control_mask
+.Lfloating_horizontal_reduce_software_\@:
+	ldr x8, [_stream, #16]
+	add _stream, _stream, #24
+	b .Lfloating_horizontal_ah_software
+	.endif
 .endm
 
 .macro floating_horizontal_reduce_shapes name, operation, checked
-	floating_horizontal_reduce \name\()_4h, \operation, h1, 4h, h, \checked
-	floating_horizontal_reduce \name\()_8h, \operation, h1, 8h, h, \checked
-	floating_horizontal_reduce \name\()_4s, \operation, s1, 4s, s, \checked
+	floating_horizontal_reduce \name\()_4h, \operation, h1, 4h, (\checked * 2)
+	floating_horizontal_reduce \name\()_8h, \operation, h1, 8h, (\checked * 2)
+	floating_horizontal_reduce \name\()_4s, \operation, s1, 4s, (\checked * 3)
 .endm
 
 floating_horizontal_scalar_binary_shapes fabd_scalar, fabd, 0
 floating_horizontal_vector_shapes fabd_vector, fabd, 0
 floating_horizontal_scalar_pair_shapes faddp_scalar, faddp, 0
 floating_horizontal_vector_shapes faddp_vector, faddp, 0
+floating_horizontal_scalar_binary_shapes fabd_checked_scalar, fabd, 1
+floating_horizontal_vector_shapes fabd_checked_vector, fabd, 1
+floating_horizontal_scalar_pair_shapes faddp_checked_scalar, faddp, 1
+floating_horizontal_vector_shapes faddp_checked_vector, faddp, 1
 
 floating_horizontal_scalar_binary_shapes fmax_scalar, fmax, 0
 floating_horizontal_scalar_binary_shapes fmax_ah_scalar, fmax, 1
 floating_horizontal_vector_shapes fmax_vector, fmax, 0
 floating_horizontal_vector_shapes fmax_ah_vector, fmax, 1
 floating_horizontal_scalar_binary_shapes fmaxnm_scalar, fmaxnm, 0
+floating_horizontal_scalar_binary_shapes fmaxnm_ah_scalar, fmaxnm, 1
 floating_horizontal_vector_shapes fmaxnm_vector, fmaxnm, 0
+floating_horizontal_vector_shapes fmaxnm_ah_vector, fmaxnm, 1
 floating_horizontal_scalar_binary_shapes fmin_scalar, fmin, 0
 floating_horizontal_scalar_binary_shapes fmin_ah_scalar, fmin, 1
 floating_horizontal_vector_shapes fmin_vector, fmin, 0
 floating_horizontal_vector_shapes fmin_ah_vector, fmin, 1
 floating_horizontal_scalar_binary_shapes fminnm_scalar, fminnm, 0
+floating_horizontal_scalar_binary_shapes fminnm_ah_scalar, fminnm, 1
 floating_horizontal_vector_shapes fminnm_vector, fminnm, 0
+floating_horizontal_vector_shapes fminnm_ah_vector, fminnm, 1
 
 floating_horizontal_scalar_pair_shapes fmaxp_scalar, fmaxp, 0
 floating_horizontal_scalar_pair_shapes fmaxp_ah_scalar, fmaxp, 1
 floating_horizontal_vector_shapes fmaxp_vector, fmaxp, 0
 floating_horizontal_vector_shapes fmaxp_ah_vector, fmaxp, 1
 floating_horizontal_scalar_pair_shapes fmaxnmp_scalar, fmaxnmp, 0
+floating_horizontal_scalar_pair_shapes fmaxnmp_ah_scalar, fmaxnmp, 1
 floating_horizontal_vector_shapes fmaxnmp_vector, fmaxnmp, 0
+floating_horizontal_vector_shapes fmaxnmp_ah_vector, fmaxnmp, 1
 floating_horizontal_scalar_pair_shapes fminp_scalar, fminp, 0
 floating_horizontal_scalar_pair_shapes fminp_ah_scalar, fminp, 1
 floating_horizontal_vector_shapes fminp_vector, fminp, 0
 floating_horizontal_vector_shapes fminp_ah_vector, fminp, 1
 floating_horizontal_scalar_pair_shapes fminnmp_scalar, fminnmp, 0
+floating_horizontal_scalar_pair_shapes fminnmp_ah_scalar, fminnmp, 1
 floating_horizontal_vector_shapes fminnmp_vector, fminnmp, 0
+floating_horizontal_vector_shapes fminnmp_ah_vector, fminnmp, 1
 
 floating_horizontal_reduce_shapes fmaxv, fmaxv, 0
 floating_horizontal_reduce_shapes fmaxv_ah, fmaxv, 1
 floating_horizontal_reduce_shapes fmaxnmv, fmaxnmv, 0
+floating_horizontal_reduce_shapes fmaxnmv_ah, fmaxnmv, 1
 floating_horizontal_reduce_shapes fminv, fminv, 0
 floating_horizontal_reduce_shapes fminv_ah, fminv, 1
 floating_horizontal_reduce_shapes fminnmv, fminnmv, 0
+floating_horizontal_reduce_shapes fminnmv_ah, fminnmv, 1
 
 /* FEAT_FAMINMAX is selected once by the builder. Native hosts execute one
  * branch-free instruction; older hosts enter the exact bitwise fallback. */
 .macro floating_horizontal_absolute_native name, encoding
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
 	.inst \encoding
-	add x13, x12, x9, lsl #4
-	str q2, [x13]
+	str q2, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -458,11 +475,10 @@ gadget floating_horizontal_absolute_software
 gadget bfloat_convert_scalar_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	add x12, _cpu, x10
+	add x13, _cpu, x9
 	ldr s0, [x12]
 	ldr q1, [x13]
 	.inst 0x1e634001
@@ -472,11 +488,10 @@ gadget bfloat_convert_scalar_native
 gadget bfloat_convert_lower_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	add x12, _cpu, x10
+	add x13, _cpu, x9
 	ldr q0, [x12]
 	.inst 0x0ea16802
 	str q2, [x13]
@@ -485,11 +500,10 @@ gadget bfloat_convert_lower_native
 gadget bfloat_convert_upper_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	add x12, _cpu, x10
+	add x13, _cpu, x9
 	ldr q0, [x12]
 	ldr q2, [x13]
 	.inst 0x4ea16802
@@ -518,18 +532,14 @@ gadget bfloat_convert_software
 gadget bfloat_dot_native_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	ldr q2, [_cpu, x9]
 	.inst \encoding
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -558,13 +568,12 @@ gadget bfloat_dot_software
 gadget bfloat_matrix_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x13, _cpu, x10
+	add x14, _cpu, x11
+	add x15, _cpu, x9
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
@@ -582,60 +591,45 @@ gadget bfloat_matrix_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 
-/* FEAT_FHM maps every FMLAL/FMLSL width, source half, and indexed lane to one
- * native instruction. AFP-capable hosts use branch-free variants; older FHM
- * hosts pay one rare AH check and otherwise retain the native fast path. */
-.macro half_fused_long_native name, encoding, checked
+/* Shape and CpuState offsets are resolved by the builder. Native selection
+ * requires complete alternative-control support, leaving no runtime test. */
+.macro half_fused_long_native name, encoding
 gadget half_fused_long_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \checked
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lhalf_fused_long_software_loaded
-.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	ldr q2, [_cpu, x9]
 	.inst \encoding
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
-.macro half_fused_long_pair name, encoding
-	half_fused_long_native native_\name, \encoding, 0
-	half_fused_long_native checked_\name, \encoding, 1
-.endm
+half_fused_long_native native_vector_add_lower_2s, 0x0e21ec02
+half_fused_long_native native_vector_add_lower_4s, 0x4e21ec02
+half_fused_long_native native_vector_add_upper_2s, 0x2e21cc02
+half_fused_long_native native_vector_add_upper_4s, 0x6e21cc02
+half_fused_long_native native_vector_sub_lower_2s, 0x0ea1ec02
+half_fused_long_native native_vector_sub_lower_4s, 0x4ea1ec02
+half_fused_long_native native_vector_sub_upper_2s, 0x2ea1cc02
+half_fused_long_native native_vector_sub_upper_4s, 0x6ea1cc02
 
-half_fused_long_pair vector_add_lower_2s, 0x0e21ec02
-half_fused_long_pair vector_add_lower_4s, 0x4e21ec02
-half_fused_long_pair vector_add_upper_2s, 0x2e21cc02
-half_fused_long_pair vector_add_upper_4s, 0x6e21cc02
-half_fused_long_pair vector_sub_lower_2s, 0x0ea1ec02
-half_fused_long_pair vector_sub_lower_4s, 0x4ea1ec02
-half_fused_long_pair vector_sub_upper_2s, 0x2ea1cc02
-half_fused_long_pair vector_sub_upper_4s, 0x6ea1cc02
-
-.macro half_fused_long_indexed_pair operation, half, shape, prefix, index, bits
-	half_fused_long_pair indexed_\operation\()_\half\()_\shape\()_\index, \
+.macro half_fused_long_indexed operation, half, shape, prefix, index, bits
+	half_fused_long_native native_indexed_\operation\()_\half\()_\shape\()_\index, \
 		(\prefix | \bits)
 .endm
 .macro half_fused_long_indexed_shapes operation, half, shape, prefix
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 0, 0x000000
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 1, 0x100000
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 2, 0x200000
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 3, 0x300000
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 4, 0x000800
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 5, 0x100800
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 6, 0x200800
-	half_fused_long_indexed_pair \operation, \half, \shape, \prefix, 7, 0x300800
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 0, 0x000000
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 1, 0x100000
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 2, 0x200000
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 3, 0x300000
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 4, 0x000800
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 5, 0x100800
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 6, 0x200800
+	half_fused_long_indexed \operation, \half, \shape, \prefix, 7, 0x300800
 .endm
 
 half_fused_long_indexed_shapes add, lower, 2s, 0x0f810002
@@ -648,14 +642,12 @@ half_fused_long_indexed_shapes sub, upper, 2s, 0x2f81c002
 half_fused_long_indexed_shapes sub, upper, 4s, 0x6f81c002
 
 .purgem half_fused_long_indexed_shapes
-.purgem half_fused_long_indexed_pair
-.purgem half_fused_long_pair
+.purgem half_fused_long_indexed
 .purgem half_fused_long_native
 
 gadget half_fused_long_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.Lhalf_fused_long_software_loaded:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -665,25 +657,17 @@ gadget half_fused_long_software
 	msr fpsr, x16
 	next_gadget
 
-/* FEAT_F16MM and FEAT_F16F32MM each map FMMLA to one host instruction.
- * Shape is fixed at translation time.  AFP hosts use branch-free gadgets;
- * older hosts check only the runtime controls their hardware cannot honor. */
-.macro half_matrix_native name, encoding, control_mask
+/* Shape and CpuState offsets are fixed by translation. */
+.macro half_matrix_native name, encoding
 gadget half_matrix_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \control_mask
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #\control_mask
-	b.ne .Lhalf_matrix_software_loaded
-.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x13, _cpu, x10
+	add x14, _cpu, x11
+	add x15, _cpu, x9
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
@@ -692,16 +676,13 @@ gadget half_matrix_\name
 	next_gadget
 .endm
 
-half_matrix_native native_non_widening, 0x4ec1ec02, 0
-half_matrix_native checked_non_widening, 0x4ec1ec02, 2
-half_matrix_native native_widening, 0x4e41ec02, 0
-half_matrix_native checked_widening, 0x4e41ec02, 3
+half_matrix_native native_non_widening, 0x4ec1ec02
+half_matrix_native native_widening, 0x4e41ec02
 .purgem half_matrix_native
 
 gadget half_matrix_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.Lhalf_matrix_software_loaded:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -712,24 +693,18 @@ gadget half_matrix_software
 	next_gadget
 
 /* FEAT_F16F32DOT maps every vector width and indexed pair to one FDOT.
- * The builder resolves those choices; AFP-less hosts retain one runtime
- * check for the only guest FPCR controls the instruction cannot honor. */
-.macro half_dot_native name, encoding, checked
+ * The builder resolves the complete shape and all state offsets. Hosts without
+ * AFP use the portable entry so native hot paths need no control branch. */
+.macro half_dot_native name, encoding
 gadget half_dot_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \checked
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lhalf_dot_software_loaded
-.endif
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x13, _cpu, x10
+	add x14, _cpu, x11
+	add x15, _cpu, x9
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
@@ -738,28 +713,21 @@ gadget half_dot_\name
 	next_gadget
 .endm
 
-.macro half_dot_pair name, encoding
-	half_dot_native native_\name, \encoding, 0
-	half_dot_native checked_\name, \encoding, 1
-.endm
-
-half_dot_pair vector_2s, 0x0e81fc02
-half_dot_pair vector_4s, 0x4e81fc02
-half_dot_pair indexed_2s_0, 0x0f419002
-half_dot_pair indexed_2s_1, 0x0f619002
-half_dot_pair indexed_2s_2, 0x0f419802
-half_dot_pair indexed_2s_3, 0x0f619802
-half_dot_pair indexed_4s_0, 0x4f419002
-half_dot_pair indexed_4s_1, 0x4f619002
-half_dot_pair indexed_4s_2, 0x4f419802
-half_dot_pair indexed_4s_3, 0x4f619802
-.purgem half_dot_pair
+half_dot_native native_vector_2s, 0x0e81fc02
+half_dot_native native_vector_4s, 0x4e81fc02
+half_dot_native native_indexed_2s_0, 0x0f419002
+half_dot_native native_indexed_2s_1, 0x0f619002
+half_dot_native native_indexed_2s_2, 0x0f419802
+half_dot_native native_indexed_2s_3, 0x0f619802
+half_dot_native native_indexed_4s_0, 0x4f419002
+half_dot_native native_indexed_4s_1, 0x4f619002
+half_dot_native native_indexed_4s_2, 0x4f419802
+half_dot_native native_indexed_4s_3, 0x4f619802
 .purgem half_dot_native
 
 gadget half_dot_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.Lhalf_dot_software_loaded:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -776,13 +744,12 @@ gadget half_dot_software
 gadget bfloat_multiply_long_native_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x13, _cpu, x10
+	add x14, _cpu, x11
+	add x15, _cpu, x9
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
@@ -853,13 +820,14 @@ floating_scale_native 4s, 0x6ea1fc02
 floating_scale_native 2d, 0x6ee1fc02
 .purgem floating_scale_native
 
-gadget floating_scale_software
+.macro floating_scale_software name
+gadget floating_scale_software_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_floating_scale_software)
+	bl NAME(uml_arm64_floating_scale_software_\name)
 	ldp x1, x2, [sp], #16
 	mrs x17, fpsr
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -867,78 +835,125 @@ gadget floating_scale_software
 	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x16
 	next_gadget
+.endm
+
+floating_scale_software 4h
+floating_scale_software 8h
+floating_scale_software 2s
+floating_scale_software 4s
+floating_scale_software 2d
+.purgem floating_scale_software
 
 /* Reciprocal operation, arity, precision, and vector width are selected at
- * translation time. Every valid production path is one native FP operation. */
-.macro floating_reciprocal_scalar_unary name, operation, source, destination, element
+ * translation time. AFP-capable hosts use branch-free native variants.
+ * Older hosts retain one predictable control check and enter the strict cold
+ * path only when the guest enables behavior that their hardware lacks. */
+.macro floating_reciprocal_scalar_unary name, operation, source, destination, descriptor, checked
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
+.if \checked
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	tst w16, #7
+	b.ne .Lfloating_reciprocal_software_\@
+.endif
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	add x12, _cpu, x10
+	add x13, _cpu, x9
+	/* The native scalar operation either preserves this old destination
+	 * under FPCR.NEP or zeroes the inactive bytes itself. */
+	ldr q1, [x13]
 	ldr \source, [x12]
-	movi v1.16b, #0
 	\operation \destination, \source
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q2, [x13]
-	ins v2.\element[0], v1.\element[0]
-	mov v1.16b, v2.16b
-1:	str q1, [x13]
+	str q1, [x13]
 	next_gadget
+.if \checked
+.Lfloating_reciprocal_software_\@:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov w2, #\descriptor
+	bl NAME(uml_arm64_floating_reciprocal_software)
+	ldp x1, x2, [sp], #16
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+	next_gadget
+.endif
 .endm
 
-.macro floating_reciprocal_scalar_unary_shapes name, operation
-	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1, h
-	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1, s
-	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1, d
+.macro floating_reciprocal_scalar_unary_shapes name, operation, opcode, checked
+	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1, \
+		(\opcode | 8), \checked
+	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1, \
+		(\opcode | 8 | 16), \checked
+	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1, \
+		(\opcode | 8 | 32), \checked
 .endm
 
-.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination, element
+.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination, descriptor, checked
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr \source0, [x13]
-	ldr \source1, [x14]
-	movi v2.16b, #0
-	\operation \destination, \source0, \source1
+.if \checked
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:	add x13, x12, x9, lsl #4
+	tst w16, #7
+	b.ne .Lfloating_reciprocal_software_\@
+.endif
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x13, _cpu, x10
+	add x14, _cpu, x11
+	/* Scalar step operations merge inactive bytes from the first source,
+	 * not from the old destination. Native FPCR.NEP selects this copy
+	 * without a runtime branch. */
+	ldr q0, [x13]
+	ldr \source1, [x14]
+	mov v2.16b, v0.16b
+	\operation \destination, \source0, \source1
+	add x13, _cpu, x9
 	str q2, [x13]
 	next_gadget
+.if \checked
+.Lfloating_reciprocal_software_\@:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov w2, #\descriptor
+	bl NAME(uml_arm64_floating_reciprocal_software)
+	ldp x1, x2, [sp], #16
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+	next_gadget
+.endif
 .endm
 
-.macro floating_reciprocal_scalar_binary_shapes name, operation
-	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2, h
-	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2, s
-	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2, d
+.macro floating_reciprocal_scalar_binary_shapes name, operation, opcode, checked
+	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2, \
+		(\opcode | 8), \checked
+	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2, \
+		(\opcode | 8 | 16), \checked
+	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2, \
+		(\opcode | 8 | 32), \checked
 .endm
 
-.macro floating_reciprocal_vector name, operation, arrangement, unary
+.macro floating_reciprocal_vector name, operation, arrangement, unary, descriptor, checked
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
+.if \checked
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	tst w16, #3
+	b.ne .Lfloating_reciprocal_software_\@
+.endif
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	add x12, _cpu, x10
 	ldr q0, [x12]
 	.if !\unary
-	ubfx w10, w8, #16, #5
-	add x12, x11, x10, lsl #4
+	lsr x10, x8, #32
+	add x12, _cpu, x10
 	ldr q1, [x12]
 	.endif
 	movi v2.16b, #0
@@ -947,28 +962,54 @@ gadget floating_reciprocal_\name
 	.else
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	.endif
-	add x12, x11, x9, lsl #4
+	add x12, _cpu, x9
 	str q2, [x12]
 	next_gadget
+.if \checked
+.Lfloating_reciprocal_software_\@:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov w2, #\descriptor
+	bl NAME(uml_arm64_floating_reciprocal_software)
+	ldp x1, x2, [sp], #16
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+	next_gadget
+.endif
 .endm
 
-.macro floating_reciprocal_vector_shapes name, operation, unary
-	floating_reciprocal_vector \name\()_4h, \operation, 4h, \unary
-	floating_reciprocal_vector \name\()_8h, \operation, 8h, \unary
-	floating_reciprocal_vector \name\()_2s, \operation, 2s, \unary
-	floating_reciprocal_vector \name\()_4s, \operation, 4s, \unary
-	floating_reciprocal_vector \name\()_2d, \operation, 2d, \unary
+.macro floating_reciprocal_vector_shapes name, operation, unary, opcode, checked
+	floating_reciprocal_vector \name\()_4h, \operation, 4h, \unary, \
+		\opcode, \checked
+	floating_reciprocal_vector \name\()_8h, \operation, 8h, \unary, \
+		(\opcode | 64), \checked
+	floating_reciprocal_vector \name\()_2s, \operation, 2s, \unary, \
+		(\opcode | 16), \checked
+	floating_reciprocal_vector \name\()_4s, \operation, 4s, \unary, \
+		(\opcode | 16 | 64), \checked
+	floating_reciprocal_vector \name\()_2d, \operation, 2d, \unary, \
+		(\opcode | 32 | 64), \checked
 .endm
 
-floating_reciprocal_scalar_unary_shapes frecpe_scalar, frecpe
-floating_reciprocal_vector_shapes frecpe_vector, frecpe, 1
-floating_reciprocal_scalar_binary_shapes frecps_scalar, frecps
-floating_reciprocal_vector_shapes frecps_vector, frecps, 0
-floating_reciprocal_scalar_unary_shapes frecpx_scalar, frecpx
-floating_reciprocal_scalar_unary_shapes frsqrte_scalar, frsqrte
-floating_reciprocal_vector_shapes frsqrte_vector, frsqrte, 1
-floating_reciprocal_scalar_binary_shapes frsqrts_scalar, frsqrts
-floating_reciprocal_vector_shapes frsqrts_vector, frsqrts, 0
+floating_reciprocal_scalar_unary_shapes native_frecpe_scalar, frecpe, 0, 0
+floating_reciprocal_scalar_unary_shapes checked_frecpe_scalar, frecpe, 0, 1
+floating_reciprocal_vector_shapes native_frecpe_vector, frecpe, 1, 0, 0
+floating_reciprocal_vector_shapes checked_frecpe_vector, frecpe, 1, 0, 1
+floating_reciprocal_scalar_binary_shapes native_frecps_scalar, frecps, 1, 0
+floating_reciprocal_scalar_binary_shapes checked_frecps_scalar, frecps, 1, 1
+floating_reciprocal_vector_shapes native_frecps_vector, frecps, 0, 1, 0
+floating_reciprocal_vector_shapes checked_frecps_vector, frecps, 0, 1, 1
+floating_reciprocal_scalar_unary_shapes native_frecpx_scalar, frecpx, 2, 0
+floating_reciprocal_scalar_unary_shapes checked_frecpx_scalar, frecpx, 2, 1
+floating_reciprocal_scalar_unary_shapes native_frsqrte_scalar, frsqrte, 3, 0
+floating_reciprocal_scalar_unary_shapes checked_frsqrte_scalar, frsqrte, 3, 1
+floating_reciprocal_vector_shapes native_frsqrte_vector, frsqrte, 1, 3, 0
+floating_reciprocal_vector_shapes checked_frsqrte_vector, frsqrte, 1, 3, 1
+floating_reciprocal_scalar_binary_shapes native_frsqrts_scalar, frsqrts, 4, 0
+floating_reciprocal_scalar_binary_shapes checked_frsqrts_scalar, frsqrts, 4, 1
+floating_reciprocal_vector_shapes native_frsqrts_vector, frsqrts, 0, 4, 0
+floating_reciprocal_vector_shapes checked_frsqrts_vector, frsqrts, 0, 4, 1
 
 .purgem floating_reciprocal_vector_shapes
 .purgem floating_reciprocal_vector
@@ -983,22 +1024,18 @@ floating_reciprocal_vector_shapes frsqrts_vector, frsqrts, 0
 gadget floating_complex_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x15]
+	ldr q2, [_cpu, x9]
 	.else
 	movi v2.16b, #0
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement, #\rotation
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -1013,18 +1050,14 @@ gadget floating_complex_\name
 gadget floating_complex_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	uxth w9, w8
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	ldr q2, [_cpu, x9]
 	fcmla v2.\arrangement, v0.\arrangement, v1.\element[\index], #\rotation
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -1741,11 +1774,10 @@ gadget simd_fcvtxn_scalar
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
+	uxth w9, w8
+	lsr x10, x8, #16
+	add x12, _cpu, x10
+	add x13, _cpu, x9
 	movi v2.16b, #0
 	.if \source_bits == 16
 	ldr h0, [x12]
@@ -1851,6 +1883,11 @@ floating_convert_precision floating_convert_d_to_s, 64, 32
 	next_gadget
 .endm
 
+gadget floating_to_integer_software_fallback
+	ensure_fp_environment
+	ldr x8, [_stream], #8
+	floating_to_integer_software
+
 .macro floating_javascript_convert_software
 	mov x19, x1
 	mov x20, x2
@@ -1865,6 +1902,11 @@ floating_convert_precision floating_convert_d_to_s, 64, 32
 	next_gadget
 .endm
 
+gadget floating_javascript_convert_software_fallback
+	ensure_fp_environment
+	ldr x8, [_stream], #8
+	floating_javascript_convert_software
+
 .macro floating_javascript_convert name, discard
 gadget \name
 	ensure_fp_environment
@@ -1876,6 +1918,7 @@ gadget \name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lfloating_javascript_convert_software_\@
+	tbnz w16, #24, .Lfloating_javascript_convert_software_\@
 	fjcvtzs w14, d0
 	mrs x27, nzcv
 	.if \discard == 0
@@ -1907,7 +1950,12 @@ floating_javascript_convert floating_javascript_convert_discard, 1
 	next_gadget
 .endm
 
-.macro gpr_to_floating name, operation, integer, floating, element, half, zero
+gadget integer_to_floating_software_fallback
+	ensure_fp_environment
+	ldr x8, [_stream], #8
+	integer_to_floating_software
+
+.macro gpr_to_floating name, operation, integer, floating, element, zero
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1924,9 +1972,6 @@ gadget \name
 	movi v2.16b, #0
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lgpr_to_floating_software_\@
-	.if \half
-	tbnz w16, #26, .Lgpr_to_floating_software_\@
-	.endif
 	\operation \floating\()2, \integer\()14
 	tbz w16, #2, .Lgpr_to_floating_store_\@
 	ldr q3, [x13]
@@ -1940,9 +1985,9 @@ gadget \name
 .endm
 
 .macro gpr_to_floating_widths name, operation, integer, zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_h\zero, \operation, \integer, h, h, 1, \zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_s\zero, \operation, \integer, s, s, 0, \zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_d\zero, \operation, \integer, d, d, 0, \zero
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero
 .endm
 
 .macro gpr_to_floating_variants name, operation
@@ -1959,7 +2004,7 @@ gpr_to_floating_variants ucvtf, ucvtf
 .purgem gpr_to_floating_widths
 .purgem gpr_to_floating
 
-.macro simd_integer_to_floating_scalar name, operation, element, half
+.macro simd_integer_to_floating_scalar name, operation, element
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1972,9 +2017,6 @@ gadget \name
 	movi v2.16b, #0
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lsimd_integer_to_floating_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_integer_to_floating_software_\@
-	.endif
 	\operation \element\()2, \element\()0
 	tbz w16, #2, .Lsimd_integer_to_floating_store_\@
 	ldr q3, [x13]
@@ -1987,7 +2029,7 @@ gadget \name
 	integer_to_floating_software
 .endm
 
-.macro simd_integer_to_floating_vector name, operation, arrangement, half
+.macro simd_integer_to_floating_vector name, operation, arrangement
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1999,9 +2041,6 @@ gadget \name
 	ldr q0, [x12]
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lsimd_integer_to_floating_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_integer_to_floating_software_\@
-	.endif
 	\operation v2.\arrangement, v0.\arrangement
 	str q2, [x13]
 	next_gadget
@@ -2010,14 +2049,14 @@ gadget \name
 .endm
 
 .macro simd_integer_to_floating_variants name, operation
-	simd_integer_to_floating_scalar simd_\name\()_h, \operation, h, 1
-	simd_integer_to_floating_scalar simd_\name\()_s, \operation, s, 0
-	simd_integer_to_floating_scalar simd_\name\()_d, \operation, d, 0
-	simd_integer_to_floating_vector simd_\name\()_4h, \operation, 4h, 1
-	simd_integer_to_floating_vector simd_\name\()_8h, \operation, 8h, 1
-	simd_integer_to_floating_vector simd_\name\()_2s, \operation, 2s, 0
-	simd_integer_to_floating_vector simd_\name\()_4s, \operation, 4s, 0
-	simd_integer_to_floating_vector simd_\name\()_2d, \operation, 2d, 0
+	simd_integer_to_floating_scalar simd_\name\()_h, \operation, h
+	simd_integer_to_floating_scalar simd_\name\()_s, \operation, s
+	simd_integer_to_floating_scalar simd_\name\()_d, \operation, d
+	simd_integer_to_floating_vector simd_\name\()_4h, \operation, 4h
+	simd_integer_to_floating_vector simd_\name\()_8h, \operation, 8h
+	simd_integer_to_floating_vector simd_\name\()_2s, \operation, 2s
+	simd_integer_to_floating_vector simd_\name\()_4s, \operation, 4s
+	simd_integer_to_floating_vector simd_\name\()_2d, \operation, 2d
 .endm
 
 simd_integer_to_floating_variants scvtf, scvtf
@@ -2027,7 +2066,7 @@ simd_integer_to_floating_variants ucvtf, ucvtf
 .purgem simd_integer_to_floating_vector
 .purgem simd_integer_to_floating_scalar
 
-.macro simd_cross_integer_to_floating name, operation, integer, floating, element, half
+.macro simd_cross_integer_to_floating name, operation, integer, floating, element
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2040,9 +2079,6 @@ gadget \name
 	movi v2.16b, #0
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lsimd_cross_integer_to_floating_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_cross_integer_to_floating_software_\@
-	.endif
 	\operation \floating\()2, \integer\()14
 	tbz w16, #2, .Lsimd_cross_integer_to_floating_store_\@
 	ldr q3, [x13]
@@ -2056,10 +2092,10 @@ gadget \name
 .endm
 
 .macro simd_cross_integer_to_floating_variants name, operation
-	simd_cross_integer_to_floating simd_cross_\name\()_h_w, \operation, w, h, h, 1
-	simd_cross_integer_to_floating simd_cross_\name\()_h_x, \operation, x, h, h, 1
-	simd_cross_integer_to_floating simd_cross_\name\()_s_x, \operation, x, s, s, 0
-	simd_cross_integer_to_floating simd_cross_\name\()_d_w, \operation, w, d, d, 0
+	simd_cross_integer_to_floating simd_cross_\name\()_h_w, \operation, w, h, h
+	simd_cross_integer_to_floating simd_cross_\name\()_h_x, \operation, x, h, h
+	simd_cross_integer_to_floating simd_cross_\name\()_s_x, \operation, x, s, s
+	simd_cross_integer_to_floating simd_cross_\name\()_d_w, \operation, w, d, d
 .endm
 
 simd_cross_integer_to_floating_variants scvtf, scvtf
@@ -2068,7 +2104,7 @@ simd_cross_integer_to_floating_variants ucvtf, ucvtf
 .purgem simd_cross_integer_to_floating_variants
 .purgem simd_cross_integer_to_floating
 
-.macro floating_to_gpr name, operation, integer, floating, half, discard
+.macro floating_to_gpr name, operation, integer, floating, discard
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2079,9 +2115,6 @@ gadget \name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lfloating_to_gpr_zero_software_\@
-	.if \half
-	tbnz w16, #26, .Lfloating_to_gpr_zero_software_\@
-	.endif
 	\operation \integer\()14, \floating\()0
 	.if \discard == 0
 	and w9, w8, #0x1f
@@ -2093,17 +2126,17 @@ gadget \name
 	floating_to_integer_software
 .endm
 
-.macro floating_to_gpr_widths name, operation, floating, half
-	floating_to_gpr floating_to_gpr_\name\()_w_\floating, \operation, w, \floating, \half, 0
-	floating_to_gpr floating_to_gpr_\name\()_x_\floating, \operation, x, \floating, \half, 0
-	floating_to_gpr floating_to_gpr_\name\()_w_\floating\()_discard, \operation, w, \floating, \half, 1
-	floating_to_gpr floating_to_gpr_\name\()_x_\floating\()_discard, \operation, x, \floating, \half, 1
+.macro floating_to_gpr_widths name, operation, floating
+	floating_to_gpr floating_to_gpr_\name\()_w_\floating, \operation, w, \floating, 0
+	floating_to_gpr floating_to_gpr_\name\()_x_\floating, \operation, x, \floating, 0
+	floating_to_gpr floating_to_gpr_\name\()_w_\floating\()_discard, \operation, w, \floating, 1
+	floating_to_gpr floating_to_gpr_\name\()_x_\floating\()_discard, \operation, x, \floating, 1
 .endm
 
 .macro floating_to_gpr_variants name, operation
-	floating_to_gpr_widths \name, \operation, h, 1
-	floating_to_gpr_widths \name, \operation, s, 0
-	floating_to_gpr_widths \name, \operation, d, 0
+	floating_to_gpr_widths \name, \operation, h
+	floating_to_gpr_widths \name, \operation, s
+	floating_to_gpr_widths \name, \operation, d
 .endm
 
 floating_to_gpr_variants fcvtns, fcvtns
@@ -2121,7 +2154,7 @@ floating_to_gpr_variants fcvtau, fcvtau
 .purgem floating_to_gpr_widths
 .purgem floating_to_gpr
 
-.macro simd_floating_to_integer_scalar name, operation, element, half
+.macro simd_floating_to_integer_scalar name, operation, element
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2135,9 +2168,6 @@ gadget \name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lsimd_floating_to_integer_zero_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_floating_to_integer_zero_software_\@
-	.endif
 	\operation \element\()2, \element\()0
 	tbz w16, #2, .Lsimd_floating_to_integer_zero_store_\@
 	ldr q3, [x13]
@@ -2150,7 +2180,7 @@ gadget \name
 	floating_to_integer_software
 .endm
 
-.macro simd_floating_to_integer_vector name, operation, arrangement, half
+.macro simd_floating_to_integer_vector name, operation, arrangement
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2163,9 +2193,6 @@ gadget \name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lsimd_floating_to_integer_zero_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_floating_to_integer_zero_software_\@
-	.endif
 	\operation v2.\arrangement, v0.\arrangement
 	str q2, [x13]
 	next_gadget
@@ -2174,14 +2201,14 @@ gadget \name
 .endm
 
 .macro simd_floating_to_integer_variants name, operation
-	simd_floating_to_integer_scalar simd_\name\()_h, \operation, h, 1
-	simd_floating_to_integer_scalar simd_\name\()_s, \operation, s, 0
-	simd_floating_to_integer_scalar simd_\name\()_d, \operation, d, 0
-	simd_floating_to_integer_vector simd_\name\()_4h, \operation, 4h, 1
-	simd_floating_to_integer_vector simd_\name\()_8h, \operation, 8h, 1
-	simd_floating_to_integer_vector simd_\name\()_2s, \operation, 2s, 0
-	simd_floating_to_integer_vector simd_\name\()_4s, \operation, 4s, 0
-	simd_floating_to_integer_vector simd_\name\()_2d, \operation, 2d, 0
+	simd_floating_to_integer_scalar simd_\name\()_h, \operation, h
+	simd_floating_to_integer_scalar simd_\name\()_s, \operation, s
+	simd_floating_to_integer_scalar simd_\name\()_d, \operation, d
+	simd_floating_to_integer_vector simd_\name\()_4h, \operation, 4h
+	simd_floating_to_integer_vector simd_\name\()_8h, \operation, 8h
+	simd_floating_to_integer_vector simd_\name\()_2s, \operation, 2s
+	simd_floating_to_integer_vector simd_\name\()_4s, \operation, 4s
+	simd_floating_to_integer_vector simd_\name\()_2d, \operation, 2d
 .endm
 
 simd_floating_to_integer_variants fcvtns, fcvtns
@@ -2202,7 +2229,7 @@ simd_floating_to_integer_variants fcvtau, fcvtau
 /* FEAT_FPRCVT writes a cross-width integer into a SIMD&FP register. Using the
  * baseline host FP-to-GPR conversion family avoids requiring FPRCVT on the
  * host while keeping the common path to one exact conversion instruction. */
-.macro floating_to_simd_integer name, operation, integer, floating, element, half
+.macro floating_to_simd_integer name, operation, integer, floating, element
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2215,9 +2242,6 @@ gadget \name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lfloating_to_simd_integer_software_\@
-	.if \half
-	tbnz w16, #26, .Lfloating_to_simd_integer_software_\@
-	.endif
 	\operation \integer\()14, \floating\()0
 	movi v2.16b, #0
 	fmov \element\()2, \integer\()14
@@ -2233,10 +2257,10 @@ gadget \name
 .endm
 
 .macro floating_to_simd_integer_variants name, operation
-	floating_to_simd_integer floating_to_simd_\name\()_w_h, \operation, w, h, s, 1
-	floating_to_simd_integer floating_to_simd_\name\()_x_h, \operation, x, h, d, 1
-	floating_to_simd_integer floating_to_simd_\name\()_x_s, \operation, x, s, d, 0
-	floating_to_simd_integer floating_to_simd_\name\()_w_d, \operation, w, d, s, 0
+	floating_to_simd_integer floating_to_simd_\name\()_w_h, \operation, w, h, s
+	floating_to_simd_integer floating_to_simd_\name\()_x_h, \operation, x, h, d
+	floating_to_simd_integer floating_to_simd_\name\()_x_s, \operation, x, s, d
+	floating_to_simd_integer floating_to_simd_\name\()_w_d, \operation, w, d, s
 .endm
 
 floating_to_simd_integer_variants fcvtns, fcvtns
@@ -2268,7 +2292,7 @@ NAME(uml_arm64_gadget_\name):
 NAME(uml_arm64_gadget_\name\()_end):
 .endm
 
-.macro floating_to_gpr_fixed_body operation, integer, floating, half, discard, fraction
+.macro floating_to_gpr_fixed_body operation, integer, floating, discard, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2279,9 +2303,6 @@ NAME(uml_arm64_gadget_\name\()_end):
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lfloating_to_gpr_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lfloating_to_gpr_fixed_software_\@
-	.endif
 	\operation \integer\()14, \floating\()0, #\fraction
 	.if \discard == 0
 	and w9, w8, #0x1f
@@ -2293,27 +2314,27 @@ NAME(uml_arm64_gadget_\name\()_end):
 	floating_to_integer_software
 .endm
 
-.macro floating_to_gpr_fixed_table name, operation, integer, floating, half, discard, count
+.macro floating_to_gpr_fixed_table name, operation, integer, floating, discard, count
 	floating_fixed_table_begin \name
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
-			floating_to_gpr_fixed_body \operation, \integer, \floating, \half, \discard, \fraction
+			floating_to_gpr_fixed_body \operation, \integer, \floating, \discard, \fraction
 		.endif
 	.endr
 	floating_fixed_table_end \name
 .endm
 
-.macro floating_to_gpr_fixed_widths name, operation, floating, half
-	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_w_\floating, \operation, w, \floating, \half, 0, 32
-	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_x_\floating, \operation, x, \floating, \half, 0, 64
-	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_w_\floating\()_discard, \operation, w, \floating, \half, 1, 32
-	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_x_\floating\()_discard, \operation, x, \floating, \half, 1, 64
+.macro floating_to_gpr_fixed_widths name, operation, floating
+	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_w_\floating, \operation, w, \floating, 0, 32
+	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_x_\floating, \operation, x, \floating, 0, 64
+	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_w_\floating\()_discard, \operation, w, \floating, 1, 32
+	floating_to_gpr_fixed_table floating_to_gpr_fixed_\name\()_x_\floating\()_discard, \operation, x, \floating, 1, 64
 .endm
 
 .macro floating_to_gpr_fixed_variants name, operation
-	floating_to_gpr_fixed_widths \name, \operation, h, 1
-	floating_to_gpr_fixed_widths \name, \operation, s, 0
-	floating_to_gpr_fixed_widths \name, \operation, d, 0
+	floating_to_gpr_fixed_widths \name, \operation, h
+	floating_to_gpr_fixed_widths \name, \operation, s
+	floating_to_gpr_fixed_widths \name, \operation, d
 .endm
 
 floating_to_gpr_fixed_variants fcvtzs, fcvtzs
@@ -2324,7 +2345,7 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 .purgem floating_to_gpr_fixed_table
 .purgem floating_to_gpr_fixed_body
 
-.macro simd_floating_to_integer_fixed_scalar_body operation, element, half, fraction
+.macro simd_floating_to_integer_fixed_scalar_body operation, element, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2338,9 +2359,6 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lsimd_floating_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_floating_fixed_software_\@
-	.endif
 	\operation \element\()2, \element\()0, #\fraction
 	tbz w16, #2, .Lsimd_floating_fixed_store_\@
 	ldr q3, [x13]
@@ -2353,7 +2371,7 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	floating_to_integer_software
 .endm
 
-.macro simd_floating_to_integer_fixed_vector_body operation, arrangement, half, fraction
+.macro simd_floating_to_integer_fixed_vector_body operation, arrangement, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2366,9 +2384,6 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #3
 	b.ne .Lsimd_floating_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_floating_fixed_software_\@
-	.endif
 	\operation v2.\arrangement, v0.\arrangement, #\fraction
 	str q2, [x13]
 	next_gadget
@@ -2376,14 +2391,14 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	floating_to_integer_software
 .endm
 
-.macro simd_floating_to_integer_fixed_table name, operation, shape, half, scalar, count
+.macro simd_floating_to_integer_fixed_table name, operation, shape, scalar, count
 	floating_fixed_table_begin \name
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
 			.if \scalar
-				simd_floating_to_integer_fixed_scalar_body \operation, \shape, \half, \fraction
+				simd_floating_to_integer_fixed_scalar_body \operation, \shape, \fraction
 			.else
-				simd_floating_to_integer_fixed_vector_body \operation, \shape, \half, \fraction
+				simd_floating_to_integer_fixed_vector_body \operation, \shape, \fraction
 			.endif
 		.endif
 	.endr
@@ -2391,14 +2406,14 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 .endm
 
 .macro simd_floating_to_integer_fixed_variants name, operation
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 1, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_s, \operation, s, 0, 1, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_d, \operation, d, 0, 1, 64
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 1, 0, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 1, 0, 16
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 0, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 0, 32
-	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 0, 64
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 16
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_s, \operation, s, 1, 32
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_d, \operation, d, 1, 64
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 0, 16
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 0, 16
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 32
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 32
+	simd_floating_to_integer_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 64
 .endm
 
 simd_floating_to_integer_fixed_variants fcvtzs, fcvtzs
@@ -2409,7 +2424,7 @@ simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 .purgem simd_floating_to_integer_fixed_vector_body
 .purgem simd_floating_to_integer_fixed_scalar_body
 
-.macro gpr_to_floating_fixed_body operation, integer, floating, element, half, zero, fraction
+.macro gpr_to_floating_fixed_body operation, integer, floating, element, zero, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2426,9 +2441,6 @@ simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 	movi v2.16b, #0
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lgpr_to_floating_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lgpr_to_floating_fixed_software_\@
-	.endif
 	\operation \floating\()2, \integer\()14, #\fraction
 	tbz w16, #2, .Lgpr_to_floating_fixed_store_\@
 	ldr q3, [x13]
@@ -2441,20 +2453,20 @@ simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 	integer_to_floating_software
 .endm
 
-.macro gpr_to_floating_fixed_table name, operation, integer, floating, element, half, zero, count
+.macro gpr_to_floating_fixed_table name, operation, integer, floating, element, zero, count
 	floating_fixed_table_begin \name
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
-			gpr_to_floating_fixed_body \operation, \integer, \floating, \element, \half, \zero, \fraction
+			gpr_to_floating_fixed_body \operation, \integer, \floating, \element, \zero, \fraction
 		.endif
 	.endr
 	floating_fixed_table_end \name
 .endm
 
 .macro gpr_to_floating_fixed_widths name, operation, integer, zero, count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_h\zero, \operation, \integer, h, h, 1, \zero, \count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_s\zero, \operation, \integer, s, s, 0, \zero, \count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_d\zero, \operation, \integer, d, d, 0, \zero, \count
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero, \count
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero, \count
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero, \count
 .endm
 
 .macro gpr_to_floating_fixed_variants name, operation
@@ -2472,7 +2484,7 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 .purgem gpr_to_floating_fixed_table
 .purgem gpr_to_floating_fixed_body
 
-.macro simd_integer_to_floating_fixed_scalar_body operation, element, half, fraction
+.macro simd_integer_to_floating_fixed_scalar_body operation, element, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2485,9 +2497,6 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	movi v2.16b, #0
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lsimd_integer_to_floating_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_integer_to_floating_fixed_software_\@
-	.endif
 	\operation \element\()2, \element\()0, #\fraction
 	tbz w16, #2, .Lsimd_integer_to_floating_fixed_store_\@
 	ldr q3, [x13]
@@ -2500,7 +2509,7 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	integer_to_floating_software
 .endm
 
-.macro simd_integer_to_floating_fixed_vector_body operation, arrangement, half, fraction
+.macro simd_integer_to_floating_fixed_vector_body operation, arrangement, fraction
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -2512,9 +2521,6 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	ldr q0, [x12]
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #1, .Lsimd_integer_to_floating_fixed_software_\@
-	.if \half
-	tbnz w16, #26, .Lsimd_integer_to_floating_fixed_software_\@
-	.endif
 	\operation v2.\arrangement, v0.\arrangement, #\fraction
 	str q2, [x13]
 	next_gadget
@@ -2522,14 +2528,14 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	integer_to_floating_software
 .endm
 
-.macro simd_integer_to_floating_fixed_table name, operation, shape, half, scalar, count
+.macro simd_integer_to_floating_fixed_table name, operation, shape, scalar, count
 	floating_fixed_table_begin \name
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
 			.if \scalar
-				simd_integer_to_floating_fixed_scalar_body \operation, \shape, \half, \fraction
+				simd_integer_to_floating_fixed_scalar_body \operation, \shape, \fraction
 			.else
-				simd_integer_to_floating_fixed_vector_body \operation, \shape, \half, \fraction
+				simd_integer_to_floating_fixed_vector_body \operation, \shape, \fraction
 			.endif
 		.endif
 	.endr
@@ -2537,14 +2543,14 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 .endm
 
 .macro simd_integer_to_floating_fixed_variants name, operation
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 1, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_s, \operation, s, 0, 1, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_d, \operation, d, 0, 1, 64
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 1, 0, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 1, 0, 16
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 0, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 0, 32
-	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 0, 64
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_h, \operation, h, 1, 16
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_s, \operation, s, 1, 32
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_d, \operation, d, 1, 64
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4h, \operation, 4h, 0, 16
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_8h, \operation, 8h, 0, 16
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2s, \operation, 2s, 0, 32
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_4s, \operation, 4s, 0, 32
+	simd_integer_to_floating_fixed_table simd_fixed_\name\()_2d, \operation, 2d, 0, 64
 .endm
 
 simd_integer_to_floating_fixed_variants scvtf, scvtf
@@ -2557,34 +2563,28 @@ simd_integer_to_floating_fixed_variants ucvtf, ucvtf
 .purgem floating_fixed_table_end
 .purgem floating_fixed_table_begin
 
-/* Fused operand: destination[4:0], first[12:8], addend[20:16],
- * second[28:24]. */
+/* Translation emits four direct CpuState vector offsets in destination,
+ * first multiplicand, second multiplicand, and addend order. */
 .macro floating_fused name, first, second, addend, destination, element, operation
 gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #24, #5
-	add x13, _cpu, #UML_GADGET_CPU_V0
-	add x14, x13, x10, lsl #4
-	add x15, x13, x12, lsl #4
-	add x16, x13, x11, lsl #4
-	add x17, x13, x9, lsl #4
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
 	movi v3.16b, #0
-	ldr \first, [x14]
-	ldr \second, [x15]
-	ldr \addend, [x16]
+	ldr \first, [_cpu, x9]
+	ldr \second, [_cpu, x10]
+	ldr \addend, [_cpu, x11]
 	\operation \destination, \first, \second, \addend
 	/* All scalar fused forms merge inactive bits from Va for FPCR.NEP. */
-	ldr w8, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w8, #2, 1f
-	ldr q4, [x16]
+	ldr w12, [_cpu, #UML_GADGET_CPU_FPCR]
+	tbz w12, #2, 1f
+	ldr q4, [_cpu, x11]
 	ins v4.\element[0], v3.\element[0]
 	mov v3.16b, v4.16b
 1:
-	str q3, [x17]
+	str q3, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -2607,18 +2607,13 @@ floating_fused floating_nmsub_double, d0, d1, d2, d3, d, fnmsub
 gadget simd_fused_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x8]
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [x15]
+	str q2, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -2828,19 +2823,52 @@ simd_three_same_scalar sqrdmulh_s, sqrdmulh, s, 0, 1
 
 /* FEAT_RDM three-same-extra operations use the destination as the exact
  * accumulator. They are kept in dedicated symbols because their encoding
- * class is separate from ordinary three-same. */
-simd_three_same_vector sqrdmlah_4h, sqrdmlah, 4h, 1, 1
-simd_three_same_vector sqrdmlah_2s, sqrdmlah, 2s, 1, 1
-simd_three_same_vector sqrdmlah_8h, sqrdmlah, 8h, 1, 1
-simd_three_same_vector sqrdmlah_4s, sqrdmlah, 4s, 1, 1
-simd_three_same_scalar sqrdmlah_h, sqrdmlah, h, 1, 1
-simd_three_same_scalar sqrdmlah_s, sqrdmlah, s, 1, 1
-simd_three_same_vector sqrdmlsh_4h, sqrdmlsh, 4h, 1, 1
-simd_three_same_vector sqrdmlsh_2s, sqrdmlsh, 2s, 1, 1
-simd_three_same_vector sqrdmlsh_8h, sqrdmlsh, 8h, 1, 1
-simd_three_same_vector sqrdmlsh_4s, sqrdmlsh, 4s, 1, 1
-simd_three_same_scalar sqrdmlsh_h, sqrdmlsh, h, 1, 1
-simd_three_same_scalar sqrdmlsh_s, sqrdmlsh, s, 1, 1
+ * class is separate from ordinary three-same. Translation supplies three
+ * direct CpuState offsets, so the valid native hot path does no field
+ * extraction or address arithmetic. */
+.macro simd_rdm_direct name, operation, destination, left, right, load_destination, load_left, load_right
+gadget simd_three_same_\name
+	ensure_fp_environment
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
+	ldr \load_destination, [_cpu, x13]
+	ldr \load_left, [_cpu, x14]
+	ldr \load_right, [_cpu, x15]
+	\operation \destination, \left, \right
+	str q0, [_cpu, x13]
+	next_gadget
+.endm
+
+.macro simd_rdm_direct_family name, operation
+	simd_rdm_direct \name\()_4h, \operation, v0.4h, v1.4h, v2.4h, q0, q1, q2
+	simd_rdm_direct \name\()_2s, \operation, v0.2s, v1.2s, v2.2s, q0, q1, q2
+	simd_rdm_direct \name\()_8h, \operation, v0.8h, v1.8h, v2.8h, q0, q1, q2
+	simd_rdm_direct \name\()_4s, \operation, v0.4s, v1.4s, v2.4s, q0, q1, q2
+	simd_rdm_direct \name\()_h, \operation, h0, h1, h2, h0, h1, h2
+	simd_rdm_direct \name\()_s, \operation, s0, s1, s2, s0, s1, s2
+.endm
+
+simd_rdm_direct_family sqrdmlah, sqrdmlah
+simd_rdm_direct_family sqrdmlsh, sqrdmlsh
+
+.purgem simd_rdm_direct_family
+.purgem simd_rdm_direct
+
+/* Hosts without FEAT_RDM use one cold exact helper selected at translation.
+ * Synchronize cumulative native FPSR state on both sides of the call. */
+gadget simd_rdm_software
+	ensure_fp_environment
+	ldr w8, [_stream], #8
+	mrs x16, fpsr
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov w1, w8
+	bl NAME(uml_arm64_simd_rdm_software)
+	ldp x1, x2, [sp], #16
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+	next_gadget
 
 .purgem simd_three_same_s4
 .purgem simd_three_same_v7
@@ -2854,23 +2882,19 @@ simd_three_same_scalar sqrdmlsh_s, sqrdmlsh, s, 1, 1
  * the builder when the host extension is unavailable. */
 .macro simd_dot_vector name, operation, destination, sources, wide
 gadget simd_dot_vector_\name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	\operation v0.\destination, v1.\sources, v2.\sources
 	.if \wide
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
+	str d0, [_cpu, x9]
+	add x9, x9, #8
+	str xzr, [_cpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2886,23 +2910,19 @@ simd_dot_vector usdot_4s, usdot, 4s, 16b, 1
 
 .macro simd_dot_indexed name, operation, destination, sources, index, wide
 gadget simd_dot_indexed_\name\()_\destination\()_\index
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	\operation v0.\destination, v1.\sources, v2.4b[\index]
 	.if \wide
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
+	str d0, [_cpu, x9]
+	add x9, x9, #8
+	str xzr, [_cpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -2934,7 +2954,11 @@ simd_dot_indexed_family usdot, usdot
 	uxtl v4.8h, v2.8b
 	.endif
 	mul v3.8h, v3.8h, v4.8h
+	.if !\signed_left && !\signed_right
+	uaddlp v3.4s, v3.8h
+	.else
 	saddlp v3.4s, v3.8h
+	.endif
 	addp v3.4s, v3.4s, v3.4s
 	.if \wide
 	.if \signed_left
@@ -2948,7 +2972,11 @@ simd_dot_indexed_family usdot, usdot
 	uxtl2 v6.8h, v2.16b
 	.endif
 	mul v5.8h, v5.8h, v6.8h
+	.if !\signed_left && !\signed_right
+	uaddlp v5.4s, v5.8h
+	.else
 	saddlp v5.4s, v5.8h
+	.endif
 	addp v5.4s, v5.4s, v5.4s
 	mov v3.d[1], v5.d[0]
 	add v0.4s, v0.4s, v3.4s
@@ -2959,27 +2987,27 @@ simd_dot_indexed_family usdot, usdot
 
 .macro simd_dot_vector_software name, signed_left, signed_right, wide
 gadget simd_dot_vector_\name\()_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	simd_dot_software_body \signed_left, \signed_right, \wide
 	.if \wide
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
+	str d0, [_cpu, x9]
+	add x9, x9, #8
+	str xzr, [_cpu, x9]
 	.endif
 	next_gadget
 .endm
 
+simd_dot_vector_software sdot_2s, 1, 1, 0
+simd_dot_vector_software sdot_4s, 1, 1, 1
+simd_dot_vector_software udot_2s, 0, 0, 0
+simd_dot_vector_software udot_4s, 0, 0, 1
 simd_dot_vector_software usdot_2s, 0, 1, 0
 simd_dot_vector_software usdot_4s, 0, 1, 1
 
@@ -2987,24 +3015,20 @@ simd_dot_vector_software usdot_4s, 0, 1, 1
 
 .macro simd_dot_indexed_software name, signed_left, signed_right, shape, index, wide
 gadget simd_dot_indexed_\name\()_\shape\()_\index\()_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr x9, [_stream], #8
+	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	dup v2.4s, v2.s[\index]
 	simd_dot_software_body \signed_left, \signed_right, \wide
 	.if \wide
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
+	str d0, [_cpu, x9]
+	add x9, x9, #8
+	str xzr, [_cpu, x9]
 	.endif
 	next_gadget
 .endm
@@ -3016,6 +3040,8 @@ gadget simd_dot_indexed_\name\()_\shape\()_\index\()_soft
 	.endr
 .endm
 
+simd_dot_indexed_software_family sdot, 1, 1
+simd_dot_indexed_software_family udot, 0, 0
 simd_dot_indexed_software_family sudot, 1, 0
 simd_dot_indexed_software_family usdot, 0, 1
 
@@ -3025,19 +3051,13 @@ simd_dot_indexed_software_family usdot, 0, 1
 
 .macro simd_matrix_native name, operation
 gadget simd_matrix_\name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x14]
-	ldr q1, [x15]
-	ldr q2, [x13]
-	\operation v2.4s, v0.16b, v1.16b
-	str q2, [x13]
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
+	\operation v0.4s, v1.16b, v2.16b
+	str q0, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3064,17 +3084,11 @@ simd_matrix_native usmmla, usmmla
 
 .macro simd_matrix_software name, signed_left, signed_right, unsigned_product
 gadget simd_matrix_\name\()_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x14]
-	ldr q1, [x15]
-	ldr q16, [x13]
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	ldr q16, [_cpu, x9]
 	.if \signed_left
 	sxtl v2.8h, v0.8b
 	sxtl2 v3.8h, v0.16b
@@ -3098,7 +3112,7 @@ gadget simd_matrix_\name\()_soft
 	simd_matrix_reduce 6, 7, \unsigned_product
 	zip1 v4.4s, v4.4s, v6.4s
 	add v16.4s, v16.4s, v4.4s
-	str q16, [x13]
+	str q16, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3109,18 +3123,16 @@ simd_matrix_software usmmla, 0, 1, 0
 .purgem simd_matrix_software
 .purgem simd_matrix_reduce
 
-/* Translation-specialized widening and high-narrow arithmetic. As with the
- * three-same matrix above, the builder resolves operation, signedness,
- * element size, and lower/upper-half form once. */
+/* Translation-specialized widening arithmetic. As with the three-same matrix
+ * above, the builder resolves operation, signedness, element size, and
+ * lower/upper-half form once. */
 .macro simd_widening_vector name, operation, destination, left, right, accumulate=0, fpstate=0
 gadget simd_widening_\name
 	.if \fpstate
 	ensure_fp_environment
 	.endif
-	ldr x8, [_stream], #8
-	and x9, x8, #0xffff
-	ubfx x10, x8, #16, #16
-	lsr x11, x8, #32
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	.if \accumulate
@@ -3134,10 +3146,8 @@ gadget simd_widening_\name
 .macro simd_widening_scalar name, operation, destination, source, accumulate=0
 gadget simd_widening_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and x9, x8, #0xffff
-	ubfx x10, x8, #16, #16
-	lsr x11, x8, #32
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	.if \accumulate
@@ -3166,13 +3176,30 @@ gadget simd_widening_\name
 	simd_widening_vector \name\()_4s,  \operation2, 2d, 2d, 4s
 .endm
 
+/* High-narrow streams carry three direct CpuState offsets.  Two stream loads
+ * replace packed-field extraction in the runtime hot path; the upper-half
+ * forms alone load the old destination because lower-half forms clear it. */
+.macro simd_high_narrow_vector name, operation, destination, left, right, preserve=0
+gadget simd_widening_\name
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
+	.if \preserve
+	ldr q2, [_cpu, x9]
+	.endif
+	\operation v2.\destination, v0.\left, v1.\right
+	str q2, [_cpu, x9]
+	next_gadget
+.endm
+
 .macro simd_high_narrow3 name, operation, operation2
-	simd_widening_vector \name\()_8h,  \operation,  8b, 8h, 8h
-	simd_widening_vector \name\()_4s,  \operation,  4h, 4s, 4s
-	simd_widening_vector \name\()_2d,  \operation,  2s, 2d, 2d
-	simd_widening_vector \name\()_8h2, \operation2, 16b, 8h, 8h, 1
-	simd_widening_vector \name\()_4s2, \operation2, 8h,  4s, 4s, 1
-	simd_widening_vector \name\()_2d2, \operation2, 4s,  2d, 2d, 1
+	simd_high_narrow_vector \name\()_8h,  \operation,  8b, 8h, 8h
+	simd_high_narrow_vector \name\()_4s,  \operation,  4h, 4s, 4s
+	simd_high_narrow_vector \name\()_2d,  \operation,  2s, 2d, 2d
+	simd_high_narrow_vector \name\()_8h2, \operation2, 16b, 8h, 8h, 1
+	simd_high_narrow_vector \name\()_4s2, \operation2, 8h,  4s, 4s, 1
+	simd_high_narrow_vector \name\()_2d2, \operation2, 4s,  2d, 2d, 1
 .endm
 
 simd_widening_long3 saddl, saddl, saddl2
@@ -3221,27 +3248,29 @@ simd_widening_scalar sqdmull_h, sqdmull, s, h
 simd_widening_scalar sqdmull_s, sqdmull, d, s
 
 .purgem simd_high_narrow3
+.purgem simd_high_narrow_vector
 .purgem simd_widening_wide3
 .purgem simd_widening_long3
 .purgem simd_widening_scalar
 .purgem simd_widening_vector
 
-/* Translation-specialized integer two-register operations. */
+/* Translation-specialized integer two-register operations. The stream packs
+ * direct CpuState vector byte offsets; runtime performs no guest-register
+ * decoding or vector-base address formation. */
 .macro simd_unary_vector name, operation, destination, source, accumulate=0, fpstate=0
 gadget simd_unary_\name
 	.if \fpstate
 	ensure_fp_environment
 	.endif
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	ldr q0, [x11, x10, lsl #4]
+	uxth w9, w8
+	lsr w10, w8, #16
+	ldr q0, [_cpu, x10]
 	.if \accumulate
-	ldr q2, [x11, x9, lsl #4]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation v2.\destination, v0.\source
-	str q2, [x11, x9, lsl #4]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3251,15 +3280,14 @@ gadget simd_unary_\name
 	ensure_fp_environment
 	.endif
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	ldr q0, [x11, x10, lsl #4]
+	uxth w9, w8
+	lsr w10, w8, #16
+	ldr q0, [_cpu, x10]
 	.if \accumulate
-	ldr q2, [x11, x9, lsl #4]
+	ldr q2, [_cpu, x9]
 	.endif
 	\operation \destination\()2, \source\()0
-	str q2, [x11, x9, lsl #4]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3358,28 +3386,22 @@ simd_unary_vector rev16_16b, rev16, 16b, 16b
 .macro simd_compare_zero_vector name, operation, arrangement
 gadget simd_unary_\name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q0, [x12]
+	uxth w9, w8
+	lsr w10, w8, #16
+	ldr q0, [_cpu, x10]
 	\operation v2.\arrangement, v0.\arrangement, #0
-	str q2, [x13]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
 .macro simd_compare_zero_scalar name, operation
 gadget simd_unary_\name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q0, [x12]
+	uxth w9, w8
+	lsr w10, w8, #16
+	ldr q0, [_cpu, x10]
 	\operation d2, d0, #0
-	str q2, [x13]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3428,14 +3450,11 @@ simd_unary_scalar sqxtun_s, sqxtun, s, d, 0, 1
 .macro simd_shll name, operation, destination, source, shift
 gadget simd_unary_\name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q0, [x12]
+	uxth w9, w8
+	lsr w10, w8, #16
+	ldr q0, [_cpu, x10]
 	\operation v2.\destination, v0.\source, #\shift
-	str q2, [x13]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -3508,30 +3527,34 @@ simd_unary_vector ursqrte_4s, ursqrte, 4s, 4s
 .purgem simd_unary_scalar
 .purgem simd_unary_vector
 
-/* Translation-specialized Advanced SIMD bitwise operations. */
-.macro simd_bitwise_shape name, operation, arrangement, accumulate=0
+/* Translation-specialized Advanced SIMD bitwise operations. Register fields
+ * become direct CpuState byte offsets in the stream, so the runtime path
+ * performs no guest-register decoding or address formation. */
+.macro simd_bitwise_shape name, operation, arrangement, wide, accumulate=0
 gadget \name\()_\arrangement
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
+	ldp x9, x10, [_stream], #16
+	ldr x11, [_stream], #8
+	.if \wide
+	ldr q0, [_cpu, x10]
+	ldr q1, [_cpu, x11]
 	.if \accumulate
-	ldr q2, [x15]
+	ldr q2, [_cpu, x9]
+	.endif
+	.else
+	ldr d0, [_cpu, x10]
+	ldr d1, [_cpu, x11]
+	.if \accumulate
+	ldr d2, [_cpu, x9]
+	.endif
 	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [x15]
+	str q2, [_cpu, x9]
 	next_gadget
 .endm
 
 .macro simd_bitwise name, operation, accumulate=0
-	simd_bitwise_shape \name, \operation, 8b, \accumulate
-	simd_bitwise_shape \name, \operation, 16b, \accumulate
+	simd_bitwise_shape \name, \operation, 8b, 0, \accumulate
+	simd_bitwise_shape \name, \operation, 16b, 1, \accumulate
 .endm
 
 simd_bitwise simd_and, and
@@ -3543,65 +3566,83 @@ simd_bitwise simd_bsl, bsl, 1
 simd_bitwise simd_bit, bit, 1
 simd_bitwise simd_bif, bif, 1
 
+/* ORR with identical sources is MOV. Translation removes the redundant
+ * source load and native operation; the 64-bit load also clears the upper
+ * half required by the 8-byte arrangement. */
+.macro simd_move_shape name, register
+gadget \name
+	ldp x9, x10, [_stream], #16
+	ldr \register\()2, [_cpu, x10]
+	str q2, [_cpu, x9]
+	next_gadget
+.endm
+
+simd_move_shape simd_mov_8b, d
+simd_move_shape simd_mov_16b, q
+
+.purgem simd_move_shape
 .purgem simd_bitwise
 .purgem simd_bitwise_shape
 
-/* FEAT_AES maps exactly to the host cryptographic instructions. */
-.macro simd_aes_binary name, operation
-gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x9, lsl #4
-	add x13, x11, x10, lsl #4
-	ldr q0, [x12]
-	ldr q1, [x13]
+/* Translation resolves both vector-register fields to CpuState offsets and
+ * selects the operation and host path. Valid native blocks therefore contain
+ * no opcode decode, register-index arithmetic, or conditional branch. */
+.macro simd_aes_native_binary name, operation
+gadget \name\()_native
+	ldp x9, x10, [_stream], #16
+	ldr q0, [_cpu, x9]
+	ldr q1, [_cpu, x10]
 	\operation v0.16b, v1.16b
-	str q0, [x12]
+	str q0, [_cpu, x9]
 	next_gadget
 .endm
 
-.macro simd_aes_unary name, operation
-gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x10, lsl #4
-	add x13, x11, x9, lsl #4
-	ldr q1, [x12]
+.macro simd_aes_native_unary name, operation
+gadget \name\()_native
+	ldp x9, x10, [_stream], #16
+	ldr q1, [_cpu, x10]
 	\operation v0.16b, v1.16b
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	next_gadget
 .endm
 
-simd_aes_binary simd_aese, aese
-simd_aes_binary simd_aesd, aesd
-simd_aes_unary simd_aesmc, aesmc
-simd_aes_unary simd_aesimc, aesimc
+.macro simd_aes_software name
+gadget \name\()_soft
+	ldp x8, x9, [_stream], #16
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov x2, x9
+	bl NAME(uml_arm64_\name\()_software)
+	ldp x1, x2, [sp], #16
+	next_gadget
+.endm
 
-.purgem simd_aes_unary
-.purgem simd_aes_binary
+simd_aes_native_binary simd_aese, aese
+simd_aes_native_binary simd_aesd, aesd
+simd_aes_native_unary simd_aesmc, aesmc
+simd_aes_native_unary simd_aesimc, aesimc
+simd_aes_software simd_aese
+simd_aes_software simd_aesd
+simd_aes_software simd_aesmc
+simd_aes_software simd_aesimc
+
+.purgem simd_aes_software
+.purgem simd_aes_native_unary
+.purgem simd_aes_native_binary
 
 /* FEAT_SHA1 and FEAT_SHA256 map one-for-one to host crypto instructions.
  * Operation selection is performed by the builder, leaving no opcode branch
  * in a valid translated block. */
 .macro simd_sha_three name, operation, destination, first, second
 gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x8]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	\operation \destination, \first, \second
-	str q0, [x13]
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -3620,16 +3661,11 @@ simd_sha_three simd_sha512su1, sha512su1, v0.2d, v1.2d, v2.2d
 
 .macro simd_sha_two name, operation, destination, source
 gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x9, lsl #4
-	add x13, x11, x10, lsl #4
-	ldr q0, [x12]
-	ldr q1, [x13]
+	ldp x8, x9, [_stream], #16
+	ldr q0, [_cpu, x8]
+	ldr q1, [_cpu, x9]
 	\operation \destination, \source
-	str q0, [x12]
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -3640,21 +3676,65 @@ simd_sha_two simd_sha512su0, sha512su0, v0.2d, v1.2d
 
 .purgem simd_sha_two
 
+/* Hosts that do not implement an assigned fixed transform use a
+ * translation-selected semantic leaf. Each entry still has a fixed operation
+ * and direct register offsets, so neither opcode nor register fields are
+ * decoded by the threaded runtime. */
+.macro simd_sha_three_software name
+gadget \name\()_soft
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov x2, x9
+	mov x3, x10
+	bl NAME(uml_arm64_\name\()_software)
+	ldp x1, x2, [sp], #16
+	next_gadget
+.endm
+
+simd_sha_three_software simd_sha1c
+simd_sha_three_software simd_sha1p
+simd_sha_three_software simd_sha1m
+simd_sha_three_software simd_sha1su0
+simd_sha_three_software simd_sha256h
+simd_sha_three_software simd_sha256h2
+simd_sha_three_software simd_sha256su1
+simd_sha_three_software simd_sha512h
+simd_sha_three_software simd_sha512h2
+simd_sha_three_software simd_sha512su1
+
+.purgem simd_sha_three_software
+
+.macro simd_sha_two_software name
+gadget \name\()_soft
+	ldp x8, x9, [_stream], #16
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov x2, x9
+	bl NAME(uml_arm64_\name\()_software)
+	ldp x1, x2, [sp], #16
+	next_gadget
+.endm
+
+simd_sha_two_software simd_sha1h
+simd_sha_two_software simd_sha1su1
+simd_sha_two_software simd_sha256su0
+simd_sha_two_software simd_sha512su0
+
+.purgem simd_sha_two_software
+
 .macro simd_sm_three name, operation
 gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x8]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	\operation v0.4s, v1.4s, v2.4s
-	str q0, [x13]
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -3665,38 +3745,24 @@ simd_sm_three simd_sm4ekey, sm4ekey
 .purgem simd_sm_three
 
 gadget simd_sm3ss1
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #24, #5
-	add x13, _cpu, #UML_GADGET_CPU_V0
-	add x17, x13, x9, lsl #4
-	add x14, x13, x10, lsl #4
-	add x15, x13, x11, lsl #4
-	add x16, x13, x12, lsl #4
-	ldr q1, [x14]
-	ldr q2, [x15]
-	ldr q3, [x16]
+	ldp x8, x9, [_stream], #16
+	ldp x10, x11, [_stream], #16
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
+	ldr q3, [_cpu, x11]
 	sm3ss1 v0.4s, v1.4s, v2.4s, v3.4s
-	str q0, [x17]
+	str q0, [_cpu, x8]
 	next_gadget
 
 .macro simd_sm3tt name, operation, index
 gadget simd_\name\()_\index
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q0, [_cpu, x8]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	\operation v0.4s, v1.4s, v2.s[\index]
-	str q0, [x13]
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
@@ -3710,32 +3776,22 @@ gadget simd_\name\()_\index
 .purgem simd_sm3tt
 
 gadget simd_sm4e
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x9, lsl #4
-	add x13, x11, x10, lsl #4
-	ldr q0, [x12]
-	ldr q1, [x13]
+	ldp x8, x9, [_stream], #16
+	ldr q0, [_cpu, x8]
+	ldr q1, [_cpu, x9]
 	sm4e v0.4s, v1.4s
-	str q0, [x12]
+	str q0, [_cpu, x8]
 	next_gadget
 
 /* Branch-free baseline-AdvSIMD fallbacks selected at translation time on
  * hosts without FEAT_SM3/FEAT_SM4. */
 gadget simd_sm3partw1_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	add x13, _cpu, x8
 	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	eor v5.16b, v0.16b, v1.16b
 	ext v3.16b, v2.16b, v2.16b, #4
 	ushr v4.4s, v3.4s, #17
@@ -3760,17 +3816,12 @@ gadget simd_sm3partw1_soft
 	next_gadget
 
 gadget simd_sm3partw2_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	add x13, _cpu, x8
 	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	ushr v3.4s, v2.4s, #25
 	sli v3.4s, v2.4s, #7
 	eor v3.16b, v3.16b, v1.16b
@@ -3788,19 +3839,12 @@ gadget simd_sm3partw2_soft
 	next_gadget
 
 gadget simd_sm3ss1_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #24, #5
-	add x13, _cpu, #UML_GADGET_CPU_V0
-	add x17, x13, x9, lsl #4
-	add x14, x13, x10, lsl #4
-	add x15, x13, x11, lsl #4
-	add x16, x13, x12, lsl #4
-	ldr q1, [x14]
-	ldr q2, [x15]
-	ldr q3, [x16]
+	ldp x8, x9, [_stream], #16
+	ldp x10, x11, [_stream], #16
+	add x13, _cpu, x8
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
+	ldr q3, [_cpu, x11]
 	umov w8, v1.s[3]
 	umov w9, v2.s[3]
 	umov w10, v3.s[3]
@@ -3810,22 +3854,17 @@ gadget simd_sm3ss1_soft
 	ror w8, w8, #25
 	movi v0.16b, #0
 	ins v0.s[3], w8
-	str q0, [x17]
+	str q0, [x13]
 	next_gadget
 
 .macro simd_sm3tt_soft name, operation, index
 gadget simd_\name\()_\index\()_soft
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	add x13, _cpu, x8
 	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
 	umov w8, v0.s[0]
 	umov w9, v0.s[1]
 	umov w10, v0.s[2]
@@ -3937,12 +3976,9 @@ gadget simd_\name\()_\index\()_soft
 .endm
 
 gadget simd_sm4e_soft
-	ldr x7, [_stream], #8
-	and w9, w7, #0x1f
-	ubfx w10, w7, #8, #5
-	add x3, _cpu, #UML_GADGET_CPU_V0
-	add x4, x3, x9, lsl #4
-	add x5, x3, x10, lsl #4
+	ldp x4, x5, [_stream], #16
+	add x4, _cpu, x4
+	add x5, _cpu, x5
 	adr x6, simd_sm4_sbox_table
 	ldp w8, w9, [x4]
 	ldp w10, w11, [x4, #8]
@@ -3955,14 +3991,11 @@ gadget simd_sm4e_soft
 	next_gadget
 
 gadget simd_sm4ekey_soft
+	ldp x4, x5, [_stream], #16
 	ldr x7, [_stream], #8
-	and w9, w7, #0x1f
-	ubfx w10, w7, #8, #5
-	ubfx w11, w7, #16, #5
-	add x3, _cpu, #UML_GADGET_CPU_V0
-	add x4, x3, x9, lsl #4
-	add x5, x3, x10, lsl #4
-	add x7, x3, x11, lsl #4
+	add x4, _cpu, x4
+	add x5, _cpu, x5
+	add x7, _cpu, x7
 	adr x6, simd_sm4_sbox_table
 	ldp w8, w9, [x5]
 	ldp w10, w11, [x5, #8]
@@ -3997,153 +4030,184 @@ simd_sm4_sbox_table:
 	.byte 0x89,0x69,0x97,0x4a,0x0c,0x96,0x77,0x7e,0x65,0xb9,0xf1,0x09,0xc5,0x6e,0xc6,0x84
 	.byte 0x18,0xf0,0x7d,0xec,0x3a,0xdc,0x4d,0x20,0x79,0xee,0x5f,0x3e,0xd7,0xcb,0x39,0x48
 
-.macro simd_crypto_three name, operation
+.macro simd_four_source_logic name, operation, native, kind
 gadget \name
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	ubfx w12, w8, #24, #5
-	add x13, _cpu, #UML_GADGET_CPU_V0
-	add x14, x13, x10, lsl #4
-	add x15, x13, x11, lsl #4
-	add x16, x13, x12, lsl #4
-	ldr q1, [x14]
-	ldr q2, [x15]
-	ldr q3, [x16]
+	ldp x8, x9, [_stream], #16
+	ldp x10, x11, [_stream], #16
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
+	ldr q3, [_cpu, x11]
+.if \native
 	\operation v0.16b, v1.16b, v2.16b, v3.16b
-	add x14, x13, x9, lsl #4
-	str q0, [x14]
+.elseif \kind == 0
+	eor v0.16b, v1.16b, v2.16b
+	eor v0.16b, v0.16b, v3.16b
+.else
+	bic v0.16b, v2.16b, v3.16b
+	eor v0.16b, v0.16b, v1.16b
+.endif
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
-simd_crypto_three simd_eor3, eor3
-simd_crypto_three simd_bcax, bcax
-.purgem simd_crypto_three
+simd_four_source_logic simd_eor3_native, eor3, 1, 0
+simd_four_source_logic simd_eor3_soft, eor3, 0, 0
+simd_four_source_logic simd_bcax_native, bcax, 1, 1
+simd_four_source_logic simd_bcax_soft, bcax, 0, 1
+.purgem simd_four_source_logic
 
-gadget simd_rax1
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr q1, [x13]
-	ldr q2, [x14]
+.macro simd_rax1 name, native
+gadget \name
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
+.if \native
 	rax1 v0.2d, v1.2d, v2.2d
-	add x13, x12, x9, lsl #4
-	str q0, [x13]
-	next_gadget
-
-.macro simd_xar rotate
-gadget simd_xar_\rotate
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr q1, [x13]
-	ldr q2, [x14]
-	xar v0.2d, v1.2d, v2.2d, #\rotate
-	add x13, x12, x9, lsl #4
-	str q0, [x13]
+.else
+	shl v0.2d, v2.2d, #1
+	ushr v3.2d, v2.2d, #63
+	orr v0.16b, v0.16b, v3.16b
+	eor v0.16b, v0.16b, v1.16b
+.endif
+	str q0, [_cpu, x8]
 	next_gadget
 .endm
 
-simd_xar 0
-simd_xar 1
-simd_xar 2
-simd_xar 3
-simd_xar 4
-simd_xar 5
-simd_xar 6
-simd_xar 7
-simd_xar 8
-simd_xar 9
-simd_xar 10
-simd_xar 11
-simd_xar 12
-simd_xar 13
-simd_xar 14
-simd_xar 15
-simd_xar 16
-simd_xar 17
-simd_xar 18
-simd_xar 19
-simd_xar 20
-simd_xar 21
-simd_xar 22
-simd_xar 23
-simd_xar 24
-simd_xar 25
-simd_xar 26
-simd_xar 27
-simd_xar 28
-simd_xar 29
-simd_xar 30
-simd_xar 31
-simd_xar 32
-simd_xar 33
-simd_xar 34
-simd_xar 35
-simd_xar 36
-simd_xar 37
-simd_xar 38
-simd_xar 39
-simd_xar 40
-simd_xar 41
-simd_xar 42
-simd_xar 43
-simd_xar 44
-simd_xar 45
-simd_xar 46
-simd_xar 47
-simd_xar 48
-simd_xar 49
-simd_xar 50
-simd_xar 51
-simd_xar 52
-simd_xar 53
-simd_xar 54
-simd_xar 55
-simd_xar 56
-simd_xar 57
-simd_xar 58
-simd_xar 59
-simd_xar 60
-simd_xar 61
-simd_xar 62
-simd_xar 63
+simd_rax1 simd_rax1_native, 1
+simd_rax1 simd_rax1_soft, 0
+.purgem simd_rax1
 
+.macro simd_xar name, rotate, native
+gadget \name
+	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	ldr q1, [_cpu, x9]
+	ldr q2, [_cpu, x10]
+.if \native
+	xar v0.2d, v1.2d, v2.2d, #\rotate
+.else
+	eor v0.16b, v1.16b, v2.16b
+.if \rotate != 0
+	ushr v3.2d, v0.2d, #\rotate
+	shl v0.2d, v0.2d, #(64-\rotate)
+	orr v0.16b, v0.16b, v3.16b
+.endif
+.endif
+	str q0, [_cpu, x8]
+	next_gadget
+.endm
+
+.macro simd_xar_pair rotate
+	simd_xar simd_xar_native_\rotate, \rotate, 1
+	simd_xar simd_xar_soft_\rotate, \rotate, 0
+.endm
+
+simd_xar_pair 0
+simd_xar_pair 1
+simd_xar_pair 2
+simd_xar_pair 3
+simd_xar_pair 4
+simd_xar_pair 5
+simd_xar_pair 6
+simd_xar_pair 7
+simd_xar_pair 8
+simd_xar_pair 9
+simd_xar_pair 10
+simd_xar_pair 11
+simd_xar_pair 12
+simd_xar_pair 13
+simd_xar_pair 14
+simd_xar_pair 15
+simd_xar_pair 16
+simd_xar_pair 17
+simd_xar_pair 18
+simd_xar_pair 19
+simd_xar_pair 20
+simd_xar_pair 21
+simd_xar_pair 22
+simd_xar_pair 23
+simd_xar_pair 24
+simd_xar_pair 25
+simd_xar_pair 26
+simd_xar_pair 27
+simd_xar_pair 28
+simd_xar_pair 29
+simd_xar_pair 30
+simd_xar_pair 31
+simd_xar_pair 32
+simd_xar_pair 33
+simd_xar_pair 34
+simd_xar_pair 35
+simd_xar_pair 36
+simd_xar_pair 37
+simd_xar_pair 38
+simd_xar_pair 39
+simd_xar_pair 40
+simd_xar_pair 41
+simd_xar_pair 42
+simd_xar_pair 43
+simd_xar_pair 44
+simd_xar_pair 45
+simd_xar_pair 46
+simd_xar_pair 47
+simd_xar_pair 48
+simd_xar_pair 49
+simd_xar_pair 50
+simd_xar_pair 51
+simd_xar_pair 52
+simd_xar_pair 53
+simd_xar_pair 54
+simd_xar_pair 55
+simd_xar_pair 56
+simd_xar_pair 57
+simd_xar_pair 58
+simd_xar_pair 59
+simd_xar_pair 60
+simd_xar_pair 61
+simd_xar_pair 62
+simd_xar_pair 63
+
+.purgem simd_xar_pair
 .purgem simd_xar
 
-.macro simd_pmull name, operation, destination_arrangement, source_arrangement
+.macro simd_pmull_direct name, operation, destination_arrangement, source_arrangement
 gadget \name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	ldr q1, [x13]
-	ldr q2, [x14]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	\operation v0.\destination_arrangement, v1.\source_arrangement, \
 		v2.\source_arrangement
-	add x13, x12, x9, lsl #4
-	str q0, [x13]
+	str q0, [_cpu, x9]
 	next_gadget
 .endm
 
-simd_pmull simd_pmull_8b, pmull, 8h, 8b
-simd_pmull simd_pmull_8b2, pmull2, 8h, 16b
-simd_pmull simd_pmull_1d, pmull, 1q, 1d
-simd_pmull simd_pmull_1d2, pmull2, 1q, 2d
+simd_pmull_direct simd_pmull_8b_direct, pmull, 8h, 8b
+simd_pmull_direct simd_pmull_8b2_direct, pmull2, 8h, 16b
+simd_pmull_direct simd_pmull_1d_native_direct, pmull, 1q, 1d
+simd_pmull_direct simd_pmull_1d2_native_direct, pmull2, 1q, 2d
 
-.purgem simd_pmull
+.purgem simd_pmull_direct
+
+.macro simd_pmull_software_direct name, high
+gadget \name
+	ldr x8, [_stream], #8
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	mov w2, #\high
+	bl NAME(uml_arm64_simd_pmull_software)
+	ldp x1, x2, [sp], #16
+	next_gadget
+.endm
+
+simd_pmull_software_direct simd_pmull_1d_soft_direct, 0
+simd_pmull_software_direct simd_pmull_1d2_soft_direct, 1
+
+.purgem simd_pmull_software_direct
 
 .macro simd_extract_q offset
 gadget simd_extract_q\offset
@@ -4209,19 +4273,16 @@ simd_extract_d 7
 .macro simd_permute_shape name, operation, arrangement, wide
 gadget \name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	add x14, x12, x11, lsl #4
-	add x15, x12, x9, lsl #4
-	ldr q1, [x13]
-	ldr q2, [x14]
+	and x9, x8, #0xffff
+	ubfx x10, x8, #16, #16
+	lsr x11, x8, #32
+	ldr q1, [_cpu, x10]
+	ldr q2, [_cpu, x11]
 	\operation v0.\arrangement, v1.\arrangement, v2.\arrangement
 	.if \wide
-	str q0, [x15]
+	str q0, [_cpu, x9]
 	.else
+	add x15, _cpu, x9
 	str d0, [x15]
 	str xzr, [x15, #8]
 	.endif
@@ -4535,53 +4596,28 @@ simd_shift_left_long_operation ushll2, ushll2, 16b, 8h, 4s
 .macro simd_table_lookup_shape name, operation, count, extend, wide
 gadget \name
 	ldr x8, [_stream], #8
-	.if \count == 1
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
-	lsr x11, x8, #32
-	ldr q0, [_cpu, x10]
-	ldr q4, [_cpu, x11]
-		.if \extend
-	ldr q5, [_cpu, x9]
-		.endif
-	\operation v5.16b, {v0.16b}, v4.16b
-		.if \wide
-	str q5, [_cpu, x9]
-		.else
-	add x15, _cpu, x9
-	str d5, [x15]
-	str xzr, [x15, #8]
-		.endif
-	.else
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x14, x12, x10, lsl #4
-	ldr q0, [x14]
+	ubfx x11, x8, #32, #16
 	.if \count > 1
-	add w13, w10, #1
-	and w13, w13, #31
-	add x14, x12, x13, lsl #4
-	ldr q1, [x14]
+	lsr x12, x8, #48
+	.endif
+	ldr q4, [_cpu, x10]
+	ldr q0, [_cpu, x11]
+	.if \count > 1
+	ldr q1, [_cpu, x12]
 	.endif
 	.if \count > 2
-	add w13, w10, #2
-	and w13, w13, #31
-	add x14, x12, x13, lsl #4
-	ldr q2, [x14]
+	ldr x13, [_stream], #8
+	and x14, x13, #0xffff
+	ldr q2, [_cpu, x14]
 	.endif
 	.if \count > 3
-	add w13, w10, #3
-	and w13, w13, #31
-	add x14, x12, x13, lsl #4
-	ldr q3, [x14]
+	ubfx x15, x13, #16, #16
+	ldr q3, [_cpu, x15]
 	.endif
-	add x14, x12, x11, lsl #4
-	ldr q4, [x14]
-	add x15, x12, x9, lsl #4
 	.if \extend
-	ldr q5, [x15]
+	ldr q5, [_cpu, x9]
 	.endif
 	.if \count == 1
 	\operation v5.16b, {v0.16b}, v4.16b
@@ -4593,11 +4629,11 @@ gadget \name
 	\operation v5.16b, {v0.16b-v3.16b}, v4.16b
 	.endif
 	.if \wide
-	str q5, [x15]
+	str q5, [_cpu, x9]
 	.else
+	add x15, _cpu, x9
 	str d5, [x15]
 	str xzr, [x15, #8]
-	.endif
 	.endif
 	next_gadget
 .endm
@@ -4629,23 +4665,17 @@ simd_table_lookup_shape simd_tbx_4_16b, tbx, 4, 1, 1
 .macro simd_lut_native name, instruction, two_tables
 gadget simd_lut_native_\name
 	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x10, lsl #4
-	ldr q0, [x13]
+	ubfx x9, x8, #11, #11
+	ldr q0, [_cpu, x9]
 	.if \two_tables
-	add w13, w10, #1
-	and w13, w13, #31
-	add x14, x12, x13, lsl #4
-	ldr q1, [x14]
+	ubfx x10, x8, #22, #11
+	ldr q1, [_cpu, x10]
 	.endif
-	add x13, x12, x11, lsl #4
-	ldr q2, [x13]
+	ubfx x11, x8, #33, #11
+	ldr q2, [_cpu, x11]
 	.inst \instruction
-	add x13, x12, x9, lsl #4
-	str q3, [x13]
+	and x9, x8, #0x7ff
+	str q3, [_cpu, x9]
 	next_gadget
 .endm
 
@@ -4915,26 +4945,15 @@ simd_saturating_narrow_operation uqrshrn, urshl, uqxtn
  * the hot path contains only register loads, the host operation, and stores. */
 .macro simd_indexed_same_shape name, operation, arrangement, element, index, wide, accumulate
 gadget simd_indexed_\name\()_\arrangement\()_\index
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
 	.if \accumulate
-	ldr q0, [x13]
+	ldr q0, [_cpu, x13]
 	.endif
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr q1, [_cpu, x14]
+	ldr q2, [_cpu, x15]
 	\operation v0.\arrangement, v1.\arrangement, v2.\element[\index]
-	.if \wide
-	str q0, [x13]
-	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
-	.endif
+	str q0, [_cpu, x13]
 	next_gadget
 .endm
 
@@ -4958,21 +4977,15 @@ simd_indexed_same_family mul, mul, 0
 
 .macro simd_indexed_long_shape name, operation, narrow, wide, element, index, high, accumulate
 gadget simd_indexed_\name\()_\element\()_\high\()_\index
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
 	.if \accumulate
-	ldr q0, [x13]
+	ldr q0, [_cpu, x13]
 	.endif
-	ldr q1, [x14]
-	ldr q2, [x15]
+	ldr q1, [_cpu, x14]
+	ldr q2, [_cpu, x15]
 	\operation v0.\wide, v1.\narrow, v2.\element[\index]
-	str q0, [x13]
+	str q0, [_cpu, x13]
 	next_gadget
 .endm
 
@@ -5000,30 +5013,24 @@ simd_indexed_long_family umull, umull, umull2, 0
 .macro simd_indexed_saturating_long_shape name, operation, narrow, wide, element, load_source, load_destination, index, shape, scalar, accumulate
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
 	.if \scalar
 	movi v0.16b, #0
 	movi v1.16b, #0
 	.if \accumulate
-	ldr \load_destination, [x13]
+	ldr \load_destination, [_cpu, x13]
 	.endif
-	ldr \load_source, [x14]
+	ldr \load_source, [_cpu, x14]
 	.else
 	.if \accumulate
-	ldr q0, [x13]
+	ldr q0, [_cpu, x13]
 	.endif
-	ldr q1, [x14]
+	ldr q1, [_cpu, x14]
 	.endif
-	ldr q2, [x15]
+	ldr q2, [_cpu, x15]
 	\operation \wide, \narrow, v2.\element[\index]
-	str q0, [x13]
+	str q0, [_cpu, x13]
 	next_gadget
 .endm
 
@@ -5050,28 +5057,17 @@ simd_indexed_saturating_long_family sqdmull, sqdmull, sqdmull2, 0
 .macro simd_indexed_saturating_high_shape name, operation, arrangement, element, load_source, index, shape, scalar, wide
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
 	.if \scalar
 	movi v1.16b, #0
-	ldr \load_source, [x14]
+	ldr \load_source, [_cpu, x14]
 	.else
-	ldr q1, [x14]
+	ldr q1, [_cpu, x14]
 	.endif
-	ldr q2, [x15]
+	ldr q2, [_cpu, x15]
 	\operation \arrangement, \load_source, v2.\element[\index]
-	.if \wide
-	str q0, [x13]
-	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
-	.endif
+	str q0, [_cpu, x13]
 	next_gadget
 .endm
 
@@ -5099,31 +5095,20 @@ simd_indexed_saturating_high_family sqrdmulh, sqrdmulh
 .macro simd_indexed_saturating_accumulate_high_shape name, operation, arrangement, element, load_source, load_destination, index, shape, scalar, wide
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx w10, w8, #8, #5
-	ubfx w11, w8, #16, #5
-	add x12, _cpu, #UML_GADGET_CPU_V0
-	add x13, x12, x9, lsl #4
-	add x14, x12, x10, lsl #4
-	add x15, x12, x11, lsl #4
+	ldp x13, x14, [_stream], #16
+	ldr x15, [_stream], #8
 	.if \scalar
 	movi v0.16b, #0
 	movi v1.16b, #0
-	ldr \load_destination, [x13]
-	ldr \load_source, [x14]
+	ldr \load_destination, [_cpu, x13]
+	ldr \load_source, [_cpu, x14]
 	.else
-	ldr q0, [x13]
-	ldr q1, [x14]
+	ldr q0, [_cpu, x13]
+	ldr q1, [_cpu, x14]
 	.endif
-	ldr q2, [x15]
+	ldr q2, [_cpu, x15]
 	\operation \arrangement, \load_source, v2.\element[\index]
-	.if \wide
-	str q0, [x13]
-	.else
-	str d0, [x13]
-	str xzr, [x13, #8]
-	.endif
+	str q0, [_cpu, x13]
 	next_gadget
 .endm
 
@@ -5151,10 +5136,21 @@ simd_indexed_saturating_accumulate_high_family sqrdmlsh, sqrdmlsh
  * path has no decode branches.  Scalar forms only test FPCR.NEP because that
  * architectural state controls whether the inactive destination bits merge
  * from the accumulator/source instead of being cleared. */
-.macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, scalar, accumulate
+.macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, scalar, accumulate, checked, fiz
 gadget simd_indexed_\name\()_\shape\()_\index
 	ensure_fp_environment
+	.if \checked
+	ldr x8, [_stream], #16
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
+	.if \fiz
+	tst w16, #3
+	b.ne .Lsimd_indexed_floating_software_\@
+	.else
+	tbnz w16, #1, .Lsimd_indexed_floating_software_\@
+	.endif
+	.else
 	ldr x8, [_stream], #8
+	.endif
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
@@ -5180,29 +5176,48 @@ gadget simd_indexed_\name\()_\shape\()_\index
 	.endif
 	str q2, [_cpu, x9]
 	next_gadget
+	.if \checked
+.Lsimd_indexed_floating_software_\@:
+	ldr w15, [_stream, #-8]
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov w1, w15
+	bl NAME(uml_arm64_simd_indexed_floating_software)
+	ldp x1, x2, [sp], #16
+	mrs x17, fpsr
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	orr w16, w16, w17
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+	next_gadget
+	.endif
 .endm
 
-.macro simd_indexed_floating_family name, operation, accumulate
+.macro simd_indexed_floating_family name, operation, accumulate, checked
 	.irp index, 0, 1, 2, 3, 4, 5, 6, 7
-		simd_indexed_floating_shape \name, \operation, h, h2, h0, h, \index, 1, \accumulate
-		simd_indexed_floating_shape \name, \operation, 4h, v2.4h, v0.4h, h, \index, 0, \accumulate
-		simd_indexed_floating_shape \name, \operation, 8h, v2.8h, v0.8h, h, \index, 0, \accumulate
+		simd_indexed_floating_shape \name, \operation, h, h2, h0, h, \index, 1, \accumulate, \checked, 0
+		simd_indexed_floating_shape \name, \operation, 4h, v2.4h, v0.4h, h, \index, 0, \accumulate, \checked, 0
+		simd_indexed_floating_shape \name, \operation, 8h, v2.8h, v0.8h, h, \index, 0, \accumulate, \checked, 0
 	.endr
 	.irp index, 0, 1, 2, 3
-		simd_indexed_floating_shape \name, \operation, s, s2, s0, s, \index, 1, \accumulate
-		simd_indexed_floating_shape \name, \operation, 2s, v2.2s, v0.2s, s, \index, 0, \accumulate
-		simd_indexed_floating_shape \name, \operation, 4s, v2.4s, v0.4s, s, \index, 0, \accumulate
+		simd_indexed_floating_shape \name, \operation, s, s2, s0, s, \index, 1, \accumulate, \checked, 1
+		simd_indexed_floating_shape \name, \operation, 2s, v2.2s, v0.2s, s, \index, 0, \accumulate, \checked, 1
+		simd_indexed_floating_shape \name, \operation, 4s, v2.4s, v0.4s, s, \index, 0, \accumulate, \checked, 1
 	.endr
 	.irp index, 0, 1
-		simd_indexed_floating_shape \name, \operation, d, d2, d0, d, \index, 1, \accumulate
-		simd_indexed_floating_shape \name, \operation, 2d, v2.2d, v0.2d, d, \index, 0, \accumulate
+		simd_indexed_floating_shape \name, \operation, d, d2, d0, d, \index, 1, \accumulate, \checked, 1
+		simd_indexed_floating_shape \name, \operation, 2d, v2.2d, v0.2d, d, \index, 0, \accumulate, \checked, 1
 	.endr
 .endm
 
-simd_indexed_floating_family fmla, fmla, 1
-simd_indexed_floating_family fmls, fmls, 1
-simd_indexed_floating_family fmul, fmul, 0
-simd_indexed_floating_family fmulx, fmulx, 0
+simd_indexed_floating_family fmla, fmla, 1, 0
+simd_indexed_floating_family fmls, fmls, 1, 0
+simd_indexed_floating_family fmul, fmul, 0, 0
+simd_indexed_floating_family fmulx, fmulx, 0, 0
+simd_indexed_floating_family fmla_checked, fmla, 1, 1
+simd_indexed_floating_family fmls_checked, fmls, 1, 1
+simd_indexed_floating_family fmul_checked, fmul, 0, 1
+simd_indexed_floating_family fmulx_checked, fmulx, 0, 1
 
 .purgem simd_indexed_floating_family
 .purgem simd_indexed_floating_shape
@@ -5575,62 +5590,49 @@ floating_select_always_shape d, 8
 .macro fp8_native_one name, encoding
 gadget fp8_native_\name
 	ldr x19, [_stream], #8
-	ubfx w20, w19, #8, #5
-	add x8, _cpu, #UML_GADGET_CPU_V0
-	add x9, x8, x20, lsl #4
-	ldr q1, [x9]
+	ubfx x20, x19, #16, #16
+	ldr q1, [_cpu, x20]
 	ensure_fp_environment
 	ensure_fpmr_environment
 	.inst \encoding
-	and w20, w19, #0x1f
-	add x8, x8, x20, lsl #4
-	str q0, [x8]
+	and x20, x19, #0xffff
+	str q0, [_cpu, x20]
 	next_gadget
 .endm
 
 .macro fp8_native_two name, encoding, merge
 gadget fp8_native_\name
 	ldr x19, [_stream], #8
-	add x8, _cpu, #UML_GADGET_CPU_V0
 	.if \merge
-	and w20, w19, #0x1f
-	add x9, x8, x20, lsl #4
-	ldr q0, [x9]
+	and x20, x19, #0xffff
+	ldr q0, [_cpu, x20]
 	.endif
-	ubfx w20, w19, #8, #5
-	add x9, x8, x20, lsl #4
-	ldr q1, [x9]
-	ubfx w20, w19, #16, #5
-	add x9, x8, x20, lsl #4
-	ldr q2, [x9]
+	ubfx x20, x19, #16, #16
+	ldr q1, [_cpu, x20]
+	ubfx x20, x19, #32, #16
+	ldr q2, [_cpu, x20]
 	ensure_fp_environment
 	ensure_fpmr_environment
 	.inst \encoding
-	and w20, w19, #0x1f
-	add x8, x8, x20, lsl #4
-	str q0, [x8]
+	and x20, x19, #0xffff
+	str q0, [_cpu, x20]
 	next_gadget
 .endm
 
 .macro fp8_native_three name, encoding
 gadget fp8_native_\name
 	ldr x19, [_stream], #8
-	add x8, _cpu, #UML_GADGET_CPU_V0
-	and w20, w19, #0x1f
-	add x9, x8, x20, lsl #4
-	ldr q0, [x9]
-	ubfx w20, w19, #8, #5
-	add x9, x8, x20, lsl #4
-	ldr q1, [x9]
-	ubfx w20, w19, #16, #5
-	add x9, x8, x20, lsl #4
-	ldr q2, [x9]
+	and x20, x19, #0xffff
+	ldr q0, [_cpu, x20]
+	ubfx x20, x19, #16, #16
+	ldr q1, [_cpu, x20]
+	ubfx x20, x19, #32, #16
+	ldr q2, [_cpu, x20]
 	ensure_fp_environment
 	ensure_fpmr_environment
 	.inst \encoding
-	and w20, w19, #0x1f
-	add x8, x8, x20, lsl #4
-	str q0, [x8]
+	and x20, x19, #0xffff
+	str q0, [_cpu, x20]
 	next_gadget
 .endm
 
@@ -5766,11 +5768,7 @@ gadget fp8_software
 	ldp x1, x2, [sp], #16
 	/* A preceding native FP gadget may already own the live host FPSR. Merge
 	 * software conversion flags into it so block-leave cannot overwrite them. */
-#if UML_ENABLE_GADGET_INTERPRETER_RUNPATH
-	ldr x11, [sp, #0x78]
-#else
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
-#endif
 	cbz x11, 1f
 	mrs x12, fpsr
 	ldr w13, [_cpu, #UML_GADGET_CPU_FPSR]

@@ -634,8 +634,7 @@ public:
 			return -1;
 		std::memcpy(destination, buffer, length);
 		if (iterator->second.guest_code)
-			reference.state->code_changes.fetch_add(
-				1, std::memory_order_release);
+			publish_code_change(*reference.state);
 		return 0;
 	}
 
@@ -759,14 +758,11 @@ public:
 
 	void invalidate_code(std::uint64_t address)
 	{
-		/* Translated blocks are keyed by the address-space code sequence.
-		 * Cache maintenance invalidates the current process without making
-		 * unrelated processes discard their translated programs.
-		 */
 		const auto generation = generation_for(
 			address, active_thread_generation().generation);
-		state_for(generation)->code_changes.fetch_add(
-			1, std::memory_order_release);
+		auto state = state_for(generation);
+		std::shared_lock lock{state->mappings_mutex};
+		publish_code_change(*state);
 	}
 
 	[[nodiscard]] std::uint64_t active_generation() const noexcept
@@ -1168,7 +1164,12 @@ private:
 		if (state.mapping_history.size() > maximum_mapping_history)
 			state.mapping_history.pop_front();
 		if (changes_code)
-			state.code_changes.fetch_add(1, std::memory_order_release);
+			publish_code_change(state);
+	}
+
+	static void publish_code_change(GenerationState &state)
+	{
+		state.code_changes.fetch_add(1, std::memory_order_release);
 	}
 
 	mutable std::shared_mutex states_mutex_;

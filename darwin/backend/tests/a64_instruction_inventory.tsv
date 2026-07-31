@@ -1,0 +1,984 @@
+stable_id	section	pdf_label	current_suite	current_variant_model	native_feature_requirements	three_engine_status
+BASE-0001	Base	ABS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0002	Base	ADC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0003	Base	ADCS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0004	Base	ADD (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0005	Base	ADD (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0006	Base	ADD (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0007	Base	ADDG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0008	Base	ADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0009	Base	ADDS (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0010	Base	ADDS (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0011	Base	ADDS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0012	Base	ADR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0013	Base	ADRP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0014	Base	AND (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0015	Base	AND (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0016	Base	ANDS (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0017	Base	ANDS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0018	Base	APAS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	rme_gpc3	verified
+BASE-0019	Base	ASR (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0020	Base	ASR (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0021	Base	ASRV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0022	Base	AT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|ats1a|pan2)	verified
+BASE-0023	Base	AUTDA, AUTDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0024	Base	AUTDB, AUTDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0025	Base	AUTIA, AUTIA1716, AUTIASP, AUTIAZ, AUTIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0026	Base	AUTIA171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0027	Base	AUTIASPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0028	Base	AUTIASPPCR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0029	Base	AUTIB, AUTIB1716, AUTIBSP, AUTIBZ, AUTIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0030	Base	AUTIB171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0031	Base	AUTIBSPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0032	Base	AUTIBSPPCR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0033	Base	AXFLAG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m2	verified
+BASE-0034	Base	B	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0035	Base	B.cond	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0036	Base	BC.cond	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	hbc	verified
+BASE-0037	Base	BFC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	asmv8p2	verified
+BASE-0038	Base	BFI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0039	Base	BFM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0040	Base	BFXIL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0041	Base	BIC (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0042	Base	BICS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0043	Base	BL	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0044	Base	BLR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0046	Base	BR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0048	Base	BRB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	brbe	verified
+BASE-0049	Base	BRK	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0050	Base	BTI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	bti	verified
+BASE-0051	Base	CAS, CASA, CASAL, CASL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0052	Base	CASB, CASAB, CASALB, CASLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0053	Base	CASH, CASAH, CASALH, CASLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0054	Base	CASP, CASPA, CASPAL, CASPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0055	Base	CASPT, CASPAT, CASPALT, CASPLT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0056	Base	CAST, CASAT, CASALT, CASLT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0057	Base	CB<cc> (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0058	Base	CB<cc> (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0059	Base	CBB<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0060	Base	CBBLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0061	Base	CBBLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0062	Base	CBBLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0063	Base	CBBLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0064	Base	CBGE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0065	Base	CBH<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0066	Base	CBHLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0067	Base	CBHLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0068	Base	CBHLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0069	Base	CBHLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0070	Base	CBHS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0071	Base	CBLE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0072	Base	CBLE (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0073	Base	CBLO (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0074	Base	CBLS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0075	Base	CBLS (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0076	Base	CBLT (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0077	Base	CBNZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0078	Base	CBZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0079	Base	CCMN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0080	Base	CCMN (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0081	Base	CCMP (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0082	Base	CCMP (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0083	Base	CFINV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m	verified
+BASE-0084	Base	CFP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	specres	verified
+BASE-0085	Base	CHKFEAT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	chk	verified
+BASE-0086	Base	CINC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0087	Base	CINV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0088	Base	CLRBHB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	clrbhb	verified
+BASE-0089	Base	CLREX	shared-base-memory	immediate+monitor-state+register-preservation	baseline	verified
+BASE-0090	Base	CLS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0091	Base	CLZ	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0092	Base	CMN (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0093	Base	CMN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0094	Base	CMN (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0095	Base	CMP (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0096	Base	CMP (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0097	Base	CMP (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0098	Base	CMPP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0099	Base	CNEG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0100	Base	CNT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0101	Base	COSP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	specres2	verified
+BASE-0102	Base	CPP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	specres	verified
+BASE-0103	Base	CPYFP, CPYFM, CPYFE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0104	Base	CPYFPN, CPYFMN, CPYFEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0105	Base	CPYFPRN, CPYFMRN, CPYFERN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0106	Base	CPYFPRT, CPYFMRT, CPYFERT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0107	Base	CPYFPRTN, CPYFMRTN, CPYFERTN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0108	Base	CPYFPRTRN, CPYFMRTRN, CPYFERTRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0109	Base	CPYFPRTWN, CPYFMRTWN, CPYFERTWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0110	Base	CPYFPT, CPYFMT, CPYFET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0111	Base	CPYFPTN, CPYFMTN, CPYFETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0112	Base	CPYFPTRN, CPYFMTRN, CPYFETRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0113	Base	CPYFPTWN, CPYFMTWN, CPYFETWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0114	Base	CPYFPWN, CPYFMWN, CPYFEWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0115	Base	CPYFPWT, CPYFMWT, CPYFEWT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0116	Base	CPYFPWTN, CPYFMWTN, CPYFEWTN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0117	Base	CPYFPWTRN, CPYFMWTRN, CPYFEWTRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0118	Base	CPYFPWTWN, CPYFMWTWN, CPYFEWTWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0119	Base	CPYP, CPYM, CPYE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0120	Base	CPYPN, CPYMN, CPYEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0121	Base	CPYPRN, CPYMRN, CPYERN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0122	Base	CPYPRT, CPYMRT, CPYERT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0123	Base	CPYPRTN, CPYMRTN, CPYERTN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0124	Base	CPYPRTRN, CPYMRTRN, CPYERTRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0125	Base	CPYPRTWN, CPYMRTWN, CPYERTWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0126	Base	CPYPT, CPYMT, CPYET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0127	Base	CPYPTN, CPYMTN, CPYETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0128	Base	CPYPTRN, CPYMTRN, CPYETRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0129	Base	CPYPTWN, CPYMTWN, CPYETWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0130	Base	CPYPWN, CPYMWN, CPYEWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0131	Base	CPYPWT, CPYMWT, CPYEWT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0132	Base	CPYPWTN, CPYMWTN, CPYEWTN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0133	Base	CPYPWTRN, CPYMWTRN, CPYEWTRN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0134	Base	CPYPWTWN, CPYMWTWN, CPYEWTWN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0135	Base	CRC32B, CRC32H, CRC32W, CRC32X	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	crc32	verified
+BASE-0136	Base	CRC32CB, CRC32CH, CRC32CW, CRC32CX	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	crc32	verified
+BASE-0137	Base	CSDB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0138	Base	CSEL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0139	Base	CSET	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0140	Base	CSETM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0141	Base	CSINC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0142	Base	CSINV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0143	Base	CSNEG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0144	Base	CTZ	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0145	Base	DC	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	per_variant(baseline|dpb|dpb2|mec|mte|mte2|mtetc|occmo|pops|rme)	verified
+BASE-0146	Base	DCPS1	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0147	Base	DCPS2	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0148	Base	DCPS3	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0149	Base	DGH	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	dgh	verified
+BASE-0150	Base	DMB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0151	Base	DRPS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0152	Base	DSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	xs	verified
+BASE-0153	Base	DVP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	specres	verified
+BASE-0154	Base	EON (shifted register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0155	Base	EOR (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0156	Base	EOR (shifted register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0157	Base	ERET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0158	Base	ERETAA, ERETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0159	Base	ESB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	ras	verified
+BASE-0160	Base	EXTR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0161	Base	GCSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
+BASE-0162	Base	GCSPOPCX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
+BASE-0163	Base	GCSPOPM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
+BASE-0164	Base	GCSPOPX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
+BASE-0165	Base	GCSPUSHM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
+BASE-0166	Base	GCSPUSHX	shared-base-control-system	condition+target-form+register-alias+flags+reserved	gcs	verified
+BASE-0167	Base	GCSSS1	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
+BASE-0168	Base	GCSSS2	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
+BASE-0169	Base	GCSSTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	verified
+BASE-0170	Base	GCSSTTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	verified
+BASE-0171	Base	GIC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcie	verified
+BASE-0172	Base	GICR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcie	verified
+BASE-0173	Base	GMI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0174	Base	GSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcie	verified
+BASE-0175	Base	HINT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|bti|chk|clrbhb|cmh|dgh|e3dse|gcs|pcdphint|ras|spe|trf)	verified
+BASE-0176	Base	HINTE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	hinte	verified
+BASE-0177	Base	HLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0178	Base	HVC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0179	Base	IC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0180	Base	IRG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0181	Base	ISB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0182	Base	LD64B	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64	verified
+BASE-0183	Base	LDADD, LDADDA, LDADDAL, LDADDL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0184	Base	LDADDB, LDADDAB, LDADDALB, LDADDLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0185	Base	LDADDH, LDADDAH, LDADDALH, LDADDLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0186	Base	LDAP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lscp	verified
+BASE-0187	Base	LDAPP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lscp	verified
+BASE-0188	Base	LDAPR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	per_variant(lrcpc3|lrcpc)	verified
+BASE-0189	Base	LDAPRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc	verified
+BASE-0190	Base	LDAPRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc	verified
+BASE-0191	Base	LDAPUR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0192	Base	LDAPURB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0193	Base	LDAPURH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0194	Base	LDAPURSB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0195	Base	LDAPURSH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0196	Base	LDAPURSW	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0197	Base	LDAR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0198	Base	LDARB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0199	Base	LDARH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0200	Base	LDATXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0201	Base	LDAXP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0202	Base	LDAXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0203	Base	LDAXRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0204	Base	LDAXRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0205	Base	LDCLR, LDCLRA, LDCLRAL, LDCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0206	Base	LDCLRB, LDCLRAB, LDCLRALB, LDCLRLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0207	Base	LDCLRH, LDCLRAH, LDCLRALH, LDCLRLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0208	Base	LDCLRP, LDCLRPA, LDCLRPAL, LDCLRPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse128	verified
+BASE-0209	Base	LDEOR, LDEORA, LDEORAL, LDEORL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0210	Base	LDEORB, LDEORAB, LDEORALB, LDEORLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0211	Base	LDEORH, LDEORAH, LDEORALH, LDEORLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0212	Base	LDG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0213	Base	LDGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
+BASE-0214	Base	LDIAPP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc3	verified
+BASE-0215	Base	LDLAR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0216	Base	LDLARB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0217	Base	LDLARH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0218	Base	LDNP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0219	Base	LDP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0220	Base	LDPSW	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0221	Base	LDR (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0222	Base	LDR (literal)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0223	Base	LDR (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0224	Base	LDRAA, LDRAB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	pauth	verified
+BASE-0225	Base	LDRB (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0226	Base	LDRB (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0227	Base	LDRH (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0228	Base	LDRH (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0229	Base	LDRSB (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0230	Base	LDRSB (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0231	Base	LDRSH (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0232	Base	LDRSH (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0233	Base	LDRSW (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0234	Base	LDRSW (literal)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0235	Base	LDRSW (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0236	Base	LDSET, LDSETA, LDSETAL, LDSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0237	Base	LDSETB, LDSETAB, LDSETALB, LDSETLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0238	Base	LDSETH, LDSETAH, LDSETALH, LDSETLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0239	Base	LDSETP, LDSETPA, LDSETPAL, LDSETPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse128	verified
+BASE-0240	Base	LDSMAX, LDSMAXA, LDSMAXAL, LDSMAXL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0241	Base	LDSMAXB, LDSMAXAB, LDSMAXALB, LDSMAXLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0242	Base	LDSMAXH, LDSMAXAH, LDSMAXALH, LDSMAXLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0243	Base	LDSMIN, LDSMINA, LDSMINAL, LDSMINL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0244	Base	LDSMINB, LDSMINAB, LDSMINALB, LDSMINLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0245	Base	LDSMINH, LDSMINAH, LDSMINALH, LDSMINLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0246	Base	LDTADD, LDTADDA, LDTADDAL, LDTADDL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0247	Base	LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0248	Base	LDTNP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0249	Base	LDTP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0250	Base	LDTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0251	Base	LDTRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0252	Base	LDTRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0253	Base	LDTRSB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0254	Base	LDTRSH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0255	Base	LDTRSW	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0256	Base	LDTSET, LDTSETA, LDTSETAL, LDTSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0257	Base	LDTXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0258	Base	LDUMAX, LDUMAXA, LDUMAXAL, LDUMAXL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0259	Base	LDUMAXB, LDUMAXAB, LDUMAXALB, LDUMAXLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0260	Base	LDUMAXH, LDUMAXAH, LDUMAXALH, LDUMAXLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0261	Base	LDUMIN, LDUMINA, LDUMINAL, LDUMINL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0262	Base	LDUMINB, LDUMINAB, LDUMINALB, LDUMINLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0263	Base	LDUMINH, LDUMINAH, LDUMINALH, LDUMINLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0264	Base	LDUR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0265	Base	LDURB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0266	Base	LDURH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0267	Base	LDURSB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0268	Base	LDURSH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0269	Base	LDURSW	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0270	Base	LDXP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0271	Base	LDXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0272	Base	LDXRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0273	Base	LDXRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0274	Base	LSL (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0275	Base	LSL (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0276	Base	LSLV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0277	Base	LSR (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0278	Base	LSR (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0279	Base	LSRV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0280	Base	MADD	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0281	Base	MADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0282	Base	MNEG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0283	Base	MOV (bitmask immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0284	Base	MOV (inverted wide immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0285	Base	MOV (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0286	Base	MOV (to/from SP)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0287	Base	MOV (wide immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0288	Base	MOVK	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0289	Base	MOVN	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0290	Base	MOVZ	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0291	Base	MRRS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sysreg128	verified
+BASE-0292	Base	MRS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0293	Base	MSR (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|dit|ebep|mte|mte2|nmi|pan|sme|spe_exc|ssbs|trbe_exc|uao|vhe)	verified
+BASE-0294	Base	MSR (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0295	Base	MSRR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sysreg128	verified
+BASE-0296	Base	MSUB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0297	Base	MSUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0298	Base	MUL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0299	Base	MVN	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0300	Base	NEG (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0301	Base	NEGS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0302	Base	NGC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0303	Base	NGCS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0304	Base	NOP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0305	Base	ORN (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0306	Base	ORR (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0307	Base	ORR (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0308	Base	PACDA, PACDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0309	Base	PACDB, PACDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0310	Base	PACGA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0311	Base	PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0312	Base	PACIA171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0313	Base	PACIASPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0314	Base	PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0315	Base	PACIB171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0316	Base	PACIBSPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0317	Base	PACM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
+BASE-0318	Base	PACNBIASPPC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
+BASE-0319	Base	PACNBIBSPPC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
+BASE-0320	Base	PRFM (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0321	Base	PRFM (literal)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0322	Base	PRFM (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0323	Base	PRFUM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0324	Base	PSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	spe	verified
+BASE-0325	Base	PSSBB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0326	Base	RBIT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0327	Base	RCWCAS, RCWCASA, RCWCASAL, RCWCASL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0328	Base	RCWCASP, RCWCASPA, RCWCASPAL, RCWCASPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0329	Base	RCWCLR, RCWCLRA, RCWCLRAL, RCWCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0330	Base	RCWCLRP, RCWCLRPA, RCWCLRPAL, RCWCLRPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0331	Base	RCWSCAS, RCWSCASA, RCWSCASAL, RCWSCASL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0332	Base	RCWSCASP, RCWSCASPA, RCWSCASPAL, RCWSCASPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0333	Base	RCWSCLR, RCWSCLRA, RCWSCLRAL, RCWSCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0334	Base	RCWSCLRP, RCWSCLRPA, RCWSCLRPAL, RCWSCLRPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0335	Base	RCWSET, RCWSETA, RCWSETAL, RCWSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0336	Base	RCWSETP, RCWSETPA, RCWSETPAL, RCWSETPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0337	Base	RCWSSET, RCWSSETA, RCWSSETAL, RCWSSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0338	Base	RCWSSETP, RCWSSETPA, RCWSSETPAL, RCWSSETPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0339	Base	RCWSSWP, RCWSSWPA, RCWSSWPAL, RCWSSWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0340	Base	RCWSSWPP, RCWSSWPPA, RCWSSWPAL, RCWSSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0341	Base	RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
+BASE-0342	Base	RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0343	Base	RET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0344	Base	RETAA, RETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0345	Base	RETAASPPC, RETABSPPC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
+BASE-0346	Base	RETAASPPCR, RETABSPPCR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
+BASE-0347	Base	REV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0348	Base	REV16	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0349	Base	REV32	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0350	Base	REV64	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0351	Base	RMIF	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m	verified
+BASE-0352	Base	ROR (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0353	Base	ROR (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0354	Base	RORV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0355	Base	RPRFM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	rprfm	verified
+BASE-0356	Base	SB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sb	verified
+BASE-0357	Base	SBC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0358	Base	SBCS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0359	Base	SBFIZ	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0360	Base	SBFM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0361	Base	SBFX	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0362	Base	SDIV (quotient)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0363	Base	SETF8, SETF16	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m	verified
+BASE-0364	Base	SETGP, SETGM, SETGE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
+BASE-0365	Base	SETGPN, SETGMN, SETGEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
+BASE-0366	Base	SETGPT, SETGMT, SETGET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
+BASE-0367	Base	SETGPTN, SETGMTN, SETGETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
+BASE-0368	Base	SETP, SETM, SETE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0369	Base	SETPN, SETMN, SETEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0370	Base	SETPT, SETMT, SETET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0371	Base	SETPTN, SETMTN, SETETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
+BASE-0372	Base	SEV	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0373	Base	SEVL	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0374	Base	SHUH	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmh	verified
+BASE-0375	Base	SMADDL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0376	Base	SMAX (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0377	Base	SMAX (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0378	Base	SMC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0379	Base	SMIN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0380	Base	SMIN (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0381	Base	SMNEGL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0382	Base	SMSTART	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	verified
+BASE-0383	Base	SMSTOP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	verified
+BASE-0384	Base	SMSUBL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0385	Base	SMULH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0386	Base	SMULL (32-bit)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0387	Base	SSBB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0388	Base	ST2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0389	Base	ST64B	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64	verified
+BASE-0390	Base	ST64BV	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64_v	verified
+BASE-0391	Base	ST64BV0	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64_accdata	verified
+BASE-0392	Base	STADD, STADDL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0393	Base	STADDB, STADDLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0394	Base	STADDH, STADDLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0395	Base	STCLR, STCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0396	Base	STCLRB, STCLRLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0397	Base	STCLRH, STCLRLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0398	Base	STCPH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	cmh	verified
+BASE-0399	Base	STEOR, STEORL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0400	Base	STEORB, STEORLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0401	Base	STEORH, STEORLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0402	Base	STG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0403	Base	STGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
+BASE-0404	Base	STGP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0405	Base	STILP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc3	verified
+BASE-0406	Base	STLLR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0407	Base	STLLRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0408	Base	STLLRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
+BASE-0409	Base	STLP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lscp	verified
+BASE-0410	Base	STLR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc3	verified
+BASE-0411	Base	STLRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0412	Base	STLRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0413	Base	STLTXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0414	Base	STLUR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0415	Base	STLURB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0416	Base	STLURH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc2	verified
+BASE-0417	Base	STLXP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0418	Base	STLXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0419	Base	STLXRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0420	Base	STLXRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0421	Base	STNP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0422	Base	STP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0423	Base	STR (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0424	Base	STR (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0425	Base	STRB (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0426	Base	STRB (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0427	Base	STRH (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0428	Base	STRH (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0429	Base	STSET, STSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0430	Base	STSETB, STSETLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0431	Base	STSETH, STSETLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0432	Base	STSHH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	pcdphint	verified
+BASE-0433	Base	STSMAX, STSMAXL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0434	Base	STSMAXB, STSMAXLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0435	Base	STSMAXH, STSMAXLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0436	Base	STSMIN, STSMINL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0437	Base	STSMINB, STSMINLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0438	Base	STSMINH, STSMINLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0439	Base	STTADD, STTADDL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0440	Base	STTCLR, STTCLRL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0441	Base	STTNP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0442	Base	STTP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0443	Base	STTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0444	Base	STTRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0445	Base	STTRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0446	Base	STTSET, STTSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0447	Base	STTXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0448	Base	STUMAX, STUMAXL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0449	Base	STUMAXB, STUMAXLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0450	Base	STUMAXH, STUMAXLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0451	Base	STUMIN, STUMINL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0452	Base	STUMINB, STUMINLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0453	Base	STUMINH, STUMINLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0454	Base	STUR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0455	Base	STURB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0456	Base	STURH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0457	Base	STXP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0458	Base	STXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0459	Base	STXRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0460	Base	STXRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
+BASE-0461	Base	STZ2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0462	Base	STZG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0463	Base	STZGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
+BASE-0464	Base	SUB (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0465	Base	SUB (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0466	Base	SUB (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0467	Base	SUBG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0468	Base	SUBP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0469	Base	SUBPS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0470	Base	SUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0471	Base	SUBS (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0472	Base	SUBS (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0473	Base	SUBS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0474	Base	SVC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0475	Base	SWP, SWPA, SWPAL, SWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0476	Base	SWPB, SWPAB, SWPALB, SWPLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0477	Base	SWPH, SWPAH, SWPALH, SWPLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
+BASE-0478	Base	SWPP, SWPPA, SWPPAL, SWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse128	verified
+BASE-0479	Base	SWPT, SWPTA, SWPTAL, SWPTL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	verified
+BASE-0480	Base	SXTB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0481	Base	SXTH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0482	Base	SXTW	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0483	Base	SYS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0484	Base	SYSL	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0485	Base	SYSP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sysinstr128	verified
+BASE-0486	Base	TBNZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0487	Base	TBZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0488	Base	TLBI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|rme|tlbios|tlbirange|tlbiw|xs)	verified
+BASE-0489	Base	TLBIP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sysinstr128	verified
+BASE-0490	Base	TRCIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	ite	verified
+BASE-0491	Base	TSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	trf	verified
+BASE-0492	Base	TST (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0493	Base	TST (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0494	Base	UBFIZ	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0495	Base	UBFM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0496	Base	UBFX	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0497	Base	UDF	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0498	Base	UDIV (quotient)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0499	Base	UMADDL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0500	Base	UMAX (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0501	Base	UMAX (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0502	Base	UMIN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0503	Base	UMIN (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
+BASE-0504	Base	UMNEGL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0505	Base	UMSUBL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0506	Base	UMULH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0507	Base	UMULL (32-bit)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0508	Base	UXTB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0509	Base	UXTH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
+BASE-0510	Base	WFE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0511	Base	WFET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	verified
+BASE-0512	Base	WFI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+BASE-0513	Base	WFIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	verified
+BASE-0514	Base	XAFLAG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m2	verified
+BASE-0515	Base	XPACD, XPACI, XPACLRI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0516	Base	YIELD	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
+FPSIMD-0001	FP&SIMD	ABS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0002	FP&SIMD	ADD (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0003	FP&SIMD	ADDHN, ADDHN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0004	FP&SIMD	ADDP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	advanced_simd	verified
+FPSIMD-0005	FP&SIMD	ADDP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0006	FP&SIMD	ADDV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0007	FP&SIMD	AESD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
+FPSIMD-0008	FP&SIMD	AESE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
+FPSIMD-0009	FP&SIMD	AESIMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
+FPSIMD-0010	FP&SIMD	AESMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
+FPSIMD-0011	FP&SIMD	AND (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0012	FP&SIMD	BCAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+sha3	verified
+FPSIMD-0013	FP&SIMD	BF1CVTL, BF1CVTL2, BF2CVTL, BF2CVTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
+FPSIMD-0014	FP&SIMD	BFCVT	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	bf16	verified
+FPSIMD-0015	FP&SIMD	BFCVTN, BFCVTN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0016	FP&SIMD	BFDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0017	FP&SIMD	BFDOT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0018	FP&SIMD	BFMLALB, BFMLALT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0019	FP&SIMD	BFMLALB, BFMLALT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0020	FP&SIMD	BFMMLA (widening)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	bf16	verified
+FPSIMD-0021	FP&SIMD	BIC (vector, immediate)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0022	FP&SIMD	BIC (vector, register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0023	FP&SIMD	BIF	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0024	FP&SIMD	BIT	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0025	FP&SIMD	BSL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0026	FP&SIMD	CLS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0027	FP&SIMD	CLZ (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0028	FP&SIMD	CMEQ (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0029	FP&SIMD	CMEQ (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0030	FP&SIMD	CMGE (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0031	FP&SIMD	CMGE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0032	FP&SIMD	CMGT (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0033	FP&SIMD	CMGT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0034	FP&SIMD	CMHI (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0035	FP&SIMD	CMHS (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0036	FP&SIMD	CMLE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0037	FP&SIMD	CMLT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0038	FP&SIMD	CMTST	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0039	FP&SIMD	CNT	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0040	FP&SIMD	DUP (element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0041	FP&SIMD	DUP (general)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0042	FP&SIMD	EOR (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0043	FP&SIMD	EOR3	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+sha3	verified
+FPSIMD-0044	FP&SIMD	EXT	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0045	FP&SIMD	F1CVTL, F1CVTL2, F2CVTL, F2CVTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
+FPSIMD-0046	FP&SIMD	FABD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0047	FP&SIMD	FABS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0048	FP&SIMD	FABS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0049	FP&SIMD	FACGE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0050	FP&SIMD	FACGT	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0051	FP&SIMD	FADD (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0052	FP&SIMD	FADD (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0053	FP&SIMD	FADDP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0054	FP&SIMD	FADDP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0055	FP&SIMD	FAMAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+faminmax	verified
+FPSIMD-0056	FP&SIMD	FAMIN	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+faminmax	verified
+FPSIMD-0057	FP&SIMD	FCADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
+FPSIMD-0058	FP&SIMD	FCCMP	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0059	FP&SIMD	FCCMPE	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0060	FP&SIMD	FCMEQ (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0061	FP&SIMD	FCMEQ (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0062	FP&SIMD	FCMGE (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0063	FP&SIMD	FCMGE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0064	FP&SIMD	FCMGT (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0065	FP&SIMD	FCMGT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0066	FP&SIMD	FCMLA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
+FPSIMD-0067	FP&SIMD	FCMLA (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
+FPSIMD-0068	FP&SIMD	FCMLE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0069	FP&SIMD	FCMLT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0070	FP&SIMD	FCMP	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0071	FP&SIMD	FCMPE	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0072	FP&SIMD	FCSEL	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0073	FP&SIMD	FCVT	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
+FPSIMD-0074	FP&SIMD	FCVTAS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0075	FP&SIMD	FCVTAS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0076	FP&SIMD	FCVTAS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0077	FP&SIMD	FCVTAU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0078	FP&SIMD	FCVTAU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0079	FP&SIMD	FCVTAU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0080	FP&SIMD	FCVTL, FCVTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0081	FP&SIMD	FCVTMS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0082	FP&SIMD	FCVTMS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0083	FP&SIMD	FCVTMS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0084	FP&SIMD	FCVTMU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0085	FP&SIMD	FCVTMU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0086	FP&SIMD	FCVTMU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0087	FP&SIMD	FCVTN (half-precision to 8-bit floating-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
+FPSIMD-0088	FP&SIMD	FCVTN, FCVTN2 (double to single-precision, single to half-precision)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0089	FP&SIMD	FCVTN, FCVTN2 (single-precision to 8-bit floating-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
+FPSIMD-0090	FP&SIMD	FCVTNS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0091	FP&SIMD	FCVTNS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0092	FP&SIMD	FCVTNS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0093	FP&SIMD	FCVTNU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0094	FP&SIMD	FCVTNU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0095	FP&SIMD	FCVTNU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0096	FP&SIMD	FCVTPS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0097	FP&SIMD	FCVTPS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0098	FP&SIMD	FCVTPS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0099	FP&SIMD	FCVTPU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0100	FP&SIMD	FCVTPU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0101	FP&SIMD	FCVTPU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0102	FP&SIMD	FCVTXN, FCVTXN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0103	FP&SIMD	FCVTZS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0104	FP&SIMD	FCVTZS (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0105	FP&SIMD	FCVTZS (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0106	FP&SIMD	FCVTZS (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0107	FP&SIMD	FCVTZS (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0108	FP&SIMD	FCVTZU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0109	FP&SIMD	FCVTZU (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0110	FP&SIMD	FCVTZU (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0111	FP&SIMD	FCVTZU (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0112	FP&SIMD	FCVTZU (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0113	FP&SIMD	FDIV (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0114	FP&SIMD	FDIV (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0115	FP&SIMD	FDOT (8-bit floating-point to half-precision, by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8dot2	verified
+FPSIMD-0116	FP&SIMD	FDOT (8-bit floating-point to half-precision, vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8dot2	verified
+FPSIMD-0117	FP&SIMD	FDOT (8-bit floating-point to single-precision, by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8dot4	verified
+FPSIMD-0118	FP&SIMD	FDOT (8-bit floating-point to single-precision, vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8dot4	verified
+FPSIMD-0119	FP&SIMD	FDOT (half-precision to single-precision, by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f16f32dot	verified
+FPSIMD-0120	FP&SIMD	FDOT (half-precision to single-precision, vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f16f32dot	verified
+FPSIMD-0121	FP&SIMD	FJCVTZS	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	jscvt	verified
+FPSIMD-0122	FP&SIMD	FMADD	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0123	FP&SIMD	FMAX (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0124	FP&SIMD	FMAX (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0125	FP&SIMD	FMAXNM (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0126	FP&SIMD	FMAXNM (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0127	FP&SIMD	FMAXNMP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0128	FP&SIMD	FMAXNMP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0129	FP&SIMD	FMAXNMV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0130	FP&SIMD	FMAXP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0131	FP&SIMD	FMAXP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0132	FP&SIMD	FMAXV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0133	FP&SIMD	FMIN (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0134	FP&SIMD	FMIN (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0135	FP&SIMD	FMINNM (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0136	FP&SIMD	FMINNM (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0137	FP&SIMD	FMINNMP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0138	FP&SIMD	FMINNMP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0139	FP&SIMD	FMINNMV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0140	FP&SIMD	FMINP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0141	FP&SIMD	FMINP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0142	FP&SIMD	FMINV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0143	FP&SIMD	FMLA (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0144	FP&SIMD	FMLA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0145	FP&SIMD	FMLAL, FMLAL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fhm	verified
+FPSIMD-0146	FP&SIMD	FMLAL, FMLAL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fhm	verified
+FPSIMD-0147	FP&SIMD	FMLALB, FMLALT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8fma	verified
+FPSIMD-0148	FP&SIMD	FMLALB, FMLALT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8fma	verified
+FPSIMD-0149	FP&SIMD	FMLALLBB, FMLALLBT, FMLALLTB, FMLALLTT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8fma	verified
+FPSIMD-0150	FP&SIMD	FMLALLBB, FMLALLBT, FMLALLTB, FMLALLTT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8fma	verified
+FPSIMD-0151	FP&SIMD	FMLS (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0152	FP&SIMD	FMLS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0153	FP&SIMD	FMLSL, FMLSL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fhm	verified
+FPSIMD-0154	FP&SIMD	FMLSL, FMLSL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fhm	verified
+FPSIMD-0155	FP&SIMD	FMMLA (non-widening)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f16mm	verified
+FPSIMD-0156	FP&SIMD	FMMLA (widening, 8-bit floating-point to half-precision)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f8f16mm	verified
+FPSIMD-0157	FP&SIMD	FMMLA (widening, 8-bit floating-point to single-precision)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f8f32mm	verified
+FPSIMD-0158	FP&SIMD	FMMLA (widening, half-precision to single-precision)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	f16f32mm	verified
+FPSIMD-0159	FP&SIMD	FMOV (general)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0160	FP&SIMD	FMOV (register)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0161	FP&SIMD	FMOV (scalar, immediate)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0162	FP&SIMD	FMOV (vector, immediate)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0163	FP&SIMD	FMSUB	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0164	FP&SIMD	FMUL (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0165	FP&SIMD	FMUL (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0166	FP&SIMD	FMUL (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0167	FP&SIMD	FMULX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0168	FP&SIMD	FMULX (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0169	FP&SIMD	FNEG (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0170	FP&SIMD	FNEG (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0171	FP&SIMD	FNMADD	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0172	FP&SIMD	FNMSUB	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0173	FP&SIMD	FNMUL (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0174	FP&SIMD	FRECPE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0175	FP&SIMD	FRECPS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0176	FP&SIMD	FRECPX	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0177	FP&SIMD	FRINT32X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
+FPSIMD-0178	FP&SIMD	FRINT32X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
+FPSIMD-0179	FP&SIMD	FRINT32Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
+FPSIMD-0180	FP&SIMD	FRINT32Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
+FPSIMD-0181	FP&SIMD	FRINT64X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
+FPSIMD-0182	FP&SIMD	FRINT64X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
+FPSIMD-0183	FP&SIMD	FRINT64Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
+FPSIMD-0184	FP&SIMD	FRINT64Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
+FPSIMD-0185	FP&SIMD	FRINTA (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0186	FP&SIMD	FRINTA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0187	FP&SIMD	FRINTI (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0188	FP&SIMD	FRINTI (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0189	FP&SIMD	FRINTM (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0190	FP&SIMD	FRINTM (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0191	FP&SIMD	FRINTN (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0192	FP&SIMD	FRINTN (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0193	FP&SIMD	FRINTP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0194	FP&SIMD	FRINTP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0195	FP&SIMD	FRINTX (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0196	FP&SIMD	FRINTX (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0197	FP&SIMD	FRINTZ (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0198	FP&SIMD	FRINTZ (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0199	FP&SIMD	FRSQRTE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0200	FP&SIMD	FRSQRTS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0201	FP&SIMD	FSCALE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
+FPSIMD-0202	FP&SIMD	FSQRT (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0203	FP&SIMD	FSQRT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0204	FP&SIMD	FSUB (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0205	FP&SIMD	FSUB (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0206	FP&SIMD	INS (element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0207	FP&SIMD	INS (general)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0208	FP&SIMD	LD1 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0209	FP&SIMD	LD1 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0210	FP&SIMD	LD1R	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0211	FP&SIMD	LD2 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0212	FP&SIMD	LD2 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0213	FP&SIMD	LD2R	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0214	FP&SIMD	LD3 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0215	FP&SIMD	LD3 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0216	FP&SIMD	LD3R	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0217	FP&SIMD	LD4 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0218	FP&SIMD	LD4 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0219	FP&SIMD	LD4R	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0220	FP&SIMD	LDAP1 (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd+lrcpc3	verified
+FPSIMD-0221	FP&SIMD	LDAPUR (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lrcpc3	verified
+FPSIMD-0222	FP&SIMD	LDBFADD, LDBFADDA, LDBFADDAL, LDBFADDL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0223	FP&SIMD	LDBFMAX, LDBFMAXA, LDBFMAXAL, LDBFMAXL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0224	FP&SIMD	LDBFMAXNM, LDBFMAXNMA, LDBFMAXNMAL, LDBFMAXNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0225	FP&SIMD	LDBFMIN, LDBFMINA, LDBFMINAL, LDBFMINL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0226	FP&SIMD	LDBFMINNM, LDBFMINNMA, LDBFMINNMAL, LDBFMINNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0227	FP&SIMD	LDFADD, LDFADDA, LDFADDAL, LDFADDL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0228	FP&SIMD	LDFMAX, LDFMAXA, LDFMAXAL, LDFMAXL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0229	FP&SIMD	LDFMAXNM, LDFMAXNMA, LDFMAXNMAL, LDFMAXNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0230	FP&SIMD	LDFMIN, LDFMINA, LDFMINAL, LDFMINL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0231	FP&SIMD	LDFMINNM, LDFMINNMA, LDFMINNMAL, LDFMINNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0232	FP&SIMD	LDNP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0233	FP&SIMD	LDP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0235	FP&SIMD	LDR (literal, SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0236	FP&SIMD	LDR (register, SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0237	FP&SIMD	LDTNP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lsui	verified
+FPSIMD-0238	FP&SIMD	LDTP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lsui	verified
+FPSIMD-0239	FP&SIMD	LDUR (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0240	FP&SIMD	LUTI2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+lut	verified
+FPSIMD-0241	FP&SIMD	LUTI4	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+lut	verified
+FPSIMD-0242	FP&SIMD	MLA (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0243	FP&SIMD	MLA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0244	FP&SIMD	MLS (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0245	FP&SIMD	MLS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0246	FP&SIMD	MOV (element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0247	FP&SIMD	MOV (from general)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0248	FP&SIMD	MOV (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	advanced_simd	verified
+FPSIMD-0249	FP&SIMD	MOV (to general)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0250	FP&SIMD	MOV (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0251	FP&SIMD	MOVI	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0252	FP&SIMD	MUL (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0253	FP&SIMD	MUL (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0254	FP&SIMD	MVN	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0255	FP&SIMD	MVNI	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0256	FP&SIMD	NEG (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0257	FP&SIMD	NOT	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0258	FP&SIMD	ORN (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0259	FP&SIMD	ORR (vector, immediate)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0260	FP&SIMD	ORR (vector, register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0261	FP&SIMD	PMUL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0262	FP&SIMD	PMULL, PMULL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0263	FP&SIMD	RADDHN, RADDHN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0264	FP&SIMD	RAX1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+sha3	verified
+FPSIMD-0265	FP&SIMD	RBIT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0266	FP&SIMD	REV16 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0267	FP&SIMD	REV32 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0268	FP&SIMD	REV64	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0269	FP&SIMD	RSHRN, RSHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0270	FP&SIMD	RSUBHN, RSUBHN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0271	FP&SIMD	SABA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0272	FP&SIMD	SABAL, SABAL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0273	FP&SIMD	SABD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0274	FP&SIMD	SABDL, SABDL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0275	FP&SIMD	SADALP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0276	FP&SIMD	SADDL, SADDL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0277	FP&SIMD	SADDLP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0278	FP&SIMD	SADDLV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0279	FP&SIMD	SADDW, SADDW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0280	FP&SIMD	SCVTF (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0281	FP&SIMD	SCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0282	FP&SIMD	SCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0283	FP&SIMD	SCVTF (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0284	FP&SIMD	SCVTF (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0285	FP&SIMD	SDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified
+FPSIMD-0286	FP&SIMD	SDOT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified
+FPSIMD-0287	FP&SIMD	SHA1C	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0288	FP&SIMD	SHA1H	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0289	FP&SIMD	SHA1M	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0290	FP&SIMD	SHA1P	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0291	FP&SIMD	SHA1SU0	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0292	FP&SIMD	SHA1SU1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha1	verified
+FPSIMD-0293	FP&SIMD	SHA256H	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha256	verified
+FPSIMD-0294	FP&SIMD	SHA256H2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha256	verified
+FPSIMD-0295	FP&SIMD	SHA256SU0	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha256	verified
+FPSIMD-0296	FP&SIMD	SHA256SU1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha256	verified
+FPSIMD-0297	FP&SIMD	SHA512H	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha512	verified
+FPSIMD-0298	FP&SIMD	SHA512H2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha512	verified
+FPSIMD-0299	FP&SIMD	SHA512SU0	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha512	verified
+FPSIMD-0300	FP&SIMD	SHA512SU1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sha512	verified
+FPSIMD-0301	FP&SIMD	SHADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0302	FP&SIMD	SHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0303	FP&SIMD	SHLL, SHLL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0304	FP&SIMD	SHRN, SHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0305	FP&SIMD	SHSUB	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0306	FP&SIMD	SLI	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0307	FP&SIMD	SM3PARTW1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0308	FP&SIMD	SM3PARTW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0309	FP&SIMD	SM3SS1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0310	FP&SIMD	SM3TT1A	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0311	FP&SIMD	SM3TT1B	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0312	FP&SIMD	SM3TT2A	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0313	FP&SIMD	SM3TT2B	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm3	verified
+FPSIMD-0314	FP&SIMD	SM4E	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm4	verified
+FPSIMD-0315	FP&SIMD	SM4EKEY	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	sm4	verified
+FPSIMD-0316	FP&SIMD	SMAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0317	FP&SIMD	SMAXP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0318	FP&SIMD	SMAXV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0319	FP&SIMD	SMIN	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0320	FP&SIMD	SMINP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0321	FP&SIMD	SMINV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0322	FP&SIMD	SMLAL, SMLAL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0323	FP&SIMD	SMLAL, SMLAL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0324	FP&SIMD	SMLSL, SMLSL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0325	FP&SIMD	SMLSL, SMLSL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0326	FP&SIMD	SMMLA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0327	FP&SIMD	SMOV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0328	FP&SIMD	SMULL, SMULL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0329	FP&SIMD	SMULL, SMULL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0330	FP&SIMD	SQABS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0331	FP&SIMD	SQADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0332	FP&SIMD	SQDMLAL, SQDMLAL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0333	FP&SIMD	SQDMLAL, SQDMLAL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0334	FP&SIMD	SQDMLSL, SQDMLSL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0335	FP&SIMD	SQDMLSL, SQDMLSL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0336	FP&SIMD	SQDMULH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0337	FP&SIMD	SQDMULH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0338	FP&SIMD	SQDMULL, SQDMULL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0339	FP&SIMD	SQDMULL, SQDMULL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0340	FP&SIMD	SQNEG	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0341	FP&SIMD	SQRDMLAH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
+FPSIMD-0342	FP&SIMD	SQRDMLAH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
+FPSIMD-0343	FP&SIMD	SQRDMLSH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
+FPSIMD-0344	FP&SIMD	SQRDMLSH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
+FPSIMD-0345	FP&SIMD	SQRDMULH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0346	FP&SIMD	SQRDMULH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0347	FP&SIMD	SQRSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0348	FP&SIMD	SQRSHRN, SQRSHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0349	FP&SIMD	SQRSHRUN, SQRSHRUN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0350	FP&SIMD	SQSHL (immediate)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0351	FP&SIMD	SQSHL (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0352	FP&SIMD	SQSHLU	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0353	FP&SIMD	SQSHRN, SQSHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0354	FP&SIMD	SQSHRUN, SQSHRUN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0355	FP&SIMD	SQSUB	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0356	FP&SIMD	SQXTN, SQXTN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0357	FP&SIMD	SQXTUN, SQXTUN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0358	FP&SIMD	SRHADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0359	FP&SIMD	SRI	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0360	FP&SIMD	SRSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0361	FP&SIMD	SRSHR	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0362	FP&SIMD	SRSRA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0363	FP&SIMD	SSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0364	FP&SIMD	SSHLL, SSHLL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0365	FP&SIMD	SSHR	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0366	FP&SIMD	SSRA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0367	FP&SIMD	SSUBL, SSUBL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0368	FP&SIMD	SSUBW, SSUBW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0369	FP&SIMD	ST1 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0370	FP&SIMD	ST1 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0371	FP&SIMD	ST2 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0372	FP&SIMD	ST2 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0373	FP&SIMD	ST3 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0374	FP&SIMD	ST3 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0375	FP&SIMD	ST4 (multiple structures)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0376	FP&SIMD	ST4 (single structure)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd	verified
+FPSIMD-0377	FP&SIMD	STBFADD, STBFADDL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0378	FP&SIMD	STBFMAX, STBFMAXL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0379	FP&SIMD	STBFMAXNM, STBFMAXNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0380	FP&SIMD	STBFMIN, STBFMINL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0381	FP&SIMD	STBFMINNM, STBFMINNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0382	FP&SIMD	STFADD, STFADDL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0383	FP&SIMD	STFMAX, STFMAXL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0384	FP&SIMD	STFMAXNM, STFMAXNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0385	FP&SIMD	STFMIN, STFMINL	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0386	FP&SIMD	STFMINNM, STFMINNML	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsfe	verified
+FPSIMD-0387	FP&SIMD	STL1 (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	advanced_simd+lrcpc3	verified
+FPSIMD-0388	FP&SIMD	STLUR (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lrcpc3	verified
+FPSIMD-0389	FP&SIMD	STNP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0390	FP&SIMD	STP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0391	FP&SIMD	STR (immediate, SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0392	FP&SIMD	STR (register, SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0393	FP&SIMD	STTNP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lsui	verified
+FPSIMD-0394	FP&SIMD	STTP (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point+lsui	verified
+FPSIMD-0395	FP&SIMD	STUR (SIMD&FP)	shared-simd-memory	structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	floating_point	verified
+FPSIMD-0396	FP&SIMD	SUB (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0397	FP&SIMD	SUBHN, SUBHN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0398	FP&SIMD	SUDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0399	FP&SIMD	SUQADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0400	FP&SIMD	SXTL, SXTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0401	FP&SIMD	TBL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0402	FP&SIMD	TBX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0403	FP&SIMD	TRN1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0404	FP&SIMD	TRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0405	FP&SIMD	UABA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0406	FP&SIMD	UABAL, UABAL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0407	FP&SIMD	UABD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0408	FP&SIMD	UABDL, UABDL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0409	FP&SIMD	UADALP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0410	FP&SIMD	UADDL, UADDL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0411	FP&SIMD	UADDLP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0412	FP&SIMD	UADDLV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0413	FP&SIMD	UADDW, UADDW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0414	FP&SIMD	UCVTF (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
+FPSIMD-0415	FP&SIMD	UCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0416	FP&SIMD	UCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0417	FP&SIMD	UCVTF (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0418	FP&SIMD	UCVTF (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
+FPSIMD-0419	FP&SIMD	UDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified
+FPSIMD-0420	FP&SIMD	UDOT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified
+FPSIMD-0421	FP&SIMD	UHADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0422	FP&SIMD	UHSUB	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0423	FP&SIMD	UMAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0424	FP&SIMD	UMAXP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0425	FP&SIMD	UMAXV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0426	FP&SIMD	UMIN	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0427	FP&SIMD	UMINP	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0428	FP&SIMD	UMINV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0429	FP&SIMD	UMLAL, UMLAL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0430	FP&SIMD	UMLAL, UMLAL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0431	FP&SIMD	UMLSL, UMLSL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0432	FP&SIMD	UMLSL, UMLSL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0433	FP&SIMD	UMMLA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0434	FP&SIMD	UMOV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0435	FP&SIMD	UMULL, UMULL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0436	FP&SIMD	UMULL, UMULL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0437	FP&SIMD	UQADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0438	FP&SIMD	UQRSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0439	FP&SIMD	UQRSHRN, UQRSHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0440	FP&SIMD	UQSHL (immediate)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0441	FP&SIMD	UQSHL (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0442	FP&SIMD	UQSHRN, UQSHRN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0443	FP&SIMD	UQSUB	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0444	FP&SIMD	UQXTN, UQXTN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0445	FP&SIMD	URECPE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0446	FP&SIMD	URHADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0447	FP&SIMD	URSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0448	FP&SIMD	URSHR	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0449	FP&SIMD	URSQRTE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0450	FP&SIMD	URSRA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0451	FP&SIMD	USDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0452	FP&SIMD	USDOT (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0453	FP&SIMD	USHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0454	FP&SIMD	USHLL, USHLL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0455	FP&SIMD	USHR	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0456	FP&SIMD	USMMLA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	i8mm	verified
+FPSIMD-0457	FP&SIMD	USQADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0458	FP&SIMD	USRA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0459	FP&SIMD	USUBL, USUBL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0460	FP&SIMD	USUBW, USUBW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0461	FP&SIMD	UXTL, UXTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0462	FP&SIMD	UZP1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0463	FP&SIMD	UZP2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0464	FP&SIMD	XAR	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+sha3	verified
+FPSIMD-0465	FP&SIMD	XTN, XTN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0466	FP&SIMD	ZIP1	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
+FPSIMD-0467	FP&SIMD	ZIP2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified

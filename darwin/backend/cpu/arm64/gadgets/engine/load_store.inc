@@ -86,13 +86,21 @@ literal_vector_fast literal_load_vector128_fast, ldr, q, 16
  * a distinct entry. Stream: [Rt offset, Rn offset, byte displacement][PC].
  * The only conditional branches left are the runtime cross-page and TLB/fault
  * decisions; valid same-page hits execute no opcode or register-mode tests. */
-.macro scalar_unsigned_fast load, bits64, transfer_zero, suffix
+.macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix
 gadget \suffix
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
+	.if \base_sp
+	tst x7, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	add x7, x7, x21
 	.if \bits64
 	branch_if_cross_page x7, 8, x9, .Lscalar_unsigned_cross\@
@@ -155,28 +163,36 @@ gadget \suffix
 	next_gadget
 .endm
 
-scalar_unsigned_fast 1, 0, 0, load32_unsigned_fast_r
-scalar_unsigned_fast 1, 0, 1, load32_unsigned_fast_z
-scalar_unsigned_fast 1, 1, 0, load64_unsigned_fast_r
-scalar_unsigned_fast 1, 1, 1, load64_unsigned_fast_z
-scalar_unsigned_fast 0, 0, 0, store32_unsigned_fast_r
-scalar_unsigned_fast 0, 0, 1, store32_unsigned_fast_z
-scalar_unsigned_fast 0, 1, 0, store64_unsigned_fast_r
-scalar_unsigned_fast 0, 1, 1, store64_unsigned_fast_z
+.macro scalar_unsigned_modes load, bits64, name
+scalar_unsigned_fast \load, \bits64, 0, 0, \name\()_r
+scalar_unsigned_fast \load, \bits64, 1, 0, \name\()_z
+scalar_unsigned_fast \load, \bits64, 0, 1, \name\()_r_sp
+scalar_unsigned_fast \load, \bits64, 1, 1, \name\()_z_sp
+.endm
 
+scalar_unsigned_modes 1, 0, load32_unsigned_fast
+scalar_unsigned_modes 1, 1, load64_unsigned_fast
+scalar_unsigned_modes 0, 0, store32_unsigned_fast
+scalar_unsigned_modes 0, 1, store64_unsigned_fast
+
+.purgem scalar_unsigned_modes
 .purgem scalar_unsigned_fast
 
 /* Translation-specialized byte/halfword and sign-extending unsigned-offset
  * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn
  * and the already-scaled displacement, so the runtime does not inspect an
  * opcode or branch on register 31. */
-.macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero
+.macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
+	.if \base_sp
+	tst x7, #0xf
+	b.ne .Lscalar_alignment_fault_read
+	.endif
 	add x7, x7, x21
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_load_cross\@
@@ -217,8 +233,10 @@ gadget \name
 .endm
 
 .macro scalar_unsigned_load_narrow_modes name, instruction, host_register, bytes, extension
-	scalar_unsigned_load_narrow_fast \name\()_r, \instruction, \host_register, \bytes, \extension, 0
-	scalar_unsigned_load_narrow_fast \name\()_z, \instruction, \host_register, \bytes, \extension, 1
+	scalar_unsigned_load_narrow_fast \name\()_r, \instruction, \host_register, \bytes, \extension, 0, 0
+	scalar_unsigned_load_narrow_fast \name\()_z, \instruction, \host_register, \bytes, \extension, 1, 0
+	scalar_unsigned_load_narrow_fast \name\()_r_sp, \instruction, \host_register, \bytes, \extension, 0, 1
+	scalar_unsigned_load_narrow_fast \name\()_z_sp, \instruction, \host_register, \bytes, \extension, 1, 1
 .endm
 
 scalar_unsigned_load_narrow_modes load8_unsigned_fast, ldrb, w, 1, 0
@@ -232,13 +250,17 @@ scalar_unsigned_load_narrow_modes load32_signed_x_fast, ldrsw, x, 4, 5
 .purgem scalar_unsigned_load_narrow_modes
 .purgem scalar_unsigned_load_narrow_fast
 
-.macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero
+.macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
+	.if \base_sp
+	tst x7, #0xf
+	b.ne .Lscalar_alignment_fault_write
+	.endif
 	add x7, x7, x21
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_store_cross\@
@@ -268,8 +290,10 @@ gadget \name
 .endm
 
 .macro scalar_unsigned_store_narrow_modes name, instruction, bytes
-	scalar_unsigned_store_narrow_fast \name\()_r, \instruction, \bytes, 0
-	scalar_unsigned_store_narrow_fast \name\()_z, \instruction, \bytes, 1
+	scalar_unsigned_store_narrow_fast \name\()_r, \instruction, \bytes, 0, 0
+	scalar_unsigned_store_narrow_fast \name\()_z, \instruction, \bytes, 1, 0
+	scalar_unsigned_store_narrow_fast \name\()_r_sp, \instruction, \bytes, 0, 1
+	scalar_unsigned_store_narrow_fast \name\()_z_sp, \instruction, \bytes, 1, 1
 .endm
 
 scalar_unsigned_store_narrow_modes store8_unsigned_fast, strb, 1
@@ -281,14 +305,26 @@ scalar_unsigned_store_narrow_modes store16_unsigned_fast, strh, 2
 /* All SIMD&FP unsigned-offset widths use a translated CpuState vector offset,
  * translated base offset, and scaled displacement. Width and direction are
  * fixed by the selected symbol. */
-.macro vector_unsigned_fast name, load, instruction, host_register, bytes
+.macro vector_unsigned_fast name, load, instruction, host_register, bytes, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	lsr x21, x8, #32
 	ldr x7, [_cpu, x20]
+	.if \base_sp
+	tst x7, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	add x7, x7, x21
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w9, .Lvector_unsigned_tagged\@
+	.endif
 	branch_if_cross_page x7, \bytes, x9, .Lvector_unsigned_cross\@
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -312,32 +348,79 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if !\base_sp
+.Lvector_unsigned_tagged\@:
+	sub sp, sp, #32
+	stp x1, x2, [sp, #16]
+	.if \load
+	movi v0.16b, #0
+	.else
+	ldr q0, [_cpu, x19]
+	.endif
+	str q0, [sp]
+	mov x0, _cpu
+	mov x1, _tlb
+	mov x2, x7
+	mov x3, sp
+	mov x4, #\bytes
+	mov w5, #(!\load)
+	mov w6, #\base_sp
+	mov w7, #((\bytes << 8) | 1)
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	ldp x1, x2, [sp, #16]
+	cbz w0, 97f
+	.if \load
+	ldr q0, [sp]
+	str q0, [_cpu, x19]
+	.endif
+	add sp, sp, #32
+	add _stream, _stream, #8
+	next_gadget
+97:
+	add sp, sp, #32
+	b uml_arm64_gadget_memory_fault
+	.endif
 .endm
 
-vector_unsigned_fast vector_load8_unsigned_fast, 1, ldr, b, 1
-vector_unsigned_fast vector_load16_unsigned_fast, 1, ldr, h, 2
-vector_unsigned_fast vector_load32_unsigned_fast, 1, ldr, s, 4
-vector_unsigned_fast vector_load64_unsigned_fast, 1, ldr, d, 8
-vector_unsigned_fast vector_load128_unsigned_fast, 1, ldr, q, 16
-vector_unsigned_fast vector_store8_unsigned_fast, 0, str, b, 1
-vector_unsigned_fast vector_store16_unsigned_fast, 0, str, h, 2
-vector_unsigned_fast vector_store32_unsigned_fast, 0, str, s, 4
-vector_unsigned_fast vector_store64_unsigned_fast, 0, str, d, 8
-vector_unsigned_fast vector_store128_unsigned_fast, 0, str, q, 16
+.macro vector_unsigned_modes name, load, instruction, host_register, bytes
+	vector_unsigned_fast vector_\name\()_unsigned_fast, \load, \instruction, \host_register, \bytes, 0
+	vector_unsigned_fast vector_\name\()_unsigned_fast_sp, \load, \instruction, \host_register, \bytes, 1
+.endm
 
+vector_unsigned_modes load8, 1, ldr, b, 1
+vector_unsigned_modes load16, 1, ldr, h, 2
+vector_unsigned_modes load32, 1, ldr, s, 4
+vector_unsigned_modes load64, 1, ldr, d, 8
+vector_unsigned_modes load128, 1, ldr, q, 16
+vector_unsigned_modes store8, 0, str, b, 1
+vector_unsigned_modes store16, 0, str, h, 2
+vector_unsigned_modes store32, 0, str, s, 4
+vector_unsigned_modes store64, 0, str, d, 8
+vector_unsigned_modes store128, 0, str, q, 16
+
+.purgem vector_unsigned_modes
 .purgem vector_unsigned_fast
 
 /* Scalar unscaled/pre/post-indexed accesses. Operand: Rt CpuState offset in
  * bits 15:0, Rn offset in 31:16, signed imm9 in 63:32. Mode 0 is adjusted
  * address without writeback, mode 1 pre-index, mode 2 post-index, and mode 3
  * post-index with architecturally suppressed overlapping-load writeback. */
-.macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero
+.macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	asr x21, x8, #32
 	ldr x24, [_cpu, x20]
+	.if \base_sp
+	tst x24, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	add x25, x24, x21
 	.if \mode >= 2
 	mov x26, x24
@@ -412,14 +495,23 @@ gadget \name
 .endm
 
 .macro scalar_other_immediate_operation name, load, instruction, host_register, bytes, extension
-	scalar_other_immediate_fast scalar_other_\name\()_offset_r, \load, \instruction, \host_register, \bytes, \extension, 0, 0
-	scalar_other_immediate_fast scalar_other_\name\()_offset_z, \load, \instruction, \host_register, \bytes, \extension, 0, 1
-	scalar_other_immediate_fast scalar_other_\name\()_pre_r, \load, \instruction, \host_register, \bytes, \extension, 1, 0
-	scalar_other_immediate_fast scalar_other_\name\()_pre_z, \load, \instruction, \host_register, \bytes, \extension, 1, 1
-	scalar_other_immediate_fast scalar_other_\name\()_post_r, \load, \instruction, \host_register, \bytes, \extension, 2, 0
-	scalar_other_immediate_fast scalar_other_\name\()_post_z, \load, \instruction, \host_register, \bytes, \extension, 2, 1
-	scalar_other_immediate_fast scalar_other_\name\()_post_suppress_r, \load, \instruction, \host_register, \bytes, \extension, 3, 0
-	scalar_other_immediate_fast scalar_other_\name\()_post_suppress_z, \load, \instruction, \host_register, \bytes, \extension, 3, 1
+	scalar_other_immediate_fast scalar_other_\name\()_offset_r, \load, \instruction, \host_register, \bytes, \extension, 0, 0, 0
+	scalar_other_immediate_fast scalar_other_\name\()_offset_z, \load, \instruction, \host_register, \bytes, \extension, 0, 1, 0
+	scalar_other_immediate_fast scalar_other_\name\()_offset_r_sp, \load, \instruction, \host_register, \bytes, \extension, 0, 0, 1
+	scalar_other_immediate_fast scalar_other_\name\()_offset_z_sp, \load, \instruction, \host_register, \bytes, \extension, 0, 1, 1
+	scalar_other_immediate_fast scalar_other_\name\()_pre_r, \load, \instruction, \host_register, \bytes, \extension, 1, 0, 0
+	scalar_other_immediate_fast scalar_other_\name\()_pre_z, \load, \instruction, \host_register, \bytes, \extension, 1, 1, 0
+	scalar_other_immediate_fast scalar_other_\name\()_pre_r_sp, \load, \instruction, \host_register, \bytes, \extension, 1, 0, 1
+	scalar_other_immediate_fast scalar_other_\name\()_pre_z_sp, \load, \instruction, \host_register, \bytes, \extension, 1, 1, 1
+	scalar_other_immediate_fast scalar_other_\name\()_post_r, \load, \instruction, \host_register, \bytes, \extension, 2, 0, 0
+	scalar_other_immediate_fast scalar_other_\name\()_post_z, \load, \instruction, \host_register, \bytes, \extension, 2, 1, 0
+	scalar_other_immediate_fast scalar_other_\name\()_post_r_sp, \load, \instruction, \host_register, \bytes, \extension, 2, 0, 1
+	scalar_other_immediate_fast scalar_other_\name\()_post_z_sp, \load, \instruction, \host_register, \bytes, \extension, 2, 1, 1
+	.if \load
+	/* Suppressed writeback requires Rn == Rt != 31, so only the ordinary
+	 * transfer-register entry is reachable. */
+	scalar_other_immediate_fast scalar_other_\name\()_post_suppress_r, \load, \instruction, \host_register, \bytes, \extension, 3, 0, 0
+	.endif
 .endm
 
 scalar_other_immediate_operation store8, 0, strb, w, 1, 0
@@ -439,16 +531,48 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 .purgem scalar_other_immediate_operation
 .purgem scalar_other_immediate_fast
 
+/* Only translation-selected SP forms can reach these cold paths. All GPR-base
+ * scalar-memory gadgets retain their prior branch shape. The operand has
+ * already been consumed, so _stream points directly at the precise guest PC.
+ */
+.p2align 4
+.Lscalar_alignment_fault_read:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
+	mov w2, #0
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
+
+.p2align 4
+.Lscalar_alignment_fault_write:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
+	mov w2, #1
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
+
 /* Register-offset form. The upper operand half stores the translated Rm
  * CpuState byte offset. Extension (UXTW/X/SXTW) and optional scaling are fixed
  * in the gadget symbol. */
-.macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero
+.macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	ubfx x21, x8, #32, #16
 	ldr x24, [_cpu, x20]
+	.if \base_sp
+	tst x24, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	ldr x26, [_cpu, x21]
 	.if \address_extension == 0
 	mov w26, w26
@@ -527,8 +651,10 @@ gadget \name
 .endm
 
 .macro scalar_other_register_extension name, load, instruction, host_register, bytes, result_extension, address_extension, extension_name, shifted
-	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_r, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 0
-	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_z, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 1
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_r, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 0, 0
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_z, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 1, 0
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_r_sp, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 0, 1
+	scalar_other_register_fast scalar_other_\name\()_\extension_name\()_\shifted\()_z_sp, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, 1, 1
 .endm
 
 /* The final parameter controls result sign extension; address extension is
@@ -563,18 +689,30 @@ scalar_other_register_all load64u, 1, ldr, x, 8, 0
 /* SIMD&FP unscaled/pre/post-indexed and register-offset forms use the same
  * translated address descriptors as scalar memory, with the V-register byte
  * offset in bits 15:0. */
-.macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode
+.macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	asr x21, x8, #32
 	ldr x24, [_cpu, x20]
+	.if \base_sp
+	tst x24, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	add x25, x24, x21
 	.if \mode == 2
 	mov x26, x24
 	.else
 	mov x26, x25
+	.endif
+	.if !\base_sp || \mode != 0
+	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w9, .Lvector_other_immediate_tagged\@
 	.endif
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_immediate_cross\@
 	mov x7, x26
@@ -606,21 +744,68 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if !\base_sp || \mode != 0
+.Lvector_other_immediate_tagged\@:
+	sub sp, sp, #32
+	stp x1, x2, [sp, #16]
+	.if \load
+	movi v0.16b, #0
+	.else
+	ldr q0, [_cpu, x19]
+	.endif
+	str q0, [sp]
+	mov x0, _cpu
+	mov x1, _tlb
+	mov x2, x26
+	mov x3, sp
+	mov x4, #\bytes
+	mov w5, #(!\load)
+	mov w6, #\base_sp
+	mov w7, #((\bytes << 8) | 1)
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	ldp x1, x2, [sp, #16]
+	cbz w0, 97f
+	.if \load
+	ldr q0, [sp]
+	str q0, [_cpu, x19]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x25, [_cpu, x20]
+	.endif
+	add sp, sp, #32
+	add _stream, _stream, #8
+	next_gadget
+97:
+	add sp, sp, #32
+	b uml_arm64_gadget_memory_fault
+	.endif
 .endm
 
 .macro vector_other_immediate_operation name, load, instruction, host_register, bytes
-	vector_other_immediate_fast vector_other_\name\()_offset, \load, \instruction, \host_register, \bytes, 0
-	vector_other_immediate_fast vector_other_\name\()_pre, \load, \instruction, \host_register, \bytes, 1
-	vector_other_immediate_fast vector_other_\name\()_post, \load, \instruction, \host_register, \bytes, 2
+	vector_other_immediate_fast vector_other_\name\()_offset, \load, \instruction, \host_register, \bytes, 0, 0
+	vector_other_immediate_fast vector_other_\name\()_pre, \load, \instruction, \host_register, \bytes, 1, 0
+	vector_other_immediate_fast vector_other_\name\()_post, \load, \instruction, \host_register, \bytes, 2, 0
+	vector_other_immediate_fast vector_other_\name\()_offset_sp, \load, \instruction, \host_register, \bytes, 0, 1
+	vector_other_immediate_fast vector_other_\name\()_pre_sp, \load, \instruction, \host_register, \bytes, 1, 1
+	vector_other_immediate_fast vector_other_\name\()_post_sp, \load, \instruction, \host_register, \bytes, 2, 1
 .endm
 
-.macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted
+.macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted, base_sp
 gadget \name
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
 	ubfx x21, x8, #32, #16
 	ldr x24, [_cpu, x20]
+	.if \base_sp
+	tst x24, #0xf
+		.if \load
+	b.ne .Lscalar_alignment_fault_read
+		.else
+	b.ne .Lscalar_alignment_fault_write
+		.endif
+	.endif
 	ldr x26, [_cpu, x21]
 	.if \extension == 0
 	mov w26, w26
@@ -639,6 +824,8 @@ gadget \name
 		.endif
 	.endif
 	add x26, x24, x26
+	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w9, .Lvector_other_register_tagged\@
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_register_cross\@
 	mov x7, x26
 	.if \load
@@ -663,10 +850,42 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+.Lvector_other_register_tagged\@:
+	sub sp, sp, #32
+	stp x1, x2, [sp, #16]
+	.if \load
+	movi v0.16b, #0
+	.else
+	ldr q0, [_cpu, x19]
+	.endif
+	str q0, [sp]
+	mov x0, _cpu
+	mov x1, _tlb
+	mov x2, x26
+	mov x3, sp
+	mov x4, #\bytes
+	mov w5, #(!\load)
+	mov w6, #\base_sp
+	mov w7, #((\bytes << 8) | 1)
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	ldp x1, x2, [sp, #16]
+	cbz w0, 97f
+	.if \load
+	ldr q0, [sp]
+	str q0, [_cpu, x19]
+	.endif
+	add sp, sp, #32
+	add _stream, _stream, #8
+	next_gadget
+97:
+	add sp, sp, #32
+	b uml_arm64_gadget_memory_fault
 .endm
 
 .macro vector_other_register_extension name, load, instruction, host_register, bytes, extension, extension_name, shifted
-	vector_other_register_fast vector_other_\name\()_\extension_name\()_\shifted, \load, \instruction, \host_register, \bytes, \extension, \shifted
+	vector_other_register_fast vector_other_\name\()_\extension_name\()_\shifted, \load, \instruction, \host_register, \bytes, \extension, \shifted, 0
+	vector_other_register_fast vector_other_\name\()_\extension_name\()_\shifted\()_sp, \load, \instruction, \host_register, \bytes, \extension, \shifted, 1
 .endm
 
 .macro vector_other_operation name, load, instruction, host_register, bytes
@@ -699,10 +918,11 @@ vector_other_operation load128, 1, ldr, q, 16
 /* Translation-specialized integer pair transfers. The packed operand holds
  * Rt/Rt2/Rn CpuState byte offsets in successive 16-bit fields and the signed,
  * already-scaled displacement in the upper 16 bits. Width, direction,
- * writeback mode, sign extension, and both XZR cases are fixed by the symbol.
- * Mode 0 is adjusted address without writeback, mode 1 pre-index, mode 2
- * post-index, and mode 3 post-index with suppressed load writeback. */
-.macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero
+ * writeback mode, sign extension, SP versus GPR base, and both XZR cases are
+ * fixed by the symbol. Mode 0 is adjusted address without writeback, mode 1
+ * pre-index, mode 2 post-index, and mode 3 post-index with suppressed load
+ * writeback. */
+.macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero, sp_base
 gadget \name
 	ldr x8, [_stream], #8
 	and x22, x8, #0xffff
@@ -710,6 +930,14 @@ gadget \name
 	ubfx x24, x8, #32, #16
 	asr x6, x8, #48
 	ldr x16, [_cpu, x24]
+	.if \sp_base
+	tst x16, #0xf
+		.if \load
+	b.ne uml_arm64_gadget_pair_alignment_fault_read
+		.else
+	b.ne uml_arm64_gadget_pair_alignment_fault_write
+		.endif
+	.endif
 	add x21, x16, x6
 	.if \mode >= 2
 	mov x19, x16
@@ -800,33 +1028,46 @@ gadget \name
 .endm
 
 .macro integer_pair_mode name, load, instruction, host_register, bytes, sign_extend, mode
-	integer_pair_fast integer_pair_\name\()_\mode\()_rr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 0
-	integer_pair_fast integer_pair_\name\()_\mode\()_rz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 1
-	integer_pair_fast integer_pair_\name\()_\mode\()_zr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 0
-	integer_pair_fast integer_pair_\name\()_\mode\()_zz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 1
+	integer_pair_fast integer_pair_\name\()_\mode\()_rr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 0, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_rz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 1, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_zr, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 0, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_zz, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 1, 0
+	integer_pair_fast integer_pair_\name\()_\mode\()_rr_sp, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 0, 1
+	integer_pair_fast integer_pair_\name\()_\mode\()_rz_sp, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 0, 1, 1
+	integer_pair_fast integer_pair_\name\()_\mode\()_zr_sp, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 0, 1
+	integer_pair_fast integer_pair_\name\()_\mode\()_zz_sp, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, 1, 1, 1
 .endm
 
-.macro integer_pair_operation name, load, instruction, host_register, bytes, sign_extend
-	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 0
-	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 1
-	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 2
-	integer_pair_mode \name, \load, \instruction, \host_register, \bytes, \sign_extend, 3
+.macro integer_pair_store_operation name, instruction, host_register, bytes
+	integer_pair_mode \name, 0, \instruction, \host_register, \bytes, 0, 0
+	integer_pair_mode \name, 0, \instruction, \host_register, \bytes, 0, 1
+	integer_pair_mode \name, 0, \instruction, \host_register, \bytes, 0, 2
 .endm
 
-integer_pair_operation store32, 0, stp, w, 4, 0
-integer_pair_operation load32, 1, ldp, w, 4, 0
-integer_pair_operation load32s, 1, ldpsw, x, 4, 1
-integer_pair_operation store64, 0, stp, x, 8, 0
-integer_pair_operation load64, 1, ldp, x, 8, 0
+.macro integer_pair_load_operation name, instruction, host_register, bytes, sign_extend
+	integer_pair_mode \name, 1, \instruction, \host_register, \bytes, \sign_extend, 0
+	integer_pair_mode \name, 1, \instruction, \host_register, \bytes, \sign_extend, 1
+	integer_pair_mode \name, 1, \instruction, \host_register, \bytes, \sign_extend, 2
+	/* Mode 3 is post-index with WBSUPPRESS and is load-only. */
+	integer_pair_mode \name, 1, \instruction, \host_register, \bytes, \sign_extend, 3
+.endm
 
-.purgem integer_pair_operation
+integer_pair_store_operation store32, stp, w, 4
+integer_pair_load_operation load32, ldp, w, 4, 0
+integer_pair_load_operation load32s, ldpsw, x, 4, 1
+integer_pair_store_operation store64, stp, x, 8
+integer_pair_load_operation load64, ldp, x, 8, 0
+
+.purgem integer_pair_load_operation
+.purgem integer_pair_store_operation
 .purgem integer_pair_mode
 .purgem integer_pair_fast
 
 /* Translation-specialized SIMD&FP pairs. Operand fields match the integer
  * pair descriptor, but the first two offsets address VectorRegister slots.
- * Width, direction, and address mode are fixed by the selected symbol. */
-.macro vector_pair_fast name, load, instruction, host_register, bytes, mode
+ * Width, direction, address mode, and SP versus GPR base are fixed by the
+ * selected symbol. */
+.macro vector_pair_fast name, load, instruction, host_register, bytes, mode, sp_base
 gadget \name
 	ldr x8, [_stream], #8
 	and x22, x8, #0xffff
@@ -834,11 +1075,23 @@ gadget \name
 	ubfx x24, x8, #32, #16
 	asr x6, x8, #48
 	ldr x16, [_cpu, x24]
+	.if \sp_base
+	tst x16, #0xf
+		.if \load
+	b.ne uml_arm64_gadget_pair_alignment_fault_read
+		.else
+	b.ne uml_arm64_gadget_pair_alignment_fault_write
+		.endif
+	.endif
 	add x21, x16, x6
 	.if \mode == 2
 	mov x19, x16
 	.else
 	mov x19, x21
+	.endif
+	.if !\sp_base || \mode != 0
+	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w9, .Lvector_pair_tagged\@
 	.endif
 	branch_if_cross_page x19, (2 * \bytes), x9, .Lvector_pair_cross\@
 	.if \load
@@ -895,12 +1148,54 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if !\sp_base || \mode != 0
+.Lvector_pair_tagged\@:
+	sub sp, sp, #48
+	stp x1, x2, [sp, #32]
+	.if \load
+	movi v0.16b, #0
+	movi v1.16b, #0
+	.else
+	ldr q0, [_cpu, x22]
+	ldr q1, [_cpu, x23]
+	.endif
+	stp q0, q1, [sp]
+	mov x0, _cpu
+	mov x1, _tlb
+	mov x2, x19
+	mov x3, sp
+	mov x4, #(2 * \bytes)
+	mov w5, #(!\load)
+	mov w6, #\sp_base
+	mov w7, #(((2 * \bytes) << 8) | 1)
+	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	ldp x1, x2, [sp, #32]
+	cbz w0, 97f
+	.if \load
+	ldp q0, q1, [sp]
+	str q0, [_cpu, x22]
+	str q1, [_cpu, x23]
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
+	add sp, sp, #48
+	add _stream, _stream, #8
+	next_gadget
+97:
+	add sp, sp, #48
+	b uml_arm64_gadget_memory_fault
+	.endif
 .endm
 
 .macro vector_pair_operation name, load, instruction, host_register, bytes
-	vector_pair_fast vector_pair_\name\()_0, \load, \instruction, \host_register, \bytes, 0
-	vector_pair_fast vector_pair_\name\()_1, \load, \instruction, \host_register, \bytes, 1
-	vector_pair_fast vector_pair_\name\()_2, \load, \instruction, \host_register, \bytes, 2
+	vector_pair_fast vector_pair_\name\()_0, \load, \instruction, \host_register, \bytes, 0, 0
+	vector_pair_fast vector_pair_\name\()_1, \load, \instruction, \host_register, \bytes, 1, 0
+	vector_pair_fast vector_pair_\name\()_2, \load, \instruction, \host_register, \bytes, 2, 0
+	vector_pair_fast vector_pair_\name\()_0_sp, \load, \instruction, \host_register, \bytes, 0, 1
+	vector_pair_fast vector_pair_\name\()_1_sp, \load, \instruction, \host_register, \bytes, 1, 1
+	vector_pair_fast vector_pair_\name\()_2_sp, \load, \instruction, \host_register, \bytes, 2, 1
 .endm
 
 vector_pair_operation store32, 0, stp, s, 4
@@ -913,23 +1208,49 @@ vector_pair_operation load128, 1, ldp, q, 16
 .purgem vector_pair_operation
 .purgem vector_pair_fast
 
+/* Only SP-specialized pair gadgets can reach these cold paths. GPR-base
+ * gadgets contain no alignment test or branch. */
+.p2align 4
+uml_arm64_gadget_pair_alignment_fault_read:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	mov x1, x16
+	mov w2, #0
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
+
+.p2align 4
+uml_arm64_gadget_pair_alignment_fault_write:
+	stp x1, x2, [sp, #-16]!
+	mov x0, x2
+	mov x1, x16
+	mov w2, #1
+	bl NAME(uml_arm64_gadget_alignment_fault)
+	ldp x1, x2, [sp], #16
+	b uml_arm64_gadget_memory_fault
+
 /* LDRAA/LDRAB authenticate the base with a zero modifier before applying the
  * signed scaled offset. Key, writeback, SP alignment, and XZR destination are
  * fixed by the builder. Stream: [packed direct offsets/immediate][guest PC]. */
-.macro pauth_load name, authentication, writeback, base_sp, discard
+.macro pauth_load name, operation, writeback, base_sp, discard
 gadget pauth_load_\name
 	ldr x8, [_stream], #8
 	.if !\discard
 	and w19, w8, #0xffff
 	.endif
-	ubfx w20, w8, #16, #16
 	asr x21, x8, #32
+	.if \base_sp
+	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
+	.else
+	ubfx w20, w8, #16, #16
 	ldr x7, [_cpu, x20]
+	.endif
 	.if \base_sp
 	tst x7, #0xf
-	b.ne uml_arm64_gadget_memory_fault
+	b.ne .Lscalar_alignment_fault_read
 	.endif
-	\authentication x7
+	software_pointer_auth x7, xzr, \operation
 	add x25, x7, x21
 	branch_if_cross_page x25, 8, x9, pauth_load_\name\()_cross
 	mov x7, x25
@@ -944,31 +1265,36 @@ pauth_load_\name\()_finish:
 	str x0, [_cpu, x19]
 	.endif
 	.if \writeback
+	.if \base_sp
+	str x25, [_cpu, #UML_GADGET_CPU_SP]
+	.else
 	str x25, [_cpu, x20]
+	.endif
 	.endif
 	add _stream, _stream, #8
 	next_gadget
 .endm
 
-.macro pauth_load_modes key, authentication
-pauth_load \key\()_o_rr, \authentication, 0, 0, 0
-pauth_load \key\()_o_rz, \authentication, 0, 0, 1
-pauth_load \key\()_o_sr, \authentication, 0, 1, 0
-pauth_load \key\()_o_sz, \authentication, 0, 1, 1
-pauth_load \key\()_w_rr, \authentication, 1, 0, 0
-pauth_load \key\()_w_rz, \authentication, 1, 0, 1
-pauth_load \key\()_w_sr, \authentication, 1, 1, 0
-pauth_load \key\()_w_sz, \authentication, 1, 1, 1
+.macro pauth_load_modes key, operation
+pauth_load \key\()_o_rr, \operation, 0, 0, 0
+pauth_load \key\()_o_rz, \operation, 0, 0, 1
+pauth_load \key\()_o_sr, \operation, 0, 1, 0
+pauth_load \key\()_o_sz, \operation, 0, 1, 1
+pauth_load \key\()_w_rr, \operation, 1, 0, 0
+pauth_load \key\()_w_rz, \operation, 1, 0, 1
+pauth_load \key\()_w_sr, \operation, 1, 1, 0
+pauth_load \key\()_w_sz, \operation, 1, 1, 1
 .endm
 
-pauth_load_modes a, autdza
-pauth_load_modes b, autdzb
+pauth_load_modes a, 6
+pauth_load_modes b, 7
 
 .purgem pauth_load_modes
 .purgem pauth_load
 
 uml_arm64_gadget_memory_fault:
 	ldr x8, [_stream]
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, #UML_GADGET_EVENT_MEMORY_FAULT
 	b uml_arm64_gadget_leave

@@ -35,14 +35,12 @@ std::uint32_t single(const arm64::CpuState &cpu, unsigned index)
 	return bits;
 }
 
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
 std::uint64_t native_fpcr()
 {
 	std::uint64_t value = 0;
 	asm volatile("mrs %0, fpcr" : "=r"(value));
 	return value;
 }
-#endif
 
 template<std::size_t Size>
 arm64::CpuState execute(const std::array<std::uint32_t, Size> &instructions,
@@ -101,7 +99,6 @@ int main()
 		require(cpu.fpsr == 0);
 	}
 
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
 	/* The production executor may retain the guest FP environment between
 	 * internal block exits, but an explicit dispatch-boundary restore must
 	 * commit FPSR and restore the caller environment exactly once. */
@@ -133,5 +130,4 @@ int main()
 		require(!cpu.gadget_fp_active);
 		require(native_fpcr() == host_fpcr);
 	}
-#endif
 }

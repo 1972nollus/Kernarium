@@ -23,6 +23,9 @@ public:
 		std::uint64_t address, std::span<std::byte> destination) override;
 	[[nodiscard]] bool write(
 		std::uint64_t address, std::span<const std::byte> source) override;
+	[[nodiscard]] bool validate_access(
+		std::uint64_t address, std::size_t size,
+		arm64::MemoryAccess access) override;
 	[[nodiscard]] std::byte *atomic_pointer(
 		std::uint64_t address, std::size_t size,
 		arm64::MemoryAccess access) override;
@@ -34,6 +37,7 @@ public:
 	[[nodiscard]] bool validate_write(
 		std::uint64_t address, std::size_t size);
 	[[nodiscard]] arm64::MemoryFault last_fault() const noexcept override;
+	[[nodiscard]] bool has_fault() const noexcept;
 
 private:
 	static constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -65,6 +69,7 @@ private:
 	std::uint64_t changes_{};
 	std::array<TlbEntry, tlb_size> tlb_{};
 	arm64::MemoryFault fault_{};
+	bool fault_recorded_{};
 };
 
 } // namespace uml::backend

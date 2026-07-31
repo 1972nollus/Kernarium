@@ -1,71 +1,58 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_fcvtxn_test_support.hpp"
+#include "arm64_floating_precision_conversion_test_support.hpp"
 
-namespace test = arm64_simd_fcvtxn_test;
-namespace base = arm64_simd_test;
+#include <array>
+#include <cstdio>
+
+namespace test = arm64_floating_precision_conversion_test;
 
 namespace {
 
-void nan_payload_default_nan_and_signaling()
+void fpcr_controls_nep_and_sticky_status()
 {
-	base::Harness harness;
-	for (const bool signaling : {false, true}) {
-		auto initial = base::state(signaling);
-		initial.fpsr = 0x0800'0090U;
-		test::set_source_lane(initial, 29U, 0U,
-			signaling ? 0x7ff0'1234'5678'9abcULL :
-				0x7ff8'1234'5678'9abcULL);
-		const std::uint32_t outputs[]{0x7fc0'91a2U};
-		test::require_result(test::instruction(test::Form::scalar, 28U, 29U),
-			test::Form::scalar, 28U, outputs, signaling ? 1U : 0U,
-			initial, harness);
-	}
-
-	for (const bool ah : {false, true}) {
-		auto initial = base::state(10U + ah);
-		initial.fpcr = (1U << 25) | (ah ? 2U : 0U);
-		test::set_source_lane(initial, 29U, 0U,
-			0xfff8'1234'5678'9abcULL);
-		const std::uint32_t outputs[]{ah ? 0xffc0'0000U : 0x7fc0'0000U};
-		test::require_result(test::instruction(test::Form::scalar, 28U, 29U),
-			test::Form::scalar, 28U, outputs, 0U, initial, harness);
-	}
-}
-
-void afp_subnormal_controls()
-{
-	base::Harness harness;
-	struct Entry final {
-		std::uint32_t fpcr;
-		std::uint32_t output;
-		std::uint32_t exceptions;
+	test::engine_tests::EngineHarness harness;
+	constexpr std::array controls{
+		0U, test::fpcr_fz, test::fpcr_fiz, test::fpcr_ah,
+		test::fpcr_ah | test::fpcr_fz,
+		test::fpcr_ah | test::fpcr_fiz,
+		test::fpcr_dn, test::fpcr_dn | test::fpcr_ah,
+		test::fpcr_fz16, test::fpcr_nep,
+		test::fpcr_nep | test::fpcr_ah,
 	};
-	const Entry entries[]{
-		{0U, 1U, (1U << 3) | (1U << 4)},
-		{1U << 24, 0U, 1U << 7},
-		{1U, 0U, 0U},
-		{2U, 1U, (1U << 7) | (1U << 3) | (1U << 4)},
-		{(1U << 24) | 2U, 0U,
-			(1U << 7) | (1U << 3) | (1U << 4)},
-		{3U, 0U, 0U},
+	constexpr std::array inputs{
+		0x0000'0000'0000'0001ULL,
+		0x8000'0000'0000'0001ULL,
+		0x7ff0'0000'0000'0000ULL,
+		0x7ff8'1234'5678'9abcULL,
+		0x7ff0'1234'5678'9abcULL,
 	};
-	for (const auto entry : entries) {
-		auto initial = base::state(entry.fpcr);
-		initial.fpcr = entry.fpcr;
-		initial.fpsr = 0x10U;
-		test::set_source_lane(initial, 29U, 0U, 1U);
-		const std::uint32_t outputs[]{entry.output};
-		test::require_result(test::instruction(test::Form::scalar, 28U, 29U),
-			test::Form::scalar, 28U, outputs, entry.exceptions,
-			initial, harness);
+	unsigned seed = 3'500U;
+	for (const auto form : test::round_odd_forms) {
+		for (const auto fpcr : controls) {
+			for (unsigned index = 0U; index < inputs.size(); ++index) {
+				auto initial = test::state(++seed);
+				initial.fpcr = fpcr;
+				initial.fpsr = test::fpsr_overflow | (1U << 27);
+				const std::array values{inputs[index]};
+				test::fill_source(initial, form, {28U, 29U}, values);
+				char name[176];
+				std::snprintf(name, sizeof(name),
+					"floating-round-odd-control scalar=%u "
+					"upper=%u fpcr=%x input=%u",
+					static_cast<unsigned>(form.scalar),
+					static_cast<unsigned>(form.upper), fpcr, index);
+				test::check(harness, name, form, {28U, 29U},
+					initial);
+			}
+		}
 	}
+	harness.print_summary("arm64-simd-fcvtxn-control");
 }
 
 } // namespace
 
 int main()
 {
-	nan_payload_default_nan_and_signaling();
-	afp_subnormal_controls();
+	fpcr_controls_nep_and_sticky_status();
 	return 0;
 }

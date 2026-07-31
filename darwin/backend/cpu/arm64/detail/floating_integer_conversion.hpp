@@ -40,8 +40,8 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 	const auto destination = format(destination_width);
 	const auto sign_bit = static_cast<std::uint64_t>(sign) <<
 		(destination_width - 1U);
-	const bool alternative_half = destination_width == 16U &&
-		(fpcr & (1U << 26)) != 0U;
+	/* FixedToFP delegates to FPRound, which clears AHP but retains the
+	 * destination-width flush control (FZ or FZ16). */
 	const unsigned rounding = (fpcr >> 22) & 3U;
 	const int highest = static_cast<int>(std::bit_width(magnitude)) - 1;
 	const int value_exponent = highest - static_cast<int>(fractional_bits);
@@ -58,21 +58,14 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 			rounded.value >>= 1U;
 			++biased_exponent;
 		}
-		const auto overflow_limit = alternative_half ? exponent_ones + 1U :
-			exponent_ones;
-		if (biased_exponent >= static_cast<int>(overflow_limit)) {
-			if (alternative_half) {
-				exceptions |= 1U;
-				result = sign_bit | low_mask(destination_width - 1U);
-			} else {
-				const bool to_infinity = rounding == 0U ||
-					(rounding == 1U && !sign) ||
-					(rounding == 2U && sign);
-				result = to_infinity ?
-					infinity(destination_width, sign) :
-					max_normal(destination_width, sign);
-				exceptions |= (1U << 2) | (1U << 4);
-			}
+		if (biased_exponent >= static_cast<int>(exponent_ones)) {
+			const bool to_infinity = rounding == 0U ||
+				(rounding == 1U && !sign) ||
+				(rounding == 2U && sign);
+			result = to_infinity ?
+				infinity(destination_width, sign) :
+				max_normal(destination_width, sign);
+			exceptions |= (1U << 2) | (1U << 4);
 		} else {
 			result = sign_bit |
 				(static_cast<std::uint64_t>(biased_exponent) <<
@@ -83,8 +76,10 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 		}
 	} else {
 		const bool ah = (fpcr & 2U) != 0U;
-		if (!ah && destination_width != 16U &&
-		    (fpcr & (1U << 24)) != 0U) {
+		const bool flush = destination_width == 16U ?
+			(fpcr & (1U << 19)) != 0U :
+			(fpcr & (1U << 24)) != 0U;
+		if (!ah && flush) {
 			exceptions |= 1U << 3;
 			result = sign_bit;
 		} else {
@@ -95,8 +90,7 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 				rounding, sign);
 			const bool became_normal = rounded.value >=
 				(std::uint64_t{1} << destination.fraction_bits);
-			if (ah && !became_normal && destination_width != 16U &&
-			    (fpcr & (1U << 24)) != 0U) {
+			if (ah && !became_normal && flush) {
 				exceptions |= (1U << 3) | (1U << 4);
 				result = sign_bit;
 			} else {
@@ -127,10 +121,6 @@ convert_floating_to_javascript_integer(std::uint64_t input,
 	using namespace floating_conversion_detail;
 	std::uint32_t exceptions{};
 	const auto source = unpack(input, 64U, fpcr, exceptions);
-	const auto input_denormal_exception = [&]() constexpr {
-		if (source.type == Class::denormal && (fpcr & 2U) != 0U)
-			exceptions |= 1U << 7;
-	};
 	if (source.type == Class::quiet_nan ||
 	    source.type == Class::signaling_nan ||
 	    source.type == Class::infinity) {
@@ -138,7 +128,8 @@ convert_floating_to_javascript_integer(std::uint64_t input,
 		return {0U, exceptions, false};
 	}
 	if (source.type == Class::zero)
-		return {0U, exceptions, !source.sign};
+		return {0U, exceptions,
+			!source.sign && (input & low_mask(52U)) == 0U};
 
 	std::uint64_t magnitude{};
 	bool inexact{};
@@ -164,7 +155,6 @@ convert_floating_to_javascript_integer(std::uint64_t input,
 	}
 	const auto value = static_cast<std::uint32_t>(source.sign ?
 		~magnitude + 1U : magnitude);
-	input_denormal_exception();
 	if (outside_signed_range)
 		exceptions |= 1U;
 	else if (inexact)
@@ -179,14 +169,18 @@ convert_floating_to_javascript_integer(std::uint64_t input,
 {
 	using namespace floating_conversion_detail;
 	std::uint32_t exceptions{};
-	const auto source = unpack(input, source_width, fpcr, exceptions);
-	const auto input_denormal_exception = [&]() constexpr {
-		if (source_width != 16U && source.type == Class::denormal &&
-		    (fpcr & 2U) != 0U)
-			exceptions |= 1U << 7;
-	};
+	/* FPToFixed uses FPUnpack, which clears AHP and observes FZ16 for
+	 * half-precision inputs.  FPUnpackCV has the opposite controls and is used
+	 * only by floating-point precision conversions. */
+	const auto conversion_fpcr = fpcr & ~(1U << 26);
+	const auto half_fraction = input & 0x03ffU;
+	const auto half_exponent = input & 0x7c00U;
+	const bool flush_half = source_width == 16U && half_exponent == 0U &&
+		half_fraction != 0U && (conversion_fpcr & (1U << 19)) != 0U;
+	const auto processed_input = flush_half ? input & 0x8000U : input;
+	const auto source =
+		unpack(processed_input, source_width, conversion_fpcr, exceptions);
 	const auto invalid = [&]() constexpr {
-		input_denormal_exception();
 		exceptions |= 1U;
 		if (unsigned_result)
 			return FloatingIntegerConversion{
@@ -250,7 +244,6 @@ convert_floating_to_javascript_integer(std::uint64_t input,
 		magnitude > positive_limit) ||
 	    (unsigned_result && source.sign && magnitude != 0U))
 		return invalid();
-	input_denormal_exception();
 	if (inexact)
 		exceptions |= 1U << 4;
 	const auto value = source.sign && magnitude != 0U ?

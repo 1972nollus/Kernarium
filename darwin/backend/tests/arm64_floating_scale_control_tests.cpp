@@ -1,128 +1,153 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_floating_scale_test_support.hpp"
 
+#include <array>
+
 namespace test = arm64_floating_scale_test;
 
 namespace {
 
 constexpr test::Registers registers{0, 1, 2};
-constexpr test::Form single{32U, 16U};
+constexpr std::uint32_t fpcr_nep = 1U << 2;
+constexpr std::uint32_t fpcr_ahp = 1U << 26;
 
-void clear_sources(test::common::arm64::CpuState &state)
+void check(test::engine_tests::EngineHarness &harness, const char *name,
+	const test::Form &form, std::uint64_t input, std::int64_t scale,
+	std::uint32_t fpcr, std::uint32_t fpsr, unsigned seed)
 {
-	state.vectors[registers.first].bytes = {};
-	state.vectors[registers.second].bytes = {};
+	auto initial = test::state(seed);
+	initial.fpcr = fpcr;
+	initial.fpsr = fpsr;
+	test::fill_lanes(initial, registers.first, form, input);
+	test::fill_lanes(initial, registers.second, form,
+		test::scale_bits(scale, form.width));
+	harness.check_one(name, test::instruction(form, registers), initial,
+		test::expected_state(initial, form, registers),
+		test::native_requirements());
 }
 
-void extreme_scales_clamp_and_raise_expected_flags()
+void every_overflow_rounding_direction(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto initial = test::common::state(30);
-	clear_sources(initial);
-	initial.fpsr = 0;
-	test::basic::set_lane(initial, registers.first, 0, 1.0F);
-	test::basic::set_lane(initial, registers.first, 1, 1.0F);
-	test::set_scale_lane<float>(initial, registers.second, 0, 0x7fff'ffffU);
-	test::set_scale_lane<float>(initial, registers.second, 1, 0x8000'0000U);
-	const auto encoded = test::instruction(single, registers);
-	const auto actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0x7f80'0000U);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 1) == 0U);
-	test::common::require((actual.fpsr & 0x1cU) == 0x1cU);
-	harness.require_differential(encoded, initial);
+	unsigned seed{};
+	for (const auto &form : test::forms) {
+		const auto format = test::format(form.width);
+		for (const bool negative : {false, true})
+			for (unsigned rounding = 0; rounding < 4U; ++rounding)
+				check(harness, "floating-scale-overflow-rounding",
+					form,
+					test::maximum_finite_bits(format, negative),
+					1, rounding << 22, 0, ++seed);
+	}
 }
 
-void directed_overflow_uses_maximum_finite()
+void every_underflow_rounding_direction(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto initial = test::common::state(31);
-	clear_sources(initial);
-	initial.fpcr = 3U << 22;
-	initial.fpsr = 0;
-	test::basic::set_lane(initial, registers.first, 0, 1.0F);
-	test::set_scale_lane<float>(initial, registers.second, 0, 0x7fff'ffffU);
-	const auto encoded = test::instruction(single, registers);
-	const auto actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0x7f7f'ffffU);
-	test::common::require((actual.fpsr & 0x14U) == 0x14U);
-	harness.require_differential(encoded, initial);
+	unsigned seed = 100U;
+	for (const auto &form : test::forms) {
+		const auto format = test::format(form.width);
+		for (const bool negative : {false, true})
+			for (unsigned rounding = 0; rounding < 4U; ++rounding)
+				check(harness, "floating-scale-underflow-rounding",
+					form,
+					test::minimum_normal_bits(format, negative),
+					-static_cast<std::int64_t>(
+						format.fraction_bits + 1U),
+					rounding << 22, 0, ++seed);
+	}
 }
 
-void nan_controls_and_signaling_exception()
+void input_and_output_flush_modes(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto initial = test::common::state(32);
-	clear_sources(initial);
-	initial.fpsr = 1U << 4;
-	test::basic::set_lane(initial, registers.first, 0,
-		std::bit_cast<float>(0xff80'0123U));
-	test::set_scale_lane<float>(initial, registers.second, 0, 4U);
-	const auto encoded = test::instruction(single, registers);
-	auto actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0xffc0'0123U);
-	test::common::require((actual.fpsr & 0x11U) == 0x11U);
-	harness.require_differential(encoded, initial);
-	initial.fpcr = (1U << 25) | 2U;
-	initial.fpsr = 0;
-	actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0xffc0'0000U);
-	test::common::require((actual.fpsr & 1U) != 0U);
-	harness.require_differential(encoded, initial);
+	unsigned seed = 200U;
+	for (const auto &form : test::forms) {
+		const auto format = test::format(form.width);
+		const auto output_flush = form.width == 16U ?
+			test::fpcr_fz16 : test::fpcr_fz;
+		for (const auto fpcr : std::array{
+			     0U, output_flush, test::fpcr_ah,
+			     output_flush | test::fpcr_ah})
+			check(harness, "floating-scale-output-flush",
+				form, test::minimum_normal_bits(format), -1,
+				fpcr, test::fpsr_saturation, ++seed);
+
+		if (form.width == 16U)
+			continue;
+		for (const auto fpcr : std::array{
+			     0U, test::fpcr_fz, test::fpcr_fiz,
+			     test::fpcr_ah, test::fpcr_ah | test::fpcr_fz,
+			     test::fpcr_ah | test::fpcr_fiz})
+			check(harness, "floating-scale-input-flush",
+				form, test::minimum_subnormal_bits(format),
+				static_cast<std::int64_t>(format.fraction_bits),
+				fpcr, test::fpsr_saturation, ++seed);
+	}
 }
 
-void input_and_output_flush_controls()
+void every_nan_control_sign_and_class(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	const auto encoded = test::instruction(single, registers);
-	auto initial = test::common::state(33);
-	clear_sources(initial);
-	initial.fpcr = 1U;
-	initial.fpsr = 0;
-	test::basic::set_lane(initial, registers.first, 0,
-		std::bit_cast<float>(1U));
-	test::set_scale_lane<float>(initial, registers.second, 0, 1U);
-	auto actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0U);
-	test::common::require((actual.fpsr & (1U << 7)) == 0U);
-	harness.require_differential(encoded, initial);
+	unsigned seed = 300U;
+	for (const auto &form : test::forms) {
+		const auto format = test::format(form.width);
+		for (const bool signaling : {false, true})
+			for (const bool negative : {false, true})
+				for (const auto fpcr : std::array{
+				     0U, test::fpcr_dn, test::fpcr_ah,
+				     test::fpcr_dn | test::fpcr_ah})
+					check(harness, "floating-scale-not-a-number-control",
+						form,
+						signaling ?
+							test::signaling_nan_bits(
+								format, negative) :
+							test::quiet_nan_bits(
+								format, negative),
+						4, fpcr, test::fpsr_saturation, ++seed);
+	}
+}
 
-	initial.fpcr = 1U << 24;
-	initial.fpsr = 0;
-	actual = harness.run_interpreter(encoded, initial);
-	test::common::require(test::basic::lane_bits<float>(actual,
-		registers.destination, 0) == 0U);
-	test::common::require((actual.fpsr & (1U << 7)) != 0U);
-	harness.require_differential(encoded, initial);
+void ignored_and_preserved_control_state(
+	test::engine_tests::EngineHarness &harness)
+{
+	unsigned seed = 500U;
+	for (const auto &form : test::forms) {
+		const auto format = test::format(form.width);
+		check(harness, "floating-scale-preserves-cumulative-status",
+			form,
+			test::normal_bits(format,
+				static_cast<unsigned>(format.bias), 0U),
+			0, fpcr_nep | fpcr_ahp,
+			test::fpsr_invalid | test::fpsr_overflow |
+				test::fpsr_underflow | test::fpsr_inexact |
+				test::fpsr_input_denormal |
+				test::fpsr_saturation,
+			++seed);
+	}
 
-	const test::Form half{16U, 16U};
-	initial = test::common::state(34);
-	clear_sources(initial);
-	initial.fpcr = 1U << 19;
-	initial.fpsr = 0;
-	test::set_scale_lane<_Float16>(initial, registers.first, 0,
-		std::uint16_t{0x0400U});
-	test::set_scale_lane<_Float16>(initial, registers.second, 0,
-		std::uint16_t{0xffffU});
-	const auto half_encoded = test::instruction(half, registers);
-	actual = harness.run_interpreter(half_encoded, initial);
-	test::common::require(test::basic::lane_bits<_Float16>(actual,
-		registers.destination, 0) == 0U);
-	test::common::require((actual.fpsr & 0x18U) == 0x08U);
-	harness.require_differential(half_encoded, initial);
+	for (const auto &form : {test::Form{16U, 8U},
+	     test::Form{16U, 16U}}) {
+		const auto format = test::format(form.width);
+		check(harness, "floating-scale-half-ignores-alternative-format",
+			form, test::infinity_bits(format), 1, fpcr_ahp, 0,
+			++seed);
+		check(harness, "floating-scale-half-nan-ignores-alternative-format",
+			form, test::signaling_nan_bits(format), 1,
+			fpcr_ahp, 0, ++seed);
+	}
 }
 
 } // namespace
 
 int main()
 {
-	input_and_output_flush_controls();
-	extreme_scales_clamp_and_raise_expected_flags();
-	directed_overflow_uses_maximum_finite();
-	nan_controls_and_signaling_exception();
+	test::engine_tests::EngineHarness harness;
+	every_overflow_rounding_direction(harness);
+	every_underflow_rounding_direction(harness);
+	input_and_output_flush_modes(harness);
+	every_nan_control_sign_and_class(harness);
+	ignored_and_preserved_control_state(harness);
+	harness.print_summary("arm64-floating-scale-control");
+	return 0;
 }

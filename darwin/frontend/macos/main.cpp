@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -35,14 +36,75 @@ extern const unsigned char uml_elf_end[]
 
 namespace {
 
-void host_fault(int signal, siginfo_t *info, void *context_pointer)
+constexpr char host_fault_prefix[] = "Darwin UML host signal ";
+constexpr char host_fault_pc_prefix[] = " at pc=0x";
+constexpr char host_fault_address_prefix[] = " address=0x";
+constexpr std::size_t host_fault_hex_digits = sizeof(std::uintptr_t) * 2U;
+constexpr std::size_t host_fault_message_capacity = 128;
+
+template<std::size_t Size>
+char *append_host_fault_literal(char *output,
+				const char (&literal)[Size]) noexcept
+{
+	for (std::size_t index = 0; index + 1U < Size; ++index)
+		*output++ = literal[index];
+	return output;
+}
+
+char *append_host_fault_signal(char *output, int signal) noexcept
+{
+	constexpr std::size_t decimal_digits =
+		std::numeric_limits<unsigned int>::digits10 + 1U;
+	char reversed[decimal_digits];
+	std::size_t count = 0;
+	unsigned int magnitude = static_cast<unsigned int>(signal);
+	if (signal < 0) {
+		*output++ = '-';
+		magnitude = 0U - magnitude;
+	}
+	do {
+		reversed[count++] = static_cast<char>('0' + magnitude % 10U);
+		magnitude /= 10U;
+	} while (magnitude != 0U);
+	while (count != 0U)
+		*output++ = reversed[--count];
+	return output;
+}
+
+char *append_host_fault_hex(char *output, std::uintptr_t value) noexcept
+{
+	constexpr char digits[] = "0123456789abcdef";
+	for (std::size_t index = host_fault_hex_digits; index != 0U; --index) {
+		const auto shift = (index - 1U) * 4U;
+		*output++ = digits[(value >> shift) & 0xfU];
+	}
+	return output;
+}
+
+void host_fault(int signal, siginfo_t *info, void *context_pointer) noexcept
 {
 	auto &context = *static_cast<ucontext_t *>(context_pointer);
 	const auto pc = static_cast<std::uintptr_t>(
 		__darwin_arm_thread_state64_get_pc(context.uc_mcontext->__ss));
-	dprintf(STDERR_FILENO,
-		"Darwin UML host signal %d at pc=%p address=%p\n", signal,
-		reinterpret_cast<void *>(pc), info->si_addr);
+	const auto address = reinterpret_cast<std::uintptr_t>(info->si_addr);
+	static_assert((sizeof(host_fault_prefix) - 1U) +
+			      (std::numeric_limits<unsigned int>::digits10 + 2U) +
+			      (sizeof(host_fault_pc_prefix) - 1U) +
+			      host_fault_hex_digits +
+			      (sizeof(host_fault_address_prefix) - 1U) +
+			      host_fault_hex_digits + 1U <=
+		      host_fault_message_capacity);
+	char message[host_fault_message_capacity];
+	char *output = message;
+	output = append_host_fault_literal(output, host_fault_prefix);
+	output = append_host_fault_signal(output, signal);
+	output = append_host_fault_literal(output, host_fault_pc_prefix);
+	output = append_host_fault_hex(output, pc);
+	output = append_host_fault_literal(output, host_fault_address_prefix);
+	output = append_host_fault_hex(output, address);
+	*output++ = '\n';
+	(void)write(STDERR_FILENO, message,
+		    static_cast<std::size_t>(output - message));
 	_exit(128 + signal);
 }
 
@@ -312,6 +374,9 @@ int main(int argc, char *argv[], char *envp[])
 	const int result = uml_backend_run(
 		backend.get(), static_cast<int>(arguments.size()), arguments.data(),
 		environment.data());
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+	uml_backend_report_jit_gpr_link_profile();
+#endif
 	if (gpu_service)
 		gpu_service->stop();
 	/* The embedded ELF kernel installs process-wide Linux signal handlers.

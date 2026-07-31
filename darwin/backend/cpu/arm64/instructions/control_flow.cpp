@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "../dispatcher.hpp"
 
+#include "../detail/host_counter.hpp"
 #include "../detail/instruction_helpers.hpp"
+#include "../detail/pointer_auth.hpp"
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 
 namespace uml::backend::arm64 {
@@ -155,10 +156,13 @@ RunResult Dispatcher::branch_register(CpuState &cpu, GuestMemory &,
 	return continue_after(address, instruction);
 }
 
-RunResult Dispatcher::branch_authenticated(CpuState &cpu, GuestMemory &,
+RunResult Dispatcher::branch_authenticated(CpuState &cpu, GuestMemory &memory,
 	std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	if (!cpu.pointer_authentication_enabled)
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
 	const bool return_form =
 		(instruction & 0xffff'fbffU) == 0xd65f'0bffU;
 	const bool key_b = (instruction & 0x400U) != 0;
@@ -181,15 +185,41 @@ RunResult Dispatcher::branch_authenticated(CpuState &cpu, GuestMemory &,
 			cpu.read_register(modifier_register, true);
 	}
 	auto target = cpu.read_register(target_register, false);
-	if (zero_modifier) {
-		if (key_b)
-			__asm__ volatile("autizb %0" : "+r"(target));
-		else
-			__asm__ volatile("autiza %0" : "+r"(target));
-	} else if (key_b) {
-		__asm__ volatile("autib %0, %1" : "+r"(target) : "r"(modifier));
-	} else {
-		__asm__ volatile("autia %0, %1" : "+r"(target) : "r"(modifier));
+	target = detail::execute_pointer_auth(
+		cpu, target, modifier,
+		key_b ? detail::PointerAuthOperation::authenticate_instruction_b :
+			detail::PointerAuthOperation::authenticate_instruction_a);
+	if (cpu.gcs_implemented && cpu.gcs_push_enabled) {
+		if (link) {
+			const auto record_address =
+				cpu.gcs_pointer - sizeof(std::uint64_t);
+			std::array<std::byte, sizeof(std::uint64_t)> bytes{};
+			detail::encode_little_endian(address + 4, bytes);
+			if (!memory.write(record_address, bytes)) {
+				const auto fault = memory.last_fault();
+				return {StopReason::memory_fault, fault.address,
+					instruction, 0, true};
+			}
+			cpu.gcs_pointer =
+				record_address & ~std::uint64_t{7};
+		} else if (return_form) {
+			const auto record_address = cpu.gcs_pointer;
+			std::array<std::byte, sizeof(std::uint64_t)> bytes{};
+			if (!memory.read(record_address, bytes)) {
+				const auto fault = memory.last_fault();
+				return {StopReason::memory_fault, fault.address,
+					instruction, 0, false};
+			}
+			const auto recorded =
+				detail::decode_little_endian(bytes);
+			if (recorded != target)
+				return {StopReason::gcs_fault, address,
+					instruction, 0, false};
+			target = recorded;
+			cpu.gcs_pointer =
+				(record_address + sizeof(recorded)) &
+				~std::uint64_t{7};
+		}
 	}
 	if (link)
 		cpu.registers[30] = address + 4;
@@ -265,17 +295,11 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 		cpu.nzcv = static_cast<std::uint32_t>(
 			cpu.read_register(transfer, false)) & 0xf000'0000U;
 	else if (system_register == 0xd53b'e000U)
-		/* Express the virtual counter directly in nanoseconds.  Pairing a 1 GHz
-		 * frequency with steady_clock keeps CNTVCT monotonic and makes the two
-		 * architectural registers self-consistent without exposing host timing
-		 * details to the guest.
-		 */
-		cpu.write_register(transfer, 1'000'000'000U, false);
+		cpu.write_register(
+			transfer, detail::read_host_counter_frequency(), false);
 	else if (system_register == 0xd53b'e040U)
-		cpu.write_register(transfer, static_cast<std::uint64_t>(
-			std::chrono::duration_cast<std::chrono::nanoseconds>(
-				std::chrono::steady_clock::now().time_since_epoch()).count()),
-			false);
+		cpu.write_register(
+			transfer, detail::read_host_virtual_counter(), false);
 	else
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};

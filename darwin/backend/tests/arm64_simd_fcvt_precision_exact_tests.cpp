@@ -2,86 +2,143 @@
 #include "arm64_simd_fcvt_precision_test_support.hpp"
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 
 namespace test = arm64_simd_fcvt_precision_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
 struct ExactCase final {
-	unsigned source_width;
-	unsigned destination_width;
+	test::Pair pair;
 	std::uint64_t input;
 	std::uint64_t output;
 };
 
-void exact_finite_zero_and_infinity_values()
+void require_oracle(const ExactCase &entry)
 {
-	base::Harness harness;
+	const auto conversion = test::oracle::convert(entry.input,
+		entry.pair.source_width, entry.pair.destination_width, 0U);
+	if (conversion.bits == entry.output && conversion.flags == 0U)
+		return;
+	std::fprintf(stderr,
+		"scalar precision oracle mismatch source=%u destination=%u "
+		"input=%016llx expected=%016llx/%08x actual=%016llx/%08x\n",
+		entry.pair.source_width, entry.pair.destination_width,
+		static_cast<unsigned long long>(entry.input),
+		static_cast<unsigned long long>(entry.output), 0U,
+		static_cast<unsigned long long>(conversion.bits),
+		conversion.flags);
+	std::abort();
+}
+
+void exact_finite_zero_denormal_and_infinity_values(
+	test::engine_tests::EngineHarness &harness)
+{
 	const std::array cases{
-		ExactCase{16U, 32U, 0x0000U, 0x0000'0000U},
-		ExactCase{16U, 32U, 0x8000U, 0x8000'0000U},
-		ExactCase{16U, 32U, 0x3c00U, 0x3f80'0000U},
-		ExactCase{16U, 32U, 0x0001U, 0x3380'0000U},
-		ExactCase{16U, 64U, 0x3c00U, 0x3ff0'0000'0000'0000ULL},
-		ExactCase{16U, 64U, 0x0001U, 0x3e70'0000'0000'0000ULL},
-		ExactCase{32U, 64U, 0x3f80'0000U, 0x3ff0'0000'0000'0000ULL},
-		ExactCase{32U, 64U, 0x0000'0001U, 0x36a0'0000'0000'0000ULL},
-		ExactCase{32U, 16U, 0x3f80'0000U, 0x3c00U},
-		ExactCase{64U, 32U, 0x3ff0'0000'0000'0000ULL, 0x3f80'0000U},
-		ExactCase{64U, 16U, 0x3ff0'0000'0000'0000ULL, 0x3c00U},
+		ExactCase{{16U, 32U}, 0x0000U, 0x0000'0000U},
+		ExactCase{{16U, 32U}, 0x8000U, 0x8000'0000U},
+		ExactCase{{16U, 32U}, 0x3c00U, 0x3f80'0000U},
+		ExactCase{{16U, 32U}, 0x0001U, 0x3380'0000U},
+		ExactCase{{16U, 64U}, 0x3c00U,
+			0x3ff0'0000'0000'0000ULL},
+		ExactCase{{16U, 64U}, 0x0001U,
+			0x3e70'0000'0000'0000ULL},
+		ExactCase{{32U, 64U}, 0x3f80'0000U,
+			0x3ff0'0000'0000'0000ULL},
+		ExactCase{{32U, 64U}, 0x0000'0001U,
+			0x36a0'0000'0000'0000ULL},
+		ExactCase{{32U, 16U}, 0x3f80'0000U, 0x3c00U},
+		ExactCase{{64U, 32U}, 0x3ff0'0000'0000'0000ULL,
+			0x3f80'0000U},
+		ExactCase{{64U, 16U}, 0x3ff0'0000'0000'0000ULL,
+			0x3c00U},
 	};
-	for (unsigned index = 0; index < cases.size(); ++index) {
-		const auto entry = cases[index];
-		auto initial = base::state(index);
+	for (unsigned index = 0U; index < cases.size(); ++index) {
+		const auto &entry = cases[index];
+		require_oracle(entry);
+		auto initial = test::state(index);
 		initial.fpsr = 0x0800'0090U;
-		test::set_source(initial, 29U, entry.source_width, entry.input);
-		test::require_result(test::instruction(entry.source_width,
-			entry.destination_width, 28U, 29U), entry.destination_width,
-			28U, entry.output, 0U, initial, harness);
+		test::set_source(initial, 29U, entry.pair.source_width,
+			entry.input);
+		char name[160];
+		std::snprintf(name, sizeof(name),
+			"scalar-precision-exact index=%u source=%u destination=%u",
+			index, entry.pair.source_width,
+			entry.pair.destination_width);
+		test::check(harness, name, entry.pair, {28U, 29U}, initial);
 	}
-	for (const auto pair : std::array{
-			std::pair{16U, 32U}, std::pair{16U, 64U},
-			std::pair{32U, 16U}, std::pair{32U, 64U},
-			std::pair{64U, 16U}, std::pair{64U, 32U}})
+
+	for (const auto pair : test::pairs)
 		for (const bool negative : {false, true}) {
-			auto initial = base::state(pair.first + pair.second + negative);
+			auto initial = test::state(
+				pair.source_width + pair.destination_width +
+				static_cast<unsigned>(negative));
 			initial.fpsr = 0x10U;
-			test::set_source(initial, 29U, pair.first,
-				test::infinity(pair.first, negative));
-			test::require_result(test::instruction(pair.first, pair.second,
-				28U, 29U), pair.second, 28U,
-				test::infinity(pair.second, negative), 0U, initial, harness);
+			test::set_source(initial, 29U, pair.source_width,
+				test::infinity(pair.source_width, negative));
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"scalar-precision-infinity source=%u destination=%u "
+				"negative=%u",
+				pair.source_width, pair.destination_width,
+				static_cast<unsigned>(negative));
+			test::check(harness, name, pair, {28U, 29U}, initial);
 		}
 }
 
-void representative_default_path_differential_samples()
+void every_representative_floating_class(
+	test::engine_tests::EngineHarness &harness)
 {
-	base::Harness harness;
+	unsigned seed = 200U;
+	for (const auto pair : test::pairs) {
+		const auto inputs =
+			test::oracle::representative_inputs(pair.source_width);
+		for (unsigned index = 0U; index < inputs.size(); ++index) {
+			auto initial = test::state(++seed);
+			test::set_source(initial, 29U, pair.source_width,
+				inputs[index]);
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"scalar-precision-class source=%u destination=%u "
+				"input=%u",
+				pair.source_width, pair.destination_width, index);
+			test::check(harness, name, pair, {28U, 29U}, initial);
+		}
+	}
+}
+
+void deterministic_bit_pattern_samples(
+	test::engine_tests::EngineHarness &harness)
+{
 	std::uint64_t random = 0x243f'6a88'85a3'08d3ULL;
-	for (const auto pair : std::array{
-			std::pair{16U, 32U}, std::pair{16U, 64U},
-			std::pair{32U, 16U}, std::pair{32U, 64U},
-			std::pair{64U, 16U}, std::pair{64U, 32U}})
-		for (unsigned mode = 0; mode < 4U; ++mode)
-			for (unsigned sample = 0; sample < 256U; ++sample) {
-				random ^= random << 13;
-				random ^= random >> 7;
-				random ^= random << 17;
-				auto initial = base::state(sample + mode);
-				initial.fpcr = mode << 22;
-				initial.fpsr = sample & 1U ? 0x80U : 0U;
-				test::set_source(initial, 29U, pair.first, random);
-				harness.require_differential(test::instruction(pair.first,
-					pair.second, 28U, 29U), initial);
-			}
+	unsigned seed = 1000U;
+	for (const auto pair : test::pairs)
+		for (unsigned sample = 0U; sample < 256U; ++sample) {
+			random ^= random << 13U;
+			random ^= random >> 7U;
+			random ^= random << 17U;
+			auto initial = test::state(++seed);
+			initial.fpsr = (sample & 1U) != 0U ? 0x80U : 0U;
+			test::set_source(initial, 29U, pair.source_width,
+				random);
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"scalar-precision-pattern source=%u destination=%u "
+				"sample=%u",
+				pair.source_width, pair.destination_width, sample);
+			test::check(harness, name, pair, {28U, 29U}, initial);
+		}
 }
 
 } // namespace
 
 int main()
 {
-	exact_finite_zero_and_infinity_values();
-	representative_default_path_differential_samples();
+	test::engine_tests::EngineHarness harness;
+	exact_finite_zero_denormal_and_infinity_values(harness);
+	every_representative_floating_class(harness);
+	deterministic_bit_pattern_samples(harness);
+	harness.print_summary("arm64-simd-fcvt-precision-exact");
 	return 0;
 }

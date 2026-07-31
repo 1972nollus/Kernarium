@@ -2,75 +2,116 @@
 #include "arm64_simd_fcmp_test_support.hpp"
 
 namespace test = arm64_simd_fcmp_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-void every_condition_and_nzcv_input()
+void every_condition_input_fallback_and_signaling_mode()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
 		for (const bool signaling : {false, true})
 			for (unsigned condition = 0; condition < 16U; ++condition)
-				for (unsigned flags = 0; flags < 16U; ++flags) {
-					auto initial = base::state(
-						bytes * 31U + condition + flags + signaling);
-					initial.nzcv = flags << 28;
-					initial.fpsr = 0x0800'0010U;
-					test::put(initial, 29U, bytes, test::negative_one(bytes));
-					test::put(initial, 30U, bytes, test::positive_one(bytes));
-					const unsigned fallback =
-						(condition * 11U + flags * 3U + 1U) & 15U;
-					const bool passed =
-						uml::backend::arm64::detail::condition_holds(
-							initial.nzcv, condition);
-					test::require_result(test::conditional_instruction(bytes,
-						signaling, condition, fallback, 29U, 30U),
-						passed ? 0x8000'0000U : fallback << 28,
-						0U, initial, harness);
-				}
+				for (unsigned flags = 0; flags < 16U; ++flags)
+					for (unsigned fallback = 0;
+					     fallback < 16U; ++fallback) {
+						auto initial = test::state(
+							format.bytes * 37U +
+							signaling * 23U +
+							condition * 17U +
+							flags * 11U + fallback);
+						initial.nzcv = flags << 28;
+						initial.fpsr =
+							0x0800'0010U | (fallback & 1U);
+						test::put(initial, 29U, format,
+							format.positive_one |
+								((fallback & 1U) ?
+									format.sign : 0U));
+						test::put(initial, 30U, format,
+							format.positive_two);
+						test::check_conditional(harness,
+							"FCCMP/FCCMPE conditions",
+							format, signaling, condition,
+							fallback, 29U, 30U, initial);
+					}
+	harness.print_summary("arm64-simd-fcmp-conditional-matrix");
 }
 
-void failed_condition_does_not_observe_operands()
+void failed_conditions_do_not_process_operands()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool signaling : {false, true}) {
-			auto initial = base::state(bytes + signaling);
-			initial.nzcv = 0U; /* EQ fails. */
-			initial.fpcr = (1U << 24) | 2U;
-			initial.fpsr = 0x10U;
-			test::put(initial, 29U, bytes, test::signaling_nan(bytes));
-			test::put(initial, 30U, bytes,
-				test::minimum_subnormal(bytes));
-			test::require_result(test::conditional_instruction(bytes,
-				signaling, 0U, 13U, 29U, 30U), 0xd000'0000U,
-				0U, initial, harness);
-		}
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
+		for (const bool signaling : {false, true})
+			for (unsigned condition = 0; condition < 14U; ++condition) {
+				unsigned failing_flags = 0U;
+				while (test::condition_holds(
+					failing_flags << 28, condition))
+					++failing_flags;
+				for (const auto left : {
+					format.quiet_nan, format.signaling_nan})
+					for (const auto right : {
+						format.minimum_subnormal,
+						format.signaling_nan}) {
+						auto initial = test::state(
+							format.bytes * 41U +
+							signaling * 19U +
+							condition * 13U +
+							static_cast<unsigned>(left));
+						initial.nzcv = failing_flags << 28;
+						initial.fpcr = format.bytes == 2U ?
+							(1U << 19) :
+							(1U << 24) | 2U;
+						initial.fpsr = 0x0800'0010U;
+						test::put(initial, 29U, format, left);
+						test::put(initial, 30U, format, right);
+						test::check_conditional(harness,
+							"FCCMP/FCCMPE failed condition",
+							format, signaling, condition,
+							13U, 29U, 30U, initial);
+					}
+			}
+	harness.print_summary("arm64-simd-fcmp-conditional-short-circuit");
 }
 
-void passed_condition_uses_quiet_or_signaling_compare()
+void passed_conditions_process_both_nan_classes()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {2U, 4U, 8U})
-		for (const bool signaling : {false, true}) {
-			auto initial = base::state(bytes * 7U + signaling);
-			initial.nzcv = 0x4000'0000U; /* EQ passes. */
-			initial.fpsr = 0x0800'0090U;
-			test::put(initial, 29U, bytes, test::quiet_nan(bytes));
-			test::put(initial, 30U, bytes, test::positive_one(bytes));
-			test::require_result(test::conditional_instruction(bytes,
-				signaling, 0U, 9U, 29U, 30U), 0x3000'0000U,
-				signaling ? 1U : 0U, initial, harness);
-		}
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
+		for (const bool signaling : {false, true})
+			for (unsigned condition = 0; condition < 16U; ++condition) {
+				unsigned passing_flags = 0U;
+				while (!test::condition_holds(
+					passing_flags << 28, condition))
+					++passing_flags;
+				for (const auto left : {
+					format.quiet_nan, format.signaling_nan})
+					for (const auto right : {
+						format.positive_one,
+						format.quiet_nan,
+						format.signaling_nan}) {
+						auto initial = test::state(
+							format.bytes * 43U +
+							signaling * 29U +
+							condition * 7U +
+							static_cast<unsigned>(right));
+						initial.nzcv = passing_flags << 28;
+						initial.fpsr = 0x0800'0090U;
+						test::put(initial, 29U, format, left);
+						test::put(initial, 30U, format, right);
+						test::check_conditional(harness,
+							"FCCMP/FCCMPE passed NaN",
+							format, signaling, condition,
+							9U, 29U, 30U, initial);
+					}
+			}
+	harness.print_summary("arm64-simd-fcmp-conditional-nan");
 }
 
 } // namespace
 
 int main()
 {
-	every_condition_and_nzcv_input();
-	failed_condition_does_not_observe_operands();
-	passed_condition_uses_quiet_or_signaling_compare();
+	every_condition_input_fallback_and_signaling_mode();
+	failed_conditions_do_not_process_operands();
+	passed_conditions_process_both_nan_classes();
 	return 0;
 }

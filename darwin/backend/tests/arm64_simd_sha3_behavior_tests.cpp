@@ -1,128 +1,131 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_sha3_test_support.hpp"
 
 #include <array>
-#include <bit>
-#include <cstdint>
-#include <cstring>
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_sha3_test;
 
 namespace {
 
-struct ThreeRegisters final {
-	unsigned destination;
-	unsigned first;
-	unsigned second;
-	unsigned third;
-};
-
-struct TwoRegisters final {
-	unsigned destination;
-	unsigned first;
-	unsigned second;
+constexpr std::array four_register_cases{
+	test::Registers{0, 1, 2, 3},
+	test::Registers{1, 1, 2, 3},
+	test::Registers{2, 1, 2, 3},
+	test::Registers{3, 1, 2, 3},
+	test::Registers{1, 1, 1, 1},
+	test::Registers{0, 1, 1, 2},
+	test::Registers{0, 1, 2, 1},
+	test::Registers{0, 1, 2, 2},
+	test::Registers{31, 30, 29, 28},
+	test::Registers{30, 31, 29, 28},
+	test::Registers{29, 30, 29, 28},
+	test::Registers{28, 30, 29, 28},
 };
 
 constexpr std::array three_register_cases{
-	ThreeRegisters{0, 1, 2, 3}, ThreeRegisters{1, 1, 2, 3},
-	ThreeRegisters{2, 1, 2, 3}, ThreeRegisters{3, 1, 2, 3},
-	ThreeRegisters{1, 1, 1, 1}, ThreeRegisters{31, 30, 29, 28},
+	test::Registers{0, 1, 2, 0},
+	test::Registers{1, 1, 2, 0},
+	test::Registers{2, 1, 2, 0},
+	test::Registers{1, 1, 1, 0},
+	test::Registers{31, 30, 29, 0},
+	test::Registers{30, 30, 29, 0},
+	test::Registers{29, 30, 29, 0},
+	test::Registers{31, 31, 31, 0},
 };
-constexpr std::array two_register_cases{
-	TwoRegisters{0, 1, 2}, TwoRegisters{1, 1, 2},
-	TwoRegisters{2, 1, 2}, TwoRegisters{1, 1, 1},
-	TwoRegisters{31, 30, 29},
+
+constexpr std::array<std::uint64_t, 12> edge_values{
+	std::uint64_t{0},
+	~std::uint64_t{},
+	std::uint64_t{1},
+	std::uint64_t{1} << 63U,
+	0xaaaa'aaaa'aaaa'aaaaULL,
+	0x5555'5555'5555'5555ULL,
+	0x0123'4567'89ab'cdefULL,
+	0xfedc'ba98'7654'3210ULL,
+	0x8000'0000'0000'0001ULL,
+	0x7fff'ffff'ffff'ffffULL,
+	0x0000'0000'ffff'ffffULL,
+	0xffff'ffff'0000'0000ULL,
 };
 
-[[nodiscard]] constexpr std::uint32_t crypto_three(bool bcax,
-	ThreeRegisters registers)
+[[nodiscard]] test::arm64::CpuState edge_state(unsigned pattern)
 {
-	return (bcax ? 0xce20'0000U : 0xce00'0000U) |
-		((registers.second & 31U) << 16) |
-		((registers.third & 31U) << 10) |
-		((registers.first & 31U) << 5) |
-		(registers.destination & 31U);
+	auto cpu = test::state(pattern + 100U);
+	for (unsigned reg = 0; reg < cpu.vectors.size(); ++reg)
+		for (unsigned lane = 0; lane < 2U; ++lane)
+			test::write_lane(cpu.vectors[reg].bytes, lane,
+				edge_values[(pattern + reg * 5U + lane * 7U) %
+					edge_values.size()]);
+	return cpu;
 }
 
-[[nodiscard]] constexpr std::uint32_t rax1(TwoRegisters registers)
+void four_source_truth_tables_and_aliases(
+	test::engine_tests::EngineHarness &harness)
 {
-	return 0xce60'8c00U | ((registers.second & 31U) << 16) |
-		((registers.first & 31U) << 5) |
-		(registers.destination & 31U);
+	for (const auto operation : {
+		     test::Operation::three_way_exclusive,
+		     test::Operation::clear_and_exclusive,
+	     })
+		for (const auto registers : four_register_cases)
+			for (unsigned pattern = 0; pattern < 16U; ++pattern)
+				test::check_one(harness,
+					{operation, registers, 0},
+					edge_state(pattern));
 }
 
-[[nodiscard]] constexpr std::uint32_t xar(unsigned rotate,
-	TwoRegisters registers)
+void rotate_one_boundaries_and_aliases(
+	test::engine_tests::EngineHarness &harness)
 {
-	return 0xce80'0000U | ((registers.second & 31U) << 16) |
-		((rotate & 63U) << 10) | ((registers.first & 31U) << 5) |
-		(registers.destination & 31U);
+	for (const auto registers : three_register_cases)
+		for (unsigned pattern = 0; pattern < 16U; ++pattern)
+			test::check_one(harness,
+				{
+					test::Operation::rotate_one_and_exclusive,
+					registers,
+					0,
+				},
+				edge_state(pattern + 20U));
 }
 
-[[nodiscard]] std::uint64_t lane(
-	const test::arm64::VectorRegister &vector, unsigned index)
+void every_rotation_and_alias(
+	test::engine_tests::EngineHarness &harness)
 {
-	std::uint64_t result;
-	std::memcpy(&result, vector.bytes.data() + index * sizeof(result),
-		sizeof(result));
-	return result;
-}
-
-void eor3_and_bcax()
-{
-	test::Harness harness;
-	for (const bool bcax : {false, true})
+	for (unsigned rotate = 0; rotate < 64U; ++rotate)
 		for (const auto registers : three_register_cases)
-			for (unsigned seed = 0; seed < 16; ++seed) {
-				const auto initial = test::state(seed + bcax * 23U);
-				const auto instruction = crypto_three(bcax, registers);
-				const auto result = harness.run_interpreter(instruction, initial);
-				for (unsigned byte = 0; byte < 16; ++byte) {
-					const auto first = initial.vectors[registers.first].bytes[byte];
-					const auto second = initial.vectors[registers.second].bytes[byte];
-					const auto third = initial.vectors[registers.third].bytes[byte];
-					const auto expected = bcax ? first ^ (second & ~third) :
-						first ^ second ^ third;
-					test::require(result.vectors[registers.destination]
-						.bytes[byte] == expected);
-				}
-				harness.require_differential(instruction, initial);
-			}
+			for (unsigned pattern = 0; pattern < 4U; ++pattern)
+				test::check_one(harness,
+					{
+						test::Operation::
+							exclusive_and_rotate,
+						registers,
+						rotate,
+					},
+					edge_state(pattern + rotate * 3U));
 }
 
-void rotate_forms()
+void run_matrix(test::engine_tests::EngineHarnessOptions options,
+	std::string_view summary)
 {
-	test::Harness harness;
-	for (const auto registers : two_register_cases)
-		for (unsigned seed = 0; seed < 16; ++seed) {
-			const auto initial = test::state(seed + 71U);
-			const auto instruction = rax1(registers);
-			const auto result = harness.run_interpreter(instruction, initial);
-			for (unsigned index = 0; index < 2; ++index)
-				test::require(lane(result.vectors[registers.destination], index) ==
-					(lane(initial.vectors[registers.first], index) ^
-					 std::rotl(lane(initial.vectors[registers.second], index), 1)));
-			harness.require_differential(instruction, initial);
-		}
-	for (unsigned rotate = 0; rotate < 64; ++rotate)
-		for (const auto registers : two_register_cases) {
-			const auto initial = test::state(rotate * 3U + registers.destination);
-			const auto instruction = xar(rotate, registers);
-			const auto result = harness.run_interpreter(instruction, initial);
-			for (unsigned index = 0; index < 2; ++index)
-				test::require(lane(result.vectors[registers.destination], index) ==
-					std::rotr(lane(initial.vectors[registers.first], index) ^
-						lane(initial.vectors[registers.second], index),
-						static_cast<int>(rotate)));
-			harness.require_differential(instruction, initial);
-		}
+	test::engine_tests::EngineHarness harness{options};
+	four_source_truth_tables_and_aliases(harness);
+	rotate_one_boundaries_and_aliases(harness);
+	every_rotation_and_alias(harness);
+	constexpr std::size_t expected_cases =
+		2U * four_register_cases.size() * 16U +
+		three_register_cases.size() * 16U +
+		64U * three_register_cases.size() * 4U;
+	static_assert(expected_cases == 2'560U);
+	test::require_engine_counts(harness, expected_cases);
+	harness.print_summary(summary);
 }
 
 } // namespace
 
 int main()
 {
-	eor3_and_bcax();
-	rotate_forms();
+	run_matrix({}, "arm64-simd-logical-rotation-behavior");
+	run_matrix(
+		{.force_software_sha3 = true},
+		"arm64-simd-logical-rotation-portable");
 	return 0;
 }

@@ -9,19 +9,30 @@ namespace {
 
 void every_scalar_and_vector_encoding()
 {
-	base::Harness harness;
+	test::engine_tests::EngineHarness harness;
 	for (const auto operation : {test::Operation::absolute,
 		     test::Operation::negate}) {
 		for (const auto shape : test::shapes) {
-			auto initial = base::state(shape.lane_bytes + shape.scalar + shape.q);
-			initial.fpsr = 0x0800'0080U;
-			fp::fill_bits(initial.vectors[29].bytes, shape.lane_bytes,
-				fp::floating_bits(shape.lane_bytes, -1.5));
-			const auto encoded = test::instruction(operation, shape, 28U, 29U);
-			test::require_result(encoded, shape, operation, 28U, 29U,
-				initial, harness);
+			for (unsigned destination = 0; destination < 32U;
+			     ++destination)
+				for (unsigned source = 0; source < 32U; ++source) {
+					auto initial = base::state(shape.lane_bytes +
+						shape.scalar + shape.q + destination * 5U +
+						source * 11U);
+					initial.fpsr = 0x0800'0080U;
+					fp::fill_bits(initial.vectors[source].bytes,
+						shape.lane_bytes,
+						fp::floating_bits(shape.lane_bytes, -1.5));
+					const auto encoded = test::instruction(operation,
+						shape, destination, source);
+					test::check_result(harness,
+						"fabs-fneg-valid-allocation", encoded,
+						shape, operation, destination, source,
+						initial);
+				}
 		}
 	}
+	harness.print_summary("arm64-simd-fabs-fneg-allocation-valid");
 }
 
 void canonical_vector_words_match_the_architecture()
@@ -51,25 +62,39 @@ void canonical_vector_words_match_the_architecture()
 
 void reserved_precision_and_arrangement_are_early_illegal()
 {
-	base::Harness harness;
+	test::engine_tests::EngineHarness harness;
 	for (const auto operation : {test::Operation::absolute,
 		     test::Operation::negate}) {
-		const auto scalar_reserved =
-			(operation == test::Operation::negate ? 0x1e21'4000U :
-				0x1e20'c000U) | (2U << 22) | (29U << 5) | 28U;
-		harness.require_illegal(scalar_reserved, base::state(31U));
-		const test::Shape short_double{8U, false, false};
-		harness.require_illegal(
-			test::instruction(operation, short_double, 28U, 29U),
-			base::state(32U));
-		for (const auto shape : {test::Shape{4U, false, false},
-		     test::Shape{4U, false, true}, test::Shape{8U, false, true}}) {
-			auto unallocated =
-				test::instruction(operation, shape, 28U, 29U);
-			unallocated &= ~0x0080'0000U;
-			harness.require_illegal(unallocated, base::state(33U));
-		}
+		for (unsigned destination = 0; destination < 32U; ++destination)
+			for (unsigned source = 0; source < 32U; ++source) {
+				const auto scalar_reserved =
+					(operation == test::Operation::negate ?
+						0x1e21'4000U : 0x1e20'c000U) |
+					(2U << 22) | (source << 5) | destination;
+				harness.check_illegal("fabs-fneg-reserved-precision",
+					scalar_reserved,
+					base::state(31U + destination + source));
+				const test::Shape short_double{8U, false, false};
+				harness.check_illegal(
+					"fabs-fneg-reserved-short-double",
+					test::instruction(operation, short_double,
+						destination, source),
+					base::state(32U + destination + source));
+				for (const auto shape : {
+				     test::Shape{4U, false, false},
+				     test::Shape{4U, false, true},
+				     test::Shape{8U, false, true}}) {
+					auto unallocated = test::instruction(operation,
+						shape, destination, source);
+					unallocated &= ~0x0080'0000U;
+					harness.check_illegal(
+						"fabs-fneg-reserved-opcode",
+						unallocated,
+						base::state(33U + destination + source));
+				}
+			}
 	}
+	harness.print_summary("arm64-simd-fabs-fneg-allocation-reserved");
 }
 
 } // namespace

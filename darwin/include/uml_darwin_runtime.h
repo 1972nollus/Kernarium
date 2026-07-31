@@ -59,6 +59,31 @@ int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write);
 int darwin_uml_enter_guest(void *registers, void *fp_registers,
 			   unsigned long fp_size, unsigned long generation,
 			   unsigned long *tls);
+enum darwin_uml_execution_engine {
+	DARWIN_UML_EXECUTION_AUTO = 0,
+	DARWIN_UML_EXECUTION_GADGETS = 1,
+	DARWIN_UML_EXECUTION_JIT = 2,
+	DARWIN_UML_EXECUTION_INTERPRETER = 3,
+};
+int darwin_uml_set_execution_engine(enum darwin_uml_execution_engine engine);
+enum darwin_uml_execution_engine darwin_uml_get_execution_engine(void);
+/*
+ * Linux consumes these masks when constructing AT_HWCAP/AT_HWCAP2.  They
+ * describe the virtual EL0 CPU implemented by the selected production
+ * engines, intersected with native extensions required by their precompiled
+ * fast paths. They are never an unchecked copy of the host feature set.
+ */
+unsigned long darwin_uml_guest_hwcap(void);
+unsigned long darwin_uml_guest_hwcap2(void);
+int darwin_uml_jit_available(void);
+int darwin_uml_jit_enter_guest(void *registers, void *fp_registers,
+			       unsigned long fp_size,
+			       unsigned long generation,
+			       unsigned long *tls);
+int darwin_uml_interpreter_enter_guest(void *registers, void *fp_registers,
+				       unsigned long fp_size,
+				       unsigned long generation,
+				       unsigned long *tls);
 int darwin_uml_static_dispatch_enabled(void);
 int darwin_uml_static_enter_guest(void *registers, void *fp_registers,
 				  unsigned long fp_size,

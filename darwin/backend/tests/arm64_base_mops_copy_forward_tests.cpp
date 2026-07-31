@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_mops_test_support.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <set>
+#include <utility>
 #include <vector>
 
 namespace mops = mops_test;
-namespace arm64 = uml::backend::arm64;
-namespace gadgets = uml::backend::arm64::gadgets;
+namespace engine = uml::backend::tests;
 
 namespace {
 
@@ -18,279 +16,359 @@ constexpr unsigned destination_register = 3;
 constexpr unsigned source_register = 4;
 constexpr unsigned count_register = 5;
 
-void encoding_examples()
+[[nodiscard]] constexpr std::array<engine::ProgramWord, 4>
+sequence(unsigned options)
 {
-	mops::test::require(mops::copy_instruction(false, mops::Stage::prologue,
-		0, 0, 1, 2) == 0x1901'0440U);
-	mops::test::require(mops::copy_instruction(false, mops::Stage::main,
-		0, 0, 1, 2) == 0x1941'0440U);
-	mops::test::require(mops::copy_instruction(false, mops::Stage::epilogue,
-		0, 0, 1, 2) == 0x1981'0440U);
-	mops::test::require(mops::copy_instruction(false, mops::Stage::prologue,
-		4, 3, 4, 5) == 0x1904'44a3U); // CPYFPWN
-	mops::test::require(mops::copy_instruction(false, mops::Stage::prologue,
-		2, 6, 7, 8) == 0x1907'2506U); // CPYFPRT
-}
-
-void interpreter_all_options()
-{
-	constexpr std::uint64_t source = mops::Memory::base + 0x1000;
-	constexpr std::uint64_t destination = mops::Memory::base + 0x5000;
-	constexpr std::size_t size = 257;
-	for (unsigned options = 0; options < 16; ++options) {
-		mops::Memory memory;
-		mops::fill_pattern(std::span{memory.at(source), size}, options);
-		std::fill_n(memory.at(destination), size, std::byte{0xcc});
-		auto cpu = mops::state();
-		cpu.registers[destination_register] = destination;
-		cpu.registers[source_register] = source;
-		cpu.registers[count_register] = size;
-		cpu.pc = mops::pc;
-
-		const auto prologue = mops::copy_instruction(false,
+	return {{
+		{.offset = 0,
+		 .instruction = mops::copy_instruction(false,
 			mops::Stage::prologue, options, destination_register,
-			source_register, count_register);
-		mops::require_continued(arm64::Dispatcher{}.execute(
-			cpu, memory, prologue), mops::pc, prologue);
-		mops::test::require(cpu.pc == mops::pc + 4 &&
-			cpu.nzcv == 0x2000'0000U &&
-			cpu.registers[count_register] == size &&
-			cpu.registers[source_register] == source &&
-			cpu.registers[destination_register] == destination &&
-			memory.reads == 0 && memory.writes == 0);
-
-		const auto main = mops::copy_instruction(false, mops::Stage::main,
-			options, destination_register, source_register, count_register);
-		mops::require_continued(arm64::Dispatcher{}.execute(
-			cpu, memory, main), mops::pc + 4, main);
-		mops::test::require(cpu.pc == mops::pc + 8 &&
-			cpu.registers[count_register] == size &&
-			memory.reads == 0 && memory.writes == 0);
-
-		const auto epilogue = mops::copy_instruction(false,
+			source_register, count_register)},
+		{.offset = 4,
+		 .instruction = mops::copy_instruction(false, mops::Stage::main,
+			options, destination_register, source_register,
+			count_register)},
+		{.offset = 8,
+		 .instruction = mops::copy_instruction(false,
 			mops::Stage::epilogue, options, destination_register,
-			source_register, count_register);
-		mops::require_continued(arm64::Dispatcher{}.execute(
-			cpu, memory, epilogue), mops::pc + 8, epilogue);
-		mops::test::require(cpu.pc == mops::pc + 12 &&
-			cpu.registers[count_register] == 0 &&
-			cpu.registers[source_register] == source + size &&
-			cpu.registers[destination_register] == destination + size &&
-			std::equal(memory.at(source), memory.at(source) + size,
-				memory.at(destination)) &&
-			memory.reads == size && memory.writes == size);
-	}
+			source_register, count_register)},
+		{.offset = 12, .instruction = mops::system_call},
+	}};
 }
 
-void gadget_all_options_and_pages()
+void all_options_cross_pages(engine::EngineHarness &harness)
 {
-	constexpr std::uint64_t guest = 0x7400'0000ULL;
-	mops::test::StaticMapping mapping{
-		guest, 0x4d4f5001UL, "/tmp/uml-mops-cpyf-XXXXXX"};
-	constexpr std::size_t size = 5000;
-	const auto source = guest + 2 * mops::test::StaticMapping::page_size + 123;
-	const auto destination = guest + 8 * mops::test::StaticMapping::page_size + 311;
+	const std::size_t size = mops::page_size + 257;
+	const std::size_t source_offset = 123;
+	const std::size_t destination_offset = 3 * mops::page_size + 311;
 	for (unsigned options = 0; options < 16; ++options) {
-		mops::fill_pattern(std::span{mapping.at(source), size}, options + 7);
-		std::vector<std::byte> expected(
-			mapping.at(source), mapping.at(source) + size);
-		std::fill_n(mapping.at(destination), size, std::byte{0xcc});
-		auto cpu = mops::state();
-		cpu.registers[destination_register] = destination;
-		cpu.registers[source_register] = source;
-		cpu.registers[count_register] = size;
-		const std::array instructions{
-			mops::copy_instruction(false, mops::Stage::prologue, options,
-				destination_register, source_register, count_register),
-			mops::copy_instruction(false, mops::Stage::main, options,
-				destination_register, source_register, count_register),
-			mops::copy_instruction(false, mops::Stage::epilogue, options,
-				destination_register, source_register, count_register),
-			0xd400'0001U};
-		mops::test::require(mapping.execute(mops::pc, instructions, cpu) ==
-			gadgets::Event::system_call);
-		mops::test::require(std::equal(expected.begin(), expected.end(),
-			mapping.at(destination)) && cpu.pc == mops::pc + 16 &&
-			cpu.nzcv == 0x2000'0000U &&
-			cpu.registers[count_register] == 0 &&
-			cpu.registers[source_register] == source + size &&
-			cpu.registers[destination_register] == destination + size);
+		std::vector<std::byte> initial(6 * mops::page_size, std::byte{0xcc});
+		mops::fill_pattern(std::span{initial}.subspan(source_offset, size),
+			options + 7U);
+		auto expected_memory = initial;
+		mops::copy_bytes(expected_memory, destination_offset, source_offset,
+			size);
+		const auto source = mops::data_base + source_offset;
+		const auto destination = mops::data_base + destination_offset;
+		auto initial_cpu = mops::state();
+		initial_cpu.registers[destination_register] = destination;
+		initial_cpu.registers[source_register] = source;
+		initial_cpu.registers[count_register] = size;
+		auto expected_cpu = initial_cpu;
+		expected_cpu.nzcv = mops::option_b_forward;
+		expected_cpu.registers[destination_register] = destination + size;
+		expected_cpu.registers[source_register] = source + size;
+		expected_cpu.registers[count_register] = 0;
+		expected_cpu.pc = mops::successful_program_pc(4);
+		const std::array regions{engine::MemoryRegion{
+			.address = mops::data_base,
+			.initial = initial,
+			.expected = expected_memory,
+		}};
+		const auto code = sequence(options);
+		harness.check_program({
+			.name = "CPYF option sequence across pages",
+			.code = code,
+			.initial = initial_cpu,
+			.expected = expected_cpu,
+			.native = mops::native(),
+			.memory = regions,
+		});
 	}
 }
 
-void interpreter_fault_restart_and_format_checks()
+void zero_and_maximum_lengths(engine::EngineHarness &harness)
 {
-	constexpr std::uint64_t source = mops::Memory::base + 0x1000;
-	constexpr std::uint64_t destination = mops::Memory::base + 0x5000;
-	constexpr std::uint64_t size = 32;
-	for (const bool write_fault : {false, true}) {
-		mops::Memory memory;
-		mops::fill_pattern(std::span{memory.at(source), size}, 11);
-		std::fill_n(memory.at(destination), size, std::byte{0xcc});
-		const unsigned completed = write_fault ? 11U : 7U;
-		if (write_fault)
-			memory.fault_write = destination + completed;
-		else
-			memory.fault_read = source + completed;
-		auto cpu = mops::state();
-		cpu.registers[destination_register] = destination;
-		cpu.registers[source_register] = source;
-		cpu.registers[count_register] = size;
-		cpu.pc = mops::pc;
-		for (const auto stage : {mops::Stage::prologue, mops::Stage::main}) {
-			const auto encoded = mops::copy_instruction(false, stage, 0,
-				destination_register, source_register, count_register);
-			const auto address = cpu.pc;
-			mops::require_continued(arm64::Dispatcher{}.execute(
-				cpu, memory, encoded), address, encoded);
-		}
-		const auto epilogue = mops::copy_instruction(false,
-			mops::Stage::epilogue, 0, destination_register,
-			source_register, count_register);
-		const auto fault = arm64::Dispatcher{}.execute(cpu, memory, epilogue);
-		mops::test::require(fault.reason == arm64::StopReason::memory_fault &&
-			fault.address == (write_fault ? destination : source) + completed &&
-			fault.write == write_fault && cpu.pc == mops::pc + 8 &&
-			cpu.registers[count_register] == size - completed &&
-			cpu.registers[source_register] == source + completed &&
-			cpu.registers[destination_register] == destination + completed &&
-			std::equal(memory.at(source), memory.at(source) + completed,
-				memory.at(destination)));
+	for (const auto requested : {
+	     std::uint64_t{0x8000'0000'0000'0000ULL},
+	     ~std::uint64_t{0},
+	     mops::max_block}) {
+		auto initial = mops::state();
+		initial.registers[destination_register] = 0x1235;
+		initial.registers[source_register] = 0x9877;
+		initial.registers[count_register] = requested;
+		auto expected = initial;
+		expected.registers[count_register] = mops::max_block;
+		expected.nzcv = mops::option_b_forward;
+		harness.check_one("CPYF maximum length prologue",
+			mops::copy_instruction(false, mops::Stage::prologue, 15,
+				destination_register, source_register, count_register),
+			initial, expected, mops::native());
 	}
 
-	mops::Memory memory;
-	auto malformed = mops::state();
-	malformed.registers[destination_register] = destination;
-	malformed.registers[source_register] = source;
-	malformed.registers[count_register] = 8;
-	malformed.nzcv = 0;
-	malformed.pc = mops::pc;
-	const auto before = malformed;
-	const auto encoded = mops::copy_instruction(false, mops::Stage::epilogue,
-		0, destination_register, source_register, count_register);
-	mops::test::require(arm64::Dispatcher{}.execute(
-		malformed, memory, encoded).reason ==
-		arm64::StopReason::illegal_instruction);
-	mops::require_state(malformed, before, mops::pc);
-	mops::test::require(memory.reads == 0 && memory.writes == 0);
+	auto initial = mops::state();
+	initial.registers[destination_register] = 0x1235;
+	initial.registers[source_register] = 0x9877;
+	initial.registers[count_register] = 0;
+	auto expected = initial;
+	expected.nzcv = mops::option_b_forward;
+	expected.pc = mops::successful_program_pc(4);
+	const auto code = sequence(6);
+	harness.check_program({
+		.name = "CPYF zero length sequence",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.native = mops::native(),
+	});
 }
 
-void gadget_fault_restart()
+void forward_overlap_block_order(engine::EngineHarness &harness)
 {
-	constexpr std::uint64_t guest = 0x7500'0000ULL;
-	mops::test::StaticMapping mapping{
-		guest, 0x4d4f5002UL, "/tmp/uml-mops-cpyf-fault-XXXXXX"};
-	const auto source = guest + mops::test::StaticMapping::length - 20;
-	const auto destination = guest + 2 * mops::test::StaticMapping::page_size;
-	mops::fill_pattern(std::span{mapping.at(source), 20}, 13);
-	std::fill_n(mapping.at(destination), 64, std::byte{0xcc});
-	auto cpu = mops::state();
-	cpu.registers[destination_register] = destination;
-	cpu.registers[source_register] = source;
-	cpu.registers[count_register] = 64;
-	const std::array instructions{
-		mops::copy_instruction(false, mops::Stage::prologue, 0,
-			destination_register, source_register, count_register),
-		mops::copy_instruction(false, mops::Stage::main, 0,
-			destination_register, source_register, count_register),
-		mops::copy_instruction(false, mops::Stage::epilogue, 0,
-			destination_register, source_register, count_register),
-		0xd400'0001U};
-	mops::test::require(mapping.execute(mops::pc, instructions, cpu) ==
-		gadgets::Event::memory_fault);
-	mops::test::require(cpu.pc == mops::pc + 8 &&
-		cpu.registers[count_register] == 44 &&
-		cpu.registers[source_register] == source + 20 &&
-		cpu.registers[destination_register] == destination + 20 &&
-		std::equal(mapping.at(source), mapping.at(source) + 20,
-			mapping.at(destination)));
+	/*
+	 * MemCpyBytes reads at most MaxMOPSBlockSize (64) bytes before writing
+	 * them. With this exact 64-byte displacement, both the byte-granular
+	 * interpreter choice and the gadget's largest permitted block produce
+	 * the same architecturally forward result. A page-sized bulk copy would
+	 * incorrectly behave like an overlap-preserving general copy.
+	 */
+	constexpr std::size_t source_offset = 128;
+	constexpr std::size_t displacement = 64;
+	constexpr std::size_t size = 128;
+	constexpr std::size_t destination_offset =
+		source_offset + displacement;
+	std::vector<std::byte> initial(mops::page_size);
+	mops::fill_pattern(initial, 61);
+	auto expected_memory = initial;
+	for (std::size_t offset = 0; offset < size; ++offset)
+		expected_memory[destination_offset + offset] =
+			expected_memory[source_offset + offset];
+
+	const auto source = mops::data_base + source_offset;
+	const auto destination = mops::data_base + destination_offset;
+	auto initial_cpu = mops::state();
+	initial_cpu.registers[destination_register] = destination;
+	initial_cpu.registers[source_register] = source;
+	initial_cpu.registers[count_register] = size;
+	auto expected_cpu = initial_cpu;
+	expected_cpu.nzcv = mops::option_b_forward;
+	expected_cpu.registers[destination_register] = destination + size;
+	expected_cpu.registers[source_register] = source + size;
+	expected_cpu.registers[count_register] = 0;
+	expected_cpu.pc = mops::successful_program_pc(4);
+	const std::array regions{engine::MemoryRegion{
+		.address = mops::data_base,
+		.initial = initial,
+		.expected = expected_memory,
+	}};
+	const auto code = sequence(0);
+	harness.check_program({
+		.name = "CPYF forward overlap observes 64-byte block limit",
+		.code = code,
+		.initial = initial_cpu,
+		.expected = expected_cpu,
+		.native = mops::native(),
+		.memory = regions,
+	});
 }
 
-void register_and_reserved_matrices()
+void malformed_stage_state(engine::EngineHarness &harness)
 {
-	constexpr std::uint64_t guest = 0x7600'0000ULL;
-	mops::test::StaticMapping mapping{
-		guest, 0x4d4f5003UL, "/tmp/uml-mops-cpyf-reg-XXXXXX"};
-	mops::Memory memory;
-	for (unsigned destination = 0; destination < 32; ++destination)
-		for (unsigned source = 0; source < 32; ++source)
-			for (unsigned count = 0; count < 32; ++count) {
-				const auto encoded = mops::copy_instruction(false,
-					mops::Stage::prologue, 0, destination, source, count);
-				auto interpreted = mops::state();
-				interpreted.registers[destination % 31] = mops::Memory::base;
-				interpreted.registers[source % 31] = mops::Memory::base + 0x1000;
-				interpreted.registers[count % 31] = 0;
-				interpreted.pc = mops::pc;
-				const bool valid = mops::valid_copy_registers(
-					destination, source, count);
-				const auto result = arm64::Dispatcher{}.execute(
-					interpreted, memory, encoded);
-				mops::test::require(result.reason == (valid ?
-					arm64::StopReason::continued :
-					arm64::StopReason::illegal_instruction));
-
-				auto gadget = mops::state();
-				gadget.registers[destination % 31] = guest;
-				gadget.registers[source % 31] = guest + 0x1000;
-				gadget.registers[count % 31] = 0;
-				mops::test::require(mapping.execute(mops::pc, encoded, gadget) ==
-					(valid ? gadgets::Event::system_call :
-					 gadgets::Event::illegal_instruction));
-			}
-
-	for (unsigned options = 0; options < 16; ++options)
-		for (const auto sz : {0x4000'0000U, 0x8000'0000U,
-			0xc000'0000U}) {
-			const auto reserved = mops::copy_instruction(false,
-				mops::Stage::prologue, options, 3, 4, 5) | sz;
-			auto cpu = mops::state();
-			cpu.pc = mops::pc;
-			mops::test::require(arm64::Dispatcher{}.execute(
-				cpu, memory, reserved).reason ==
-				arm64::StopReason::illegal_instruction);
-			mops::test::require(mapping.execute(mops::pc, reserved, cpu) ==
-				gadgets::Event::illegal_instruction);
-		}
-}
-
-void saturation_and_specialization()
-{
-	mops::Memory memory;
-	auto cpu = mops::state();
-	cpu.registers[count_register] = 0x8000'0000'0000'0000ULL;
-	cpu.pc = mops::pc;
-	const auto encoded = mops::copy_instruction(false, mops::Stage::prologue,
-		0, destination_register, source_register, count_register);
-	mops::require_continued(arm64::Dispatcher{}.execute(
-		cpu, memory, encoded), mops::pc, encoded);
-	mops::test::require(cpu.registers[count_register] ==
-		0x7fff'ffff'ffff'ffffULL && cpu.nzcv == 0x2000'0000U);
-
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
-	std::set<std::uintptr_t> entries;
-	for (const auto stage : {mops::Stage::prologue, mops::Stage::main,
-		mops::Stage::epilogue}) {
-		const auto built = gadgets::Builder{}.build(mops::pc,
-			std::array{mops::copy_instruction(false, stage, 0,
-				destination_register, source_register, count_register)});
-		mops::test::require(built.complete &&
-			built.program.instruction_count() == 1);
-		entries.insert(built.program.words().front());
+	const auto epilogue = mops::copy_instruction(false,
+		mops::Stage::epilogue, 0, destination_register, source_register,
+		count_register);
+	for (const auto [remaining, nzcv] : {
+	     std::pair{std::uint64_t{8}, 0U},
+	     std::pair{mops::max_block + 1U, mops::option_b_forward}}) {
+		auto initial = mops::state();
+		initial.registers[destination_register] = mops::data_base;
+		initial.registers[source_register] =
+			mops::data_base + 2 * mops::page_size;
+		initial.registers[count_register] = remaining;
+		initial.nzcv = nzcv;
+		mops::check_runtime_illegal(harness,
+			"malformed CPYF epilogue state", epilogue, initial,
+			mops::native());
 	}
-	mops::test::require(entries.size() == 3);
-#endif
+
+	for (unsigned options = 0; options < 16; ++options) {
+		auto initial = mops::state();
+		initial.registers[destination_register] = mops::data_base + 1;
+		initial.registers[source_register] = mops::data_base + 3;
+		initial.registers[count_register] = mops::max_block + 1U;
+		initial.nzcv = 0;
+		harness.check_one("zero-size CPYF main stage", mops::copy_instruction(
+			false, mops::Stage::main, options, destination_register,
+			source_register, count_register), initial, initial,
+			mops::native());
+	}
+
+	auto zero = mops::state();
+	zero.registers[destination_register] = 0x1003;
+	zero.registers[source_register] = 0x2005;
+	zero.registers[count_register] = 0;
+	zero.nzcv = mops::option_b_backward;
+	harness.check_one("CPYF zero epilogue ignores format state", epilogue,
+		zero, zero, mops::native());
+}
+
+void non_format_flags_are_ignored(engine::EngineHarness &harness)
+{
+	constexpr std::size_t source_offset = 128;
+	constexpr std::size_t destination_offset = 512;
+	constexpr std::size_t size = 37;
+	std::vector<std::byte> initial(mops::page_size, std::byte{0xcc});
+	mops::fill_pattern(std::span{initial}.subspan(source_offset, size), 73);
+	auto expected_memory = initial;
+	mops::copy_bytes(expected_memory, destination_offset, source_offset, size);
+	auto initial_cpu = mops::state();
+	initial_cpu.registers[destination_register] =
+		mops::data_base + destination_offset;
+	initial_cpu.registers[source_register] =
+		mops::data_base + source_offset;
+	initial_cpu.registers[count_register] = size;
+	initial_cpu.nzcv = 0xf000'0000U;
+	auto expected_cpu = initial_cpu;
+	expected_cpu.registers[destination_register] += size;
+	expected_cpu.registers[source_register] += size;
+	expected_cpu.registers[count_register] = 0;
+	expected_cpu.pc = mops::successful_program_pc(2);
+	const std::array code{
+		engine::ProgramWord{
+			.offset = 0,
+			.instruction = mops::copy_instruction(false,
+				mops::Stage::epilogue, 15, destination_register,
+				source_register, count_register),
+		},
+		engine::ProgramWord{.offset = 4, .instruction = mops::system_call},
+	};
+	const std::array regions{engine::MemoryRegion{
+		.address = mops::data_base,
+		.initial = initial,
+		.expected = expected_memory,
+	}};
+	harness.check_program({
+		.name = "CPYF epilogue ignores N/Z/V format bits",
+		.code = code,
+		.initial = initial_cpu,
+		.expected = expected_cpu,
+		.native = mops::native(),
+		.memory = regions,
+	});
+}
+
+void read_fault_restart(engine::EngineHarness &harness)
+{
+	const auto source_page = mops::data_base;
+	const auto destination_page = mops::data_base + 3 * mops::page_size;
+	const auto source = source_page + mops::page_size - 32;
+	const auto destination = destination_page + 79;
+	std::vector<std::byte> source_initial(mops::page_size);
+	mops::fill_pattern(source_initial, 31);
+	std::vector<std::byte> destination_initial(mops::page_size,
+		std::byte{0xcc});
+	auto destination_expected = destination_initial;
+	std::copy_n(source_initial.end() - 32, 32,
+		destination_expected.begin() + 79);
+
+	auto initial = mops::state();
+	initial.registers[destination_register] = destination;
+	initial.registers[source_register] = source;
+	initial.registers[count_register] = 64;
+	auto expected = initial;
+	expected.nzcv = mops::option_b_forward;
+	expected.registers[destination_register] = destination + 32;
+	expected.registers[source_register] = source + 32;
+	expected.registers[count_register] = 32;
+	expected.pc = engine::engine_test_code_base + 8;
+	const std::array regions{
+		engine::MemoryRegion{
+			.address = source_page,
+			.initial = source_initial,
+		},
+		engine::MemoryRegion{
+			.address = destination_page,
+			.initial = destination_initial,
+			.expected = destination_expected,
+		},
+	};
+	const auto code = sequence(10);
+	harness.check_program({
+		.name = "CPYF read fault restart",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.event = engine::ExpectedEvent::memory_fault,
+		.native = mops::native(),
+		.fault = {
+			.address = source + 32,
+			.access = mops::arm64::MemoryAccess::read,
+		},
+		.compare_fault = true,
+		.memory = regions,
+	});
+}
+
+void write_permission_fault_restart(engine::EngineHarness &harness)
+{
+	const auto source_page = mops::data_base;
+	const auto destination_page = mops::data_base + 3 * mops::page_size;
+	const auto source = source_page + 101;
+	const auto destination = destination_page + mops::page_size - 32;
+	std::vector<std::byte> source_initial(mops::page_size);
+	mops::fill_pattern(source_initial, 47);
+	std::vector<std::byte> first_initial(mops::page_size, std::byte{0xcc});
+	auto first_expected = first_initial;
+	std::copy_n(source_initial.begin() + 101, 32,
+		first_expected.end() - 32);
+	const std::vector<std::byte> denied_initial(mops::page_size,
+		std::byte{0xdd});
+
+	auto initial = mops::state();
+	initial.registers[destination_register] = destination;
+	initial.registers[source_register] = source;
+	initial.registers[count_register] = 64;
+	auto expected = initial;
+	expected.nzcv = mops::option_b_forward;
+	expected.registers[destination_register] = destination + 32;
+	expected.registers[source_register] = source + 32;
+	expected.registers[count_register] = 32;
+	expected.pc = engine::engine_test_code_base + 8;
+	const std::array regions{
+		engine::MemoryRegion{
+			.address = source_page,
+			.initial = source_initial,
+		},
+		engine::MemoryRegion{
+			.address = destination_page,
+			.initial = first_initial,
+			.expected = first_expected,
+		},
+		engine::MemoryRegion{
+			.address = destination_page + mops::page_size,
+			.initial = denied_initial,
+			.readable = true,
+			.writable = false,
+		},
+	};
+	const auto code = sequence(5);
+	harness.check_program({
+		.name = "CPYF write permission fault restart",
+		.code = code,
+		.initial = initial,
+		.expected = expected,
+		.event = engine::ExpectedEvent::memory_fault,
+		.native = mops::native(),
+		.fault = {
+			.address = destination + 32,
+			.access = mops::arm64::MemoryAccess::write,
+		},
+		.compare_fault = true,
+		.memory = regions,
+	});
 }
 
 } // namespace
 
 int main()
 {
-	encoding_examples();
-	interpreter_all_options();
-	gadget_all_options_and_pages();
-	interpreter_fault_restart_and_format_checks();
-	gadget_fault_restart();
-	register_and_reserved_matrices();
-	saturation_and_specialization();
+	engine::EngineHarness harness;
+	all_options_cross_pages(harness);
+	zero_and_maximum_lengths(harness);
+	forward_overlap_block_order(harness);
+	malformed_stage_state(harness);
+	non_format_flags_are_ignored(harness);
+	read_fault_restart(harness);
+	write_permission_fault_restart(harness);
+	harness.print_summary("arm64-base-mops-copy-forward");
 }

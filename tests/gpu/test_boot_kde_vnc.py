@@ -20,6 +20,23 @@ class KdeVncLauncherTests(unittest.TestCase):
         options = boot_kde_vnc.parse_arguments([])
         self.assertEqual(options.bind, "127.0.0.1")
         self.assertIsNone(options.password)
+        self.assertEqual(options.cpus, 10)
+        self.assertEqual(options.engine, "jit")
+
+    def test_execution_settings_are_forwarded(self) -> None:
+        options = boot_kde_vnc.parse_arguments(
+            ["--cpus", "6", "--engine", "gadgets"]
+        )
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = command.index("--")
+        self.assertIn("ncpus=6", command[separator + 1 :])
+        self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
+
+    def test_desktop_idle_lock_is_disabled_in_overlay(self) -> None:
+        commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
+        self.assertIn("kscreenlockerrc", commands)
+        self.assertIn("Autolock=false", commands)
+        self.assertIn("LockOnResume=false", commands)
 
     def test_password_is_forwarded_to_the_host_gpu(self) -> None:
         options = boot_kde_vnc.parse_arguments(

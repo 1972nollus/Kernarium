@@ -3,6 +3,7 @@
 
 #include "../detail/atomic_floating.hpp"
 #include "../detail/instruction_helpers.hpp"
+#include "../detail/pointer_auth.hpp"
 
 #include <algorithm>
 #include <array>
@@ -42,8 +43,19 @@ constexpr std::uintptr_t reservation_granule = 16;
 constexpr std::size_t reservation_slot_count = 1U << 15;
 
 struct ReservationSlot final {
-	std::uintptr_t key{};
-	std::uint64_t version{};
+	/*
+	 * Hash collisions are allowed to fail a guest store-conditional
+	 * spuriously.  Therefore a monotonically increasing version per hash
+	 * bucket is sufficient: every store to any colliding reservation
+	 * granule invalidates the snapshot, without needing a separately locked
+	 * key/value pair.
+	 *
+	 * Native JIT store blocks may finish concurrently on several vCPUs.
+	 * Keeping the version atomic lets their post-store invalidation remain
+	 * lock-free while semantic exclusive operations continue to serialize
+	 * the actual memory transaction with exclusive_memory_mutex.
+	 */
+	std::atomic<std::uint64_t> version{};
 };
 
 std::array<ReservationSlot, reservation_slot_count> reservation_slots;
@@ -64,6 +76,14 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 		~(reservation_granule - 1);
 }
 
+[[nodiscard]] std::uintptr_t reservation_key(GuestMemory &memory,
+	std::uint64_t address, std::size_t size, MemoryAccess access) noexcept
+{
+	auto *pointer = memory.reservation_pointer(address, size, access);
+	return pointer != nullptr ? host_reservation_key(pointer) :
+		fallback_reservation_key(address);
+}
+
 [[nodiscard]] ReservationSlot &reservation_slot(std::uintptr_t key) noexcept
 {
 	auto hash = key >> 4;
@@ -73,20 +93,12 @@ std::array<ReservationSlot, reservation_slot_count> reservation_slots;
 
 [[nodiscard]] std::uint64_t reservation_version(std::uintptr_t key) noexcept
 {
-	auto &slot = reservation_slot(key);
-	if (slot.key != key) {
-		slot.key = key;
-		++slot.version;
-	}
-	return slot.version;
+	return reservation_slot(key).version.load(std::memory_order_acquire);
 }
 
 void reservation_store(std::uintptr_t key) noexcept
 {
-	auto &slot = reservation_slot(key);
-	if (slot.key != key)
-		slot.key = key;
-	++slot.version;
+	reservation_slot(key).version.fetch_add(1, std::memory_order_release);
 }
 
 template<typename Integer>
@@ -189,7 +201,7 @@ enum class AtomicStoreResult {
 	value = detail::decode_little_endian(std::span{bytes}.first(size));
 	if (order != std::memory_order_relaxed)
 		std::atomic_thread_fence(std::memory_order_acquire);
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::read);
 	return true;
 }
 
@@ -215,7 +227,7 @@ enum class AtomicStoreResult {
 		return AtomicStoreResult::stored;
 	}
 
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 	std::array<std::byte, 8> bytes{};
 	detail::encode_little_endian(value, std::span{bytes}.first(size));
 	if (order != std::memory_order_relaxed)
@@ -277,12 +289,15 @@ enum class AtomicStoreResult {
 			std::atomic_thread_fence(std::memory_order_release);
 		detail::encode_little_endian(replacement,
 			std::span{bytes}.first(size));
-		if (!memory.write(address, std::span{bytes}.first(size)))
-			return false;
 	}
+	/* Select the architecture-permitted write-back behavior on a failed
+	 * comparison too. Besides deterministic reservation effects, this
+	 * validates write permission for every atomic read-modify-write access. */
+	if (!memory.write(address, std::span{bytes}.first(size)))
+		return false;
 	if (acquire)
 		std::atomic_thread_fence(std::memory_order_acquire);
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 	return true;
 }
 
@@ -327,7 +342,8 @@ enum class AtomicStoreResult {
 	} else {
 		if (!memory.read(address, std::span{bytes}.first(total_size)))
 			return false;
-		key = fallback_reservation_key(address);
+		key = reservation_key(
+			memory, address, total_size, MemoryAccess::write);
 	}
 	observed_first = detail::decode_little_endian(
 		std::span{bytes}.first(element_size));
@@ -337,6 +353,10 @@ enum class AtomicStoreResult {
 		std::uint64_t{0xffff'ffffU};
 	if (observed_first != (compare_first & mask) ||
 	    observed_second != (compare_second & mask)) {
+		/* Choose the permitted write-back of the observed pair so failed
+		 * comparisons still validate atomic write permission. */
+		if (!memory.write(address, std::span{bytes}.first(total_size)))
+			return false;
 		if (acquire)
 			std::atomic_thread_fence(std::memory_order_acquire);
 		return true;
@@ -472,7 +492,7 @@ template<typename Integer>
 		return false;
 	if (decoded.acquire)
 		std::atomic_thread_fence(std::memory_order_acquire);
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 	return true;
 }
 
@@ -515,7 +535,7 @@ template<typename Integer>
 		return false;
 	if (acquire)
 		std::atomic_thread_fence(std::memory_order_acquire);
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 	return true;
 }
 
@@ -592,7 +612,7 @@ rcw_result(unsigned operation, bool soft, std::uint64_t observed,
 	if (acquire)
 		std::atomic_thread_fence(std::memory_order_acquire);
 	nzcv = flags;
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, 8, MemoryAccess::write);
 	return true;
 }
 
@@ -690,7 +710,7 @@ struct RcwPairResult final {
 	if (acquire)
 		std::atomic_thread_fence(std::memory_order_acquire);
 	nzcv = outcome.nzcv;
-	key = fallback_reservation_key(address);
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 	return true;
 }
 
@@ -740,7 +760,7 @@ struct RcwPairResult final {
 	} else {
 		if (!memory.read(address, bytes))
 			return false;
-		key = fallback_reservation_key(address);
+		key = reservation_key(memory, address, size, MemoryAccess::write);
 	}
 
 	observed_first = detail::decode_little_endian(
@@ -804,7 +824,8 @@ struct RcwPairResult final {
 	} else {
 		if (!memory.read(address, std::span{bytes}.first(total_size)))
 			return false;
-		key = fallback_reservation_key(address);
+		key = reservation_key(
+			memory, address, total_size, MemoryAccess::read);
 	}
 	if (order != std::memory_order_relaxed)
 		std::atomic_thread_fence(order);
@@ -862,7 +883,8 @@ struct RcwPairResult final {
 		return AtomicStoreResult::stored;
 	}
 
-	key = fallback_reservation_key(address);
+	key = reservation_key(
+		memory, address, total_size, MemoryAccess::write);
 	if (expected_key != nullptr && key != *expected_key)
 		return AtomicStoreResult::reservation_mismatch;
 	if (order != std::memory_order_relaxed)
@@ -881,7 +903,7 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	 */
 	for (std::size_t offset = 0; offset < size;) {
 		const auto current = address + offset;
-		auto *pointer = memory.atomic_pointer(
+		auto *pointer = memory.reservation_pointer(
 			current, 1, MemoryAccess::write);
 		reservation_store(pointer != nullptr ? host_reservation_key(pointer) :
 			fallback_reservation_key(current));
@@ -907,7 +929,69 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	return true;
 }
 
+[[nodiscard]] bool simd_structure_address(CpuState &cpu,
+	GuestMemory &memory, std::uint64_t tagged_address, bool base_sp,
+	bool tagchecked, std::size_t transfer_size, std::size_t element_size,
+	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address)
+{
+	const bool tagged = !base_sp && cpu.mte_enabled;
+	address = tagged ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+	const bool check_tags =
+		tagchecked && cpu.mte_enabled && !cpu.pstate_tco;
+	const auto logical_tag = tagged ?
+		static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
+	for (std::size_t completed = 0; completed < transfer_size;
+	     completed += element_size) {
+		const auto current = address + completed;
+		const auto access_size =
+			std::min(element_size, transfer_size - completed);
+		if (!memory.validate_access(current, access_size, access)) {
+			fault_address = memory.last_fault().address;
+			return false;
+		}
+		if (!check_tags)
+			continue;
+		for (std::size_t checked = 0; checked < access_size;) {
+			const auto tagged_current = current + checked;
+			std::uint8_t allocation_tag{};
+			if (!memory.read_allocation_tag(
+				    tagged_current, allocation_tag) ||
+			    allocation_tag != logical_tag) {
+				fault_address = tagged_current;
+				return false;
+			}
+			checked += std::min<std::size_t>(
+				access_size - checked,
+				16U - (tagged_current & 15U));
+		}
+	}
+	return true;
+}
+
 } // namespace
+
+extern "C" void uml_arm64_jit_invalidate_store_ranges(
+	const std::uint64_t *ranges, std::size_t count) noexcept
+{
+	if (ranges == nullptr || count == 0)
+		return;
+
+	for (std::size_t index = 0; index < count; ++index) {
+		const auto host_address = ranges[index * 2];
+		const auto size = ranges[index * 2 + 1];
+		for (std::uint64_t offset = 0; offset < size;) {
+			const auto current = host_address + offset;
+			reservation_store(host_reservation_key(
+				reinterpret_cast<std::byte *>(current)));
+			const auto remaining_in_granule = reservation_granule -
+				(static_cast<std::uintptr_t>(current) &
+				 (reservation_granule - 1));
+			offset += std::min<std::uint64_t>(
+				size - offset, remaining_in_granule);
+		}
+	}
+}
 
 using detail::continue_after;
 using detail::decode_little_endian;
@@ -933,9 +1017,25 @@ RunResult Dispatcher::load_store_64b(CpuState &cpu, GuestMemory &memory,
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const unsigned status_register = (instruction >> 16) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const bool tagged = base_register != 31U && cpu.mte_enabled;
+	const bool tagchecked = tagged && !cpu.pstate_tco;
+	const auto address = tagged ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & 63U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, !load};
+	if (tagchecked) {
+		const auto logical_tag =
+			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
+		for (unsigned offset = 0; offset < 64; offset += 16) {
+			std::uint8_t allocation_tag{};
+			if (!memory.read_allocation_tag(
+				    address + offset, allocation_tag) ||
+			    allocation_tag != logical_tag)
+				return {StopReason::memory_fault, address + offset,
+					instruction, 0, !load};
+		}
+	}
 
 	std::array<std::byte, 64> bytes{};
 	if (load) {
@@ -1081,12 +1181,17 @@ RunResult Dispatcher::load_store_allocation_tag(
 	const auto tagged_address = postindex ? base_address :
 		base_address + offset;
 	const auto address = tagged_address & 0x00ff'ffff'ffff'ffffULL;
+	/* AArch64_MemTagWrite faults every allocation-tag store whose effective
+	 * address is not Tag-Granule aligned. The backing tag API deliberately
+	 * accepts any byte within a granule, so enforce the architectural
+	 * alignment before it can round the address down.
+	 */
+	if ((address & 15U) != 0)
+		return fault(address, true);
 	const auto source = cpu.read_register(transfer, true);
 	const auto tag = static_cast<std::uint8_t>(source >> 56) & 15U;
 	const std::size_t length = two_granules ? 32 : 16;
 	if (zero_data) {
-		if ((address & 15U) != 0)
-			return fault(address, true);
 		std::array<std::byte, 32> zeros{};
 		if (!ordinary_store(memory, address,
 			std::span{zeros}.first(length)))
@@ -1204,9 +1309,7 @@ RunResult Dispatcher::memory_copy_set(CpuState &cpu, GuestMemory &memory,
 		set_tag ? max_tag_set : max_block;
 	const bool backward = copy_general && (cpu.nzcv & 0x8000'0000U) != 0;
 	if (remaining > limit ||
-	    (remaining != 0 && (cpu.nzcv & 0x2000'0000U) == 0) ||
-	    (remaining != 0 && !copy_general &&
-	     (cpu.nzcv & 0x8000'0000U) != 0))
+	    (remaining != 0 && (cpu.nzcv & 0x2000'0000U) == 0))
 		return illegal();
 
 	auto to = cpu.registers[destination];
@@ -1316,8 +1419,26 @@ RunResult Dispatcher::load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		return {StopReason::illegal_instruction, pc, instruction, 0,
 			false};
 	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
-	const auto address = cpu.read_register((instruction >> 5) & 0x1fU, true) +
+	const unsigned base_register = (instruction >> 5) & 0x1fU;
+	const auto base = cpu.read_register(base_register, true);
+	/* CheckSPAlignment precedes address generation and memory observation.
+	 * The interpreter deliberately diagnoses this before touching either the
+	 * transfer register or GuestMemory.
+	 */
+	if (base_register == 31U && (base & 15U) != 0)
+		return {StopReason::memory_fault, base, instruction, 0, !load};
+	const auto tagged_address = base +
 		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
+	std::uint64_t address = tagged_address;
+	if (vector) {
+		std::uint64_t fault_address{};
+		if (!simd_structure_address(cpu, memory, tagged_address,
+			    base_register == 31U, base_register != 31U, size, size,
+			    load ? MemoryAccess::read : MemoryAccess::write,
+			    address, fault_address))
+			return {StopReason::memory_fault, fault_address, instruction, 0,
+				!load};
+	}
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
 	if (load) {
@@ -1424,6 +1545,11 @@ RunResult Dispatcher::load_store_other(CpuState &cpu, GuestMemory &memory,
 	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto base = cpu.read_register(base_register, true);
+	/* This check is on the unmodified SP value, before immediate/register
+	 * effective-address generation and any transfer-register or memory effect.
+	 */
+	if (base_register == 31U && (base & 15U) != 0)
+		return {StopReason::memory_fault, base, instruction, 0, !load};
 	std::uint64_t address = base;
 	bool writeback = false;
 	std::uint64_t adjusted = base;
@@ -1453,6 +1579,18 @@ RunResult Dispatcher::load_store_other(CpuState &cpu, GuestMemory &memory,
 			address = adjusted;
 			writeback = mode == 3;
 		}
+	}
+	if (vector) {
+		const auto tagged_address = address;
+		std::uint64_t fault_address{};
+		if (!simd_structure_address(cpu, memory, tagged_address,
+			    base_register == 31U,
+			    register_offset || writeback || base_register != 31U,
+			    size, size,
+			    load ? MemoryAccess::read : MemoryAccess::write,
+			    address, fault_address))
+			return {StopReason::memory_fault, fault_address, instruction, 0,
+				!load};
 	}
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
@@ -1487,7 +1625,8 @@ RunResult Dispatcher::load_store_other(CpuState &cpu, GuestMemory &memory,
 	 * a load whose transfer register overlaps a non-SP base. Stores retain
 	 * Constraint_NONE and therefore store the pre-writeback base value.
 	 */
-	if (writeback && load && base_register == transfer && base_register != 31U)
+	if (writeback && load && !vector &&
+	    base_register == transfer && base_register != 31U)
 		writeback = false;
 	if (writeback)
 		cpu.write_register(base_register, adjusted, true);
@@ -1499,6 +1638,8 @@ RunResult Dispatcher::load_pointer_authenticated(CpuState &cpu,
 	GuestMemory &memory, std::uint32_t instruction) const
 {
 	const auto pc = cpu.pc;
+	if (!cpu.pointer_authentication_enabled)
+		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const unsigned destination = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const bool writeback = (instruction & 0x800U) != 0;
@@ -1513,10 +1654,11 @@ RunResult Dispatcher::load_pointer_authenticated(CpuState &cpu,
 	auto address = cpu.read_register(base_register, true);
 	if (base_register == 31U && (address & 15U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, false};
-	if ((instruction & 0x0080'0000U) != 0)
-		__asm__ volatile("autdzb %0" : "+r"(address));
-	else
-		__asm__ volatile("autdza %0" : "+r"(address));
+	address = detail::execute_pointer_auth(
+		cpu, address, 0,
+		(instruction & 0x0080'0000U) != 0 ?
+			detail::PointerAuthOperation::authenticate_data_b :
+			detail::PointerAuthOperation::authenticate_data_a);
 	address += displacement;
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, bytes))
@@ -1537,9 +1679,18 @@ RunResult Dispatcher::load_store_pair(CpuState &cpu, GuestMemory &memory,
 	const bool load = (instruction & 0x0040'0000U) != 0;
 	const unsigned operation = instruction >> 30;
 	const unsigned mode = (instruction >> 23) & 0x3U;
-	if (!vector && operation == 1 && (!load || mode == 0U))
+	/* SIMD&FP opc=11 is the FEAT_LSUI 128-bit unprivileged pair family.
+	 * GPR opc=11 is the corresponding 64-bit family. GPR opc=01 is LDPSW
+	 * and has no non-temporal or store allocation. Reject the remaining
+	 * encodings before observing the base or memory.
+	 */
+	if (!vector && operation == 1U && (!load || mode == 0U))
 		return {StopReason::illegal_instruction, pc, instruction, 0,
 			false};
+	const unsigned first = instruction & 0x1fU;
+	const unsigned second = (instruction >> 10) & 0x1fU;
+	if (load && first == second)
+		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const std::size_t size = vector ?
 		(operation >= 2 ? 16U : std::size_t{4} << operation) :
 		operation >= 2 ? 8U : 4U;
@@ -1549,36 +1700,40 @@ RunResult Dispatcher::load_store_pair(CpuState &cpu, GuestMemory &memory,
 	const auto base = cpu.read_register(base_register, true);
 	const auto adjusted = static_cast<std::uint64_t>(
 		static_cast<std::int64_t>(base) + displacement);
-	const auto address = mode == 1 ? base : adjusted;
+	const auto tagged_address = mode == 1 ? base : adjusted;
+	std::uint64_t address = tagged_address;
 	bool writeback = mode == 1 || mode == 3;
-	const unsigned first = instruction & 0x1fU;
-	const unsigned second = (instruction >> 10) & 0x1fU;
-	if (load && first == second)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	if (writeback && load && !vector && base_register != 31U &&
 	    (base_register == first || base_register == second))
 		writeback = false;
-	std::array<std::byte, 16> first_bytes{};
-	std::array<std::byte, 16> second_bytes{};
+	if (base_register == 31U && (base & 15U) != 0)
+		return {StopReason::memory_fault, base, instruction, 0, !load};
+	if (vector) {
+		std::uint64_t fault_address{};
+		if (!simd_structure_address(cpu, memory, tagged_address,
+			    base_register == 31U,
+			    writeback || base_register != 31U, size * 2U, size * 2U,
+			    load ? MemoryAccess::read : MemoryAccess::write,
+			    address, fault_address))
+			return {StopReason::memory_fault, fault_address, instruction, 0,
+				!load};
+	}
+	std::array<std::byte, 32> pair_bytes{};
 	if (load) {
-		if (!memory.read(address, std::span{first_bytes}.first(size)))
+		if (!memory.read(address, std::span{pair_bytes}.first(size * 2U)))
 			return {StopReason::memory_fault, address, instruction, 0, false};
-		if (!memory.read(address + size,
-				 std::span{second_bytes}.first(size)))
-			return {StopReason::memory_fault, address + size, instruction, 0,
-				false};
 		if (vector) {
 			cpu.vectors[first].bytes.fill(std::byte{});
 			cpu.vectors[second].bytes.fill(std::byte{});
-			std::copy_n(first_bytes.begin(), size,
+			std::copy_n(pair_bytes.begin(), size,
 				cpu.vectors[first].bytes.begin());
-			std::copy_n(second_bytes.begin(), size,
+			std::copy_n(pair_bytes.begin() + size, size,
 				cpu.vectors[second].bytes.begin());
 		} else {
 			auto first_value = decode_little_endian(
-				std::span{first_bytes}.first(size));
+				std::span{pair_bytes}.first(size));
 			auto second_value = decode_little_endian(
-				std::span{second_bytes}.first(size));
+				std::span{pair_bytes}.subspan(size, size));
 			if (operation == 1) {
 				first_value = static_cast<std::uint64_t>(
 					static_cast<std::int64_t>(
@@ -1591,7 +1746,6 @@ RunResult Dispatcher::load_store_pair(CpuState &cpu, GuestMemory &memory,
 			cpu.write_register(second, second_value, false);
 		}
 	} else {
-		std::array<std::byte, 32> pair_bytes{};
 		if (vector) {
 			std::copy_n(cpu.vectors[first].bytes.begin(), size,
 				pair_bytes.begin());
@@ -1637,7 +1791,18 @@ RunResult Dispatcher::load_store_simd_structure(
 	const std::size_t element_size = std::size_t{1} << size;
 	const std::size_t transfer_size = vector_size * register_count;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	if (base_register == 31U && (tagged_address & 15U) != 0)
+		return {StopReason::memory_fault, tagged_address, instruction, 0,
+			!load};
+	std::uint64_t address{};
+	std::uint64_t tag_fault{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, post_index || base_register != 31U,
+		    transfer_size, element_size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, tag_fault))
+		return {StopReason::memory_fault, tag_fault, instruction, 0, !load};
 	const unsigned first_register = instruction & 0x1fU;
 	std::array<std::byte, 64> bytes{};
 	if (load) {
@@ -1681,7 +1846,7 @@ RunResult Dispatcher::load_store_simd_structure(
 	if (post_index) {
 		const auto offset = offset_register == 0x1fU ? transfer_size :
 			cpu.read_register(offset_register, false);
-		cpu.write_register(base_register, address + offset, true);
+		cpu.write_register(base_register, tagged_address + offset, true);
 	}
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -1703,7 +1868,6 @@ RunResult Dispatcher::load_store_simd_single_structure(
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const unsigned first_register = instruction & 0x1fU;
-	const auto address = cpu.read_register(base_register, true);
 	const std::size_t vector_size = full_vector ? 16 : 8;
 	unsigned register_count;
 	std::size_t element_size;
@@ -1749,6 +1913,18 @@ RunResult Dispatcher::load_store_simd_single_structure(
 	}
 
 	const std::size_t transfer_size = element_size * register_count;
+	const auto tagged_address = cpu.read_register(base_register, true);
+	if (base_register == 31U && (tagged_address & 15U) != 0)
+		return {StopReason::memory_fault, tagged_address, instruction, 0,
+			!load};
+	std::uint64_t address{};
+	std::uint64_t tag_fault{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, post_index || base_register != 31U,
+		    transfer_size, element_size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, tag_fault))
+		return {StopReason::memory_fault, tag_fault, instruction, 0, !load};
 	std::array<std::byte, 32> bytes{};
 	if (load) {
 		if (!memory.read(address, std::span{bytes}.first(transfer_size)))
@@ -1783,7 +1959,7 @@ RunResult Dispatcher::load_store_simd_single_structure(
 	if (post_index) {
 		const auto offset = offset_register == 0x1fU ? transfer_size :
 			cpu.read_register(offset_register, false);
-		cpu.write_register(base_register, address + offset, true);
+		cpu.write_register(base_register, tagged_address + offset, true);
 	}
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -1794,7 +1970,7 @@ RunResult Dispatcher::load_store_simd_ordered(CpuState &cpu,
 {
 	const auto pc = cpu.pc;
 	const bool lane_form =
-		(instruction & 0xbf3f'fc00U) == 0x0d01'8400U;
+		(instruction & 0xbfbf'fc00U) == 0x0d01'8400U;
 	const bool load = (instruction & 0x0040'0000U) != 0U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const unsigned transfer = instruction & 31U;
@@ -1902,7 +2078,8 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 	const unsigned size_code = instruction >> 30;
 	const unsigned transfer = instruction & 0x1fU;
 	const unsigned second_transfer = (instruction >> 10) & 0x1fU;
-	const auto address = cpu.read_register((instruction >> 5) & 0x1fU, true);
+	const unsigned base_register = (instruction >> 5) & 0x1fU;
+	const auto address = cpu.read_register(base_register, true);
 	const bool ordered = (instruction & 0x0000'8000U) != 0;
 	if (pair) {
 		/* Pair-exclusive encodings fix bit 31, use Rt2 as a real transfer
@@ -1915,7 +2092,8 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 				false};
 		const std::size_t element_size = std::size_t{1} << size_code;
 		const auto total_size = element_size * 2;
-		if ((address & (total_size - 1U)) != 0)
+		if ((base_register == 31U && (address & 15U) != 0) ||
+		    (address & (total_size - 1U)) != 0)
 			return {StopReason::memory_fault, address, instruction, 0,
 				!load};
 		if (load) {
@@ -1967,6 +2145,9 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_value2 == monitored_second;
 			cpu.exclusive_address = ~std::uint64_t{0};
 			cpu.exclusive_key = 0;
+			cpu.exclusive_value = 0;
+			cpu.exclusive_value2 = 0;
+			cpu.exclusive_version = 0;
 			cpu.exclusive_size = 0;
 			if (success) {
 				std::uintptr_t stored_key = 0;
@@ -1993,7 +2174,8 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 	    (exclusive && load && status != 0x1fU))
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const std::size_t size = std::size_t{1} << size_code;
-	if ((address & (size - 1U)) != 0)
+	if ((base_register == 31U && (address & 15U) != 0) ||
+	    (address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, !load};
 	if (load) {
 		if (exclusive) {
@@ -2045,6 +2227,9 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 				cpu.exclusive_value == current;
 			cpu.exclusive_address = ~std::uint64_t{0};
 			cpu.exclusive_key = 0;
+			cpu.exclusive_value = 0;
+			cpu.exclusive_value2 = 0;
+			cpu.exclusive_version = 0;
 			cpu.exclusive_size = 0;
 			if (success) {
 				std::uintptr_t stored_key = 0;
@@ -2097,7 +2282,8 @@ RunResult Dispatcher::load_store_compare_swap(CpuState &cpu,
 	const unsigned replacement_register = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto address = cpu.read_register(base_register, true);
-	if ((address & (size - 1U)) != 0)
+	if ((base_register == 31U && (address & 15U) != 0) ||
+	    (address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 	const auto compare = cpu.read_register(compare_register, false);
 	const auto replacement = cpu.read_register(replacement_register, false);
@@ -2136,7 +2322,8 @@ RunResult Dispatcher::load_store_compare_swap_pair(CpuState &cpu,
 	const auto total_size = element_size * 2;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto address = cpu.read_register(base_register, true);
-	if ((address & (total_size - 1U)) != 0)
+	if ((base_register == 31U && (address & 15U) != 0) ||
+	    (address & (total_size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 	const auto compare_first = cpu.read_register(compare_register, false);
 	const auto compare_second = cpu.read_register(compare_register + 1, false);
@@ -2191,7 +2378,8 @@ RunResult Dispatcher::load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	const unsigned destination = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto address = cpu.read_register(base_register, true);
-	if ((address & (size - 1U)) != 0)
+	if ((base_register == 31U && (address & 15U) != 0) ||
+	    (address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 	const auto operand = cpu.read_register(source, false);
 	const bool acquire = (instruction & 0x0080'0000U) != 0 &&
@@ -2218,12 +2406,28 @@ RunResult Dispatcher::load_store_atomic_floating(CpuState &cpu,
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const std::size_t size = decoded.width / 8U;
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
-	if ((address & (size - 1U)) != 0U)
-		return {StopReason::memory_fault, address, instruction, 0, true};
+	const auto tagged_address = cpu.read_register(base_register, true);
+	/* CheckSPAlignment precedes element alignment, address translation, tag
+	 * checking, FP-state materialization, and memory observation. */
+	if (base_register == 31U && (tagged_address & 15U) != 0U)
+		return {StopReason::memory_fault, tagged_address, instruction, 0,
+			true};
+	const auto untagged_address =
+		base_register != 31U && cpu.mte_enabled ?
+		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+	if ((untagged_address & (size - 1U)) != 0U)
+		return {StopReason::memory_fault, untagged_address, instruction, 0,
+			true};
+	std::uint64_t address{};
+	std::uint64_t tag_fault{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, base_register != 31U, size, size,
+		    MemoryAccess::write, address, tag_fault))
+		return {StopReason::memory_fault, tag_fault, instruction, 0, true};
 
 	/* Capture the complete source before an aliased destination is written.
-	 * Lazy FP materialization also happens only after all decode checks pass.
+	 * Lazy FP materialization happens only after every decode, alignment,
+	 * permission, and allocation-tag check has passed.
 	 */
 	cpu.access_fp_state();
 	const unsigned source = (instruction >> 16) & 31U;
@@ -2255,7 +2459,8 @@ RunResult Dispatcher::load_store_atomic_pair_128(CpuState &cpu,
 	const unsigned operation = o3 ? 8U : opcode;
 	const unsigned first = instruction & 31U;
 	const unsigned second = (instruction >> 16) & 31U;
-	if ((o3 != 0U && opcode != 0U) ||
+	if ((instruction & 0x4000'0000U) != 0U ||
+	    (o3 != 0U && opcode != 0U) ||
 	    (operation != 1U && operation != 3U && operation != 8U) ||
 	    first == 31U || second == 31U || first == second)
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
@@ -2300,7 +2505,8 @@ RunResult Dispatcher::load_store_rcw(CpuState &cpu, GuestMemory &memory,
 	const bool soft = (instruction & 0x4000'0000U) != 0;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto address = cpu.read_register(base_register, true);
-	if ((address & 7U) != 0)
+	if ((base_register == 31U && (address & 15U) != 0) ||
+	    (address & 7U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 	const unsigned first = (instruction >> 16) & 31U;
 	const unsigned second = instruction & 31U;

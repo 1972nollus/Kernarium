@@ -1,43 +1,51 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_fixed_transform_test_support.hpp"
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_fixed_transform_test;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t three(
-	std::uint32_t operation, unsigned destination, unsigned first,
-	unsigned second)
-{
-	return operation | (second << 16) | (first << 5) | destination;
+void three_register_allocations(test::engine::EngineHarness &harness) {
+  for (unsigned operation = 0; operation < 3U; ++operation) {
+    for (unsigned reg = 0; reg < 32U; ++reg) {
+      test::check_transform64_three(
+          harness, "fixed64-valid-destination", operation, {reg, 1, 2},
+          test::state(0x1200U + operation * 97U + reg));
+      test::check_transform64_three(
+          harness, "fixed64-valid-first", operation, {3, reg, 4},
+          test::state(0x2200U + operation * 97U + reg));
+      test::check_transform64_three(
+          harness, "fixed64-valid-second", operation, {5, 6, reg},
+          test::state(0x3200U + operation * 97U + reg));
+    }
+    for (unsigned index = 0; index < test::alias3.size(); ++index)
+      test::check_transform64_three(
+          harness, "fixed64-valid-alias", operation, test::alias3[index],
+          test::state(0x4200U + operation * 17U + index));
+  }
 }
 
-[[nodiscard]] constexpr std::uint32_t schedule_zero(
-	unsigned destination, unsigned source)
-{
-	return 0xcec0'8000U | (source << 5) | destination;
-}
-
-void every_register_and_alias_allocation()
-{
-	test::Harness harness;
-	constexpr std::array operations{0xce60'8000U, 0xce60'8400U, 0xce60'8800U};
-	for (const unsigned destination : {0U, 1U, 15U, 31U})
-		for (const unsigned first : {0U, 1U, 15U, 31U})
-			for (const unsigned second : {0U, 1U, 15U, 31U})
-				for (const auto operation : operations)
-					harness.require_differential(three(operation, destination,
-						first, second), test::state(destination + first + second));
-	for (const unsigned destination : {0U, 1U, 15U, 31U})
-		for (const unsigned source : {0U, 1U, 15U, 31U})
-			harness.require_differential(schedule_zero(destination, source),
-				test::state(destination + source + 53U));
+void two_register_allocations(test::engine::EngineHarness &harness) {
+  for (unsigned reg = 0; reg < 32U; ++reg) {
+    test::check_transform64_two(harness, "fixed64-two-valid-destination",
+                                {reg, 1}, test::state(0x5200U + reg));
+    test::check_transform64_two(harness, "fixed64-two-valid-source", {2, reg},
+                                test::state(0x6200U + reg));
+  }
+  for (unsigned index = 0; index < test::alias2.size(); ++index)
+    test::check_transform64_two(harness, "fixed64-two-valid-alias",
+                                test::alias2[index],
+                                test::state(0x7200U + index));
 }
 
 } // namespace
 
-int main()
-{
-	every_register_and_alias_allocation();
-	return 0;
+int main() {
+  test::engine::EngineHarness harness;
+  three_register_allocations(harness);
+  two_register_allocations(harness);
+  test::require(harness.counts().interpreter == 369,
+                "fixed64 allocation case count");
+  harness.print_summary("arm64-simd-fixed64-allocation");
+  return 0;
 }

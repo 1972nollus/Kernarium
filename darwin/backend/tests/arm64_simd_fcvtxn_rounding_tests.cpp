@@ -1,60 +1,53 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_fcvtxn_test_support.hpp"
+#include "arm64_floating_precision_conversion_test_support.hpp"
 
-namespace test = arm64_simd_fcvtxn_test;
-namespace base = arm64_simd_test;
+#include <array>
+#include <cstdio>
+
+namespace test = arm64_floating_precision_conversion_test;
 
 namespace {
 
-void ignores_fpcr_rounding_mode()
+void round_odd_ignores_fpcr_direction_and_jams_every_boundary()
 {
-	base::Harness harness;
-	for (unsigned mode = 0; mode < 4U; ++mode) {
-		auto initial = base::state(mode);
-		initial.fpcr = mode << 22;
-		test::set_source_lane(initial, 29U, 0U,
-			0x3ff0'0000'1000'0000ULL);
-		const std::uint32_t outputs[]{0x3f80'0001U};
-		test::require_result(test::instruction(test::Form::scalar, 28U, 29U),
-			test::Form::scalar, 28U, outputs, 1U << 4, initial, harness);
-	}
-}
-
-void overflow_and_underflow_jam_to_odd()
-{
-	base::Harness harness;
-	for (const auto form : {test::Form::scalar, test::Form::vector_lower,
-	     test::Form::vector_upper}) {
-		const unsigned count = test::lanes(form);
-		auto overflow = base::state(20U + static_cast<unsigned>(form));
-		std::array<std::uint32_t, 2> maximum{};
-		for (unsigned lane = 0; lane < count; ++lane) {
-			test::set_source_lane(overflow, 29U, lane,
-				0x7fe0'0000'0000'0000ULL);
-			maximum[lane] = 0x7f7f'ffffU;
+	test::engine_tests::EngineHarness harness;
+	constexpr std::array inputs{
+		0x3ff0'0000'0000'0000ULL,
+		0x3ff0'0000'0000'0001ULL,
+		0x3ff0'0000'1000'0000ULL,
+		0x3ff0'0000'1fff'ffffULL,
+		0xbff0'0000'0000'0001ULL,
+		0xbff0'0000'1000'0000ULL,
+		0x7fef'ffff'ffff'ffffULL,
+		0x3690'0000'0000'0000ULL,
+		0x0000'0000'0000'0001ULL,
+	};
+	unsigned seed = 3'000U;
+	for (const auto form : test::round_odd_forms) {
+		for (unsigned mode = 0U; mode < 4U; ++mode) {
+			for (const auto input : inputs) {
+				auto initial = test::state(++seed);
+				initial.fpcr = mode << 22;
+				const std::array values{input};
+				test::fill_source(initial, form, {28U, 29U}, values);
+				char name[160];
+				std::snprintf(name, sizeof(name),
+					"floating-round-odd-boundary scalar=%u "
+					"upper=%u mode=%u input=%llx",
+					static_cast<unsigned>(form.scalar),
+					static_cast<unsigned>(form.upper), mode,
+					static_cast<unsigned long long>(input));
+				test::check(harness, name, form, {28U, 29U}, initial);
+			}
 		}
-		test::require_result(test::instruction(form, 28U, 29U), form, 28U,
-			std::span{maximum}.first(count), (1U << 2) | (1U << 4),
-			overflow, harness);
-
-		auto underflow = base::state(30U + static_cast<unsigned>(form));
-		std::array<std::uint32_t, 2> minimum{};
-		for (unsigned lane = 0; lane < count; ++lane) {
-			test::set_source_lane(underflow, 29U, lane,
-				0x3690'0000'0000'0000ULL);
-			minimum[lane] = 1U;
-		}
-		test::require_result(test::instruction(form, 28U, 29U), form, 28U,
-			std::span{minimum}.first(count), (1U << 3) | (1U << 4),
-			underflow, harness);
 	}
+	harness.print_summary("arm64-simd-fcvtxn-rounding");
 }
 
 } // namespace
 
 int main()
 {
-	ignores_fpcr_rounding_mode();
-	overflow_and_underflow_jam_to_odd();
+	round_odd_ignores_fpcr_direction_and_jams_every_boundary();
 	return 0;
 }

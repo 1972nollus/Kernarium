@@ -57,7 +57,11 @@ struct Fp8Instruction final {
 		result.upper = q;
 		return result;
 	}
-	/* Two-source half/single narrow forms. */
+	/* Two-source half/single narrow forms. Bit 21 is fixed zero here, but
+	 * the bit-21-set cells are allocated to older vector maximum/minimum
+	 * families. Include the fixed bit in recognition so those instructions
+	 * continue to their owning decoder instead of being shadowed as invalid
+	 * members of this family. */
 	if ((instruction & 0xbfe0'fc00U) == 0x0e40'f400U ||
 	    (instruction & 0xbfe0'fc00U) == 0x0e00'f400U) {
 		result.recognized = result.valid = true;
@@ -145,15 +149,6 @@ struct Fp8Instruction final {
 		return result;
 	}
 	return result;
-}
-
-[[nodiscard]] constexpr std::uintptr_t fp8_operand(
-	const Fp8Instruction &decoded) noexcept
-{
-	return decoded.destination |
-		(static_cast<std::uintptr_t>(decoded.first) << 8) |
-		(static_cast<std::uintptr_t>(decoded.second) << 16) |
-		(static_cast<std::uintptr_t>(decoded.index) << 24);
 }
 
 enum class FpClass : std::uint8_t { zero, finite, infinity, qnan, snan };
@@ -473,7 +468,9 @@ struct Converted16 final {
 {
 	const auto value = unpack_fp8(input, fp8_source_format(fpmr, source2));
 	if (value.type == FpClass::snan || value.type == FpClass::qnan)
-		return {static_cast<std::uint16_t>(bfloat ? 0x7fc0U : 0x7e00U),
+		return {static_cast<std::uint16_t>(
+			(bfloat ? 0x7fc0U : 0x7e00U) |
+			((fpcr & 2U) != 0U ? 0x8000U : 0U)),
 			value.type == FpClass::snan ? 1U : 0U};
 	if (value.type == FpClass::infinity)
 		return {static_cast<std::uint16_t>((value.negative ? 0x8000U : 0U) |
@@ -559,9 +556,12 @@ struct Converted8 final {
 	return {result, exceptions};
 }
 
-[[nodiscard]] constexpr std::uint32_t binary_default_nan(unsigned width) noexcept
+[[nodiscard]] constexpr std::uint32_t binary_default_nan(
+	unsigned width, std::uint32_t fpcr) noexcept
 {
-	return width == 16U ? 0x7e00U : 0x7fc0'0000U;
+	return (width == 16U ? 0x7e00U : 0x7fc0'0000U) |
+		((fpcr & 2U) != 0U ?
+			(width == 16U ? 0x8000U : 0x8000'0000U) : 0U);
 }
 
 [[nodiscard]] constexpr std::uint32_t binary_infinity(
@@ -574,7 +574,7 @@ struct Converted8 final {
 [[nodiscard]] inline std::uint32_t fp8_dot_add(
 	std::uint32_t addend_bits, unsigned width,
 	std::span<const std::uint8_t> left, std::span<const std::uint8_t> right,
-	std::uint32_t, std::uint64_t fpmr) noexcept
+	std::uint32_t fpcr, std::uint64_t fpmr) noexcept
 {
 	const auto addend = unpack_binary(addend_bits, width);
 	const auto format1 = fp8_source_format(fpmr, false);
@@ -591,7 +591,7 @@ struct Converted8 final {
 			second[i].type == FpClass::qnan;
 	}
 	if (any_nan)
-		return binary_default_nan(width);
+		return binary_default_nan(width, fpcr);
 	bool positive_infinity = addend.type == FpClass::infinity && !addend.negative;
 	bool negative_infinity = addend.type == FpClass::infinity && addend.negative;
 	bool same_signed_zero = addend.type == FpClass::zero;
@@ -624,7 +624,7 @@ struct Converted8 final {
 	}
 	invalid = invalid || (positive_infinity && negative_infinity);
 	if (invalid)
-		return binary_default_nan(width);
+		return binary_default_nan(width, fpcr);
 	if (positive_infinity)
 		return binary_infinity(width, false);
 	if (negative_infinity)

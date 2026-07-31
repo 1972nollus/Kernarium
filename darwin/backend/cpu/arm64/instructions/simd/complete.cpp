@@ -2,7 +2,9 @@
 #include "../../dispatcher.hpp"
 
 #include "../../detail/floating_compare.hpp"
+#include "../../detail/floating_indexed.hpp"
 #include "../../detail/instruction_helpers.hpp"
+#include "../../detail/integer_multiply.hpp"
 
 #include <algorithm>
 #include <array>
@@ -120,6 +122,10 @@ std::uint64_t polynomial_multiply_byte(std::uint64_t left, std::uint64_t right)
 constexpr bool valid_integer_two_register_misc(unsigned opcode,
 	bool unsigned_group, bool scalar, bool q, unsigned size)
 {
+	/* These opcode slots are vector-only reverse/byte operations. Their
+	 * scalar encodings are unallocated and must stop before register reads. */
+	if (scalar && (opcode == 0U || opcode == 1U || opcode == 5U))
+		return false;
 	switch (opcode) {
 	case 2:  // SADDLP/UADDLP
 	case 6:  // SADALP/UADALP
@@ -292,12 +298,31 @@ Floating multiply_extended(Floating left, Floating right)
 
 template<typename Floating>
 Floating fused_multiply_add(Floating left, Floating right,
-	Floating accumulator)
+	Floating accumulator, bool subtract)
 {
-	if constexpr (sizeof(Floating) == 2)
-		return __builtin_fmaf16(left, right, accumulator);
-	else
-		return std::fma(left, right, accumulator);
+	Floating result;
+#define UML_INDEXED_FUSED_ASM(suffix, operation) \
+	__asm__ volatile(#operation " %" #suffix "0, %" #suffix "1, %" #suffix \
+		"2, %" #suffix "3" : "=w"(result) : "w"(left), "w"(right), \
+		"w"(accumulator))
+	if constexpr (sizeof(Floating) == 2) {
+		if (subtract)
+			UML_INDEXED_FUSED_ASM(h, fmsub);
+		else
+			UML_INDEXED_FUSED_ASM(h, fmadd);
+	} else if constexpr (sizeof(Floating) == 4) {
+		if (subtract)
+			UML_INDEXED_FUSED_ASM(s, fmsub);
+		else
+			UML_INDEXED_FUSED_ASM(s, fmadd);
+	} else {
+		if (subtract)
+			UML_INDEXED_FUSED_ASM(d, fmsub);
+		else
+			UML_INDEXED_FUSED_ASM(d, fmadd);
+	}
+#undef UML_INDEXED_FUSED_ASM
+	return result;
 }
 
 } // namespace
@@ -307,7 +332,7 @@ RunResult Dispatcher::simd_dot_product(CpuState &cpu, GuestMemory &,
 {
 	const auto address = cpu.pc;
 	const unsigned size = (instruction >> 22) & 3U;
-	if (size != 2U)
+	if ((instruction & 0x1000'0000U) != 0U || size != 2U)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
 	const bool ordinary =
@@ -347,10 +372,15 @@ RunResult Dispatcher::simd_matrix_multiply(CpuState &cpu, GuestMemory &,
 	std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	const bool mixed =
-		(instruction & 0xffe0'fc00U) == 0x4e80'ac00U;
-	const bool both_unsigned = !mixed &&
-		(instruction & 0x2000'0000U) != 0;
+	const bool q = (instruction & 0x4000'0000U) != 0;
+	const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
+	const unsigned size = (instruction >> 22) & 3U;
+	const bool alternate = (instruction & 0x800U) != 0;
+	if (!q || size != 2U || (unsigned_group && alternate))
+		return {StopReason::illegal_instruction, address, instruction, 0,
+			false};
+	const bool mixed = alternate;
+	const bool both_unsigned = unsigned_group;
 	const bool left_unsigned = mixed || both_unsigned;
 	const bool right_unsigned = both_unsigned;
 	const unsigned destination = instruction & 31U;
@@ -434,39 +464,10 @@ RunResult Dispatcher::simd_saturating_rounding_multiply_accumulate(
 	CpuState &cpu, GuestMemory &, std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	const unsigned size = (instruction >> 22) & 3U;
-	if (size != 1U && size != 2U)
+	if (!detail::execute_saturating_rounding_multiply_accumulate(
+		    cpu, instruction))
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
-	const bool scalar = (instruction & 0x1000'0000U) != 0;
-	const bool subtract = (instruction & 0x800U) != 0;
-	const unsigned lane_bytes = 1U << size;
-	const unsigned lane_bits = lane_bytes * 8U;
-	const unsigned vector_bytes = scalar ? lane_bytes :
-		(instruction & 0x4000'0000U) != 0 ? 16U : 8U;
-	const auto left = cpu.vectors[(instruction >> 5) & 31U].bytes;
-	const auto right = cpu.vectors[(instruction >> 16) & 31U].bytes;
-	const auto accumulator = cpu.vectors[instruction & 31U].bytes;
-	std::array<std::byte, 16> result{};
-	for (unsigned offset = 0; offset < vector_bytes; offset += lane_bytes) {
-		const auto left_raw = decode_little_endian(
-			std::span{left}.subspan(offset, lane_bytes));
-		const auto right_raw = decode_little_endian(
-			std::span{right}.subspan(offset, lane_bytes));
-		const auto accumulator_raw = decode_little_endian(
-			std::span{accumulator}.subspan(offset, lane_bytes));
-		const SignedWide product = as_signed(left_raw, lane_bits) *
-			as_signed(right_raw, lane_bits) * 2;
-		SignedWide combined = as_signed(accumulator_raw, lane_bits) *
-			(SignedWide{1} << lane_bits);
-		combined += subtract ? -product : product;
-		combined += SignedWide{1} << (lane_bits - 1U);
-		const auto value = saturate_signed(
-			cpu, combined >> lane_bits, lane_bits);
-		encode_little_endian(value,
-			std::span{result}.subspan(offset, lane_bytes));
-	}
-	cpu.vectors[instruction & 31U].bytes = result;
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }
@@ -833,7 +834,9 @@ RunResult Dispatcher::simd_two_register_misc(CpuState &cpu, GuestMemory &memory,
 			const auto raw = decode_little_endian(
 				std::span{source}.subspan(input, source_size));
 			std::uint64_t value;
-			if (opcode == 18)
+			if (opcode == 18 && !unsigned_group)
+				value = raw & mask_for(lane_bits); // XTN
+			else if (opcode == 18)
 				value = saturate_unsigned(cpu, as_signed(raw, source_size * 8),
 					lane_bits); // SQXTUN
 			else if (unsigned_group)
@@ -1100,6 +1103,15 @@ RunResult Dispatcher::simd_by_indexed_element(CpuState &cpu, GuestMemory &,
 	if (floating && size == 3U && (instruction & 0x0020'0000U) != 0)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
+	if (integer_group && unsigned_group &&
+	    (operation == 13U || operation == 15U)) {
+		if (!detail::execute_saturating_rounding_multiply_accumulate(
+			    cpu, instruction))
+			return {StopReason::illegal_instruction, address, instruction,
+				0, false};
+		cpu.pc += 4;
+		return continue_after(address, instruction);
+	}
 	unsigned element_register = (instruction >> 16) & 0xfU;
 	unsigned element_index;
 	if (floating && size == 0U) {
@@ -1179,11 +1191,29 @@ RunResult Dispatcher::simd_by_indexed_element(CpuState &cpu, GuestMemory &,
 					static_cast<Integer>(decode_little_endian(
 						std::span{old_destination}.subspan(
 							lane * sizeof(Floating), sizeof(Floating)))));
-				const Floating value = operation == 1U ?
-					fused_multiply_add(left, element, accumulator) :
-					operation == 5U ? fused_multiply_add(
-						-left, element, accumulator) : unsigned_group ?
-					multiply_extended(left, element) : left * element;
+				Floating value;
+				if ((cpu.fpcr & 2U) != 0U ||
+				    (sizeof(Floating) != 2U && (cpu.fpcr & 1U) != 0U)) {
+					const auto indexed_operation = operation == 1U ?
+						detail::IndexedFloatingOperation::add :
+						operation == 5U ?
+						detail::IndexedFloatingOperation::subtract :
+						unsigned_group ?
+						detail::IndexedFloatingOperation::
+							multiply_extended :
+						detail::IndexedFloatingOperation::multiply;
+					const auto software =
+						detail::indexed_floating_software(
+							accumulator, left, element,
+							indexed_operation, cpu.fpcr);
+					value = std::bit_cast<Floating>(software.bits);
+					cpu.fpsr |= software.exceptions;
+				} else {
+					value = operation == 1U || operation == 5U ?
+						fused_multiply_add(left, element, accumulator,
+							operation == 5U) : unsigned_group ?
+						multiply_extended(left, element) : left * element;
+				}
 				encode_little_endian(std::bit_cast<Integer>(value),
 					std::span{result}.subspan(
 						lane * sizeof(Floating), sizeof(Floating)));

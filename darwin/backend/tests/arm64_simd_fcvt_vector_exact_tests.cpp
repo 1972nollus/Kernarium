@@ -1,51 +1,44 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_fcvt_vector_test_support.hpp"
+#include "arm64_floating_precision_conversion_test_support.hpp"
 
-namespace test = arm64_simd_fcvt_vector_test;
-namespace base = arm64_simd_test;
+#include <array>
+#include <cstdio>
+
+namespace test = arm64_floating_precision_conversion_test;
 
 namespace {
 
-struct ExactCase final {
-	test::Shape shape;
-	std::array<std::uint64_t, 4> inputs;
-	std::array<std::uint64_t, 4> outputs;
-};
-
-void exact_finite_special_and_signed_zero_values()
+void finite_special_zero_denormal_and_nan_classes()
 {
-	base::Harness harness;
-	const std::array cases{
-		ExactCase{test::shapes[0],
-			{0x3c00U, 0xc000U, 0x7c00U, 0x8000U},
-			{0x3f80'0000U, 0xc000'0000U, 0x7f80'0000U, 0x8000'0000U}},
-		ExactCase{test::shapes[1],
-			{0x3f80'0000U, 0xc000'0000U, 0U, 0U},
-			{0x3ff0'0000'0000'0000ULL, 0xc000'0000'0000'0000ULL, 0U, 0U}},
-		ExactCase{test::shapes[2],
-			{0x3f80'0000U, 0xc000'0000U, 0x7f80'0000U, 0x8000'0000U},
-			{0x3c00U, 0xc000U, 0x7c00U, 0x8000U}},
-		ExactCase{test::shapes[3],
-			{0x3ff0'0000'0000'0000ULL, 0xc000'0000'0000'0000ULL, 0U, 0U},
-			{0x3f80'0000U, 0xc000'0000U, 0U, 0U}},
-	};
-	for (const auto &entry : cases)
-		for (const bool upper : {false, true}) {
-			auto initial = base::state(entry.shape.source_width + upper);
-			const unsigned count = test::lanes(entry.shape);
-			for (unsigned lane = 0; lane < count; ++lane)
-				test::set_source_lane(initial, 29U, entry.shape, upper, lane,
-					entry.inputs[lane]);
-			test::require_result(test::instruction(entry.shape, upper,
-				28U, 29U), entry.shape, upper, 28U,
-				std::span{entry.outputs}.first(count), 0U, initial, harness);
+	test::engine_tests::EngineHarness harness;
+	unsigned seed = 100U;
+	for (const auto form : test::ordinary_forms) {
+		const auto inputs = test::representative_inputs(form.source_width);
+		for (unsigned index = 0U; index < inputs.size(); ++index) {
+			auto initial = test::state(++seed);
+			std::array<std::uint64_t, 4> values{};
+			for (unsigned lane = 0U; lane < test::lanes(form); ++lane)
+				values[lane] =
+					inputs[(index + lane * 3U) % inputs.size()];
+			test::fill_source(initial, form, {28U, 29U},
+				std::span{values}.first(test::lanes(form)));
+			char name[160];
+			std::snprintf(name, sizeof(name),
+				"floating-precision-exact operation=%u source=%u "
+				"destination=%u upper=%u input=%u",
+				static_cast<unsigned>(form.operation),
+				form.source_width, form.destination_width,
+				static_cast<unsigned>(form.upper), index);
+			test::check(harness, name, form, {28U, 29U}, initial);
 		}
+	}
+	harness.print_summary("arm64-simd-fcvt-vector-exact");
 }
 
 } // namespace
 
 int main()
 {
-	exact_finite_special_and_signed_zero_values();
+	finite_special_zero_denormal_and_nan_classes();
 	return 0;
 }

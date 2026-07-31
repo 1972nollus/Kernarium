@@ -1,129 +1,167 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_bfloat_conversion_test_support.hpp"
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+
 namespace test = arm64_bfloat_conversion_test;
 
 namespace {
 
-constexpr test::Registers registers{0, 1};
-constexpr auto encoded = test::instruction(test::Form::scalar, registers);
-
-test::common::arm64::CpuState scalar_state(unsigned seed, std::uint32_t input)
+void require_oracle(std::uint32_t input, std::uint32_t fpcr,
+	std::uint16_t bits, std::uint32_t flags)
 {
-	auto state = test::common::state(seed);
-	state.vectors[registers.source].bytes = {};
-	state.fpsr = 0;
-	test::set_single(state, registers.source, 0, input);
-	return state;
+	const auto actual = test::convert(input, fpcr);
+	if (actual.bits == bits && actual.flags == flags)
+		return;
+	std::fprintf(stderr,
+		"reduced-precision control oracle mismatch input=%08x "
+		"fpcr=%08x expected=%04x/%08x actual=%04x/%08x\n",
+		input, fpcr, bits, flags, actual.bits, actual.flags);
+	std::abort();
 }
 
-void all_rounding_modes()
+void run_explicit(test::engine_tests::EngineHarness &harness,
+	const char *name, std::uint32_t input, std::uint32_t fpcr,
+	std::uint16_t bits, std::uint32_t flags, unsigned seed)
 {
-	test::common::Harness harness;
-	constexpr std::array positive{std::uint16_t{0x3f80U},
-		std::uint16_t{0x3f81U}, std::uint16_t{0x3f80U},
-		std::uint16_t{0x3f80U}};
-	constexpr std::array negative{std::uint16_t{0xbf80U},
-		std::uint16_t{0xbf80U}, std::uint16_t{0xbf81U},
-		std::uint16_t{0xbf80U}};
-	for (unsigned mode = 0; mode < 4U; ++mode) {
-		auto state = scalar_state(20 + mode, 0x3f80'8000U);
-		state.fpcr = mode << 22;
-		auto actual = harness.run_interpreter(encoded, state);
-		test::common::require(test::bfloat_lane(actual,
-			registers.destination, 0) == positive[mode]);
-		test::common::require((actual.fpsr & (1U << 4)) != 0U);
-		harness.require_differential(encoded, state);
-
-		state = scalar_state(30 + mode, 0xbf80'8000U);
-		state.fpcr = mode << 22;
-		actual = harness.run_interpreter(encoded, state);
-		test::common::require(test::bfloat_lane(actual,
-			registers.destination, 0) == negative[mode]);
-		harness.require_differential(encoded, state);
+	require_oracle(input, fpcr, bits, flags);
+	for (const auto form : test::forms) {
+		auto initial = test::state(seed +
+			static_cast<unsigned>(form) * 100U);
+		initial.fpcr = fpcr;
+		initial.fpsr = 0x0800'0080U;
+		for (unsigned lane = 0U; lane < 4U; ++lane)
+			test::write_single(initial.vectors[29].bytes,
+				lane, input);
+		test::check(harness, name, form, {28U, 29U}, initial);
 	}
 }
 
-void nan_and_alternative_controls()
+void every_rounding_mode_and_tie(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto state = scalar_state(40, 0xff80'1234U);
-	auto actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0xffc0U);
-	test::common::require((actual.fpsr & 1U) != 0U);
-	harness.require_differential(encoded, state);
-
-	state.fpcr = 2U;
-	state.fpsr = 0;
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0xffc0U);
-	test::common::require(actual.fpsr == 0U);
-	harness.require_differential(encoded, state);
-
-	state.fpcr = 1U << 25;
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0x7fc0U);
-	state.fpcr = (1U << 25) | 2U;
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0xffc0U);
+	constexpr std::array positive{
+		std::uint16_t{0x3f80U}, std::uint16_t{0x3f81U},
+		std::uint16_t{0x3f80U}, std::uint16_t{0x3f80U}};
+	constexpr std::array negative{
+		std::uint16_t{0xbf80U}, std::uint16_t{0xbf80U},
+		std::uint16_t{0xbf81U}, std::uint16_t{0xbf80U}};
+	for (unsigned mode = 0U; mode < 4U; ++mode) {
+		char positive_name[128];
+		std::snprintf(positive_name, sizeof(positive_name),
+			"reduced-precision-positive-tie mode=%u", mode);
+		run_explicit(harness, positive_name, 0x3f80'8000U,
+			mode << 22U, positive[mode],
+			test::floating::fpsr_inexact, 10U + mode);
+		char negative_name[128];
+		std::snprintf(negative_name, sizeof(negative_name),
+			"reduced-precision-negative-tie mode=%u", mode);
+		run_explicit(harness, negative_name, 0xbf80'8000U,
+			mode << 22U, negative[mode],
+			test::floating::fpsr_inexact, 20U + mode);
+	}
 }
 
-void denormal_flush_and_tiny_rounding()
+void nan_default_and_alternative_controls(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto state = scalar_state(50, 0x0001'0000U);
-	auto actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 1U);
-	test::common::require(actual.fpsr == 0U);
-
-	state = scalar_state(51, 0x0001'0001U);
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 1U);
-	test::common::require((actual.fpsr & 0x18U) == 0x18U);
-	harness.require_differential(encoded, state);
-
-	state.fpcr = 1U << 24;
-	state.fpsr = 0;
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0U);
-	test::common::require((actual.fpsr & (1U << 7)) != 0U);
-	harness.require_differential(encoded, state);
-
-	state.fpcr = 1U;
-	state.fpsr = 0;
-	actual = harness.run_interpreter(encoded, state);
-	test::common::require(test::bfloat_lane(actual,
-		registers.destination, 0) == 0U);
-	test::common::require(actual.fpsr == 0U);
-	harness.require_differential(encoded, state);
+	run_explicit(harness, "reduced-precision-signaling-nan",
+		0xff80'1234U, 0U, 0xffc0U,
+		test::floating::fpsr_invalid, 30U);
+	run_explicit(harness, "reduced-precision-signaling-nan-alternative",
+		0xff80'1234U, test::floating::fpcr_ah,
+		0xffc0U, 0U, 31U);
+	run_explicit(harness, "reduced-precision-default-nan",
+		0xffc1'2345U, test::floating::fpcr_dn,
+		0x7fc0U, 0U, 32U);
+	run_explicit(harness, "reduced-precision-default-nan-alternative",
+		0xffc1'2345U,
+		test::floating::fpcr_dn | test::floating::fpcr_ah,
+		0xffc0U, 0U, 33U);
 }
 
-void scalar_nep_merges_old_destination()
+void denormal_flush_underflow_and_overflow(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::common::Harness harness;
-	auto state = scalar_state(60, 0x3f80'0000U);
-	state.fpcr = 4U;
-	const auto before = state.vectors[registers.destination].bytes;
-	const auto actual = harness.run_interpreter(encoded, state);
-	for (unsigned byte = 2U; byte < 16U; ++byte)
-		test::common::require(actual.vectors[registers.destination].bytes[byte] ==
-			before[byte]);
-	harness.require_differential(encoded, state);
+	run_explicit(harness, "reduced-precision-exact-denormal",
+		0x0001'0000U, 0U, 0x0001U, 0U, 40U);
+	run_explicit(harness, "reduced-precision-inexact-denormal",
+		0x0001'0001U, 0U, 0x0001U,
+		test::floating::fpsr_underflow |
+			test::floating::fpsr_inexact,
+		41U);
+	run_explicit(harness, "reduced-precision-standard-input-flush",
+		0x0001'0001U, test::floating::fpcr_fz, 0x0000U,
+		test::floating::fpsr_input_denormal, 42U);
+	run_explicit(harness, "reduced-precision-silent-input-flush",
+		0x0001'0001U, test::floating::fpcr_fiz, 0x0000U,
+		0U, 43U);
+	run_explicit(harness, "reduced-precision-alternative-input-flush",
+		0x0001'0001U, test::floating::fpcr_ah, 0x0000U,
+		0U, 44U);
+	run_explicit(harness, "reduced-precision-overflow",
+		0x7f7f'ffffU, 0U, 0x7f80U,
+		test::floating::fpsr_overflow |
+			test::floating::fpsr_inexact,
+		45U);
+	run_explicit(harness, "reduced-precision-overflow-toward-zero",
+		0x7f7f'ffffU, 3U << 22U, 0x7f7fU,
+		test::floating::fpsr_inexact, 46U);
+}
+
+void every_relevant_control_combination(
+	test::engine_tests::EngineHarness &harness)
+{
+	constexpr std::array control_bits{
+		test::floating::fpcr_fiz, test::floating::fpcr_ah,
+		test::floating::fpcr_nep, test::floating::fpcr_fz,
+		test::floating::fpcr_dn,
+	};
+	unsigned seed = 1000U;
+	for (const auto form : test::forms)
+		for (unsigned controls = 0U;
+		     controls < (1U << control_bits.size()); ++controls) {
+			std::uint32_t fpcr{};
+			for (unsigned bit = 0U; bit < control_bits.size(); ++bit)
+				if ((controls & (1U << bit)) != 0U)
+					fpcr |= control_bits[bit];
+			for (unsigned rounding = 0U; rounding < 4U;
+			     ++rounding) {
+				auto initial = test::state(++seed);
+				initial.fpcr = fpcr | (rounding << 22U);
+				for (unsigned lane = 0U; lane < 4U; ++lane)
+					test::write_single(
+						initial.vectors[29].bytes,
+						lane,
+						test::representative_inputs[
+							(controls +
+							 rounding +
+							 lane * 3U) %
+							test::representative_inputs
+								.size()]);
+				char name[192];
+				std::snprintf(name, sizeof(name),
+					"reduced-precision-controls form=%u "
+					"mask=%u rounding=%u",
+					static_cast<unsigned>(form),
+					controls, rounding);
+				test::check(harness, name, form,
+					{28U, 29U}, initial);
+			}
+		}
 }
 
 } // namespace
 
 int main()
 {
-	all_rounding_modes();
-	nan_and_alternative_controls();
-	denormal_flush_and_tiny_rounding();
-	scalar_nep_merges_old_destination();
+	test::engine_tests::EngineHarness harness;
+	every_rounding_mode_and_tie(harness);
+	nan_default_and_alternative_controls(harness);
+	denormal_flush_underflow_and_overflow(harness);
+	every_relevant_control_combination(harness);
+	harness.print_summary("arm64-bfloat-conversion-control");
+	return 0;
 }

@@ -71,7 +71,7 @@ RunResult Dispatcher::simd_shift_immediate(CpuState &cpu, GuestMemory &memory,
 	if (encoded < 8)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
-	if (opcode == 20)
+	if (opcode == 20 && (instruction & 0x1000'0000U) == 0)
 		return simd_shift_left_long(cpu, memory, instruction);
 	if (opcode >= 16 && opcode <= 19) {
 		const bool scalar = (instruction & 0x1000'0000U) != 0;
@@ -256,7 +256,8 @@ RunResult Dispatcher::simd_shift_immediate(CpuState &cpu, GuestMemory &memory,
 		} else if (opcode == 12 || opcode == 14) {
 			const __int128 signed_value = detail::sign_extend(source_value,
 				lane_bits);
-			const __int128 shifted = signed_value << shift;
+			const __int128 shifted = signed_value *
+				(static_cast<__int128>(1) << shift);
 			const bool unsigned_result = alternate;
 			const __int128 minimum = unsigned_result ? 0 :
 				-static_cast<__int128>(static_cast<unsigned __int128>(1) <<

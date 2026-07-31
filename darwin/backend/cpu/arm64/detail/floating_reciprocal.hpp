@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../cpu_state.hpp"
+
+#include <cstddef>
 #include <cstdint>
 
 namespace uml::backend::arm64::detail {
@@ -124,11 +127,19 @@ struct FloatingReciprocal final {
 }
 
 [[nodiscard]] constexpr std::uintptr_t floating_reciprocal_operand(
-	std::uint32_t instruction) noexcept
+	std::uint32_t instruction, const FloatingReciprocal &decoded) noexcept
 {
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
+	constexpr auto vector_base = offsetof(CpuState, vectors);
+	const auto offset = [](unsigned reg) {
+		return vector_base + reg * sizeof(VectorRegister);
+	};
+	static_assert(offset(31U) <= 0xffffU);
+	return offset(instruction & 31U) |
+		(static_cast<std::uintptr_t>(
+			offset((instruction >> 5) & 31U)) << 16) |
+		(decoded.unary ? 0U :
+			(static_cast<std::uintptr_t>(
+				offset((instruction >> 16) & 31U)) << 32));
 }
 
 } // namespace uml::backend::arm64::detail

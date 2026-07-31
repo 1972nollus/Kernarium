@@ -14,7 +14,6 @@ namespace gadgets = arm64::gadgets;
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
 
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
 namespace {
 
 void require(bool condition,
@@ -138,13 +137,9 @@ std::uint32_t test_branch(std::uint64_t pc, std::uint64_t target,
 }
 
 } // namespace
-#endif
 
 int main()
 {
-#if UML_TEST_GADGET_INTERPRETER_RUNPATH
-	return 0;
-#else
 	/* An unresolved direct edge selects the data-only fallback stream and
 	 * returns the target PC without executing arbitrary memory. */
 	{
@@ -480,5 +475,4 @@ int main()
 	}
 
 	return 0;
-#endif
 }

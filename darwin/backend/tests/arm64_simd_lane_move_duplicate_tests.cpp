@@ -1,106 +1,75 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_simd_test_support.hpp"
+#include "arm64_simd_lane_move_test_support.hpp"
 
-#include <bit>
+#include <array>
 
-namespace test = arm64_simd_test;
+namespace test = arm64_simd_lane_move_test;
 
 namespace {
 
-[[nodiscard]] constexpr std::uint32_t duplicate_element(bool scalar, bool q,
-	unsigned immediate, unsigned destination, unsigned source)
-{
-	return (scalar ? 0x5e00'0400U : 0x0e00'0400U) |
-		(!scalar && q ? 0x4000'0000U : 0U) |
-		((immediate & 31U) << 16) | ((source & 31U) << 5) |
-		(destination & 31U);
-}
+constexpr std::array register_cases{
+	test::Registers{6, 7},
+	test::Registers{7, 7},
+	test::Registers{31, 0},
+	test::Registers{0, 31},
+};
 
-[[nodiscard]] constexpr std::uint32_t duplicate_general(bool q,
-	unsigned immediate, unsigned destination, unsigned source)
+void every_element_size_lane_shape_and_alias(
+	test::engine_tests::EngineHarness &harness)
 {
-	return 0x0e00'0c00U | (q ? 0x4000'0000U : 0U) |
-		((immediate & 31U) << 16) | ((source & 31U) << 5) |
-		(destination & 31U);
-}
-
-void every_element_size_lane_shape_and_alias()
-{
-	test::Harness harness;
-	for (unsigned immediate = 0; immediate < 32; ++immediate) {
-		if ((immediate & 15U) == 0)
-			continue;
-		const unsigned shift = std::countr_zero(immediate);
-		const unsigned bytes = 1U << shift;
-		const unsigned source_offset =
-			(immediate >> (shift + 1U)) << shift;
+	for (unsigned immediate = 0; immediate < 32; ++immediate)
 		for (const bool scalar : {false, true})
 			for (const bool q : {false, true}) {
-				if (!scalar && !q && shift == 3U)
-					continue;
 				if (scalar && q)
 					continue;
-				const unsigned output_bytes = scalar ? bytes : q ? 16U : 8U;
-				for (const bool alias : {false, true}) {
-					auto initial = test::state(immediate + q * 37U);
-					const unsigned destination = alias ? 7U : 6U;
-					const unsigned source = 7U;
-					const auto source_bytes = initial.vectors[source].bytes;
-					const auto instruction = duplicate_element(scalar, q,
-						immediate, destination, source);
-					const auto result = harness.run_interpreter(
-						instruction, initial);
-					for (unsigned byte = 0; byte < output_bytes; ++byte)
-						test::require(result.vectors[destination].bytes[byte] ==
-							source_bytes[source_offset + byte % bytes]);
-					for (unsigned byte = output_bytes; byte < 16; ++byte)
-						test::require(result.vectors[destination].bytes[byte] ==
-							std::byte{});
-					harness.require_differential(instruction, initial);
+				if (!test::valid_duplicate(
+				    scalar, q, immediate))
+					continue;
+				for (const auto registers : register_cases) {
+					const auto initial = test::state(
+						immediate + q * 37U + scalar * 71U +
+						registers.destination);
+					harness.check_one("simd-duplicate-element-behavior",
+						test::duplicate_element_instruction(
+							scalar, q, immediate, registers),
+						initial,
+						test::expected_duplicate_element(initial,
+							scalar, q, immediate, registers),
+						test::native_requirements());
 				}
 			}
-	}
 }
 
-void every_general_size_shape_ignored_bit_and_zero_register()
+void every_general_size_shape_ignored_bit_and_zero_register(
+	test::engine_tests::EngineHarness &harness)
 {
-	test::Harness harness;
-	for (unsigned immediate = 0; immediate < 32; ++immediate) {
-		if ((immediate & 15U) == 0)
-			continue;
-		const unsigned shift = std::countr_zero(immediate);
-		const unsigned bytes = 1U << shift;
+	for (unsigned immediate = 0; immediate < 32; ++immediate)
 		for (const bool q : {false, true}) {
-			if (!q && shift == 3U)
+			if (!test::valid_duplicate(false, q, immediate))
 				continue;
-			for (const unsigned source : {9U, 31U}) {
-				auto initial = test::state(immediate + source);
-				initial.registers[9] = 0xf1e2'd3c4'b5a6'9788ULL;
-				const auto instruction = duplicate_general(
-					q, immediate, 4, source);
-				const auto result = harness.run_interpreter(
-					instruction, initial);
-				const std::uint64_t value = source == 31U ? 0 :
-					initial.registers[source];
-				const unsigned output_bytes = q ? 16U : 8U;
-				for (unsigned byte = 0; byte < output_bytes; ++byte)
-					test::require(result.vectors[4].bytes[byte] ==
-						static_cast<std::byte>(value >>
-							((byte % bytes) * 8U)));
-				for (unsigned byte = output_bytes; byte < 16; ++byte)
-					test::require(result.vectors[4].bytes[byte] == std::byte{});
-				harness.require_differential(instruction, initial);
+			for (const auto registers : register_cases) {
+				auto initial = test::state(
+					immediate + q * 43U + registers.source);
+				initial.registers[7] = 0xf1e2'd3c4'b5a6'9788ULL;
+				harness.check_one("simd-duplicate-general-behavior",
+					test::duplicate_general_instruction(
+						q, immediate, registers),
+					initial,
+					test::expected_duplicate_general(
+						initial, q, immediate, registers),
+					test::native_requirements());
 			}
 		}
-	}
 }
 
 } // namespace
 
 int main()
 {
-	/* Scalar DUP is the MOV (scalar) alias encoding. */
-	every_element_size_lane_shape_and_alias();
-	every_general_size_shape_ignored_bit_and_zero_register();
+	test::engine_tests::EngineHarness harness;
+	/* Scalar DUP is also the MOV (scalar) encoding. */
+	every_element_size_lane_shape_and_alias(harness);
+	every_general_size_shape_ignored_bit_and_zero_register(harness);
+	harness.print_summary("arm64-simd-lane-move-duplicate");
 	return 0;
 }

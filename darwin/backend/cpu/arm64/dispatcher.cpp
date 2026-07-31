@@ -13,6 +13,7 @@
 #include "detail/floating_complex.hpp"
 #include "detail/floating_arithmetic.hpp"
 #include "detail/floating_conversion.hpp"
+#include "detail/floating_exception.hpp"
 #include "detail/floating_fused.hpp"
 #include "detail/floating_horizontal.hpp"
 #include "detail/floating_integer_conversion.hpp"
@@ -45,7 +46,8 @@ public:
 			return;
 		__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr_) : : "memory");
 		__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr_) : : "memory");
-		const std::uint64_t fpcr = cpu_.fpcr;
+		cpu_.access_fp_state();
+		const std::uint64_t fpcr = detail::host_fpcr(cpu_.fpcr);
 		const std::uint64_t fpsr = 0;
 		__asm__ volatile("msr fpcr, %0" : : "r"(fpcr) : "memory");
 		__asm__ volatile("msr fpsr, %0" : : "r"(fpsr) : "memory");
@@ -101,7 +103,62 @@ RunResult Dispatcher::step(CpuState &cpu, GuestMemory &memory) const
 RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			      std::uint32_t instruction) const
 {
+	/* The pure dispatcher is the correctness/debug path. Import its complete
+	 * deferred image at every explicit execution boundary so every decoder,
+	 * including memory and system-register families, observes one coherent
+	 * architectural state. Production engines retain translation-time
+	 * selective materialization.
+	 */
+	cpu.access_fp_state();
+	const auto guest_fpcr = cpu.fpcr;
+	if (detail::needs_floating_exception_transaction(
+		    guest_fpcr, instruction)) {
+		const auto original_fpsr = cpu.fpsr;
+		CpuState isolated = cpu;
+		isolated.fpsr &= ~detail::fpsr_exception_cumulative_mask;
+
+		RunResult result;
+		{
+			const ScopedFloatingEnvironment floating_environment{
+				isolated, instruction};
+			result = execute_decoded(isolated, memory, instruction);
+		}
+
+		/* A reserved allocation remains illegal even when guest exception
+		 * enables are set.  It did not execute and therefore cannot turn
+		 * into a floating-point trap.
+		 */
+		if (result.reason != StopReason::continued)
+			return result;
+
+		const auto decision = detail::decide_floating_exception(
+			cpu.fpcr, original_fpsr, isolated.fpsr);
+		if (decision.traps()) {
+			cpu.fpsr = decision.committed_fpsr;
+			RunResult trap{};
+			trap.reason = StopReason::floating_point_trap;
+			trap.address = cpu.pc;
+			trap.instruction = instruction;
+			trap.syndrome = decision.syndrome;
+			return trap;
+		}
+
+		/* The isolated execution began with cumulative flags clear. Restore
+		 * the flags that predated this instruction before committing it.
+		 */
+		isolated.fpsr |=
+			original_fpsr & detail::fpsr_exception_cumulative_mask;
+		cpu = isolated;
+		return result;
+	}
+
 	const ScopedFloatingEnvironment floating_environment{cpu, instruction};
+	return execute_decoded(cpu, memory, instruction);
+}
+
+RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
+				      std::uint32_t instruction) const
+{
 	/* UDF #imm16 is the permanently undefined A64 instruction class.  It is
 	 * architecturally distinct from an otherwise valid instruction which this
 	 * emulator has not implemented yet: userspace must receive SIGILL for UDF,
@@ -124,10 +181,29 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		return bfloat_matrix_multiply(cpu, memory, instruction);
 	if (detail::decode_bfloat_multiply_long(instruction).recognized)
 		return bfloat_multiply_long(cpu, memory, instruction);
+	if ((instruction & 0xbf20'fc00U) == 0x2e00'fc00U) {
+		const unsigned size = (instruction >> 22) & 3U;
+		if (size == 0U || size == 2U)
+			return {StopReason::illegal_instruction, cpu.pc,
+				instruction, 0, false};
+	}
+	if ((instruction & 0xbf20'fc00U) == 0x2e00'ec00U) {
+		const bool q = (instruction & 0x4000'0000U) != 0U;
+		const unsigned size = (instruction >> 22) & 3U;
+		if ((!q && size == 1U) || (q && size == 3U))
+			return {StopReason::illegal_instruction, cpu.pc,
+				instruction, 0, false};
+	}
 	if (detail::decode_half_fused_long(instruction).recognized)
 		return half_fused_long(cpu, memory, instruction);
+	if (detail::reserved_half_fused_long(instruction))
+		return {StopReason::illegal_instruction, cpu.pc, instruction, 0,
+			false};
 	if (detail::decode_half_dot(instruction).recognized)
 		return half_dot(cpu, memory, instruction);
+	if (detail::reserved_half_dot_scalar_class(instruction))
+		return {StopReason::illegal_instruction, cpu.pc, instruction, 0,
+			false};
 	if (detail::decode_half_matrix(instruction).recognized)
 		return half_matrix(cpu, memory, instruction);
 	if (detail::decode_floating_reciprocal(instruction).recognized)
@@ -241,6 +317,20 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::cache_maintenance}, // dc cvau, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7520U,
 			&Dispatcher::cache_maintenance}, // ic ivau, Xt
+		DecodeEntry{0xffff'ffe0U, 0xd508'77a0U,
+			&Dispatcher::guarded_control_stack}, // GCSPOPCX
+		DecodeEntry{0xffff'ffe0U, 0xd52b'7720U,
+			&Dispatcher::guarded_control_stack}, // GCSPOPM
+		DecodeEntry{0xffff'ffe0U, 0xd508'77c0U,
+			&Dispatcher::guarded_control_stack}, // GCSPOPX
+		DecodeEntry{0xffff'ffe0U, 0xd50b'7700U,
+			&Dispatcher::guarded_control_stack}, // GCSPUSHM
+		DecodeEntry{0xffff'ffe0U, 0xd508'7780U,
+			&Dispatcher::guarded_control_stack}, // GCSPUSHX
+		DecodeEntry{0xffff'ffe0U, 0xd50b'7740U,
+			&Dispatcher::guarded_control_stack}, // GCSSS1
+		DecodeEntry{0xffff'ffe0U, 0xd52b'7760U,
+			&Dispatcher::guarded_control_stack}, // GCSSS2
 		DecodeEntry{0xfff8'0000U, 0xd508'0000U,
 			&Dispatcher::system_instruction}, // SYS
 		DecodeEntry{0xfff8'0000U, 0xd528'0000U,
@@ -252,13 +342,18 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		DecodeEntry{0xffff'f0ffU, 0xd503'30dfU, &Dispatcher::memory_barrier},
 		DecodeEntry{0xffff'f3ffU, 0xd503'323fU, &Dispatcher::memory_barrier},
 		DecodeEntry{0xffff'ffffU, 0xd503'30ffU, &Dispatcher::memory_barrier},
+		/* Only CRm==0 allocates SB. Diagnose the rest of this otherwise
+		 * unallocated barrier-opcode column as illegal instead of allowing it
+		 * to fall through as an unsupported instruction. */
+		DecodeEntry{0xffff'f0ffU, 0xd503'30ffU,
+			&Dispatcher::unavailable_extension},
 		DecodeEntry{0xfedf'f800U, 0xd61f'0800U,
 			&Dispatcher::branch_authenticated},
 		DecodeEntry{0xffff'fbffU, 0xd65f'0bffU,
 			&Dispatcher::branch_authenticated},
-		DecodeEntry{0xffc0'001fU, 0x5500'001fU,
-			&Dispatcher::unavailable_extension},
 		DecodeEntry{0xffff'fbe0U, 0xd65f'0be0U,
+			&Dispatcher::unavailable_extension},
+		DecodeEntry{0xffc0'0000U, 0x5500'0000U,
 			&Dispatcher::unavailable_extension},
 		DecodeEntry{0xffff'fc1fU, 0xd61f'0000U, &Dispatcher::branch_register},
 		DecodeEntry{0xffff'fc1fU, 0xd63f'0000U, &Dispatcher::branch_register},
@@ -285,6 +380,12 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::mte_add_sub_tag},
 		DecodeEntry{0xffc0'c000U, 0xd180'0000U,
 			&Dispatcher::mte_add_sub_tag},
+		/* The remaining members of the tag-immediate allocation are
+		 * unallocated. Keep them out of the broad immediate decoder so a
+		 * malformed instruction is diagnosed before any state is observed.
+		 */
+		DecodeEntry{0x1f80'0000U, 0x1180'0000U,
+			&Dispatcher::unavailable_extension},
 		DecodeEntry{0x1f80'0000U, 0x1100'0000U, &Dispatcher::add_sub_immediate},
 		DecodeEntry{0x1f20'0000U, 0x0b00'0000U, &Dispatcher::add_sub_register},
 		DecodeEntry{0x1fe0'0000U, 0x0b20'0000U, &Dispatcher::add_sub_register},
@@ -302,13 +403,21 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::flag_manipulation}, // rmif
 		DecodeEntry{0xffff'bc1fU, 0x3a00'080dU,
 			&Dispatcher::flag_manipulation}, // setf8/setf16
+		/* Keep reserved members of both flag-manipulation allocations on
+		 * the validating interpreter path.  Bit 10 for RMIF and bit 11 for
+		 * SETF distinguish neighboring allocated arithmetic forms.
+		 */
+		DecodeEntry{0xffe0'0400U, 0xba00'0400U,
+			&Dispatcher::flag_manipulation},
+		DecodeEntry{0xffff'0800U, 0x3a00'0800U,
+			&Dispatcher::flag_manipulation},
 		DecodeEntry{0x1f80'0000U, 0x1200'0000U, &Dispatcher::logical_immediate},
 		DecodeEntry{0x1f80'0000U, 0x1300'0000U, &Dispatcher::bitfield},
-		DecodeEntry{0xffe0'0000U, 0x93c0'0000U, &Dispatcher::extract_register},
-		DecodeEntry{0xffe0'0000U, 0x1380'0000U, &Dispatcher::extract_register},
+		DecodeEntry{0x1f80'0000U, 0x1380'0000U,
+			&Dispatcher::extract_register},
 		DecodeEntry{0x1f00'0000U, 0x0a00'0000U, &Dispatcher::logical_shifted},
-		DecodeEntry{0x3fe0'0800U, 0x1a80'0000U, &Dispatcher::conditional_select},
-		DecodeEntry{0x3fe0'0410U, 0x3a40'0000U,
+		DecodeEntry{0x3fe0'0000U, 0x1a80'0000U, &Dispatcher::conditional_select},
+		DecodeEntry{0x3fe0'0000U, 0x3a40'0000U,
 			&Dispatcher::conditional_compare},
 		/* FEAT_CPA multiply encodings occupy otherwise reserved members of
 		 * the broad data-processing (3 source) allocation.
@@ -328,6 +437,11 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		DecodeEntry{0x7fe0'fc00U, 0x1ac0'0c00U, &Dispatcher::divide},
 		DecodeEntry{0x7fe0'f000U, 0x1ac0'6000U,
 			&Dispatcher::integer_min_max},
+		/* S==1 members of the scalar min/max opcode partition are
+		 * unallocated. Route them through the validating interpreter so
+		 * debug execution reports the exact illegal instruction early. */
+		DecodeEntry{0x5fe0'f000U, 0x1ac0'6000U,
+			&Dispatcher::integer_min_max},
 		DecodeEntry{0xffe0'fc00U, 0x9ac0'3000U,
 			&Dispatcher::pointer_auth_generic},
 		DecodeEntry{0xffff'c000U, 0xdac1'0000U,
@@ -337,21 +451,19 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		/* FEAT_PAuth_LR is absent from this host-backed guest profile. PACM
 		 * retains its HINT-space NOP behavior; every non-HINT encoding is
 		 * UNDEFINED before architectural state is observed. */
-		DecodeEntry{0xffff'fbffU, 0xdac1'8bfeU,
+		DecodeEntry{0xffff'c000U, 0xdac1'8000U,
 			&Dispatcher::unavailable_extension},
-		DecodeEntry{0xffff'fbffU, 0xdac1'bbfeU,
-			&Dispatcher::unavailable_extension},
-		DecodeEntry{0xffff'fbffU, 0xdac1'a3feU,
-			&Dispatcher::unavailable_extension},
-		DecodeEntry{0xffff'fbffU, 0xdac1'83feU,
-			&Dispatcher::unavailable_extension},
-		DecodeEntry{0xffff'f81fU, 0xdac1'901eU,
-			&Dispatcher::unavailable_extension},
-		DecodeEntry{0xffc0'001fU, 0xf380'001fU,
+		DecodeEntry{0xffc0'0000U, 0xf380'0000U,
 			&Dispatcher::unavailable_extension},
 		DecodeEntry{0x7fff'8000U, 0x5ac0'0000U,
 			&Dispatcher::bit_reverse_count},
 		DecodeEntry{0x7fe0'e000U, 0x1ac0'4000U, &Dispatcher::crc32},
+		/* Every allocated data-processing (2 source) member is decoded
+		 * above. Catch its reserved opcode combinations as UNDEFINED before
+		 * the diagnostic unsupported-instruction fallback.
+		 */
+		DecodeEntry{0x5fe0'0000U, 0x1ac0'0000U,
+			&Dispatcher::unavailable_extension},
 		DecodeEntry{0xff20'fc00U, 0x1e20'2000U,
 			&Dispatcher::floating_compare},
 		DecodeEntry{0xff20'0c00U, 0x1e20'0400U,
@@ -465,9 +577,11 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_dot_product},
 		DecodeEntry{0xbf20'fc00U, 0x0e00'9c00U,
 			&Dispatcher::simd_dot_product},
-		DecodeEntry{0xdfe0'fc00U, 0x4e80'a400U,
-			&Dispatcher::simd_matrix_multiply},
-		DecodeEntry{0xffe0'fc00U, 0x4e80'ac00U,
+		DecodeEntry{0xdf20'fc00U, 0x5e00'9400U,
+			&Dispatcher::simd_dot_product}, // reserved scalar dot slot
+		DecodeEntry{0xff20'fc00U, 0x5e00'9c00U,
+			&Dispatcher::simd_dot_product}, // reserved scalar mixed slot
+		DecodeEntry{0x9f20'f400U, 0x0e00'a400U,
 			&Dispatcher::simd_matrix_multiply},
 		DecodeEntry{0xbf60'fc00U, 0x0e40'1c00U,
 			&Dispatcher::simd_floating_multiply_extended},
@@ -622,7 +736,7 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_shift_register},
 		DecodeEntry{0x9f20'fc00U, 0x0e20'5400U,
 			&Dispatcher::simd_shift_register},
-		DecodeEntry{0x8f80'fc00U, 0x0f00'a400U,
+		DecodeEntry{0x9f80'fc00U, 0x0f00'a400U,
 			&Dispatcher::simd_shift_left_long},
 		DecodeEntry{0xbf00'fc00U, 0x0f00'8400U,
 			&Dispatcher::simd_shift_right_narrow},
@@ -638,7 +752,7 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::simd_by_indexed_element},
 		/* FEAT_LRCPC3 AdvSIMD lane acquire/release aliases overlap the broad
 		 * single-structure class. Route them first so ordering is not lost. */
-		DecodeEntry{0xbf3f'fc00U, 0x0d01'8400U,
+		DecodeEntry{0xbfbf'fc00U, 0x0d01'8400U,
 			&Dispatcher::load_store_simd_ordered},
 		DecodeEntry{0xbf20'0000U, 0x0c00'0000U,
 			&Dispatcher::load_store_simd_structure},
@@ -651,13 +765,11 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		DecodeEntry{0x3f20'0c00U, 0x1d00'0800U,
 			&Dispatcher::load_store_simd_ordered},
 		DecodeEntry{0xff00'0000U, 0xd800'0000U, &Dispatcher::nop},
-		/* FEAT_GCS is not exposed by the userspace profile.  Decode its two
-		 * direct load/store encodings explicitly so they become Undefined
-		 * before an address, SP alignment, or source register is observed. */
+		/* Direct FEAT_GCS stores overlap the broad load/store allocation. */
 		DecodeEntry{0xffff'fc00U, 0xd91f'0c00U,
-			&Dispatcher::unavailable_extension}, // GCSSTR
+			&Dispatcher::guarded_control_stack}, // GCSSTR
 		DecodeEntry{0xffff'fc00U, 0xd91f'1c00U,
-			&Dispatcher::unavailable_extension}, // GCSSTTR
+			&Dispatcher::guarded_control_stack}, // GCSSTTR
 		/* FEAT_MTE tag-memory operations overlap the generic pair and
 		 * load/store classes. Route their whole allocations to the strict
 		 * handler before those broader decoders. */
@@ -694,11 +806,23 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 		 */
 		DecodeEntry{0xbf20'fc00U, 0x1920'0c00U,
 			&Dispatcher::load_store_rcw_pair},
+		/* S=1,o3=1,opc=000 is the reserved software-RCW boundary
+		 * immediately beside SWPP. Keep it in the strict RCW decoder. */
+		DecodeEntry{0xff20'fc00U, 0x5920'8000U,
+			&Dispatcher::load_store_rcw_pair},
 		DecodeEntry{0xbf20'fc00U, 0x1920'9000U,
 			&Dispatcher::load_store_rcw_pair},
 		DecodeEntry{0xbf20'fc00U, 0x1920'a000U,
 			&Dispatcher::load_store_rcw_pair},
 		DecodeEntry{0xbf20'fc00U, 0x1920'b000U,
+			&Dispatcher::load_store_rcw_pair},
+		DecodeEntry{0xbf20'fc00U, 0x1920'c000U,
+			&Dispatcher::load_store_rcw_pair},
+		DecodeEntry{0xbf20'fc00U, 0x1920'd000U,
+			&Dispatcher::load_store_rcw_pair},
+		DecodeEntry{0xbf20'fc00U, 0x1920'e000U,
+			&Dispatcher::load_store_rcw_pair},
+		DecodeEntry{0xbf20'fc00U, 0x1920'f000U,
 			&Dispatcher::load_store_rcw_pair},
 		DecodeEntry{0xbf20'fc00U, 0x1920'0800U,
 			&Dispatcher::load_store_rcw},
@@ -708,7 +832,11 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::load_store_rcw},
 		DecodeEntry{0xbf20'fc00U, 0x3820'b000U,
 			&Dispatcher::load_store_rcw},
-		DecodeEntry{0xff20'0c00U, 0x1920'0000U,
+		/* The pair RCW entries above consume every allocated o3=1 cell.
+		 * Route the complete remaining LSE128/S=1 boundary through one
+		 * strict decoder so reserved software cells diagnose UNDEFINED.
+		 */
+		DecodeEntry{0xbf20'0c00U, 0x1920'0000U,
 			&Dispatcher::load_store_atomic_pair_128},
 		DecodeEntry{0xffff'fc00U, 0xf83f'd000U,
 			&Dispatcher::load_store_64b},

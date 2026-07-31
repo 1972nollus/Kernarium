@@ -12,6 +12,23 @@ struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };
 
+struct PointerAuthKey final {
+	std::uint64_t low{};
+	std::uint64_t high{};
+
+	[[nodiscard]] constexpr bool operator==(
+		const PointerAuthKey &) const noexcept = default;
+};
+
+inline constexpr std::array<PointerAuthKey, 5>
+	deterministic_pointer_auth_keys{{
+		{0x84be'85ce'9804'e94bULL, 0xec28'0d07'4b7a'c6d3ULL},
+		{0x4a65'7b64'56cb'c3d1ULL, 0x2b7e'1516'28ae'd2a6ULL},
+		{0x09cf'4f3c'abf7'1528ULL, 0x7f4a'7c15'9e37'79b9ULL},
+		{0xd1b5'4a32'd192'ed03ULL, 0x94d0'49bb'1331'11ebULL},
+		{0x2545'f491'4f6c'dd1dULL, 0xbf58'476d'1ce4'e5b9ULL},
+	}};
+
 struct CpuState final {
 	std::array<std::uint64_t, 31> registers{};
 	std::uint64_t sp{};
@@ -77,7 +94,34 @@ struct CpuState final {
 	 * records its data-only cache cell here so the outer dispatcher can train
 	 * that exact site. This is never guest-visible architectural state. */
 	void *gadget_indirect_miss{};
-
+	/* JIT blocks using the optional native mode register retain the host value
+	 * here so returning and terminal C++ helpers can run in the host-owned
+	 * environment without losing the live guest value. */
+	std::uint64_t gadget_host_fpmr{};
+	bool gadget_fpmr_active{};
+	/* Effective EL0 Guarded Control Stack state.  The runtime does not
+	 * advertise FEAT_GCS yet, so production frames retain the architectural
+	 * reset values.  Conformance tests enable the feature explicitly. */
+	std::uint64_t gcs_pointer{};
+	bool gcs_implemented{};
+	bool gcs_push_enabled{};
+	bool gcs_store_enabled{};
+	/*
+	 * Five guest-owned 128-bit pointer-authentication keys: instruction A/B,
+	 * data A/B, and generic. Production imports these from the task register
+	 * frame, so signatures survive syscalls, migration, and vCPU changes
+	 * without ever exposing Darwin's process keys. Direct engine tests retain
+	 * deterministic defaults and may replace them with explicit test keys.
+	 */
+	std::array<PointerAuthKey, 5> pointer_auth_keys{
+		deterministic_pointer_auth_keys};
+	/*
+	 * HINT-space key operations are architectural no-ops when the base
+	 * extension is not part of the virtual CPU profile.  Unit tests leave
+	 * the complete software implementation enabled; production selects the
+	 * leaner guest profile before entering any execution engine.
+	 */
+	bool pointer_authentication_enabled{true};
 	[[nodiscard]] std::uint8_t choose_mte_tag(
 		unsigned start, unsigned offset) const noexcept
 	{

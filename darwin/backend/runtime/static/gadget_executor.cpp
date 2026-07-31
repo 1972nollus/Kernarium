@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "gadget_executor.hpp"
 
+#include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/dispatcher.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -69,6 +70,100 @@ const bool block_links_enabled = [] {
 	return enabled;
 }
 
+[[nodiscard]] constexpr bool terminal_does_not_retire(
+	arm64::gadgets::Event event) noexcept
+{
+	switch (event) {
+	case arm64::gadgets::Event::fatal:
+	case arm64::gadgets::Event::memory_fault:
+	case arm64::gadgets::Event::illegal_instruction:
+	case arm64::gadgets::Event::gcs_fault:
+	case arm64::gadgets::Event::floating_point_trap:
+		return true;
+	default:
+		return false;
+	}
+}
+
+[[nodiscard]] bool program_contains_stream(
+	const arm64::gadgets::Program &program, const void *stream) noexcept
+{
+	if (stream == nullptr || program.words().empty())
+		return false;
+	const auto marker = reinterpret_cast<std::uintptr_t>(stream);
+	const auto begin = reinterpret_cast<std::uintptr_t>(
+		program.words().data());
+	const auto end =
+		begin + program.words().size() * sizeof(std::uintptr_t);
+	return marker >= begin && marker < end;
+}
+
+[[nodiscard]] std::uint32_t effective_fpcr(
+	const arm64::CpuState &cpu) noexcept
+{
+	return cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+}
+
+void correct_terminal_instruction_count(
+	const arm64::gadgets::Program &program, arm64::gadgets::Event event,
+	std::uint64_t fault_pc, std::size_t &executed) noexcept
+{
+	if (!terminal_does_not_retire(event))
+		return;
+
+	const auto base = program.guest_address();
+	if (fault_pc < base)
+		return;
+	const auto offset = fault_pc - base;
+	if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
+		return;
+	const auto fault_index = offset / sizeof(std::uint32_t);
+	if (fault_index >= program.instruction_count())
+		return;
+	const auto unretired =
+		program.instruction_count() - static_cast<std::size_t>(fault_index);
+	if (executed < unretired)
+		return;
+
+	/* The assembly engine precharges a block's full translated length.  A
+	 * non-retiring terminal stores its own PC, allowing the cold C++ boundary
+	 * to subtract the current block's unexecuted suffix. Counts accumulated
+	 * before a linked successor are retained.
+	 */
+	executed -= unretired;
+}
+
+void correct_fpcr_enable_instruction_count(
+	const arm64::gadgets::Program &program, arm64::gadgets::Event event,
+	const arm64::CpuState &cpu, std::size_t &executed) noexcept
+{
+	if (event != arm64::gadgets::Event::continued ||
+	    (effective_fpcr(cpu) &
+	     arm64::detail::fpcr_exception_enable_mask) == 0U)
+		return;
+
+	const auto base = program.guest_address();
+	if (cpu.pc <= base)
+		return;
+	const auto offset = cpu.pc - base;
+	if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
+		return;
+	const auto retired = offset / sizeof(std::uint32_t);
+	if (retired > program.instruction_count())
+		return;
+	const auto unretired =
+		program.instruction_count() - static_cast<std::size_t>(retired);
+	if (executed < unretired)
+		return;
+
+	/* An FPCR write that newly enables traps exits at its translated
+	 * fallthrough PC. It retires, but later words in the precharged block do
+	 * not. Unresolved control-flow exits cannot satisfy the enabled-state
+	 * condition because enabled entries use the one-instruction cold path.
+	 */
+	executed -= unretired;
+}
+
 void trace_block(std::uint64_t pc, const arm64::gadgets::BuildResult &built,
 		 arm64::gadgets::Event event) noexcept
 {
@@ -114,6 +209,12 @@ public:
 		for (std::size_t index = 0; index < source.size(); ++index)
 			writes_.insert_or_assign(address + index, source[index]);
 		return true;
+	}
+
+	bool validate_access(std::uint64_t address, std::size_t size,
+		arm64::MemoryAccess access) override
+	{
+		return memory_.validate_access(address, size, access);
 	}
 
 	arm64::MemoryFault last_fault() const noexcept override
@@ -191,6 +292,11 @@ extern "C" void uml_arm64_gadget_fp_link_entry();
 
 class GadgetExecutor::ProgramCache final {
 public:
+	ProgramCache()
+		: stream_index_{std::make_unique<StreamIndexSet[]>(
+			  stream_index_set_count)}
+	{}
+
 	void invalidate() noexcept
 	{
 		indirect_links_.clear();
@@ -202,6 +308,9 @@ public:
 			if (slab)
 				for (auto &slot : slab->slots)
 					slot.epoch = 0;
+		for (std::size_t set = 0; set < stream_index_set_count; ++set)
+			for (auto &entry : stream_index_[set].entries)
+				entry = {};
 		epoch_ = 1;
 	}
 
@@ -215,6 +324,40 @@ public:
 			const auto &slot = slab->slots[location.offset + way];
 			if (slot.epoch == epoch_ && slot.pc == pc)
 				return &*slot.result;
+		}
+		return nullptr;
+	}
+
+	[[nodiscard]] const BuildResult *find_stream(
+		const void *stream) const noexcept
+	{
+		if (stream == nullptr)
+			return nullptr;
+		const auto marker = reinterpret_cast<std::uintptr_t>(stream);
+		const auto &set = stream_index_[stream_index_location(marker)];
+		for (const auto &entry : set.entries) {
+			const auto *slot = entry.slot;
+			if (slot != nullptr && slot->epoch == epoch_ &&
+			    slot->activation == entry.activation &&
+			    slot->result &&
+			    program_contains_stream(slot->result->program, stream))
+				return &*slot->result;
+		}
+
+		/*
+		 * The fixed index deliberately permits replacement under unusual
+		 * host-address collisions. Preserve exact terminal accounting with
+		 * a cold correctness fallback; ordinary linked exits find one of
+		 * four allocation-free entries above.
+		 */
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots)
+				if (slot.epoch == epoch_ && slot.result &&
+				    program_contains_stream(
+					    slot.result->program, stream))
+					return &*slot.result;
 		}
 		return nullptr;
 	}
@@ -282,7 +425,10 @@ public:
 		slot.result.emplace(std::move(result));
 		slot.pc = pc;
 		slot.epoch = epoch_;
-		activate(pc, *slot.result);
+		++slot.activation;
+		if (slot.activation == 0)
+			slot.activation = 1;
+		activate(pc, slot);
 		return *slot.result;
 	}
 
@@ -297,11 +443,15 @@ private:
 	static constexpr std::size_t slot_count = ways * set_count;
 	static constexpr std::size_t slab_slots = 256;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
+	static constexpr unsigned stream_index_granule_shift = 6;
+	static constexpr std::size_t stream_index_ways = 4;
+	static constexpr std::size_t stream_index_set_count = 16 * 1024;
 
 	struct Slot final {
 		std::optional<BuildResult> result;
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
+		std::uint64_t activation{};
 	};
 
 	struct Slab final {
@@ -312,6 +462,19 @@ private:
 		std::size_t set;
 		std::size_t slab;
 		std::size_t offset;
+	};
+
+	struct StreamIndexEntry final {
+		/* A reused cache slot changes activation, invalidating every old
+		 * index entry without walking the former program's stream.
+		 */
+		const Slot *slot{};
+		std::uint64_t activation{};
+	};
+
+	struct StreamIndexSet final {
+		std::array<StreamIndexEntry, stream_index_ways> entries;
+		std::uint8_t next_replacement{};
 	};
 
 	struct LinkRecord final {
@@ -357,15 +520,76 @@ private:
 		};
 	}
 
+	[[nodiscard]] static std::size_t stream_index_location(
+		std::uintptr_t stream) noexcept
+	{
+		const auto chunk = stream >> stream_index_granule_shift;
+		const auto mixed = chunk ^ (chunk >> 14) ^ (chunk >> 28);
+		return static_cast<std::size_t>(mixed) &
+			(stream_index_set_count - 1);
+	}
+
+	template <typename Operation>
+	static void for_each_stream_index_set(
+		const arm64::gadgets::Program &program, Operation operation)
+	{
+		const auto words = program.words();
+		if (words.empty())
+			return;
+		const auto begin = reinterpret_cast<std::uintptr_t>(words.data());
+		const auto last = begin +
+			words.size() * sizeof(std::uintptr_t) - 1;
+		auto chunk = begin >> stream_index_granule_shift;
+		const auto last_chunk = last >> stream_index_granule_shift;
+		for (;;) {
+			operation(stream_index_location(
+				chunk << stream_index_granule_shift));
+			if (chunk == last_chunk)
+				break;
+			++chunk;
+		}
+	}
+
+	void index_stream(const Slot &slot)
+	{
+		const auto &result = *slot.result;
+		for_each_stream_index_set(result.program, [&](std::size_t location) {
+			auto &set = stream_index_[location];
+			std::size_t selected =
+				set.next_replacement & (stream_index_ways - 1);
+			for (std::size_t way = 0; way < stream_index_ways; ++way) {
+				const auto &entry = set.entries[way];
+				const bool current =
+					entry.slot != nullptr &&
+					entry.slot->epoch == epoch_ &&
+					entry.slot->activation ==
+						entry.activation &&
+					entry.slot->result;
+				if (!current || entry.slot == &slot) {
+					selected = way;
+					break;
+				}
+			}
+			set.entries[selected] = {
+				.slot = &slot,
+				.activation = slot.activation,
+			};
+			set.next_replacement = static_cast<std::uint8_t>(
+				(selected + 1) & (stream_index_ways - 1));
+		});
+	}
+
 	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
 	{
 		return links_.try_emplace(pc, pc).first->second;
 	}
 
-	void activate(std::uint64_t pc, const BuildResult &result)
+	void activate(std::uint64_t pc, const Slot &slot)
 	{
+		const auto &result = *slot.result;
 		if (!result.complete || result.program.instruction_count() == 0)
 			return;
+		index_stream(slot);
 		auto &record = link_record(pc);
 		auto *target = &record.link;
 		if (result.program.accesses_fp_state()) {
@@ -398,12 +622,15 @@ private:
 	std::unordered_map<std::uint64_t, LinkRecord> links_;
 	std::unordered_map<std::uint64_t,
 		arm64::gadgets::IndirectLink> indirect_links_;
+	std::unique_ptr<StreamIndexSet[]> stream_index_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
 	std::uint64_t epoch_{1};
 };
 
-GadgetExecutor::GadgetExecutor() : programs_{std::make_unique<ProgramCache>()}
+GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
+	: programs_{std::make_unique<ProgramCache>()},
+	  build_options_{build_options}
 {
 }
 
@@ -468,6 +695,7 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	std::size_t &executed)
 {
 	executed = 0;
+	floating_point_syndrome_ = 0;
 	auto *context = execution_context(generation);
 	if (context == nullptr)
 		return arm64::gadgets::Event::fatal;
@@ -486,6 +714,10 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 		mapping_generation_ = generation;
 		mapping_changes_ = sequences.mapping_changes;
 	}
+	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+	if ((guest_fpcr &
+	     arm64::detail::fpcr_exception_enable_mask) != 0U)
+		return run_trap_enabled_instruction(cpu, memory, executed);
 	prepare_cache(generation, sequences.code_changes);
 	std::optional<CachedResult> selected;
 	std::optional<BuildResult> uncached;
@@ -506,11 +738,15 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 		auto decoded = [&] {
 			const auto window = std::span{instructions}.first(count);
 			if (verification_requested)
-				return arm64::gadgets::Builder{}.build(cpu.pc, window);
+				return arm64::gadgets::Builder{}.build(
+					cpu.pc, window, {},
+					std::pmr::get_default_resource(), {},
+					build_options_);
 			if (!block_links_enabled)
 				return arm64::gadgets::Builder{}.build(
 					cpu.pc, window, {},
-					programs_->program_storage());
+					programs_->program_storage(), {},
+					build_options_);
 			return arm64::gadgets::Builder{}.build(
 				cpu.pc, window,
 				[this](std::uint64_t pc) {
@@ -519,7 +755,8 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 				programs_->program_storage(),
 				[this](std::uint64_t source_pc) {
 					return programs_->indirect_link(source_pc);
-				});
+				},
+				build_options_);
 		}();
 		if (verification_requested) {
 			uncached.emplace(std::move(decoded));
@@ -547,12 +784,23 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	 * Leave exclusive blocks on the real dispatcher path and keep verifying
 	 * every surrounding block; otherwise the verifier reports a false mismatch
 	 * at ordinary LDXR/STXR retry loops before userspace starts.
+	 *
+	 * A register FPCR write can also end the gadget block early when its value
+	 * enables traps. The reference run cannot predict that shortened boundary
+	 * from the original multi-instruction budget, so leave this rare block out
+	 * of overlay verification as well.
 	 */
 	const bool verifying = verification_requested && instructions_loaded &&
 		std::none_of(instructions.begin(),
 			instructions.begin() + built.program.instruction_count(),
 			[](std::uint32_t instruction) {
-				return (instruction & 0x3f00'0000U) == 0x0800'0000U;
+				const bool exclusive =
+					(instruction & 0x3f00'0000U) ==
+						0x0800'0000U;
+				const bool writes_fpcr =
+					(instruction & 0xffff'ffe0U) ==
+						0xd51b'4400U;
+				return exclusive || writes_fpcr;
 			});
 	std::unique_ptr<arm64::CpuState> expected;
 	arm64::RunResult expected_result{};
@@ -573,6 +821,29 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 		arm64::gadgets::execute(built.program, cpu, tlb_, executed) :
 		arm64::gadgets::execute_preserving_native_fp_environment(
 			built.program, cpu, tlb_, executed);
+	const bool fpcr_enable_exit =
+		event == arm64::gadgets::Event::continued &&
+		(effective_fpcr(cpu) &
+		 arm64::detail::fpcr_exception_enable_mask) != 0U;
+	const bool count_exit =
+		terminal_does_not_retire(event) || fpcr_enable_exit;
+	if (count_exit) {
+		const auto *current_program = &built.program;
+		const auto *exit_stream = cpu.gadget_indirect_miss;
+		if (!program_contains_stream(*current_program, exit_stream)) {
+			if (const auto *cached =
+				    programs_->find_stream(exit_stream);
+			    cached != nullptr)
+				current_program = &cached->program;
+		}
+		if (fpcr_enable_exit)
+			correct_fpcr_enable_instruction_count(
+				*current_program, event, cpu, executed);
+		else
+			correct_terminal_instruction_count(
+				*current_program, event, cpu.pc, executed);
+		cpu.gadget_indirect_miss = nullptr;
+	}
 	if (cpu.gadget_indirect_miss != nullptr) {
 		programs_->learn_indirect(
 			*static_cast<arm64::gadgets::IndirectLink *>(
@@ -636,6 +907,114 @@ arm64::gadgets::Event GadgetExecutor::run_block(
 	return event;
 }
 
+arm64::gadgets::Event GadgetExecutor::run_trap_enabled_instruction(
+	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
+{
+	/* Guest trap enables are intentionally a cold execution mode.  Limiting
+	 * every translated run to one instruction guarantees that an integer or
+	 * memory instruction cannot carry execution past a later FP/SIMD
+	 * data-processing instruction in the same cached block.
+	 */
+	cpu.gadget_indirect_miss = nullptr;
+	arm64::gadgets::restore_native_fp_environment(cpu);
+	std::uint32_t instruction = 0;
+	auto encoded = std::as_writable_bytes(std::span{&instruction, 1});
+	if (!memory.fetch(cpu.pc, encoded)) {
+		const auto fault = memory.last_fault();
+		tlb_.fault_address = fault.address;
+		tlb_.fault_access = fault.access == arm64::MemoryAccess::write ?
+			arm64::gadgets::Access::write :
+			arm64::gadgets::Access::read;
+		return arm64::gadgets::Event::memory_fault;
+	}
+
+	auto built = arm64::gadgets::Builder{}.build(
+		cpu.pc, std::span{&instruction, 1}, {},
+		std::pmr::get_default_resource(), {}, build_options_);
+	if (!built.complete || built.program.instruction_count() != 1) {
+		std::fprintf(stderr,
+			"Darwin static unsupported instruction pc=%#llx value=%#x compiled=%zu\n",
+			static_cast<unsigned long long>(built.stop_address),
+			built.stop_instruction,
+			built.program.instruction_count());
+		if (trace_blocks_enabled)
+			trace_block(cpu.pc, built, arm64::gadgets::Event::fatal);
+		cpu.pc = built.stop_address;
+		return arm64::gadgets::Event::fatal;
+	}
+
+	const bool transactional =
+		arm64::detail::needs_floating_exception_transaction(
+			cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr,
+			instruction);
+	if (!transactional) {
+		const auto event = arm64::gadgets::execute(
+			built.program, cpu, tlb_, executed);
+		correct_terminal_instruction_count(
+			built.program, event, cpu.pc, executed);
+		cpu.gadget_indirect_miss = nullptr;
+		if (trace_blocks_enabled)
+			trace_block(built.program.guest_address(), built, event);
+		/* A one-instruction fallthrough ends in Builder's synthetic
+		 * interrupt gadget.  It is an internal cold-mode boundary, not a
+		 * guest-visible fairness interrupt.
+		 */
+		return event == arm64::gadgets::Event::interrupt ?
+			arm64::gadgets::Event::continued : event;
+	}
+
+	cpu.access_fp_state();
+	const auto original_fpsr = cpu.fpsr;
+	arm64::CpuState isolated = cpu;
+	isolated.fpsr &=
+		~arm64::detail::fpsr_exception_cumulative_mask;
+
+	std::size_t isolated_executed = 0;
+	const auto event = arm64::gadgets::execute(
+		built.program, isolated, tlb_, isolated_executed);
+	if (event != arm64::gadgets::Event::interrupt &&
+	    event != arm64::gadgets::Event::continued) {
+		/* Reserved allocations and other non-executing events retain the
+		 * live architectural state, just like the strict interpreter.
+		 */
+		correct_terminal_instruction_count(
+			built.program, event, isolated.pc, isolated_executed);
+		isolated.gadget_indirect_miss = nullptr;
+		executed = isolated_executed;
+		if (trace_blocks_enabled)
+			trace_block(built.program.guest_address(), built, event);
+		return event;
+	}
+
+	const auto decision = arm64::detail::decide_floating_exception(
+		cpu.fpcr, original_fpsr, isolated.fpsr);
+	if (decision.traps()) {
+		cpu.fpsr = decision.committed_fpsr;
+		floating_point_syndrome_ = decision.syndrome;
+		executed = 0;
+		if (trace_blocks_enabled)
+			trace_block(built.program.guest_address(), built,
+				arm64::gadgets::Event::floating_point_trap);
+		return arm64::gadgets::Event::floating_point_trap;
+	}
+
+	/* The scratch execution began with cumulative flags clear.  Preserve
+	 * every other FPSR field produced by the gadget while restoring the
+	 * pre-existing cumulative state before committing the transaction.
+	 */
+	isolated.fpsr =
+		(isolated.fpsr &
+		 ~arm64::detail::fpsr_exception_cumulative_mask) |
+		(decision.committed_fpsr &
+		 arm64::detail::fpsr_exception_cumulative_mask);
+	cpu = isolated;
+	executed = isolated_executed;
+	if (trace_blocks_enabled)
+		trace_block(built.program.guest_address(), built,
+			arm64::gadgets::Event::continued);
+	return arm64::gadgets::Event::continued;
+}
+
 std::uint64_t GadgetExecutor::fault_address() const noexcept
 {
 	return tlb_.fault_address;
@@ -644,6 +1023,11 @@ std::uint64_t GadgetExecutor::fault_address() const noexcept
 arm64::gadgets::Access GadgetExecutor::fault_access() const noexcept
 {
 	return tlb_.fault_access;
+}
+
+std::uint32_t GadgetExecutor::floating_point_syndrome() const noexcept
+{
+	return floating_point_syndrome_;
 }
 
 } // namespace uml::backend

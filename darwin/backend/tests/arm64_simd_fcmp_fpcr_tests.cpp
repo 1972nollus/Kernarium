@@ -4,103 +4,135 @@
 #include <array>
 
 namespace test = arm64_simd_fcmp_test;
-namespace base = arm64_simd_test;
 
 namespace {
 
-struct ControlCase final {
-	std::uint32_t fpcr;
-	std::uint32_t positive_nzcv;
-	std::uint32_t exceptions;
+inline constexpr std::array unrelated_control_bits{
+	0U,
+	1U << 22,
+	2U << 22,
+	3U << 22,
+	1U << 25,
+	(3U << 22) | (1U << 25),
 };
 
-void half_precision_fz16_and_afp_controls()
+void half_precision_control_matrix()
 {
-	base::Harness harness;
-	const std::array cases{
-		ControlCase{0U, 0x2000'0000U, 0U},
-		ControlCase{1U, 0x2000'0000U, 0U},
-		ControlCase{2U, 0x2000'0000U, 0U},
-		ControlCase{3U, 0x2000'0000U, 0U},
-		ControlCase{1U << 19, 0x6000'0000U, 0U},
-		ControlCase{(1U << 19) | 3U, 0x6000'0000U, 0U},
-	};
-	for (const auto &entry : cases)
-		for (const bool negative : {false, true}) {
-			auto initial = base::state(entry.fpcr + negative);
-			initial.fpcr = entry.fpcr;
-			initial.fpsr = 0x10U;
-			test::put(initial, 29U, 2U,
-				test::minimum_subnormal(2U, negative));
-			test::require_result(test::direct_instruction(2U, false, true,
-				29U), negative && entry.positive_nzcv != 0x6000'0000U ?
-					0x8000'0000U : entry.positive_nzcv,
-				entry.exceptions, initial, harness);
-		}
+	test::engine_tests::EngineHarness harness;
+	const auto &format = test::formats[0];
+	for (unsigned alternative = 0; alternative < 8U; ++alternative)
+		for (const bool flush_half : {false, true})
+			for (const bool standard_flush : {false, true})
+				for (const auto unrelated : unrelated_control_bits)
+					for (const bool negative : {false, true})
+						for (const bool signaling : {false, true}) {
+							auto initial = test::state(
+								alternative * 47U +
+								flush_half * 31U +
+								standard_flush * 23U +
+								unrelated + negative * 11U +
+								signaling);
+							initial.fpcr = alternative |
+								(flush_half ? 1U << 19 : 0U) |
+								(standard_flush ?
+									1U << 24 : 0U) |
+								unrelated;
+							initial.fpsr = 0x0800'0010U;
+							test::put(initial, 29U, format,
+								format.minimum_subnormal |
+									(negative ?
+										format.sign : 0U));
+							test::check_direct(harness,
+								"FCMP/FCMPE half control state",
+								format, signaling, true,
+								29U, 0U, initial);
+						}
+	harness.print_summary("arm64-simd-fcmp-fpcr-half");
 }
 
-void single_and_double_afp_subnormal_matrix()
+void single_and_double_control_matrix()
 {
-	base::Harness harness;
-	const std::array cases{
-		ControlCase{0U, 0x2000'0000U, 0U},
-		ControlCase{1U << 24, 0x6000'0000U, 1U << 7},
-		ControlCase{1U, 0x6000'0000U, 0U},
-		ControlCase{(1U << 24) | 1U, 0x6000'0000U, 1U << 7},
-		ControlCase{2U, 0x2000'0000U, 1U << 7},
-		ControlCase{(1U << 24) | 2U, 0x2000'0000U, 1U << 7},
-		ControlCase{3U, 0x6000'0000U, 0U},
-		ControlCase{(1U << 24) | 3U, 0x6000'0000U, 0U},
-	};
-	for (const unsigned bytes : {4U, 8U})
-		for (const auto &entry : cases)
-			for (const bool negative : {false, true}) {
-				auto initial = base::state(bytes + entry.fpcr + negative);
-				initial.fpcr = entry.fpcr;
-				initial.fpsr = 0x0800'0010U;
-				test::put(initial, 29U, bytes,
-					test::minimum_subnormal(bytes, negative));
-				const auto expected = negative &&
-					entry.positive_nzcv != 0x6000'0000U ?
-					0x8000'0000U : entry.positive_nzcv;
-				test::require_result(test::direct_instruction(bytes,
-					false, true, 29U), expected, entry.exceptions,
-					initial, harness);
-			}
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : {test::formats[1], test::formats[2]})
+		for (unsigned alternative = 0; alternative < 8U; ++alternative)
+			for (const bool standard_flush : {false, true})
+				for (const auto unrelated : unrelated_control_bits)
+					for (const bool negative : {false, true})
+						for (const bool signaling : {false, true})
+							for (const bool zero : {false, true}) {
+								auto initial = test::state(
+									format.bytes * 53U +
+									alternative * 43U +
+									standard_flush * 29U +
+									unrelated + negative * 13U +
+									signaling * 7U + zero);
+								initial.fpcr = alternative |
+									(standard_flush ?
+										1U << 24 : 0U) |
+									unrelated;
+								initial.fpsr = 0x0800'0010U;
+								test::put(initial, 29U, format,
+									format.minimum_subnormal |
+										(negative ?
+											format.sign : 0U));
+								test::put(initial, 30U, format,
+									format.minimum_normal);
+								test::check_direct(harness,
+									"FCMP/FCMPE control state",
+									format, signaling, zero,
+									29U, 30U, initial);
+							}
+	harness.print_summary("arm64-simd-fcmp-fpcr-ordinary");
 }
 
-void nan_short_circuit_and_unpack_exceptions()
+void nan_and_subnormal_processing_order()
 {
-	base::Harness harness;
-	for (const unsigned bytes : {4U, 8U}) {
-		/* Ordinary FZ raises IDC while unpacking the denormal even though the
-		 * comparison later discovers a quiet NaN. */
-		auto fz = base::state(bytes);
-		fz.fpcr = 1U << 24;
-		fz.fpsr = 0x10U;
-		test::put(fz, 29U, bytes, test::quiet_nan(bytes));
-		test::put(fz, 30U, bytes, test::minimum_subnormal(bytes));
-		test::require_result(test::direct_instruction(bytes, false, false,
-			29U, 30U), 0x3000'0000U, 1U << 7, fz, harness);
-
-		/* AH defers IDC to FPProcessDenorms, which is skipped for unordered
-		 * comparisons. A signaling compare therefore adds IOC only. */
-		auto ah = base::state(bytes + 1U);
-		ah.fpcr = 2U;
-		ah.fpsr = 0x80U;
-		test::put(ah, 29U, bytes, test::quiet_nan(bytes));
-		test::put(ah, 30U, bytes, test::minimum_subnormal(bytes));
-		test::require_result(test::direct_instruction(bytes, true, false,
-			29U, 30U), 0x3000'0000U, 1U, ah, harness);
-	}
+	test::engine_tests::EngineHarness harness;
+	for (const auto &format : test::formats)
+		for (unsigned alternative = 0; alternative < 4U; ++alternative)
+			for (const bool standard_flush : {false, true})
+				for (const bool flush_half : {false, true})
+					for (const bool signaling : {false, true})
+						for (const auto nan : {
+							format.quiet_nan,
+							format.signaling_nan})
+							for (const bool nan_first :
+							     {false, true}) {
+								auto initial = test::state(
+									format.bytes * 59U +
+									alternative * 37U +
+									standard_flush * 19U +
+									flush_half * 13U +
+									signaling * 7U +
+									nan_first);
+								initial.fpcr = alternative |
+									(standard_flush ?
+										1U << 24 : 0U) |
+									(flush_half ?
+										1U << 19 : 0U);
+								initial.fpsr = 0x0800'0010U;
+								test::put(initial, 29U, format,
+									nan_first ?
+										nan :
+										format.minimum_subnormal);
+								test::put(initial, 30U, format,
+									nan_first ?
+										format.minimum_subnormal :
+										nan);
+								test::check_direct(harness,
+									"FCMP/FCMPE NaN processing order",
+									format, signaling, false,
+									29U, 30U, initial);
+							}
+	harness.print_summary("arm64-simd-fcmp-fpcr-nan-order");
 }
 
 } // namespace
 
 int main()
 {
-	half_precision_fz16_and_afp_controls();
-	single_and_double_afp_subnormal_matrix();
-	nan_short_circuit_and_unpack_exceptions();
+	half_precision_control_matrix();
+	single_and_double_control_matrix();
+	nan_and_subnormal_processing_order();
 	return 0;
 }

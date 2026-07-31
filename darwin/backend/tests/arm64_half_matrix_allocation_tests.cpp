@@ -5,29 +5,31 @@ namespace test = arm64_half_matrix_test;
 
 int main()
 {
-	test::common::Harness harness;
+	test::engine_tests::EngineHarness harness;
+	test::ExpectedCounts counts{};
 	unsigned seed{};
 	for (const bool widening : {false, true})
-		for (const auto registers : test::register_cases)
-			harness.require_differential(test::instruction(widening, registers),
-				test::common::state(++seed));
+		for (const auto registers : test::register_aliases)
+			test::check(harness, "half-matrix-allocation",
+				widening, registers, test::state(++seed), counts);
 
-	using test::common::arm64::detail::decode_half_matrix;
-	test::common::require(
-		test::instruction(false, {0, 0, 0}) == 0x4ec0'ec00U);
-	test::common::require(
-		test::instruction(true, {0, 0, 0}) == 0x4e40'ec00U);
-	test::common::require(decode_half_matrix(0x4ec2'ec20U).valid);
-	test::common::require(!decode_half_matrix(0x0ec2'ec20U).valid);
-	test::common::require(decode_half_matrix(0x2ec2'ec20U).recognized);
-	test::common::require(!decode_half_matrix(0x2ec2'ec20U).valid);
-	test::common::require(decode_half_matrix(0x6ec2'ec20U).recognized);
-	test::common::require(!decode_half_matrix(0x6ec2'ec20U).valid);
-	test::common::require(decode_half_matrix(0x4e45'ec83U).widening);
-	test::common::require(!decode_half_matrix(0x0e45'ec83U).valid);
-	test::common::require(!decode_half_matrix(0x6e40'ec00U).recognized);
-	harness.require_illegal(0x0ec2'ec20U);
-	harness.require_illegal(0x2ec2'ec20U);
-	harness.require_illegal(0x6ec2'ec20U);
-	harness.require_illegal(0x0e45'ec83U);
+	using test::arm64::detail::decode_half_matrix;
+	test::require(test::instruction(false, {0U, 0U, 0U}) ==
+		0x4ec0'ec00U, "wrong non-widening encoding");
+	test::require(test::instruction(true, {0U, 0U, 0U}) ==
+		0x4e40'ec00U, "wrong widening encoding");
+	test::require(decode_half_matrix(0x4ec2'ec20U).valid,
+		"valid non-widening allocation was rejected");
+	test::require(!decode_half_matrix(0x0ec2'ec20U).valid,
+		"Q=0 non-widening allocation was accepted");
+	test::require(decode_half_matrix(0x2ec2'ec20U).recognized &&
+		!decode_half_matrix(0x2ec2'ec20U).valid,
+		"U=1 non-widening allocation was not reserved");
+	test::require(decode_half_matrix(0x4e45'ec83U).widening,
+		"valid widening allocation was rejected");
+	test::require(!decode_half_matrix(0x0e45'ec83U).valid,
+		"Q=0 widening allocation was accepted");
+
+	test::require_counts(harness, counts);
+	harness.print_summary("arm64-half-matrix-allocation");
 }

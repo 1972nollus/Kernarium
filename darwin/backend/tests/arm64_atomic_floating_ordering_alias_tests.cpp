@@ -1,93 +1,144 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_atomic_floating_test_support.hpp"
 
+#include <cstdio>
+
 namespace fp_atomic = arm64_atomic_floating_test;
-namespace test = arm64_load_store_test;
+namespace engine = uml::backend::tests;
+
+namespace {
+
+void every_named_variant(
+	engine::EngineHarness &harness, fp_atomic::ExpectedCounts &counts)
+{
+	unsigned ordinal = 0;
+	for (const auto &shape : fp_atomic::widths)
+		for (const auto operation : fp_atomic::operations) {
+			for (unsigned ordering = 0; ordering < 4U; ++ordering) {
+				const bool acquire = (ordering & 2U) != 0U;
+				const bool release = (ordering & 1U) != 0U;
+				const unsigned rn = ordinal % 32U;
+				const unsigned rs = (ordinal * 7U + 3U) % 32U;
+				const unsigned rt = (ordinal * 13U + 5U) % 32U;
+				char name[160];
+				std::snprintf(name, sizeof(name),
+					"all load variants size=%u opc=%u A=%u R=%u",
+					shape.size_code, fp_atomic::opcode(operation),
+					static_cast<unsigned>(acquire),
+					static_cast<unsigned>(release));
+				fp_atomic::check_basic(harness, counts, name,
+					shape.size_code, operation, acquire, release, false,
+					rn, rs, rt);
+				++ordinal;
+			}
+			for (const bool release : {false, true}) {
+				const unsigned rn = ordinal % 32U;
+				const unsigned rs = (ordinal * 11U + 1U) % 32U;
+				char name[160];
+				std::snprintf(name, sizeof(name),
+					"all store variants size=%u opc=%u R=%u",
+					shape.size_code, fp_atomic::opcode(operation),
+					static_cast<unsigned>(release));
+				fp_atomic::check_basic(harness, counts, name,
+					shape.size_code, operation, false, release, true,
+					rn, rs, 31);
+				++ordinal;
+			}
+		}
+}
+
+void every_base_register(
+	engine::EngineHarness &harness, fp_atomic::ExpectedCounts &counts)
+{
+	for (const auto &shape : fp_atomic::widths)
+		for (const auto operation : fp_atomic::operations)
+			for (unsigned rn = 0; rn < 32U; ++rn) {
+				char load_name[160];
+				std::snprintf(load_name, sizeof(load_name),
+					"every load base size=%u opc=%u rn=%u",
+					shape.size_code, fp_atomic::opcode(operation), rn);
+				fp_atomic::check_basic(harness, counts, load_name,
+					shape.size_code, operation, (rn & 2U) != 0U,
+					(rn & 1U) != 0U, false, rn, 3, 4);
+
+				char store_name[160];
+				std::snprintf(store_name, sizeof(store_name),
+					"every store base size=%u opc=%u rn=%u",
+					shape.size_code, fp_atomic::opcode(operation), rn);
+				fp_atomic::check_basic(harness, counts, store_name,
+					shape.size_code, operation, false,
+					(rn & 1U) != 0U, true, rn, 3, 31);
+			}
+}
+
+void every_source_register(
+	engine::EngineHarness &harness, fp_atomic::ExpectedCounts &counts)
+{
+	for (const auto &shape : fp_atomic::widths)
+		for (const auto operation : fp_atomic::operations)
+			for (unsigned rs = 0; rs < 32U; ++rs) {
+				char load_name[160];
+				std::snprintf(load_name, sizeof(load_name),
+					"every load source size=%u opc=%u rs=%u",
+					shape.size_code, fp_atomic::opcode(operation), rs);
+				fp_atomic::check_basic(harness, counts, load_name,
+					shape.size_code, operation, (rs & 2U) != 0U,
+					(rs & 1U) != 0U, false, 2, rs,
+					rs == 4U ? 5U : 4U);
+
+				char store_name[160];
+				std::snprintf(store_name, sizeof(store_name),
+					"every store source size=%u opc=%u rs=%u",
+					shape.size_code, fp_atomic::opcode(operation), rs);
+				fp_atomic::check_basic(harness, counts, store_name,
+					shape.size_code, operation, false,
+					(rs & 1U) != 0U, true, 2, rs, 31);
+			}
+}
+
+void every_destination_and_alias(
+	engine::EngineHarness &harness, fp_atomic::ExpectedCounts &counts)
+{
+	for (const auto &shape : fp_atomic::widths)
+		for (const auto operation : fp_atomic::operations) {
+			for (unsigned rt = 0; rt < 32U; ++rt) {
+				char name[160];
+				std::snprintf(name, sizeof(name),
+					"every load destination size=%u opc=%u rt=%u",
+					shape.size_code, fp_atomic::opcode(operation), rt);
+				fp_atomic::check_basic(harness, counts, name,
+					shape.size_code, operation, (rt & 2U) != 0U,
+					(rt & 1U) != 0U, false, 2,
+					rt == 3U ? 5U : 3U, rt);
+			}
+			for (unsigned ordering = 0; ordering < 4U; ++ordering)
+				for (unsigned reg = 0; reg < 32U; ++reg) {
+					char name[160];
+					std::snprintf(name, sizeof(name),
+						"Rs==Rt alias size=%u opc=%u ordering=%u v=%u",
+						shape.size_code, fp_atomic::opcode(operation),
+						ordering, reg);
+					fp_atomic::check_basic(harness, counts, name,
+						shape.size_code, operation,
+						(ordering & 2U) != 0U,
+						(ordering & 1U) != 0U, false, 2,
+						reg, reg);
+				}
+		}
+}
+
+} // namespace
 
 int main()
 {
-	constexpr std::array observed{0x3f80ULL, 0x3c00ULL,
-		0x3f80'0000ULL, 0x3ff0'0000'0000'0000ULL};
-	constexpr std::array operand{0x4000ULL, 0x4000ULL,
-		0x4000'0000ULL, 0x4000'0000'0000'0000ULL};
-	constexpr std::array sum{0x4040ULL, 0x4200ULL,
-		0x4040'0000ULL, 0x4008'0000'0000'0000ULL};
-
-	const auto expected = [&](unsigned size, fp_atomic::Operation operation) {
-		return operation == fp_atomic::Operation::add ? sum[size] :
-			operation == fp_atomic::Operation::maximum || operation ==
-				fp_atomic::Operation::maximum_number ? operand[size] :
-				observed[size];
-	};
-
-	for (const bool direct : {false, true}) {
-		for (unsigned size_code = 0; size_code < 4; ++size_code) {
-			const auto size = fp_atomic::size_bytes(size_code);
-			for (const auto operation : fp_atomic::operations) {
-				for (const bool acquire : {false, true}) {
-					for (const bool release : {false, true}) {
-						/* Rs==Rt must capture the source before returning memory. */
-						fp_atomic::atomic::AtomicMemory memory;
-						fp_atomic::arm64::CpuState cpu{};
-						cpu.fpsr = 0x91;
-						const auto encoded = fp_atomic::instruction(size_code,
-							operation, acquire, release, false, 2, 3, 3);
-						const auto result = fp_atomic::execute_interpreter(cpu,
-							memory, encoded, observed[size_code], operand[size_code],
-							direct);
-						test::require(result.reason == fp_atomic::arm64::
-							StopReason::continued && memory.get(
-								fp_atomic::interpreter_address, size) ==
-								expected(size_code, operation) &&
-							fp_atomic::vector_bits(cpu, 3, size) ==
-								observed[size_code] &&
-							fp_atomic::vector_upper_zero(cpu, 3, size) &&
-							cpu.fpsr == 0x91);
-
-						/* V31 is an ordinary SIMD source and destination. */
-						memory = {};
-						cpu = {};
-						const auto v31 = fp_atomic::instruction(size_code,
-							operation, acquire, release, false, 2, 3, 31);
-						fp_atomic::execute_interpreter(cpu, memory, v31,
-							observed[size_code], operand[size_code], direct);
-						test::require(fp_atomic::vector_bits(cpu, 31, size) ==
-							observed[size_code] &&
-							fp_atomic::vector_upper_zero(cpu, 31, size));
-					}
-				}
-
-				for (const bool release : {false, true}) {
-					/* SP addressing is selected by Rn==31. */
-					fp_atomic::atomic::AtomicMemory memory;
-					fp_atomic::arm64::CpuState cpu{};
-					const auto encoded = fp_atomic::instruction(size_code,
-						operation, false, release, false, 31, 3, 4);
-					const auto result = fp_atomic::execute_interpreter(cpu,
-						memory, encoded, observed[size_code], operand[size_code],
-						direct, 31, 3);
-					test::require(result.reason == fp_atomic::arm64::
-						StopReason::continued && cpu.sp ==
-						fp_atomic::interpreter_address);
-
-					/* Store-only preserves every SIMD register, including V31
-					 * when it is simultaneously Rs and the encoded Rt field. */
-					memory = {};
-					cpu = {};
-					fp_atomic::set_vector(cpu, 31, operand[size_code], size,
-						std::byte{0xa5});
-					const auto before = cpu.vectors[31];
-					const auto store = fp_atomic::instruction(size_code,
-						operation, false, release, true, 2, 31, 31);
-					const auto stored = fp_atomic::execute_interpreter(cpu,
-						memory, store, observed[size_code], operand[size_code],
-						direct, 2, 31);
-					test::require(stored.reason == fp_atomic::arm64::
-						StopReason::continued && cpu.vectors[31].bytes ==
-						before.bytes && memory.get(fp_atomic::interpreter_address,
-							size) == expected(size_code, operation));
-				}
-			}
-		}
-	}
+	engine::EngineHarness harness;
+	fp_atomic::ExpectedCounts counts;
+	every_named_variant(harness, counts);
+	every_base_register(harness, counts);
+	every_source_register(harness, counts);
+	every_destination_and_alias(harness, counts);
+	fp_atomic::require(counts.cases == 5880U,
+		"ordering/alias suite case-count drift");
+	fp_atomic::require_counts(harness, counts);
+	harness.print_summary("arm64-atomic-floating-ordering-alias");
 }

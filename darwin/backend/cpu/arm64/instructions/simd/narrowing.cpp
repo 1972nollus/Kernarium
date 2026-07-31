@@ -19,13 +19,15 @@ RunResult Dispatcher::simd_arithmetic_narrow(CpuState &cpu, GuestMemory &,
 					     std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
-	const bool subtract = ((instruction >> 11) & 0x1fU) == 12;
-	const bool rounding = (instruction & 0x2000'0000U) != 0;
-	const std::size_t source_size = std::size_t{2} <<
-		((instruction >> 22) & 0x3U);
-	if (source_size > 8)
+	const auto operation = instruction & 0x9f20'fc00U;
+	const unsigned size = (instruction >> 22) & 0x3U;
+	if ((operation != 0x0e20'4000U &&
+	     operation != 0x0e20'6000U) || size == 3U)
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};
+	const bool subtract = operation == 0x0e20'6000U;
+	const bool rounding = (instruction & 0x2000'0000U) != 0;
+	const std::size_t source_size = std::size_t{2} << size;
 	const std::size_t destination_size = source_size / 2;
 	const unsigned destination_bits =
 		static_cast<unsigned>(destination_size * 8);
@@ -109,21 +111,33 @@ RunResult Dispatcher::simd_arithmetic_wide(CpuState &cpu, GuestMemory &,
 				detail::sign_extend(decode_raw_narrow(left), narrow_bits)) *
 				static_cast<__int128>(detail::sign_extend(
 					decode_raw_narrow(right), narrow_bits)) * 2;
-			__int128 combined = product;
+			const __int128 minimum = -static_cast<__int128>(
+				static_cast<unsigned __int128>(1) << (wide_bits - 1));
+			const __int128 maximum = static_cast<__int128>(
+				(static_cast<unsigned __int128>(1) <<
+				 (wide_bits - 1)) - 1);
+			const auto saturate = [&](const __int128 input) {
+				if (input < minimum || input > maximum)
+					cpu.fpsr |= 1U << 27;
+				return std::clamp(input, minimum, maximum);
+			};
+			/*
+			 * SignedSatQ is applied to the doubled product before an
+			 * accumulating add/subtract, then again to the accumulator
+			 * expression. Keeping these as two stages is observable both
+			 * through FPSR.QC and through the final value.
+			 */
+			const __int128 saturated_product = saturate(product);
+			__int128 combined = saturated_product;
 			if (operation != 13) {
 				const auto accumulator = decode_little_endian(
 					std::span{old_destination}.subspan(output, wide_size));
 				combined = static_cast<__int128>(
 					detail::sign_extend(accumulator, wide_bits)) +
-					(operation == 11 ? -product : product);
+					(operation == 11 ? -saturated_product :
+					 saturated_product);
 			}
-			const __int128 minimum = -static_cast<__int128>(
-				static_cast<unsigned __int128>(1) << (wide_bits - 1));
-			const __int128 maximum = static_cast<__int128>(
-				(static_cast<unsigned __int128>(1) << (wide_bits - 1)) - 1);
-			if (combined < minimum || combined > maximum)
-				cpu.fpsr |= 1U << 27;
-			combined = std::clamp(combined, minimum, maximum);
+			combined = saturate(combined);
 			value = static_cast<std::uint64_t>(combined);
 		} else if (absolute_difference) {
 			const auto first = decode_raw_narrow(left);

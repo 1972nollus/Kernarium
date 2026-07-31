@@ -16,7 +16,8 @@ namespace uml::backend {
 
 class GadgetExecutor final {
 public:
-	GadgetExecutor();
+	explicit GadgetExecutor(
+		arm64::gadgets::BuildOptions build_options = {});
 	~GadgetExecutor();
 	[[nodiscard]] bool begin_execution(unsigned long generation,
 					   std::uint64_t guest_pc);
@@ -29,6 +30,7 @@ public:
 
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] arm64::gadgets::Access fault_access() const noexcept;
+	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
 
 private:
 	using BuildResult = arm64::gadgets::BuildResult;
@@ -39,6 +41,9 @@ private:
 	[[nodiscard]] const BuildResult &store(
 		std::uint64_t pc, BuildResult result);
 	[[nodiscard]] void *execution_context(unsigned long generation);
+	[[nodiscard]] arm64::gadgets::Event run_trap_enabled_instruction(
+		arm64::CpuState &cpu, StaticGuestMemory &memory,
+		std::size_t &executed);
 
 	class ProgramCache;
 
@@ -51,6 +56,8 @@ private:
 	void *execution_context_{};
 	unsigned long execution_generation_{};
 	bool preempted_{};
+	std::uint32_t floating_point_syndrome_{};
+	arm64::gadgets::BuildOptions build_options_;
 };
 
 } // namespace uml::backend

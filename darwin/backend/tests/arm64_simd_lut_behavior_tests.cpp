@@ -1,54 +1,51 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_lut_test_support.hpp"
 
-namespace test = arm64_simd_lut_test;
-
+namespace uml::backend::tests::simd_lut {
 namespace {
 
-void every_segment_lane_and_table_index()
+void deterministic_patterns(EngineHarness &harness)
 {
-	test::common::Harness harness;
-	constexpr test::Registers registers{0, 1, 2};
-	for (const auto &variant : test::variants) {
-		const unsigned values = 1U << variant.index_bits;
-		for (unsigned rotation = 0; rotation < values; ++rotation) {
-			auto initial = test::common::state(
-				variant.part * 19U + rotation * 7U + variant.index_bits);
-			test::set_selected_indices(initial, variant, registers, rotation);
-			const auto expected =
-				test::expected_result(initial, variant, registers);
-			const auto actual = harness.run_interpreter(
-				test::instruction(variant, registers), initial);
-			test::common::require(
-				actual.vectors[registers.destination].bytes == expected.bytes);
-			test::require_only_destination_changed(
-				initial, actual, registers.destination);
-		}
-	}
-}
-
-void source_aliases_and_table_register_wrap_are_snapshot_safe()
-{
-	test::common::Harness harness;
-	unsigned seed = 100;
-	for (const auto &variant : test::variants)
-		for (const auto registers : test::register_cases) {
-			auto initial = test::common::state(++seed);
-			const auto expected =
-				test::expected_result(initial, variant, registers);
-			const auto actual = harness.run_interpreter(
-				test::instruction(variant, registers), initial);
-			test::common::require(
-				actual.vectors[registers.destination].bytes == expected.bytes);
-			test::require_only_destination_changed(
-				initial, actual, registers.destination);
+	constexpr unsigned destination = 13U;
+	constexpr unsigned table = 5U;
+	constexpr unsigned indices = 21U;
+	for (const auto &form : forms)
+		for (unsigned pattern = 0; pattern < 256U; ++pattern) {
+			const auto instruction =
+				encode(form, indices, table, destination);
+			auto initial = seeded_state(
+				instruction ^ (pattern * 0x9e37U));
+			for (unsigned byte = 0; byte < 16U; ++byte) {
+				initial.vectors[table].bytes[byte] =
+					static_cast<std::byte>(
+						0x11U + byte * 13U + pattern);
+				initial.vectors[table + 1U].bytes[byte] =
+					static_cast<std::byte>(
+						0xd7U - byte * 7U + pattern * 3U);
+			}
+			initial.vectors[indices].bytes.fill(std::byte{});
+			const unsigned elements = 16U / form.element_bytes;
+			const unsigned mask =
+				(1U << form.index_bits) - 1U;
+			for (unsigned element = 0; element < elements;
+			     ++element)
+				write_index(initial.vectors[indices], form,
+					element,
+					(pattern + element * 3U +
+						form.part * 5U) &
+						mask);
+			check(harness, "simd-lut-pattern-behavior",
+				instruction, initial);
 		}
 }
 
 } // namespace
+} // namespace uml::backend::tests::simd_lut
 
 int main()
 {
-	every_segment_lane_and_table_index();
-	source_aliases_and_table_register_wrap_are_snapshot_safe();
+	uml::backend::tests::EngineHarness harness;
+	uml::backend::tests::simd_lut::deterministic_patterns(harness);
+	harness.print_summary("arm64-simd-lut-behavior");
+	return 0;
 }

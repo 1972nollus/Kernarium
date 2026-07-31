@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "arm64_basic_floating_test_support.hpp"
-#include "arm64_floating_complex_test_support.hpp"
-#include "cpu/arm64/detail/floating_horizontal.hpp"
+#include "arm64_floating_horizontal_test_support.hpp"
 
 namespace arm64_floating_absolute_minmax_test {
 
-namespace basic = arm64_basic_floating_test;
-namespace common = arm64_simd_test;
-namespace complex = arm64_floating_complex_test;
-namespace detail = uml::backend::arm64::detail;
+namespace horizontal = arm64_floating_horizontal_test;
+namespace basic = horizontal::basic;
+namespace common = horizontal::common;
+namespace arm64 = horizontal::arm64;
+namespace engine_tests = horizontal::engine_tests;
 
-using Operation = detail::FloatingHorizontalOperation;
-using Registers = complex::Registers;
-inline constexpr auto register_cases = complex::register_cases;
+using Operation = horizontal::Operation;
+using Registers = horizontal::Registers;
+using ExpectedCounts = horizontal::ExpectedCounts;
+inline constexpr auto register_cases = horizontal::register_cases;
 
 struct Form final {
 	Operation operation;
@@ -31,11 +31,11 @@ void for_each_form(Function &&function)
 			function(Form{operation, shape[0], shape[1]});
 }
 
-[[nodiscard]] constexpr unsigned shape(unsigned width,
-	unsigned vector_bytes) noexcept
+[[nodiscard]] constexpr horizontal::Form horizontal_form(
+	const Form &form) noexcept
 {
-	return width == 16U ? (vector_bytes == 16U ? 1U : 0U) :
-		width == 32U ? (vector_bytes == 16U ? 3U : 2U) : 4U;
+	return {form.operation, horizontal::Kind::vector_binary,
+		form.width, form.vector_bytes};
 }
 
 [[nodiscard]] constexpr std::uint32_t instruction(const Form &form,
@@ -47,10 +47,54 @@ void for_each_form(Function &&function)
 		0x2ea0'dc00U, 0x6ea0'dc00U, 0x6ee0'dc00U};
 	const auto &table = form.operation == Operation::absolute_maximum ?
 		maximum : minimum;
-	return table[shape(form.width, form.vector_bytes)] |
+	return table[horizontal::vector_shape(
+		form.width, form.vector_bytes)] |
 		(registers.destination & 31U) |
 		((registers.first & 31U) << 5) |
 		((registers.second & 31U) << 16);
+}
+
+[[nodiscard]] inline auto native_requirements(const Form &form)
+{
+	return horizontal::native_requirements(horizontal_form(form));
+}
+
+[[nodiscard]] inline arm64::CpuState state(unsigned seed = 0)
+{
+	return horizontal::state(seed);
+}
+
+inline void set_lane_bits(arm64::CpuState &cpu, unsigned reg,
+	unsigned lane, unsigned width, std::uint64_t bits)
+{
+	horizontal::set_lane_bits(cpu, reg, lane, width, bits);
+}
+
+inline void check(engine_tests::EngineHarness &harness,
+	std::string_view name, const Form &form, Registers registers,
+	const arm64::CpuState &initial, ExpectedCounts &counts)
+{
+	const auto converted = horizontal_form(form);
+	const auto native = native_requirements(form);
+	arm64::CpuState expected;
+	if (form.width == 16U)
+		expected = horizontal::expected_minmax<std::uint16_t>(
+			initial, converted, registers);
+	else if (form.width == 32U)
+		expected = horizontal::expected_minmax<std::uint32_t>(
+			initial, converted, registers);
+	else
+		expected = horizontal::expected_minmax<std::uint64_t>(
+			initial, converted, registers);
+	harness.check_one(name, instruction(form, registers), initial,
+		expected, native);
+	counts.add(native);
+}
+
+inline void require_counts(const engine_tests::EngineHarness &harness,
+	const ExpectedCounts &expected)
+{
+	horizontal::require_counts(harness, expected);
 }
 
 } // namespace arm64_floating_absolute_minmax_test

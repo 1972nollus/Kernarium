@@ -47,7 +47,6 @@ void uml_arm64_gadget_simd_three_same_cmeq_8h();
 void uml_arm64_gadget_simd_unary_xtn_8h2();
 }
 
-#if !UML_TEST_GADGET_INTERPRETER_RUNPATH
 static void require(bool condition,
 	const std::source_location location = std::source_location::current())
 {
@@ -179,15 +178,9 @@ static constexpr std::uint32_t two_register(bool q, unsigned size,
 		((size & 3U) << 22) | ((opcode & 31U) << 12) |
 		((source & 31U) << 5) | (destination & 31U);
 }
-#endif
 
 int main()
 {
-#if UML_TEST_GADGET_INTERPRETER_RUNPATH
-	/* This suite asserts production lowering choices. Interpreter builds are
-	 * validated by the behavior suites and intentionally select decoded.cpp. */
-	return 0;
-#else
 	{
 		const auto program = build_one(0xd61f'0060U); // br x3
 		require_gadget(program, uml_arm64_gadget_branch_register);
@@ -378,5 +371,4 @@ int main()
 			address_of(uml_arm64_gadget_simd_unary_xtn_8h2));
 	}
 	return 0;
-#endif
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "arm64_engine_test_support.hpp"
 #include "arm64_simd_fp_indexed_test_support.hpp"
 #include "cpu/arm64/detail/instruction_helpers.hpp"
 
@@ -12,6 +13,7 @@ namespace arm64_simd_fabs_fneg_test {
 
 namespace base = arm64_simd_test;
 namespace fp = arm64_simd_fp_indexed_test;
+namespace engine_tests = uml::backend::tests;
 
 enum class Operation { absolute, negate };
 
@@ -74,12 +76,25 @@ inline constexpr std::array shapes{
 		std::span{bytes}.subspan(lane * lane_bytes, lane_bytes));
 }
 
-inline void require_result(std::uint32_t encoded, const Shape &shape,
-	Operation operation, unsigned destination, unsigned source,
-	const uml::backend::arm64::CpuState &initial, base::Harness &harness)
+[[nodiscard]] inline engine_tests::NativeRequirements native_requirements(
+	const Shape &shape, const uml::backend::arm64::CpuState &initial)
+{
+	using uml::backend::ArmFeature;
+	auto requirements = engine_tests::NativeRequirements::features(
+		shape.scalar ? ArmFeature::floating_point :
+			ArmFeature::advanced_simd);
+	if (shape.lane_bytes == 2U)
+		requirements = requirements | ArmFeature::fp16;
+	if ((initial.fpcr & 6U) != 0U)
+		requirements = requirements | ArmFeature::afp;
+	return requirements;
+}
+
+[[nodiscard]] inline uml::backend::arm64::CpuState expected_state(
+	const Shape &shape, Operation operation, unsigned destination,
+	unsigned source, const uml::backend::arm64::CpuState &initial)
 {
 	auto expected = initial;
-	expected.pc = base::pc + 4U;
 	const auto source_bytes = initial.vectors[source].bytes;
 	std::array<std::byte, 16> result{};
 	if (shape.scalar && (initial.fpcr & 4U) != 0U)
@@ -93,9 +108,17 @@ inline void require_result(std::uint32_t encoded, const Shape &shape,
 		fp::write_bits(result, shape.lane_bytes, lane, value);
 	}
 	expected.vectors[destination].bytes = result;
-	const auto interpreted = harness.run_interpreter(encoded, initial);
-	base::require_architecture_equal(expected, interpreted);
-	harness.require_differential(encoded, initial);
+	return expected;
+}
+
+inline void check_result(engine_tests::EngineHarness &harness,
+	std::string_view name, std::uint32_t encoded, const Shape &shape,
+	Operation operation, unsigned destination, unsigned source,
+	const uml::backend::arm64::CpuState &initial)
+{
+	harness.check_one(name, encoded, initial,
+		expected_state(shape, operation, destination, source, initial),
+		native_requirements(shape, initial));
 }
 
 } // namespace arm64_simd_fabs_fneg_test

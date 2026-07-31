@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/backend.h"
 #include "device.hpp"
+#include "uml_darwin_runtime.h"
 
 #include <algorithm>
 #include <atomic>
@@ -55,9 +56,12 @@ public:
 			return -UML_BACKEND_INVALID_ARGUMENT;
 		if (native_kernel_entry_ == nullptr && kernel_.empty())
 			return -UML_BACKEND_UNSUPPORTED;
-		auto arguments = prepare_arguments(argc, argv);
-		if (arguments.empty())
+		auto prepared = prepare_arguments(argc, argv);
+		if (!prepared.valid || prepared.arguments.empty())
 			return -UML_BACKEND_INVALID_ARGUMENT;
+		if (darwin_uml_set_execution_engine(prepared.engine) != 0)
+			return -UML_BACKEND_UNSUPPORTED;
+		auto &arguments = prepared.arguments;
 		std::vector<char *> argument_pointers;
 		argument_pointers.reserve(arguments.size() + 1);
 		for (auto &argument : arguments)
@@ -101,6 +105,12 @@ public:
 	}
 
 private:
+	struct PreparedArguments final {
+		std::vector<std::string> arguments;
+		darwin_uml_execution_engine engine{DARWIN_UML_EXECUTION_AUTO};
+		bool valid{true};
+	};
+
 	class NetworkSession final {
 	public:
 		explicit NetworkSession(const uml::network::Provider &provider)
@@ -182,23 +192,58 @@ private:
 			has_argument(arguments, "--showconfig");
 	}
 
-	[[nodiscard]] std::vector<std::string> prepare_arguments(
+	[[nodiscard]] static bool parse_execution_engine(
+		std::string_view value, darwin_uml_execution_engine &engine)
+	{
+		if (value == "auto")
+			engine = DARWIN_UML_EXECUTION_AUTO;
+		else if (value == "jit")
+			engine = DARWIN_UML_EXECUTION_JIT;
+		else if (value == "gadgets")
+			engine = DARWIN_UML_EXECUTION_GADGETS;
+		else if (value == "interpreter")
+			engine = DARWIN_UML_EXECUTION_INTERPRETER;
+		else
+			return false;
+		return true;
+	}
+
+	[[nodiscard]] PreparedArguments prepare_arguments(
 		int argc, const char *const argv[]) const
 	{
-		std::vector<std::string> arguments;
+		PreparedArguments prepared;
+		auto &arguments = prepared.arguments;
 		arguments.reserve(static_cast<std::size_t>(argc) + 6);
 		for (int index = 0; index < argc; ++index) {
 			if (argv[index] == nullptr)
-				return {};
-			arguments.emplace_back(argv[index]);
+				return {.valid = false};
+			const std::string_view argument{argv[index]};
+			constexpr std::string_view prefix{"--execution-engine="};
+			if (argument.starts_with(prefix)) {
+				if (!parse_execution_engine(
+					    argument.substr(prefix.size()),
+					    prepared.engine))
+					return {.valid = false};
+				continue;
+			}
+			if (argument == "--execution-engine") {
+				if (++index >= argc || argv[index] == nullptr ||
+				    !parse_execution_engine(
+					    argv[index], prepared.engine))
+					return {.valid = false};
+				continue;
+			}
+			if (argument.starts_with("--jit-gadget-fallback"))
+				return {.valid = false};
+			arguments.emplace_back(argument);
 		}
 		if (arguments.empty())
 			arguments.emplace_back("uml-darwin");
 		if (informational(arguments))
-			return arguments;
+			return prepared;
 		if (!has_prefix(arguments, "ubd0")) {
 			if (rootfs_.empty())
-				return {};
+				return {.valid = false};
 			arguments.emplace_back("ubd0=" + rootfs_);
 		}
 		if (!has_prefix(arguments, "root="))
@@ -211,7 +256,7 @@ private:
 			arguments.emplace_back("ip=dhcp");
 		if (!has_argument(arguments, "ro") && !has_argument(arguments, "rw"))
 			arguments.emplace_back("rw");
-		return arguments;
+		return prepared;
 	}
 
 	std::string rootfs_;
@@ -264,7 +309,9 @@ extern "C" int uml_backend_get_capabilities(
 	    capabilities->struct_size < sizeof(*capabilities))
 		return -UML_BACKEND_INVALID_ARGUMENT;
 	capabilities->abi_version = UML_BACKEND_ABI_VERSION;
-	capabilities->userspace_execution = UML_BACKEND_STATIC_GADGETS;
+	capabilities->userspace_execution =
+		static_cast<uml_backend_execution_model>(
+			darwin_uml_get_execution_engine());
 	const bool native_kernel = backend->implementation.has_native_kernel();
 	const bool elf_kernel = UML_BACKEND_HAS_KERNEL_RUNNER &&
 		backend->implementation.has_embedded_kernel();

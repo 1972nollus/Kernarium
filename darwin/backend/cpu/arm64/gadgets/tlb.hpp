@@ -14,8 +14,8 @@ enum class Access : std::uint32_t {
 
 struct alignas(32) TlbEntry final {
 	std::uint64_t read_page{1};
-	std::uint64_t write_page{1};
 	std::uintptr_t read_data_minus_address{};
+	std::uint64_t write_page{1};
 	std::uintptr_t write_data_minus_address{};
 };
 
@@ -41,6 +41,7 @@ struct alignas(32) Tlb final {
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);
+	void discard(std::uint64_t address);
 	[[nodiscard]] std::byte *translate(std::uint64_t address, Access access);
 	[[nodiscard]] bool read_allocation_tag(
 		std::uint64_t address, std::uint8_t &tag);
@@ -55,3 +56,17 @@ private:
 };
 
 } // namespace uml::backend::arm64::gadgets
+
+namespace uml::backend::arm64 {
+struct CpuState;
+}
+
+extern "C" std::uint32_t uml_arm64_guarded_call_record(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb,
+	std::uint64_t return_address) noexcept;
+
+extern "C" std::uint32_t uml_arm64_guarded_return_record(
+	uml::backend::arm64::CpuState *cpu,
+	uml::backend::arm64::gadgets::Tlb *tlb,
+	std::uint64_t target) noexcept;

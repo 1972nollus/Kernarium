@@ -81,13 +81,4 @@ struct BFloatConversionResult final {
 	return {result, exceptions};
 }
 
-[[nodiscard]] constexpr std::uintptr_t bfloat_conversion_operand(
-	std::uint32_t instruction, const BFloatConversion &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>(decoded.scalar) << 16) |
-		(static_cast<std::uintptr_t>(decoded.upper) << 17);
-}
-
 } // namespace uml::backend::arm64::detail

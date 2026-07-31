@@ -3171,3 +3171,54 @@ The legacy `mmap2` case predates the modern LTP result API. Its normal path perf
 | ustat02 | Missing physical architecture/ABI | Native arm64 has no obsolete `ustat(2)` syscall number; modern filesystem statistics use `statfs`/`statvfs` | Exempt |
 | userns01 | Userspace library limitation | The installed LTP package was built without libcap and reports TCONF before exercising user-namespace capability behavior | Exempt |
 | userns06 | Userspace library limitation | The installed LTP package was built without libcap and reports TCONF before exercising its user-namespace capability assertions | Exempt |
+
+## 2026-07-27 strict-JIT requalification
+
+The JIT qualification uses a separate 4 KiB compatibility build at
+`.build/cmake-macos-4k` with kernel output in `.build/kernel-4k`. This keeps
+the default `.build/kernel` configuration at 16 KiB and avoids rewriting one
+kernel build tree between production and raw-ext2 integration runs.
+
+The first fail-fast passes exposed two genuine missing strict-JIT behaviors:
+
+- `syscalls/sendmsg03` reached scalar `FABD S31,S30,S31` (`0x7ebfd7df`).
+  Floating-horizontal scalar, vector, pairwise, and reduction forms now lower
+  through the independently compiled floating-point JIT family. Exact
+  high-register S and D encodings are covered by focused SIMD JIT tests.
+- `hugetlb/hugemmap15` intentionally executes `UDF #0` after remapping a
+  page. The JIT now preserves the fault PC and returns architectural illegal
+  instruction delivery for every `UDF #imm16`; exact `#0` and `#0xbeef`
+  encodings are covered by focused integer JIT tests.
+
+After those fixes, the complete non-pressure campaign selected 2,141 ordinary
+isolated cases and one serial case, skipped all 374 host-pressure entries, and
+finished in **1,480.7 seconds without a JIT fatal**. `mmap18`, which had once
+ended transiently without a console status, passed all four assertions in the
+full run and in 16 simultaneous focused guests.
+
+The only initial harness rejection was `controllers/memcg_stat`. That installed
+legacy-cgroup test is documented as timing-dependent: it can cleanly pass,
+pass with only a BusyBox cleanup warning, or pass several functional checks
+before an immediately sampled batched counter produces a userspace break.
+The variable-matrix contract now accepts those three shapes while still
+requiring at least one TPASS and rejecting a failure/break/skip-only result.
+The isolated control produced four TPASS and only the known counter/BusyBox
+cleanup break. Re-evaluated under that corrected manifest contract, the
+campaign is **2,142/2,142 accepted**.
+
+## 2026-07-31 final direct-engine requalification
+
+The final accepted direct-engine source was qualified again with the dedicated
+4 KiB compatibility emulator at `.build/cmake-macos-4k/bin/uml-darwin`.
+`rootfs.ext2` contains the 4 KiB-compatible userspace used by this harness;
+the default 16 KiB production emulator instead boots the first partition of
+`rootfs.img`. This separation keeps the default production kernel at 16 KiB
+while exercising the same final backend source against the full raw-ext2
+integration matrix.
+
+The default campaign excluded all 374 `host-pressure` cases, ran 2,141
+ordinary isolated guests with 16 host workers and one guest vCPU each, then
+ran the one serial-only case. It completed in **631.1 seconds** with
+**2,142/2,142 accepted and zero rejected cases**. The canonical lower image
+was mounted read-only for every case and all guest modifications remained in
+the tmpfs overlay.

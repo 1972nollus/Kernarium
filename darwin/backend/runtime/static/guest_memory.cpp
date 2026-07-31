@@ -19,6 +19,7 @@ void StaticGuestMemory::prepare(
 {
 	generation_ = generation;
 	changes_ = changes;
+	fault_recorded_ = false;
 }
 
 bool StaticGuestMemory::read(
@@ -105,12 +106,18 @@ void StaticGuestMemory::invalidate_code(std::uint64_t address)
 bool StaticGuestMemory::validate_write(
 	std::uint64_t address, std::size_t size)
 {
+	return validate_access(address, size, arm64::MemoryAccess::write);
+}
+
+bool StaticGuestMemory::validate_access(
+	std::uint64_t address, std::size_t size, arm64::MemoryAccess access)
+{
 	std::size_t completed = 0;
 	while (completed < size) {
 		const auto current = address + completed;
 		const auto length = std::min<std::size_t>(
 			size - completed, page_size - (current & (page_size - 1)));
-		if (translate(current, arm64::MemoryAccess::write) == nullptr)
+		if (translate(current, access) == nullptr)
 			return false;
 		completed += length;
 	}
@@ -120,6 +127,11 @@ bool StaticGuestMemory::validate_write(
 arm64::MemoryFault StaticGuestMemory::last_fault() const noexcept
 {
 	return fault_;
+}
+
+bool StaticGuestMemory::has_fault() const noexcept
+{
+	return fault_recorded_;
 }
 
 constexpr std::size_t StaticGuestMemory::index_for(
@@ -201,6 +213,7 @@ bool StaticGuestMemory::record_fault(
 	std::uint64_t address, arm64::MemoryAccess access)
 {
 	fault_ = {address, access};
+	fault_recorded_ = true;
 	return false;
 }
 
