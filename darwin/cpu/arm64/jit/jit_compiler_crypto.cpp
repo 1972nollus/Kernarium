@@ -1,0 +1,244 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "jit_compiler_families.hpp"
+
+#include "cpu/host_capabilities.hpp"
+
+#include <cstddef>
+
+namespace uml::cpu::arm64::jit {
+
+[[nodiscard]] bool JitCompilerFamilies::emit_crc32(std::uint32_t instruction) {
+  if (!host_capabilities().crc32 ||
+      (instruction & 0x7fe0'e000U) != 0x1ac0'4000U)
+    return false;
+  const unsigned operation = (instruction >> 10) & 7U;
+  const unsigned size = operation & 3U;
+  if (((instruction >> 31) != 0) != (size == 3U))
+    return false;
+  const unsigned destination = instruction & 31U;
+  if (destination == 31U)
+    return true;
+  const unsigned accumulator = (instruction >> 5) & 31U;
+  const unsigned source = (instruction >> 16) & 31U;
+  const auto native_accumulator =
+      read_native_gpr(accumulator, false, 8U);
+  const auto native_source =
+      source == accumulator ? native_accumulator
+                            : read_native_gpr(source, false, 9U);
+  const auto native_destination =
+      write_native_gpr(destination, false, false, 10U);
+  emit((instruction & ~0x001f'03ffU) | (native_source.host << 16) |
+       (native_accumulator.host << 5) | native_destination.host);
+  commit_native_gpr(native_destination, destination, false);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_aes(std::uint32_t instruction) {
+  const auto &features = host_capabilities();
+  if (!features.advanced_simd || !features.aes ||
+      (instruction & 0xffff'8c00U) != 0x4e28'0800U)
+    return false;
+  const unsigned operation = (instruction >> 12) & 7U;
+  if (operation < 4U)
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_destination =
+      write_native_vector(destination, true, 0U);
+  const auto native_source =
+      source == destination ? native_destination
+                            : read_native_vector(source, 1U);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_pmull(std::uint32_t instruction) {
+  if ((instruction & 0xbf20'fc00U) != 0x0e20'e000U)
+    return false;
+  const unsigned size = (instruction >> 22) & 3U;
+  if (size != 0U && size != 3U)
+    return false;
+  const auto &features = host_capabilities();
+  if (!features.advanced_simd || (size == 3U && !features.pmull))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  const auto native_left = read_native_vector(left, 1U);
+  const auto native_right =
+      right == left ? native_left : read_native_vector(right, 2U);
+  const auto native_destination =
+      write_native_vector(destination, false, 0U);
+  emit((instruction & ~0x001f'03ffU) | (native_right.host << 16) |
+       (native_left.host << 5) | native_destination.host);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_sha1_sha2(std::uint32_t instruction) {
+  const bool three = (instruction & 0xffe0'8c00U) == 0x5e00'0000U;
+  const bool two = (instruction & 0xffff'8c00U) == 0x5e28'0800U;
+  if (!three && !two)
+    return false;
+  const unsigned operation = (instruction >> 12) & (three ? 7U : 3U);
+  const bool sha1 = three ? operation <= 3U : operation <= 1U;
+  const bool sha2 =
+      three ? operation >= 4U && operation <= 6U : operation == 2U;
+  if ((!sha1 && !sha2) || (sha1 && !host_capabilities().sha1) ||
+      (sha2 && !host_capabilities().sha2))
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const auto native_destination =
+      write_native_vector(destination, true, 0U);
+  const auto native_first =
+      first == destination ? native_destination
+                           : read_native_vector(first, 1U);
+  auto native = (instruction & ~((31U << 5) | 31U)) |
+                (native_first.host << 5) | native_destination.host;
+  if (three) {
+    const unsigned second = (instruction >> 16) & 31U;
+    const auto native_second =
+        second == destination
+            ? native_destination
+            : second == first ? native_first
+                              : read_native_vector(second, 2U);
+    native =
+        (native & ~(31U << 16)) | (native_second.host << 16);
+  }
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_sha512(std::uint32_t instruction) {
+  if (!host_capabilities().sha512)
+    return false;
+  const auto operation = instruction & 0xffe0'fc00U;
+  const bool three = operation == 0xce60'8000U || operation == 0xce60'8400U ||
+                     operation == 0xce60'8800U;
+  const bool two = (instruction & 0xffff'fc00U) == 0xcec0'8000U;
+  if (!three && !two)
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const auto native_destination =
+      write_native_vector(destination, true, 0U);
+  const auto native_first =
+      first == destination ? native_destination
+                           : read_native_vector(first, 1U);
+  auto native = (instruction & ~((31U << 5) | 31U)) |
+                (native_first.host << 5) | native_destination.host;
+  if (three) {
+    const unsigned second = (instruction >> 16) & 31U;
+    const auto native_second =
+        second == destination
+            ? native_destination
+            : second == first ? native_first
+                              : read_native_vector(second, 2U);
+    native =
+        (native & ~(31U << 16)) | (native_second.host << 16);
+  }
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_sm(std::uint32_t instruction) {
+  const auto three_operation = instruction & 0xffe0'fc00U;
+  const bool partw1 = three_operation == 0xce60'c000U;
+  const bool partw2 = three_operation == 0xce60'c400U;
+  const bool key = three_operation == 0xce60'c800U;
+  const bool four = (instruction & 0xffe0'8000U) == 0xce40'0000U;
+  const bool indexed = (instruction & 0xffe0'c000U) == 0xce40'8000U;
+  const bool round = (instruction & 0xffff'fc00U) == 0xcec0'8400U;
+  if (!partw1 && !partw2 && !key && !four && !indexed && !round)
+    return false;
+
+  const bool family3 = partw1 || partw2 || four || indexed;
+  if ((family3 &&
+       !host_capabilities().has(ArmFeature::sm3)) ||
+      (!family3 &&
+       !host_capabilities().has(ArmFeature::sm4)))
+    return false;
+
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const unsigned second = (instruction >> 16) & 31U;
+  const bool reads_destination = partw1 || partw2 || indexed || round;
+  const auto native_first = read_native_vector(first, 1U);
+  auto native_second = NativeVector{};
+  if (!round) {
+    native_second =
+        second == first ? native_first : read_native_vector(second, 2U);
+  }
+  auto native_third = NativeVector{};
+  if (four) {
+    const unsigned third = (instruction >> 10) & 31U;
+    native_third =
+        third == first
+            ? native_first
+            : !round && third == second
+                  ? native_second
+                  : read_native_vector(third, 3U);
+  }
+  const auto native_destination =
+      write_native_vector(destination, reads_destination, 0U);
+  auto native = (instruction & ~((31U << 5) | 31U)) |
+                (native_first.host << 5) | native_destination.host;
+  if (!round)
+    native =
+        (native & ~(31U << 16)) | (native_second.host << 16);
+  if (four)
+    native = (native & ~(31U << 10)) | (native_third.host << 10);
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+[[nodiscard]] bool
+JitCompilerFamilies::emit_simd_sha3(std::uint32_t instruction) {
+  if (!host_capabilities().sha3)
+    return false;
+  const auto three_operation = instruction & 0xffe0'fc00U;
+  const bool four = (instruction & 0xffe0'8000U) == 0xce00'0000U ||
+                    (instruction & 0xffe0'8000U) == 0xce20'0000U;
+  const bool three = three_operation == 0xce60'8c00U ||
+                     (instruction & 0xffe0'0000U) == 0xce80'0000U;
+  if (!four && !three)
+    return false;
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const unsigned second = (instruction >> 16) & 31U;
+  const auto native_first = read_native_vector(first, 1U);
+  const auto native_second =
+      second == first ? native_first : read_native_vector(second, 2U);
+  auto native_third = NativeVector{};
+  if (four) {
+    const unsigned third = (instruction >> 10) & 31U;
+    native_third =
+        third == first
+            ? native_first
+            : third == second ? native_second
+                              : read_native_vector(third, 3U);
+  }
+  const auto native_destination =
+      write_native_vector(destination, false, 0U);
+  auto native = (instruction & ~((31U << 16) | (31U << 5) | 31U)) |
+                (native_second.host << 16) | (native_first.host << 5) |
+                native_destination.host;
+  if (four)
+    native = (native & ~(31U << 10)) | (native_third.host << 10);
+  emit(native);
+  commit_native_vector(native_destination, destination);
+  return true;
+}
+
+} // namespace uml::cpu::arm64::jit

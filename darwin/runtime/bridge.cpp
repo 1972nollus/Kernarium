@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#include "../include/uml_darwin_runtime.h"
+#include "uml_darwin_host.h"
 
 #include <errno.h>
 #include <fcntl.h>

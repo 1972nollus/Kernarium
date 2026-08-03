@@ -55,7 +55,6 @@ int darwin_uml_static_vm_mapping_matches(unsigned long address, int fd,
 					   unsigned long long offset);
 int darwin_uml_static_vm_rebind(unsigned long address, int fd,
 				 unsigned long long offset);
-int darwin_uml_static_vm_has_mapping(unsigned long address);
 int darwin_uml_static_vm_copy_from_buffer(unsigned long address,
 					   const void *buffer,
 					   unsigned long length);

@@ -3,6 +3,8 @@
 """Boot KDE Plasma in the immutable GPU guest and expose its VNC display."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import ipaddress
@@ -13,10 +15,10 @@ from typing import Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-GUEST_HARNESS = REPO_ROOT / "tests/gpu/run_gpu_guest.py"
-DEFAULT_EMULATOR = REPO_ROOT / ".build/cmake-macos/bin/uml-darwin"
+GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
+DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.img"
-DEFAULT_BASELINE = REPO_ROOT / "tests/gpu/rootfs-baseline.json"
+DEFAULT_BASELINE = REPO_ROOT / "tools/rootfs/manifest.json"
 
 KDE_OVERLAY_COMMANDS = (
     "getent passwd plasma >/dev/null || "
@@ -86,7 +88,12 @@ def positive_integer(value: str) -> int:
 
 
 def port_number(value: str) -> int:
-    parsed = positive_integer(value)
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("not an integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
     if parsed > 65535:
         raise argparse.ArgumentTypeError("must be at most 65535")
     return parsed
@@ -114,7 +121,9 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         default="127.0.0.1",
         help="VNC IPv4 bind address (default: 127.0.0.1)",
     )
-    parser.add_argument("--port", type=port_number, default=5900)
+    parser.add_argument(
+        "--port", type=port_number, default=5900,
+        help="VNC TCP port (0 selects a dynamically bound port)")
     parser.add_argument(
         "--password",
         type=vnc_password,

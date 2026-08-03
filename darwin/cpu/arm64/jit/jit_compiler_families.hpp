@@ -1,0 +1,426 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "cpu/engine.hpp"
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+#include "jit_gpr_pressure_profile.hpp"
+#endif
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+
+namespace uml::cpu::arm64::jit {
+
+namespace arm64 = ::uml::cpu::arm64;
+using ::uml::cpu::ArmFeature;
+using ::uml::cpu::ArmFeatureSet;
+using ::uml::cpu::host_capabilities;
+
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+struct JitIndirectLinkProfileCounters final {
+  std::uint64_t *first{};
+  std::uint64_t *second{};
+};
+#endif
+
+/*
+ * Family emitters live in separate translation units.  This small bridge
+ * deliberately hides the executor's concrete Arm64Emitter: family code sees
+ * only the operations needed to translate an instruction and cannot reach
+ * executor/cache state.
+ */
+class JitCompilerFamilies {
+protected:
+  using Event = ::uml::cpu::EngineEvent;
+  using Label = std::size_t;
+  using LinkResolver = const void *(*)(void *, std::uint64_t);
+  using IndirectLinkResolver = const void *(*)(void *, std::uint64_t);
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  using DirectLinkProfileResolver =
+      std::uint64_t *(*)(void *, const void *, std::uint64_t, std::uint32_t);
+  using IndirectLinkProfileResolver =
+      JitIndirectLinkProfileCounters (*)(void *, const void *, std::uint64_t,
+                                        std::uint32_t);
+#endif
+
+  JitCompilerFamilies() = default;
+
+  void attach_family_emitter(void *emitter, bool *native_fp,
+                             bool *native_fpmr,
+                             bool enable_gpr_cache) noexcept;
+  void attach_link_resolver(void *context, LinkResolver resolver) noexcept;
+  void attach_indirect_link_resolver(
+      void *context, IndirectLinkResolver resolver) noexcept;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  void attach_gpr_link_profile(
+      void *context, DirectLinkProfileResolver direct_resolver,
+      IndirectLinkProfileResolver indirect_resolver) noexcept;
+  void begin_gpr_link_profile_block(std::uint64_t pc) noexcept;
+  [[nodiscard]] std::uint32_t
+  gpr_profile_read_before_write_mask() const noexcept;
+  [[nodiscard]] std::uint32_t gpr_profile_written_mask() const noexcept;
+  [[nodiscard]] std::uint32_t
+  gpr_profile_dirty_live_out_mask() const noexcept;
+  void profile_gpr_read(unsigned guest, bool stack_pointer) noexcept;
+  void profile_gpr_write(unsigned guest, bool stack_pointer) noexcept;
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+  void attach_gpr_pressure_profile(bool enabled) noexcept;
+  void begin_gpr_pressure_profile_block() noexcept;
+  [[nodiscard]] JitGprPressureProfile
+  finish_gpr_pressure_profile_block() const noexcept;
+#endif
+
+  void emit(std::uint32_t instruction);
+  [[nodiscard]] Label make_label();
+  void bind(Label label);
+  void branch_condition(Label label, unsigned condition);
+  void compare_zero(Label label, unsigned reg, bool is_64_bit, bool nonzero);
+  void test_zero(Label label, unsigned reg, unsigned bit, bool nonzero);
+  void load_constant(unsigned destination, std::uint64_t value);
+  void load_literal_constant(unsigned destination, std::uint64_t value);
+  void load_x(unsigned destination, unsigned base, std::size_t offset);
+  void store_x(unsigned source, unsigned base, std::size_t offset);
+  void load_q(unsigned destination, unsigned base, std::size_t offset);
+  void store_q(unsigned source, unsigned base, std::size_t offset);
+  void return_constant(Event event, std::size_t instructions);
+  void return_dynamic(std::size_t instructions);
+  void load_gpr(unsigned host, unsigned guest, bool stack_pointer);
+  void store_gpr(unsigned host, unsigned guest, bool stack_pointer);
+
+  struct NativeGpr final {
+    unsigned host{};
+    bool resident{};
+  };
+
+  struct GprResidencyPlan final {
+    std::array<unsigned, 8> guests{};
+    std::size_t count{};
+    std::size_t estimated_avoided_accesses{};
+  };
+
+  void begin_gpr_residency_observation(bool enabled) noexcept;
+  [[nodiscard]] GprResidencyPlan
+  finish_gpr_residency_observation() const noexcept;
+  void apply_gpr_residency_plan(const GprResidencyPlan &plan) noexcept;
+  [[nodiscard]] bool gpr_slots_unbound() const noexcept;
+
+  [[nodiscard]] NativeGpr read_native_gpr(unsigned guest,
+                                          bool stack_pointer,
+                                          unsigned fallback);
+  [[nodiscard]] NativeGpr write_native_gpr(unsigned guest,
+                                           bool stack_pointer,
+                                           bool reads_old,
+                                           unsigned fallback);
+  void commit_native_gpr(NativeGpr value, unsigned guest,
+                         bool stack_pointer);
+
+  struct NativeVector final {
+    unsigned host{};
+    bool resident{};
+  };
+
+  [[nodiscard]] std::optional<unsigned>
+  constrained_vector_source(std::uint32_t instruction) const noexcept;
+  void pin_constrained_vector(unsigned guest) noexcept;
+  struct ConsecutiveVectorList final {
+    unsigned first{};
+    unsigned count{};
+  };
+  [[nodiscard]] std::optional<ConsecutiveVectorList>
+  consecutive_vector_list(std::uint32_t instruction) const noexcept;
+  [[nodiscard]] bool
+  pin_consecutive_vector_list(unsigned first, unsigned count) noexcept;
+  [[nodiscard]] NativeVector read_native_vector(unsigned guest,
+                                                unsigned fallback);
+  [[nodiscard]] NativeVector
+  read_constrained_native_vector(unsigned guest, unsigned fallback);
+  [[nodiscard]] NativeVector write_native_vector(unsigned guest,
+                                                 bool reads_old,
+                                                 unsigned fallback);
+  void commit_native_vector(NativeVector value, unsigned guest);
+
+  [[nodiscard]] std::uint16_t dirty_gpr_mask() const noexcept;
+  [[nodiscard]] std::uint32_t dirty_vector_mask() const noexcept;
+  void set_exit_gpr_mask(std::uint16_t mask) noexcept;
+  void set_exit_vector_mask(std::uint32_t mask) noexcept;
+  void flush_exit_gprs();
+  void spill_gprs_for_returning_call();
+  void reload_gprs_after_call();
+  void spill_gprs_for_terminal_call();
+  void flush_and_invalidate_gprs();
+
+  void store_pc(std::uint64_t pc);
+  enum class GuestFlagsState : unsigned char {
+    memory,
+    synchronized,
+    host_dirty,
+  };
+  /*
+   * Guest NZCV has three translation-time states:
+   *   memory       CpuState is canonical; host NZCV is scratch.
+   *   synchronized CpuState and host NZCV both contain the guest value.
+   *   host_dirty   host NZCV is canonical; CpuState is stale.
+   *
+   * load_flags/store_flags retain their historical producer/consumer names,
+   * but now move only when the state machine requires it.
+   */
+  void load_flags();
+  void store_flags();
+  void synchronize_flags();
+  void spill_flags_for_internal_clobber();
+  void flush_flags_for_exit();
+  void assume_flags_in_memory() noexcept;
+  [[nodiscard]] GuestFlagsState snapshot_flags() const noexcept;
+  void publish_cold_flags(GuestFlagsState state);
+  void read_flags(unsigned destination);
+  void mark_native_fp() noexcept;
+  void mark_native_fpmr() noexcept;
+  void emit_linked_exit(std::uint64_t target, std::size_t count);
+  void emit_indirect_linked_exit(unsigned target_host, bool writes_link,
+                                 std::uint64_t source_pc,
+                                 std::size_t count);
+
+  void emit_native_binary(std::uint32_t instruction, bool stack_pointer,
+                          bool sets_flags);
+  void emit_native_unary(std::uint32_t instruction);
+  void emit_conditional_compare(std::uint32_t instruction);
+  void emit_bitfield(std::uint32_t instruction);
+  void emit_direct_branch(std::uint64_t target, std::size_t count);
+  void emit_conditional_pc(unsigned condition, std::uint64_t taken,
+                           std::uint64_t fallthrough, std::size_t count);
+  void emit_compare_branch(std::uint32_t instruction, std::uint64_t pc,
+                           std::size_t count);
+  void emit_test_branch(std::uint32_t instruction, std::uint64_t pc,
+                        std::size_t count);
+  void emit_register_branch(std::uint32_t instruction, std::uint64_t pc,
+                            std::size_t count);
+  void emit_pc_relative(std::uint32_t instruction, std::uint64_t pc);
+  void emit_move_wide(std::uint32_t instruction);
+  void emit_add_sub_immediate(std::uint32_t instruction);
+  void emit_add_sub_extended(std::uint32_t instruction);
+  void emit_logical_immediate(std::uint32_t instruction);
+  void emit_logical_shifted(std::uint32_t instruction);
+  void emit_add_sub_carry(std::uint32_t instruction);
+  void emit_conditional_select(std::uint32_t instruction);
+  void emit_integer_min_max(std::uint32_t instruction, bool immediate);
+  void emit_multiply_add(std::uint32_t instruction);
+  [[nodiscard]] bool emit_flag_manipulation(std::uint32_t instruction);
+  [[nodiscard]] static bool valid_move_wide(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool valid_shifted_register(std::uint32_t instruction,
+                                                   bool add_sub) noexcept;
+  [[nodiscard]] static bool
+  valid_extended_register(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_logical_immediate(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool valid_bitfield(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_multiply_add(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_bit_reverse_count(std::uint32_t instruction) noexcept;
+
+  [[nodiscard]] bool emit_basic_floating(std::uint32_t instruction);
+  [[nodiscard]] bool emit_fused_floating(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_integer_float_convert(std::uint32_t instruction);
+  [[nodiscard]] bool emit_integer_to_floating(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_to_integer(std::uint32_t instruction);
+  [[nodiscard]] bool
+  emit_floating_javascript_convert(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_precision_convert(std::uint32_t instruction);
+  [[nodiscard]] bool emit_fp8_convert_up(std::uint32_t instruction);
+  [[nodiscard]] bool emit_fp8_convert_down(std::uint32_t instruction);
+  [[nodiscard]] bool emit_fp8_dot(std::uint32_t instruction);
+  [[nodiscard]] bool
+  emit_fp8_multiply_matrix(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_round(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_unary(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_horizontal(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_reciprocal(std::uint32_t instruction);
+  [[nodiscard]] bool emit_floating_scale(std::uint32_t instruction);
+  [[nodiscard]] bool
+  host_supports_floating_type(std::uint32_t instruction) const;
+  void emit_floating_compare(std::uint32_t instruction, bool conditional);
+  void emit_floating_select(std::uint32_t instruction);
+  void emit_floating_move(std::uint32_t instruction, bool immediate);
+
+  [[nodiscard]] static bool
+  valid_simd_three_same_integer(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_bitwise_register(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_three_same_integer(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_arithmetic_narrow(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_widening(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_narrow_move(std::uint32_t instruction);
+  [[nodiscard]] bool
+  emit_simd_two_register_integer(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_unsigned_estimate(std::uint32_t instruction);
+  [[nodiscard]] static bool
+  recognized_simd_fmulx(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_fmulx(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_fmulx(std::uint32_t instruction);
+  [[nodiscard]] bool emit_bfloat_dot(std::uint32_t instruction);
+  [[nodiscard]] bool emit_half_dot(std::uint32_t instruction);
+  [[nodiscard]] bool emit_half_fused_long(std::uint32_t instruction);
+  [[nodiscard]] bool emit_half_matrix(std::uint32_t instruction);
+  [[nodiscard]] bool emit_bfloat_multiply_long(std::uint32_t instruction);
+  [[nodiscard]] bool emit_bfloat_matrix(std::uint32_t instruction);
+  [[nodiscard]] static bool
+  recognized_simd_dot(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_dot(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_dot(std::uint32_t instruction);
+  [[nodiscard]] static bool
+  recognized_simd_matrix(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_matrix(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_matrix(std::uint32_t instruction);
+  [[nodiscard]] static bool
+  recognized_simd_floating_indexed(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_floating_indexed(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  recognized_simd_integer_indexed(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_integer_indexed(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_integer_indexed(std::uint32_t instruction);
+  [[nodiscard]] static bool
+  recognized_simd_rdm(std::uint32_t instruction) noexcept;
+  [[nodiscard]] static bool
+  valid_simd_rdm(std::uint32_t instruction) noexcept;
+  [[nodiscard]] bool emit_simd_rdm(std::uint32_t instruction);
+  [[nodiscard]] bool
+  emit_simd_floating_compare(std::uint32_t instruction);
+  [[nodiscard]] bool
+  emit_simd_floating_complex(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_floating_indexed(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_extract(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_table_lookup(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_lut(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_permute(std::uint32_t instruction);
+
+  [[nodiscard]] bool emit_crc32(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_aes(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_pmull(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_sha1_sha2(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_sha512(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_sm(std::uint32_t instruction);
+  [[nodiscard]] bool emit_simd_sha3(std::uint32_t instruction);
+
+private:
+  static constexpr unsigned unbound_guest = 32U;
+  static constexpr std::array<unsigned, 8> resident_gpr_hosts{
+      3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U};
+  static_assert([] {
+    for (const auto host : resident_gpr_hosts)
+      if (host >= 19U && host <= 21U)
+        return false;
+    return true;
+  }());
+  static constexpr std::size_t pinned_vector_slot_count = 2;
+  static constexpr std::array<unsigned, 18> resident_vector_hosts{
+      6U,  7U,  16U, 17U, 18U, 19U, 20U, 21U, 22U,
+      23U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U};
+
+  struct GprSlot final {
+    unsigned guest{unbound_guest};
+    bool stack_pointer{};
+    bool loaded{};
+    bool dirty{};
+  };
+
+  struct GprResidencyGuest final {
+    static constexpr std::size_t no_first_access =
+        static_cast<std::size_t>(-1);
+
+    std::size_t first_access{no_first_access};
+    std::size_t reads{};
+    std::size_t writes{};
+    bool written{};
+    bool read_before_write{};
+  };
+
+  void observe_gpr_access(unsigned guest, bool stack_pointer,
+                          bool reads, bool writes) noexcept;
+  [[nodiscard]] static std::size_t
+  residency_benefit(const GprResidencyGuest &guest) noexcept;
+
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+  struct GprPressureGuest final {
+    static constexpr unsigned no_rank = 0xffU;
+
+    unsigned rank{no_rank};
+    std::size_t fallback_read_loads{};
+    std::size_t fallback_write_stores{};
+    std::size_t required_resident_accesses{};
+    bool resident_value_available{};
+    bool dirty{};
+  };
+
+  void profile_gpr_slot_allocation(std::size_t slots) noexcept;
+  void profile_gpr_overflow_native_access(
+      unsigned guest, bool stack_pointer, bool reads_old,
+      bool writes) noexcept;
+  void profile_gpr_overflow_nonallocating_access(
+      unsigned guest, bool stack_pointer, bool reads_old,
+      bool writes) noexcept;
+  void profile_gpr_overflow_fallback_store(
+      unsigned guest, bool stack_pointer) noexcept;
+  [[nodiscard]] GprPressureGuest *
+  find_profiled_overflow_guest(unsigned guest,
+                               bool stack_pointer) noexcept;
+#endif
+
+  struct VectorSlot final {
+    unsigned guest{unbound_guest};
+    bool loaded{};
+    bool dirty{};
+  };
+
+  [[nodiscard]] std::optional<std::size_t>
+  find_gpr_slot(unsigned guest, bool stack_pointer) const noexcept;
+  [[nodiscard]] std::optional<std::size_t>
+  allocate_gpr_slot(unsigned guest, bool stack_pointer);
+  [[nodiscard]] std::optional<std::size_t>
+  find_vector_slot(unsigned guest) const noexcept;
+  [[nodiscard]] std::optional<std::size_t>
+  allocate_vector_slot(unsigned guest);
+  void flush_gprs(std::uint16_t mask);
+  void flush_vectors(std::uint32_t mask);
+
+  std::array<GprSlot, resident_gpr_hosts.size()> gpr_slots_{};
+  std::array<GprResidencyGuest, 32> gpr_residency_guests_{};
+  std::size_t gpr_residency_next_access_{};
+  bool gpr_residency_observation_enabled_{};
+  std::array<VectorSlot, resident_vector_hosts.size()> vector_slots_{};
+  std::uint16_t exit_gpr_mask_{};
+  std::uint32_t exit_vector_mask_{};
+  GuestFlagsState guest_flags_state_{GuestFlagsState::memory};
+  bool exit_gpr_mask_set_{};
+  bool exit_vector_mask_set_{};
+  bool gpr_cache_enabled_{};
+  void *family_emitter_{};
+  bool *family_native_fp_{};
+  bool *family_native_fpmr_{};
+  void *link_context_{};
+  LinkResolver link_resolver_{};
+  void *indirect_link_context_{};
+  IndirectLinkResolver indirect_link_resolver_{};
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  std::uint64_t profile_block_pc_{};
+  std::uint32_t profile_gpr_read_before_write_{};
+  std::uint32_t profile_gpr_written_{};
+  void *gpr_link_profile_context_{};
+  DirectLinkProfileResolver direct_link_profile_resolver_{};
+  IndirectLinkProfileResolver indirect_link_profile_resolver_{};
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+  bool gpr_pressure_profile_enabled_{};
+  std::size_t gpr_pressure_next_rank_{};
+  JitGprPressureProfile gpr_pressure_profile_{};
+  std::array<GprPressureGuest, 32> gpr_pressure_guests_{};
+#endif
+};
+
+} // namespace uml::cpu::arm64::jit

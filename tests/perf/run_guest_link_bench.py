@@ -2,12 +2,13 @@
 """Measure cached gadget-block link throughput in a standalone guest."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
 import os
 import pathlib
-import re
 import shlex
 import statistics
 import sys
@@ -15,8 +16,8 @@ import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(TESTS / "ltp"))
-sys.path.insert(0, str(TESTS / "smp"))
+sys.path.insert(0, str(TESTS / "integration" / "ltp"))
+sys.path.insert(0, str(TESTS / "integration" / "smp"))
 from run_guest_ltp import Guest  # noqa: E402
 from run_guest_smp import cpu_time_seconds  # noqa: E402
 
@@ -43,15 +44,23 @@ def parse_arguments() -> argparse.Namespace:
         choices=("jit", "gadgets", "interpreter"),
         default="jit",
     )
-    parser.add_argument(
+    boot_mode = parser.add_mutually_exclusive_group()
+    boot_mode.add_argument(
         "--shell-init",
         action="store_true",
         help="boot /bin/sh directly and mount disposable runtime filesystems",
     )
-    parser.add_argument(
-        "--systemd-overlay",
+    boot_mode.add_argument(
+        "--overlay-shell",
+        dest="overlay_shell",
         action="store_true",
-        help="boot rootfs.img through a read-only-lower tmpfs overlay",
+        help="boot rootfs.img through a writable tmpfs OverlayFS shell",
+    )
+    boot_mode.add_argument(
+        "--systemd-overlay",
+        dest="overlay_shell",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     return parser.parse_args()
 
@@ -116,17 +125,16 @@ def main() -> int:
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
-            f"--execution-engine={arguments.engine}",
         ),
-        systemd_overlay=arguments.systemd_overlay or arguments.shell_init,
+        init_shell=arguments.shell_init,
+        overlay_shell=arguments.overlay_shell,
+        engine=arguments.engine,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
     try:
         if arguments.shell_init:
-            guest._read_until(
-                re.compile(rb"(?:^|\r?\n)# $"), arguments.boot_timeout
-            )
+            guest.boot_to_shell(arguments.boot_timeout)
             mounts = guest.run_command(
                 "mount -t proc proc /proc && "
                 "mount -t tmpfs -o mode=1777 tmpfs /tmp",

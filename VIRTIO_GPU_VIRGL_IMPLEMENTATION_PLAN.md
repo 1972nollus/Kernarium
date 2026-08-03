@@ -52,7 +52,7 @@ thread-affinity rule is part of the implementation contract.
 
 - Build virglrenderer as a static library with OpenGL enabled and Venus
   disabled.
-- Link the GPU backend with OpenGL, LibVNCServer, and libepoxy.
+- Link the GPU emulator with OpenGL, LibVNCServer, and libepoxy.
 - Keep rendering in the emulator process; no helper process or host display
   server is required.
 
@@ -89,9 +89,9 @@ Advertise only the device features used by this path:
 - Enable UML DMA/IOMEM emulation required by Virtio-GPU.
 - Accept the in-process `fd=<number>` transport on Darwin.
 - Normalize Darwin's host `EAGAIN`/`EWOULDBLOCK` values.
-- Register backend-request readiness through Darwin's normal UML IRQ path.
+- Register emulator-request readiness through Darwin's normal UML IRQ path.
 - Always retain per-queue call descriptors so completion delivery does not
-  depend on the time-travel backend-request path.
+  depend on the time-travel emulator-request path.
 - Register virtual keyboard and absolute-tablet devices backed by an inherited
   datagram descriptor so external VNC input reaches normal Linux evdev.
 

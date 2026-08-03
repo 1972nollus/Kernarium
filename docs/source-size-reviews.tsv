@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Optional review records for cohesive files that benefit from explicit context.
+# reviewed_lines is the factual size at review time, not a future limit.
+path	owner	reviewed_lines	note	reviewed
+darwin/cpu/arm64/gadgets/program.cpp	CPU/gadgets	12812	Keep declaration tables and the order-sensitive decoder together until a table-driven family interface can preserve emitted word order, splitting cold family tables first if that contract becomes practical.	2026-08-02
+darwin/cpu/arm64/gadgets/engine/floating_simd.inc	CPU/gadgets	5778	Keep this assembly bank intact while its macro-local labels, symbol ordering, relocations, and measured hot-path layout remain coupled.	2026-08-02
+darwin/cpu/arm64/gadgets/engine/system_atomic.inc	CPU/gadgets	2925	Keep complete system and atomic banks together while extraction would cross macro-local-label groups or change exported symbol and section layout.	2026-08-02
+darwin/cpu/arm64/gadgets/engine/core_integer.inc	CPU/gadgets	2240	Keep complete integer banks together while extraction would disturb exported-symbol ordering or measured section layout.	2026-08-02
+darwin/cpu/arm64/gadgets/engine/load_store.inc	CPU/gadgets	1300	Keep complete load/store banks together while extraction would disturb exported-symbol ordering or measured section layout.	2026-08-02
+darwin/cpu/arm64/jit/jit_executor.cpp	CPU/JIT	11043	Keep the translation coordinator cohesive until compiler and test-adapter contracts can be exposed without widening the production API or changing generated code.	2026-08-02
+darwin/memory/mmu/address_space.cpp	Memory/MMU	1050	Retain one execution-gate owner, revisiting a mapping-mutation split only if another responsibility appears.	2026-08-02
+tests/unit/arm64/arm64_floating_reciprocal_test_support.hpp	CPU-test/oracles	1082	Keep the software oracle next to its test support while that makes the specification mapping easier to audit, moving it only if a distinct reusable responsibility emerges.	2026-08-02
+tests/unit/arm64/base.cmake	CPU-test/build	1010	Keep the family registrations together while the file remains a declarative index, extracting repeated registration mechanics when doing so improves navigation.	2026-08-02
+tests/unit/arm64/arm64_engine_test_support.cpp	CPU-test/harness	1022	Keep engine orchestration and its mapping fixtures together while they share one harness contract, separating them if either becomes independently reusable.	2026-08-02
+tests/unit/arm64/engine.cmake	CPU-test/build	911	Keep engine test registrations together as a declarative index, extracting repeated mechanics when doing so improves navigation.	2026-08-02

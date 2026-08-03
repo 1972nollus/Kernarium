@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Optional display and virtual-input policy for desktop guest campaigns.
+# uinput and evdev are software-only interfaces: they let guest userspace
+# construct and consume virtual input devices without exposing host hardware.
+CONFIG_INPUT=y
+CONFIG_INPUT_MOUSEDEV=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_MISC=y
+CONFIG_INPUT_UINPUT=y
+CONFIG_UML_VNC_INPUT=y
+# The host GPU service is exposed through UML's direct vhost-user transport.
+# DRM, Virtio-GPU, and Virtio input must be built in because UML deliberately
+# ships without loadable-module support.
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_UML=y
+CONFIG_VIRTIO_INPUT=y
+CONFIG_DRM=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_DRM_VIRTIO_GPU_KMS=y

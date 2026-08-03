@@ -1,5 +1,9 @@
 # A64 Base and SIMD/FP instruction implementation progress
 
+> Historical execution log. References to `rootfs.ext2` describe pre-refactor
+> results; use the immutable `rootfs.img` workflow documented in
+> `docs/testing.md` for current work.
+
 Source: `ISA_A64_xml_A_profile-2026-06.pdf`, Arm A64 ISA XML for A-profile architecture, 2026-06, document 111182 (ID102025).
 
 Scope: all entries in the PDF inventories `A64 -- Base Instructions (alphabetic order)` (516 entries) and `A64 -- SIMD and Floating-point Instructions (alphabetic order)` (467 entries). Aliases, grouped mnemonics, scalar/vector forms, addressing forms, element widths, architectural feature variants, and every distinct encoding described by an entry must be tested before that entry is complete.
@@ -22,7 +26,7 @@ boxes are checked:
 ## Current three-engine conformance audit (2026-07-30)
 
 - [x] Added a canonical 983-row inventory at
-  `darwin/backend/tests/a64_instruction_inventory.tsv`, with stable IDs,
+  `tests/unit/arm64/a64_instruction_inventory.tsv`, with stable IDs,
   section/label identity, shared-suite assignment, variant dimensions, and
   specification-derived native feature expressions.
 - [x] Added a validator that proves the inventory is exactly 516 Base plus 467
@@ -600,7 +604,7 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
   tables; guarded software behavior remains for semantics the host cannot
   reproduce exactly.
 - Test organization: instruction coverage is split across **483 focused A64
-  test source files** (**488 backend test sources** including infrastructure),
+  test source files** (**488 emulator test sources** including infrastructure),
   with separate allocation/encoding, behavior, control-state, fault/ordering,
   and gadget checks as applicable.
 - Current registered CTest matrix (guest integrations excluded):
@@ -621,7 +625,7 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
   measures **13.933 average FPS** across 30 post-warm-up samples. The canonical
   `rootfs.img` hash remains
   `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
-- Canonical artifacts: `.build/kernel` was regenerated with
+- Artifacts observed for this run: `.build/kernel` was regenerated with
   `CONFIG_PAGE_SIZE_16KB=y`, 4 KiB pages disabled, and
   `CONFIG_BLK_DEV_INITRD=y`; the matching `uml-darwin` production executable
   was relinked successfully.

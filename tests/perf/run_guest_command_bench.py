@@ -2,12 +2,13 @@
 """Run a matched command repeatedly in a read-only overlay-root guest."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
 import os
 import pathlib
-import re
 import shlex
 import subprocess
 import statistics
@@ -16,8 +17,8 @@ import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(TESTS / "ltp"))
-sys.path.insert(0, str(TESTS / "smp"))
+sys.path.insert(0, str(TESTS / "integration" / "ltp"))
+sys.path.insert(0, str(TESTS / "integration" / "smp"))
 from run_guest_ltp import Guest  # noqa: E402
 from run_guest_smp import cpu_time_seconds  # noqa: E402
 
@@ -70,7 +71,6 @@ def main() -> int:
     extra_arguments = [
         f"ncpus={arguments.cpus}",
         f"root={arguments.root_device}",
-        f"--execution-engine={arguments.engine}",
     ]
     guest = Guest(
         arguments.emulator.resolve(),
@@ -78,13 +78,14 @@ def main() -> int:
         arguments.memory,
         "tmpfs",
         tuple(extra_arguments),
-        systemd_overlay=arguments.shell_init,
+        init_shell=arguments.shell_init,
+        engine=arguments.engine,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
     try:
         if arguments.shell_init:
-            guest._read_until(re.compile(rb"(?:^|\r?\n)# $"), 180)
+            guest.boot_to_shell(180)
             mounts = guest.run_command(
                 "mount -t proc proc /proc && "
                 "mount -t tmpfs -o mode=1777 tmpfs /tmp",

@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "arm64_engine_test_support.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <source_location>
+#include <string_view>
+
+namespace arm64_system_test {
+
+namespace arm64 = uml::cpu::arm64;
+namespace engine_tests = uml::emulator::tests;
+
+inline void require(
+	bool condition,
+	const std::source_location location = std::source_location::current())
+{
+	if (!condition) {
+		std::fprintf(stderr, "require failed at %s:%u\n",
+			location.file_name(), location.line());
+		std::abort();
+	}
+}
+
+[[nodiscard]] inline arm64::CpuState state()
+{
+	arm64::CpuState cpu{};
+	for (std::size_t index = 0; index < cpu.registers.size(); ++index)
+		cpu.registers[index] = 0x9182'7364'5546'3728ULL ^
+			(static_cast<std::uint64_t>(index) *
+				0x0101'0101'0101'0101ULL);
+	for (std::size_t reg = 0; reg < cpu.vectors.size(); ++reg)
+		for (std::size_t byte = 0;
+		     byte < cpu.vectors[reg].bytes.size(); ++byte)
+			cpu.vectors[reg].bytes[byte] =
+				static_cast<std::byte>(reg * 11U + byte * 23U);
+	cpu.sp = 0xfeed'face'cafe'bee0ULL;
+	cpu.nzcv = 0xa000'0000U;
+	cpu.fpcr = 0x07f7'9f07U;
+	cpu.fpsr = 0xf800'009fU;
+	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
+	cpu.tls = 0x1234'5678'9abc'def0ULL;
+	cpu.set_mte_configuration(true, 0x8421U);
+	cpu.set_mte_generator(true, 0xace1U, 7,
+		0xfeed'face'0123'4567ULL);
+	cpu.cpa_enabled = true;
+	cpu.cpa_multiply_enabled = true;
+	cpu.accdata = 0xa1b2'c3d4U;
+	cpu.pstate_ssbs = true;
+	cpu.pstate_dit = true;
+	cpu.pstate_tco = true;
+	cpu.pstate_sm = true;
+	cpu.pstate_za = true;
+	cpu.pstate_daif = 0xaU;
+	cpu.exclusive_address = 0x2000;
+	cpu.exclusive_key = 0x3456;
+	cpu.exclusive_value = 0x1020'3040'5060'7080ULL;
+	cpu.exclusive_value2 = 0x8877'6655'4433'2211ULL;
+	cpu.exclusive_version = 17;
+	cpu.exclusive_size = 8;
+	return cpu;
+}
+
+class Harness final {
+public:
+	void check(std::string_view name, std::uint32_t instruction,
+		const arm64::CpuState &initial, const arm64::CpuState &expected,
+		engine_tests::NativeRequirements native)
+	{
+		engines_.check_one(name, instruction, initial, expected, native);
+	}
+
+	void check_unchanged(std::string_view name, std::uint32_t instruction,
+		engine_tests::NativeRequirements native =
+			engine_tests::NativeRequirements::baseline())
+	{
+		const auto initial = state();
+		check(name, instruction, initial, initial, native);
+	}
+
+	void require_illegal(std::uint32_t instruction)
+	{
+		const auto initial = state();
+		engines_.check_illegal("base-system-illegal", instruction, initial);
+	}
+
+	void print_summary(std::string_view name) const
+	{
+		engines_.print_summary(name);
+	}
+
+	engine_tests::EngineHarness &engines()
+	{
+		return engines_;
+	}
+
+private:
+	engine_tests::EngineHarness engines_;
+};
+
+[[nodiscard]] constexpr std::uint32_t system_instruction(bool result,
+	unsigned op1, unsigned crn, unsigned crm, unsigned op2, unsigned rt)
+{
+	return (result ? 0xd528'0000U : 0xd508'0000U) |
+		((op1 & 7U) << 16) | ((crn & 15U) << 12) |
+		((crm & 15U) << 8) | ((op2 & 7U) << 5) | (rt & 31U);
+}
+
+[[nodiscard]] constexpr bool gcs_system_instruction(
+	std::uint32_t instruction)
+{
+	switch (instruction & 0xffff'ffe0U) {
+	case 0xd508'77a0U:
+	case 0xd52b'7720U:
+	case 0xd508'77c0U:
+	case 0xd50b'7700U:
+	case 0xd508'7780U:
+	case 0xd50b'7740U:
+	case 0xd52b'7760U:
+		return true;
+	default:
+		return false;
+	}
+}
+
+[[nodiscard]] constexpr std::uint32_t system_register(bool read,
+	unsigned o0, unsigned op1, unsigned crn, unsigned crm, unsigned op2,
+	unsigned rt)
+{
+	return 0xd510'0000U | (static_cast<unsigned>(read) << 21) |
+		((o0 & 1U) << 19) | ((op1 & 7U) << 16) |
+		((crn & 15U) << 12) | ((crm & 15U) << 8) |
+		((op2 & 7U) << 5) | (rt & 31U);
+}
+
+} // namespace arm64_system_test

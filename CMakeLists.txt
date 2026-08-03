@@ -1,9 +1,22 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.27)
 
 project(uml_apple LANGUAGES CXX ASM)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+include(UmlTesting)
+include(VerifyDependencies)
+include(VerifyAbi)
+include(UmlArchitecture)
+
+uml_verify_generated_abi()
+
+# Request the codemodel for this configure invocation. Unlike creating a
+# query file while configuration is already in progress, cmake_file_api()
+# guarantees that a fresh build tree has its reply at generation time.
+cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
 
 set(UML_APPLE_PLATFORM "macos" CACHE STRING
     "Apple target platform: macos, ios, or ios-simulator")
@@ -14,22 +27,47 @@ if(NOT UML_APPLE_PLATFORM MATCHES "^(macos|ios|ios-simulator)$")
 endif()
 
 if(NOT APPLE)
-    message(FATAL_ERROR "The UML Apple backend requires an Apple SDK")
+    message(FATAL_ERROR "The UML Apple emulator requires an Apple SDK")
 endif()
 
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(UML_TARGET_MACOS ON)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line frontend" ON)
+    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
     option(UML_BUILD_KERNEL_RUNNER
            "Build the embedded ELF kernel runner for the macOS CLI" ON)
 else()
     set(UML_TARGET_MACOS OFF)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line frontend" OFF)
+    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
     set(UML_BUILD_KERNEL_RUNNER OFF CACHE BOOL
         "The transitional ELF runner is available only on macOS" FORCE)
 endif()
 
-option(UML_BUILD_TESTS "Build host-runnable backend unit tests" ${UML_TARGET_MACOS})
+option(UML_BUILD_UNIT_TESTS
+    "Build host-only C++/assembly unit tests"
+    ${UML_TARGET_MACOS})
+option(UML_BUILD_INTEGRATION_TESTS
+    "Register guest, rootfs, Python, VNC, and workload integration tests" OFF)
+set(_uml_build_tooling_tests_default OFF)
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS)
+    set(_uml_build_tooling_tests_default ON)
+endif()
+option(UML_BUILD_TOOLING_TESTS
+    "Build and register host-only repository/tooling validation tests"
+    ${_uml_build_tooling_tests_default})
+set(UML_INTEGRATION_ROOTFS "" CACHE FILEPATH
+    "Immutable lower rootfs image used by integration tests")
+option(UML_ENABLE_EXTERNAL_NETWORK_TESTS
+    "Register guest tests that intentionally access the public network" OFF)
+set(UML_EXTERNAL_NETWORK_TEST_HOST "example.com" CACHE STRING
+    "Public host used only when UML_ENABLE_EXTERNAL_NETWORK_TESTS is enabled")
+set(UML_DEPENDENCY_PREFIX
+    "${PROJECT_SOURCE_DIR}/.build/dependencies/macos-arm64"
+    CACHE PATH "Private prefix containing source-built host dependencies")
+option(UML_BUILD_GPU "Build the host GPU/display provider" ${UML_TARGET_MACOS})
+option(UML_BUILD_NETWORK_PROVIDER
+    "Build the optional SLiRP network provider"
+    ${UML_BUILD_KERNEL_RUNNER})
+
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
 option(DARWIN_UML_JIT_GPR_LINK_PROFILE
@@ -37,12 +75,12 @@ option(DARWIN_UML_JIT_GPR_LINK_PROFILE
 option(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE
     "Instrument JIT translation for resident-GPR pressure profiling" OFF)
 
-if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    add_compile_definitions(DARWIN_UML_JIT_GPR_LINK_PROFILE=1)
-endif()
-if(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    add_compile_definitions(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE=1)
-endif()
+add_library(uml_jit_profile_configuration INTERFACE)
+add_library(UML::JitProfileConfiguration ALIAS
+    uml_jit_profile_configuration)
+target_compile_definitions(uml_jit_profile_configuration INTERFACE
+    $<$<BOOL:${DARWIN_UML_JIT_GPR_LINK_PROFILE}>:DARWIN_UML_JIT_GPR_LINK_PROFILE=1>
+    $<$<BOOL:${DARWIN_UML_JIT_GPR_PRESSURE_PROFILE}>:DARWIN_UML_JIT_GPR_PRESSURE_PROFILE=1>)
 
 if(UML_GUEST_16K_PAGES)
     set(UML_GUEST_PAGE_SIZE 16384)
@@ -51,72 +89,70 @@ else()
     set(UML_GUEST_PAGE_SIZE 4096)
     set(UML_GUEST_PAGE_SHIFT 12)
 endif()
-add_compile_definitions(
+add_library(uml_guest_page_configuration INTERFACE)
+add_library(UML::GuestPageConfiguration ALIAS
+    uml_guest_page_configuration)
+target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
     DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT})
 
-if(UML_BUILD_TESTS)
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
+   UML_BUILD_TOOLING_TESTS)
     enable_testing()
-    add_test(NAME source-tree-cxx-only
-        COMMAND ${CMAKE_COMMAND}
-            -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_test(NAME gpu-guest-rootfs-safety
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/gpu/test_run_gpu_guest.py)
-    set_tests_properties(gpu-guest-rootfs-safety PROPERTIES
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/gpu)
-    add_test(NAME kde-vnc-launcher-options
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/gpu/test_boot_kde_vnc.py)
-    add_test(NAME chromium-webgl-aquarium-metrics
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/gpu/test_run_chromium_webgl.py)
-    add_test(NAME jit-gpr-link-profile-analysis
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/perf/analyze_jit_gpr_link_profile_tests.py)
-    set_tests_properties(jit-gpr-link-profile-analysis PROPERTIES
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/perf)
 endif()
 
-add_subdirectory(darwin/backend)
-
-if(UML_TARGET_MACOS)
-    # First-party host code remains C++, but the vendored VNC implementation
-    # is C and is built as part of the GPU service.
-    enable_language(C)
-    set(LIBVNCSERVER_INSTALL OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(WITH_LIBVNCSERVER ON CACHE BOOL "" FORCE)
-    set(WITH_LIBVNCCLIENT ON CACHE BOOL "" FORCE)
-    set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(WITH_TESTS OFF CACHE BOOL "" FORCE)
-    set(WITH_ZLIB ON CACHE BOOL "" FORCE)
-    set(WITH_LZO OFF CACHE BOOL "" FORCE)
-    set(WITH_JPEG OFF CACHE BOOL "" FORCE)
-    set(WITH_PNG OFF CACHE BOOL "" FORCE)
-    set(WITH_SDL OFF CACHE BOOL "" FORCE)
-    set(WITH_GTK OFF CACHE BOOL "" FORCE)
-    set(WITH_LIBSSHTUNNEL OFF CACHE BOOL "" FORCE)
-    set(WITH_GNUTLS OFF CACHE BOOL "" FORCE)
-    set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
-    set(WITH_SYSTEMD OFF CACHE BOOL "" FORCE)
-    set(WITH_GCRYPT OFF CACHE BOOL "" FORCE)
-    set(WITH_FFMPEG OFF CACHE BOOL "" FORCE)
-    set(WITH_TIGHTVNC_FILETRANSFER OFF CACHE BOOL "" FORCE)
-    set(WITH_WEBSOCKETS OFF CACHE BOOL "" FORCE)
-    set(WITH_SASL OFF CACHE BOOL "" FORCE)
-    set(WITH_XCB OFF CACHE BOOL "" FORCE)
-    set(WITH_QT OFF CACHE BOOL "" FORCE)
-    add_subdirectory(external/libvncserver
-        ${PROJECT_BINARY_DIR}/external/libvncserver EXCLUDE_FROM_ALL)
-    add_subdirectory(darwin/gpu)
+if(UML_TARGET_MACOS AND (UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER))
+    add_subdirectory(dependencies)
 endif()
 
 if(UML_BUILD_CLI)
-    if(NOT UML_TARGET_MACOS)
-        message(FATAL_ERROR "The CLI is currently supported only for macOS")
-    endif()
-    add_subdirectory(darwin/frontend/macos)
+    add_subdirectory(kernel)
+endif()
+
+add_subdirectory(darwin)
+
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
+   UML_BUILD_TOOLING_TESTS)
+    add_subdirectory(tests)
+endif()
+
+uml_write_architecture_manifest()
+
+# This structural gate is part of every Apple product configuration, including
+# iOS builds with behavioral tests disabled. The File API reply is produced by
+# the completed configure and the target never reconfigures its own tree.
+get_property(_uml_audit_test_suites GLOBAL PROPERTY
+    UML_AUDIT_EXPECTED_TEST_SUITES)
+get_property(_uml_audit_conditional_tests GLOBAL PROPERTY
+    UML_AUDIT_REQUIRED_CONDITIONAL_TESTS)
+if(_uml_audit_test_suites)
+    add_custom_target(architecture-audit
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+            -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
+            -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
+        COMMAND ${CMAKE_COMMAND}
+            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
+            -P ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
+        COMMAND ${CMAKE_COMMAND}
+            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
+            -DMANIFEST=${PROJECT_SOURCE_DIR}/tests/test-manifest.tsv
+            -DEXPECTED_SUITES=${_uml_audit_test_suites}
+            -DREQUIRED_CONDITIONAL_TESTS=${_uml_audit_conditional_tests}
+            -P ${PROJECT_SOURCE_DIR}/scripts/audit-test-manifest.cmake
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        COMMENT "Auditing host source-tree architecture"
+        VERBATIM)
+else()
+    add_custom_target(architecture-audit
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+            -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
+            -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
+        COMMAND ${CMAKE_COMMAND}
+            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
+            -P ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        COMMENT "Auditing host source-tree architecture"
+        VERBATIM)
 endif()

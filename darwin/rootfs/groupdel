@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compatibility frontend for BusyBox-based root filesystems without the
+# Compatibility app for BusyBox-based root filesystems without the
 # shadow-utils groupdel command.
 
 usage()

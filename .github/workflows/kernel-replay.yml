@@ -1,0 +1,42 @@
+name: Kernel replay policy
+
+on:
+  pull_request:
+    paths:
+      - "kernel/**"
+      - ".github/workflows/kernel-replay.yml"
+  push:
+    paths:
+      - "kernel/**"
+      - ".github/workflows/kernel-replay.yml"
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      next_ref:
+        description: Upstream ref used by the next-version conflict probe
+        required: true
+        default: master
+
+permissions:
+  contents: read
+
+jobs:
+  apply-from-scratch-and-delta-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replay exact series and enforce delta ceilings
+        run: kernel/verify-replay.sh --work-root "$RUNNER_TEMP" --skip-build
+
+  next-version-conflicts:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply series to selected upstream ref
+        env:
+          DISPATCH_REF: ${{ inputs.next_ref }}
+        run: |
+          next_ref=${DISPATCH_REF:-master}
+          kernel/check-next-version.sh --work-root "$RUNNER_TEMP" --ref "$next_ref"

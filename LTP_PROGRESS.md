@@ -1,5 +1,9 @@
 # Darwin UML LTP progress
 
+> Historical execution log. References to `rootfs.ext2` describe pre-refactor
+> results; use the immutable `rootfs.img` workflow documented in
+> `docs/testing.md` for current work.
+
 Last updated: 2026-07-26 (Asia/Tokyo)
 
 ## Scope and rules
@@ -10,10 +14,10 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 - Results predating the static-gadget/MMU refactor are not credited. This campaign restarted from case 1.
 - Exemptions require evidence of missing physical hardware/architecture or a faulty userspace library.
 - Missing kernel features are enabled and retested; they are not exemptions, except loadable modules, which are deliberately excluded so the kernel contains no dynamically loaded code.
-- KSM is intentionally disabled because host-backed guest RAM does not benefit from an in-guest duplicate-page scanner; 17 KSM-specific or KSM-dependent scenario entries are listed in `tests/ltp/disabled-tests.tsv` and are never scheduled.
+- KSM is intentionally disabled because host-backed guest RAM does not benefit from an in-guest duplicate-page scanner; 17 KSM-specific or KSM-dependent scenario entries are listed in `tests/integration/ltp/disabled-tests.tsv` and are never scheduled.
 - Hardware-facing VT and network/synchronous-serial TTY drivers are intentionally disabled because the emulator exposes a host-backed serial console rather than physical display, keyboard, or serial-network devices; the four direct PTY cases and their three CVE-scenario duplicates are listed in the disabled manifest.
 - Twenty-two controller cases that require globally expensive kernel diagnostics are disabled. Those diagnostics are absent from the production configuration, and the earlier configuration-only accommodations for those cases were removed.
-- Every credited result is also present in `tests/ltp/verified-tests.tsv` and rerunnable by the host suite.
+- Every credited result is also present in `tests/integration/ltp/verified-tests.tsv` and rerunnable by the host suite.
 - Ordinary cases always run with one guest CPU. Tests which intentionally exercise multiple CPUs are tagged `host-pressure`, retain the full host-backed SMP topology, and are excluded by default; `--run-host-pressure` explicitly includes that serialized tail after the ordinary parallel phase.
 
 ## Fresh baseline
@@ -63,7 +67,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 
 | Check | Result | Evidence |
 |---|---:|---|
-| Production kernel configuration | Pass | Globally expensive diagnostics and debug information are disabled; 22 dependent controller cases are kept out of scheduling by `tests/ltp/disabled-tests.tsv` |
+| Production kernel configuration | Pass | Globally expensive diagnostics and debug information are disabled; 22 dependent controller cases are kept out of scheduling by `tests/integration/ltp/disabled-tests.tsv` |
 | Generic SMP user-memory lifetime fix | Pass | User-copy and futex paths now walk page tables under the appropriate locks, hold a page reference for the host access, preserve fault-driven stack growth and copy-on-write, and dirty successful writes |
 | Original intermittent reproducer | Pass | `cgroup_fj_stress_memory_10_3_none` completed 12 consecutive isolated runs on the final implementation |
 | Stack-growth regression | Pass | Fault-driven user stack growth succeeds with the locked page-table walk |
@@ -1062,7 +1066,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 980 | syscalls | renameat202 | `renameat202 -i 10` | Pass | 10 TPASS across the configured renameat2 concurrency iterations; health check passes | None |
 | 981 | syscalls | request_key01 | `request_key01` | Pass | 2 TPASS for request-key invocation and keyring behavior; health check passes | Restored the generic key and big-key subsystems in the maintained defconfig and made CMake refresh stale generated configurations |
 | 982 | syscalls | request_key02 | `request_key02` | Pass | 3 TPASS for request-key address and keyring error handling; health check passes | None |
-| 983 | syscalls | request_key03 | `request_key03` | Exempt (partial hardware) | 4 TPASS cover encrypted-key update/request and user-key update/request; the trusted-key path alone reports unsupported; health check passes | Trusted-key backends require a physical TPM, TEE, NXP CAAM, or NXP DCP trust source unavailable to UML |
+| 983 | syscalls | request_key03 | `request_key03` | Exempt (partial hardware) | 4 TPASS cover encrypted-key update/request and user-key update/request; the trusted-key path alone reports unsupported; health check passes | Trusted-key emulators require a physical TPM, TEE, NXP CAAM, or NXP DCP trust source unavailable to UML |
 | 984 | syscalls | request_key04 | `request_key04` | Pass | 1 TPASS for request-key default-keyring behavior; health check passes | None |
 | 985 | syscalls | request_key05 | `request_key05` | Pass | 1 TPASS for request-key authorization behavior; health check passes | None |
 | 986 | syscalls | request_key06 | `request_key06` | Pass | 4 TPASS for invalid type, description, callout-info, and reserved-type handling; health check passes | Fixed UML `strnlen_user()` to return zero—not negative `EFAULT`—on an inaccessible address, matching the Linux uaccess contract |
@@ -1512,7 +1516,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 1430 | syscalls | writev06 | `writev06` | Pass | 1 legacy-format TPASS for returning the expected partial byte count of 2; health check passes | None |
 | 1431 | syscalls | writev07 | `writev07` | Pass | 8 TPASS for correct 64-byte contents and offsets from four positions spanning page boundaries; health check passes | None |
 | 1432 | syscalls | perf_event_open01 | `perf_event_open01` | Exempt (hardware) | 2 TPASS for software CPU/task clocks; 5 TCONF because UML exposes no physical PMU instruction, cache, or branch counters; health check passes | Preserve physical PMU absence as an explicit host-suite expectation |
-| 1433 | syscalls | perf_event_open02 | `perf_event_open02` | Exempt (hardware) | TCONF because the requested physical CPU-cycle performance counter has no UML PMU backend; health check passes | Preserve physical PMU absence as an explicit host-suite expectation |
+| 1433 | syscalls | perf_event_open02 | `perf_event_open02` | Exempt (hardware) | TCONF because the requested physical CPU-cycle performance counter has no UML PMU emulator; health check passes | Preserve physical PMU absence as an explicit host-suite expectation |
 | 1434 | syscalls | futex_cmp_requeue01 | `futex_cmp_requeue01` | Pass | 7 TPASS for compare-and-requeue behavior, including two 1,000-waiter matrices, with 2 GiB guest RAM; health check passes | Record the test's intrinsic task-capacity requirement in the host manifest |
 | 1435 | syscalls | futex_cmp_requeue02 | `futex_cmp_requeue02` | Pass | 3 TPASS for `EINVAL` and `EAGAIN` on invalid operations and value mismatches; health check passes | None |
 | 1436 | syscalls | futex_wait01 | `futex_wait01` | Pass | 4 TPASS for relative/absolute timeout and value-mismatch paths returning `ETIMEDOUT` or `EAGAIN`; health check passes | None |
@@ -1726,10 +1730,10 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 1644 | mm | mmapstress08 | `mmapstress08` | Exempt (architecture) | The installed case emits two TCONF results because it explicitly supports only IA-32 and x86-64; health check passes | Preserve the native arm64 architecture exemption; no emulator or kernel change |
 | 1645 | mm | mmapstress09 | `mmapstress09 -p 20 -t 0.2` | Pass | 1 TPASS; all 20 concurrent mapping workers retain correct mapped data for the configured interval; health check passes | Mark as host-pressure so parallel regression runs it serially after ordinary cases |
 | 1646 | mm | mmapstress10 | `mmapstress10 -p 20 -t 0.2` | Pass | 1 TPASS; all 20 concurrent file-mapping workers retain correct data for the configured interval; health check passes | Mark as host-pressure so parallel regression runs it serially after ordinary cases |
-| 1647 | mm | mmap10 | `mmap10` | Disabled (emulator design) | The workload stops at its KSM configuration gate after one generic anonymous-mapping assertion when `CONFIG_KSM=n` | Listed in `tests/ltp/disabled-tests.tsv`; ordinary mmap release remains covered by the mmap and mmapstress cases |
+| 1647 | mm | mmap10 | `mmap10` | Disabled (emulator design) | The workload stops at its KSM configuration gate after one generic anonymous-mapping assertion when `CONFIG_KSM=n` | Listed in `tests/integration/ltp/disabled-tests.tsv`; ordinary mmap release remains covered by the mmap and mmapstress cases |
 | 1648 | mm | mmap10_1 | `mmap10 -i 60` | Disabled (emulator design) | Repeated form of the same KSM-dependent mapping-release workload | Same design exclusion |
 | 1649 | mm | kallsyms | `kallsyms` | Pass | 1 TPASS; all readable kernel symbols are probed while 32,810 expected access SIGSEGVs are handled, with no skipped symbol; health check passes | None |
-| 1650 | mm | ksm01 | `ksm01` | Disabled (emulator design) | KSM-specific merge, split, and accounting workload | `CONFIG_KSM=n`; listed in `tests/ltp/disabled-tests.tsv` and omitted from regression scheduling |
+| 1650 | mm | ksm01 | `ksm01` | Disabled (emulator design) | KSM-specific merge, split, and accounting workload | `CONFIG_KSM=n`; listed in `tests/integration/ltp/disabled-tests.tsv` and omitted from regression scheduling |
 | 1651 | mm | ksm01_1 | `ksm01 -u 128` | Disabled (emulator design) | Explicit-size KSM merge workload | Same design exclusion |
 | 1652 | mm | ksm02 | `ksm02` | Disabled (emulator design) | NUMA-aware KSM workload | Same design exclusion; the independent rootfs libnuma limitation is no longer relevant |
 | 1653 | mm | ksm02_1 | `ksm02 -u 128` | Disabled (emulator design) | Explicit-size NUMA-aware KSM workload | Same design exclusion |
@@ -1744,7 +1748,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 1662 | mm | ksm07 | `ksm07` | Disabled (emulator design) | KSM smart-scan accounting workload | Same design exclusion |
 | 1663 | mm | cpuset01 | `cpuset01` | Exempt (userspace library) | LTP emits TCONF before any assertion because the installed binary lacks libnuma API version 2; health check passes | Same rootfs/LTP packaging limitation as the NUMA-dependent KSM and set-mempolicy cases; no emulator change |
 | 1664 | mm | cpuset02 | `cpuset02` | Exempt (userspace library) | The second cpuset case emits the same pre-test libnuma-v2 TCONF; health check passes | No emulator change |
-| 1665 | mm | oom01 | `oom01` | Disabled (emulator design) | This workload includes a required KSM-page OOM victim mode and is no longer a complete test with `CONFIG_KSM=n` | Listed in `tests/ltp/disabled-tests.tsv`; non-KSM allocation and pressure behavior remains covered by the other mm stress cases |
+| 1665 | mm | oom01 | `oom01` | Disabled (emulator design) | This workload includes a required KSM-page OOM victim mode and is no longer a complete test with `CONFIG_KSM=n` | Listed in `tests/integration/ltp/disabled-tests.tsv`; non-KSM allocation and pressure behavior remains covered by the other mm stress cases |
 | 1666 | mm | oom02 | `oom02` | Exempt (userspace library) | LTP emits TCONF before any assertion because the installed binary lacks libnuma API version 2; health check passes | No emulator change |
 | 1667 | mm | oom03 | `oom03` | Exempt (userspace library) | LTP emits the same pre-test libnuma-v2 TCONF; health check passes | No emulator change |
 | 1668 | mm | oom04 | `oom04` | Exempt (userspace library) | LTP emits the same pre-test libnuma-v2 TCONF; health check passes | No emulator change |
@@ -1752,7 +1756,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 1670 | mm | swapping01 | `swapping01 -i 5` | Pass | 5 TPASS; each 1.16-1.20 GiB allocation swaps 285-376 MiB without heavy-swapping failure in 81.74s; health check passes | Attach a disposable 2 GiB sparse swap UBD; mark as host-pressure |
 | 1671 | mm | thp01 | `thp01 -I 120` | Pass | 9,593 TPASS liveness checks complete during the configured 120-second fork/memory stress in 128.13s; health check passes | Mark as host-pressure; no additional fix |
 | 1672 | mm | thp02 | `thp02` | Pass | 1 TPASS after all four aligned/unaligned 8 MiB transparent-huge-page `mremap()` combinations; health check passes | Enable UML THP and implement PMD-leaf protection, invalidation, TLB synchronization, fault completion, and uaccess semantics |
-| 1673 | mm | thp03 | `thp03` | Disabled (emulator design) | The current packaged workload stops at its required `MADV_MERGEABLE` setup gate when `CONFIG_KSM=n` | Listed in `tests/ltp/disabled-tests.tsv`; transparent-huge-page mapping and split behavior remains covered by the neighboring generic cases |
+| 1673 | mm | thp03 | `thp03` | Disabled (emulator design) | The current packaged workload stops at its required `MADV_MERGEABLE` setup gate when `CONFIG_KSM=n` | Listed in `tests/integration/ltp/disabled-tests.tsv`; transparent-huge-page mapping and split behavior remains covered by the neighboring generic cases |
 | 1674 | mm | thp04 | `thp04` | Pass | 1 TPASS after the full fuzzy concurrent huge-zero-page sampling interval; the huge zero page remains clean and the health check passes | Covered by the generic UML PMD-leaf implementation |
 | 1675 | mm | vma01 | `vma01` | Pass | 1 TPASS; parent and child create and discover both expected three-page VMAs at distinct addresses; health check passes | No additional fix |
 | 1676 | mm | vma02 | `vma02` | Exempt (userspace library) | LTP exits before either case because the installed binary lacks libnuma API version 2; health check passes | Rootfs/LTP packaging limitation; no emulator change |
@@ -1852,11 +1856,11 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | 1770 | nptl | nptl01 | `nptl01` | Pass | All 100,000 pthread iterations complete; 1 TPASS; health check passes | No additional fix |
 | 1771 | pty | pty01 | `pty01` | Pass | 2 TPASS for bidirectional PTY master/slave transfer; health check passes | No additional fix |
 | 1772 | pty | pty02 | `pty02` | Pass | 1 TPASS; `FIONREAD` returns without the historical line-discipline hang; health check passes | No additional fix |
-| 1773 | pty | pty03 | `pty03` | Disabled (emulator design) | The case exclusively fuzzes network and synchronous-serial TTY line disciplines that model external hardware interfaces | Listed in `tests/ltp/disabled-tests.tsv`; the temporary SLIP/PPP/AX.25/SLCAN/PPS/CAIF/GSM kernel configuration was reverted |
-| 1774 | pty | pty04 | `pty04` | Disabled (emulator design) | The case requires bidirectional SLIP/SLCAN PTY-to-netdev hardware-interface emulation | Listed in `tests/ltp/disabled-tests.tsv`; those drivers are intentionally absent |
-| 1775 | pty | pty05 | `pty05` | Disabled (emulator design) | The case exclusively requires the `N_HDLC` synchronous-serial hardware interface | Listed in `tests/ltp/disabled-tests.tsv`; UML deliberately has no corresponding hardware device |
+| 1773 | pty | pty03 | `pty03` | Disabled (emulator design) | The case exclusively fuzzes network and synchronous-serial TTY line disciplines that model external hardware interfaces | Listed in `tests/integration/ltp/disabled-tests.tsv`; the temporary SLIP/PPP/AX.25/SLCAN/PPS/CAIF/GSM kernel configuration was reverted |
+| 1774 | pty | pty04 | `pty04` | Disabled (emulator design) | The case requires bidirectional SLIP/SLCAN PTY-to-netdev hardware-interface emulation | Listed in `tests/integration/ltp/disabled-tests.tsv`; those drivers are intentionally absent |
+| 1775 | pty | pty05 | `pty05` | Disabled (emulator design) | The case exclusively requires the `N_HDLC` synchronous-serial hardware interface | Listed in `tests/integration/ltp/disabled-tests.tsv`; UML deliberately has no corresponding hardware device |
 | 1776 | pty | pty06 | `pty06` | Pass | 1 TPASS after the full `VT_DISALLOCATE` fuzzy race interval; health check passes | No additional fix |
-| 1777 | pty | pty07 | `pty07` | Disabled (emulator design) | The case exclusively exercises the physical display/keyboard VT switcher through `VT_GETSTATE` | Listed in `tests/ltp/disabled-tests.tsv`; generic VT would take over the `tty0` namespace used by the UML host serial console |
+| 1777 | pty | pty07 | `pty07` | Disabled (emulator design) | The case exclusively exercises the physical display/keyboard VT switcher through `VT_GETSTATE` | Listed in `tests/integration/ltp/disabled-tests.tsv`; generic VT would take over the `tty0` namespace used by the UML host serial console |
 | 1778 | pty | pty08 | `pty08` | Pass | 2 TPASS: closing the master yields EOF from slave reads and `EIO` from slave writes; health check passes | No additional fix |
 | 1779 | pty | pty09 | `pty09` | Pass | 1 TPASS after opening the PTY slave once for each of the 1,017 PIDs available to the guest; health check passes | No additional fix |
 | 1780 | pty | ptem01 | `ptem01` | Pass | 9 TPASS across `TCGETS`, `TCSETS*`, `TCGETA`, and `TCSETA*` PTY ioctl variants; health check passes | No additional fix |
@@ -2660,25 +2664,25 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 
 ## Host regression suite
 
-The suite in `tests/ltp/run_guest_ltp.py` boots the canonical ext2 image read-only for each manifest entry. `/sbin/uml-overlay-init` pivots into an overlayfs root whose upper and work directories live on tmpfs. Each isolated case receives 1 GiB of guest RAM by default so the volatile overlay can also hold LTP scratch-device images. `/tmp` is tmpfs by default; an explicit per-case manifest field selects the volatile ext2 workspace only for tests qualified with block-filesystem semantics. The harness then logs in through the serial console, runs exactly one LTP command, parses its summary, verifies that a new process can still decompress `/proc/config.gz`, and powers off the guest. A process-group termination fallback prevents stale `uml-darwin` instances; no disk-image copy is created. `--jobs N` uses a host thread pool to run N isolated guests concurrently. Ordinary guests use one vCPU even when only one worker is selected. Tests which intentionally use or require multiple guest CPUs are tagged `host-pressure`, retain the full configured SMP topology, and are excluded by default. Passing `--run-host-pressure` explicitly includes them; they run one at a time after the isolated timing case. `--parallel-guest-cpus N` remains an explicit diagnostic override for ordinary cases. `--fail-fast` cancels pending work and terminates active guests after the first rejected result so diagnosis does not leave a known-bad campaign consuming host resources. `--start-at SCENARIO/TEST_ID` runs a manifest suffix during iterative qualification.
+The suite in `tests/integration/ltp/run_guest_ltp.py` boots the canonical ext2 image read-only for each manifest entry. `/sbin/uml-overlay-init` pivots into an overlayfs root whose upper and work directories live on tmpfs. Each isolated case receives 1 GiB of guest RAM by default so the volatile overlay can also hold LTP scratch-device images. `/tmp` is tmpfs by default; an explicit per-case manifest field selects the volatile ext2 workspace only for tests qualified with block-filesystem semantics. The harness then logs in through the serial console, runs exactly one LTP command, parses its summary, verifies that a new process can still decompress `/proc/config.gz`, and powers off the guest. A process-group termination fallback prevents stale `uml-darwin` instances; no disk-image copy is created. `--jobs N` uses a host thread pool to run N isolated guests concurrently. Ordinary guests use one vCPU even when only one worker is selected. Tests which intentionally use or require multiple guest CPUs are tagged `host-pressure`, retain the full configured SMP topology, and are excluded by default. Passing `--run-host-pressure` explicitly includes them; they run one at a time after the isolated timing case. `--parallel-guest-cpus N` remains an explicit diagnostic override for ordinary cases. `--fail-fast` cancels pending work and terminates active guests after the first rejected result so diagnosis does not leave a known-bad campaign consuming host resources. `--start-at SCENARIO/TEST_ID` runs a manifest suffix during iterative qualification.
 
 Run ordinary and isolated timing cases (the default):
 
 ```sh
-python3 tests/ltp/run_guest_ltp.py \
+python3 tests/integration/ltp/run_guest_ltp.py \
   --emulator .build/cmake-macos/bin/uml-darwin \
   --rootfs rootfs.ext2 \
-  --manifest tests/ltp/verified-tests.tsv \
+  --manifest tests/integration/ltp/verified-tests.tsv \
   --jobs 16
 ```
 
 Explicitly include the serialized host-pressure tail:
 
 ```sh
-python3 tests/ltp/run_guest_ltp.py \
+python3 tests/integration/ltp/run_guest_ltp.py \
   --emulator .build/cmake-macos/bin/uml-darwin \
   --rootfs rootfs.ext2 \
-  --manifest tests/ltp/verified-tests.tsv \
+  --manifest tests/integration/ltp/verified-tests.tsv \
   --jobs 16 \
   --run-host-pressure
 ```
@@ -3080,7 +3084,7 @@ The legacy `mmap2` case predates the modern LTP result API. Its normal path perf
 | preadv203 | Userspace/filesystem matrix limitation | The available ext2 and tmpfs implementations do not support `RWF_NOWAIT`; ext4 is built in but the installed rootfs lacks `mkfs.ext4`, so LTP cannot create a supporting test filesystem | Exempt |
 | preadv203_64 | Userspace/filesystem matrix limitation | The large-file build has the same matrix: ext2/tmpfs lack `RWF_NOWAIT`, and the installed rootfs has no `mkfs.ext4` for the enabled supporting filesystem | Exempt |
 | readdir21 | Missing physical architecture/ABI | Native arm64 has no legacy `__NR_readdir` syscall number; LTP reports both ext2 and tmpfs variants unsupported before execution | Exempt |
-| request_key03 | Missing physical security hardware | Four software-backed encrypted/user key checks pass; only trusted keys are unavailable because every Linux trusted-key backend requires TPM, TEE, CAAM, or DCP hardware | Exempt |
+| request_key03 | Missing physical security hardware | Four software-backed encrypted/user key checks pass; only trusted keys are unavailable because every Linux trusted-key emulator requires TPM, TEE, CAAM, or DCP hardware | Exempt |
 | sbrk03 | Missing physical architecture/ABI | The installed test explicitly rejects native aarch64 before running an assertion; generic program-break behavior remains covered by passing `sbrk01` and `sbrk02` | Exempt |
 | sched_rr_get_interval03 | Userspace/libc matrix limitation | Five applicable checks pass, including raw-syscall `EFAULT`; upstream intentionally skips only the equivalent libc-wrapper bad-address subcase | Exempt |
 | sched_stress | Faulty userspace test script | The installed script documents x86-only device discovery and derives `RAWDEV` with `df / | grep dev`; overlay root produces an empty path, every `sched_tc4` disk-I/O worker logs `open(""): ENOENT`, and the legacy driver nevertheless discards those failures and exits `successful!` | Exempt |
@@ -3213,7 +3217,7 @@ The final accepted direct-engine source was qualified again with the dedicated
 `rootfs.ext2` contains the 4 KiB-compatible userspace used by this harness;
 the default 16 KiB production emulator instead boots the first partition of
 `rootfs.img`. This separation keeps the default production kernel at 16 KiB
-while exercising the same final backend source against the full raw-ext2
+while exercising the same final emulator source against the full raw-ext2
 integration matrix.
 
 The default campaign excluded all 374 `host-pressure` cases, ran 2,141

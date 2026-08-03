@@ -1,0 +1,143 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * Canonical Darwin UML host/kernel data ABI.
+ *
+ * This file is copied verbatim to the host and replayed Linux source by
+ * kernel/abi/sync.sh.  Change it rather than either generated destination;
+ * bump both ABI_VERSION and ABI_FINGERPRINT whenever a binary boundary, enum,
+ * or layout changes.
+ */
+#ifndef UML_DARWIN_ABI_H
+#define UML_DARWIN_ABI_H
+
+#include "uml_darwin_abi_identity.h"
+
+/* Keep this header usable by both kernel C and Darwin user objects. In
+ * particular, do not include <linux/types.h>: Darwin libc headers are already
+ * visible in some UML user objects and their POSIX typedefs intentionally
+ * differ from the kernel's. These primitive spellings have the required ABI
+ * widths on the supported LP64 targets without importing either namespace. */
+typedef unsigned char darwin_uml_abi_u8;
+typedef unsigned int darwin_uml_abi_u32;
+typedef int darwin_uml_abi_s32;
+typedef unsigned long long darwin_uml_abi_u64;
+
+#ifndef DARWIN_UML_GUEST_PAGE_SIZE
+#define DARWIN_UML_GUEST_PAGE_SIZE 16384
+#endif
+
+#ifndef DARWIN_UML_GUEST_PAGE_SHIFT
+#define DARWIN_UML_GUEST_PAGE_SHIFT 14
+#endif
+
+enum {
+	DARWIN_UML_GUEST_REGISTER_COUNT = 31,
+	DARWIN_UML_VECTOR_REGISTER_COUNT = 32,
+	DARWIN_UML_POINTER_AUTH_KEY_COUNT = 5,
+};
+
+enum darwin_uml_guest_event {
+	DARWIN_UML_EVENT_SYSCALL = 1,
+	DARWIN_UML_EVENT_FAULT = 2,
+	DARWIN_UML_EVENT_INTERRUPT = 3,
+	DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION = 4,
+	DARWIN_UML_EVENT_BREAKPOINT = 5,
+	DARWIN_UML_EVENT_GCS_FAULT = 6,
+	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
+	DARWIN_UML_EVENT_FATAL = -1,
+};
+
+enum {
+	DARWIN_UML_FAULT_WRITE = 2,
+	DARWIN_UML_FAULT_PAGE = 14,
+};
+
+/* ESR-shaped metadata carried in fault.error_code for an FP trap. */
+#define DARWIN_UML_FLOATING_POINT_EC (0x2cU << 26)
+#define DARWIN_UML_FLOATING_POINT_IL (1U << 25)
+#define DARWIN_UML_FLOATING_POINT_TFV (1U << 23)
+#define DARWIN_UML_FLOATING_POINT_INVALID (1U << 0)
+#define DARWIN_UML_FLOATING_POINT_DIVIDE_BY_ZERO (1U << 1)
+#define DARWIN_UML_FLOATING_POINT_OVERFLOW (1U << 2)
+#define DARWIN_UML_FLOATING_POINT_UNDERFLOW (1U << 3)
+#define DARWIN_UML_FLOATING_POINT_INEXACT (1U << 4)
+#define DARWIN_UML_FLOATING_POINT_INPUT_DENORMAL (1U << 7)
+#define DARWIN_UML_FLOATING_POINT_SYNDROME_BASE \
+	(DARWIN_UML_FLOATING_POINT_EC | DARWIN_UML_FLOATING_POINT_IL | \
+	 DARWIN_UML_FLOATING_POINT_TFV)
+
+#define DARWIN_UML_SIGRETURN_TRAMPOLINE 0x3fffffffff00ULL
+#define DARWIN_UML_NR_RT_SIGRETURN 139ULL
+
+struct darwin_uml_faultinfo {
+	darwin_uml_abi_s32 error_code;
+	darwin_uml_abi_s32 padding;
+	darwin_uml_abi_u64 address;
+	darwin_uml_abi_s32 trap_number;
+	darwin_uml_abi_s32 trailing_padding;
+};
+
+/* Prefix passed unchanged between a UML task and the native host runtime. */
+struct darwin_uml_guest_registers {
+	darwin_uml_abi_u64 x[29];
+	darwin_uml_abi_u64 fp;
+	darwin_uml_abi_u64 lr;
+	darwin_uml_abi_u64 sp;
+	darwin_uml_abi_u64 pc;
+	darwin_uml_abi_u32 pstate;
+	darwin_uml_abi_u32 state_flags;
+	darwin_uml_abi_u64 original_x0;
+	struct darwin_uml_faultinfo fault;
+	long long syscall;
+	darwin_uml_abi_s32 is_user;
+	darwin_uml_abi_s32 padding;
+	darwin_uml_abi_u64 fpmr;
+	darwin_uml_abi_u64 svcr;
+	darwin_uml_abi_u64 pointer_auth_keys[DARWIN_UML_POINTER_AUTH_KEY_COUNT][2];
+};
+
+struct darwin_uml_guest_fp_registers {
+	darwin_uml_abi_u8 vectors[DARWIN_UML_VECTOR_REGISTER_COUNT][16];
+	darwin_uml_abi_u32 fpsr;
+	darwin_uml_abi_u32 fpcr;
+	darwin_uml_abi_u32 reserved[2];
+};
+
+/* Layout constants make the native and kernel-side checks independent of a
+ * compiler's spelling of the corresponding structures. */
+#define DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET 272U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_FAULT_OFFSET 280U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET 304U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET 320U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_POINTER_AUTH_KEYS_OFFSET 336U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 416U
+#define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
+
+#if defined(__cplusplus)
+#include <stddef.h>
+static_assert(DARWIN_UML_ABI_VERSION == 3U);
+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x4333b73bf8b2ea99ULL);
+static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
+static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
+		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
+static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
+		DARWIN_UML_GUEST_PAGE_SIZE == 16384);
+static_assert(offsetof(struct darwin_uml_guest_registers, original_x0) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, fault) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_FAULT_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, syscall) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, pointer_auth_keys) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_POINTER_AUTH_KEYS_OFFSET);
+static_assert(sizeof(struct darwin_uml_guest_registers) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_SIZE);
+static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);
+static_assert(sizeof(struct darwin_uml_guest_fp_registers) ==
+		DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE);
+#endif
+
+#endif

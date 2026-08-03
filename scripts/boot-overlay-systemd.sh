@@ -6,7 +6,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "${script_dir}/.." && pwd -P)"
 
-emulator="${UML_EMULATOR:-${repo_root}/.build/cmake-macos/bin/uml-darwin}"
+emulator="${UML_EMULATOR:-${repo_root}/.build/presets/macos-integration/bin/uml-darwin}"
 rootfs="${UML_ROOTFS:-${repo_root}/rootfs.img}"
 root_device="${UML_ROOT_DEVICE:-/dev/ubda1}"
 memory="${UML_MEMORY:-8G}"
@@ -24,7 +24,7 @@ and systemd as PID 1.
 
 Options:
   --emulator PATH     Emulator executable
-                      (default: .build/cmake-macos/bin/uml-darwin)
+                      (default: .build/presets/macos-integration/bin/uml-darwin)
   --rootfs PATH       Read-only root filesystem image
                       (default: rootfs.img)
   --root-device PATH  Guest root block device (default: /dev/ubda1)

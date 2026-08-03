@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Ordered final-state topic identity manifest. Fields are order, file, stable
+# patch-id, SHA-256 of the patch file, and subject. prepare-source.sh validates
+# every field before it creates or accepts the managed replay branch.
+order	filename	stable_patch_id	sha256	subject
+1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	83b68787ffa040ebb5c7f6411fe72e5074bd068a	ca76e9c85462d0001793ab8d9ccc7a33d7409113172354906cd62d59209633af	uml: establish shared architecture contracts and build wiring
+2	0002-uml-add-SMP-MMU-timer-and-execution-core-support.patch	55e327cddf2b06ac86bb8aad9843ff3925d83dfb	e7115eed9d62392e8771925af812c246b84d419e2e9660ab469c5ce1793a418e	uml: add SMP, MMU, timer, and execution core support
+3	0003-uml-keep-Linux-host-services-aligned-with-shared-cor.patch	e1bf51f96d9b17463cffb18d7f184925a24c505a	b62ef509bd97ab8b09761bbe1ebc3f23d0f1ee10e702b4b4ba01edc495619d58	uml: keep Linux host services aligned with shared core contracts
+4	0004-uml-add-Darwin-host-service-implementation.patch	3da04cbf2d5422fb4076708b2bb87df3f444a4a2	c23a15e07c6e201acf84f090440f8f42c3515cb79d7a4399b458337d1da574cd	uml: add Darwin host service implementation
+5	0005-uml-define-the-Darwin-fixed-arity-host-bridge-ABI.patch	a1041ce4423b21be5ce8caa053bb0b214351dbf3	1474bc4f64f170e87ab05ae53548f67af87f971fdadcaf59274d8d2e229581f1	uml: define the Darwin fixed-arity host bridge ABI
+6	0006-arm64-add-the-user-mode-Linux-architecture-port.patch	f223de42b801231625553897257f7c7a71f7dc07	7aa09b6a320eb6a0141ab21903b5ed08048cf382457415114d605893a413029f	arm64: add the user-mode Linux architecture port
+7	0007-uml-adapt-standard-virtual-devices-to-Darwin-host-pr.patch	b4e2c714a4429589dfe4f4f0594600570499e969	07eaa728ff61e1a29fffe0131c60b71e3046465d85a20b150fa9fa602fbf4ece	uml: adapt standard virtual devices to Darwin host providers
+8	0008-kbuild-make-host-ELF-tools-portable-to-Darwin.patch	e7abee05e65f17a44568c618a9ede6a1d954c4be	2fadd78f5a935ac6a649c51b7585c8aeebc2911335076278d421bd08684460de	kbuild: make host ELF tools portable to Darwin
+9	0009-mm-handle-zero-length-cachestat-ranges.patch	92e4637379a7d13b8f4f743ecc4ef60bcd66c8c0	b856b75e94a34a1ab07b01722d95beff8b2c79b28c424c85303aec9be2a4273f	mm: handle zero-length cachestat ranges
+10	0010-smack-use-the-connected-socket-for-stream-sendmsg-ch.patch	1112b0d3c164b1a4d13af588b3ff640f7698c234	067a668da84a5a71e4e030c1e6d09fe51599eb330603f6fb1323b5fdced3449c	smack: use the connected socket for stream sendmsg checks

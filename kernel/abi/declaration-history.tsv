@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+version	fingerprint	declaration_sha256	rationale
+1	0x44415257494e0001	be57daaaa0f0a660f0b7226b91b3fc7830172fab24c5e9f8f82c08604ffef905	Legacy host/kernel and public API declaration baseline
+2	0x29087665291807b0	29087665291807b080bfc3e02cc6e18ef63cad9f9ba3f808d76afc806885373b	Remove unused raw stop/static-dispatch C exports and enforce declaration identity
+3	0x4333b73bf8b2ea99	4333b73bf8b2ea997904cf0ad1c0ab8975121928af60cd5b8e4b0b0e01749cc6	Remove host-internal engine entry points and dead VM queries from the synchronized host/kernel ABI

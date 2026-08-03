@@ -1,0 +1,384 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 27,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "macos-unit-16k",
+      "displayName": "macOS host unit tests (16 KiB)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/Apple.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "UML_APPLE_PLATFORM": "macos",
+        "UML_BUILD_CLI": false,
+        "UML_BUILD_KERNEL_RUNNER": false,
+        "UML_BUILD_NETWORK_PROVIDER": false,
+        "UML_BUILD_GPU": false,
+        "UML_BUILD_UNIT_TESTS": true,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": true,
+        "UML_GUEST_16K_PAGES": true
+      }
+    },
+    {
+      "name": "macos-unit-4k",
+      "displayName": "macOS host unit tests (4 KiB)",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false
+      }
+    },
+    {
+      "name": "macos-tooling",
+      "displayName": "macOS host tooling checks",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": true
+      }
+    },
+    {
+      "name": "macos-integration",
+      "displayName": "macOS guest integration tests",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_CLI": true,
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": true,
+        "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.img",
+        "UML_KERNEL_JOBS": "8"
+      }
+    },
+    {
+      "name": "macos-integration-4k",
+      "displayName": "macOS guest integration tests (4 KiB)",
+      "inherits": "macos-integration",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false
+      }
+    },
+    {
+      "name": "macos-all",
+      "displayName": "macOS unit and integration tests",
+      "inherits": "macos-integration",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_UNIT_TESTS": true
+      }
+    },
+    {
+      "name": "macos-unit-16k-asan-ubsan",
+      "displayName": "macOS unit tests with ASan/UBSan",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "macos-unit-16k-tsan",
+      "displayName": "macOS unit tests with TSan",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "ios-device",
+      "displayName": "iOS device library",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_APPLE_PLATFORM": "ios",
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": false
+      }
+    },
+    {
+      "name": "ios-simulator",
+      "displayName": "iOS simulator library",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_APPLE_PLATFORM": "ios-simulator",
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": false
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "tooling-test-binaries",
+      "configurePreset": "macos-tooling",
+      "targets": ["tooling-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "unit-test-binaries",
+      "configurePreset": "macos-unit-16k",
+      "targets": ["tooling-test-binaries", "unit-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "unit-test-binaries-4k",
+      "configurePreset": "macos-unit-4k",
+      "targets": ["tooling-test-binaries", "unit-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-integration",
+      "configurePreset": "macos-integration",
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-integration-4k",
+      "configurePreset": "macos-integration-4k",
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-all",
+      "configurePreset": "macos-all",
+      "targets": ["tooling-test-binaries", "unit-test-binaries", "integration-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "macos-unit-16k-asan-ubsan",
+      "targets": ["unit-test-binaries"]
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "macos-unit-16k-tsan",
+      "targets": ["unit-test-binaries"]
+    },
+    {
+      "name": "ios-device",
+      "configurePreset": "ios-device",
+      "targets": ["uml_emulator", "architecture-audit"]
+    },
+    {
+      "name": "ios-simulator",
+      "configurePreset": "ios-simulator",
+      "targets": ["uml_emulator", "architecture-audit"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "unit",
+      "configurePreset": "macos-unit-16k",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      },
+      "execution": {
+        "jobs": 10,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "unit-4k",
+      "configurePreset": "macos-unit-4k",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      },
+      "execution": {
+        "jobs": 10,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "integration-fast",
+      "configurePreset": "macos-integration",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^integration$"
+        },
+        "exclude": {
+          "label": "pressure"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "integration-full",
+      "configurePreset": "macos-integration",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^integration$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "integration-fast-4k",
+      "inherits": "integration-fast",
+      "configurePreset": "macos-integration-4k"
+    },
+    {
+      "name": "tooling",
+      "configurePreset": "macos-tooling",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^tooling$"
+        }
+      },
+      "execution": {
+        "jobs": 10,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "tooling-unit",
+      "inherits": "tooling",
+      "configurePreset": "macos-unit-16k",
+      "filter": {
+        "exclude": {
+          "name": "^arm64-instruction-evidence-reset$"
+        }
+      }
+    },
+    {
+      "name": "tooling-unit-4k",
+      "inherits": "tooling-unit",
+      "configurePreset": "macos-unit-4k"
+    },
+    {
+      "name": "tooling-integration",
+      "inherits": "tooling",
+      "configurePreset": "macos-integration",
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "tooling-integration-4k",
+      "inherits": "tooling-integration",
+      "configurePreset": "macos-integration-4k"
+    },
+    {
+      "name": "tooling-all",
+      "inherits": "tooling-unit",
+      "configurePreset": "macos-all"
+    },
+    {
+      "name": "all",
+      "configurePreset": "macos-all",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^(unit|integration)$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "unit-asan-ubsan",
+      "configurePreset": "macos-unit-16k-asan-ubsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "unit"
+        }
+      }
+    },
+    {
+      "name": "unit-tsan",
+      "configurePreset": "macos-unit-16k-tsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "tsan"
+        }
+      },
+      "execution": {
+        "jobs": 3
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "check-unit",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-16k"},
+        {"type": "build", "name": "unit-test-binaries"},
+        {"type": "test", "name": "unit"},
+        {"type": "test", "name": "tooling-unit"}
+      ]
+    },
+    {
+      "name": "check-integration",
+      "steps": [
+        {"type": "configure", "name": "macos-integration"},
+        {"type": "build", "name": "macos-integration"},
+        {"type": "test", "name": "tooling-integration"},
+        {"type": "test", "name": "integration-fast"}
+      ]
+    },
+    {
+      "name": "check-integration-4k",
+      "steps": [
+        {"type": "configure", "name": "macos-integration-4k"},
+        {"type": "build", "name": "macos-integration-4k"},
+        {"type": "test", "name": "tooling-integration-4k"},
+        {"type": "test", "name": "integration-fast-4k"}
+      ]
+    },
+    {
+      "name": "check-all",
+      "steps": [
+        {"type": "configure", "name": "macos-all"},
+        {"type": "build", "name": "macos-all"},
+        {"type": "test", "name": "all"},
+        {"type": "test", "name": "tooling-all"}
+      ]
+    }
+  ]
+}

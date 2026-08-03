@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Darwin UML policy: Apple hosts use 16 KiB guest pages by default.
+CONFIG_PAGE_SIZE_16KB=y
+# CONFIG_PAGE_SIZE_4KB is not set

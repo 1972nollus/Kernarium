@@ -3,6 +3,8 @@
 """Build a per-workload hotspot matrix from a Geekbench profile directory."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import csv

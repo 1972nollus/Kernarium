@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+if(NOT UML_INTEGRATION_ROOTFS)
+    message(FATAL_ERROR
+        "UML_BUILD_INTEGRATION_TESTS requires UML_INTEGRATION_ROOTFS")
+endif()
+if(NOT EXISTS "${UML_INTEGRATION_ROOTFS}")
+    message(FATAL_ERROR
+        "UML_INTEGRATION_ROOTFS does not exist: ${UML_INTEGRATION_ROOTFS}")
+endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(UML_LTP_JOBS 16 CACHE STRING
+    "Concurrent isolated guest workers for each LTP engine campaign")
+if(NOT UML_LTP_JOBS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "UML_LTP_JOBS must be a positive integer")
+endif()
+
+# These are explicit guest campaigns, deliberately outside ordinary CTest.
+add_custom_target(guest-smp-parallel
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/rootfs/with-verified-rootfs.sh
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --
+        ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
+        --emulator $<TARGET_FILE:uml-darwin>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --root-device /dev/ubda1
+        --overlay-shell
+    DEPENDS uml-darwin
+    COMMENT "Running standalone guest SMP integration suite"
+    USES_TERMINAL
+    VERBATIM)
+
+function(uml_add_ltp_engine_campaign ENGINE)
+    set(_results
+        "${PROJECT_BINARY_DIR}/results/refactor/ltp/${ENGINE}")
+    add_custom_target(guest-ltp-${ENGINE}
+        COMMAND ${PROJECT_SOURCE_DIR}/tools/rootfs/with-verified-rootfs.sh
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --
+            ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+            ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/ltp/run_guest_ltp.py
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --manifest ${PROJECT_SOURCE_DIR}/tests/integration/ltp/verified-tests.tsv
+            --engine ${ENGINE}
+            --results-dir ${_results}
+            --jobs ${UML_LTP_JOBS}
+        DEPENDS uml-darwin
+        COMMENT "Running standalone ${ENGINE} guest LTP integration suite"
+        USES_TERMINAL
+        VERBATIM)
+endfunction()
+
+uml_add_ltp_engine_campaign(gadgets)
+uml_add_ltp_engine_campaign(jit)
+add_custom_target(guest-ltp-verified)
+add_dependencies(guest-ltp-verified guest-ltp-gadgets guest-ltp-jit)
+
+# Every guest campaign uses the immutable image wrapper, which validates the
+# GPT layout, mode, and digest both before launch and after cleanup.  The fast
+# suite contains short real boots; full adds topology, MMU, and rendering work.
+uml_add_guest_integration_test(
+    NAME guest-overlay-systemd-smoke
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
+        --emulator $<TARGET_FILE:uml-darwin>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --timeout 240
+        --command "test -d /run/systemd/system && grep -qx systemd /proc/1/comm"
+    LABELS guest;overlay;systemd;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+function(uml_add_guest_engine_smoke ENGINE)
+    set(_labels guest cpu ${ENGINE} smoke)
+    if(NOT ENGINE STREQUAL "interpreter")
+        list(APPEND _labels dynamic-code)
+    endif()
+    uml_add_guest_integration_test(
+        NAME guest-${ENGINE}-smoke
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/jit/run_guest_jit_smoke.py
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --engine ${ENGINE}
+        LABELS ${_labels}
+        TIMEOUT 420
+        PROCESSORS 2
+        RESOURCE_GROUPS cpus:2)
+endfunction()
+
+uml_add_guest_engine_smoke(interpreter)
+uml_add_guest_engine_smoke(gadgets)
+uml_add_guest_engine_smoke(jit)
+
+uml_add_guest_integration_test(
+    NAME guest-slirp-network
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
+        --emulator $<TARGET_FILE:uml-darwin>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;network;slirp;smoke
+    TIMEOUT 240
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+uml_add_guest_integration_test(
+    NAME guest-smp-topology
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
+        --emulator $<TARGET_FILE:uml-darwin>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --root-device /dev/ubda1
+        --overlay-shell
+        --cpus 10
+    LABELS guest;smp;topology;full;pressure
+    TIMEOUT 420
+    PROCESSORS 10
+    RESOURCE_GROUPS cpus:10)
+
+set(UML_GUEST_SHARED_MMAP_STRESS
+    "${CMAKE_CURRENT_BINARY_DIR}/guest-shared-mmap-stress")
+add_custom_command(
+    OUTPUT "${UML_GUEST_SHARED_MMAP_STRESS}"
+    COMMAND "${CMAKE_CXX_COMPILER}"
+        --target=aarch64-unknown-linux-gnu
+        -nostdlib
+        -static
+        -fuse-ld=lld
+        -Wl,-e,_start
+        "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_shared_mmap_stress.S"
+        -o "${UML_GUEST_SHARED_MMAP_STRESS}"
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT=${UML_GUEST_SHARED_MMAP_STRESS}
+        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_shared_mmap_stress.S"
+    COMMENT "Building the freestanding arm64 shared-MM guest stress binary"
+    VERBATIM)
+add_custom_target(uml-guest-shared-mmap-stress
+    DEPENDS "${UML_GUEST_SHARED_MMAP_STRESS}")
+add_dependencies(integration-test-binaries uml-guest-shared-mmap-stress)
+
+uml_add_guest_integration_test(
+    NAME guest-mmu-stress
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_mmu_stress.py
+        --emulator $<TARGET_FILE:uml-darwin>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --root-device /dev/ubda1
+        --overlay-shell
+        --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
+        --cpus 10
+    LABELS guest;memory;mmu;full;pressure
+    TIMEOUT 600
+    PROCESSORS 10
+    RESOURCE_GROUPS cpus:10)
+
+if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
+    uml_add_guest_integration_test(
+        NAME guest-external-network
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --external
+            --external-host ${UML_EXTERNAL_NETWORK_TEST_HOST}
+        LABELS guest;network;external;full
+        TIMEOUT 300
+        PROCESSORS 2
+        RESOURCE_GROUPS cpus:2)
+
+    uml_add_guest_integration_test(
+        NAME guest-kde-vnc-webgl-aquarium
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py
+            --client $<TARGET_FILE:uml-vnc-smoke-client>
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+        LABELS guest;gpu;vnc;webgl;external;full
+        TIMEOUT 720
+        PROCESSORS 10
+        RESOURCE_GROUPS cpus:10,gpus:1)
+
+    uml_add_guest_integration_test(
+        NAME guest-webgl-rendered-workflows
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_webgl_samples.py
+            --client $<TARGET_FILE:uml-vnc-smoke-client>
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+        LABELS guest;gpu;webgl;external;full;pressure
+        TIMEOUT 1800
+        PROCESSORS 10
+        RESOURCE_GROUPS cpus:10,gpus:1)
+endif()

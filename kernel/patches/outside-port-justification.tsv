@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Exact policy for every replayed path outside arch/arm64/um and arch/um.
+path	owner	disposition	origin_patch	next_version_policy	rationale
+arch/arm64/Makefile.um	arm64-uml-port	keep	0006	carry	ARCH=um with SUBARCH=arm64 requires the architecture selection and generated-header wiring at this upstream-owned path.
+mm/filemap.c	pending-upstream	upstream	0009	drop-when-base-contains-fix	Independent zero-length cachestat range correction required by the port's guest workload; isolated as its own upstream candidate.
+scripts/Makefile.vmlinux	darwin-host-build	upstream	0008	retest-and-upstream	Select the Darwin-compatible host ELF definitions for the final vmlinux link without changing Linux-host behavior.
+scripts/include/elf_darwin_compat.h	darwin-host-build	upstream	0008	retest-and-upstream	Central compatibility definitions replace scattered Darwin host-tool ELF assumptions.
+scripts/insert-sys-cert.c	darwin-host-build	upstream	0008	retest-and-upstream	Use the shared host ELF compatibility contract for a build tool compiled on Darwin.
+scripts/link-vmlinux.sh	darwin-host-build	upstream	0008	retest-and-upstream	Avoid Linux-only linker options when the kernel host is Darwin.
+scripts/mod/file2alias.c	darwin-host-build	upstream	0008	retest-and-upstream	Use the shared host ELF compatibility contract for Darwin-built modpost tools.
+scripts/mod/mk_elfconfig.c	darwin-host-build	upstream	0008	retest-and-upstream	Generate host ELF configuration from the compatibility contract on Darwin.
+scripts/mod/modpost.c	darwin-host-build	upstream	0008	retest-and-upstream	Use the shared host ELF compatibility contract for Darwin-built modpost.
+scripts/mod/modpost.h	darwin-host-build	upstream	0008	retest-and-upstream	Declare the host-portable ELF types consumed by the modpost sources.
+scripts/recordmcount.c	darwin-host-build	upstream	0008	retest-and-upstream	Use the shared host ELF compatibility contract for a Darwin-built host tool.
+scripts/sorttable.c	darwin-host-build	upstream	0008	retest-and-upstream	Use the shared host ELF compatibility contract for a Darwin-built host tool.
+security/smack/smack_lsm.c	pending-upstream	upstream	0010	drop-when-base-contains-fix	Independent connected-stream sendmsg socket lookup correction exercised by SMP UML; isolated as its own upstream candidate.

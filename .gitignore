@@ -4,6 +4,11 @@
 # Local root filesystem image
 /rootfs.ext2
 *.img
+/.rootfs.img.uml-lock
+
+# Official Linux checkout is maintained as its own repository; the outer tree
+# tracks its reproducible patch series under kernel/patches/ instead.
+/linux/
 
 # Compiler and debugger output outside the build directory
 *.dSYM/
@@ -27,3 +32,7 @@ __pycache__/
 *.pdf
 /external/*
 !/external/.gitkeep
+
+# Per-developer CMake configuration; checked-in workflows live in
+# CMakePresets.json.
+CMakeUserPresets.json

@@ -3,6 +3,8 @@
 """Profile a live Darwin UML Geekbench run and correlate samples with tests."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import csv

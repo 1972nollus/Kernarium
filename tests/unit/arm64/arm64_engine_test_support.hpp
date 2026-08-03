@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/memory.hpp"
+#include "cpu/host_capabilities.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <memory>
+#include <optional>
+#include <source_location>
+#include <span>
+#include <string_view>
+
+namespace uml::emulator::tests {
+
+namespace arm64 = ::uml::cpu::arm64;
+using ArmFeature = ::uml::cpu::ArmFeature;
+using ArmFeatureSet = ::uml::cpu::ArmFeatureSet;
+
+inline constexpr std::uint64_t engine_test_code_base = 0x4f00'0000;
+inline constexpr std::uint64_t engine_test_data_base = 0x5100'0000;
+
+class NativeRequirements final {
+public:
+  [[nodiscard]] static NativeRequirements baseline() noexcept {
+    return NativeRequirements{{}};
+  }
+
+  [[nodiscard]] static NativeRequirements
+  features(ArmFeature feature) noexcept {
+    ArmFeatureSet required;
+    required.set(static_cast<std::size_t>(feature));
+    return NativeRequirements{required};
+  }
+
+  [[nodiscard]] static NativeRequirements
+  features(std::initializer_list<ArmFeature> features) noexcept {
+    ArmFeatureSet required;
+    for (const auto feature : features)
+      required.set(static_cast<std::size_t>(feature));
+    return NativeRequirements{required};
+  }
+
+  [[nodiscard]] NativeRequirements
+  operator|(ArmFeature feature) const noexcept {
+    auto result = requirements_;
+    result.set(static_cast<std::size_t>(feature));
+    return NativeRequirements{result};
+  }
+
+  [[nodiscard]] const ArmFeatureSet &features() const noexcept {
+    return requirements_;
+  }
+
+private:
+  explicit NativeRequirements(ArmFeatureSet requirements) noexcept
+      : requirements_{requirements} {}
+
+  ArmFeatureSet requirements_;
+};
+
+enum class ExpectedEvent {
+  system_call,
+  memory_fault,
+  gcs_fault,
+  illegal_instruction,
+  breakpoint,
+  floating_point_trap,
+  instruction_budget,
+  fatal,
+};
+
+struct MemoryFaultExpectation final {
+  std::uint64_t address{};
+  arm64::MemoryAccess access{arm64::MemoryAccess::read};
+};
+
+struct AllocationTag final {
+  std::size_t offset{};
+  std::uint8_t value{};
+};
+
+using ArchitectureValidator = void (*)(
+    const arm64::CpuState &initial, const arm64::CpuState &expected_template,
+    const arm64::CpuState &actual, std::string_view case_name,
+    std::string_view engine, std::uint32_t instruction);
+
+/*
+ * Optional test-only hooks bracket one engine invocation after memory has
+ * been restored. They let concurrency cases observe the exact mapped backing
+ * without duplicating the interpreter/gadget/native selection logic.
+ */
+using EngineExecutionHook = void (*)(void *context, std::string_view engine,
+                                     unsigned long generation);
+
+struct MemoryRegion final {
+  std::uint64_t address{};
+  std::span<const std::byte> initial;
+  /* An empty expected span means that the initial bytes are unchanged. */
+  std::span<const std::byte> expected;
+  /* Tag lists are sparse overrides; all omitted granules start at zero. */
+  std::span<const AllocationTag> initial_tags;
+  /* Omitted expected granules retain their initial value. */
+  std::span<const AllocationTag> expected_tags;
+  bool readable{true};
+  bool writable{true};
+  bool executable{};
+  bool guest_code{};
+  bool guest_writable{true};
+};
+
+struct InstructionCase final {
+  std::string_view name;
+  std::uint32_t instruction{};
+  arm64::CpuState initial;
+  arm64::CpuState expected;
+  ExpectedEvent event{ExpectedEvent::system_call};
+  /* Required: native eligibility must come from the instruction allocation. */
+  NativeRequirements native;
+  MemoryFaultExpectation fault{};
+  bool compare_fault{};
+  /* Required ESR-shaped cause metadata for floating_point_trap. */
+  std::uint32_t syndrome{};
+  bool invalid_encoding{};
+  std::span<const MemoryRegion> memory;
+  /*
+   * Optional architecture-level validation for instructions whose permitted
+   * result is not a single bit-exact value. Event, fault, code, and memory
+   * checks remain mandatory. When absent, every architectural field is
+   * compared with expected.
+  */
+  ArchitectureValidator validator{};
+  void *execution_context{};
+  EngineExecutionHook before_engine{};
+  EngineExecutionHook after_engine{};
+  /*
+   * InstructionCase normally derives this exactly: a successful instruction
+   * plus the harness terminal SVC retires two instructions, while a
+   * non-retiring terminal retires none. Override only for an instruction
+   * whose own terminal behavior makes that default inapplicable.
+   */
+  std::optional<std::size_t> expected_instructions{};
+};
+
+struct ProgramWord final {
+  std::size_t offset{};
+  std::uint32_t instruction{};
+};
+
+/*
+ * Some architecturally valid programs contain retry loops whose number of
+ * iterations may differ between implementations (for example, an exclusive
+ * store is permitted to fail spuriously). Each engine must still produce a
+ * specification-valid retired count: minimum + N * step.
+ */
+struct InstructionCountPattern final {
+  std::size_t minimum{};
+  std::size_t step{1};
+  std::optional<std::size_t> maximum{};
+};
+
+struct ProgramCase final {
+  std::string_view name;
+  std::span<const ProgramWord> code;
+  std::size_t entry_offset{};
+  arm64::CpuState initial;
+  /* Unlike InstructionCase, ProgramCase expects an absolute final PC. */
+  arm64::CpuState expected;
+  ExpectedEvent event{ExpectedEvent::system_call};
+  /* Required: derived from every instruction that may execute. */
+  NativeRequirements native;
+  MemoryFaultExpectation fault{};
+  bool compare_fault{};
+  /* Required ESR-shaped cause metadata for floating_point_trap. */
+  std::uint32_t syndrome{};
+  bool invalid_encoding{};
+  std::span<const MemoryRegion> memory;
+  ArchitectureValidator validator{};
+  void *execution_context{};
+  EngineExecutionHook before_engine{};
+  EngineExecutionHook after_engine{};
+  /*
+   * When supplied, every engine is checked against this specification value.
+   * Otherwise translated engines must still match the interpreter's count,
+   * except for instruction-budget terminals whose engine-specific block-link
+   * fairness accounting deliberately uses different boundary quanta.
+  */
+  std::optional<std::size_t> expected_instructions{};
+  std::optional<InstructionCountPattern> expected_instruction_pattern{};
+};
+
+struct EngineTestCounts final {
+  std::size_t interpreter{};
+  std::size_t gadgets{};
+  std::size_t jit{};
+  std::size_t jit_skipped{};
+  std::size_t jit_skipped_host_feature{};
+  std::size_t jit_unavailable{};
+};
+
+struct EngineHarnessOptions final {
+  /*
+   * The complete software implementation remains the default for
+   * instruction conformance. Feature-profile tests disable it in all three
+   * engines and verify HINT/undefined behavior with the same case definition.
+   */
+  bool enable_pointer_authentication{true};
+  /* This switch selects dedicated guarded-control-flow translations in both
+   * production engines. The interpreter always follows CpuState so it remains
+   * the strict semantic oracle.
+   */
+  bool enable_guarded_control_flow{};
+  /* These switches alter only the gadget translation choice. Interpreter and
+   * JIT still run in sequence, so portable gadget paths use the same oracle
+   * and case definition as the normal three-engine conformance run.
+   */
+  bool force_software_checksum{};
+  bool force_software_flags{};
+  bool force_software_sha3{};
+  bool force_software_fixed_transforms{};
+  bool force_software_aes{};
+  bool force_software_pmull{};
+  bool force_software_dotprod{};
+  bool force_software_i8mm{};
+};
+
+[[nodiscard]] bool host_supports(NativeRequirements requirements) noexcept;
+
+void require_architecture_equal(
+    const arm64::CpuState &expected, const arm64::CpuState &actual,
+    std::string_view case_name, std::string_view engine,
+    std::uint32_t instruction,
+    const std::source_location location = std::source_location::current());
+
+class EngineHarness final {
+public:
+  explicit EngineHarness(EngineHarnessOptions options = {});
+  ~EngineHarness();
+
+  EngineHarness(const EngineHarness &) = delete;
+  EngineHarness &operator=(const EngineHarness &) = delete;
+
+  void check(const InstructionCase &test_case,
+             const std::source_location location =
+                 std::source_location::current());
+  void check_program(const ProgramCase &test_case,
+                     const std::source_location location =
+                         std::source_location::current());
+
+  void check_one(std::string_view name, std::uint32_t instruction,
+                 const arm64::CpuState &initial,
+                 const arm64::CpuState &expected, NativeRequirements native,
+                 const std::source_location location =
+                     std::source_location::current());
+
+  void
+  check_illegal(std::string_view name, std::uint32_t instruction,
+                const arm64::CpuState &initial,
+                NativeRequirements native = NativeRequirements::baseline(),
+                const std::source_location location =
+                    std::source_location::current());
+
+  [[nodiscard]] const EngineTestCounts &counts() const noexcept;
+  void print_summary(std::string_view suite) const;
+
+private:
+  class Implementation;
+  std::unique_ptr<Implementation> implementation_;
+};
+
+} // namespace uml::emulator::tests

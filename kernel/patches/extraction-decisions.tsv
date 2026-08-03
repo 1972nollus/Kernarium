@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+path	owner	decision	outer_boundary	next_action	rationale
+arch/um/drivers/Kconfig	uml-devices	keep-kernel	configuration only	carry	Standard Linux device selection belongs beside the drivers it controls.
+arch/um/drivers/Makefile	uml-devices	keep-kernel	build composition only	carry	Kbuild ownership cannot be supplied by an outer host provider.
+arch/um/drivers/chan_user.c	uml-devices	keep-kernel	outer host owns Darwin file services	upstream-with-port	The kernel-side channel adapter preserves the standard UML console and channel ABI.
+arch/um/drivers/chan_user.h	uml-devices	keep-kernel	outer host owns Darwin file services	upstream-with-port	The declaration is consumed by the in-kernel channel implementation.
+arch/um/drivers/cow_user.c	uml-devices	keep-kernel	outer host owns backing-file syscalls	upstream-with-port	Copy-on-write block semantics and metadata validation remain a Linux device concern.
+arch/um/drivers/darwin_net_kern.c	uml-devices	keep-kernel	outer host owns SLiRP packets and readiness	carry	The kernel endpoint is a small standard net_device adapter; SLiRP state and policy are already outside Linux.
+arch/um/drivers/rtc_kern.c	uml-devices	keep-kernel	outer host owns clock primitives	upstream-with-port	Linux RTC registration and interrupt semantics must remain in the guest kernel.
+arch/um/drivers/rtc_user.c	uml-devices	keep-kernel	outer host owns Darwin timing calls	upstream-with-port	This is the UML host-boundary half of the standard RTC driver, not a replaceable application service.
+arch/um/drivers/ubd_kern.c	uml-devices	keep-kernel	outer host owns file descriptors and mappings	upstream-with-port	Linux block queues and UBD request semantics remain in the kernel.
+arch/um/drivers/ubd_user.c	uml-devices	keep-kernel	outer host owns Darwin file and mapping primitives	upstream-with-port	The UML user half translates standard UBD requests at the established OS boundary.
+arch/um/drivers/virtio_uml.c	uml-devices	keep-kernel	outer host owns vhost-user GPU service	upstream-with-port	Virtio discovery, DMA masks, queues, and IRQ delivery are standard kernel responsibilities.
+arch/um/drivers/vnc_input.c	uml-devices	keep-kernel	outer host owns VNC server and input transport	carry	The outer provider emits events; Linux input-device registration and event injection stay in the kernel.
+scripts/Makefile.vmlinux	darwin-host-build	keep-build	outer wrapper cannot replace Kbuild internals	upstream	Final vmlinux host-tool selection occurs before the emulator can run.
+scripts/include/elf_darwin_compat.h	darwin-host-build	keep-build	outer wrapper cannot provide compile-time ELF types	upstream	One shared compatibility header keeps Darwin definitions local to Kbuild host tools.
+scripts/insert-sys-cert.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	The tool directly parses ELF structures during the kernel build.
+scripts/link-vmlinux.sh	darwin-host-build	keep-build	outer wrapper may invoke but cannot safely rewrite link policy	upstream	The script owns linker capability selection for the final image.
+scripts/mod/file2alias.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	Modpost ELF parsing requires the common Darwin-compatible definitions.
+scripts/mod/mk_elfconfig.c	darwin-host-build	keep-build	outer wrapper cannot alter generated configuration semantics	upstream	The generated ELF configuration must reflect the compiling host.
+scripts/mod/modpost.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	Modpost directly consumes the portable ELF contract.
+scripts/mod/modpost.h	darwin-host-build	keep-build	outer wrapper cannot provide private declarations	upstream	The declarations are internal to the Kbuild host tool.
+scripts/recordmcount.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	The tool directly parses object files before the emulator exists.
+scripts/sorttable.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	The tool directly parses object files during vmlinux construction.

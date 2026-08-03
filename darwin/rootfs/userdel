@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compatibility frontend for root filesystems that provide BusyBox deluser but
+# Compatibility app for root filesystems that provide BusyBox deluser but
 # not the shadow-utils userdel command expected by Linux test and admin tools.
 
 usage()

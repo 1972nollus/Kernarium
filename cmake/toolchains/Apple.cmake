@@ -32,3 +32,13 @@ elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
 else()
     message(FATAL_ERROR "Unknown UML_APPLE_PLATFORM=${UML_APPLE_PLATFORM}")
 endif()
+
+# The macOS arm64 default target enables the FP16/DotProd/Crypto mnemonics
+# used by the existing instruction bodies.  iOS defaults to a more
+# conservative arm64 baseline, so select the same architectural assembler
+# vocabulary explicitly for the portable emulator library.  Runtime feature
+# selection still controls whether optional instructions are exposed to a
+# guest; this only makes the already-tested host implementations assemble.
+if(NOT UML_APPLE_PLATFORM STREQUAL "macos")
+    add_compile_options(-march=armv8.2-a+fp16+dotprod+crypto+fcma)
+endif()

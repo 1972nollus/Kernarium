@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_simd_matrix_test_support.hpp"
+
+#include "cpu/arm64/gadgets/program.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <set>
+
+extern "C" {
+void uml_arm64_gadget_simd_matrix_smmla();
+void uml_arm64_gadget_simd_matrix_ummla();
+void uml_arm64_gadget_simd_matrix_usmmla();
+void uml_arm64_gadget_simd_matrix_smmla_soft();
+void uml_arm64_gadget_simd_matrix_ummla_soft();
+void uml_arm64_gadget_simd_matrix_usmmla_soft();
+}
+
+namespace test = arm64_simd_matrix_test;
+namespace gadgets = uml::cpu::arm64::gadgets;
+
+namespace {
+
+using Gadget = void (*)();
+
+[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
+{
+	return reinterpret_cast<std::uintptr_t>(gadget);
+}
+
+[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned reg) noexcept
+{
+	return offsetof(test::arm64::CpuState, vectors) +
+		reg * sizeof(test::arm64::VectorRegister);
+}
+
+[[nodiscard]] constexpr unsigned mode_index(test::Mode mode) noexcept
+{
+	switch (mode) {
+	case test::Mode::signed_signed:
+		return 0U;
+	case test::Mode::unsigned_unsigned:
+		return 1U;
+	case test::Mode::unsigned_signed:
+		return 2U;
+	}
+	return 0U;
+}
+
+[[nodiscard]] Gadget selected_gadget(test::Mode mode, bool portable)
+{
+	static constexpr std::array native{
+		uml_arm64_gadget_simd_matrix_smmla,
+		uml_arm64_gadget_simd_matrix_ummla,
+		uml_arm64_gadget_simd_matrix_usmmla,
+	};
+	static constexpr std::array software{
+		uml_arm64_gadget_simd_matrix_smmla_soft,
+		uml_arm64_gadget_simd_matrix_ummla_soft,
+		uml_arm64_gadget_simd_matrix_usmmla_soft,
+	};
+	const bool host_native =
+		test::engine_tests::host_supports(test::native_requirements());
+	return (portable || !host_native ? software : native)[mode_index(mode)];
+}
+
+[[nodiscard]] constexpr bool conditional_branch(
+	std::uint32_t instruction) noexcept
+{
+	return (instruction & 0xff00'0010U) == 0x5400'0000U ||
+		(instruction & 0x7e00'0000U) == 0x3400'0000U ||
+		(instruction & 0x7e00'0000U) == 0x3600'0000U;
+}
+
+[[nodiscard]] constexpr bool indirect_branch(
+	std::uint32_t instruction) noexcept
+{
+	return (instruction & 0xffff'fc1fU) == 0xd61f'0000U;
+}
+
+void require_straight_line(Gadget gadget)
+{
+	const auto *instructions =
+		reinterpret_cast<const std::uint32_t *>(gadget);
+	for (unsigned index = 0; index < 64U; ++index) {
+		test::require(!conditional_branch(instructions[index]),
+			"matrix gadget contains a conditional branch");
+		test::require((instructions[index] & 0xfc00'0000U) !=
+				0x9400'0000U,
+			"matrix gadget contains a helper call");
+		if (indirect_branch(instructions[index]))
+			return;
+	}
+	test::fail("matrix gadget did not reach indirect dispatch");
+}
+
+void translation_resolves_host_choice_and_register_offsets()
+{
+	constexpr auto base = test::engine_tests::engine_test_code_base;
+	constexpr test::Registers registers{31U, 30U, 29U};
+	for (const bool portable : {false, true})
+		for (const auto mode : test::modes) {
+			const auto options = gadgets::BuildOptions{
+				.force_software_i8mm = portable,
+			};
+			const auto built = gadgets::Builder{}.build(base,
+				std::array{test::instruction(mode, registers)},
+				{}, std::pmr::get_default_resource(), {}, options);
+			const auto words = built.program.words();
+			test::require(built.complete && words.size() == 6U,
+				"matrix stream has an unexpected shape");
+			test::require(words[0] == address(
+					selected_gadget(mode, portable)),
+				"matrix host/form choice was not made in translation");
+			test::require(
+				words[1] == vector_offset(registers.destination) &&
+					words[2] == vector_offset(registers.left) &&
+					words[3] == vector_offset(registers.right),
+				"matrix stream retained encoded register indices");
+		}
+}
+
+void all_live_entries_are_straight_line_and_unique()
+{
+	const std::array<Gadget, 6> entries{
+		uml_arm64_gadget_simd_matrix_smmla,
+		uml_arm64_gadget_simd_matrix_ummla,
+		uml_arm64_gadget_simd_matrix_usmmla,
+		uml_arm64_gadget_simd_matrix_smmla_soft,
+		uml_arm64_gadget_simd_matrix_ummla_soft,
+		uml_arm64_gadget_simd_matrix_usmmla_soft,
+	};
+	std::set<std::uintptr_t> unique;
+	for (const auto entry : entries) {
+		unique.insert(address(entry));
+		require_straight_line(entry);
+	}
+	test::require(unique.size() == entries.size(),
+		"matrix gadget entries are duplicated");
+}
+
+} // namespace
+
+int main()
+{
+	translation_resolves_host_choice_and_register_offsets();
+	all_live_entries_are_straight_line_and_unique();
+	return 0;
+}

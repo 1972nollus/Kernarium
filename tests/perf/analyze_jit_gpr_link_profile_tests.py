@@ -3,6 +3,8 @@
 """Unit tests for diagnostic JIT link-profile ranking."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import contextlib
 import io

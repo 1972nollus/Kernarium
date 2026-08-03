@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Base production policy shared by every Darwin UML page-size/profile build.
+CONFIG_BINFMT_ELF=y
+# Accept an external initramfs for recovery, image inspection, and read-only
+# overlay boots without modifying the guest's root partition.
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_IKCONFIG=y
+CONFIG_IKCONFIG_PROC=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_BLK_DEV_UBD=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
+CONFIG_ZRAM=y
+CONFIG_BLK_DEV_RAM=y
+CONFIG_EXT2_FS=y
+CONFIG_EXT2_FS_XATTR=y
+CONFIG_EXT4_FS=y
+CONFIG_XFS_FS=y
+CONFIG_BTRFS_FS=y
+CONFIG_QUOTA=y
+CONFIG_QUOTA_NETLINK_INTERFACE=y
+CONFIG_QFMT_V1=y
+CONFIG_QFMT_V2=y
+# The RAID6 implementation-selection benchmark dominates boot under instruction
+# emulation; all functional implementations remain available without it.
+# CONFIG_RAID6_PQ_BENCHMARK is not set
+CONFIG_OVERLAY_FS=y
+CONFIG_PROC_FS=y
+CONFIG_MAGIC_SYSRQ=y
+CONFIG_FTRACE=y
+CONFIG_SCHED_TRACER=y
+CONFIG_TASKSTATS=y
+CONFIG_TASK_XACCT=y
+CONFIG_TASK_IO_ACCOUNTING=y
+CONFIG_BSD_PROCESS_ACCT=y
+CONFIG_BSD_PROCESS_ACCT_V3=y
+CONFIG_CONNECTOR=y
+CONFIG_PROC_EVENTS=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_FANOTIFY=y
+CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
+CONFIG_TTY=y
+# UML uses its host-backed serial console; physical display/keyboard virtual
+# terminals are deliberately outside the emulator's device model.
+# CONFIG_VT is not set
+CONFIG_NET=y
+CONFIG_BPF_SYSCALL=y
+# Exercise the guest's unprivileged verifier/interpreter ABI; this affects
+# guest policy only and cannot grant capabilities in the Darwin host.
+# CONFIG_BPF_UNPRIV_DEFAULT_OFF is not set
+CONFIG_PERF_EVENTS=y
+# UML exposes software perf events only; the native ARM PMU is not present.
+CONFIG_ARM_PMU=n
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_INET=y
+# The built-in Darwin SLiRP transport supplies DHCP before guest userspace is
+# available.  Kernel IP autoconfiguration therefore also works with minimal
+# roots and with init systems whose userspace network service is disabled.
+CONFIG_IP_PNP=y
+CONFIG_IP_PNP_DHCP=y
+# In-kernel virtual CAN provides the software bus used by socket-CAN
+# workloads without modeling a physical controller.
+CONFIG_CAN=y
+CONFIG_CAN_RAW=y
+CONFIG_CAN_BCM=y
+CONFIG_CAN_VCAN=y
+# Software-only peer interfaces back network namespaces without modeling
+# physical host hardware.
+CONFIG_VETH=y
+CONFIG_DUMMY=y
+CONFIG_VSOCKETS=y
+CONFIG_VSOCKETS_LOOPBACK=y
+CONFIG_TLS=y
+CONFIG_NET_SCHED=y
+CONFIG_NET_SCH_HTB=y
+# Software XFRM policy/state management and its NETLINK_XFRM control plane.
+CONFIG_XFRM_USER=y
+CONFIG_IP_SCTP=y
+CONFIG_RDS=y
+CONFIG_RDS_TCP=y
+CONFIG_DNS_RESOLVER=y
+CONFIG_ASYMMETRIC_KEY_TYPE=y
+CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE=y
+CONFIG_X509_CERTIFICATE_PARSER=y
+CONFIG_CRYPTO_RSA=y
+CONFIG_CRYPTO_USER=y
+CONFIG_CRYPTO_PCRYPT=y
+CONFIG_CRYPTO_AUTHENC=y
+CONFIG_CRYPTO_HMAC=y
+CONFIG_CRYPTO_MD5=y
+CONFIG_CRYPTO_SHA1=y
+CONFIG_CRYPTO_SHA256=y
+CONFIG_CRYPTO_SHA3=y
+CONFIG_CRYPTO_SM3_GENERIC=y
+CONFIG_CRYPTO_CHACHA20POLY1305=y
+# Software AF_ALG interfaces for guest userspace crypto workloads.
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CRYPTO_USER_API_SKCIPHER=y
+CONFIG_CRYPTO_USER_API_RNG=y
+CONFIG_CRYPTO_USER_API_AEAD=y
+CONFIG_KEYS=y
+CONFIG_KEY_NOTIFICATIONS=y
+CONFIG_BIG_KEYS=y
+CONFIG_ENCRYPTED_KEYS=y
+CONFIG_USER_DECRYPTED_DATA=y
+CONFIG_SECURITY=y
+CONFIG_SECURITYFS=y
+CONFIG_SECURITY_SMACK=y
+CONFIG_SECURITY_LANDLOCK=y
+CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,smack,ipe,bpf"
+CONFIG_NETDEVICES=y
+CONFIG_TUN=y
+CONFIG_RTC_CLASS=y
+CONFIG_UML_RTC=y
+CONFIG_TIME_NS=y
+CONFIG_POSIX_AUX_CLOCKS=y
+CONFIG_HZ=1000
+CONFIG_SMP=y
+CONFIG_HOTPLUG_CPU=y
+CONFIG_NR_CPUS=64
+CONFIG_CHECKPOINT_RESTORE=y
+CONFIG_USER_NS=y
+CONFIG_SYSVIPC=y
+CONFIG_POSIX_MQUEUE=y
+CONFIG_WATCH_QUEUE=y
+# KSM's background page-content scanning is not useful for this emulator: the
+# host already owns the single physical backing and KSM adds VMA hooks plus a
+# permanent guest worker without reducing the host allocation.
+# CONFIG_KSM is not set
+CONFIG_USERFAULTFD=y
+CONFIG_HUGETLBFS=y
+CONFIG_CMA=y
+CONFIG_TRANSPARENT_HUGEPAGE=y
+CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+CONFIG_FS_VERITY=y
+CONFIG_ISO9660_FS=y
+CONFIG_JOLIET=y
+CONFIG_ZISOFS=y
+CONFIG_BINFMT_MISC=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_FILE_DIRECT=y
+CONFIG_SQUASHFS_COMPILE_DECOMP_MULTI_PERCPU=y
+CONFIG_SQUASHFS_XATTR=y
+CONFIG_SQUASHFS_ZLIB=y
+CONFIG_SQUASHFS_LZ4=y
+CONFIG_SQUASHFS_LZO=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_KERNEL_STACK_ORDER=5
+# Darwin executes every UML task on its own native pthread stack.  Keeping a
+# second vmalloc-backed task stack only exercises host page-table mappings that
+# are never used for execution and makes task creation needlessly fragile.
+# CONFIG_VMAP_STACK is not set
+CONFIG_NULL_CHAN=y
+CONFIG_CON_CHAN="null"
+CONFIG_SSL_CHAN="null"
+CONFIG_CC_OPTIMIZE_FOR_SIZE=y
+# CONFIG_MODULES is not set
+# CONFIG_SOUND is not set
+# Keep the shipped emulator on the production kernel profile.  Optional
+# diagnostics substantially affect guest scheduling and synchronization costs.
+# CONFIG_DEBUG_KERNEL is not set
+# CONFIG_DEBUG_INFO is not set

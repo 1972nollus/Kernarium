@@ -2,6 +2,8 @@
 """Measure cold translation and exec throughput with repeated /bin/true."""
 
 from __future__ import annotations
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
 
 import argparse
 import os
@@ -12,8 +14,8 @@ import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(TESTS / "ltp"))
-sys.path.insert(0, str(TESTS / "smp"))
+sys.path.insert(0, str(TESTS / "integration" / "ltp"))
+sys.path.insert(0, str(TESTS / "integration" / "smp"))
 from run_guest_ltp import Guest  # noqa: E402
 from run_guest_smp import cpu_time_seconds  # noqa: E402
 
@@ -77,9 +79,9 @@ def main() -> int:
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
-            f"--execution-engine={arguments.engine}",
         ),
-        systemd_overlay=True,
+        overlay_shell=True,
+        engine=arguments.engine,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []

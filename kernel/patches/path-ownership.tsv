@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+pattern	owner	disposition	rationale
+arch/arm64/um/*	arm64-uml-port	keep	Architecture implementation unique to the arm64 UML port.
+arch/arm64/Makefile.um	arm64-uml-port	keep	Required top-level architecture wiring for ARCH=um SUBARCH=arm64.
+arch/um/os-Darwin/*	darwin-host	keep	Darwin host services behind the established UML host-OS boundary.
+arch/um/drivers/*	uml-devices	keep	Kernel-side standard device semantics stay in Linux; only Darwin host services belong in outer providers, as recorded in extraction-decisions.tsv.
+arch/um/os-Linux/*	uml-generic	upstream	Linux-host parity changes required by shared SMP and host-service abstractions.
+arch/um/*	uml-generic	upstream	Shared UML architecture hooks, MMU, SMP, and page-size support.
+scripts/*	darwin-host-build	upstream	Kbuild host tools run before the outer emulator exists, so their ELF portability must remain in-tree and be proposed upstream; see extraction-decisions.tsv.
+mm/filemap.c	pending-upstream	upstream	Independent cachestat zero-length correctness fix; remove when the pinned base contains it.
+security/smack/smack_lsm.c	pending-upstream	upstream	Independent connected-stream sendmsg correctness fix; remove when the pinned base contains it.

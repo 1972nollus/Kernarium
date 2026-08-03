@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "image": "rootfs.img",
+  "sha256": "501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5",
+  "size": 8589934592,
+  "frozen_mode": "0444",
+  "acquisition": {
+    "method": "authenticated release artifact",
+    "url_environment": "UML_ROOTFS_URL",
+    "statement_url_environment": "UML_ROOTFS_STATEMENT_URL",
+    "signature_url_environment": "UML_ROOTFS_SIGNATURE_URL",
+    "public_key_environment": "UML_ROOTFS_PUBLIC_KEY",
+    "required_verification": "detached OpenSSL signature over a small release digest statement, followed by this pinned image SHA-256"
+  },
+  "partition_table": {
+    "scheme": "gpt",
+    "sector_size": 512,
+    "protective_mbr": {
+      "type": "0xee",
+      "first_lba": 1,
+      "sector_count": 16777215
+    },
+    "gpt": {
+      "header_lba": 1,
+      "first_usable_lba": 2048,
+      "last_usable_lba": 16777182,
+      "partition_entry_lba": 2,
+      "partition_entry_count": 128,
+      "partition_entry_size": 128
+    },
+    "partitions": [
+      {
+        "number": 1,
+        "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+        "first_lba": 2048,
+        "last_lba": 16775167
+      }
+    ]
+  },
+  "installed_guest": {
+    "architecture": "arm64",
+    "distribution": "Debian GNU/Linux 13 (trixie)",
+    "chromium": "150.0.7871.100-1~deb13u1",
+    "mesa": "26.1.2-1~bpo13+1",
+    "kde_plasma_desktop": "5:162",
+    "kwin_wayland": "4:6.3.6",
+    "vulkan_tools": "1.4.304.0+dfsg1-2"
+  }
+}
