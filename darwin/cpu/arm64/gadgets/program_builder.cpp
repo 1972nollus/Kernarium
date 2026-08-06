@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "program_builder_decode.hpp"
+#include "gadget_selection.hpp"
+
+#include <algorithm>
+#include <span>
+#include <utility>
+
+namespace uml::cpu::arm64::gadgets {
+
+using namespace selection;
+using namespace builder_detail;
+
+DecodeResult builder_detail::implementation_gap(DecodeContext &context)
+{
+	/* Keep a translated prefix executable. The terminal gadget reports the
+	 * first unsupported allocation without charging it as a retired
+	 * instruction; instruction_count deliberately remains the number of
+	 * successfully translated words.
+	 */
+	emit(context.words, uml_arm64_gadget_illegal);
+	emit(context.words, context.address);
+	return DecodeResult::implementation_gap;
+}
+
+BuildResult Builder::build(
+	std::uint64_t guest_address,
+	std::span<const std::uint32_t> instructions,
+	LinkResolver resolve_link, std::pmr::memory_resource *storage,
+	IndirectLinkResolver resolve_indirect_link, BuildOptions options) const
+{
+	const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
+		options.host_capabilities};
+	std::pmr::vector<std::uintptr_t> words{storage};
+	words.reserve(std::min<std::size_t>(
+		instructions.size() * 2 + 2, 34));
+	std::size_t compiled = 0;
+	bool program_accesses_fp_state = false;
+	for (const auto instruction : instructions) {
+		program_accesses_fp_state = program_accesses_fp_state ||
+			uml::cpu::arm64::detail::
+				instruction_accesses_fp_state(instruction);
+		const auto address = guest_address + compiled * sizeof(instruction);
+		if ((instruction & 0xffff'0000U) == 0) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				true, address, instruction};
+		}
+
+		DecodeContext context{
+			guest_address,
+			address,
+			instruction,
+			compiled,
+			program_accesses_fp_state,
+			words,
+			resolve_link,
+			resolve_indirect_link,
+			options,
+		};
+		DecodeResult decoded = DecodeResult::decoded;
+		switch (production_decode_starts[instruction >> 24]) {
+		case ProductionDecodeStart::branch_system:
+			decoded = decode_branch_system(context);
+			break;
+		case ProductionDecodeStart::data_processing_immediate:
+		case ProductionDecodeStart::data_processing_register:
+			decoded = decode_data_processing(context);
+			break;
+		case ProductionDecodeStart::data_processing_pointer_auth_overlap:
+			decoded = pointer_auth_lr_unavailable(instruction) ?
+				decode_branch_system(context) :
+				decode_data_processing(context);
+			break;
+		case ProductionDecodeStart::floating_simd:
+			decoded = decode_floating_simd(context);
+			break;
+		case ProductionDecodeStart::load_store:
+			decoded = decode_load_store(context);
+			break;
+		case ProductionDecodeStart::exception:
+			decoded = decode_exception(context);
+			break;
+		}
+		if (decoded != DecodeResult::decoded) {
+			return {Program{guest_address, compiled, std::move(words),
+				program_accesses_fp_state},
+				decoded == DecodeResult::terminal,
+				address, instruction};
+		}
+		++compiled;
+	}
+	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);
+	if (resolve_link) {
+		emit(words, uml_arm64_gadget_branch_linked);
+		emit(words, reinterpret_cast<std::uintptr_t>(
+			resolve_link(fallthrough)));
+	} else {
+		emit(words, uml_arm64_gadget_interrupt);
+		emit(words, fallthrough);
+	}
+	return {Program{guest_address, compiled, std::move(words),
+		program_accesses_fp_state}, true,
+		guest_address + compiled * sizeof(std::uint32_t), 0};
+}
+
+} // namespace uml::cpu::arm64::gadgets

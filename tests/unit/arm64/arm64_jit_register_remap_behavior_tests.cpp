@@ -225,6 +225,7 @@ void native_counter_preserves_resident_values(
       .expected = expected,
       .native = engine_tests::NativeRequirements::baseline(),
       .validator = ignore_counter_register,
+      .validator_relation_id = "ignore-host-counter-register/v1",
       .expected_instructions = code.size(),
   });
 }

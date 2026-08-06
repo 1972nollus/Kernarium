@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 
@@ -30,7 +31,8 @@ void test_defaults_and_engine_selection()
 	const auto options = uml::emulator::prepare_emulator_options(
 		3, arguments, "/tmp/rootfs.img", true);
 	require(options.valid, "valid emulator options were rejected");
-	require(options.engine == DARWIN_UML_EXECUTION_INTERPRETER,
+	require(options.engine ==
+			uml::runtime::ExecutionEngine::interpreter,
 		"execution engine was not parsed");
 	require(contains(options, "console=ttyS0"), "kernel argument was lost");
 	require(contains(options, "ubd0r=/tmp/rootfs.img"),
@@ -52,7 +54,7 @@ void test_explicit_defaults_are_preserved()
 	const auto options = uml::emulator::prepare_emulator_options(
 		9, arguments, "/unused/rootfs", true);
 	require(options.valid, "explicit emulator options were rejected");
-	require(options.engine == DARWIN_UML_EXECUTION_GADGETS,
+	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
 	require(options.arguments.size() == 7,
 		"explicit kernel policy values were duplicated");
@@ -63,6 +65,21 @@ void test_explicit_defaults_are_preserved()
 			1, writable_mapping, "/unused/rootfs", false)
 			.valid,
 		"writable rootfs mapping was accepted");
+	for (const char *mapping : {
+		     "ubd0s=/custom/rootfs", "ubd0c=/custom/rootfs",
+		     "ubd0d=/custom/rootfs", "ubd0t=/custom/rootfs",
+		     "ubd0"}) {
+		const char *flagged_mapping[]{mapping};
+		require(!uml::emulator::prepare_emulator_options(
+				1, flagged_mapping, "/unused/rootfs", false)
+				.valid,
+			"writable or malformed flagged rootfs mapping was accepted");
+	}
+	const char *flagged_read_only_mapping[]{"ubd0rscdt=/custom/rootfs"};
+	require(uml::emulator::prepare_emulator_options(
+			1, flagged_read_only_mapping, "/unused/rootfs", false)
+			.valid,
+		"read-only flagged rootfs mapping was rejected");
 	const char *writable_root[]{"rw"};
 	require(!uml::emulator::prepare_emulator_options(
 			1, writable_root, "/unused/rootfs", false)
@@ -96,6 +113,11 @@ void test_invalid_and_informational_inputs()
 			1, static_cast<const char *const *>(nullptr), {}, false)
 			.valid,
 		"null argument vector was accepted");
+	const char *placeholder[]{"unused"};
+	require(!uml::emulator::prepare_emulator_options(
+			std::numeric_limits<int>::max(), placeholder,
+			"/tmp/rootfs.img", false).valid,
+		"argument count that overflows the kernel-entry ABI was accepted");
 }
 
 } // namespace

@@ -53,6 +53,18 @@ void every_immediate(EngineHarness &harness)
 					}
 }
 
+void independent_native_specimen(EngineHarness &harness)
+{
+	arm64::CpuState initial{};
+	initial.registers[5] = 0x25;
+	initial.nzcv = 0xa000'0000U;
+	check(harness,
+		"ADD immediate native specimen width=64 sh=0 imm=5 rn=5 rd=0",
+		Form::immediate,
+		encode_immediate(true, false, false, false, 5, 5, 0),
+		initial, "BASE-0005/ADD_64_addsub_imm");
+}
+
 void arithmetic_boundaries(EngineHarness &harness)
 {
 	const std::array left_values{
@@ -197,6 +209,7 @@ void aliases_and_special_registers(EngineHarness &harness)
 void run_immediate_tests(EngineHarness &harness)
 {
 	every_immediate(harness);
+	independent_native_specimen(harness);
 	arithmetic_boundaries(harness);
 	aliases_and_special_registers(harness);
 }

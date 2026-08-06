@@ -104,7 +104,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x0, x2
 	mov x1, x7
 	mov w2, #\access
-	bl NAME(uml_arm64_gadget_tlb_miss)
+	bl NAME(uml_arm64_tlb_miss)
 	ldp x1, x2, [sp], #16
 	cbz x0, uml_arm64_gadget_memory_fault
 	mov x7, x0
@@ -147,7 +147,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, sp
 	mov x3, #\size
 	mov w4, #\access
-	bl NAME(uml_arm64_gadget_memory_transfer)
+	bl NAME(uml_arm64_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, 97f
 	.if !\access

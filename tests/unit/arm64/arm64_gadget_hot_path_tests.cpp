@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <utility>
+#include <vector>
 
 namespace gadgets = uml::cpu::arm64::gadgets;
 
@@ -179,8 +181,57 @@ static constexpr std::uint32_t two_register(bool q, unsigned size,
 		((source & 31U) << 5) | (destination & 31U);
 }
 
+static void mixed_family_walk_preserves_stream_order()
+{
+	constexpr std::uint64_t base = 0x6000;
+	const std::array ordinary{
+		0xd503'201fU,
+		0xd280'00a0U,
+		three_same(false, false, false, 0, 8),
+		unsigned_immediate(3, 1, 1, 3, 2),
+	};
+	constexpr std::uint32_t terminal = 0xd400'0001U;
+	std::vector<std::uintptr_t> expected;
+	bool accesses_fp_state = false;
+	for (std::size_t index = 0; index < ordinary.size(); ++index) {
+		const std::array instruction{ordinary[index]};
+		const auto built = gadgets::Builder{}.build(
+			base + index * sizeof(std::uint32_t), instruction);
+		require(built.complete);
+		require(built.program.instruction_count() == 1U);
+		require(built.program.words().size() >= 3U);
+		expected.insert(expected.end(), built.program.words().begin(),
+			built.program.words().end() - 2);
+		accesses_fp_state = accesses_fp_state ||
+			built.program.accesses_fp_state();
+	}
+
+	const std::array terminal_instruction{terminal};
+	const auto terminal_built = gadgets::Builder{}.build(
+		base + ordinary.size() * sizeof(std::uint32_t),
+		terminal_instruction);
+	expected.insert(expected.end(), terminal_built.program.words().begin(),
+		terminal_built.program.words().end());
+	accesses_fp_state = accesses_fp_state ||
+		terminal_built.program.accesses_fp_state();
+
+	const std::array mixed{
+		ordinary[0], ordinary[1], ordinary[2], ordinary[3], terminal};
+	const auto built = gadgets::Builder{}.build(base, mixed);
+	require(built.complete);
+	require(built.stop_address ==
+		base + ordinary.size() * sizeof(std::uint32_t));
+	require(built.stop_instruction == terminal);
+	require(built.program.instruction_count() == mixed.size());
+	require(built.program.accesses_fp_state() == accesses_fp_state);
+	require(built.program.words().size() == expected.size());
+	require(std::equal(built.program.words().begin(),
+		built.program.words().end(), expected.begin()));
+}
+
 int main()
 {
+	mixed_family_walk_preserves_stream_order();
 	{
 		const auto program = build_one(0xd61f'0060U); // br x3
 		require_gadget(program, uml_arm64_gadget_branch_register);

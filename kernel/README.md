@@ -18,7 +18,16 @@ tree is the build input and the omitted file is not reconstructed from Git.
 The ordered project patch files and
 their SHA-256/stable patch IDs are in
 [`patches/series/manifest.tsv`](patches/series/manifest.tsv). The expected
-final tree is checked after every replay.
+final tree is checked after every replay. The shared core delta is separated
+into MMU/large-page, SMP/timer/interrupt, execution/capability, and build-rule
+topics so each can be reviewed and rebased independently. Final-state paths
+normally belong to one topic. The sole intentional multi-topic path is declared
+with its exact ordered owners and rationale in
+[`patches/topic-path-overlaps.tsv`](patches/topic-path-overlaps.tsv): Darwin
+vhost-user transport changes remain in topic 0010 while the generic 64-bit
+DMA-mask correction remains independently reviewable and droppable as topic
+0014.
+The manifest verifier rejects undeclared, stale, or mismatched overlaps.
 
 The signed archive, packaged/final trees, ordered stable patch IDs, and patch
 hashes are the reproducible identities. The local archive-import and replay
@@ -38,14 +47,17 @@ kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux \
   --cache /path/to/kernel-cache --no-fetch
-kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --jobs 8
+kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --jobs 2
 ```
 
 The first preparation populates `.build/kernel-cache` unless another cache is
 selected. `--no-fetch` requires both authenticated release files to be present
 there; ordinary `--verify` never reads the cache or network. The last command
 starts from a fresh signed release package and builds both 16 KiB and 4 KiB
-configurations out of tree. `--recreate` is the only mode allowed to replace a
+configurations out of tree. Two kernel jobs is the conservative checked-in
+default because parallel LLVM links can otherwise exceed the acceptance
+host's memory; hosts with more headroom may override `UML_KERNEL_JOBS` or
+`--jobs`. `--recreate` is the only mode allowed to replace a
 clean stale managed replay branch, and it never replaces the source directory
 itself.
 

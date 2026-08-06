@@ -1,7 +1,7 @@
 From 79989e2b9a94ccfc10ac68d0a01e3422ba50e3e1 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 09/10] mm: handle zero-length cachestat ranges
+Subject: [PATCH 09/11] mm: handle zero-length cachestat ranges
 
 Apply the reviewed final-state topic without intermediate churn.
 ---

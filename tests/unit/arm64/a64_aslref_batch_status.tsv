@@ -1,0 +1,5 @@
+component	status	detail	sha256	oracle
+features	generated	pinned 2026-06 feature enumeration	9e8de851e2cda29d4f84c73c923870c6cb91bbb4a3c9b70aaeba15de4de2b60e	arm-a-profile-features-2026-06-json-build-818
+system-registers	generated-with-upstream-diagnostics	official ASLRef v1.0~draft.2 extraction policy	23d27d6000a059725a2a7149a3c3c36324fcfea895bf3cefd95a9b2fb93bc045	arm-a-profile-system-register-2026-06-xml
+instructions+shared	generated	all instruction procedures and shared pseudocode	f38cb7e993cfe96db2fa87437a31628ed8886bd3962c59a07aec28cac8bd74ba	arm-a-profile-2026-06-xml-2026-06_rel
+full-composition	parse-failed	system-registers.asl:ERRIRQCR<m>: unsupported indexed register declaration	63b6b85721de6f876db888af1512cb93dd4dd77b52cc3b4b0c3a6f0afb4a5fcb	aslref-version-1.0~draft.2

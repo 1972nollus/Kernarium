@@ -33,12 +33,15 @@ else()
     message(FATAL_ERROR "Unknown UML_APPLE_PLATFORM=${UML_APPLE_PLATFORM}")
 endif()
 
-# The macOS arm64 default target enables the FP16/DotProd/Crypto mnemonics
-# used by the existing instruction bodies.  iOS defaults to a more
-# conservative arm64 baseline, so select the same architectural assembler
-# vocabulary explicitly for the portable emulator library.  Runtime feature
-# selection still controls whether optional instructions are exposed to a
-# guest; this only makes the already-tested host implementations assemble.
+# The macOS arm64 default target enables the optional mnemonics used by the
+# existing assembly bodies. iOS defaults to a more conservative baseline, so
+# expose the required option to the CPU implementation and apply it globally
+# only to standalone assembly sources. Ordinary C and C++ targets retain the
+# platform baseline. Runtime feature selection remains the sole authority for
+# executing optional host operations.
 if(NOT UML_APPLE_PLATFORM STREQUAL "macos")
-    add_compile_options(-march=armv8.2-a+fp16+dotprod+crypto+fcma)
+    set(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION
+        "-march=armv8.2-a+fp16+dotprod+crypto+fcma")
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:ASM>:${UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION}>)
 endif()

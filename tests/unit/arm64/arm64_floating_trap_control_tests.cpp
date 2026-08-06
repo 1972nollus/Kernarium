@@ -305,7 +305,9 @@ void host_environment_is_restored_after_trap(
 			test::syndrome_for(test::fpsr_divide_by_zero),
 		.execution_context = &trace,
 		.before_engine = &install_host_environment,
+		.before_engine_effect_id = "install-host-floating-environment/v1",
 		.after_engine = &observe_host_environment,
+		.after_engine_effect_id = "observe-host-floating-environment/v1",
 	});
 	require_host_environment_restored(trace);
 }

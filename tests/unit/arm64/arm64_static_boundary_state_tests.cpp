@@ -2,6 +2,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
+#include "runtime/execution_engine.hpp"
 
 #include <array>
 #include <cstddef>
@@ -271,7 +272,8 @@ void guest_keys_survive_every_engine_boundary()
 			Engine{&darwin_uml_static_enter_guest, 206, 0x56'0000},
 			Engine{&darwin_uml_jit_enter_guest, 207, 0x57'0000},
 		};
-		require(darwin_uml_jit_available() == 1);
+		require(uml::runtime::execution_engine_available(
+			uml::runtime::ExecutionEngine::jit));
 		for (const auto engine : engines) {
 			TemporaryBacking backing;
 			/*

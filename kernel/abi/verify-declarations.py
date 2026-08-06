@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Bind normalized host/kernel and public emulator declarations to ABI identity."""
+"""Bind the independent kernel bridge and installed API declarations."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 
-ABI_FILES = (
+KERNEL_ABI_FILES = (
     "kernel/abi/darwin_uml_abi.h",
     "kernel/abi/darwin_uml_cpu.h",
     "kernel/abi/darwin_uml_host.h",
@@ -21,8 +21,26 @@ ABI_FILES = (
     "kernel/abi/darwin_uml_network.h",
     "kernel/abi/darwin_uml_bridge.h",
     "kernel/abi/uml_tlb_sync_ranges.h",
+)
+PUBLIC_ABI_FILES = (
+    "darwin/api/include/uml/abi_identity.h",
     "darwin/api/include/uml/emulator.h",
 )
+
+DOMAINS = {
+    "kernel": {
+        "files": KERNEL_ABI_FILES,
+        "identity": "kernel/abi/identity.env",
+        "history": "kernel/abi/declaration-history.tsv",
+        "prefix": "DARWIN_UML_ABI",
+    },
+    "public": {
+        "files": PUBLIC_ABI_FILES,
+        "identity": "darwin/api/abi/identity.env",
+        "history": "darwin/api/abi/declaration-history.tsv",
+        "prefix": "UML_EMULATOR_ABI",
+    },
+}
 
 TOKEN = re.compile(
     r"""
@@ -83,9 +101,9 @@ def without_comments(source: str) -> str:
     return "".join(result)
 
 
-def declaration_digest(root: Path) -> str:
+def declaration_digest(root: Path, domain: str) -> str:
     normalized: list[str] = []
-    for relative in ABI_FILES:
+    for relative in DOMAINS[domain]["files"]:
         path = root / relative
         if not path.is_file():
             fail(f"missing ABI input: {path}")
@@ -100,6 +118,15 @@ def declaration_digest(root: Path) -> str:
                 source,
                 flags=re.DOTALL,
             )
+        elif relative == "darwin/api/include/uml/abi_identity.h":
+            # The public identity header is installed, but its selected
+            # version and derived fingerprint must not hash themselves.
+            source = re.sub(
+                r"#\s*define\s+UML_EMULATOR_ABI_"
+                r"(?:VERSION|FINGERPRINT)\s+[^\n]+",
+                "",
+                source,
+            )
         tokens = TOKEN.findall(source)
         normalized.append(f"FILE {relative}\n")
         normalized.extend(f"{token}\n" for token in tokens)
@@ -110,21 +137,24 @@ def derived_fingerprint(digest: str) -> str:
     return f"0x{digest[:16]}"
 
 
-def identity(root: Path) -> tuple[int, str]:
-    source = (root / "kernel/abi/identity.env").read_text(encoding="utf-8")
-    version = re.search(r"^DARWIN_UML_ABI_VERSION=([0-9]+)$", source, re.MULTILINE)
+def identity(root: Path, domain: str) -> tuple[int, str]:
+    configuration = DOMAINS[domain]
+    path = root / configuration["identity"]
+    source = path.read_text(encoding="utf-8")
+    prefix = configuration["prefix"]
+    version = re.search(rf"^{prefix}_VERSION=([0-9]+)$", source, re.MULTILINE)
     fingerprint = re.search(
-        r"^DARWIN_UML_ABI_FINGERPRINT='(0x[0-9A-Fa-f]+)'$",
+        rf"^{prefix}_FINGERPRINT='(0x[0-9A-Fa-f]+)'$",
         source,
         re.MULTILINE,
     )
     if version is None or fingerprint is None:
-        fail("cannot parse kernel/abi/identity.env")
+        fail(f"cannot parse {path}")
     return int(version.group(1)), fingerprint.group(1).lower()
 
 
-def history(root: Path) -> list[tuple[int, str, str]]:
-    path = root / "kernel/abi/declaration-history.tsv"
+def history(root: Path, domain: str) -> list[tuple[int, str, str]]:
+    path = root / DOMAINS[domain]["history"]
     if not path.is_file():
         fail(f"missing declaration history: {path}")
     rows: list[tuple[int, str, str]] = []
@@ -167,34 +197,42 @@ def main() -> int:
         "--root", type=Path, default=Path(__file__).resolve().parents[2]
     )
     parser.add_argument("--compute", action="store_true")
+    parser.add_argument(
+        "--domain", choices=("all", *DOMAINS), default="all"
+    )
     options = parser.parse_args()
     root = options.root.resolve()
-    digest = declaration_digest(root)
-    fingerprint = derived_fingerprint(digest)
-    if options.compute:
-        print(f"declaration_sha256={digest}")
-        print(f"derived_fingerprint={fingerprint}")
-        return 0
+    domains = tuple(DOMAINS) if options.domain == "all" else (options.domain,)
+    for domain in domains:
+        digest = declaration_digest(root, domain)
+        fingerprint = derived_fingerprint(digest)
+        if options.compute:
+            print(f"{domain}_declaration_sha256={digest}")
+            print(f"{domain}_derived_fingerprint={fingerprint}")
+            continue
 
-    version, configured_fingerprint = identity(root)
-    rows = history(root)
-    recorded_version, recorded_fingerprint, recorded_digest = rows[-1]
-    if version != recorded_version or configured_fingerprint != recorded_fingerprint:
-        fail("identity.env does not select the final declaration-history row")
-    if digest != recorded_digest:
-        fail(
-            "ABI declarations changed without appending a new identity row "
-            f"(computed {digest}, recorded {recorded_digest})"
+        version, configured_fingerprint = identity(root, domain)
+        rows = history(root, domain)
+        recorded_version, recorded_fingerprint, recorded_digest = rows[-1]
+        if (version != recorded_version or
+                configured_fingerprint != recorded_fingerprint):
+            fail(
+                f"{domain} identity does not select its final history row"
+            )
+        if digest != recorded_digest:
+            fail(
+                f"{domain} ABI declarations changed without appending a new "
+                f"identity row (computed {digest}, recorded {recorded_digest})"
+            )
+        if fingerprint != recorded_fingerprint:
+            fail(
+                f"{domain} ABI fingerprint is not derived from its normalized "
+                f"declarations (expected {fingerprint})"
+            )
+        print(
+            f"verified {domain} ABI declarations version {version}, "
+            f"fingerprint {configured_fingerprint}, SHA-256 {digest}"
         )
-    if fingerprint != recorded_fingerprint:
-        fail(
-            "ABI fingerprint is not derived from the normalized declarations "
-            f"(expected {fingerprint})"
-        )
-    print(
-        f"verified ABI declarations version {version}, fingerprint "
-        f"{configured_fingerprint}, SHA-256 {digest}"
-    )
     return 0
 
 

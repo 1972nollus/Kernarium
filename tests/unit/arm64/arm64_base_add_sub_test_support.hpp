@@ -273,7 +273,8 @@ static_assert(arithmetic(0xffff'ffff'ffff'ffffULL, 1, true, false).nzcv ==
 }
 
 inline void check(EngineHarness &harness, std::string_view name, Form form,
-	std::uint32_t instruction, const arm64::CpuState &initial)
+	std::uint32_t instruction, const arm64::CpuState &initial,
+	std::string_view native_oracle_case_id = {})
 {
 	if (!is_valid(form, instruction)) {
 		std::fprintf(stderr,
@@ -281,9 +282,20 @@ inline void check(EngineHarness &harness, std::string_view name, Form form,
 			instruction);
 		std::abort();
 	}
-	harness.check_one(name, instruction, initial,
-		expected_state(form, instruction, initial),
-		NativeRequirements::baseline());
+	if (native_oracle_case_id.empty()) {
+		harness.check_one(name, instruction, initial,
+			expected_state(form, instruction, initial),
+			NativeRequirements::baseline());
+		return;
+	}
+	harness.check({
+		.name = name,
+		.instruction = instruction,
+		.initial = initial,
+		.expected = expected_state(form, instruction, initial),
+		.native = NativeRequirements::baseline(),
+		.native_oracle_case_id = native_oracle_case_id,
+	});
 }
 
 inline void check_illegal(EngineHarness &harness, std::string_view name,

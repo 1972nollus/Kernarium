@@ -196,6 +196,8 @@ void random_architectural_invariants(test::EngineHarness &harness)
 					.expected = initial,
 					.native = mte::native_mte,
 					.validator = &validate_random_result,
+					.validator_relation_id =
+						"permitted-tag-generator-choice/v1",
 				});
 			}
 		}

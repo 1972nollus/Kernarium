@@ -6,6 +6,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ABI_DIR="$ROOT_DIR/kernel/abi"
 IDENTITY_PATH="$ABI_DIR/identity.env"
+PUBLIC_IDENTITY_PATH="$ROOT_DIR/darwin/api/abi/identity.env"
 METADATA_PATH="$ROOT_DIR/kernel/patches/metadata.env"
 HOST_DIR="$ROOT_DIR/darwin/include"
 KERNEL_SOURCE=''
@@ -71,6 +72,8 @@ sync_file()
 }
 
 [ -r "$IDENTITY_PATH" ] || fail "missing ABI identity: $IDENTITY_PATH"
+[ -r "$PUBLIC_IDENTITY_PATH" ] ||
+	fail "missing public ABI identity: $PUBLIC_IDENTITY_PATH"
 [ -r "$METADATA_PATH" ] || fail "missing kernel metadata: $METADATA_PATH"
 "$ABI_DIR/verify-declarations.py"
 # Both files are tracked project data containing simple shell assignments.
@@ -78,6 +81,10 @@ sync_file()
 . "$IDENTITY_PATH"
 IDENTITY_VERSION=$DARWIN_UML_ABI_VERSION
 IDENTITY_FINGERPRINT=$DARWIN_UML_ABI_FINGERPRINT
+# shellcheck disable=SC1090
+. "$PUBLIC_IDENTITY_PATH"
+PUBLIC_IDENTITY_VERSION=$UML_EMULATOR_ABI_VERSION
+PUBLIC_IDENTITY_FINGERPRINT=$UML_EMULATOR_ABI_FINGERPRINT
 # shellcheck disable=SC1090
 . "$METADATA_PATH"
 [ "$UML_KERNEL_ABI_VERSION" = "$IDENTITY_VERSION" ] ||
@@ -90,14 +97,16 @@ grep -q "DARWIN_UML_ABI_VERSION ${IDENTITY_VERSION}U" \
 grep -q "DARWIN_UML_ABI_FINGERPRINT ${IDENTITY_FINGERPRINT}ULL" \
 	"$ABI_DIR/darwin_uml_abi_identity.h" ||
 	fail "ABI identity header fingerprint differs from identity.env"
+grep -q "UML_EMULATOR_ABI_VERSION ${PUBLIC_IDENTITY_VERSION}U" \
+	"$ROOT_DIR/darwin/api/include/uml/abi_identity.h" ||
+	fail "public ABI identity header version differs from identity.env"
+grep -q "UML_EMULATOR_ABI_FINGERPRINT ${PUBLIC_IDENTITY_FINGERPRINT}ULL" \
+	"$ROOT_DIR/darwin/api/include/uml/abi_identity.h" ||
+	fail "public ABI identity header fingerprint differs from identity.env"
 
 sync_file "$ABI_DIR/darwin_uml_abi.h" "$HOST_DIR/uml_darwin_abi.h"
 sync_file "$ABI_DIR/darwin_uml_abi_identity.h" \
 	"$HOST_DIR/uml_darwin_abi_identity.h"
-if [ "$HOST_DIR" = "$ROOT_DIR/darwin/include" ]; then
-	sync_file "$ABI_DIR/darwin_uml_abi_identity.h" \
-		"$ROOT_DIR/darwin/api/include/uml/abi_identity.h"
-fi
 sync_file "$ABI_DIR/darwin_uml_cpu.h" "$HOST_DIR/uml_darwin_cpu.h"
 sync_file "$ABI_DIR/darwin_uml_host.h" "$HOST_DIR/uml_darwin_host.h"
 sync_file "$ABI_DIR/darwin_uml_memory.h" "$HOST_DIR/uml_darwin_memory.h"

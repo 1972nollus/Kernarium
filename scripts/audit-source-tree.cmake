@@ -7,15 +7,25 @@ endif()
 
 set(VIOLATIONS)
 
-file(GLOB_RECURSE C_SOURCES LIST_DIRECTORIES false
+file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/*.c"
     "${SOURCE_ROOT}/Makefile")
+set(C_SOURCES ${ROOT_C_SOURCES})
+foreach(FIRST_PARTY_SCOPE IN ITEMS
+        cmake darwin dependencies kernel scripts tests tools)
+    if(NOT IS_DIRECTORY "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}")
+        continue()
+    endif()
+    file(GLOB_RECURSE SCOPED_C_SOURCES LIST_DIRECTORIES false
+        "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}/*.c"
+        "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}/Makefile")
+    list(APPEND C_SOURCES ${SCOPED_C_SOURCES})
+endforeach()
+list(REMOVE_DUPLICATES C_SOURCES)
 foreach(PATH IN LISTS C_SOURCES)
-    if(PATH MATCHES "/linux/" OR
-       PATH MATCHES "/linux-6\\.18/" OR
-       PATH MATCHES "/external/" OR
-       PATH MATCHES "/\\.build/" OR
-       PATH MATCHES "/\\.git/")
+    if(PATH STREQUAL "${SOURCE_ROOT}/tests/consumer/apple/main.c")
+        # The installed-package acceptance intentionally includes one genuine
+        # C translation unit. Production implementation remains C++-only.
         continue()
     endif()
     list(APPEND VIOLATIONS "${PATH}: project C source is not allowed")
@@ -139,18 +149,156 @@ file(GLOB_RECURSE CXX_SOURCES LIST_DIRECTORIES false
 foreach(PATH IN LISTS CXX_SOURCES)
     file(READ "${PATH}" CONTENT)
     if(CONTENT MATCHES
-       "#[ \\t]*include[ \\t]*.*\\.(cpp|cc|cxx|inc)[\">]")
+       "(^|\\n)[ \\t]*#[ \\t]*include[ \\t]+[^\\n]*(\\.(cpp|cc|cxx|inc)|_impl\\.hpp)[\">]")
         list(APPEND VIOLATIONS
             "${PATH}: C/C++ source includes an implementation fragment")
     endif()
+    if(PATH MATCHES "/darwin/cpu/.*\\.(h|hh|hpp|hxx)$" AND
+       CONTENT MATCHES "(^|\\n)[ \\t]*namespace[ \\t]*\\{")
+        list(APPEND VIOLATIONS
+            "${PATH}: CPU header creates anonymous per-translation-unit ownership")
+    endif()
 endforeach()
 
-file(GLOB_RECURSE UNIT_PYTHON LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/tests/unit/*.py")
-foreach(PATH IN LISTS UNIT_PYTHON)
+# All first-party CTest registrations must pass through the suite helpers so
+# manifest ownership, labels, fixture policy, and aggregate binary dependencies
+# cannot be bypassed by a raw add_test() in another directory.
+include("${SOURCE_ROOT}/cmake/TestRegistrationPolicy.cmake")
+uml_find_raw_test_registrations(
+    SOURCE_ROOT "${SOURCE_ROOT}"
+    OUT_VIOLATIONS RAW_TEST_REGISTRATION_VIOLATIONS)
+list(APPEND VIOLATIONS ${RAW_TEST_REGISTRATION_VIOLATIONS})
+
+file(GLOB_RECURSE UNIT_SCRIPT_RUNNERS LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/tests/unit/*.py"
+    "${SOURCE_ROOT}/tests/unit/*.sh")
+foreach(PATH IN LISTS UNIT_SCRIPT_RUNNERS)
     list(APPEND VIOLATIONS
-        "${PATH}: Python is not allowed in the host unit-test tree")
+        "${PATH}: Python and shell are not allowed in the host unit-test tree")
 endforeach()
+
+# Guest domains and performance runners may share process/console mechanics
+# only through tests/integration/support. Importing another suite's entry point
+# couples its command-line policy and teardown behavior into an unrelated test.
+file(GLOB_RECURSE GUEST_RUNNER_PYTHON LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/tests/integration/*.py"
+    "${SOURCE_ROOT}/tests/perf/*.py")
+foreach(PATH IN LISTS GUEST_RUNNER_PYTHON)
+    file(READ "${PATH}" CONTENT)
+    if(CONTENT MATCHES
+       "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?run_guest_(ltp|smp|jit|network|gpu)")
+        list(APPEND VIOLATIONS
+            "${PATH}: guest suites must share helpers through tests/integration/support")
+    endif()
+endforeach()
+
+# Standalone assembly benchmarks are intentionally outside CTest, but they are
+# still maintained source. Require an exact inventory, an explicit runner and
+# retention purpose, and a canonical opt-in build target so probes cannot turn
+# into anonymous debris after an optimization experiment ends.
+set(PERFORMANCE_PROBE_ROOT "${SOURCE_ROOT}/tests/perf")
+set(PERFORMANCE_PROBE_MANIFEST "${PERFORMANCE_PROBE_ROOT}/probes.tsv")
+set(PERFORMANCE_PROBE_CMAKE "${PERFORMANCE_PROBE_ROOT}/CMakeLists.txt")
+file(GLOB PERFORMANCE_PROBE_SOURCES RELATIVE "${PERFORMANCE_PROBE_ROOT}"
+    "${PERFORMANCE_PROBE_ROOT}/*.S")
+list(SORT PERFORMANCE_PROBE_SOURCES)
+set(PERFORMANCE_PROBE_MANIFEST_SOURCES)
+if(NOT EXISTS "${PERFORMANCE_PROBE_MANIFEST}")
+    list(APPEND VIOLATIONS
+        "${PERFORMANCE_PROBE_MANIFEST}: performance probe inventory is missing")
+else()
+    file(STRINGS "${PERFORMANCE_PROBE_MANIFEST}" PERFORMANCE_PROBE_ROWS)
+    if(PERFORMANCE_PROBE_ROWS)
+        list(POP_FRONT PERFORMANCE_PROBE_ROWS PERFORMANCE_PROBE_HEADER)
+    else()
+        set(PERFORMANCE_PROBE_HEADER "")
+    endif()
+    if(NOT PERFORMANCE_PROBE_HEADER STREQUAL
+       "source\tcategory\trequired_feature\trunner\tretention")
+        list(APPEND VIOLATIONS
+            "${PERFORMANCE_PROBE_MANIFEST}: invalid performance probe header")
+    endif()
+    foreach(PERFORMANCE_PROBE_ROW IN LISTS PERFORMANCE_PROBE_ROWS)
+        if(PERFORMANCE_PROBE_ROW STREQUAL "" OR
+           PERFORMANCE_PROBE_ROW MATCHES "^#")
+            continue()
+        endif()
+        string(REPLACE "\t" ";" PERFORMANCE_PROBE_FIELDS
+            "${PERFORMANCE_PROBE_ROW}")
+        list(LENGTH PERFORMANCE_PROBE_FIELDS PERFORMANCE_PROBE_FIELD_COUNT)
+        if(NOT PERFORMANCE_PROBE_FIELD_COUNT EQUAL 5)
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: malformed row '${PERFORMANCE_PROBE_ROW}'")
+            continue()
+        endif()
+        list(GET PERFORMANCE_PROBE_FIELDS 0 PERFORMANCE_PROBE_SOURCE)
+        list(GET PERFORMANCE_PROBE_FIELDS 1 PERFORMANCE_PROBE_CATEGORY)
+        list(GET PERFORMANCE_PROBE_FIELDS 2 PERFORMANCE_PROBE_FEATURE)
+        list(GET PERFORMANCE_PROBE_FIELDS 3 PERFORMANCE_PROBE_RUNNER)
+        list(GET PERFORMANCE_PROBE_FIELDS 4 PERFORMANCE_PROBE_RETENTION)
+        list(FIND PERFORMANCE_PROBE_MANIFEST_SOURCES
+            "${PERFORMANCE_PROBE_SOURCE}" PERFORMANCE_PROBE_DUPLICATE)
+        if(NOT PERFORMANCE_PROBE_DUPLICATE EQUAL -1)
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: duplicate probe ${PERFORMANCE_PROBE_SOURCE}")
+        else()
+            list(APPEND PERFORMANCE_PROBE_MANIFEST_SOURCES
+                "${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(NOT PERFORMANCE_PROBE_SOURCE MATCHES
+           "^guest_[a-z0-9_]+\\.S$" OR
+           NOT EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}")
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: invalid probe source ${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(NOT PERFORMANCE_PROBE_CATEGORY MATCHES "^[a-z][a-z0-9-]+$")
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: invalid category for ${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(NOT PERFORMANCE_PROBE_FEATURE MATCHES "^(base|lse)$")
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: invalid feature for ${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(NOT PERFORMANCE_PROBE_RUNNER STREQUAL
+           "run_guest_link_bench.py" OR
+           NOT EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_RUNNER}")
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: invalid runner for ${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(PERFORMANCE_PROBE_RETENTION STREQUAL "")
+            list(APPEND VIOLATIONS
+                "${PERFORMANCE_PROBE_MANIFEST}: missing retention rationale for ${PERFORMANCE_PROBE_SOURCE}")
+        endif()
+        if(EXISTS "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}")
+            file(READ "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}"
+                PERFORMANCE_PROBE_CONTENT)
+            if(NOT PERFORMANCE_PROBE_CONTENT MATCHES
+               "(^|\n)[ \t]*\\.global[ \t]+_start" OR
+               NOT PERFORMANCE_PROBE_CONTENT MATCHES "success_message")
+                list(APPEND VIOLATIONS
+                    "${PERFORMANCE_PROBE_ROOT}/${PERFORMANCE_PROBE_SOURCE}: probe lacks the self-checking freestanding contract")
+            endif()
+        endif()
+    endforeach()
+endif()
+list(SORT PERFORMANCE_PROBE_MANIFEST_SOURCES)
+if(NOT PERFORMANCE_PROBE_SOURCES STREQUAL
+   PERFORMANCE_PROBE_MANIFEST_SOURCES)
+    list(APPEND VIOLATIONS
+        "${PERFORMANCE_PROBE_MANIFEST}: inventory does not exactly own every tests/perf assembly probe")
+endif()
+if(NOT EXISTS "${PERFORMANCE_PROBE_CMAKE}")
+    list(APPEND VIOLATIONS
+        "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is missing")
+else()
+    file(READ "${PERFORMANCE_PROBE_CMAKE}" PERFORMANCE_PROBE_CMAKE_CONTENT)
+    if(NOT PERFORMANCE_PROBE_CMAKE_CONTENT MATCHES
+       "performance-probe-binaries" OR
+       NOT PERFORMANCE_PROBE_CMAKE_CONTENT MATCHES "probes\\.tsv")
+        list(APPEND VIOLATIONS
+            "${PERFORMANCE_PROBE_CMAKE}: performance probe build owner is incomplete")
+    endif()
+endif()
 
 # CTest already exports PYTHONDONTWRITEBYTECODE, but the same runners are also
 # invoked directly by developers and release scripts.  Make standalone
@@ -185,6 +333,7 @@ endforeach()
 # One-off investigation inputs, probe binaries, source clones, and superseded
 # dependency prefixes are not repository inputs or durable evidence.
 set(FORBIDDEN_DEBRIS
+    "${SOURCE_ROOT}/.DS_Store"
     "${SOURCE_ROOT}/external/libvncserver"
     "${SOURCE_ROOT}/external/virglrenderer"
     "${SOURCE_ROOT}/tmp"

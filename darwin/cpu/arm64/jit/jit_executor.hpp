@@ -14,16 +14,24 @@
 #include <cstdint>
 #include <memory>
 
+#ifndef UML_JIT_RUNTIME_DIAGNOSTICS
+#define UML_JIT_RUNTIME_DIAGNOSTICS 0
+#endif
+
 namespace uml::cpu::arm64 {
 
 struct JitExecutorOptions final {
 	bool enable_guarded_control_flow{};
 	bool enable_pointer_authentication{true};
-	bool reuse_validated_stale_blocks{true};
-	/* Zero selects the production arena size. */
-	std::size_t code_arena_size{};
 	::uml::cpu::HostCapabilities host_capabilities{
 		::uml::cpu::host_capabilities()};
+};
+
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+struct JitExecutorDiagnosticsOptions final {
+	bool reuse_validated_stale_blocks{true};
+	/* Zero selects the ordinary production arena size. */
+	std::size_t code_arena_size{};
 };
 
 struct JitCacheValidationDiagnostics final {
@@ -45,6 +53,7 @@ struct JitIndirectLinkDiagnostics final {
 	std::uint64_t deactivated_sites{};
 	std::uint64_t capacity_refusals{};
 };
+#endif
 
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 struct JitGprLinkProfileDiagnostics final {
@@ -65,6 +74,10 @@ class JitExecutor final {
 public:
 	explicit JitExecutor(bool enable_guarded_control_flow = false);
 	explicit JitExecutor(JitExecutorOptions options);
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+	JitExecutor(JitExecutorOptions options,
+		    JitExecutorDiagnosticsOptions diagnostics);
+#endif
 	~JitExecutor();
 
 	JitExecutor(const JitExecutor &) = delete;
@@ -80,10 +93,12 @@ public:
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
 	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
+#if UML_JIT_RUNTIME_DIAGNOSTICS
 	[[nodiscard]] JitCacheValidationDiagnostics
 	cache_validation_diagnostics() const noexcept;
 	[[nodiscard]] JitIndirectLinkDiagnostics
 	indirect_link_diagnostics() const noexcept;
+#endif
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 	[[nodiscard]] JitGprLinkProfileDiagnostics
 	gpr_link_profile_diagnostics() noexcept;

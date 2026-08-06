@@ -178,12 +178,73 @@ inline constexpr std::array arm_feature_labels{
 	std::string_view{"XS"}, std::string_view{"AFP"},
 };
 
+/* Stable machine-readable names shared with the architectural instruction
+ * inventory and its execution evidence.  Display labels above remain free to
+ * use Arm's conventional capitalization; these tokens are an exact data join. */
+inline constexpr std::array arm_feature_tokens{
+	std::string_view{"aes"}, std::string_view{"asmv8p2"},
+	std::string_view{"ats1a"}, std::string_view{"advanced_simd"},
+	std::string_view{"bf16"}, std::string_view{"brbe"},
+	std::string_view{"bti"}, std::string_view{"chk"},
+	std::string_view{"clrbhb"}, std::string_view{"cmh"},
+	std::string_view{"cmpbr"}, std::string_view{"cpa"},
+	std::string_view{"crc32"}, std::string_view{"cssc"},
+	std::string_view{"d128"}, std::string_view{"dgh"},
+	std::string_view{"dit"}, std::string_view{"dpb"},
+	std::string_view{"dpb2"}, std::string_view{"dotprod"},
+	std::string_view{"e3dse"}, std::string_view{"ebep"},
+	std::string_view{"ebf16"}, std::string_view{"f16f32dot"},
+	std::string_view{"f16f32mm"}, std::string_view{"f16mm"},
+	std::string_view{"f8f16mm"}, std::string_view{"f8f32mm"},
+	std::string_view{"faminmax"}, std::string_view{"fcma"},
+	std::string_view{"fhm"}, std::string_view{"floating_point"},
+	std::string_view{"fp16"}, std::string_view{"fp8"},
+	std::string_view{"fp8dot2"}, std::string_view{"fp8dot4"},
+	std::string_view{"fp8fma"}, std::string_view{"fprcvt"},
+	std::string_view{"frintts"}, std::string_view{"flag_m"},
+	std::string_view{"flag_m2"}, std::string_view{"gcie"},
+	std::string_view{"gcs"}, std::string_view{"hbc"},
+	std::string_view{"hinte"}, std::string_view{"i8mm"},
+	std::string_view{"ite"}, std::string_view{"jscvt"},
+	std::string_view{"lor"}, std::string_view{"lrcpc"},
+	std::string_view{"lrcpc2"}, std::string_view{"lrcpc3"},
+	std::string_view{"ls64"}, std::string_view{"ls64_accdata"},
+	std::string_view{"ls64_v"}, std::string_view{"lscp"},
+	std::string_view{"lse"}, std::string_view{"lse128"},
+	std::string_view{"lsfe"}, std::string_view{"lsui"},
+	std::string_view{"lut"}, std::string_view{"mec"},
+	std::string_view{"mops"}, std::string_view{"mte"},
+	std::string_view{"mte2"}, std::string_view{"mtetc"},
+	std::string_view{"nmi"}, std::string_view{"occmo"},
+	std::string_view{"pan"}, std::string_view{"pan2"},
+	std::string_view{"pauth"}, std::string_view{"pauth_lr"},
+	std::string_view{"pcdphint"}, std::string_view{"pmull"},
+	std::string_view{"prfmslc"}, std::string_view{"pops"},
+	std::string_view{"ras"}, std::string_view{"rdm"},
+	std::string_view{"rme"}, std::string_view{"rme_gpc3"},
+	std::string_view{"rprfm"}, std::string_view{"sb"},
+	std::string_view{"sha1"}, std::string_view{"sha256"},
+	std::string_view{"sha3"}, std::string_view{"sha512"},
+	std::string_view{"sm3"}, std::string_view{"sm4"},
+	std::string_view{"sme"}, std::string_view{"spe"},
+	std::string_view{"specres"}, std::string_view{"specres2"},
+	std::string_view{"spe_exc"}, std::string_view{"ssbs"},
+	std::string_view{"sysinstr128"}, std::string_view{"sysreg128"},
+	std::string_view{"the"}, std::string_view{"tlbid"},
+	std::string_view{"tlbios"}, std::string_view{"tlbirange"},
+	std::string_view{"tlbiw"}, std::string_view{"trbe_exc"},
+	std::string_view{"trf"}, std::string_view{"uao"},
+	std::string_view{"vhe"}, std::string_view{"wfxt"},
+	std::string_view{"xs"}, std::string_view{"afp"},
+};
+
 inline constexpr std::size_t arm_inventory_feature_count =
 	static_cast<std::size_t>(ArmFeature::inventory_count);
 inline constexpr std::size_t arm_feature_count =
 	static_cast<std::size_t>(ArmFeature::count);
 static_assert(arm_inventory_feature_count == 107);
 static_assert(arm_feature_labels.size() == arm_feature_count);
+static_assert(arm_feature_tokens.size() == arm_feature_count);
 
 using ArmFeatureSet = std::bitset<arm_feature_count>;
 

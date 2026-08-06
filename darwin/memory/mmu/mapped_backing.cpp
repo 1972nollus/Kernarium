@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "mapped_backing.hpp"
 
+#include "allocation_fault.hpp"
+
 #include "uml_darwin_guest.h"
 
 #include <array>
@@ -38,8 +40,25 @@ std::shared_ptr<MappedBacking> MappedBacking::create(
 		MAP_SHARED, fd, 0);
 	if (mapping == MAP_FAILED)
 		return {};
-	return std::shared_ptr<MappedBacking>{
-		new MappedBacking{static_cast<std::byte *>(mapping), size}};
+	UML_MEMORY_BACKING_MAPPING_CREATED();
+	struct MappingGuard final {
+		void *mapping;
+		std::size_t size;
+		bool owned{true};
+		~MappingGuard()
+		{
+			if (!owned)
+				return;
+			(void)munmap(mapping, size);
+			UML_MEMORY_BACKING_MAPPING_DESTROYED();
+		}
+	} guard{mapping, size};
+	UML_MEMORY_ALLOCATION_CHECKPOINT(
+		testing::AllocationSite::backing);
+	auto *backing = new MappedBacking{
+		static_cast<std::byte *>(mapping), size};
+	guard.owned = false;
+	return std::shared_ptr<MappedBacking>{backing};
 }
 
 MappedBacking::MappedBacking(std::byte *data, std::size_t size) noexcept
@@ -51,6 +70,8 @@ MappedBacking::~MappedBacking()
 {
 	if (data_ != nullptr)
 		(void)munmap(data_, size_);
+	if (data_ != nullptr)
+		UML_MEMORY_BACKING_MAPPING_DESTROYED();
 }
 
 std::byte *MappedBacking::at(std::uint64_t offset) const noexcept
@@ -84,16 +105,15 @@ bool MappedBacking::store_allocation_tag(
 			tags = found->second.get();
 	}
 	if (tags == nullptr) {
-		std::lock_guard lock{tags_mutex_};
-		auto &slot = tag_pages_[page];
-		if (!slot) {
-			try {
+		try {
+			std::lock_guard lock{tags_mutex_};
+			auto &slot = tag_pages_[page];
+			if (!slot)
 				slot = std::make_unique<TagPage>();
-			} catch (...) {
-				return false;
-			}
+			tags = slot.get();
+		} catch (...) {
+			return false;
 		}
-		tags = slot.get();
 	}
 	tags->tags[index].store(tag & 15U, std::memory_order_release);
 	return true;

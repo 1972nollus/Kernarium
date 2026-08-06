@@ -11,7 +11,8 @@ The supported workflow on macOS is:
 ```sh
 dependencies/prepare.sh
 dependencies/build.sh
-cmake --preset macos-integration
+UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
+  cmake --preset macos-integration
 ```
 
 `prepare.sh` is the only step that accesses the network. It downloads each
@@ -23,12 +24,10 @@ with an exclusive rename and verifies whichever process wins. Use `--no-fetch`
 with a populated archive cache, or `--verify` to audit prepared sources without
 network access.
 
-LibVNCServer follows the same release-package rule. Because upstream currently
-publishes fixes between point releases, the manifest applies a small ordered
-set of official post-release corrections to 0.9.15; their original commit
-identities and rationale are recorded in
-[`patches/libvncserver/README.md`](patches/libvncserver/README.md). It does not
-substitute a moving branch snapshot for the release package.
+LibVNCServer follows the same release-package rule. The manifest pins the
+pristine 0.9.15 release archive and its canonical unmodified tree hash. There
+is no project-maintained post-release patch layer and no moving branch
+snapshot.
 
 `build.sh` copies those verified trees into a temporary build area and creates
 only static arm64 libraries under `.build/dependencies/macos-arm64`. Its
@@ -86,5 +85,7 @@ hash. Compiler/SDK versions and the real build timestamp are retained in the
 prefix receipt as observations. Binary equality across builds is neither
 claimed nor required.
 
-The host-only unit presets do not need the private desktop dependency prefix,
-a kernel build, or a rootfs image.
+The core `macos-unit-16k` and `macos-unit-4k` presets do not need the private
+desktop dependency prefix, a kernel build, or a rootfs image. The focused GPU
+unit presets do use the private graphics/display dependencies, but still need
+neither a kernel nor a rootfs.

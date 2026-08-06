@@ -8,7 +8,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 METADATA="$ROOT_DIR/kernel/patches/metadata.env"
-MANIFEST="$ROOT_DIR/kernel/patches/series/manifest.tsv"
+SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
 
 fail()
 {
@@ -22,7 +22,8 @@ usage()
 Usage: kernel/check-next-version.sh --work-root PATH --ref REF [--keep]
 
 Clone the audit-only Linux origin, detach at REF, and apply the complete tracked
-series with git am --3way. A conflict is a failing result for scheduled CI.
+series with git am --3way. Report the recorded carry, drop, retest, or upstream
+action for every path when a topic applies, is already contained, or conflicts.
 EOF
 }
 
@@ -56,9 +57,11 @@ done
 [ -n "$WORK_ROOT" ] || fail "--work-root is required"
 [ -n "$UPSTREAM_REF" ] || fail "--ref is required"
 [ -r "$METADATA" ] || fail "missing metadata: $METADATA"
-[ -r "$MANIFEST" ] || fail "missing manifest: $MANIFEST"
+[ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
 # shellcheck disable=SC1090
 . "$METADATA"
+"$SERIES_POLICY" manifest >/dev/null
+"$SERIES_POLICY" policy >/dev/null
 
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
@@ -72,21 +75,24 @@ cleanup()
 }
 trap cleanup 0 HUP INT TERM
 
-git clone --filter=blob:none --no-checkout "$UML_KERNEL_NEXT_VERSION_ORIGIN" \
-	"$CHECK_ROOT/linux"
-git -C "$CHECK_ROOT/linux" fetch --no-tags origin "$UPSTREAM_REF"
-git -C "$CHECK_ROOT/linux" switch --detach FETCH_HEAD
+audit_git()
+{
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git \
+		-c user.name='linux-um-darwin next-version audit' \
+		-c user.email='noreply@linux-um-darwin.invalid' \
+		-c core.hooksPath=/dev/null "$@"
+}
 
-tab=$(printf '\t')
-while IFS="$tab" read -r order filename patch_id digest subject; do
-	case "$order" in \#*|order|'') continue ;; esac
-	patch="$ROOT_DIR/kernel/patches/series/$filename"
-	[ -r "$patch" ] || fail "missing patch: $filename"
-	if ! git -C "$CHECK_ROOT/linux" am --3way "$patch"; then
-		git -C "$CHECK_ROOT/linux" am --abort >/dev/null 2>&1 || true
-		fail "patch $order ($filename) conflicts with $UPSTREAM_REF"
-	fi
-done < "$MANIFEST"
+audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_NEXT_VERSION_ORIGIN" \
+	"$CHECK_ROOT/linux"
+audit_git -C "$CHECK_ROOT/linux" fetch --no-tags origin "$UPSTREAM_REF"
+audit_git -C "$CHECK_ROOT/linux" switch --detach FETCH_HEAD
+NEXT_BASE=$(audit_git -C "$CHECK_ROOT/linux" rev-parse HEAD)
+
+if ! "$SERIES_POLICY" next-version --source "$CHECK_ROOT/linux" \
+	--base "$NEXT_BASE"; then
+	exit 1
+fi
 
 printf '%s\n' "complete series applies to $UPSTREAM_REF"
 if [ "$KEEP" -eq 1 ]; then

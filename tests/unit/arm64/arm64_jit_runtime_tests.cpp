@@ -558,11 +558,7 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 
 int main()
 {
-	require(darwin_uml_jit_available() == 1);
-	const auto *verification = std::getenv("UML_VERIFY_JIT");
-	const bool verifies_each_block =
-		verification != nullptr && verification[0] != '\0' &&
-		verification[0] != '0';
+	require(jit_available() == 1);
 	inline_tlb_and_cross_page_fallback();
 	write_fault_is_precise();
 	guest_jit_code_invalidation();
@@ -571,12 +567,9 @@ int main()
 	reservation_contention_keeps_native_store_block();
 	pair_cross_page_slow_path_resumes_native_translation();
 	deferred_fp_source_is_materialized_and_refreshed();
-	if (!verifies_each_block) {
-		direct_links_are_bounded_to_one_translation_window();
-		published_links_can_chain_store_blocks();
-	}
+	direct_links_are_bounded_to_one_translation_window();
+	published_links_can_chain_store_blocks();
 	reservation_helpers_are_isolated_from_published_links();
-	if (!verifies_each_block)
-		linked_successor_keeps_one_frame_through_tlb_helper_and_exits();
+	linked_successor_keeps_one_frame_through_tlb_helper_and_exits();
 	return 0;
 }

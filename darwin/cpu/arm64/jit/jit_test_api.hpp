@@ -91,9 +91,6 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value);
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
                                  bool native_xs);
 
-[[nodiscard]] bool
-verification_replay_safe_for_testing(std::uint32_t instruction) noexcept;
-
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 [[nodiscard]] CompiledCode
 compile_gpr_profile_linked_block(
@@ -131,7 +128,11 @@ persistent_link_successful_path_word_savings() noexcept;
 [[nodiscard]] std::uint8_t
 link_selector_for_capability_mask(std::uint8_t capabilities) noexcept;
 [[nodiscard]] std::uint8_t
+checked_link_selector_for_capability_mask(std::uint8_t capabilities) noexcept;
+[[nodiscard]] std::uint8_t
 link_capability_mask_for_selector(std::size_t selector) noexcept;
+
+[[nodiscard]] bool invalid_emitter_metadata_is_rejected_for_testing();
 
 [[nodiscard]] bool
 block_link_table_is_bounded(std::size_t capacity);
@@ -156,5 +157,7 @@ late_store_waits_for_current_helper_for_testing();
 tracked_store_invalidation_does_not_deadlock_for_testing();
 [[nodiscard]] bool
 publication_gate_randomized_stress_for_testing();
+[[nodiscard]] bool
+publication_participant_lifetime_is_idempotent_for_testing();
 
 } // namespace uml::cpu::arm64::jit::testing

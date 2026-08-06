@@ -106,6 +106,9 @@ protected:
   finish_gpr_residency_observation() const noexcept;
   void apply_gpr_residency_plan(const GprResidencyPlan &plan) noexcept;
   [[nodiscard]] bool gpr_slots_unbound() const noexcept;
+  [[nodiscard]] constexpr std::size_t gpr_slot_capacity() const noexcept {
+    return resident_gpr_hosts.size();
+  }
 
   [[nodiscard]] NativeGpr read_native_gpr(unsigned guest,
                                           bool stack_pointer,

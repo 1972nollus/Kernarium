@@ -132,7 +132,7 @@ void supported_prefix_stops_before_illegal_word() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
+  require(jit_available() == 1);
   valid_host_unavailable_is_guest_illegal();
   valid_contract_unavailable_is_guest_illegal();
   unknown_word_is_guest_illegal();

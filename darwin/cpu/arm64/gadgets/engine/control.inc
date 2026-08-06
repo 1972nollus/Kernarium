@@ -10,13 +10,6 @@ gadget interrupt
 	mov w0, #UML_GADGET_EVENT_INTERRUPT
 	b uml_arm64_gadget_leave
 
-gadget fatal
-	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
-	mvn w0, wzr
-	b uml_arm64_gadget_leave
-
 gadget illegal
 	ldr x8, [_stream]
 	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]

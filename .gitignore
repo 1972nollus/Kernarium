@@ -31,7 +31,6 @@ __pycache__/
 /tmp/
 *.pdf
 /external/*
-!/external/.gitkeep
 
 # Per-developer CMake configuration; checked-in workflows live in
 # CMakePresets.json.

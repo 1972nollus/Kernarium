@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.27)
 
-project(uml_apple LANGUAGES CXX ASM)
+project(uml_apple LANGUAGES C CXX ASM)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -56,6 +56,8 @@ option(UML_BUILD_TOOLING_TESTS
     ${_uml_build_tooling_tests_default})
 set(UML_INTEGRATION_ROOTFS "" CACHE FILEPATH
     "Immutable lower rootfs image used by integration tests")
+set(UML_INSTRUCTION_MATERIALIZATION_WORK_ROOT "" CACHE PATH
+    "Optional external root for large instruction-materialization join state")
 option(UML_ENABLE_EXTERNAL_NETWORK_TESTS
     "Register guest tests that intentionally access the public network" OFF)
 set(UML_EXTERNAL_NETWORK_TEST_HOST "example.com" CACHE STRING
@@ -74,11 +76,22 @@ option(DARWIN_UML_JIT_GPR_LINK_PROFILE
     "Instrument successful JIT links for guest-GPR traffic profiling" OFF)
 option(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE
     "Instrument JIT translation for resident-GPR pressure profiling" OFF)
+option(UML_ENABLE_RUNTIME_PROFILING
+    "Compile optional runtime, MMU, and device profiling into products" OFF)
+
+if(UML_ENABLE_RUNTIME_PROFILING OR
+   DARWIN_UML_JIT_GPR_LINK_PROFILE OR
+   DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    set(UML_ENABLE_JIT_PROFILE ON)
+else()
+    set(UML_ENABLE_JIT_PROFILE OFF)
+endif()
 
 add_library(uml_jit_profile_configuration INTERFACE)
 add_library(UML::JitProfileConfiguration ALIAS
     uml_jit_profile_configuration)
 target_compile_definitions(uml_jit_profile_configuration INTERFACE
+    UML_ENABLE_JIT_PROFILE=$<BOOL:${UML_ENABLE_JIT_PROFILE}>
     $<$<BOOL:${DARWIN_UML_JIT_GPR_LINK_PROFILE}>:DARWIN_UML_JIT_GPR_LINK_PROFILE=1>
     $<$<BOOL:${DARWIN_UML_JIT_GPR_PRESSURE_PROFILE}>:DARWIN_UML_JIT_GPR_PRESSURE_PROFILE=1>)
 

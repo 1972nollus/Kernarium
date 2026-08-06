@@ -10,6 +10,7 @@ using ::uml::platform::ArmFeatureSet;
 using ::uml::platform::HostCapabilities;
 using ::uml::platform::arm_feature_count;
 using ::uml::platform::arm_feature_labels;
+using ::uml::platform::arm_feature_tokens;
 using ::uml::platform::arm_inventory_feature_count;
 
 /* Direct CPU unit tests intentionally use only the Apple arm64 ABI baseline.

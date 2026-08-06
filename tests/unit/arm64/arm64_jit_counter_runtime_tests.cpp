@@ -11,7 +11,7 @@ using namespace uml::emulator::tests;
 
 namespace {
 
-void direct_counter_block_is_verifier_safe()
+void direct_counter_block_executes()
 {
 	constexpr unsigned long generation = 716;
 	constexpr std::uint64_t base = 0x8b'0000;
@@ -48,8 +48,7 @@ void direct_counter_block_is_verifier_safe()
 
 int main()
 {
-	require(::setenv("UML_VERIFY_JIT", "1", 1) == 0);
-	require(darwin_uml_jit_available() == 1);
-	direct_counter_block_is_verifier_safe();
+	require(jit_available() == 1);
+	direct_counter_block_executes();
 	return 0;
 }

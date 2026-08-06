@@ -1,0 +1,1033 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include "jit_compiler.hpp"
+
+namespace uml::cpu::arm64 {
+
+JitCompiler::JitCompiler(bool enable_guarded_control_flow,
+                       void *link_context,
+                       LinkResolver link_resolver,
+                       bool track_direct_stores,
+                       IndirectLinkResolver indirect_link_resolver,
+                       bool persistent_linked_block_abi
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+                       ,
+                       void *gpr_link_profile_context,
+                       DirectLinkProfileResolver direct_profile_resolver,
+                       IndirectLinkProfileResolver indirect_profile_resolver
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+                       ,
+                       bool profile_gpr_pressure
+#endif
+                       ) noexcept
+      : emitter_{persistent_linked_block_abi}, cold_{this},
+        configured_link_context_{link_context},
+        configured_link_resolver_{link_resolver},
+        configured_indirect_link_resolver_{indirect_link_resolver},
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+        configured_gpr_link_profile_context_{gpr_link_profile_context},
+        configured_direct_profile_resolver_{direct_profile_resolver},
+        configured_indirect_profile_resolver_{indirect_profile_resolver},
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+        configured_profile_gpr_pressure_{profile_gpr_pressure},
+#endif
+        configured_persistent_linked_block_abi_{persistent_linked_block_abi},
+        track_direct_stores_{track_direct_stores},
+        enable_guarded_control_flow_{enable_guarded_control_flow} {
+    attach_family_emitter(&emitter_, &native_fp_, &native_fpmr_,
+                          !track_direct_stores_);
+    attach_link_resolver(link_context, link_resolver);
+    attach_indirect_link_resolver(link_context, indirect_link_resolver);
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    attach_gpr_link_profile(gpr_link_profile_context, direct_profile_resolver,
+                            indirect_profile_resolver);
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    attach_gpr_pressure_profile(profile_gpr_pressure);
+#endif
+    emitter_.attach_exit_flush(this, [](void *context) {
+      static_cast<JitCompiler *>(context)->flush_exit_gprs();
+    });
+    emitter_.attach_flag_clobber(this, [](void *context) {
+      static_cast<JitCompiler *>(context)
+          ->spill_flags_for_internal_clobber();
+    });
+  }
+
+JitCompiler::JitCompiler(bool enable_guarded_control_flow,
+              const ArmFeatureSet &translation_features) noexcept
+      : JitCompiler{enable_guarded_control_flow} {
+    translation_features_ = &translation_features;
+  }
+
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+void JitCompiler::set_gpr_pressure_profile_enabled(bool enabled) noexcept {
+    configured_profile_gpr_pressure_ = enabled;
+    attach_gpr_pressure_profile(enabled);
+}
+#endif
+
+void JitCompiler::set_gpr_residency_planning_enabled(bool enabled) noexcept {
+    gpr_residency_planning_enabled_ = enabled;
+  }
+
+void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
+    table_list_planning_enabled_ = enabled;
+  }
+
+void JitCompiler::set_pointer_authentication_enabled(bool enabled) noexcept {
+    enable_pointer_authentication_ = enabled;
+  }
+
+JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
+                 std::span<const std::uint32_t> instructions) {
+    const bool can_plan_gpr_residency =
+        gpr_residency_planning_enabled_
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+        && configured_direct_profile_resolver_ == nullptr &&
+        configured_indirect_profile_resolver_ == nullptr
+#endif
+        ;
+    auto selected =
+        compile_once(guest_pc, instructions, can_plan_gpr_residency);
+    bool retained_gpr_plan = false;
+    const auto plan = selected.gpr_residency_plan;
+    if (can_plan_gpr_residency &&
+        plan.count != 0U && !selected.words.empty()) {
+      JitCompiler candidate_compiler{
+          enable_guarded_control_flow_, configured_link_context_,
+          configured_link_resolver_, track_direct_stores_,
+          configured_indirect_link_resolver_,
+          configured_persistent_linked_block_abi_
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+          ,
+          configured_gpr_link_profile_context_,
+          configured_direct_profile_resolver_,
+          configured_indirect_profile_resolver_
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+          ,
+          configured_profile_gpr_pressure_
+#endif
+      };
+      candidate_compiler.translation_features_ = translation_features_;
+      candidate_compiler.table_list_planning_enabled_ =
+          table_list_planning_enabled_;
+      candidate_compiler.enable_pointer_authentication_ =
+          enable_pointer_authentication_;
+      candidate_compiler.gpr_residency_planning_enabled_ = false;
+      candidate_compiler.apply_gpr_residency_plan(plan);
+      auto candidate =
+          candidate_compiler.compile_once(guest_pc, instructions, false);
+      const bool same_metadata =
+          candidate.guest_instructions == selected.guest_instructions &&
+          candidate.internal_entry_word == selected.internal_entry_word &&
+          candidate.memory_write_mask == selected.memory_write_mask &&
+          candidate.direct_memory_write_mask ==
+              selected.direct_memory_write_mask &&
+          candidate.accesses_fp_state == selected.accesses_fp_state &&
+          candidate.link_target_safe == selected.link_target_safe &&
+          candidate.native_fp == selected.native_fp &&
+          candidate.native_fpmr == selected.native_fpmr &&
+          candidate.guest_illegal == selected.guest_illegal
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+          &&
+          candidate.profile_read_before_write ==
+              selected.profile_read_before_write &&
+          candidate.profile_written == selected.profile_written
+#endif
+          ;
+      if (same_metadata && !candidate.words.empty() &&
+          candidate.hot_words < selected.hot_words &&
+          candidate.words.size() <= selected.words.size()) {
+        selected_words_.assign(candidate.words.begin(),
+                               candidate.words.end());
+        candidate.words = selected_words_;
+        candidate.gpr_residency_plan = plan;
+        selected = candidate;
+        retained_gpr_plan = true;
+      }
+    }
+    if (!retained_gpr_plan)
+      selected.gpr_residency_plan = {};
+
+    profile_jit_compilation(
+        guest_pc,
+        instructions.first(
+            std::min(selected.guest_instructions, instructions.size())),
+        selected.words, selected.hot_words, track_direct_stores_
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+        ,
+        selected.gpr_pressure
+#endif
+    );
+    return selected;
+  }
+
+JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
+                      std::span<const std::uint32_t> instructions,
+                      bool observe_gpr_residency) {
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    begin_gpr_link_profile_block(guest_pc);
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    begin_gpr_pressure_profile_block();
+#endif
+    begin_gpr_residency_observation(observe_gpr_residency);
+    select_constrained_vector_pins(instructions);
+    if (table_list_planning_enabled_)
+      select_consecutive_vector_lists(instructions);
+    emitter_.prologue();
+    const auto internal_entry_word = emitter_.size();
+    while (count_ < instructions.size()) {
+      const auto pc = guest_pc + count_ * sizeof(std::uint32_t);
+      if (const auto run = try_emit_simd_unsigned_run(
+              instructions.subspan(count_), pc);
+          run != 0) {
+        accesses_fp_state_ = true;
+        count_ += run;
+        continue;
+      }
+      if (const auto run = try_emit_sp_unsigned_run(
+              instructions.subspan(count_), pc);
+          run != 0) {
+        count_ += run;
+        continue;
+      }
+      if (const auto run = try_emit_gpr_unsigned_run(
+              instructions.subspan(count_), pc);
+          run != 0) {
+        count_ += run;
+        continue;
+      }
+      if (try_emit_native_exclusive_run(instructions.subspan(count_), pc))
+        continue;
+      const auto instruction = instructions[count_];
+      if (reservation_sensitive_allocation(instruction)) {
+        /*
+         * A reservation-establishing helper waits for every other vCPU's
+         * published direct-store block.  It therefore cannot execute inside
+         * a publication inherited from an earlier instruction or linked
+         * predecessor: two such vCPUs could otherwise wait on one another.
+         *
+         * Split before the allocation and mark its one-instruction block as
+         * an ineligible chain target.  Both decisions happen while
+         * translating, leaving ordinary generated blocks branch-free.
+         */
+        if (count_ != 0) {
+          store_pc(pc);
+          emitter_.return_constant(Event::continued, count_);
+          terminated_ = true;
+          break;
+        }
+        link_target_safe_ = false;
+      }
+      const auto action = emit_instruction(instruction, pc);
+      if (action == Action::unsupported) {
+        /*
+         * Keep a supported native prefix instead of discarding it
+         * merely because the following instruction is unsupported.
+         * A block beginning with an unsupported or unavailable
+         * instruction becomes a precise guest illegal-instruction
+         * terminal. The generated block contains no runtime decode or
+         * feature check, and the faulting instruction does not retire.
+         */
+        if (count_ == 0) {
+          guest_illegal_ = true;
+          store_pc(pc);
+          emitter_.return_constant(Event::illegal_instruction, count_ + 1U);
+          ++count_;
+          terminated_ = true;
+        } else {
+          store_pc(pc);
+          emitter_.return_constant(Event::continued, count_);
+          terminated_ = true;
+        }
+        break;
+      }
+      accesses_fp_state_ =
+          accesses_fp_state_ ||
+          arm64::detail::instruction_accesses_fp_state(instruction);
+      ++count_;
+      if (action == Action::terminate) {
+        terminated_ = true;
+        break;
+      }
+    }
+    if (!terminated_) {
+      store_pc(guest_pc + count_ * sizeof(std::uint32_t));
+      emitter_.return_constant(Event::continued, count_);
+    }
+    const auto hot_words = emitter_.size();
+    const auto gpr_residency_plan =
+        finish_gpr_residency_observation();
+    begin_gpr_residency_observation(false);
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    const auto gpr_pressure = finish_gpr_pressure_profile_block();
+#endif
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    const auto profile_read_before_write =
+        gpr_profile_read_before_write_mask();
+    const auto profile_written = gpr_profile_written_mask();
+#endif
+    for (const auto &translation : translation_cold_)
+      emit_translation_cold(translation);
+    for (const auto &cold : cold_) {
+      set_exit_gpr_mask(cold.dirty_gprs);
+      set_exit_vector_mask(cold.dirty_vectors);
+      emitter_.bind(cold.label);
+      /*
+       * Every edge leading here is flag-neutral. Publish the translation-time
+       * snapshot only on the cold arm, then let the existing terminal helpers
+       * consume CpuState as their canonical source.
+       */
+      publish_cold_flags(cold.flags);
+      assume_flags_in_memory();
+      if (cold.action == ColdPath::Action::memory_fault) {
+        store_pc(cold.pc);
+        emitter_.return_constant(Event::memory_fault, cold.count);
+      } else if (cold.action == ColdPath::Action::pair_slow) {
+        emit_pair_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::simd_structure_slow) {
+        emit_simd_structure_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::alignment_fault) {
+        emit_alignment_fault(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::ordered_slow) {
+        emit_ordered_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::exclusive_slow) {
+        emit_exclusive_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action ==
+                 ColdPath::Action::deferred_exclusive_slow) {
+        emit_deferred_exclusive_slow(cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::memory_slow) {
+        emit_memory_slow(cold.instruction, cold.pc, cold.count);
+      }
+    }
+    const auto words = emitter_.finish();
+    Result result{
+        .words = words,
+        .guest_instructions = count_,
+        .hot_words = hot_words,
+        .internal_entry_word = internal_entry_word,
+        .memory_write_mask = memory_write_mask_,
+        .direct_memory_write_mask = direct_memory_write_mask_,
+        .accesses_fp_state = accesses_fp_state_,
+        .link_target_safe = link_target_safe_,
+        .native_fp = native_fp_,
+        .native_fpmr = native_fpmr_,
+        .guest_illegal = guest_illegal_,
+        .gpr_residency_plan = gpr_residency_plan,
+    };
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    result.profile_read_before_write = profile_read_before_write;
+    result.profile_written = profile_written;
+#endif
+#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
+    result.gpr_pressure = gpr_pressure;
+#endif
+    return result;
+  }
+
+void JitCompiler::select_constrained_vector_pins(
+      std::span<const std::uint32_t> instructions) noexcept {
+    std::array<unsigned, 32> frequency{};
+    std::array<std::size_t, 32> first_use{};
+    first_use.fill(std::numeric_limits<std::size_t>::max());
+    for (std::size_t index = 0; index < instructions.size(); ++index) {
+      const bool reservation_boundary =
+          reservation_sensitive_allocation(instructions[index]);
+      if (index != 0U && reservation_boundary)
+        break;
+      const auto guest = constrained_vector_source(instructions[index]);
+      if (guest) {
+        ++frequency[*guest];
+        first_use[*guest] = std::min(first_use[*guest], index);
+      }
+      if (reservation_boundary ||
+          obvious_translated_block_terminator(instructions[index]))
+        break;
+    }
+
+    for (std::size_t pin = 0; pin < 2U; ++pin) {
+      unsigned selected = 32U;
+      for (unsigned guest = 0; guest < 32U; ++guest) {
+        if (frequency[guest] == 0U)
+          continue;
+        if (selected == 32U ||
+            frequency[guest] > frequency[selected] ||
+            (frequency[guest] == frequency[selected] &&
+             first_use[guest] < first_use[selected]))
+          selected = guest;
+      }
+      if (selected == 32U)
+        break;
+      pin_constrained_vector(selected);
+      frequency[selected] = 0U;
+    }
+  }
+
+void JitCompiler::select_consecutive_vector_lists(
+      std::span<const std::uint32_t> instructions) noexcept {
+    for (std::size_t index = 0; index < instructions.size(); ++index) {
+      const bool reservation_boundary =
+          reservation_sensitive_allocation(instructions[index]);
+      if (index != 0U && reservation_boundary)
+        break;
+      if (const auto list =
+              consecutive_vector_list(instructions[index]))
+        static_cast<void>(
+            pin_consecutive_vector_list(list->first, list->count));
+      if (reservation_boundary ||
+          obvious_translated_block_terminator(instructions[index]))
+        break;
+    }
+  }
+
+[[nodiscard]] bool
+  JitCompiler::translation_supports(ArmFeature feature) const noexcept {
+    if (translation_features_ != nullptr)
+      return translation_features_->test(
+          static_cast<std::size_t>(feature));
+    return host_capabilities().has(feature);
+  }
+
+[[nodiscard]] bool
+  JitCompiler::reservation_sensitive_allocation(std::uint32_t instruction) noexcept {
+    const bool native_scalar_lse =
+        (instruction & 0x0100'0000U) == 0U &&
+        host_capabilities().has(ArmFeature::lse) &&
+        ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
+         (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
+    if (native_scalar_lse)
+      return false;
+    const bool read_check_write =
+        (instruction & 0xbf20'fc00U) == 0x1920'0800U ||
+        ((instruction & 0xbf20'8c00U) == 0x3820'8000U &&
+         ((instruction >> 12) & 7U) >= 1U &&
+         ((instruction >> 12) & 7U) <= 3U) ||
+        (instruction & 0xbf20'fc00U) == 0x1920'0c00U ||
+        ((instruction & 0xbf20'8c00U) == 0x1920'8000U &&
+         (((instruction >> 12) & 7U) != 0U ||
+          (instruction & 0x4000'0000U) != 0U));
+    const bool pair_atomic =
+        (instruction & 0xbf20'0c00U) == 0x1920'0000U;
+    const bool scalar_atomic =
+        (instruction & 0x3f20'0c00U) == 0x3820'0000U ||
+        (instruction & 0x3f20'0c00U) == 0x1920'0400U;
+    const bool exclusive_or_ordered =
+        (instruction & 0x3f00'0000U) == 0x0800'0000U ||
+        (instruction & 0x3f00'0000U) == 0x0900'0000U;
+    return read_check_write || pair_atomic || scalar_atomic ||
+           exclusive_or_ordered;
+  }
+
+void JitCompiler::mark_memory_write() noexcept {
+    if (count_ < maximum_block_instructions)
+      memory_write_mask_ |= std::uint64_t{1} << count_;
+  }
+
+void JitCompiler::mark_direct_memory_write() noexcept {
+    mark_memory_write();
+    if (count_ < maximum_block_instructions)
+      direct_memory_write_mask_ |= std::uint64_t{1} << count_;
+  }
+
+void JitCompiler::track_direct_store(unsigned address, std::size_t size) {
+    track_direct_store(address, size, count_);
+  }
+
+void JitCompiler::track_direct_store(unsigned address, std::size_t size,
+                          std::size_t instruction_index) {
+    if (!track_direct_stores_ ||
+        instruction_index >= maximum_block_instructions)
+      return;
+    /* Every caller records after emit_translate(), so address is the
+     * permission-checked host backing pointer rather than a guest VA.
+     */
+    const auto offset =
+        instruction_index * sizeof(JitStoreRange);
+    emitter_.load_x(3, 31, 32);
+    emitter_.load_x(3, 3, offsetof(JitChainState, stores));
+    emitter_.store_x(address, 3, offset + offsetof(JitStoreRange, address));
+    emitter_.load_constant(4, size);
+    emitter_.store_x(4, 3, offset + offsetof(JitStoreRange, size));
+  }
+
+[[nodiscard]] bool JitCompiler::emit_primary_hint(std::uint32_t instruction) {
+    if ((instruction & 0xffff'f01fU) != 0xd503'201fU)
+      return false;
+
+    /*
+     * Stateful aliases name fixed architectural registers. Rewrite them to
+     * ordinary register forms over scratch registers so x15 remains the
+     * CpuState base and only the specified guest destination is committed.
+     */
+    const unsigned immediate = (instruction >> 5) & 0x7fU;
+    if (immediate == 40U) {
+      if (!host_capabilities().has(ArmFeature::chk))
+        return true;
+      load_gpr(16, 16, false);
+      emitter_.emit(instruction);
+      store_gpr(16, 16, false);
+      return true;
+    }
+    /*
+     * These hints directly affect the host execution carrying the guest
+     * block. Optional HINT-space encodings are architecturally NOP on older
+     * hosts, so no runtime feature branch or fallback sequence is needed.
+     */
+    if (immediate == 1U || immediate == 6U || immediate == 20U ||
+        immediate == 22U) {
+      emitter_.emit(instruction);
+      return true;
+    }
+    return true;
+  }
+
+void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
+    emitter_.load_constant(9, mask);
+    emitter_.emit((wide ? 0x8a00'0000U : 0x0a00'0000U) | (9U << 16) |
+                  ((reg & 31U) << 5) | (reg & 31U));
+  }
+
+[[nodiscard]] bool JitCompiler::emit_system_register(std::uint32_t instruction) {
+    constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
+    constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
+    constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
+    const auto system = instruction & 0xffff'ffe0U;
+    const unsigned transfer = instruction & 31U;
+    const auto write_destination = [&](auto emit_value) {
+      if (transfer == 31U)
+        return;
+      const auto native_destination =
+          write_native_gpr(transfer, false, false, 8);
+      emit_value(native_destination.host);
+      commit_native_gpr(native_destination, transfer, false);
+    };
+    const auto copy_source_to_scratch = [&] {
+      const auto native_source =
+          read_native_gpr(transfer, false, 8);
+      if (native_source.host != 8U)
+        emitter_.move_x(8, native_source.host);
+    };
+    switch (system) {
+    case 0xd53b'd040U: // TPIDR_EL0
+      write_destination([&](unsigned destination) {
+        emitter_.load_x(destination, 15, offsetof(CpuState, tls));
+      });
+      return true;
+    case 0xd51b'd040U: {
+      const auto native_source =
+          read_native_gpr(transfer, false, 8);
+      emitter_.store_x(native_source.host, 15, offsetof(CpuState, tls));
+      return true;
+    }
+    case 0xd53b'd060U: // TPIDRRO_EL0
+      write_destination(
+          [&](unsigned destination) {
+            emitter_.load_constant(destination, 0);
+          });
+      return true;
+    case 0xd53b'00e0U: // DCZID_EL0
+      write_destination(
+          [&](unsigned destination) {
+            emitter_.load_constant(destination, 4U);
+          });
+      return true;
+    case 0xd53b'0020U: // CTR_EL0
+      write_destination([&](unsigned destination) {
+        emitter_.load_constant(destination, 0x8444'8004U);
+      });
+      return true;
+    case 0xd53b'4400U: // FPCR
+      write_destination([&](unsigned destination) {
+        emitter_.load_w(destination, 15, offsetof(CpuState, fpcr));
+        mask_register(destination, fpcr_mask, false);
+      });
+      return true;
+    case 0xd51b'4400U:
+      copy_source_to_scratch();
+      mask_register(8, fpcr_mask, false);
+      emitter_.store_w(8, 15, offsetof(CpuState, fpcr));
+      mask_register(
+          8, fpcr_mask & ~arm64::detail::fpcr_exception_enable_mask, false);
+      emitter_.emit(0xd51b'4408U); // msr fpcr, x8
+      native_fp_ = true;
+      return true;
+    case 0xd53b'4420U:             // FPSR
+      write_destination([&](unsigned destination) {
+        emitter_.emit(0xd53b'4420U | destination);
+        mask_register(destination, native_fpsr_mutable_mask, false);
+        emitter_.load_w(10, 15, offsetof(CpuState, fpsr));
+        mask_register(10, 0xf000'0000U, false);
+        emitter_.emit(0x2a00'0000U | (10U << 16) |
+                      (destination << 5) | destination);
+      });
+      native_fp_ = true;
+      return true;
+    case 0xd51b'4420U:
+      copy_source_to_scratch();
+      mask_register(8, fpsr_mask, false);
+      emitter_.store_w(8, 15, offsetof(CpuState, fpsr));
+      emitter_.emit(0xd51b'4428U); // msr fpsr, x8
+      native_fp_ = true;
+      return true;
+    case 0xd53b'4440U: // FPMR
+      write_destination([&](unsigned destination) {
+        emitter_.load_x(destination, 15, offsetof(CpuState, fpmr));
+      });
+      return true;
+    case 0xd51b'4440U:
+      copy_source_to_scratch();
+      mask_register(8, fpmr_mask, true);
+      emitter_.store_x(8, 15, offsetof(CpuState, fpmr));
+      if (translation_supports(ArmFeature::fp8)) {
+        emitter_.emit(0xd51b'4448U); // msr FPMR, x8
+        native_fpmr_ = true;
+      }
+      return true;
+    case 0xd53b'4200U: // NZCV
+      write_destination([&](unsigned destination) {
+        read_flags(destination);
+      });
+      return true;
+    case 0xd51b'4200U:
+      copy_source_to_scratch();
+      mask_register(8, 0xf000'0000U, false);
+      emitter_.store_w(8, 15, offsetof(CpuState, nzcv));
+      /* The guest write supersedes any formerly resident host value. */
+      assume_flags_in_memory();
+      return true;
+    case 0xd53b'e000U: // CNTFRQ_EL0
+      write_destination([&](unsigned destination) {
+        emitter_.emit(0xd53b'e000U | destination);
+      });
+      return true;
+    case 0xd53b'e040U: // CNTVCT_EL0
+      write_destination([&](unsigned destination) {
+        emitter_.emit(0xd53b'e040U | destination);
+      });
+      return true;
+    default:
+      return false;
+    }
+  }
+
+void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
+    mark_direct_memory_write();
+    const unsigned source = instruction & 31U;
+    load_gpr(8, source, false);
+    mask_register(8, ~std::uint64_t{63}, true);
+    const auto fault = emitter_.make_label();
+    cold_.push_back(
+        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    /* The advertised 64-byte block size divides every supported guest
+     * page, so an aligned DC ZVA block needs exactly one translation.
+     */
+    emit_translate(8, Access::write, fault, fault, 1);
+    track_direct_store(8, 64);
+    for (unsigned offset = 0; offset < 64; offset += 16)
+      emitter_.emit(0xa900'0000U | ((offset / 8U) << 15) | (31U << 10) |
+                    (8U << 5) | 31U);
+    clear_local_exclusive_monitor();
+  }
+
+void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t pc,
+                             std::size_t count) {
+    /*
+     * This instruction is an architectural translated-code boundary. Publish
+     * the complete native register cache before the cold helper, then return
+     * to C++ at the known fallthrough so the changed code sequence is
+     * observed before another translated instruction executes.
+     */
+    store_pc(pc + sizeof(std::uint32_t));
+    spill_gprs_for_terminal_call();
+    const unsigned source = instruction & 31U;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    profile_gpr_read(source, false);
+#endif
+    if (source == 31U)
+      emitter_.move_x(0, 31);
+    else
+      emitter_.load_x(0, 15, register_offset(source, false));
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_guest_code_synchronize));
+    emitter_.return_constant(Event::continued, count);
+  }
+
+void JitCompiler::emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
+                      std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(reinterpret_cast<const void *>(&uml_arm64_jit_execute_pair));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_simd_structure_slow(std::uint32_t instruction, std::uint64_t pc,
+                                std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_simd_structure));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_alignment_fault(std::uint32_t instruction, std::uint64_t pc,
+                            std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_alignment_fault));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_ordered_slow(std::uint32_t instruction, std::uint64_t pc,
+                         std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_ordered));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_exclusive_slow(std::uint32_t instruction, std::uint64_t pc,
+                           std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_exclusive));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_deferred_exclusive_slow(std::uint64_t pc,
+                                    std::size_t count) {
+    store_pc(pc);
+    emitter_.load_constant(0, 1U);
+    emitter_.store_b(
+        0, 19, offsetof(JitChainState, deferred_semantic_instruction));
+    /*
+     * The instruction at pc has not executed. return_constant() flushes the
+     * live guest prefix before unwinding the one outer generated frame.
+     */
+    emitter_.return_constant(Event::continued,
+                             count == 0U ? 0U : count - 1U);
+  }
+
+void JitCompiler::emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
+                        std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_memory));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_gcs_slow(std::uint32_t instruction, std::uint64_t pc,
+                     std::size_t count) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.call(reinterpret_cast<const void *>(&uml_arm64_jit_execute_gcs));
+    emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_simd_modified_immediate(std::uint32_t instruction,
+                                    bool reads_destination) {
+    const unsigned destination = instruction & 31U;
+    const auto native_destination =
+        write_native_vector(destination, reads_destination, 0);
+    emitter_.emit((instruction & ~31U) | native_destination.host);
+    commit_native_vector(native_destination, destination);
+  }
+
+void JitCompiler::emit_simd_duplicate_general(std::uint32_t instruction) {
+    const unsigned source = (instruction >> 5) & 31U;
+    const unsigned destination = instruction & 31U;
+    const auto native_source = read_native_gpr(source, false, 8);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~((31U << 5) | 31U)) |
+                  (native_source.host << 5) | native_destination.host);
+    commit_native_vector(native_destination, destination);
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_insert(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd)
+      return false;
+    const bool from_general = (instruction & 0xffe0'fc00U) == 0x4e00'1c00U;
+    const bool from_element = (instruction & 0xffe0'8400U) == 0x6e00'0400U;
+    if (!from_general && !from_element)
+      return false;
+    if (!arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U))
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    unsigned native_source{};
+    if (from_general)
+      native_source = read_native_gpr(source, false, 8).host;
+    else
+      native_source = read_native_vector(source, 1).host;
+    const auto native_destination =
+        write_native_vector(destination, true, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_duplicate_element(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd)
+      return false;
+    const bool vector = (instruction & 0xbf20'fc00U) == 0x0e00'0400U;
+    const bool scalar = (instruction & 0xff20'fc00U) == 0x5e00'0400U;
+    if (!vector && !scalar)
+      return false;
+    const auto lane =
+        arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U);
+    const bool q = (instruction & 0x4000'0000U) != 0;
+    if (!lane || (vector && !q && lane->element_shift == 3U))
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    return true;
+  }
+
+void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
+    const unsigned source = (instruction >> 5) & 31U;
+    const unsigned destination = instruction & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~((31U << 5) | 31U)) |
+                  (native_source.host << 5) | native_destination.host);
+    commit_native_vector(native_destination, destination);
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_bit_unary(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd)
+      return false;
+    const auto operation = instruction & 0x9f20'fc00U;
+    if (operation != 0x0e20'5800U && operation != 0x0e20'0800U &&
+        operation != 0x0e20'1800U)
+      return false;
+    const unsigned opcode = (instruction >> 10) & 63U;
+    const bool alternate = (instruction & 0x2000'0000U) != 0;
+    const unsigned size = (instruction >> 22) & 3U;
+    const bool valid =
+        opcode == 22U
+            ? ((!alternate && size == 0U) || (alternate && size <= 1U))
+        : opcode == 2U ? ((!alternate && size < 3U) || (alternate && size < 2U))
+                       : opcode == 6U && !alternate && size == 0U;
+    if (!valid)
+      return false;
+    emit_simd_unary_native(instruction);
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_integer_reduce(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd ||
+        (instruction & 0x9f30'0c00U) != 0x0e30'0800U)
+      return false;
+    const unsigned operation = (instruction >> 12) & 31U;
+    const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
+    if (operation != 3U && operation != 10U && operation != 26U &&
+        (operation != 27U || unsigned_group))
+      return false;
+    const bool q = (instruction & 0x4000'0000U) != 0;
+    const unsigned size = (instruction >> 22) & 3U;
+    if (size > 2U || (!q && size == 2U))
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_scalar_pairwise_add(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd ||
+        (instruction & 0xffff'fc00U) != 0x5ef1'b800U)
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_shift_immediate(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd)
+      return false;
+    const bool vector = (instruction & 0x9f00'0400U) == 0x0f00'0400U;
+    const bool scalar = (instruction & 0xdf00'0400U) == 0x5f00'0400U;
+    if (!vector && !scalar)
+      return false;
+    const unsigned opcode = (instruction >> 11) & 31U;
+    const bool alternate = (instruction & 0x2000'0000U) != 0;
+    if (opcode != 0U && opcode != 2U && opcode != 4U && opcode != 6U &&
+        opcode != 8U && opcode != 10U && opcode != 12U && opcode != 14U &&
+        opcode != 16U && opcode != 17U && opcode != 18U && opcode != 19U)
+      return false;
+    if ((opcode == 8U || opcode == 12U) && !alternate)
+      return false;
+    const unsigned encoded = (instruction >> 16) & 0x7fU;
+    if (encoded < 8U)
+      return false;
+    const unsigned lane_bits = std::bit_floor(encoded);
+    if (lane_bits > 64U)
+      return false;
+    const bool q = (instruction & 0x4000'0000U) != 0;
+    const bool narrow = opcode >= 16U;
+    const bool saturating_left =
+        opcode == 12U || opcode == 14U;
+    if (narrow) {
+      if (encoded >= 64U || (scalar && opcode <= 17U && !alternate))
+        return false;
+    } else {
+      if (scalar && !saturating_left && lane_bits != 64U)
+        return false;
+      const unsigned vector_bits = scalar ? lane_bits : q ? 128U : 64U;
+      if (lane_bits > vector_bits || (!scalar && lane_bits == 64U && !q))
+        return false;
+      const bool shift_left =
+          opcode == 10U || opcode == 12U || opcode == 14U;
+      const unsigned shift =
+          shift_left ? encoded - lane_bits : 2U * lane_bits - encoded;
+      if ((shift_left && shift >= lane_bits) ||
+          (!shift_left && (shift == 0U || shift > lane_bits)))
+        return false;
+    }
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const bool reads_destination =
+        opcode == 2U || opcode == 6U || opcode == 8U ||
+        (opcode == 10U && alternate) || (narrow && !scalar && q);
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, reads_destination, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    const bool saturating =
+        saturating_left || opcode >= 18U ||
+        ((opcode == 16U || opcode == 17U) && alternate);
+    if (saturating)
+      native_fp_ = true;
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_shift_left_long(std::uint32_t instruction) {
+    if (!host_capabilities().advanced_simd ||
+        (instruction & 0x9f80'fc00U) != 0x0f00'a400U)
+      return false;
+    const unsigned encoded = (instruction >> 16) & 0x7fU;
+    const unsigned source_bits = std::bit_floor(encoded);
+    if (source_bits < 8U || source_bits > 32U ||
+        encoded - source_bits >= source_bits)
+      return false;
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
+    const auto native_destination =
+        write_native_vector(destination, false, 0);
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+                  native_destination.host);
+    commit_native_vector(native_destination, destination);
+    return true;
+  }
+
+[[nodiscard]] bool JitCompiler::emit_simd_general_move(std::uint32_t instruction) {
+    const auto opcode = instruction & 0xffff'fc00U;
+    bool vector_to_gpr = (instruction & 0xbfe0'fc00U) == 0x0e00'3c00U ||
+                         (instruction & 0xbfe0'fc00U) == 0x0e00'2c00U;
+    if (vector_to_gpr) {
+      const bool signed_move = (instruction & 0x1000U) == 0;
+      const auto lane =
+          arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U);
+      const bool wide = (instruction & 0x4000'0000U) != 0;
+      if (!lane || (signed_move ? lane->element_shift >= (wide ? 3U : 2U)
+                                : (wide ? lane->element_shift != 3U
+                                        : lane->element_shift >= 3U)))
+        return false;
+    } else {
+      switch (opcode) {
+      case 0x1ee6'0000U:
+      case 0x9ee6'0000U:
+      case 0x9e66'0000U:
+      case 0x1e26'0000U:
+      case 0x9eae'0000U:
+        vector_to_gpr = true;
+        break;
+      case 0x9e67'0000U:
+      case 0x1ee7'0000U:
+      case 0x9ee7'0000U:
+      case 0x1e27'0000U:
+      case 0x9eaf'0000U:
+        break;
+      default:
+        return false;
+      }
+      if ((opcode == 0x1ee6'0000U || opcode == 0x9ee6'0000U ||
+           opcode == 0x1ee7'0000U || opcode == 0x9ee7'0000U) &&
+          !host_capabilities().fp16)
+        return false;
+    }
+    const unsigned source = (instruction >> 5) & 31U;
+    const unsigned destination = instruction & 31U;
+    auto native = instruction & ~((31U << 5) | 31U);
+    if (vector_to_gpr) {
+      const auto native_source = read_native_vector(source, 0);
+      const auto native_destination =
+          write_native_gpr(destination, false, false, 8);
+      native |= (native_source.host << 5) | native_destination.host;
+      emitter_.emit(native);
+      commit_native_gpr(native_destination, destination, false);
+    } else {
+      const auto native_source = read_native_gpr(source, false, 8);
+      const bool reads_destination = opcode == 0x9eaf'0000U;
+      const auto native_destination =
+          write_native_vector(destination, reads_destination, 0);
+      native |= (native_source.host << 5) | native_destination.host;
+      emitter_.emit(native);
+      commit_native_vector(native_destination, destination);
+    }
+    return true;
+  }
+
+} // namespace uml::cpu::arm64

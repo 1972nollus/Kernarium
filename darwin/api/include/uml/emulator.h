@@ -11,8 +11,6 @@
 extern "C" {
 #endif
 
-#define UML_EMULATOR_ABI_VERSION 3U
-
 typedef int (*uml_emulator_kernel_entry)(int argc, char *const argv[],
 					char *const envp[]);
 
@@ -80,17 +78,23 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
 /* A run is synchronous. It copies argv, envp, and all referenced strings
  * before entering the kernel and retains none of them after returning. At
  * most one run may be active on a handle; concurrent runs fail. Different
- * native-callback-backed handles may run concurrently. Embedded ELF kernel
- * runs are serialized process-wide because they occupy a fixed linked address
- * window and use process-global Linux state. */
+ * native-callback-backed handles may run concurrently in a 16 KiB guest-page
+ * build when their native mappings do not overlap; an overlapping mapping
+ * fails instead of replacing another run's mapping. Native mappings belong
+ * to the run and are flushed and unmapped before that run returns. The 4 KiB
+ * compatibility build serializes native callbacks
+ * process-wide because identical guest addresses materialize in one host
+ * address space. Embedded ELF kernel runs are also serialized process-wide
+ * because they occupy a fixed linked-address window and use process-global
+ * Linux state. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* This is the sole operation intended to overlap uml_emulator_run on the same
- * handle. A request made while idle is not inherited by a later run. */
+ * handle. A request made while idle is not inherited by a later run. A request
+ * made while a 4 KiB native or embedded run is queued at process admission
+ * cancels that run with -UML_EMULATOR_RUNTIME_ERROR and is not inherited by a
+ * retry. */
 void uml_emulator_request_stop(struct uml_emulator *emulator);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-void uml_emulator_report_jit_gpr_link_profile(void);
-#endif
 
 #ifdef __cplusplus
 }

@@ -23,8 +23,10 @@ parallel Bazel or Meson source manifests.
 
 - Configure, build, test, and workflow presets are part of the supported
   interface.
-- Unit tests must be buildable without the kernel runner, CLI, Python, or a
-  rootfs image.
+- Unit-test implementations and registered unit commands contain no Python and
+  must build without the kernel runner, CLI, or a rootfs image. Python may be
+  used as an explicit configure/build tool for repository-wide declaration and
+  source-policy verification; those invocations are not unit-test commands.
 - Guest/rootfs, GUI, networking, and performance workflows are explicit
   integration or benchmark targets and are not hidden in ordinary unit test
   registration.

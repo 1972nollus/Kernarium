@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_static_mmu.h"
 #include "uml_darwin_guest.h"
+#include "../domain_contract.hpp"
 #include "address_space_types.hpp"
+#include "allocation_fault.hpp"
+#include "domain_registry_testing.hpp"
 #include "execution_gate.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -14,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -61,13 +66,159 @@ MappingBatch &mapping_batch()
 	return batch;
 }
 
+void reset_mapping_batch() noexcept
+{
+	auto &batch = mapping_batch();
+	batch.operations.clear();
+	batch.backings.clear();
+	batch.address_space = nullptr;
+	batch.depth = 0;
+	batch.generation = 0;
+	batch.invalidation_epoch = 0;
+	batch.state.reset();
+}
+
 ActiveWalker &active_walker()
 {
-	static thread_local ActiveWalker active;
-	return active;
+	struct ThreadWalker final {
+		~ThreadWalker()
+		{
+			if (value.state)
+				value.state->walker_mutex.unlock();
+		}
+
+		ActiveWalker value;
+	};
+	static thread_local ThreadWalker active;
+	return active.value;
 }
 
 constexpr std::size_t maximum_mapping_history = 4096;
+
+struct MappingChangePlan final {
+	std::uint64_t address;
+	std::uint64_t length;
+	bool changes_code;
+};
+
+class PendingMappingChanges final {
+public:
+	PendingMappingChanges(GenerationState &state,
+		std::span<const MappingChangePlan> changes)
+		: state_{state}
+	{
+		const auto first = state.mapping_changes.load(
+			std::memory_order_acquire) + 1;
+		try {
+			for (std::size_t index = 0; index < changes.size(); ++index) {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::history);
+				state.mapping_history.push_back({first + index,
+					changes[index].address, changes[index].length});
+				++added_;
+				code_changes_ += changes[index].changes_code ? 1U : 0U;
+			}
+		} catch (...) {
+			rollback_history();
+			throw;
+		}
+	}
+
+	~PendingMappingChanges()
+	{
+		if (!committed_)
+			rollback_history();
+	}
+
+	PendingMappingChanges(const PendingMappingChanges &) = delete;
+	PendingMappingChanges &operator=(const PendingMappingChanges &) = delete;
+
+	void commit() noexcept
+	{
+		if (added_ != 0)
+			state_.mapping_changes.fetch_add(
+				added_, std::memory_order_release);
+		if (code_changes_ != 0)
+			state_.code_changes.fetch_add(
+				code_changes_, std::memory_order_release);
+		while (state_.mapping_history.size() > maximum_mapping_history)
+			state_.mapping_history.pop_front();
+		committed_ = true;
+	}
+
+private:
+	void rollback_history() noexcept
+	{
+		while (added_ != 0) {
+			state_.mapping_history.pop_back();
+			--added_;
+		}
+	}
+
+	GenerationState &state_;
+	std::size_t added_{};
+	std::size_t code_changes_{};
+	bool committed_{};
+};
+
+[[nodiscard]] bool same_mapping(
+	const Mapping &left, const Mapping &right) noexcept
+{
+	return left.offset == right.offset && left.fd == right.fd &&
+		left.protection == right.protection &&
+		left.guest_code == right.guest_code &&
+		left.guest_writable == right.guest_writable;
+}
+
+[[nodiscard]] bool same_mapping(
+	const std::optional<Mapping> &left,
+	const std::optional<Mapping> &right) noexcept
+{
+	return left.has_value() == right.has_value() &&
+		(!left || same_mapping(*left, *right));
+}
+
+struct PlannedMappingPage final {
+	std::uint64_t address;
+	std::optional<Mapping> original;
+	std::optional<Mapping> final;
+};
+
+class MappingPlanRollback final {
+public:
+	MappingPlanRollback(GenerationState &state,
+		std::span<const PlannedMappingPage> pages) noexcept
+		: state_{state}, pages_{pages}
+	{
+	}
+
+	~MappingPlanRollback()
+	{
+		if (committed_)
+			return;
+		for (auto page = pages_.rbegin(); page != pages_.rend(); ++page) {
+			if (!page->original) {
+				state_.mappings.erase(page->address);
+				continue;
+			}
+			/* Erasures occur only after every throwing insertion succeeds, so
+			 * an unwind always finds every originally present node. */
+			if (auto found = state_.mappings.find(page->address);
+			    found != state_.mappings.end())
+				found->second = *page->original;
+		}
+	}
+
+	MappingPlanRollback(const MappingPlanRollback &) = delete;
+	MappingPlanRollback &operator=(const MappingPlanRollback &) = delete;
+
+	void commit() noexcept { committed_ = true; }
+
+private:
+	GenerationState &state_;
+	std::span<const PlannedMappingPage> pages_;
+	bool committed_{};
+};
 
 ActiveGeneration &active_thread_generation()
 {
@@ -77,9 +228,53 @@ ActiveGeneration &active_thread_generation()
 
 ActiveExecution &active_thread_execution()
 {
-	static thread_local ActiveExecution active;
-	return active;
+	struct ThreadExecution final {
+		~ThreadExecution()
+		{
+			if (value.state != nullptr)
+				execution_reader_end(*value.state);
+		}
+
+		ActiveExecution value;
+	};
+	static thread_local ThreadExecution active;
+	return active.value;
 }
+
+void prune_retired_thread_state() noexcept
+{
+	const auto domain_retired = [](const auto &state) {
+		return state != nullptr && state->address_space_lifetime &&
+			state->address_space_lifetime->retired.load(
+				std::memory_order_acquire);
+	};
+	auto &execution = active_thread_execution();
+	if (domain_retired(execution.state)) {
+		execution_reader_end(*execution.state);
+		execution.address_space = nullptr;
+		execution.generation = 0;
+		execution.state = nullptr;
+		execution.owner.reset();
+	}
+	auto &walker = active_walker();
+	if (domain_retired(walker.state.get())) {
+		auto state = std::move(walker.state);
+		walker.address_space = nullptr;
+		walker.generation = 0;
+		state->walker_mutex.unlock();
+	}
+	auto &batch = mapping_batch();
+	if (domain_retired(batch.state.get()))
+		reset_mapping_batch();
+	auto &active = active_thread_generation();
+	if (domain_retired(active.state.get())) {
+		active.address_space = nullptr;
+		active.generation = 0;
+		active.state.reset();
+	}
+}
+
+class AddressSpaceAccess;
 
 class AddressSpace final {
 public:
@@ -88,16 +283,19 @@ public:
 		std::uint64_t length, int protection, bool guest_code,
 		bool guest_writable)
 	{
-		if ((address | offset | length) % page_size != 0 || length == 0)
+		if ((address | offset | length) % page_size != 0 || length == 0 ||
+		    !stays_in_generation(address, length))
 			return -1;
 		auto backing = backing_for(fd);
 		if (!backing || offset > backing->size() ||
 		    length > backing->size() - offset)
 			return -1;
-
 		generation = generation_for(address, generation);
 		auto &batch = mapping_batch();
-		if (batch.depth != 0 && batch.generation == generation) {
+		if (batch.depth != 0 && batch.address_space == this &&
+		    batch.generation == generation) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::batch);
 			batch.operations.push_back({
 				true, address, length,
 				Mapping{std::move(backing), offset, fd, protection,
@@ -115,10 +313,14 @@ public:
 
 	int protect(std::uint64_t address, std::uint64_t length, int protection)
 	{
-		if ((address | length) % page_size != 0 || length == 0)
+		if ((address | length) % page_size != 0 || length == 0 ||
+		    !stays_in_generation(address, length))
 			return -1;
-		const auto generation = generation_for(
-			address, active_thread_generation().generation);
+		const auto &active = active_thread_generation();
+		const auto generation = generation_for(address,
+			active.address_space == this && active.state &&
+				!active.state->retired.load(std::memory_order_acquire) ?
+				active.generation : 0);
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
@@ -131,33 +333,56 @@ public:
 			    mapping->second.protection != protection) {
 				changed = true;
 				changes_code = changes_code || mapping->second.guest_code;
-				mapping->second.protection = protection;
 			}
 		}
-		if (changed)
-			changed_locked(*state, changes_code, address, length);
+		if (!changed)
+			return 0;
+		const std::array changes{
+			MappingChangePlan{address, length, changes_code}};
+		PendingMappingChanges pending{*state, changes};
+		for (std::uint64_t position = 0; position < length;
+		     position += page_size) {
+			auto mapping = state->mappings.find(address + position);
+			if (mapping != state->mappings.end())
+				mapping->second.protection = protection;
+		}
+		pending.commit();
 		return 0;
 	}
 
 	int unmap(std::uint64_t generation, std::uint64_t address,
 		  std::uint64_t length)
 	{
-		if (length == 0 || address + length < address)
-			return length == 0 ? 0 : -1;
-		address &= ~(page_size - 1);
-		length = (length + page_size - 1) & ~(page_size - 1);
+		if (length == 0)
+			return 0;
+		if (length > std::numeric_limits<std::uint64_t>::max() - address)
+			return -1;
+		const auto end = address + length;
+		if (end > std::numeric_limits<std::uint64_t>::max() -
+				(page_size - 1))
+			return -1;
+		const auto first = address & ~(page_size - 1);
+		const auto rounded_end = (end + page_size - 1) & ~(page_size - 1);
+		if (first < address_limit && rounded_end > address_limit)
+			return -1;
+		address = first;
+		length = rounded_end - first;
 		generation = generation_for(address, generation);
 		auto &batch = mapping_batch();
-		if (batch.depth != 0 && batch.generation == generation) {
+		if (batch.depth != 0 && batch.address_space == this &&
+		    batch.generation == generation) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::batch);
 			batch.operations.push_back(
 				{false, address, length, Mapping{}});
 			return 0;
 		}
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
-		state->invalidation_epoch.fetch_add(1, std::memory_order_release);
 		std::lock_guard lock{state->mappings_mutex};
-		unmap_locked(*state, address, length);
+		if (unmap_locked(*state, address, length))
+			state->invalidation_epoch.fetch_add(
+				1, std::memory_order_release);
 		return 0;
 	}
 
@@ -170,8 +395,11 @@ public:
 		 * supplies the implicit generation used by mapping-management calls.
 		 */
 		auto &active = active_thread_generation();
-		if (active.generation == generation && active.state)
+		if (active.address_space == this && active.generation == generation &&
+		    active.state &&
+		    !active.state->retired.load(std::memory_order_acquire))
 			return 0;
+		active.address_space = this;
 		active.generation = generation;
 		active.state = state_for(generation);
 		return 0;
@@ -185,9 +413,13 @@ public:
 		ExecutionQuiesce quiesce{state, generation};
 		{
 			std::lock_guard lock{state->mappings_mutex};
+			const std::array changes{
+				MappingChangePlan{0, 0, true}};
+			PendingMappingChanges pending{*state, changes};
 			state->mappings.clear();
-			changed_locked(*state, true, 0, 0);
+			pending.commit();
 		}
+		state->retired.store(true, std::memory_order_release);
 		{
 			std::lock_guard lock{states_mutex_};
 			if (const auto found = states_.find(generation);
@@ -195,16 +427,69 @@ public:
 				states_.erase(found);
 		}
 		auto &active = active_thread_generation();
-		if (active.generation == generation)
+		if (active.address_space == this && active.generation == generation) {
 			active.state.reset();
+			active.address_space = nullptr;
+		}
 		return 0;
+	}
+
+	void retire() noexcept
+	{
+		std::unique_lock lifecycle_lock{lifecycle_mutex_};
+		if (retired_)
+			return;
+		retired_ = true;
+		lifetime_->retired.store(true, std::memory_order_release);
+		{
+			std::lock_guard lock{states_mutex_};
+			for (auto &[generation, state] : states_) {
+				(void)generation;
+				state->retired.store(true, std::memory_order_release);
+			}
+			states_.clear();
+		}
+		auto &active = active_thread_generation();
+		if (active.address_space == this) {
+			active.address_space = nullptr;
+			active.generation = 0;
+			active.state.reset();
+		}
+		auto &batch = mapping_batch();
+		if (batch.address_space == this) {
+			batch.operations.clear();
+			batch.backings.clear();
+			batch.address_space = nullptr;
+			batch.depth = 0;
+			batch.generation = 0;
+			batch.invalidation_epoch = 0;
+			batch.state.reset();
+		}
+		auto &walker = active_walker();
+		if (walker.address_space == this && walker.state) {
+			auto state = std::move(walker.state);
+			walker.address_space = nullptr;
+			walker.generation = 0;
+			state->walker_mutex.unlock();
+		}
+		auto &execution = active_thread_execution();
+		if (execution.address_space == this && execution.state != nullptr) {
+			execution_reader_end(*execution.state);
+			execution.address_space = nullptr;
+			execution.generation = 0;
+			execution.state = nullptr;
+			execution.owner.reset();
+		}
 	}
 
 	int matches(std::uint64_t address, int fd, std::uint64_t offset)
 	{
 		address &= ~(page_size - 1);
-		const auto generation = generation_for(
-			address, active_thread_generation().generation);
+		const auto &active = active_thread_generation();
+		const auto generation = generation_for(address,
+			active.address_space == this && active.state &&
+				!active.state->retired.load(std::memory_order_acquire) ?
+				active.generation : 0);
 		auto reference = reference_for(generation);
 		std::shared_lock lock{reference.state->mappings_mutex};
 		auto iterator = reference.state->mappings.find(address);
@@ -220,8 +505,11 @@ public:
 		if (!backing || offset > backing->size() ||
 		    page_size > backing->size() - offset)
 			return -1;
-		const auto generation = generation_for(
-			address, active_thread_generation().generation);
+		const auto &active = active_thread_generation();
+		const auto generation = generation_for(address,
+			active.address_space == this && active.state &&
+				!active.state->retired.load(std::memory_order_acquire) ?
+				active.generation : 0);
 		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
@@ -230,11 +518,13 @@ public:
 			return 0;
 		if (iterator->second.fd == fd && iterator->second.offset == offset)
 			return 0;
+		const std::array changes{MappingChangePlan{
+			address, page_size, iterator->second.guest_code}};
+		PendingMappingChanges pending{*state, changes};
 		iterator->second.backing = std::move(backing);
 		iterator->second.offset = offset;
 		iterator->second.fd = fd;
-		changed_locked(*state, iterator->second.guest_code, address,
-			page_size);
+		pending.commit();
 		return 0;
 	}
 
@@ -255,8 +545,11 @@ public:
 		 * a sibling guest thread may update another byte in the same guest page
 		 * while the 4 KiB fallback operates through a Darwin 16 KiB shadow.
 		 */
-		const auto generation = generation_for(
-			page, active_thread_generation().generation);
+		const auto &active = active_thread_generation();
+		const auto generation = generation_for(page,
+			active.address_space == this && active.state &&
+				!active.state->retired.load(std::memory_order_acquire) ?
+				active.generation : 0);
 		auto reference = reference_for(generation);
 		std::shared_lock lock{reference.state->mappings_mutex};
 		auto iterator = reference.state->mappings.find(page);
@@ -328,7 +621,9 @@ public:
 		 * shared_ptr here made every translated block contend on the same
 		 * reference count in multi-process workloads.
 		 */
-		if (active.generation == generation && active.state)
+		if (active.address_space == this &&
+		    active.generation == generation && active.state &&
+		    !active.state->retired.load(std::memory_order_acquire))
 			return (code ? active.state->code_changes :
 				active.state->mapping_changes)
 				.load(std::memory_order_acquire);
@@ -341,8 +636,10 @@ public:
 		std::uint64_t generation)
 	{
 		auto &active = active_thread_generation();
-		if (active.generation == generation && active.state)
-		return {
+		if (active.address_space == this &&
+		    active.generation == generation && active.state &&
+		    !active.state->retired.load(std::memory_order_acquire))
+			return {
 				active.state->mapping_changes.load(
 					std::memory_order_acquire),
 				active.state->code_changes.load(
@@ -392,8 +689,11 @@ public:
 
 	void invalidate_code(std::uint64_t address)
 	{
-		const auto generation = generation_for(
-			address, active_thread_generation().generation);
+		const auto &active = active_thread_generation();
+		const auto generation = generation_for(address,
+			active.address_space == this && active.state &&
+				!active.state->retired.load(std::memory_order_acquire) ?
+				active.generation : 0);
 		auto state = state_for(generation);
 		std::shared_lock lock{state->mappings_mutex};
 		publish_code_change(*state);
@@ -401,7 +701,10 @@ public:
 
 	[[nodiscard]] std::uint64_t active_generation() const noexcept
 	{
-		return active_thread_generation().generation;
+		const auto &active = active_thread_generation();
+		return active.address_space == this && active.state &&
+			!active.state->retired.load(std::memory_order_acquire) ?
+			active.generation : 0;
 	}
 
 	void forget_descriptor(int fd)
@@ -414,16 +717,20 @@ public:
 	{
 		auto &batch = mapping_batch();
 		if (batch.depth != 0) {
-			if (batch.generation != generation)
+			if (batch.address_space != this ||
+			    batch.generation != generation)
 				return -1;
 			++batch.depth;
 			return 0;
 		}
-		batch.backings.clear();
-		batch.operations.clear();
+		auto state = state_for(generation);
+		const auto invalidation_epoch = state->invalidation_epoch.load(
+			std::memory_order_acquire);
+		reset_mapping_batch();
+		batch.address_space = this;
 		batch.generation = generation;
-		batch.invalidation_epoch = state_for(batch.generation)->
-			invalidation_epoch.load(std::memory_order_acquire);
+		batch.invalidation_epoch = invalidation_epoch;
+		batch.state = std::move(state);
 		batch.depth = 1;
 		return 0;
 	}
@@ -431,29 +738,23 @@ public:
 	int end_batch()
 	{
 		auto &batch = mapping_batch();
-		if (batch.depth == 0)
+		if (batch.depth == 0 || batch.address_space != this)
 			return -1;
 		if (--batch.depth != 0)
 			return 0;
+		struct BatchReset final {
+			~BatchReset() { reset_mapping_batch(); }
+		};
+		[[maybe_unused]] BatchReset reset;
 
 		int result = 0;
-		auto state = state_for(batch.generation);
+		auto state = batch.state;
+		if (!state || state->retired.load(std::memory_order_acquire))
+			return -EAGAIN;
 		{
 			std::unique_lock lock{state->mappings_mutex};
-			const auto apply_operations = [&] {
-				for (const auto &operation : batch.operations) {
-					if (operation.map)
-						map_locked(*state,
-							operation.address,
-							operation.length,
-							operation.mapping);
-					else
-						unmap_locked(*state,
-							operation.address,
-							operation.length);
-				}
-			};
-			if (state->invalidation_epoch.load(std::memory_order_acquire) !=
+			if (state->retired.load(std::memory_order_acquire) ||
+			    state->invalidation_epoch.load(std::memory_order_acquire) !=
 			    batch.invalidation_epoch) {
 				result = -EAGAIN;
 			} else if (!batch_changes_published_mapping(
@@ -466,25 +767,22 @@ public:
 				 * Avoid stopping every sibling vCPU for ordinary first-touch
 				 * demand paging.
 				 */
-				apply_operations();
+				apply_batch_locked(*state, batch.operations);
 			} else {
 				lock.unlock();
 				ExecutionQuiesce quiesce{state, batch.generation};
 				lock.lock();
-				if (state->invalidation_epoch.load(
+				if (state->retired.load(std::memory_order_acquire) ||
+				    state->invalidation_epoch.load(
 					    std::memory_order_acquire) !=
 				    batch.invalidation_epoch) {
 					result = -EAGAIN;
 				} else {
-					apply_operations();
+					apply_batch_locked(*state, batch.operations);
 				}
 				lock.unlock();
 			}
 		}
-		batch.operations.clear();
-		batch.backings.clear();
-		batch.generation = 0;
-		batch.invalidation_epoch = 0;
 		return result;
 	}
 
@@ -495,6 +793,7 @@ public:
 			return -1;
 		auto state = state_for(generation);
 		state->walker_mutex.lock();
+		active.address_space = this;
 		active.generation = generation;
 		active.state = std::move(state);
 		return 0;
@@ -503,9 +802,11 @@ public:
 	int unlock_walker(std::uint64_t generation)
 	{
 		auto &active = active_walker();
-		if (!active.state || active.generation != generation)
+		if (!active.state || active.address_space != this ||
+		    active.generation != generation)
 			return -1;
 		auto state = std::move(active.state);
+		active.address_space = nullptr;
 		active.generation = 0;
 		state->walker_mutex.unlock();
 		return 0;
@@ -517,16 +818,20 @@ public:
 		if (execution.state != nullptr)
 			return -1;
 		auto &active = active_thread_generation();
-		if (active.generation == generation && active.state) {
-			execution.state = active.state.get();
+		if (active.address_space == this &&
+		    active.generation == generation && active.state &&
+		    !active.state->retired.load(std::memory_order_acquire)) {
+			execution.owner = active.state;
 		} else {
 			execution.owner = state_for(generation);
-			execution.state = execution.owner.get();
 		}
+		execution.state = execution.owner.get();
+		execution.address_space = this;
 		if (!execution_reader_begin(
 				*execution.state, generation, guest_pc)) {
 			execution.state = nullptr;
 			execution.owner.reset();
+			execution.address_space = nullptr;
 			return -1;
 		}
 		execution.generation = generation;
@@ -536,11 +841,13 @@ public:
 	int execution_end(std::uint64_t generation)
 	{
 		auto &execution = active_thread_execution();
-		if (execution.state == nullptr || execution.generation != generation)
+		if (execution.state == nullptr || execution.address_space != this ||
+		    execution.generation != generation)
 			return -1;
 		execution_reader_end(*execution.state);
 		execution.state = nullptr;
 		execution.owner.reset();
+		execution.address_space = nullptr;
 		execution.generation = 0;
 		return 0;
 	}
@@ -564,7 +871,8 @@ public:
 	static int execution_context_begin(ExecutionContext *context,
 					   std::uint64_t guest_pc)
 	{
-		if (context == nullptr || context->entered)
+		if (context == nullptr || context->entered ||
+		    context->state->retired.load(std::memory_order_acquire))
 			return -1;
 		/* Capture before entering the gate.  If a writer closes the gate in
 		 * between, this reader either waits for it or observes its interrupt;
@@ -603,6 +911,16 @@ public:
 	}
 
 private:
+	friend class AddressSpaceAccess;
+
+	[[nodiscard]] static bool stays_in_generation(
+		std::uint64_t address, std::uint64_t length) noexcept
+	{
+		if (length > std::numeric_limits<std::uint64_t>::max() - address)
+			return false;
+		return address >= address_limit || address + length <= address_limit;
+	}
+
 	int access_allocation_tag(std::uint64_t generation,
 		std::uint64_t address, bool write, std::uint8_t *tag)
 	{
@@ -641,7 +959,9 @@ private:
 	GenerationReference reference_for(std::uint64_t generation)
 	{
 		auto &active = active_thread_generation();
-		if (active.generation == generation && active.state)
+		if (active.address_space == this &&
+		    active.generation == generation && active.state &&
+		    !active.state->retired.load(std::memory_order_acquire))
 			return {{}, active.state.get()};
 		auto owner = state_for(generation);
 		auto *state = owner.get();
@@ -651,7 +971,7 @@ private:
 	std::shared_ptr<MappedBacking> backing_for(int fd)
 	{
 		auto &batch = mapping_batch();
-		if (batch.depth != 0) {
+		if (batch.depth != 0 && batch.address_space == this) {
 			if (auto found = batch.backings.find(fd);
 			    found != batch.backings.end())
 				return found->second;
@@ -674,7 +994,7 @@ private:
 		if (auto found = backings_.find(key); found != backings_.end()) {
 			if (auto backing = found->second.lock()) {
 				descriptor_backings_.insert_or_assign(fd, backing);
-				if (batch.depth != 0)
+				if (batch.depth != 0 && batch.address_space == this)
 					batch.backings.insert_or_assign(fd, backing);
 				return backing;
 			}
@@ -683,7 +1003,7 @@ private:
 		if (backing) {
 			backings_.insert_or_assign(key, backing);
 			descriptor_backings_.insert_or_assign(fd, backing);
-			if (batch.depth != 0)
+			if (batch.depth != 0 && batch.address_space == this)
 				batch.backings.insert_or_assign(fd, backing);
 		}
 		return backing;
@@ -693,9 +1013,15 @@ private:
 		std::uint64_t generation)
 	{
 		if (const auto found = states_.find(generation);
-		    found != states_.end())
-			return found->second;
+		    found != states_.end()) {
+			if (!found->second->retired.load(std::memory_order_acquire))
+				return found->second;
+			states_.erase(found);
+		}
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::generation);
 		auto state = std::make_shared<GenerationState>();
+		state->address_space_lifetime = lifetime_;
 		states_.emplace(generation, state);
 		return state;
 	}
@@ -705,41 +1031,181 @@ private:
 		{
 			std::shared_lock lock{states_mutex_};
 			if (const auto found = states_.find(generation);
-			    found != states_.end())
+			    found != states_.end() &&
+			    !found->second->retired.load(std::memory_order_acquire))
 				return found->second;
 		}
 		std::lock_guard lock{states_mutex_};
 		return state_for_locked(generation);
 	}
 
+	void apply_batch_locked(GenerationState &state,
+		std::span<const MappingOperation> operations)
+	{
+		constexpr std::size_t maximum_plan_reserve = 64 * 1024;
+		const auto add_reserve_pages = [&](std::size_t &total,
+						 const std::uint64_t pages) {
+			if (pages >= maximum_plan_reserve - total)
+				total = maximum_plan_reserve;
+			else
+				total += static_cast<std::size_t>(pages);
+		};
+		std::size_t touched_pages = 0;
+		std::size_t possible_pages = std::min(
+			state.mappings.size(), maximum_plan_reserve);
+		for (const auto &operation : operations) {
+			const auto operation_pages = operation.length / page_size;
+			add_reserve_pages(touched_pages, operation_pages);
+			if (operation.map)
+				add_reserve_pages(possible_pages, operation_pages);
+		}
+		const auto plan_reserve = std::min(touched_pages, possible_pages);
+		std::vector<PlannedMappingPage> pages;
+		std::unordered_map<std::uint64_t, std::size_t> page_indices;
+		std::vector<MappingChangePlan> changes;
+		/* The operation count is a poor capacity estimate: one coalesced TLB
+		 * range can cover thousands of pages. Reserve a checked upper bound on
+		 * planned pages, capped to avoid a hostile overlapping batch forcing an
+		 * otherwise unnecessary address-space-sized allocation. */
+		pages.reserve(plan_reserve);
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::batch_index);
+		page_indices.reserve(plan_reserve);
+		changes.reserve(operations.size());
+		const auto page_for = [&](const std::uint64_t address)
+			-> PlannedMappingPage & {
+			if (const auto found = page_indices.find(address);
+			    found != page_indices.end())
+				return pages[found->second];
+			std::optional<Mapping> original;
+			if (const auto found = state.mappings.find(address);
+			    found != state.mappings.end())
+				original = found->second;
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::batch_index);
+			page_indices.emplace(address, pages.size());
+			pages.push_back({address, original, original});
+			return pages.back();
+		};
+
+		for (const auto &operation : operations) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::batch_commit);
+			bool changed = false;
+			bool changes_code = false;
+			const auto clear_page = [&](PlannedMappingPage &page) {
+				if (!page.final)
+					return;
+				changed = true;
+				changes_code = changes_code || page.final->guest_code;
+				page.final.reset();
+			};
+			const auto operation_pages = operation.length / page_size;
+			const auto candidate_pages =
+				state.mappings.size() >
+					std::numeric_limits<std::size_t>::max() - pages.size() ?
+				std::numeric_limits<std::size_t>::max() :
+				state.mappings.size() + pages.size();
+			if (!operation.map && operation_pages > candidate_pages) {
+				const auto end = operation.address + operation.length;
+				/* A broad unmap is commonly a sparse exit_mmap() range. It can
+				 * only change pages which were already published or mapped by an
+				 * earlier operation in this batch; do not materialize every hole. */
+					for (const auto &[address, mapping] : state.mappings) {
+						(void)mapping;
+						if (address >= operation.address && address < end)
+							clear_page(page_for(address));
+					}
+					for (auto &page : pages)
+						if (page.address >= operation.address &&
+						    page.address < end)
+							clear_page(page);
+				} else {
+					for (std::uint64_t position = 0;
+					     position < operation.length;
+					     position += page_size) {
+						auto &page = page_for(
+							operation.address + position);
+						if (!operation.map) {
+							clear_page(page);
+							continue;
+						}
+						std::optional<Mapping> next;
+						next = Mapping{operation.mapping.backing,
+							operation.mapping.offset + position,
+							operation.mapping.fd,
+							operation.mapping.protection,
+							operation.mapping.guest_code,
+							operation.mapping.guest_writable};
+						if (same_mapping(page.final, next))
+							continue;
+						changed = true;
+						changes_code = changes_code ||
+							(page.final && page.final->guest_code) ||
+							(next && next->guest_code);
+						page.final = std::move(next);
+					}
+				}
+			if (changed)
+				changes.push_back({operation.address,
+					operation.length, changes_code});
+		}
+		if (changes.empty())
+			return;
+
+		PendingMappingChanges pending{state, changes};
+		MappingPlanRollback rollback{state, pages};
+		/* Complete every potentially allocating insertion before erasing an
+		 * original node.  Rollback can therefore restore without allocating. */
+		for (const auto &page : pages) {
+			if (same_mapping(page.original, page.final) || !page.final)
+				continue;
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::mapping);
+			state.mappings.insert_or_assign(page.address, *page.final);
+		}
+		for (const auto &page : pages)
+			if (!same_mapping(page.original, page.final) && !page.final)
+				state.mappings.erase(page.address);
+		rollback.commit();
+		pending.commit();
+	}
+
 	void map_locked(GenerationState &state, std::uint64_t address,
 		std::uint64_t length, const Mapping &mapping)
 	{
-		bool changed = false;
+		std::vector<PlannedMappingPage> pages;
+		pages.reserve(static_cast<std::size_t>(length / page_size));
 		bool changes_code = false;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
-			if (const auto previous = state.mappings.find(address + position);
-			    previous != state.mappings.end()) {
-				if (previous->second.fd == mapping.fd &&
-				    previous->second.offset == mapping.offset + position &&
-				    previous->second.protection == mapping.protection &&
-				    previous->second.guest_code == mapping.guest_code &&
-				    previous->second.guest_writable ==
-					mapping.guest_writable)
-					continue;
-				changes_code = changes_code || previous->second.guest_code;
-			}
-			changed = true;
-			changes_code = changes_code || mapping.guest_code;
-			state.mappings.insert_or_assign(
-				address + position,
-				Mapping{mapping.backing, mapping.offset + position,
-					mapping.fd, mapping.protection,
-					mapping.guest_code, mapping.guest_writable});
+			const auto page_address = address + position;
+			std::optional<Mapping> previous;
+			if (const auto found = state.mappings.find(page_address);
+			    found != state.mappings.end())
+				previous = found->second;
+			Mapping next{mapping.backing, mapping.offset + position,
+				mapping.fd, mapping.protection, mapping.guest_code,
+				mapping.guest_writable};
+			if (previous && same_mapping(*previous, next))
+				continue;
+			changes_code = changes_code ||
+				(previous && previous->guest_code) || next.guest_code;
+			pages.push_back({page_address, previous, std::move(next)});
 		}
-		if (changed)
-			changed_locked(state, changes_code, address, length);
+		if (pages.empty())
+			return;
+		const std::array changes{
+			MappingChangePlan{address, length, changes_code}};
+		PendingMappingChanges pending{state, changes};
+		MappingPlanRollback rollback{state, pages};
+		for (const auto &page : pages) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::mapping);
+			state.mappings.insert_or_assign(page.address, *page.final);
+		}
+		rollback.commit();
+		pending.commit();
 	}
 
 	[[nodiscard]] static bool batch_changes_published_mapping(
@@ -747,31 +1213,41 @@ private:
 		std::span<const MappingOperation> operations)
 	{
 		for (const auto &operation : operations) {
-			for (std::uint64_t position = 0;
-			     position < operation.length; position += page_size) {
-				const auto previous =
-					state.mappings.find(operation.address + position);
-				if (previous == state.mappings.end())
-					continue;
+			const auto operation_pages = operation.length / page_size;
+			const auto mapping_differs = [&](const std::uint64_t address,
+						 const Mapping &mapping) {
 				if (!operation.map)
 					return true;
-				const auto &mapping = previous->second;
-				if (mapping.fd != operation.mapping.fd ||
-				    mapping.offset !=
-					    operation.mapping.offset + position ||
-				    mapping.protection !=
-					    operation.mapping.protection ||
-				    mapping.guest_code !=
-					    operation.mapping.guest_code ||
-				    mapping.guest_writable !=
-					    operation.mapping.guest_writable)
-					return true;
+				const auto position = address - operation.address;
+				return mapping.fd != operation.mapping.fd ||
+					mapping.offset != operation.mapping.offset + position ||
+					mapping.protection != operation.mapping.protection ||
+					mapping.guest_code != operation.mapping.guest_code ||
+					mapping.guest_writable !=
+						operation.mapping.guest_writable;
+			};
+			if (operation_pages <= state.mappings.size()) {
+				for (std::uint64_t position = 0;
+				     position < operation.length; position += page_size) {
+					const auto previous = state.mappings.find(
+						operation.address + position);
+					if (previous != state.mappings.end() &&
+					    mapping_differs(previous->first, previous->second))
+						return true;
+				}
+				continue;
 			}
+			const auto end = operation.address + operation.length;
+			for (const auto &[address, mapping] : state.mappings)
+				if (address >= operation.address && address < end &&
+				    mapping_differs(address, mapping))
+					return true;
 		}
 		return false;
 	}
 
-	void unmap_locked(GenerationState &state, std::uint64_t address,
+	[[nodiscard]] bool unmap_locked(GenerationState &state,
+		std::uint64_t address,
 		std::uint64_t length)
 	{
 		bool changed = false;
@@ -783,22 +1259,17 @@ private:
 				continue;
 			changed = true;
 			changes_code = changes_code || mapping->second.guest_code;
-			state.mappings.erase(mapping);
 		}
-		if (changed)
-			changed_locked(state, changes_code, address, length);
-	}
-
-	void changed_locked(GenerationState &state, bool changes_code,
-		std::uint64_t address, std::uint64_t length)
-	{
-		const auto sequence = state.mapping_changes.fetch_add(
-			1, std::memory_order_release) + 1;
-		state.mapping_history.push_back({sequence, address, length});
-		if (state.mapping_history.size() > maximum_mapping_history)
-			state.mapping_history.pop_front();
-		if (changes_code)
-			publish_code_change(state);
+		if (!changed)
+			return false;
+		const std::array changes{
+			MappingChangePlan{address, length, changes_code}};
+		PendingMappingChanges pending{state, changes};
+		for (std::uint64_t position = 0; position < length;
+		     position += page_size)
+			state.mappings.erase(address + position);
+		pending.commit();
+		return true;
 	}
 
 	static void publish_code_change(GenerationState &state)
@@ -812,20 +1283,364 @@ private:
 	std::unordered_map<BackingKey, std::weak_ptr<MappedBacking>, BackingKeyHash>
 		backings_;
 	std::unordered_map<int, std::weak_ptr<MappedBacking>> descriptor_backings_;
+	std::shared_ptr<AddressSpaceLifetime> lifetime_{
+		std::make_shared<AddressSpaceLifetime>()};
+	mutable std::shared_mutex lifecycle_mutex_;
+	bool retired_{};
 };
 
-AddressSpace &address_space()
+class AddressSpaceAccess final {
+public:
+	AddressSpaceAccess() noexcept = default;
+
+	explicit AddressSpaceAccess(
+		std::shared_ptr<AddressSpace> owner)
+		: owner_{std::move(owner)}, lifecycle_{owner_->lifecycle_mutex_}
+	{
+		if (!owner_->retired_)
+			return;
+		lifecycle_.unlock();
+		owner_.reset();
+		errno = ESHUTDOWN;
+	}
+
+	AddressSpaceAccess(AddressSpaceAccess &&) noexcept = default;
+	AddressSpaceAccess &operator=(AddressSpaceAccess &&) noexcept = delete;
+
+	AddressSpaceAccess(const AddressSpaceAccess &) = delete;
+	AddressSpaceAccess &operator=(const AddressSpaceAccess &) = delete;
+
+	[[nodiscard]] explicit operator bool() const noexcept
+	{
+		return owner_ != nullptr;
+	}
+
+	[[nodiscard]] AddressSpace &operator*() const noexcept
+	{
+		return *owner_;
+	}
+
+	[[nodiscard]] AddressSpace *operator->() const noexcept
+	{
+		return owner_.get();
+	}
+
+private:
+	/* Release the per-operation lease before dropping the last possible owner,
+	 * so a concurrent retire() can never observe destroyed lock storage. */
+	std::shared_ptr<AddressSpace> owner_;
+	std::shared_lock<std::shared_mutex> lifecycle_;
+};
+
+constexpr std::uint64_t legacy_domain = 1;
+
+std::atomic<DomainProvider> &domain_provider()
 {
-	static AddressSpace instance;
-	return instance;
+	static std::atomic<DomainProvider> provider{};
+	return provider;
+}
+
+std::atomic<DomainRetireObserver> &domain_retire_observer()
+{
+	static std::atomic<DomainRetireObserver> observer{};
+	return observer;
+}
+
+std::atomic_uint64_t &domain_retirement_sequence_storage()
+{
+	static std::atomic_uint64_t sequence{};
+	return sequence;
+}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+std::atomic<testing::SoftwareAddressSpaceAcquiredHook> &
+software_address_space_acquired_hook()
+{
+	static std::atomic<testing::SoftwareAddressSpaceAcquiredHook> hook{};
+	return hook;
+}
+#endif
+
+[[nodiscard]] bool resolve_current_domain_impl(std::uint64_t &domain) noexcept
+{
+	const auto provider = domain_provider().load(std::memory_order_acquire);
+	if (provider == nullptr) {
+		domain = legacy_domain;
+		return true;
+	}
+	return provider(domain) && domain != 0;
+}
+
+class AddressSpaceRegistry final {
+public:
+	[[nodiscard]] std::shared_ptr<AddressSpace> current() noexcept
+	{
+		for (;;) {
+			const auto retirement_sequence =
+				domain_retirement_sequence_storage().load(
+					std::memory_order_acquire);
+			std::uint64_t domain;
+			if (!resolve_current_domain_impl(domain)) {
+				errno = ESRCH;
+				return {};
+			}
+			try {
+				{
+					std::shared_lock lock{mutex_};
+					if (const auto found = spaces_.find(domain);
+					    found != spaces_.end()) {
+						if (domain_retirement_sequence_storage().load(
+							    std::memory_order_acquire) !=
+							    retirement_sequence)
+							continue;
+						return found->second;
+					}
+				}
+				std::lock_guard lock{mutex_};
+				if (domain_retirement_sequence_storage().load(
+					    std::memory_order_acquire) != retirement_sequence)
+					continue;
+				if (const auto found = spaces_.find(domain);
+				    found != spaces_.end())
+					return found->second;
+				auto space = std::make_shared<AddressSpace>();
+				/* Retirement advances the sequence before acquiring mutex_. A resolver
+				 * that captured a domain earlier therefore cannot install state after
+				 * retirement. If retirement starts after this check, it waits for this
+				 * publication and removes the entry. This needs no permanent tombstone
+				 * or second provider lookup on the ordinary path. */
+				if (domain_retirement_sequence_storage().load(
+					    std::memory_order_acquire) != retirement_sequence)
+					continue;
+				spaces_.emplace(domain, space);
+				return space;
+			} catch (const std::bad_alloc &) {
+				errno = ENOMEM;
+				return {};
+			} catch (...) {
+				errno = EIO;
+				return {};
+			}
+		}
+	}
+
+	void retire(std::uint64_t domain) noexcept
+	{
+		std::shared_ptr<AddressSpace> retired;
+		{
+			std::lock_guard lock{mutex_};
+			if (const auto found = spaces_.find(domain);
+			    found != spaces_.end()) {
+				retired = std::move(found->second);
+				spaces_.erase(found);
+			}
+		}
+		if (retired)
+			retired->retire();
+	}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+	[[nodiscard]] std::size_t size_for_testing() const noexcept
+	{
+		std::shared_lock lock{mutex_};
+		return spaces_.size();
+	}
+#endif
+
+	void forget_descriptor(int fd)
+	{
+		std::shared_lock lock{mutex_};
+		for (const auto &[domain, space] : spaces_) {
+			(void)domain;
+			space->forget_descriptor(fd);
+		}
+	}
+
+private:
+	mutable std::shared_mutex mutex_;
+	std::unordered_map<std::uint64_t, std::shared_ptr<AddressSpace>> spaces_;
+};
+
+std::atomic<AddressSpaceRegistry *> published_address_space_registry{};
+std::atomic_flag address_space_registry_initialization = ATOMIC_FLAG_INIT;
+
+[[nodiscard]] AddressSpaceRegistry *existing_address_space_registry() noexcept
+{
+	return published_address_space_registry.load(std::memory_order_acquire);
+}
+
+AddressSpaceRegistry *address_space_registry() noexcept
+{
+	/* Context teardown can run during static destruction. Keep the registry at
+	 * process lifetime so a late legacy-context destructor never calls through
+	 * an already destroyed mutex or container. Initialization is retryable: a
+	 * transient allocation failure must not permanently cache a null registry. */
+	if (auto *registry = existing_address_space_registry(); registry != nullptr)
+		return registry;
+	while (address_space_registry_initialization.test_and_set(
+		       std::memory_order_acquire))
+		std::this_thread::yield();
+	struct InitializationUnlock final {
+		~InitializationUnlock()
+		{
+			address_space_registry_initialization.clear(
+				std::memory_order_release);
+		}
+	};
+	[[maybe_unused]] InitializationUnlock unlock;
+	if (auto *registry = existing_address_space_registry(); registry != nullptr)
+		return registry;
+	try {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::software_domain_registry);
+		auto *registry = new (std::nothrow) AddressSpaceRegistry;
+		if (registry != nullptr)
+			published_address_space_registry.store(
+				registry, std::memory_order_release);
+		return registry;
+	} catch (...) {
+		return nullptr;
+	}
+}
+
+[[nodiscard]] AddressSpaceAccess address_space() noexcept
+{
+	try {
+		prune_retired_thread_state();
+		errno = 0;
+		auto *registry = address_space_registry();
+		if (registry == nullptr) {
+			errno = ENOMEM;
+			return {};
+		}
+		auto owner = registry->current();
+		if (!owner)
+			return {};
+#if UML_MEMORY_ALLOCATION_TESTING
+		if (const auto hook = software_address_space_acquired_hook().load(
+			    std::memory_order_acquire); hook != nullptr)
+			hook();
+#endif
+		return AddressSpaceAccess{std::move(owner)};
+	} catch (const std::bad_alloc &) {
+		errno = ENOMEM;
+	} catch (...) {
+		errno = EIO;
+	}
+	return {};
 }
 
 } // namespace
+
+void set_domain_provider(DomainProvider provider) noexcept
+{
+	domain_provider().store(provider, std::memory_order_release);
+}
+
+bool resolve_current_domain(std::uint64_t &domain) noexcept
+{
+	return resolve_current_domain_impl(domain);
+}
+
+std::uint64_t domain_retirement_sequence() noexcept
+{
+	return domain_retirement_sequence_storage().load(
+		std::memory_order_acquire);
+}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+namespace testing {
+
+std::size_t software_domain_count() noexcept
+{
+	auto *registry = existing_address_space_registry();
+	return registry != nullptr ? registry->size_for_testing() : 0;
+}
+
+void set_software_address_space_acquired_hook(
+	SoftwareAddressSpaceAcquiredHook hook) noexcept
+{
+	software_address_space_acquired_hook().store(
+		hook, std::memory_order_release);
+}
+
+} // namespace testing
+#endif
+
+void set_domain_retire_observer(DomainRetireObserver observer) noexcept
+{
+	domain_retire_observer().store(observer, std::memory_order_release);
+}
+
+void retire_domain(std::uint64_t domain) noexcept
+{
+	if (domain == 0)
+		return;
+	domain_retirement_sequence_storage().fetch_add(
+		1, std::memory_order_acq_rel);
+	/* Retirement is a teardown operation. It must never allocate or initialize
+	 * process-wide state merely to discover that the domain was untouched. */
+	if (auto *registry = existing_address_space_registry(); registry != nullptr)
+		registry->retire(domain);
+	if (const auto observer = domain_retire_observer().load(
+		    std::memory_order_acquire); observer != nullptr)
+		observer(domain);
+}
+
 } // namespace uml::memory
+
+namespace {
+
+template<typename Function>
+[[nodiscard]] int with_address_space(Function &&function) noexcept
+{
+	try {
+		auto space = uml::memory::address_space();
+		if (!space) {
+			if (errno == 0)
+				errno = ESRCH;
+			return -1;
+		}
+		errno = 0;
+		const int result = function(*space);
+		if (result < 0 && errno == 0)
+			errno = EFAULT;
+		return result;
+	} catch (const std::bad_alloc &) {
+		uml::memory::reset_mapping_batch();
+		errno = ENOMEM;
+		return -1;
+	} catch (...) {
+		uml::memory::reset_mapping_batch();
+		errno = EIO;
+		return -1;
+	}
+}
+
+template<typename Function>
+[[nodiscard]] std::uint64_t with_address_space_sequence(
+	Function &&function) noexcept
+{
+	try {
+		auto space = uml::memory::address_space();
+		return space ? function(*space) : 0;
+	} catch (...) {
+		uml::memory::reset_mapping_batch();
+		return 0;
+	}
+}
+
+} // namespace
 
 extern "C" int darwin_uml_close(int fd)
 {
-	uml::memory::address_space().forget_descriptor(fd);
+	try {
+		if (auto *registry = uml::memory::existing_address_space_registry();
+		    registry != nullptr)
+			registry->forget_descriptor(fd);
+	} catch (...) {
+		/* Descriptor closure must still happen after bookkeeping failure. */
+	}
 	return ::close(fd);
 }
 
@@ -834,10 +1649,11 @@ extern "C" int darwin_uml_static_vm_map(void *address, int fd,
 					 unsigned long length, int protection,
 					 int guest_code, int guest_writable)
 {
-	return uml::memory::address_space().map(
-		uml::memory::address_space().active_generation(),
-		reinterpret_cast<std::uintptr_t>(address), fd, offset, length,
-		protection, guest_code != 0, guest_writable != 0);
+	return with_address_space([&](auto &space) {
+		return space.map(space.active_generation(),
+			reinterpret_cast<std::uintptr_t>(address), fd, offset, length,
+			protection, guest_code != 0, guest_writable != 0);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_map_generation(
@@ -845,128 +1661,155 @@ extern "C" int darwin_uml_static_vm_map_generation(
 	unsigned long long offset, unsigned long length, int protection,
 	int guest_code, int guest_writable)
 {
-	return uml::memory::address_space().map(
-		generation, reinterpret_cast<std::uintptr_t>(address), fd, offset,
-		length, protection, guest_code != 0, guest_writable != 0);
+	return with_address_space([&](auto &space) {
+		return space.map(generation,
+			reinterpret_cast<std::uintptr_t>(address), fd, offset,
+			length, protection, guest_code != 0, guest_writable != 0);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_protect(void *address,
 					     unsigned long length,
 					     int protection)
 {
-	return uml::memory::address_space().protect(
-		reinterpret_cast<std::uintptr_t>(address), length, protection);
+	return with_address_space([&](auto &space) {
+		return space.protect(
+			reinterpret_cast<std::uintptr_t>(address), length, protection);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_unmap(void *address,
 					   unsigned long length)
 {
-	auto &space = uml::memory::address_space();
-	return space.unmap(space.active_generation(),
-		reinterpret_cast<std::uintptr_t>(address), length);
+	return with_address_space([&](auto &space) {
+		return space.unmap(space.active_generation(),
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_unmap_generation(
 	unsigned long generation, void *address, unsigned long length)
 {
-	return uml::memory::address_space().unmap(
-		generation, reinterpret_cast<std::uintptr_t>(address), length);
+	return with_address_space([&](auto &space) {
+		return space.unmap(generation,
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_activate(unsigned long generation)
 {
-	return uml::memory::address_space().activate(generation);
+	return with_address_space(
+		[&](auto &space) { return space.activate(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_destroy(unsigned long generation)
 {
-	return uml::memory::address_space().destroy(generation);
+	return with_address_space(
+		[&](auto &space) { return space.destroy(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_mapping_matches(
 	unsigned long address, int fd, unsigned long long offset)
 {
-	return uml::memory::address_space().matches(address, fd, offset);
+	return with_address_space(
+		[&](auto &space) { return space.matches(address, fd, offset); });
 }
 
 extern "C" int darwin_uml_static_vm_rebind(unsigned long address, int fd,
 					      unsigned long long offset)
 {
-	return uml::memory::address_space().rebind(address, fd, offset);
+	return with_address_space(
+		[&](auto &space) { return space.rebind(address, fd, offset); });
 }
 
 extern "C" int darwin_uml_static_vm_copy_from_buffer(
 	unsigned long address, const void *buffer, unsigned long length)
 {
-	return uml::memory::address_space().copy_from_buffer(
-		address, buffer, length);
+	return with_address_space([&](auto &space) {
+		return space.copy_from_buffer(address, buffer, length);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_retry_fault(
 	unsigned long address, int execute, int write)
 {
-	auto &space = uml::memory::address_space();
-	void *translated = nullptr;
-	const auto access = execute != 0 ? DARWIN_UML_STATIC_EXECUTE :
-		write != 0 ? DARWIN_UML_STATIC_WRITE : DARWIN_UML_STATIC_READ;
-	const int result = space.translate(
-		space.active_generation(), address, access, &translated);
-	if (result == DARWIN_UML_STATIC_TRANSLATED && translated != nullptr)
-		return 1;
-	return result == DARWIN_UML_STATIC_HOST_ERROR ? -1 : 0;
+	return with_address_space([&](auto &space) {
+		void *translated = nullptr;
+		const auto access = execute != 0 ? DARWIN_UML_STATIC_EXECUTE :
+			write != 0 ? DARWIN_UML_STATIC_WRITE : DARWIN_UML_STATIC_READ;
+		const int result = space.translate(
+			space.active_generation(), address, access, &translated);
+		if (result == DARWIN_UML_STATIC_TRANSLATED &&
+		    translated != nullptr)
+			return 1;
+		return result == DARWIN_UML_STATIC_HOST_ERROR ? -1 : 0;
+	});
 }
 
 extern "C" int darwin_uml_static_vm_batch_begin(unsigned long generation)
 {
-	return uml::memory::address_space().begin_batch(generation);
+	return with_address_space(
+		[&](auto &space) { return space.begin_batch(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_batch_end(void)
 {
-	return uml::memory::address_space().end_batch();
+	return with_address_space([](auto &space) { return space.end_batch(); });
 }
 
 extern "C" int darwin_uml_static_vm_walker_lock(unsigned long generation)
 {
-	return uml::memory::address_space().lock_walker(generation);
+	return with_address_space(
+		[&](auto &space) { return space.lock_walker(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_walker_unlock(unsigned long generation)
 {
-	return uml::memory::address_space().unlock_walker(generation);
+	return with_address_space(
+		[&](auto &space) { return space.unlock_walker(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_translate(
 	unsigned long generation, unsigned long address,
 	enum darwin_uml_static_access access, void **host_address)
 {
-	return uml::memory::address_space().translate(
-		generation, address, access, host_address);
+	return with_address_space([&](auto &space) {
+		return space.translate(generation, address, access, host_address);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_load_allocation_tag(
 	unsigned long generation, unsigned long address, uint8_t *tag)
 {
-	return uml::memory::address_space().load_allocation_tag(
-		generation, address, tag);
+	return with_address_space([&](auto &space) {
+		return space.load_allocation_tag(generation, address, tag);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_store_allocation_tag(
 	unsigned long generation, unsigned long address, uint8_t tag)
 {
-	return uml::memory::address_space().store_allocation_tag(
-		generation, address, tag);
+	return with_address_space([&](auto &space) {
+		return space.store_allocation_tag(generation, address, tag);
+	});
 }
 
 extern "C" uint64_t darwin_uml_static_vm_changes(unsigned long generation)
 {
-	return uml::memory::address_space().changes(generation, false);
+	return with_address_space_sequence(
+		[&](auto &space) { return space.changes(generation, false); });
 }
 
 extern "C" struct darwin_uml_static_sequences darwin_uml_static_vm_sequences(
 	unsigned long generation)
 {
-	return uml::memory::address_space().sequences(generation);
+	try {
+		auto space = uml::memory::address_space();
+		return space ? space->sequences(generation) :
+			darwin_uml_static_sequences{};
+	} catch (...) {
+		return {};
+	}
 }
 
 extern "C" int darwin_uml_static_vm_mapping_changes(
@@ -974,62 +1817,107 @@ extern "C" int darwin_uml_static_vm_mapping_changes(
 	struct darwin_uml_static_mapping_change *changes, size_t capacity,
 	uint64_t *current_sequence)
 {
-	return uml::memory::address_space().mapping_changes(
-		generation, sequence, changes, capacity, current_sequence);
+	return with_address_space([&](auto &space) {
+		return space.mapping_changes(
+			generation, sequence, changes, capacity, current_sequence);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_execution_begin(
 	unsigned long generation, unsigned long guest_pc)
 {
-	return uml::memory::address_space().execution_begin(
-		generation, guest_pc);
+	return with_address_space([&](auto &space) {
+		return space.execution_begin(generation, guest_pc);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_execution_end(
 	unsigned long generation)
 {
-	return uml::memory::address_space().execution_end(generation);
+	return with_address_space(
+		[&](auto &space) { return space.execution_end(generation); });
 }
 
 extern "C" void *darwin_uml_static_vm_execution_context_create(
 	unsigned long generation)
 {
-	return uml::memory::address_space().create_execution_context(generation);
+	try {
+		auto space = uml::memory::address_space();
+		return space ? space->create_execution_context(generation) : nullptr;
+	} catch (...) {
+		return nullptr;
+	}
 }
 
 extern "C" void darwin_uml_static_vm_execution_context_destroy(void *context)
 {
-	uml::memory::address_space().destroy_execution_context(
-		static_cast<uml::memory::ExecutionContext *>(context));
+	try {
+		uml::memory::AddressSpace::destroy_execution_context(
+			static_cast<uml::memory::ExecutionContext *>(context));
+	} catch (...) {
+		/* The C destruction boundary cannot report an error. */
+	}
 }
 
 extern "C" int darwin_uml_static_vm_execution_context_begin(
 	void *context, unsigned long guest_pc)
 {
-	return uml::memory::address_space().execution_context_begin(
-		static_cast<uml::memory::ExecutionContext *>(context), guest_pc);
+	try {
+		errno = 0;
+		const int result = uml::memory::AddressSpace::execution_context_begin(
+			static_cast<uml::memory::ExecutionContext *>(context), guest_pc);
+		if (result < 0 && errno == 0)
+			errno = EFAULT;
+		return result;
+	} catch (const std::bad_alloc &) {
+		errno = ENOMEM;
+		return -1;
+	} catch (...) {
+		errno = EIO;
+		return -1;
+	}
 }
 
 extern "C" int darwin_uml_static_vm_execution_context_end(void *context)
 {
-	return uml::memory::address_space().execution_context_end(
-		static_cast<uml::memory::ExecutionContext *>(context));
+	try {
+		errno = 0;
+		const int result = uml::memory::AddressSpace::execution_context_end(
+			static_cast<uml::memory::ExecutionContext *>(context));
+		if (result < 0 && errno == 0)
+			errno = EFAULT;
+		return result;
+	} catch (const std::bad_alloc &) {
+		errno = ENOMEM;
+		return -1;
+	} catch (...) {
+		errno = EIO;
+		return -1;
+	}
 }
 
 extern "C" struct darwin_uml_static_sequences
 darwin_uml_static_vm_execution_context_sequences(void *context)
 {
-	return uml::memory::address_space().execution_context_sequences(
-		static_cast<uml::memory::ExecutionContext *>(context));
+	try {
+		return uml::memory::AddressSpace::execution_context_sequences(
+			static_cast<uml::memory::ExecutionContext *>(context));
+	} catch (...) {
+		return {};
+	}
 }
 
 extern "C" uint64_t darwin_uml_static_vm_code_changes(
 	unsigned long generation)
 {
-	return uml::memory::address_space().changes(generation, true);
+	return with_address_space_sequence(
+		[&](auto &space) { return space.changes(generation, true); });
 }
 
 extern "C" void darwin_uml_static_vm_invalidate_code(unsigned long address)
 {
-	uml::memory::address_space().invalidate_code(address);
+	(void)with_address_space([&](auto &space) {
+		space.invalidate_code(address);
+		return 0;
+	});
 }

@@ -14,6 +14,8 @@ struct Provider final {
 	void (*stop)(void *){};
 };
 
+[[nodiscard]] Provider resolve_active_provider() noexcept;
+
 class ProviderContext final {
 public:
 	explicit ProviderContext(Provider provider) noexcept : provider_{provider} {}
@@ -22,18 +24,6 @@ public:
 
 private:
 	Provider provider_;
-};
-
-class ActiveProviderScope final {
-public:
-	explicit ActiveProviderScope(ProviderContext &context);
-	~ActiveProviderScope();
-
-	ActiveProviderScope(const ActiveProviderScope &) = delete;
-	ActiveProviderScope &operator=(const ActiveProviderScope &) = delete;
-
-private:
-	ProviderContext *previous_;
 };
 
 } // namespace uml::network

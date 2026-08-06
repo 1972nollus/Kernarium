@@ -1,0 +1,455 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "program_builder_decode.hpp"
+#include "gadget_selection.hpp"
+
+namespace uml::cpu::arm64::gadgets::builder_detail {
+
+using namespace selection;
+
+DecodeResult decode_branch_system(DecodeContext &context)
+{
+	const auto address = context.address;
+	const auto instruction = context.instruction;
+	auto &compiled = context.compiled;
+	auto &words = context.words;
+	const auto &resolve_link = context.resolve_link;
+	const auto &resolve_indirect_link = context.resolve_indirect_link;
+	const auto &options = context.options;
+
+	if (const auto selected = gcs_gadget(instruction); selected) {
+		emit(words, selected->entry);
+		if (selected->has_operand)
+			emit(words, selected->operand);
+		emit(words, address);
+		if (selected->always_traps) {
+			++compiled;
+			return DecodeResult::terminal;
+		}
+	} else if (pointer_auth_lr_unavailable(instruction)) {
+		/* FEAT_PAuth_LR is not advertised by the static guest profile.
+		 * Its non-HINT encodings are architecturally UNDEFINED. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x7c00'0000U) == 0x1400'0000U) {
+		const auto displacement = sign_extend(
+			static_cast<std::uint64_t>(instruction & 0x03ff'ffffU) << 2,
+			28);
+		const auto target = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(address) + displacement);
+		const bool link = (instruction >> 31) != 0;
+		if (resolve_link) {
+			emit(words, link ? uml_arm64_gadget_branch_link_linked :
+				uml_arm64_gadget_branch_linked);
+			emit(words, reinterpret_cast<std::uintptr_t>(
+				resolve_link(target)));
+		} else {
+			emit(words, link ? uml_arm64_gadget_branch_link :
+				uml_arm64_gadget_branch);
+			emit(words, target);
+		}
+		if (link)
+			emit(words, address + sizeof(instruction));
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
+		const auto displacement = sign_extend(
+			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
+			21);
+		const auto target = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(address) + displacement);
+		const auto fallthrough = address + sizeof(instruction);
+		if (resolve_link) {
+			emit(words, conditional_branch_linked_gadget(
+				instruction & 15U));
+			emit(words, reinterpret_cast<std::uintptr_t>(
+				resolve_link(target)));
+			emit(words, reinterpret_cast<std::uintptr_t>(
+				resolve_link(fallthrough)));
+		} else {
+			emit(words, conditional_branch_gadget(instruction & 15U));
+			emit(words, target);
+			emit(words, fallthrough);
+		}
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
+		const bool immediate = (instruction & 0x0100'0000U) != 0;
+		const unsigned narrow_control = (instruction >> 14) & 3U;
+		const unsigned cc = (instruction >> 21) & 7U;
+		const bool valid_form = immediate ?
+			(instruction & 0x0000'4000U) == 0 :
+			(narrow_control == 0 ||
+			 (((instruction >> 31) == 0) && narrow_control >= 2));
+		if (!valid_form || cc == 4 || cc == 5) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+		const auto displacement = sign_extend(
+			static_cast<std::uint64_t>(
+				(instruction >> 5) & 0x1ffU) << 2,
+			11);
+		const auto target = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(address) + displacement);
+		const auto fallthrough = address + sizeof(instruction);
+		const unsigned left = instruction & 31U;
+		const unsigned right = (instruction >> 16) & 31U;
+		bool constant = false;
+		bool take = false;
+		if (immediate && left == 31) {
+			constant = true;
+			take = cmpbr_immediate_zero_result(
+				cc, (instruction >> 15) & 63U);
+		} else if (!immediate && left == right) {
+			constant = true;
+			take = cmpbr_equal_register_result(cc);
+		}
+		if (constant) {
+			if (resolve_link) {
+				emit(words, uml_arm64_gadget_branch_always_linked);
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(take ? target : fallthrough)));
+			} else {
+				emit(words, uml_arm64_gadget_branch_always);
+				emit(words, take ? target : fallthrough);
+			}
+		} else if (immediate) {
+			emit(words, cmpbr_immediate_gadget(
+				(instruction >> 31) != 0, cc));
+			emit(words, left |
+				(static_cast<std::uintptr_t>(
+					(instruction >> 15) & 63U) << 8));
+			emit(words, target);
+			emit(words, fallthrough);
+		} else {
+			const unsigned width = narrow_control == 2 ? 8U :
+				narrow_control == 3 ? 16U :
+				(instruction >> 31) != 0 ? 64U : 32U;
+			emit(words, cmpbr_register_gadget(width, cc,
+				left == 31, right == 31));
+			emit(words, left |
+				(static_cast<std::uintptr_t>(right) << 8));
+			emit(words, target);
+			emit(words, fallthrough);
+		}
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x7e00'0000U) == 0x3400'0000U) {
+		const auto displacement = sign_extend(
+			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
+			21);
+		const auto target = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(address) + displacement);
+		const auto fallthrough = address + sizeof(instruction);
+		const unsigned source = instruction & 31U;
+		const bool nonzero = (instruction & 0x0100'0000U) != 0;
+		if (source == 31U) {
+			const auto selected = nonzero ? fallthrough : target;
+			if (resolve_link) {
+				emit(words, uml_arm64_gadget_branch_always_linked);
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(selected)));
+			} else {
+				emit(words, uml_arm64_gadget_branch_always);
+				emit(words, selected);
+			}
+		} else {
+			emit(words, compare_branch_gadget(
+				(instruction >> 31) != 0, nonzero,
+				static_cast<bool>(resolve_link)));
+			emit(words, offsetof(CpuState, registers) + source * 8U);
+			if (resolve_link) {
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(fallthrough)));
+			} else {
+				emit(words, target);
+				emit(words, fallthrough);
+			}
+		}
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x7e00'0000U) == 0x3600'0000U) {
+		const auto displacement = sign_extend(
+			static_cast<std::uint64_t>((instruction >> 5) & 0x3fffU) << 2,
+			16);
+		const auto bit = ((instruction >> 31) << 5) |
+			((instruction >> 19) & 31U);
+		const auto target = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>(address) + displacement);
+		const auto fallthrough = address + sizeof(instruction);
+		const unsigned source = instruction & 31U;
+		const bool nonzero = (instruction & 0x0100'0000U) != 0;
+		if (source == 31U) {
+			const auto selected = nonzero ? fallthrough : target;
+			if (resolve_link) {
+				emit(words, uml_arm64_gadget_branch_always_linked);
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(selected)));
+			} else {
+				emit(words, uml_arm64_gadget_branch_always);
+				emit(words, selected);
+			}
+		} else {
+			emit(words, test_branch_gadget(nonzero,
+				static_cast<bool>(resolve_link)));
+			emit(words, offsetof(CpuState, registers) + source * 8U);
+			emit(words, std::uintptr_t{1} << bit);
+			if (resolve_link) {
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(target)));
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(fallthrough)));
+			} else {
+				emit(words, target);
+				emit(words, fallthrough);
+			}
+		}
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xfedf'f800U) == 0xd61f'0800U) {
+		if (!options.enable_pointer_authentication) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+		const bool zero_modifier =
+			(instruction & 0x0100'0000U) == 0;
+		const unsigned modifier = instruction & 31U;
+		const unsigned target = (instruction >> 5) & 31U;
+		if (zero_modifier && modifier != 31U) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+		const bool link = (instruction & 0x0020'0000U) != 0;
+		const bool key_b = (instruction & 0x400U) != 0;
+		emit(words,
+			link && options.enable_guarded_control_flow ?
+				pointer_auth_guarded_call_gadget(
+					key_b, zero_modifier,
+					target == 31U) :
+				pointer_auth_branch_gadget(
+					link, key_b, zero_modifier,
+					target == 31U));
+		if (target != 31U || !zero_modifier) {
+			const auto operand = target == 31U ?
+				(modifier < 31U ?
+					modifier * sizeof(std::uint64_t) :
+					offsetof(CpuState, sp)) :
+				zero_modifier ?
+					target * sizeof(std::uint64_t) :
+					pointer_auth_operand(target, modifier);
+			emit(words, operand);
+		}
+		if (link)
+			emit(words, address + sizeof(instruction));
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
+		if (!options.enable_pointer_authentication) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+		const bool key_b = (instruction & 0x400U) != 0;
+		emit(words, options.enable_guarded_control_flow ?
+			pointer_auth_guarded_return_gadget(key_b) :
+			pointer_auth_branch_gadget(
+				false, key_b, false, false));
+		emit(words, pointer_auth_operand(30, 31));
+		if (options.enable_guarded_control_flow)
+			emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U ||
+		   (instruction & 0xffff'fc1fU) == 0xd63f'0000U ||
+		   (instruction & 0xffff'fc1fU) == 0xd65f'0000U) {
+		const auto opcode = instruction & 0xffff'fc1fU;
+		const unsigned source = (instruction >> 5) & 31U;
+		const bool cached = static_cast<bool>(resolve_indirect_link);
+		emit(words, opcode == 0xd61f'0000U ?
+			(cached ? uml_arm64_gadget_branch_register_cached :
+				uml_arm64_gadget_branch_register) :
+			opcode == 0xd63f'0000U ?
+			(cached ? uml_arm64_gadget_branch_link_register_cached :
+				uml_arm64_gadget_branch_link_register) :
+			(cached ? uml_arm64_gadget_return_cached :
+				uml_arm64_gadget_return));
+		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
+			static_cast<std::uintptr_t>(source * 8U));
+		if (cached)
+			emit(words, reinterpret_cast<std::uintptr_t>(
+				resolve_indirect_link(address)));
+		if (opcode == 0xd63f'0000U)
+			emit(words, address + sizeof(instruction));
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {
+		const auto immediate = static_cast<std::uint64_t>(
+			((instruction >> 5) & 0x7ffffU) << 2) |
+			((instruction >> 29) & 3U);
+		const auto relative = sign_extend(immediate, 21);
+		const auto value = (instruction >> 31) != 0 ?
+			static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(address & ~0xfffULL) +
+				relative * 4096) :
+			static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(address) + relative);
+		const unsigned destination = instruction & 31U;
+		if (destination == 31U) {
+			emit(words, uml_arm64_gadget_nop);
+		} else {
+			emit(words, uml_arm64_gadget_pc_relative);
+			emit(words, static_cast<std::uintptr_t>(destination * 8U));
+			emit(words, value);
+		}
+	} else if (instruction == 0xd500'401fU) {
+		emit(words, uml_arm64_gadget_cfinv);
+	} else if (instruction == 0xd500'405fU) {
+		emit(words, !options.force_software_flags &&
+				host_capabilities().has(ArmFeature::flag_m2) ?
+			uml_arm64_gadget_axflag_native :
+			uml_arm64_gadget_axflag);
+	} else if (instruction == 0xd500'403fU) {
+		emit(words, !options.force_software_flags &&
+				host_capabilities().has(ArmFeature::flag_m2) ?
+			uml_arm64_gadget_xaflag_native :
+			uml_arm64_gadget_xaflag);
+	} else if ((instruction & 0xfff8'f01fU) == 0xd500'401fU) {
+		const auto selected = pstate_immediate_gadget(instruction);
+		if (!selected.valid) {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+		emit(words, selected.gadget);
+		if (selected.fault_address)
+			emit(words, address);
+	} else if ((instruction & 0xffff'ffe0U) == 0xd53b'd040U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'd040U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'd060U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'00e0U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'0020U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'4400U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'4400U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'4420U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'4420U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'4440U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'4440U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'4200U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'4200U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'e000U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'e040U) {
+		const auto selected = system_register_gadget(instruction);
+		emit(words, selected.gadget);
+		if (selected.operand)
+			emit(words, static_cast<std::uintptr_t>(
+				(instruction & 31U) * sizeof(std::uint64_t)));
+		/* A register-sourced FPCR write may enable synchronous exception
+		 * reporting. Supply its already-known fallthrough PC so the
+		 * rare enabled case can leave the block immediately; ordinary
+		 * control-only writes remain straight through.
+		 */
+		if ((instruction & 0xffff'ffe0U) == 0xd51b'4400U &&
+		    (instruction & 31U) != 31U) {
+			emit(words, address + sizeof(instruction));
+		}
+	} else if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
+		   (instruction & 0xffd0'0000U) == 0xd550'0000U ||
+		   (instruction & 0xfff8'0000U) == 0xd548'0000U) {
+		/* Every implemented EL0 register is selected above. Unknown 64-bit
+		 * registers plus FEAT_SYSREG128/SYSINSTR128 operations are
+		 * inaccessible in the current userspace architectural profile. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xfff8'0000U) == 0xd508'0000U ||
+		   (instruction & 0xfff8'0000U) == 0xd528'0000U) {
+		const auto operation = instruction & 0xffff'ffe0U;
+		if (operation == 0xd50b'7420U) {
+			const unsigned source = instruction & 31U;
+			emit(words, source == 31U ?
+				uml_arm64_gadget_cache_zero_z :
+				uml_arm64_gadget_cache_zero_r);
+			if (source != 31U)
+				emit(words, static_cast<std::uintptr_t>(
+					source * sizeof(std::uint64_t)));
+			emit(words, address);
+		} else if (operation == 0xd50b'7b20U) {
+			/* Guest writes already update the coherent backing. */
+			emit(words, uml_arm64_gadget_nop);
+		} else if (operation == 0xd50b'7520U) {
+			const unsigned source = instruction & 31U;
+			emit(words, source == 31U ?
+				uml_arm64_gadget_code_synchronize_z :
+				uml_arm64_gadget_code_synchronize_r);
+			if (source != 31U)
+				emit(words, static_cast<std::uintptr_t>(
+					source * sizeof(std::uint64_t)));
+			emit(words, address + sizeof(instruction));
+			++compiled;
+			return DecodeResult::terminal;
+		} else {
+			emit(words, uml_arm64_gadget_illegal);
+			emit(words, address);
+			++compiled;
+			return DecodeResult::terminal;
+		}
+	} else if ((instruction & 0xffff'f0ffU) == 0xd503'305fU) {
+		emit(words, uml_arm64_gadget_clear_exclusive);
+	} else if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
+		   (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
+		   (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
+		   (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
+		   instruction == 0xd503'30ffU) {
+		emit(words, memory_barrier_gadget(instruction));
+	} else if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU) {
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if (instruction == 0xd503'20ffU) {
+		emit(words, options.enable_pointer_authentication ?
+			uml_arm64_gadget_xpaclri : uml_arm64_gadget_nop);
+	} else if (const auto pointer_auth =
+		decode_pointer_auth_hint(instruction); pointer_auth) {
+		if (!options.enable_pointer_authentication) {
+			emit(words, uml_arm64_gadget_nop);
+		} else {
+			emit(words, pointer_auth_gadgets[pointer_auth->operation]
+				[pointer_auth->zero_modifier]);
+			emit(words, pointer_auth_operand(
+				pointer_auth->destination,
+				pointer_auth->modifier));
+		}
+	} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
+		emit(words, architectural_hint_gadget(instruction));
+	} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||
+		   (instruction & 0xffff'ffe0U) == 0xd503'1000U ||
+		   (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
+		emit(words, uml_arm64_gadget_nop);
+	} else if (instruction == 0xd6bf'03e0U ||
+		   instruction == 0xd69f'03e0U ||
+		   instruction == 0xd69f'0bffU ||
+		   instruction == 0xd69f'0fffU) {
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else {
+		return implementation_gap(context);
+	}
+	return DecodeResult::decoded;
+}
+
+} // namespace uml::cpu::arm64::gadgets::builder_detail

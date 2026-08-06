@@ -2866,8 +2866,10 @@ gadget simd_rdm_software
 	mov w1, w8
 	bl NAME(uml_arm64_simd_rdm_software)
 	ldp x1, x2, [sp], #16
+	cbz w0, NAME(uml_arm64_gadget_illegal)
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x16
+	add _stream, _stream, #8
 	next_gadget
 
 .purgem simd_three_same_s4

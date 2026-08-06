@@ -45,6 +45,7 @@ constexpr std::uint64_t virtioFeatureVersion1 = 1ULL << 32U;
 // Virtio-GPU device feature bits from include/uapi/linux/virtio_gpu.h.
 constexpr std::uint64_t virtioGpuFeatureVirgl = 1ULL << 0U;
 constexpr std::uint64_t virtioGpuFeatureContextInit = 1ULL << 4U;
+constexpr std::uint64_t protocolFeatureMultipleQueues = 1ULL << 0U;
 constexpr std::uint64_t protocolFeatureReplyAck = 1ULL << 3U;
 constexpr std::uint64_t protocolFeatureSlaveRequest = 1ULL << 5U;
 constexpr std::uint64_t protocolFeatureConfig = 1ULL << 9U;
@@ -103,9 +104,14 @@ struct [[gnu::packed]] VirtqueueUsedElement {
 constexpr std::uint16_t descriptorNext = 1U;
 constexpr std::uint16_t descriptorWrite = 2U;
 constexpr std::uint16_t descriptorIndirect = 4U;
+constexpr std::uint16_t availableSuppressInterrupt = 1U;
 // Vhost-user encodes the queue index and "no descriptor" flag in one u64.
 constexpr std::uint64_t vhostVringIndexMask = 0xffU;
 constexpr std::uint64_t vhostVringNoDescriptor = 1U << 8U;
+constexpr std::uint64_t vhostVringDescriptorMask =
+    vhostVringIndexMask | vhostVringNoDescriptor;
+constexpr std::uint32_t configFlagWritable = 0;
+constexpr std::uint32_t configFlagMigration = 1;
 constexpr std::size_t splitRingHeaderSize =
     2U * sizeof(std::uint16_t); // flags followed by the producer index.
 constexpr std::size_t gpuControlQueue = 0;

@@ -39,6 +39,14 @@ constexpr std::int32_t absoluteMaximum = 32767;
 [[nodiscard]] std::optional<std::uint16_t> keyCode(
     std::uint32_t keySymbol) noexcept;
 
+/* LibVNCServer invokes input handlers through a C callback boundary. A custom
+ * host sink must therefore never be allowed to unwind through that boundary.
+ * The boolean result lets the display report a failed delivery without
+ * conflating it with an intentionally absent sink. */
+[[nodiscard]] bool tryDeliver(
+    const VncInputSink& sink,
+    std::span<const VncInputEvent> events) noexcept;
+
 } // namespace input
 
 static_assert(sizeof(VncInputEvent) == 8);

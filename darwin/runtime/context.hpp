@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "uml_darwin_cpu.h"
+#include "execution_engine.hpp"
+#include "platform/run_routing.hpp"
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <utility>
 
 namespace uml::runtime {
 
@@ -15,6 +19,46 @@ struct ThreadStateStore;
 
 using GuestEntry = int (*)(void *, void *, unsigned long, unsigned long,
 	unsigned long *);
+
+class Context;
+
+/* Pins one host thread's execution object and the Context memory domain that
+ * backs its translated caches. Run transitions and Context destruction wait
+ * for every outstanding access; request_stop() remains independent so a guest
+ * entry holding this access can still be interrupted. */
+class ThreadExecutionStateAccess final {
+public:
+	ThreadExecutionStateAccess(ThreadExecutionStateAccess &&) noexcept = default;
+	ThreadExecutionStateAccess &operator=(
+		ThreadExecutionStateAccess &&) noexcept = delete;
+
+	ThreadExecutionStateAccess(const ThreadExecutionStateAccess &) = delete;
+	ThreadExecutionStateAccess &operator=(
+		const ThreadExecutionStateAccess &) = delete;
+
+	[[nodiscard]] ThreadExecutionState *operator->() const noexcept
+	{
+		return execution_.get();
+	}
+
+	[[nodiscard]] ThreadExecutionState &operator*() const noexcept
+	{
+		return *execution_;
+	}
+
+private:
+	friend class Context;
+
+	ThreadExecutionStateAccess(
+		std::shared_lock<std::shared_mutex> lifecycle,
+		std::shared_ptr<ThreadExecutionState> execution) noexcept
+		: lifecycle_{std::move(lifecycle)}, execution_{std::move(execution)}
+	{
+	}
+
+	std::shared_lock<std::shared_mutex> lifecycle_;
+	std::shared_ptr<ThreadExecutionState> execution_;
+};
 
 class Context final {
 public:
@@ -29,34 +73,24 @@ public:
 	void request_stop() noexcept;
 	[[nodiscard]] bool stop_requested() const noexcept;
 	[[nodiscard]] const std::atomic_bool *stop_token() const noexcept;
-	using RunAdmissionHook = void (*)(void *) noexcept;
-	void set_run_admission_hook_for_testing(
-		RunAdmissionHook hook, void *opaque) noexcept;
-	using RunRetirementHook = void (*)(void *) noexcept;
-	void set_run_retirement_hook_for_testing(
-		RunRetirementHook hook, void *opaque) noexcept;
 
-	[[nodiscard]] int set_execution_engine(
-		darwin_uml_execution_engine engine) noexcept;
-	[[nodiscard]] darwin_uml_execution_engine execution_engine() const noexcept;
+	[[nodiscard]] int set_execution_engine(ExecutionEngine engine) noexcept;
+	[[nodiscard]] ExecutionEngine execution_engine() const noexcept;
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
+	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
-	ThreadExecutionState &thread_execution_state();
-	[[nodiscard]] std::size_t
-	thread_execution_state_count_for_testing() const noexcept;
+	[[nodiscard]] ThreadExecutionStateAccess thread_execution_state();
 
 private:
 	void retire_thread_execution_states() noexcept;
 
-	std::atomic<darwin_uml_execution_engine> selected_engine_;
+	std::atomic<ExecutionEngine> selected_engine_;
 	std::atomic<GuestEntry> selected_entry_;
+	std::atomic_uint64_t memory_domain_;
 	std::atomic_bool stop_requested_{false};
 	mutable std::mutex run_mutex_;
 	bool running_{};
-	RunAdmissionHook run_admission_hook_{};
-	void *run_admission_hook_context_{};
-	RunRetirementHook run_retirement_hook_{};
-	void *run_retirement_hook_context_{};
+	mutable std::shared_mutex execution_lifecycle_mutex_;
 	mutable std::mutex states_mutex_;
 	std::shared_ptr<ThreadStateStore> state_store_;
 };
@@ -64,13 +98,40 @@ private:
 class ActiveContextScope final {
 public:
 	explicit ActiveContextScope(Context &context);
+	struct DeferredPublication final {};
+	explicit ActiveContextScope(Context &context, DeferredPublication);
 	~ActiveContextScope();
 
 	ActiveContextScope(const ActiveContextScope &) = delete;
 	ActiveContextScope &operator=(const ActiveContextScope &) = delete;
 
+	/* A deferred scope is invisible until commit.  commit() cannot allocate,
+	 * which lets callers prepare every participating registry before any
+	 * previous fallback is invalidated. */
+	void commit() noexcept;
+
 private:
-	Context *previous_;
+	::uml::routing::ActiveRouteScope route_;
+};
+
+/* Composition-facing run route. The provider endpoint is opaque here so the
+ * runtime and device modules continue to depend only on the neutral routing
+ * foundation, never on each other. */
+class ActiveRunRouteScope final {
+public:
+	struct DeferredPublication final {};
+
+	ActiveRunRouteScope(Context &context, void *network,
+		DeferredPublication) noexcept;
+	~ActiveRunRouteScope();
+
+	ActiveRunRouteScope(const ActiveRunRouteScope &) = delete;
+	ActiveRunRouteScope &operator=(const ActiveRunRouteScope &) = delete;
+
+	void commit() noexcept;
+
+private:
+	::uml::routing::ActiveRouteScope route_;
 };
 
 class RunScope final {
@@ -89,11 +150,11 @@ private:
 };
 
 /* A kernel-created vCPU thread has no public handle parameter. It may use a
- * genuinely sole active context as a fallback. Once runs overlap, their
- * unbound threads remain ambiguous until every overlapping scope retires,
- * even if only one scope is still active. Ambiguous callers receive nullptr
- * and fail closed rather than borrowing either handle's state. With no public
- * run, legacy C callers retain the process-local compatibility context. */
+ * genuinely sole active context as a fallback. While runs overlap, unbound
+ * callers receive nullptr and fail closed rather than borrowing either
+ * handle's state. Ambiguity remains sticky for the surviving route until the
+ * complete overlapping cohort retires. With no public run, legacy C callers
+ * retain the process-local compatibility context. */
 [[nodiscard]] Context *current_context() noexcept;
 
 } // namespace uml::runtime

@@ -338,7 +338,7 @@ BASE-0336	Base	RCWSETP, RCWSETPA, RCWSETPAL, RCWSETPL	shared-base-memory	access-
 BASE-0337	Base	RCWSSET, RCWSSETA, RCWSSETAL, RCWSSETL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
 BASE-0338	Base	RCWSSETP, RCWSSETPA, RCWSSETPAL, RCWSSETPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
 BASE-0339	Base	RCWSSWP, RCWSSWPA, RCWSSWPAL, RCWSSWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
-BASE-0340	Base	RCWSSWPP, RCWSSWPPA, RCWSSWPAL, RCWSSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
+BASE-0340	Base	RCWSSWPP, RCWSSWPPA, RCWSSWPPAL, RCWSSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
 BASE-0341	Base	RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
 BASE-0342	Base	RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
 BASE-0343	Base	RET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
@@ -483,11 +483,11 @@ BASE-0481	Base	SXTH	shared-base-data-processing	register-width+operand-form+regi
 BASE-0482	Base	SXTW	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0483	Base	SYS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0484	Base	SYSL	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0485	Base	SYSP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sysinstr128	verified
+BASE-0485	Base	SYSP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	d128+sysinstr128	verified
 BASE-0486	Base	TBNZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0487	Base	TBZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0488	Base	TLBI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|rme|tlbios|tlbirange|tlbiw|xs)	verified
-BASE-0489	Base	TLBIP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sysinstr128	verified
+BASE-0489	Base	TLBIP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	d128+sysinstr128	verified
 BASE-0490	Base	TRCIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	ite	verified
 BASE-0491	Base	TSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	trf	verified
 BASE-0492	Base	TST (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -521,10 +521,10 @@ FPSIMD-0003	FP&SIMD	ADDHN, ADDHN2	shared-simd-data-processing	scalar-vector+elem
 FPSIMD-0004	FP&SIMD	ADDP (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	advanced_simd	verified
 FPSIMD-0005	FP&SIMD	ADDP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0006	FP&SIMD	ADDV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
-FPSIMD-0007	FP&SIMD	AESD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
-FPSIMD-0008	FP&SIMD	AESE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
-FPSIMD-0009	FP&SIMD	AESIMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
-FPSIMD-0010	FP&SIMD	AESMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes	verified
+FPSIMD-0007	FP&SIMD	AESD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes+advanced_simd	verified
+FPSIMD-0008	FP&SIMD	AESE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes+advanced_simd	verified
+FPSIMD-0009	FP&SIMD	AESIMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes+advanced_simd	verified
+FPSIMD-0010	FP&SIMD	AESMC	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	aes+advanced_simd	verified
 FPSIMD-0011	FP&SIMD	AND (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0012	FP&SIMD	BCAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+sha3	verified
 FPSIMD-0013	FP&SIMD	BF1CVTL, BF1CVTL2, BF2CVTL, BF2CVTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
@@ -571,7 +571,7 @@ FPSIMD-0053	FP&SIMD	FADDP (scalar)	shared-floating-scalar	precision+register-ali
 FPSIMD-0054	FP&SIMD	FADDP (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0055	FP&SIMD	FAMAX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+faminmax	verified
 FPSIMD-0056	FP&SIMD	FAMIN	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+faminmax	verified
-FPSIMD-0057	FP&SIMD	FCADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
+FPSIMD-0057	FP&SIMD	FCADD	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+fcma+fp16	verified
 FPSIMD-0058	FP&SIMD	FCCMP	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
 FPSIMD-0059	FP&SIMD	FCCMPE	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
 FPSIMD-0060	FP&SIMD	FCMEQ (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
@@ -580,8 +580,8 @@ FPSIMD-0062	FP&SIMD	FCMGE (register)	shared-simd-data-processing	scalar-vector+e
 FPSIMD-0063	FP&SIMD	FCMGE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0064	FP&SIMD	FCMGT (register)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0065	FP&SIMD	FCMGT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
-FPSIMD-0066	FP&SIMD	FCMLA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
-FPSIMD-0067	FP&SIMD	FCMLA (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fcma	verified
+FPSIMD-0066	FP&SIMD	FCMLA	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+fcma+fp16	verified
+FPSIMD-0067	FP&SIMD	FCMLA (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+fcma+fp16	verified
 FPSIMD-0068	FP&SIMD	FCMLE (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0069	FP&SIMD	FCMLT (zero)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0070	FP&SIMD	FCMP	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
@@ -589,42 +589,42 @@ FPSIMD-0071	FP&SIMD	FCMPE	shared-floating-scalar	precision+register-alias+fp-sta
 FPSIMD-0072	FP&SIMD	FCSEL	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
 FPSIMD-0073	FP&SIMD	FCVT	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0074	FP&SIMD	FCVTAS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0075	FP&SIMD	FCVTAS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0075	FP&SIMD	FCVTAS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0076	FP&SIMD	FCVTAS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0077	FP&SIMD	FCVTAU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0078	FP&SIMD	FCVTAU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0078	FP&SIMD	FCVTAU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0079	FP&SIMD	FCVTAU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0080	FP&SIMD	FCVTL, FCVTL2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0081	FP&SIMD	FCVTMS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0082	FP&SIMD	FCVTMS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0082	FP&SIMD	FCVTMS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0083	FP&SIMD	FCVTMS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0084	FP&SIMD	FCVTMU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0085	FP&SIMD	FCVTMU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0085	FP&SIMD	FCVTMU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0086	FP&SIMD	FCVTMU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0087	FP&SIMD	FCVTN (half-precision to 8-bit floating-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
 FPSIMD-0088	FP&SIMD	FCVTN, FCVTN2 (double to single-precision, single to half-precision)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0089	FP&SIMD	FCVTN, FCVTN2 (single-precision to 8-bit floating-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	fp8	verified
 FPSIMD-0090	FP&SIMD	FCVTNS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0091	FP&SIMD	FCVTNS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0091	FP&SIMD	FCVTNS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0092	FP&SIMD	FCVTNS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0093	FP&SIMD	FCVTNU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0094	FP&SIMD	FCVTNU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0094	FP&SIMD	FCVTNU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0095	FP&SIMD	FCVTNU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0096	FP&SIMD	FCVTPS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0097	FP&SIMD	FCVTPS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0097	FP&SIMD	FCVTPS (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0098	FP&SIMD	FCVTPS (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0099	FP&SIMD	FCVTPU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0100	FP&SIMD	FCVTPU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0100	FP&SIMD	FCVTPU (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0101	FP&SIMD	FCVTPU (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0102	FP&SIMD	FCVTXN, FCVTXN2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0103	FP&SIMD	FCVTZS (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0104	FP&SIMD	FCVTZS (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
-FPSIMD-0105	FP&SIMD	FCVTZS (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0104	FP&SIMD	FCVTZS (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
+FPSIMD-0105	FP&SIMD	FCVTZS (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0106	FP&SIMD	FCVTZS (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0107	FP&SIMD	FCVTZS (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0108	FP&SIMD	FCVTZU (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0109	FP&SIMD	FCVTZU (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
-FPSIMD-0110	FP&SIMD	FCVTZU (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0109	FP&SIMD	FCVTZU (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
+FPSIMD-0110	FP&SIMD	FCVTZU (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0111	FP&SIMD	FCVTZU (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0112	FP&SIMD	FCVTZU (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0113	FP&SIMD	FDIV (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
@@ -679,7 +679,7 @@ FPSIMD-0161	FP&SIMD	FMOV (scalar, immediate)	shared-floating-scalar	precision+re
 FPSIMD-0162	FP&SIMD	FMOV (vector, immediate)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0163	FP&SIMD	FMSUB	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
 FPSIMD-0164	FP&SIMD	FMUL (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
-FPSIMD-0165	FP&SIMD	FMUL (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0165	FP&SIMD	FMUL (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0166	FP&SIMD	FMUL (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0167	FP&SIMD	FMULX	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0168	FP&SIMD	FMULX (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
@@ -691,14 +691,14 @@ FPSIMD-0173	FP&SIMD	FNMUL (scalar)	shared-floating-scalar	precision+register-ali
 FPSIMD-0174	FP&SIMD	FRECPE	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0175	FP&SIMD	FRECPS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0176	FP&SIMD	FRECPX	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
-FPSIMD-0177	FP&SIMD	FRINT32X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
-FPSIMD-0178	FP&SIMD	FRINT32X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
-FPSIMD-0179	FP&SIMD	FRINT32Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
-FPSIMD-0180	FP&SIMD	FRINT32Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
-FPSIMD-0181	FP&SIMD	FRINT64X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
-FPSIMD-0182	FP&SIMD	FRINT64X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
-FPSIMD-0183	FP&SIMD	FRINT64Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	frintts	verified
-FPSIMD-0184	FP&SIMD	FRINT64Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	frintts	verified
+FPSIMD-0177	FP&SIMD	FRINT32X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point+frintts	verified
+FPSIMD-0178	FP&SIMD	FRINT32X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+frintts	verified
+FPSIMD-0179	FP&SIMD	FRINT32Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point+frintts	verified
+FPSIMD-0180	FP&SIMD	FRINT32Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+frintts	verified
+FPSIMD-0181	FP&SIMD	FRINT64X (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point+frintts	verified
+FPSIMD-0182	FP&SIMD	FRINT64X (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+frintts	verified
+FPSIMD-0183	FP&SIMD	FRINT64Z (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point+frintts	verified
+FPSIMD-0184	FP&SIMD	FRINT64Z (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+frintts	verified
 FPSIMD-0185	FP&SIMD	FRINTA (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
 FPSIMD-0186	FP&SIMD	FRINTA (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0187	FP&SIMD	FRINTI (scalar)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
@@ -795,8 +795,8 @@ FPSIMD-0277	FP&SIMD	SADDLP	shared-simd-data-processing	scalar-vector+element-siz
 FPSIMD-0278	FP&SIMD	SADDLV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0279	FP&SIMD	SADDW, SADDW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0280	FP&SIMD	SCVTF (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0281	FP&SIMD	SCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
-FPSIMD-0282	FP&SIMD	SCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0281	FP&SIMD	SCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
+FPSIMD-0282	FP&SIMD	SCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0283	FP&SIMD	SCVTF (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0284	FP&SIMD	SCVTF (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0285	FP&SIMD	SDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified
@@ -855,10 +855,10 @@ FPSIMD-0337	FP&SIMD	SQDMULH (vector)	shared-simd-data-processing	scalar-vector+e
 FPSIMD-0338	FP&SIMD	SQDMULL, SQDMULL2 (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0339	FP&SIMD	SQDMULL, SQDMULL2 (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0340	FP&SIMD	SQNEG	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
-FPSIMD-0341	FP&SIMD	SQRDMLAH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
-FPSIMD-0342	FP&SIMD	SQRDMLAH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
-FPSIMD-0343	FP&SIMD	SQRDMLSH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
-FPSIMD-0344	FP&SIMD	SQRDMLSH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	rdm	verified
+FPSIMD-0341	FP&SIMD	SQRDMLAH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+rdm	verified
+FPSIMD-0342	FP&SIMD	SQRDMLAH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+rdm	verified
+FPSIMD-0343	FP&SIMD	SQRDMLSH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+rdm	verified
+FPSIMD-0344	FP&SIMD	SQRDMLSH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd+rdm	verified
 FPSIMD-0345	FP&SIMD	SQRDMULH (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0346	FP&SIMD	SQRDMULH (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0347	FP&SIMD	SQRSHL	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
@@ -929,8 +929,8 @@ FPSIMD-0411	FP&SIMD	UADDLP	shared-simd-data-processing	scalar-vector+element-siz
 FPSIMD-0412	FP&SIMD	UADDLV	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0413	FP&SIMD	UADDW, UADDW2	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0414	FP&SIMD	UCVTF (scalar SIMD&FP)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	fprcvt	verified
-FPSIMD-0415	FP&SIMD	UCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
-FPSIMD-0416	FP&SIMD	UCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	per_variant(fp16|floating_point)	verified
+FPSIMD-0415	FP&SIMD	UCVTF (scalar, fixed-point)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
+FPSIMD-0416	FP&SIMD	UCVTF (scalar, integer)	shared-floating-scalar	precision+register-alias+fp-state+rounding+reserved	floating_point	verified
 FPSIMD-0417	FP&SIMD	UCVTF (vector, fixed-point)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0418	FP&SIMD	UCVTF (vector, integer)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	per_variant(advanced_simd+fp16|advanced_simd)	verified
 FPSIMD-0419	FP&SIMD	UDOT (by element)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	dotprod	verified

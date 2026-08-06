@@ -16,8 +16,8 @@ import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(TESTS / "integration" / "ltp"))
-from run_guest_ltp import Guest  # noqa: E402
+sys.path.insert(0, str(TESTS / "integration" / "support"))
+from guest import Guest  # noqa: E402
 
 
 UPLOAD_HOST = "browser.geekbench.com"

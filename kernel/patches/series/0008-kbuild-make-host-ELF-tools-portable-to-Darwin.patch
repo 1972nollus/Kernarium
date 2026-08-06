@@ -1,7 +1,7 @@
 From af3f9f526d6f7f3f80b895cf16a54423cfc4c96b Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 08/10] kbuild: make host ELF tools portable to Darwin
+Subject: [PATCH 08/11] kbuild: make host ELF tools portable to Darwin
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
@@ -48,9 +48,9 @@ index 000000000..f4c381dc4
 +#define ELF_DARWIN_COMPAT_H
 +
 +/*
-+ * Homebrew's portable libelf provides the ELF layouts on Darwin, but its
-+ * replacement elf.h predates several relocation namespaces inspected by
-+ * current modpost.  These values come from the corresponding processor ABIs.
++ * The repository-owned Darwin libelf header supplies the base ELF layouts.
++ * These additional values cover relocation namespaces inspected by host
++ * tools and come from the corresponding processor ABIs.
 + */
 +#ifndef STT_LOPROC
 +#define STT_LOPROC 13

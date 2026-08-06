@@ -3,15 +3,19 @@
 #include "device.hpp"
 #include "options.hpp"
 #include "context.hpp"
-#include "uml_darwin_cpu.h"
+#include "testing.hpp"
+#include "uml_darwin_abi.h"
 
+#include <atomic>
 #include <cstddef>
-#include <cstdlib>
+#include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <new>
 #include <span>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -21,55 +25,181 @@ extern "C" {
 }
 #endif
 
-#if UML_EMULATOR_HAS_SLIRP
-extern "C" int uml_slirp_net_open(
-	void *, unsigned char[6], unsigned int *);
-extern "C" int uml_slirp_net_irq_fd(void *);
-extern "C" int uml_slirp_net_read(void *, void *, std::size_t);
-extern "C" int uml_slirp_net_write(void *, const void *, std::size_t);
-extern "C" void uml_slirp_net_stop(void *);
-extern "C" void *uml_slirp_net_create(void) noexcept;
-extern "C" void uml_slirp_net_destroy(void *) noexcept;
-#endif
-
 namespace uml::emulator {
 
-#if UML_EMULATOR_HAS_KERNEL_RUNNER
 namespace {
-std::mutex embedded_kernel_run_mutex;
+std::mutex process_address_space_mutex;
+std::condition_variable process_address_space_changed;
+std::size_t process_address_space_shared_runs;
+std::size_t process_address_space_waiting_exclusive_runs;
+bool process_address_space_exclusive_run;
+
+enum class AddressSpaceAdmissionMode : std::uint8_t {
+	none,
+	shared,
+	exclusive,
+};
+
+class PendingExclusiveAdmission final {
+public:
+	explicit PendingExclusiveAdmission(
+		AddressSpaceAdmissionMode mode) noexcept
+		: pending_{mode == AddressSpaceAdmissionMode::exclusive}
+	{
+		if (pending_)
+			++process_address_space_waiting_exclusive_runs;
+	}
+
+	~PendingExclusiveAdmission()
+	{
+		if (!pending_)
+			return;
+		retire();
+		/* A shared admission may already be sleeping solely because this
+		 * writer was pending. Exceptional wait unwinding must wake it after
+		 * removing the writer preference. */
+		process_address_space_changed.notify_all();
+	}
+
+	PendingExclusiveAdmission(const PendingExclusiveAdmission &) = delete;
+	PendingExclusiveAdmission &operator=(
+		const PendingExclusiveAdmission &) = delete;
+
+	void retire() noexcept
+	{
+		if (!pending_)
+			return;
+		--process_address_space_waiting_exclusive_runs;
+		pending_ = false;
+	}
+
+private:
+	bool pending_{};
+};
+
+#if UML_EMULATOR_ADMISSION_TESTING
+std::atomic<testing::AddressSpaceAdmissionHook> after_handle_admission_hook;
+std::atomic<testing::AddressSpaceAdmissionHook> admission_wait_boundary_hook;
+std::atomic<testing::AddressSpaceAdmissionHook> before_gate_release_hook;
+std::atomic<void *> address_space_admission_hook_context;
+std::atomic_bool fail_next_admission_wait;
+
+void invoke_admission_hook(
+	const std::atomic<testing::AddressSpaceAdmissionHook> &hook) noexcept
+{
+	if (const auto callback = hook.load(std::memory_order_acquire);
+	    callback != nullptr)
+			callback(address_space_admission_hook_context.load(
+				std::memory_order_acquire));
+}
+
+void admission_wait_checkpoint()
+{
+	if (fail_next_admission_wait.exchange(false, std::memory_order_acq_rel)) {
+		throw std::system_error{
+			std::make_error_code(std::errc::resource_unavailable_try_again),
+			"forced process-address-space admission wait failure"};
+	}
 }
 #endif
 
-class DefaultNetwork final {
+class ProcessAddressSpaceAdmission final {
 public:
-	explicit DefaultNetwork(bool enabled)
+	explicit ProcessAddressSpaceAdmission(
+		AddressSpaceAdmissionMode mode) noexcept
+		: mode_{mode}
 	{
-#if UML_EMULATOR_HAS_SLIRP
-		if (enabled) {
-			context_ = uml_slirp_net_create();
-			if (context_ == nullptr)
-				throw std::bad_alloc{};
+	}
+
+	[[nodiscard]] bool enter(::uml::runtime::Context &context)
+	{
+		if (mode_ == AddressSpaceAdmissionMode::none)
+			return true;
+		std::unique_lock lock{process_address_space_mutex};
+		/* Declared after the lock so exceptional wait unwinding decrements the
+		 * writer preference count while the admission mutex is still owned. */
+		PendingExclusiveAdmission pending_exclusive{mode_};
+		const auto blocked = [&] {
+			return process_address_space_exclusive_run ||
+				(mode_ == AddressSpaceAdmissionMode::exclusive &&
+				 process_address_space_shared_runs != 0) ||
+				(mode_ == AddressSpaceAdmissionMode::shared &&
+				 process_address_space_waiting_exclusive_runs != 0);
+		};
+		while (blocked() && !context.stop_requested()) {
+#if UML_EMULATOR_ADMISSION_TESTING
+			invoke_admission_hook(admission_wait_boundary_hook);
+			admission_wait_checkpoint();
+#endif
+			process_address_space_changed.wait(lock);
 		}
-#else
-		(void)enabled;
-#endif
+		if (context.stop_requested()) {
+			pending_exclusive.retire();
+			lock.unlock();
+			process_address_space_changed.notify_all();
+			return false;
+		}
+		if (mode_ == AddressSpaceAdmissionMode::shared)
+			++process_address_space_shared_runs;
+		else {
+			pending_exclusive.retire();
+			process_address_space_exclusive_run = true;
+		}
+		entered_ = true;
+		return true;
 	}
 
-	~DefaultNetwork()
+	~ProcessAddressSpaceAdmission()
 	{
-#if UML_EMULATOR_HAS_SLIRP
-		uml_slirp_net_destroy(context_);
+		if (!entered_)
+			return;
+#if UML_EMULATOR_ADMISSION_TESTING
+		invoke_admission_hook(before_gate_release_hook);
 #endif
+		{
+			std::lock_guard lock{process_address_space_mutex};
+			if (mode_ == AddressSpaceAdmissionMode::shared)
+				--process_address_space_shared_runs;
+			else
+				process_address_space_exclusive_run = false;
+		}
+		process_address_space_changed.notify_all();
 	}
 
-	DefaultNetwork(const DefaultNetwork &) = delete;
-	DefaultNetwork &operator=(const DefaultNetwork &) = delete;
-
-	[[nodiscard]] void *get() const noexcept { return context_; }
+	ProcessAddressSpaceAdmission(const ProcessAddressSpaceAdmission &) = delete;
+	ProcessAddressSpaceAdmission &operator=(
+		const ProcessAddressSpaceAdmission &) = delete;
 
 private:
-	void *context_{};
+	AddressSpaceAdmissionMode mode_{AddressSpaceAdmissionMode::none};
+	bool entered_{};
 };
+}
+
+#if UML_EMULATOR_ADMISSION_TESTING
+namespace testing {
+
+void set_address_space_admission_hooks(
+		AddressSpaceAdmissionHook after_handle_admission,
+		AddressSpaceAdmissionHook at_wait_boundary,
+		AddressSpaceAdmissionHook before_gate_release, void *context) noexcept
+{
+	address_space_admission_hook_context.store(context, std::memory_order_release);
+	after_handle_admission_hook.store(
+		after_handle_admission, std::memory_order_release);
+	admission_wait_boundary_hook.store(
+		at_wait_boundary, std::memory_order_release);
+	before_gate_release_hook.store(
+		before_gate_release, std::memory_order_release);
+}
+
+void fail_next_address_space_admission_wait() noexcept
+{
+	fail_next_admission_wait.store(true, std::memory_order_release);
+}
+
+} // namespace testing
+#endif
 
 class Emulator final {
 public:
@@ -77,10 +207,9 @@ public:
 		: rootfs_(config.rootfs_path == nullptr ? "" : config.rootfs_path),
 		  native_kernel_entry_{config.native_kernel_entry},
 		  runtime_{},
-		  default_network_{uses_default_user_network(config)},
-		  network_{network_provider(config, default_network_.get())},
+		  network_{network_provider(config)},
 		  network_context_{network_},
-		  default_user_network_{default_network_.get() != nullptr}
+		  user_network_{config.network != nullptr}
 	{
 		if (config.kernel_image != nullptr && config.kernel_image_size != 0) {
 			const auto image = std::span{
@@ -97,20 +226,20 @@ public:
 			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (native_kernel_entry_ == nullptr && kernel_.empty())
 			return -UML_EMULATOR_UNSUPPORTED;
-		auto prepared = prepare_emulator_options(
-			argc, argv, rootfs_, default_user_network_);
-		if (!prepared.valid || prepared.arguments.empty())
-			return -UML_EMULATOR_INVALID_ARGUMENT;
-#if UML_EMULATOR_HAS_KERNEL_RUNNER
-		std::unique_lock embedded_kernel_lock{
-			embedded_kernel_run_mutex, std::defer_lock};
-		if (native_kernel_entry_ == nullptr)
-			embedded_kernel_lock.lock();
-#endif
+		ProcessAddressSpaceAdmission process_admission{
+			address_space_admission_mode()};
 		::uml::runtime::RunScope run_scope{runtime_};
 		if (!run_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
-		::uml::runtime::ActiveContextScope context_scope{runtime_};
+#if UML_EMULATOR_ADMISSION_TESTING
+		if (address_space_admission_mode() !=
+		    AddressSpaceAdmissionMode::none)
+			invoke_admission_hook(after_handle_admission_hook);
+#endif
+		auto prepared = prepare_emulator_options(
+			argc, argv, rootfs_, user_network_);
+		if (!prepared.valid || prepared.arguments.empty())
+			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
 		auto &arguments = prepared.arguments;
@@ -130,7 +259,14 @@ public:
 		for (auto &entry : environment_strings)
 			environment_pointers.push_back(entry.data());
 		environment_pointers.push_back(nullptr);
-		NetworkSession network_session{network_context_, network_};
+		if (!process_admission.enter(runtime_))
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		/* One opaque route publishes CPU and network endpoints under one lock.
+		 * Its intrusive storage and commit are allocation-free. */
+		::uml::runtime::ActiveRunRouteScope route_scope{
+			runtime_, &network_context_,
+			::uml::runtime::ActiveRunRouteScope::DeferredPublication{}};
+		route_scope.commit();
 
 		if (native_kernel_entry_ != nullptr)
 			return native_kernel_entry_(
@@ -157,44 +293,43 @@ public:
 
 	void request_stop() noexcept
 	{
+		if (address_space_admission_mode() !=
+		    AddressSpaceAdmissionMode::none) {
+			/* Predicate mutation and wait enrollment share this mutex, so a
+			 * notification cannot land between a false check and wait. */
+			{
+				std::lock_guard lock{process_address_space_mutex};
+				runtime_.request_stop();
+			}
+			process_address_space_changed.notify_all();
+			return;
+		}
 		runtime_.request_stop();
 	}
 
-	[[nodiscard]] darwin_uml_execution_engine execution_engine() const noexcept
+	[[nodiscard]] ::uml::runtime::ExecutionEngine
+	execution_engine() const noexcept
 	{
 		return runtime_.execution_engine();
 	}
 
 private:
-	class NetworkSession final {
-	public:
-		NetworkSession(uml::network::ProviderContext &context,
-			uml::network::Provider provider)
-			: provider_{provider}, scope_{context}
-		{
+	[[nodiscard]] AddressSpaceAdmissionMode
+	address_space_admission_mode() const noexcept
+	{
+		if (native_kernel_entry_ != nullptr) {
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+			return AddressSpaceAdmissionMode::exclusive;
+#else
+			return AddressSpaceAdmissionMode::shared;
+#endif
 		}
-
-		~NetworkSession()
-		{
-			if (provider_.stop != nullptr) {
-				try {
-					provider_.stop(provider_.context);
-				} catch (...) {
-					/* A provider must not unwind through public C cleanup. */
-				}
-			}
-		}
-
-		NetworkSession(const NetworkSession &) = delete;
-		NetworkSession &operator=(const NetworkSession &) = delete;
-
-	private:
-		uml::network::Provider provider_;
-		uml::network::ActiveProviderScope scope_;
-	};
+		return kernel_.empty() ? AddressSpaceAdmissionMode::none :
+			AddressSpaceAdmissionMode::exclusive;
+	}
 
 	[[nodiscard]] static uml::network::Provider network_provider(
-		const uml_emulator_config &config, void *default_context) noexcept
+		const uml_emulator_config &config) noexcept
 	{
 		if (config.network != nullptr)
 			return {
@@ -204,44 +339,16 @@ private:
 				.read = config.network->read,
 				.write = config.network->write,
 			};
-#if UML_EMULATOR_HAS_SLIRP
-		return {
-			.context = default_context,
-			.open = uml_slirp_net_open,
-			.irq_fd = uml_slirp_net_irq_fd,
-			.read = uml_slirp_net_read,
-			.write = uml_slirp_net_write,
-			.stop = uml_slirp_net_stop,
-		};
-#else
-		(void)default_context;
 		return {};
-#endif
-	}
-
-	[[nodiscard]] static bool uses_default_user_network(
-		const uml_emulator_config &config) noexcept
-	{
-#if UML_EMULATOR_HAS_SLIRP
-		if (config.network != nullptr)
-			return false;
-		const auto *disabled = std::getenv("UML_DISABLE_NETWORK");
-		return disabled == nullptr || disabled[0] == '\0' ||
-			disabled[0] == '0';
-#else
-		(void)config;
-		return false;
-#endif
 	}
 
 	std::string rootfs_;
 	std::vector<std::byte> kernel_;
 	uml_emulator_kernel_entry native_kernel_entry_{};
 	::uml::runtime::Context runtime_;
-	DefaultNetwork default_network_;
 	uml::network::Provider network_;
 	uml::network::ProviderContext network_context_;
-	bool default_user_network_{};
+	bool user_network_{};
 };
 
 } // namespace uml::emulator
@@ -255,9 +362,13 @@ struct uml_emulator {
 extern "C" int uml_emulator_create(const uml_emulator_config *config,
 				  uml_emulator **result)
 {
-	if (config == nullptr || result == nullptr ||
+	if (result == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	*result = nullptr;
+	if (config == nullptr ||
 	    config->abi_version != UML_EMULATOR_ABI_VERSION ||
 	    config->struct_size < sizeof(*config) ||
+	    (config->kernel_image == nullptr && config->kernel_image_size != 0) ||
 	    (config->network != nullptr &&
 	     (config->network->struct_size < sizeof(*config->network) ||
 	      config->network->open == nullptr ||
@@ -265,7 +376,6 @@ extern "C" int uml_emulator_create(const uml_emulator_config *config,
 	      config->network->read == nullptr ||
 	      config->network->write == nullptr)))
 		return -UML_EMULATOR_INVALID_ARGUMENT;
-	*result = nullptr;
 	std::unique_ptr<uml_emulator> emulator;
 	try {
 		emulator.reset(new uml_emulator(*config));

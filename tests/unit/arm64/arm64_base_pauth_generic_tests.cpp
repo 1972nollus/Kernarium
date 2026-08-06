@@ -28,6 +28,8 @@ void every_register_encoding(
 					.native = pauth::native_pauth,
 					.validator =
 						&pauth::validate_generic_code,
+					.validator_relation_id =
+						"permitted-transformed-generic/v1",
 				});
 				++cases;
 			}

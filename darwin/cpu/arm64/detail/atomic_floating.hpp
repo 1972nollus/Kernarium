@@ -431,7 +431,9 @@ template<AtomicFloatingOperation Operation>
 		return atomic_floating_result<AtomicFloatingOperation::minimum_number>(
 			observed, operand, width, bfloat, fpcr);
 	}
-	__builtin_unreachable();
+	/* Decoders construct only the five enumerators above. Preserve memory if a
+	 * corrupted internal descriptor ever crosses this helper boundary. */
+	return observed;
 }
 
 } // namespace uml::cpu::arm64::detail

@@ -23,8 +23,11 @@ public:
     InProcessGpuService(const InProcessGpuService&) = delete;
     InProcessGpuService& operator=(const InProcessGpuService&) = delete;
 
-    [[nodiscard]] const std::string& connectionName() const noexcept;
-    [[nodiscard]] const std::string& inputConnectionName() const noexcept;
+    /* Transfer each guest endpoint exactly once. The service retains only
+     * the opposite endpoint used by its worker, so guest closure and numeric
+     * descriptor reuse cannot make service teardown close an unrelated file. */
+    [[nodiscard]] std::string takeConnectionName();
+    [[nodiscard]] std::string takeInputConnectionName();
     void stop() noexcept;
 
 private:

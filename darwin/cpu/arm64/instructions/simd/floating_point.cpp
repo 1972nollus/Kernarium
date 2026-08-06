@@ -78,14 +78,16 @@ template<typename Floating>
 	case detail::BasicFloatingOperation::square_root:
 		return floating_square_root(first);
 	}
-	__builtin_unreachable();
+	/* The decoder constructs exactly the six enumerators above and the
+	 * dispatcher rejects an unrecognized descriptor before this helper. */
+	return first;
 }
 
 template<typename Floating>
 [[nodiscard]] Floating fused_floating_operation(bool negate, bool subtract,
 	Floating first, Floating second, Floating addend)
 {
-	Floating result;
+	Floating result{};
 #define UML_FUSED_ASM(suffix, operation) \
 	__asm__ volatile(#operation " %" #suffix "0, %" #suffix "1, %" #suffix \
 		"2, %" #suffix "3" : "=w"(result) : "w"(first), "w"(second), \
@@ -126,11 +128,12 @@ template<typename Floating>
 [[nodiscard]] Floating standard_floating_round(
 	detail::FloatingRoundOperation operation, Floating value)
 {
-	Floating result;
+	Floating result = value;
 #define UML_ROUND_ASM(suffix, instruction) \
 	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1" : \
 		"=w"(result) : "w"(value))
 #define UML_ROUND_SWITCH(suffix) \
+	/* Sized forms are handled before this helper. */ \
 	switch (operation) { \
 	case detail::FloatingRoundOperation::nearest: \
 		UML_ROUND_ASM(suffix, frintn); break; \
@@ -146,7 +149,7 @@ template<typename Floating>
 		UML_ROUND_ASM(suffix, frintx); break; \
 	case detail::FloatingRoundOperation::current: \
 		UML_ROUND_ASM(suffix, frinti); break; \
-	default: __builtin_unreachable(); \
+	default: break; \
 	}
 	if constexpr (sizeof(Floating) == 2)
 		UML_ROUND_SWITCH(h)
@@ -164,7 +167,7 @@ template<typename Floating>
 	detail::FloatingHorizontalOperation operation, Floating first,
 	Floating second)
 {
-	Floating result;
+	Floating result = first;
 #define UML_HORIZONTAL_ASM(suffix, instruction) \
 	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1, %" #suffix \
 		"2" : "=w"(result) : "w"(first), "w"(second))
@@ -184,7 +187,8 @@ template<typename Floating>
 		UML_HORIZONTAL_ASM(suffix, fminnm); break; \
 	case detail::FloatingHorizontalOperation::absolute_maximum: \
 	case detail::FloatingHorizontalOperation::absolute_minimum: \
-		__builtin_unreachable(); \
+		/* The caller handles absolute forms before this helper. */ \
+		break; \
 	}
 	if constexpr (sizeof(Floating) == 2)
 		UML_HORIZONTAL_SWITCH(h)
@@ -294,12 +298,13 @@ template<typename Floating>
 	detail::FloatingHorizontalOperation operation,
 	const std::array<std::byte, 16> &source, unsigned vector_bytes)
 {
-	Floating result;
+	Floating result{};
 #define UML_REDUCE_ASM(suffix, instruction, arrangement, load) \
 	__asm__ volatile(load " [%1]\n\t" #instruction " %" #suffix \
 		"0, v1." #arrangement : "=w"(result) : "r"(source.data()) : \
 		"v1", "memory")
 #define UML_REDUCE_SWITCH(suffix, arrangement, load) \
+	/* Reduction decode admits only the four cases below. */ \
 	switch (operation) { \
 	case detail::FloatingHorizontalOperation::maximum: \
 		UML_REDUCE_ASM(suffix, fmaxv, arrangement, load); break; \
@@ -309,7 +314,7 @@ template<typename Floating>
 		UML_REDUCE_ASM(suffix, fminv, arrangement, load); break; \
 	case detail::FloatingHorizontalOperation::minimum_number: \
 		UML_REDUCE_ASM(suffix, fminnmv, arrangement, load); break; \
-	default: __builtin_unreachable(); \
+	default: break; \
 	}
 	if constexpr (sizeof(Floating) == 2) {
 		if (vector_bytes == 8U)
@@ -514,7 +519,9 @@ void execute_floating_round(CpuState &cpu, std::uint32_t instruction,
 		const auto value = decode_lane<Floating>(source, lane);
 		if (detail::is_sized_round(decoded.operation)) {
 			if constexpr (sizeof(Floating) == 2) {
-				__builtin_unreachable();
+				/* Sized-round encodings never decode as half precision. Keep
+				 * the source unchanged if an internal descriptor is corrupted. */
+				encode_lane(result, lane, value);
 			} else {
 				const unsigned integer_bits =
 					decoded.operation ==

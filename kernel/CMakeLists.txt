@@ -1,6 +1,25 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-set(UML_KERNEL_BUILD_DIR "${PROJECT_SOURCE_DIR}/.build/kernel" CACHE PATH
+if(UML_GUEST_16K_PAGES)
+    set(UML_KERNEL_PAGE_VARIANT 16k)
+    set(UML_KERNEL_PAGE_FRAGMENT
+        "${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment")
+else()
+    set(UML_KERNEL_PAGE_VARIANT 4k)
+    set(UML_KERNEL_PAGE_FRAGMENT
+        "${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment")
+endif()
+
+# Each CMake binary tree owns a page-variant-specific Kbuild directory. The
+# checked 16 KiB and 4 KiB presets can therefore build concurrently without
+# reusing or replacing one another's .config, objects, or embedded vmlinux.
+include("${PROJECT_SOURCE_DIR}/kernel/CMakeBuildLayout.cmake")
+uml_kernel_build_layout(
+    BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+    PAGE_VARIANT "${UML_KERNEL_PAGE_VARIANT}"
+    OUT_BUILD_DIR UML_KERNEL_DEFAULT_BUILD_DIR
+    OUT_IMAGE UML_KERNEL_DEFAULT_IMAGE)
+set(UML_KERNEL_BUILD_DIR "${UML_KERNEL_DEFAULT_BUILD_DIR}" CACHE PATH
     "Out-of-tree Linux UML kernel build directory")
 # The kernel image is an output of UML_KERNEL_BUILD_DIR, not an independent
 # input. Keeping it as a normal user cache entry allowed a reused build tree
@@ -9,6 +28,12 @@ set(UML_KERNEL_IMAGE "${UML_KERNEL_BUILD_DIR}/vmlinux" CACHE INTERNAL
     "Derived Linux UML kernel ELF embedded in the transitional macOS CLI" FORCE)
 set(UML_KERNEL_SOURCE_DIR "${PROJECT_SOURCE_DIR}/linux" CACHE PATH
     "Prepared official Linux UML source checkout")
+if(UML_KERNEL_SOURCE_DIR STREQUAL "")
+    message(FATAL_ERROR
+        "UML_KERNEL_SOURCE_DIR is empty. Integration presets require the "
+        "UML_KERNEL_SOURCE_DIR environment variable to name a clean prepared "
+        "Linux checkout on a case-sensitive filesystem.")
+endif()
 if(NOT EXISTS "${UML_KERNEL_SOURCE_DIR}/Makefile")
     message(FATAL_ERROR
         "UML_KERNEL_SOURCE_DIR must contain a prepared Linux checkout: "
@@ -77,7 +102,7 @@ if(NOT UML_KERNEL_REVISION_FILE_RESULT EQUAL 0 OR
         "Cannot resolve the Git revision file for UML_KERNEL_SOURCE_DIR: "
         "${UML_KERNEL_SOURCE_DIR}")
 endif()
-set(UML_KERNEL_JOBS 8 CACHE STRING
+set(UML_KERNEL_JOBS 2 CACHE STRING
     "Parallel GNU Make jobs for the out-of-tree UML kernel build")
 if(NOT UML_KERNEL_JOBS MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "UML_KERNEL_JOBS must be a positive integer")
@@ -136,16 +161,6 @@ if(NOT UML_KERNEL_PROFILE MATCHES "^(core|desktop|production)$")
         "UML_KERNEL_PROFILE must be core, desktop, or production")
 endif()
 
-if(UML_GUEST_16K_PAGES)
-    set(UML_KERNEL_PAGE_VARIANT 16k)
-    set(UML_KERNEL_PAGE_FRAGMENT
-        "${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment")
-else()
-    set(UML_KERNEL_PAGE_VARIANT 4k)
-    set(UML_KERNEL_PAGE_FRAGMENT
-        "${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment")
-endif()
-
 add_custom_target(uml_kernel_source_verify
     COMMAND "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
         --source "${UML_KERNEL_SOURCE_DIR}" --verify --no-fetch
@@ -190,6 +205,8 @@ add_custom_command(
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/libelf.h"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/bin/find"
             "${PROJECT_SOURCE_DIR}/kernel/abi/sync.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/abi/verify-linux-imports.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/abi/import-policy.tsv"
             "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_abi.h"
             "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_bridge.h"
             "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_cpu.h"
@@ -199,12 +216,15 @@ add_custom_command(
             "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
             "${PROJECT_SOURCE_DIR}/kernel/materialize-release.sh"
             "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/verify-series-policy.py"
             "${PROJECT_SOURCE_DIR}/kernel/verify-replay.sh"
             "${PROJECT_SOURCE_DIR}/kernel/check-next-version.sh"
             "${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env"
             "${PROJECT_SOURCE_DIR}/kernel/keys/38DBBDC86092693E.asc"
             "${PROJECT_SOURCE_DIR}/kernel/patches/path-ownership.tsv"
+            "${PROJECT_SOURCE_DIR}/kernel/patches/extraction-decisions.tsv"
             "${PROJECT_SOURCE_DIR}/kernel/patches/outside-port-justification.tsv"
+            "${PROJECT_SOURCE_DIR}/kernel/patches/topic-path-overlaps.tsv"
             "${PROJECT_SOURCE_DIR}/kernel/patches/series/manifest.tsv"
             ${UML_KERNEL_PATCH_FILES}
             uml_kernel_source_verify

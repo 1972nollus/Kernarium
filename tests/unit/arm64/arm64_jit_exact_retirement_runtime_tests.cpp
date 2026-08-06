@@ -190,11 +190,8 @@ void dynamic_fault_with_odd_prefix_is_exact() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  if (verification == nullptr || verification[0] == '\0' ||
-      verification[0] == '0')
-    direct_and_pic_constant_terminals_are_exact();
+  require(jit_available() == 1);
+  direct_and_pic_constant_terminals_are_exact();
   dynamic_success_with_odd_prefix_is_exact();
   dynamic_fault_with_odd_prefix_is_exact();
   return 0;

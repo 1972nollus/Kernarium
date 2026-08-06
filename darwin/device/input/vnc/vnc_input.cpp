@@ -119,4 +119,18 @@ std::optional<std::uint16_t> keyCode(std::uint32_t keySymbol) noexcept
     return find(specialKeys, keySymbol);
 }
 
+bool tryDeliver(
+    const VncInputSink& sink,
+    std::span<const VncInputEvent> events) noexcept
+{
+    if (!sink)
+        return true;
+    try {
+        sink(events);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // namespace uml::gpu::input

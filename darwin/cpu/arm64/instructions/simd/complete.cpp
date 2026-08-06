@@ -24,6 +24,7 @@ namespace uml::cpu::arm64 {
 using detail::continue_after;
 using detail::decode_little_endian;
 using detail::encode_little_endian;
+using namespace simd_complete_detail;
 
 RunResult Dispatcher::simd_dot_product(CpuState &cpu, GuestMemory &,
 	std::uint32_t instruction) const

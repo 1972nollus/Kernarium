@@ -19,7 +19,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_structure_${simd_structure_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_structure_${simd_structure_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -42,7 +43,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_ordered_${simd_ordered_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_ordered_${simd_ordered_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -59,10 +61,11 @@
 
 	add_executable(uml_arm64_simd_baseline_inventory_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_baseline_inventory_tests.cpp
-		${PROJECT_SOURCE_DIR}/tests/arm64-neon-inventory.s
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64-neon-inventory.s
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 	target_include_directories(uml_arm64_simd_baseline_inventory_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -76,7 +79,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_three_same_${simd_three_same_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_three_same_${simd_three_same_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -96,7 +100,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_widening_${simd_widening_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_widening_${simd_widening_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -121,7 +126,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_high_narrow_${simd_high_narrow_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_high_narrow_${simd_high_narrow_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -149,7 +155,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_two_register_${simd_two_register_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_two_register_${simd_two_register_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -169,7 +176,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_reduce_${simd_reduce_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_reduce_${simd_reduce_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -189,7 +197,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_estimate_${simd_estimate_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_estimate_${simd_estimate_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -209,7 +218,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_bitwise_${simd_bitwise_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_bitwise_${simd_bitwise_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -229,7 +239,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_immediate_${simd_immediate_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_immediate_${simd_immediate_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -250,7 +261,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_rearrange_${simd_rearrange_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_rearrange_${simd_rearrange_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -270,7 +282,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_lut_${simd_lut_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_simd_lut_${simd_lut_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -290,7 +303,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_basic_floating_${basic_floating_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_basic_floating_${basic_floating_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -310,7 +324,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_fused_floating_${fused_floating_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_fused_floating_${fused_floating_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -330,7 +345,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_round_${floating_round_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_round_${floating_round_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -352,7 +368,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_integer_to_floating_${integer_to_floating_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_integer_to_floating_${integer_to_floating_suite}_tests
 			PRIVATE ${PROJECT_SOURCE_DIR}/darwin
@@ -376,7 +393,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_horizontal_${floating_horizontal_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_horizontal_${floating_horizontal_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -399,7 +417,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_reciprocal_${floating_reciprocal_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_reciprocal_${floating_reciprocal_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -422,7 +441,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_complex_${floating_complex_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_complex_${floating_complex_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -445,7 +465,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_absolute_minmax_${floating_absolute_minmax_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_absolute_minmax_${floating_absolute_minmax_suite}_tests
 			PRIVATE ${PROJECT_SOURCE_DIR}/darwin
@@ -467,7 +488,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_scale_${floating_scale_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_floating_scale_${floating_scale_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -481,4 +503,3 @@
 		uml_add_unit_test(NAME arm64-floating-scale-${floating_scale_suite}
 			COMMAND uml_arm64_floating_scale_${floating_scale_suite}_tests)
 	endforeach()
-

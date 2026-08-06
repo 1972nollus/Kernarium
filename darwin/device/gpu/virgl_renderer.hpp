@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <condition_variable>
 #include <mutex>
@@ -57,13 +58,14 @@ public:
     [[nodiscard]] int createContext(
         std::uint32_t contextId,
         std::uint32_t flags,
-        std::string_view debugName);
-    void destroyContext(std::uint32_t contextId);
+        std::string_view debugName) noexcept;
+    void destroyContext(std::uint32_t contextId) noexcept;
 
     [[nodiscard]] int submit(
         std::uint32_t contextId,
-        std::span<const std::uint8_t> command);
-    [[nodiscard]] int createResource3d(const Resource3d& resource);
+        std::span<const std::uint8_t> command) noexcept;
+    [[nodiscard]] int createResource3d(
+        const Resource3d& resource) noexcept;
     [[nodiscard]] int transferResource(
         bool toHost,
         std::uint32_t resourceId,
@@ -72,46 +74,48 @@ public:
         std::uint32_t stride,
         std::uint32_t layerStride,
         const Box& box,
-        std::uint64_t offset);
-    void readResourceRectangle(
+        std::uint64_t offset) noexcept;
+    [[nodiscard]] int readResourceRectangle(
         std::uint32_t resourceId,
         std::span<std::uint8_t> destination,
         std::uint32_t offset,
         std::uint32_t x,
         std::uint32_t y,
         std::uint32_t width,
-        std::uint32_t height);
+        std::uint32_t height) noexcept;
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
-        std::uint64_t fenceId);
-    void unrefResource(std::uint32_t resourceId);
+        std::uint64_t fenceId,
+        const std::atomic_bool* stopRequested) noexcept;
+    void unrefResource(std::uint32_t resourceId) noexcept;
     [[nodiscard]] int attachBacking(
         std::uint32_t resourceId,
-        std::span<iovec> backing);
-    void detachBacking(std::uint32_t resourceId);
-    void attachResource(
+        std::span<iovec> backing) noexcept;
+    void detachBacking(std::uint32_t resourceId) noexcept;
+    [[nodiscard]] int attachResource(
         std::uint32_t contextId,
-        std::uint32_t resourceId);
-    void detachResource(
+        std::uint32_t resourceId) noexcept;
+    [[nodiscard]] int detachResource(
         std::uint32_t contextId,
-        std::uint32_t resourceId);
+        std::uint32_t resourceId) noexcept;
+    void resetFenceState() noexcept;
 private:
     static void* createGlContext(
         void* cookie,
         int scanoutIndex,
-        virgl_renderer_gl_ctx_param* parameters);
-    static void destroyGlContext(void* cookie, void* context);
+        virgl_renderer_gl_ctx_param* parameters) noexcept;
+    static void destroyGlContext(void* cookie, void* context) noexcept;
     static int makeGlContextCurrent(
         void* cookie,
         int scanoutIndex,
-        void* context);
-    static void writeFence(void* cookie, std::uint32_t fenceId);
+        void* context) noexcept;
+    static void writeFence(void* cookie, std::uint32_t fenceId) noexcept;
     static void writeContextFence(
         void* cookie,
         std::uint32_t contextId,
         std::uint32_t ringIndex,
-        std::uint64_t fenceId);
+        std::uint64_t fenceId) noexcept;
     [[nodiscard]] static std::uint64_t contextRingKey(
         std::uint32_t contextId,
         std::uint32_t ringIndex) noexcept;
@@ -120,6 +124,7 @@ private:
     std::mutex glContextMutex_;
     std::condition_variable fenceCondition_;
     std::unordered_map<std::uint64_t, std::uint64_t> retiredContextFences_;
+    std::atomic_bool fenceCallbackFailed_ {};
     void* sharedGlContext_ {};
     std::uint32_t retiredFence_ {};
 };

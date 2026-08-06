@@ -12,12 +12,16 @@ namespace {
 	const RunResult &result, std::size_t retired,
 	const GuestAddressSpace &memory) noexcept
 {
+	const auto result_access = result.access ==
+			::uml::memory::MemoryAccess::execute ?
+		::uml::memory::MemoryAccess::execute :
+		result.write ? ::uml::memory::MemoryAccess::write :
+			::uml::memory::MemoryAccess::read;
 	ExecutionResult output{};
 	output.retired_instructions = retired;
 	output.fault = {
 		.address = result.address,
-		.access = result.write ? ::uml::memory::MemoryAccess::write :
-			::uml::memory::MemoryAccess::read,
+		.access = result_access,
 	};
 	output.syndrome = result.syndrome;
 	if (result.reason == StopReason::memory_fault) {
@@ -26,9 +30,7 @@ namespace {
 		/* The static MMU reports the failed page, while Dispatcher::run
 		 * retains the architectural direction for compound operations such as
 		 * atomic RMW. Preserve that direction in the common result. */
-		output.fault.access = result.write ?
-			::uml::memory::MemoryAccess::write :
-			::uml::memory::MemoryAccess::read;
+		output.fault.access = result_access;
 	}
 	switch (result.reason) {
 	case StopReason::continued:
@@ -46,12 +48,14 @@ namespace {
 	case StopReason::illegal_instruction:
 		output.reason = ExitReason::illegal_instruction;
 		break;
+	case StopReason::unavailable_feature:
+		output.reason = ExitReason::illegal_instruction;
+		break;
 	case StopReason::unsupported_instruction:
-		/* A valid encoding that the strict interpreter does not implement is
-		 * an emulator coverage failure, not a guest-visible undefined
-		 * instruction. Preserve the pre-refactor fatal/debug boundary.
-		 */
-		output.reason = ExitReason::fatal;
+		/* An implementation gap is diagnostically distinct inside the
+		 * dispatcher, but it remains scoped to the guest task at the public
+		 * engine boundary. It must not terminate the emulator instance. */
+		output.reason = ExitReason::illegal_instruction;
 		break;
 	case StopReason::breakpoint:
 		output.reason = ExitReason::breakpoint;
@@ -92,6 +96,19 @@ public:
 				if (request.interrupt.pending())
 					return {.reason = ExitReason::interrupt,
 						.retired_instructions = retired};
+				/* BranchTo installs the target before the architecture checks
+				 * instruction-address alignment. Preserve any prior retired prefix,
+				 * but never attempt a misaligned host-side fetch. */
+				if ((request.cpu.pc &
+				     (alignof(std::uint32_t) - 1U)) != 0U)
+					return {
+						.reason = ExitReason::pc_alignment,
+						.retired_instructions = retired,
+						.fault = {
+							.address = request.cpu.pc,
+							.access = ::uml::memory::MemoryAccess::execute,
+						},
+					};
 				const auto result = dispatcher.step(
 					request.cpu, request.memory);
 				retired += result.instructions;

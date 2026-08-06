@@ -62,7 +62,7 @@ void current_host_barriers_execute() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
+  require(jit_available() == 1);
   current_host_barriers_execute();
   return 0;
 }

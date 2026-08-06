@@ -22,7 +22,7 @@ proxy-libintl|0.5
 glib|2.88.3
 libslirp|4.9.3
 libepoxy|1.5.10
-libvncserver|0.9.15+backports.20260519
+libvncserver|0.9.15
 virglrenderer|1.3.0'
 
 fail()
@@ -172,6 +172,7 @@ MESON_DIR=$(dirname -- "$MESON")
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
 mkdir -p -- "$WORK_ROOT" "$PREFIX_PARENT"
+WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
 PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
 PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 TEMP_ROOT=
@@ -456,7 +457,7 @@ meson_env setup "$BUILDS/libepoxy" "$SOURCES/libepoxy" \
 meson_env compile -C "$BUILDS/libepoxy"
 meson_install_env install -C "$BUILDS/libepoxy"
 
-printf '%s\n' "building LibVNCServer 0.9.15 with upstream backports"
+printf '%s\n' "building pristine LibVNCServer 0.9.15"
 cmake_setup "$SOURCES/libvncserver" "$BUILDS/libvncserver" \
 	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
 	-DLIBVNCSERVER_INSTALL=ON \

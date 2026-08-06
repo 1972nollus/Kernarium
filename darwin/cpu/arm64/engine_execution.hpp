@@ -56,58 +56,90 @@ template<bool PollCallback, typename Executor>
 	};
 
 	std::size_t retired = 0;
-	for (;;) {
-		if (interrupt_pending())
-			return finish(ExitReason::interrupt, retired);
-		std::size_t block_instructions = 0;
-		const auto event = executor.run_block(
-			request.cpu, memory, request.generation, block_instructions);
-		retired += block_instructions;
-		if (executor.preempted())
-			return finish(ExitReason::interrupt, retired);
-		if (request.boundary != nullptr &&
-			request.boundary(request.cpu, request.boundary_context))
-			return finish(ExitReason::system_call, retired);
-		if (event == EngineEvent::continued) {
-			if (retired < request.instruction_budget)
-				continue;
-			return finish(ExitReason::instruction_budget, retired);
-		}
-
-		switch (event) {
-		case EngineEvent::system_call:
-			return finish(ExitReason::system_call, retired);
-		case EngineEvent::memory_fault:
-			return finish(ExitReason::memory_fault, retired,
-				executor.fault_address(),
-				executor.fault_access() == ::uml::memory::Access::write ?
-					::uml::memory::MemoryAccess::write :
-					::uml::memory::MemoryAccess::read);
-		case EngineEvent::interrupt:
-			/* Translated blocks use the interrupt event as their ordinary
-			 * cold-boundary/fairness exit. It becomes guest-visible only when
-			 * an actual interrupt token or engine preemption is pending.
-			 */
+	try {
+		for (;;) {
 			if (interrupt_pending())
 				return finish(ExitReason::interrupt, retired);
-			if (retired < request.instruction_budget)
-				continue;
-			return finish(ExitReason::instruction_budget, retired);
-		case EngineEvent::illegal_instruction:
-			return finish(ExitReason::illegal_instruction, retired);
-		case EngineEvent::breakpoint:
-			return finish(ExitReason::breakpoint, retired);
-		case EngineEvent::gcs_fault:
-			return finish(ExitReason::gcs_fault, retired);
-		case EngineEvent::floating_point_trap:
-			return finish(ExitReason::floating_point_trap, retired, 0,
-				::uml::memory::MemoryAccess::read,
-				executor.floating_point_syndrome());
-		case EngineEvent::fatal:
-			return finish(ExitReason::fatal, retired);
-		case EngineEvent::continued:
-			break;
+			/* AArch64 checks PC alignment at the next instruction boundary.
+			 * Keep this outside generated blocks: valid programs pay one cold
+			 * block-boundary branch, while a misaligned indirect target retains
+			 * the already-retired branch prefix and never reaches host code.
+			 */
+			if ((request.cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U)
+				return finish(ExitReason::pc_alignment, retired,
+					request.cpu.pc,
+					::uml::memory::MemoryAccess::execute);
+			std::size_t block_instructions = 0;
+			EngineEvent event;
+			try {
+				event = executor.run_block(
+					request.cpu, memory, request.generation,
+					block_instructions);
+			} catch (...) {
+				/* Executors publish only the committed prefix through the
+				 * out-parameter. A cold cache/link postamble can fail after
+				 * native work has advanced CpuState, so include that prefix
+				 * before materializing the abnormal boundary. */
+				retired += block_instructions;
+				return finish(ExitReason::fatal, retired);
+			}
+			retired += block_instructions;
+			if (executor.preempted())
+				return finish(ExitReason::interrupt, retired);
+			if (request.boundary != nullptr &&
+				request.boundary(
+					request.cpu, request.boundary_context))
+				return finish(ExitReason::system_call, retired);
+			if (event == EngineEvent::continued) {
+				if (retired < request.instruction_budget)
+					continue;
+				return finish(ExitReason::instruction_budget, retired);
+			}
+
+			switch (event) {
+			case EngineEvent::system_call:
+				return finish(ExitReason::system_call, retired);
+			case EngineEvent::memory_fault:
+				return finish(ExitReason::memory_fault, retired,
+					executor.fault_address(),
+					::uml::memory::guest_access(
+						executor.fault_access()));
+			case EngineEvent::interrupt:
+				/* Translated blocks use the interrupt event as their ordinary
+				 * cold-boundary/fairness exit. It becomes guest-visible only when
+				 * an actual interrupt token or engine preemption is pending.
+				 */
+				if (interrupt_pending())
+					return finish(ExitReason::interrupt, retired);
+				if (retired < request.instruction_budget)
+					continue;
+				return finish(ExitReason::instruction_budget, retired);
+			case EngineEvent::illegal_instruction:
+				return finish(ExitReason::illegal_instruction, retired);
+			case EngineEvent::breakpoint:
+				return finish(ExitReason::breakpoint, retired);
+			case EngineEvent::gcs_fault:
+				return finish(ExitReason::gcs_fault, retired);
+			case EngineEvent::floating_point_trap:
+				return finish(ExitReason::floating_point_trap, retired, 0,
+					::uml::memory::MemoryAccess::read,
+					executor.floating_point_syndrome());
+			case EngineEvent::pc_alignment:
+				return finish(ExitReason::pc_alignment, retired,
+					request.cpu.pc,
+					::uml::memory::MemoryAccess::execute);
+			case EngineEvent::fatal:
+				return finish(ExitReason::fatal, retired);
+			case EngineEvent::continued:
+				break;
+			}
 		}
+	} catch (...) {
+		/* A later block may fail after earlier translated work left native
+		 * architectural state live. Convert the exception here, while both the
+		 * exact retired prefix and the request CpuState are still available.
+		 * ExecutionScope subsequently balances the MMU execution lifetime. */
+		return finish(ExitReason::fatal, retired);
 	}
 }
 

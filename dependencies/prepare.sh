@@ -169,6 +169,21 @@ validate_row()
 	fi
 }
 
+validate_patch_inventory()
+{
+	manifest_patches=$(awk -F '\t' '
+		/^#/ || /^[[:space:]]*$/ || $1 == "name" || $9 == "-" { next }
+		{ print $9 }
+	' "$MANIFEST" | LC_ALL=C sort -u)
+	directory_patches=$(
+		cd "$PATCH_ROOT"
+		find . -type f -name '*.patch' -print |
+			sed 's|^\./||' | LC_ALL=C sort
+	)
+	[ "$directory_patches" = "$manifest_patches" ] ||
+		fail "dependency patch inventory differs from manifest"
+}
+
 if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
 	tab=$(printf '\t')
 	while IFS="$tab" read -r name version kind archive_url archive_file \
@@ -178,9 +193,12 @@ if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
 		esac
 		validate_row
 	done < "$MANIFEST"
+	validate_patch_inventory
 	printf '%s\n' "validated dependency manifest: $MANIFEST"
 	exit 0
 fi
+
+validate_patch_inventory
 
 if [ "$VERIFY_ONLY" -eq 0 ]; then
 	mkdir -p -- "$DEPENDENCY_ROOT" "$CACHE_ROOT"

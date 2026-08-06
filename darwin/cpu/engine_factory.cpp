@@ -22,7 +22,14 @@ std::unique_ptr<CpuEngine> make_cpu_engine(
 
 bool cpu_engine_available(EngineKind kind) noexcept
 {
-	return kind != EngineKind::jit || arm64::detail::native_jit_engine_available();
+	switch (kind) {
+	case EngineKind::interpreter:
+	case EngineKind::gadgets:
+		return true;
+	case EngineKind::jit:
+		return arm64::detail::native_jit_engine_available();
+	}
+	return false;
 }
 
 void materialize_architectural_state(arm64::CpuState &cpu) noexcept

@@ -28,7 +28,7 @@ string(REPLACE "," ";" REQUIRED_CONDITIONAL_TESTS
 
 find_program(CTEST_EXECUTABLE NAMES ctest REQUIRED)
 execute_process(
-    COMMAND "${CTEST_EXECUTABLE}" --test-dir "${BUILD_ROOT}" -N
+    COMMAND "${CTEST_EXECUTABLE}" --test-dir "${BUILD_ROOT}" -N -V
     RESULT_VARIABLE CTEST_RESULT
     OUTPUT_VARIABLE CTEST_OUTPUT
     ERROR_VARIABLE CTEST_ERROR)
@@ -79,6 +79,13 @@ foreach(ROW IN LISTS MANIFEST_ROWS)
     endif()
     if(NOT SUITE MATCHES "^(unit|tooling|integration)$")
         message(FATAL_ERROR "Test manifest has an invalid suite: ${ROW}")
+    endif()
+    set(EXPECTED_OWNER_ROOT "tests/${SUITE}")
+    if(NOT OWNER STREQUAL "${EXPECTED_OWNER_ROOT}" AND
+       NOT OWNER MATCHES "^${EXPECTED_OWNER_ROOT}/")
+        message(FATAL_ERROR
+            "Test owner is outside ${EXPECTED_OWNER_ROOT} for ${SUITE} "
+            "suite: ${ROW}")
     endif()
     if(NOT DISPOSITION MATCHES "^(retained|conditional|renamed|removed)$")
         message(FATAL_ERROR "Test manifest has an invalid disposition: ${ROW}")
@@ -218,6 +225,27 @@ endforeach()
 
 string(REPLACE "\r\n" "\n" CTEST_OUTPUT "${CTEST_OUTPUT}")
 string(REGEX MATCHALL "Test[ \t]+#[0-9]+:[ \t]*[^\n]+" CTEST_ROWS "${CTEST_OUTPUT}")
+string(REGEX MATCHALL
+    "Labels:[^\n]*\n[ \t]*Test[ \t]+#[0-9]+:[ \t]*[^\n]+"
+    CTEST_LABELED_ROWS "${CTEST_OUTPUT}")
+set(CTEST_LABELED_NAMES)
+set(CTEST_LABEL_SETS)
+foreach(ROW IN LISTS CTEST_LABELED_ROWS)
+    string(REGEX REPLACE
+        "^Labels:[ \t]*([^\n]*)\n[ \t]*Test[ \t]+#[0-9]+:[ \t]*(.*)$"
+        "\\1" TEST_LABELS "${ROW}")
+    string(REGEX REPLACE
+        "^Labels:[^\n]*\n[ \t]*Test[ \t]+#[0-9]+:[ \t]*(.*)$"
+        "\\1" LABELED_TEST_NAME "${ROW}")
+    list(FIND CTEST_LABELED_NAMES "${LABELED_TEST_NAME}" DUPLICATE_INDEX)
+    if(NOT DUPLICATE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "Duplicate CTest label record: ${LABELED_TEST_NAME}")
+    endif()
+    list(APPEND CTEST_LABELED_NAMES "${LABELED_TEST_NAME}")
+    list(APPEND CTEST_LABEL_SETS "${TEST_LABELS}")
+endforeach()
+
 set(CTEST_NAMES)
 foreach(ROW IN LISTS CTEST_ROWS)
     string(REGEX REPLACE "^[ \t]*Test[ \t]+#[0-9]+:[ \t]*" "" TEST_NAME "${ROW}")
@@ -239,6 +267,43 @@ foreach(ROW IN LISTS CTEST_ROWS)
        NOT DISPOSITION STREQUAL "conditional")
         message(FATAL_ERROR
             "Registered test is not retained in ${MANIFEST}: ${TEST_NAME}")
+    endif()
+
+    # Inspect the generated CTest registry, not only helper bookkeeping. This
+    # catches a raw or post-registration mutation that omits the suite label or
+    # assigns a test to a different aggregate than its manifest owner.
+    list(FIND CTEST_LABELED_NAMES "${TEST_NAME}" LABELED_INDEX)
+    if(LABELED_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "CTest registration has no suite label: ${TEST_NAME}")
+    endif()
+    list(GET CTEST_LABEL_SETS ${LABELED_INDEX} TEST_LABELS)
+    string(REGEX MATCHALL "[^ \t]+" TEST_LABEL_LIST "${TEST_LABELS}")
+    set(TEST_SUITE_LABELS)
+    foreach(LABEL IN LISTS TEST_LABEL_LIST)
+        if(LABEL MATCHES "^(unit|tooling|integration)$")
+            list(APPEND TEST_SUITE_LABELS "${LABEL}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES TEST_SUITE_LABELS)
+    list(LENGTH TEST_SUITE_LABELS TEST_SUITE_LABEL_COUNT)
+    if(NOT TEST_SUITE_LABEL_COUNT EQUAL 1)
+        message(FATAL_ERROR
+            "CTest registration must have exactly one suite label: "
+            "${TEST_NAME} (${TEST_LABELS})")
+    endif()
+    list(GET TEST_SUITE_LABELS 0 TEST_SUITE_LABEL)
+    list(GET MANIFEST_SUITES ${MANIFEST_INDEX} MANIFEST_SUITE)
+    if(NOT TEST_SUITE_LABEL STREQUAL MANIFEST_SUITE)
+        message(FATAL_ERROR
+            "CTest suite label differs from ${MANIFEST}: ${TEST_NAME} "
+            "(${TEST_SUITE_LABEL} versus ${MANIFEST_SUITE})")
+    endif()
+    list(FIND EXPECTED_SUITES "${TEST_SUITE_LABEL}" SUITE_ENABLED)
+    if(SUITE_ENABLED EQUAL -1)
+        message(FATAL_ERROR
+            "CTest registered a disabled suite: ${TEST_NAME} "
+            "(${TEST_SUITE_LABEL})")
     endif()
 endforeach()
 

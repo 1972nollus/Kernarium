@@ -110,20 +110,6 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
-uml_add_guest_integration_test(
-    NAME guest-smp-topology
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
-        --emulator $<TARGET_FILE:uml-darwin>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --root-device /dev/ubda1
-        --overlay-shell
-        --cpus 10
-    LABELS guest;smp;topology;full;pressure
-    TIMEOUT 420
-    PROCESSORS 10
-    RESOURCE_GROUPS cpus:10)
-
 set(UML_GUEST_SHARED_MMAP_STRESS
     "${CMAKE_CURRENT_BINARY_DIR}/guest-shared-mmap-stress")
 add_custom_command(

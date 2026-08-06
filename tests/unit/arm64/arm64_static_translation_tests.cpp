@@ -124,7 +124,7 @@ void translation_window_preserves_a_second_page_fault()
 	require(registers.x[0] == 42);
 	require(registers.pc == base + page);
 	require(registers.fault.address == base + page);
-	require(registers.fault.error_code == 0);
+	require(registers.fault.error_code == DARWIN_UML_FAULT_EXECUTE);
 }
 
 } // namespace

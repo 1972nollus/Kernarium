@@ -2,6 +2,7 @@
 #include "options.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <string_view>
 
 namespace uml::emulator {
@@ -23,6 +24,21 @@ namespace {
 	});
 }
 
+[[nodiscard]] bool has_writable_primary_block_device(
+	const std::vector<std::string> &arguments)
+{
+	for (const auto &argument : arguments) {
+		constexpr std::string_view device{"ubd0"};
+		if (!argument.starts_with(device))
+			continue;
+		const auto separator = argument.find('=', device.size());
+		if (separator == std::string::npos ||
+		    argument.find('r', device.size()) >= separator)
+			return true;
+	}
+	return false;
+}
+
 [[nodiscard]] bool informational(
 	const std::vector<std::string> &arguments)
 {
@@ -32,16 +48,16 @@ namespace {
 }
 
 [[nodiscard]] bool parse_execution_engine(
-	std::string_view value, darwin_uml_execution_engine &engine)
+	std::string_view value, ::uml::runtime::ExecutionEngine &engine)
 {
 	if (value == "auto")
-		engine = DARWIN_UML_EXECUTION_AUTO;
+		engine = ::uml::runtime::ExecutionEngine::automatic;
 	else if (value == "jit")
-		engine = DARWIN_UML_EXECUTION_JIT;
+		engine = ::uml::runtime::ExecutionEngine::jit;
 	else if (value == "gadgets")
-		engine = DARWIN_UML_EXECUTION_GADGETS;
+		engine = ::uml::runtime::ExecutionEngine::gadgets;
 	else if (value == "interpreter")
-		engine = DARWIN_UML_EXECUTION_INTERPRETER;
+		engine = ::uml::runtime::ExecutionEngine::interpreter;
 	else
 		return false;
 	return true;
@@ -54,7 +70,13 @@ EmulatorOptions prepare_emulator_options(
 	bool default_user_network)
 {
 	EmulatorOptions prepared;
-	if (argc < 0 || (argc != 0 && argv == nullptr)) {
+	/* Policy can append at most six kernel arguments. Keep the final argc
+	 * representable by the fixed-width kernel entry ABI before allocating or
+	 * inspecting a caller-supplied vector. */
+	constexpr int maximum_appended_arguments = 6;
+	if (argc < 0 ||
+	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
+	    (argc != 0 && argv == nullptr)) {
 		prepared.valid = false;
 		return prepared;
 	}
@@ -92,9 +114,11 @@ EmulatorOptions prepare_emulator_options(
 		prepared.arguments.emplace_back("uml-darwin");
 	if (informational(prepared.arguments))
 		return prepared;
-	// The project rootfs is a frozen GPT image.  A writable `ubd0=` mapping
-	// would bypass OverlayFS and can silently damage the shared fixture.
-	if (has_prefix(prepared.arguments, "ubd0=")) {
+	// The project rootfs is a frozen GPT image. Every valid UML block-device
+	// flag combination is writable unless it contains `r`; accepting only the
+	// plain `ubd0=` spelling here would leave `ubd0s=`, `ubd0c=`, and the other
+	// flag variants able to bypass OverlayFS and damage the shared fixture.
+	if (has_writable_primary_block_device(prepared.arguments)) {
 		prepared.valid = false;
 		return prepared;
 	}

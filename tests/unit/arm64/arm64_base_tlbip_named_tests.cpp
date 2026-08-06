@@ -33,17 +33,19 @@ void every_named_operation_and_pair(engine::EngineHarness &harness)
 				feature_test::check_profile_illegal(
 					harness, d128_name, instruction,
 					d128_native);
-				/*
-				 * The same encoding is allocated by either of two
-				 * architectural versions. Keep both native gates so a
-				 * host implementing just one version executes JIT for
-				 * exactly that version.
-				 */
-				const feature_test::CaseName tlbid_name{
-					"tlbip-tlbid-%04x-t%u", key, first};
-				feature_test::check_profile_illegal(
-					harness, tlbid_name, instruction,
-					tlbid_native);
+				if (operations::tlbip_supports_tlbid(
+						op1, crn, crm, op2)) {
+					/*
+					 * These operation-table rows are allocated by
+					 * FEAT_D128 or FEAT_TLBID. D128-only rows must not
+					 * acquire a spurious TLBID native gate.
+					 */
+					const feature_test::CaseName tlbid_name{
+						"tlbip-tlbid-%04x-t%u", key, first};
+					feature_test::check_profile_illegal(
+						harness, tlbid_name, instruction,
+						tlbid_native);
+				}
 			} else {
 				const feature_test::CaseName reserved_name{
 					"tlbip-reserved-rt-%04x-t%u",
@@ -61,8 +63,12 @@ int main()
 {
 	engine::EngineHarness harness;
 	every_named_operation_and_pair(harness);
+	constexpr std::size_t tlbid_operations =
+		operations::tlbip_named.size() -
+		operations::tlbip_d128_only.size();
 	constexpr std::size_t cases =
-		operations::tlbip_named.size() * (17U * 2U + 15U);
+		operations::tlbip_named.size() * (17U + 15U) +
+		tlbid_operations * 17U;
 	operations::require_mandatory_jit(
 		harness, cases, operations::tlbip_named.size() * 15U);
 	harness.print_summary("arm64-base-tlbip-named");

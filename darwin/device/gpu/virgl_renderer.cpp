@@ -6,8 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <limits>
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl3.h>
@@ -35,16 +35,19 @@ namespace {
 constexpr auto maximumFenceWait = std::chrono::seconds(60);
 
 std::atomic_bool missingGlEntryPoint;
+std::atomic_bool rendererInstanceActive;
 
 void unavailableGlEntryPoint()
 {
 }
 
-epoxy_resolver_stub_t handleMissingGlEntryPoint(const char* name)
+epoxy_resolver_stub_t handleMissingGlEntryPoint(const char* name) noexcept
 {
     missingGlEntryPoint.store(true, std::memory_order_release);
-    std::cerr << "Virgl rejected unavailable host GL entry point: "
-              << (name == nullptr ? "(unknown)" : name) << '\n';
+    std::fprintf(
+        stderr,
+        "Virgl rejected unavailable host GL entry point: %s\n",
+        name == nullptr ? "(unknown)" : name);
     /*
      * Libepoxy normally aborts here. Its supported failure-handler contract
      * allows a fallback stub; Virgl's public operation wrapper then turns the
@@ -64,37 +67,50 @@ int checkGlDispatchResult(int result)
 
 VirglRenderer::VirglRenderer()
 {
-    epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
-    // virgl_renderer_init() retains this pointer until cleanup rather than
-    // copying the callback table. Keep it alive for the process lifetime so
-    // deferred fence callbacks cannot refer to constructor stack storage.
-    static virgl_renderer_callbacks callbacks = [] {
-        virgl_renderer_callbacks result {};
-        result.version = VIRGL_RENDERER_CALLBACKS_VERSION;
-        result.write_fence = &VirglRenderer::writeFence;
-        result.create_gl_context = &VirglRenderer::createGlContext;
-        result.destroy_gl_context = &VirglRenderer::destroyGlContext;
-        result.make_current = &VirglRenderer::makeGlContextCurrent;
-        result.write_context_fence = &VirglRenderer::writeContextFence;
-        return result;
-    }();
-
-    // With neither USE_EGL nor USE_GLX set, virglrenderer uses the CGL
-    // callbacks above. Fence retirement remains explicitly polled because its
-    // threaded path relies on Linux eventfd.
-    constexpr int rendererFlags = 0;
-    const int result = virgl_renderer_init(this, rendererFlags, &callbacks);
-    const int checkedResult = checkGlDispatchResult(result);
-    if (checkedResult != 0) {
+    if (rendererInstanceActive.exchange(true, std::memory_order_acq_rel)) {
         throw std::runtime_error(
-            "failed to initialize in-process Virgl renderer: " +
-            std::to_string(checkedResult));
+            "an in-process Virgl renderer is already active");
+    }
+    try {
+        epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
+        // virgl_renderer_init() retains this pointer until cleanup rather than
+        // copying the callback table. Keep it alive for the process lifetime
+        // so deferred fence callbacks cannot refer to constructor storage.
+        static virgl_renderer_callbacks callbacks = [] {
+            virgl_renderer_callbacks result {};
+            result.version = VIRGL_RENDERER_CALLBACKS_VERSION;
+            result.write_fence = &VirglRenderer::writeFence;
+            result.create_gl_context = &VirglRenderer::createGlContext;
+            result.destroy_gl_context = &VirglRenderer::destroyGlContext;
+            result.make_current = &VirglRenderer::makeGlContextCurrent;
+            result.write_context_fence = &VirglRenderer::writeContextFence;
+            return result;
+        }();
+
+        // With neither USE_EGL nor USE_GLX set, virglrenderer uses the CGL
+        // callbacks above. Fence retirement remains explicitly polled because
+        // its threaded path relies on Linux eventfd.
+        constexpr int rendererFlags = 0;
+        const int result =
+            virgl_renderer_init(this, rendererFlags, &callbacks);
+        const int checkedResult = checkGlDispatchResult(result);
+        if (checkedResult != 0) {
+            if (result == 0)
+                virgl_renderer_cleanup(this);
+            throw std::runtime_error(
+                "failed to initialize in-process Virgl renderer: " +
+                std::to_string(checkedResult));
+        }
+    } catch (...) {
+        rendererInstanceActive.store(false, std::memory_order_release);
+        throw;
     }
 }
 
 VirglRenderer::~VirglRenderer()
 {
     virgl_renderer_cleanup(this);
+    rendererInstanceActive.store(false, std::memory_order_release);
 }
 
 VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
@@ -122,8 +138,10 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
     for (GLenum error = glGetError();
          error != GL_NO_ERROR;
          error = glGetError()) {
-        std::cerr << "Virgl CGL capset probe GL error (cleared): "
-                  << error << '\n';
+        std::fprintf(
+            stderr,
+            "Virgl CGL capset probe GL error (cleared): %u\n",
+            static_cast<unsigned int>(error));
     }
     return result;
 }
@@ -131,18 +149,21 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
 int VirglRenderer::createContext(
     std::uint32_t contextId,
     std::uint32_t flags,
-    std::string_view debugName)
+    std::string_view debugName) noexcept
 {
     if (debugName.size() > std::numeric_limits<std::uint32_t>::max())
         return EINVAL;
-    const int result = checkGlDispatchResult(
-        virgl_renderer_context_create_with_flags(
-            contextId,
-            flags,
-            static_cast<std::uint32_t>(debugName.size()),
-            debugName.data()));
-    if (result != 0)
-        return result;
+    const int createResult = virgl_renderer_context_create_with_flags(
+        contextId,
+        flags,
+        static_cast<std::uint32_t>(debugName.size()),
+        debugName.data());
+    const int checkedResult = checkGlDispatchResult(createResult);
+    if (checkedResult != 0) {
+        if (createResult == 0)
+            virgl_renderer_context_destroy(contextId);
+        return checkedResult;
+    }
 
     /*
      * virglrenderer creates a fresh shared CGL context here and assumes that
@@ -155,8 +176,10 @@ int VirglRenderer::createContext(
     for (GLenum error = glGetError();
          error != GL_NO_ERROR;
          error = glGetError()) {
-        std::cerr << "Virgl CGL context initialization GL error: "
-                  << error << '\n';
+        std::fprintf(
+            stderr,
+            "Virgl CGL context initialization GL error: %u\n",
+            static_cast<unsigned int>(error));
         unexpectedError |= error != GL_INVALID_ENUM;
     }
     if (unexpectedError) {
@@ -166,20 +189,25 @@ int VirglRenderer::createContext(
     return 0;
 }
 
-void VirglRenderer::destroyContext(std::uint32_t contextId)
+void VirglRenderer::destroyContext(std::uint32_t contextId) noexcept
 {
     virgl_renderer_context_destroy(contextId);
-    std::lock_guard lock(mutex_);
-    std::erase_if(
-        retiredContextFences_,
-        [contextId](const auto& entry) {
-            return static_cast<std::uint32_t>(entry.first >> 8U) == contextId;
-        });
+    try {
+        std::lock_guard lock(mutex_);
+        std::erase_if(
+            retiredContextFences_,
+            [contextId](const auto& entry) {
+                return static_cast<std::uint32_t>(entry.first >> 8U) ==
+                    contextId;
+            });
+    } catch (...) {
+        // Never carry a C++ exception through teardown or the C renderer API.
+    }
 }
 
 int VirglRenderer::submit(
     std::uint32_t contextId,
-    std::span<const std::uint8_t> command)
+    std::span<const std::uint8_t> command) noexcept
 {
     constexpr std::size_t commandWordSize = sizeof(std::uint32_t);
     if (command.size() % commandWordSize != 0 ||
@@ -197,7 +225,8 @@ int VirglRenderer::submit(
             static_cast<int>(command.size() / commandWordSize)));
 }
 
-int VirglRenderer::createResource3d(const Resource3d& resource)
+int VirglRenderer::createResource3d(
+    const Resource3d& resource) noexcept
 {
     virgl_renderer_resource_create_args arguments {
         .handle = resource.resourceId,
@@ -212,8 +241,12 @@ int VirglRenderer::createResource3d(const Resource3d& resource)
         .nr_samples = resource.sampleCount,
         .flags = resource.flags,
     };
-    return checkGlDispatchResult(
-        virgl_renderer_resource_create(&arguments, nullptr, 0));
+    const int createResult =
+        virgl_renderer_resource_create(&arguments, nullptr, 0);
+    const int checkedResult = checkGlDispatchResult(createResult);
+    if (createResult == 0 && checkedResult != 0)
+        virgl_renderer_resource_unref(resource.resourceId);
+    return checkedResult;
 }
 
 int VirglRenderer::transferResource(
@@ -224,7 +257,7 @@ int VirglRenderer::transferResource(
     std::uint32_t stride,
     std::uint32_t layerStride,
     const Box& box,
-    std::uint64_t offset)
+    std::uint64_t offset) noexcept
 {
     virgl_box transferBox {
         .x = box.x,
@@ -260,14 +293,14 @@ int VirglRenderer::transferResource(
             0));
 }
 
-void VirglRenderer::readResourceRectangle(
+int VirglRenderer::readResourceRectangle(
     std::uint32_t resourceId,
     std::span<std::uint8_t> destination,
     std::uint32_t offset,
     std::uint32_t x,
     std::uint32_t y,
     std::uint32_t width,
-    std::uint32_t height)
+    std::uint32_t height) noexcept
 {
     iovec vector {
         .iov_base = destination.data(),
@@ -282,182 +315,242 @@ void VirglRenderer::readResourceRectangle(
         static_cast<int>(y),
         static_cast<int>(width),
         static_cast<int>(height));
+    return checkGlDispatchResult(0);
 }
 
 int VirglRenderer::createFenceAndWait(
     std::uint32_t contextId,
     std::uint32_t ringIndex,
-    std::uint64_t fenceId)
+    std::uint64_t fenceId,
+    const std::atomic_bool* stopRequested) noexcept
 {
-    const bool contextZero = contextId == 0;
-    std::uint64_t key = 0;
-    int result = 0;
-    if (contextZero) {
-        if (fenceId > std::numeric_limits<std::uint32_t>::max())
-            return EOVERFLOW;
-        result = virgl_renderer_create_fence(
-            static_cast<int>(fenceId), contextId);
-    } else {
-        // Virgl fences retire in order within each context and ring.
-        constexpr std::uint32_t mergeableFence =
-            VIRGL_RENDERER_FENCE_FLAG_MERGEABLE;
-        result = virgl_renderer_context_create_fence(
-            contextId, mergeableFence, ringIndex, fenceId);
-        key = contextRingKey(contextId, ringIndex);
-    }
-    result = checkGlDispatchResult(result);
-    if (result != 0)
-        return result;
-
-    const auto deadline =
-        std::chrono::steady_clock::now() + maximumFenceWait;
-    // Polling at one millisecond keeps fence latency low without spinning a
-    // host CPU when a Metal queue has substantial work outstanding.
-    constexpr auto pollingInterval = std::chrono::milliseconds(1);
-    std::unique_lock lock(mutex_);
-    while (true) {
-        const bool retired = contextZero
-            ? retiredFence_ >= fenceId
-            : [&] {
-                const auto iterator = retiredContextFences_.find(key);
-                return iterator != retiredContextFences_.end() &&
-                    iterator->second >= fenceId;
-            }();
-        if (retired)
-            return 0;
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline)
-            return ETIMEDOUT;
-
-        lock.unlock();
-        if (contextZero)
-            virgl_renderer_poll();
-        else
-            virgl_renderer_context_poll(contextId);
-        if (checkGlDispatchResult(0) != 0)
+    try {
+        if (fenceCallbackFailed_.load(std::memory_order_acquire))
             return EIO;
-        lock.lock();
-        fenceCondition_.wait_until(
-            lock, std::min(deadline, now + pollingInterval));
+        if (stopRequested != nullptr &&
+            stopRequested->load(std::memory_order_acquire)) {
+            return ECANCELED;
+        }
+        const bool contextZero = contextId == 0;
+        std::uint64_t key = 0;
+        int result = 0;
+        if (contextZero) {
+            if (fenceId > std::numeric_limits<std::uint32_t>::max())
+                return EOVERFLOW;
+            result = virgl_renderer_create_fence(
+                static_cast<int>(fenceId), contextId);
+        } else {
+            // Virgl fences retire in order within each context and ring.
+            constexpr std::uint32_t mergeableFence =
+                VIRGL_RENDERER_FENCE_FLAG_MERGEABLE;
+            key = contextRingKey(contextId, ringIndex);
+            {
+                // Publish the callback slot before the renderer can retire the
+                // fence. The C callback then performs only allocation-free
+                // lookup and update and cannot throw across its ABI boundary.
+                std::lock_guard lock(mutex_);
+                retiredContextFences_.try_emplace(key, 0);
+            }
+            result = virgl_renderer_context_create_fence(
+                contextId, mergeableFence, ringIndex, fenceId);
+        }
+        result = checkGlDispatchResult(result);
+        if (result != 0)
+            return result;
+
+        const auto deadline =
+            std::chrono::steady_clock::now() + maximumFenceWait;
+        // Polling at one millisecond keeps fence latency low without spinning
+        // a host CPU when a Metal queue has substantial work outstanding.
+        constexpr auto pollingInterval = std::chrono::milliseconds(1);
+        std::unique_lock lock(mutex_);
+        while (true) {
+            if (fenceCallbackFailed_.load(std::memory_order_acquire))
+                return EIO;
+            const bool retired = contextZero
+                ? retiredFence_ >= fenceId
+                : [&] {
+                    const auto iterator = retiredContextFences_.find(key);
+                    return iterator != retiredContextFences_.end() &&
+                        iterator->second >= fenceId;
+                }();
+            if (retired)
+                return 0;
+            if (stopRequested != nullptr &&
+                stopRequested->load(std::memory_order_acquire)) {
+                return ECANCELED;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+                return ETIMEDOUT;
+
+            lock.unlock();
+            if (contextZero)
+                virgl_renderer_poll();
+            else
+                virgl_renderer_context_poll(contextId);
+            if (checkGlDispatchResult(0) != 0)
+                return EIO;
+            lock.lock();
+            fenceCondition_.wait_until(
+                lock, std::min(deadline, now + pollingInterval));
+        }
+    } catch (...) {
+        return EIO;
     }
 }
 
-void VirglRenderer::unrefResource(std::uint32_t resourceId)
+void VirglRenderer::unrefResource(std::uint32_t resourceId) noexcept
 {
     virgl_renderer_resource_unref(resourceId);
 }
 
 int VirglRenderer::attachBacking(
     std::uint32_t resourceId,
-    std::span<iovec> backing)
+    std::span<iovec> backing) noexcept
 {
     if (backing.size() >
         static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         return EINVAL;
     }
-    return virgl_renderer_resource_attach_iov(
+    const int result = virgl_renderer_resource_attach_iov(
         static_cast<int>(resourceId),
         backing.data(),
         static_cast<int>(backing.size()));
+    if (result != 0) {
+        virgl_renderer_resource_detach_iov(
+            static_cast<int>(resourceId), nullptr, nullptr);
+    }
+    return result;
 }
 
-void VirglRenderer::detachBacking(std::uint32_t resourceId)
+void VirglRenderer::detachBacking(std::uint32_t resourceId) noexcept
 {
     virgl_renderer_resource_detach_iov(
         static_cast<int>(resourceId), nullptr, nullptr);
 }
 
-void VirglRenderer::attachResource(
+int VirglRenderer::attachResource(
     std::uint32_t contextId,
-    std::uint32_t resourceId)
+    std::uint32_t resourceId) noexcept
 {
     virgl_renderer_ctx_attach_resource(
         static_cast<int>(contextId), static_cast<int>(resourceId));
+    const int result = checkGlDispatchResult(0);
+    if (result != 0) {
+        virgl_renderer_ctx_detach_resource(
+            static_cast<int>(contextId), static_cast<int>(resourceId));
+    }
+    return result;
 }
 
-void VirglRenderer::detachResource(
+int VirglRenderer::detachResource(
     std::uint32_t contextId,
-    std::uint32_t resourceId)
+    std::uint32_t resourceId) noexcept
 {
     virgl_renderer_ctx_detach_resource(
         static_cast<int>(contextId), static_cast<int>(resourceId));
+    const int result = checkGlDispatchResult(0);
+    if (result != 0) {
+        virgl_renderer_ctx_attach_resource(
+            static_cast<int>(contextId), static_cast<int>(resourceId));
+    }
+    return result;
+}
+
+void VirglRenderer::resetFenceState() noexcept
+{
+    try {
+        std::lock_guard lock(mutex_);
+        retiredFence_ = 0;
+        retiredContextFences_.clear();
+        fenceCallbackFailed_.store(false, std::memory_order_release);
+    } catch (...) {
+    }
 }
 
 void* VirglRenderer::createGlContext(
     void* cookie,
     int,
-    virgl_renderer_gl_ctx_param* parameters)
+    virgl_renderer_gl_ctx_param* parameters) noexcept
 {
-    if (parameters == nullptr || parameters->compat_ctx ||
-        parameters->major_ver > 4 ||
-        (parameters->major_ver == 4 && parameters->minor_ver > 1) ||
-        parameters->major_ver < 3) {
-        return nullptr;
-    }
-
-    const auto profile =
-        parameters->major_ver >= 4
-        ? kCGLOGLPVersion_GL4_Core
-        : kCGLOGLPVersion_3_2_Core;
-    const CGLPixelFormatAttribute attributes[] {
-        kCGLPFAOpenGLProfile,
-        static_cast<CGLPixelFormatAttribute>(profile),
-        kCGLPFAAccelerated,
-        kCGLPFANoRecovery,
-        static_cast<CGLPixelFormatAttribute>(0),
-    };
-
-    CGLPixelFormatObj pixelFormat = nullptr;
-    GLint pixelFormatCount = 0;
-    if (CGLChoosePixelFormat(
-            attributes, &pixelFormat, &pixelFormatCount) != kCGLNoError ||
-        pixelFormat == nullptr || pixelFormatCount == 0) {
-        return nullptr;
-    }
-
-    auto& renderer = *static_cast<VirglRenderer*>(cookie);
-    CGLContextObj sharedContext = nullptr;
-    {
-        std::lock_guard lock(renderer.glContextMutex_);
-        if (parameters->shared) {
-            sharedContext =
-                static_cast<CGLContextObj>(renderer.sharedGlContext_);
+    try {
+        if (parameters == nullptr || parameters->compat_ctx ||
+            parameters->major_ver > 4 ||
+            (parameters->major_ver == 4 && parameters->minor_ver > 1) ||
+            parameters->major_ver < 3) {
+            return nullptr;
         }
-    }
-    if (parameters->shared && sharedContext == nullptr) {
+
+        const auto profile =
+            parameters->major_ver >= 4
+            ? kCGLOGLPVersion_GL4_Core
+            : kCGLOGLPVersion_3_2_Core;
+        const CGLPixelFormatAttribute attributes[] {
+            kCGLPFAOpenGLProfile,
+            static_cast<CGLPixelFormatAttribute>(profile),
+            kCGLPFAAccelerated,
+            kCGLPFANoRecovery,
+            static_cast<CGLPixelFormatAttribute>(0),
+        };
+
+        CGLPixelFormatObj pixelFormat = nullptr;
+        GLint pixelFormatCount = 0;
+        if (CGLChoosePixelFormat(
+                attributes, &pixelFormat, &pixelFormatCount) != kCGLNoError ||
+            pixelFormat == nullptr || pixelFormatCount == 0) {
+            return nullptr;
+        }
+
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        CGLContextObj sharedContext = nullptr;
+        {
+            std::lock_guard lock(renderer.glContextMutex_);
+            if (parameters->shared) {
+                sharedContext =
+                    static_cast<CGLContextObj>(renderer.sharedGlContext_);
+            }
+        }
+        if (parameters->shared && sharedContext == nullptr) {
+            CGLReleasePixelFormat(pixelFormat);
+            return nullptr;
+        }
+
+        CGLContextObj context = nullptr;
+        const auto result =
+            CGLCreateContext(pixelFormat, sharedContext, &context);
         CGLReleasePixelFormat(pixelFormat);
+        if (result != kCGLNoError || context == nullptr)
+            return nullptr;
+
+        if (!parameters->shared) {
+            std::lock_guard lock(renderer.glContextMutex_);
+            renderer.sharedGlContext_ = context;
+        }
+        return context;
+    } catch (...) {
         return nullptr;
     }
-
-    CGLContextObj context = nullptr;
-    const auto result =
-        CGLCreateContext(pixelFormat, sharedContext, &context);
-    CGLReleasePixelFormat(pixelFormat);
-    if (result != kCGLNoError || context == nullptr)
-        return nullptr;
-
-    if (!parameters->shared) {
-        std::lock_guard lock(renderer.glContextMutex_);
-        renderer.sharedGlContext_ = context;
-    }
-    return context;
 }
 
-void VirglRenderer::destroyGlContext(void* cookie, void* context)
+void VirglRenderer::destroyGlContext(void* cookie, void* context) noexcept
 {
-    if (context == nullptr)
-        return;
-    auto& renderer = *static_cast<VirglRenderer*>(cookie);
-    {
-        std::lock_guard lock(renderer.glContextMutex_);
-        if (renderer.sharedGlContext_ == context)
-            renderer.sharedGlContext_ = nullptr;
+    try {
+        if (context == nullptr)
+            return;
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        {
+            std::lock_guard lock(renderer.glContextMutex_);
+            if (renderer.sharedGlContext_ == context)
+                renderer.sharedGlContext_ = nullptr;
+        }
+        CGLDestroyContext(static_cast<CGLContextObj>(context));
+    } catch (...) {
     }
-    CGLDestroyContext(static_cast<CGLContextObj>(context));
 }
 
-int VirglRenderer::makeGlContextCurrent(void*, int, void* context)
+int VirglRenderer::makeGlContextCurrent(void*, int, void* context) noexcept
 {
     return CGLSetCurrentContext(static_cast<CGLContextObj>(context)) ==
             kCGLNoError
@@ -465,30 +558,44 @@ int VirglRenderer::makeGlContextCurrent(void*, int, void* context)
         : -EIO;
 }
 
-void VirglRenderer::writeFence(void* cookie, std::uint32_t fenceId)
+void VirglRenderer::writeFence(
+    void* cookie, std::uint32_t fenceId) noexcept
 {
-    auto& renderer = *static_cast<VirglRenderer*>(cookie);
-    {
-        std::lock_guard lock(renderer.mutex_);
-        renderer.retiredFence_ = std::max(renderer.retiredFence_, fenceId);
+    try {
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        {
+            std::lock_guard lock(renderer.mutex_);
+            renderer.retiredFence_ = std::max(renderer.retiredFence_, fenceId);
+        }
+        renderer.fenceCondition_.notify_all();
+    } catch (...) {
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        renderer.fenceCallbackFailed_.store(true, std::memory_order_release);
+        renderer.fenceCondition_.notify_all();
     }
-    renderer.fenceCondition_.notify_all();
 }
 
 void VirglRenderer::writeContextFence(
     void* cookie,
     std::uint32_t contextId,
     std::uint32_t ringIndex,
-    std::uint64_t fenceId)
+    std::uint64_t fenceId) noexcept
 {
-    auto& renderer = *static_cast<VirglRenderer*>(cookie);
-    {
-        std::lock_guard lock(renderer.mutex_);
-        auto& retired = renderer.retiredContextFences_[
-            contextRingKey(contextId, ringIndex)];
-        retired = std::max(retired, fenceId);
+    try {
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        {
+            std::lock_guard lock(renderer.mutex_);
+            const auto iterator = renderer.retiredContextFences_.find(
+                contextRingKey(contextId, ringIndex));
+            if (iterator != renderer.retiredContextFences_.end())
+                iterator->second = std::max(iterator->second, fenceId);
+        }
+        renderer.fenceCondition_.notify_all();
+    } catch (...) {
+        auto& renderer = *static_cast<VirglRenderer*>(cookie);
+        renderer.fenceCallbackFailed_.store(true, std::memory_order_release);
+        renderer.fenceCondition_.notify_all();
     }
-    renderer.fenceCondition_.notify_all();
 }
 
 std::uint64_t VirglRenderer::contextRingKey(

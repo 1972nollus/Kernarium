@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -70,6 +71,23 @@ bool create_pipe(std::array<UniqueFd, 2> &result) noexcept
 	return false;
 }
 
+bool ensure_pipe(std::array<UniqueFd, 2> &result) noexcept
+{
+	if (result[0].get() >= 0 && result[1].get() >= 0)
+		return true;
+	result[0].reset();
+	result[1].reset();
+	return create_pipe(result);
+}
+
+void drain_pipe(UniqueFd &descriptor) noexcept
+{
+	std::array<std::byte, 64> buffer{};
+	while (descriptor.get() >= 0 &&
+	       ::read(descriptor.get(), buffer.data(), buffer.size()) > 0)
+		;
+}
+
 } // namespace
 
 UniqueFd::~UniqueFd()
@@ -112,11 +130,17 @@ SlirpProvider::~SlirpProvider()
 }
 
 int SlirpProvider::open(std::span<unsigned char, 6> mac,
-		       unsigned int &mtu) noexcept
+                       unsigned int &mtu)
 {
 	std::lock_guard lock{start_mutex_};
 	if (!started_.load(std::memory_order_acquire)) {
-		if (!create_pipe(wake_pipe_) || !create_pipe(receive_pipe_))
+		stopping_.store(false, std::memory_order_release);
+		/* Both pipes are provider-owned capabilities. Keep their numeric
+		 * descriptors stable across stop/reopen so an IRQ registration that
+		 * borrowed receive_pipe_[0] can never observe descriptor reuse between
+		 * sessions. Failed first-open attempts may retain the same owned pipes
+		 * for a later retry. */
+		if (!ensure_pipe(wake_pipe_) || !ensure_pipe(receive_pipe_))
 			return errno == 0 ? -EIO : -errno;
 
 		SlirpConfig config{};
@@ -133,10 +157,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		config.if_mru = 1500;
 		slirp_.reset(slirp_new(&config, &callbacks(), this));
 		if (!slirp_) {
-			wake_pipe_[0].reset();
-			wake_pipe_[1].reset();
-			receive_pipe_[0].reset();
-			receive_pipe_[1].reset();
 			return -EIO;
 		}
 		try {
@@ -156,10 +176,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			}};
 		} catch (const std::system_error &) {
 			slirp_.reset();
-			wake_pipe_[0].reset();
-			wake_pipe_[1].reset();
-			receive_pipe_[0].reset();
-			receive_pipe_[1].reset();
 			return -EIO;
 		}
 		started_.store(true, std::memory_order_release);
@@ -169,7 +185,7 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 	return 0;
 }
 
-int SlirpProvider::irq_fd() const noexcept
+int SlirpProvider::irq_fd() const
 {
 	std::lock_guard lock{start_mutex_};
 	return started_.load(std::memory_order_acquire) ?
@@ -181,28 +197,180 @@ void SlirpProvider::stop() noexcept
 	std::lock_guard lock{start_mutex_};
 	if (!started_.load(std::memory_order_acquire))
 		return;
+	/* Close new guest I/O admission before waking the worker. Operations that
+	 * already committed under a queue mutex retain descriptor ownership until
+	 * that mutex is released; cleanup takes the same mutexes below. */
+	started_.store(false, std::memory_order_release);
+	stopping_.store(true, std::memory_order_release);
 	worker_.request_stop();
+#if UML_SLIRP_TESTING
+	{
+		std::lock_guard pause_lock{transmit_pause_mutex_};
+		transmit_pause_requested_for_testing_.store(
+			false, std::memory_order_release);
+	}
+	transmit_pause_condition_.notify_all();
+#endif
 	wake();
 	if (worker_.joinable())
 		worker_.join();
-	started_.store(false, std::memory_order_release);
+#if UML_SLIRP_TESTING
+	notify_receive_cleanup_for_testing();
+#endif
 	{
 		std::lock_guard receive_lock{receive_mutex_};
 		receive_head_ = 0;
 		receive_tail_ = 0;
+		drain_pipe(receive_pipe_[0]);
 	}
 	{
 		std::lock_guard transmit_lock{transmit_mutex_};
 		transmit_head_ = 0;
 		transmit_tail_ = 0;
+		drain_pipe(wake_pipe_[0]);
 	}
 	slirp_.reset();
 	timers_.clear();
-	wake_pipe_[0].reset();
-	wake_pipe_[1].reset();
-	receive_pipe_[0].reset();
-	receive_pipe_[1].reset();
 }
+
+#if UML_SLIRP_TESTING
+void SlirpProvider::pause_transmit_for_testing() noexcept
+{
+	{
+		std::lock_guard lock{transmit_pause_mutex_};
+		transmit_pause_reached_for_testing_ = false;
+		transmit_pause_requested_for_testing_.store(
+			true, std::memory_order_release);
+	}
+	wake();
+}
+
+bool SlirpProvider::wait_for_transmit_pause_for_testing() noexcept
+{
+	std::unique_lock lock{transmit_pause_mutex_};
+	return transmit_pause_condition_.wait_for(
+		lock, std::chrono::seconds{2}, [this] {
+			return transmit_pause_reached_for_testing_;
+		});
+}
+
+void SlirpProvider::pause_next_write_before_commit_for_testing() noexcept
+{
+	std::lock_guard lock{io_pause_mutex_};
+	write_pause_requested_for_testing_ = true;
+	write_pause_reached_for_testing_ = false;
+	release_write_for_testing_ = false;
+}
+
+bool SlirpProvider::wait_for_write_pause_for_testing() noexcept
+{
+	std::unique_lock lock{io_pause_mutex_};
+	return io_pause_condition_.wait_for(
+		lock, std::chrono::seconds{2}, [this] {
+			return write_pause_reached_for_testing_;
+		});
+}
+
+void SlirpProvider::release_write_for_testing() noexcept
+{
+	{
+		std::lock_guard lock{io_pause_mutex_};
+		release_write_for_testing_ = true;
+	}
+	io_pause_condition_.notify_all();
+}
+
+void SlirpProvider::pause_next_read_before_notification_for_testing() noexcept
+{
+	std::lock_guard lock{io_pause_mutex_};
+	read_pause_requested_for_testing_ = true;
+	read_pause_reached_for_testing_ = false;
+	release_read_for_testing_ = false;
+	receive_cleanup_reached_for_testing_ = false;
+}
+
+bool SlirpProvider::wait_for_read_pause_for_testing() noexcept
+{
+	std::unique_lock lock{io_pause_mutex_};
+	return io_pause_condition_.wait_for(
+		lock, std::chrono::seconds{2}, [this] {
+			return read_pause_reached_for_testing_;
+		});
+}
+
+void SlirpProvider::release_read_for_testing() noexcept
+{
+	{
+		std::lock_guard lock{io_pause_mutex_};
+		release_read_for_testing_ = true;
+	}
+	io_pause_condition_.notify_all();
+}
+
+bool SlirpProvider::wait_for_receive_cleanup_for_testing() noexcept
+{
+	std::unique_lock lock{io_pause_mutex_};
+	return io_pause_condition_.wait_for(
+		lock, std::chrono::seconds{2}, [this] {
+			return receive_cleanup_reached_for_testing_;
+		});
+}
+
+slirp_ssize_t SlirpProvider::enqueue_received_for_testing(
+	std::span<const std::byte> frame) noexcept
+{
+	try {
+		return enqueue_received(frame);
+	} catch (...) {
+		return -1;
+	}
+}
+
+bool SlirpProvider::readiness_channels_drained_for_testing() const noexcept
+{
+	std::array<pollfd, 2> descriptors{{
+		{.fd = wake_pipe_[0].get(), .events = POLLIN, .revents = 0},
+		{.fd = receive_pipe_[0].get(), .events = POLLIN, .revents = 0},
+	}};
+	return descriptors[0].fd >= 0 && descriptors[1].fd >= 0 &&
+		::poll(descriptors.data(), descriptors.size(), 0) == 0;
+}
+
+void SlirpProvider::pause_write_before_commit_for_testing() noexcept
+{
+	std::unique_lock lock{io_pause_mutex_};
+	if (!write_pause_requested_for_testing_)
+		return;
+	write_pause_requested_for_testing_ = false;
+	write_pause_reached_for_testing_ = true;
+	io_pause_condition_.notify_all();
+	io_pause_condition_.wait(lock, [this] {
+		return release_write_for_testing_;
+	});
+}
+
+void SlirpProvider::pause_read_before_notification_for_testing() noexcept
+{
+	std::unique_lock lock{io_pause_mutex_};
+	if (!read_pause_requested_for_testing_)
+		return;
+	read_pause_requested_for_testing_ = false;
+	read_pause_reached_for_testing_ = true;
+	io_pause_condition_.notify_all();
+	io_pause_condition_.wait(lock, [this] {
+		return release_read_for_testing_;
+	});
+}
+
+void SlirpProvider::notify_receive_cleanup_for_testing() noexcept
+{
+	{
+		std::lock_guard lock{io_pause_mutex_};
+		receive_cleanup_reached_for_testing_ = true;
+	}
+	io_pause_condition_.notify_all();
+}
+#endif
 
 } // namespace uml::network
 
@@ -214,14 +382,23 @@ extern "C" int uml_slirp_net_open(
 	if (const auto *disabled = std::getenv("UML_DISABLE_NETWORK");
 	    disabled != nullptr && disabled[0] != '\0' && disabled[0] != '0')
 		return -ENETDOWN;
-	return static_cast<uml::network::SlirpProvider *>(context)->open(
-		std::span<unsigned char, 6>{mac, 6}, *mtu);
+	try {
+		return static_cast<uml::network::SlirpProvider *>(context)->open(
+			std::span<unsigned char, 6>{mac, 6}, *mtu);
+	} catch (...) {
+		return -EIO;
+	}
 }
 
 extern "C" int uml_slirp_net_irq_fd(void *context)
 {
-	return context == nullptr ? -1 :
-		static_cast<uml::network::SlirpProvider *>(context)->irq_fd();
+	if (context == nullptr)
+		return -1;
+	try {
+		return static_cast<uml::network::SlirpProvider *>(context)->irq_fd();
+	} catch (...) {
+		return -1;
+	}
 }
 
 extern "C" int uml_slirp_net_read(
@@ -229,8 +406,12 @@ extern "C" int uml_slirp_net_read(
 {
 	if (context == nullptr || (buffer == nullptr && capacity != 0))
 		return -EINVAL;
-	return static_cast<uml::network::SlirpProvider *>(context)->read(
-		{static_cast<std::byte *>(buffer), capacity});
+	try {
+		return static_cast<uml::network::SlirpProvider *>(context)->read(
+			{static_cast<std::byte *>(buffer), capacity});
+	} catch (...) {
+		return -EIO;
+	}
 }
 
 extern "C" int uml_slirp_net_write(
@@ -238,8 +419,12 @@ extern "C" int uml_slirp_net_write(
 {
 	if (context == nullptr || (buffer == nullptr && length != 0))
 		return -EINVAL;
-	return static_cast<uml::network::SlirpProvider *>(context)->write(
-		{static_cast<const std::byte *>(buffer), length});
+	try {
+		return static_cast<uml::network::SlirpProvider *>(context)->write(
+			{static_cast<const std::byte *>(buffer), length});
+	} catch (...) {
+		return -EIO;
+	}
 }
 
 extern "C" void uml_slirp_net_stop(void *context)

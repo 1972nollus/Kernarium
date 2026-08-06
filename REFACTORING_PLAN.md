@@ -21,6 +21,47 @@ and [`docs/testing.md`](docs/testing.md) for current commands. Use the phased
 material below as design rationale only where the handoff has not superseded
 it.
 
+## Current scope amendments (2026-08-03)
+
+These user-directed decisions supersede conflicting requirements in the
+historical plan below:
+
+1. A valid instruction that an engine has not implemented is a guest-scoped
+   failure, not a fatal emulator event. It must terminate or signal the guest
+   program through the normal guest illegal-instruction path without bringing
+   down the emulator or silently switching engines. All three engines must
+   agree on the guest-visible event and zero-retirement/PC semantics. A test
+   must execute a known-good guest operation afterward to prove the emulator
+   remains usable.
+2. LibVNCServer must be built from the pinned official release archive exactly
+   as upstream published it. Do not carry project patches or selected
+   post-release backports merely for general upstream corrections. The current
+   implementation task is to return the 0.9.15 manifest entry to version
+   `0.9.15`, remove its patch metadata/files, derive the pristine prepared-tree
+   identity, rebuild the private prefix, and rerun VNC/package consumers.
+3. Rootfs image ownership, immutability hashes, sidecar locking, maintenance
+   serialization, and related cleanup are deferred because the test-image
+   model will be redesigned. They are not refactor acceptance gates. Existing
+   protections may remain, but do not expand or refactor them now. Continue to
+   avoid incidental destructive image changes unless a later task explicitly
+   authorizes the new testing workflow.
+4. Source-size guidance is advisory rather than a strict 1,000-line policy.
+   Split mixed responsibilities into logical owners, but permit cohesive,
+   order-sensitive, generated-like, or hot-path units to remain longer when the
+   ownership is clear and the split would obscure or perturb the code.
+5. Interpreter, gadget, native-shadow, and software-MMU paths must remain
+   data-only on sandboxed iOS: no W+X mapping and no RW/RX transition. Dynamic
+   executable publication may remain only in the explicitly selected JIT path
+   for entitled debugger or jailbreak use; it must not leak into non-JIT paths.
+6. Interpreter acceptance is deliberately lightweight. Do not run Node.js,
+   Go, browsers, benchmarks, or similarly heavy real workloads through the
+   interpreter; those workloads are too slow there and are not refactor gates.
+7. Reproducible external inputs mean authenticated source archives, patch bytes
+   and order, prepared source trees, build policy, and ABI identities. Kernel
+   and external-library timestamps, build identities, user/host fields,
+   compiler notes, package layouts, and binary hashes remain authentic dynamic
+   metadata and need not be byte-for-byte deterministic.
+
 ## Goals
 
 1. Give every module one responsibility and enforce an acyclic dependency
@@ -50,8 +91,9 @@ it.
   engine selection defaults.
 - The interpreter remains the strict, defensive reference implementation.
   Gadget and JIT production paths must not inherit interpreter-only checks.
-- JIT remains an explicit engine with no fallback to gadgets. Unsupported JIT
-  instructions remain visible failures rather than silently changing engines.
+- JIT remains an explicit engine with no fallback to gadgets. Unsupported
+  instructions use the same guest-scoped illegal-instruction failure as the
+  interpreter and gadgets; they must not become fatal emulator events.
 - Host and implementation capability checks continue to constrain guest HWCAP
   and HWCAP2. The three engines must implement every feature advertised for
   their selected virtual CPU profile.
@@ -63,10 +105,9 @@ it.
   changed as a side effect of moving code.
 - The default guest page size remains 16 KiB. The 4 KiB compatibility build
   remains buildable and tested.
-- The refactored integration suites use an immutable lower rootfs plus an
-  in-memory overlay. Tests and builds must not mutate `rootfs.img`. Any
-  temporary Phase 0 baseline on legacy `rootfs.ext2` is identified explicitly,
-  serialized against image builds, and protected by pre/post hashes.
+- Rootfs file-management policy is deferred to the planned testing redesign.
+  Existing overlay/verification behavior may remain, but changing locking,
+  hashes, maintenance, or image ownership is outside the current refactor.
 - Pure moves, naming changes, behavior changes, and performance changes belong
   in separate reviewable change sets. During the current refactor, do not stage
   or commit any of them without separate authorization.
@@ -240,9 +281,10 @@ preserve the monolith:
    enforce process-group cleanup/leak checks.
 7. Add authoritative CMake workflow/test presets named `check-unit`,
    `check-integration`, and `check-all`. Same-named custom build targets may be
-   convenience delegates only; CI and documentation use the presets so suite
-   selection is not generator-specific. Keep benchmarks separate from
-   correctness tests. Exclude pressure work from `integration-fast` and include
+   convenience delegates only; local verification and documentation use the
+   presets so suite selection is not generator-specific. Keep benchmarks
+   separate from correctness tests. Exclude pressure work from
+   `integration-fast` and include
    it only in the explicitly selected `integration-full` campaign.
 8. Declare product/configuration/toolchain inputs, outputs, stamps, and
    byproducts at the Kbuild and foreign-project boundaries while retaining
@@ -302,8 +344,8 @@ requirement. A pilot is not part of the main refactor and must be time-boxed:
    all required assembly symbols, and has no unexplained hot-path
    instruction-count or performance regression. Generated package/kernel
    hashes and metadata may differ when explained and recorded. Require at least
-   one quantified benefit—CI
-   latency, incremental time, cache reuse, dependency violations caught, or
+   one quantified benefit—clean-build latency, incremental time, cache reuse,
+   dependency violations caught, or
    reduced maintenance surface. Otherwise delete the pilot; do not leave two
    source-of-truth manifests. Irrelevant explained layout differences alone
    are not a rejection criterion.
@@ -418,8 +460,8 @@ edge, or lower-layer include of the composition layer.
   add no runtime dispatch cost.
 - Give each target only its own include root. Remove directory-wide include
   paths that make accidental upward includes compile.
-- Add a CMake architecture check describing allowed target edges and fail CI
-  on a cycle or forbidden dependency.
+- Add a CMake architecture check describing allowed target edges and fail the
+  local architecture gate on a cycle or forbidden dependency.
 - Add a source-layer audit for forbidden includes, including JIT-to-gadgets,
   CPU-to-device, and any C++ inclusion of `.cpp` or `.inc` implementation
   fragments.
@@ -653,6 +695,11 @@ explicit manifest.
 
 ### Unit suite contract
 
+In this contract, “no Python commands” applies to files and registered CTest
+commands owned by the unit suite. Repository configuration may invoke Python as
+a build tool for declaration or source-policy verification; such checks belong
+to configure/tooling and are not unit-test execution.
+
 - Contains no Python files or Python commands.
 - Does not build or invoke the UML kernel, emulator app, a rootfs tool, VNC
   process orchestration, or guest code that requires a boot.
@@ -805,9 +852,9 @@ kernel/
 ```
 
 Pin `linux-6.18` to an unmodified upstream revision. Prepare a stamped build
-worktree under `.build` and apply the ordered patch series there. CI must apply
-the series from scratch and periodically test it against the intended next
-kernel version.
+worktree under `.build` and apply the ordered patch series there. An explicit
+local command must apply the series from scratch and test it against the
+intended next kernel version when requested.
 
 Split the remaining changes into reviewable topics:
 
@@ -827,8 +874,8 @@ os-Linux SMP/timer files).
 Target end state: no project patch outside `arch/arm64/um` and `arch/um` except
 small independently upstreamed fixes; no configuration or rootfs policy inside
 the Linux checkout; and as few modifications to existing generic UML files as
-possible. Add a patch-count/diffstat report to CI so the delta cannot quietly
-grow.
+possible. Add a patch-count/diffstat report to the local replay audit so the
+delta cannot quietly grow.
 
 ## Dead code and repository hygiene
 
@@ -973,7 +1020,7 @@ removed only if the replacement meets correctness and performance gates.
   C ABI module and generated kernel-facing headers.
 - Relocate the timer hook, isolate generic fixes, and reconstruct the patch
   series over a pristine baseline.
-- Add apply-from-scratch and next-version conflict CI.
+- Add local apply-from-scratch and next-version conflict checks.
 
 Exit gate: clean source preparation reproduces the verified source tree and
 configuration inputs, and both 16/4 KiB variants build and boot successfully;
@@ -1006,13 +1053,14 @@ context unless those current documents explicitly confirm them.
    At the 2026-08-01 audit, both repositories were clean and only this new
    top-level `REFACTORING_PLAN.md` was untracked. Do not assume that remains
    true.
-3. Verify the immutable rootfs hash before any boot. Never modify, remount
-   writable, replace, or regenerate `rootfs.img` as an implicit build step.
+3. Treat rootfs-management work as deferred. Use the existing boot wrappers for
+   any otherwise-required validation, but do not spend refactor scope changing
+   image hashes, locking, maintenance, or ownership.
 4. Verify the implemented signed-release Linux replay described in the current
    handoff and kernel README; do not repeat the obsolete provenance search
    below.
-5. Audit the current handoff's remaining work rather than restarting Slice
-   0A/0B or replaying completed directory moves.
+5. Use the current handoff's completed sixth-audit closure record rather than
+   restarting Slice 0A/0B or replaying completed directory moves.
 6. Keep `REFACTOR_PROGRESS.md` current. Store raw
    logs and binaries below `.build/results/refactor`, not in Git.
 
@@ -1037,8 +1085,8 @@ no upstream tag at its HEAD. Consequently, cloning the outer repository does
 not provide a way to obtain the recorded kernel commit. That historical blocker
 is resolved: current preparation authenticates the pinned official signed
 `linux-6.18.41.tar.xz` release package, verifies its packaged tree, applies the
-10 outer-owned final-state topic patches, and verifies final tree
-`8adb106de7c19ed9e6c83f622a48e54629053699`. Prepared-source verification works
+11 outer-owned final-state topic patches, and verifies final tree
+`834e5c5faa8fc4638c9fdcbd40a1f29f5c7c2d5d`. Prepared-source verification works
 offline; generated import/replay commit metadata remains an observation. See
 `kernel/README.md` for the authoritative identities and commands.
 
@@ -1217,12 +1265,12 @@ are not current commands or open policy exceptions.
 
 In the implemented layout, full LTP is never registered in CTest. It runs as
 standalone, engine-parameterized `guest-ltp-gadgets` and `guest-ltp-jit`
-campaigns, with `guest-ltp-verified` as their convenience aggregate. SMP has
-rootfs-backed integration CTest registrations as well as the standalone
-`guest-smp-parallel` aggregate. Neither is a unit test. `integration-fast`
-excludes the SMP/shared-MM pressure cases, while `integration-full` includes
-them. Current guest workflows use the immutable partitioned `rootfs.img` under
-an in-memory overlay; see `docs/testing.md`.
+campaigns, with `guest-ltp-verified` as their convenience aggregate. The
+`run_guest_smp.py` topology/hotplug workload is likewise available only through
+the standalone `guest-smp-parallel` target. The shorter shared-MM stress remains
+an integration CTest because it is a bounded acceptance fixture rather than the
+standalone SMP campaign. Current guest workflows use the immutable partitioned
+`rootfs.img` under an in-memory overlay; see `docs/testing.md`.
 
 The seven Python CTest cases identified for porting or reclassification in that
 historical snapshot were:
@@ -1394,11 +1442,14 @@ old gap statement.
    helpers, labels, fixtures, and resource policy.
 5. Map all 563 existing names before moves. Preserve every assertion or record
    a reviewed removal rationale.
-6. Make Python discovery conditional on integration support. Port parser,
-   inventory, and pure option assertions to C++ or CMake; use a compiled process
-   fixture for any host-only VNC test; move actual boots to integration.
+6. Keep Python out of unit-owned files and registered unit commands. Put Python
+   parser, inventory, and source-policy checks in tooling/configure; use a
+   compiled process fixture for host-only VNC behavior and move actual boots to
+   integration.
 7. Prove unit-only configuration/build/test succeeds with CLI and kernel runner
-   off, no kernel build, no rootfs files, no Python requirement, and no guest.
+   off, no kernel build, no rootfs files, no Python invoked by the unit CTest
+   selection, and no guest. Repository configure may still require Python as a
+   declared build tool for cross-suite declaration verification.
 8. Modularize only test/build ownership in this slice. Do not move production
    hot code until the isolated suite is green.
 
@@ -1518,6 +1569,9 @@ unfinished repository source refactoring.
       without network access; the prefix receipt binds the manifest and build
       policy, and configuration rejects missing, stale, shared-library, or
       wrong-architecture contents without ambient library discovery.
+- [ ] LibVNCServer is built from its pinned official release archive with no
+      project patch or post-release backport layer, and VNC/package consumers
+      pass against the rebuilt pristine dependency.
 - [ ] Checked-in presets reproduce supported configure/build/test workflows,
       and the CMake File API architecture audit enforces the intended DAG.
 - [ ] A clean project checkout can authenticate the pinned packaged Linux source,
@@ -1530,6 +1584,9 @@ unfinished repository source refactoring.
 - [ ] The module graph is documented, mechanically enforced, and acyclic.
 - [ ] All three engines implement `CpuEngine`; the virtual boundary is outside
       hot loops and JIT has no gadget dependency.
+- [ ] A valid but unimplemented instruction fails only the guest program on all
+      three engines, retires no instruction, preserves the faulting PC, and
+      leaves the emulator able to run subsequent guest work.
 - [ ] Engine/runtime entry duplication has been removed without weakening the
       interpreter or adding gadget/JIT hot-path checks.
 - [ ] Production, test/support, CMake, and declarative files appear in the
@@ -1538,9 +1595,8 @@ unfinished repository source refactoring.
       dependencies.
 - [ ] `tests/unit` contains no Python and runs without kernel, app, rootfs, or
       guest boot.
-- [ ] Integration tests are independently configured, rootfs-safe, labeled,
-      and include all non-mutating boot/rootfs workflows; authorized rootfs
-      maintenance remains a separate tool.
+- [ ] Integration tests are independently configured and labeled. Rootfs image
+      management is deferred and is not part of this exit gate.
 - [ ] All original test assertions are mapped to retained tests or documented
       removals.
 - [ ] Default 16 KiB, compatibility 4 KiB, macOS, iOS, and iOS-simulator builds
@@ -1551,8 +1607,9 @@ unfinished repository source refactoring.
       config/build/initrd policy lives outside the kernel tree.
 - [ ] Empty directories, confirmed unused code/assets, and abandoned profiling
       machinery are removed.
-- [ ] Rootfs lower-image hashes are unchanged.
+- [ ] Rootfs file-management acceptance is deferred to the testing redesign.
 - [ ] Repeated gadget and JIT Geekbench results have no unexplained regression.
 - [ ] A fresh chat can execute the documented configure, unit, integration,
-      boot, rootfs-verification, and benchmark commands without relying on
-      hidden conversation history or an uncleared build cache.
+      boot, and benchmark commands without relying on hidden conversation
+      history or an uncleared build cache; rootfs-management redesign remains
+      separately deferred.

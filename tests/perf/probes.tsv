@@ -1,0 +1,31 @@
+source	category	required_feature	runner	retention
+guest_add_immediate_loop.S	integer	base	run_guest_link_bench.py	Matched control for ADD-immediate lowering and gadget layout changes.
+guest_atomic_add_loop.S	atomic	lse	run_guest_link_bench.py	Private-counter control for direct atomic lowering and multicore scaling.
+guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
+guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
+guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures fixed guest-register retention across a linked backward edge.
+guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
+guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.
+guest_fp_polymorphic_indirect_loop.S	floating-state	base	run_guest_link_bench.py	Stresses floating-state exits at a polymorphic indirect branch site.
+guest_gpr_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page scalar memory runs through an allocated base register.
+guest_indirect_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures monomorphic indirect-call and return successor linking.
+guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.
+guest_link_loop.S	control-flow	base	run_guest_link_bench.py	Baseline for cached direct successor-link throughput.
+guest_logical_move_loop.S	integer	base	run_guest_link_bench.py	Matched control for logical-register move alias lowering.
+guest_memory_site_loop.S	memory	base	run_guest_link_bench.py	Measures repeated scalar and vector accesses at stable translated sites.
+guest_operand_predecode_loop.S	integer	base	run_guest_link_bench.py	Measures translation-predecoded scalar operand addressing.
+guest_reservation_store_fallback_loop.S	atomic	base	run_guest_link_bench.py	Exercises the software reservation fallback followed by publication.
+guest_reservation_store_loop.S	atomic	base	run_guest_link_bench.py	Exercises the bounded native reservation sequence followed by publication.
+guest_scalar_byte_loop.S	memory	base	run_guest_link_bench.py	Matched control for the page-contained scalar byte fast path.
+guest_simd_basic_fadd_loop.S	simd	base	run_guest_link_bench.py	Measures basic vector floating arithmetic register addressing.
+guest_simd_indexed_fmla_loop.S	simd	base	run_guest_link_bench.py	Measures indexed vector multiply-add register addressing.
+guest_simd_saddlp_loop.S	simd	base	run_guest_link_bench.py	Measures signed pairwise-add-long vector lowering.
+guest_simd_smull_loop.S	simd	base	run_guest_link_bench.py	Measures signed widening-multiply vector lowering.
+guest_simd_structure_remap_loop.S	simd	base	run_guest_link_bench.py	Measures one-register structure transfers with remapped vector state.
+guest_simd_tbl2_loop.S	simd	base	run_guest_link_bench.py	Two-table control for one-table lookup specialization changes.
+guest_simd_tbl_loop.S	simd	base	run_guest_link_bench.py	Measures one-table vector lookup operand addressing.
+guest_simd_three_same_add_loop.S	simd	base	run_guest_link_bench.py	Measures same-width three-register vector addition lowering.
+guest_simd_unsigned_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page unsigned-offset vector memory runs.
+guest_sp_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures adjacent scalar memory runs addressed directly from SP.
+guest_tlb_128m_alias_loop.S	tlb	base	run_guest_link_bench.py	Detects regressions in 16 KiB TLB indexing and set associativity.
+guest_vector_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native vector pair transfers.

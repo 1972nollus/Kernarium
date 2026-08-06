@@ -94,7 +94,11 @@ RunResult Dispatcher::step(CpuState &cpu, GuestMemory &memory) const
 {
 	std::array<std::byte, sizeof(std::uint32_t)> encoded{};
 	if (!memory.fetch(cpu.pc, encoded))
-		return {StopReason::memory_fault, cpu.pc, 0, 0, false};
+		return {
+			.reason = StopReason::memory_fault,
+			.address = cpu.pc,
+			.access = ::uml::memory::MemoryAccess::execute,
+		};
 	const auto instruction = static_cast<std::uint32_t>(
 		detail::decode_little_endian(encoded));
 	return execute(cpu, memory, instruction);
@@ -159,10 +163,11 @@ RunResult Dispatcher::execute(CpuState &cpu, GuestMemory &memory,
 RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 				      std::uint32_t instruction) const
 {
-	/* UDF #imm16 is the permanently undefined A64 instruction class.  It is
-	 * architecturally distinct from an otherwise valid instruction which this
-	 * emulator has not implemented yet: userspace must receive SIGILL for UDF,
-	 * while missing emulation remains a fatal diagnostic.
+	/* UDF #imm16 is the permanently undefined A64 instruction class. It is
+	 * diagnostically distinct inside the dispatcher from an otherwise valid
+	 * instruction that has not been implemented yet, but both remain scoped to
+	 * the guest task and become an illegal-instruction exit at the engine
+	 * boundary.
 	 */
 	if ((instruction & 0xffff'0000U) == 0)
 		return {StopReason::illegal_instruction, cpu.pc, instruction, 0,

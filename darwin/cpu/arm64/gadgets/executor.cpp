@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
-#include "verification.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
-#include "cpu/arm64/dispatcher.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <memory_resource>
@@ -52,16 +49,6 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	}
 	return count;
 }
-
-const bool trace_blocks_enabled = [] {
-	const auto *value = std::getenv("UML_STATIC_TRACE_BLOCKS");
-	return value != nullptr && value[0] != '\0' && value[0] != '0';
-}();
-
-const bool block_links_enabled = [] {
-	const auto *value = std::getenv("UML_STATIC_DISABLE_BLOCK_LINKS");
-	return value == nullptr || value[0] == '\0' || value[0] == '0';
-}();
 
 [[nodiscard]] constexpr bool terminal_does_not_retire(
 	::uml::cpu::EngineEvent event) noexcept
@@ -155,21 +142,6 @@ void correct_fpcr_enable_instruction_count(
 	 * condition because enabled entries use the one-instruction cold path.
 	 */
 	executed -= unretired;
-}
-
-void trace_block(std::uint64_t pc, const arm64::gadgets::BuildResult &built,
-		 ::uml::cpu::EngineEvent event) noexcept
-{
-	static thread_local unsigned emitted = 0;
-	if (emitted >= 4096)
-		return;
-	++emitted;
-	std::fprintf(stderr,
-		"Darwin static block pc=%#llx count=%zu complete=%u stop=%#llx/%#x event=%d\n",
-		static_cast<unsigned long long>(pc),
-		built.program.instruction_count(), built.complete ? 1U : 0U,
-		static_cast<unsigned long long>(built.stop_address),
-		built.stop_instruction, static_cast<int>(event));
 }
 
 } // namespace
@@ -523,6 +495,10 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 
 GadgetExecutor::~GadgetExecutor()
 {
+	if (current_cpu_ != nullptr) {
+		current_cpu_->gadget_indirect_miss = nullptr;
+		arm64::restore_native_fp_environment(*current_cpu_);
+	}
 	darwin_uml_static_vm_execution_context_destroy(execution_context_);
 }
 
@@ -537,8 +513,30 @@ bool GadgetExecutor::begin_execution(unsigned long generation,
 
 void GadgetExecutor::end_execution() noexcept
 {
+	if (current_cpu_ != nullptr) {
+		/* A miss is a pointer into this executor's cache, not architectural
+		 * state. Learning the target can allocate after the guest branch has
+		 * retired; discard the marker even when that postamble throws. */
+		current_cpu_->gadget_indirect_miss = nullptr;
+		arm64::restore_native_fp_environment(*current_cpu_);
+	}
+	current_cpu_ = nullptr;
 	if (execution_context_ != nullptr)
 		(void)darwin_uml_static_vm_execution_context_end(execution_context_);
+}
+
+void GadgetExecutor::select_cpu(CpuState &cpu) noexcept
+{
+	if (current_cpu_ == &cpu)
+		return;
+	if (current_cpu_ != nullptr) {
+		current_cpu_->gadget_indirect_miss = nullptr;
+		arm64::restore_native_fp_environment(*current_cpu_);
+	}
+	/* The marker is executor-private scratch. Never inherit it across CPU or
+	 * execution reuse; end_execution() resets current_cpu_ at every exit. */
+	cpu.gadget_indirect_miss = nullptr;
+	current_cpu_ = &cpu;
 }
 
 void *GadgetExecutor::execution_context(unsigned long generation)
@@ -583,12 +581,12 @@ const BuildResult &GadgetExecutor::store(
 {
 	executed = 0;
 	floating_point_syndrome_ = 0;
+	select_cpu(cpu);
 	auto *context = execution_context(generation);
 	if (context == nullptr)
 		return ::uml::cpu::EngineEvent::fatal;
 	std::array<std::uint32_t, block_instruction_count> instructions;
 	bool instructions_loaded = false;
-	const bool verification_requested = verification_enabled();
 	const auto sequences =
 		darwin_uml_static_vm_execution_context_sequences(context);
 	preempted_ = sequences.execution_interrupt != 0;
@@ -606,106 +604,44 @@ const BuildResult &GadgetExecutor::store(
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
 	prepare_cache(generation, sequences.code_changes);
-	std::optional<CachedResult> selected;
-	std::optional<BuildResult> uncached;
-	if (!verification_requested)
-		selected = find(cpu.pc);
+	auto selected = find(cpu.pc);
 	if (!selected) {
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
 		if (count == 0) {
 			const auto fault = memory.last_fault();
 			tlb_.fault_address = fault.address;
-			tlb_.fault_access = fault.access == arm64::MemoryAccess::write ?
-				::uml::memory::Access::write :
-				::uml::memory::Access::read;
+			tlb_.fault_access = ::uml::memory::translated_access(
+				fault.access);
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		instructions_loaded = true;
-		auto decoded = [&] {
-			const auto window = std::span{instructions}.first(count);
-			if (verification_requested)
-				return arm64::gadgets::Builder{}.build(
-					cpu.pc, window, {},
-					std::pmr::get_default_resource(), {},
-					build_options_);
-			if (!block_links_enabled)
-				return arm64::gadgets::Builder{}.build(
-					cpu.pc, window, {},
-					programs_->program_storage(), {},
-					build_options_);
-			return arm64::gadgets::Builder{}.build(
-				cpu.pc, window,
-				[this](std::uint64_t pc) {
-					return programs_->link(pc);
-				},
-				programs_->program_storage(),
-				[this](std::uint64_t source_pc) {
-					return programs_->indirect_link(source_pc);
-				},
-				build_options_);
-		}();
-		if (verification_requested) {
-			uncached.emplace(std::move(decoded));
-			selected = std::cref(*uncached);
-		} else {
-			selected = std::cref(store(cpu.pc, std::move(decoded)));
-		}
+		const auto window = std::span{instructions}.first(count);
+		auto decoded = arm64::gadgets::Builder{}.build(
+			cpu.pc, window,
+			[this](std::uint64_t pc) {
+				return programs_->link(pc);
+			},
+			programs_->program_storage(),
+			[this](std::uint64_t source_pc) {
+				return programs_->indirect_link(source_pc);
+			},
+			build_options_);
+		selected = std::cref(store(cpu.pc, std::move(decoded)));
 	}
 	const auto &built = selected->get();
-	if (!built.complete || built.program.instruction_count() == 0) {
+	if (!built.complete) {
 		std::fprintf(stderr,
 			"Darwin static unsupported instruction pc=%#llx value=%#x compiled=%zu\n",
 			static_cast<unsigned long long>(built.stop_address),
 			built.stop_instruction,
 			built.program.instruction_count());
-		if (trace_blocks_enabled)
-			trace_block(cpu.pc, built, ::uml::cpu::EngineEvent::fatal);
+	}
+	if (built.program.instruction_count() == 0) {
 		cpu.pc = built.stop_address;
-		return ::uml::cpu::EngineEvent::fatal;
+		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
-	/* The reference overlay intentionally does not expose direct atomic
-	 * pointers because a speculative reference store must not modify live
-	 * guest RAM.  Its synthetic reservation keys therefore cannot be compared
-	 * with a reservation established by the live TLB in an earlier block.
-	 * Leave exclusive blocks on the real dispatcher path and keep verifying
-	 * every surrounding block; otherwise the verifier reports a false mismatch
-	 * at ordinary LDXR/STXR retry loops before userspace starts.
-	 *
-	 * A register FPCR write can also end the gadget block early when its value
-	 * enables traps. The reference run cannot predict that shortened boundary
-	 * from the original multi-instruction budget, so leave this rare block out
-	 * of overlay verification as well.
-	 */
-	const bool verifying = verification_requested && instructions_loaded &&
-		std::none_of(instructions.begin(),
-			instructions.begin() + built.program.instruction_count(),
-			[](std::uint32_t instruction) {
-				const bool exclusive =
-					(instruction & 0x3f00'0000U) ==
-						0x0800'0000U;
-				const bool writes_fpcr =
-					(instruction & 0xffff'ffe0U) ==
-						0xd51b'4400U;
-				return exclusive || writes_fpcr;
-			});
-	std::unique_ptr<arm64::CpuState> expected;
-	arm64::RunResult expected_result{};
-	std::unique_ptr<VerificationMemory> overlay;
-	if (verifying) {
-		/* The reference dispatcher accesses vectors directly.  Materialize the
-		 * deferred kernel frame before copying it so gadget verification observes
-		 * the same incoming FP state as normal execution.
-		 */
-		if (built.program.accesses_fp_state())
-			cpu.access_fp_state();
-		expected = std::make_unique<arm64::CpuState>(cpu);
-		overlay = std::make_unique<VerificationMemory>(memory);
-		expected_result = arm64::Dispatcher{}.run(
-			*expected, *overlay, built.program.instruction_count());
-	}
-	const auto event = verification_requested ?
-		arm64::gadgets::execute(built.program, cpu, tlb_, executed) :
+	const auto event =
 		arm64::gadgets::execute_preserving_native_fp_environment(
 			built.program, cpu, tlb_, executed);
 	const bool fpcr_enable_exit =
@@ -731,13 +667,14 @@ const BuildResult &GadgetExecutor::store(
 				*current_program, event, cpu.pc, executed);
 		cpu.gadget_indirect_miss = nullptr;
 	}
-	if (cpu.gadget_indirect_miss != nullptr) {
+	if (cpu.gadget_indirect_miss != nullptr &&
+	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
 		programs_->learn_indirect(
 			*static_cast<arm64::gadgets::IndirectLink *>(
 				cpu.gadget_indirect_miss),
 			cpu.pc);
-		cpu.gadget_indirect_miss = nullptr;
 	}
+	cpu.gadget_indirect_miss = nullptr;
 	if (event == ::uml::cpu::EngineEvent::fatal ||
 	    event == ::uml::cpu::EngineEvent::illegal_instruction) {
 		std::array<std::byte, sizeof(std::uint32_t)> current_encoded{};
@@ -770,30 +707,6 @@ const BuildResult &GadgetExecutor::store(
 				static_cast<unsigned long long>(address), instruction);
 		}
 	}
-	if (overlay && (!same_cpu_state(
-			*expected, cpu, built.program.guest_address()) ||
-			!overlay->matches_guest())) {
-		std::fprintf(stderr,
-			"Darwin static verify failed pc=%#llx count=%zu event=%d reference=%u/%#llx/%#x\n",
-			static_cast<unsigned long long>(built.program.guest_address()),
-			built.program.instruction_count(), static_cast<int>(event),
-			static_cast<unsigned>(expected_result.reason),
-			static_cast<unsigned long long>(expected_result.address),
-			expected_result.instruction);
-		for (std::size_t index = 0;
-		     index < built.program.instruction_count(); ++index)
-			std::fprintf(stderr,
-				"Darwin static verify instruction pc=%#llx value=%#x\n",
-				static_cast<unsigned long long>(
-					built.program.guest_address() + index * 4),
-				instructions[index]);
-		std::abort();
-	}
-	/* Keep disabled tracing out of both the call and thread-local paths.  This
-	 * boundary executes after every translated block.
-	 */
-	if (trace_blocks_enabled)
-		trace_block(built.program.guest_address(), built, event);
 	return event;
 }
 
@@ -812,9 +725,7 @@ const BuildResult &GadgetExecutor::store(
 	if (!memory.fetch(cpu.pc, encoded)) {
 		const auto fault = memory.last_fault();
 		tlb_.fault_address = fault.address;
-		tlb_.fault_access = fault.access == arm64::MemoryAccess::write ?
-			::uml::memory::Access::write :
-			::uml::memory::Access::read;
+		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
 		return ::uml::cpu::EngineEvent::memory_fault;
 	}
 
@@ -827,10 +738,8 @@ const BuildResult &GadgetExecutor::store(
 			static_cast<unsigned long long>(built.stop_address),
 			built.stop_instruction,
 			built.program.instruction_count());
-		if (trace_blocks_enabled)
-			trace_block(cpu.pc, built, ::uml::cpu::EngineEvent::fatal);
 		cpu.pc = built.stop_address;
-		return ::uml::cpu::EngineEvent::fatal;
+		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
 
 	const bool transactional =
@@ -843,8 +752,6 @@ const BuildResult &GadgetExecutor::store(
 		correct_terminal_instruction_count(
 			built.program, event, cpu.pc, executed);
 		cpu.gadget_indirect_miss = nullptr;
-		if (trace_blocks_enabled)
-			trace_block(built.program.guest_address(), built, event);
 		/* A one-instruction fallthrough ends in Builder's synthetic
 		 * interrupt gadget.  It is an internal cold-mode boundary, not a
 		 * guest-visible fairness interrupt.
@@ -871,8 +778,6 @@ const BuildResult &GadgetExecutor::store(
 			built.program, event, isolated.pc, isolated_executed);
 		isolated.gadget_indirect_miss = nullptr;
 		executed = isolated_executed;
-		if (trace_blocks_enabled)
-			trace_block(built.program.guest_address(), built, event);
 		return event;
 	}
 
@@ -882,9 +787,6 @@ const BuildResult &GadgetExecutor::store(
 		cpu.fpsr = decision.committed_fpsr;
 		floating_point_syndrome_ = decision.syndrome;
 		executed = 0;
-		if (trace_blocks_enabled)
-			trace_block(built.program.guest_address(), built,
-				::uml::cpu::EngineEvent::floating_point_trap);
 		return ::uml::cpu::EngineEvent::floating_point_trap;
 	}
 
@@ -899,9 +801,6 @@ const BuildResult &GadgetExecutor::store(
 		 arm64::detail::fpsr_exception_cumulative_mask);
 	cpu = isolated;
 	executed = isolated_executed;
-	if (trace_blocks_enabled)
-		trace_block(built.program.guest_address(), built,
-			::uml::cpu::EngineEvent::continued);
 	return ::uml::cpu::EngineEvent::continued;
 }
 

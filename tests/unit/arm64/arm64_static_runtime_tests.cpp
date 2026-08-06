@@ -168,7 +168,8 @@ static void uml_static_host_interrupt_sequence()
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 
 	unsigned int sequence = 0;
-	darwin_uml_static_guest_interrupt_sequence(&sequence, sequence);
+	require(darwin_uml_static_guest_interrupt_sequence(
+		&sequence, sequence) == 0);
 	std::thread interrupt{[&] {
 		std::this_thread::sleep_for(10ms);
 		__atomic_fetch_add(&sequence, 1U, __ATOMIC_RELEASE);
@@ -180,7 +181,7 @@ static void uml_static_host_interrupt_sequence()
 	const int event = darwin_uml_static_enter_guest(
 		&registers, &fp, sizeof(fp), generation, &tls);
 	interrupt.join();
-	darwin_uml_static_guest_interrupt_sequence(nullptr, 0);
+	require(darwin_uml_static_guest_interrupt_sequence(nullptr, 0) == 0);
 	require(event == DARWIN_UML_EVENT_INTERRUPT);
 	require(registers.pc == base);
 	require(darwin_uml_static_vm_destroy(generation) == 0);

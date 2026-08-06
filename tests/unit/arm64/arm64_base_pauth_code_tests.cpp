@@ -42,6 +42,8 @@ void register_modifier_forms(
 						.native = pauth::native_pauth,
 						.validator =
 							&pauth::validate_inserted_code,
+						.validator_relation_id =
+							"permitted-transformed-code/v1",
 					});
 					++cases;
 				}
@@ -74,6 +76,8 @@ void zero_modifier_forms(
 					.native = pauth::native_pauth,
 					.validator =
 						&pauth::validate_inserted_code,
+					.validator_relation_id =
+						"permitted-transformed-code/v1",
 				});
 				++cases;
 			}
@@ -101,6 +105,8 @@ void system_alias_forms(
 				.expected = initial,
 				.native = pauth::native_pauth,
 				.validator = &pauth::validate_inserted_code,
+				.validator_relation_id =
+					"permitted-transformed-code/v1",
 			});
 			++cases;
 		}

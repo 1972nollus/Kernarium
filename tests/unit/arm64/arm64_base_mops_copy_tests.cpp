@@ -84,6 +84,44 @@ void all_options_overlap_pages(engine::EngineHarness &harness)
 	}
 }
 
+void full_extent_backward_overlap(engine::EngineHarness &harness)
+{
+	constexpr std::size_t transfer_size = 64 * 1024;
+	const std::size_t source_offset = mops::page_size - 211;
+	const std::size_t overlap_delta = 173;
+	const std::size_t destination_offset = source_offset + overlap_delta;
+	std::vector<std::byte> initial(transfer_size + 2 * mops::page_size);
+	mops::fill_pattern(initial, 91);
+	auto expected_memory = initial;
+	mops::copy_bytes(expected_memory, destination_offset, source_offset,
+		transfer_size);
+
+	auto initial_cpu = mops::state();
+	initial_cpu.registers[destination_register] =
+		mops::data_base + destination_offset;
+	initial_cpu.registers[source_register] =
+		mops::data_base + source_offset;
+	initial_cpu.registers[count_register] = transfer_size;
+	auto expected_cpu = initial_cpu;
+	expected_cpu.nzcv = mops::option_b_backward;
+	expected_cpu.registers[count_register] = 0;
+	expected_cpu.pc = mops::successful_program_pc(4);
+	const std::array regions{engine::MemoryRegion{
+		.address = mops::data_base,
+		.initial = initial,
+		.expected = expected_memory,
+	}};
+	const auto code = sequence(0);
+	harness.check_program({
+		.name = "CPY full-extent 65536-byte backward overlap",
+		.code = code,
+		.initial = initial_cpu,
+		.expected = expected_cpu,
+		.native = mops::native(),
+		.memory = regions,
+	});
+}
+
 void direction_selection(engine::EngineHarness &harness)
 {
 	struct DirectionCase final {
@@ -352,6 +390,7 @@ int main()
 {
 	engine::EngineHarness harness;
 	all_options_overlap_pages(harness);
+	full_extent_backward_overlap(harness);
 	direction_selection(harness);
 	zero_maximum_and_malformed_state(harness);
 	forward_read_fault_restart(harness);

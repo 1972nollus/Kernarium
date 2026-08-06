@@ -12,6 +12,69 @@ function(uml_record_registered_test NAME SUITE)
         list(APPEND _unit_tests "${NAME}")
         set_property(GLOBAL PROPERTY UML_UNIT_TESTS "${_unit_tests}")
     endif()
+
+    string(TOUPPER "${SUITE}" _suite_upper)
+    set(_target_property "UML_${_suite_upper}_COMMAND_TARGETS")
+    get_property(_command_targets GLOBAL PROPERTY "${_target_property}")
+    foreach(_argument IN LISTS ARGN)
+        set(_command_target "")
+        if(_argument MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
+            set(_command_target "${CMAKE_MATCH_1}")
+        elseif(_argument MATCHES
+               "^\\$<JOIN:\\$<TARGET_OBJECTS:([^>]+)>,\\|>$")
+            set(_command_target "${CMAKE_MATCH_1}")
+        elseif(_argument MATCHES "^\\$<TARGET_OBJECTS:([^>]+)>$")
+            set(_command_target "${CMAKE_MATCH_1}")
+        elseif(TARGET "${_argument}")
+            set(_command_target "${_argument}")
+        endif()
+        if(NOT _command_target OR NOT TARGET "${_command_target}")
+            continue()
+        endif()
+        get_property(_aliased_target TARGET "${_command_target}"
+            PROPERTY ALIASED_TARGET)
+        if(_aliased_target)
+            set(_command_target "${_aliased_target}")
+        endif()
+        get_target_property(_command_target_imported "${_command_target}"
+            IMPORTED)
+        get_target_property(_command_target_type "${_command_target}" TYPE)
+        if(NOT _command_target_imported AND
+           NOT _command_target_type STREQUAL "INTERFACE_LIBRARY")
+            list(APPEND _command_targets "${_command_target}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _command_targets)
+    set_property(GLOBAL PROPERTY "${_target_property}" "${_command_targets}")
+endfunction()
+
+function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
+    if(NOT TARGET "${AGGREGATE_TARGET}")
+        add_custom_target("${AGGREGATE_TARGET}")
+    endif()
+    string(TOUPPER "${SUITE}" _suite_upper)
+    get_property(_command_targets GLOBAL PROPERTY
+        "UML_${_suite_upper}_COMMAND_TARGETS")
+    list(REMOVE_DUPLICATES _command_targets)
+    foreach(_command_target IN LISTS _command_targets)
+        if(NOT TARGET "${_command_target}")
+            message(FATAL_ERROR
+                "${SUITE} test command target disappeared: ${_command_target}")
+        endif()
+        add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
+    endforeach()
+
+    get_property(_aggregate_dependencies TARGET "${AGGREGATE_TARGET}"
+        PROPERTY MANUALLY_ADDED_DEPENDENCIES)
+    foreach(_command_target IN LISTS _command_targets)
+        list(FIND _aggregate_dependencies "${_command_target}"
+            _dependency_index)
+        if(_dependency_index EQUAL -1)
+            message(FATAL_ERROR
+                "${AGGREGATE_TARGET} does not build registered ${SUITE} "
+                "command target ${_command_target}")
+        endif()
+    endforeach()
 endfunction()
 
 function(uml_apply_test_properties NAME)
@@ -50,21 +113,63 @@ function(uml_apply_test_properties NAME)
 endfunction()
 
 function(uml_add_unit_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
+    cmake_parse_arguments(TEST "NO_EVIDENCE_DEPENDENCY" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
         "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_unit_test requires NAME and COMMAND")
     endif()
 
-    add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
+    # Unit tests are native host binaries (or CMake-only setup actions).  Keep
+    # Python and shell runners in the tooling/integration suites even when a
+    # caller attempts to hide one behind an absolute interpreter path.
+    foreach(_command_argument IN LISTS TEST_COMMAND)
+        if(_command_argument MATCHES "(^|/)(python[0-9.]*|sh|bash|zsh)$" OR
+           _command_argument MATCHES "\\.(py|sh)$")
+            message(FATAL_ERROR
+                "${TEST_NAME}: unit tests may not invoke Python or shell: "
+                "${_command_argument}")
+        endif()
+    endforeach()
+
+    if(TEST_NO_EVIDENCE_DEPENDENCY)
+        set(_unit_test_command ${TEST_COMMAND})
+    else()
+        if(NOT TARGET uml_instruction_evidence_test_runner)
+            message(FATAL_ERROR
+                "${TEST_NAME}: instruction-evidence runner target is missing")
+        endif()
+        set(_unit_test_command ${TEST_COMMAND})
+        list(GET _unit_test_command 0 _unit_test_executable)
+        if(TARGET "${_unit_test_executable}")
+            set_property(GLOBAL APPEND PROPERTY
+                UML_UNIT_TEST_BINARY_TARGETS "${_unit_test_executable}")
+            # The registered command always starts with the evidence wrapper.
+            # Keep an individually requested unit executable runnable through
+            # CTest, not only when the suite aggregate happened to build the
+            # wrapper first.
+            get_property(_unit_test_executable_alias TARGET
+                "${_unit_test_executable}" PROPERTY ALIASED_TARGET)
+            if(_unit_test_executable_alias)
+                set(_unit_test_dependency_target
+                    "${_unit_test_executable_alias}")
+            else()
+                set(_unit_test_dependency_target
+                    "${_unit_test_executable}")
+            endif()
+            add_dependencies("${_unit_test_dependency_target}"
+                uml_instruction_evidence_test_runner)
+            list(REMOVE_AT _unit_test_command 0)
+            list(PREPEND _unit_test_command
+                "$<TARGET_FILE:${_unit_test_executable}>")
+        endif()
+        list(PREPEND _unit_test_command
+            "$<TARGET_FILE:uml_instruction_evidence_test_runner>")
+    endif()
+    add_test(NAME "${TEST_NAME}" COMMAND ${_unit_test_command})
     set(_labels "unit")
     if(TEST_LABELS)
         list(APPEND _labels ${TEST_LABELS})
-    endif()
-    set(_fixtures_required ${TEST_FIXTURES_REQUIRED})
-    if(NOT TEST_FIXTURES_SETUP)
-        list(APPEND _fixtures_required uml-instruction-evidence-run)
     endif()
     uml_apply_test_properties("${TEST_NAME}"
         LABELS "${_labels}"
@@ -75,11 +180,32 @@ function(uml_add_unit_test)
         RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
         FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
         FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${_fixtures_required}")
+        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
         "UML_INSTRUCTION_EVIDENCE=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv"
-        "UML_INSTRUCTION_EVIDENCE_TEST=${TEST_NAME}")
-    uml_record_registered_test("${TEST_NAME}" unit ${TEST_COMMAND})
+        "UML_INSTRUCTION_EVIDENCE_TEST=${TEST_NAME}"
+        "UML_INSTRUCTION_EVIDENCE_BINDINGS=${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_evidence_bindings.tsv")
+    if(UML_BUILD_TOOLING_TESTS)
+        # The input join consumes one independently compressed stream per
+        # producer.  Keeping the path test-specific makes parallel unit runs
+        # race-free; the join's dependency list keeps it behind all selected
+        # producers in a complete unit+tooling invocation.
+        set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
+            "UML_INSTRUCTION_INPUT_MATERIALIZATION=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv.inputs.jsonl.gz")
+    endif()
+    if(UML_BUILD_TOOLING_TESTS AND NOT TEST_NO_EVIDENCE_DEPENDENCY)
+        # CMake test properties are directory-scoped. Attach the ordering in
+        # the unit test's owning directory. The reset is itself unit-labelled
+        # in combined unit/tooling graphs, so strict unit selection includes
+        # and orders it without introducing a tooling-labelled dependency.
+        set_property(TEST "${TEST_NAME}" APPEND PROPERTY
+            DEPENDS arm64-instruction-evidence-reset)
+    endif()
+    uml_record_registered_test("${TEST_NAME}" unit ${_unit_test_command})
+    unset(_unit_test_command)
+    unset(_unit_test_executable)
+    unset(_unit_test_executable_alias)
+    unset(_unit_test_dependency_target)
 endfunction()
 
 function(uml_add_tooling_test)
@@ -217,6 +343,17 @@ function(uml_test_owner_matches NAME OWNER COMMAND_TEXT OUTPUT)
     set(${OUTPUT} ${_matches} PARENT_SCOPE)
 endfunction()
 
+function(_uml_collect_directory_tests DIRECTORY_PATH OUTPUT)
+    get_property(_tests DIRECTORY "${DIRECTORY_PATH}" PROPERTY TESTS)
+    get_property(_subdirectories DIRECTORY "${DIRECTORY_PATH}"
+        PROPERTY SUBDIRECTORIES)
+    foreach(_subdirectory IN LISTS _subdirectories)
+        _uml_collect_directory_tests("${_subdirectory}" _subdirectory_tests)
+        list(APPEND _tests ${_subdirectory_tests})
+    endforeach()
+    set(${OUTPUT} "${_tests}" PARENT_SCOPE)
+endfunction()
+
 function(uml_validate_registered_test_manifest)
     set(_manifest "${PROJECT_SOURCE_DIR}/tests/test-manifest.tsv")
     if(NOT EXISTS "${_manifest}")
@@ -249,6 +386,13 @@ function(uml_validate_registered_test_manifest)
            NOT EXISTS "${PROJECT_SOURCE_DIR}/${_owner}")
             message(FATAL_ERROR
                 "Invalid or missing test owner in manifest: ${_row}")
+        endif()
+        set(_expected_owner_root "tests/${_suite}")
+        if(NOT _owner STREQUAL "${_expected_owner_root}" AND
+           NOT _owner MATCHES "^${_expected_owner_root}/")
+            message(FATAL_ERROR
+                "Test owner is outside ${_expected_owner_root} for "
+                "${_suite} suite: ${_row}")
         endif()
         if(NOT _disposition MATCHES "^(retained|conditional|renamed|removed)$")
             message(FATAL_ERROR "Invalid test disposition in manifest: ${_row}")
@@ -320,11 +464,13 @@ function(uml_validate_registered_test_manifest)
     endforeach()
 
     get_property(_registered GLOBAL PROPERTY UML_REGISTERED_TESTS)
+    set(_registered_names)
     foreach(_registration IN LISTS _registered)
         string(REPLACE "\t" ";" _registration_fields "${_registration}")
         list(GET _registration_fields 0 _registered_name)
         list(GET _registration_fields 1 _registered_suite)
         list(GET _registration_fields 2 _registered_command)
+        list(APPEND _registered_names "${_registered_name}")
         list(FIND _manifest_names "${_registered_name}" _manifest_index)
         if(_manifest_index EQUAL -1)
             message(FATAL_ERROR
@@ -351,4 +497,26 @@ function(uml_validate_registered_test_manifest)
                 "${_registered_name} -> ${_manifest_owner}")
         endif()
     endforeach()
+
+    # Compare the helpers' registry with CMake's actual generated test graph.
+    # This closes indirect spellings such as cmake_language(CALL ADD_TEST ...)
+    # which no source-text policy can enumerate reliably.
+    _uml_collect_directory_tests("${PROJECT_SOURCE_DIR}" _actual_test_names)
+    list(REMOVE_DUPLICATES _registered_names)
+    list(REMOVE_DUPLICATES _actual_test_names)
+    list(SORT _registered_names)
+    list(SORT _actual_test_names)
+    if(NOT _registered_names STREQUAL _actual_test_names)
+        set(_unregistered ${_actual_test_names})
+        set(_missing ${_registered_names})
+        foreach(_name IN LISTS _registered_names)
+            list(REMOVE_ITEM _unregistered "${_name}")
+        endforeach()
+        foreach(_name IN LISTS _actual_test_names)
+            list(REMOVE_ITEM _missing "${_name}")
+        endforeach()
+        message(FATAL_ERROR
+            "CTest registrations differ from the centralized suite registry; "
+            "unregistered=[${_unregistered}], missing=[${_missing}]")
+    endif()
 endfunction()

@@ -17,6 +17,7 @@ enum class StopReason {
 	memory_fault,
 	gcs_fault,
 	illegal_instruction,
+	unavailable_feature,
 	unsupported_instruction,
 	floating_point_trap,
 };
@@ -27,6 +28,12 @@ struct RunResult final {
 	std::uint32_t instruction{};
 	std::size_t instructions{};
 	bool write{};
+	/* Fetch faults are neither data reads nor writes. Keep the historical
+	 * write member for the many instruction-family aggregate initializers,
+	 * and use this field to preserve the otherwise unrepresentable execute
+	 * direction at the dispatcher boundary. */
+	::uml::memory::MemoryAccess access{
+		::uml::memory::MemoryAccess::read};
 	/* ESR-shaped metadata for StopReason::floating_point_trap. */
 	std::uint32_t syndrome{};
 };

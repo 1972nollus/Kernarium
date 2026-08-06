@@ -112,19 +112,6 @@ void every_scalar_compare_swap_variant_is_native() {
       compare_swap(2U, true, false, 5U, 31U, 31U), pc + 0x1000U);
 }
 
-void verifier_does_not_replay_concurrent_memory_operations() {
-  for (unsigned size = 0; size < 4U; ++size)
-    for (unsigned ordering = 0; ordering < 4U; ++ordering)
-      for (unsigned operation = 0; operation < 9U; ++operation)
-        require(!jit_test::verification_replay_safe_for_testing(
-            atomic(size, (ordering & 2U) != 0U,
-                   (ordering & 1U) != 0U, operation, 1U, 0U, 0U)));
-  require(!jit_test::verification_replay_safe_for_testing(
-      compare_swap(2U, true, false, 1U, 0U, 0U)));
-  require(!jit_test::verification_replay_safe_for_testing(0xf940'0b90U));
-  require(jit_test::verification_replay_safe_for_testing(0x8b00'0020U));
-}
-
 } // namespace
 
 int main() {
@@ -135,7 +122,6 @@ int main() {
   }
   every_scalar_rmw_variant_is_native();
   every_scalar_compare_swap_variant_is_native();
-  verifier_does_not_replay_concurrent_memory_operations();
   std::puts("arm64-jit-scalar-atomic-codegen: passed");
   return 0;
 }

@@ -99,6 +99,8 @@ UML_DECLARE_RDM(sqrdmlah)
 UML_DECLARE_RDM(sqrdmlsh)
 #undef UML_DECLARE_RDM
 void uml_arm64_gadget_simd_rdm_software();
+std::uint64_t uml_arm64_simd_rdm_software(
+	uml::cpu::arm64::CpuState *, std::uint32_t) noexcept;
 }
 
 namespace test = arm64_simd_indexed_test;
@@ -354,10 +356,28 @@ void every_form_uses_direct_offsets_and_no_gadget_is_dead()
 	}
 }
 
+void corrupt_software_metadata_reports_failure_without_mutation()
+{
+	test::arm64::CpuState cpu{};
+	cpu.fpsr = 0x8800'0011U;
+	cpu.vectors[3].bytes.fill(std::byte{0x5a});
+	const auto vectors = cpu.vectors;
+	const auto fpsr = cpu.fpsr;
+	test::require(uml_arm64_simd_rdm_software(
+		&cpu, 0xffff'ffffU) == 0U,
+		"invalid cold-helper metadata did not report failure");
+	for (std::size_t index = 0; index < cpu.vectors.size(); ++index)
+		test::require(cpu.vectors[index].bytes == vectors[index].bytes,
+			"invalid cold-helper metadata changed a vector register");
+	test::require(cpu.fpsr == fpsr,
+		"invalid cold-helper metadata changed status state");
+}
+
 } // namespace
 
 int main()
 {
 	every_form_uses_direct_offsets_and_no_gadget_is_dead();
+	corrupt_software_metadata_reports_failure_without_mutation();
 	return 0;
 }

@@ -297,10 +297,31 @@ inline constexpr std::array<std::uint16_t, 120> tlbip_named{{
 	0x3499, 0x349d, 0x34a9, 0x34ad, 0x34b1, 0x34b5, 0x34b9, 0x34bd,
 }};
 
+/*
+ * 2026-06 TLBIP operation-table rows whose architectural feature column is
+ * FEAT_D128 (not FEAT_D128 || FEAT_TLBID).
+ */
+inline constexpr std::array<std::uint16_t, 56> tlbip_d128_only{{
+	0x0431, 0x0433, 0x0435, 0x0437, 0x0439, 0x043b, 0x043d, 0x043f,
+	0x04b1, 0x04b3, 0x04b5, 0x04b7, 0x04b9, 0x04bb, 0x04bd, 0x04bf,
+	0x2421, 0x2422, 0x2425, 0x2426, 0x2431, 0x2435, 0x2439, 0x243d,
+	0x24a1, 0x24a2, 0x24a5, 0x24a6, 0x24b1, 0x24b5, 0x24b9, 0x24bd,
+	0x3409, 0x340d, 0x3411, 0x3415, 0x3419, 0x341d, 0x3429, 0x342d,
+	0x3431, 0x3435, 0x3439, 0x343d, 0x3489, 0x348d, 0x3491, 0x3495,
+	0x3499, 0x349d, 0x34a9, 0x34ad, 0x34b1, 0x34b5, 0x34b9, 0x34bd,
+}};
+
 [[nodiscard]] constexpr bool named_tlbip_operation(
 	unsigned op1, unsigned crn, unsigned crm, unsigned op2) noexcept
 {
 	return contains(tlbip_named, operation_key(op1, crn, crm, op2));
+}
+
+[[nodiscard]] constexpr bool tlbip_supports_tlbid(
+	unsigned op1, unsigned crn, unsigned crm, unsigned op2) noexcept
+{
+	const auto key = operation_key(op1, crn, crm, op2);
+	return contains(tlbip_named, key) && !contains(tlbip_d128_only, key);
 }
 
 [[nodiscard]] constexpr bool named_at_operation(

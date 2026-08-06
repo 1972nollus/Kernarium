@@ -36,6 +36,7 @@ private:
 	using CachedResult = std::reference_wrapper<const BuildResult>;
 
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
+	void select_cpu(CpuState &cpu) noexcept;
 	[[nodiscard]] std::optional<CachedResult> find(std::uint64_t pc) const;
 	[[nodiscard]] const BuildResult &store(
 		std::uint64_t pc, BuildResult result);
@@ -52,6 +53,7 @@ private:
 	std::uint64_t mapping_changes_{};
 	std::unique_ptr<ProgramCache> programs_;
 	::uml::memory::Tlb tlb_;
+	CpuState *current_cpu_{};
 	void *execution_context_{};
 	unsigned long execution_generation_{};
 	bool preempted_{};

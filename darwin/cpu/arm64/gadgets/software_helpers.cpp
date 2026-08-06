@@ -31,7 +31,6 @@
 #include "../detail/integer_multiply.hpp"
 #include "../detail/pointer_auth.hpp"
 #include "cpu/host_capabilities.hpp"
-#include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
 #include <array>
@@ -42,20 +41,6 @@
 #include <span>
 #include <type_traits>
 #include <utility>
-
-extern "C" [[gnu::noinline]] void
-uml_arm64_guest_code_synchronize(std::uint64_t address) noexcept
-{
-	/*
-	 * Guest data and instruction views share one physical backing, but
-	 * translated programs still need an explicit sequence change at the
-	 * architectural synchronization point.  Keep this uncommon operation in
-	 * one cold helper rather than adding work to ordinary stores.
-	 */
-	std::atomic_thread_fence(std::memory_order_seq_cst);
-	darwin_uml_static_vm_invalidate_code(
-		static_cast<unsigned long>(address));
-}
 
 extern "C" [[gnu::noinline]] std::uint64_t
 uml_arm64_guest_pointer_auth(
@@ -104,14 +89,16 @@ extern "C" [[gnu::noinline]] void uml_arm64_gadget_access_fp_state(
 	cpu->access_fp_state();
 }
 
-extern "C" [[gnu::noinline]] void
+extern "C" [[gnu::noinline]] std::uint64_t
 uml_arm64_simd_rdm_software(CpuState *cpu,
 	std::uint32_t instruction) noexcept
 {
-	if (!uml::cpu::arm64::detail::
-		    execute_saturating_rounding_multiply_accumulate(
-			    *cpu, instruction))
-		__builtin_trap();
+	/* The builder validates this encoding before selecting the cold software
+	 * helper. Keep a defensive result for corrupt/stale program metadata: the
+	 * assembly wrapper turns it into the same precise guest illegal event as a
+	 * translation-time rejection instead of terminating the host process. */
+	return uml::cpu::arm64::detail::
+		execute_saturating_rounding_multiply_accumulate(*cpu, instruction);
 }
 
 extern "C" [[gnu::noinline]] void

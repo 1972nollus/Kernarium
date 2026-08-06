@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
-#include "uml_darwin_cpu.h"
+#include "runtime/execution_engine.hpp"
 
 #include <string>
 #include <string_view>
@@ -16,7 +16,8 @@ namespace uml::emulator {
  */
 struct EmulatorOptions final {
 	std::vector<std::string> arguments;
-	darwin_uml_execution_engine engine{DARWIN_UML_EXECUTION_AUTO};
+	::uml::runtime::ExecutionEngine engine{
+		::uml::runtime::ExecutionEngine::automatic};
 	bool valid{true};
 };
 

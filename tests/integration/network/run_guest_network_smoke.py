@@ -20,9 +20,9 @@ import sys
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "ltp"))
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from run_guest_ltp import Guest  # noqa: E402
+from guest import Guest  # noqa: E402
 
 
 NODE = "/root/.nvm/versions/node/v24.18.0/bin/node"

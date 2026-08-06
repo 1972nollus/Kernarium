@@ -8,6 +8,7 @@ OWNERSHIP="$ROOT_DIR/kernel/patches/path-ownership.tsv"
 OUTSIDE_POLICY="$ROOT_DIR/kernel/patches/outside-port-justification.tsv"
 SERIES_MANIFEST="$ROOT_DIR/kernel/patches/series/manifest.tsv"
 SERIES_DIR="$ROOT_DIR/kernel/patches/series"
+SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
 
 fail()
 {
@@ -52,6 +53,8 @@ done
 [ -r "$OWNERSHIP" ] || fail "missing ownership manifest: $OWNERSHIP"
 [ -r "$OUTSIDE_POLICY" ] || fail "missing outside-port policy: $OUTSIDE_POLICY"
 [ -r "$SERIES_MANIFEST" ] || fail "missing series manifest: $SERIES_MANIFEST"
+[ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
+"$SERIES_POLICY" manifest >/dev/null
 # shellcheck disable=SC1090
 . "$METADATA"
 [ -d "$SOURCE/.git" ] || fail "not a Linux checkout: $SOURCE"
@@ -100,9 +103,11 @@ classify_path()
 	done < "$OWNERSHIP"
 }
 
-# Build an exact path-to-topic index from the checked-in series. A final-state
-# topic series must touch every replay delta path in exactly one patch; this
-# rejects reintroduced broad patches and change-then-revert churn.
+# Build an exact path-to-topic index from the checked-in series. The manifest
+# verifier above rejects every undeclared multi-topic path and requires each
+# declared overlap to name its exact ordered owners. This retains the
+# change-then-revert guard while permitting a small independently droppable fix
+# to share a path with its broader subsystem topic.
 while IFS="$tab" read -r order filename patch_id digest subject; do
 	case "$order" in \#*|order|'') continue ;; esac
 	case "$order:$filename" in
@@ -123,13 +128,6 @@ while IFS="$tab" read -r order filename patch_id digest subject; do
 			>> "$DELTA_TMP/series-membership.tsv"
 	done < "$patch_numstat"
 done < "$SERIES_MANIFEST"
-
-duplicate_series_path=$(awk -F '\t' '
-	{ count[$2]++ }
-	END { for (path in count) if (count[path] != 1) { print path; exit } }
-' "$DELTA_TMP/series-membership.tsv")
-[ -z "$duplicate_series_path" ] ||
-	fail "series path is changed by more than one topic patch: $duplicate_series_path"
 
 # Validate policy semantics independently of the current tree walk so an
 # owner, disposition, origin, or next-version typo cannot become accepted just

@@ -1,0 +1,409 @@
+"""Shared serial-console guest harness for integration and performance runners."""
+
+from __future__ import annotations
+# Imported support must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
+
+import dataclasses
+import os
+import pathlib
+import pty
+import re
+import select
+import shlex
+import signal
+import subprocess
+import tempfile
+import time
+import uuid
+from collections.abc import Sequence
+
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+BOOT_TIMEOUT_SECONDS = 90
+SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
+SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
+OVERLAY_SHELL_BOOTSTRAP = (
+    "set -eu; "
+    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt; "
+    "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root; "
+    "mount -o bind / /mnt/lower; "
+    "mount -t overlay overlay "
+    "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; "
+    "mount -t devtmpfs devtmpfs /mnt/root/dev; "
+    "mkdir -p /mnt/root/.uml-lower; "
+    "cd /mnt/root; "
+    "pivot_root . .uml-lower; "
+    "rm -f /etc/resolv.conf; "
+    "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
+    "'nameserver 10.0.2.3' > /etc/resolv.conf; "
+    "mount -t proc proc /proc; "
+    "mount -t sysfs sysfs /sys; "
+    "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp; "
+    "exec /bin/sh"
+)
+SYSTEMD_OVERLAY_BOOTSTRAP = (
+    "set -eu; "
+    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt; "
+    "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root; "
+    "mount -o bind / /mnt/lower; "
+    "mount -t overlay overlay "
+    "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; "
+    "mount -t devtmpfs devtmpfs /mnt/root/dev; "
+    "mkdir -p /mnt/root/.uml-lower; "
+    "cd /mnt/root; "
+    "pivot_root . .uml-lower; "
+    "rm -f /etc/resolv.conf; "
+    "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
+    "'nameserver 10.0.2.3' > /etc/resolv.conf; "
+    "if [ -x /lib/systemd/systemd ]; then exec /lib/systemd/systemd; fi; "
+    "exec /usr/lib/systemd/systemd"
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandResult:
+    return_code: int
+    output: str
+
+
+def emulator_arguments(
+    emulator: pathlib.Path,
+    rootfs: pathlib.Path,
+    memory: str,
+    workspace: str = "tmpfs",
+    kernel_arguments: Sequence[str] = (),
+    swap_path: pathlib.Path | None = None,
+    init_path: str = "/sbin/uml-overlay-init",
+    engine: str = "jit",
+) -> list[str]:
+    arguments = [
+        str(emulator),
+        f"--execution-engine={engine}",
+        f"ubd0r={rootfs}",
+        "ro",
+        f"init={init_path}",
+        f"mem={memory}",
+    ]
+    if workspace == "ext2":
+        arguments.insert(-1, "uml_ltp_workspace=ext2")
+    if swap_path is not None:
+        arguments.insert(-1, f"ubd1={swap_path}")
+    arguments.extend(kernel_arguments)
+    return arguments
+
+
+def size_bytes(value: str) -> int:
+    """Parse a memory or disk size using binary K/M/G/T suffixes."""
+    match = SIZE_VALUE.fullmatch(value)
+    if match is None:
+        raise ValueError(f"invalid size {value!r}")
+    suffix_shift = {"": 0, "K": 10, "M": 20, "G": 30, "T": 40}
+    size = int(match.group(1)) << suffix_shift[match.group(2).upper()]
+    if size < 4096:
+        raise ValueError(f"size must be at least 4096 bytes: {value!r}")
+    return size
+
+
+def cleanup_stale_swap_images() -> None:
+    """Remove sparse swap backings left by terminated harness processes."""
+    for path in pathlib.Path(tempfile.gettempdir()).glob("uml-ltp-swap-*.img"):
+        match = SWAP_IMAGE.fullmatch(path.name)
+        if match is None:
+            continue
+        try:
+            os.kill(int(match.group(1)), 0)
+        except ProcessLookupError:
+            path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
+
+
+def create_swap_image(value: str) -> pathlib.Path:
+    """Create a per-guest sparse raw disk without allocating its data blocks."""
+    descriptor, name = tempfile.mkstemp(
+        prefix=f"uml-ltp-swap-{os.getpid()}-", suffix=".img"
+    )
+    try:
+        os.ftruncate(descriptor, size_bytes(value))
+    except BaseException:
+        pathlib.Path(name).unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(descriptor)
+    return pathlib.Path(name)
+
+
+def marker_pattern(marker: str) -> re.Pattern[bytes]:
+    """Match protocol markers even if a tty ioctl enables case conversion."""
+    return re.compile(
+        re.escape(marker.encode()) + rb":(\d+)\r?\n",
+        re.IGNORECASE,
+    )
+
+
+class Guest:
+    """One emulator process controlled through its serial console."""
+
+    def __init__(
+        self,
+        emulator: pathlib.Path,
+        rootfs: pathlib.Path,
+        memory: str,
+        workspace: str,
+        kernel_arguments: Sequence[str] = (),
+        swap_size: str | None = None,
+        cgroup1: str | None = None,
+        cgroup2_nsdelegate: bool = False,
+        init_shell: bool = False,
+        overlay_shell: bool = False,
+        systemd_overlay: bool = False,
+        engine: str = "jit",
+    ) -> None:
+        if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
+            raise ValueError("guest boot modes are mutually exclusive")
+        self._swap_path = create_swap_image(swap_size) if swap_size else None
+        self._cgroup1 = cgroup1
+        self._cgroup2_nsdelegate = cgroup2_nsdelegate
+        self._init_shell = init_shell
+        self._overlay_shell = overlay_shell
+        self._systemd_overlay = systemd_overlay
+        if init_shell or overlay_shell or systemd_overlay:
+            kernel_arguments = (*kernel_arguments, "console=tty0", "ip=dhcp")
+        if systemd_overlay:
+            kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
+        master, slave = pty.openpty()
+        self._master = master
+        os.set_blocking(master, False)
+        try:
+            self._process = subprocess.Popen(
+                emulator_arguments(
+                    emulator,
+                    rootfs,
+                    memory,
+                    workspace,
+                    kernel_arguments,
+                    self._swap_path,
+                    "/bin/sh"
+                    if init_shell or overlay_shell or systemd_overlay
+                    else "/sbin/uml-overlay-init",
+                    engine,
+                ),
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except BaseException:
+            os.close(master)
+            self._remove_swap_image()
+            raise
+        finally:
+            os.close(slave)
+        self._transcript = bytearray()
+
+    @property
+    def process_id(self) -> int:
+        return self._process.pid
+
+    def terminate(self) -> None:
+        """Force a guest worker to leave a blocking console operation."""
+        self._signal(signal.SIGKILL)
+
+    def _signal(self, guest_signal: int) -> None:
+        """Signal the guest session, falling back to its leader if required."""
+        if self._process.poll() is None:
+            try:
+                os.killpg(self._process.pid, guest_signal)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                try:
+                    self._process.send_signal(guest_signal)
+                except ProcessLookupError:
+                    pass
+
+    def boot_to_shell(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
+        """Reach a root shell supplied by an explicit init-shell boot mode."""
+        if not (self._init_shell or self._overlay_shell):
+            raise RuntimeError("Guest was not constructed with an init-shell mode")
+        self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+        if self._overlay_shell:
+            self._write(OVERLAY_SHELL_BOOTSTRAP + "\n")
+            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+
+    def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
+        if self._systemd_overlay:
+            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+            self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
+            self._read_until(
+                re.compile(rb" login:\s*root \(automatic login\)", re.MULTILINE),
+                timeout_seconds,
+            )
+            self._read_until(
+                re.compile(rb"(?:^|\r?\n)[^\r\n]*# $"), timeout_seconds
+            )
+        elif self._init_shell or self._overlay_shell:
+            self.boot_to_shell(timeout_seconds)
+        else:
+            self._read_until(
+                re.compile(rb" login:\s*$", re.MULTILINE), timeout_seconds
+            )
+            self._write("root\n")
+            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+        if self._swap_path is not None:
+            result = self.run_command(
+                "mkswap /dev/ubdb >/dev/null && swapon /dev/ubdb",
+                timeout_seconds,
+            )
+            if result.return_code != 0:
+                raise RuntimeError(
+                    "could not enable disposable guest swap: " + result.output
+                )
+        if self._cgroup2_nsdelegate:
+            result = self.run_command(
+                "mkdir -p /sys/fs/cgroup && "
+                "mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup",
+                timeout_seconds,
+            )
+            if result.return_code != 0:
+                raise RuntimeError(
+                    "could not mount disposable cgroup v2 nsdelegate hierarchy: "
+                    + result.output
+                )
+        elif self._cgroup1 is not None:
+            mountpoint = f"/sys/fs/cgroup/{self._cgroup1}"
+            command = (
+                "mount -t tmpfs -o mode=755 cgroup-root /sys/fs/cgroup && "
+                f"mkdir -p {shlex.quote(mountpoint)} && "
+                f"mount -t cgroup -o {shlex.quote(self._cgroup1)} "
+                f"{shlex.quote(self._cgroup1)} {shlex.quote(mountpoint)}"
+            )
+            result = self.run_command(command, timeout_seconds)
+            if result.return_code != 0:
+                raise RuntimeError(
+                    "could not mount disposable cgroup v1 hierarchy: "
+                    + result.output
+                )
+
+    def run_command(
+        self, command: str, timeout_seconds: int = 30
+    ) -> CommandResult:
+        """Run a shell command through the serial console and capture it."""
+        token = uuid.uuid4().hex
+        begin = f"__UML_COMMAND_BEGIN_{token}__"
+        end = f"__UML_COMMAND_END_{token}__"
+        wrapped = (
+            f"printf '\\n{begin}\\n'; {command}; rc=$?; "
+            f"printf '\\n{end}:%s\\n' \"$rc\"\n"
+        )
+        start = len(self._transcript)
+        self._write(wrapped)
+        match = self._read_until(marker_pattern(end), timeout_seconds, start)
+        section = bytes(self._transcript[start : match.start()])
+        begin_at = section.rfind(begin.encode())
+        if begin_at >= 0:
+            section = section[begin_at + len(begin) :]
+        return CommandResult(int(match.group(1)), self._normal_output(section))
+
+    def shutdown(self, timeout_seconds: int = 30) -> bool:
+        """Request an orderly halt and wait for the emulator to exit."""
+        if self._process.poll() is not None:
+            return True
+        try:
+            self._write("sync; poweroff -f\n")
+            deadline = time.monotonic() + timeout_seconds
+            while self._process.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                readable, _, _ = select.select(
+                    [self._master], [], [], min(remaining, 0.25)
+                )
+                if readable:
+                    self._drain()
+            self._drain()
+        except (BrokenPipeError, OSError):
+            return self._process.poll() is not None
+        return True
+
+    def close(self) -> None:
+        try:
+            self.shutdown(5)
+            if self._process.poll() is None:
+                try:
+                    self._signal(signal.SIGTERM)
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+            if self._process.poll() is None:
+                self._signal(signal.SIGKILL)
+                self._process.wait()
+        except KeyboardInterrupt:
+            if self._process.poll() is None:
+                self._signal(signal.SIGKILL)
+            try:
+                self._process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        finally:
+            try:
+                os.close(self._master)
+            finally:
+                self._remove_swap_image()
+
+    def _remove_swap_image(self) -> None:
+        if self._swap_path is not None:
+            self._swap_path.unlink(missing_ok=True)
+            self._swap_path = None
+
+    def output(self) -> str:
+        return self._normal_output(bytes(self._transcript))
+
+    def _write(self, text: str) -> None:
+        os.write(self._master, text.encode())
+
+    def _read_until(
+        self,
+        pattern: re.Pattern[bytes],
+        timeout_seconds: int,
+        search_from: int = 0,
+    ) -> re.Match[bytes]:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            match = pattern.search(self._transcript, search_from)
+            if match is not None:
+                return match
+            if self._process.poll() is not None:
+                self._drain()
+                match = pattern.search(self._transcript, search_from)
+                if match is not None:
+                    return match
+                raise RuntimeError(
+                    f"guest exited with status {self._process.returncode}"
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"guest operation exceeded {timeout_seconds}s")
+            readable, _, _ = select.select(
+                [self._master], [], [], min(remaining, 0.25)
+            )
+            if readable:
+                self._drain()
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                chunk = os.read(self._master, 65536)
+            except (BlockingIOError, OSError):
+                return
+            if not chunk:
+                return
+            self._transcript.extend(chunk)
+
+    @staticmethod
+    def _normal_output(output: bytes) -> str:
+        decoded = output.decode("utf-8", errors="replace").replace("\r", "")
+        return ANSI_ESCAPE.sub("", decoded).strip()

@@ -2,12 +2,41 @@
 
 include_guard(GLOBAL)
 
+find_program(_UML_SOURCE_SIZE_WC_EXECUTABLE NAMES wc NO_CACHE)
+
 function(_uml_source_size_count_lines OUTPUT_VARIABLE PATH)
-    file(READ "${PATH}" _uml_source_size_contents)
-    string(LENGTH "${_uml_source_size_contents}" _uml_source_size_length)
+    file(SIZE "${PATH}" _uml_source_size_length)
     if(_uml_source_size_length EQUAL 0)
         set(_uml_source_size_line_count 0)
+    elseif(_UML_SOURCE_SIZE_WC_EXECUTABLE)
+        # Avoid copying each complete file through CMake's regex engine. Some
+        # checked-in declarative inventories are tens of megabytes, while the
+        # source-size report needs only a newline count and the final byte.
+        execute_process(
+            COMMAND "${_UML_SOURCE_SIZE_WC_EXECUTABLE}" -l "${PATH}"
+            RESULT_VARIABLE _uml_source_size_wc_result
+            OUTPUT_VARIABLE _uml_source_size_wc_output
+            ERROR_VARIABLE _uml_source_size_wc_error)
+        if(NOT _uml_source_size_wc_result EQUAL 0 OR
+           NOT _uml_source_size_wc_output MATCHES
+               "^[ \t]*([0-9]+)[ \t]+")
+            message(FATAL_ERROR
+                "Unable to count source lines in ${PATH}: "
+                "${_uml_source_size_wc_error}")
+        endif()
+        set(_uml_source_size_line_count "${CMAKE_MATCH_1}")
+        math(EXPR _uml_source_size_last_index
+            "${_uml_source_size_length} - 1")
+        file(READ "${PATH}" _uml_source_size_last_character
+            OFFSET ${_uml_source_size_last_index} LIMIT 1)
+        if(NOT _uml_source_size_last_character STREQUAL "\n")
+            math(EXPR _uml_source_size_line_count
+                "${_uml_source_size_line_count} + 1")
+        endif()
     else()
+        # CMake-only fallback for non-POSIX hosts. The supported Apple build
+        # environment always supplies wc as a host build tool.
+        file(READ "${PATH}" _uml_source_size_contents)
         string(REGEX REPLACE "[^\n]" "" _uml_source_size_newlines
             "${_uml_source_size_contents}")
         string(LENGTH "${_uml_source_size_newlines}"
@@ -85,7 +114,7 @@ function(uml_report_source_sizes)
         .s .asm .inc
         .py .sh .bash .zsh .mk)
     set(_uml_source_size_declarative_extensions
-        .asc .commands .env .fragment
+        .asc .asl .commands .env .fragment
         .json .md .patch .toml .tsv .txt .yaml .yml)
     set(_uml_source_size_paths)
     set(_uml_source_size_declarative_paths)

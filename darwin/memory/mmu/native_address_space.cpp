@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_address_space.hpp"
+#include "allocation_fault.hpp"
+#include "domain_registry_testing.hpp"
+#include "../domain_contract.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -7,23 +10,33 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
+#include <limits>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <mutex>
+#include <memory>
+#include <new>
+#include <optional>
+#include <shared_mutex>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <unistd.h>
 #include <vector>
 
 namespace uml::memory {
 namespace {
 
-constexpr std::uintptr_t guest_page_size = 4096;
-
 [[nodiscard]] std::uintptr_t host_page_size() noexcept
 {
 	static const auto size = static_cast<std::uintptr_t>(getpagesize());
 	return size;
 }
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+constexpr std::uintptr_t guest_page_size = 4096;
 
 [[nodiscard]] std::uintptr_t slot_for(std::uintptr_t address) noexcept
 {
@@ -50,8 +63,11 @@ int read_exact(int fd, std::uint64_t offset, std::byte *destination,
 			length - completed, static_cast<off_t>(offset + completed));
 		if (result < 0 && errno == EINTR)
 			continue;
-		if (result <= 0)
+		if (result <= 0) {
+			if (result == 0)
+				errno = EIO;
 			return -1;
+		}
 		completed += static_cast<std::size_t>(result);
 	}
 	return 0;
@@ -66,15 +82,697 @@ int write_exact(int fd, std::uint64_t offset, const std::byte *source,
 			length - completed, static_cast<off_t>(offset + completed));
 		if (result < 0 && errno == EINTR)
 			continue;
-		if (result <= 0)
+		if (result <= 0) {
+			if (result == 0)
+				errno = EIO;
 			return -1;
+		}
 		completed += static_cast<std::size_t>(result);
 	}
 	return 0;
 }
+#endif
+
+[[nodiscard]] bool covered_host_range(std::uintptr_t address,
+	std::uint64_t length, std::uintptr_t &first,
+	std::uintptr_t &end) noexcept
+{
+	if (length == 0 || address + length < address)
+		return false;
+	const auto mask = host_page_size() - 1;
+	first = address & ~mask;
+	const auto last = address + length;
+	if (last > std::numeric_limits<std::uintptr_t>::max() - mask)
+		return false;
+	end = (last + mask) & ~mask;
+	return end > first;
+}
+
+[[nodiscard]] bool exact_host_range(std::uintptr_t address,
+	std::uint64_t length, std::uintptr_t &first,
+	std::uintptr_t &end) noexcept
+{
+	return covered_host_range(address, length, first, end) &&
+		first == address && end == address + length;
+}
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+enum class OwnershipKind : std::uint8_t {
+	direct,
+	shadow,
+};
+#endif
+
+struct Ownership final {
+	std::uint64_t owner;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	OwnershipKind kind;
+#endif
+};
+
+[[nodiscard]] constexpr Ownership direct_ownership(
+	std::uint64_t owner) noexcept
+{
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	return {owner, OwnershipKind::direct};
+#else
+	return {owner};
+#endif
+}
+
+[[nodiscard]] constexpr bool is_direct_ownership(
+	const Ownership &ownership, std::uint64_t owner) noexcept
+{
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	return ownership.owner == owner && ownership.kind == OwnershipKind::direct;
+#else
+	return ownership.owner == owner;
+#endif
+}
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+[[nodiscard]] constexpr Ownership shadow_ownership(
+	std::uint64_t owner) noexcept
+{
+	return {owner, OwnershipKind::shadow};
+}
+
+[[nodiscard]] constexpr bool is_shadow_ownership(
+	const Ownership &ownership, std::uint64_t owner) noexcept
+{
+	return ownership.owner == owner && ownership.kind == OwnershipKind::shadow;
+}
+#endif
+
+class HostOwnershipRegistry final {
+public:
+	int map_direct(std::uint64_t owner, std::uintptr_t address, int fd,
+		std::uint64_t offset, std::uint64_t length, int protection)
+	{
+		std::uintptr_t first;
+		std::uintptr_t end;
+		if (!exact_host_range(address, length, first, end) ||
+		    (offset & (host_page_size() - 1)) != 0 ||
+		    offset > static_cast<std::uint64_t>(
+				std::numeric_limits<off_t>::max())) {
+			errno = EINVAL;
+			return -1;
+		}
+
+		std::lock_guard lock{mutex_};
+		std::vector<std::uintptr_t> inserted;
+		std::size_t new_page_count = 0;
+		for (auto page = first; page < end; page += host_page_size()) {
+			if (const auto found = owners_.find(page);
+			    found != owners_.end()) {
+				if (!is_direct_ownership(found->second, owner)) {
+					errno = EBUSY;
+					return -1;
+				}
+				continue;
+			}
+			++new_page_count;
+		}
+		inserted.reserve(new_page_count);
+		for (auto page = first; page < end; page += host_page_size())
+			if (!owners_.contains(page))
+				inserted.push_back(page);
+		if (!inserted.empty())
+			owners_.reserve(owners_.size() + inserted.size());
+		try {
+			for (const auto page : inserted) {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_owner_record);
+				owners_.emplace(page, direct_ownership(owner));
+			}
+		} catch (...) {
+			for (const auto page : inserted)
+				owners_.erase(page);
+			throw;
+		}
+
+		const auto rollback = [&]() noexcept {
+			for (const auto page : inserted)
+				owners_.erase(page);
+		};
+
+		try {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_after_mmap);
+		} catch (...) {
+			rollback();
+			throw;
+		}
+
+		void *mapped = mmap(reinterpret_cast<void *>(address), length,
+			protection, MAP_FIXED | MAP_SHARED, fd,
+			static_cast<off_t>(offset));
+		if (mapped == MAP_FAILED) {
+			rollback();
+			return -1;
+		}
+		if (mapped != reinterpret_cast<void *>(address)) {
+			(void)munmap(mapped, length);
+			errno = EFAULT;
+			rollback();
+			return -1;
+		}
+		return 0;
+	}
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	int map_shadow(std::uint64_t owner, std::uintptr_t slot,
+		int protection)
+	{
+		std::lock_guard lock{mutex_};
+		if (owners_.contains(slot)) {
+			errno = EBUSY;
+			return -1;
+		}
+		try {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_owner_record);
+			owners_.emplace(slot, shadow_ownership(owner));
+		} catch (...) {
+			owners_.erase(slot);
+			throw;
+		}
+		try {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_after_mmap);
+		} catch (...) {
+			owners_.erase(slot);
+			throw;
+		}
+		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
+			protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
+			const auto saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
+			if (mapped != MAP_FAILED)
+				(void)munmap(mapped, host_page_size());
+			owners_.erase(slot);
+			errno = saved_errno;
+			return -1;
+		}
+		return 0;
+	}
+
+	int replace_direct_with_shadow(std::uint64_t owner,
+		std::uintptr_t slot, std::uintptr_t prepared)
+	{
+		std::lock_guard lock{mutex_};
+		const auto found = owners_.find(slot);
+		if (found == owners_.end() ||
+		    !is_direct_ownership(found->second, owner)) {
+			errno = found == owners_.end() ? ENOMEM : EBUSY;
+			return -1;
+		}
+		mach_vm_address_t target = static_cast<mach_vm_address_t>(slot);
+		vm_prot_t current = VM_PROT_NONE;
+		vm_prot_t maximum = VM_PROT_NONE;
+		const auto result = mach_vm_remap(
+			mach_task_self(), &target, host_page_size(), 0,
+			VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
+			static_cast<mach_vm_address_t>(prepared), TRUE,
+			&current, &maximum, VM_INHERIT_NONE);
+		if (result != KERN_SUCCESS || target != slot) {
+			errno = result == KERN_NO_SPACE ? ENOMEM : EFAULT;
+			return -1;
+		}
+		found->second = shadow_ownership(owner);
+		return 0;
+	}
+
+	int replace_shadow_with_direct(std::uint64_t owner,
+		std::uintptr_t slot, int fd, std::uint64_t offset,
+		int protection)
+	{
+		std::lock_guard lock{mutex_};
+		const auto found = owners_.find(slot);
+		if (found == owners_.end() ||
+		    !is_shadow_ownership(found->second, owner)) {
+			errno = found == owners_.end() ? ENOMEM : EBUSY;
+			return -1;
+		}
+		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
+			protection, MAP_FIXED | MAP_SHARED, fd,
+			static_cast<off_t>(offset));
+		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
+			const int saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
+			if (mapped != MAP_FAILED)
+				(void)munmap(mapped, host_page_size());
+			errno = saved_errno;
+			return -1;
+		}
+		found->second = direct_ownership(owner);
+		return 0;
+	}
+#endif
+
+	int protect_direct(std::uint64_t owner, std::uintptr_t address,
+		std::uint64_t length, int protection)
+	{
+		std::uintptr_t first;
+		std::uintptr_t end;
+		if (!exact_host_range(address, length, first, end)) {
+			errno = EINVAL;
+			return -1;
+		}
+		std::lock_guard lock{mutex_};
+		for (auto page = first; page < end; page += host_page_size()) {
+			const auto found = owners_.find(page);
+			if (found == owners_.end() ||
+			    !is_direct_ownership(found->second, owner)) {
+				errno = found == owners_.end() ? ENOMEM : EBUSY;
+				return -1;
+			}
+		}
+		return mprotect(reinterpret_cast<void *>(address), length,
+			protection);
+	}
+
+	int unmap_direct(std::uint64_t owner, std::uintptr_t address,
+		std::uint64_t length)
+	{
+		std::uintptr_t first;
+		std::uintptr_t end;
+		if (!exact_host_range(address, length, first, end)) {
+			errno = EINVAL;
+			return -1;
+		}
+		std::lock_guard lock{mutex_};
+		for (auto page = first; page < end; page += host_page_size())
+			if (const auto found = owners_.find(page);
+			    found != owners_.end() &&
+			    !is_direct_ownership(found->second, owner)) {
+				errno = EBUSY;
+				return -1;
+			}
+		for (auto page = first; page < end;) {
+			if (!owners_.contains(page)) {
+				page += host_page_size();
+				continue;
+			}
+			const auto run = page;
+			do {
+				page += host_page_size();
+			} while (page < end && owners_.contains(page));
+			if (munmap(reinterpret_cast<void *>(run), page - run) != 0)
+				return -1;
+			for (auto erased = run; erased < page;
+			     erased += host_page_size())
+				owners_.erase(erased);
+		}
+		return 0;
+	}
+
+	int flush_direct(std::uint64_t owner, std::uintptr_t address,
+		std::uint64_t length)
+	{
+		if (length == 0)
+			return 0;
+		std::uintptr_t first;
+		std::uintptr_t end;
+		if (!covered_host_range(address, length, first, end)) {
+			errno = EINVAL;
+			return -1;
+		}
+		std::lock_guard lock{mutex_};
+		for (auto page = first; page < end; page += host_page_size()) {
+			const auto found = owners_.find(page);
+			if (found == owners_.end())
+				continue;
+			if (!is_direct_ownership(found->second, owner)) {
+				errno = EBUSY;
+				return -1;
+			}
+			if (msync(reinterpret_cast<void *>(page),
+				    host_page_size(), MS_SYNC) != 0)
+				return -1;
+		}
+		return 0;
+	}
+
+	int validate_direct(std::uint64_t owner, std::uintptr_t address,
+		std::uint64_t length) const noexcept
+	{
+		std::uintptr_t first;
+		std::uintptr_t end;
+		if (!covered_host_range(address, length, first, end)) {
+			errno = EINVAL;
+			return -1;
+		}
+		try {
+			std::lock_guard lock{mutex_};
+			for (auto page = first; page < end;
+			     page += host_page_size()) {
+				const auto found = owners_.find(page);
+				if (found == owners_.end())
+					continue;
+				if (!is_direct_ownership(found->second, owner)) {
+					errno = EBUSY;
+					return -1;
+				}
+			}
+			return 0;
+		} catch (...) {
+			errno = EIO;
+			return -1;
+		}
+	}
+
+	[[nodiscard]] bool owns_direct(
+		std::uint64_t owner, std::uintptr_t page) const noexcept
+	{
+		try {
+			std::lock_guard lock{mutex_};
+			const auto found = owners_.find(page);
+			return found != owners_.end() &&
+				is_direct_ownership(found->second, owner);
+		} catch (...) {
+			/* Retain the local claim if ownership cannot be inspected. */
+			return true;
+		}
+	}
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	int release_shadow(std::uint64_t owner, std::uintptr_t slot) noexcept
+	{
+		std::lock_guard lock{mutex_};
+		const auto found = owners_.find(slot);
+		if (found == owners_.end())
+			return 0;
+		if (!is_shadow_ownership(found->second, owner)) {
+			errno = EBUSY;
+			return -1;
+		}
+		if (munmap(reinterpret_cast<void *>(slot), host_page_size()) != 0)
+			return -1;
+		owners_.erase(found);
+		return 0;
+	}
+#endif
+
+	void retire(std::uint64_t owner) noexcept
+	{
+		std::lock_guard lock{mutex_};
+		for (auto position = owners_.begin(); position != owners_.end();) {
+			if (position->second.owner != owner) {
+				++position;
+				continue;
+			}
+			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+			if (position->second.kind == OwnershipKind::direct)
+			#endif
+				(void)msync(reinterpret_cast<void *>(position->first),
+					host_page_size(), MS_SYNC);
+			(void)munmap(reinterpret_cast<void *>(position->first),
+				host_page_size());
+			position = owners_.erase(position);
+		}
+	}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+	[[nodiscard]] std::size_t size_for_testing() const noexcept
+	{
+		try {
+			std::lock_guard lock{mutex_};
+			return owners_.size();
+		} catch (...) {
+			return std::numeric_limits<std::size_t>::max();
+		}
+	}
+#endif
+
+private:
+	mutable std::mutex mutex_;
+	std::unordered_map<std::uintptr_t, Ownership> owners_;
+};
+
+std::atomic<HostOwnershipRegistry *> published_host_ownership_registry{};
+std::atomic_flag host_ownership_registry_initialization = ATOMIC_FLAG_INIT;
+
+HostOwnershipRegistry *host_ownership_registry() noexcept
+{
+	if (auto *registry = published_host_ownership_registry.load(
+		    std::memory_order_acquire); registry != nullptr)
+		return registry;
+	while (host_ownership_registry_initialization.test_and_set(
+		       std::memory_order_acquire))
+		std::this_thread::yield();
+	struct InitializationUnlock final {
+		~InitializationUnlock()
+		{
+			host_ownership_registry_initialization.clear(
+				std::memory_order_release);
+		}
+	};
+	[[maybe_unused]] InitializationUnlock unlock;
+	if (auto *registry = published_host_ownership_registry.load(
+		    std::memory_order_acquire); registry != nullptr)
+		return registry;
+	try {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_owner_registry);
+		auto *registry = new (std::nothrow) HostOwnershipRegistry;
+		if (registry != nullptr)
+			published_host_ownership_registry.store(
+				registry, std::memory_order_release);
+		return registry;
+	} catch (...) {
+		return nullptr;
+	}
+}
+
+std::atomic_uint64_t next_ownership_id{1};
+
+[[nodiscard]] std::uint64_t fresh_ownership_id() noexcept
+{
+	auto result = next_ownership_id.fetch_add(1, std::memory_order_relaxed);
+	if (result == 0)
+		result = next_ownership_id.fetch_add(1, std::memory_order_relaxed);
+	return result;
+}
 
 } // namespace
 
+NativeAddressSpace::NativeAddressSpace() noexcept
+	: ownership_id_{fresh_ownership_id()}
+{
+}
+
+int NativeAddressSpace::map_direct(
+	std::uintptr_t address, int fd, std::uint64_t offset,
+	std::uint64_t length, int protection)
+{
+	std::uintptr_t first;
+	std::uintptr_t end;
+	if (!exact_host_range(address, length, first, end)) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	std::vector<std::uintptr_t> inserted;
+	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	struct DirectSnapshot final {
+		std::uintptr_t page;
+		std::optional<DirectMapping> mapping;
+	};
+	std::vector<DirectSnapshot> direct_snapshots;
+	#endif
+	std::size_t new_page_count = 0;
+	for (auto page = first; page < end; page += host_page_size()) {
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+		if (materialized_slots_.contains(page)) {
+			errno = EBUSY;
+			return -1;
+		}
+#endif
+		if (!direct_slots_.contains(page))
+			++new_page_count;
+	}
+	inserted.reserve(new_page_count);
+	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	const auto page_count = static_cast<std::size_t>(
+		(end - first) / host_page_size());
+	direct_snapshots.reserve(page_count);
+	direct_mappings_.reserve(direct_mappings_.size() + new_page_count);
+	for (auto page = first; page < end; page += host_page_size()) {
+		std::optional<DirectMapping> previous;
+		if (const auto found = direct_mappings_.find(page);
+		    found != direct_mappings_.end())
+			previous = found->second;
+		direct_snapshots.push_back({page, previous});
+	}
+	const auto rollback_direct_metadata = [&]() noexcept {
+		for (const auto &snapshot : direct_snapshots) {
+			if (snapshot.mapping)
+				direct_mappings_.insert_or_assign(
+					snapshot.page, *snapshot.mapping);
+			else
+				direct_mappings_.erase(snapshot.page);
+		}
+	};
+	#endif
+	try {
+		for (auto page = first; page < end; page += host_page_size()) {
+			if (!direct_slots_.contains(page)) {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_direct_record);
+				direct_slots_.insert(page);
+				inserted.push_back(page);
+			}
+			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_direct_record);
+			direct_mappings_.insert_or_assign(page, DirectMapping{
+				fd, offset + (page - first), protection});
+			#endif
+		}
+		const auto result = registry->map_direct(
+			ownership_id_, address, fd, offset, length, protection);
+		if (result != 0) {
+			for (const auto rollback : inserted)
+				direct_slots_.erase(rollback);
+			#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+			rollback_direct_metadata();
+			#endif
+		}
+		return result;
+	} catch (...) {
+		for (const auto rollback : inserted)
+			direct_slots_.erase(rollback);
+		#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+		rollback_direct_metadata();
+		#endif
+		throw;
+	}
+}
+
+int NativeAddressSpace::protect_direct(
+	std::uintptr_t address, std::uint64_t length, int protection)
+{
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	const auto result = registry->protect_direct(
+		ownership_id_, address, length, protection);
+	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	if (result == 0) {
+		const auto end = address + length;
+		for (auto slot = address; slot < end; slot += host_page_size())
+			if (auto mapping = direct_mappings_.find(slot);
+			    mapping != direct_mappings_.end())
+				mapping->second.protection = protection;
+	}
+	#endif
+	return result;
+}
+
+int NativeAddressSpace::unmap_direct(
+	std::uintptr_t address, std::uint64_t length)
+{
+	std::uintptr_t first;
+	std::uintptr_t end;
+	if (!exact_host_range(address, length, first, end)) {
+		errno = EINVAL;
+		return -1;
+	}
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	const auto reconcile = [&]() noexcept {
+		for (auto page = first; page < end; page += host_page_size())
+			if (!registry->owns_direct(ownership_id_, page)) {
+				direct_slots_.erase(page);
+				#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+				direct_mappings_.erase(page);
+				#endif
+			}
+	};
+	int result;
+	try {
+		result = registry->unmap_direct(
+			ownership_id_, address, length);
+	} catch (...) {
+		reconcile();
+		throw;
+	}
+	const auto saved_errno = errno;
+	reconcile();
+	if (result != 0)
+		errno = saved_errno;
+	return result;
+}
+
+int NativeAddressSpace::flush_direct(
+	std::uintptr_t address, std::uint64_t length)
+{
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	return registry->flush_direct(
+		ownership_id_, address, length);
+}
+
+int NativeAddressSpace::sync_direct(
+	std::uintptr_t address, std::uint64_t length)
+{
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	/* Direct mappings are MAP_SHARED, so there is no shadow buffer to refill.
+	 * Validation still prevents a foreign domain from treating another run's
+	 * high mapping as its own. */
+	return registry->validate_direct(ownership_id_, address, length);
+}
+
+int NativeAddressSpace::retry_direct(
+	std::uintptr_t address, bool execute, bool write)
+{
+	(void)execute;
+	(void)write;
+	return sync_direct(address, 1);
+}
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 bool NativeAddressSpace::needs_shadow(
 	std::uintptr_t address, std::uint64_t offset,
 	std::uint64_t length) noexcept
@@ -83,29 +781,289 @@ bool NativeAddressSpace::needs_shadow(
 	return ((address | offset | length) & mask) != 0;
 }
 
-bool NativeAddressSpace::contains(
-	std::uintptr_t address, std::uint64_t length) const
-{
-	std::lock_guard lock{mutex_};
-	return contains_locked(address, length);
-}
-
-bool NativeAddressSpace::contains_locked(
+bool NativeAddressSpace::contains_shadow(
 	std::uintptr_t address, std::uint64_t length) const
 {
 	if (length == 0 || address + length < address)
 		return false;
-	address &= ~(guest_page_size - 1);
-	for (std::uint64_t position = 0; position < length;
-	     position += guest_page_size)
-		/*
-		 * An operation on an absent 4 KiB sibling still targets the same
-		 * 16 KiB Darwin VM slot.  It must be handled here so a raw munmap
-		 * cannot discard the slot's other live Linux quarters.
-		 */
-		if (materialized_slots_.contains(slot_for(address + position)))
+	std::lock_guard lock{mutex_};
+	const auto first = slot_for(address);
+	const auto end = address + length;
+	for (auto slot = first; slot < end; slot += host_page_size())
+		if (materialized_slots_.contains(slot))
 			return true;
 	return false;
+}
+
+bool NativeAddressSpace::contains_direct(
+	std::uintptr_t address, std::uint64_t length) const
+{
+	if (length == 0 || address + length < address)
+		return false;
+	std::lock_guard lock{mutex_};
+	const auto first = slot_for(address);
+	const auto end = address + length;
+	for (auto slot = first; slot < end; slot += host_page_size())
+		if (direct_slots_.contains(slot))
+			return true;
+	return false;
+}
+
+NativeAddressSpace::DirectTransitionGuard::DirectTransitionGuard(
+	NativeAddressSpace &owner_value, std::size_t capacity)
+	: owner{owner_value}
+{
+	transitions.reserve(capacity);
+}
+
+NativeAddressSpace::DirectTransitionGuard::~DirectTransitionGuard()
+{
+	if (committed)
+		return;
+	const int saved_errno = errno;
+	owner.restore_direct_transitions_locked(transitions);
+	errno = saved_errno;
+}
+
+void NativeAddressSpace::restore_direct_transitions_locked(
+	std::vector<DirectTransition> &transitions) noexcept
+{
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr)
+		return;
+	for (auto position = transitions.rbegin();
+	     position != transitions.rend(); ++position) {
+		if (!position->converted || position->direct_mapping.empty() ||
+		    position->direct_slot.empty())
+			continue;
+		const auto mapping = position->direct_mapping.mapped();
+		try {
+			if (registry->replace_shadow_with_direct(
+				ownership_id_, position->slot, mapping.fd,
+				mapping.offset, mapping.protection) < 0)
+				continue;
+		} catch (...) {
+			continue;
+		}
+		for (std::uintptr_t offset = 0; offset < host_page_size();
+		     offset += guest_page_size) {
+			const auto page = position->slot + offset;
+			if (backing_index_ready_)
+				if (const auto found = mappings_.find(page);
+				    found != mappings_.end())
+					erase_backing_index_entry_locked(
+						BackingPageKey{found->second.identity,
+							found->second.offset}, page);
+			mappings_.erase(page);
+		}
+		materialized_slots_.erase(position->slot);
+		slot_protections_.erase(position->slot);
+		direct_slots_.insert(std::move(position->direct_slot));
+		direct_mappings_.insert(std::move(position->direct_mapping));
+	}
+}
+
+int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
+	std::uintptr_t slot)
+{
+	const auto direct = direct_mappings_.find(slot);
+	if (direct == direct_mappings_.end())
+		return 0;
+	if (!direct_slots_.contains(slot) || materialized_slots_.contains(slot)) {
+		errno = EBUSY;
+		return -1;
+	}
+	for (std::uintptr_t position = 0; position < host_page_size();
+	     position += guest_page_size)
+		if (mappings_.contains(slot + position)) {
+			errno = EBUSY;
+			return -1;
+		}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+
+	/* A temporary, fully populated host page lets mach_vm_remap replace the
+	 * direct slot atomically.  No CPU can observe the zero-filled interval
+	 * produced by replacing a mapping with MAP_FIXED anonymous memory first. */
+	std::array<std::byte, 16 * 1024> snapshot{};
+	static_assert(snapshot.size() >= 4 * guest_page_size);
+	void *shared_alias = mmap(nullptr, host_page_size(), PROT_READ,
+		MAP_SHARED, direct->second.fd,
+		static_cast<off_t>(direct->second.offset));
+	if (shared_alias == MAP_FAILED)
+		return -1;
+	std::copy_n(static_cast<const std::byte *>(shared_alias), host_page_size(),
+		snapshot.begin());
+	if (munmap(shared_alias, host_page_size()) != 0)
+		return -1;
+
+	BackingIdentity identity{};
+	if (identify_backing(direct->second.fd, identity) < 0)
+		return -1;
+	const int shadow_protection =
+		shadow_data_protection(direct->second.protection);
+	std::array<std::uintptr_t, 4> pages{};
+	std::vector<decltype(backing_index_)::iterator> index_entries;
+	index_entries.reserve(pages.size());
+	void *prepared = mmap(nullptr, host_page_size(),
+		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (prepared == MAP_FAILED)
+		return -1;
+	std::copy_n(snapshot.begin(), host_page_size(),
+		static_cast<std::byte *>(prepared));
+	if (mprotect(prepared, host_page_size(), shadow_protection) != 0) {
+		const int saved_errno = errno;
+		(void)munmap(prepared, host_page_size());
+		errno = saved_errno;
+		return -1;
+	}
+
+	const auto rollback_metadata = [&]() noexcept {
+		for (const auto entry : index_entries)
+			backing_index_.erase(entry);
+		for (const auto page : pages)
+			if (page != 0)
+				mappings_.erase(page);
+		slot_protections_.erase(slot);
+		materialized_slots_.erase(slot);
+	};
+	try {
+		mappings_.reserve(mappings_.size() + pages.size());
+		materialized_slots_.reserve(materialized_slots_.size() + 1);
+		slot_protections_.reserve(slot_protections_.size() + 1);
+		if (backing_index_ready_)
+			backing_index_.reserve(backing_index_.size() + pages.size());
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_mapping);
+			const auto page = slot + index * guest_page_size;
+			pages[index] = page;
+			Mapping mapping{
+				direct->second.fd,
+				direct->second.offset + index * guest_page_size,
+				direct->second.protection,
+				identity,
+			};
+			std::copy_n(snapshot.begin() + index * guest_page_size,
+				guest_page_size, mapping.original.begin());
+			mapping.loaded = true;
+			mappings_.emplace(page, std::move(mapping));
+			if (backing_index_ready_) {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_backing_index);
+				index_entries.push_back(backing_index_.emplace(
+					BackingPageKey{identity,
+						direct->second.offset +
+						index * guest_page_size},
+					page));
+			}
+		}
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_slot);
+		materialized_slots_.insert(slot);
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_slot);
+		slot_protections_.emplace(slot, shadow_protection);
+	} catch (...) {
+		rollback_metadata();
+		(void)munmap(prepared, host_page_size());
+		throw;
+	}
+
+	if (registry->replace_direct_with_shadow(
+		ownership_id_, slot,
+		reinterpret_cast<std::uintptr_t>(prepared)) < 0) {
+		const int saved_errno = errno;
+		rollback_metadata();
+		(void)munmap(prepared, host_page_size());
+		errno = saved_errno;
+		return -1;
+	}
+	(void)munmap(prepared, host_page_size());
+	return 0;
+}
+
+int NativeAddressSpace::ensure_shadow_range_locked(
+	std::uintptr_t address, std::uint64_t length,
+	DirectTransitionGuard &guard)
+{
+	if (length == 0 || address + length < address) {
+		errno = EINVAL;
+		return -1;
+	}
+	const auto first = slot_for(address);
+	const auto end = address + length;
+	for (auto slot = first; slot < end; slot += host_page_size()) {
+		if (!direct_mappings_.contains(slot))
+			continue;
+		guard.transitions.emplace_back();
+		auto &transition = guard.transitions.back();
+		transition.slot = slot;
+		if (convert_direct_slot_to_shadow_locked(slot) < 0)
+			return -1;
+		transition.direct_slot = direct_slots_.extract(slot);
+		transition.direct_mapping = direct_mappings_.extract(slot);
+		transition.converted = true;
+	}
+	return 0;
+}
+
+std::size_t NativeAddressSpace::BackingPageKeyHash::operator()(
+	const BackingPageKey &key) const noexcept
+{
+	const auto mix = [](std::size_t seed, std::uint64_t value) noexcept {
+		const auto hashed = std::hash<std::uint64_t>{}(value);
+		return seed ^ (hashed + 0x9e3779b97f4a7c15ULL +
+			(seed << 6U) + (seed >> 2U));
+	};
+	return mix(mix(std::hash<std::uint64_t>{}(key.identity.device),
+		key.identity.inode), key.offset);
+}
+
+int NativeAddressSpace::identify_backing(
+	int fd, BackingIdentity &identity) noexcept
+{
+	struct stat status {};
+	if (fstat(fd, &status) != 0)
+		return -1;
+	identity = {
+		static_cast<std::uint64_t>(status.st_dev),
+		static_cast<std::uint64_t>(status.st_ino),
+	};
+	return 0;
+}
+
+int NativeAddressSpace::ensure_backing_index_locked()
+{
+	if (backing_index_ready_)
+		return 0;
+	decltype(backing_index_) index;
+	UML_MEMORY_ALLOCATION_CHECKPOINT(
+		testing::AllocationSite::native_backing_index);
+	index.reserve(mappings_.size());
+	for (const auto &[page, mapping] : mappings_) {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_backing_index);
+		index.emplace(BackingPageKey{mapping.identity, mapping.offset}, page);
+	}
+	backing_index_.swap(index);
+	backing_index_ready_ = true;
+	return 0;
+}
+
+void NativeAddressSpace::erase_backing_index_entry_locked(
+	const BackingPageKey &key, std::uintptr_t page) noexcept
+{
+	const auto [first, end] = backing_index_.equal_range(key);
+	for (auto position = first; position != end; ++position) {
+		if (position->second != page)
+			continue;
+		backing_index_.erase(position);
+		return;
+	}
 }
 
 int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
@@ -121,25 +1079,33 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 	if (read_exact(found->second.fd, found->second.offset,
 		backing.data(), backing.size()) < 0)
 		return -1;
-	if (backing != found->second.original) {
-		/*
-		 * A shared physical alias changed this page after the shadow was
-		 * loaded.  Its contents are authoritative; never overwrite a reused
-		 * physical page with a stale shadow.
-		 */
-		if (std::getenv("UML_MMU_TRACE") != nullptr)
-			std::fprintf(stderr,
-				"Darwin native shadow conflict address=%#lx fd=%d offset=%#llx\n",
-				static_cast<unsigned long>(page), found->second.fd,
-				found->second.offset);
-		found->second.loaded = false;
-		return 0;
+	const bool backing_changed = backing != found->second.original;
+	/* Merge disjoint native-shadow and shared-backing writes byte-for-byte.
+	 * A whole-page pwrite would lose a sibling CPU's update to an unrelated
+	 * byte.  If both sides changed the same byte, the already-shared value is
+	 * authoritative because another translated task can have observed it. */
+	std::size_t position = 0;
+	while (position < guest_page_size) {
+		if (current[position] == found->second.original[position] ||
+		    backing[position] != found->second.original[position]) {
+			++position;
+			continue;
+		}
+		const auto first = position;
+		do {
+			backing[position] = current[position];
+			++position;
+		} while (position < guest_page_size &&
+			 current[position] != found->second.original[position] &&
+			 backing[position] == found->second.original[position]);
+		if (write_exact(found->second.fd, found->second.offset + first,
+			current + first, position - first) < 0)
+			return -1;
 	}
-	if (write_exact(found->second.fd, found->second.offset,
-		current, guest_page_size) < 0)
-		return -1;
-	std::copy_n(current, guest_page_size,
-		found->second.original.begin());
+	found->second.original = backing;
+	/* A later reconcile reloads shared bytes that changed independently while
+	 * retaining every disjoint native write merged above. */
+	found->second.loaded = !backing_changed;
 	return 0;
 }
 
@@ -152,6 +1118,29 @@ int NativeAddressSpace::flush_slot_locked(std::uintptr_t slot)
 		if (flush_page_locked(slot + position) < 0)
 			return -1;
 	return 0;
+}
+
+int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
+{
+	auto found = mappings_.find(page);
+	if (found == mappings_.end())
+		return 0;
+	if (!found->second.loaded)
+		return load_page_locked(page);
+	std::array<std::byte, guest_page_size> backing{};
+	if (read_exact(found->second.fd, found->second.offset,
+		backing.data(), backing.size()) < 0)
+		return -1;
+	if (backing == found->second.original)
+		return 0;
+	const auto *current = reinterpret_cast<const std::byte *>(page);
+	if (std::memcmp(current, found->second.original.data(), guest_page_size) != 0) {
+		if (flush_page_locked(page) < 0)
+			return -1;
+		if (found->second.loaded)
+			return 0;
+	}
+	return load_page_locked(page);
 }
 
 int NativeAddressSpace::load_page_locked(std::uintptr_t page)
@@ -174,13 +1163,41 @@ int NativeAddressSpace::materialize_slot_locked(std::uintptr_t slot)
 	if (materialized_slots_.contains(slot))
 		return set_slot_protection_locked(
 			slot, PROT_READ | PROT_WRITE);
-	void *result = mmap(reinterpret_cast<void *>(slot), host_page_size(),
-		PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (result == MAP_FAILED)
+	if (direct_slots_.contains(slot)) {
+		errno = EBUSY;
 		return -1;
-	materialized_slots_.insert(slot);
-	slot_protections_.insert_or_assign(slot, PROT_READ | PROT_WRITE);
-	return 0;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	try {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_slot);
+		materialized_slots_.insert(slot);
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_slot);
+		slot_protections_.insert_or_assign(
+			slot, PROT_READ | PROT_WRITE);
+	} catch (...) {
+		slot_protections_.erase(slot);
+		materialized_slots_.erase(slot);
+		throw;
+	}
+	try {
+		const auto result = registry->map_shadow(
+			ownership_id_, slot, PROT_READ | PROT_WRITE);
+		if (result != 0) {
+			slot_protections_.erase(slot);
+			materialized_slots_.erase(slot);
+		}
+		return result;
+	} catch (...) {
+		slot_protections_.erase(slot);
+		materialized_slots_.erase(slot);
+		throw;
+	}
 }
 
 int NativeAddressSpace::set_slot_protection_locked(
@@ -194,13 +1211,17 @@ int NativeAddressSpace::set_slot_protection_locked(
 		errno = EACCES;
 		return -1;
 	}
-	if (const auto current = slot_protections_.find(slot);
-	    current != slot_protections_.end() && current->second == protection)
+	const auto current = slot_protections_.find(slot);
+	if (current == slot_protections_.end()) {
+		errno = EINVAL;
+		return -1;
+	}
+	if (current->second == protection)
 		return 0;
 	if (mprotect(reinterpret_cast<void *>(slot), host_page_size(),
 		     protection) != 0)
 		return -1;
-	slot_protections_.insert_or_assign(slot, protection);
+	current->second = protection;
 	return 0;
 }
 
@@ -220,9 +1241,17 @@ int NativeAddressSpace::update_slot_protection_locked(std::uintptr_t slot)
 		}
 	}
 	if (!populated) {
+		if (materialized_slots_.contains(slot)) {
+			auto *registry = host_ownership_registry();
+			if (registry == nullptr) {
+				errno = ENOMEM;
+				return -1;
+			}
+			if (registry->release_shadow(ownership_id_, slot) != 0)
+				return -1;
+		}
+		materialized_slots_.erase(slot);
 		slot_protections_.erase(slot);
-		if (materialized_slots_.erase(slot) != 0)
-			return munmap(reinterpret_cast<void *>(slot), host_page_size());
 		return 0;
 	}
 	if (!materialized_slots_.contains(slot) &&
@@ -240,102 +1269,476 @@ int NativeAddressSpace::map(
 	std::uint64_t length, int protection)
 {
 	if (((address | offset | length) & (guest_page_size - 1)) != 0 ||
-	    length == 0 || address + length < address)
+	    length == 0 || address + length < address ||
+	    offset > static_cast<std::uint64_t>(
+		std::numeric_limits<off_t>::max()) ||
+	    length > static_cast<std::uint64_t>(
+		std::numeric_limits<off_t>::max()) - offset) {
+		errno = EINVAL;
+		return -1;
+	}
+	BackingIdentity identity{};
+	if (identify_backing(fd, identity) < 0)
 		return -1;
 	std::lock_guard lock{mutex_};
-	std::vector<std::uintptr_t> slots;
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	DirectTransitionGuard transitions{*this,
+		static_cast<std::size_t>(
+			(slot_for(address + length - 1) - slot_for(address)) /
+			host_page_size() + 1)};
+	if (ensure_shadow_range_locked(address, length, transitions) < 0)
+		return -1;
+	struct PageSnapshot final {
+		std::uintptr_t page;
+		std::optional<Mapping> mapping;
+		std::array<std::byte, guest_page_size> bytes{};
+		bool bytes_valid{};
+	};
+	struct SlotSnapshot final {
+		std::uintptr_t slot;
+		int protection;
+		bool materialized;
+	};
+	std::vector<PageSnapshot> pages;
+	std::vector<SlotSnapshot> slots;
+	using BackingIndex = decltype(backing_index_);
+	std::vector<BackingIndex::iterator> inserted_index_entries;
+	const auto page_count = static_cast<std::size_t>(length / guest_page_size);
+	pages.reserve(page_count);
+	slots.reserve(page_count);
 	for (std::uint64_t position = 0; position < length;
 	     position += guest_page_size) {
 		const auto page = address + position;
-		const auto page_offset = offset + position;
-		auto existing = mappings_.find(page);
-		if (existing != mappings_.end() && existing->second.loaded &&
-		    existing->second.fd == fd &&
-		    existing->second.offset == page_offset &&
-		    existing->second.protection == protection)
-			continue;
+		std::optional<Mapping> previous;
+		if (const auto found = mappings_.find(page);
+		    found != mappings_.end())
+			previous = found->second;
+		pages.push_back({page, std::move(previous)});
 		const auto slot = slot_for(page);
-		if (std::ranges::find(slots, slot) == slots.end())
-			slots.push_back(slot);
-		if (existing != mappings_.end() && existing->second.fd == fd &&
-		    existing->second.offset == page_offset) {
-			existing->second.protection = protection;
-			if (existing->second.loaded)
-				continue;
-		} else {
-			if (existing != mappings_.end() &&
-			    flush_page_locked(page) < 0)
-				return -1;
-			mappings_.insert_or_assign(page,
-				Mapping{fd, page_offset, protection});
-		}
-		/* Never replace an already materialized 16 KiB slot.  A sibling
-		 * virtual CPU may be reading or writing one of its other live 4 KiB
-		 * quarters.  Temporarily make the stable slot writable and populate
-		 * only the quarter whose Linux mapping changed.
-		 */
-		if (materialize_slot_locked(slot) < 0 || load_page_locked(page) < 0)
-			return -1;
+		if (std::ranges::find_if(slots,
+				[slot](const SlotSnapshot &entry) {
+					return entry.slot == slot;
+				}) != slots.end())
+			continue;
+		const bool materialized = materialized_slots_.contains(slot);
+		const auto current = slot_protections_.find(slot);
+		slots.push_back({slot,
+			current == slot_protections_.end() ? PROT_NONE :
+				current->second,
+			materialized});
 	}
-	for (const auto slot : slots)
-		if (update_slot_protection_locked(slot) < 0)
+	if (backing_index_ready_) {
+		std::size_t changed_pages = 0;
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			const auto &previous = pages[index].mapping;
+			const BackingPageKey key{
+				identity, offset + index * guest_page_size};
+			if (!previous || previous->identity != key.identity ||
+			    previous->offset != key.offset)
+				++changed_pages;
+		}
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_backing_index);
+		inserted_index_entries.reserve(changed_pages);
+		backing_index_.reserve(backing_index_.size() + changed_pages);
+		try {
+			for (std::size_t index = 0; index < pages.size(); ++index) {
+				const auto &previous = pages[index].mapping;
+				const BackingPageKey key{
+					identity, offset + index * guest_page_size};
+				if (previous && previous->identity == key.identity &&
+				    previous->offset == key.offset)
+					continue;
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_backing_index);
+				inserted_index_entries.push_back(
+					backing_index_.emplace(key, pages[index].page));
+			}
+		} catch (...) {
+			for (const auto position : inserted_index_entries)
+				backing_index_.erase(position);
+			throw;
+		}
+	}
+
+	const auto rollback = [&]() noexcept {
+		for (const auto position : inserted_index_entries)
+			backing_index_.erase(position);
+		for (const auto &slot : slots)
+			if (materialized_slots_.contains(slot.slot))
+				(void)mprotect(reinterpret_cast<void *>(slot.slot),
+					host_page_size(), PROT_READ | PROT_WRITE);
+		for (const auto &page : pages)
+			if (page.bytes_valid)
+				std::copy(page.bytes.begin(), page.bytes.end(),
+					reinterpret_cast<std::byte *>(page.page));
+		for (const auto &page : pages) {
+			if (!page.mapping) {
+				mappings_.erase(page.page);
+				continue;
+			}
+			if (auto found = mappings_.find(page.page);
+			    found != mappings_.end())
+				found->second = *page.mapping;
+		}
+		for (const auto &slot : slots) {
+			if (!slot.materialized) {
+				if (materialized_slots_.contains(slot.slot)) {
+					if (auto *registry = host_ownership_registry();
+					    registry != nullptr)
+						(void)registry->release_shadow(
+							ownership_id_, slot.slot);
+				}
+				materialized_slots_.erase(slot.slot);
+				slot_protections_.erase(slot.slot);
+				continue;
+			}
+			(void)mprotect(reinterpret_cast<void *>(slot.slot),
+				host_page_size(), slot.protection);
+			if (auto found = slot_protections_.find(slot.slot);
+			    found != slot_protections_.end())
+				found->second = slot.protection;
+		}
+	};
+
+	try {
+		/* Capture every existing quarter only after making its host slot
+		 * readable and writable.  The saved bytes protect live siblings if a
+		 * later page or bookkeeping allocation fails. */
+		for (const auto &slot : slots)
+			if (slot.materialized &&
+			    set_slot_protection_locked(
+				    slot.slot, PROT_READ | PROT_WRITE) < 0) {
+				rollback();
+				return -1;
+			}
+		for (auto &page : pages) {
+			if (!materialized_slots_.contains(slot_for(page.page)))
+				continue;
+			std::copy_n(reinterpret_cast<const std::byte *>(page.page),
+				guest_page_size, page.bytes.begin());
+			page.bytes_valid = true;
+		}
+
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_operation);
+			const auto page = pages[index].page;
+			const auto page_offset = offset + index * guest_page_size;
+			auto existing = mappings_.find(page);
+			const bool same_backing = existing != mappings_.end() &&
+				existing->second.identity == identity &&
+				existing->second.offset == page_offset;
+			if (existing != mappings_.end() && existing->second.loaded &&
+			    same_backing &&
+			    existing->second.protection == protection) {
+				existing->second.fd = fd;
+				continue;
+			}
+			if (same_backing) {
+				existing->second.fd = fd;
+				existing->second.protection = protection;
+				if (existing->second.loaded)
+					continue;
+			} else {
+				if (existing != mappings_.end() &&
+				    flush_page_locked(page) < 0) {
+					rollback();
+					return -1;
+				}
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_mapping);
+				mappings_.insert_or_assign(page,
+					Mapping{fd, page_offset, protection, identity});
+			}
+			/* Never replace an already materialized host slot.  Populate only
+			 * the quarter whose Linux mapping changed. */
+			if (materialize_slot_locked(slot_for(page)) < 0 ||
+			    load_page_locked(page) < 0) {
+				rollback();
+				return -1;
+			}
+		}
+		for (const auto &slot : slots)
+			if (update_slot_protection_locked(slot.slot) < 0) {
+				rollback();
+				return -1;
+			}
+	} catch (...) {
+		rollback();
+		throw;
+	}
+	if (backing_index_ready_)
+		for (std::size_t index = 0; index < pages.size(); ++index) {
+			const auto &page = pages[index];
+			if (!page.mapping ||
+			    (page.mapping->identity == identity &&
+			     page.mapping->offset ==
+				offset + index * guest_page_size))
+				continue;
+			erase_backing_index_entry_locked(
+				BackingPageKey{page.mapping->identity,
+					page.mapping->offset}, page.page);
+		}
+	transitions.commit();
+	return 0;
+}
+
+int NativeAddressSpace::publish_backing(
+	int fd, std::uint64_t offset, std::uint64_t length)
+{
+	if (((offset | length) & (guest_page_size - 1)) != 0 || length == 0 ||
+	    offset > static_cast<std::uint64_t>(
+		std::numeric_limits<off_t>::max()) ||
+	    length > static_cast<std::uint64_t>(
+		std::numeric_limits<off_t>::max()) - offset) {
+		errno = EINVAL;
+		return -1;
+	}
+	BackingIdentity identity{};
+	if (identify_backing(fd, identity) < 0)
+		return -1;
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	/* Keep every potentially throwing bookkeeping operation ahead of the first
+	 * write to shared backing.  A failed software-map publication can therefore
+	 * be retried without a half-built index or partially visible mapping. */
+	UML_MEMORY_ALLOCATION_CHECKPOINT(
+		testing::AllocationSite::native_backing_index);
+	if (ensure_backing_index_locked() < 0)
+		return -1;
+	std::vector<std::uintptr_t> slots;
+	for (std::uint64_t position = 0; position < length;
+	     position += guest_page_size) {
+		const BackingPageKey key{identity, offset + position};
+		const auto [first, end] = backing_index_.equal_range(key);
+		for (auto mapping = first; mapping != end; ++mapping) {
+			UML_MEMORY_ALLOCATION_CHECKPOINT(
+				testing::AllocationSite::native_backing_index);
+			slots.push_back(slot_for(mapping->second));
+		}
+	}
+	std::ranges::sort(slots);
+	slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+	std::vector<int> protections;
+	UML_MEMORY_ALLOCATION_CHECKPOINT(
+		testing::AllocationSite::native_backing_index);
+	protections.reserve(slots.size());
+	for (const auto slot : slots) {
+		const auto protection = slot_protections_.find(slot);
+		if (!materialized_slots_.contains(slot) ||
+		    protection == slot_protections_.end()) {
+			errno = EFAULT;
 			return -1;
+		}
+		protections.push_back(protection->second);
+	}
+	const auto restore = [&](std::size_t count) noexcept {
+		int result = 0;
+		for (std::size_t index = 0; index < count; ++index)
+			if (set_slot_protection_locked(
+				slots[index], protections[index]) < 0)
+				result = -1;
+		return result;
+	};
+	std::size_t writable_slots = 0;
+	for (; writable_slots < slots.size(); ++writable_slots)
+		if (set_slot_protection_locked(slots[writable_slots],
+			PROT_READ | PROT_WRITE) < 0) {
+			const int saved_errno = errno;
+			(void)restore(writable_slots);
+			errno = saved_errno;
+			return -1;
+		}
+	/* A Darwin protection applies to a complete 16 KiB host slot.  Once any
+	 * quarter aliases a page being published, flush all dirty quarters in that
+	 * slot.  Then reconcile every alias while all touched slots remain writable;
+	 * otherwise the last alias to publish could leave an earlier alias stale. */
+	for (const auto slot : slots)
+		if (flush_slot_locked(slot) < 0) {
+			const int saved_errno = errno;
+			(void)restore(writable_slots);
+			errno = saved_errno;
+			return -1;
+		}
+	for (const auto slot : slots)
+		for (std::uintptr_t position = 0; position < host_page_size();
+		     position += guest_page_size)
+			if (reconcile_page_locked(slot + position) < 0) {
+				const int saved_errno = errno;
+				(void)restore(writable_slots);
+				errno = saved_errno;
+				return -1;
+			}
+	if (restore(writable_slots) < 0)
+		return -1;
 	return 0;
 }
 
 int NativeAddressSpace::protect(
 	std::uintptr_t address, std::uint64_t length, int protection)
 {
-	if (length == 0 || address + length < address)
+	if (length == 0 || address + length < address ||
+	    ((address | length) & (guest_page_size - 1)) != 0 ||
+	    (protection & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0) {
+		errno = EINVAL;
 		return -1;
+	}
 	std::lock_guard lock{mutex_};
-	std::vector<std::uintptr_t> slots;
-	address &= ~(guest_page_size - 1);
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	DirectTransitionGuard transitions{*this,
+		static_cast<std::size_t>(
+			(slot_for(address + length - 1) - slot_for(address)) /
+			host_page_size() + 1)};
+	if (ensure_shadow_range_locked(address, length, transitions) < 0)
+		return -1;
+	struct PageProtection final {
+		std::uintptr_t page;
+		int protection;
+	};
+	struct SlotProtection final {
+		std::uintptr_t slot;
+		int protection;
+	};
+	const auto page_count = static_cast<std::size_t>(length / guest_page_size);
+	std::vector<PageProtection> pages;
+	std::vector<SlotProtection> slots;
+	pages.reserve(page_count);
+	slots.reserve(page_count);
 	for (std::uint64_t position = 0; position < length;
 	     position += guest_page_size) {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_operation);
 		const auto page = address + position;
 		auto mapping = mappings_.find(page);
-		if (mapping == mappings_.end())
-			continue;
-		const auto slot = slot_for(page);
-		if (std::ranges::find(slots, slot) == slots.end())
-			slots.push_back(slot);
-		mapping->second.protection = protection;
-	}
-	for (const auto slot : slots)
-		if (update_slot_protection_locked(slot) < 0)
+		if (mapping == mappings_.end()) {
+			errno = ENOMEM;
 			return -1;
+		}
+		pages.push_back({page, mapping->second.protection});
+		const auto slot = slot_for(page);
+		if (std::ranges::find_if(slots,
+				[slot](const SlotProtection &entry) {
+					return entry.slot == slot;
+				}) != slots.end())
+			continue;
+		const auto current = slot_protections_.find(slot);
+		if (!materialized_slots_.contains(slot) ||
+		    current == slot_protections_.end()) {
+			errno = EFAULT;
+			return -1;
+		}
+		slots.push_back({slot, current->second});
+	}
+	if (std::ranges::all_of(pages, [protection](const auto &page) {
+		return page.protection == protection;
+	})) {
+		transitions.commit();
+		return 0;
+	}
+	const auto rollback = [&]() noexcept {
+		for (const auto &page : pages)
+			if (auto mapping = mappings_.find(page.page);
+			    mapping != mappings_.end())
+				mapping->second.protection = page.protection;
+		for (const auto &slot : slots)
+			(void)set_slot_protection_locked(slot.slot, slot.protection);
+	};
+	for (const auto &page : pages)
+		mappings_.find(page.page)->second.protection = protection;
+	try {
+		for (const auto &slot : slots)
+			if (update_slot_protection_locked(slot.slot) < 0) {
+				const auto saved_errno = errno;
+				rollback();
+				errno = saved_errno;
+				return -1;
+			}
+	} catch (...) {
+		rollback();
+		throw;
+	}
+	transitions.commit();
 	return 0;
 }
 
 int NativeAddressSpace::unmap(
 	std::uintptr_t address, std::uint64_t length)
 {
-	if (length == 0 || address + length < address)
-		return length == 0 ? 0 : -1;
+	if (length == 0 || address + length < address ||
+	    ((address | length) & (guest_page_size - 1)) != 0) {
+		errno = EINVAL;
+		return -1;
+	}
 	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	DirectTransitionGuard transitions{*this,
+		static_cast<std::size_t>(
+			(slot_for(address + length - 1) - slot_for(address)) /
+			host_page_size() + 1)};
+	if (ensure_shadow_range_locked(address, length, transitions) < 0)
+		return -1;
+	std::vector<std::uintptr_t> pages;
 	std::vector<std::uintptr_t> slots;
+	std::vector<std::pair<BackingPageKey, std::uintptr_t>> indexed_pages;
 	address &= ~(guest_page_size - 1);
 	for (std::uint64_t position = 0; position < length;
 	     position += guest_page_size) {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_operation);
 		const auto page = address + position;
+		pages.push_back(page);
+		if (backing_index_ready_)
+			if (const auto mapping = mappings_.find(page);
+			    mapping != mappings_.end())
+				indexed_pages.push_back({BackingPageKey{
+					mapping->second.identity,
+					mapping->second.offset}, page});
 		const auto slot = slot_for(page);
 		if (std::ranges::find(slots, slot) == slots.end())
 			slots.push_back(slot);
+	}
+	for (const auto page : pages)
 		if (flush_page_locked(page) < 0)
 			return -1;
+	for (const auto page : pages)
 		mappings_.erase(page);
-	}
+	for (const auto &[key, page] : indexed_pages)
+		erase_backing_index_entry_locked(key, page);
 	for (const auto slot : slots)
 		if (update_slot_protection_locked(slot) < 0)
 			return -1;
+	transitions.commit();
 	return 0;
 }
 
 int NativeAddressSpace::flush(
 	std::uintptr_t address, std::uint64_t length)
 {
+	if (length == 0)
+		return 0;
+	if (address + length < address ||
+	    ((address | length) & (guest_page_size - 1)) != 0) {
+		errno = EINVAL;
+		return -1;
+	}
 	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
 	const auto first = slot_for(address);
 	const auto end = address + length;
 	for (auto slot = first; slot < end; slot += host_page_size())
@@ -347,23 +1750,38 @@ int NativeAddressSpace::flush(
 int NativeAddressSpace::refresh(
 	std::uintptr_t address, std::uint64_t length)
 {
-	if (length == 0 || address + length < address)
-		return length == 0 ? 0 : -1;
+	if (length == 0)
+		return 0;
+	if (address + length < address) {
+		errno = EINVAL;
+		return -1;
+	}
 	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	std::vector<std::uintptr_t> pages;
 	std::vector<std::uintptr_t> slots;
 	const auto first = address & ~(guest_page_size - 1);
 	const auto end = address + length;
 	for (auto page = first; page < end; page += guest_page_size) {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_operation);
 		if (!mappings_.contains(page))
 			continue;
+		pages.push_back(page);
 		const auto slot = slot_for(page);
 		if (std::ranges::find(slots, slot) == slots.end())
 			slots.push_back(slot);
+	}
+	for (const auto page : pages) {
 		/* Synchronize only the requested Linux page.  Rebuilding the host
 		 * slot would overwrite unrelated live pages beneath other CPUs.
 		 */
 		if (flush_page_locked(page) < 0 ||
-		    materialize_slot_locked(slot) < 0 || load_page_locked(page) < 0)
+		    materialize_slot_locked(slot_for(page)) < 0 ||
+		    load_page_locked(page) < 0)
 			return -1;
 	}
 	for (const auto slot : slots)
@@ -376,6 +1794,10 @@ int NativeAddressSpace::retry(
 	std::uintptr_t address, bool execute, bool write)
 {
 	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
 	const auto page = address & ~(guest_page_size - 1);
 	const auto mapping = mappings_.find(page);
 	if (mapping == mappings_.end() ||
@@ -392,10 +1814,220 @@ int NativeAddressSpace::retry(
 	return 1;
 }
 
-NativeAddressSpace &native_address_space()
+#if UML_MEMORY_ALLOCATION_TESTING
+std::size_t NativeAddressSpace::mapping_count_for_testing() const noexcept
 {
-	static NativeAddressSpace instance;
-	return instance;
+	std::lock_guard lock{mutex_};
+	return retired_.load(std::memory_order_acquire) ? 0 : mappings_.size();
 }
+
+std::size_t
+NativeAddressSpace::materialized_slot_count_for_testing() const noexcept
+{
+	std::lock_guard lock{mutex_};
+	return retired_.load(std::memory_order_acquire) ? 0 :
+		materialized_slots_.size();
+}
+
+std::size_t NativeAddressSpace::direct_mapping_count_for_testing() const
+	noexcept
+{
+	std::lock_guard lock{mutex_};
+	return retired_.load(std::memory_order_acquire) ? 0 :
+		direct_slots_.size();
+}
+#endif
+#endif
+
+NativeAddressSpace::~NativeAddressSpace()
+{
+	retire();
+}
+
+void NativeAddressSpace::retire() noexcept
+{
+	std::lock_guard lock{mutex_};
+	if (retired_.exchange(true, std::memory_order_acq_rel))
+		return;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	for (const auto slot : materialized_slots_)
+		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+			PROT_READ | PROT_WRITE);
+	for (const auto slot : materialized_slots_)
+		(void)flush_slot_locked(slot);
+	mappings_.clear();
+	backing_index_.clear();
+	slot_protections_.clear();
+	materialized_slots_.clear();
+	direct_mappings_.clear();
+	backing_index_ready_ = false;
+#endif
+	if (auto *registry = host_ownership_registry(); registry != nullptr)
+		registry->retire(ownership_id_);
+	direct_slots_.clear();
+}
+
+namespace {
+
+class NativeAddressSpaceRegistry final {
+public:
+	[[nodiscard]] std::shared_ptr<NativeAddressSpace> current() noexcept
+	{
+		for (;;) {
+			const auto retirement_sequence = domain_retirement_sequence();
+			std::uint64_t domain;
+			if (!resolve_current_domain(domain)) {
+				errno = ESRCH;
+				return {};
+			}
+			try {
+				{
+					std::shared_lock lock{mutex_};
+					if (const auto found = spaces_.find(domain);
+					    found != spaces_.end()) {
+						if (domain_retirement_sequence() !=
+						    retirement_sequence)
+							continue;
+						return found->second;
+					}
+				}
+				std::lock_guard lock{mutex_};
+				if (domain_retirement_sequence() != retirement_sequence)
+					continue;
+				if (const auto found = spaces_.find(domain);
+				    found != spaces_.end())
+					return found->second;
+				auto space = std::make_shared<NativeAddressSpace>();
+				/* The shared retirement sequence advances before retire() acquires
+				 * mutex_. A delayed resolver therefore cannot publish an old domain;
+				 * retirement that begins after this check removes the entry. */
+				if (domain_retirement_sequence() != retirement_sequence)
+					continue;
+				spaces_.emplace(domain, space);
+				return space;
+			} catch (const std::bad_alloc &) {
+				errno = ENOMEM;
+				return {};
+			} catch (...) {
+				errno = EIO;
+				return {};
+			}
+		}
+	}
+
+	void retire(std::uint64_t domain) noexcept
+	{
+		std::shared_ptr<NativeAddressSpace> retired;
+		{
+			std::lock_guard lock{mutex_};
+			if (const auto found = spaces_.find(domain);
+			    found != spaces_.end()) {
+				retired = std::move(found->second);
+				spaces_.erase(found);
+			}
+		}
+		if (retired)
+			retired->retire();
+	}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+	[[nodiscard]] std::size_t size_for_testing() const noexcept
+	{
+		std::shared_lock lock{mutex_};
+		return spaces_.size();
+	}
+#endif
+
+private:
+	mutable std::shared_mutex mutex_;
+	std::unordered_map<std::uint64_t,
+		std::shared_ptr<NativeAddressSpace>> spaces_;
+};
+
+void retire_native_domain(std::uint64_t domain) noexcept;
+
+std::atomic<NativeAddressSpaceRegistry *> published_native_address_space_registry{};
+std::atomic_flag native_address_space_registry_initialization = ATOMIC_FLAG_INIT;
+
+NativeAddressSpaceRegistry *native_address_space_registry() noexcept
+{
+	if (auto *registry = published_native_address_space_registry.load(
+		    std::memory_order_acquire); registry != nullptr)
+		return registry;
+	while (native_address_space_registry_initialization.test_and_set(
+		       std::memory_order_acquire))
+		std::this_thread::yield();
+	struct InitializationUnlock final {
+		~InitializationUnlock()
+		{
+			native_address_space_registry_initialization.clear(
+				std::memory_order_release);
+		}
+	};
+	[[maybe_unused]] InitializationUnlock unlock;
+	if (auto *registry = published_native_address_space_registry.load(
+		    std::memory_order_acquire); registry != nullptr)
+		return registry;
+	try {
+		UML_MEMORY_ALLOCATION_CHECKPOINT(
+			testing::AllocationSite::native_domain_registry);
+		auto *registry = new (std::nothrow) NativeAddressSpaceRegistry;
+		if (registry != nullptr) {
+			/* Publish the retirement callback first. A concurrent retirement
+			 * then waits for this initializer and cannot miss the registry. */
+			set_domain_retire_observer(&retire_native_domain);
+			published_native_address_space_registry.store(
+				registry, std::memory_order_release);
+		}
+		return registry;
+	} catch (...) {
+		return nullptr;
+	}
+}
+
+void retire_native_domain(std::uint64_t domain) noexcept
+{
+	if (auto *registry = native_address_space_registry(); registry != nullptr)
+		registry->retire(domain);
+}
+
+} // namespace
+
+std::shared_ptr<NativeAddressSpace> native_address_space() noexcept
+{
+	try {
+		errno = 0;
+		if (auto *registry = native_address_space_registry(); registry != nullptr)
+			return registry->current();
+		errno = ENOMEM;
+		return {};
+	} catch (const std::bad_alloc &) {
+		errno = ENOMEM;
+		return {};
+	} catch (...) {
+		errno = EIO;
+		return {};
+	}
+}
+
+#if UML_MEMORY_ALLOCATION_TESTING
+namespace testing {
+
+std::size_t native_domain_count() noexcept
+{
+	if (auto *registry = native_address_space_registry(); registry != nullptr)
+		return registry->size_for_testing();
+	return 0;
+}
+
+std::size_t native_host_mapping_count() noexcept
+{
+	if (auto *registry = host_ownership_registry(); registry != nullptr)
+		return registry->size_for_testing();
+	return std::numeric_limits<std::size_t>::max();
+}
+
+} // namespace testing
+#endif
 
 } // namespace uml::memory

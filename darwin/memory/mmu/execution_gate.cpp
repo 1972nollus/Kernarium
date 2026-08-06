@@ -2,6 +2,14 @@
 #include "execution_gate.hpp"
 
 #include <atomic>
+#include <utility>
+
+#ifndef UML_RUNTIME_PROFILING
+#define UML_RUNTIME_PROFILING 0
+#endif
+
+#if UML_RUNTIME_PROFILING
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +17,7 @@
 #include <pthread.h>
 #include <thread>
 #include <vector>
+#endif
 
 namespace uml::memory {
 namespace {
@@ -16,6 +25,7 @@ namespace {
 constexpr std::uint64_t execution_gate_closed = std::uint64_t{1} << 63;
 constexpr std::uint64_t execution_reader_mask = ~execution_gate_closed;
 
+#if UML_RUNTIME_PROFILING
 [[nodiscard]] bool gate_profile_enabled() noexcept
 {
 	static const bool enabled = [] {
@@ -40,45 +50,72 @@ struct ReaderProfile final {
 
 std::mutex &reader_profiles_mutex()
 {
-	static std::mutex mutex;
-	return mutex;
+	static auto *mutex = new std::mutex;
+	return *mutex;
 }
 
-std::vector<std::unique_ptr<ReaderProfile>> &reader_profiles()
+std::vector<ReaderProfile *> &reader_profiles()
 {
-	static std::vector<std::unique_ptr<ReaderProfile>> profiles;
-	return profiles;
+	static auto *profiles = new std::vector<ReaderProfile *>;
+	return *profiles;
 }
 
-ReaderProfile &local_reader_profile()
-{
-	static thread_local ReaderProfile *profile = [] {
-		auto owned = std::make_unique<ReaderProfile>();
-		owned->thread = current_thread_id();
-		auto *result = owned.get();
+class ReaderProfileRegistration final {
+public:
+	ReaderProfileRegistration() noexcept
+	{
+		profile_.thread = current_thread_id();
+		try {
+			std::lock_guard lock{reader_profiles_mutex()};
+			reader_profiles().push_back(&profile_);
+			registered_ = true;
+		} catch (...) {
+		}
+	}
+
+	~ReaderProfileRegistration()
+	{
+		if (!registered_)
+			return;
 		std::lock_guard lock{reader_profiles_mutex()};
-		reader_profiles().push_back(std::move(owned));
-		return result;
-	}();
-	return *profile;
+		std::erase(reader_profiles(), &profile_);
+	}
+
+	[[nodiscard]] ReaderProfile *get() noexcept
+	{
+		return registered_ ? &profile_ : nullptr;
+	}
+
+private:
+	ReaderProfile profile_{};
+	bool registered_{};
+};
+
+ReaderProfile *local_reader_profile() noexcept
+{
+	static thread_local ReaderProfileRegistration registration;
+	return registration.get();
 }
 
-void profile_reader_begin(std::uint64_t generation, std::uint64_t guest_pc)
+void profile_reader_begin(
+	std::uint64_t generation, std::uint64_t guest_pc) noexcept
 {
 	if (!gate_profile_enabled())
 		return;
-	auto &profile = local_reader_profile();
-	profile.guest_pc.store(guest_pc, std::memory_order_relaxed);
-	profile.generation.store(generation, std::memory_order_release);
+	if (auto *profile = local_reader_profile(); profile != nullptr) {
+		profile->guest_pc.store(guest_pc, std::memory_order_relaxed);
+		profile->generation.store(generation, std::memory_order_release);
+	}
 }
 
-void profile_reader_end()
+void profile_reader_end() noexcept
 {
 	if (!gate_profile_enabled())
 		return;
-	auto &profile = local_reader_profile();
-	profile.generation.store(0, std::memory_order_release);
-	profile.guest_pc.store(0, std::memory_order_relaxed);
+	if (auto *profile = local_reader_profile(); profile != nullptr) {
+		profile->generation.store(0, std::memory_order_release);
+		profile->guest_pc.store(0, std::memory_order_relaxed);
+	}
 }
 
 void profile_stalled_readers(std::uint64_t generation)
@@ -95,7 +132,7 @@ void profile_stalled_readers(std::uint64_t generation)
 		static_cast<unsigned long long>(generation));
 	{
 		std::lock_guard lock{reader_profiles_mutex()};
-		for (const auto &profile : reader_profiles()) {
+		for (const auto *profile : reader_profiles()) {
 			if (profile->generation.load(std::memory_order_acquire) !=
 			    generation)
 				continue;
@@ -110,32 +147,44 @@ void profile_stalled_readers(std::uint64_t generation)
 	if (output != stderr)
 		std::fclose(output);
 }
+#endif
 
 } // namespace
 
 bool execution_reader_begin(GenerationState &state, std::uint64_t generation,
-	std::uint64_t guest_pc)
+	std::uint64_t guest_pc) noexcept
 {
 	auto value = state.execution_gate.load(std::memory_order_acquire);
 	for (;;) {
+		if (state.retired.load(std::memory_order_acquire))
+			return false;
 		while ((value & execution_gate_closed) != 0) {
 			state.execution_gate.wait(value, std::memory_order_relaxed);
 			value = state.execution_gate.load(std::memory_order_acquire);
+			if (state.retired.load(std::memory_order_acquire))
+				return false;
 		}
 		if ((value & execution_reader_mask) == execution_reader_mask)
 			return false;
 		if (state.execution_gate.compare_exchange_weak(
 				value, value + 1, std::memory_order_acquire,
 				std::memory_order_relaxed)) {
+#if UML_RUNTIME_PROFILING
 			profile_reader_begin(generation, guest_pc);
+#else
+			(void)generation;
+			(void)guest_pc;
+#endif
 			return true;
 		}
 	}
 }
 
-void execution_reader_end(GenerationState &state)
+void execution_reader_end(GenerationState &state) noexcept
 {
+#if UML_RUNTIME_PROFILING
 	profile_reader_end();
+#endif
 	const auto previous = state.execution_gate.fetch_sub(
 		1, std::memory_order_release);
 	if ((previous & execution_gate_closed) != 0 &&
@@ -145,8 +194,14 @@ void execution_reader_end(GenerationState &state)
 
 ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,
 	std::uint64_t generation)
-	: state_{std::move(state)}, generation_{generation}
+	: state_{std::move(state)}
+#if UML_RUNTIME_PROFILING
+	, generation_{generation}
+#endif
 {
+#if !UML_RUNTIME_PROFILING
+	(void)generation;
+#endif
 	auto value = state_->execution_gate.load(std::memory_order_acquire);
 	for (;;) {
 		if ((value & execution_gate_closed) != 0) {
@@ -162,6 +217,7 @@ ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,
 	}
 	state_->execution_interrupts.fetch_add(1, std::memory_order_release);
 	value = state_->execution_gate.load(std::memory_order_acquire);
+#if UML_RUNTIME_PROFILING
 	const auto started = std::chrono::steady_clock::now();
 	bool reported = false;
 	while ((value & execution_reader_mask) != 0) {
@@ -177,6 +233,12 @@ ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,
 		}
 		value = state_->execution_gate.load(std::memory_order_acquire);
 	}
+#else
+	while ((value & execution_reader_mask) != 0) {
+		state_->execution_gate.wait(value, std::memory_order_relaxed);
+		value = state_->execution_gate.load(std::memory_order_acquire);
+	}
+#endif
 }
 
 ExecutionQuiesce::~ExecutionQuiesce()
@@ -184,5 +246,17 @@ ExecutionQuiesce::~ExecutionQuiesce()
 	state_->execution_gate.store(0, std::memory_order_release);
 	state_->execution_gate.notify_all();
 }
+
+#if UML_RUNTIME_PROFILING
+namespace testing {
+
+std::size_t execution_gate_profile_count() noexcept
+{
+	std::lock_guard lock{reader_profiles_mutex()};
+	return reader_profiles().size();
+}
+
+} // namespace testing
+#endif
 
 } // namespace uml::memory

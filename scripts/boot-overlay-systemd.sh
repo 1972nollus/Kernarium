@@ -43,6 +43,25 @@ console.
 EOF
 }
 
+validate_kernel_argument()
+{
+	argument=$1
+	case "$argument" in
+	rw)
+		echo "$0: the writable-root kernel argument 'rw' is forbidden" >&2
+		exit 2
+		;;
+	ro)
+		echo "$0: 'ro' is supplied by the launcher and must not be repeated" >&2
+		exit 2
+		;;
+	ubd0*=*|root=*|init=*|mem=*|console=*|systemd.unit=*)
+		echo "$0: kernel argument is controlled by the launcher: $argument" >&2
+		exit 2
+		;;
+	esac
+}
+
 while (($# != 0)); do
 	case "$1" in
 	--emulator)
@@ -122,6 +141,9 @@ done
 	echo "$0: root device, memory, and systemd unit must be non-empty" >&2
 	exit 2
 }
+for kernel_argument in "${extra_kernel_arguments[@]}"; do
+	validate_kernel_argument "$kernel_argument"
+done
 
 command=(
 	"$emulator"

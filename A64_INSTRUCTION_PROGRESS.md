@@ -8,10 +8,168 @@ Source: `ISA_A64_xml_A_profile-2026-06.pdf`, Arm A64 ISA XML for A-profile archi
 
 Scope: all entries in the PDF inventories `A64 -- Base Instructions (alphabetic order)` (516 entries) and `A64 -- SIMD and Floating-point Instructions (alphabetic order)` (467 entries). Aliases, grouped mnemonics, scalar/vector forms, addressing forms, element widths, architectural feature variants, and every distinct encoding described by an entry must be tested before that entry is complete.
 
-## Completion rules
+## Frozen aggregate-manifest publication
 
-An entry is complete under the current three-engine audit only when all five
-boxes are checked:
+The frozen manifest and identity are published only as one complete two-profile
+operation. Partial producer replacement and validator-side writes are not
+supported, so neither file can be refreshed through a weaker path:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B \
+  tests/tooling/arm64/freeze_a64_aggregate_manifest.py \
+  --full-4k-manifest /absolute/path/to/full-4k.tsv \
+  --full-16k-manifest /absolute/path/to/full-16k.tsv \
+  --evidence-4k /absolute/path/to/4k/instruction-evidence \
+  --evidence-16k /absolute/path/to/16k/instruction-evidence \
+  --output tests/unit/arm64/a64_instruction_aggregate_manifest.tsv \
+  --identity-output \
+    tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json
+```
+
+Full publication enumerates the exact 449 `*.tsv.raw` producer basenames in
+each evidence directory, independently regenerates each profile aggregate from
+those raw files with the checked required/decode models and pinned decoder,
+and requires the supplied profile TSV to match that derivation exactly. It then
+validates both profile sources, their exact page/cardinality, producer and
+identity sets, canonical ordering, allocation model, and declared profile
+exceptions before staging the bound manifest/identity replacement.
+An interrupted replacement is fail-closed because consumers reject a mismatched
+pair, and rerunning the same command resumes from the validated profile inputs.
+
+Large completed raw profiles can be preserved losslessly in deterministic gzip
+form after their aggregate has been validated:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B \
+  tests/tooling/arm64/compress_a64_raw_evidence.py \
+  --evidence-directory /absolute/path/to/instruction-evidence \
+  --guest-page-size 16384 \
+  --free-space-reserve-gib 8
+```
+
+Readers accept exactly one `producer.tsv.raw` or `producer.tsv.raw.gz` for each
+of the frozen 449 producer names. They reject missing producers, symlinks,
+truncated streams, and duplicate plain/compressed basenames. Compression holds
+a directory-scoped lock, reserves a conservative hard upper bound of twice the
+raw size plus 1 MiB for its temporary gzip, and verifies the staged member
+against the original uncompressed size and digest before removing the plain
+file. A matching duplicate left by an interrupted replacement is verified and
+resumed, while a mismatch fails closed.
+The emitted canonical compression identity records every producer's raw and
+compressed size/digest.
+
+## Exact official-semantics campaign gate (not yet executed)
+
+The bounded campaign, sharding, authority-reconstruction, cancellation/resume,
+and two-profile promotion tooling is implemented. The multi-day official run
+has **not** been executed, so it does not close or reaffirm any historical
+instruction checkbox below. The canonical, copy/paste executable 4 KiB +
+16 KiB command chain is
+[`docs/testing.md`](docs/testing.md#exact-official-a64-campaign). It starts
+from fresh unit evidence and includes materialization joins, authority-filtered
+sharding, immutable plans, an exact four-shard pilot per profile, full resume,
+independent verification, locked promotion, and promotion `--verify-only`.
+
+Current frozen aggregate identity (2026-08-05):
+
+- 32,169 aggregate rows: 16,084 for 4 KiB and 16,085 for 16 KiB;
+- aggregate-ID SHA-256
+  `00ebf4703abb2e9c59050d4e7f00418dcb6b5f61f0e61dddbe566c51f2057d66`;
+- aggregate-row SHA-256
+  `f42d770d290b88135f5da3eb04793d516cd89723e614b4e2911499fcc5541c0`.
+
+These are aggregate counts, not official input-contract counts. Never reuse a
+prior or estimated contract total. Each fresh sharding pass writes its exact
+authority-filtered `total_contracts` to `shard-set.json`; that value is then
+re-supplied to sharding and planning through `--expected-total-contracts`.
+
+The campaign implementation now has the following fail-closed properties:
+
+- checkpoint authority is reconstructed with a bounded fan-in merge (maximum
+  32 live streams) and aggregate-sized memory, while raw/input bindings remain
+  disk-backed and the per-input lookup is forced through the
+  `authoritative_binding_by_input` index;
+- sharding reconstructs one producer at a time, caps shards at 1,024 unique
+  authority-bound contracts, holds canonical exclusive evidence locks for its
+  full source/authority/publication snapshot, emits deterministic gzip, and can
+  regenerate or byte-verify a partially published shard set;
+- plan schema v4 freezes the exact Python runtime/source closure, official
+  tools, checkpoints, aggregate identity, shard identities, and hard limits
+  for encoded input, artifact bytes/files, and captured logs;
+- pilot/run reserve the frozen per-worker output/local maximum before every
+  submission and recheck after every completion. A failure consumes the whole
+  completed batch before any refill, cancels queued work, terminates active
+  probe process groups, and removes only its uniquely owned local partials;
+- published shard trees are immutable resume points. Low-space and in-flight
+  interruption fixtures prove no campaign report is emitted, no child/temp
+  debris remains, and a later run preserves every prior `SUCCESS.json` byte;
+- all metadata publication is file-before-directory synced. The production
+  chain uses `--directory-sync-policy require`, so unsupported directory
+  `fsync` is fatal rather than silently weakening evidence;
+- final promotion locks both profile roots in canonical order, reconstructs
+  both exact authorities under explicit database/scratch caps, stores results
+  in locally rooted SQLite, streams indexed bindings aggregate by aggregate,
+  publishes a bound TSV/identity pair, and verifies the same pair without
+  repair.
+
+Bounded scale evidence from the 2026-08-05 fixture run merged 262,144 sorted
+checkpoint contributions from 64 synthetic producers with fan-in 8. Peak
+Python allocation was 3,743,973 bytes and peak merge scratch was 1,500,707
+bytes. A separate source-stream fixture processed 32,768 producers one at a
+time, retained 1,024 authority IDs in a 16,384-byte SQLite file, and verified
+the input-leading authority query plan. The promotion fixture then streamed
+65,536 indexed input/result bindings into 64 aggregate summaries in a peak
+68,354,048-byte database (1,043 measured bytes/input); measured Python peaks
+were 45,987 bytes for 4,096 inputs and 49,687 bytes for 65,536, with SQLite
+temporary storage pinned to the checked local root. Campaign capacity rounds
+that measurement up to 1,536 bytes/input, models 40,000,000 inputs with a 3/2
+safety factor (92,160,000,000 bytes), and defaults to a 137,438,953,472-byte
+hard database cap. These fixtures establish bounded mechanics; they are not
+substitutes for the fresh 449-producer production joins or the official
+campaign.
+
+Production completion checklist (all remain open):
+
+- [ ] Run fresh 4 KiB and 16 KiB unit evidence and prove exactly 449 v4
+  materialization sidecars per profile.
+- [ ] Finish and verify both complete materialization joins/checkpoint sets.
+- [ ] Derive, publish, and exact-resume both deterministic shard sets; record
+  their fresh totals and identities.
+- [ ] Build both immutable v4 plans with the source PDF/archive and official
+  tool closure frozen.
+- [ ] Pass each four-worker, four-full-shard pilot without a campaign report.
+- [ ] Resume both complete campaigns, then run independent reserved-scratch
+  verification.
+- [ ] Publish and `--verify-only` the locked two-profile promotion pair.
+- [ ] Only after all prior gates pass, review whether the exact promoted rows
+  justify changing any instruction-completion status.
+
+> **Seventh-audit qualification (2026-08-04):** the checkmarks below are a
+> historical implementation ledger, not current mechanical proof that all
+> variants are complete. The evidence schema currently permits exactly one
+> record for each of the 983 stable entry IDs and credits only its selected
+> case/word. It therefore cannot prove exhaustive coverage of every width,
+> form, alias, state combination, valid/reserved partition, or feature variant.
+> In addition, the allocation generator derives its form label and selected
+> word from test-owned catalogs; its external decoder classifies only that
+> selected word. Separately, feature validation compares requirements copied
+> between test-owned inventory and binding fields. Whole-pipeline consistent
+> mutations can still validate. Closure now
+> requires independent variant identities plus an authoritative form-to-
+> allocation and allocation-to-feature oracle, with removal, duplication,
+> cross-variant-swap, reserved-field, and regenerated-catalog negatives. Do not
+> treat or reaffirm the checked boxes as complete until those gates pass for
+> both page modes and the exact production objects of all three engines. The
+> shared fault model must also preserve instruction-fetch versus data-read
+> direction through the runtime/kernel boundary, and translated-engine
+> exception tests must prove
+> architectural/host state cleanup before these boxes can close.
+
+## Target closure rules
+
+After the seventh-audit gates above pass, an entry can be complete only when
+every independently identified required variant satisfies all five fields
+below. Five checked boxes on one representative case are not sufficient:
 
 - `Spec`: encoding constraints and operational pseudocode audited against the 2026-06 PDF.
 - `Interpreter`: pure C++ behavior is implemented only for the debug interpreter configuration; it validates reserved encodings, alignment, accesses, and architectural constraints before side effects, favoring early diagnostics and safety over speed.
@@ -23,7 +181,7 @@ boxes are checked:
   architectural state, event/fault metadata, and memory image, then the same
   case runs interpreter, gadgets, and JIT in that order.
 
-## Current three-engine conformance audit (2026-07-30)
+## Historical three-engine conformance campaign (2026-07-30)
 
 - [x] Added a canonical 983-row inventory at
   `tests/unit/arm64/a64_instruction_inventory.tsv`, with stable IDs,
@@ -46,8 +204,8 @@ boxes are checked:
   translation-owned literal.
 - [x] Exact constant construction skips default leading halfwords and selects
   the one-filled alternative only when strictly shorter. The all-ones
-  continuation sentinel is one instruction rather than four. Current
-  one-store TLB shapes are **32 hot / 76 total words** at 16 KiB and **34 hot
+  continuation sentinel is one instruction rather than four. The campaign's
+  one-store TLB shapes were **32 hot / 76 total words** at 16 KiB and **34 hot
   / 74 total words** at 4 KiB.
 - [x] A diagnostic-only GPR-pressure build records resident high-water,
   allocation refusals, overflow loads/stores, repeated accesses, and projected
@@ -89,7 +247,7 @@ boxes are checked:
   Forced portable-path suites therefore still execute interpreter, gadget,
   and JIT in order against one oracle instead of using a separate gadget-only
   runner.
-- [x] Current migrations cover Base add/subtract, logical, move-wide,
+- [x] That campaign's migrations covered Base add/subtract, logical, move-wide,
   bitfield/extract, scalar bit operations, atomic/exclusive operations,
   conditional data processing, control flow, barriers, memory transfers, and
   checksum-like operations, plus substantial scalar and vector FP&SIMD
@@ -207,15 +365,15 @@ boxes are checked:
   destructive-alias, edge-pattern, and neighboring reserved-partition cases.
   Translation selects one of 134 live direct-offset gadgets, resolves the
   immediate and native/portable choice before execution, and leaves every
-  valid hot path branch-free. The portable gadget bodies run through the same
+  valid hot path branch-free. The portable gadget bodies ran through the same
   three-engine oracle even on a capable host.
 - [x] The 27 indexed and vector integer multiply rows now cover every
   allocated element size, arrangement, lower/upper source half, indexed lane,
   register field, destructive alias, modular boundary, rounding boundary,
   two-stage saturation result, cumulative status result, and reserved
   scalar/size partition. Their 15,780 cases per engine pass both page
-  configurations. Translation selects exactly 534 live native gadgets on the
-  current host, resolves register fields and indexed lanes before execution,
+  configurations. Translation selected exactly 534 live native gadgets on the
+  campaign host, resolved register fields and indexed lanes before execution,
   and keeps ordinary hot paths branch-free.
 - [x] PMULL and PMULL2 now cover all 131,072 allocated combinations of
   lower/upper source half, element size, and three register fields, together
@@ -340,7 +498,7 @@ boxes are checked:
   rounding modes, representative number classes, alternate-number controls,
   input flushing, default results, cumulative status, overflow, and 256
   deterministic source patterns per form. All 5,395 cases pass interpreter
-  and gadgets in both page configurations; the current host records 5,395
+  and gadgets in both page configurations; the campaign host recorded 5,395
   exact native-feature skips, while the JIT emits native forms when that
   feature is present. Translation now places direct vector offsets in the
   immutable gadget stream, and all four family gadget entries are live.
@@ -535,19 +693,22 @@ boxes are checked:
   contributing two interpreter/gadget cases and two exact JIT feature skips.
   The whole-inventory baseline scanner remains only as a structural
   translation-acceptance test, not as a semantic oracle.
-- [x] The final verbose shared-harness sweep ran 18,214,125 cases through
+- [x] Historical sweep result: the final verbose shared-harness sweep ran 18,214,125 cases through
   both interpreter and gadgets and 12,493,442 through JIT, with 5,720,683
   exact specification-derived host-feature skips. JIT was unavailable for
   zero cases, and invalid encodings continued through all three engines.
   These totals include harness-contract, deferred-state, and synchronous-trap
   regressions in addition to the 983-row instruction inventory.
-- [x] The new audit has fully verified 983/983 inventory rows: 516/516 Base
-  and 467/467 FP&SIMD. Every allocated variant and reserved partition has
-  passed both page configurations.
+- [x] Historical closure claim, superseded by the seventh-audit qualification:
+  the earlier audit reported 983/983 inventory rows, 516/516 Base and 467/467
+  FP&SIMD, and reported every allocated variant and reserved partition as
+  passing both page configurations. The current evidence schema cannot prove
+  that exhaustiveness.
 - [x] Migrate every remaining existing instruction test to the shared explicit
   oracle and remove the legacy two-engine differential helpers.
-- [x] Mark `JIT` complete for all 983 inventory rows after every encoding and
-  variant is either executed natively or recorded as a host-feature skip.
+- [x] Historical ledger action: all 983 `JIT` boxes were marked complete after
+  selected encodings executed natively or recorded a host-feature skip. Those
+  marks are provisional until independent variant identities exist.
 - [x] Run the full standard suite after the complete migration. The final
   16 KiB configuration passed all 521 registered tests and the 4 KiB
   configuration passed all 522; the loopback VNC smoke was run separately
@@ -556,8 +717,9 @@ boxes are checked:
 ## Legacy interpreter/gadget milestones
 
 The following checkmarks record the earlier interpreter/gadget completion
-campaign. They do not imply completion of the new independent JIT conformance
-audit; the per-entry `JIT` boxes below are authoritative for that work.
+campaign. The per-entry boxes were once treated as authoritative, but the
+seventh-audit qualification at the top supersedes that status for every
+engine.
 
 - [x] PDF inventories extracted, form-feed boundaries validated, and counted: 983 entries.
 - [x] Existing implementation and test coverage classified for every entry.
@@ -570,14 +732,21 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
 - [x] Full unit and integration test suites pass in debug-interpreter and release-gadget configurations.
 - [x] 8 GB, first-partition, in-memory-overlay boot verified and UnixBench baseline recorded.
 
-## Final implementation and gadget audit
+## Historical final implementation and gadget audit
 
-- Inventory completion: **983/983** PDF entries (**516/516 Base** and
-  **467/467 FP&SIMD**) have Spec, Interpreter, Gadget, JIT, and Tests checked.
+This section preserves dated implementation, test, integration, and performance
+results. It is not current instruction-completeness or product-acceptance
+evidence; use the seventh-audit qualification and refactor handoff instead.
+
+- Historical inventory claim: **983/983** PDF entries (**516/516 Base** and
+  **467/467 FP&SIMD**) had Spec, Interpreter, Gadget, JIT, and Tests checked.
+  Those boxes currently represent selected cases rather than exhaustive
+  independently identified variants.
 - Runtime selection: `--execution-engine=jit`, `gadgets`, or `interpreter`
   chooses the userspace engine. macOS defaults to JIT and iOS defaults to
-  gadgets. JIT has no gadget fallback; an unsupported translated block is an
-  explicit fatal event.
+  gadgets. JIT has no gadget fallback; an unsupported translated block produces
+  a guest-scoped illegal-instruction event with zero retirement, and the
+  emulator remains reusable.
 - Debug interpreter path: the pure C++ engine remains explicitly selectable
   for diagnostics and retains validation-first behavior before side effects.
   It is not selected by either platform's production default.
@@ -593,11 +762,13 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
   duplicated to avoid unconditional finish branches. Remaining instruction-
   state tests are architectural FPCR/RCW semantics, while remaining memory
   branches are TLB, page-span, alignment/fault, or atomic-retry checks.
-- Dead-gadget audit: all **9,826** production gadget/helper definitions
+- Dated dead-gadget audit: all **9,826** production gadget/helper definitions
   (**9,587** exported assembly/table symbols plus **239** C++ helpers) were
   compared with production object references, immutable native-table
   relocations, and assembly-internal targets. The 16 KiB and 4 KiB symbol
-  sets are identical and the final unused-definition set is empty.
+  sets were identical and that pass reported an empty unused-definition set.
+  The seventh audit has since found one unreachable fatal helper/wrapper, so
+  current closure requires its removal or an explicit documented ABI purpose.
 - Host acceleration: gadgets use exact AArch64 host operations and extensions
   where their semantics match, including scalar/vector arithmetic, atomic
   operations, floating-point/vector execution, and specialized block/vector
@@ -607,7 +778,7 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
   test source files** (**488 emulator test sources** including infrastructure),
   with separate allocation/encoding, behavior, control-state, fault/ordering,
   and gadget checks as applicable.
-- Current registered CTest matrix (guest integrations excluded):
+- Dated registered CTest matrix (guest integrations excluded):
   **521/521** tests pass with 16 KiB pages and **522/522** with 4 KiB pages.
   The extra 4 KiB test covers the shadow MMU. The LTP runner parser remains a
   unit test; guest SMP and the verified guest LTP campaign remain standalone
@@ -634,24 +805,24 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
   topology/parallelism check consumed 39.66 host-CPU seconds over 4.01 seconds
   wall time (**9.90 effective host cores**).
 
-### Native JIT engine audit
+### Historical native JIT engine audit
 
 - The optional JIT engine never enters a gadget. The former fallback flag,
   public API, CLI option, decoded-gadget call, gadget cache member, and gadget
-  builder path have been removed; an unsupported JIT block is explicit and
-  fatal.
-- Its compiler implementation is split into independently compiled integer,
-  floating-point, vector-arithmetic/rearrangement, and specialized
-  block/vector `.cpp` translation units. A narrow internal family interface
-  hides the concrete emitter and executor state; executor/cache and
-  software-MMU orchestration remain in `jit_executor.cpp`. No C++ `.inc`
-  implementation fragments remain.
-- Every optional family propagated through guest HWCAP has a feature-gated
-  native emitter, while HWCAP2 remains zero. The shared harness derives each
-  case's native requirement from its specification allocation, skips only a
-  valid case missing that exact host capability, and always executes invalid
-  or reserved encodings through JIT.
-- The current ordinary sandboxed matrices pass **559/559** registered tests
+  builder path have been removed; an unsupported JIT block is a guest-scoped
+  illegal-instruction event with zero retirement and no fallback.
+- Family compilers were moved to independently compiled `.cpp` translation
+  units, but the executor remains textually composed from large implementation
+  headers. The seventh audit therefore treats the split as partial: lifecycle,
+  cache, linking, publication, diagnostics, semantic helpers, and verification
+  still require normal responsibility-owned translation units.
+- The campaign assumed every optional family propagated through guest HWCAP had
+  a feature-gated native emitter while HWCAP2 remained zero. Its shared harness
+  took each case's native requirement from test-owned allocation metadata,
+  skipped a valid case missing that declared capability, and executed invalid
+  or reserved encodings through JIT. The seventh audit requires an independent
+  allocation-to-feature oracle before treating those skips as exact.
+- The dated ordinary sandboxed matrices passed **559/559** registered tests
   with 16 KiB pages and **558/558** with 4 KiB pages. The host VNC smoke
   remains registered and passes separately with explicit localhost-bind
   permission in both builds, producing complete standard totals of
@@ -704,7 +875,7 @@ audit; the per-entry `JIT` boxes below are authoritative for that work.
 - The pressure-guided eight-slot GPR selection and consecutive vector-list
   prebinding are complete. Expanding the resident bank into x22/x23 remains a
   separate candidate only if later runtime evidence clears its added
-  outer-boundary save/restore cost; current code-shape gains remain pending
+  outer-boundary save/restore cost; those code-shape gains remained pending
   matched workload measurement.
 - The rebuilt real guest passes the standalone JIT contract:
   `AT_HWCAP=0x2200fb`, `AT_HWCAP2=0`, V8 dynamic-code generation,
@@ -824,7 +995,7 @@ overlay / overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/wo
   **1784725767**, SHA-256
   `9d1398970ea078dcef37bed42ed5eba6ba132f53cca6849420a3f8f188f510ba`.
 
-## Base instructions (516/516 complete)
+## Base instructions (516/516 historical checkmarks; variant proof open)
 
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - ABS: Absolute value.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - ADC: Add with carry.
@@ -1165,7 +1336,7 @@ overlay / overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/wo
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSSET, RCWSSETA, RCWSSETAL, RCWSSETL: Read check write software atomic bit set on doubleword in memory.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSSETP, RCWSSETPA, RCWSSETPAL, RCWSSETPL: Read check write software atomic bit set on quadword in memory.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSSWP, RCWSSWPA, RCWSSWPAL, RCWSSWPL: Read check write software swap doubleword in memory.
-- [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSSWPP, RCWSSWPPA, RCWSSWPAL, RCWSSWPPL: Read check write software swap quadword in memory.
+- [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSSWPP, RCWSSWPPA, RCWSSWPPAL, RCWSSWPPL: Read check write software swap quadword in memory.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL: Read check write swap doubleword in memory.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL: Read check write swap quadword in memory.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - RET: Return from subroutine.
@@ -1343,7 +1514,7 @@ overlay / overlay rw,...,lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/wo
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - XPACD, XPACI, XPACLRI: Strip Pointer Authentication Code.
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - YIELD: Yield.
 
-## SIMD and Floating-point instructions (467/467 complete)
+## SIMD and Floating-point instructions (467/467 historical checkmarks; variant proof open)
 
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - ABS: Absolute value (vector).
 - [x] Spec [x] Interpreter [x] Gadget [x] JIT [x] Tests - ADD (vector): Add (vector).

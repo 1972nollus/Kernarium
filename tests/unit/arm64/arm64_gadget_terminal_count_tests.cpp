@@ -149,7 +149,7 @@ void enabled_trap_reserved_allocation_does_not_retire()
 	require(outcome.executed == 0);
 }
 
-void valid_prefix_before_fatal_is_counted()
+void valid_prefix_before_implementation_gap_is_counted()
 {
 	constexpr std::array instructions{
 		0xd280'00a0U, // movz x0, #5
@@ -157,7 +157,7 @@ void valid_prefix_before_fatal_is_counted()
 		0xd400'0001U, // svc #0
 	};
 	const auto outcome = run(instructions);
-	require(outcome.event == ::uml::cpu::EngineEvent::fatal);
+	require(outcome.event == ::uml::cpu::EngineEvent::illegal_instruction);
 	require(outcome.cpu.registers[0] == 5);
 	require(outcome.cpu.pc == code_base + sizeof(std::uint32_t));
 	require(outcome.executed == 1);
@@ -402,7 +402,7 @@ int main()
 	valid_prefix_before_illegal_is_counted();
 	memory_fault_excludes_fault_and_later_decoded_words();
 	enabled_trap_reserved_allocation_does_not_retire();
-	valid_prefix_before_fatal_is_counted();
+	valid_prefix_before_implementation_gap_is_counted();
 	gcs_fault_excludes_the_faulting_instruction();
 	retiring_terminals_keep_their_instruction_count();
 	linked_successor_terminal_subtracts_only_its_suffix();

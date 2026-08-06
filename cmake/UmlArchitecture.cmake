@@ -14,7 +14,25 @@ function(uml_declare_architecture_target TARGET LAYER)
     if(_existing)
         message(FATAL_ERROR "Architecture layer already declared for ${TARGET}: ${_existing}")
     endif()
+    set(_engine_kind "-")
+    if(ARGC GREATER 2)
+        set(_engine_kind "${ARGV2}")
+    endif()
+    if(LAYER STREQUAL "cpu")
+        if(NOT _engine_kind MATCHES
+           "^(native|gadget|interpreter|shared|mixed)$")
+            message(FATAL_ERROR
+                "CPU architecture target ${TARGET} requires an explicit "
+                "engine kind: native, gadget, interpreter, shared, or mixed")
+        endif()
+    elseif(NOT _engine_kind STREQUAL "-")
+        message(FATAL_ERROR
+            "Non-CPU architecture target ${TARGET} cannot declare engine "
+            "kind ${_engine_kind}")
+    endif()
     set_property(TARGET "${TARGET}" PROPERTY UML_ARCHITECTURE_LAYER "${LAYER}")
+    set_property(TARGET "${TARGET}" PROPERTY UML_CPU_ENGINE_KIND
+        "${_engine_kind}")
     set_property(GLOBAL APPEND PROPERTY UML_ARCHITECTURE_TARGETS "${TARGET}")
 endfunction()
 
@@ -53,7 +71,8 @@ function(uml_write_architecture_manifest)
         endif()
     endforeach()
     set(_manifest "${CMAKE_BINARY_DIR}/uml-architecture-targets.tsv")
-    file(WRITE "${_manifest}" "# target\tlayer\tkind\tdependencies\n")
+    file(WRITE "${_manifest}"
+        "# target\tlayer\ttarget_kind\tengine_kind\tdependencies\n")
     foreach(_target IN LISTS _targets)
         get_property(_layer TARGET "${_target}" PROPERTY UML_ARCHITECTURE_LAYER)
         if(NOT _layer)
@@ -64,6 +83,11 @@ function(uml_write_architecture_manifest)
             set(_kind "interface")
         else()
             set(_kind "codemodel")
+        endif()
+        get_property(_engine_kind TARGET "${_target}"
+            PROPERTY UML_CPU_ENGINE_KIND)
+        if(NOT _engine_kind)
+            set(_engine_kind "-")
         endif()
 
         set(_architecture_dependencies)
@@ -117,6 +141,7 @@ function(uml_write_architecture_manifest)
             set(_dependency_text "-")
         endif()
         file(APPEND "${_manifest}"
-            "${_target}\t${_layer}\t${_kind}\t${_dependency_text}\n")
+            "${_target}\t${_layer}\t${_kind}\t${_engine_kind}\t"
+            "${_dependency_text}\n")
     endforeach()
 endfunction()

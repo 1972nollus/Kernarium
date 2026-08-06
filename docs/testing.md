@@ -24,6 +24,15 @@ ctest --preset unit
 cmake --preset macos-unit-4k
 cmake --build --preset unit-test-binaries-4k
 ctest --preset unit-4k
+
+# Equivalent authoritative configure/build/unit/tooling workflows.
+cmake --workflow --preset check-unit
+cmake --workflow --preset check-unit-4k
+
+# Standalone exact instruction-evidence pipelines. Each selection orders the
+# CMake reset, all host producers, and the Python validator.
+ctest --preset instruction-evidence
+ctest --preset instruction-evidence-4k
 ```
 
 Prepare full integration explicitly. Linux must be replayed on a
@@ -60,8 +69,8 @@ dependencies/verify-prefix.sh \
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
 kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --skip-build
 python3 tools/rootfs/verify.py --image rootfs.img
-cmake --preset macos-integration \
-  -DUML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux
+UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
+  cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
 ```
@@ -92,8 +101,9 @@ production overlay/systemd path, interpreter, gadgets, JIT, and deterministic
 SLiRP. The interpreter smoke intentionally stops after shell arithmetic and
 CPU/HWCAP checks; Node/V8/Wasm coverage is restricted to gadget and JIT runs.
 Do not add heavyweight Node.js, Go, or similar workloads to interpreter
-acceptance. `integration-full` additionally selects the 10-vCPU SMP and
-shared-MM pressure tests. Shell-oriented workloads boot an explicit writable tmpfs
+acceptance. `integration-full` (or `integration-full-4k` for the matching
+page profile) additionally selects the 10-vCPU SMP and shared-MM pressure
+tests. Shell-oriented workloads boot an explicit writable tmpfs
 OverlayFS shell; that is intentional and avoids relying on a systemd getty for
 PTY interaction, while `guest-overlay-systemd-smoke` validates the production
 systemd path separately.  The shared-MM workload is a CMake-built freestanding
@@ -109,8 +119,8 @@ External network, KDE/VNC, and rendered WebGL workflows are opt-in because
 they need network/GUI permission:
 
 ```sh
-cmake --preset macos-integration \
-  -DUML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
+UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
+  cmake --preset macos-integration \
   -DUML_ENABLE_EXTERNAL_NETWORK_TESTS=ON
 ctest --preset integration-full
 ```
@@ -125,6 +135,13 @@ cmake --build .build/presets/macos-integration --target guest-ltp-jit
 # Convenience aggregate after both independent campaigns are desired:
 cmake --build .build/presets/macos-integration --target guest-ltp-verified
 python3 tests/integration/ltp/run_guest_ltp.py --help
+```
+
+The 10-core topology, utilization, and hotplug workload is also deliberately
+outside CTest. Run its standalone target explicitly:
+
+```sh
+cmake --build .build/presets/macos-integration --target guest-smp-parallel
 ```
 
 Provisioning an image is explicit and verifies a detached signature over a
@@ -149,11 +166,20 @@ acceptance campaigns.  Typical host-product commands are:
 cmake --preset macos-unit-16k-asan-ubsan
 cmake --build --preset asan-ubsan
 ctest --preset unit-asan-ubsan -j 10 \
-  --resource-spec-file cmake/ctest-resources.json
+  --resource-spec-file "$PWD/cmake/ctest-resources.json"
 
 cmake --preset macos-unit-16k-tsan
 cmake --build --preset tsan
 ctest --preset unit-tsan
+
+# Canonical rootfs-free GPU/VNC descriptor-ownership gates.
+cmake --workflow --preset check-gpu
+cmake --workflow --preset check-gpu-asan-ubsan
+
+# Canonical malformed embedded-loader sanitizer gate.
+cmake --preset macos-loader-asan-ubsan
+cmake --build --preset loader-asan-ubsan
+ctest --preset loader-asan-ubsan
 
 cmake --preset ios-device
 cmake --build --preset ios-device
@@ -162,14 +188,314 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-`unit-tsan` intentionally runs the tests labelled `tsan`: the static MMU gate,
-static runtime, JIT publication concurrency, runtime context lifecycle, and
-instruction-evidence reset fixture. The full normal and ASan/UBSan suites
-retain exhaustive instruction coverage.
+`unit-tsan` intentionally runs the four tests labelled `tsan`: the static MMU
+gate, static runtime, JIT publication concurrency, and runtime context
+lifecycle. It does not select the instruction-evidence reset. The full normal
+and ASan/UBSan suites retain exhaustive instruction coverage.
 
-`scripts/build-xcframework.sh` builds a complete aggregate archive and links an
-external consumer for macOS, iOS device, and iOS simulator. It also rejects
-non-JIT executable-memory publication references in either iOS archive.
+The two GPU workflows are host-only and rootfs-free. They configure the GPU
+graph, build both GPU unit fixtures and all registered tooling fixtures plus
+the architecture audit, run the GPU unit selection, and then run the
+independently labelled `virtio-gpu-vnc-smoke` tooling check. This covers
+service ownership, VNC lifetime/port reuse, and the real LibVNCServer wiring
+normally or under ASan+UBSan. Loopback socket policy must permit the VNC
+port-reuse cases.
+
+The strict `unit` selection is Python-free. In configurations that enable both
+unit and tooling tests, it includes the CMake evidence reset so stale per-test
+TSVs are removed before producers run. In a unit-only, tooling-disabled graph,
+neither the reset nor the tooling validators are registered. The
+`instruction-evidence` presets add the validator and are standalone after the
+matching build preset. A raw `tooling` selection is non-destructive: in a
+unit-enabled tree its evidence validator requires a preceding unit producer
+run, as provided by `check-unit`; in the tooling-only tree that conditional
+validator is not registered.
+
+The combined unit/tooling graph also records one compressed input-
+materialization sidecar per unit producer. The
+`arm64-input-materialization-join` tooling check deliberately requires the
+complete producer set, so selecting that check without first completing the
+matching unit run fails instead of yielding a partial index. Raw sidecars stay
+under the build tree. The resumable checkpoints and contract index can be
+placed on a larger volume by setting the CMake cache path
+`UML_INSTRUCTION_MATERIALIZATION_WORK_ROOT`; page-size-specific subdirectories
+are added automatically. The registered join preserves at least 5 GiB on the
+checkpoint volume and rejects a producer before its bounded working estimate
+would consume that reserve. This is an exhaustive tooling gate over roughly
+30 million contributions and 449 producer shards per page profile, not a
+fixture-scale check: it remains in the standard combined unit/tooling workflow,
+uses resumable checkpoints, and has a bounded four-hour CTest timeout.
+
+## Exact official A64 campaign
+
+The `arm64-aslref-campaign-*` CTests are host-only fixtures for publication,
+authority reconstruction, sharding, cancellation/resume, and final joining.
+They do **not** execute the complete official campaign. The complete campaign
+starts with fresh 4 KiB and 16 KiB unit evidence, reconstructs all 449 producer
+checkpoints for each profile, and then executes the commands below. It can run
+for days and must remain outside ordinary CTest.
+
+Use a new absolute work root on a local filesystem. Output, scratch, and run
+roots are siblings, not nested within one another or any frozen input. The
+example official-tool paths are the paths found by the 2026-08-05 audit;
+replace any that no longer exist. `PDF` must point at the exact source PDF.
+Every `test` below must succeed before proceeding.
+
+```sh
+REPO=/Users/dev/Downloads/linux-um-darwin
+WORK=/Volumes/<case-sensitive-volume>/a64-official-2026-06-run-001
+ARCH_ROOT=/private/tmp/a64-asl-2026-06.3oq9iS/ISA_A64_xml_A_profile-2026-06
+ARCHIVE=/private/tmp/ISA_A64_xml_A_profile-2026-06.tar.gz
+FEATURES=/private/tmp/a64-features-2026-06.S4QKh4/Features.json
+ASLREF=/private/tmp/aslref-inspect.k1syjc/herdtools7-aslref-v1.0_draft.2/_build/default/asllib/aslref.exe
+BUNDLER=/private/tmp/aslref-inspect.k1syjc/herdtools7-aslref-v1.0_draft.2/herd/libdir/asl-pseudocode/bundler.py
+PDF=/Volumes/<case-sensitive-volume>/spec/ISA_A64_xml_A_profile-2026-06.pdf
+
+test ! -e "$WORK"
+test -d "$ARCH_ROOT"
+test -f "$ARCHIVE"
+test -f "$FEATURES"
+test -x "$ASLREF"
+test -f "$BUNDLER"
+test -f "$PDF"
+
+mkdir -p "$WORK"/join-4k "$WORK"/join-16k \
+  "$WORK"/shards-4k "$WORK"/shards-16k \
+  "$WORK"/local-shard-4k "$WORK"/local-shard-16k \
+  "$WORK"/local-plan-4k "$WORK"/local-plan-16k \
+  "$WORK"/plans "$WORK"/run-4k "$WORK"/run-16k \
+  "$WORK"/local-run-4k "$WORK"/local-run-16k \
+  "$WORK"/local-verify-4k "$WORK"/local-verify-16k \
+  "$WORK"/local-promotion "$WORK"/promotion
+
+cd "$REPO"
+cmake --preset macos-unit-4k
+cmake --build --preset unit-test-binaries-4k
+ctest --preset unit-4k
+cmake --preset macos-unit-16k
+cmake --build --preset unit-test-binaries
+ctest --preset unit
+
+EVIDENCE_4K="$REPO/.build/presets/macos-unit-4k/instruction-evidence"
+EVIDENCE_16K="$REPO/.build/presets/macos-unit-16k/instruction-evidence"
+test "$(find "$EVIDENCE_4K" -name '*.tsv.inputs.jsonl.gz' -type f | wc -l | tr -d ' ')" -eq 449
+test "$(find "$EVIDENCE_16K" -name '*.tsv.inputs.jsonl.gz' -type f | wc -l | tr -d ' ')" -eq 449
+
+python3 -B tests/tooling/arm64/join_a64_input_materializations.py \
+  --evidence-directory "$EVIDENCE_4K" \
+  --guest-page-size 4096 --require-execution-ready \
+  --output "$WORK/join-4k/index.tsv" \
+  --contract-index-output "$WORK/join-4k/contracts.tsv.gz" \
+  --checkpoint-directory "$WORK/join-4k/checkpoints" \
+  --free-space-reserve-gib 20
+python3 -B tests/tooling/arm64/join_a64_input_materializations.py \
+  --evidence-directory "$EVIDENCE_16K" \
+  --guest-page-size 16384 --require-execution-ready \
+  --output "$WORK/join-16k/index.tsv" \
+  --contract-index-output "$WORK/join-16k/contracts.tsv.gz" \
+  --checkpoint-directory "$WORK/join-16k/checkpoints" \
+  --free-space-reserve-gib 20
+
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
+  --evidence-directory "$EVIDENCE_4K" --guest-page-size 4096 \
+  --materialization-index "$WORK/join-4k/index.tsv" \
+  --contract-manifest "$WORK/join-4k/contracts.tsv.gz" \
+  --output-directory "$WORK/shards-4k" \
+  --local-temp-root "$WORK/local-shard-4k" \
+  --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
+  --evidence-directory "$EVIDENCE_16K" --guest-page-size 16384 \
+  --materialization-index "$WORK/join-16k/index.tsv" \
+  --contract-manifest "$WORK/join-16k/contracts.tsv.gz" \
+  --output-directory "$WORK/shards-16k" \
+  --local-temp-root "$WORK/local-shard-16k" \
+  --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+
+TOTAL_4K=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["total_contracts"])' "$WORK/shards-4k/shard-set.json")
+TOTAL_16K=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["total_contracts"])' "$WORK/shards-16k/shard-set.json")
+test "$TOTAL_4K" -gt 4096
+test "$TOTAL_16K" -gt 4096
+
+# Re-run in exact-resume mode so the derived totals become explicit gates.
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
+  --evidence-directory "$EVIDENCE_4K" --guest-page-size 4096 \
+  --materialization-index "$WORK/join-4k/index.tsv" \
+  --contract-manifest "$WORK/join-4k/contracts.tsv.gz" \
+  --output-directory "$WORK/shards-4k" \
+  --local-temp-root "$WORK/local-shard-4k" \
+  --expected-total-contracts "$TOTAL_4K" \
+  --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
+  --evidence-directory "$EVIDENCE_16K" --guest-page-size 16384 \
+  --materialization-index "$WORK/join-16k/index.tsv" \
+  --contract-manifest "$WORK/join-16k/contracts.tsv.gz" \
+  --output-directory "$WORK/shards-16k" \
+  --local-temp-root "$WORK/local-shard-16k" \
+  --expected-total-contracts "$TOTAL_16K" \
+  --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
+  --campaign-id a64-2026-06-4k \
+  --input-list "$WORK/shards-4k/shard-input-list.txt" \
+  --output "$WORK/plans/campaign-4k.json" \
+  --local-temp-root "$WORK/local-plan-4k" \
+  --minimum-local-free-gib 20 --guest-page-size 4096 \
+  --expected-total-contracts "$TOTAL_4K" \
+  --architecture-root "$ARCH_ROOT" --aslref "$ASLREF" \
+  --bundler "$BUNDLER" --features-json "$FEATURES" \
+  --closure-capture-directory "$EVIDENCE_4K" \
+  --materialization-index "$WORK/join-4k/index.tsv" \
+  --contract-manifest "$WORK/join-4k/contracts.tsv.gz" \
+  --timeout-seconds 1800 --max-rss-kib 12582912 \
+  --max-encoded-bytes 134217728 --max-artifact-bytes 536870912 \
+  --max-artifact-files 4096 --max-log-bytes 8388608 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --freeze-path "$ARCHIVE" --freeze-path "$PDF"
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
+  --campaign-id a64-2026-06-16k \
+  --input-list "$WORK/shards-16k/shard-input-list.txt" \
+  --output "$WORK/plans/campaign-16k.json" \
+  --local-temp-root "$WORK/local-plan-16k" \
+  --minimum-local-free-gib 20 --guest-page-size 16384 \
+  --expected-total-contracts "$TOTAL_16K" \
+  --architecture-root "$ARCH_ROOT" --aslref "$ASLREF" \
+  --bundler "$BUNDLER" --features-json "$FEATURES" \
+  --closure-capture-directory "$EVIDENCE_16K" \
+  --materialization-index "$WORK/join-16k/index.tsv" \
+  --contract-manifest "$WORK/join-16k/contracts.tsv.gz" \
+  --timeout-seconds 1800 --max-rss-kib 12582912 \
+  --max-encoded-bytes 134217728 --max-artifact-bytes 536870912 \
+  --max-artifact-files 4096 --max-log-bytes 8388608 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --freeze-path "$ARCHIVE" --freeze-path "$PDF"
+
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py pilot \
+  --plan "$WORK/plans/campaign-4k.json" --output-root "$WORK/run-4k" \
+  --local-temp-root "$WORK/local-run-4k" --workers 4 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py pilot \
+  --plan "$WORK/plans/campaign-16k.json" --output-root "$WORK/run-16k" \
+  --local-temp-root "$WORK/local-run-16k" --workers 4 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+
+# These commands resume the four pilot shards and run every remaining shard.
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py run \
+  --plan "$WORK/plans/campaign-4k.json" --output-root "$WORK/run-4k" \
+  --local-temp-root "$WORK/local-run-4k" --workers 4 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py run \
+  --plan "$WORK/plans/campaign-16k.json" --output-root "$WORK/run-16k" \
+  --local-temp-root "$WORK/local-run-16k" --workers 4 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184 \
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
+  --directory-sync-policy require
+
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py verify \
+  --plan "$WORK/plans/campaign-4k.json" --output-root "$WORK/run-4k" \
+  --local-temp-root "$WORK/local-verify-4k" --minimum-local-free-gib 20 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184
+python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py verify \
+  --plan "$WORK/plans/campaign-16k.json" --output-root "$WORK/run-16k" \
+  --local-temp-root "$WORK/local-verify-16k" --minimum-local-free-gib 20 \
+  --maximum-authority-database-bytes 137438953472 \
+  --maximum-authority-merge-scratch-bytes 17179869184
+
+python3 -B tests/tooling/arm64/join_a64_aslref_campaign_results.py \
+  --campaign-4k-plan "$WORK/plans/campaign-4k.json" \
+  --campaign-4k-root "$WORK/run-4k" \
+  --campaign-16k-plan "$WORK/plans/campaign-16k.json" \
+  --campaign-16k-root "$WORK/run-16k" \
+  --local-temp-root "$WORK/local-promotion" --minimum-local-free-gib 20 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --output "$WORK/promotion/a64_aslref_behavior_status.tsv" \
+  --identity-output "$WORK/promotion/a64_aslref_behavior_status.identity.json"
+python3 -B tests/tooling/arm64/join_a64_aslref_campaign_results.py \
+  --campaign-4k-plan "$WORK/plans/campaign-4k.json" \
+  --campaign-4k-root "$WORK/run-4k" \
+  --campaign-16k-plan "$WORK/plans/campaign-16k.json" \
+  --campaign-16k-root "$WORK/run-16k" \
+  --local-temp-root "$WORK/local-promotion" --minimum-local-free-gib 20 \
+  --maximum-database-bytes 137438953472 \
+  --maximum-merge-scratch-bytes 17179869184 \
+  --output "$WORK/promotion/a64_aslref_behavior_status.tsv" \
+  --identity-output "$WORK/promotion/a64_aslref_behavior_status.identity.json" \
+  --verify-only
+```
+
+The first sharding pass derives the exact campaign counts from the freshly
+joined authority; never substitute aggregate-row counts or an older run's raw
+contract totals. The current frozen aggregate identity has 32,169 rows
+(16,084 at 4 KiB and 16,085 at 16 KiB), ID digest
+`00ebf4703abb2e9c59050d4e7f00418dcb6b5f61f0e61dddbe566c51f2057d66`,
+and row digest
+`f42d770d290b88135f5da3eb04793d516cd89723e614b4e2911499fcc5541c0`;
+those are aggregate identities, not campaign totals. The derived shard count
+is `ceil(TOTAL/1024)`, and the pilot itself requires the first four shards to
+contain exactly 1,024 contracts each.
+
+`require` durability makes unsupported directory `fsync` fatal. Sharding and
+campaign publication fsync files before dependent metadata and sync staging,
+shard, and output directories before success. Run/pilot recheck both reserves
+before each submission and after every completion using the frozen artifact,
+file-count, and combined-log caps for every active worker. On interruption,
+only exact owned `.a64-campaign-*` local workspaces and shard partials are
+recovered; published `SUCCESS.json` trees are verified and retained byte for
+byte. Sharding holds the canonical exclusive producer/evidence locks across
+source identity, authority reconstruction, generation, and final verification,
+so one shard set is a quiescent snapshot rather than a mixture of producer
+generations. A probe using `--generated-directory` rejects placement in any
+source, input, or capture tree and checks its explicit
+`--minimum-generated-free-gib` reserve plus the artifact hard cap before it
+creates the directory. Promotion locks both profile roots in canonical order,
+keeps per-input results in its size-capped, locally rooted SQLite database,
+streams indexed bindings one aggregate at a time, and verifies the complete
+frozen join before publishing or verifying its output pair.
+The 128 GiB database caps are deliberate: the bounded promotion scale fixture
+measured 1,043 bytes per input at its peak after including the authority,
+campaign-ID, result, and normalized per-shard tables. The capacity model rounds
+to 1,536 bytes, allows 40 million inputs, and applies a 3/2 safety factor
+(92,160,000,000 required bytes). The promotion identity binds both that model
+and the actual database/scratch caps.
+
+`scripts/build-xcframework.sh` builds a complete aggregate archive, verifies
+its exact production-object membership and absence of test/profiling hooks,
+and links external C and C++ consumers for macOS, iOS device, and iOS
+simulator. It also rejects non-JIT executable-memory publication references in
+either iOS archive.
+Interpreter, gadgets, native-shadow mappings, and software-MMU storage remain
+data-only: no W+X mapping and no RW/RX transition. Executable publication is
+retained only in the explicitly selected JIT arena for entitled
+debugger/jailbreak use.
 
 The current refactor evidence index and the local raw-result locations are in
 [`refactor-evidence.md`](refactor-evidence.md).

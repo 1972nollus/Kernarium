@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "memory/guest_address_space.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -10,7 +12,35 @@ namespace uml::memory {
 enum class Access : std::uint32_t {
 	read,
 	write,
+	execute,
 };
+
+[[nodiscard]] constexpr Access translated_access(
+	MemoryAccess access) noexcept
+{
+	switch (access) {
+	case MemoryAccess::read:
+		return Access::read;
+	case MemoryAccess::write:
+		return Access::write;
+	case MemoryAccess::execute:
+		return Access::execute;
+	}
+	return Access::read;
+}
+
+[[nodiscard]] constexpr MemoryAccess guest_access(Access access) noexcept
+{
+	switch (access) {
+	case Access::read:
+		return MemoryAccess::read;
+	case Access::write:
+		return MemoryAccess::write;
+	case Access::execute:
+		return MemoryAccess::execute;
+	}
+	return MemoryAccess::read;
+}
 
 struct alignas(32) TlbEntry final {
 	std::uint64_t read_page{1};
@@ -58,4 +88,3 @@ private:
 };
 
 } // namespace uml::memory
-

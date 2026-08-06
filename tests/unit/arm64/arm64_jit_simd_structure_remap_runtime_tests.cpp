@@ -593,6 +593,7 @@ void check_monitor_clear(engine::EngineHarness &harness,
       .native = structure::native_requirement(),
       .memory = std::span<const engine::MemoryRegion>{regions},
       .validator = &validate_failed_exclusive,
+      .validator_relation_id = "permitted-exclusive-store-failure/v1",
   });
 }
 

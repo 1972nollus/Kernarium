@@ -95,6 +95,30 @@ void exception_return_is_illegal_at_el0(
 	}
 }
 
+void zero_target_return(test::EngineHarness &harness, std::size_t &cases)
+{
+	for (const bool key_b : {false, true}) {
+		auto initial = pauth::initial_state(
+			0x180 + static_cast<unsigned>(key_b));
+		initial.registers[30] = 0;
+		const pauth::CaseName name{
+			"ret%s-zero-target", key_b ? "ab" : "aa"};
+		harness.check({
+			.name = name,
+			.instruction = pauth::authenticated_return(key_b),
+			.initial = initial,
+			.expected = initial,
+			.event = test::ExpectedEvent::memory_fault,
+			.native = pauth::native_pauth,
+			.validator = &pauth::validate_branch_failure,
+			.validator_relation_id =
+				"permitted-transformed-branch-failure/v1",
+			.expected_instructions = 1,
+		});
+		++cases;
+	}
+}
+
 void guarded_return_success(
 	test::EngineHarness &harness, std::size_t &cases)
 {
@@ -245,6 +269,8 @@ void guarded_return_mismatch(
 			.native = pauth::native_pauth,
 			.memory = regions,
 			.validator = &validate_guarded_return_fault,
+			.validator_relation_id =
+				"guarded-control-return-fault/v1",
 		});
 		++cases;
 	}
@@ -298,6 +324,8 @@ void guarded_return_fault_atomicity(
 			.compare_fault = true,
 			.memory = regions,
 			.validator = &validate_guarded_return_fault,
+			.validator_relation_id =
+				"guarded-control-return-fault/v1",
 		});
 		++cases;
 	}
@@ -355,6 +383,7 @@ int main()
 	std::size_t cases = 0;
 	return_forms(harness, cases);
 	exception_return_is_illegal_at_el0(harness, cases);
+	zero_target_return(harness, cases);
 	production_specialization();
 	pauth::require_counts(harness, cases);
 	harness.print_summary("arm64-base-pauth-return");

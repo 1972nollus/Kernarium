@@ -11,6 +11,7 @@ METADATA_PATH="$ROOT_DIR/kernel/patches/metadata.env"
 PATCH_DIR="$ROOT_DIR/kernel/patches/series"
 MANIFEST_PATH="$PATCH_DIR/manifest.tsv"
 MATERIALIZER="$ROOT_DIR/kernel/materialize-release.sh"
+SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
 
 fail()
 {
@@ -95,6 +96,7 @@ command -v git >/dev/null 2>&1 || fail "git is required"
 command -v shasum >/dev/null 2>&1 ||
 	fail "stock macOS shasum is required to verify patch hashes"
 [ -x "$MATERIALIZER" ] || fail "missing release materializer: $MATERIALIZER"
+[ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
 case "${UML_KERNEL_TRUSTED_KEY:-}" in
 /*) TRUSTED_KEY=$UML_KERNEL_TRUSTED_KEY ;;
 '') fail "trusted Linux release signing key path is missing" ;;
@@ -137,6 +139,7 @@ assert_case_sensitive_directory()
 assert_case_sensitive_directory "$PARENT_DIR"
 
 manifest_patch_ids=''
+manifest_subjects=''
 manifest_count=0
 validate_manifest()
 {
@@ -163,6 +166,8 @@ validate_manifest()
 			fail "stable patch-id mismatch for $filename"
 		manifest_patch_ids="${manifest_patch_ids}${patch_id}
 "
+		manifest_subjects="${manifest_subjects}${subject}
+"
 		manifest_count=$((manifest_count + 1))
 		expected_order=$((expected_order + 1))
 	done < "$MANIFEST_PATH"
@@ -171,6 +176,8 @@ validate_manifest()
 }
 
 validate_manifest
+"$SERIES_POLICY" manifest >/dev/null
+"$SERIES_POLICY" policy >/dev/null
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	[ "$VERIFY_ONLY" -eq 0 ] || fail "Linux checkout is missing: $SOURCE_DIR"
@@ -230,14 +237,33 @@ verify_managed_branch()
 	branch_tree=$(git -C "$SOURCE_DIR" rev-parse "$UML_KERNEL_PATCH_BRANCH^{tree}")
 	[ "$branch_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
 		fail "managed branch has tree $branch_tree; expected $UML_KERNEL_FINAL_TREE (use --recreate only after reviewing it)"
-	actual_patch_ids=$(git -C "$SOURCE_DIR" rev-list --reverse \
-		"$BASE_COMMIT..$UML_KERNEL_PATCH_BRANCH" |
+	"$SERIES_POLICY" topology --source "$SOURCE_DIR" --base "$BASE_COMMIT" \
+		--tip "$UML_KERNEL_PATCH_BRANCH" >/dev/null
+	"$SERIES_POLICY" policy --source "$SOURCE_DIR" --base "$BASE_COMMIT" \
+		--tip "$UML_KERNEL_PATCH_BRANCH" >/dev/null
+	actual_commits=$(git -C "$SOURCE_DIR" rev-list --reverse \
+		"$BASE_COMMIT..$UML_KERNEL_PATCH_BRANCH")
+	actual_commit_count=$(printf '%s\n' "$actual_commits" |
+		awk 'NF { count++ } END { print count + 0 }')
+	[ "$actual_commit_count" -eq "$UML_KERNEL_PATCH_COUNT" ] ||
+		fail "managed branch has $actual_commit_count commits; expected $UML_KERNEL_PATCH_COUNT"
+	merge_commits=$(git -C "$SOURCE_DIR" rev-list --merges \
+		"$BASE_COMMIT..$UML_KERNEL_PATCH_BRANCH")
+	[ -z "$merge_commits" ] || fail "managed branch contains a merge commit"
+	actual_subjects=$(git -C "$SOURCE_DIR" log --reverse --format='%s' \
+		"$BASE_COMMIT..$UML_KERNEL_PATCH_BRANCH")
+	[ "$actual_subjects" = "$(printf '%s' "$manifest_subjects")" ] ||
+		fail "managed branch subjects/order do not match $MANIFEST_PATH"
+	actual_patch_ids=$(printf '%s\n' "$actual_commits" |
 		while IFS= read -r commit; do
+			[ -n "$commit" ] || continue
 			git -C "$SOURCE_DIR" show --pretty=format: "$commit" |
-				git patch-id --stable | awk '{print $1}'
+				git patch-id --stable |
+				awk 'NF { count++; id = $1 }
+					END { print (count == 1 ? id : "__INVALID__") }'
 		done)
 	[ "$actual_patch_ids" = "$(printf '%s' "$manifest_patch_ids")" ] ||
-		fail "managed branch patch history does not match $MANIFEST_PATH"
+		fail "managed branch requires one nonempty manifest patch ID per commit"
 	git -C "$SOURCE_DIR" merge-base --is-ancestor "$BASE_COMMIT" \
 		"$UML_KERNEL_PATCH_BRANCH" ||
 		fail "managed branch is not based on the authenticated packaged release"

@@ -1,7 +1,7 @@
 From d815e0975e2b061bc9e0e22d595c79043944f261 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:10 +0900
-Subject: [PATCH 06/10] arm64: add the user-mode Linux architecture port
+Subject: [PATCH 06/11] arm64: add the user-mode Linux architecture port
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
@@ -41,7 +41,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/registers.c                    |  51 ++++++
  arch/arm64/um/setjmp.S                       |  43 +++++
  arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 ++++
- arch/arm64/um/shared/sysdep/faultinfo.h      |  30 ++++
+ arch/arm64/um/shared/sysdep/faultinfo.h      |  32 ++++
  arch/arm64/um/shared/sysdep/kernel-offsets.h |  16 ++
  arch/arm64/um/shared/sysdep/ptrace.h         |  74 +++++++++
  arch/arm64/um/shared/sysdep/ptrace_user.h    |  14 ++
@@ -52,7 +52,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 +++
  arch/arm64/um/user-offsets.c                 |  63 +++++++
- 47 files changed, 1451 insertions(+)
+ 47 files changed, 1453 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -1304,7 +1304,7 @@ new file mode 100644
 index 000000000..aa168d8eb
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/faultinfo.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _SYSDEP_UM_ARM64_FAULTINFO_H
 +#define _SYSDEP_UM_ARM64_FAULTINFO_H
@@ -1316,9 +1316,11 @@ index 000000000..aa168d8eb
 +};
 +
 +#define UML_ARM64_FAULT_WRITE 2
++#define UML_ARM64_FAULT_EXECUTE 16
 +#define UML_ARM64_FAULT_PAGE 14
 +
 +#define FAULT_WRITE(fi) ((fi).error_code & UML_ARM64_FAULT_WRITE)
++#define FAULT_EXECUTE(fi) ((fi).error_code & UML_ARM64_FAULT_EXECUTE)
 +#define FAULT_ADDRESS(fi) ((fi).cr2)
 +#define SEGV_IS_FIXABLE(fi) ((fi)->trap_no == UML_ARM64_FAULT_PAGE)
 +#define PTRACE_FULL_FAULTINFO 1

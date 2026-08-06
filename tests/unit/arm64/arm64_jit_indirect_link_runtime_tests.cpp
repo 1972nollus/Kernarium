@@ -491,11 +491,7 @@ void indirect_cycles_obey_fairness_checkpoint() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  if (verification != nullptr && verification[0] != '\0' &&
-      verification[0] != '0')
-    return 0;
+  require(jit_available() == 1);
   monomorphic_and_bimorphic_sites_chain();
   resident_blr_x30_and_ret_chain_correctly();
   target_mutation_deactivates_and_retrains_site();

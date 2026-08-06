@@ -23,6 +23,10 @@ struct Mapping final {
 	bool guest_writable;
 };
 
+struct AddressSpaceLifetime final {
+	std::atomic_bool retired{};
+};
+
 struct GenerationState final {
 	std::mutex walker_mutex;
 	mutable std::shared_mutex mappings_mutex;
@@ -32,6 +36,8 @@ struct GenerationState final {
 	std::atomic_uint64_t invalidation_epoch{};
 	std::atomic_uint64_t execution_interrupts{};
 	std::atomic_uint64_t execution_gate{};
+	std::atomic_bool retired{};
+	std::shared_ptr<AddressSpaceLifetime> address_space_lifetime;
 	struct MappingChange final {
 		std::uint64_t sequence;
 		std::uint64_t address;
@@ -48,19 +54,23 @@ struct MappingOperation final {
 };
 
 struct MappingBatch final {
+	const void *address_space{};
 	unsigned depth{};
 	std::unordered_map<int, std::shared_ptr<MappedBacking>> backings;
 	std::vector<MappingOperation> operations;
 	std::uint64_t generation{};
 	std::uint64_t invalidation_epoch{};
+	std::shared_ptr<GenerationState> state;
 };
 
 struct ActiveWalker final {
+	const void *address_space{};
 	std::uint64_t generation{};
 	std::shared_ptr<GenerationState> state;
 };
 
 struct ActiveGeneration final {
+	const void *address_space{};
 	std::uint64_t generation{};
 	std::shared_ptr<GenerationState> state;
 };
@@ -71,6 +81,7 @@ struct GenerationReference final {
 };
 
 struct ActiveExecution final {
+	const void *address_space{};
 	std::uint64_t generation{};
 	GenerationState *state{};
 	std::shared_ptr<GenerationState> owner;

@@ -224,4 +224,12 @@ run_make olddefconfig
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
+if [ -n "$UML_KERNEL_NM" ]; then
+	"$ROOT_DIR/kernel/abi/verify-linux-imports.sh" \
+		--kernel-binary "$BUILD_DIR/vmlinux" --nm "$UML_KERNEL_NM" \
+		--page-size "$PAGE_SIZE"
+else
+	"$ROOT_DIR/kernel/abi/verify-linux-imports.sh" \
+		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE"
+fi
 printf '%s\n' "built $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"

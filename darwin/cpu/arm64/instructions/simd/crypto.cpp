@@ -244,12 +244,15 @@ void execute_aes_software(VectorRegister &destination,
 void execute_aes_software(VectorRegister &destination,
 	const VectorRegister &source, unsigned operation)
 {
+	/* simd_crypto passes the three-bit guest field only after rejecting 0..3,
+	 * so a guest can reach precisely 4..7. The default is an internal-call
+	 * guard and deliberately leaves architectural state untouched. */
 	switch (operation) {
 	case 4: execute_aes_software<4>(destination, source); break;
 	case 5: execute_aes_software<5>(destination, source); break;
 	case 6: execute_aes_software<6>(destination, source); break;
 	case 7: execute_aes_software<7>(destination, source); break;
-	default: __builtin_unreachable();
+	default: return;
 	}
 }
 
@@ -260,6 +263,8 @@ void execute_aes_software(VectorRegister &destination,
 void execute_aes_native(VectorRegister &destination,
 	const VectorRegister &source, unsigned operation)
 {
+	/* Guest-controlled values are range-checked by the dispatcher before
+	 * either helper is called. */
 	const auto input = load_vector<uint8x16_t>(source);
 	const auto old_destination = load_vector<uint8x16_t>(destination);
 	uint8x16_t result;
@@ -268,7 +273,7 @@ void execute_aes_native(VectorRegister &destination,
 	case 5: result = vaesdq_u8(old_destination, input); break;
 	case 6: result = vaesmcq_u8(input); break;
 	case 7: result = vaesimcq_u8(input); break;
-	default: __builtin_unreachable();
+	default: return;
 	}
 	store_vector(destination, result);
 }

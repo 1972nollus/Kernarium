@@ -135,6 +135,8 @@ RunResult Dispatcher::simd_bitwise_register(CpuState &cpu, GuestMemory &,
 					    std::uint32_t instruction) const
 {
 	const auto address = cpu.pc;
+	/* Two low bits and one high bit form a complete three-bit selector, so
+	 * every guest encoding reaches exactly one of the eight cases below. */
 	const unsigned operation = ((instruction >> 22) & 0x3U) |
 		((instruction >> 27) & 0x4U);
 	const std::size_t vector_size = (instruction & 0x4000'0000U) != 0 ?
@@ -147,7 +149,7 @@ RunResult Dispatcher::simd_bitwise_register(CpuState &cpu, GuestMemory &,
 		const auto old = std::to_integer<unsigned>(destination[index]);
 		const auto lhs = std::to_integer<unsigned>(left[index]);
 		const auto rhs = std::to_integer<unsigned>(right[index]);
-		unsigned value;
+		unsigned value = 0;
 		switch (operation) {
 		case 0: value = lhs & rhs; break;
 		case 1: value = lhs & ~rhs; break;
@@ -157,7 +159,7 @@ RunResult Dispatcher::simd_bitwise_register(CpuState &cpu, GuestMemory &,
 		case 5: value = (old & lhs) | (~old & rhs); break;
 		case 6: value = (old & ~rhs) | (lhs & rhs); break;
 		case 7: value = (old & rhs) | (lhs & ~rhs); break;
-		default: __builtin_unreachable();
+		default: break; // Internal corruption only: operation is always <= 7.
 		}
 		result[index] = static_cast<std::byte>(value & 0xffU);
 	}

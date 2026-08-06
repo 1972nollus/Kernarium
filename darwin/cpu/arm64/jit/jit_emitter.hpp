@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "jit_runtime_contract.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <span>
+#include <vector>
+
+#if __has_feature(ptrauth_calls)
+#include <ptrauth.h>
+#endif
+
+namespace uml::cpu::arm64 {
+
+template <typename Function>
+[[nodiscard]] Function sign_jit_function(void *pointer) noexcept {
+#if __has_feature(ptrauth_calls)
+  return reinterpret_cast<Function>(
+      ptrauth_sign_unauthenticated(pointer, ptrauth_key_function_pointer, 0));
+#else
+  return reinterpret_cast<Function>(pointer);
+#endif
+}
+
+[[nodiscard]] inline std::uintptr_t
+callable_address(const void *pointer) noexcept {
+#if __has_feature(ptrauth_calls)
+  return reinterpret_cast<std::uintptr_t>(
+      ptrauth_strip(pointer, ptrauth_key_function_pointer));
+#else
+  return reinterpret_cast<std::uintptr_t>(pointer);
+#endif
+}
+
+class Arm64Emitter final {
+public:
+  using Label = std::size_t;
+  using ExitFlush = void (*)(void *);
+  using FlagClobber = void (*)(void *);
+
+  enum class BranchKind {
+    unconditional,
+    conditional,
+    compare_zero,
+    compare_nonzero,
+    test_zero,
+    test_nonzero,
+  };
+
+  struct Patch final {
+    std::size_t word;
+    Label label;
+    BranchKind kind;
+  };
+
+  struct StablePointerPatch final {
+    std::size_t word;
+    std::uint64_t value;
+    unsigned destination;
+  };
+
+  explicit Arm64Emitter(
+      bool persistent_linked_block_abi =
+          persistent_linked_block_abi_default,
+      std::size_t literal_range_words = std::size_t{1} << 18U) noexcept;
+
+  [[nodiscard]] bool persistent_linked_block_abi() const noexcept;
+  [[nodiscard]] Label make_label();
+  void bind(Label label);
+  void emit(std::uint32_t instruction);
+  void attach_exit_flush(void *context, ExitFlush flush) noexcept;
+  void attach_flag_clobber(void *context, FlagClobber clobber) noexcept;
+  [[nodiscard]] std::size_t size() const noexcept;
+  void branch(Label label);
+  void branch_condition(Label label, unsigned condition);
+  void compare_zero(Label label, unsigned reg, bool is_64_bit, bool nonzero);
+  void test_zero(Label label, unsigned reg, unsigned bit, bool nonzero);
+  void load_x(unsigned destination, unsigned base, std::size_t offset);
+  void load_x_indexed_8(unsigned destination, unsigned base, unsigned index);
+  void load_pair_x(unsigned first, unsigned second, unsigned base,
+                   std::ptrdiff_t offset);
+  void store_x(unsigned source, unsigned base, std::size_t offset);
+  void load_w(unsigned destination, unsigned base, std::size_t offset);
+  void store_w(unsigned source, unsigned base, std::size_t offset);
+  void load_b(unsigned destination, unsigned base, std::size_t offset);
+  void store_b(unsigned source, unsigned base, std::size_t offset);
+  void load_q(unsigned destination, unsigned base, std::size_t offset);
+  void store_q(unsigned source, unsigned base, std::size_t offset);
+  void move_q(unsigned destination, unsigned source);
+  void move_x(unsigned destination, unsigned source);
+  void move_w(unsigned destination, unsigned source);
+  void load_constant(unsigned destination, std::uint64_t value);
+  void load_literal_constant(unsigned destination, std::uint64_t value);
+  void load_stable_pointer(unsigned destination, std::uintptr_t value);
+  void add_immediate(unsigned destination, unsigned source, unsigned immediate,
+                     bool shift_12 = false);
+  void subtract_immediate(unsigned destination, unsigned source,
+                          unsigned immediate, bool shift_12 = false);
+  void add_shifted(unsigned destination, unsigned left, unsigned right,
+                   unsigned shift);
+  void ubfm(unsigned destination, unsigned source, unsigned rotate,
+            unsigned mask);
+  void compare_register(unsigned left, unsigned right);
+  void compare_immediate(unsigned source, unsigned immediate,
+                         bool shift_12 = false);
+  void emit_internal_flag_clobber(std::uint32_t instruction);
+  void call(const void *function);
+  void call_preserving_flags(const void *function);
+  void branch_register(unsigned reg);
+  void prologue();
+  void epilogue();
+  void reload_context();
+  void return_constant(Event event, std::size_t instructions);
+  void return_dynamic(std::size_t instructions);
+  [[nodiscard]] std::span<const std::uint32_t> finish();
+
+private:
+  static constexpr std::size_t unbound =
+      std::numeric_limits<std::size_t>::max();
+
+  void patch(Label label, BranchKind kind, std::uint32_t instruction);
+
+  std::vector<std::uint32_t> words_;
+  std::vector<std::size_t> labels_;
+  std::vector<Patch> patches_;
+  std::vector<StablePointerPatch> literal_patches_;
+  std::size_t literal_range_words_{};
+  bool persistent_linked_block_abi_{};
+  bool valid_{true};
+  void *exit_context_{};
+  ExitFlush exit_flush_{};
+  void *flag_context_{};
+  FlagClobber flag_clobber_{};
+};
+
+[[nodiscard]] constexpr std::size_t
+register_offset(unsigned reg, bool stack_pointer) noexcept {
+  return reg == 31U && stack_pointer ? offsetof(CpuState, sp)
+                                     : reg * sizeof(std::uint64_t);
+}
+
+} // namespace uml::cpu::arm64

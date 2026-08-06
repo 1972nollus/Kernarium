@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime/context.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,6 +9,12 @@
 using namespace uml::emulator::tests;
 
 namespace {
+
+void select_execution_engine(uml::runtime::ExecutionEngine engine)
+{
+	auto *context = uml::runtime::current_context();
+	require(context != nullptr && context->set_execution_engine(engine) == 0);
+}
 
 void public_boundary_reports_precise_metadata_for_every_engine()
 {
@@ -24,15 +31,15 @@ void public_boundary_reports_precise_metadata_for_every_engine()
 	JitMapping mapping{generation, base, backing, 1};
 
 	const std::array engines{
-		DARWIN_UML_EXECUTION_INTERPRETER,
-		DARWIN_UML_EXECUTION_GADGETS,
-		DARWIN_UML_EXECUTION_JIT,
+		uml::runtime::ExecutionEngine::interpreter,
+		uml::runtime::ExecutionEngine::gadgets,
+		uml::runtime::ExecutionEngine::jit,
 	};
 	for (const auto engine : engines) {
-		if (engine == DARWIN_UML_EXECUTION_JIT &&
-		    darwin_uml_jit_available() == 0)
+		if (engine == uml::runtime::ExecutionEngine::jit &&
+		    !jit_available())
 			continue;
-		require(darwin_uml_set_execution_engine(engine) == 0);
+		select_execution_engine(engine);
 		darwin_uml_guest_registers registers{};
 		darwin_uml_guest_fp_registers fp{};
 		unsigned long tls = 0;
@@ -61,8 +68,7 @@ void public_boundary_reports_precise_metadata_for_every_engine()
 			original_destination.data(),
 			original_destination.size()) == 0);
 	}
-	require(darwin_uml_set_execution_engine(
-		DARWIN_UML_EXECUTION_AUTO) == 0);
+	select_execution_engine(uml::runtime::ExecutionEngine::automatic);
 }
 
 } // namespace

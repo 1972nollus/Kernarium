@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "in_process_service.hpp"
+#include "link_profile_api.hpp"
 #include "protocol.hpp"
 #include "uml/emulator.h"
 
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -33,6 +35,15 @@ extern const unsigned char uml_elf_start[]
 	__asm("section$start$__DATA$__uml_elf");
 extern const unsigned char uml_elf_end[]
 	__asm("section$end$__DATA$__uml_elf");
+#if UML_APP_HAS_SLIRP
+int uml_slirp_net_open(void *, unsigned char[6], unsigned int *);
+int uml_slirp_net_irq_fd(void *);
+int uml_slirp_net_read(void *, void *, std::size_t);
+int uml_slirp_net_write(void *, const void *, std::size_t);
+void uml_slirp_net_stop(void *);
+void *uml_slirp_net_create(void) noexcept;
+void uml_slirp_net_destroy(void *) noexcept;
+#endif
 }
 
 namespace {
@@ -42,6 +53,64 @@ constexpr char host_fault_pc_prefix[] = " at pc=0x";
 constexpr char host_fault_address_prefix[] = " address=0x";
 constexpr std::size_t host_fault_hex_digits = sizeof(std::uintptr_t) * 2U;
 constexpr std::size_t host_fault_message_capacity = 128;
+
+class AppNetwork final {
+public:
+	AppNetwork()
+	{
+#if UML_APP_HAS_SLIRP
+		context_ = uml_slirp_net_create();
+		if (context_ == nullptr)
+			throw std::bad_alloc{};
+#endif
+	}
+
+	~AppNetwork() { shutdown(); }
+
+	AppNetwork(const AppNetwork &) = delete;
+	AppNetwork &operator=(const AppNetwork &) = delete;
+
+	[[nodiscard]] uml_emulator_network_callbacks callbacks() noexcept
+	{
+#if UML_APP_HAS_SLIRP
+		return {
+			.struct_size = sizeof(uml_emulator_network_callbacks),
+			.context = context_,
+			.open = uml_slirp_net_open,
+			.irq_fd = uml_slirp_net_irq_fd,
+			.read = uml_slirp_net_read,
+			.write = uml_slirp_net_write,
+		};
+#else
+		return {};
+#endif
+	}
+
+	void shutdown() noexcept
+	{
+#if UML_APP_HAS_SLIRP
+		if (context_ != nullptr) {
+			uml_slirp_net_stop(context_);
+			uml_slirp_net_destroy(context_);
+			context_ = nullptr;
+		}
+#endif
+	}
+
+private:
+	void *context_{};
+};
+
+[[nodiscard]] bool user_network_enabled() noexcept
+{
+#if UML_APP_HAS_SLIRP
+	const auto *disabled = std::getenv("UML_DISABLE_NETWORK");
+	return disabled == nullptr || disabled[0] == '\0' ||
+		disabled[0] == '0';
+#else
+	return false;
+#endif
+}
 
 template<std::size_t Size>
 char *append_host_fault_literal(char *output,
@@ -314,6 +383,19 @@ int main(int argc, char *argv[], char *envp[])
 		rootfs = located->string();
 	}
 
+	std::unique_ptr<AppNetwork> app_network;
+	uml_emulator_network_callbacks network_callbacks{};
+	if (user_network_enabled()) {
+		try {
+			app_network = std::make_unique<AppNetwork>();
+			network_callbacks = app_network->callbacks();
+		} catch (const std::exception &error) {
+			std::fprintf(stderr, "Unable to create user network: %s\n",
+				error.what());
+			return 1;
+		}
+	}
+
 	const uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
@@ -322,7 +404,7 @@ int main(int argc, char *argv[], char *envp[])
 		.kernel_image_size = static_cast<std::size_t>(
 			uml_elf_end - uml_elf_start),
 		.native_kernel_entry = nullptr,
-		.network = nullptr,
+		.network = app_network ? &network_callbacks : nullptr,
 	};
 	uml_emulator *created = nullptr;
 	const int create_result = uml_emulator_create(&config, &created);
@@ -353,19 +435,20 @@ int main(int argc, char *argv[], char *envp[])
 						.width = prepared.gpu.width,
 						.height = prepared.gpu.height,
 					});
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				gpu_service->takeConnectionName() + ":" +
+				std::to_string(
+					uml::gpu::protocol::virtioGpuDeviceId));
+			prepared.kernel.emplace_back(
+				"uml_vnc_input." +
+				gpu_service->takeInputConnectionName());
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio-GPU: %s\n",
 				error.what());
 			return 1;
 		}
-		prepared.kernel.emplace_back(
-			"virtio_uml.device=" + gpu_service->connectionName() +
-			":" + std::to_string(
-				      uml::gpu::protocol::virtioGpuDeviceId));
-		prepared.kernel.emplace_back(
-			"uml_vnc_input." +
-			gpu_service->inputConnectionName());
 	}
 	std::vector<const char *> arguments;
 	arguments.reserve(prepared.kernel.size());
@@ -378,6 +461,8 @@ int main(int argc, char *argv[], char *envp[])
 	const int result = uml_emulator_run(
 		emulator.get(), static_cast<int>(arguments.size()), arguments.data(),
 		environment.data());
+	if (app_network)
+		app_network->shutdown();
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 	uml_emulator_report_jit_gpr_link_profile();
 #endif

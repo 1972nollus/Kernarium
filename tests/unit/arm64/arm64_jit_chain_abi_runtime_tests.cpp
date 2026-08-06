@@ -351,12 +351,8 @@ uml_arm64_jit_chain_abi_callback(void *opaque) {
 }
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
+  require(jit_available() == 1);
   host_callee_saved_registers_are_restored();
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  if (verification != nullptr && verification[0] != '\0' &&
-      verification[0] != '0')
-    return 0;
   zero_one_two_three_and_many_links();
   exact_fairness_commit_boundary();
   non_dividing_fairness_quantum_restores_the_source();

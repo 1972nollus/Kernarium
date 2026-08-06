@@ -18,6 +18,7 @@ namespace {
 
 namespace arm64 = uml::cpu::arm64;
 using uml::cpu::arm64::JitExecutor;
+using uml::cpu::arm64::JitExecutorDiagnosticsOptions;
 using uml::cpu::arm64::JitExecutorOptions;
 using uml::memory::StaticGuestMemory;
 using Event = ::uml::cpu::EngineEvent;
@@ -467,7 +468,9 @@ void arena_reset_recompiles_link_operands_before_installation() {
   }
   backing.put32(target - base, system_call);
   JitMapping mapping{generation, base, backing, 1};
-  JitExecutor executor{JitExecutorOptions{.code_arena_size = 4096}};
+  JitExecutor executor{
+      JitExecutorOptions{},
+      JitExecutorDiagnosticsOptions{.code_arena_size = 4096}};
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = target;
@@ -571,11 +574,7 @@ void explicit_shutdown_hook_writes_one_global_snapshot() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  if (verification != nullptr && verification[0] != '\0' &&
-      verification[0] != '0')
-    return 0;
+  require(jit_available() == 1);
   direct_profile_counts_only_taken_successes();
   pic_slots_are_attributed_and_drained_before_replacement_and_reset();
   repeated_pic_emissions_keep_their_own_dirty_masks();

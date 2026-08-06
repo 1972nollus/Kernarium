@@ -5,6 +5,7 @@
 #include "virgl_renderer.hpp"
 #include "vnc_display.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -13,7 +14,17 @@
 #include <vector>
 #include <sys/uio.h>
 
+#ifndef UML_GPU_DEVICE_TESTING
+#define UML_GPU_DEVICE_TESTING 0
+#endif
+
 namespace uml::gpu {
+
+#if UML_GPU_DEVICE_TESTING
+namespace testing {
+class VirtioGpuDeviceDependencies;
+}
+#endif
 
 class VirtioGpuDevice {
 public:
@@ -21,12 +32,24 @@ public:
         std::function<bool(std::uint64_t, std::span<std::uint8_t>)>;
     using GuestMapper =
         std::function<std::span<std::uint8_t>(std::uint64_t, std::size_t)>;
+#if UML_GPU_DEVICE_TESTING
+    VirtioGpuDevice(
+        testing::VirtioGpuDeviceDependencies& dependencies,
+        GuestReader guestReader,
+        GuestMapper guestMapper);
+#else
     VirtioGpuDevice(
         VncDisplay& display,
         GuestReader guestReader,
         GuestMapper guestMapper);
+#endif
+    ~VirtioGpuDevice();
 
     [[nodiscard]] protocol::GpuConfig config() const noexcept;
+    // The caller owns this flag and must keep it alive until it clears the
+    // registration after process() has returned.
+    void setStopRequest(const std::atomic_bool* stopRequested) noexcept;
+    void reset() noexcept;
     [[nodiscard]] std::vector<std::uint8_t> process(
         std::span<const std::uint8_t> request,
         bool cursorQueue);
@@ -74,13 +97,21 @@ private:
     [[nodiscard]] std::vector<std::uint8_t> capset(
         const protocol::GpuGetCapset& request) const;
 
+#if UML_GPU_DEVICE_TESTING
+    testing::VirtioGpuDeviceDependencies& dependencies_;
+#else
     VncDisplay& display_;
+#endif
     GuestReader guestReader_;
     GuestMapper guestMapper_;
+#if !UML_GPU_DEVICE_TESTING
     VirglRenderer renderer_;
+#endif
     std::unordered_map<std::uint32_t, Resource> resources_;
     std::unordered_map<std::uint32_t, VirglResource> virglResources_;
     std::unordered_set<std::uint32_t> contexts_;
+    std::vector<std::uint8_t> transferStaging_;
+    const std::atomic_bool* stopRequested_ {};
     std::uint32_t scanoutResource_ {};
     protocol::GpuRectangle scanoutRectangle_ {};
 };

@@ -2,12 +2,17 @@
 
 #include "vnc_display.hpp"
 
+#if UML_GPU_VNC_STARTUP_TESTING
+#include "vnc_display_testing.hpp"
+#endif
+
 #include <Accelerate/Accelerate.h>
 #include <arm_neon.h>
 
 #include <algorithm>
 #include <arpa/inet.h>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <pthread.h>
@@ -22,6 +27,32 @@ namespace uml::gpu {
 namespace {
 
 constexpr std::uint8_t opaqueAlpha = 0xffU;
+
+class ScreenInitializationGuard final {
+public:
+    explicit ScreenInitializationGuard(rfbScreenInfoPtr& screen) noexcept
+        : screen_(screen)
+    {
+    }
+
+    ~ScreenInitializationGuard()
+    {
+        if (!armed_ || screen_ == nullptr)
+            return;
+        if (initialized_)
+            rfbShutdownServer(screen_, TRUE);
+        rfbScreenCleanup(screen_);
+        screen_ = nullptr;
+    }
+
+    void initialized() noexcept { initialized_ = true; }
+    void release() noexcept { armed_ = false; }
+
+private:
+    rfbScreenInfoPtr& screen_;
+    bool initialized_ {};
+    bool armed_ {true};
+};
 
 std::array<std::uint8_t, 4> channelPermutation(protocol::GpuFormat format)
 {
@@ -99,6 +130,10 @@ VncDisplay::VncDisplay(
     , password_(std::move(password))
 {
     if (width == 0 || height == 0 ||
+        width > static_cast<std::uint32_t>(
+                    std::numeric_limits<int>::max()) ||
+        height > static_cast<std::uint32_t>(
+                     std::numeric_limits<int>::max()) ||
         width > std::numeric_limits<std::size_t>::max() / height / 4U) {
         throw std::invalid_argument("invalid VNC framebuffer dimensions");
     }
@@ -116,13 +151,27 @@ VncDisplay::VncDisplay(
     if (screen_ == nullptr) {
         throw std::runtime_error("rfbGetScreen failed");
     }
+    ScreenInitializationGuard screenGuard{screen_};
     screen_->desktopName = "Darwin UML Virtio-GPU";
     screen_->frameBuffer = reinterpret_cast<char*>(framebuffer_.data());
     screen_->screenData = this;
+    /* The GPU transport publishes pixels on a different thread from
+     * LibVNCServer's event loop. LibVNCServer deliberately leaves ownership
+     * of frameBuffer synchronization to its caller, so bracket every encoder
+     * read with the same mutex used by clear(), update(), and the self-test
+     * producer. The event loop is single-threaded in this integration. */
+    screen_->displayHook = [](rfbClientPtr client) noexcept {
+        static_cast<VncDisplay*>(client->screen->screenData)
+            ->framebufferMutex_.lock();
+    };
+    screen_->displayFinishedHook = [](rfbClientPtr client, int) noexcept {
+        static_cast<VncDisplay*>(client->screen->screenData)
+            ->framebufferMutex_.unlock();
+    };
     screen_->kbdAddEvent = [](
                                rfbBool down,
                                rfbKeySym keySymbol,
-                               rfbClientPtr client) {
+                               rfbClientPtr client) noexcept {
         static_cast<VncDisplay*>(client->screen->screenData)
             ->handleKey(down != FALSE, keySymbol);
     };
@@ -130,7 +179,7 @@ VncDisplay::VncDisplay(
                                int buttonMask,
                                int x,
                                int y,
-                               rfbClientPtr client) {
+                               rfbClientPtr client) noexcept {
         rfbDefaultPtrAddEvent(buttonMask, x, y, client);
         static_cast<VncDisplay*>(client->screen->screenData)
             ->handlePointer(buttonMask, x, y);
@@ -144,8 +193,6 @@ VncDisplay::VncDisplay(
     screen_->ipv6port = -1;
     in_addr interfaceAddress {};
     if (::inet_pton(AF_INET, bindAddress.c_str(), &interfaceAddress) != 1) {
-        rfbScreenCleanup(screen_);
-        screen_ = nullptr;
         throw std::invalid_argument(
             "invalid VNC IPv4 bind address: " + bindAddress);
     }
@@ -162,8 +209,6 @@ VncDisplay::VncDisplay(
     screen_->serverFormat.blueShift = 0;
     if (!password_.empty()) {
         if (password_.size() > 8) {
-            rfbScreenCleanup(screen_);
-            screen_ = nullptr;
             throw std::invalid_argument(
                 "VNC password must contain at most 8 bytes");
         }
@@ -172,13 +217,17 @@ VncDisplay::VncDisplay(
         screen_->passwordCheck = rfbCheckPasswordByList;
     }
     rfbInitServer(screen_);
+    screenGuard.initialized();
     if (!rfbIsActive(screen_) || screen_->port <= 0 ||
         screen_->listenSock == RFB_INVALID_SOCKET) {
-        rfbScreenCleanup(screen_);
-        screen_ = nullptr;
         throw std::runtime_error("VNC server failed to listen");
     }
+#if UML_GPU_VNC_STARTUP_TESTING
+    testing::eventThreadStartCheckpoint(
+        static_cast<std::uint16_t>(screen_->port));
+#endif
     eventThread_ = std::thread(&VncDisplay::eventLoop, this);
+    screenGuard.release();
 }
 
 VncDisplay::~VncDisplay()
@@ -205,6 +254,16 @@ std::uint32_t VncDisplay::height() const noexcept
 std::uint16_t VncDisplay::port() const noexcept
 {
     return screen_ == nullptr ? 0 : static_cast<std::uint16_t>(screen_->port);
+}
+
+void VncDisplay::clear() noexcept
+{
+    std::lock_guard lock(framebufferMutex_);
+    std::fill(framebuffer_.begin(), framebuffer_.end(), 0);
+    // Scaled client framebuffers are derived synchronously by this call, so
+    // keep them in the same publication critical section as the source image.
+    rfbMarkRectAsModified(
+        screen_, 0, 0, static_cast<int>(width_), static_cast<int>(height_));
 }
 
 void VncDisplay::update(
@@ -246,15 +305,23 @@ void VncDisplay::update(
     std::uint32_t height)
 {
     const auto minimumSourceRowBytes =
-        static_cast<std::uint64_t>(sourceWidth) *
+        static_cast<std::size_t>(sourceWidth) *
         protocol::gpuBytesPerPixel;
     if (sourceRowBytes < minimumSourceRowBytes)
         throw std::invalid_argument("short Virtio-GPU source stride");
     if (sourceHeight != 0) {
+        const auto precedingRows =
+            static_cast<std::size_t>(sourceHeight - 1U);
+        if (precedingRows != 0 &&
+            sourceRowBytes >
+                (std::numeric_limits<std::size_t>::max() -
+                 minimumSourceRowBytes) /
+                    precedingRows) {
+            throw std::invalid_argument(
+                "overflowing Virtio-GPU source layout");
+        }
         const auto requiredSourceBytes =
-            static_cast<std::uint64_t>(sourceHeight - 1U) *
-                sourceRowBytes +
-            minimumSourceRowBytes;
+            precedingRows * sourceRowBytes + minimumSourceRowBytes;
         if (requiredSourceBytes > source.size())
             throw std::invalid_argument("short Virtio-GPU resource");
     }
@@ -268,25 +335,39 @@ void VncDisplay::update(
         {height, sourceHeight - sourceY, height_ - destinationY});
     if (rectangleWidth == 0 || rectangleHeight == 0)
         return;
-    {
-        std::lock_guard lock(framebufferMutex_);
-        const auto sourceOffset =
-            static_cast<std::size_t>(sourceY) * sourceRowBytes +
-            static_cast<std::size_t>(sourceX) *
-                protocol::gpuBytesPerPixel;
+
+    const auto convertedRowBytes =
+        static_cast<std::size_t>(rectangleWidth) *
+        protocol::gpuBytesPerPixel;
+    if (rectangleHeight >
+        std::numeric_limits<std::size_t>::max() / convertedRowBytes) {
+        throw std::invalid_argument("overflowing VNC update rectangle");
+    }
+    std::vector<std::uint8_t> converted(
+        convertedRowBytes * static_cast<std::size_t>(rectangleHeight));
+    const auto sourceOffset =
+        static_cast<std::size_t>(sourceY) * sourceRowBytes +
+        static_cast<std::size_t>(sourceX) * protocol::gpuBytesPerPixel;
+    copyRectangleWithVImage(
+        converted.data(),
+        source.data() + sourceOffset,
+        rectangleWidth,
+        rectangleHeight,
+        sourceRowBytes,
+        convertedRowBytes,
+        sourceFormat);
+
+    std::lock_guard lock(framebufferMutex_);
+    for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
         const auto destinationOffset =
-            (static_cast<std::size_t>(destinationY) * width_ +
+            (static_cast<std::size_t>(destinationY + row) * width_ +
                 destinationX) *
             protocol::gpuBytesPerPixel;
-        copyRectangleWithVImage(
+        std::memcpy(
             framebuffer_.data() + destinationOffset,
-            source.data() + sourceOffset,
-            rectangleWidth,
-            rectangleHeight,
-            sourceRowBytes,
-            static_cast<std::size_t>(width_) *
-                protocol::gpuBytesPerPixel,
-            sourceFormat);
+            converted.data() +
+                static_cast<std::size_t>(row) * convertedRowBytes,
+            convertedRowBytes);
     }
     rfbMarkRectAsModified(
         screen_,
@@ -332,7 +413,7 @@ void VncDisplay::fillSelfTestPattern()
         screen_, 0, 0, static_cast<int>(width_), static_cast<int>(height_));
 }
 
-void VncDisplay::handleKey(bool down, std::uint32_t keySymbol)
+void VncDisplay::handleKey(bool down, std::uint32_t keySymbol) noexcept
 {
     if (!inputSink_)
         return;
@@ -351,10 +432,11 @@ void VncDisplay::handleKey(bool down, std::uint32_t keySymbol)
             .value = 0,
         },
     };
-    inputSink_(events);
+    if (!input::tryDeliver(inputSink_, events))
+        reportInputFailure();
 }
 
-void VncDisplay::handlePointer(int buttonMask, int x, int y)
+void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 {
     if (!inputSink_)
         return;
@@ -389,7 +471,16 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y)
     if ((buttonMask & 64) != 0)
         append(input::eventRelative, input::relativeHorizontalWheel, 1);
     append(input::eventSync, input::syncReport, 0);
-    inputSink_(std::span(events).first(count));
+    if (!input::tryDeliver(inputSink_, std::span(events).first(count)))
+        reportInputFailure();
+}
+
+void VncDisplay::reportInputFailure() noexcept
+{
+    if (!inputFailureReported_.exchange(true, std::memory_order_relaxed)) {
+        std::fputs(
+            "Unable to deliver VNC input to the emulator\n", stderr);
+    }
 }
 
 void VncDisplay::eventLoop()

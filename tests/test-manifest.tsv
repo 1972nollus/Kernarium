@@ -1,14 +1,42 @@
 legacy_name	current_name	owner	suite	disposition	rationale
--	source-tree-cxx-only	scripts/audit-source-tree.cmake	tooling	retained	structural source-tree audit
--	source-size-advisory-policy	scripts/test-source-size-report.cmake	tooling	retained	advisory source-size policy regression test
+-	source-tree-cxx-only	tests/tooling/cmake/test_source_tree_audit.cmake	tooling	retained	structural source-tree audit
+-	source-size-advisory-policy	tests/tooling/cmake/test_source_size_report.cmake	tooling	retained	advisory source-size policy regression test
+-	xcframework-output-safety	tests/tooling/cmake/test_xcframework_destination.sh	tooling	retained	supported aggregate name and non-destructive build-root containment rejection
+-	test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cmake	tooling	retained	generated CTest registrations require exactly one manifest-matching suite label
+-	symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained	rejects link, object, aggregate, and include edges in both directions across every concrete engine kind
+-	engine-object-boundary-audit	tests/tooling/cmake/test_engine_object_boundaries.py	tooling	retained	proves neutral helper ownership, production conformance composition, dead-symbol removal, and stable engine entry disassembly
 -	arm64-engine-harness	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained	raw concrete input recorder deduplication and conflicting-payload rejection
 -	arm64-deferred-fp-state	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-host-instruction-probe	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-native-hardware-oracle	tests/unit/arm64/native_hardware_oracle_tests.cpp	unit	retained	subprocess-isolated independent host execution with exact feature, signal, memory, and timeout evidence
+-	arm64-aslref-module-composition	tests/tooling/arm64/test_a64_aslref_module_composition.py	tooling	retained	owner modules replace exact official state boundaries without duplicate or cross-family declarations
+-	arm64-aslref-corpus-identity	tests/tooling/arm64/validate_a64_aslref_corpus.py	tooling	retained	configure and tooling validation reject missing, noncanonical, renamed, or split-generation allocation corpus/interface queue trios
+-	arm64-one-shot-publication-safety	tests/tooling/arm64/test_a64_one_shot_publications.py	tooling	retained	frozen inputs, alias and ancestry rejection, durable staged sets, identity-last corpus binding, and concurrent parent serialization fail closed
+-	arm64-aslref-execution-oracle	tests/tooling/arm64/test_a64_aslref_execution_oracle.py	tooling	retained	validates checked representative official-ASL execution partitions, exact instruction-function mapping, semantic witness identity, and aggregate-plan parity
+-	arm64-aslref-materialization-batch	tests/tooling/arm64/test_a64_aslref_materialization_batch.py	tooling	retained	validates bounded batch policy, generated-output path isolation and exact reserve boundaries, pinned implementation-defined projection completeness and ranges, PAC dependency normalization, and MOPS whole-sequence topology
+-	arm64-aslref-campaign-publication	tests/tooling/arm64/test_a64_aslref_campaign.py	tooling	retained	validates immutable source and page-profile binding, authoritative input-set equality, bounded four-worker execution, success-only atomic publication, exact artifact integrity, and resume behavior
+-	arm64-aslref-campaign-pilot	tests/tooling/arm64/test_a64_aslref_campaign_pilot.py	tooling	retained	runs exactly the first four 1024-contract shards of a complete frozen plan with four workers, forbids pilot promotion/reporting, and proves byte-preserving full-campaign resume with honest invocation accounting
+-	arm64-aslref-campaign-authority	tests/tooling/arm64/test_a64_aslref_campaign_authority.py	tooling	retained	proves canonical multi-producer authoritative joins and rejects same-count replacement, cross-aggregate swap, duplicate, payload mutation, mixed-page input, and symlinked checkpoints
+-	arm64-aslref-campaign-sharding	tests/tooling/arm64/test_a64_aslref_campaign_sharding.py	tooling	retained	proves full-snapshot evidence locking, bounded-fan-in authority merging and producer-at-a-time deduplication, deterministic hard-capped shards/metadata, durable publication, indexed exact-set joins, and byte-preserving resume
+-	arm64-aslref-campaign-result-join	tests/tooling/arm64/test_a64_aslref_campaign_result_join.py	tooling	retained	requires separate verified 4K and 16K campaigns, disk-backed indexed exact result bindings, bounded aggregate streaming, hard database capacity, and identity-last output-pair publication before promotion
+-	arm64-aslref-user-state-interface	tests/tooling/arm64/test_a64_aslref_user_state_interface.py	tooling	retained	validates exact X/W accessor widths and negative narrow writes, with configured pinned ASLRef and architecture inputs enabling direct official-semantics execution
 -	uml-tlb-sync-ranges	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-tlb-layout	tests/unit/arm64	unit	retained	existing registered test
 -	static-mmu-batch	tests/unit/arm64	unit	retained	existing registered test
+-	memory-domain-lifetime	tests/unit/memory	unit	retained	bounded allocation-free run-domain retirement and delayed-resolver rejection in both page modes
+-	memory-execution-gate-profile	tests/unit/memory	unit	retained	optional MMU gate profiling retires per-thread registrations after thread churn
+-	gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional	fragmented wire input, connection retry, notification, device rollback, and service startup preserve GPU ownership
+-	gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional	fragmented and malformed frames adopt ancillary descriptors once, close them on every failure path, and preserve retryability without a listener
+-	gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional	partial header and payload shutdown require the in-process service's separately owned endpoint wake rather than timeout polling
+-	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove mutating command failure atomicity and same-operation retry
+-	gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional	post-listen event-thread construction failure releases the VNC server and permits immediate retry
+-	vnc-input-boundary	tests/unit/gpu/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
 -	native-4k-shadow-mmu	tests/unit/arm64	unit	conditional	4 KiB-only native shadow-MMU coverage
+-	emulator-native-4k-admission	tests/unit/arm64	unit	conditional	4 KiB native callback runs serialize identical process addresses and support queued cancellation and retry
+-	emulator-native-16k-ownership	tests/unit/arm64	unit	conditional	16 KiB native callback domains own high mappings, reject cross-handle collisions atomically, and retire leaked mappings
 backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retained	renamed during neutral module move
+-	emulator-c-api-boundary	tests/unit/emulator_c_api_boundary_tests.cpp	unit	retained	public run and network C boundaries contain host callback exceptions, retire routing state, and permit retry
 -	arm64-dispatcher-internal	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-floating-exception	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-floating-trap-scalar	tests/unit/arm64	unit	retained	existing registered test
@@ -558,40 +586,56 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-fp8-convert-down-control	tests/unit/arm64	unit	retained	existing registered test
 -	slirp-network-arp	tests/tooling/CMakeLists.txt	tooling	conditional	host-only SLiRP contract registered when the optional provider is built
 -	embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional	real embedded ELF handles serialize the fixed linked window and process-global Linux state
--	virtio-gpu-vnc-smoke	tests/tooling/CMakeLists.txt	tooling	conditional	host-only protocol fixture registered when GPU dependencies are built
+-	virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional	host-only protocol fixture registered when GPU dependencies and tooling are built
+-	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
 -	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
--	rootfs-provisioning	tools/rootfs/test-provision.py	tooling	retained	authenticated digest-statement provisioning and tamper rejection
--	rootfs-maintenance-safety	tools/rootfs/test-maintenance.py	tooling	retained	explicit authorization, full-run lock, refreeze, and process-group cleanup
+-	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	authenticated digest-statement provisioning and tamper rejection
+-	rootfs-maintenance-safety	tests/tooling/rootfs/test_maintenance.py	tooling	retained	explicit authorization, full-run lock, refreeze, and process-group cleanup
+-	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	rejects writable or duplicate rootfs options and all launcher-owned kernel argument overrides
 -	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only runner safety self-test
 -	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher option self-test
 -	chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained	host-only metrics parser self-test
 -	network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained	keeps host-network probes out of the deterministic SLiRP smoke
--	jit-gpr-link-profile-analysis	tests/perf/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test
+-	jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test
+-	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, and network-gate smoke
 -	arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained	host-only inventory consistency audit
--	arm64-instruction-evidence-reset	cmake/ResetInstructionEvidence.cmake	tooling	conditional	unit-suite fixture that clears stale per-test evidence before a conformance run
--	arm64-instruction-evidence	tests/tooling/arm64/validate_a64_instruction_evidence.py	tooling	conditional	read-only validation of selected unit-producer evidence
+-	arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained	rejects form confusion, unreachable words, and undeclared exact-encoding aliases
+-	arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained	rejects missing, duplicate, swapped, count, digest, reserved-predicate, feature-gate, oracle-locator, and page-profile aggregate drift
+-	arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained	proves deterministic gzip parity and resumable replacement while rejecting duplicate, mismatched, symlink, and truncated raw evidence
+-	arm64-input-materialization-negative-fixtures	tests/tooling/arm64/test_a64_input_materialization.py	tooling	retained	validates canonical content-addressed raw inputs, projection mutations, callback descriptors, corruption, and disk-backed join ordering
+-	arm64-aslref-system-state	tests/tooling/arm64/test_a64_aslref_system_state.py	tooling	retained	validates the projected system-state bridge, all exposed selector contracts, official XML provenance, and official read/write instruction procedures
+-	arm64-instruction-evidence-reset	tests/unit/arm64/reset_instruction_evidence.cmake	unit	conditional	CMake-only unit setup that clears stale per-test evidence before producers run
+-	arm64-instruction-evidence	tests/tooling/arm64/validate_a64_instruction_evidence.py	tooling	conditional	validates selected unit-producer evidence and rewrites stable-id-bindings.tsv
+-	arm64-input-materialization-join	tests/tooling/arm64/join_a64_input_materializations.py	tooling	conditional	long-running exhaustive gate validates and joins every raw concrete input to the exact checked aggregate identity after all unit producers complete
 -	arm64-jit-gpr-link-profile-codegen	tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp	unit	conditional	registered when JIT guest-GPR link profiling is enabled
 -	arm64-jit-gpr-link-profile-runtime	tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp	unit	conditional	registered when JIT guest-GPR link profiling is enabled
 -	arm64-jit-gpr-pressure-profile	tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp	unit	conditional	registered when JIT guest-GPR pressure profiling is enabled
 -	emulator-options	tests/unit	unit	retained	explicit emulator option contract coverage
 -	runtime-context-lifecycle	tests/unit/runtime	unit	retained	synchronized run/stop admission plus thread-state churn and reuse cleanup
+-	runtime-route-transaction	tests/unit/runtime	unit	retained	allocation-free shared CPU/network route publication and retirement are one observable transaction
+-	runtime-exit-order	tests/unit/runtime	unit	retained	legacy context teardown cannot call a destroyed software-memory registry
 -	cpu-engine-contract	tests/unit	unit	retained	explicit CPU engine boundary coverage
+-	arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained	subprocess-isolated cross-engine and C-bridge PC-alignment signal contract with retry and cache reuse
 -	cpu-interpreter-isolated-link	tests/unit	unit	retained	interpreter adapter declares every link dependency
 -	cpu-gadget-isolated-link	tests/unit	unit	retained	gadget adapter declares every link dependency
 -	cpu-jit-isolated-link	tests/unit	unit	retained	JIT adapter declares every link dependency
 -	cpu-factory-isolated-link	tests/unit	unit	retained	common factory declares every concrete engine dependency
--	kernel-release-source-preparer	kernel/test-materialize-release.sh	tooling	retained	offline signed-release materialization and tamper rejection
+-	kernel-release-source-preparer	tests/tooling/kernel/test_materialize_release.sh	tooling	retained	offline signed-release materialization and tamper rejection
+-	kernel-series-topology	tests/tooling/kernel/test_series_topology.sh	tooling	retained	exact patch-count, patch-ID, subject/order, and no-merge history rejection
+-	kernel-cmake-build-layout	tests/tooling/kernel/test_cmake_build_layout.cmake	tooling	retained	page-mode integration configurations own distinct binary-tree-local Kbuild directories and vmlinux outputs
+-	kernel-next-version-policy-actions	tests/tooling/kernel/test_next_version_policy.sh	tooling	retained	already-contained fixes and genuine conflicts emit distinct per-path carry, drop, retest, and upstream actions
 -	abi-declaration-identity	tests/tooling/abi/test_declaration_identity.sh	tooling	retained	rejects declaration changes without an ABI identity-history update
--	dependency-source-archive-verifier	dependencies/test-source-archive.sh	tooling	retained	safe archive extraction and canonical prepared-tree identity
-dependency-state-verifier	dependency-source-preparer	dependencies/test-prepare.sh	tooling	retained	offline release archive preparation and tamper rejection
--	dependency-build-manifest	dependencies/test-build-manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
--	dependency-prefix-verifier	dependencies/test-verify-prefix.sh	tooling	retained	private static arm64 prefix provenance and content validation
+-	dependency-source-archive-verifier	tests/tooling/dependencies/test_source_archive.sh	tooling	retained	safe archive extraction and canonical prepared-tree identity
+dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/test_prepare.sh	tooling	retained	offline release archive preparation and tamper rejection
+-	dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
+-	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private static arm64 prefix provenance and content validation
+-	dependency-production-link-allowlist	tests/tooling/dependencies/test_verify_production_link.sh	tooling	retained	final link permits only build, Apple SDK/toolchain, and verified private-prefix inputs
 -	guest-overlay-systemd-smoke	tests/integration	integration	retained	immutable OverlayFS and systemd guest boot
 -	guest-interpreter-smoke	tests/integration/jit	integration	retained	lightweight interpreter kernel, shell, and CPU-feature smoke
 -	guest-gadgets-smoke	tests/integration/jit	integration	retained	gadget-engine guest dynamic-code smoke
 -	guest-jit-smoke	tests/integration/jit	integration	retained	JIT-engine guest dynamic-code smoke
 -	guest-slirp-network	tests/integration/network	integration	retained	deterministic SLiRP gateway guest smoke
--	guest-smp-topology	tests/integration/smp	integration	retained	10-vCPU topology and hotplug campaign
+guest-smp-topology	guest-smp-topology	tests/integration/smp	integration	removed	run_guest_smp.py is an explicit standalone guest campaign, not a CTest registration
 -	guest-mmu-stress	tests/integration/smp	integration	retained	10-vCPU shared-MM and mapping stress campaign
 -	guest-external-network	tests/integration/network	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
 -	guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission

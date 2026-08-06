@@ -154,6 +154,8 @@ void check_overlapping_failure(
 		.validator = link ?
 			&validate_overlapping_branch_failure_link :
 			&validate_overlapping_branch_failure_no_link,
+		.validator_relation_id =
+			"permitted-transformed-branch-failure/v1",
 		.expected_instructions = 2,
 	});
 }
@@ -247,6 +249,8 @@ void zero_target_forms(
 					.native = pauth::native_pauth,
 					.validator =
 						&pauth::validate_branch_failure,
+					.validator_relation_id =
+						"permitted-transformed-branch-failure/v1",
 					.expected_instructions = 1,
 				});
 				++cases;
@@ -460,6 +464,8 @@ void guarded_call_zero_target(
 				.native = pauth::native_pauth,
 				.memory = regions,
 				.validator = &validate_guarded_zero_target,
+				.validator_relation_id =
+					"guarded-control-zero-target-fault/v1",
 			});
 			++cases;
 		}
@@ -530,6 +536,8 @@ void guarded_call_fault_atomicity(
 				.compare_fault = true,
 				.memory = regions,
 				.validator = &validate_guarded_call_fault,
+				.validator_relation_id =
+					"guarded-control-call-fault-atomicity/v1",
 			});
 			++cases;
 		}

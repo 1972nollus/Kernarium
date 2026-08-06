@@ -2,6 +2,8 @@
 #pragma once
 
 #include "protocol.hpp"
+#include "unique_descriptor.hpp"
+#include "vhost_user_message.hpp"
 #include "virtio_gpu_device.hpp"
 #include "vnc_display.hpp"
 #include "../input/vnc/vnc_input.hpp"
@@ -42,18 +44,12 @@ public:
         const std::function<void()>& ready = {});
 
 private:
-    struct ReceivedMessage {
-        protocol::VhostHeader header {};
-        std::vector<std::uint8_t> payload;
-        std::vector<int> descriptors;
-    };
-
     struct Mapping {
         std::uint64_t guestAddress {};
         std::uint64_t userAddress {};
         std::uint64_t size {};
         std::uint64_t mmapOffset {};
-        int descriptor {-1};
+        UniqueDescriptor descriptor;
         std::uint8_t* address {};
     };
 
@@ -63,8 +59,12 @@ private:
         std::uint64_t descriptorAddress {};
         std::uint64_t availableAddress {};
         std::uint64_t usedAddress {};
-        int callDescriptor {-1};
+        UniqueDescriptor kickDescriptor;
+        UniqueDescriptor callDescriptor;
         bool enabled {};
+        bool started {};
+        bool polling {};
+        bool callPolling {};
     };
 
     struct DescriptorSegment {
@@ -73,9 +73,9 @@ private:
         bool writable {};
     };
 
-    void resetConnection();
-    [[nodiscard]] bool receiveMessage(int socket, ReceivedMessage& message);
-    void handleMessage(int socket, ReceivedMessage& message);
+    void resetConnection() noexcept;
+    void clearMappings() noexcept;
+    void handleMessage(int socket, VhostUserMessage& message);
     void sendReply(
         int socket,
         const protocol::VhostHeader& request,
@@ -88,7 +88,9 @@ private:
         int socket,
         const protocol::VhostHeader& request,
         std::uint64_t status);
-    void configureMemory(ReceivedMessage& message);
+    void configureMemory(VhostUserMessage& message);
+    void configureKick(VhostUserMessage& message);
+    void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
     void signalQueue(std::uint32_t index);
     void serveConnection(
@@ -111,13 +113,13 @@ private:
     std::uint16_t vncPort_ {};
     VncDisplay display_;
     VirtioGpuDevice gpu_;
-    int listenSocket_ {-1};
-    int slaveRequestDescriptor_ {-1};
+    UniqueDescriptor slaveRequestDescriptor_;
     std::vector<Mapping> mappings_;
     std::array<Queue, protocol::gpuQueueCount> queues_ {};
     std::uint64_t negotiatedFeatures_ {};
     std::uint64_t negotiatedProtocolFeatures_ {};
-    bool traceGpuCommands_ {};
+    bool featuresConfigured_ {};
+    const std::atomic_bool* connectionStopRequested_ {};
 };
 
 } // namespace uml::gpu

@@ -262,13 +262,24 @@ void link_selector_layout_is_dense_and_compact()
 	}
 	for (std::uint8_t capabilities = 0; capabilities < 16;
 	     ++capabilities) {
-		if (std::find(capability_masks.begin(),
-			      capability_masks.end(), capabilities) !=
-		    capability_masks.end())
+		const bool valid = std::find(capability_masks.begin(),
+			capability_masks.end(), capabilities) !=
+			capability_masks.end();
+		if (valid) {
+			require(uml::cpu::arm64::jit::testing::
+				checked_link_selector_for_capability_mask(
+					capabilities) ==
+				uml::cpu::arm64::jit::testing::
+					link_selector_for_capability_mask(
+						capabilities));
 			continue;
+		}
 		require(uml::cpu::arm64::jit::testing::
 				link_selector_for_capability_mask(
 					capabilities) == 0xffU);
+		require(uml::cpu::arm64::jit::testing::
+				checked_link_selector_for_capability_mask(
+					capabilities) == 0U);
 	}
 	require(uml::cpu::arm64::jit::testing::
 			link_capability_mask_for_selector(
@@ -297,7 +308,7 @@ void tracked_translation_has_no_successor_branch()
 
 int main()
 {
-	require(darwin_uml_jit_available() == 1);
+	require(jit_available() == 1);
 	guest_capabilities_match_host();
 	link_selector_layout_is_dense_and_compact();
 	require(uml::cpu::arm64::jit::testing::block_link_table_is_bounded(1));
@@ -307,5 +318,7 @@ int main()
 	tracked_translation_has_no_successor_branch();
 	guest_key_operations_use_semantic_bridge();
 	stateful_system_instructions_are_translation_feature_gated();
+	require(uml::cpu::arm64::jit::testing::
+		invalid_emitter_metadata_is_rejected_for_testing());
 	return 0;
 }

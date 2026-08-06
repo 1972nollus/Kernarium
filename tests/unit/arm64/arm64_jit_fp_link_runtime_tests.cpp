@@ -341,32 +341,6 @@ void changing_cpu_materializes_the_previous_owner() {
   executor.end_execution();
 }
 
-void verification_materializes_native_status() {
-  constexpr unsigned long generation = 8410;
-  constexpr std::uint64_t base = 0x110'0000;
-  JitBacking backing{1};
-  backing.put32(0, native_divide);
-  backing.put32(4, system_call);
-  JitMapping mapping{generation, base, backing, 1};
-  JitExecutor executor;
-  StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  set_vector_lanes(cpu.vectors[1], 0x3f80'0000U);
-  set_vector_lanes(cpu.vectors[2], 0);
-  cpu.pc = base;
-  const auto host_fpcr = native_fpcr();
-  const auto host_fpsr = native_fpsr();
-
-  require(executor.begin_execution(generation, cpu.pc));
-  const auto run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 2);
-  require(!cpu.gadget_fp_active);
-  require((cpu.fpsr & fpsr_divide_by_zero) != 0);
-  require(native_fpcr() == host_fpcr);
-  require(native_fpsr() == host_fpsr);
-  executor.end_execution();
-}
-
 void returning_miss_preserves_native_control_and_status() {
   constexpr unsigned long generation = 8411;
   constexpr std::uint64_t base = 0x114'0000;
@@ -686,13 +660,7 @@ void linked_vector_fault_is_precise_for_page_size() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  if (verification != nullptr && verification[0] != '\0' &&
-      verification[0] != '0') {
-    verification_materializes_native_status();
-    return 0;
-  }
+  require(jit_available() == 1);
   deferred_vector_self_loop_obeys_fairness();
   direct_capability_requirements_are_exact();
   control_and_status_state_survives_links();

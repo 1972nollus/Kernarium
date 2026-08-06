@@ -26,7 +26,8 @@ inline constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 using Page = std::array<std::byte, page_size>;
 /* Base pointer authentication is implemented from guest-owned software
  * state in all three engines and therefore has no native-host requirement. */
-inline const auto native_pauth = test::NativeRequirements::baseline();
+inline const auto native_pauth =
+	test::NativeRequirements::features(::uml::cpu::ArmFeature::pauth);
 inline const auto native_pauth_lr =
 	test::NativeRequirements::features(::uml::cpu::ArmFeature::pauth_lr);
 

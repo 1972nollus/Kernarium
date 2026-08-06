@@ -296,6 +296,8 @@ void signed_fault_address(
 				},
 				.compare_fault = true,
 				.validator = &validate_signed_fault_state,
+				.validator_relation_id =
+					"transformed-address-fault-state/v1",
 			});
 			++cases;
 		}

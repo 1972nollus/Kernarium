@@ -2,7 +2,12 @@
 
 #include "in_process_service.hpp"
 
+#include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
+
+#if UML_GPU_STARTUP_TESTING
+#include "in_process_service_testing.hpp"
+#endif
 
 #include <atomic>
 #include <array>
@@ -25,6 +30,22 @@
 
 namespace uml::gpu {
 namespace {
+
+using DescriptorPair = std::array<UniqueDescriptor, 2>;
+
+void setCloseOnExec(const DescriptorPair& descriptors)
+{
+    for (const auto& descriptor : descriptors) {
+        const int flags = ::fcntl(descriptor.get(), F_GETFD);
+        if (flags < 0 ||
+            ::fcntl(
+                descriptor.get(), F_SETFD, flags | FD_CLOEXEC) != 0) {
+            throw std::runtime_error(
+                "configuring in-process GPU descriptor failed: " +
+                std::string(std::strerror(errno)));
+        }
+    }
+}
 
 class ScopedGuestTimerBlock final {
 public:
@@ -58,7 +79,7 @@ private:
     bool active_ {};
 };
 
-std::array<int, 2> makeSocketPair()
+DescriptorPair makeSocketPair()
 {
     std::array<int, 2> descriptors {-1, -1};
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) != 0) {
@@ -66,10 +87,28 @@ std::array<int, 2> makeSocketPair()
             "in-process vhost-user socketpair failed: " +
             std::string(std::strerror(errno)));
     }
-    return descriptors;
+    DescriptorPair result {
+        UniqueDescriptor {descriptors[0]}, UniqueDescriptor {descriptors[1]}};
+    setCloseOnExec(result);
+#if UML_GPU_STARTUP_TESTING
+    testing::startupCheckpoint(
+        testing::StartupFailure::afterTransportSocketPair);
+#endif
+    return result;
 }
 
-std::array<int, 2> makeInputSocketPair()
+UniqueDescriptor duplicateDescriptor(int descriptor)
+{
+    const int duplicate = ::fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
+    if (duplicate < 0) {
+        throw std::runtime_error(
+            "duplicating in-process GPU stop descriptor failed: " +
+            std::string(std::strerror(errno)));
+    }
+    return UniqueDescriptor {duplicate};
+}
+
+DescriptorPair makeInputSocketPair()
 {
     std::array<int, 2> descriptors {-1, -1};
     if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0) {
@@ -77,24 +116,28 @@ std::array<int, 2> makeInputSocketPair()
             "in-process VNC input socketpair failed: " +
             std::string(std::strerror(errno)));
     }
-    const int flags = ::fcntl(descriptors[0], F_GETFL);
+    DescriptorPair result {
+        UniqueDescriptor {descriptors[0]}, UniqueDescriptor {descriptors[1]}};
+    setCloseOnExec(result);
+    const int flags = ::fcntl(result[0].get(), F_GETFL);
     if (flags < 0 ||
-        ::fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) != 0) {
+        ::fcntl(result[0].get(), F_SETFL, flags | O_NONBLOCK) != 0) {
         const int error = errno;
-        ::close(descriptors[0]);
-        ::close(descriptors[1]);
         throw std::runtime_error(
             "configuring VNC input socket failed: " +
             std::string(std::strerror(error)));
     }
-    int noSigpipe = 1;
-    (void)::setsockopt(
-        descriptors[0],
-        SOL_SOCKET,
-        SO_NOSIGPIPE,
-        &noSigpipe,
-        sizeof(noSigpipe));
-    return descriptors;
+    if (::fcntl(result[0].get(), F_SETNOSIGPIPE, 1) != 0) {
+        const int error = errno;
+        throw std::runtime_error(
+            "configuring VNC input no-signal writes failed: " +
+            std::string(std::strerror(error)));
+    }
+#if UML_GPU_STARTUP_TESTING
+    testing::startupCheckpoint(
+        testing::StartupFailure::afterInputSocketPair);
+#endif
+    return result;
 }
 
 } // namespace
@@ -104,10 +147,11 @@ public:
     explicit Implementation(InProcessGpuOptions options)
         : options_(std::move(options))
         , descriptors_(makeSocketPair())
+        , stopDescriptor_(duplicateDescriptor(descriptors_[0].get()))
         , inputDescriptors_(makeInputSocketPair())
-        , connectionName_("fd=" + std::to_string(descriptors_[1]))
+        , connectionName_("fd=" + std::to_string(descriptors_[1].get()))
         , inputConnectionName_(
-              "fd=" + std::to_string(inputDescriptors_[1]))
+              "fd=" + std::to_string(inputDescriptors_[1].get()))
         , thread_([this] { run(); })
     {
         std::unique_lock lock(stateMutex_);
@@ -122,23 +166,35 @@ public:
     ~Implementation()
     {
         stop();
-        if (inputDescriptors_[0] >= 0)
-            ::close(std::exchange(inputDescriptors_[0], -1));
     }
 
-    const std::string& connectionName() const noexcept
+    std::string takeConnectionName()
     {
-        return connectionName_;
+        if (descriptors_[1].get() < 0)
+            throw std::logic_error("GPU transport endpoint already transferred");
+        auto name = connectionName_;
+        (void)descriptors_[1].release();
+        return name;
     }
 
-    const std::string& inputConnectionName() const noexcept
+    std::string takeInputConnectionName()
     {
-        return inputConnectionName_;
+        if (inputDescriptors_[1].get() < 0)
+            throw std::logic_error("GPU input endpoint already transferred");
+        auto name = inputConnectionName_;
+        (void)inputDescriptors_[1].release();
+        return name;
     }
 
     void stop() noexcept
     {
         stopRequested_.store(true, std::memory_order_release);
+        // Keep a separately owned duplicate of the worker endpoint solely as
+        // a wake capability.  shutdown(2) interrupts poll plus any partial
+        // frame read/write without closing a descriptor number that could
+        // already have been transferred to, closed by, and reused in UML.
+        if (stopDescriptor_.get() >= 0)
+            (void)::shutdown(stopDescriptor_.get(), SHUT_RDWR);
         if (thread_.joinable())
             thread_.join();
     }
@@ -148,6 +204,9 @@ private:
     {
         (void)::pthread_setname_np("uml-gpu");
         try {
+#if UML_GPU_STARTUP_TESTING
+            testing::startupCheckpoint(testing::StartupFailure::workerEntry);
+#endif
             /*
              * CGL current contexts are pthread-local. Construct and destroy
              * virglrenderer on the transport thread so its initialization
@@ -165,7 +224,7 @@ private:
                 [this](std::span<const VncInputEvent> events) {
                     sendInput(events);
                 });
-            server.runConnected(descriptors_[0], stopRequested_, [this] {
+            server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);
                     ready_ = true;
@@ -185,7 +244,7 @@ private:
     {
         const auto bytes = events.size_bytes();
         const auto sent = ::send(
-            inputDescriptors_[0], events.data(), bytes, MSG_DONTWAIT);
+            inputDescriptors_[0].get(), events.data(), bytes, MSG_DONTWAIT);
         if (sent == static_cast<ssize_t>(bytes)) {
             return;
         }
@@ -201,8 +260,9 @@ private:
     }
 
     InProcessGpuOptions options_;
-    std::array<int, 2> descriptors_;
-    std::array<int, 2> inputDescriptors_;
+    DescriptorPair descriptors_;
+    UniqueDescriptor stopDescriptor_;
+    DescriptorPair inputDescriptors_;
     std::string connectionName_;
     std::string inputConnectionName_;
     std::atomic_bool stopRequested_ {};
@@ -232,14 +292,14 @@ InProcessGpuService::InProcessGpuService(InProcessGpuOptions options)
 
 InProcessGpuService::~InProcessGpuService() = default;
 
-const std::string& InProcessGpuService::connectionName() const noexcept
+std::string InProcessGpuService::takeConnectionName()
 {
-    return implementation_->connectionName();
+    return implementation_->takeConnectionName();
 }
 
-const std::string& InProcessGpuService::inputConnectionName() const noexcept
+std::string InProcessGpuService::takeInputConnectionName()
 {
-    return implementation_->inputConnectionName();
+    return implementation_->takeInputConnectionName();
 }
 
 void InProcessGpuService::stop() noexcept

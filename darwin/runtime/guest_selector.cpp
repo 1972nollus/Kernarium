@@ -46,21 +46,6 @@ constexpr unsigned long hwcap_sha512 = 1UL << 21;
 
 } // namespace
 
-extern "C" int darwin_uml_set_execution_engine(
-	enum darwin_uml_execution_engine engine)
-{
-	auto *context = ::uml::runtime::current_context();
-	return context == nullptr ? -1 : context->set_execution_engine(engine);
-}
-
-extern "C" enum darwin_uml_execution_engine
-darwin_uml_get_execution_engine(void)
-{
-	auto *context = ::uml::runtime::current_context();
-	return context == nullptr ? DARWIN_UML_EXECUTION_AUTO :
-		context->execution_engine();
-}
-
 extern "C" unsigned long darwin_uml_guest_hwcap(void)
 {
 	/*

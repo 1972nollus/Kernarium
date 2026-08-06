@@ -927,7 +927,7 @@ gadget simd_structure_\name
 	.if \base_sp == 0 || \mode != 0
 	orr w7, w7, #1
 	.endif
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	mov x7, sp
@@ -949,7 +949,7 @@ gadget simd_structure_\name
 	.if \base_sp == 0 || \mode != 0
 	orr w7, w7, #1
 	.endif
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	.endif
@@ -1125,7 +1125,7 @@ gadget simd_replicate_\name
 	mov w5, #0
 	mov w6, #\base_sp
 	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_replicate_fault\@
 	mov x7, sp
@@ -1307,7 +1307,7 @@ gadget simd_lane_\name
 	mov w5, #0
 	mov w6, #\base_sp
 	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	mov x7, sp
@@ -1323,7 +1323,7 @@ gadget simd_lane_\name
 	mov w5, #1
 	mov w6, #\base_sp
 	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	.endif
@@ -1644,7 +1644,7 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
 	mov x2, x7
 	mov x3, #\bytes
 	mov w4, #0
-	bl NAME(uml_arm64_gadget_atomic_floating_pointer)
+	bl NAME(uml_arm64_atomic_floating_pointer)
 	ldp x1, x2, [sp], #16
 	cbz x0, uml_arm64_gadget_memory_fault
 	mov x7, x0
@@ -1787,7 +1787,7 @@ uml_arm64_gadget_atomic_alignment_fault_read:
 	mov x0, x2
 	mov x1, x7
 	mov w2, #0
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -1797,7 +1797,7 @@ uml_arm64_gadget_atomic_alignment_fault_write:
 	mov x0, x2
 	mov x1, x7
 	mov w2, #1
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 

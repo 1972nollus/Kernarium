@@ -7,7 +7,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_arithmetic_${base_arithmetic_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_arithmetic_${base_arithmetic_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -30,7 +31,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_bit_${base_bit_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_bit_${base_bit_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -52,7 +54,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_multiply_reserved_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_multiply_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -76,7 +79,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_condition_${base_condition_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_condition_${base_condition_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -99,7 +103,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_min_max_${base_min_max_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_min_max_${base_min_max_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -121,7 +126,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_add_sub_extended_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_add_sub_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -138,7 +144,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_pointer_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_mte_pointer_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -153,7 +160,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_tag_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_mte_tag_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -167,7 +175,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_mte_random_tag_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_mte_random_tag_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -182,7 +191,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cpa_pointer_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cpa_pointer_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -197,7 +207,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cpa_multiply_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cpa_multiply_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -212,7 +223,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cmpbr_immediate_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cmpbr_immediate_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -227,7 +239,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cmpbr_register_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cmpbr_register_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -245,7 +258,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_logical_behavior_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_logical_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -265,7 +279,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_move_wide_${base_move_wide_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_move_wide_${base_move_wide_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -286,7 +301,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${base_integer_alias}_alias_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_${base_integer_alias}_alias_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -310,7 +326,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_bitfield_${base_bitfield_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_bitfield_${base_bitfield_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -330,7 +347,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_extract_${base_extract_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_extract_${base_extract_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -355,7 +373,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_control_${base_control_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_control_${base_control_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -379,7 +398,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_crc_${base_crc_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_crc_${base_crc_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -400,7 +420,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_flag_${base_flag_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_flag_${base_flag_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -421,7 +442,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_barrier_${base_barrier_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_barrier_${base_barrier_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -442,7 +464,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_hint_${base_hint_suite}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
         target_include_directories(
 			uml_arm64_base_hint_${base_hint_suite}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -461,7 +484,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_hint_stateful_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_hint_stateful_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -479,7 +503,8 @@
 	    ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_store_hint_${base_store_hint_suite}_tests.cpp
 	    $<TARGET_OBJECTS:uml_arm64_dispatch>
 	    $<TARGET_OBJECTS:uml_static_mmu>
-	    $<TARGET_OBJECTS:uml_arm64_gadgets>)
+	    $<TARGET_OBJECTS:uml_arm64_gadgets>
+	    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 	target_include_directories(
 	    uml_arm64_base_store_hint_${base_store_hint_suite}_tests PRIVATE
 	    ${PROJECT_SOURCE_DIR}/darwin
@@ -499,7 +524,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_extended_hint_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_extended_hint_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -517,7 +543,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_system_register_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_system_register_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -532,7 +559,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cache_zero_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cache_zero_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -547,7 +575,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_cache_zero_fault_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_cache_zero_fault_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -567,7 +596,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${SYSTEM_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(uml_arm64_base_${SYSTEM_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
@@ -601,7 +631,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${SYSTEM_OPERATION_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_base_${SYSTEM_OPERATION_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -620,7 +651,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_system_register_pair_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 	target_include_directories(
 		uml_arm64_base_system_register_pair_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
@@ -653,7 +685,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_gcs_${GCS_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(uml_arm64_base_gcs_${GCS_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
@@ -670,7 +703,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${GIC_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(uml_arm64_base_${GIC_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
@@ -690,7 +724,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${FEATURE_SYSTEM_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_base_${FEATURE_SYSTEM_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -710,7 +745,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${CHKFEAT_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_base_${CHKFEAT_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -730,7 +766,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${AT_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(uml_arm64_base_${AT_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
@@ -747,7 +784,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_${IC_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(uml_arm64_base_${IC_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
 			${PROJECT_SOURCE_DIR}/darwin/include)
@@ -764,7 +802,8 @@
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pstate_${PSTATE_TEST}_tests.cpp
 			$<TARGET_OBJECTS:uml_arm64_dispatch>
 			$<TARGET_OBJECTS:uml_static_mmu>
-			$<TARGET_OBJECTS:uml_arm64_gadgets>)
+			$<TARGET_OBJECTS:uml_arm64_gadgets>
+			$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 		target_include_directories(
 			uml_arm64_base_pstate_${PSTATE_TEST}_tests PRIVATE
 			${PROJECT_SOURCE_DIR}/darwin
@@ -783,7 +822,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_strip_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_strip_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -798,7 +838,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_profile_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_profile_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -813,7 +854,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_code_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_code_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -828,7 +870,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_auth_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_auth_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -843,7 +886,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_generic_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_generic_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -858,7 +902,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_branch_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_branch_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -873,7 +918,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_return_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_return_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -888,7 +934,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_load_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_load_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -903,7 +950,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_lr_data_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_lr_data_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -918,7 +966,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_pauth_lr_return_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_pauth_lr_return_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -933,7 +982,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_exception_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_exception_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -948,7 +998,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_breakpoint_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_breakpoint_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -963,7 +1014,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_undefined_exception_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(
         uml_arm64_base_undefined_exception_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
@@ -983,7 +1035,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_prefetch_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_prefetch_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
@@ -997,7 +1050,8 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_base_range_prefetch_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>
 		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>)
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_include_directories(uml_arm64_base_range_prefetch_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)

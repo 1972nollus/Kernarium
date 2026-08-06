@@ -3,12 +3,14 @@
 
 #include "cpu/engine_factory.hpp"
 #include "execution_state.hpp"
+#include "memory/domain_contract.hpp"
 #include "uml_darwin_guest.h"
 
 #include <algorithm>
 #include <cstdint>
-#include <iterator>
 #include <memory>
+#include <new>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -19,11 +21,11 @@ namespace uml::runtime {
 struct ThreadStateStore final {
 	struct State final {
 		std::uint64_t registration{};
-		std::unique_ptr<ThreadExecutionState> execution;
+		std::shared_ptr<ThreadExecutionState> execution;
 	};
 
 	struct Acquired final {
-		ThreadExecutionState *execution{};
+		std::shared_ptr<ThreadExecutionState> execution;
 		std::uint64_t registration{};
 	};
 
@@ -32,14 +34,14 @@ struct ThreadStateStore final {
 		std::lock_guard lock{mutex};
 		if (const auto position = states.find(thread);
 		    position != states.end())
-			return {position->second.execution.get(),
+			return {position->second.execution,
 				position->second.registration};
-		auto execution = std::make_unique<ThreadExecutionState>();
+		auto execution = std::make_shared<ThreadExecutionState>();
 		const auto registration = next_registration++;
-		auto *result = execution.get();
+		auto result = execution;
 		states.emplace(thread,
 			State{registration, std::move(execution)});
-		return {result, registration};
+		return {std::move(result), registration};
 	}
 
 	void retire(std::thread::id thread,
@@ -58,12 +60,6 @@ struct ThreadStateStore final {
 		states.clear();
 	}
 
-	[[nodiscard]] std::size_t size() const noexcept
-	{
-		std::lock_guard lock{mutex};
-		return states.size();
-	}
-
 	mutable std::mutex mutex;
 	std::unordered_map<std::thread::id, State> states;
 	std::uint64_t next_registration{1};
@@ -72,49 +68,62 @@ struct ThreadStateStore final {
 namespace {
 
 #if UML_DEFAULT_EXECUTION_ENGINE_JIT
-constexpr auto platform_default = DARWIN_UML_EXECUTION_JIT;
+constexpr auto platform_default = ExecutionEngine::jit;
 #else
-constexpr auto platform_default = DARWIN_UML_EXECUTION_GADGETS;
+constexpr auto platform_default = ExecutionEngine::gadgets;
 #endif
 
-[[nodiscard]] constexpr GuestEntry entry_for(
-	darwin_uml_execution_engine engine) noexcept
+[[nodiscard]] constexpr GuestEntry entry_for(ExecutionEngine engine) noexcept
 {
 	switch (engine) {
-	case DARWIN_UML_EXECUTION_JIT:
+	case ExecutionEngine::jit:
 		return darwin_uml_jit_enter_guest;
-	case DARWIN_UML_EXECUTION_INTERPRETER:
+	case ExecutionEngine::interpreter:
 		return darwin_uml_interpreter_enter_guest;
-	case DARWIN_UML_EXECUTION_GADGETS:
-	case DARWIN_UML_EXECUTION_AUTO:
+	case ExecutionEngine::gadgets:
+	case ExecutionEngine::automatic:
 		return darwin_uml_static_enter_guest;
 	}
-	return darwin_uml_static_enter_guest;
+	return nullptr;
 }
 
-[[nodiscard]] constexpr ::uml::cpu::EngineKind cpu_kind(
-	darwin_uml_execution_engine engine) noexcept
+[[nodiscard]] constexpr std::optional<::uml::cpu::EngineKind> cpu_kind(
+	ExecutionEngine engine) noexcept
 {
 	switch (engine) {
-	case DARWIN_UML_EXECUTION_INTERPRETER:
+	case ExecutionEngine::interpreter:
 		return ::uml::cpu::EngineKind::interpreter;
-	case DARWIN_UML_EXECUTION_JIT:
+	case ExecutionEngine::jit:
 		return ::uml::cpu::EngineKind::jit;
-	case DARWIN_UML_EXECUTION_AUTO:
-	case DARWIN_UML_EXECUTION_GADGETS:
+	case ExecutionEngine::automatic:
+		return std::nullopt;
+	case ExecutionEngine::gadgets:
 		return ::uml::cpu::EngineKind::gadgets;
 	}
-	return ::uml::cpu::EngineKind::gadgets;
+	return std::nullopt;
 }
 
-thread_local Context *thread_context;
-std::mutex active_mutex;
-struct ActiveContextEntry final {
-	ActiveContextScope *scope;
-	Context *context;
-	bool unbound_fallback_allowed;
+std::atomic_uint64_t next_memory_domain{1};
+
+[[nodiscard]] std::uint64_t fresh_memory_domain() noexcept
+{
+	for (;;) {
+		const auto domain = next_memory_domain.fetch_add(
+			1, std::memory_order_relaxed) + 1;
+		if (domain > 1)
+			return domain;
+	}
+}
+
+[[nodiscard]] bool provide_memory_domain(std::uint64_t &domain) noexcept;
+
+struct DomainProviderRegistration final {
+	DomainProviderRegistration() noexcept
+	{
+		::uml::memory::set_domain_provider(&provide_memory_domain);
+	}
 };
-std::vector<ActiveContextEntry> active_contexts;
+const DomainProviderRegistration domain_provider_registration;
 
 struct ThreadStateRegistration final {
 	std::weak_ptr<ThreadStateStore> store;
@@ -134,6 +143,10 @@ public:
 	void bind(const std::shared_ptr<ThreadStateStore> &store,
 		std::uint64_t registration)
 	{
+		entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+			[](const ThreadStateRegistration &entry) {
+				return entry.store.expired();
+			}), entries_.end());
 		const std::weak_ptr<ThreadStateStore> candidate{store};
 		for (auto &entry : entries_) {
 			if (!entry.store.owner_before(candidate) &&
@@ -152,39 +165,85 @@ private:
 
 thread_local ThreadStateRegistrations thread_state_registrations;
 
-[[nodiscard]] Context &legacy_context() noexcept
+std::atomic<Context *> published_legacy_context{};
+std::atomic_flag legacy_context_initialization = ATOMIC_FLAG_INIT;
+
+[[nodiscard]] Context *legacy_context() noexcept
 {
-	static Context context;
+	/* The compatibility context is process state, not an emulator handle.  Its
+	 * destructor would otherwise run after this thread's MMU TLS destructors on
+	 * Darwin and attempt to retire through already-destroyed thread-local
+	 * owners.  Deliberately give it process lifetime, just like the MMU domain
+	 * registry it addresses. A transient first allocation failure must remain
+	 * retryable rather than permanently caching an unavailable compatibility
+	 * context. */
+	if (auto *context = published_legacy_context.load(
+		    std::memory_order_acquire); context != nullptr)
+		return context;
+	while (legacy_context_initialization.test_and_set(
+		       std::memory_order_acquire))
+		std::this_thread::yield();
+	struct InitializationUnlock final {
+		~InitializationUnlock()
+		{
+			legacy_context_initialization.clear(std::memory_order_release);
+		}
+	};
+	[[maybe_unused]] InitializationUnlock unlock;
+	if (auto *context = published_legacy_context.load(
+		    std::memory_order_acquire); context != nullptr)
+		return context;
+	auto *context = new (std::nothrow) Context;
+	if (context != nullptr)
+		published_legacy_context.store(context, std::memory_order_release);
 	return context;
 }
 
 } // namespace
 
 Context::Context() noexcept
-	: selected_engine_{platform_default}, selected_entry_{entry_for(platform_default)}
+	: selected_engine_{platform_default}, selected_entry_{entry_for(platform_default)},
+	  memory_domain_{fresh_memory_domain()}
 {
 }
 
-Context::~Context() = default;
+Context::~Context()
+{
+	std::unique_lock lifecycle_lock{execution_lifecycle_mutex_};
+	retire_thread_execution_states();
+	::uml::memory::retire_domain(
+		memory_domain_.exchange(0, std::memory_order_acq_rel));
+}
 
 bool Context::begin_run() noexcept
 {
 	std::lock_guard lock{run_mutex_};
 	if (running_)
 		return false;
+	std::unique_lock lifecycle_lock{execution_lifecycle_mutex_};
 	stop_requested_.store(false, std::memory_order_release);
+	/* A context can be routed through the compatibility-facing internal scope
+	 * before its first run. Retire every execution object while its old memory
+	 * domain is still valid, then rotate and retire that domain before admitting
+	 * the run. thread_execution_state() takes the same lifecycle lock, so a
+	 * concurrent pre-run acquisition cannot publish between these two steps.
+	 * Later runs normally exchange zero because end_run() already retired their
+	 * domain. All operations in this boundary are allocation-free. */
+	retire_thread_execution_states();
+	const auto previous_domain = memory_domain_.exchange(
+		fresh_memory_domain(), std::memory_order_acq_rel);
+	::uml::memory::retire_domain(previous_domain);
 	running_ = true;
-	if (run_admission_hook_ != nullptr)
-		run_admission_hook_(run_admission_hook_context_);
 	return true;
 }
 
 void Context::end_run() noexcept
 {
 	std::lock_guard lock{run_mutex_};
-	if (run_retirement_hook_ != nullptr)
-		run_retirement_hook_(run_retirement_hook_context_);
+	std::unique_lock lifecycle_lock{execution_lifecycle_mutex_};
 	retire_thread_execution_states();
+	::uml::memory::retire_domain(
+		memory_domain_.exchange(0, std::memory_order_acq_rel));
 	stop_requested_.store(false, std::memory_order_release);
 	running_ = false;
 }
@@ -206,38 +265,30 @@ const std::atomic_bool *Context::stop_token() const noexcept
 	return &stop_requested_;
 }
 
-void Context::set_run_admission_hook_for_testing(
-	RunAdmissionHook hook, void *opaque) noexcept
+bool execution_engine_available(ExecutionEngine engine) noexcept
 {
-	std::lock_guard lock{run_mutex_};
-	run_admission_hook_ = hook;
-	run_admission_hook_context_ = opaque;
-}
-
-void Context::set_run_retirement_hook_for_testing(
-	RunRetirementHook hook, void *opaque) noexcept
-{
-	std::lock_guard lock{run_mutex_};
-	run_retirement_hook_ = hook;
-	run_retirement_hook_context_ = opaque;
-}
-
-int Context::set_execution_engine(darwin_uml_execution_engine engine) noexcept
-{
-	if (engine == DARWIN_UML_EXECUTION_AUTO)
+	if (engine == ExecutionEngine::automatic)
 		engine = platform_default;
-	if (engine != DARWIN_UML_EXECUTION_GADGETS &&
-	    engine != DARWIN_UML_EXECUTION_JIT &&
-	    engine != DARWIN_UML_EXECUTION_INTERPRETER)
+	const auto kind = cpu_kind(engine);
+	return kind.has_value() && ::uml::cpu::cpu_engine_available(*kind);
+}
+
+int Context::set_execution_engine(ExecutionEngine engine) noexcept
+{
+	if (engine == ExecutionEngine::automatic)
+		engine = platform_default;
+	if (engine != ExecutionEngine::gadgets &&
+	    engine != ExecutionEngine::jit &&
+	    engine != ExecutionEngine::interpreter)
 		return -1;
-	if (!::uml::cpu::cpu_engine_available(cpu_kind(engine)))
+	if (!execution_engine_available(engine))
 		return -1;
 	selected_engine_.store(engine, std::memory_order_release);
 	selected_entry_.store(entry_for(engine), std::memory_order_release);
 	return 0;
 }
 
-darwin_uml_execution_engine Context::execution_engine() const noexcept
+ExecutionEngine Context::execution_engine() const noexcept
 {
 	return selected_engine_.load(std::memory_order_acquire);
 }
@@ -247,8 +298,14 @@ GuestEntry Context::guest_entry() const noexcept
 	return selected_entry_.load(std::memory_order_acquire);
 }
 
-ThreadExecutionState &Context::thread_execution_state()
+std::uint64_t Context::memory_domain() const noexcept
 {
+	return memory_domain_.load(std::memory_order_acquire);
+}
+
+ThreadExecutionStateAccess Context::thread_execution_state()
+{
+	std::shared_lock lifecycle_lock{execution_lifecycle_mutex_};
 	std::shared_ptr<ThreadStateStore> store;
 	{
 		std::lock_guard lock{states_mutex_};
@@ -256,21 +313,10 @@ ThreadExecutionState &Context::thread_execution_state()
 			state_store_ = std::make_shared<ThreadStateStore>();
 		store = state_store_;
 	}
-	const auto acquired = store->acquire(std::this_thread::get_id());
+	auto acquired = store->acquire(std::this_thread::get_id());
 	thread_state_registrations.bind(store, acquired.registration);
-	return *acquired.execution;
+	return {std::move(lifecycle_lock), std::move(acquired.execution)};
 }
-
-std::size_t Context::thread_execution_state_count_for_testing() const noexcept
-{
-	std::shared_ptr<ThreadStateStore> store;
-	{
-		std::lock_guard lock{states_mutex_};
-		store = state_store_;
-	}
-	return store ? store->size() : 0;
-}
-
 void Context::retire_thread_execution_states() noexcept
 {
 	std::shared_ptr<ThreadStateStore> store;
@@ -283,31 +329,37 @@ void Context::retire_thread_execution_states() noexcept
 }
 
 ActiveContextScope::ActiveContextScope(Context &context)
-	: previous_{thread_context}
+	: ActiveContextScope{context, DeferredPublication{}}
 {
-	std::lock_guard lock{active_mutex};
-	const bool unbound_fallback_allowed = active_contexts.empty();
-	if (!unbound_fallback_allowed)
-		for (auto &entry : active_contexts)
-			entry.unbound_fallback_allowed = false;
-	active_contexts.push_back(
-		{this, &context, unbound_fallback_allowed});
-	thread_context = &context;
+	commit();
 }
 
-ActiveContextScope::~ActiveContextScope()
+ActiveContextScope::ActiveContextScope(Context &context,
+	DeferredPublication)
+	: route_{&context, nullptr,
+		::uml::routing::ActiveRouteScope::DeferredPublication{}}
 {
-	{
-		std::lock_guard lock{active_mutex};
-		const auto position = std::find_if(
-			active_contexts.rbegin(), active_contexts.rend(),
-			[this](const ActiveContextEntry &entry) {
-				return entry.scope == this;
-			});
-		if (position != active_contexts.rend())
-			active_contexts.erase(std::next(position).base());
-	}
-	thread_context = previous_;
+}
+
+void ActiveContextScope::commit() noexcept
+{
+	route_.commit();
+}
+
+ActiveContextScope::~ActiveContextScope() = default;
+
+ActiveRunRouteScope::ActiveRunRouteScope(Context &context, void *network,
+	DeferredPublication) noexcept
+	: route_{&context, network,
+		::uml::routing::ActiveRouteScope::DeferredPublication{}}
+{
+}
+
+ActiveRunRouteScope::~ActiveRunRouteScope() = default;
+
+void ActiveRunRouteScope::commit() noexcept
+{
+	route_.commit();
 }
 
 RunScope::RunScope(Context &context) noexcept
@@ -323,17 +375,23 @@ RunScope::~RunScope()
 
 Context *current_context() noexcept
 {
-	if (thread_context != nullptr)
-		return thread_context;
-	{
-		std::lock_guard lock{active_mutex};
-		if (active_contexts.size() == 1 &&
-		    active_contexts.front().unbound_fallback_allowed)
-			return active_contexts.front().context;
-		if (!active_contexts.empty())
-			return nullptr;
-	}
-	return &legacy_context();
+	const auto route = ::uml::routing::current_route();
+	if (route.runtime != nullptr)
+		return static_cast<Context *>(route.runtime);
+	return route.public_run_active ? nullptr : legacy_context();
 }
+
+namespace {
+
+bool provide_memory_domain(std::uint64_t &domain) noexcept
+{
+	auto *context = current_context();
+	if (context == nullptr)
+		return false;
+	domain = context->memory_domain();
+	return domain != 0;
+}
+
+} // namespace
 
 } // namespace uml::runtime

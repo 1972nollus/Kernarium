@@ -3,21 +3,20 @@
 
 namespace uml::cpu::arm64 {
 
-extern "C" void uml_arm64_gadget_restore_native_fp_environment(
+extern "C" void uml_arm64_restore_native_fp_environment(
 	CpuState *cpu);
-extern "C" void uml_arm64_gadget_restore_native_fpmr_environment(
+extern "C" void uml_arm64_restore_native_fpmr_environment(
 	CpuState *cpu);
 
 void restore_native_fp_environment(CpuState &cpu) noexcept
 {
-	uml_arm64_gadget_restore_native_fp_environment(&cpu);
-	uml_arm64_gadget_restore_native_fpmr_environment(&cpu);
+	uml_arm64_restore_native_fp_environment(&cpu);
+	uml_arm64_restore_native_fpmr_environment(&cpu);
 }
 
 void restore_native_fpmr_environment(CpuState &cpu) noexcept
 {
-	uml_arm64_gadget_restore_native_fpmr_environment(&cpu);
+	uml_arm64_restore_native_fpmr_environment(&cpu);
 }
 
 } // namespace uml::cpu::arm64
-

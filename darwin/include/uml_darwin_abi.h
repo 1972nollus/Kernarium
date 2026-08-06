@@ -44,11 +44,13 @@ enum darwin_uml_guest_event {
 	DARWIN_UML_EVENT_BREAKPOINT = 5,
 	DARWIN_UML_EVENT_GCS_FAULT = 6,
 	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
+	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
 	DARWIN_UML_EVENT_FATAL = -1,
 };
 
 enum {
 	DARWIN_UML_FAULT_WRITE = 2,
+	DARWIN_UML_FAULT_EXECUTE = 16,
 	DARWIN_UML_FAULT_PAGE = 14,
 };
 
@@ -115,9 +117,10 @@ struct darwin_uml_guest_fp_registers {
 
 #if defined(__cplusplus)
 #include <stddef.h>
-static_assert(DARWIN_UML_ABI_VERSION == 3U);
-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x4333b73bf8b2ea99ULL);
+static_assert(DARWIN_UML_ABI_VERSION == 6U);
+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL);
 static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
+static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
 static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));

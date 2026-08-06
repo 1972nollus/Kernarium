@@ -36,6 +36,8 @@ int main() {
       "a helper blocked tracked-store invalidation while scanning publications");
   require(testing::publication_gate_randomized_stress_for_testing(),
           "randomized helper/store stress violated publication exclusion");
+  require(testing::publication_participant_lifetime_is_idempotent_for_testing(),
+          "participant registration left a duplicate or stale scan pointer");
   std::puts("arm64-jit-publication-gate: concurrency checks passed");
   return 0;
 }

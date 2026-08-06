@@ -351,19 +351,13 @@ void fairness_exit_publishes_last_iteration_flags() {
 } // namespace
 
 int main() {
-  require(darwin_uml_jit_available() == 1);
-  const auto *verification = std::getenv("UML_VERIFY_JIT");
-  const bool verifies_each_block =
-      verification != nullptr && verification[0] != '\0' &&
-      verification[0] != '0';
+  require(jit_available() == 1);
   returning_tlb_helper_preserves_guest_flags();
   sp_alignment_edges_publish_exact_flags();
   cold_fault_and_trap_publish_exact_flags();
   system_register_read_and_write_synchronize_lazy_flags();
   internal_control_test_does_not_replace_guest_flags();
-  if (!verifies_each_block) {
-    linked_helper_and_invalidation_keep_guest_flags();
-    fairness_exit_publishes_last_iteration_flags();
-  }
+  linked_helper_and_invalidation_keep_guest_flags();
+  fairness_exit_publishes_last_iteration_flags();
   return 0;
 }

@@ -2,55 +2,152 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
+
+#ifndef UML_MEMORY_ALLOCATION_TESTING
+#define UML_MEMORY_ALLOCATION_TESTING 0
+#endif
 
 namespace uml::memory {
 
 class NativeAddressSpace final {
 public:
+	NativeAddressSpace() noexcept;
+	~NativeAddressSpace();
+	int map_direct(std::uintptr_t address, int fd, std::uint64_t offset,
+		std::uint64_t length, int protection);
+	int protect_direct(
+		std::uintptr_t address, std::uint64_t length, int protection);
+	int unmap_direct(std::uintptr_t address, std::uint64_t length);
+	int flush_direct(std::uintptr_t address, std::uint64_t length);
+	int sync_direct(std::uintptr_t address, std::uint64_t length);
+	int retry_direct(std::uintptr_t address, bool execute, bool write);
+	void retire() noexcept;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	[[nodiscard]] static bool needs_shadow(
 		std::uintptr_t address, std::uint64_t offset,
 		std::uint64_t length) noexcept;
-
-	[[nodiscard]] bool contains(
+	[[nodiscard]] bool contains_shadow(
+		std::uintptr_t address, std::uint64_t length) const;
+	[[nodiscard]] bool contains_direct(
 		std::uintptr_t address, std::uint64_t length) const;
 	int map(std::uintptr_t address, int fd, std::uint64_t offset,
 		std::uint64_t length, int protection);
+	int publish_backing(int fd, std::uint64_t offset, std::uint64_t length);
 	int protect(std::uintptr_t address, std::uint64_t length,
 		    int protection);
 	int unmap(std::uintptr_t address, std::uint64_t length);
 	int flush(std::uintptr_t address, std::uint64_t length);
 	int refresh(std::uintptr_t address, std::uint64_t length);
 	int retry(std::uintptr_t address, bool execute, bool write);
+	/* Keep the class definition identical in production and allocation-test
+	 * translation units.  The definitions exist only in the separately built
+	 * test variant, so ordinary products still expose no test symbols or work. */
+	[[nodiscard]] std::size_t mapping_count_for_testing() const noexcept;
+	[[nodiscard]] std::size_t materialized_slot_count_for_testing() const
+		noexcept;
+	[[nodiscard]] std::size_t direct_mapping_count_for_testing() const
+		noexcept;
+#endif
 
 private:
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	struct BackingIdentity final {
+		std::uint64_t device;
+		std::uint64_t inode;
+
+		[[nodiscard]] bool operator==(
+			const BackingIdentity &) const noexcept = default;
+	};
+
+	struct BackingPageKey final {
+		BackingIdentity identity;
+		std::uint64_t offset;
+
+		[[nodiscard]] bool operator==(
+			const BackingPageKey &) const noexcept = default;
+	};
+
+	struct BackingPageKeyHash final {
+		[[nodiscard]] std::size_t operator()(
+			const BackingPageKey &key) const noexcept;
+	};
+
 	struct Mapping final {
 		int fd;
 		std::uint64_t offset;
 		int protection;
+		BackingIdentity identity;
 		std::array<std::byte, 4096> original{};
 		bool loaded{};
 	};
+	struct DirectMapping final {
+		int fd;
+		std::uint64_t offset;
+		int protection;
+	};
+	struct DirectTransition final {
+		std::uintptr_t slot{};
+		std::unordered_set<std::uintptr_t>::node_type direct_slot;
+		std::unordered_map<std::uintptr_t, DirectMapping>::node_type
+			direct_mapping;
+		bool converted{};
+	};
+	struct DirectTransitionGuard final {
+		DirectTransitionGuard(
+			NativeAddressSpace &owner, std::size_t capacity);
+		~DirectTransitionGuard();
+		DirectTransitionGuard(const DirectTransitionGuard &) = delete;
+		DirectTransitionGuard &operator=(
+			const DirectTransitionGuard &) = delete;
+		void commit() noexcept { committed = true; }
 
+		NativeAddressSpace &owner;
+		std::vector<DirectTransition> transitions;
+		bool committed{};
+	};
+
+	static int identify_backing(int fd, BackingIdentity &identity) noexcept;
+	int convert_direct_slot_to_shadow_locked(std::uintptr_t slot);
+	int ensure_shadow_range_locked(
+		std::uintptr_t address, std::uint64_t length,
+		DirectTransitionGuard &guard);
+	void restore_direct_transitions_locked(
+		std::vector<DirectTransition> &transitions) noexcept;
+	int ensure_backing_index_locked();
+	void erase_backing_index_entry_locked(
+		const BackingPageKey &key, std::uintptr_t page) noexcept;
 	int flush_page_locked(std::uintptr_t page);
 	int flush_slot_locked(std::uintptr_t slot);
+	int reconcile_page_locked(std::uintptr_t page);
 	int load_page_locked(std::uintptr_t page);
 	int materialize_slot_locked(std::uintptr_t slot);
 	int set_slot_protection_locked(std::uintptr_t slot, int protection);
 	int update_slot_protection_locked(std::uintptr_t slot);
-	[[nodiscard]] bool contains_locked(
-		std::uintptr_t address, std::uint64_t length) const;
-
+#endif
 	mutable std::mutex mutex_;
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	std::unordered_map<std::uintptr_t, Mapping> mappings_;
+	std::unordered_multimap<BackingPageKey, std::uintptr_t,
+		BackingPageKeyHash> backing_index_;
 	std::unordered_map<std::uintptr_t, int> slot_protections_;
 	std::unordered_set<std::uintptr_t> materialized_slots_;
+	std::unordered_map<std::uintptr_t, DirectMapping> direct_mappings_;
+	bool backing_index_ready_{};
+#endif
+	std::unordered_set<std::uintptr_t> direct_slots_;
+	std::uint64_t ownership_id_{};
+	std::atomic_bool retired_{};
 };
 
-NativeAddressSpace &native_address_space();
+[[nodiscard]] std::shared_ptr<NativeAddressSpace>
+native_address_space() noexcept;
 
 } // namespace uml::memory

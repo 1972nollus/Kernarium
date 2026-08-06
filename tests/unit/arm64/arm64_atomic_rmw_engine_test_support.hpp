@@ -399,7 +399,17 @@ inline void reservation_invalidation(engine::EngineHarness &harness,
 		"BASE-0435 STSMAXH STSMAXLH", "BASE-0438 STSMINH STSMINLH",
 		"BASE-0450 STUMAXH STUMAXLH", "BASE-0453 STUMINH STUMINLH",
 	};
-	return size_code == 0U ? byte_names[operation] : half_names[operation];
+	constexpr std::array word_names{
+		"BASE-0392 STADD STADDL", "BASE-0395 STCLR STCLRL",
+		"BASE-0399 STEOR STEORL", "BASE-0429 STSET STSETL",
+		"BASE-0433 STSMAX STSMAXL", "BASE-0436 STSMIN STSMINL",
+		"BASE-0448 STUMAX STUMAXL", "BASE-0451 STUMIN STUMINL",
+	};
+	switch (size_code) {
+	case 0U: return byte_names[operation];
+	case 1U: return half_names[operation];
+	default: return word_names[operation];
+	}
 }
 
 [[nodiscard]] constexpr std::string_view unprivileged_store_alias_name(
@@ -419,7 +429,7 @@ inline void store_only_aliases(engine::EngineHarness &harness,
 	/* SWP has no store-only architectural alias. */
 	if (operation >= 8U)
 		return;
-	for (unsigned size_code = 0; size_code < 2U; ++size_code) {
+	for (unsigned size_code = 0; size_code < 4U; ++size_code) {
 		const auto size = std::size_t{1} << size_code;
 		const auto values = value_pairs(size)[0];
 		for (const bool release : {false, true})

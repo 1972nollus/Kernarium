@@ -8,6 +8,8 @@ endif()
 
 add_executable(uml-darwin main.cpp)
 uml_declare_architecture_target(uml-darwin app)
+target_include_directories(uml-darwin PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/cpu/arm64/jit)
 add_dependencies(uml-darwin uml_kernel uml_dependency_prefix_verify)
 set_property(TARGET uml-darwin APPEND PROPERTY LINK_DEPENDS
     "${UML_KERNEL_IMAGE}"
@@ -17,6 +19,11 @@ target_link_libraries(uml-darwin PRIVATE
     UML::Emulator
     UML::GpuDevice
     UML::JitProfileConfiguration)
+if(TARGET uml_network_provider)
+    target_link_libraries(uml-darwin PRIVATE UML::NetworkProvider)
+endif()
+target_compile_definitions(uml-darwin PRIVATE
+    UML_APP_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
 target_compile_options(uml-darwin PRIVATE -Wall -Wextra -Werror)
 target_link_options(uml-darwin PRIVATE
     "LINKER:-export_dynamic"
@@ -32,6 +39,7 @@ add_custom_command(TARGET uml-darwin POST_BUILD
         --binary $<TARGET_FILE:uml-darwin>
         --link-map ${CMAKE_CURRENT_BINARY_DIR}/uml-darwin-link-map.txt
         --prefix ${UML_DEPENDENCY_PREFIX}
+        --build-root ${CMAKE_BINARY_DIR}
     COMMENT "Verifying the final production static-link closure"
     VERBATIM)
 

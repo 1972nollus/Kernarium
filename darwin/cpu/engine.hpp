@@ -36,6 +36,7 @@ enum class EngineEvent : int {
 	breakpoint = 5,
 	gcs_fault = 6,
 	floating_point_trap = 7,
+	pc_alignment = 8,
 };
 
 enum class ExitReason {
@@ -46,6 +47,7 @@ enum class ExitReason {
 	breakpoint,
 	gcs_fault,
 	floating_point_trap,
+	pc_alignment,
 	instruction_budget,
 	fatal,
 };

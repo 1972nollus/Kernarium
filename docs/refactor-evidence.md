@@ -1,28 +1,224 @@
 # Refactor evidence
 
-This index records the 2026-08-03 fourth independent audit and preserves
-relevant dated observations from earlier campaigns. The repository is not
-closed: the fourth audit found gaps in runtime isolation, instruction evidence,
-packaging, loader safety, replay enforcement, and test ownership. The
-authoritative checklist is in
+This index records the open seventh independent audit on 2026-08-04 plus
+relevant dated observations from earlier campaigns. The seventh pass supersedes
+the sixth pass's repository-complete claim. Rootfs file management is
+explicitly excluded until the testing-image redesign, and campaigns needing
+external inputs remain external acceptance rather than source-refactor work.
+The authoritative checklist is in
 [`../REFACTOR_HANDOFF.md`](../REFACTOR_HANDOFF.md); commands and external
 prerequisites are in [`testing.md`](testing.md).
 
-## Fourth-audit observations
+## Seventh-audit evidence
 
-| Observation | Result or evidence |
+| Area | Fresh evidence and consequence |
 | --- | --- |
-| Fresh unit-only configure and architecture audit | passed; 550 targets / 561 registrations in `../.build/audit-round4-unit-only` |
-| Current unit/evidence-producer run | 562/562 passed in `../.build/audit-round3-finish-unit` |
-| Standalone instruction validator | 1/1 passed after evidence regeneration; pass is unsound as described below |
-| Instruction inventory shape | 983 verified rows: 516 Base and 467 FP&SIMD |
-| ABI synchronization | v3, fingerprint `0x4333b73bf8b2ea99`, declaration SHA-256 `4333b73bf8b2ea997904cf0ad1c0ab8975121928af60cd5b8e4b0b0e01749cc6` |
-| Dependency manifest and source/archive self-tests | passed; stale generated prefix receipt was correctly rejected |
-| Network-enabled raw macOS consumer | failed to link with unresolved `uml_slirp_net_create`, `destroy`, `irq_fd`, `open`, `read`, `stop`, and `write`; log at `/private/tmp/uml-audit-round4-macos-network-consumer.log` |
-| Network-disabled Apple consumers and fresh iOS graphs | passed |
-| Guest/performance work | no guest boot, LTP, or Geekbench run was part of this audit |
+| Allocation/feature oracle | The generator reads each form label and selected word from test-owned catalogs, asks the external decoder about that selected word, and infers a mask with independent one-bit flips. Regenerating all 983 rows is byte-identical at SHA-256 `0e383651df7e3d743ab7d7d4ffe2007b6ce41bd6bb09f1ffc8bdb9f0ca77d574`, but a consistently changed form or unrelated feature still regenerates and validates. A two-bit mask scan found 127 accepted words across 70 IDs that the decoder rejects or reclassifies; `0b221427`, for example, satisfies one current `ffe00000/0b200000` mask but is rejected by the decoder. Determinism therefore does not establish an independent form/allocation/feature oracle. |
+| Variant cardinality | Inventory, bindings, and evidence each contain 983 unique stable IDs. The validator rejects a second evidence record for an ID, the recorder emits only the bound selected case/word, and the harness credits only that bound entry. The generic variant-description field and broad executable sweeps do not independently enumerate every required valid/invalid variant, so one checked row cannot close a multi-variant instruction entry. |
+| Exact production engines | The full conformance sweep uses a test-local gadget adapter and a native-code support target that recompiles the implementation with test macros. Focused production-adapter contracts pass, but the 983-row report does not prove the exact production engine objects. The native executor is still textually assembled from roughly 10,095 implementation-header lines, and gadget translation retains a roughly 4,274-line central builder plus large selection fragments. |
+| Runtime/ABI fault correctness | `MemoryAccess` distinguishes execute, but every engine/runtime fault conversion, the translated TLB, the C ABI, and the shared harness collapse it to read/write; Linux guesses execute when fault address equals PC. A data read at PC and a true fetch fault can therefore take the wrong retry path. Separately, a gadget second-block throw can bypass architectural-state materialization/host-environment restoration, and interrupt-token registration catches allocation failure without latching or reporting it. None has the required injected cross-engine/ABI test. |
+| Engine boundary audit | Link/object/aggregate rules pass, but the real File API manifest does not serialize include-directory ownership. Synthetic negatives inject include edges not produced by the real graph, and text scanning can be bypassed by adding another engine's include directory then including only a basename. The registered 25-pass edge fixture timed out at 60.01 seconds; its direct command passed in 59.71 seconds. |
+| Memory-domain lifetime | Every run allocates a monotonic domain and permanently records it in the software retirement set; initialized 4 KiB runs also retain it in the native set. Even domains that never acquired an address space are retained. If retirement insertion fails, the exception is swallowed and a delayed resolver can recreate retired state. No 100,000-run boundedness/interleaving gate exists. |
+| GPU lifecycle and ownership | A live peer can leave a partial frame in blocking `MSG_WAITALL` reads while service stop only sets a flag and joins. The service also retains RAII ownership of peer descriptors whose exact raw numbers are handed to and closed by guest transport code, creating double-close/reuse risk. Reconnect/reset retains device resources and scanout state, and direct command-level exception-atomic tests are absent. Existing normal and ASan+UBSan ownership fixtures pass but do not exercise these cases. |
+| Linux/workflow shape | Topic 0002 still combines MMU/large-page, SMP/timer/IRQ, execution/capability, and build-portability changes across 19 files (+1,723/-117), contrary to the planned decomposition. Fresh checked-in integration presets cannot provide the required case-sensitive kernel checkout. The source audit traverses large ignored trees before filtering, and raw CTest registrations can escape mechanical suite-label verification. |
+| Suite build completeness | In a fresh GPU graph, `unit-test-binaries` omits the registered GPU ownership binary. `tooling-test-binaries` is empty because it scans only the tooling subdirectory, while the registered VNC smoke uses two parent-owned targets that are not built. There is no graph audit joining registered target commands to suite aggregate dependencies. Unit source/execution is Python-free, but ADR 0001's stronger no-Python build claim conflicts with the unconditional Python ABI verifier at configure. |
+| Current product provenance | Current gadget/native-code split sources and topic 0011 postdate the existing macOS CLI, kernels, and package consumers. The macOS XCFramework archive contains obsolete `program.cpp.o` while newer build archives contain the split objects. Those dated artifacts cannot close the current tree. |
+| Bounded cleanup and zero-cost diagnostics | One fatal gadget wrapper/declaration/body has no source or relocation reachability. Network restart and runtime lifecycle/failure controls remain in production objects. Disabled dispatch/MMU profiling still performs clock work; enabled gate profiling permanently retains one heap record per participating thread and scans the growing vector. Legacy-context teardown can reach the software registry through implicit static destruction order. Remove or isolate these paths and add symbol/object, no-clock-call, thread-churn, and subprocess exit-order gates. |
 
-The network-enabled package failure is reproducible without a guest:
+### Seventh-audit fresh verification
+
+| Check | Result |
+| --- | --- |
+| 16 KiB host graph | clean configure/build succeeded; strict unit selection passed 562/562 in 468.78 seconds |
+| 4 KiB host graph | clean configure/build succeeded; strict unit selection passed 563/563 in 367.62 seconds |
+| Architecture/source | current 4 KiB graph passed at 553 targets / 586 registrations; normal and sanitized GPU graphs passed at 562 targets / 587 registrations; source report covers 1,060 files, 60 above advisory guidance, 42 without optional review context, and zero changed since review |
+| Tooling | 22/23 passed; only `symmetric-engine-edge-audit` reached its 60-second timeout, while the same command passed directly in 59.71 seconds |
+| Safety gates | full ASan+UBSan 562/562; TSan 4/4; malformed-loader ASan+UBSan 1/1; GPU normal 1/1 and GPU ASan+UBSan 1/1 after loopback-port permission |
+| Policy/dependencies | pinned release-source manifest, pristine LibVNCServer 0.9.15, verified private prefix, ABI identities, Linux manifest/topology/next-version fixtures, and isolated topic 0011 checks pass |
+| Not claimed | no guest boot, rootfs change, LTP, browser, benchmark, current Linux replay/build, current CLI final link, or current package rebuild was performed |
+
+Reproduction notes for a fresh task:
+
+```sh
+cmake --build .build/audit-round7-unit16 \
+  --target tooling-test-binaries unit-test-binaries architecture-audit
+ctest --test-dir .build/audit-round7-unit16 -L '^unit$' --output-on-failure
+
+cmake --build .build/audit-round7-unit4k \
+  --target tooling-test-binaries unit-test-binaries architecture-audit
+ctest --test-dir .build/audit-round7-unit4k -L '^unit$' --output-on-failure
+ctest --test-dir .build/audit-round7-unit4k \
+  -R '^symmetric-engine-edge-audit$' --output-on-failure
+
+python3 tests/tooling/arm64/generate_a64_instruction_allocations.py \
+  --llvm-mc /opt/homebrew/opt/llvm/bin/llvm-mc \
+  --output /private/tmp/uml-audit-round7-allocations.tsv
+cmp tests/unit/arm64/a64_instruction_allocations.tsv \
+  /private/tmp/uml-audit-round7-allocations.tsv
+printf '0x27 0x14 0x22 0x0b\n' | \
+  /opt/homebrew/opt/llvm/bin/llvm-mc --disassemble --show-inst \
+    --triple=aarch64 --mattr=+all
+```
+
+The final command rejects a word admitted by one checked-in mask. The 127-word
+two-bit scan was an audit probe, not a checked-in test; converting that scan
+and the whole-catalog form/feature mutations into durable negative fixtures is
+part of the open acceptance work. Completed logs are under the named build
+directories; the full sanitizer log contains 562 `Test Passed.` records and no
+`Test Failed.` record.
+
+## Sixth-audit closure evidence (historical; superseded)
+
+The table below records what the sixth pass reported. Seventh-audit findings
+above invalidate its completeness claim without erasing the value of its dated
+test results.
+
+| Area | Dated reported evidence |
+| --- | --- |
+| Independent instruction oracle | `generate_a64_instruction_allocations.py` records LLVM MC 22.1.8 provenance and generates 983 allocations with 79 distinct masks and 21 exact-word masks. The validator keys allocation ownership by section plus architectural form and checks opcode provenance, mask, and value. Seven negative fixtures reject encoding, form, feature, alias, and the formerly accepted self-consistent wrong-form mutations. |
+| Exact engine evidence | Both page-size reports contain all 983 IDs. JIT has 670 retired plus 40 executed/non-retired cases and 273 exact feature skips; interpreter and gadgets have 893 retired plus 90 executed/non-retired cases. Reports are byte-identical at SHA-256 `d4bf8d90db910807e6adbf2bf19e06f1d32ccd98fd60cfa7b2d26a583d3ed139`. |
+| Engine architecture and modularity | Gadget catalog/selection/encoding, build, and execution have separate owners. JIT cache, linking, publication, diagnostics, semantic memory, emission, compilation, verification, lifecycle, and testing are separated; test-only ownership is excluded from production. The production JIT object is byte-identical to its pre-split object. The File API audit rejects cross-engine link, object, aggregate, include, and source-include edges in both directions, with a 24-case negative matrix. |
+| 4 KiB run isolation and failure safety | Native shadow state is owned by the active domain and retired after normal or abnormal execution. Because domains ultimately materialize in one process address space, native callbacks serialize with the embedded runner in 4 KiB builds. A same-VA two-handle test proves queued cancellation, flush-before-handoff, byte/domain isolation, and retry; 16 KiB native callbacks retain separate concurrency coverage. Map, protect, unmap, and refresh allocation failures are contained at the C boundary, roll back host slots/protections/bookkeeping without harming siblings, and permit retry. Native shadow mappings are data-only. |
+| GPU/VNC ownership and gates | Queue notification descriptors have RAII ownership; memory-table replacement is transactional; initialized VNC state remains guarded across event-thread construction. Production dispatch covers repeated replacement, each reset-stage failure, retry, descriptor balance, post-listen thread failure, and exact port reuse. Canonical rootfs-free normal and ASan+UBSan GPU workflows require this test whenever its target exists. |
+| Linux/dependency policy | The 64-bit vhost-user DMA-mask correction is independent topic 11. Complete-directory inventory checks reject unlisted Linux or dependency patches. `topic-path-overlaps.tsv` declares the sole exact multi-topic path as `virtio_uml.c` owned by 0007/0011; undeclared, stale, and wrong-owner fixtures fail. A fresh authenticated eleven-topic replay verifies final tree `834e5c5faa8fc4638c9fdcbd40a1f29f5c7c2d5d` and the 162/13 delta policy. |
+| Bounded taxonomy/coverage | A deterministic queued-transmit restart proves that no previous-session frame executes after reopen. The NEON inventory input is owned by `tests/unit/arm64`. The source report covers 1,060 files, 60 above advisory guidance, 42 without optional review context, and zero changed since review. |
+| iOS executable memory | Device and simulator archives contain no executable-publication reference outside `jit_arena.cpp`. Interpreter, gadgets, native shadow, and software-MMU storage are data-only: no W+X mapping and no RW/RX transition. The explicit JIT path remains available for entitled debugger/jailbreak use. |
+
+### Independent-oracle baseline reproduction (historical)
+
+Before the closure implementation, the following baseline reproduction exposed
+the duplicated catalog. It describes the old file contents and is retained as
+the negative symptom; running it against the current generated catalog no
+longer produces this result.
+
+```sh
+awk -F '\t' '
+  NR==FNR { if (FNR>1) binding[$1]=$6; next }
+  FNR>1 { rows++; if ($4=="ffffffff") exact++; if (binding[$1]==$5) same++ }
+  END { printf "rows=%d exact_masks=%d same_encoding_as_bindings=%d\n", rows, exact, same }
+' tests/unit/arm64/a64_instruction_evidence_bindings.tsv \
+  tests/unit/arm64/a64_instruction_allocations.tsv
+```
+
+Historical output:
+
+```text
+rows=983 exact_masks=983 same_encoding_as_bindings=983
+```
+
+At that baseline, calling the real binding validator with the same nonmatching
+architectural word in both test-owned fixtures printed:
+
+```text
+accepted self-consistent nonmatching architectural encoding
+```
+
+The checked-in negative fixture now makes that mutation fail for an allocation-
+form mismatch.
+
+Fresh closure verification:
+
+| Check | Result |
+| --- | --- |
+| 16 KiB host graph | build 1130/1130; unit 562/562; tooling 23/23 |
+| 4 KiB host graph | build 1070/1070; unit 563/563; exact-evidence validator 1/1 |
+| Sanitizers | full ASan+UBSan 562/562; focused native 4 KiB ASan+UBSan 2/2; TSan 4/4; malformed-loader ASan+UBSan 1/1 |
+| GPU-enabled graphs | normal and ASan+UBSan each audited as 562 targets / 587 registrations; ownership test 1/1 in each |
+| Network | rootfs-free deterministic SLiRP ARP/restart test 1/1 |
+| Structural audits | current source/architecture graphs passed; report covers 1,060 files, 60 above guideline, 42 without optional review context, and zero changed since review |
+| Apple products | iOS device and simulator builds/audits passed at 21 targets each; non-JIT executable-publication symbol scans were empty |
+| Linux/dependencies | fresh authenticated eleven-topic replay, exact final tree, 162/13 delta, topology/overlap policy, exact patch inventories, both ABI identities, pinned official inputs, pristine LibVNCServer 0.9.15, and dependency negative tests passed |
+| External campaigns | no guest boot, LTP, Node.js, Go, browser, benchmark, or controlled performance run; rootfs redesign remains deferred |
+
+The fresh cached-archive replay reverified the pinned OpenPGP signer, packaged
+tree, all eleven patch identities/order, canonical final tree, and delta policy;
+its temporary checkout was removed afterward. Dynamic generated metadata is
+intentionally not a byte-equality gate.
+
+## Fifth-audit evidence (historical closure claim)
+
+The following table records what the fifth pass reported before the sixth-audit
+baseline found gaps that the sixth pass then reported closed. The seventh audit
+reopened some of those guarantees. This remains useful dated evidence, not the
+current acceptance checklist.
+
+| Area | Dated fifth-audit result |
+| --- | --- |
+| Deterministic 16 KiB host graph | `.build/audit-round5-main-unit` passed reset, 561 evidence producers, and validation 563/563 in 286.37 seconds; its generated report contains all 983 stable IDs |
+| Deterministic 4 KiB host graph | `.build/audit-round5-main-4k` passed the 553-target / 585-registration architecture audit and reset, native-shadow coverage, all producers, and validation 564/564 in 279.60 seconds |
+| Exact evidence semantics | independent `a64_instruction_allocations.tsv` mask/value metadata and exact required/observed feature vectors join every binding. Each page-size report records 670 retired native cases, 40 executed/non-retired cases, and 273 exact native-feature skips while interpreter and gadgets continue. Six negative fixtures include encoding-only and unrelated-feature mutations |
+| Evidence workflow | reset is a Python-free unit fixture, ordinary producers depend on it, validation depends on all producers, and standalone evidence presets select the complete graph. Raw tooling excludes reset, preserves producer files, and passed 22/22 after generation |
+| Engine architecture and iOS memory | transfer, TLB, FP, and environment helpers are owned by neutral `uml_arm64_execution_helpers`; native-code targets have no gadget link/object/header/symbol edge and the audit rejects one. Interpreter/gadget source and iOS archives contain no W+X or RW/RX publication primitive; only `jit_arena.cpp` owns executable publication |
+| Cross-registry rollback and admission | deferred context/provider publication commits jointly without allocation. Provider-B failure leaves A's CPU/network fallback unchanged, permits B retry, and does not weaken committed-overlap fail-closed behavior. Stop mutation shares the admission mutex, and deterministic post-admission/wait-boundary hooks prove a queued stop completes before active-run release |
+| Software and native MMU | preallocation/rollback covers Nth-page, Nth-operation, and history-publication failures with coherent mapping/code sequences and retry. Batches retain exact generation-state identity and reject retirement/replacement with `-EAGAIN`. Native 4 KiB C entry points contain exceptions and roll back post-`mmap`, container-growth, and multi-page failures without harming sibling pages |
+| GPU received descriptors | `ReceivedDescriptors` owns ancillary FDs immediately after `recvmsg`; release occurs only after successful transfer. Sixty-four repetitions per malformed-version, oversized, truncated, dispatch-exception, and allocation-failure class plus valid transfer passed 1/1 with unchanged FD counts. Startup failure seams compile only in a test variant |
+| Canonical gates and policy | malformed loader ASan+UBSan passed 1/1 from the checked-in loader preset; canonical TSan passed exactly 4/4 in 4.44 seconds. Next-version fixtures distinguish applied, contained, and conflicting patches and verify carry/drop/retest/upstream output; topology, manifest, policy, ABI, and documentation checks pass |
+| Linux, ABI, and dependencies | authenticated no-fetch replay matches canonical final tree `834e5c5faa8fc4638c9fdcbd40a1f29f5c7c2d5d`; commit/build metadata is intentionally dynamic. The 162/13 delta policy, independent public/kernel ABI v4 identities, exact 16/4 KiB active-import checks, pristine LibVNCServer 0.9.15, and the freshly rebuilt default private prefix all verify. The then-current 16 KiB kernel and production app passed final static-link closure |
+| Apple packages | macOS, iOS device, and iOS Simulator graphs passed architecture audits and raw/install-tree genuine C/C++ consumer links. `.build/xcframework/UMLEmulator.xcframework` was produced from the then-current fifth-audit tree and default prefix |
+| Source organization | the advisory audit covers 1,034 files: 53 above guideline, 42 without optional review context, and six changed since review; cohesive logical units may exceed a nominal line target |
+| Guest/performance work | no guest boot, LTP, Node.js, Go, browser, or benchmark campaign was run for closure; rootfs redesign remains deferred and physical-device/external-service campaigns remain external acceptance |
+
+### Fifth-audit baseline reproductions (historical)
+
+Before the closure changes, the raw tooling failure was reproduced with:
+
+```sh
+ctest --test-dir .build/audit-round5-main-unit \
+  --output-on-failure -L '^tooling$' -j 6
+```
+
+It passed 21 of 22 tests and failed `arm64-instruction-evidence` because no
+evidence remained after the selected reset. CTest `DEPENDS` orders only tests
+already selected; it does not select the unit producers. The corresponding
+post-unit, reset-excluding 4 KiB run passed:
+
+```sh
+ctest --test-dir .build/audit-round5-main-unit4k \
+  --output-on-failure -L '^tooling$' \
+  -E '^arm64-instruction-evidence-reset$' -j 6
+```
+
+The validator's encoding/feature negative used its real `validate_bindings()`
+entry point with a one-row inventory and printed:
+
+```text
+accepted mismatched encoding and unchecked feature requirement
+```
+
+At that baseline the checked-in catalog's previously identified false rows were
+repaired, but the reproduction showed that the guarantee was not mechanically
+enforced. The fifth pass claimed its allocation join closed that gap; the
+historical sixth-audit self-consistent reproduction above proved it did not.
+
+The baseline GPU descriptor reproduction sent a valid-version unsupported request over
+the service socket with one `SCM_RIGHTS` descriptor, closed the sender's copy,
+and repeated that sequence 12 times. The service logged 12 unsupported-request
+errors and retained descriptors 9 through 20, all referring to `/dev/null`.
+
+## Fourth-audit closure evidence (historical)
+
+This table was the reported end state of the fourth audit. Later audit records
+supersede it, and the seventh-audit checklist is authoritative wherever an
+underlying guarantee was reopened.
+
+| Area | Dated result or evidence |
+| --- | --- |
+| Host units | the then-current 4 KiB selection passed 562/562 and the 16 KiB selection passed 561/561, with focused MMU, lifecycle, gadget, GPU, VNC, and packaging checks repeated after that audit's final edits |
+| Exact ARM64 evidence | both page-size reports validate 983/983 checked-in stable-ID bindings, with exact encoding/form and executed/retired joins, 713 JIT executions, 270 exact host-feature skips, and all four negative fixtures passing |
+| Runtime safety | all engines agree on guest-illegal implementation gaps and remain reusable; same-handle fail-fast, stop-aware embedded admission, domain/run-isolated MMU state, registry rollback, SLiRP readiness, and allocation-fault retry tests pass; the bounded ELF-loader fixture passes both at the production link address and under targeted ASan+UBSan |
+| Architecture and ownership | the 559-target / 585-registration unit/tooling/GPU graph passes; tooling-disabled external integration configures and audits as 39 targets / 10 registrations; all three package product graphs pass |
+| Public and kernel ABI | public API v4 is `0xd9a69804d3303044` (`d9a69804d33030448b780d58c3f553c0e12e4f1e19ab37f89d2719b8b93115f1`); independent kernel bridge v4 is `0xfe2d71a33e3d446e` (`fe2d71a33e3d446ec929bad4ef91d8f7b59fa2c1718bbd3d137cb24627ba175b`) |
+| Dependencies and link provenance | pristine LibVNCServer 0.9.15 tree `3b0f5deb99f726cc0cfb963b783fcc396017fde8e646240a9ed3b01c18077a35`, fresh private-prefix verification, loopback VNC, canonical final-link allowlist, and ambient-archive rejection pass |
+| Linux replay | ten exact nonempty stable patch IDs, subjects/order, no merges, topology negatives, policy checks, and independent no-fetch verification pass; exact final tree is `834e5c5faa8fc4638c9fdcbd40a1f29f5c7c2d5d` over the bounded 162-path delta |
+| Apple package and executable memory | macOS, iOS device, and iOS Simulator slices pass raw and installed-tree genuine C/C++ consumers; non-JIT paths contain no W+X or RW/RX transition, and device/simulator archives expose executable publication only through the explicitly selected JIT arena |
+| Guest/performance work | no new guest boot, LTP, Node.js, Go, browser, or benchmark workload was run for this closure; preserved earlier lightweight and performance evidence remains below |
+
+## Initial fourth-audit reproductions (historical)
+
+The following failures were the inputs to the now-closed work. They remain here
+to show the original symptoms and are not claims about the current tree.
+
+The original failing invocation did not require a guest:
 
 ```sh
 cmake -S tests/consumer/apple \
@@ -36,7 +232,7 @@ cmake --build .build/audit-round4-macos-network-consumer \
   --target uml-emulator-external-consumer --parallel 10
 ```
 
-The regenerated
+The then-regenerated
 `../.build/audit-round3-finish-unit/instruction-evidence/stable-id-bindings.tsv`
 contains 983 output rows, but only 183 use an explicit `stable-id` binding; 800
 use `decoded-label`. They resolve to 902 unique evidence selections. Concrete
@@ -47,32 +243,39 @@ false-form bindings include:
 - `FPSIMD-0234` (immediate) and `FPSIMD-0235` (literal) both select
   `0x3c403c5d`, disassembled as an immediate writeback load.
 
-The cause is structural. `form_matches()` falls through from exact compound
-qualifiers to broad substring tests, while `section_matches()` infers section
-ownership from names and paths. `EngineHarness::check_program()` records every
-stored program word with one aggregate engine result, rather than proving the
-word retired. `arm64_instruction_evidence.cpp` then ORs engine flags across
-variants. The validator therefore proves that it can assign every inventory
-row to some passing evidence record, not that the correct instruction form and
-every variant ran on every applicable engine.
+The cause was structural. `form_matches()` fell through from exact compound
+qualifiers to broad substring tests, while `section_matches()` inferred section
+ownership from names and paths. `EngineHarness::check_program()` recorded every
+stored program word with one aggregate engine result rather than proving the
+word retired. `arm64_instruction_evidence.cpp` then ORed engine flags across
+variants. The validator therefore proved only that it could assign every
+inventory row to some passing evidence record, not that the correct instruction
+form and every variant ran on every applicable engine.
 
-Other fourth-audit findings are source-level reproductions rather than new
-passing tests. Most notably, `Emulator::run()` acquires the global embedded-run
-mutex before same-handle admission; the MMU is process-global and generation-
-only; JIT converts a valid coverage gap to a guest-illegal terminal; the ELF
-loader uses destructive fixed mappings without complete range validation or
-unmapping; an undersized SLiRP read leaves stale readiness; and direct boot/GPU
-launchers do not share the maintenance sidecar lock. Acceptance tests for each
-are specified in the handoff.
+Other findings were source-level reproductions rather than new passing tests.
+Most notably, `Emulator::run()` acquired the global embedded-run mutex before
+same-handle admission; the MMU was process-global and generation-only; engines
+disagreed on implementation gaps; the ELF loader used destructive fixed
+mappings without complete range validation or unmapping; and an undersized
+SLiRP read left stale readiness. Each now has the focused acceptance coverage
+summarized above and specified in the handoff.
+
+Three later user decisions changed prioritization without erasing the audit
+evidence: guest-illegal became the required nonfatal outcome for an
+unimplemented instruction; the LibVNCServer post-release patch layer was
+removed in favor of the pristine 0.9.15 release archive; and rootfs
+hash/lock/maintenance work—including the observed launcher lock mismatch—is
+deferred until the testing-image model is redesigned.
 
 ## Third-audit closure (historical)
 
-Focused current-source checks close the run-retirement race, real embedded-
-kernel multi-handle contract, fresh guest-helper generation, both optional JIT
-profiles, reverse/interface/product architecture enforcement, build-time
-dependency revalidation, network queue/provider reuse, ABI/device extraction,
-and the final-state Linux topic series. These were the claims accepted by that
-campaign; the fourth audit supersedes conflicting closure statements. The
+The third campaign's focused checks reported closure of the run-retirement
+race, real embedded-kernel multi-handle contract, fresh guest-helper generation,
+both optional JIT profiles, reverse/interface/product architecture enforcement,
+build-time dependency revalidation, network queue/provider reuse, ABI/device
+extraction, and the final-state Linux topic series. These were the claims
+accepted by that campaign; the seventh audit supersedes conflicting closure
+statements. The
 earlier broad matrices remain
 parseable passing evidence for their dated configurations and are retained
 below rather than relabeled as new runs.
@@ -84,20 +287,25 @@ below rather than relabeled as new runs.
 - Apple clang 21.0.0 (`clang-2100.1.1.101`)
 - Python 3.14.6
 - Xcode 26.6 (17F113)
-- outer repository base: `618b68658013b83394efef367570fa2c36113eb0`
+- historical outer repository base: `618b68658013b83394efef367570fa2c36113eb0`
+- current outer HEAD: `b931e9b682e7b4bde4a4824c2e2142676052e1e1`
+  (`Major refactor`)
 
-The refactor remains an intentionally dirty working tree. No refactor file was
-staged or committed, and the pre-existing staged deletion of the former
-`linux-6.18` gitlink was preserved.
+The fourth-audit evidence was originally collected while the refactor was a
+dirty tree based on the historical commit above. At the fifth-audit baseline,
+the outer HEAD at that time had 109 modified/deleted tracked paths and 15
+untracked status entries containing implementation, tests, replay policy, ABI,
+and documentation work. Nothing was staged, and all pre-existing changes were
+preserved.
 
 ## Preserved host and guest matrices
 
 | Third-audit campaign | Result | Local evidence |
 | --- | --- | --- |
-| Current unit selection | 562/562 passed | `../.build/audit-round3-finish-unit` |
-| Repeated API and context lifecycle | 50/50 each passed | current unit binaries |
+| Dated unit selection | 562/562 passed | `../.build/audit-round3-finish-unit` |
+| Repeated API and context lifecycle | 50/50 each passed | that audit's unit binaries |
 | Tooling/provenance after evidence generation | 18/18 passed | reset fixture excluded |
-| Current targeted TSan | 1/1 passed | `../.build/audit-round3-final-tsan` |
+| Targeted TSan | 1/1 passed | `../.build/audit-round3-final-tsan` |
 | Optional JIT link profile | 2/2 passed | `../.build/audit-round3-final-profile-link` |
 | Optional JIT pressure profile | 1/1 passed | `../.build/audit-round3-final-profile-pressure` |
 | Bounded guest acceptance, 16 KiB | 5/5 passed | `../.build/audit-round3-final-integration` |
@@ -114,21 +322,24 @@ The preserved broader campaign remains: 580/580 normal unit/tooling at 16 KiB,
 581/581 at 4 KiB, 562/562 ASan+UBSan, 5/5 targeted TSan, and 24/24 fast guest
 integration at each page size. Those JUnits remain under
 `../.build/results/refactor/final-20260803`; they are dated regression evidence,
-not substituted for the fourth-audit acceptance work.
+not substituted for the fifth-audit acceptance work.
 
 ## Preserved instruction and architecture evidence
 
 The third-audit executable-instruction report assigned all 983 inventory IDs
 (516 Base and 467 FP&SIMD) to registered CTests and disassembled encodings, with
 interpreter/gadget flags and either a JIT flag or an explicit host-feature skip.
-The fourth audit shows that this assignment is not proof of correct per-form or
-per-variant execution. The generated `stable-id-bindings.tsv` contains one
+The fourth audit showed that this assignment was not proof of correct per-form
+or per-variant execution. The generated `stable-id-bindings.tsv` contained one
 header plus all 983 assignments in both page-size build trees. Selecting only
 `arm64-instruction-evidence` lists and runs one validator without activating
 its reset fixture or erasing producer evidence. The validator is
 non-destructive to producer TSVs, but it refreshes `stable-id-bindings.tsv`.
+The checked-in exact catalog and later reports are stronger than this heuristic
+historical evidence, but the sixth and seventh audits found that they still lack
+an independent encoding-to-form and exact feature-skip join.
 
-Canonical current architecture audits passed with these graphs:
+The preserved third-audit architecture campaign passed with these graphs:
 
 | Configuration | Audited graph |
 | --- | --- |
@@ -151,62 +362,72 @@ Isolated-link tests cover each CPU engine/factory edge. Two-real-kernel-handle
 serialization, network-provider isolation, and deterministic overlapping
 run-retirement/admission tests cover the process-wide and per-handle contracts.
 
-The final advisory source-size report covers 1,010 production, test/support,
-CMake, and declarative files. Fifty-three exceed a guideline, 42 lack optional
-review context, and two reviewed files changed in size. These counts are
-informational; cohesive files are allowed to remain large.
+That historical advisory source-size report covered 1,023 production,
+test/support, CMake, and declarative files. Fifty-four exceeded a guideline, 43
+lacked optional review context, and five reviewed files had changed in size.
+The fresh seventh-audit source-size counts are recorded above; all such counts
+are informational and cohesive logical units may remain large.
 
 ## Linux, dependencies, ABI, and rootfs
 
 The exact Linux replay uses the signed official `linux-6.18.41.tar.xz` release
 package (SHA-256
 `17fc72f0f8d4a8a8633a5d20085f5d9c5a5ec51ee896a0b7ae1ec25da31273ea`) and the
-10 final-state topic patches in `../kernel/patches/series/manifest.tsv`. The
+11 final-state topic patches in `../kernel/patches/series/manifest.tsv`. The
 packaged tree is
 `3098cc6dba43578488a8f7f486797af8046ce8b8`; it omits only upstream's
 export-ignored `Documentation/.renames.txt` relative to the recorded tag tree.
 Independent authenticated replay reproduces final tree
-`8adb106de7c19ed9e6c83f622a48e54629053699`. Generated local import/replay
+`834e5c5faa8fc4638c9fdcbd40a1f29f5c7c2d5d`. Generated local import/replay
 commit IDs are observations because their authentic committer metadata is
-intentionally dynamic. The third-audit replay observed managed HEAD
-`cbad57bf321f34259311b0cf0fe9135159bf5832`. The Darwin host-service topic that
-carries the synchronized ABI has stable ID
-`3da04cbf2d5422fb4076708b2bb87df3f444a4a2` and SHA-256
-`c23a15e07c6e201acf84f090440f8f42c3515cb79d7a4399b458337d1da574cd`.
+intentionally dynamic. The Darwin host-service topic has stable ID
+`14c6b921eac5574938073b9aca3006fc5f9cac14` and SHA-256
+`589f1c85669095f43f4a4bf9d6e1d71f6b6923ec0011b65e0711cbf1745b22f0`.
+The independent DMA-mask topic has stable ID
+`4293e280ee408165ae454f97819e652e00906581` and SHA-256
+`b9f1494ad577cbc2bbe62f34daaac27e53f86b9d03a196fbed928be0872aebce`.
 
-The third-audit run performed fresh signed-package Linux replay, canonical
-no-fetch verification, 162 changed-file/13 outside-port delta-ceiling checks,
-and focused release-package dependency preparation/negative tests. Production
-libraries are built from
-pinned official release packages into a project-private arm64 static prefix.
+The historical closure run performed authenticated release replay plus independent
+canonical no-fetch verification, 162 changed-file delta-ceiling checks, and
+focused release-package dependency preparation/negative tests. Production
+libraries are built from pinned official release packages into a project-private
+arm64 static prefix. LibVNCServer uses the pristine pinned 0.9.15 release tree
+without a project patch layer.
 Archive, patch, prepared-tree, manifest, and build-policy identities are
 enforced; the receipt's canonical full-payload hash is a per-build integrity
 observation, not a requirement that independent builds emit byte-identical
 libraries. Prefix verification rejects altered or extra payloads, non-archive
 or shared content, wrong architecture or deployment target, and
-ambient/staging paths. The current matrices also cover ABI synchronization and
-the source-tree audit, and both 16 KiB and 4 KiB kernels built and booted.
+ambient/staging paths. Those matrices also covered ABI synchronization and the
+source-tree audit, and both 16 KiB and 4 KiB kernels built and booted at that
+time.
 Kernel and external-library timestamps, build identity,
 user/host, compiler notes, package layout/hashes, and binary hashes are dynamic
 observations rather than reproducible identities; source inputs, patch bytes,
-exact source tree, and ABI identity are the enforced invariants. ABI v3 uses
-fingerprint `0x4333b73bf8b2ea99`, derived from normalized canonical host/kernel
-headers plus installed `uml/emulator.h`; declaration history and negative tests
-reject a declaration or layout change without an explicit identity advance.
+exact source tree, and ABI identity are the enforced invariants. Public API v4
+uses fingerprint `0xd9a69804d3303044` and declaration SHA-256
+`d9a69804d33030448b780d58c3f553c0e12e4f1e19ab37f89d2719b8b93115f1`.
+The independently versioned kernel bridge v4 uses fingerprint
+`0xfe2d71a33e3d446e` and declaration SHA-256
+`fe2d71a33e3d446ec929bad4ef91d8f7b59fa2c1718bbd3d137cb24627ba175b`.
+Separate declaration histories and negative tests reject drift without an
+explicit identity advance in the affected boundary.
 
-The rootfs remained 8,589,934,592 bytes, mode `0444`, SHA-256
+As a historical observation, the rootfs remained 8,589,934,592 bytes, mode `0444`, SHA-256
 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
 Provisioning, explicit maintenance authorization, recovery artifacts, lock
 lifetime, and process-group cleanup are covered by host tests. No writable
-rootfs maintenance was performed.
+rootfs maintenance was performed. These properties are no longer current
+refactor acceptance gates.
 
 ## Apple package and executable memory
 
 `scripts/build-xcframework.sh` rebuilt all three arm64 aggregate archives,
-linked an external consumer for every platform, audited the device/simulator
-archives, and recreated `UMLEmulator.xcframework`. Each archive has 59 members;
-its Info.plist contains macOS arm64, iOS-device arm64, and iOS-simulator arm64.
-A local `UMLBackend.xcframework` is an older artifact, not a current product.
+linked raw-build and installed-tree genuine C and C++ consumers for every
+platform, audited the device/simulator archives, and recreated
+`../.build/audit-round4-package/UMLEmulator.xcframework`. Its Info.plist
+contains macOS arm64, iOS-device arm64, and iOS-simulator arm64. A local
+`UMLBackend.xcframework` is an older artifact, not a current product.
 
 Archive hashes, package layout details, tool versions, timestamps, and other
 generated build metadata are intentionally dynamic observations. Acceptance is
@@ -267,12 +488,12 @@ the overall multi-core score is effectively flat.
 The following are intentionally not local pass claims because their inputs are
 outside the repository:
 
-- publisher release URL and trusted rootfs public key;
-- an immutable image containing the full LTP payload for gadgets and JIT;
+- a suitable guest image containing the full LTP payload for gadgets and JIT;
 - physical sandboxed/entitled iOS devices;
 - opt-in public-network, interactive KDE/VNC, rendered WebGL, and browser
   campaigns; and
 - repeated controlled gadget/JIT performance runs.
 
-Missing external inputs are not the cause of the repository-owned work reopened
-by the fourth audit.
+Missing external inputs are separate from the open repository-owned seventh-
+audit work. Rootfs provisioning, identity, locking, and maintenance are
+intentionally deferred until the testing-image redesign.

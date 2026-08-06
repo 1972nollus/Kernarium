@@ -4,6 +4,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
+#include "runtime/execution_engine.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,12 @@
 #include <unistd.h>
 
 namespace uml::emulator::tests {
+
+[[nodiscard]] inline bool jit_available() noexcept
+{
+	return ::uml::runtime::execution_engine_available(
+		::uml::runtime::ExecutionEngine::jit);
+}
 
 inline void require(bool condition,
 	const std::source_location location = std::source_location::current())

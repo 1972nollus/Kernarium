@@ -14,10 +14,9 @@ import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(TESTS / "integration" / "ltp"))
-sys.path.insert(0, str(TESTS / "integration" / "smp"))
-from run_guest_ltp import Guest  # noqa: E402
-from run_guest_smp import cpu_time_seconds  # noqa: E402
+sys.path.insert(0, str(TESTS / "integration" / "support"))
+from guest import Guest  # noqa: E402
+from host_metrics import cpu_time_seconds  # noqa: E402
 
 
 def parse_arguments() -> argparse.Namespace:

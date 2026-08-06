@@ -19,6 +19,7 @@ namespace {
 namespace arm64 = uml::cpu::arm64;
 using uml::cpu::arm64::JitCacheValidationDiagnostics;
 using uml::cpu::arm64::JitExecutor;
+using uml::cpu::arm64::JitExecutorDiagnosticsOptions;
 using uml::cpu::arm64::JitExecutorOptions;
 using uml::memory::StaticGuestMemory;
 
@@ -375,10 +376,12 @@ void arena_reset_discards_saved_validation_words()
 	JitBacking backing{1};
 	backing.put(0, std::as_bytes(std::span{instructions}));
 	JitMapping mapping{generation, base, backing, 1};
-	JitExecutor executor{JitExecutorOptions{
-		.reuse_validated_stale_blocks = true,
-		.code_arena_size = 16U * 1024U,
-	}};
+	JitExecutor executor{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{
+			.reuse_validated_stale_blocks = true,
+			.code_arena_size = 16U * 1024U,
+		}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 
@@ -419,7 +422,9 @@ void arena_reset_recompiles_link_descriptors()
 	}
 	backing.put32(target - base, system_call);
 	JitMapping mapping{generation, base, backing, 1};
-	JitExecutor executor{JitExecutorOptions{.code_arena_size = 4096}};
+	JitExecutor executor{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{.code_arena_size = 4096}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 
@@ -502,9 +507,11 @@ struct Timing final {
 	backing.put32(0, move_immediate(0, 7));
 	backing.put32(4, system_call);
 	JitMapping mapping{generation, base, backing, 2};
-	JitExecutor executor{JitExecutorOptions{
-		.reuse_validated_stale_blocks = reuse,
-	}};
+	JitExecutor executor{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{
+			.reuse_validated_stale_blocks = reuse,
+		}};
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 	cpu.pc = base;
@@ -551,25 +558,15 @@ void stale_sequence_control_reports_avoided_translation_work()
 
 int main()
 {
-	const auto *verification = std::getenv("UML_VERIFY_JIT");
-	const bool verifies_each_block =
-		verification != nullptr && verification[0] != '\0' &&
-		verification[0] != '0';
 	unrelated_page_change_reuses_exact_block();
 	in_block_change_rejects_saved_words();
 	executable_permission_change_rejects_saved_block();
 	remapped_code_is_refetched_from_the_current_mapping();
 	cross_page_block_is_validated_completely();
-	/*
-	 * Per-block interpreter verification deliberately disables successor
-	 * links, so only the link lifecycle case is inapplicable in that mode.
-	 */
-	if (!verifies_each_block)
-		sequence_change_deactivates_unvalidated_successor_link();
+	sequence_change_deactivates_unvalidated_successor_link();
 	cache_replacement_keeps_validation_metadata_bounded();
 	arena_reset_discards_saved_validation_words();
-	if (!verifies_each_block)
-		arena_reset_recompiles_link_descriptors();
+	arena_reset_recompiles_link_descriptors();
 	reordered_words_cannot_hide_behind_a_digest_collision();
 	stale_sequence_control_reports_avoided_translation_work();
 	return 0;

@@ -8,41 +8,14 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import os
 import pathlib
-import subprocess
 import sys
 import time
 
 
-LTP_TOOLS = pathlib.Path(__file__).resolve().parents[1] / "ltp"
-sys.path.insert(0, str(LTP_TOOLS))
-from run_guest_ltp import Guest  # noqa: E402
-
-
-def cpu_time_seconds(process_id: int) -> float:
-    value = subprocess.check_output(
-        ["ps", "-p", str(process_id), "-o", "time="],
-        text=True,
-    ).strip()
-    if not value:
-        raise RuntimeError("ps returned no CPU time for the emulator")
-    days = 0
-    if "-" in value:
-        day_text, value = value.split("-", 1)
-        days = int(day_text)
-    fields = value.split(":")
-    if len(fields) == 2:
-        hours = 0
-        minutes, seconds = fields
-    elif len(fields) == 3:
-        hours, minutes, seconds = fields
-    else:
-        raise RuntimeError(f"unrecognized ps CPU time: {value!r}")
-    return (
-        days * 86400
-        + int(hours) * 3600
-        + int(minutes) * 60
-        + float(seconds)
-    )
+SUPPORT = pathlib.Path(__file__).resolve().parents[1] / "support"
+sys.path.insert(0, str(SUPPORT))
+from guest import Guest  # noqa: E402
+from host_metrics import cpu_time_seconds  # noqa: E402
 
 
 def require_command(guest: Guest, command: str, expected: str | None = None) -> str:

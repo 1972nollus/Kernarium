@@ -336,7 +336,7 @@ RunResult Dispatcher::system_instruction(CpuState &cpu, GuestMemory &,
 RunResult Dispatcher::unavailable_extension(CpuState &cpu, GuestMemory &,
 	std::uint32_t instruction) const
 {
-	return {StopReason::illegal_instruction, cpu.pc, instruction, 0, false};
+	return {StopReason::unavailable_feature, cpu.pc, instruction, 0, false};
 }
 
 RunResult Dispatcher::memory_barrier(CpuState &cpu, GuestMemory &,

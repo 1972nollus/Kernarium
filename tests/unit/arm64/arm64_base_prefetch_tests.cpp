@@ -119,6 +119,18 @@ void valid_prefetches(engine_tests::EngineHarness &harness)
 			.subspan(first, std::min(batch_size, stream.size() - first)));
 }
 
+void exact_evidence_representatives(engine_tests::EngineHarness &harness)
+{
+	const auto initial = state();
+	for (const auto [name, instruction] :
+	     std::array<std::pair<std::string_view, std::uint32_t>, 3>{
+		     {{"BASE-0320 PRFM immediate exact", 0xf980'0000U},
+		      {"BASE-0322 PRFM register exact", 0xf8a0'4800U},
+		      {"BASE-0323 PRFUM exact", 0xf880'0000U}}})
+		harness.check_one(name, instruction, initial, initial,
+			engine_tests::NativeRequirements::baseline());
+}
+
 void reserved_register_offsets(engine_tests::EngineHarness &harness)
 {
 	const auto initial = state();
@@ -147,6 +159,7 @@ void reserved_register_offsets(engine_tests::EngineHarness &harness)
 int main()
 {
 	engine_tests::EngineHarness harness;
+	exact_evidence_representatives(harness);
 	valid_prefetches(harness);
 	reserved_register_offsets(harness);
 	harness.print_summary("arm64-base-prefetch");

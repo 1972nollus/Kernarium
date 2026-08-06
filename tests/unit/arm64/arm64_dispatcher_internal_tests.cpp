@@ -186,6 +186,26 @@ void invalid_instruction_preserves_precise_diagnostic_state()
 	require(memory.reads() == 0);
 }
 
+void instruction_failures_keep_distinct_internal_diagnostics()
+{
+	constexpr std::uint64_t base = 0x3800;
+	constexpr std::uint32_t invalid = 0x0000'0000U;
+	constexpr std::uint32_t unavailable_barrier_extension = 0xd503'31ffU;
+	constexpr std::uint32_t implementation_gap = 0xd500'0000U;
+	ProbeMemory memory{base, 4};
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	const arm64::Dispatcher dispatcher;
+	require(dispatcher.execute(cpu, memory, invalid).reason ==
+		arm64::StopReason::illegal_instruction);
+	require(dispatcher.execute(
+		cpu, memory, unavailable_barrier_extension).reason ==
+		arm64::StopReason::unavailable_feature);
+	require(dispatcher.execute(cpu, memory, implementation_gap).reason ==
+		arm64::StopReason::unsupported_instruction);
+	require(cpu.pc == base);
+}
+
 void fetch_fault_preserves_precise_diagnostic_state()
 {
 	constexpr std::uint64_t base = 0x4000;
@@ -348,6 +368,7 @@ int main()
 	budget_exhaustion_reports_completed_work();
 	terminal_event_reports_instruction_and_total_count();
 	invalid_instruction_preserves_precise_diagnostic_state();
+	instruction_failures_keep_distinct_internal_diagnostics();
 	fetch_fault_preserves_precise_diagnostic_state();
 	code_invalidation_is_forwarded_to_memory_adapter();
 	deferred_simd_load_store_uses_coherent_state();

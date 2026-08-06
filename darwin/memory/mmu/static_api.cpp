@@ -2,15 +2,25 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
+#if UML_MEMORY_HAS_NATIVE_VM
 #include "native_address_space.hpp"
 #endif
 
+#ifndef UML_RUNTIME_PROFILING
+#define UML_RUNTIME_PROFILING 0
+#endif
+
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <new>
 #if UML_MEMORY_HAS_NATIVE_VM
+#if UML_RUNTIME_PROFILING
 #include <cstdio>
 #include <cstdlib>
+#endif
 #include <sys/mman.h>
 #endif
 
@@ -18,12 +28,33 @@ namespace {
 
 constexpr std::uintptr_t guest_address_limit = 0x6000'0000'0000ULL;
 
-[[nodiscard]] bool guest_address(const void *address) noexcept
+enum class AddressRange : std::uint8_t {
+	guest,
+	native,
+	invalid,
+};
+
+[[nodiscard]] AddressRange address_range(
+	const void *pointer, std::uint64_t length) noexcept
 {
-	return reinterpret_cast<std::uintptr_t>(address) < guest_address_limit;
+	const auto address = reinterpret_cast<std::uintptr_t>(pointer);
+	if (length > std::numeric_limits<std::uintptr_t>::max() - address)
+		return AddressRange::invalid;
+	const bool guest = address < guest_address_limit;
+	if (length != 0 &&
+	    (address + length - 1 < guest_address_limit) != guest)
+		return AddressRange::invalid;
+	return guest ? AddressRange::guest : AddressRange::native;
+}
+
+[[nodiscard]] int invalid_address_range() noexcept
+{
+	errno = EINVAL;
+	return -1;
 }
 
 #if UML_MEMORY_HAS_NATIVE_VM
+#if UML_RUNTIME_PROFILING
 [[nodiscard]] bool trace_enabled() noexcept
 {
 	static const bool enabled = [] {
@@ -32,12 +63,49 @@ constexpr std::uintptr_t guest_address_limit = 0x6000'0000'0000ULL;
 	}();
 	return enabled;
 }
+#endif
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+[[nodiscard]] bool use_native_shadow(
+	const uml::memory::NativeAddressSpace &space, const void *address,
+	std::uint64_t offset, std::uint64_t length)
+{
+	return uml::memory::NativeAddressSpace::needs_shadow(
+			reinterpret_cast<std::uintptr_t>(address), offset, length) ||
+		space.contains_shadow(
+			reinterpret_cast<std::uintptr_t>(address), length);
+}
+#endif
 
 [[nodiscard]] int write_xor_execute(int protection) noexcept
 {
 	if ((protection & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
 		protection &= ~PROT_EXEC;
 	return protection;
+}
+template<typename Function>
+[[nodiscard]] int native_address_call(
+	const std::shared_ptr<uml::memory::NativeAddressSpace> &space,
+	Function &&function) noexcept
+{
+	try {
+		if (!space) {
+			if (errno == 0)
+				errno = ESRCH;
+			return -1;
+		}
+		errno = 0;
+		const int result = function(*space);
+		if (result < 0 && errno == 0)
+			errno = EFAULT;
+		return result;
+	} catch (const std::bad_alloc &) {
+		errno = ENOMEM;
+		return -1;
+	} catch (...) {
+		errno = EIO;
+		return -1;
+	}
 }
 #else
 [[nodiscard]] int native_vm_unavailable() noexcept
@@ -47,55 +115,80 @@ constexpr std::uintptr_t guest_address_limit = 0x6000'0000'0000ULL;
 }
 #endif
 
+[[nodiscard]] int publish_native_shadow(
+	int fd, std::uint64_t offset, std::uint64_t length) noexcept
+{
+#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	auto native_space = uml::memory::native_address_space();
+	const auto result = native_address_call(native_space, [&](auto &space) {
+		return space.publish_backing(fd, offset, length);
+	});
+	if (result == 0)
+		std::atomic_thread_fence(std::memory_order_release);
+	return result;
+#else
+	(void)fd;
+	(void)offset;
+	(void)length;
+	return 0;
+#endif
+}
+
 } // namespace
 
 extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offset,
 				 unsigned long length, int protection, int guest_code,
 				 int guest_writable)
 {
-	if (guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::guest) {
+		if (publish_native_shadow(fd, offset, length) < 0)
+			return -1;
 		return darwin_uml_static_vm_map(address, fd, offset, length, protection,
 						guest_code, guest_writable);
+	}
 #if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	const bool shadow =
-		!guest_address(address) &&
-		(uml::memory::NativeAddressSpace::needs_shadow(
-			 reinterpret_cast<std::uintptr_t>(address), offset, length) ||
-		 uml::memory::native_address_space().contains(
-			 reinterpret_cast<std::uintptr_t>(address), length));
+	return native_address_call(native_space, [&](auto &space) {
+		const bool shadow = use_native_shadow(
+			space, address, offset, length);
+#if UML_RUNTIME_PROFILING
+		if (trace_enabled())
+			std::fprintf(
+				stderr,
+				"Darwin native map address=%p fd=%d offset=%#llx "
+				"length=%#lx protection=%#x shadow=%d\n",
+				address, fd, offset, length, protection, shadow);
 #endif
-	if (trace_enabled() && !guest_address(address))
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-		std::fprintf(
-			stderr,
-			"Darwin native map address=%p fd=%d offset=%#llx length=%#lx "
-			"protection=%#x shadow=%d\n",
-			address, fd, offset, length, protection, shadow);
+		if (shadow)
+			return space.map(
+				reinterpret_cast<std::uintptr_t>(address), fd, offset,
+				length, protection);
+		protection = write_xor_execute(protection);
+		return space.map_direct(
+			reinterpret_cast<std::uintptr_t>(address), fd, offset,
+			length, protection);
+	});
 #else
-		std::fprintf(stderr,
-			     "Darwin native direct map address=%p fd=%d offset=%#llx "
-			     "length=%#lx protection=%#x\n",
-			     address, fd, offset, length, protection);
-#endif
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	if (shadow)
-		return uml::memory::native_address_space().map(
-			reinterpret_cast<std::uintptr_t>(address), fd, offset, length,
-			protection);
-#endif
 	protection = write_xor_execute(protection);
-	const auto result = mmap(address, length, protection, MAP_FIXED | MAP_SHARED,
-				 fd, offset) == MAP_FAILED
-				    ? -1
-				    : 0;
+	const auto result = native_address_call(native_space, [&](auto &space) {
+		return space.map_direct(
+			reinterpret_cast<std::uintptr_t>(address), fd, offset,
+			length, protection);
+	});
+#if UML_RUNTIME_PROFILING
 	if (trace_enabled())
 		std::fprintf(
 			stderr,
 			"Darwin static native map address=%p offset=%#llx length=%#lx "
 			"protection=%#x result=%d\n",
 			address, offset, length, protection, result);
+#endif
 	return result;
+#endif
 #else
 	return native_vm_unavailable();
 #endif
@@ -106,9 +199,17 @@ extern "C" int darwin_uml_vm_map_generation(unsigned long generation, void *addr
 					    unsigned long length, int protection,
 					    int guest_code, int guest_writable)
 {
-	if (!guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::native)
 		return darwin_uml_vm_map(address, fd, offset, length, protection,
 					 guest_code, guest_writable);
+	/* Physical aliases use private 4 KiB shadows on a 16 KiB Darwin host.
+	 * Publish them before the software mapping and its code-change sequence
+	 * become visible to an execution engine. */
+	if (publish_native_shadow(fd, offset, length) < 0)
+		return -1;
 	return darwin_uml_static_vm_map_generation(generation, address, fd, offset,
 						   length, protection, guest_code,
 						   guest_writable);
@@ -121,23 +222,40 @@ extern "C" int darwin_uml_vm_protect(void *address, unsigned long length,
 	 * guest write permission.  Only sanitize the native Darwin mapping that
 	 * is actually subject to the host W^X policy.
 	 */
-	if (guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::guest)
 		return darwin_uml_static_vm_protect(address, length, protection);
 #if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	const bool tracked = uml::memory::native_address_space().contains(
-		reinterpret_cast<std::uintptr_t>(address), length);
-	if (trace_enabled())
-		std::fprintf(
-			stderr,
-			"Darwin native protect address=%p length=%#lx protection=%#x "
-			"tracked=%d\n",
-			address, length, protection, tracked);
-	if (tracked)
-		return uml::memory::native_address_space().protect(
-			reinterpret_cast<std::uintptr_t>(address), length, protection);
+	return native_address_call(native_space, [&](auto &space) {
+		const bool shadow = space.contains_shadow(
+			reinterpret_cast<std::uintptr_t>(address), length);
+#if UML_RUNTIME_PROFILING
+		if (trace_enabled())
+			std::fprintf(
+				stderr,
+				"Darwin native protect address=%p length=%#lx "
+				"protection=%#x shadow=%d\n",
+				address, length, protection, shadow);
 #endif
-	return mprotect(address, length, write_xor_execute(protection));
+		if (shadow || uml::memory::NativeAddressSpace::needs_shadow(
+				reinterpret_cast<std::uintptr_t>(address), 0, length))
+			return space.protect(
+				reinterpret_cast<std::uintptr_t>(address), length,
+				protection);
+		return space.protect_direct(
+			reinterpret_cast<std::uintptr_t>(address), length,
+			write_xor_execute(protection));
+	});
+#endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.protect_direct(
+			reinterpret_cast<std::uintptr_t>(address), length,
+			write_xor_execute(protection));
+	});
 #else
 	return native_vm_unavailable();
 #endif
@@ -145,27 +263,36 @@ extern "C" int darwin_uml_vm_protect(void *address, unsigned long length,
 
 extern "C" int darwin_uml_vm_unmap(void *address, unsigned long length)
 {
-	if (guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::guest)
 		return darwin_uml_static_vm_unmap(address, length);
 #if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	if (trace_enabled() && !guest_address(address))
-		std::fprintf(
-			stderr,
-			"Darwin native unmap address=%p length=%#lx tracked=%d\n",
-			address, length,
-			uml::memory::native_address_space().contains(
-				reinterpret_cast<std::uintptr_t>(address), length));
-	return (uml::memory::native_address_space().contains(
-			reinterpret_cast<std::uintptr_t>(address), length) ||
-		uml::memory::NativeAddressSpace::needs_shadow(
-			reinterpret_cast<std::uintptr_t>(address), 0, length))
-		       ? uml::memory::native_address_space().unmap(
-				 reinterpret_cast<std::uintptr_t>(address), length)
-		       : munmap(address, length);
-#else
-	return munmap(address, length);
+	return native_address_call(native_space, [&](auto &space) {
+		const bool shadow = space.contains_shadow(
+			reinterpret_cast<std::uintptr_t>(address), length);
+#if UML_RUNTIME_PROFILING
+		if (trace_enabled())
+			std::fprintf(
+				stderr,
+				"Darwin native unmap address=%p length=%#lx shadow=%d\n",
+				address, length, shadow);
 #endif
+		if (shadow || uml::memory::NativeAddressSpace::needs_shadow(
+				reinterpret_cast<std::uintptr_t>(address), 0, length))
+			return space.unmap(
+				reinterpret_cast<std::uintptr_t>(address), length);
+		return space.unmap_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
+#endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.unmap_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 #else
 	return native_vm_unavailable();
 #endif
@@ -174,21 +301,30 @@ extern "C" int darwin_uml_vm_unmap(void *address, unsigned long length)
 extern "C" int darwin_uml_vm_unmap_generation(unsigned long generation, void *address,
 					      unsigned long length)
 {
-	if (guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::guest)
 		return darwin_uml_static_vm_unmap_generation(generation, address,
 							     length);
 #if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	return (uml::memory::native_address_space().contains(
-			reinterpret_cast<std::uintptr_t>(address), length) ||
-		uml::memory::NativeAddressSpace::needs_shadow(
-			reinterpret_cast<std::uintptr_t>(address), 0, length))
-		       ? uml::memory::native_address_space().unmap(
-				 reinterpret_cast<std::uintptr_t>(address), length)
-		       : munmap(address, length);
-#else
-	return munmap(address, length);
+	return native_address_call(native_space, [&](auto &space) {
+		if (space.contains_shadow(
+				reinterpret_cast<std::uintptr_t>(address), length) ||
+		    uml::memory::NativeAddressSpace::needs_shadow(
+				reinterpret_cast<std::uintptr_t>(address), 0, length))
+			return space.unmap(
+				reinterpret_cast<std::uintptr_t>(address), length);
+		return space.unmap_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 #endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.unmap_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 #else
 	return native_vm_unavailable();
 #endif
@@ -196,17 +332,33 @@ extern "C" int darwin_uml_vm_unmap_generation(unsigned long generation, void *ad
 
 extern "C" int darwin_uml_vm_drop(void *address, unsigned long length)
 {
-	if (guest_address(address))
+	const auto range = address_range(address, length);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+	if (range == AddressRange::guest)
 		return 0;
-#if UML_MEMORY_HAS_NATIVE_VM
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	return uml::memory::native_address_space().flush(
-		reinterpret_cast<std::uintptr_t>(address), length);
-#else
-	(void)address;
-	(void)length;
-	return 0;
+#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	if ((reinterpret_cast<std::uintptr_t>(address) |
+	     static_cast<std::uintptr_t>(length)) &
+	    (DARWIN_UML_GUEST_PAGE_SIZE - 1))
+		return invalid_address_range();
 #endif
+#if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	return native_address_call(native_space, [&](auto &space) {
+		if (space.contains_shadow(
+				reinterpret_cast<std::uintptr_t>(address), length))
+			return space.flush(
+				reinterpret_cast<std::uintptr_t>(address), length);
+		return space.flush_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
+#endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.flush_direct(
+			reinterpret_cast<std::uintptr_t>(address), length);
+	});
 #else
 	(void)length;
 	return native_vm_unavailable();
@@ -257,9 +409,26 @@ extern "C" int darwin_uml_vm_sync_to_backing(unsigned long)
 }
 extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 {
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	return uml::memory::native_address_space().refresh(address,
-							   DARWIN_UML_GUEST_PAGE_SIZE);
+	const auto range = address_range(reinterpret_cast<void *>(address),
+		DARWIN_UML_GUEST_PAGE_SIZE);
+	if (range == AddressRange::invalid)
+		return invalid_address_range();
+#if UML_MEMORY_HAS_NATIVE_VM
+	if (range == AddressRange::guest)
+		return 0;
+	auto native_space = uml::memory::native_address_space();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	return native_address_call(native_space, [&](auto &space) {
+		if (space.contains_shadow(address, DARWIN_UML_GUEST_PAGE_SIZE))
+			return space.refresh(
+				address, DARWIN_UML_GUEST_PAGE_SIZE);
+		return space.sync_direct(address, DARWIN_UML_GUEST_PAGE_SIZE);
+	});
+#endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.sync_direct(
+			address, DARWIN_UML_GUEST_PAGE_SIZE);
+	});
 #else
 	(void)address;
 	return 0;
@@ -269,6 +438,9 @@ extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 extern "C" int darwin_uml_vm_sync_from_buffer(unsigned long address, const void *buffer,
 					      unsigned long length)
 {
+	if (address_range(reinterpret_cast<void *>(address), length) ==
+	    AddressRange::invalid)
+		return invalid_address_range();
 	return darwin_uml_static_vm_copy_from_buffer(address, buffer, length);
 }
 
@@ -281,6 +453,8 @@ extern "C" int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
 extern "C" int darwin_uml_vm_rebind(unsigned long address, int fd,
 				    unsigned long long offset)
 {
+	if (publish_native_shadow(fd, offset, DARWIN_UML_GUEST_PAGE_SIZE) < 0)
+		return -1;
 	return darwin_uml_static_vm_rebind(address, fd, offset);
 }
 
@@ -297,9 +471,21 @@ extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int
 {
 	if (address < guest_address_limit)
 		return darwin_uml_static_vm_retry_fault(address, execute, write);
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	return uml::memory::native_address_space().retry(address, execute != 0,
-							 write != 0);
+#if UML_MEMORY_HAS_NATIVE_VM
+	auto native_space = uml::memory::native_address_space();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+	return native_address_call(native_space, [&](auto &space) {
+		if (space.contains_shadow(address, 1))
+			return space.retry(
+				address, execute != 0, write != 0);
+		return space.retry_direct(
+			address, execute != 0, write != 0);
+	});
+#endif
+	return native_address_call(native_space, [&](auto &space) {
+		return space.retry_direct(
+			address, execute != 0, write != 0);
+	});
 #else
 	return 0;
 #endif
@@ -307,5 +493,6 @@ extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int
 
 extern "C" int darwin_uml_begin_write_single_step(unsigned long, unsigned long)
 {
+	errno = ENOTSUP;
 	return -1;
 }

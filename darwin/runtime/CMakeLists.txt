@@ -24,7 +24,8 @@ target_include_directories(uml_static_runtime PRIVATE
 target_compile_features(uml_static_runtime PUBLIC cxx_std_20)
 target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_runtime PRIVATE
-    UML_JIT_PUBLICATION_GATE_TESTING=0)
+    UML_JIT_PUBLICATION_GATE_TESTING=0
+    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_context OBJECT
@@ -32,6 +33,7 @@ add_library(uml_runtime_context OBJECT
 uml_declare_architecture_target(uml_runtime_context runtime)
 target_link_libraries(uml_runtime_context PRIVATE
     UML::RuntimeContract
+    UML::RunRouting
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_context PRIVATE
@@ -75,40 +77,43 @@ target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_entry PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-set(UML_RUNTIME_CORE_OBJECTS
+add_library(uml_runtime_objects INTERFACE)
+add_library(UML::RuntimeObjects ALIAS uml_runtime_objects)
+uml_declare_architecture_target(uml_runtime_objects runtime)
+target_link_libraries(uml_runtime_objects INTERFACE UML::RuntimeContract)
+target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
-    $<TARGET_OBJECTS:uml_memory_vm_bridge>
-    $<TARGET_OBJECTS:uml_arm64_dispatch>
-    $<TARGET_OBJECTS:uml_arm64_gadgets>
-    $<TARGET_OBJECTS:uml_static_mmu>
-    $<TARGET_OBJECTS:uml_static_runtime>
-    $<TARGET_OBJECTS:uml_cpu_engine_factory>
-    $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
-    $<TARGET_OBJECTS:uml_arm64_gadget_engine>
-    $<TARGET_OBJECTS:uml_arm64_jit_engine>
-    $<TARGET_OBJECTS:uml_arm64_gadget_executor>
-    $<TARGET_OBJECTS:uml_arm64_jit>
-    $<TARGET_OBJECTS:uml_arm64_jit_executor>
-    $<TARGET_OBJECTS:uml_static_guest_memory>)
-if(TARGET uml_native_mmu)
-    list(APPEND UML_RUNTIME_CORE_OBJECTS
-        $<TARGET_OBJECTS:uml_native_mmu>)
-endif()
-set(UML_RUNTIME_CORE_OBJECTS "${UML_RUNTIME_CORE_OBJECTS}" PARENT_SCOPE)
+    $<TARGET_OBJECTS:uml_static_runtime>)
 
-# Keep a separately inspectable runtime archive while exposing the exact same
-# owned object composition to the complete Apple library product.
-add_library(uml_runtime_core STATIC ${UML_RUNTIME_CORE_OBJECTS})
+# This composition target consumes module-owned object carriers. No source or
+# object manifest crosses its owning directory and no unused intermediate
+# archive is emitted.
+add_library(uml_runtime_core INTERFACE)
 add_library(UML::RuntimeCore ALIAS uml_runtime_core)
 uml_declare_architecture_target(uml_runtime_core runtime)
-target_link_libraries(uml_runtime_core PRIVATE UML::RuntimeContract)
-target_include_directories(uml_runtime_core PRIVATE
+target_link_libraries(uml_runtime_core INTERFACE
+    UML::RuntimeObjects
+    uml_cpu_engine_component
+    UML::PlatformComponent)
+target_include_directories(uml_runtime_core INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_core PUBLIC cxx_std_20)
-target_compile_options(uml_runtime_core PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_runtime_core PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    OUTPUT_NAME uml_runtime_core)
+target_compile_features(uml_runtime_core INTERFACE cxx_std_20)
+
+if(TARGET uml_memory_test_component)
+    add_library(uml_runtime_core_test_variant INTERFACE)
+    add_library(UML::RuntimeCoreTestVariant ALIAS
+        uml_runtime_core_test_variant)
+    uml_declare_architecture_target(uml_runtime_core_test_variant runtime)
+    target_link_libraries(uml_runtime_core_test_variant INTERFACE
+        UML::RuntimeObjects
+        UML::CpuEngineObjects
+        UML::MemoryTestComponent
+        UML::PlatformComponent)
+    target_include_directories(uml_runtime_core_test_variant INTERFACE
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/darwin)
+    target_compile_features(uml_runtime_core_test_variant INTERFACE cxx_std_20)
+endif()

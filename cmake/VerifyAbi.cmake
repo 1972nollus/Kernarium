@@ -33,8 +33,27 @@ function(uml_verify_generated_abi)
     set(UML_KERNEL_ABI_FINGERPRINT "${_uml_abi_fingerprint}" CACHE INTERNAL
         "Canonical Darwin UML host/kernel ABI fingerprint" FORCE)
     file(WRITE "${CMAKE_BINARY_DIR}/uml-abi-identity.txt"
-        "version=${_uml_abi_version}\n"
-        "fingerprint=${_uml_abi_fingerprint}\n")
+        "kernel_version=${_uml_abi_version}\n"
+        "kernel_fingerprint=${_uml_abi_fingerprint}\n")
+
+    file(STRINGS "${PROJECT_SOURCE_DIR}/darwin/api/abi/identity.env"
+        _uml_public_identity_rows)
+    foreach(_uml_identity_row IN LISTS _uml_public_identity_rows)
+        if(_uml_identity_row MATCHES
+           "^UML_EMULATOR_ABI_VERSION=([0-9]+)$")
+            set(_uml_public_abi_version "${CMAKE_MATCH_1}")
+        elseif(_uml_identity_row MATCHES
+               "^UML_EMULATOR_ABI_FINGERPRINT='(0x[0-9A-Fa-f]+)'$")
+            set(_uml_public_abi_fingerprint "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+    if(NOT DEFINED _uml_public_abi_version OR
+       NOT DEFINED _uml_public_abi_fingerprint)
+        message(FATAL_ERROR "Unable to parse darwin/api/abi/identity.env")
+    endif()
+    file(APPEND "${CMAKE_BINARY_DIR}/uml-abi-identity.txt"
+        "public_version=${_uml_public_abi_version}\n"
+        "public_fingerprint=${_uml_public_abi_fingerprint}\n")
 
     include(CheckCXXSourceCompiles)
     set(_uml_saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")
@@ -42,8 +61,8 @@ function(uml_verify_generated_abi)
         "${PROJECT_SOURCE_DIR}/darwin/api/include")
     set(_uml_abi_consumer_source
         "#include <uml/emulator.h>\n"
-        "static_assert(DARWIN_UML_ABI_VERSION == ${_uml_abi_version}U);\n"
-        "static_assert(DARWIN_UML_ABI_FINGERPRINT == ${_uml_abi_fingerprint}ULL);\n"
+        "static_assert(UML_EMULATOR_ABI_VERSION == ${_uml_public_abi_version}U);\n"
+        "static_assert(UML_EMULATOR_ABI_FINGERPRINT == ${_uml_public_abi_fingerprint}ULL);\n"
         "int main() { return 0; }\n")
     check_cxx_source_compiles(
         "${_uml_abi_consumer_source}"
@@ -51,6 +70,6 @@ function(uml_verify_generated_abi)
     set(CMAKE_REQUIRED_INCLUDES "${_uml_saved_required_includes}")
     if(NOT UML_EXTERNAL_ABI_IDENTITY_COMPILES)
         message(FATAL_ERROR
-            "Public external-consumer ABI identity does not match identity.env")
+            "Public external-consumer ABI identity does not match its identity.env")
     endif()
 endfunction()

@@ -1,5 +1,53 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# The standalone GPU server and VNC client are host test fixtures. Build them
+# when either their tooling smoke or the external integration workflows own a
+# use, without making either suite depend on the other suite being enabled.
+set(_uml_need_vnc_fixtures OFF)
+if(UML_BUILD_TOOLING_TESTS OR
+   (UML_BUILD_INTEGRATION_TESTS AND UML_ENABLE_EXTERNAL_NETWORK_TESTS))
+    set(_uml_need_vnc_fixtures ON)
+endif()
+if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
+    add_executable(uml-virtio-gpu
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/virtio_gpu_fixture.cpp)
+    target_link_libraries(uml-virtio-gpu PRIVATE UML::GpuDevice)
+    target_include_directories(uml-virtio-gpu PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_features(uml-virtio-gpu PRIVATE cxx_std_20)
+    target_compile_options(uml-virtio-gpu PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    set_target_properties(uml-virtio-gpu PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
+    add_executable(uml-vnc-smoke-client
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/vnc_smoke_client.cpp)
+    target_link_libraries(uml-vnc-smoke-client PRIVATE
+        UML::ThirdPartyVncClient
+        "-framework CoreFoundation")
+    target_compile_options(uml-vnc-smoke-client PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    set_target_properties(uml-vnc-smoke-client PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+endif()
+
+# Manual benchmark payloads have explicit source ownership but remain outside
+# all correctness-suite aggregates and registrations.
+add_subdirectory(perf EXCLUDE_FROM_ALL)
+
+# Both suites execute this native wrapper: unit registrations use it to write
+# instruction evidence, while a tooling-only graph uses it as a fixture for
+# the raw-evidence compression tests.  Own it at the shared tests boundary so
+# either suite can be configured independently.
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_TOOLING_TESTS)
+    add_executable(uml_instruction_evidence_test_runner
+        unit/arm64/instruction_evidence_test_runner.cpp)
+    target_compile_features(uml_instruction_evidence_test_runner PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_instruction_evidence_test_runner PRIVATE
+        -Wall -Wextra -Werror)
+endif()
+
 if(UML_BUILD_UNIT_TESTS)
     add_library(uml_host_capabilities_test_support OBJECT
         unit/host_capabilities_test_support.cpp)
@@ -25,14 +73,15 @@ endif()
 if(UML_BUILD_TOOLING_TESTS)
     add_subdirectory(tooling)
     add_custom_target(tooling-test-binaries)
-    get_property(_uml_tooling_targets DIRECTORY
-        "${CMAKE_CURRENT_SOURCE_DIR}/tooling" PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(_tooling_target IN LISTS _uml_tooling_targets)
-        get_target_property(_tooling_type ${_tooling_target} TYPE)
-        if(_tooling_type STREQUAL "EXECUTABLE")
-            add_dependencies(tooling-test-binaries ${_tooling_target})
-        endif()
-    endforeach()
+    add_dependencies(tooling-test-binaries
+        uml_arm64_execution_helpers
+        uml_arm64_gadgets
+        uml_arm64_jit
+        uml_arm64_jit_executor)
+    if(TARGET uml_arm64_engine_test_support_tests)
+        add_dependencies(tooling-test-binaries
+            uml_arm64_engine_test_support_tests)
+    endif()
 endif()
 
 if(UML_BUILD_INTEGRATION_TESTS)
@@ -41,13 +90,32 @@ if(UML_BUILD_INTEGRATION_TESTS)
     # required by the registered suite, not only the emulator app.
     add_custom_target(integration-test-binaries)
     add_subdirectory(integration)
-    foreach(_integration_target IN ITEMS uml-darwin uml-virtio-gpu)
+    set(_integration_targets uml-darwin)
+    if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
+        list(APPEND _integration_targets
+            uml-virtio-gpu uml-vnc-smoke-client)
+    endif()
+    foreach(_integration_target IN LISTS _integration_targets)
         if(NOT TARGET ${_integration_target})
             message(FATAL_ERROR
                 "Integration target is not available: ${_integration_target}")
         endif()
         add_dependencies(integration-test-binaries ${_integration_target})
     endforeach()
+endif()
+
+# Suite aggregates are derived from the actual target-backed CTest commands,
+# including commands whose fixtures are owned by another directory. A build
+# preset therefore cannot finish successfully while leaving a registered test
+# executable absent from a fresh graph.
+if(UML_BUILD_UNIT_TESTS)
+    uml_finalize_suite_binary_target(unit unit-test-binaries)
+endif()
+if(UML_BUILD_TOOLING_TESTS)
+    uml_finalize_suite_binary_target(tooling tooling-test-binaries)
+endif()
+if(UML_BUILD_INTEGRATION_TESTS)
+    uml_finalize_suite_binary_target(integration integration-test-binaries)
 endif()
 
 # Every CTest registration goes through an explicit suite helper.  Validate
@@ -73,11 +141,19 @@ string(JOIN "," _uml_enabled_test_suites_csv ${_uml_enabled_test_suites})
 # accidental omission from the configuration where the test applies.
 set(_uml_required_conditional_tests)
 if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
-    list(APPEND _uml_required_conditional_tests native-4k-shadow-mmu)
+    list(APPEND _uml_required_conditional_tests
+        native-4k-shadow-mmu
+        emulator-native-4k-admission)
+endif()
+if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES)
+    list(APPEND _uml_required_conditional_tests
+        emulator-native-16k-ownership)
 endif()
 if(UML_BUILD_UNIT_TESTS AND UML_BUILD_TOOLING_TESTS)
     list(APPEND _uml_required_conditional_tests
-        arm64-instruction-evidence)
+        arm64-instruction-evidence-reset
+        arm64-instruction-evidence
+        arm64-input-materialization-join)
 endif()
 if(UML_BUILD_UNIT_TESTS)
     if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
@@ -93,11 +169,23 @@ endif()
 if(TARGET uml_slirp_network_tests)
     list(APPEND _uml_required_conditional_tests slirp-network-arp)
 endif()
+if(TARGET uml_gpu_service_fd_tests)
+    list(APPEND _uml_required_conditional_tests gpu-service-fd-ownership)
+endif()
+if(TARGET uml_gpu_service_stop_wake_tests)
+    list(APPEND _uml_required_conditional_tests gpu-service-stop-wake)
+endif()
+if(TARGET uml_gpu_device_atomicity_tests)
+    list(APPEND _uml_required_conditional_tests gpu-device-command-atomicity)
+endif()
+if(TARGET uml_gpu_vnc_lifetime_tests)
+    list(APPEND _uml_required_conditional_tests gpu-vnc-lifetime)
+endif()
 if(TARGET uml_embedded_kernel_serialization_tests)
     list(APPEND _uml_required_conditional_tests
         embedded-kernel-handle-serialization)
 endif()
-if(TARGET uml-vnc-smoke-client)
+if(UML_BUILD_TOOLING_TESTS AND TARGET uml-vnc-smoke-client)
     list(APPEND _uml_required_conditional_tests virtio-gpu-vnc-smoke)
 endif()
 if(UML_BUILD_INTEGRATION_TESTS AND UML_ENABLE_EXTERNAL_NETWORK_TESTS)

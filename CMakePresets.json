@@ -35,6 +35,25 @@
       }
     },
     {
+      "name": "macos-unit-gpu",
+      "displayName": "macOS host GPU ownership tests",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_GPU": true
+      }
+    },
+    {
+      "name": "macos-unit-gpu-asan-ubsan",
+      "displayName": "macOS host GPU ownership tests with ASan/UBSan",
+      "inherits": "macos-unit-gpu",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
       "name": "macos-tooling",
       "displayName": "macOS host tooling checks",
       "inherits": "macos-unit-16k",
@@ -58,7 +77,8 @@
         "UML_BUILD_UNIT_TESTS": false,
         "UML_BUILD_INTEGRATION_TESTS": true,
         "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.img",
-        "UML_KERNEL_JOBS": "8"
+        "UML_KERNEL_SOURCE_DIR": "$env{UML_KERNEL_SOURCE_DIR}",
+        "UML_KERNEL_JOBS": "2"
       }
     },
     {
@@ -97,6 +117,18 @@
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=thread",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "macos-loader-asan-ubsan",
+      "displayName": "macOS embedded-loader ASan/UBSan gate",
+      "inherits": "macos-tooling",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "UML_BUILD_KERNEL_RUNNER": true
       }
     },
     {
@@ -141,6 +173,16 @@
       "targets": ["tooling-test-binaries", "unit-test-binaries", "architecture-audit"]
     },
     {
+      "name": "gpu-unit-test-binaries",
+      "configurePreset": "macos-unit-gpu",
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_vnc_lifetime_tests", "architecture-audit"]
+    },
+    {
+      "name": "gpu-unit-test-binaries-asan-ubsan",
+      "configurePreset": "macos-unit-gpu-asan-ubsan",
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_vnc_lifetime_tests", "architecture-audit"]
+    },
+    {
       "name": "macos-integration",
       "configurePreset": "macos-integration",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
@@ -164,6 +206,11 @@
       "name": "tsan",
       "configurePreset": "macos-unit-16k-tsan",
       "targets": ["unit-test-binaries"]
+    },
+    {
+      "name": "loader-asan-ubsan",
+      "configurePreset": "macos-loader-asan-ubsan",
+      "targets": ["uml_embedded_kernel_serialization_tests", "architecture-audit"]
     },
     {
       "name": "ios-device",
@@ -210,6 +257,47 @@
       }
     },
     {
+      "name": "unit-gpu",
+      "configurePreset": "macos-unit-gpu",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^(gpu-device-command-atomicity|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-vnc-lifetime)$"
+        }
+      },
+      "execution": {
+        "jobs": 1
+      }
+    },
+    {
+      "name": "unit-gpu-asan-ubsan",
+      "inherits": "unit-gpu",
+      "configurePreset": "macos-unit-gpu-asan-ubsan"
+    },
+    {
+      "name": "tooling-gpu-vnc",
+      "configurePreset": "macos-unit-gpu",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^virtio-gpu-vnc-smoke$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "tooling-gpu-vnc-asan-ubsan",
+      "inherits": "tooling-gpu-vnc",
+      "configurePreset": "macos-unit-gpu-asan-ubsan"
+    },
+    {
       "name": "integration-fast",
       "configurePreset": "macos-integration",
       "output": {
@@ -250,6 +338,11 @@
       "configurePreset": "macos-integration-4k"
     },
     {
+      "name": "integration-full-4k",
+      "inherits": "integration-full",
+      "configurePreset": "macos-integration-4k"
+    },
+    {
       "name": "tooling",
       "configurePreset": "macos-tooling",
       "output": {
@@ -268,12 +361,7 @@
     {
       "name": "tooling-unit",
       "inherits": "tooling",
-      "configurePreset": "macos-unit-16k",
-      "filter": {
-        "exclude": {
-          "name": "^arm64-instruction-evidence-reset$"
-        }
-      }
+      "configurePreset": "macos-unit-16k"
     },
     {
       "name": "tooling-unit-4k",
@@ -323,7 +411,7 @@
       },
       "filter": {
         "include": {
-          "label": "unit"
+          "label": "^unit$"
         }
       }
     },
@@ -341,6 +429,45 @@
       "execution": {
         "jobs": 3
       }
+    },
+    {
+      "name": "loader-asan-ubsan",
+      "configurePreset": "macos-loader-asan-ubsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^embedded-kernel-handle-serialization$"
+        }
+      },
+      "execution": {
+        "jobs": 1
+      }
+    },
+    {
+      "name": "instruction-evidence",
+      "configurePreset": "macos-unit-16k",
+      "environment": {
+        "UML_INSTRUCTION_RAW_EVIDENCE": "1"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^(unit|instruction-evidence-validation)$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
+      "name": "instruction-evidence-4k",
+      "inherits": "instruction-evidence",
+      "configurePreset": "macos-unit-4k"
     }
   ],
   "workflowPresets": [
@@ -354,12 +481,39 @@
       ]
     },
     {
+      "name": "check-unit-4k",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-4k"},
+        {"type": "build", "name": "unit-test-binaries-4k"},
+        {"type": "test", "name": "unit-4k"},
+        {"type": "test", "name": "tooling-unit-4k"}
+      ]
+    },
+    {
       "name": "check-integration",
       "steps": [
         {"type": "configure", "name": "macos-integration"},
         {"type": "build", "name": "macos-integration"},
         {"type": "test", "name": "tooling-integration"},
         {"type": "test", "name": "integration-fast"}
+      ]
+    },
+    {
+      "name": "check-gpu",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-gpu"},
+        {"type": "build", "name": "gpu-unit-test-binaries"},
+        {"type": "test", "name": "unit-gpu"},
+        {"type": "test", "name": "tooling-gpu-vnc"}
+      ]
+    },
+    {
+      "name": "check-gpu-asan-ubsan",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-gpu-asan-ubsan"},
+        {"type": "build", "name": "gpu-unit-test-binaries-asan-ubsan"},
+        {"type": "test", "name": "unit-gpu-asan-ubsan"},
+        {"type": "test", "name": "tooling-gpu-vnc-asan-ubsan"}
       ]
     },
     {
@@ -378,6 +532,30 @@
         {"type": "build", "name": "macos-all"},
         {"type": "test", "name": "all"},
         {"type": "test", "name": "tooling-all"}
+      ]
+    },
+    {
+      "name": "check-instruction-evidence",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-16k"},
+        {"type": "build", "name": "unit-test-binaries"},
+        {"type": "test", "name": "instruction-evidence"}
+      ]
+    },
+    {
+      "name": "check-instruction-evidence-4k",
+      "steps": [
+        {"type": "configure", "name": "macos-unit-4k"},
+        {"type": "build", "name": "unit-test-binaries-4k"},
+        {"type": "test", "name": "instruction-evidence-4k"}
+      ]
+    },
+    {
+      "name": "check-loader-asan-ubsan",
+      "steps": [
+        {"type": "configure", "name": "macos-loader-asan-ubsan"},
+        {"type": "build", "name": "loader-asan-ubsan"},
+        {"type": "test", "name": "loader-asan-ubsan"}
       ]
     }
   ]

@@ -1,18 +1,18 @@
 From ca217ca6636ad078a9d2f017791d45c5f41752f5 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 05/10] uml: define the Darwin fixed-arity host bridge ABI
+Subject: [PATCH 05/11] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/um/os-Darwin/uml_darwin_abi.h          | 143 ++++++++++++++++++++
+ arch/um/os-Darwin/uml_darwin_abi.h          | 144 ++++++++++++++++++++
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   9 ++
  arch/um/os-Darwin/uml_darwin_bridge.h       |  11 ++
- arch/um/os-Darwin/uml_darwin_cpu.h          |  32 +++++
+ arch/um/os-Darwin/uml_darwin_cpu.h          |  23 ++++
  arch/um/os-Darwin/uml_darwin_host.h         |  20 +++
  arch/um/os-Darwin/uml_darwin_memory.h       |  48 +++++++
  arch/um/os-Darwin/uml_darwin_network.h      |  18 +++
- 7 files changed, 281 insertions(+)
+ 7 files changed, 273 insertions(+)
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi_identity.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_bridge.h
@@ -26,7 +26,7 @@ new file mode 100644
 index 000000000..bce84b831
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,146 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +/*
 + * Canonical Darwin UML host/kernel data ABI.
@@ -73,11 +73,13 @@ index 000000000..bce84b831
 +	DARWIN_UML_EVENT_BREAKPOINT = 5,
 +	DARWIN_UML_EVENT_GCS_FAULT = 6,
 +	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
++	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
 +	DARWIN_UML_EVENT_FATAL = -1,
 +};
 +
 +enum {
 +	DARWIN_UML_FAULT_WRITE = 2,
++	DARWIN_UML_FAULT_EXECUTE = 16,
 +	DARWIN_UML_FAULT_PAGE = 14,
 +};
 +
@@ -144,9 +146,10 @@ index 000000000..bce84b831
 +
 +#if defined(__cplusplus)
 +#include <stddef.h>
-+static_assert(DARWIN_UML_ABI_VERSION == 3U);
-+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x4333b73bf8b2ea99ULL);
++static_assert(DARWIN_UML_ABI_VERSION == 6U);
++static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL);
 +static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
++static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
 +static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 +static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 +		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
@@ -181,8 +184,8 @@ index 000000000..9497b54fe
 +#ifndef UML_DARWIN_ABI_IDENTITY_H
 +#define UML_DARWIN_ABI_IDENTITY_H
 +
-+#define DARWIN_UML_ABI_VERSION 3U
-+#define DARWIN_UML_ABI_FINGERPRINT 0x4333b73bf8b2ea99ULL
++#define DARWIN_UML_ABI_VERSION 6U
++#define DARWIN_UML_ABI_FINGERPRINT 0x6524b65f20239ea1ULL
 +
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_bridge.h b/arch/um/os-Darwin/uml_darwin_bridge.h
@@ -207,7 +210,7 @@ new file mode 100644
 index 000000000..ca91b862b
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_cpu.h
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,23 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +#ifndef UML_DARWIN_CPU_ABI_H
 +#define UML_DARWIN_CPU_ABI_H
@@ -221,18 +224,9 @@ index 000000000..ca91b862b
 +int darwin_uml_enter_guest(void *registers, void *fp_registers,
 +			   unsigned long fp_size, unsigned long generation,
 +			   unsigned long *tls);
-+enum darwin_uml_execution_engine {
-+	DARWIN_UML_EXECUTION_AUTO = 0,
-+	DARWIN_UML_EXECUTION_GADGETS = 1,
-+	DARWIN_UML_EXECUTION_JIT = 2,
-+	DARWIN_UML_EXECUTION_INTERPRETER = 3,
-+};
-+int darwin_uml_set_execution_engine(enum darwin_uml_execution_engine engine);
-+enum darwin_uml_execution_engine darwin_uml_get_execution_engine(void);
 +unsigned long darwin_uml_guest_hwcap(void);
 +unsigned long darwin_uml_guest_hwcap2(void);
-+int darwin_uml_jit_available(void);
-+void darwin_uml_static_guest_interrupt_sequence(
++int darwin_uml_static_guest_interrupt_sequence(
 +	const unsigned int *sequence, unsigned int snapshot);
 +
 +#ifdef __cplusplus

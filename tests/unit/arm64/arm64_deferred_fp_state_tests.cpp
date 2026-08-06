@@ -167,7 +167,7 @@ void deferred_state_survives_integer_block(engine::EngineHarness &harness) {
   expected.registers[9] = 0x1234U;
 
   harness.check({
-      .name = "deferred-state-integer-block-verification",
+      .name = "deferred-state-integer-block",
       .instruction = 0xd282'4689U, // MOVZ X9, #0x1234
       .initial = initial,
       .expected = expected,
@@ -178,8 +178,6 @@ void deferred_state_survives_integer_block(engine::EngineHarness &harness) {
 } // namespace
 
 int main() {
-  if (::setenv("UML_VERIFY_JIT", "1", 1) != 0)
-    return 1;
   engine::EngineHarness harness;
   deferred_vector_store(harness);
   deferred_vector_load(harness);

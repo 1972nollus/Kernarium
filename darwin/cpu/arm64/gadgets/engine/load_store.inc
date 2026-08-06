@@ -367,7 +367,7 @@ gadget \name
 	mov w5, #(!\load)
 	mov w6, #\base_sp
 	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #16]
 	cbz w0, 97f
 	.if \load
@@ -541,7 +541,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #0
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -551,7 +551,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #1
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -763,7 +763,7 @@ gadget \name
 	mov w5, #(!\load)
 	mov w6, #\base_sp
 	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #16]
 	cbz w0, 97f
 	.if \load
@@ -868,7 +868,7 @@ gadget \name
 	mov w5, #(!\load)
 	mov w6, #\base_sp
 	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #16]
 	cbz w0, 97f
 	.if \load
@@ -1169,7 +1169,7 @@ gadget \name
 	mov w5, #(!\load)
 	mov w6, #\sp_base
 	mov w7, #(((2 * \bytes) << 8) | 1)
-	bl NAME(uml_arm64_gadget_simd_structure_memory_transfer)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, 97f
 	.if \load
@@ -1216,7 +1216,7 @@ uml_arm64_gadget_pair_alignment_fault_read:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #0
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -1226,7 +1226,7 @@ uml_arm64_gadget_pair_alignment_fault_write:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #1
-	bl NAME(uml_arm64_gadget_alignment_fault)
+	bl NAME(uml_arm64_alignment_fault)
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 

@@ -2,6 +2,10 @@
 
 #include "virtio_gpu_device.hpp"
 
+#if UML_GPU_DEVICE_TESTING
+#include "virtio_gpu_device_testing.hpp"
+#endif
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -10,6 +14,14 @@
 
 namespace uml::gpu {
 namespace {
+
+#if UML_GPU_DEVICE_TESTING
+#define UML_GPU_RENDERER dependencies_
+#define UML_GPU_DISPLAY dependencies_
+#else
+#define UML_GPU_RENDERER renderer_
+#define UML_GPU_DISPLAY display_
+#endif
 
 template<typename Structure>
 const Structure* readStructure(std::span<const std::uint8_t> bytes)
@@ -36,6 +48,12 @@ bool supportedFormat(std::uint32_t format)
     }
 }
 
+bool backingRangeFits(std::uint64_t address, std::uint32_t length)
+{
+    return length != 0 &&
+        address <= std::numeric_limits<std::uint64_t>::max() - length;
+}
+
 bool rectangleFits(
     const protocol::GpuRectangle& rectangle,
     std::uint32_t width,
@@ -45,6 +63,26 @@ bool rectangleFits(
         rectangle.x <= width && rectangle.y <= height &&
         rectangle.width <= width - rectangle.x &&
         rectangle.height <= height - rectangle.y;
+}
+
+std::optional<std::size_t> pixelBufferSize(
+    std::uint32_t width,
+    std::uint32_t height)
+{
+    if (width == 0 || height == 0)
+        return std::nullopt;
+    const auto convertedWidth = static_cast<std::size_t>(width);
+    if (height >
+        std::numeric_limits<std::size_t>::max() / convertedWidth) {
+        return std::nullopt;
+    }
+    const auto pixels = convertedWidth * static_cast<std::size_t>(height);
+    if (pixels >
+        std::numeric_limits<std::size_t>::max() /
+            protocol::gpuBytesPerPixel) {
+        return std::nullopt;
+    }
+    return pixels * protocol::gpuBytesPerPixel;
 }
 
 std::optional<protocol::GpuRectangle> intersectRectangles(
@@ -71,6 +109,17 @@ std::optional<protocol::GpuRectangle> intersectRectangles(
 
 } // namespace
 
+#if UML_GPU_DEVICE_TESTING
+VirtioGpuDevice::VirtioGpuDevice(
+    testing::VirtioGpuDeviceDependencies& dependencies,
+    GuestReader guestReader,
+    GuestMapper guestMapper)
+    : dependencies_(dependencies)
+    , guestReader_(std::move(guestReader))
+    , guestMapper_(std::move(guestMapper))
+{
+}
+#else
 VirtioGpuDevice::VirtioGpuDevice(
     VncDisplay& display,
     GuestReader guestReader,
@@ -79,6 +128,12 @@ VirtioGpuDevice::VirtioGpuDevice(
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
 {
+}
+#endif
+
+VirtioGpuDevice::~VirtioGpuDevice()
+{
+    reset();
 }
 
 protocol::GpuConfig VirtioGpuDevice::config() const noexcept
@@ -89,6 +144,49 @@ protocol::GpuConfig VirtioGpuDevice::config() const noexcept
         .scanoutCount = protocol::primaryScanoutId + 1U,
         .capsetCount = protocol::virgl2CapsetIndex + 1U,
     };
+}
+
+void VirtioGpuDevice::setStopRequest(
+    const std::atomic_bool* stopRequested) noexcept
+{
+    stopRequested_ = stopRequested;
+}
+
+void VirtioGpuDevice::reset() noexcept
+{
+    /* Renderer objects may retain iovecs into the current connection's guest
+     * mappings. Release them before the transport unmaps those regions. Each
+     * tracked renderer object is retired once, then all host bookkeeping is
+     * returned to the pristine connection state. */
+    for (auto& [resourceId, resource] : virglResources_) {
+        if (!resource.vectors.empty()) {
+            try {
+                UML_GPU_RENDERER.detachBacking(resourceId);
+            } catch (...) {
+                // Continue to retire the renderer resource itself.
+            }
+        }
+        try {
+            UML_GPU_RENDERER.unrefResource(resourceId);
+        } catch (...) {
+            // Reset is also used by teardown and must finish clearing owners.
+        }
+    }
+    for (const auto contextId : contexts_) {
+        try {
+            UML_GPU_RENDERER.destroyContext(contextId);
+        } catch (...) {
+            // Continue retiring the remaining independently owned objects.
+        }
+    }
+    UML_GPU_RENDERER.resetFenceState();
+    contexts_.clear();
+    virglResources_.clear();
+    resources_.clear();
+    transferStaging_.clear();
+    scanoutResource_ = protocol::invalidResourceId;
+    scanoutRectangle_ = {};
+    UML_GPU_DISPLAY.clear();
 }
 
 std::vector<std::uint8_t> VirtioGpuDevice::response(
@@ -116,8 +214,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::displayInfo(
     information.modes[0].rectangle = {
         .x = 0,
         .y = 0,
-        .width = display_.width(),
-        .height = display_.height(),
+        .width = UML_GPU_DISPLAY.width(),
+        .height = UML_GPU_DISPLAY.height(),
     };
     information.modes[protocol::primaryScanoutId].enabled =
         protocol::enabledDisplayMode;
@@ -140,6 +238,10 @@ bool VirtioGpuDevice::readBacking(
         if (offset < logicalEnd && copied < destination.size()) {
             const std::uint64_t entryOffset =
                 offset > logicalStart ? offset - logicalStart : 0;
+            if (entry.address >
+                std::numeric_limits<std::uint64_t>::max() - entryOffset) {
+                return false;
+            }
             const auto available = static_cast<std::size_t>(
                 entry.length - entryOffset);
             const auto count =
@@ -184,7 +286,8 @@ bool VirtioGpuDevice::parseBacking(
                 entriesOffset +
                 static_cast<std::size_t>(index) *
                     sizeof(protocol::GpuMemoryEntry)));
-        if (entry == nullptr || entry->length == 0)
+        if (entry == nullptr ||
+            !backingRangeFits(entry->address, entry->length))
             return false;
         auto mapping = guestMapper_(entry->address, entry->length);
         if (mapping.size() != entry->length)
@@ -216,7 +319,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
             request.capsetIndex == protocol::virglCapsetIndex
             ? protocol::virglCapsetId
             : protocol::virgl2CapsetId;
-        const auto virglCapset = renderer_.capset(information.capsetId);
+        const auto virglCapset =
+            UML_GPU_RENDERER.capset(information.capsetId);
         information.maximumVersion = virglCapset.maximumVersion;
         information.maximumSize =
             static_cast<std::uint32_t>(virglCapset.data.size());
@@ -234,7 +338,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::capset(
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
     }
-    const auto virglCapset = renderer_.capset(request.capsetId);
+    const auto virglCapset = UML_GPU_RENDERER.capset(request.capsetId);
     if (request.version > virglCapset.maximumVersion)
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
@@ -323,25 +427,30 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         }
         const std::string_view debugName(
             create->debugName.data(), create->nameLength);
-        if (renderer_.createContext(
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        contexts_.insert(create->header.contextId);
+        if (UML_GPU_RENDERER.createContext(
                 create->header.contextId,
                 create->contextInit,
                 debugName) != 0) {
+            contexts_.erase(create->header.contextId);
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
-        contexts_.insert(create->header.contextId);
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
-    case protocol::GpuCommand::contextDestroy:
+    case protocol::GpuCommand::contextDestroy: {
         if (header->contextId == protocol::invalidContextId ||
-            contexts_.erase(header->contextId) == 0) {
+            !contexts_.contains(header->contextId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
-        renderer_.destroyContext(header->contextId);
-        return response(*header, protocol::GpuResponse::okNoData);
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        UML_GPU_RENDERER.destroyContext(header->contextId);
+        contexts_.erase(header->contextId);
+        return success;
+    }
 
     case protocol::GpuCommand::contextAttachResource:
     case protocol::GpuCommand::contextDetachResource: {
@@ -361,9 +470,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 return response(
                     *header, protocol::GpuResponse::errorInvalidResource);
             }
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
             if (virglResources_.contains(contextResource->resourceId)) {
-                renderer_.attachResource(
-                    header->contextId, contextResource->resourceId);
+                if (UML_GPU_RENDERER.attachResource(
+                        header->contextId,
+                        contextResource->resourceId) != 0) {
+                    return response(
+                        *header, protocol::GpuResponse::errorUnspecified);
+                }
             }
             /*
              * Linux also associates legacy RESOURCE_CREATE_2D buffers with a
@@ -371,8 +486,11 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
              * 2D path, so there is no virglrenderer object to attach; context
              * association is valid bookkeeping and intentionally a no-op.
              */
-        } else if (contexts_.contains(header->contextId) &&
-                   virglResources_.contains(contextResource->resourceId)) {
+            return success;
+        }
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        if (contexts_.contains(header->contextId) &&
+            virglResources_.contains(contextResource->resourceId)) {
             /*
              * RESOURCE_UNREF asks virglrenderer to detach the resource from
              * every context before removing it, and context destruction may
@@ -380,17 +498,20 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
              * virglrenderer's idempotent no-op semantics when either object
              * has already gone away.
              */
-            renderer_.detachResource(
-                header->contextId, contextResource->resourceId);
+            if (UML_GPU_RENDERER.detachResource(
+                    header->contextId,
+                    contextResource->resourceId) != 0) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::submit3d: {
         const auto* submit =
             readStructure<protocol::GpuSubmit3d>(request);
         if (submit == nullptr ||
-            !contexts_.contains(header->contextId) ||
             submit->size > protocol::maximumGpuSubmitSize ||
             submit->size % protocol::gpuCommandWordSize != 0 ||
             sizeof(*submit) > request.size() ||
@@ -398,23 +519,28 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        if (renderer_.submit(
+        if (!contexts_.contains(header->contextId))
+            return response(
+                *header, protocol::GpuResponse::errorInvalidContext);
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        if (UML_GPU_RENDERER.submit(
                 header->contextId,
                 request.subspan(sizeof(*submit), submit->size)) != 0) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
         if ((header->flags & protocol::gpuFlagFence) != 0 &&
-            renderer_.createFenceAndWait(
+            UML_GPU_RENDERER.createFenceAndWait(
                 header->contextId,
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                     ? header->ringIndex
                     : 0,
-                header->fenceId) != 0) {
+                header->fenceId,
+                stopRequested_) != 0) {
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::resourceCreate3d: {
@@ -442,10 +568,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             .sampleCount = create->sampleCount,
             .flags = create->flags,
         };
-        if (renderer_.createResource3d(resource) != 0) {
-            return response(
-                *header, protocol::GpuResponse::errorInvalidParameter);
-        }
+        auto success = response(*header, protocol::GpuResponse::okNoData);
         try {
             virglResources_.emplace(
                 create->resourceId,
@@ -456,20 +579,27 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                     .height = create->height,
                 });
         } catch (const std::bad_alloc&) {
-            renderer_.unrefResource(create->resourceId);
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        if (UML_GPU_RENDERER.createResource3d(resource) != 0) {
+            virglResources_.erase(create->resourceId);
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        return success;
     }
 
     case protocol::GpuCommand::transferToHost3d:
     case protocol::GpuCommand::transferFromHost3d: {
         const auto* transfer =
             readStructure<protocol::GpuTransferHost3d>(request);
-        if (transfer == nullptr ||
-            (header->contextId != protocol::invalidContextId &&
-             !contexts_.contains(header->contextId))) {
+        if (transfer == nullptr) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        if (header->contextId != protocol::invalidContextId &&
+            !contexts_.contains(header->contextId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidContext);
         }
@@ -494,7 +624,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             .height = transfer->box.height,
             .depth = transfer->box.depth,
         };
-        if (renderer_.transferResource(
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        if (UML_GPU_RENDERER.transferResource(
                 command == protocol::GpuCommand::transferToHost3d,
                 transfer->resourceId,
                 header->contextId,
@@ -507,16 +638,17 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
         if ((header->flags & protocol::gpuFlagFence) != 0 &&
-            renderer_.createFenceAndWait(
+            UML_GPU_RENDERER.createFenceAndWait(
                 header->contextId,
                 (header->flags & protocol::gpuFlagInfoRingIndex) != 0
                     ? header->ringIndex
                     : 0,
-                header->fenceId) != 0) {
+                header->fenceId,
+                stopRequested_) != 0) {
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::resourceCreate2d: {
@@ -532,24 +664,23 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             virglResources_.contains(create->resourceId)) {
             return response(*header, protocol::GpuResponse::errorInvalidResource);
         }
-        const std::uint64_t size =
-            static_cast<std::uint64_t>(create->width) * create->height *
-            protocol::gpuBytesPerPixel;
-        if (size > std::numeric_limits<std::size_t>::max())
+        const auto size = pixelBufferSize(create->width, create->height);
+        if (!size)
             return response(*header, protocol::GpuResponse::errorOutOfMemory);
         try {
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
             Resource resource {
                 .format = static_cast<protocol::GpuFormat>(create->format),
                 .width = create->width,
                 .height = create->height,
-                .pixels = std::vector<std::uint8_t>(
-                    static_cast<std::size_t>(size)),
+                .pixels = std::vector<std::uint8_t>(*size),
             };
             resources_.emplace(create->resourceId, std::move(resource));
+            return success;
         } catch (const std::bad_alloc&) {
             return response(*header, protocol::GpuResponse::errorOutOfMemory);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
     }
 
     case protocol::GpuCommand::resourceUnref: {
@@ -558,16 +689,27 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         if (reference == nullptr)
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
+        auto success = response(*header, protocol::GpuResponse::okNoData);
         if (resources_.erase(reference->resourceId) != 0) {
-            if (scanoutResource_ == reference->resourceId)
+            if (scanoutResource_ == reference->resourceId) {
                 scanoutResource_ = protocol::invalidResourceId;
-            return response(*header, protocol::GpuResponse::okNoData);
+                scanoutRectangle_ = {};
+                UML_GPU_DISPLAY.clear();
+            }
+            return success;
         }
-        if (virglResources_.erase(reference->resourceId) != 0) {
-            renderer_.unrefResource(reference->resourceId);
-            if (scanoutResource_ == reference->resourceId)
+        if (const auto virgl = virglResources_.find(reference->resourceId);
+            virgl != virglResources_.end()) {
+            /* The renderer retains the resource's iovec array, so release its
+             * reference before erasing the vector that owns that array. */
+            UML_GPU_RENDERER.unrefResource(reference->resourceId);
+            virglResources_.erase(virgl);
+            if (scanoutResource_ == reference->resourceId) {
                 scanoutResource_ = protocol::invalidResourceId;
-            return response(*header, protocol::GpuResponse::okNoData);
+                scanoutRectangle_ = {};
+                UML_GPU_DISPLAY.clear();
+            }
+            return success;
         }
         return response(*header, protocol::GpuResponse::errorInvalidResource);
     }
@@ -576,10 +718,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         const auto* attach =
             readStructure<protocol::GpuAttachBacking>(request);
         if (attach == nullptr ||
+            attach->entryCount == 0 ||
             attach->entryCount > protocol::maximumResourceBackingEntries)
             return response(*header, protocol::GpuResponse::errorInvalidParameter);
         if (const auto iterator = resources_.find(attach->resourceId);
             iterator != resources_.end()) {
+            if (!iterator->second.backing.empty())
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
             const std::size_t expected =
                 sizeof(*attach) +
                 static_cast<std::size_t>(attach->entryCount) *
@@ -595,7 +741,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             for (std::uint32_t index = 0;
                  index < attach->entryCount;
                  ++index) {
-                if (entries[index].length == 0)
+                if (!backingRangeFits(
+                        entries[index].address, entries[index].length))
                     return response(
                         *header,
                         protocol::GpuResponse::errorInvalidParameter);
@@ -604,31 +751,44 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                     .length = entries[index].length,
                 });
             }
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
             iterator->second.backing = std::move(backing);
-            return response(*header, protocol::GpuResponse::okNoData);
+            return success;
         }
 
         const auto virgl = virglResources_.find(attach->resourceId);
         if (virgl == virglResources_.end())
             return response(
                 *header, protocol::GpuResponse::errorInvalidResource);
-        if (!virgl->second.vectors.empty())
+        if (!virgl->second.backing.empty() ||
+            !virgl->second.vectors.empty())
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        std::vector<BackingEntry> backing;
+        std::vector<iovec> vectors;
         if (!parseBacking(
                 request,
                 sizeof(*attach),
                 attach->entryCount,
-                virgl->second.backing,
-                virgl->second.vectors) ||
-            renderer_.attachBacking(
-                attach->resourceId, virgl->second.vectors) != 0) {
-            virgl->second.backing.clear();
-            virgl->second.vectors.clear();
+                backing,
+                vectors)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        const int attachResult = UML_GPU_RENDERER.attachBacking(
+            attach->resourceId, vectors);
+        if (attachResult != 0) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        /* Virgl retains the iovec array pointer. Swapping the successfully
+         * attached allocation into the resource preserves that address and
+         * makes the final bookkeeping commit non-throwing. */
+        virgl->second.backing.swap(backing);
+        virgl->second.vectors.swap(vectors);
+        return success;
     }
 
     case protocol::GpuCommand::resourceDetachBacking: {
@@ -638,18 +798,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             return response(*header, protocol::GpuResponse::errorInvalidParameter);
         if (const auto iterator = resources_.find(reference->resourceId);
             iterator != resources_.end()) {
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
             iterator->second.backing.clear();
-            return response(*header, protocol::GpuResponse::okNoData);
+            return success;
         }
         const auto virgl =
             virglResources_.find(reference->resourceId);
         if (virgl == virglResources_.end())
             return response(
                 *header, protocol::GpuResponse::errorInvalidResource);
-        renderer_.detachBacking(reference->resourceId);
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        UML_GPU_RENDERER.detachBacking(reference->resourceId);
         virgl->second.backing.clear();
         virgl->second.vectors.clear();
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::transferToHost2d: {
@@ -668,26 +831,51 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         const auto rowBytes =
             static_cast<std::size_t>(transfer->rectangle.width) *
             protocol::gpuBytesPerPixel;
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        try {
+            transferStaging_.resize(
+                rowBytes * static_cast<std::size_t>(
+                    transfer->rectangle.height));
+        } catch (const std::bad_alloc&) {
+            return response(*header, protocol::GpuResponse::errorOutOfMemory);
+        }
+        const std::uint64_t sourceStride =
+            static_cast<std::uint64_t>(resource.width) *
+            protocol::gpuBytesPerPixel;
         for (std::uint32_t row = 0; row < transfer->rectangle.height; ++row) {
+            if (static_cast<std::uint64_t>(row) >
+                (std::numeric_limits<std::uint64_t>::max() -
+                    transfer->offset) /
+                    sourceStride) {
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
+            }
             const auto sourceOffset =
                 transfer->offset +
-                static_cast<std::uint64_t>(row) * resource.width *
-                    protocol::gpuBytesPerPixel;
+                static_cast<std::uint64_t>(row) * sourceStride;
+            if (!readBacking(
+                    resource,
+                    sourceOffset,
+                    std::span(transferStaging_).subspan(
+                        static_cast<std::size_t>(row) * rowBytes,
+                        rowBytes))) {
+                return response(
+                    *header, protocol::GpuResponse::errorInvalidParameter);
+            }
+        }
+        for (std::uint32_t row = 0; row < transfer->rectangle.height; ++row) {
             const auto destinationOffset =
                 (static_cast<std::size_t>(transfer->rectangle.y + row) *
                     resource.width +
                     transfer->rectangle.x) *
                 protocol::gpuBytesPerPixel;
-            if (!readBacking(
-                    resource,
-                    sourceOffset,
-                    std::span(
-                        resource.pixels.data() + destinationOffset, rowBytes))) {
-                return response(
-                    *header, protocol::GpuResponse::errorInvalidParameter);
-            }
+            std::memcpy(
+                resource.pixels.data() + destinationOffset,
+                transferStaging_.data() +
+                    static_cast<std::size_t>(row) * rowBytes,
+                rowBytes);
         }
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::setScanout: {
@@ -697,11 +885,16 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             scanout->scanoutId != protocol::primaryScanoutId)
             return response(*header, protocol::GpuResponse::errorInvalidScanout);
         if (scanout->resourceId == protocol::invalidResourceId) {
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
             scanoutResource_ = protocol::invalidResourceId;
-            return response(*header, protocol::GpuResponse::okNoData);
+            scanoutRectangle_ = {};
+            UML_GPU_DISPLAY.clear();
+            return success;
         }
         std::uint32_t width = 0;
         std::uint32_t height = 0;
+        VirglResource* virglResource = nullptr;
         if (const auto iterator = resources_.find(scanout->resourceId);
             iterator != resources_.end()) {
             width = iterator->second.width;
@@ -716,20 +909,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             }
             width = virgl->second.width;
             height = virgl->second.height;
-            const std::uint64_t byteCount =
-                static_cast<std::uint64_t>(width) * height *
-                protocol::gpuBytesPerPixel;
-            if (byteCount > std::numeric_limits<std::size_t>::max()) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            }
-            try {
-                virgl->second.pixels.resize(
-                    static_cast<std::size_t>(byteCount));
-            } catch (const std::bad_alloc&) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            }
+            virglResource = &virgl->second;
         } else {
             return response(
                 *header, protocol::GpuResponse::errorInvalidResource);
@@ -737,9 +917,30 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
         if (!rectangleFits(scanout->rectangle, width, height))
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
+        std::vector<std::uint8_t> replacementPixels;
+        bool replacePixels = false;
+        if (virglResource != nullptr) {
+            const auto byteCount = pixelBufferSize(width, height);
+            if (!byteCount) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            }
+            if (virglResource->pixels.size() != *byteCount) {
+                try {
+                    replacementPixels.resize(*byteCount);
+                } catch (const std::bad_alloc&) {
+                    return response(
+                        *header, protocol::GpuResponse::errorOutOfMemory);
+                }
+                replacePixels = true;
+            }
+        }
+        auto success = response(*header, protocol::GpuResponse::okNoData);
+        if (replacePixels)
+            virglResource->pixels.swap(replacementPixels);
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::resourceFlush: {
@@ -761,20 +962,30 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 flush->rectangle, scanoutRectangle_);
             if (!damage)
                 return response(*header, protocol::GpuResponse::okNoData);
-            display_.update(
-                std::span<const std::uint8_t>(resource.pixels),
-                resource.width,
-                resource.height,
-                static_cast<std::size_t>(resource.width) *
-                    protocol::gpuBytesPerPixel,
-                resource.format,
-                damage->x,
-                damage->y,
-                damage->x - scanoutRectangle_.x,
-                damage->y - scanoutRectangle_.y,
-                damage->width,
-                damage->height);
-            return response(*header, protocol::GpuResponse::okNoData);
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
+            try {
+                UML_GPU_DISPLAY.update(
+                    std::span<const std::uint8_t>(resource.pixels),
+                    resource.width,
+                    resource.height,
+                    static_cast<std::size_t>(resource.width) *
+                        protocol::gpuBytesPerPixel,
+                    resource.format,
+                    damage->x,
+                    damage->y,
+                    damage->x - scanoutRectangle_.x,
+                    damage->y - scanoutRectangle_.y,
+                    damage->width,
+                    damage->height);
+            } catch (const std::bad_alloc&) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            } catch (...) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
+            return success;
         }
 
         if (const auto virgl = virglResources_.find(flush->resourceId);
@@ -794,34 +1005,54 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 return response(
                     *header, protocol::GpuResponse::okNoData);
             const auto expectedBytes =
-                static_cast<std::uint64_t>(resource.width) *
-                resource.height * protocol::gpuBytesPerPixel;
-            if (expectedBytes != resource.pixels.size()) {
+                pixelBufferSize(resource.width, resource.height);
+            if (!expectedBytes) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            }
+            if (*expectedBytes != resource.pixels.size()) {
                 return response(
                     *header, protocol::GpuResponse::errorUnspecified);
             }
-            renderer_.readResourceRectangle(
-                flush->resourceId,
-                resource.pixels,
-                0,
-                damage->x,
-                damage->y,
-                damage->width,
-                damage->height);
-            display_.update(
-                std::span<const std::uint8_t>(resource.pixels),
-                resource.width,
-                resource.height,
-                static_cast<std::size_t>(resource.width) *
-                    protocol::gpuBytesPerPixel,
-                resource.format,
-                damage->x,
-                damage->y,
-                damage->x - scanoutRectangle_.x,
-                damage->y - scanoutRectangle_.y,
-                damage->width,
-                damage->height);
-            return response(*header, protocol::GpuResponse::okNoData);
+            auto success = response(
+                *header, protocol::GpuResponse::okNoData);
+            std::vector<std::uint8_t> replacementPixels;
+            try {
+                replacementPixels = resource.pixels;
+                if (UML_GPU_RENDERER.readResourceRectangle(
+                        flush->resourceId,
+                        replacementPixels,
+                        0,
+                        damage->x,
+                        damage->y,
+                        damage->width,
+                        damage->height) != 0) {
+                    return response(
+                        *header,
+                        protocol::GpuResponse::errorUnspecified);
+                }
+                UML_GPU_DISPLAY.update(
+                    std::span<const std::uint8_t>(replacementPixels),
+                    resource.width,
+                    resource.height,
+                    static_cast<std::size_t>(resource.width) *
+                        protocol::gpuBytesPerPixel,
+                    resource.format,
+                    damage->x,
+                    damage->y,
+                    damage->x - scanoutRectangle_.x,
+                    damage->y - scanoutRectangle_.y,
+                    damage->width,
+                    damage->height);
+            } catch (const std::bad_alloc&) {
+                return response(
+                    *header, protocol::GpuResponse::errorOutOfMemory);
+            } catch (...) {
+                return response(
+                    *header, protocol::GpuResponse::errorUnspecified);
+            }
+            resource.pixels.swap(replacementPixels);
+            return success;
         }
 
         return response(*header, protocol::GpuResponse::errorInvalidResource);
@@ -833,3 +1064,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
 }
 
 } // namespace uml::gpu
+
+#undef UML_GPU_RENDERER
+#undef UML_GPU_DISPLAY

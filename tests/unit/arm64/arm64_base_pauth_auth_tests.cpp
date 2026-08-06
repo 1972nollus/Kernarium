@@ -61,6 +61,7 @@ void check_overlapping_pair(
 		.expected = expected,
 		.native = pauth::native_pauth,
 		.validator = &pauth::validate_inserted_code,
+		.validator_relation_id = "permitted-transformed-code/v1",
 	});
 }
 
@@ -149,6 +150,8 @@ void same_register_failure_forms(
 					.native = pauth::native_pauth,
 					.validator =
 						&pauth::validate_inserted_code,
+					.validator_relation_id =
+						"permitted-transformed-code/v1",
 				});
 				++cases;
 			}

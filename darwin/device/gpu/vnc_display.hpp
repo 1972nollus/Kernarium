@@ -13,10 +13,25 @@
 #include <thread>
 #include <vector>
 
+#include <os/lock.h>
+
+#ifndef UML_GPU_VNC_STARTUP_TESTING
+#define UML_GPU_VNC_STARTUP_TESTING 0
+#endif
+
 struct _rfbScreenInfo;
 using rfbScreenInfoPtr = _rfbScreenInfo*;
 
 namespace uml::gpu {
+
+class FramebufferMutex final {
+public:
+    void lock() noexcept { os_unfair_lock_lock(&lock_); }
+    void unlock() noexcept { os_unfair_lock_unlock(&lock_); }
+
+private:
+    os_unfair_lock lock_ = OS_UNFAIR_LOCK_INIT;
+};
 
 class VncDisplay {
 public:
@@ -37,6 +52,9 @@ public:
     // A requested port of zero asks LibVNCServer to bind an available port.
     // Callers use the post-bind value instead of racing a probe socket.
     [[nodiscard]] std::uint16_t port() const noexcept;
+    // Return the published scanout to a blank device-reset state. This is
+    // allocation-free so transport teardown can call it from a noexcept reset.
+    void clear() noexcept;
     void update(
         const std::vector<std::uint8_t>& source,
         std::uint32_t sourceWidth,
@@ -62,8 +80,9 @@ public:
 
 private:
     void eventLoop();
-    void handleKey(bool down, std::uint32_t keySymbol);
-    void handlePointer(int buttonMask, int x, int y);
+    void handleKey(bool down, std::uint32_t keySymbol) noexcept;
+    void handlePointer(int buttonMask, int x, int y) noexcept;
+    void reportInputFailure() noexcept;
 
     std::uint32_t width_;
     std::uint32_t height_;
@@ -72,8 +91,9 @@ private:
     std::string password_;
     std::array<char*, 2> passwordList_ {};
     rfbScreenInfoPtr screen_ {};
-    std::mutex framebufferMutex_;
+    FramebufferMutex framebufferMutex_;
     std::atomic_bool running_ {true};
+    std::atomic_bool inputFailureReported_ {};
     std::thread eventThread_;
 };
 

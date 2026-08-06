@@ -12,12 +12,19 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+
+#ifndef UML_RUNTIME_PROFILING
+#define UML_RUNTIME_PROFILING 0
+#endif
+
+#if UML_RUNTIME_PROFILING
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#endif
 
 namespace uml::emulator {
 
@@ -43,11 +50,14 @@ constexpr std::uint32_t public_floating_point_flags =
 static_assert(static_cast<int>(
 		      ::uml::cpu::EngineEvent::floating_point_trap) ==
 	      DARWIN_UML_EVENT_FLOATING_POINT_TRAP);
+static_assert(static_cast<int>(::uml::cpu::EngineEvent::pc_alignment) ==
+	      DARWIN_UML_EVENT_PC_ALIGNMENT);
 static_assert(::uml::cpu::floating_point_status_exception_mask ==
 	      public_floating_point_flags);
 static_assert(::uml::cpu::floating_point_syndrome(0) ==
 	      DARWIN_UML_FLOATING_POINT_SYNDROME_BASE);
 
+#if UML_RUNTIME_PROFILING
 enum class DispatchExit : std::size_t {
 	system_call,
 	memory_fault,
@@ -56,6 +66,7 @@ enum class DispatchExit : std::size_t {
 	illegal_instruction,
 	breakpoint,
 	floating_point_trap,
+	pc_alignment,
 	fatal,
 	count,
 };
@@ -99,7 +110,8 @@ void profile_dispatch(DispatchClock::time_point started,
 	std::fprintf(stderr,
 		"Darwin dispatch profile calls=%llu average-us=%.1f max-us=%.1f "
 		"average-instructions=%.1f syscall=%llu fault=%llu interrupt=%llu "
-		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu fatal=%llu\n",
+		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu "
+		"pc-alignment=%llu fatal=%llu\n",
 		static_cast<unsigned long long>(statistics.calls),
 		statistics.nanoseconds / (statistics.calls * 1000.0),
 		statistics.maximum_nanoseconds / 1000.0,
@@ -111,8 +123,10 @@ void profile_dispatch(DispatchClock::time_point started,
 		static_cast<unsigned long long>(statistics.exits[4]),
 		static_cast<unsigned long long>(statistics.exits[5]),
 		static_cast<unsigned long long>(statistics.exits[6]),
-		static_cast<unsigned long long>(statistics.exits[7]));
+		static_cast<unsigned long long>(statistics.exits[7]),
+		static_cast<unsigned long long>(statistics.exits[8]));
 }
+#endif
 
 void ensure_pointer_auth_keys(
 	darwin_uml_guest_registers &registers) noexcept
@@ -288,7 +302,7 @@ template<uml::cpu::EngineKind Kind>
 std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
 	::uml::runtime::ThreadExecutionState &runtime)
 {
-	return runtime.engines[static_cast<std::size_t>(Kind)];
+	return runtime.engines.slot<Kind>();
 }
 
 template<uml::cpu::EngineKind Kind>
@@ -320,6 +334,7 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	return prepare_signal_return(cpu);
 }
 
+#if UML_RUNTIME_PROFILING
 [[nodiscard]] DispatchExit dispatch_exit_for(
 	uml::cpu::ExitReason reason) noexcept
 {
@@ -338,6 +353,8 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 		return DispatchExit::memory_fault;
 	case uml::cpu::ExitReason::floating_point_trap:
 		return DispatchExit::floating_point_trap;
+	case uml::cpu::ExitReason::pc_alignment:
+		return DispatchExit::pc_alignment;
 	case uml::cpu::ExitReason::instruction_budget:
 		return DispatchExit::budget;
 	case uml::cpu::ExitReason::fatal:
@@ -345,6 +362,7 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	}
 	return DispatchExit::fatal;
 }
+#endif
 
 template<uml::cpu::EngineKind Kind>
 int run_common_guest(
@@ -367,29 +385,26 @@ int run_common_guest(
 		mutable_registers.pc += sizeof(std::uint32_t);
 		return DARWIN_UML_EVENT_SYSCALL;
 	}
-	if constexpr (Kind == uml::cpu::EngineKind::interpreter) {
-		if ((registers.pc & (alignof(std::uint32_t) - 1U)) != 0)
-			return DARWIN_UML_EVENT_FATAL;
-	}
-
 	auto &mutable_registers =
 		*static_cast<darwin_uml_guest_registers *>(register_pointer);
 	auto &fp = *static_cast<darwin_uml_guest_fp_registers *>(fp_pointer);
 	auto *context = ::uml::runtime::current_context();
 	if (context == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
-	auto &runtime = context->thread_execution_state();
-	auto &cpu = runtime.cpu;
-	auto &memory = runtime.memory;
+	auto runtime = context->thread_execution_state();
+	auto &cpu = runtime->cpu;
+	auto &memory = runtime->memory;
 	load_cpu(cpu, mutable_registers, fp, *tls);
 	if constexpr (Kind != uml::cpu::EngineKind::gadgets)
 		cpu.access_fp_state();
-	auto *engine = common_engine<Kind>(runtime);
+	auto *engine = common_engine<Kind>(*runtime);
 	if (engine == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
 
+#if UML_RUNTIME_PROFILING
 	const auto started = DispatchClock::now();
-	const auto &interrupt = runtime.interrupt;
+#endif
+	const auto &interrupt = runtime->interrupt;
 	uml::cpu::ExecutionRequest request{
 		.cpu = cpu,
 		.memory = memory,
@@ -425,9 +440,17 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_SYSCALL;
 		break;
 	case uml::cpu::ExitReason::memory_fault:
-		mutable_registers.fault.error_code =
-			result.fault.access == uml::memory::MemoryAccess::write ?
-				DARWIN_UML_FAULT_WRITE : 0;
+		switch (result.fault.access) {
+		case uml::memory::MemoryAccess::read:
+			mutable_registers.fault.error_code = 0;
+			break;
+		case uml::memory::MemoryAccess::write:
+			mutable_registers.fault.error_code = DARWIN_UML_FAULT_WRITE;
+			break;
+		case uml::memory::MemoryAccess::execute:
+			mutable_registers.fault.error_code = DARWIN_UML_FAULT_EXECUTE;
+			break;
+		}
 		mutable_registers.fault.address = result.fault.address;
 		mutable_registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
 		event = DARWIN_UML_EVENT_FAULT;
@@ -450,31 +473,42 @@ int run_common_guest(
 			mutable_registers, cpu.pc, result.syndrome);
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
+	case uml::cpu::ExitReason::pc_alignment:
+		mutable_registers.fault.error_code = 0;
+		mutable_registers.fault.address = result.fault.address;
+		mutable_registers.fault.trap_number = 0;
+		event = DARWIN_UML_EVENT_PC_ALIGNMENT;
+		break;
 	case uml::cpu::ExitReason::fatal:
 		event = DARWIN_UML_EVENT_FATAL;
 		break;
 	}
+#if UML_RUNTIME_PROFILING
 	profile_dispatch(started, result.retired_instructions,
 		dispatch_exit_for(result.reason));
+#endif
 	return event;
 }
 
 } // namespace
 } // namespace uml::emulator
 
-extern "C" void darwin_uml_static_guest_interrupt_sequence(
+extern "C" int darwin_uml_static_guest_interrupt_sequence(
 	const unsigned int *sequence, unsigned int snapshot)
 {
 	try {
 		auto *context = ::uml::runtime::current_context();
 		if (context == nullptr)
-			return;
-		auto &interrupt = context->thread_execution_state().interrupt;
-		interrupt.sequence = sequence;
-		interrupt.snapshot = snapshot;
+			return -1;
+		auto runtime = context->thread_execution_state();
+		runtime->interrupt.sequence = sequence;
+		runtime->interrupt.snapshot = snapshot;
+		return 0;
 	} catch (...) {
-		/* The fixed C bridge cannot report allocation failure here. The next
-		 * guest entry will fail through its ordinary fatal boundary. */
+		/* Registration is a checked transaction. Linux must not enter the
+		 * guest after this failure, and an explicit retry replaces any prior
+		 * token before execution can resume. */
+		return -1;
 	}
 }
 
@@ -489,11 +523,6 @@ extern "C" int darwin_uml_interpreter_enter_guest(
 	} catch (...) {
 		return DARWIN_UML_EVENT_FATAL;
 	}
-}
-
-extern "C" int darwin_uml_jit_available(void)
-{
-	return uml::cpu::cpu_engine_available(uml::cpu::EngineKind::jit) ? 1 : 0;
 }
 
 extern "C" int darwin_uml_jit_enter_guest(

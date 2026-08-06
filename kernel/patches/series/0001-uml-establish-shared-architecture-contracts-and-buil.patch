@@ -1,7 +1,7 @@
 From b6cc173ebbede9c1e70501b03513df1be3c352fb Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:02 +0900
-Subject: [PATCH 01/10] uml: establish shared architecture contracts and build
+Subject: [PATCH 01/11] uml: establish shared architecture contracts and build
  wiring
 
 Apply the reviewed final-state topic without intermediate churn.
@@ -229,7 +229,7 @@ new file mode 100644
 index 000000000..8bcd5c3bc
 --- /dev/null
 +++ b/arch/um/Makefile-os-Darwin
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,24 @@
 +# SPDX-License-Identifier: GPL-2.0
 +
 +# Kernel objects remain normal AArch64 ELF.  Host-facing objects use the
@@ -250,14 +250,10 @@ index 000000000..8bcd5c3bc
 +	-idirafter $(srctree)/include/uapi
 +KBUILD_CFLAGS += -ffixed-x18 -DUML_HOST_DARWIN
 +KBUILD_CPPFLAGS += -DUML_HOST_DARWIN
-+ifneq ($(strip $(DARWIN_LIBELF_INCLUDE)),)
-+HOSTCFLAGS += -I$(DARWIN_LIBELF_INCLUDE) -I$(DARWIN_LIBELF_INCLUDE)/libelf
-+endif
-+
 +DEV_NULL_PATH = \"/dev/null\"
 +UML_LDLIBS :=
 +
-+export DARWIN_SDKROOT DARWIN_ABI_FLAGS DARWIN_LIBELF_INCLUDE UML_LDLIBS
++export DARWIN_SDKROOT DARWIN_ABI_FLAGS UML_LDLIBS
 diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
 index 9be3ee2e3..ef01d6006 100644
 --- a/arch/um/include/asm/Kbuild

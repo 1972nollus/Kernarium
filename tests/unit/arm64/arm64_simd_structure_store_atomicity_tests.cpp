@@ -76,6 +76,8 @@ void check_store(engine::EngineHarness &harness, std::string_view name,
 		.native = structure::native_requirement(),
 		.memory = std::span<const engine::MemoryRegion>{regions},
 		.validator = &validate_failed_exclusive,
+		.validator_relation_id =
+			"permitted-exclusive-store-failure/v1",
 	});
 }
 
