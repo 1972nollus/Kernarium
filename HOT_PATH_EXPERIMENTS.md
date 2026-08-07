@@ -4298,3 +4298,101 @@ implemented. Unlike these two it adds a bank entry rather than shrinking an
 existing one, so it needs translator support in `extract_register_gadget` and
 spends from the G-7 bank budget. `guest_move_keep_extract_loop` already contains
 the ROR alias, so the control for it exists.
+
+## G105: B-7, the host's real issue ratios
+
+No runtime change. This measures what the campaign has been assuming, on both
+core classes, so G-1, G-3, G-5 and B-5 can argue from a model rather than from
+trial and error. `tests/perf/host_issue_ratio.cpp`, built with
+`c++ -std=c++20 -O2 -o host_issue_ratio tests/perf/host_issue_ratio.cpp` and run bare for
+performance cores and under `taskpolicy -c background` for efficiency cores.
+
+### Method, and two mistakes it had to be corrected for
+
+Everything is reported in operations per cycle, and the cycle is **measured**:
+a dependent chain of `add` retires exactly one per cycle, which calibrates
+whichever core the process is actually on. That matters because the two classes
+do not run at the same clock, and a published frequency would be wrong for one
+of them.
+
+Two errors were made and fixed, both of which would have produced confident
+nonsense:
+
+1. **Accumulator count is a correctness property.** The first vector kernel used
+   eight accumulators, each `fadd` depending on its own previous result. Eight
+   chains against a three-cycle FADD latency sustain 8/3 = 2.67 per cycle, so it
+   reported 2.596 and looked like a two-wide vector unit. Sixteen chains report
+   3.99. The eight-chain kernel is kept in the output as a permanent reminder -
+   it still reads 2.670 on P-cores, and the gap between the two rows *is* the
+   FADD latency.
+2. **The scheduler migrates a process between core classes mid-run.** One
+   version calibrated at 2.06 GHz and then reported 6.06 vector ops per cycle,
+   which no Apple core can issue: it had calibrated on an efficiency core and
+   measured on a performance one. Fixed by requesting
+   `QOS_CLASS_USER_INTERACTIVE`, and by calibrating against *each* kernel so the
+   frequency is printed beside every result and a migration is visible rather
+   than silent.
+
+### Results
+
+| kernel | P-core (3.02-3.08 GHz) | E-core (2.04-2.06 GHz) |
+| --- | ---: | ---: |
+| 128-bit loads only | **2.99 - 3.01** | **1.99 - 2.00** |
+| vector ALU, 16 chains | **3.99 - 4.02** | **2.00** |
+| vector ALU, 8 chains | 2.67 | 2.00 - 2.01 |
+| mixed 1 load : 1 valu | 2.67 | 2.65 - 2.67 |
+| mixed 2 load : 1 valu | 4.00 - 4.02 | 2.96 - 2.97 |
+| mixed 3 load : 2 valu | **5.00 - 5.02** | **3.07 - 3.09** |
+| mixed 1 load : 2 valu | 4.02 - 4.07 | 3.00 |
+
+### What this says
+
+**The video's ratio does not transfer, and it inverts.** Cortex-A7xx mid-cores
+issue three 128-bit loads per clock against two vector operations, which is why
+its advice is to spend vector ops to save loads. Apple performance cores are
+three loads against **four** vector operations: the vector unit is the wider
+port and the load unit is the scarcer one. On efficiency cores the two are
+equal at two apiece. Any rebalancing argument copied from the talk would have
+been pointed the wrong way on this hardware.
+
+**Mixing does not buy both peaks.** The best combined rate is 5.0 per cycle on
+P-cores and 3.1 on E-cores, well below the 7 and 4 that adding the isolated
+peaks would suggest. A gadget body that is already mixed cannot be modelled as
+"loads are free because the vector unit is busy".
+
+**The two classes differ by about 2.4x in real throughput**, not by the 1.48x
+their clocks differ by: 5.0 ops/cycle at 3.04 GHz is 15.2 Gop/s, against 3.09 at
+2.05 GHz for 6.3 Gop/s. E-core FADD is also not latency-limited at eight chains
+where the P-core is, so its narrower width is the binding constraint rather than
+its window.
+
+**This corroborates G104 independently.** That trial removed instructions from
+two gadget bodies and measured 4.1% on P-cores against about 11% on E-cores, a
+ratio of roughly 2.5. The issue-width ratio measured here is 2.4. The consistent
+reading is that gadget bodies are issue-bound on efficiency cores while on
+performance cores something else - G8's threaded indirect dispatch - is the
+limit, so instruction count converts to time on one class and largely does not
+on the other. **G8's conclusion is a P-core conclusion, and this is the
+mechanism for why it should not be assumed to hold on the platform that matters
+for iOS.**
+
+### Consequences for the remaining items
+
+- G-1 removes a **load** per gadget, which is the scarcer port on both classes -
+  three-wide on P, two-wide on E. That is the right resource to attack, and the
+  prediction is that it pays on both classes rather than only on E.
+- G-5's internal `LDP`/`STP` pairs two loads into one instruction, which relieves
+  the same port. Same reasoning.
+- B-5's NEON compare-and-accumulate trades loads for vector ops. On Apple
+  hardware that is trading a three-wide port for a four-wide one on P-cores and a
+  two-wide for a two-wide on E-cores, so the video's 22-38% is not a number to
+  expect here. It is still worth doing structurally - one bulk fetch instead of
+  64 virtual ones - but the vectorisation half should not be assumed to pay.
+- Bank-growing trials (G-2, G-4) are not constrained by these ratios and remain
+  governed by G-7's I-cache budget instead.
+
+**Not measured:** a representative A-series part. The plan asks for one; there is
+no iOS device in this loop, and the XCFramework has no in-repo app target to run
+it from. The E-core column here is an M1 Ultra Icestorm cluster, which is the
+closest available stand-in and is the right shape of core, but a phone's E-cores
+and its thermal envelope are not measured and should not be claimed.
