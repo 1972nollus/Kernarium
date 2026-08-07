@@ -4002,3 +4002,96 @@ assembly bank, and nothing covers compiled code - so a future trial that does
 show an unexplained single-core move on a size-changing build should check it.
 Where a mechanism can be switched at run time, measuring both arms from one image
 removes the question entirely.
+
+## G102: B-3 step 1, ISB in place of the no-op YIELD - rejected
+
+Rejected on a **8.5% JIT multi-core regression** with no overlap between four
+runs. Reverted. The architectural premise is correct and the conclusion drawn
+from it is not.
+
+### The premise
+
+Arm gives YIELD an effect only on hardware with simultaneous multi-threading,
+which no Apple Silicon part has, so `yield` on this host is a plain NOP and the
+four spin loops in this tree have no backoff at all:
+`jit_gate_value_changed` (jit_publication.hpp), the `has_published_jit_store`
+drain loop (jit_publication_state.cpp), `ExclusiveMemoryMutex`
+(load_store_memory.hpp) and `Ls64Lock` (complex_memory_helpers.cpp). ISB is a
+pipeline restart rather than a hint, so it costs the spinner real latency and
+gives the machine back, and it is always safe where a hint was safe.
+
+### What was measured
+
+A `platform/spin_wait.hpp` with `spin_hint()` replaced `yield` at all four
+sites. Gates passed: 572/572 unit, 45/45 tooling.
+
+**The measurement has no layout confound at all.** ISB and YIELD are both
+four-byte instructions and the header is header-only, so the candidate's
+`__text` came out **byte-identical to the baseline at 3,867,900**, and zero of
+9,663 gadget entries moved. Whatever moved the score is the instruction itself.
+
+Screening first found that no probe in `tests/perf` reaches the two gadget-path
+sites: `guest_atomic_add_loop` uses `ldaddal` and
+`guest_reservation_store_fallback_loop` uses `ldxr`/`stxr`, and both lower to
+native host instructions rather than to the `exclusive_memory_mutex` fallback.
+The measurable site is therefore the JIT publication gate, which G52 put at
+44-56% of sampled emulator time for four multi-core workloads. Measured with
+`--engine jit`, 10 vCPUs.
+
+| JIT | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 237 | **790** |
+| baseline (result) | 235 | **811** |
+| ISB at all four sites (result) | 241 | 728 |
+| ISB except the two helper waits (result) | 243 | 737 |
+
+The baseline's **worst** run beats both candidates' best, so the sets do not
+overlap: -8.5% on the mean. Host load was measured throughout and does not
+explain it - the first candidate ran on a *quieter* host than its baseline
+(median 4.78 against 5.56 cores).
+
+The damage concentrates exactly where G52 said the gate dominates:
+Object Remover -28.5%, Ray Tracer -23.2%, Horizon Detection -19.9%, Asset
+Compression -17.8%, Object Detection -10.4%, HDR -10.1%.
+
+### The diagnosis, including the part that was wrong
+
+The first hypothesis was that backoff belongs to a waiter contending for a
+resource but not to one whose own latency is on the critical path, and that the
+two waits inside `JitExclusiveOperationScope` are the latter - the helper holds
+the turn while every other thread is blocked behind it, so slowing its
+observation of "drained" multiplies across all ten. A second variant removed
+the backoff from both helper waits.
+
+**That variant did not recover: 737 against 728.** The hypothesis was wrong, or
+at least not the main term. What remains between it and the baseline is the ISB
+in `jit_gate_value_changed`'s default path, used by `JitBlockPublication` while a
+store waits for the phase to clear - and that wait is *also* on the critical
+path, because a waiting store holds `jit_waiting_store_count_value` above zero
+and the next helper cannot start until it reaches zero. Every wait in this
+protocol feeds back into every other one, so there is no "free" place to spend
+latency.
+
+The conclusion is not that ISB is a bad spin hint in general. It is that this
+gate has no slack anywhere: G47 already rejected a `std::mutex` turn here on
+measured regressions, and now a 15-cycle backoff costs 8.5%. That is strong
+evidence for C-2's specified replacement - a FIFO ticket turn whose contended
+waiters park with atomic wait/notify - rather than any further tuning of how the
+waiters spin.
+
+### Disposition
+
+- The ISB substitution at the two JIT gate sites is **rejected**, with numbers.
+- `ExclusiveMemoryMutex` and `Ls64Lock` are **not** rejected and **not**
+  accepted: they were carried along in both candidates, but no probe reaches
+  them and they are cold in Geekbench, so neither run says anything about them.
+  Reopening them requires first writing a probe that reaches the
+  `exclusive_memory_mutex` fallback - the guest sequences that get there are the
+  ones the native lowering declines, not ordinary LSE atomics or plain
+  LDXR/STXR pairs.
+- B-3's second half - hoisting the mutex and vector scan out of the
+  `has_published_jit_store` loop - was not measured. Note that the natural
+  implementation, an atomic count of non-idle participants, would put a
+  contended global read-modify-write on `JitBlockPublication`'s deliberately
+  lock-free direct-store path to speed up a rare waiter, which is the shape
+  G33 and G34 were rejected for. It belongs with C-2's redesign, not before it.
