@@ -253,6 +253,17 @@ gadget move_wide_constant
 /* MOVK keeps only Rd and imm16 in the stream. Width and halfword position are
  * separate entries; invalid 32-bit halfwords and XZR were rejected/folded by
  * the translator. */
+/* BFI is exactly MOVK's semantics: insert 16 bits at a fixed position, leave
+ * the rest. The mask-shift-clear-insert sequence it replaces was three to five
+ * instructions with a bic->orr dependency three deep. For the 32-bit entries it
+ * also subsumes the zero-extend, because BFI on a w register writes bits 63:32
+ * as zero on its own.
+ *
+ * The trailing .space keeps every later gadget at the address and 64-byte phase
+ * it had before, so this is measured against an otherwise identical bank - the
+ * G96 rule, after G17 and G36 were discarded for what turned out to be layout
+ * movement. Removing the padding to collect the I-cache saving is a separate
+ * trial with its own measurement. */
 .macro move_wide_keep bits64, shift, suffix
 gadget move_wide_keep_\suffix
 	ldr x8, [_stream], #8
@@ -260,18 +271,26 @@ gadget move_wide_keep_\suffix
 	ubfx x11, x8, #8, #16
 	add x13, _cpu, #UML_GADGET_CPU_X0
 	ldr x14, [x13, x9, lsl #3]
-	.if !\bits64
-	mov w14, w14
+	.if \bits64
+	bfi x14, x11, #\shift, #16
+	.else
+	bfi w14, w11, #\shift, #16
 	.endif
-	mov x15, #0xffff
-	.if \shift
-	lsl x15, x15, #\shift
-	lsl x11, x11, #\shift
-	.endif
-	bic x14, x14, x15
-	orr x14, x14, x11
 	str x14, [x13, x9, lsl #3]
 	next_gadget
+	.if \bits64
+		.if \shift
+	.space 16
+		.else
+	.space 8
+		.endif
+	.else
+		.if \shift
+	.space 20
+		.else
+	.space 12
+		.endif
+	.endif
 .endm
 
 move_wide_keep 0, 0, w0
@@ -1410,16 +1429,19 @@ gadget extract_register_\suffix
 	.endif
 	.if \shift_nonzero
 	ubfx w12, w8, #24, #6
+	/* LSL takes its amount modulo the register width and this variant
+	 * guarantees a shift of 1..width-1, so the complement is just the
+	 * negation: (2^32 - shift) mod width == width - shift for both widths,
+	 * since 2^32 is a multiple of 64. One instruction instead of two, and
+	 * the chain no longer waits on a constant materialisation. */
 		.if \bits64
 	lsr x16, x15, x12
-	mov w17, #64
-	sub w17, w17, w12
+	neg w17, w12
 	lsl x17, x14, x17
 	orr x16, x16, x17
 		.else
 	lsr w16, w15, w12
-	mov w17, #32
-	sub w17, w17, w12
+	neg w17, w12
 	lsl w17, w14, w17
 	orr w16, w16, w17
 		.endif
@@ -1435,6 +1457,11 @@ gadget extract_register_\suffix
 	str x16, [x13, x9, lsl #3]
 	.endif
 	next_gadget
+	/* Hold this entry's length, and so every later entry's address and
+	 * 64-byte phase, at what it was before the neg. See move_wide_keep. */
+	.if \shift_nonzero
+	.space 4
+	.endif
 .endm
 .macro extract_destinations bits64, shift_nonzero, left_zero, right_zero, prefix
 extract_register_fast \bits64, \shift_nonzero, \left_zero, \right_zero, 0, \prefix\()_r
