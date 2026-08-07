@@ -1061,7 +1061,8 @@ private:
 		}
 		const auto plan_reserve = std::min(touched_pages, possible_pages);
 		std::vector<PlannedMappingPage> pages;
-		std::unordered_map<std::uint64_t, std::size_t> page_indices;
+		std::unordered_map<std::uint64_t, std::size_t, GuestPageHash>
+			page_indices;
 		std::vector<MappingChangePlan> changes;
 		/* The operation count is a poor capacity estimate: one coalesced TLB
 		 * range can cover thousands of pages. Reserve a checked upper bound on

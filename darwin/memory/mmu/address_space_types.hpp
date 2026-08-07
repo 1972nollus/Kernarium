@@ -4,6 +4,7 @@
 #include "mapped_backing.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -13,6 +14,28 @@
 #include <vector>
 
 namespace uml::memory {
+
+/* std::hash of an integer is the identity, and libc++ keeps a power-of-two
+ * bucket count whenever one is requested through reserve(), constraining a
+ * hash by masking rather than by a modulus.  A page address carries
+ * log2(page_size) low zero bits, so an identity hash under a power-of-two mask
+ * reaches only bucket_count / page_size distinct buckets: at 16 KiB pages a
+ * 65,536-bucket table uses four of them, every lookup walks a chain thousands
+ * of nodes long, and filling the table becomes quadratic.  Fold the page
+ * number so the distribution no longer depends on the bucket count the
+ * container happens to choose.
+ */
+struct GuestPageHash final {
+	[[nodiscard]] std::size_t operator()(
+		const std::uint64_t address) const noexcept
+	{
+		auto value = address / DARWIN_UML_GUEST_PAGE_SIZE;
+		value ^= value >> 33;
+		value *= 0xff51'afd7'ed55'8ccdULL;
+		value ^= value >> 29;
+		return static_cast<std::size_t>(value);
+	}
+};
 
 struct Mapping final {
 	std::shared_ptr<MappedBacking> backing;

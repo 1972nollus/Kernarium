@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
+#include "address_space_types.hpp"
 #include "allocation_fault.hpp"
 
 #include <array>
@@ -17,6 +18,7 @@
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
+#include <unordered_map>
 
 namespace {
 
@@ -593,6 +595,39 @@ void test_large_sparse_unmap_visits_only_mapped_pages()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* A batch plans one entry per touched page and indexes them by page address,
+ * reserving the index up to a power-of-two cap.  libc++ keeps a power-of-two
+ * bucket count for such a reservation and constrains the hash by masking, so
+ * an identity hash of page-aligned keys would reach only a handful of buckets
+ * and make planning quadratic.  Assert the distribution rather than the time
+ * it takes, so the guarantee does not depend on how fast the host is.
+ */
+void test_page_index_hash_spreads_page_aligned_addresses()
+{
+	constexpr std::size_t entries = 64 * 1024;
+	constexpr unsigned long base = 0x40'0000;
+	std::unordered_map<std::uint64_t, std::size_t,
+		uml::memory::GuestPageHash> index;
+
+	index.reserve(entries);
+	require((index.bucket_count() & (index.bucket_count() - 1)) == 0);
+	for (std::size_t page = 0; page < entries; ++page)
+		index.emplace(base + page * DARWIN_UML_GUEST_PAGE_SIZE, page);
+
+	std::size_t occupied = 0;
+	std::size_t longest = 0;
+	for (std::size_t bucket = 0; bucket < index.bucket_count(); ++bucket) {
+		const auto size = index.bucket_size(bucket);
+		occupied += size != 0 ? 1 : 0;
+		longest = size > longest ? size : longest;
+	}
+	/* An identity hash yields four occupied buckets and chains of 16,384 here.
+	 * A sound hash keeps chains at a small constant, so these bounds separate
+	 * the two by three orders of magnitude without being tight. */
+	require(occupied >= index.bucket_count() / 4);
+	require(longest <= 16);
+}
+
 void test_retired_batch_cannot_commit_into_replacement_generation()
 {
 	constexpr unsigned long generation = 308;
@@ -679,6 +714,7 @@ int main()
 	test_large_overlapping_batch_preserves_last_operation();
 	test_batch_index_allocation_failure_is_atomic_and_retryable();
 	test_large_sparse_unmap_visits_only_mapped_pages();
+	test_page_index_hash_spreads_page_aligned_addresses();
 	test_retired_batch_cannot_commit_into_replacement_generation();
 	test_waiting_execution_context_cannot_enter_retired_generation();
 	std::puts("Static MMU batch tests passed");
