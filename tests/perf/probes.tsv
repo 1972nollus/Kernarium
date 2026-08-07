@@ -14,6 +14,7 @@ guest_link_loop.S	control-flow	base	run_guest_link_bench.py	Baseline for cached 
 guest_logical_move_loop.S	integer	base	run_guest_link_bench.py	Matched control for logical-register move alias lowering.
 guest_memory_site_loop.S	memory	base	run_guest_link_bench.py	Measures repeated scalar and vector accesses at stable translated sites.
 guest_mmu_miss_walk_loop.S	tlb	base	run_guest_link_bench.py	Walks twice the software TLB's capacity from threads sharing one address space, so every access is a miss and the software-MMU translate path is measured under the concurrency the multi-core phase produces.
+guest_move_keep_extract_loop.S	integer	base	run_guest_link_bench.py	MOVK at every halfword position and EXTR at both widths plus the ROR alias, in the loop body. The other integer probes reach these entries only while materialising their iteration count.
 guest_operand_predecode_loop.S	integer	base	run_guest_link_bench.py	Measures translation-predecoded scalar operand addressing.
 guest_reservation_store_fallback_loop.S	atomic	base	run_guest_link_bench.py	Exercises the software reservation fallback followed by publication.
 guest_reservation_store_loop.S	atomic	base	run_guest_link_bench.py	Exercises the bounded native reservation sequence followed by publication.
