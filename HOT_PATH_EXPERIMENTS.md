@@ -4199,3 +4199,102 @@ teardown scans - is untouched. The lock is still taken and released once per
 guest entry and held across the run. That is a smaller remaining cost than what
 was removed, and unlike the cache it changes the retirement protocol rather than
 just short-circuiting a lookup, so it belongs in its own trial.
+
+## G104: G-8, BFI for MOVK and NEG for the EXTR shift complement
+
+Accepted under condition 2. **It is also the first direct evidence in this
+campaign that G-3's central hypothesis holds: the same change is worth 4.1% on
+performance cores and about 11% on efficiency cores.**
+
+### The two changes
+
+`move_wide_keep` implemented guest MOVK as materialise-mask, shift it, shift the
+immediate, `bic`, `orr` - three to five instructions with a `bic`->`orr` chain
+three deep. BFI is precisely MOVK's semantics, insert 16 bits at a fixed
+position and leave the rest, in one instruction with no chain. For the 32-bit
+entries it also subsumes the `mov w14, w14` zero-extend, because BFI on a w
+register writes bits 63:32 as zero on its own. That is 2 to 5 instructions
+removed per entry across six entries.
+
+`extract_register` computed the left shift amount as `mov w17, #64` then
+`sub w17, w17, w12`. LSL takes its amount modulo the register width and the
+`shift_nonzero` variant guarantees 1..width-1, so the complement is just
+`neg w17, w12`: for 64-bit, `(2^32 - shift) mod 64 == 64 - shift` because 2^32
+is a multiple of 64, and the same argument gives the 32-bit case. One
+instruction instead of two, and the chain no longer waits on a constant
+materialisation.
+
+### The layout is provably held constant
+
+This is the point G17 and G36 failed on, and the reason G96 made pinning a
+standing rule. Both entries shrink, and `gadget` aligns to 16 bytes, so a
+4-byte reduction moves every later entry whenever the old body length was
+exactly 4 past a multiple of 16. Trailing `.space` after the unreachable
+`next_gadget` restores each entry's original length.
+
+Verified rather than asserted: comparing the two linked images by symbol,
+**0 of 9,663 gadget entries moved**, and `__text` is **byte-identical at
+3,868,296**. The A/B therefore differs only in the instructions under test.
+
+### Measurement
+
+`guest_logical_move_loop` and `guest_add_immediate_loop` use `movk` only to
+materialise their iteration count, so neither reaches these entries from its
+measured loop. `tests/perf/guest_move_keep_extract_loop.S` puts MOVK at all four
+64-bit halfword positions and both 32-bit ones, EXTR at both widths, and the ROR
+alias into the loop body, and checks the accumulated sum against a total derived
+from one iteration - so a wrong insert position, shift complement or rotate
+fails the run rather than just running faster.
+
+| median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| P-core, `--cpus 10 --workers 1` | 3.414 s, 3.455 s | 3.574 s, 3.595 s |
+| E-core, `--cpus 4 --workers 1` | 13.216 s, 11.991 s | 14.565 s, 13.795 s |
+
+**4.1% on P-cores and about 11% on E-cores**, the candidate winning in both
+orders on both core classes. E-core wall time is noisier - host occupancy varied
+0.54 to 0.76 cores across those four runs - so treat 11% as "substantially more
+than 4.1%" rather than as a precise figure. The direction and the ordering are
+what matter, and they are exactly what G-3 predicted: a narrower core with a
+smaller reorder window pays more for gadget-body instruction count, and that is
+the core class iOS runs on.
+
+### Result
+
+Matched pair, back to back, 10 vCPUs, `--engine gadgets`, zero RCU stalls, all
+32 workloads, host load medians 2.77 and 2.84 cores.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 80 | 493 |
+| candidate (result) | 80 | **498** |
+
+Single-core is identical and multi-core is +1.0%, which is **inside** the 1.7%
+band and therefore not itself evidence. The acceptance rests on condition 2: the
+targeted control improves unambiguously on both core classes, and no Geekbench
+aggregate or section regresses beyond run-to-run variation. The largest section
+move against the candidate is single-core PDF Renderer, 86 to 84; that section
+read 83, 85, 85, 86, 86, 86 across the day's other gadget runs, so a 2-point
+move is inside its own spread. Multi-core sections are mostly up, led by Photo
+Filter +4.6%, HTML5 Browser +3.5%, Object Detection +2.2% and PDF Renderer
++2.1%.
+
+### What this reopens
+
+G8, G17, G23, G23b and G36 were all rejected as instruction-count reductions
+measured on P-cores, and G96 recorded the suspicion that the P-core result may
+not hold for the platform that matters. This trial is the first to measure one
+of these on both classes with the layout provably pinned, and the E-core figure
+is roughly two and a half times the P-core one. That does not un-reject any of
+them - each still has to be re-measured on its own - but it removes the reason
+to assume they would come out the same way, and it makes the E-core half of
+those re-measurements the interesting half.
+
+### Not done
+
+The third candidate in the G-8 table, a `_same` variant of `extract_register`
+lowering the guest `ROR #imm` alias to a single `ror` when Rn == Rm, is not
+implemented. Unlike these two it adds a bank entry rather than shrinking an
+existing one, so it needs translator support in `extract_register_gadget` and
+spends from the G-7 bank budget. `guest_move_keep_extract_loop` already contains
+the ROR alias, so the control for it exists.
