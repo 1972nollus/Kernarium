@@ -4,7 +4,7 @@
 # every field before it creates or accepts the managed replay branch.
 order	filename	stable_patch_id	sha256	subject
 1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	7518c29b7382e322437e7c2fffafca3826828aa0	b018cbe763d6a4a62b4a35509b4ec0f6ac0ca94d97ba095d7a6854923ef115c2	uml: establish shared architecture contracts and build wiring
-2	0002a-uml-add-MMU-synchronization-and-large-page-support.patch	dd0e437f6f750e7abcddc68c8ba2cbb9f270f8b9	fb71275bca4718a44622230a1448f0f52cdaa4dc0ff219d1cd1ee360b98642ab	uml: add MMU synchronization and large-page support
+2	0002a-uml-add-MMU-synchronization-and-large-page-support.patch	68eaee0a29bf413926df92e4f1a4c3f27e615128	fc16b402d6186d6baa7ae55bcb4572adbbf6f7a660547c8e6b54e49b378db3a1	uml: add MMU synchronization and large-page support
 3	0002b-uml-add-SMP-timer-and-interrupt-core-support.patch	1098f72dc4193ba3fb4a72cce2d01a5d9987b5fe	82d2908d26ce3a2de6e94c7029ee8673594e008f3455742d4209cfc184f6c5e9	uml: add SMP timer and interrupt core support
 4	0002c-uml-add-execution-and-capability-core-support.patch	0ff6f82a1fa86ed639a76c7e6cf70760efc62f32	a5f7de82de26a00deb0664c47f0bed8d130ac7dd2eb1572387a3afa114f4e766	uml: add execution and capability core support
 5	0002d-uml-make-core-build-rules-portable-across-hosts.patch	5946f4f48cf44db894ebe4d5bdd810c3a9186010	e496b4e17ac221ffc791b27e66a4101285472a51180982631ff90b05e5f22541	uml: make core build rules portable across hosts

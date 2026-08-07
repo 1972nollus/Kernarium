@@ -404,21 +404,33 @@ new file mode 100644
 index 000000000..a901375a8
 --- /dev/null
 +++ b/arch/um/kernel/skas/mmu_darwin.c
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,102 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* Same-process mm lifetime management for the Darwin UML backend. */
 +
 +#include <linux/atomic.h>
 +#include <linux/mm.h>
 +#include <linux/sched.h>
++#include <linux/mutex.h>
 +#include <asm/mm_hooks.h>
 +#include <kern_util.h>
 +#include <os.h>
 +
 +static atomic_t darwin_mm_generation = ATOMIC_INIT(1);
 +
++/* The turnstile must be owned by the guest task, not by the host carrier
++ * thread.  A task can be scheduled out inside this region, so taking only
++ * the host walker mutex lets every other carrier block on it and consume
++ * the very virtual CPUs the holder needs to make progress.  Take the
++ * sleeping guest mutex first, exactly as the Linux host backend does: a
++ * waiter then blocks as a Linux task and releases its virtual CPU, and the
++ * host walker lock behind it is uncontended.
++ */
 +void enter_turnstile(struct mm_id *id) __acquires(turnstile)
 +{
++	struct mm_context *ctx = container_of(id, struct mm_context, id);
++
++	mutex_lock(&ctx->turnstile);
 +	if (darwin_uml_vm_walker_lock(id->darwin_generation) < 0)
 +		panic("Darwin: unable to lock address-space walker %lu",
 +		      id->darwin_generation);
@@ -426,9 +438,12 @@ index 000000000..a901375a8
 +
 +void exit_turnstile(struct mm_id *id) __releases(turnstile)
 +{
++	struct mm_context *ctx = container_of(id, struct mm_context, id);
++
 +	if (darwin_uml_vm_walker_unlock(id->darwin_generation) < 0)
 +		panic("Darwin: unable to unlock address-space walker %lu",
 +		      id->darwin_generation);
++	mutex_unlock(&ctx->turnstile);
 +}
 +
 +void arch_exit_mmap(struct mm_struct *mm)
