@@ -137,6 +137,21 @@ uml_add_tooling_test(
     LABELS audit;cpu
     TIMEOUT 30)
 
+# Record this build's gadget entry addresses and 64-byte cache-line phases.
+# The snapshot is what a later optimization trial compares against with
+# --baseline, so an accepted build always leaves behind the evidence needed to
+# prove that a gadget-body change did not move unrelated entries.
+uml_add_tooling_test(
+    NAME gadget-bank-layout-snapshot
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_gadget_bank_layout.py
+        --nm ${UML_ENGINE_NM_TOOL}
+        --objects $<JOIN:$<TARGET_OBJECTS:uml_arm64_gadgets>,|>
+        --write-baseline
+            ${CMAKE_BINARY_DIR}/reports/gadget-bank-layout.tsv
+    LABELS audit;cpu
+    TIMEOUT 60)
+
 uml_add_tooling_test(
     NAME kernel-release-source-preparer
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_release.sh
@@ -439,22 +454,28 @@ if(UML_BUILD_UNIT_TESTS)
                 "${_uml_input_materialization_profile_root}/a64-input-materialization-checkpoints")
     endif()
 
-    uml_add_tooling_test(
-        NAME arm64-input-materialization-join
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/join_a64_input_materializations.py
-            --evidence-directory ${CMAKE_BINARY_DIR}/instruction-evidence
-            --guest-page-size ${UML_GUEST_PAGE_SIZE}
-            --output
-                ${CMAKE_BINARY_DIR}/instruction-evidence/a64-input-materialization-index.tsv
-            ${_uml_input_materialization_storage_args}
-        LABELS cpu;audit;instruction-evidence-validation
-        # A complete profile streams roughly 30 million contributions through
-        # 449 resumable producer checkpoints. Keep the exhaustive tooling gate
-        # bounded, but do not impose the old ten-minute fixture-scale limit.
-        TIMEOUT 14400)
-    set_tests_properties(arm64-input-materialization-join PROPERTIES
-        DEPENDS "arm64-instruction-evidence;${_uml_unit_evidence_dependencies}")
+    # Registered only alongside its producers. The sidecars they emit are the
+    # dominant build-tree cost, so both sides share one option and the join can
+    # never be selected without the inputs it requires.
+    if(UML_INSTRUCTION_INPUT_MATERIALIZATION)
+        uml_add_tooling_test(
+            NAME arm64-input-materialization-join
+            COMMAND ${Python3_EXECUTABLE} -B
+                ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/join_a64_input_materializations.py
+                --evidence-directory ${CMAKE_BINARY_DIR}/instruction-evidence
+                --guest-page-size ${UML_GUEST_PAGE_SIZE}
+                --output
+                    ${CMAKE_BINARY_DIR}/instruction-evidence/a64-input-materialization-index.tsv
+                ${_uml_input_materialization_storage_args}
+            LABELS cpu;audit;instruction-evidence-validation
+            # A complete profile streams roughly 30 million contributions
+            # through 449 resumable producer checkpoints. Keep the exhaustive
+            # tooling gate bounded, but do not impose the old ten-minute
+            # fixture-scale limit.
+            TIMEOUT 14400)
+        set_tests_properties(arm64-input-materialization-join PROPERTIES
+            DEPENDS "arm64-instruction-evidence;${_uml_unit_evidence_dependencies}")
+    endif()
 endif()
 
 if(UML_BUILD_NETWORK_PROVIDER)

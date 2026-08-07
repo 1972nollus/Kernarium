@@ -13,6 +13,7 @@ import select
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -67,6 +68,29 @@ class CommandResult:
     output: str
 
 
+CORE_CLASSES = ("performance", "efficiency")
+TASKPOLICY = "/usr/sbin/taskpolicy"
+
+
+def core_class_prefix(core_class: str) -> list[str]:
+    """Return the launcher prefix that selects a host core class.
+
+    Apple's scheduler places a process-wide background QoS clamp on the
+    efficiency cores, so ``taskpolicy -c background`` is how a measurement runs
+    on the core type that dominates iOS.  The clamp is a task ceiling, so the
+    emulator's vCPU threads inherit it even though they are created later.
+    """
+    if core_class not in CORE_CLASSES:
+        raise ValueError(f"unknown core class {core_class!r}")
+    if core_class == "performance":
+        return []
+    if sys.platform != "darwin" or not os.path.exists(TASKPOLICY):
+        raise RuntimeError(
+            "efficiency-core measurement requires Darwin's taskpolicy"
+        )
+    return [TASKPOLICY, "-c", "background"]
+
+
 def emulator_arguments(
     emulator: pathlib.Path,
     rootfs: pathlib.Path,
@@ -76,8 +100,10 @@ def emulator_arguments(
     swap_path: pathlib.Path | None = None,
     init_path: str = "/sbin/uml-overlay-init",
     engine: str = "jit",
+    core_class: str = "performance",
 ) -> list[str]:
     arguments = [
+        *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
         f"ubd0r={rootfs}",
@@ -159,9 +185,11 @@ class Guest:
         overlay_shell: bool = False,
         systemd_overlay: bool = False,
         engine: str = "jit",
+        core_class: str = "performance",
     ) -> None:
         if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
             raise ValueError("guest boot modes are mutually exclusive")
+        self._core_class = core_class
         self._swap_path = create_swap_image(swap_size) if swap_size else None
         self._cgroup1 = cgroup1
         self._cgroup2_nsdelegate = cgroup2_nsdelegate
@@ -188,6 +216,7 @@ class Guest:
                     if init_shell or overlay_shell or systemd_overlay
                     else "/sbin/uml-overlay-init",
                     engine,
+                    core_class,
                 ),
                 stdin=slave,
                 stdout=slave,

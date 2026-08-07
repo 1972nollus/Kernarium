@@ -48,6 +48,20 @@ def verify_engine_forwarding(runner: str) -> None:
         raise RuntimeError(
             f"{runner}: Guest must receive engine={expected}"
         )
+    core_keywords = [
+        keyword
+        for keyword in guest_calls[0].keywords
+        if keyword.arg == "core_class"
+    ]
+    expected_core = "arguments.core_class"
+    if (
+        len(core_keywords) != 1
+        or ast.unparse(core_keywords[0].value) != expected_core
+    ):
+        raise RuntimeError(
+            f"{runner}: Guest must receive core_class={expected_core} so an "
+            "efficiency-core measurement is selectable"
+        )
     if "--execution-engine" in source:
         raise RuntimeError(
             f"{runner}: engine selection must not be passed as a kernel argument"
@@ -124,8 +138,63 @@ def verify_geekbench_network_gate() -> None:
         guest.assert_not_called()
 
 
+def verify_core_class_launcher() -> None:
+    """The core-class choice must only change the launcher prefix."""
+    support = pathlib.Path(__file__).resolve().parents[2] / "integration" / "support"
+    spec = importlib.util.spec_from_file_location(
+        "guest_core_class_contract", support / "guest.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load the guest support module")
+    guest = importlib.util.module_from_spec(spec)
+    # dataclasses resolves a class's defining module through sys.modules, so
+    # register the module before executing it.
+    sys.modules[spec.name] = guest
+    try:
+        spec.loader.exec_module(guest)
+    except BaseException:
+        del sys.modules[spec.name]
+        raise
+
+    def build(core_class: str) -> list[str]:
+        return guest.emulator_arguments(
+            pathlib.Path("/emulator"),
+            pathlib.Path("/rootfs.img"),
+            "8G",
+            core_class=core_class,
+        )
+
+    performance = build("performance")
+    if performance[0] != "/emulator":
+        raise RuntimeError(
+            "performance-core runs must launch the emulator directly: "
+            f"{performance}"
+        )
+
+    if sys.platform == "darwin":
+        efficiency = build("efficiency")
+        prefix = [guest.TASKPOLICY, "-c", "background"]
+        if efficiency[: len(prefix)] != prefix:
+            raise RuntimeError(
+                f"efficiency-core runs must apply {prefix}: {efficiency}"
+            )
+        if efficiency[len(prefix) :] != performance:
+            raise RuntimeError(
+                "the core class must change only the launcher prefix: "
+                f"{efficiency} versus {performance}"
+            )
+
+    try:
+        build("little")
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError("an unknown core class was accepted")
+
+
 def main() -> int:
     verify_geekbench_network_gate()
+    verify_core_class_launcher()
     for runner in RUNNERS:
         verify_engine_forwarding(runner)
         result = subprocess.run(

@@ -8,6 +8,44 @@ Source: `ISA_A64_xml_A_profile-2026-06.pdf`, Arm A64 ISA XML for A-profile archi
 
 Scope: all entries in the PDF inventories `A64 -- Base Instructions (alphabetic order)` (516 entries) and `A64 -- SIMD and Floating-point Instructions (alphabetic order)` (467 entries). Aliases, grouped mnemonics, scalar/vector forms, addressing forms, element widths, architectural feature variants, and every distinct encoding described by an entry must be tested before that entry is complete.
 
+## Enabling input materialization
+
+Input-materialization sidecars are **opt-in** and off by default. Every unit
+test writes one `<producer>.tsv.inputs.jsonl.gz` when they are enabled, and only
+`arm64-input-materialization-join` reads them. A complete 16 KiB profile costs
+roughly **6.6 GiB** of compressed sidecars against 3.4 MiB of ordinary evidence,
+so an ordinary unit or tooling run must not pay for them.
+
+Configure with the option to record sidecars and register the join:
+
+```sh
+cmake -S . -B .build/presets/macos-unit-16k \
+  -DUML_INSTRUCTION_INPUT_MATERIALIZATION=ON
+```
+
+The producers and the join share this one option, so the join can never be
+selected without the inputs it requires. With the option off the suite
+registers 618 tests and leaves a 12 KiB evidence directory; with it on the
+suite registers 619 and regenerates the full profile.
+
+Two known costs apply when it is enabled:
+
+- The spool capacity policy is `expected_contributions * 1024 + 4 MiB` per
+  producer, which is too small for producers whose rows carry long
+  native-feature alternative lists. `arm64-atomic-floating-allocation`
+  overflows its 165,044,224-byte cap at 164,941,824 bytes and reports
+  `contribution spool exceeded its hard byte cap`. Pass
+  `--spool-bytes-per-contribution 2048` to clear it. Note that the same message
+  is also produced for genuine disk exhaustion, because the handler catches
+  every `sqlite3.DatabaseError`.
+- The sidecar codec is zlib level 6, chosen in
+  `tests/unit/arm64/arm64_instruction_materialization.cpp`. Measured on a real
+  120 MB sample, gzip level 9 recovers only 2.4%, while `xz -1` is **1.98x
+  smaller at comparable write cost** (1.1 s versus 0.9 s, and 0.3 s to read)
+  and `zstd -3` is **2.13x smaller and 9x faster**. Either would roughly halve
+  the 6.6 GiB profile, but both need a vendored compressor: neither `lzma.h`
+  nor `libzstd` is present in the macOS SDK.
+
 ## Frozen aggregate-manifest publication
 
 The frozen manifest and identity are published only as one complete two-profile

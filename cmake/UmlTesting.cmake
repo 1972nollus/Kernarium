@@ -185,11 +185,17 @@ function(uml_add_unit_test)
         "UML_INSTRUCTION_EVIDENCE=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv"
         "UML_INSTRUCTION_EVIDENCE_TEST=${TEST_NAME}"
         "UML_INSTRUCTION_EVIDENCE_BINDINGS=${PROJECT_SOURCE_DIR}/tests/unit/arm64/a64_instruction_evidence_bindings.tsv")
-    if(UML_BUILD_TOOLING_TESTS)
+    if(UML_BUILD_TOOLING_TESTS AND UML_INSTRUCTION_INPUT_MATERIALIZATION)
         # The input join consumes one independently compressed stream per
         # producer.  Keeping the path test-specific makes parallel unit runs
         # race-free; the join's dependency list keeps it behind all selected
         # producers in a complete unit+tooling invocation.
+        #
+        # These sidecars are the dominant build-tree cost: a complete 16 KiB
+        # profile writes roughly 6.6 GiB across 449 producers, and only the
+        # join reads them. They are therefore opt-in, and the join is
+        # registered only under the same option so it can never run without
+        # its inputs.
         set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
             "UML_INSTRUCTION_INPUT_MATERIALIZATION=${CMAKE_BINARY_DIR}/instruction-evidence/${TEST_NAME}.tsv.inputs.jsonl.gz")
     endif()

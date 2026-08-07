@@ -17,7 +17,7 @@ import time
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import Guest  # noqa: E402
+from guest import CORE_CLASSES, Guest  # noqa: E402
 
 
 UPLOAD_HOST = "browser.geekbench.com"
@@ -44,6 +44,15 @@ def parse_arguments() -> argparse.Namespace:
         "--engine",
         choices=("jit", "gadgets", "interpreter"),
         default="jit",
+    )
+    parser.add_argument(
+        "--core-class",
+        choices=CORE_CLASSES,
+        default="performance",
+        help=(
+            "host core class to measure on; 'efficiency' clamps the emulator "
+            "to background QoS so it runs on the E-cores that dominate iOS"
+        ),
     )
     parser.add_argument(
         "--allow-network",
@@ -120,6 +129,7 @@ def main() -> int:
         ),
         systemd_overlay=True,
         engine=arguments.engine,
+        core_class=arguments.core_class,
     )
     mirror_stop = threading.Event()
     mirror_ready = threading.Event()

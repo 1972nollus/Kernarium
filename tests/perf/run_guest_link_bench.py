@@ -17,7 +17,7 @@ import time
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import Guest  # noqa: E402
+from guest import CORE_CLASSES, Guest  # noqa: E402
 from host_metrics import cpu_time_seconds  # noqa: E402
 
 
@@ -42,6 +42,15 @@ def parse_arguments() -> argparse.Namespace:
         "--engine",
         choices=("jit", "gadgets", "interpreter"),
         default="jit",
+    )
+    parser.add_argument(
+        "--core-class",
+        choices=CORE_CLASSES,
+        default="performance",
+        help=(
+            "host core class to measure on; 'efficiency' clamps the emulator "
+            "to background QoS so it runs on the E-cores that dominate iOS"
+        ),
     )
     boot_mode = parser.add_mutually_exclusive_group()
     boot_mode.add_argument(
@@ -128,6 +137,7 @@ def main() -> int:
         init_shell=arguments.shell_init,
         overlay_shell=arguments.overlay_shell,
         engine=arguments.engine,
+        core_class=arguments.core_class,
     )
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
@@ -178,7 +188,9 @@ def main() -> int:
 
     print(
         f"median: {statistics.median(elapsed_samples):.3f}s wall, "
-        f"{statistics.median(utilization_samples):.2f} host cores",
+        f"{statistics.median(utilization_samples):.2f} host cores "
+        f"[engine={arguments.engine} cores={arguments.core_class} "
+        f"cpus={arguments.cpus} workers={arguments.workers}]",
         flush=True,
     )
     return 0
