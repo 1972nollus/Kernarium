@@ -88,6 +88,24 @@ target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The decode -> select -> emit chain runs once per translated guest instruction
+# and is deliberately spread across thirteen translation units:
+# verify_gadget_builder_ownership() requires each decode family to keep an
+# independently compiled owner, so neither a unity build nor header inlining is
+# available here. Interprocedural optimization is the one route that restores
+# the cross-unit inlining that split cost without changing source organization
+# or object file names, so that ownership audit still holds.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT _uml_gadget_ipo_supported
+    OUTPUT _uml_gadget_ipo_error LANGUAGES CXX)
+if(_uml_gadget_ipo_supported)
+    set_target_properties(uml_arm64_gadgets PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION ON)
+else()
+    message(STATUS
+        "gadget translation IPO unavailable: ${_uml_gadget_ipo_error}")
+endif()
+
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler.cpp
