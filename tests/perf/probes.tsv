@@ -29,3 +29,4 @@ guest_simd_unsigned_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measur
 guest_sp_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures adjacent scalar memory runs addressed directly from SP.
 guest_tlb_128m_alias_loop.S	tlb	base	run_guest_link_bench.py	Detects regressions in 16 KiB TLB indexing and set associativity.
 guest_vector_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native vector pair transfers.
+guest_yield_spin_contention_loop.S	atomic	base	run_guest_link_bench.py	Contended spin lock whose backoff uses the YIELD hint. The only probe in which a guest thread waits on another, so the only one able to measure guest YIELD lowering.
