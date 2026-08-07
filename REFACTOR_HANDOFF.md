@@ -16,6 +16,19 @@ it.
 [`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the evidence
 index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.
 
+Status changed on 2026-08-06: a gadget-engine performance campaign began;
+input-materialization recording became opt-in, removing 6.6 GiB of build-tree
+cost from ordinary runs; `arm64-input-materialization-join`, which is now
+registered only with that option, is the single failure in an otherwise clean
+618/619 16 KiB unit selection, for two independent reasons — an undersized
+contribution-spool capacity constant, and a frozen aggregate manifest that
+predates the current test sources; and an **intermittent vCPU stall under long
+Geekbench runs is open and blocking guest benchmarking**. See
+[Status change 2026-08-06](#status-change-2026-08-06-performance-campaign-and-a-newly-diagnosed-blocker)
+below; that failure is an artifact-staleness blocker, not a behavioral defect,
+and its repair is intentionally deferred into the existing instruction-evidence
+P1 finding.
+
 ## Working-tree safety
 
 The historical refactor base was
@@ -142,6 +155,738 @@ enforcement.
   `darwin/device`, and no empty first-party source directory remains.
 - Source-size thresholds remain advisory. Fresh reporting covers 1,060 files;
   size alone is not an error or an open item.
+
+## Status change 2026-08-06: performance campaign and a newly diagnosed blocker
+
+This section records work started after the seventh audit. It does not close any
+seventh-audit finding.
+
+### Changed: input materialization is now opt-in, and its join has two blockers
+
+**Disk cost removed from ordinary runs.** Every unit test previously wrote one
+compressed input-materialization sidecar whenever tooling tests were built,
+even though only `arm64-input-materialization-join` reads them. A complete
+16 KiB profile cost **6.6 GiB** against 3.4 MiB of ordinary evidence. Producers
+and the join now share one new option,
+`UML_INSTRUCTION_INPUT_MATERIALIZATION`, default `OFF`, so the join can never be
+selected without its inputs. Measured effect: the default suite registers **618
+tests and leaves a 12 KiB evidence directory**; with the option on it registers
+619 and regenerates the full profile. The `A64_INSTRUCTION_PROGRESS.md`
+publication workflow records how to enable it.
+
+Two further reductions are measured but not taken, because both require a
+vendored compressor that the macOS SDK does not provide: on a real 120 MB
+sample `xz -1` is 1.98x smaller than the current zlib level 6 at comparable
+write cost, and `zstd -3` is 2.13x smaller and 9x faster. Raising zlib to level
+9 recovers only 2.4% and is not worth doubling write time.
+
+**The join itself still fails when enabled.** With the option on, it is the only
+failure in the 16 KiB selection: **618 of 619 tests pass** in 549.89 seconds at
+`ctest -j 16` with a complete 450-file evidence profile. Neither blocker is
+caused by the performance changes below; both were reproduced before any engine
+source was edited.
+
+There are two, and the first masks the second.
+
+**Blocker A: the contribution-spool capacity policy is too small.** The join
+sizes each producer's SQLite spool as
+`expected_contributions * spool_bytes_per_contribution + 4 MiB` and enforces it
+with `PRAGMA max_page_count`. For `arm64-atomic-floating-allocation` the 16 KiB
+profile declares 157,080 contributions, giving a 165,044,224-byte cap at the
+default 1,024 bytes per contribution. The spool reached 164,941,824 bytes and
+SQLite raised `database or disk is full`, which a broad `except
+sqlite3.DatabaseError` reports as `contribution spool exceeded its hard byte
+cap`. Free disk at the time was 38.8 GB, so this is a capacity-policy shortfall,
+not exhausted storage: rows carrying long native-feature alternative lists
+average more than 1,024 bytes. Passing
+`--spool-bytes-per-contribution 2048` clears it. Two secondary defects are worth
+fixing alongside: the `except sqlite3.DatabaseError` arm reports every SQLite
+failure as a cap overflow, including genuine disk exhaustion, and the
+pre-flight `require_checkpoint_free_space` check cannot catch this because it
+uses the same underestimate.
+
+**Blocker B: the frozen aggregate manifest predates the working tree.** With
+blocker A worked around, the join proceeds and fails on the underlying problem.
+It maps each raw producer contract to an aggregate identity and rejects any
+identity absent from the frozen manifest, reporting `<raw-contract> maps to
+unknown/out-of-profile <aggregate>`. `aggregate_id` is a SHA-256 over 24
+columns that include `source_file` and `source_line`, so any movement of test
+source lines invalidates every identity derived from the moved code.
+
+Measured drift, comparing the checked-in manifest against evidence regenerated
+from the current tree:
+
+| Quantity | Value |
+| --- | --- |
+| Producers in the frozen manifest | 449 |
+| Producers compared | 47 |
+| Identical | 11 |
+| Drifted | 36 |
+
+The drift is systematic line movement in shared test-support headers, not a
+semantic change. For example `arm64_base_add_sub_test_support.hpp` records
+evidence at lines 286 and 310, while the manifest expects 62, 284, and 298. The
+manifest was last committed at `d15e98c`, before the current uncommitted test
+sources, so roughly three quarters of producers are expected to be stale.
+
+Blocker B is therefore an artifact-staleness blocker, not a behavioral defect:
+it validates instruction *evidence* bookkeeping, and the behavioral unit tests
+that gate engine changes are unaffected.
+
+Repair of blocker B requires the documented complete two-profile publication in
+`A64_INSTRUCTION_PROGRESS.md`: all 449 `*.tsv.raw` producers present in both a
+4 KiB and a 16 KiB evidence directory, both full profile TSVs, then
+`freeze_a64_aggregate_manifest.py`. Partial producer replacement and
+validator-side writes are explicitly unsupported.
+
+**This repair is deliberately not performed yet.** The seventh-audit P1 finding
+above requires deriving form-to-allocation and feature metadata from an
+independent source and adding catalog-mutation negatives *before* regenerating,
+and states that page-size reports are to be regenerated only after those
+negatives pass. Refreezing now would republish a 32,169-row bound artifact
+through exactly the circular method that finding is about. The blocker is
+recorded here so the refreeze happens as part of closing that finding rather
+than as a way to turn one test green.
+
+Blocker A is independent of that finding and can be fixed on its own: it is a
+capacity constant, touches no audited artifact, and fixing it makes the test
+report the real problem instead of a misleading one. It is left open here only
+because it changes nothing until blocker B is also resolved.
+
+### New: vCPU stall regression introduced by this refactor, root cause open
+
+**The regression is confirmed against the pre-refactor build.** Three matched
+10-vCPU gadget-engine Geekbench runs, same rootfs, same host:
+
+| Build | Workloads | RCU stalls | Watchdog kills | Outcome |
+| --- | ---: | ---: | ---: | --- |
+| pre-refactor (`.build/cmake-macos/bin/uml-darwin`, 2026-08-01) | 32/32 | **0** | 0 | completed, 52 m |
+| post-refactor run 1 | 32/32 | **2** | 0 | completed, 57 m |
+| post-refactor run 2 | 23/32 | **1** | 1 | **wedged** |
+| post-refactor run 3 (stall-catch) | 23/32 | **2** | 0 | stopped after capture |
+
+The decisive signal is not pass/fail but the stall count: the post-refactor run
+that *passed* still recorded two RCU stalls where the pre-refactor run recorded
+none over the identical 32 workloads. Pass/fail alone reads as flakiness.
+
+**The trigger is deterministic: Multi-Core Text Processing.** All three
+post-refactor runs stalled immediately after the 23rd workload marker, which is
+multi-core workload 7. That is the one Geekbench workload that scales to roughly
+1.2 host cores, so it is dominated by inter-thread synchronization rather than
+parallel compute.
+
+**Live host state at the stall** (sampled while wedged, not after it settled):
+
+- Five vCPUs stalled at once: `1-...0`, `3-...0`, `4-...0`, `8-...0`, `9-...0`,
+  all `(1 GPs behind)` with dynticks nesting 1, each carrying a runnable
+  `geekbench_aarch` task.
+- **All 208 host carrier threads were named `uml-vcpu0`; none were named
+  `uml-vcpu1` through `uml-vcpu9`.** `darwin_set_current_cpu()` is called by
+  every carrier as it acquires a CPU, so this means no carrier held any CPU
+  other than 0 while the guest believed five other CPUs had running tasks.
+- 222 threads were blocked in `pthread_cond_wait`, the task-switch wait.
+- The host process held one core at ~108% with the host 80% idle.
+
+**Mechanism, and what is still unproven.** A vCPU can only be acquired by
+handoff from its current carrier: `switch_threads_dead()` sets `from->cpu = -1`,
+calls `release_cpu_execution(cpu)`, then assigns `to->cpu = cpu` and signals it.
+That path was read in full and transfers the CPU before any exit, including both
+`pthread_exit()` branches, so it does not strand a CPU on its own. The one path
+that releases `cpu_execution_owner[cpu]` *without* handing the CPU to another
+task is `retire_task_carrier()`, which this refactor added. If it ever fires on
+a live carrier, that vCPU has no owner and no way to acquire one, which matches
+the observed state exactly. This remains a suspect: it has not been shown to
+fire, and five synthetic payloads failed to reproduce the stall.
+
+Reproduction by synthetic payload was not achieved. Geekbench itself is
+currently the only reliable reproducer, reaching the trigger in 35-47 minutes.
+The payloads below all completed cleanly on the post-refactor build at 10 vCPUs,
+which rules out the failure being reachable by ordinary carrier, thread, or
+mapping churn:
+
+| Payload | Subsystem targeted | Result |
+| --- | --- | --- |
+| `/bin/true` fork/exec storm, 10 workers, 5,000 execs | task-carrier create/retire | 5.4 s, 7.85 host cores |
+| pthread create/join churn, 16 threads x 300 rounds | `retire_task_carrier` orphaning a vCPU | 1.5 s, clean |
+| mmap/mprotect/munmap churn, 16 threads, 4 GiB | `ExecutionQuiesce` gate never reopening | 16.3 s, clean |
+| the same churn at 40 threads x 3,000 rounds, 8 GiB | sustained mapping and thread pressure | 715 s, clean |
+| contended queue, 64 threads, mutex/condvar/barrier | inter-thread synchronization | 487 s, clean |
+
+**`retire_task_carrier()` is eliminated.** It was instrumented to log every
+invocation with `cpu >= 0` and the kernel rebuilt through the patch series. It
+fired **zero** times under a 10-worker fork/exec storm (5,000 execs, 7.86 host
+cores) and **zero** times at the stall itself, captured live at 49 minutes. The
+carrier-retirement path does not release a live vCPU, so it is not the defect.
+
+**Sharper characterization from the instrumented capture.** The fourth run's
+stall is a scheduling-starvation report rather than a lock hang:
+
+```
+rcu: rcu_sched kthread starved for 6296 jiffies! g21977 f0x2
+     RCU_GP_WAIT_FQS(5) ->state=0x0 ->cpu=7
+rcu: All QSes seen, ... root ->qsmask 0x0
+task:rcu_sched  state:R  running task  stack:0  pid:15
+```
+
+The host sample taken at that instant shows the whole emulator idle at the host
+level while the guest has runnable work:
+
+- 222 host threads: **216 parked in `pthread_cond_wait`** (guest tasks awaiting a
+  scheduler handoff), three vCPU carriers in `pselect` inside `os_idle_sleep()`,
+  one kevent IRQ thread, one SLiRP `event_loop` poll, one workqueue thread.
+- **No thread is executing guest code**, yet `rcu_sched` is runnable on CPU 7.
+- All named carriers are `uml-vcpu0`; none is `uml-vcpu1`..`9`.
+
+So idle vCPU carriers are asleep in `pselect` while runnable guest tasks wait to
+be handed a CPU. That is a **missed idle wakeup**, not a stranded CPU: the
+carriers exist and are waiting, but nothing wakes them.
+
+**Root cause located: `walker_mutex` is held across a guest task switch.** A
+fifth run, with a guard added to `os_idle_sleep()`, stalled again at the same
+point, and its live sample is decisive. Of 225 host threads:
+
+- **four vCPU carriers blocked in `darwin_uml_static_vm_walker_lock` ->
+  `std::mutex::lock` -> `_pthread_mutex_firstfit_lock_wait`** for the entire
+  ten-second sample;
+- four carriers idle in `pselect`;
+- one kevent thread, one SLiRP `event_loop`, one workqueue thread;
+- 214 guest tasks parked in `pthread_cond_wait`;
+- **no thread anywhere is inside the walker doing work.**
+
+Since no running thread holds the lock, its owner is one of the parked guest
+tasks. `lock_walker()`/`unlock_walker()` take and release a host `std::mutex`
+owned by the *pthread*, while the guest may switch tasks inside that region;
+the parked owner's CPU is then handed to another task which cannot release it.
+Every later walker acquisition blocks forever, which starves the guest's
+memory-management path and produces exactly the observed RCU stalls on the
+CPUs that still have runnable work.
+
+This is the same lock G3 identified as the dominant multi-core serialization
+("eight carriers spent roughly 58%-91% of their samples waiting in
+`darwin_uml_static_vm_walker_lock`"), and `address_space.cpp` changed by 1,274
+lines in this commit. `prune_retired_thread_state()` already contains an
+out-of-band `state->walker_mutex.unlock()` for a retired domain, which is
+evidence that cross-context ownership of this mutex was known to be possible.
+
+**Fix applied: take the guest turnstile mutex outside the host walker lock.**
+The Linux-host backend serializes this region with `mutex_lock(&ctx->turnstile)`,
+a task-owned sleeping lock. The Darwin backend had replaced that with the host
+pthread mutex alone. `arch/um/kernel/skas/mmu_darwin.c` now acquires the guest
+mutex first and releases it last:
+
+```c
+void enter_turnstile(struct mm_id *id) __acquires(turnstile)
+{
+	struct mm_context *ctx = container_of(id, struct mm_context, id);
+
+	mutex_lock(&ctx->turnstile);
+	if (darwin_uml_vm_walker_lock(id->darwin_generation) < 0)
+		panic(...);
+}
+```
+
+A waiter now blocks as a Linux task and releases its virtual CPU, so the holder
+can always be scheduled; the host walker lock behind it is uncontended, which
+also removes the serialization G3 measured at 58-91% of carrier samples.
+`enter`/`exit` are strictly nested, so the guest-then-host order cannot invert.
+`mm->context.turnstile` already existed and was already `mutex_init`'d.
+
+**Measured effect.** Walker waiters at the stall fell from **4 to 0**, the
+stalled-CPU count fell from **five or six to one**, completed workloads rose
+from 23 to 25, and the journald watchdog kill disappeared. A residual stall
+remains with a different signature: seven carriers idle in `pselect`, 211 tasks
+parked, and **no thread blocked on any host lock**, while one CPU holds runnable
+work. That is a missed idle wakeup, addressed by the second fix below.
+
+**Measured outcome across eight matched 10-vCPU Geekbench runs.** Both the wedge
+and the transient stalls are fixed. A broad performance regression remains.
+
+| Build | SC | MC | Text Processing MC | Workloads | RCU stalls | Watchdog |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| pre-refactor (2026-08-01) | **81** | **514** | 61 | 32 | **0** | 0 |
+| post-refactor baseline run 1 | 79 | 471 | 33 | 32 | 2 | 0 |
+| post-refactor baseline run 2 | - | - | - | 23 | 1 | 1 (**wedged**) |
+| turnstile fix, run 1 | 78 | 464 | - | 32 | 1 | 0 |
+| turnstile fix, run 2 | 78 | 458 | - | 32 | 3 | 0 |
+| turnstile fix, run 4 | 79 | 435 | 20 | 32 | 4 | 0 |
+| turnstile fix + idle guard | 78 | 458 | - | 32 | **6** | 0 |
+| + rejected batch-scan trial | 78 | 456 | - | 32 | **6** | 0 |
+| **+ G97 page hash** | **78** | **478** | **60** | 32 | **0** | 0 |
+
+Conclusions supported by these numbers:
+
+- The turnstile fix removes the **hard wedge**. No run with it has failed to
+  complete all 32 workloads, and the journald watchdog kill has not recurred.
+- The turnstile fix alone does **not** remove transient stalls: one, three and
+  four across three runs against zero pre-refactor.
+- **The G97 page hash does.** Zero stalls, all 32 workloads, 3,285 s wall
+  against 3,375 s and 3,520 s for the two runs it replaces.
+  (result)
+- Multi-Core Text Processing is the single workload the stall damages, and its
+  score tracks the stall count exactly: 20 at four stalls, 33 at two, **60 at
+  zero**, against 61 pre-refactor. Full recovery of that section.
+- **A broad regression against pre-refactor survives and is a separate cause.**
+  Single-core 78 vs 81 and multi-core 478 vs 514, spread across nearly every
+  section - single-core Clang -11.8%, multi-core Photo Filter -14.2%, most
+  others -3% to -9% - rather than concentrated anywhere. Uniform cost on every
+  workload points at the translation, dispatch or syscall boundary, not at the
+  mapping batch path. This is the next thing to investigate, and it is
+  unrelated to everything above.
+
+### Residual regression: leading candidate is lost cross-TU inlining
+
+Structural evidence only so far; no measurement yet. Recorded because the
+elimination half is already conclusive and saves the next investigator the
+same work.
+
+**Ruled out.** These were the obvious suspects and none of them survives:
+
+| Suspect | Why it is not the cause |
+| --- | --- |
+| `CpuState` layout / guest-state locality | Every `UML_GADGET_CPU_*` and `UML_GADGET_TLB_*` offset is byte-identical between the pre-refactor `gadgets/offsets.inc` and the post-refactor `layout/assembly_offsets.h` |
+| Gadget bodies | The five `engine/*.inc` files differ by 2-16 lines each, all cosmetic |
+| Gadget bank layout | `engine.S` lost only the two `restore_native_fp_environment` routines to `native_environment.S`, and they sat *after* every gadget include, so no gadget entry moved |
+| Software TLB fast path | Unaffected by the split: the gadget probe is inline assembly, and `memory/tlb.hpp` defines the entry layout and constants `constexpr`/`inline`. Most of the old 1,258-line `tlb.cpp` became test files |
+
+**The candidate.** Gadget translation was one 14,160-line translation unit
+(`darwin/backend/cpu/arm64/gadgets/program.cpp`) and is now **15**, the largest
+2,926 lines. `Builder::build()` calls `decode_branch_system`,
+`decode_data_processing`, `decode_floating_simd` and `decode_load_store` **once
+per guest instruction translated**; all four are bare declarations in
+`program_builder_decode.hpp` and are defined in separate `program_builder_*.cpp`
+files, which in turn call into the `gadget_*_selection.cpp` TUs.
+`gadget_selection_api.hpp` is types plus 182 declarations with no inline bodies.
+
+The build is `Release`, `-O3 -DNDEBUG`, with **no LTO and no unity build** -
+confirmed from `CMakeCache.txt` and by grepping every `CMakeLists.txt`,
+`cmake/*.cmake`, toolchain file and preset. The only `-flto` in the tree
+belongs to vendored virglrenderer. So the entire decode -> select -> emit chain
+that the compiler used to inline is now behind hard call boundaries.
+
+### Corrected by the noise band: there are two causes, not one
+
+The three-run band recorded in `HOT_PATH_EXPERIMENTS.md` under G96 makes the
+per-workload comparison against pre-refactor (18926314) readable, and it
+overturns two things stated above.
+
+**The regression is not a uniform tax.** Single-core section noise is at most
+one point, so every single-core delta below is real. There is a floor of about
+-2.5% to -3.5% across the settled workloads, and then a tail on exactly the
+translation-heavy ones:
+
+| Workload | SC pre | SC band | SC delta | MC pre | MC band | MC delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Clang | 51 | 45 | **-11.8%** | 389 | 359 | -7.7% |
+| Object Remover | 125 | 113 | **-9.6%** | 708 | 659 | -6.9% |
+| File Compression | 102 | 93.5 | -8.3% | 635 | 558.5 | **-12.0%** |
+| Navigation | 170 | 162.5 | -4.4% | 1210 | 1063 | **-12.2%** |
+| PDF Renderer | 87 | 84 | -3.4% | 535 | 486.5 | -9.1% |
+| HTML5 Browser | 73 | 70 | -4.1% | 589 | 538 | -8.7% |
+| Background Blur | 71 | 68.5 | -3.5% | 587 | 539 | -8.2% |
+| Photo Library | 80 | 78 | -2.5% | 636 | 585.5 | -7.9% |
+| Horizon Detection | 108 | 105 | -2.8% | 835 | 787.5 | -5.7% |
+| HDR | 102 | 99.5 | -2.5% | 787 | 751 | -4.6% |
+| Photo Filter | 103 | 100 | -2.9% | 424 | 380.5 | -10.3% (noise 8.1%) |
+
+Clang has **zero** spread across all three band runs, so its -11.8% is the
+single most reliable number here, and Object Remover is 26.8% control-heavy -
+more blocks, so more translation churn. That tail is what the inlining
+candidate explains.
+
+**Multi-core is led by something else.** Navigation -12.2% and File Compression
+-12.0% lead the multi-core loss while Clang multi-core is only -7.7%, so
+translation is not the multi-core story. Navigation is the memory-first
+workload where the G3-era profile already recorded "TLB misses then contended
+on `mappings_mutex`", and the refactor rewrote exactly that:
+`address_space.cpp` 1,406 -> 1,923 lines and `native_address_space.cpp`
+355 -> 2,033. The single-core versions of those two workloads are far milder,
+so the cost scales with concurrency - lock contention or cross-thread traffic
+rather than per-instruction cost. That needs its own investigation, narrower
+than plan item B-1: find what the refactor *added* to the translate and miss
+path rather than redesigning it.
+
+**Retract the Photo Filter data point.** Multi-core Photo Filter was cited
+above as a -14.2% outlier. That section alone swings **8.1%** run to run, the
+noisiest in the whole suite, so it cannot carry a conclusion and should not
+have been treated as evidence.
+
+> **Outcome, for anyone reading this section later.** The candidate was right
+> and it has been fixed, in two accepted steps recorded as G99 and G100 in
+> `HOT_PATH_EXPERIMENTS.md`. Interprocedural optimization took multi-core
+> 477 -> 497 but left single-core Clang untouched, because ThinLTO declines to
+> import functions as large as the decode families. Composing those five
+> families back into one translation unit took single-core 78 -> **80** against
+> 81 pre-refactor, with Clang 44 -> **50** and File Compression, Asset
+> Compression, HDR and Text Processing back to their exact pre-refactor scores.
+> Single-core is now 75% recovered and multi-core 49%. The architecture gate
+> below was relaxed deliberately, with its audit rewritten and mutation-tested
+> rather than removed. The multi-core remainder is the separate MMU-path cause.
+
+**The obvious fixes are forbidden by a registered architecture gate, and that
+narrows the answer to one.** `verify_gadget_builder_ownership()` in
+`tests/tooling/cmake/test_engine_object_boundaries.py` - *"keep each decode
+family in a normal, independently compiled owner"* - requires all of:
+
+- `program_builder.cpp.o` **and** each of the five `program_builder_*.cpp.o`
+  present as distinct object files;
+- each `decode_*` declared but **not** defined in `program_builder_decode.hpp`;
+- each family `.cpp` owning its definition, with `program_builder.cpp` staying
+  caller-only;
+- no textual `#include` of a `.cpp`, `.cc`, `.cxx`, `.inc`, `.inl` or `.ipp`
+  in any builder source;
+- no `program_builder*.{inc,inl,ipp}` and no `*_impl*` fragment files.
+
+So `UNITY_BUILD` fails the first rule - CMake would emit `unity_N_cxx.cxx.o` -
+and every header-inlining route is blocked by the last three. The separation is
+deliberate, not an oversight.
+
+That leaves **link-time optimization**, which is the only route that changes no
+source organization and no object file name, so the ownership rule still
+passes. What has to be checked when trying it: the same audit runs `nm` over
+these objects and there is a stable-engine-entry disassembly check, and under
+full LTO the builder objects become bitcode - so prefer enabling IPO on the
+gadget translation library alone rather than the assembly bank, and confirm the
+production static-link-closure and ABI fingerprint gates still pass. Confirm
+with the G96 bank-layout comparator that no gadget entry moved.
+
+**Rejected: the idle-pending guard.** Forcing a zero `pselect` timeout whenever
+a vector was already pending made stalls **six times more frequent** (6 versus
+1) and cost multi-core score. The condition fires roughly 9,600 times per run,
+so the guard converted a large number of ordinary idle waits into busy-polling
+that burned host CPU and starved the sibling vCPUs it was meant to protect. It
+has been removed; only the turnstile fix is retained. Its rationale is recorded
+below because the reasoning looked sound and was wrong, which is the useful
+part.
+
+**The residual stall is deterministic, not intermittent.** Counting workload
+markers before each stall report shows every stall in every run lands at the
+same position:
+
+| Run | Stalls | Position |
+| --- | ---: | --- |
+| pre-refactor | 0 | - |
+| post-refactor baseline run 1 | 2 | both after workload 23 |
+| turnstile fix run 1 | 1 | workload 23 |
+| turnstile fix run 2 | 3 | workload 23 |
+| turnstile fix run 4 | 4 | workload 23 |
+| + rejected batch-scan trial | 6 | workload 23 |
+| **+ G97 page hash** | **0** | - |
+
+Workload 23 is **Multi-Core Text Processing**, the only Geekbench workload that
+scales to roughly 1.2 host cores. No stall has ever been observed at any other
+workload.
+
+This explains why five synthetic reproducers failed: every one of them kept the
+vCPUs *busy*. Text Processing has the opposite shape, one thread working while
+nine vCPUs idle and repeatedly enter and leave `os_idle_sleep()`. A reproducer
+must therefore combine **heavy serialization with low parallelism**, not high
+contention across many runnable threads.
+
+The RCU reports agree with that reading: the stalled CPU is always
+`idle=XXXX/1/0x4000...`, dyntick nesting **1**, so the guest believes the CPU is
+in kernel context rather than idle and RCU can never harvest a quiescent state
+from it. A vCPU blocked in `execution_reader_begin()` while a sibling holds the
+execution gate closed is exactly such a state: stopped, in kernel context, and
+invisible to RCU as a quiescent CPU. `ExecutionQuiesce` is the only mechanism
+that closes that gate, and its destructor waits for every reader to drain.
+
+**Residual root cause identified: `apply_batch_locked()` plans under the closed
+execution gate.** A burst-sampling capture taken *at* four live workload-23
+stalls (CPUs 2, 5, 1 and 7, one per report) shows a vCPU carrier inside
+
+```
+darwin_uml_static_vm_batch_end
+  uml::memory::AddressSpace::apply_batch_locked
+```
+
+for the whole of every snapshot, while 215-217 guest tasks are parked and six or
+seven carriers idle. `end_batch()` reaches `apply_batch_locked()` on the
+destructive path *after* constructing `ExecutionQuiesce`, so the execution gate
+is already closed and every sibling vCPU is stopped in
+`execution_reader_begin()`. Those stopped siblings are in kernel context, which
+is exactly the dyntick nesting 1 that every RCU report shows.
+
+**Root cause, confirmed: the planning index hashes page-aligned addresses onto
+four buckets.** Resolving the sample against the UML image's symbol table -
+`sample` cannot symbolize the kernel, which loads at its link address
+`0x6000_0000_0000`, so every kernel frame printed as `??? (in <unknown
+binary>)` - shows one carrier spending **1,255 of 1,255 samples**, the entire
+ten-second capture, in a single call:
+
+```
+__um_tlb_sync+0x4c4
+  darwin_uml_static_vm_batch_end
+    apply_batch_locked
+      apply_batch_locked::'lambda'(unsigned long long)   /* page_for */
+        std::__hash_table::__emplace_unique_key_args     /* page_indices */
+```
+
+Every sample is in the two hash operations of `page_for()`, and nothing else in
+the emulator is doing work. The cause is `page_indices.reserve(plan_reserve)`:
+
+- `maximum_plan_reserve` is `64 * 1024`, **a power of two**, and it is the value
+  `plan_reserve` saturates to for exactly the large batches that matter.
+- libc++ keeps a power-of-two bucket count when `reserve()` asks for one, and
+  then constrains a hash by masking (`hash & (bucket_count - 1)`) instead of by
+  a modulus.
+- `std::hash<std::uint64_t>` is the identity, and a page address has
+  `log2(page_size)` low zero bits.
+
+At 16 KiB pages a 65,536-bucket table therefore reaches
+`65536 / 16384 = 4` buckets. Measured directly against the host toolchain,
+inserting 65,536 page-aligned keys:
+
+| `reserve()` | buckets | occupied | longest chain | time |
+| --- | --- | --- | --- | --- |
+| none | 102,877 | 65,536 | 1 | **0.002 s** |
+| 1,024 | 65,536 | 4 | 16,384 | **3.274 s** |
+| 65,536 | 65,536 | 4 | 16,384 | **2.590 s** |
+| 65,537 | 65,537 | 65,536 | 1 | **0.001 s** |
+
+Filling the index is quadratic, costing seconds per batch, and it runs with
+`mappings_mutex` held and - on the destructive path - the execution gate closed
+and every sibling vCPU stopped. That is precisely the >= 10 s
+`apply_batch_locked()` in the capture, and it reaches the 21-second RCU stall
+threshold across consecutive batches.
+
+`git log -S` confirms both `page_indices` and `maximum_plan_reserve` were
+introduced in **d15e98c "Refactor half-way"** - the commit at which the
+benchmark first misbehaved.
+
+**Fix applied.** `GuestPageHash` in
+[address_space_types.hpp](darwin/memory/mmu/address_space_types.hpp) folds the
+page number through a multiply-shift finalizer, so the distribution no longer
+depends on the bucket count the container happens to choose. The reservation and
+its allocation checkpoint are unchanged. `GenerationState::mappings` is left on
+`std::hash` deliberately: it is never `reserve()`d, so libc++ grows it through
+primes (102,877 buckets, longest chain 1 above), and changing it would perturb
+the hot `translate()` path in the same trial.
+
+`static-mmu-batch` gained
+`test_page_index_hash_spreads_page_aligned_addresses()`, which asserts the
+bucket distribution rather than a wall-clock bound so the guarantee does not
+depend on host speed.
+
+**Verified.** 23/23 MMU, memory and batch tests including both TSan variants;
+full 16 KiB unit suite 618/618; and a stall-catch 10-vCPU gadget-engine
+Geekbench with **zero RCU stalls** over all 32 workloads. See the outcome table
+above and G97 in [HOT_PATH_EXPERIMENTS.md](HOT_PATH_EXPERIMENTS.md).
+
+**Tested and rejected: the quadratic broad-unmap scan is not the cause.** The
+per-operation `state.mappings` scan was replaced with one sorted key snapshot
+per batch plus `lower_bound` range lookups, guarded to build the index only when
+a batch contains more than one broad unmap so the single-unmap case is
+unchanged. It compiled, passed 23/23 MMU/memory/batch tests including TSan, and
+made **no difference**: 6 stalls, still every one at workload 23, and
+`apply_batch_locked()` still occupies the carrier for whole samples. The
+expensive path is therefore the *general* per-page branch, not the broad-unmap
+branch. The change was reverted because the project's acceptance rule requires
+measured improvement. Result: (result).
+
+**Superseded magnitude argument.** An earlier reading blamed the two full scans
+`apply_batch_locked()` runs per broad-unmap operation - one over all of
+`state.mappings`, one over all planned pages - and estimated hundreds of
+millions of iterations. That reading was wrong on both counts. The scans are
+real but were measured to cost nothing here (see the rejected sorted-snapshot
+trial above), and the quadratic term was in the hash table, not the scans. It is
+recorded because the correct objection it raised - that 65,536 *well-behaved*
+hash operations is milliseconds, not seconds - is what forced the search for a
+quadratic term and led to the actual cause.
+
+**Options considered and not needed.** Splitting `apply_batch_locked()` into a
+planning phase before `ExecutionQuiesce` and a commit phase under the closed
+gate, validated by the existing `invalidation_epoch` re-check, remains available
+if gate-closed time is still material after the hash fix. It is strictly more
+invasive - it touches the TLB-coherence commit path - so it is not attempted
+while a one-line hash change removes the same cost.
+
+Two further planning refinements are available and independent of the stall:
+`page_for()` materializes a planned page for every address in an unmap range,
+including holes, where `clear_page()` is then a no-op; and the broad-unmap fast
+path is gated on `!operation.map`, so a large protection change (a map with new
+protection bits) always walks its whole range. Both are ordinary performance
+work, to be measured on their own.
+
+**Corrected analysis of the residual, and one candidate fix struck as unsafe.**
+
+- **Do not bound the `ExecutionQuiesce` wait.** That quiesce guarantees no vCPU
+  observes a stale positive TLB entry across a destructive mapping change.
+  Timing it out would exchange an RCU stall for silent guest memory corruption.
+- The gate-inversion theory is **eliminated**: `map()`, `unmap()`, `rebind()`,
+  `destroy()` and `end_batch()` all construct `ExecutionQuiesce` before taking
+  `mappings_mutex`, so no path holds the mapping lock while waiting for readers.
+- The blocked-reader theory is **not** what the samples show, and it turned out
+  not to be needed. No thread in any capture is in `execution_reader_begin()`;
+  the idle carriers sit in `darwin_ipi_idle_drain()` and `os_idle_sleep()`,
+  which is ordinary idling. The stalled CPU is the one **doing** the work: its
+  own carrier is inside `__um_tlb_sync` -> `apply_batch_locked` for the whole
+  capture, so it reports no quiescent state and no timer ticks. Sibling
+  blocking, if any, is secondary.
+
+A missing RCU-idle annotation was considered and **rejected**: `arch_cpu_idle()`
+calls `um_idle_sleep()` without annotating, but the generic `default_idle_call()`
+already wraps it in `ct_cpuidle_enter()`/`ct_cpuidle_exit()`, so the idle path is
+annotated. Dyntick nesting **1** in every stall report therefore does not mean a
+sleeping CPU is miscounted; it means the named CPU is genuinely **in kernel
+context** and not progressing - which is answered above: its carrier is inside
+`__um_tlb_sync` -> `apply_batch_locked`, not blocked on anything.
+
+A seventh reproducer, one worker holding a rotating token while nine vCPUs idle
+and cycle through `os_idle_sleep()` plus mapping churn, also completed cleanly
+in 190 s. Reproduction outside Geekbench remains unachieved, and is no longer
+needed for this cause: the degenerate hash is reproducible directly against the
+host toolchain in a few lines, and `static-mmu-batch` now asserts against it.
+
+**Method note that unblocked this.** `sample` cannot symbolize the UML kernel,
+which the emulator loads at its link address near `0x6000_0000_0000`, so nearly
+every frame in a 32 MB capture printed as `??? (in <unknown binary>)` and the
+captures read as "no emulator thread is doing anything". Resolving those
+addresses against `nm` output from `vmlinux.unstripped` for the matching build
+turns the same captures into a per-thread answer immediately. Do this first for
+any future host-side stall investigation.
+
+**Note for future A/B work.** Rebuilding identical sources did not reproduce the
+frozen turnstile artifact byte-for-byte, so the emulator embeds something
+non-reproducible, most likely a kernel build identifier. Compare frozen
+artifacts, never rebuilds.
+
+**Rejected second fix, retained for its reasoning: never enter an unbounded idle
+wait with an IPI already pending.**
+`os_send_ipi()` omits its pipe byte when `previous_pending != 0` and returns
+early without signalling when `ipi_idle_waiting[cpu]` is set, so a carrier that
+enters `os_idle_sleep()` with a vector already pending has no remaining wake
+source, and its `pselect` timeout is `NULL` whenever the cooperative timer is
+inactive. `darwin_ipi_pending()` is now checked before the wait and forces a
+zero timeout. Measured in isolation this condition occurs about 9,600 times per
+run, so it is common; on its own it did not clear the stall because the walker
+deadlock dominated, and it is only meaningful combined with the turnstile fix.
+
+**Performance regression from the refactor, independently confirmed.** Matched
+10-vCPU gadget-engine Geekbench, same rootfs and host:
+
+| Build | Single-core | Multi-core |
+| --- | ---: | ---: |
+| pre-refactor (2026-08-01) | **81** | **514** |
+| post-refactor baseline | 79 | 471 |
+| change | -2.5% | **-8.4%** |
+
+The multi-core loss is consistent with carriers waiting on the walker lock
+rather than running guest work.
+
+**Hypotheses eliminated on the way, with evidence:** the interrupt-registration
+ABI change (kernel checks the result), an `execution_lifecycle_mutex_`
+reader/writer convoy (the writer is only taken at lifecycle boundaries),
+`retire_task_carrier()` orphaning a vCPU (instrumented; fired zero times under
+fork/exec churn and zero times at the stall), and an unbounded idle `pselect`
+missing an IPI wakeup (guarded; the condition fired 9,643 times, so it is
+routine and benign, and the stall persisted).
+
+**Superseded note.** `os_idle_sleep()` waits on `pselect(ipi_fd, ..., timeout)`
+where the timeout comes from the per-CPU cooperative timer deadline and is
+`NULL` when that timer is inactive, making the wait unbounded. The only wakeups
+are an IPI pipe byte and `DARWIN_IPI_SIGNAL`. `os_send_ipi()` writes the pipe
+byte only when `previous_pending == 0 && !target_in_guest`, and returns early
+without signalling when `ipi_idle_waiting[cpu]` is set. The interaction between
+that early return, the pipe-then-mask drain order in `darwin_ipi_poll()`, and an
+unbounded `pselect` is the most likely place for a lost wakeup, and it is the
+next thing to instrument: log every `os_send_ipi()` decision path together with
+`ipi_idle_waiting`, `guest_executing`, and `previous_pending`, then reproduce.
+
+All kernel instrumentation has been reverted and the managed checkout verified
+back to canonical tree `640b3d1404118f336d70496483f87f244076e574`.
+
+**Changing the kernel requires clearing four pinned gates**, in this order:
+edit the patch under `kernel/patches/series/` including its `@@` hunk counts;
+update the patch SHA-256 in `patches/series/manifest.tsv`; update the stable
+`git patch-id` in the same row; then `prepare-source.sh --recreate` and update
+`UML_KERNEL_FINAL_TREE` in `patches/metadata.env`.
+
+Historical detail retained below.
+
+Observed state, from the guest console and a host `sample` of the wedged
+process:
+
+- `rcu: INFO: rcu_sched detected stalls on CPUs/tasks: 4-...!: (0 ticks this
+  GP) ... 9-...!: (1 ticks this GP) ... (detected by 0, t=21002 jiffies,
+  ncpus=10)`. Both stalled CPUs carried a `geekbench_aarch` task in state `R`
+  with dynticks nesting 1, so the vCPU had runnable work and recorded no ticks.
+- `systemd-journald.service: Main process exited, code=killed, status=6/ABRT`,
+  `Failed with result 'watchdog'`.
+- The host process held steady at ~109% CPU, one core, for over an hour with
+  zero console output. Its busiest thread was CPU 0's idle carrier in
+  `os_idle_sleep`, sampling 2474/2561 in `pselect` and 78 in `poll`.
+- 206 host threads were named `uml-vcpu0` and none `uml-vcpu1`..`9`.
+- The host was 80% idle throughout, so the guest was not starved by host load.
+
+Reproduction is not yet achieved. Four targeted payloads, each aimed at a
+subsystem the refactor changed, all completed cleanly on the post-refactor
+build at 10 vCPUs:
+
+| Payload | Subsystem targeted | Result |
+| --- | --- | --- |
+| `/bin/true` fork/exec storm, 10 workers, 5,000 execs | task-carrier create/retire | 5.4 s, 7.85 host cores |
+| pthread create/join churn, 16 threads x 300 rounds | `retire_task_carrier` orphaning a vCPU | 1.5 s, clean |
+| mmap/mprotect/munmap churn, 16 threads, 4 GiB | `ExecutionQuiesce` gate never reopening | 16.3 s, clean |
+| the same churn scaled to 40 threads x 3,000 rounds, 8 GiB | sustained mapping and thread pressure | 715 s, clean |
+
+Two host-side hypotheses were examined against the source and rejected:
+
+- The interrupt-sequence registration ABI changed from `void` to `int` in this
+  commit, but the kernel call site checks the result and calls
+  `fatal_userspace` on failure, so a silent unregistered sequence is not
+  possible.
+- `Context::thread_execution_state()` holds a `shared_lock` on
+  `execution_lifecycle_mutex_` for the whole guest run, but the matching
+  `unique_lock` is taken only in the constructor, `begin_run()`, and
+  `end_run()`, so no writer contends during steady-state execution.
+
+The remaining untested suspect is the carrier-retirement code this commit added
+to `kernel/patches/series/0004-uml-add-Darwin-host-service-implementation.patch`
+(`retire_task_carrier`, `release_cpu_bootstrap`, and their
+`pthread_cleanup_push` handlers). `retire_task_carrier` releases
+`cpu_execution_owner[cpu]` and clears `task->cpu`/`task->runnable` on thread
+exit without handing the CPU to another carrier; if it ever fires on a live
+carrier, that vCPU is stranded in exactly the observed way. This is a suspect,
+not a diagnosis.
+
+Note for future investigation: the kernel is patched through `kernel/patches/`,
+not by editing `linux/` directly, so `git show <commit> -- linux/` reports no
+kernel change even when the kernel changed substantially.
+
+The reproduction harness and payload are retained under the session scratchpad
+rather than the test tree, because they do not yet reproduce the failure. They
+do encode two real guest-toolchain workarounds: `cc1` is at
+`/usr/libexec/gcc/aarch64-linux-gnu/14` and is not found by a plain `gcc`
+invocation, which fails `posix_spawnp`.
+
+### New measurement controls for gadget-engine work
+
+Recorded in full as G96 in `HOT_PATH_EXPERIMENTS.md`. Neither control changes
+runtime behavior.
+
+- `tests/tooling/cmake/test_gadget_bank_layout.py`, registered as
+  `gadget-bank-layout-snapshot`, records every `uml_arm64_gadget_*` entry's
+  offset, 64-byte cache-line phase, and size, and compares two builds. It exists
+  because G17 and G36 were rejected for a bank-layout shift that G35 later
+  learned to pin, so those results are not trustworthy as stated. Calibration
+  measured that one gadget growing 16 bytes relocates 5,925 later entries.
+- The four `tests/perf` runners accept
+  `--core-class={performance,efficiency}`. Efficiency runs launch through
+  `taskpolicy -c background`, whose process-wide QoS clamp places the task on the
+  efficiency cores that dominate iOS. Verified by measurement on an Apple M1
+  Ultra (16 performance, 4 efficiency cores): a four-thread spinner takes
+  0.213 s unclamped and 0.907 s clamped. Efficiency runs use `--cpus 4` to match
+  the four efficiency cores; performance runs keep `--cpus 10`.
+
+### In flight
+
+Guest `YIELD` now lowers to host `ISB` in both translated engines, because Arm
+defines `YIELD`'s only architectural effect on symmetric multi-threading
+hardware, which Apple Silicon does not have. `ISB` is a strictly stronger
+barrier than the hint it replaces, so no guest-visible behavior changes. The
+gadget bank snapshot is byte-identical across the change, and the guest rootfs
+contains 378 `YIELD` sites, so the substitution is reachable. Its measured
+acceptance is pending and it is not yet accepted.
 
 ## Sixth independent audit: historical closure claim
 

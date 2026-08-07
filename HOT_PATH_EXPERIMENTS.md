@@ -3300,3 +3300,546 @@ the complete textured scene. Artifacts are under
 The canonical `rootfs.img` SHA-256 remained
 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`
 after Geekbench and Aquarium, proving that guest changes remained volatile.
+
+## G96: measurement rules for the gadget-first campaign
+
+Started 2026-08-06. This section adds no runtime change. It builds the two
+measurement controls that the next campaign's acceptance rule depends on, after
+a review of every trial above found two method problems that make part of the
+existing rejection set unsafe to rely on for the iOS target.
+
+### Acceptance rule for the following trials
+
+One optimization at a time, in isolation on the last accepted build, measured
+before the next begins. A change is accepted only when it passes every
+correctness gate and satisfies one of:
+
+1. the 10-vCPU Geekbench result improves, judged on **single-core and
+   multi-core together** — both phases improve, or one improves while the other
+   moves only within the noise band. A small gain in one phase does not buy a
+   significant loss in the other; that combination is rejected unless the
+   regression is diagnosed and fixed;
+2. the targeted focused benchmark improves with **no** Geekbench regression
+   beyond run-to-run variation, in either aggregate or any per-workload
+   section.
+
+This is stricter than the rule used through G35, under which G30 was accepted
+at a 0.83% single-core loss and G37 at −2.5% single-core / +17.3% multi-core.
+Both would now need the regressed phase inside the noise band, or explained and
+repaired first. Establishing that noise band from at least three baseline runs
+is a prerequisite for the first trial, not an afterthought.
+
+### Problem 1: gadget-body results were confounded by bank layout
+
+G17 was rejected because "shrinking the large generated gadget region shifted
+later hot logical entries, and the layout effect outweighed the instruction
+reduction". G30 hit the same effect and had to restore "its established 64-byte
+phase". G35 later established the remedy — unreachable padding after each
+indirect dispatch preserves every later gadget's address and cache-line phase —
+but by then G17 and G36 had already been discarded.
+
+`tests/tooling/cmake/test_gadget_bank_layout.py` makes that remedy checkable.
+It records each defined `uml_arm64_gadget_*` entry's offset relative to the
+first gadget, its 64-byte cache-line phase, and its size, then compares two
+builds and fails on any entry the trial did not declare in an acknowledgement
+file. Comparison accepts either a written baseline (`--baseline`) or the
+accepted build's objects directly (`--baseline-objects`).
+
+The comparator carries its own negatives: an always-executed self-test proves
+it detects a move, a phase-only change, an addition, and a removal, that a size
+change stays advisory, and that acknowledgement globs neither over- nor
+under-apply. Two out-of-tree mutation checks confirmed the registered
+`performance-runner-cli` contract fails when `core_class` forwarding is dropped
+from a runner, when an unknown core class is accepted, and when the efficiency
+prefix is silently ignored.
+
+Registered as the `gadget-bank-layout-snapshot` tooling test, which writes
+`reports/gadget-bank-layout.tsv` for every build so an accepted build always
+leaves behind the evidence a later trial compares against.
+
+Calibration on two existing builds of this tree: exactly **one** gadget grew by
+16 bytes, and **5,925 later entries moved and changed 64-byte phase** as a
+result. That is the confound, quantified: a single-gadget edit relocates more
+than half the bank unless it is padded.
+
+### Problem 2: every rejection was measured on performance cores
+
+G8 (−0.06%), G17 (−0.36%), G23 (−0.24%), G23b (−2.8%) and G36 (noise) were all
+measured on a Mac, so on P-cores. iOS defaults to the gadget engine
+(`UML_DEFAULT_EXECUTION_ENGINE_JIT` is `$<BOOL:${UML_TARGET_MACOS}>`, and the
+JIT requires a `MAP_JIT` arena) and runs heavily on E-cores, which have much
+smaller reorder windows and fewer load units. G8's conclusion — that threaded
+indirect dispatch rather than gadget-body instruction count is the limit — is
+therefore a P-core result that may not hold for the platform that matters most.
+
+The four `tests/perf` runners now take `--core-class={performance,efficiency}`.
+The efficiency mode launches the emulator through `taskpolicy -c background`,
+whose process-wide QoS clamp Apple's scheduler honours by placing the task on
+the efficiency cores; `taskpolicy` execs in place, so `process_id` and the
+existing host-CPU metrics are unaffected.
+
+Verified on the measurement host, an **Apple M1 Ultra with 16 performance and
+4 efficiency cores**: a four-thread native spinner takes **0.213 s**
+unclamped and **0.907 s** clamped, a 4.3x slowdown consistent with confinement
+to four E-cores. `taskpolicy -b` was rejected for this purpose — it leaves the
+thread QoS class unchanged (33) while `-c background` sets it to 9.
+
+Read E-core numbers accordingly: with only four efficiency cores on this host, a
+10-vCPU guest is heavily oversubscribed there, so **E-core runs are evidence
+about per-instruction cost, not about multi-core scaling**. Use the single-worker
+focused probes for the E-core half of a gadget trial.
+
+**Topology rule: efficiency-core runs use `--cpus 4`, performance-core runs use
+`--cpus 10`.** Four vCPUs match the four efficiency cores, so the E-core
+measurement reflects the change under test rather than guest-scheduler queuing.
+The two core classes are therefore never compared to each other; each is
+compared only against the same core class on the accepted build.
+
+- [x] Add the gadget bank layout comparator, its self-test, and the
+  `gadget-bank-layout-snapshot` registration plus manifest row.
+- [x] Add `--core-class` to all four performance runners and extend the
+  registered CLI contract to require the forwarding.
+- [x] Confirm the efficiency clamp reaches spawned threads by measurement
+  rather than by API inspection.
+- [x] Capture the three-run Geekbench noise band that the acceptance rule
+  requires, at 10 vCPUs with `--engine gadgets`. Recorded below.
+- [ ] Re-measure G8, G17 and G36 on both core classes with the bank layout
+  pinned, and record whether any of them reopens.
+
+### The noise band
+
+Three matched runs on the accepted build (turnstile fix + G97 page hash, with
+B-4 reverted so the baseline carries no unmeasured change), 10 vCPUs,
+`--engine gadgets`, 8 GB, same rootfs and host. Zero RCU stalls and all 32
+workloads in every run.
+
+| Run | Result | SC | MC |
+| --- | --- | ---: | ---: |
+| 1 | (result) | 77 | 473 |
+| 2 | (result) | 77 | 481 |
+| 3 | (result) | 77 | 477 |
+
+**Aggregates.** Single-core is 77 in all three runs - zero spread, so any
+movement at all in the single-core aggregate is signal. Multi-core is 477 mean
+with a full range of 8 points, **1.7% peak to peak**; treat a multi-core
+aggregate move below roughly 2% as indistinguishable from noise.
+
+**Per-workload.** The aggregates are far steadier than the sections, which is
+the trap this band exists to prevent.
+
+| | worst section | spread |
+| --- | --- | ---: |
+| Single-core | Text Processing, Ray Tracer | 2.1% |
+| Multi-core | **Photo Filter** | **8.1%** |
+| Multi-core | PDF Renderer | 6.1% |
+| Multi-core | Clang | 5.6% |
+
+Nine of sixteen single-core sections moved by at most one point and six did not
+move at all, so single-core per-workload evidence is strong. Multi-core
+per-workload evidence is weak for Photo Filter, PDF Renderer and Clang, and a
+single-run multi-core section delta under about 8% for those three establishes
+nothing.
+
+**Host condition.** Measured deliberately as-is rather than on an idle host, to
+stay comparable with the runs already recorded: a stuck `ReportCrash` agent
+(~0.8 core, 261 hours of accumulated CPU) and Chrome Remote Desktop (~1.3 core)
+were left running. Roughly 4.9 of 20 cores were busy before the guest started.
+An idle host would give a tighter band, at the cost of a step change against
+every earlier result in this log.
+
+## G97: guest page addresses hashed onto four buckets in the batch planner
+
+The refactor at `d15e98c` introduced a per-batch planning index in
+`AddressSpace::apply_batch_locked()`:
+
+```cpp
+constexpr std::size_t maximum_plan_reserve = 64 * 1024;
+...
+std::unordered_map<std::uint64_t, std::size_t> page_indices;
+page_indices.reserve(plan_reserve);
+```
+
+Three facts combine badly:
+
+- `maximum_plan_reserve` is a **power of two**, and it is the value
+  `plan_reserve` saturates to for exactly the large batches that matter;
+- libc++ keeps a power-of-two bucket count when `reserve()` asks for one, and
+  then constrains a hash by masking rather than by a modulus;
+- `std::hash<std::uint64_t>` is the identity, and a guest page address has
+  `log2(page_size)` low zero bits.
+
+So a 65,536-bucket index reaches `65536 / 16384 = 4` buckets at 16 KiB pages.
+Measured directly against the host toolchain, inserting 65,536 page-aligned
+keys:
+
+| `reserve()` | buckets | occupied | longest chain | time |
+| --- | ---: | ---: | ---: | ---: |
+| none | 102,877 | 65,536 | 1 | **0.002 s** |
+| 1,024 | 65,536 | 4 | 16,384 | **3.274 s** |
+| 65,536 | 65,536 | 4 | 16,384 | **2.590 s** |
+| 65,537 | 65,537 | 65,536 | 1 | **0.001 s** |
+
+Filling the index is quadratic, and it runs with `mappings_mutex` held and — on
+the destructive path — the execution gate closed and every sibling vCPU
+stopped.
+
+**How it was found.** Burst samples taken at live Geekbench workload-23 RCU
+stalls looked empty because `sample` cannot symbolize the UML kernel, which
+loads at its link address near `0x6000_0000_0000`; nearly every frame in a
+32 MB capture printed as `??? (in <unknown binary>)`. Resolving those addresses
+against `nm` output from the matching `vmlinux.unstripped` showed one carrier
+spending **1,255 of 1,255 samples** — the entire ten-second capture — inside
+
+```
+__um_tlb_sync+0x4c4 -> darwin_uml_static_vm_batch_end -> apply_batch_locked
+  -> page_for lambda -> std::__hash_table::__emplace_unique_key_args
+```
+
+with every other emulator thread idle. Both hot frames are the index's hash
+operations.
+
+**Change.** `GuestPageHash` folds the page number through a multiply-shift
+finalizer, so the distribution no longer depends on the bucket count the
+container happens to choose. The reservation and its allocation checkpoint are
+unchanged. `GenerationState::mappings` deliberately keeps `std::hash`: it is
+never `reserve()`d, so libc++ grows it through primes, and changing it would
+perturb the hot `translate()` path inside the same trial.
+
+`static-mmu-batch` gained `test_page_index_hash_spreads_page_aligned_addresses()`,
+which asserts the bucket distribution rather than a wall-clock bound, so the
+guarantee does not depend on host speed.
+
+- [x] 23/23 MMU, memory and batch tests including the two TSan variants.
+- [x] Full 16 KiB unit suite, 618/618. (One unrelated failure first:
+  `source-tree-cxx-only` flagged a Finder `.DS_Store` in the repo root as
+  obsolete audit debris; removed.)
+- [x] Stall-catch Geekbench, 10 vCPUs, `--engine gadgets`.
+
+### Result: accepted
+
+| Build | SC | MC | Text Processing MC | RCU stalls |
+| --- | ---: | ---: | ---: | ---: |
+| pre-refactor `b931e9b` | 81 | 514 | 61 | 0 |
+| post-refactor baseline | 79 | 471 | 33 | 2 |
+| turnstile fix, run 1 | 78 | 464 | - | 1 |
+| turnstile fix, run 2 | 78 | 458 | - | 3 |
+| turnstile fix, run 4 | 79 | 435 | 20 | 4 |
+| + rejected batch-scan trial | 78 | 456 | - | 6 |
+| **+ G97 page hash** | **78** | **478** | **60** | **0** |
+
+(result), 3,285 s wall against 3,375 s
+and 3,520 s for the two runs it replaces.
+
+Against the last accepted build (turnstile fix): single-core flat at 78, and
+multi-core **+3.0% / +4.4%** over its two runs. Both aggregates satisfy
+condition 1, so the change is accepted.
+
+The mechanism shows in one workload. Multi-Core Text Processing is the only
+Geekbench section that both stalls and fails to scale, and its score tracks the
+stall count exactly - 20 at four stalls, 33 at two, **60 at zero**, against 61
+before the refactor. That section is now fully recovered; every RCU stall in
+this investigation landed inside it.
+
+**What remains.** A broad residual regression against pre-refactor survives and
+is *not* this bug: single-core 78 vs 81 and multi-core 478 vs 514.
+
+**Corrected once the noise band existed.** This paragraph originally described
+the residual as a uniform tax and cited multi-core Photo Filter at -14.2% as
+its worst case. Both readings were wrong. Photo Filter is the noisiest section
+in the suite at 8.1% run to run, so it never supported a conclusion. And the
+residual is not uniform: it is a -2.5% to -3.5% floor plus a tail on the
+translation-heavy workloads in single-core (Clang -11.8% with zero run-to-run
+spread, Object Remover -9.6%, File Compression -8.3%), while multi-core is led
+by Navigation -12.2% and File Compression -12.0% with Clang only -7.7%. Those
+are two different causes, worked separately: see `REFACTOR_HANDOFF.md` for the
+decomposition, the lost cross-translation-unit inlining candidate, and the
+separate MMU-path investigation the multi-core half needs.
+
+## G98: B-4 step 1, guest YIELD lowered to host ISB
+
+Guest `YIELD` is what glibc's aarch64 `atomic_spin_nop()` and the kernel's
+`cpu_relax()` emit while waiting on a lock. Arm defines its only architectural
+effect on symmetric multi-threading hardware, which Apple Silicon does not
+have, so lowering it to a host `YIELD` is a complete no-op: a waiting guest
+thread keeps emulating its spin loop at full speed for its whole host quantum.
+`ISB` is the substitution Arm's own porting guidance gives in place of x86
+`PAUSE`. It is strictly stronger than the hint it replaces, so nothing
+guest-visible changes, while the pipeline restart throttles the spin.
+
+Applied in both engines: `gadget yield` in
+`darwin/cpu/arm64/gadgets/engine/system_atomic.inc`, and `HINT #1` in
+`emit_primary_hint()` in `darwin/cpu/arm64/jit/jit_compiler.cpp`. One
+instruction and one emitted word either way.
+
+### Correctness
+
+- Unit preset 572/572, tooling preset 45/45.
+- Bank layout pinned per the G96 rule, and this is the first trial to use that
+  comparator in anger: snapshots taken with and without the change are
+  **byte-identical across all 9,664 gadget entries**, so it moved no entry and
+  changed no 64-byte cache-line phase.
+
+### Result on Geekbench: neutral
+
+(result), 10 vCPUs, `--engine gadgets`,
+zero RCU stalls, all 32 workloads.
+
+| | band | B-4 |
+| --- | --- | ---: |
+| Single-core | 77, 77, 77 | 77 |
+| Multi-core | 473, 481, 477 | 478 |
+
+Single-core is identical and multi-core lands mid-band, so neither aggregate
+moves. Per-workload, single-core tilts very slightly negative — Object Remover
+111 against a band of 113 in every run, and several sections one point low —
+but nothing clears the noise. **This does not meet acceptance condition 1.**
+
+### Why Geekbench cannot decide this one
+
+The measurement host has 16 performance cores and the run uses 10 vCPUs, so the
+guest is never oversubscribed and a guest thread essentially never waits on a
+descheduled vCPU. That is precisely the condition the change exists to improve,
+and it is the condition iOS lives in. Condition 2 therefore needs a focused
+benchmark, and none of the 30 existing probes could supply one: every one of
+them either owns its data, like `guest_atomic_add_loop`, or runs as independent
+parallel copies, so no guest thread ever waits on another and the hint is never
+reached under contention.
+
+`tests/perf/guest_yield_spin_contention_loop.S` was written to close that gap.
+`BENCH_THREADS` threads share one address space through `clone(CLONE_VM)` and
+contend for a single test-and-set lock, so at any moment one thread holds it and
+every other sits in the `YIELD` backoff. Wall time is then governed by how much
+host throughput the waiters consume while the holder works. The critical section
+does an unlocked read-modify-write on a shared counter on purpose: that is safe
+only if the lock is correct, so the final count is also a proof that mutual
+exclusion held for every measured acquisition. Registered in `probes.tsv` and
+run with `--workers 1`, since the probe generates its own contention.
+
+### Result on the focused probe: rejected
+
+Both configurations, `--workers 1 --repetitions 5 --shell-init`, median of five:
+
+| Configuration | baseline | B-4 | |
+| --- | ---: | ---: | --- |
+| Performance cores, 10 vCPUs | 4.210 s, 9.43 cores | 4.364 s, 9.50 cores | **+3.7% slower** |
+| Efficiency cores, 4 vCPUs, 10 guest threads | 5.477 s, 2.00 cores | 5.756 s, 2.05 cores | **+5.1% slower** |
+
+The second row is the oversubscribed, iOS-shaped case the change was written
+for: ten guest threads on four vCPUs on four efficiency cores, so a thread
+genuinely does spin while the lock holder is descheduled. B-4 is slower there,
+and slower by *more* than on the unloaded performance cores. It also consumes
+slightly more host CPU in both. Run-to-run spread is about 5%, and four of five
+B-4 runs sit above the baseline median in each configuration.
+
+**Rejected.** Neutral on Geekbench and consistently negative on the one
+benchmark built to give it its best case.
+
+**Why the reasoning was wrong.** The premise was right — a host `YIELD` really
+is a no-op on Apple Silicon, so the hint does nothing today. The error was
+assuming the replacement must therefore be an improvement. `ISB` throttles the
+*spinning* thread by flushing its pipeline, and on a core with no second
+hardware thread there is no sibling to hand those fetch and issue slots to, so
+the throttling buys nothing. What it does buy is latency: a slower spinner
+takes longer to observe that the lock was released, which lengthens every
+handoff. That is why the penalty grows under oversubscription, where handoffs
+are most frequent. Any future attempt at B-4 step 2 should treat the hint as a
+scheduling signal — exiting the block and yielding the host thread, as the plan
+itself proposes — rather than as an instruction to substitute.
+
+## G99: interprocedural optimization for the gadget translation library
+
+Accepted. This is the first repair of the post-refactor regression.
+
+### Mechanism
+
+Gadget translation was one 14,160-line translation unit before the refactor
+(`darwin/backend/cpu/arm64/gadgets/program.cpp`) and is now fifteen, the largest
+2,926 lines. `Builder::build()` calls `decode_branch_system`,
+`decode_data_processing`, `decode_floating_simd`, `decode_load_store` and
+`decode_exception` **once per guest instruction translated**; every one is a bare
+declaration in `program_builder_decode.hpp` defined in a separate `.cpp`, and
+each calls on into the `gadget_*_selection.cpp` units.
+`gadget_selection_api.hpp` is types plus 182 declarations with no inline bodies.
+The build is `Release`, `-O3 -DNDEBUG`, with no LTO and no unity build, so the
+entire decode -> select -> emit chain the compiler used to inline sits behind
+hard call boundaries.
+
+Neither obvious repair is available. `verify_gadget_builder_ownership()` in
+`test_engine_object_boundaries.py` requires all five `program_builder_*.cpp.o`
+to exist as distinct objects, which a unity build cannot satisfy, and forbids
+textual `.cpp/.inc/.inl/.ipp` composition and `*_impl` fragments, which rules
+out header inlining. Link-time optimization is the only route that changes
+neither source organization nor object file names.
+
+### The change
+
+`INTERPROCEDURAL_OPTIMIZATION` on `uml_arm64_gadgets`, guarded by
+`check_ipo_supported()`, in `darwin/cpu/CMakeLists.txt`. CMake selects
+`-flto=thin` for Clang.
+
+### Correctness
+
+- Unit preset 572/572, tooling preset 45/45, production static-link closure
+  verified.
+- The thirteen C++ objects become LLVM bitcode. Apple `nm` still reads them, so
+  `test_engine_object_boundaries.py` keeps working; `engine.S` still assembles
+  to an ordinary Mach-O object, so the engine-entry disassembly check is
+  untouched.
+- Bank layout: **no gadget entry moved and no 64-byte phase changed.**
+- The feared cost of LTO at roughly a hundred `$<TARGET_OBJECTS:>` consumers did
+  not materialise: a full ThinLTO rebuild of the unit preset takes 76 s.
+
+### Result
+
+(result), 10 vCPUs, `--engine gadgets`,
+zero RCU stalls, all 32 workloads.
+
+| | band | G99 | |
+| --- | --- | ---: | --- |
+| Single-core | 77, 77, 77 | **78** | +1 on a band with zero spread |
+| Multi-core | 473, 481, 477 | **497** | **+4.2%** against a 1.7% band |
+
+Both aggregates improve, so this meets acceptance condition 1. Multi-core is 16
+points above the highest of the three band runs.
+
+Against pre-refactor (18926314), this recovers **54% of the multi-core
+regression** (477 -> 497 of the way to 514) and 25% of single-core (77 -> 78 of
+the way to 81).
+
+### The mechanism is real but was not the one predicted
+
+The prediction was that translation-heavy workloads would gain most, and above
+all single-core Clang, which the workload profile puts at 19% cold translation
+and which had the largest single-core deficit at -11.8%. That is not what
+happened. **Single-core Clang moved 45 -> 44, slightly down.** The gains landed
+instead on the workloads whose *multi-core* deficit was worst:
+
+| Workload | band | G99 | vs band |
+| --- | ---: | ---: | ---: |
+| Navigation MC | 1047-1079 | 1158 | +79 over the band maximum |
+| File Compression MC | 553-565 | 601 | +36 |
+| HTML5 Browser MC | 533-543 | 578 | +35 |
+| Object Remover MC | 655-663 | 686 | +23 |
+| Object Remover SC | 113 in every run | 118 | +5 |
+| Clang MC | 344-364 | 379 | +15 |
+| **Clang SC** | **45 in every run** | **44** | **-1** |
+
+So the win is not confined to the decode families at all. It is spread across
+the library, which points at the *execution*-time helpers rather than the
+translation-time ones: `complex_memory_helpers.cpp`, `software_helpers.cpp` and
+`gadget_memory_selection.cpp` are called from gadget bodies at run time, and
+Navigation and File Compression are the memory-heavy workloads. Inlining across
+those units is the plausible source of a gain that tracks memory intensity
+rather than translation volume.
+
+Clang single-core remains the one section that has not recovered anything, and
+it is the cleanest signal in the suite, with zero run-to-run spread across three
+band runs. ThinLTO imports across modules heuristically and declines expensive
+imports; the decode families are exactly the large functions a cost model
+refuses. That is the specific reason to keep going with textual composition,
+which forces them into one unit rather than leaving it to a heuristic.
+
+### One regression to be honest about
+
+The G96 bank layout comparator now sees **9,577 of 9,664 entries: 87 fewer**.
+The missing ones are gadgets defined in C++ rather than assembly, whose symbols
+the comparator cannot resolve inside a bitcode object. No entry moved - every
+surviving row is byte-identical - but audit coverage dropped by 0.9%. The fix is
+to read the final linked image rather than the objects, which would also make
+the comparator independent of how the objects are produced. Not done here.
+
+## G100: textual composition of the gadget decode families
+
+Accepted, and it completes the single-core half of the post-refactor repair.
+
+### Why this was needed after G99
+
+G99 restored cross-unit inlining through ThinLTO and recovered 54% of the
+multi-core regression, but it left **single-core Clang at 44 against 45 in the
+band and 51 pre-refactor** - the most translation-heavy workload, the one the
+mechanism predicted would gain most, and the cleanest signal in the suite with
+zero run-to-run spread across three band runs. ThinLTO imports across modules on
+a cost model that declines large functions, and the five decode families are
+exactly that: 45 to 1,690 lines each of switch dispatch. Link-time optimization
+was never going to inline them; only putting them in one translation unit would.
+
+### The change
+
+The five `program_builder_<family>.cpp` become
+`program_builder_<family>_impl.ipp` fragments, composed by `program_builder.cpp`,
+so `Builder::build()` and the whole decode -> select -> emit chain compile as one
+unit again. The fragments moved verbatim - every family already had an identical
+two-line `#pragma once` include prologue and its own namespace block - so this is
+a build-shape change, not a code change.
+
+`.ipp` rather than `.inc` for two reasons: every existing `.inc` in this tree is
+an assembly fragment of the gadget bank (`engine/core_integer.inc` and its
+siblings), so reusing that suffix for C++ would overload an established
+convention; and editors do not recognise `.inc` as C++, while `.ipp` is in the
+stock VS Code C++ language definition alongside `.inl`, `.tpp` and `.ixx`.
+
+`verify_gadget_builder_ownership()` in `test_engine_object_boundaries.py` forbade
+exactly this, and was rewritten rather than deleted. It now pins that the
+composition stays disciplined instead of pinning that the families compile apart:
+one fragment owns exactly one family, no fragment defines another family's
+function, the private interface still only declares them, `program_builder.cpp`
+is the sole composer and includes exactly the five, no fragment includes another,
+and no family may regain its own object. A second hard-coded object list further
+down the same audit needed the same update.
+
+**Mutation-tested, since a rewritten audit that cannot fail is worse than none.**
+Dropping one include from the composer fails with "program_builder.cpp does not
+compose exactly the decode family fragments"; adding a second includer fails with
+"decode family fragments have extra includers: ['program_execution.cpp']"; both
+pass again when restored.
+
+### Correctness
+
+Unit preset 572/572, tooling preset 45/45, production static-link closure
+verified, and no gadget entry moved or changed 64-byte phase.
+
+### Result
+
+(result), 10 vCPUs, `--engine gadgets`,
+zero RCU stalls, all 32 workloads.
+
+| | band | G99 LTO | **G100** | pre-refactor |
+| --- | --- | ---: | ---: | ---: |
+| Single-core | 77, 77, 77 | 78 | **80** | 81 |
+| Multi-core | 473, 481, 477 | 497 | **495** | 514 |
+
+Single-core gains two points on a band with **zero** spread, so the improvement
+is unambiguous. Multi-core moves -0.4%, far inside the 1.7% band. One aggregate
+improves while the other stays within noise, which is acceptance condition 1.
+
+**The predicted mechanism finally shows up.** G99's gains landed on memory-heavy
+workloads and missed translation entirely; G100's land exactly where the theory
+said they would:
+
+| Single-core | pre | band | G99 | **G100** |
+| --- | ---: | ---: | ---: | ---: |
+| **Clang** | 51 | 45 | 44 | **50** |
+| **Object Remover** | 125 | 113 | 118 | **128** |
+| **File Compression** | 102 | 93.5 | 95 | **102** |
+| Asset Compression | 87 | 84 | 86 | 87 |
+| HDR | 102 | 99.5 | 101 | 102 |
+| Text Processing | 50 | 48.5 | 49 | 50 |
+| Ray Tracer | 101 | 95.5 | 98 | 100 |
+
+Clang recovers 45 -> 50 against 51 pre-refactor, a **+13.6%** move on the section
+LTO could not shift at all. File Compression, Asset Compression, HDR and Text
+Processing return to their pre-refactor values exactly, and Object Remover at 128
+**exceeds** its pre-refactor 125.
+
+### Where the campaign stands against pre-refactor
+
+| | pre-refactor | post-refactor band | now | recovered |
+| --- | ---: | ---: | ---: | ---: |
+| Single-core | 81 | 77 | **80** | **75%** |
+| Multi-core | 514 | 477 | **495** | **49%** |
+
+Single-core is all but repaired: one point short, with several sections at or
+above their pre-refactor scores. The multi-core remainder is not this cause -
+it is led by Navigation and File Compression and scales with concurrency, which
+points at the MMU translate and miss path the refactor rewrote. That is the next
+investigation and it is tracked separately.
