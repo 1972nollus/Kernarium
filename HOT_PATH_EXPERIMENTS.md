@@ -3843,3 +3843,162 @@ above their pre-refactor scores. The multi-core remainder is not this cause -
 it is led by Navigation and File Compression and scales with concurrency, which
 points at the MMU translate and miss path the refactor rewrote. That is the next
 investigation and it is tracked separately.
+
+## G101: B-1 step 1, the address space resolved once per thread
+
+Accepted. This is the multi-core half of the post-refactor repair that G100
+identified but did not fix.
+
+### The cause of the multi-core remainder
+
+G100 recorded that the remainder was "led by Navigation and File Compression and
+scales with concurrency, which points at the MMU translate and miss path". It
+does, and the diff against `618b686` names the mechanism.
+
+Before the engine split, `darwin/runtime/mmu/address_space.cpp:1183` reached the
+address space through
+
+```cpp
+AddressSpace &address_space()
+{
+	static AddressSpace instance;
+	return instance;
+}
+```
+
+a plain reference to a process-global instance. A software-TLB miss therefore
+paid **one** lock: the `shared_lock` on the generation's `mappings_mutex` inside
+`translate()`.
+
+Domain support replaced that with a registry lookup. The same miss now pays:
+
+| Step | Added by the refactor |
+| --- | --- |
+| `prune_retired_thread_state()` | four thread-local structures, each an acquire load |
+| `AddressSpaceRegistry::current()` | `shared_lock` on a process-global `shared_mutex`, `unordered_map` find, `shared_ptr` copy, two retirement-sequence loads |
+| `AddressSpaceAccess` constructor | a **second** `shared_lock`, on `lifecycle_mutex_`, held for the whole operation |
+| `AddressSpace::translate()` | unchanged - `shared_lock` on `mappings_mutex` plus the find |
+
+Three `shared_mutex` acquisitions where there was one. libc++'s `shared_mutex` is
+not a cheap reader-writer lock - `lock_shared()` takes a real internal
+`std::mutex` - so "shared" readers serialize on one cacheline instead of
+proceeding in parallel. Ten vCPU threads missing concurrently queue, which is
+why the cost is a multi-core cost.
+
+### The change
+
+The resolved owner is cached per thread and validated by one comparison against
+the global retirement sequence, which `retire_domain()` advances **before** it
+touches the registry, so a cache hit proves no retirement has begun since the
+entry was published. A hit still returns an owning reference: dropping to a raw
+pointer would rest on the lifecycle lock alone to keep the object alive, and the
+refcount round-trip is far cheaper than the lock and hash it replaces.
+
+`test_software_resolution_cache_drops_a_retired_domain()` pins the invalidation.
+It reuses the **same domain id** after retirement, so a cache validated on the
+domain alone hands back the retired space, which then reports `ESHUTDOWN` and
+creates no replacement. **Mutation-tested:** deleting the sequence comparison
+fails `memory-domain-lifetime`, and it passes again when restored.
+
+### A probe had to be written first
+
+No existing probe reaches the miss path. `guest_tlb_128m_alias_loop` touches
+exactly two pages, which sit in the software TLB from the second iteration
+onward - it was built to expose set aliasing in the direct index, not to
+generate misses - and `guest_memory_site_loop` hammers a single site. Measured
+on both builds the alias probe reports 0.101 s against 0.101 s: it cannot see
+this change at all.
+
+`tests/perf/guest_mmu_miss_walk_loop.S` walks 65,536 pages, twice the 32,768
+entries of the 16,384-set two-way TLB, so a linear pass evicts each entry before
+reaching it again and every access is a miss. `BENCH_THREADS` threads share the
+address space through `CLONE_VM`, the shape the multi-core phase produces; each
+thread keeps its own TLB, so sharing the region does not turn their misses into
+hits. Every pass sums the first word of each page against what the parent
+seeded, so a run reporting OK has proved all 65,536 translations resolved to the
+right host page, for every thread and every pass.
+
+| median of 3, P-core | candidate | baseline |
+| --- | ---: | ---: |
+| 10 threads, pass A | 5.117 s | 6.325 s |
+| 10 threads, pass B (reversed) | 4.769 s | 6.140 s |
+| 1 thread, pass A | 0.603 s | 0.648 s |
+| 1 thread, pass B (reversed) | 0.623 s | 0.642 s |
+
+About 21% at ten threads and 4% at one, with host CPU falling from 44-50 s to
+36-38 s on the ten-thread run, so this is less work rather than better
+scheduling. E-core runs at `--cpus 4` were inconclusive in both directions
+(candidate 15.691 s and 13.432 s, baseline 14.818 s and 15.598 s): ten probe
+threads on four efficiency cores makes wall time a scheduling result. Recorded
+as measured rather than argued into a conclusion.
+
+### Result
+
+Four runs, two matched pairs, orders reversed, 10 vCPUs, `--engine gadgets`,
+zero RCU stalls, all 32 workloads in every run.
+
+| | baseline | candidate |
+| --- | ---: | ---: |
+| pair 1, baseline first | 79 / 479 (result) | 77 / 492 (result) |
+| pair 2, candidate first | 78 / 486 (result) | 79 / 488 (result) |
+| **mean** | **78.5 / 482.5** | **78.0 / 490.0** |
+
+**Single-core is unchanged**: the ranges overlap completely, 78-79 against
+77-79. **Multi-core improves 1.55%, and the two sets do not overlap** - the
+candidate's worst run, 488, beats the baseline's best, 486, and both candidate
+runs beat both baseline runs. One aggregate improves while the other stays
+inside its noise, which is acceptance condition 1.
+
+Eleven of sixteen multi-core sections improve, led by Photo Filter +8.5%,
+HDR +5.8%, Object Remover +5.2% and Horizon Detection +4.2%.
+
+**One section regresses and is not explained: Navigation multi-core, 1115 and
+1133 against 1089 and 1083, about -3.4% with no overlap.** That is the section
+that led the post-refactor multi-core regression, so the expectation was that it
+would gain most. It is recorded as an open follow-up rather than waved away; the
+likely place to look is that Navigation's miss pattern is dominated by one
+generation's `mappings_mutex`, which this change does not touch, so removing the
+registry lock may only have moved the queue onto it. B-1 step 2 replaces exactly
+that lock.
+
+### Method notes, which cost this trial two extra runs
+
+**A cross-day comparison is not safe.** The first candidate run read 78/487 and
+was compared against G100's 80/495 from the previous day, which looked like a
+2-point single-core regression. Rerunning the *unchanged* accepted build the next
+day gave 79/479 - the same code moved 80 to 79 single-core and 495 to 479
+multi-core between days. Every trial from here compares against a control run
+back to back with it, never against a number already in this log.
+
+**A single pair overstates.** Pair 1 alone put the multi-core gain at +2.7%; with
+the reversed repeat it is +1.55%. Pair 1 alone also showed single-core 79 to 77,
+which the repeat erased - Clang single-core went 48, 45, 49, 46 across the four
+runs, an 8.9% swing between two runs of the *same* candidate binary. The G96
+band's zero single-core spread describes three runs of one build in one sitting
+and does not survive across sittings.
+
+**Host condition is now recorded rather than assumed.** Each run samples total
+host busy cores every 60 s; the pairs above ran at medians of 4.40 and 4.43
+cores. A Time Machine backup overlapping the first run was initially treated as
+grounds to discard it. That was wrong: the guest uses 10 of 20 host cores, the
+backup was network-bound to a remote volume at roughly 290 KB/s, and one core of
+background work cannot move a single-threaded phase. Record host condition, do
+not reject results for it.
+
+**Phase wall time is an independent check.** The console log timestamps each
+phase and the two agreed throughout - in pair 1 the candidate's single-core phase
+took 41 minutes against 37 and its multi-core phase 12 against 16.
+
+### Code layout, measured and set aside
+
+`__text` grew 820 bytes, so every object linked after the MMU shifted. Comparing
+the two images by symbol: **9,576 of 9,663 gadget entries are at identical
+addresses**, and the 87 that moved are the C++-defined gadgets, all displaced by
+exactly +752 bytes, which changes their 64-byte cache-line phase. This was the
+leading hypothesis for the apparent single-core regression until the repeats
+showed there was nothing to explain. It is recorded because the effect is real
+and unpinned - G35's padding rule and `gadget-bank-layout-snapshot` cover the
+assembly bank, and nothing covers compiled code - so a future trial that does
+show an unexplained single-core move on a size-changing build should check it.
+Where a mechanism can be switched at run time, measuring both arms from one image
+removes the question entirely.
