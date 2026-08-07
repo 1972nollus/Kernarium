@@ -191,83 +191,123 @@ def verify_native_page_profile(
 def verify_gadget_builder_ownership(
     source_root: Path, gadget_objects: list[Path]
 ) -> None:
-    """Keep each decode family in a normal, independently compiled owner."""
+    """Keep one decode family per fragment behind exactly one composer.
+
+    The families were independently compiled objects until the decode chain was
+    measured. `Builder::build()` calls one of them per guest instruction it
+    translates and each calls on into the selection tables, so separating them
+    put hard call boundaries across the hottest loop in translation and cost
+    real score; interprocedural optimization recovered part of that but left the
+    most translation-heavy workload untouched, because ThinLTO imports on a cost
+    model that declines functions this large. They are therefore composed
+    textually into one translation unit on purpose.
+
+    What is pinned now is that the composition stays disciplined rather than
+    that the families compile apart: one fragment owns exactly one family, the
+    private interface still only declares them, a single file composes them, and
+    fragments never nest.
+    """
     gadget_root = source_root / "darwin" / "cpu" / "arm64" / "gadgets"
-    family_sources = {
-        "decode_branch_system": "program_builder_branch_system.cpp",
-        "decode_data_processing": "program_builder_data_processing.cpp",
-        "decode_exception": "program_builder_exception.cpp",
-        "decode_floating_simd": "program_builder_floating_simd.cpp",
-        "decode_load_store": "program_builder_load_store.cpp",
+    family_fragments = {
+        "decode_branch_system": "program_builder_branch_system_impl.ipp",
+        "decode_data_processing": "program_builder_data_processing_impl.ipp",
+        "decode_exception": "program_builder_exception_impl.ipp",
+        "decode_floating_simd": "program_builder_floating_simd_impl.ipp",
+        "decode_load_store": "program_builder_load_store_impl.ipp",
     }
-    required_objects = {
-        "program_builder.cpp.o",
-        *(f"{source}.o" for source in family_sources.values()),
-    }
+    composer_name = "program_builder.cpp"
     object_names = {path.name for path in gadget_objects}
     require(
-        required_objects <= object_names,
-        "gadget decode-family source ownership is incomplete: "
-        f"{sorted(object_names)}",
+        f"{composer_name}.o" in object_names,
+        f"gadget builder composer object is missing: {sorted(object_names)}",
+    )
+    # A family must never regain its own object, which would silently undo the
+    # composition while every other check below still passed.
+    stale_objects = sorted(
+        name
+        for name in object_names
+        if name.startswith("program_builder_") and name.endswith(".cpp.o")
+    )
+    require(
+        not stale_objects,
+        f"decode families are compiled apart from their composer: {stale_objects}",
     )
 
     interface = (gadget_root / "program_builder_decode.hpp").read_text(
         encoding="utf-8"
     )
-    orchestrator = (gadget_root / "program_builder.cpp").read_text(
-        encoding="utf-8"
-    )
-    for function, source_name in family_sources.items():
+    composer = (gadget_root / composer_name).read_text(encoding="utf-8")
+    definitions = {
+        function: re.compile(
+            rf"\bDecodeResult\s+{function}\(DecodeContext &context\)\s*\{{"
+        )
+        for function in family_fragments
+    }
+    for function, fragment_name in family_fragments.items():
         declaration = re.compile(
             rf"\[\[nodiscard\]\]\s+DecodeResult\s+{function}"
             rf"\(DecodeContext &context\);"
-        )
-        definition = re.compile(
-            rf"\bDecodeResult\s+{function}\(DecodeContext &context\)\s*\{{"
         )
         require(
             declaration.search(interface) is not None,
             f"private builder interface does not declare {function}",
         )
         require(
-            definition.search(interface) is None,
+            definitions[function].search(interface) is None,
             f"private builder interface implements {function}",
         )
-        owner = (gadget_root / source_name).read_text(encoding="utf-8")
+        fragment_path = gadget_root / fragment_name
         require(
-            definition.search(owner) is not None,
-            f"{source_name} does not own {function}",
+            fragment_path.is_file(),
+            f"decode family fragment is missing: {fragment_name}",
+        )
+        fragment = fragment_path.read_text(encoding="utf-8")
+        require(
+            definitions[function].search(fragment) is not None,
+            f"{fragment_name} does not own {function}",
+        )
+        # One family per fragment: owning a second one would recreate the
+        # oversized units the split was meant to break up.
+        intruders = sorted(
+            other
+            for other, pattern in definitions.items()
+            if other != function and pattern.search(fragment) is not None
         )
         require(
-            definition.search(orchestrator) is None and function in orchestrator,
-            f"program_builder.cpp does not remain a caller-only owner for {function}",
+            not intruders,
+            f"{fragment_name} also defines {intruders}",
+        )
+        require(
+            definitions[function].search(composer) is None,
+            f"{composer_name} defines {function} directly instead of composing it",
         )
 
-    textual_cpp_include = re.compile(
-        r'^\s*#\s*include\s*[<"][^>"]+\.(?:cpp|cc|cxx|inc|inl|ipp)[>"]',
-        re.MULTILINE,
-    )
-    builder_sources = [
-        gadget_root / "program_builder.cpp",
-        *(gadget_root / source for source in family_sources.values()),
-    ]
-    composed = {
-        path.name
-        for path in builder_sources
-        if textual_cpp_include.search(path.read_text(encoding="utf-8"))
-    }
-    require(
-        not composed,
-        f"gadget builder uses textual C++ composition: {sorted(composed)}",
-    )
-    fragment_files = sorted(
-        path.name
-        for path in gadget_root.glob("program_builder*")
-        if path.suffix in (".inc", ".inl", ".ipp") or "_impl" in path.stem
+    fragment_include = re.compile(
+        r'^\s*#\s*include\s*"(program_builder_\w+_impl\.ipp)"', re.MULTILINE
     )
     require(
-        not fragment_files,
-        f"gadget builder has implementation fragments: {fragment_files}",
+        set(fragment_include.findall(composer)) == set(family_fragments.values()),
+        f"{composer_name} does not compose exactly the decode family fragments",
+    )
+    # Exactly one composer, and no fragment pulling in another, so the
+    # translation unit boundary stays where this audit can see it.
+    other_includers = sorted(
+        path.name
+        for path in gadget_root.iterdir()
+        if path.is_file()
+        and path.name != composer_name
+        and fragment_include.search(path.read_text(encoding="utf-8"))
+    )
+    require(
+        not other_includers,
+        f"decode family fragments have extra includers: {other_includers}",
+    )
+    textual_source_include = re.compile(
+        r'^\s*#\s*include\s*[<"][^>"]+\.(?:cpp|cc|cxx)[>"]', re.MULTILINE
+    )
+    require(
+        textual_source_include.search(composer) is None,
+        f"{composer_name} textually includes a compiled source file",
     )
 
 
@@ -597,12 +637,11 @@ def main() -> int:
             "gadget_memory_selection.cpp.o",
             "gadget_scalar_selection.cpp.o",
             "gadget_simd_selection.cpp.o",
+            # The five decode families no longer carry their own objects. They
+            # are composed into program_builder.cpp so the per-instruction
+            # decode chain inlines as one unit; verify_gadget_builder_ownership
+            # pins that composition.
             "program_builder.cpp.o",
-            "program_builder_branch_system.cpp.o",
-            "program_builder_data_processing.cpp.o",
-            "program_builder_exception.cpp.o",
-            "program_builder_floating_simd.cpp.o",
-            "program_builder_load_store.cpp.o",
             "program_execution.cpp.o",
         }
         <= {path.name for path in gadget_objects},

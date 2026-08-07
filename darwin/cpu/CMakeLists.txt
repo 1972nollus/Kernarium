@@ -66,12 +66,10 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
+    # program_builder.cpp textually composes the five decode families from
+    # their *_impl.ipp fragments so the whole per-instruction decode chain
+    # inlines as one unit; see the comment at the top of that file.
     arm64/gadgets/program_builder.cpp
-    arm64/gadgets/program_builder_branch_system.cpp
-    arm64/gadgets/program_builder_data_processing.cpp
-    arm64/gadgets/program_builder_exception.cpp
-    arm64/gadgets/program_builder_floating_simd.cpp
-    arm64/gadgets/program_builder_load_store.cpp
     arm64/gadgets/program_execution.cpp
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
@@ -88,13 +86,12 @@ target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# The decode -> select -> emit chain runs once per translated guest instruction
-# and is deliberately spread across thirteen translation units:
-# verify_gadget_builder_ownership() requires each decode family to keep an
-# independently compiled owner, so neither a unity build nor header inlining is
-# available here. Interprocedural optimization is the one route that restores
-# the cross-unit inlining that split cost without changing source organization
-# or object file names, so that ownership audit still holds.
+# The gadget library is still many translation units, and the selection tables
+# the decode families call into are among them. Interprocedural optimization
+# restores the cross-unit inlining that splitting the library cost; it is worth
+# 4.2% multi-core on its own. It is not sufficient by itself - ThinLTO imports
+# on a cost model that declines functions as large as the decode families, which
+# is why those five are composed textually into program_builder.cpp instead.
 include(CheckIPOSupported)
 check_ipo_supported(RESULT _uml_gadget_ipo_supported
     OUTPUT _uml_gadget_ipo_error LANGUAGES CXX)

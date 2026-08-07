@@ -6,6 +6,28 @@
 #include <span>
 #include <utility>
 
+/* Builder::build() below calls one of these five per guest instruction it
+ * translates, and each of them calls on into the gadget selection tables.
+ * Before the engine split that whole decode -> select -> emit chain lived in
+ * one translation unit and the compiler inlined it freely; separating the
+ * families into their own objects put hard call boundaries across the hottest
+ * loop in translation and cost measurable score. Interprocedural optimization
+ * recovered part of it but left single-core Clang, the most translation-heavy
+ * workload, untouched, because ThinLTO imports across modules on a cost model
+ * that declines functions this large. Composing them textually here is not a
+ * shortcut around that decision: it is the only way to make the inliner see the
+ * whole chain rather than leave it to a heuristic that has been measured to
+ * decline. Each fragment still owns exactly one decode family, and
+ * test_engine_object_boundaries.py enforces that this file remains their only
+ * includer. */
+/* .ipp rather than .inc: every .inc in this tree is an assembly fragment of the
+ * gadget bank, and editors do not treat .inc as C++. */
+#include "program_builder_branch_system_impl.ipp"
+#include "program_builder_data_processing_impl.ipp"
+#include "program_builder_exception_impl.ipp"
+#include "program_builder_floating_simd_impl.ipp"
+#include "program_builder_load_store_impl.ipp"
+
 namespace uml::cpu::arm64::gadgets {
 
 using namespace selection;
