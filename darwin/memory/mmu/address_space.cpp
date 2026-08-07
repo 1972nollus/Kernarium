@@ -1372,6 +1372,37 @@ software_address_space_acquired_hook()
 	return provider(domain) && domain != 0;
 }
 
+/* Every software-TLB miss in both engines resolves the address space through
+ * current(). Before the engine split that was a process-global instance reached
+ * by a plain reference, so a miss cost one lock: the shared_lock on the
+ * generation's mappings_mutex inside translate(). Domain support made it a
+ * registry lookup, which adds a second acquisition of a process-global
+ * shared_mutex plus a hash find to every miss on every vCPU thread - and
+ * libc++'s shared_mutex takes a real internal std::mutex in lock_shared(), so
+ * "shared" readers serialize on one cacheline rather than proceeding in
+ * parallel. That cost scales with vCPU count, which is why it shows up in the
+ * multi-core phase.
+ *
+ * The resolved owner is therefore cached per thread. activate() already keeps a
+ * thread-local generation slot of exactly this shape. Validity is one relaxed
+ * comparison against the global retirement sequence, which retire_domain()
+ * advances before it touches the registry, so a cache hit proves no retirement
+ * has begun since the entry was published. A hit still hands back an owning
+ * reference: dropping to a raw pointer would rest on the lifecycle lock alone to
+ * keep the object alive, and the refcount round-trip is far cheaper than the
+ * lock and hash it replaces. */
+struct ResolvedAddressSpace final {
+	std::uint64_t domain{};
+	std::uint64_t retirement_sequence{};
+	std::shared_ptr<AddressSpace> owner;
+};
+
+ResolvedAddressSpace &active_thread_address_space()
+{
+	static thread_local ResolvedAddressSpace resolved;
+	return resolved;
+}
+
 class AddressSpaceRegistry final {
 public:
 	[[nodiscard]] std::shared_ptr<AddressSpace> current() noexcept
@@ -1385,6 +1416,27 @@ public:
 				errno = ESRCH;
 				return {};
 			}
+			auto &resolved = active_thread_address_space();
+			if (resolved.owner != nullptr) {
+				if (resolved.retirement_sequence == retirement_sequence &&
+				    resolved.domain == domain)
+					return resolved.owner;
+				/* Any retirement invalidates the entry, which also releases
+				 * this thread's reference to a space that may be the retired
+				 * one. */
+				if (resolved.retirement_sequence != retirement_sequence)
+					resolved = {};
+			}
+			/* Only ever reached after the sequence has been re-read and found
+			 * unchanged, so the published entry is one no retirement has
+			 * touched. */
+			const auto publish =
+				[&](std::shared_ptr<AddressSpace> space) noexcept {
+					resolved.domain = domain;
+					resolved.retirement_sequence = retirement_sequence;
+					resolved.owner = std::move(space);
+					return resolved.owner;
+				};
 			try {
 				{
 					std::shared_lock lock{mutex_};
@@ -1394,7 +1446,7 @@ public:
 							    std::memory_order_acquire) !=
 							    retirement_sequence)
 							continue;
-						return found->second;
+						return publish(found->second);
 					}
 				}
 				std::lock_guard lock{mutex_};
@@ -1403,7 +1455,7 @@ public:
 					continue;
 				if (const auto found = spaces_.find(domain);
 				    found != spaces_.end())
-					return found->second;
+					return publish(found->second);
 				auto space = std::make_shared<AddressSpace>();
 				/* Retirement advances the sequence before acquiring mutex_. A resolver
 				 * that captured a domain earlier therefore cannot install state after
@@ -1414,7 +1466,7 @@ public:
 					    std::memory_order_acquire) != retirement_sequence)
 					continue;
 				spaces_.emplace(domain, space);
-				return space;
+				return publish(std::move(space));
 			} catch (const std::bad_alloc &) {
 				errno = ENOMEM;
 				return {};

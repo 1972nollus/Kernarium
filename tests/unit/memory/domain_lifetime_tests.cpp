@@ -286,6 +286,34 @@ void test_software_thread_state_recovers_after_domain_retirement()
 	require(uml::memory::testing::software_domain_count() == 0);
 }
 
+/* The resolved address space is cached per thread, so the thread that last used
+ * a domain is the one that would serve a stale entry after it is retired.
+ * Reusing the same domain id isolates the retirement-sequence check from the
+ * domain comparison: a cache validated on the domain alone hands back the
+ * retired space here, which then reports ESHUTDOWN and creates no replacement.
+ */
+void test_software_resolution_cache_drops_a_retired_domain()
+{
+	constexpr std::uint64_t domain = 15'001;
+	constexpr unsigned long generation = 909;
+
+	active_domain.store(domain, std::memory_order_release);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(uml::memory::testing::software_domain_count() == 1);
+
+	active_domain.store(0, std::memory_order_release);
+	uml::memory::retire_domain(domain);
+	require(uml::memory::testing::software_domain_count() == 0);
+
+	active_domain.store(domain, std::memory_order_release);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(uml::memory::testing::software_domain_count() == 1);
+
+	active_domain.store(0, std::memory_order_release);
+	uml::memory::retire_domain(domain);
+	require(uml::memory::testing::software_domain_count() == 0);
+}
+
 void test_software_thread_exit_closes_walker_and_execution()
 {
 	constexpr std::uint64_t domain = 14'001;
@@ -470,6 +498,7 @@ int main()
 	test_software_resolver_retries_after_unrelated_retirement();
 	test_software_acquired_space_refuses_post_retirement_state_creation();
 	test_software_thread_state_recovers_after_domain_retirement();
+	test_software_resolution_cache_drops_a_retired_domain();
 	test_software_thread_exit_closes_walker_and_execution();
 #if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 	test_native_registry_initialization_retries_once();
