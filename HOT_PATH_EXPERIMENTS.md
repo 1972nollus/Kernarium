@@ -4095,3 +4095,107 @@ waiters spin.
   contended global read-modify-write on `JitBlockPublication`'s deliberately
   lock-free direct-store path to speed up a rare waiter, which is the shape
   G33 and G34 were rejected for. It belongs with C-2's redesign, not before it.
+
+## G103: B-2, the per-thread execution object resolved once
+
+Accepted under condition 2: the focused control improves 20% at ten workers and
+8% at one, with no Geekbench regression in either aggregate or any of the
+thirty-two per-workload sections.
+
+### The cost
+
+Every guest entry calls `Context::thread_execution_state()` **twice**, once from
+`darwin_uml_static_guest_interrupt_sequence()` and once from
+`run_common_guest()`, to compute an answer that is per thread and changes only
+at a retirement. Each call took:
+
+| Step | Cost |
+| --- | --- |
+| `thread_execution_state()` | `shared_lock` on `execution_lifecycle_mutex_`, held for the whole guest run |
+| | `lock_guard` on `states_mutex_` plus a `shared_ptr` copy |
+| `ThreadStateStore::acquire()` | a third mutex, a `std::thread::id` hash lookup, a second `shared_ptr` copy |
+| `ThreadStateRegistrations::bind()` | an erase-remove over a vector whose predicate dereferences a `weak_ptr` control block per entry, then a `weak_ptr` construction and `owner_before` comparisons |
+
+Six mutex acquisitions and two hash lookups per syscall, on process-global
+cachelines shared by all ten vCPU threads. The `bind()` scan is not in the
+plan's description of this site and is not the smallest part of it.
+
+### The change, and two things that were removed from it
+
+The resolved object is cached in a thread-local keyed on the `Context`.
+
+**The entry is weak, not owning, and that is a correctness requirement rather
+than a preference.** `ThreadExecutionState` carries the engine slots and the
+guest memory view, and retirement destroys it *before* retiring the memory
+domain those caches are built on - `test_context_destruction_retires_state_before_domain`
+pins that order. An owning cache defers the destructor to the caching thread's
+next resolution or to its exit, which moves it after the retirement it is
+ordered before. The first implementation held a `shared_ptr` and was wrong in
+exactly that way.
+
+**An explicit validity epoch was written and then deleted.** It advanced inside
+`retire_thread_execution_states()` and was compared on each hit. Mutation
+testing showed no test could be made to fail without it, and the reason is that
+it is redundant: retirement clears the store, which drops the only strong
+reference - it runs under `execution_lifecycle_mutex_` held exclusively, so no
+`ThreadExecutionStateAccess` can be outstanding to hold another - so the object
+is destroyed and `lock()` fails on its own. The weak reference *is* the
+invalidation. A mechanism that no test can exercise is worse than no mechanism,
+so it was removed rather than kept as insurance.
+
+The `Context` comparison that remains is not redundant, and now has a negative.
+`test_execution_state_is_not_shared_between_contexts` resolves from two live
+contexts on one thread and requires each to get its own object. **Mutation-tested:**
+replacing the comparison with `true` fails `runtime-context-lifecycle`.
+
+### The probe
+
+Nothing in `tests/perf` measured the guest entry boundary - every other probe
+measures guest code once the emulator is already inside it.
+`tests/perf/guest_syscall_boundary_loop.S` loops on `getpid`, the cheapest
+syscall the guest kernel offers, so what it measures is almost entirely the
+crossing rather than the work behind it.
+
+| `guest_syscall_boundary_loop` | candidate | baseline |
+| --- | ---: | ---: |
+| 10 workers | 25.1 s, 24.9 s, 26.3 s | 32.9 s, 30.3 s |
+| 10 workers, host CPU | 208-220 s | 253-275 s |
+| 1 worker | 1.031 s | 1.124 s |
+
+About 20% at ten workers and 8% at one, with a fifth less host CPU consumed, so
+this is less work rather than better placement. The baseline exceeded the
+runner's 30-second default command timeout where the candidate finished in 25,
+which is how the size of the effect first showed up.
+
+### Result
+
+Matched pair, back to back, 10 vCPUs, `--engine gadgets`, zero RCU stalls, all
+32 workloads, host load medians 2.78 and 3.00 cores.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 79 | 493 |
+| candidate (result) | **80** | **494** |
+
+**No single-core section regresses at all.** Six improve - Background Blur
++2.9%, Clang +2.0%, HTML5 Browser +1.4%, Structure from Motion +1.3%,
+Navigation +1.2%, Object Remover +0.8% - and ten are unchanged.
+
+Multi-core gains are led by Navigation +3.2%, Photo Filter +2.4% and File
+Compression +1.9%. The largest multi-core losses are Clang -1.8%, PDF Renderer
+-0.8% and Ray Tracer -0.7%, all far inside those sections' band spreads of 5.6%,
+6.1% and about 2%.
+
+Geekbench is compute-bound rather than syscall-bound, so a 20% improvement at
+this boundary was never going to move the aggregate much; that it moved both by
+a point while regressing nothing is the result. The saving is proportionally
+much larger for syscall-heavy guest work than these workloads represent.
+
+### Not done
+
+The plan's second half for this item - replacing the run-long `shared_lock` on
+`execution_lifecycle_mutex_` with a published per-thread active flag that
+teardown scans - is untouched. The lock is still taken and released once per
+guest entry and held across the run. That is a smaller remaining cost than what
+was removed, and unlike the cache it changes the retirement protocol rather than
+just short-circuiting a lookup, so it belongs in its own trial.
