@@ -503,6 +503,29 @@ void test_context_destruction_retires_state_before_domain()
 		"Context destruction did not retire its pre-run domain");
 }
 
+/* The resolution cache is one thread-local entry, so a thread that alternates
+ * between two live contexts must be answered from the right one. Without the
+ * context comparison the second resolution returns the first context's object,
+ * and the two would share engine slots and guest memory across a boundary that
+ * exists precisely to keep them apart. */
+void test_execution_state_is_not_shared_between_contexts()
+{
+	uml::runtime::Context first;
+	uml::runtime::Context second;
+
+	auto *first_state = &*first.thread_execution_state();
+	auto *second_state = &*second.thread_execution_state();
+	require(first_state != second_state,
+		"two contexts resolved to one execution object");
+
+	/* Re-resolve in the opposite order: a cache keyed only on liveness would
+	 * now be warm for the second context and answer the first with it. */
+	require(&*second.thread_execution_state() == second_state,
+		"second context did not resolve to its own object");
+	require(&*first.thread_execution_state() == first_state,
+		"first context did not resolve to its own object");
+}
+
 void test_named_engine_slots_share_execution_state_lifetime()
 {
 	uml::runtime::Context context;
@@ -1068,6 +1091,7 @@ int main()
 		test_pre_run_execution_states_do_not_cross_run_boundary();
 		test_rejected_begin_preserves_active_execution_state();
 		test_context_destruction_retires_state_before_domain();
+		test_execution_state_is_not_shared_between_contexts();
 		test_named_engine_slots_share_execution_state_lifetime();
 		test_run_admission_waits_for_pre_run_execution_state_access();
 		test_run_retirement_waits_for_execution_state_access();

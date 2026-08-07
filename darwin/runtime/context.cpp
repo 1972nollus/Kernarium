@@ -165,6 +165,43 @@ private:
 
 thread_local ThreadStateRegistrations thread_state_registrations;
 
+/* Every guest entry resolves its execution object twice, once from
+ * darwin_uml_static_guest_interrupt_sequence() and once from run_common_guest(),
+ * and the answer is per-thread and does not change between retirements. Each
+ * resolution took a shared_lock on execution_lifecycle_mutex_, a lock_guard on
+ * states_mutex_ and a shared_ptr copy, then a third mutex plus a
+ * thread::id hash lookup and a second shared_ptr copy inside
+ * ThreadStateStore::acquire(), then a vector scan in bind() whose predicate
+ * dereferences a weak_ptr control block per entry. On a syscall-heavy workload
+ * that is six mutex acquisitions and two hash lookups per syscall, on
+ * process-global cachelines shared by every vCPU thread.
+ *
+ * The resolved object is therefore cached per thread, and the entry is weak
+ * rather than owning. That is what makes it self-invalidating, and it is the
+ * whole correctness argument: retire_thread_execution_states() clears the store,
+ * which drops the only strong reference - retirement runs under
+ * execution_lifecycle_mutex_ held exclusively, so no ThreadExecutionStateAccess
+ * can be outstanding to hold another - the object is destroyed, and lock() then
+ * fails and sends this thread down the slow path. An explicit validity epoch was
+ * written first and then removed: it could not be made to fail any test, because
+ * the only state it guarded against is one no caller can produce.
+ *
+ * Weak also preserves destruction order. ThreadExecutionState carries the engine
+ * slots and the guest memory view, and retirement destroys it before the memory
+ * domain behind those caches is retired. An owning cache would defer that
+ * destructor to this thread's next resolution or to thread exit, moving it after
+ * the domain retirement it is ordered before.
+ *
+ * The Context pointer is still needed: two live Contexts resolve different
+ * objects for the same thread, and a live entry from one must not answer for the
+ * other. */
+struct ResolvedThreadExecution final {
+	const Context *context{};
+	std::weak_ptr<ThreadExecutionState> execution;
+};
+
+thread_local ResolvedThreadExecution resolved_thread_execution;
+
 std::atomic<Context *> published_legacy_context{};
 std::atomic_flag legacy_context_initialization = ATOMIC_FLAG_INIT;
 
@@ -306,6 +343,11 @@ std::uint64_t Context::memory_domain() const noexcept
 ThreadExecutionStateAccess Context::thread_execution_state()
 {
 	std::shared_lock lifecycle_lock{execution_lifecycle_mutex_};
+	auto &resolved = resolved_thread_execution;
+	if (resolved.context == this) {
+		if (auto execution = resolved.execution.lock())
+			return {std::move(lifecycle_lock), std::move(execution)};
+	}
 	std::shared_ptr<ThreadStateStore> store;
 	{
 		std::lock_guard lock{states_mutex_};
@@ -315,6 +357,8 @@ ThreadExecutionStateAccess Context::thread_execution_state()
 	}
 	auto acquired = store->acquire(std::this_thread::get_id());
 	thread_state_registrations.bind(store, acquired.registration);
+	resolved.context = this;
+	resolved.execution = acquired.execution;
 	return {std::move(lifecycle_lock), std::move(acquired.execution)};
 }
 void Context::retire_thread_execution_states() noexcept
