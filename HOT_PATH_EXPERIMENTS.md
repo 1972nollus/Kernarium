@@ -4857,3 +4857,83 @@ register + `B.cond`, and `CBZ`/`CBNZ`, which is already a single instruction but
 ends a block and so pays the same boundary cost. The translation-time pair
 histogram the plan describes is worth building before guessing further, and the
 lookahead plumbing it needs is now in `DecodeContext`.
+
+## G112: G-2 generalization, SUBS-with-destination + B.cond - rejected
+
+Rejected and reverted. G111's fusion covers guest `CMP`, which is `SUBS` with an
+XZR destination. The obvious next pair is `SUBS` with a **live** destination
+followed by `B.cond` - the shape every counted loop ends on, and the reason none
+of this tree's own probes exercised G111's path. It measures well on the probe
+and badly on Geekbench, and the probe does not win the argument.
+
+### The change
+
+A second fused family identical to G111's except that the difference is written
+back to Rd before the branch resolves. Ordering is the same and is not
+incidental: neither `MRS` nor the `AND`/`STR` that write Rd disturb PSTATE, so
+the `CSEL` still reads the flags `SUBS` produced. 56 further entries, 4,632 more
+bytes of bank. 572/572 unit.
+
+### Measured
+
+| P-core, median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| `guest_compare_branch_pair_loop` | 4.688 s, 4.709 s | 4.799 s, 4.817 s |
+| `guest_add_immediate_loop` | 3.402 s, 3.413 s | 3.405 s, 3.406 s |
+
+A further **2.3%** on the probe that ends its loop this way - which stacks with
+G111 for 5.11 s unfused, 4.81 s with CMP fusion, 4.69 s with both, **8.2%
+total** - and nothing on `guest_add_immediate_loop`, whose loop edge is a small
+fraction of a large unrolled body.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline, G111 only (result) | 78 | 485 |
+| candidate (result) | 77 | 476 |
+
+**Both aggregates fall**, multi-core by 1.9% which is just outside the 1.7%
+band. That fails condition 1, and it fails condition 2 as well, which requires
+no Geekbench regression at all beyond run-to-run variation. A focused-probe gain
+does not buy an aggregate loss - that is the rule this log exists to enforce,
+and it is the rule the retracted G102 was decided under too.
+
+**The pairing is weaker than it should be and this is recorded rather than
+glossed:** the first baseline attempt wedged (below) and had to be killed, so
+the surviving baseline ran about two hours after its candidate rather than back
+to back. The direction is consistent across both aggregates, so the conclusion
+is not rescued by that, but a re-measurement is the honest first step if anyone
+wants to reopen this.
+
+### Why the loop-counter shape may genuinely be worse than the CMP shape
+
+Worth recording, because it is not obvious that adding coverage to a winning
+mechanism could lose. The fused CMP entry replaces two entries with one and
+removes a dispatch outright. The fused SUBS entry does the same but is longer -
+it carries the write-back - and, unlike the CMP case, the entries it adds are
+ones a hot loop executes **every iteration**. G110 measured a 0.41% bank size
+change as immaterial, but that experiment shrank the bank uniformly; it says
+nothing about adding 56 entries that land in the hottest loops' working set.
+That is the distinction G110 explicitly flagged as unmeasured: the number of
+distinct entries a hot loop touches, rather than total bank size.
+
+### Disposition
+
+G111 stands. The generalization is not simply "more pairs is more win", and the
+pair histogram G-2's step 3 asks for should be built and read before another
+pair is added by hand - it would rank candidates by how often they occur rather
+than by how obvious they look, and this pair looked obvious.
+
+### A wedge, recorded because it did not reproduce
+
+The first baseline run of this trial sat on multi-core File Compression for
+**44 minutes** at about 2 host cores, with no console progress, no RCU stall and
+no guest kernel warning, on a host at its usual 4.5-6 core background load. Every
+other run that day, including the same binary an hour earlier and the retry
+afterwards, completed that workload in a couple of minutes at 6-8 cores.
+
+It was killed without a stack sample, which was the wrong call - it was the only
+instance available. The run scripts now carry a stall watchdog: when the console
+log stops advancing for six minutes while the emulator is alive, it takes two
+`sample(1)` call-graphs a minute apart and leaves them beside the log without
+disturbing the run. If this recurs the samples will say whether it is the
+publication gate, the MMU miss path, or a guest scheduler loop.
