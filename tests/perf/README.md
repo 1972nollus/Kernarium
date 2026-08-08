@@ -50,7 +50,7 @@ and host-core use between two diagnostic captures.
 assembly payloads in this directory. Each row records the mechanism measured,
 minimum guest instruction feature, common runner, and why the probe remains a
 useful control. The inventory is intentionally conservative: history and
-source inspection found a distinct purpose for all 30 payloads, so none was
+source inspection found a distinct purpose for all 37 payloads, so none was
 removed merely because its filename was not referenced by another source
 file. The source-tree audit requires a one-to-one match between the inventory
 and `guest_*.S`, validates the self-checking entry-point contract, and requires
