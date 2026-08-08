@@ -4937,3 +4937,90 @@ log stops advancing for six minutes while the emulator is alive, it takes two
 `sample(1)` call-graphs a minute apart and leaves them beside the log without
 disturbing the run. If this recurs the samples will say whether it is the
 publication gate, the MMU miss path, or a guest scheduler loop.
+
+## G113: G-2 step 3, the adjacent-pair histogram
+
+No runtime change. G-2's remaining step asks for a translation-time histogram of
+adjacent gadget pairs so fusion candidates are chosen by frequency instead of by
+eye. G112 is the argument for it: the pair that looked like the obvious follow-on
+to G111 lost, and there was no way to know that in advance.
+
+### The instrument
+
+The first word a decode emits is its gadget pointer, so the record needs no
+separate pass and no knowledge of operand shapes. Counting is per thread and
+merged at dump time, so translation stays lock-free; names resolve through
+`dladdr`.
+
+Compiled out unless `UML_GADGET_PAIR_HISTOGRAM=ON`, and **verified rather than
+asserted**: the production emulator built with the option absent is byte-identical
+to the previous commit's, same SHA-256.
+
+Two things the first attempt got wrong, both recorded because they would cost
+the next person the same hour. `atexit` alone produces an empty file - the
+harness ends the guest with `poweroff -f` and then SIGTERM, and a run that exits
+on a signal never runs exit handlers - so the file is now rewritten
+periodically. And `dladdr` on every entry at every dump is far too slow once the
+table reaches twenty thousand entries; it is tolerable at the current interval
+but should be given a name cache before anyone captures a longer workload.
+
+### What it says
+
+Captured over guest boot and userland start-up: **39,845,888 pair occurrences
+across 20,324 distinct pairs.**
+
+| occurrences | share | first | second |
+| ---: | ---: | --- | --- |
+| 1,067,306 | 2.7% | `pc_relative` | `load64_unsigned_fast_r` |
+| 657,985 | 1.7% | `integer_pair_load64_0_rr_sp` | `integer_pair_load64_0_rr_sp` |
+| 611,469 | 1.5% | `pc_relative` | `add_sub_immediate_x_add_n_rr` |
+| 560,852 | 1.4% | `logical_shifted_x_orr_p_n_zr_r` | `logical_shifted_x_orr_p_n_zr_r` |
+| 545,122 | 1.4% | `logical_shifted_x_orr_p_n_zr_r` | `branch_link_linked` |
+| 533,708 | 1.3% | `nop` | `return_cached` |
+| 502,387 | 1.3% | `integer_pair_load64_2_rr_sp` | `nop` |
+| 483,785 | 1.2% | `load64_unsigned_fast_r` | `add_sub_immediate_x_add_n_rr` |
+| 457,770 | 1.1% | `nop` | `integer_pair_store64_1_rr_sp` |
+| 429,000 | 1.1% | `add_sub_immediate_x_add_n_sr` | `integer_pair_store64_0_rr_sp` |
+| 347,382 | 0.9% | `load64_unsigned_fast_r` | `compare_branch_x_z_linked` |
+
+Cumulative share: top 10 is 14.7%, top 25 is 25.1%, top 50 is 34.8%, top 100 is
+46.2%, top 200 is 57.7%. A long tail, so no single fusion is transformative and
+coverage is what pays - which is what G111 and G112 between them already showed
+from the other direction.
+
+### The finding that matters
+
+**Address materialisation dominates, and the conditional shapes do not appear at
+all.** `ADRP` + `LDR` is the single most common pair in translated code at 2.7%,
+`ADRP` + `ADD` is third at 1.5%, and `MOV` register + `MOV` register and `MOV` +
+`BL` follow. The `CMP` + `B.cond` pair fused by hand in G111 is nowhere near the
+top.
+
+That retrospectively explains G111 exactly. It won 5.8% on a probe made entirely
+of the pair it fuses and moved the Geekbench aggregate by almost nothing,
+because the pair is rare in real translated code. The mechanism was right and
+the target was picked badly - which is precisely the failure mode this histogram
+exists to prevent, and it was picked by eye because the histogram did not exist
+yet.
+
+### Ranked candidates for the next fusion trial
+
+1. `pc_relative` + `load64_unsigned_fast_r` - 2.7%, and the easiest of the set:
+   both halves are simple, neither is terminal, and no flags are involved.
+2. `pc_relative` + `add_sub_immediate_x_add_n_rr` - 1.5%, the same shape with an
+   `ADD` instead of a load.
+3. `logical_shifted_x_orr_p_n_zr_r` twice - 1.4%, two register moves.
+
+Taken together the first two are 4.2% of all adjacent pairs, against whatever
+share `CMP`+`B.cond` holds, which is below the top twenty.
+
+### Limitation, stated plainly
+
+This capture covers guest boot and userland start-up, **not the Geekbench
+workloads**. The intended Geekbench capture died on `curl: (35) TLS connect
+error` - a network failure in the guest, unrelated to the instrument - and was
+not retried. Start-up code is real compiled code and the top pairs are ordinary
+compiler output rather than anything boot-specific, so the ranking is unlikely to
+be upended, but a compute kernel's mix is not the same as a dynamic loader's and
+the capture should be repeated over Geekbench before the ranking is trusted for
+anything beyond choosing the next trial.
