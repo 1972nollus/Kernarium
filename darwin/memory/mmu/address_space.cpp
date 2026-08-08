@@ -276,6 +276,76 @@ void prune_retired_thread_state() noexcept
 
 class AddressSpaceAccess;
 
+/* Retirement has to wait for in-flight operations, and it used to do that with a
+ * shared_mutex lease taken by every AddressSpaceAccess and held for the whole
+ * call. That lock is per address space, so all ten vCPU threads of one guest
+ * process serialize on it - libc++'s lock_shared takes a real internal
+ * std::mutex - and G120 measured removing it as worth about 31% of the
+ * miss-heavy probe, more than the process-global registry lock G101 removed.
+ *
+ * The replacement is the pattern jit_publication.hpp already uses for
+ * jit_store_participants: each thread publishes the address space it is
+ * operating on into its own slot, and teardown scans the slots instead of
+ * excluding everyone.
+ *
+ * This is a store-buffer problem and the fences are the design, not a detail.
+ * An access stores its slot and then reads `retired_`; retirement stores
+ * `retired_` and then reads the slots. Both sides are seq_cst, so the two
+ * stores are totally ordered and at least one side observes the other: an
+ * access that is not seen by the scan is guaranteed to see the retirement and
+ * back out. Relaxing either side reintroduces exactly the window the lease
+ * closed. */
+struct ActiveAccessSlot final {
+	std::atomic<const void *> space{};
+};
+
+std::mutex &active_access_registry_mutex()
+{
+	static std::mutex mutex;
+	return mutex;
+}
+
+std::vector<ActiveAccessSlot *> &active_access_registry()
+{
+	static std::vector<ActiveAccessSlot *> slots;
+	return slots;
+}
+
+ActiveAccessSlot &active_access_slot()
+{
+	/* Registered on first use and unregistered at thread exit. The scan below
+	 * holds the registry mutex, and a thread in the middle of an access clears
+	 * its slot from its destructor without needing that mutex, so the scan
+	 * always makes progress even while an exiting thread waits to unregister. */
+	struct Registration final {
+		Registration()
+		{
+			const std::scoped_lock lock{active_access_registry_mutex()};
+			active_access_registry().push_back(&slot);
+		}
+
+		~Registration()
+		{
+			const std::scoped_lock lock{active_access_registry_mutex()};
+			auto &slots = active_access_registry();
+			slots.erase(std::remove(slots.begin(), slots.end(), &slot),
+				slots.end());
+		}
+
+		ActiveAccessSlot slot;
+	};
+	static thread_local Registration registration;
+	return registration.slot;
+}
+
+void wait_for_active_accesses(const void *space) noexcept
+{
+	const std::scoped_lock lock{active_access_registry_mutex()};
+	for (auto *slot : active_access_registry())
+		while (slot->space.load(std::memory_order_seq_cst) == space)
+			std::this_thread::yield();
+}
+
 class AddressSpace final {
 public:
 	int map(std::uint64_t generation, std::uint64_t address, int fd,
@@ -436,10 +506,11 @@ public:
 
 	void retire() noexcept
 	{
-		std::unique_lock lifecycle_lock{lifecycle_mutex_};
-		if (retired_)
+		if (retired_.exchange(true, std::memory_order_seq_cst))
 			return;
-		retired_ = true;
+		/* Ordered against the slot store in AddressSpaceAccess: an access this
+		 * scan does not observe is guaranteed to observe the retirement. */
+		wait_for_active_accesses(this);
 		lifetime_->retired.store(true, std::memory_order_release);
 		{
 			std::lock_guard lock{states_mutex_};
@@ -1286,8 +1357,7 @@ private:
 	std::unordered_map<int, std::weak_ptr<MappedBacking>> descriptor_backings_;
 	std::shared_ptr<AddressSpaceLifetime> lifetime_{
 		std::make_shared<AddressSpaceLifetime>()};
-	mutable std::shared_mutex lifecycle_mutex_;
-	bool retired_{};
+	std::atomic_bool retired_{};
 };
 
 class AddressSpaceAccess final {
@@ -1296,16 +1366,28 @@ public:
 
 	explicit AddressSpaceAccess(
 		std::shared_ptr<AddressSpace> owner)
-		: owner_{std::move(owner)}, lifecycle_{owner_->lifecycle_mutex_}
+		: owner_{std::move(owner)}, slot_{&active_access_slot()}
 	{
-		if (!owner_->retired_)
+		slot_->space.store(owner_.get(), std::memory_order_seq_cst);
+		if (!owner_->retired_.load(std::memory_order_seq_cst))
 			return;
-		lifecycle_.unlock();
+		slot_->space.store(nullptr, std::memory_order_seq_cst);
+		slot_ = nullptr;
 		owner_.reset();
 		errno = ESHUTDOWN;
 	}
 
-	AddressSpaceAccess(AddressSpaceAccess &&) noexcept = default;
+	~AddressSpaceAccess()
+	{
+		if (slot_ != nullptr)
+			slot_->space.store(nullptr, std::memory_order_seq_cst);
+	}
+
+	AddressSpaceAccess(AddressSpaceAccess &&other) noexcept
+		: owner_{std::move(other.owner_)}, slot_{other.slot_}
+	{
+		other.slot_ = nullptr;
+	}
 	AddressSpaceAccess &operator=(AddressSpaceAccess &&) noexcept = delete;
 
 	AddressSpaceAccess(const AddressSpaceAccess &) = delete;
@@ -1327,10 +1409,11 @@ public:
 	}
 
 private:
-	/* Release the per-operation lease before dropping the last possible owner,
-	 * so a concurrent retire() can never observe destroyed lock storage. */
+	/* Destroyed in reverse order, so the slot is cleared before the owner is
+	 * dropped and a concurrent retire() can never be left waiting on a slot
+	 * whose address space has already gone. */
 	std::shared_ptr<AddressSpace> owner_;
-	std::shared_lock<std::shared_mutex> lifecycle_;
+	ActiveAccessSlot *slot_{};
 };
 
 constexpr std::uint64_t legacy_domain = 1;
