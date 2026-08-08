@@ -5485,3 +5485,78 @@ enough that the acquisition does not show up.
 Navigation multi-core, still 3.4% down since G101 and hypothesised to be
 contention on this mutex, is therefore **not** explained by it. That hypothesis
 is withdrawn and the section needs a different explanation.
+
+## G120: the miss path's remaining cost is the lifecycle lease, worth 31%
+
+No change kept. This locates what B-1 was actually looking for, after G119
+eliminated the candidate the plan named.
+
+### First, the probe is sound
+
+Before trusting another conclusion from `guest_mmu_miss_walk_loop`, its shape was
+checked by varying the pass count on one build:
+
+| passes | wall |
+| ---: | ---: |
+| 1 | 0.659 s |
+| 4 | 1.553 s |
+| 16 | 4.955 s |
+
+Marginal cost is 0.298 s per pass between 1 and 4 and 0.284 s between 4 and 16,
+with about 0.37 s of fixed set-up. At the default of 16 passes **93% of the time
+is the measured walk**, so the probe is not dominated by first-touch faults or
+boot, and the G101 and G119 readings taken from it stand.
+
+### What actually dominates
+
+Every call through `with_address_space` constructs an `AddressSpaceAccess`, whose
+constructor takes a `shared_lock` on the address space's `lifecycle_mutex_` and
+holds it for the whole operation. That lock is **per address space**, so all ten
+vCPU threads in one guest process share it, and libc++'s `lock_shared()` takes a
+real internal `std::mutex` - so the "shared" readers serialize.
+
+Measured by removing it in a throwaway build - unsafe, since retirement is then
+unguarded, and never intended to ship:
+
+| `guest_mmu_miss_walk_loop`, 10 threads | without the lease | baseline |
+| --- | ---: | ---: |
+| both orders, median of 3 | 3.530 s, 3.388 s | 4.973 s, 5.114 s |
+
+**About 31%**, with host cores rising from 7.4 to 7.9 as the serialization goes
+away. That is larger than G101's registry-lock win on the same probe.
+
+### Where this leaves B-1
+
+The plan's three steps aimed at the wrong two of the three locks on this path:
+
+| lock | scope | measured worth |
+| --- | --- | ---: |
+| registry `mutex_` (G101, step 1) | process-global | **21% probe, 1.55% Geekbench MC** |
+| `lifecycle_mutex_` lease (**unattributed by the plan**) | per address space | **~31% probe** |
+| `mappings_mutex` (G119, step 2's target) | per generation | **0%** |
+
+The pattern is scope. The two that pay are shared by every thread that touches
+the same address space; the one that does not is already sharded per generation
+and sits behind G42's 16,384-set TLB. Step 3's flattening - removing the
+`shared_ptr<MappedBacking>` dereference on a hit - is three ordinary loads, strictly
+less than the mutex G119 measured at zero, so it is closed on the same evidence
+rather than measured separately.
+
+### The safe replacement, which is the next piece of work
+
+The lease cannot simply be deleted: it is what makes `retire()` wait for
+in-flight operations before the address space is torn down. The plan already
+describes the replacement, for B-2 rather than B-1: *a published per-thread
+active flag that teardown scans*, the pattern
+`jit_publication.hpp` uses for `jit_store_participants`.
+
+Concretely - and this is a store-buffer problem, so the fences are the design
+rather than a detail: an access publishes its address space into a thread-local
+slot, issues a `seq_cst` fence, then reads `retired_`; `retire()` stores
+`retired_`, issues a `seq_cst` fence, then scans every registered slot until none
+names it. Either the access sees the retirement or the scan sees the access, and
+never neither. It needs a slot registry with thread-exit unregistration, and TSan
+over the domain-lifetime suite is the gate that matters.
+
+That is a self-contained piece of concurrency work with a 31% probe result
+waiting behind it, and it is the single highest-value item left in Part B.
