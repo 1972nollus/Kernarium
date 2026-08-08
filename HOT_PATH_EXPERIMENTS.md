@@ -5141,3 +5141,66 @@ effort. The 3.7% figure comes from guest boot and userland start-up, where
 `nop`-adjacent pairs may be inflated by dynamic-loader and start-up code that
 does a lot of register shuffling. If the share holds on compute kernels the work
 is clearly justified; if it collapses, it is not.
+
+## G116: the pair histogram over a full Geekbench run, and two corrections
+
+G113 captured the histogram over guest boot and start-up and said plainly that
+the ranking should be re-taken over the workloads before being trusted. It has
+been, and it changes the answer twice. **3,451,912,192 pair occurrences across
+47,494 distinct pairs**, all 32 workloads, with the `dladdr` name cache that made
+a capture this long practical.
+
+| occurrences | share | first | second |
+| ---: | ---: | --- | --- |
+| 121,044,458 | 3.51% | `integer_pair_load64_0_rr_sp` | `integer_pair_load64_0_rr_sp` |
+| 101,905,829 | 2.95% | `integer_pair_store64_0_rr_sp` | `integer_pair_store64_0_rr_sp` |
+| 101,893,236 | 2.95% | `logical_shifted_x_orr_p_n_zr_r` | `logical_shifted_x_orr_p_n_zr_r` |
+| 91,484,735 | **2.65%** | `add_sub_register_x_sub_s_sh_n_rr_d` | `branch_eq_linked` |
+| 72,893,029 | 2.11% | `logical_shifted_x_orr_p_n_zr_r` | `branch_link_linked` |
+| 48,274,998 | 1.40% | `integer_pair_store64_0_rr_sp` | `add_sub_immediate_x_add_n_sr` |
+| 47,618,568 | 1.38% | `load64_unsigned_fast_r` | `load64_unsigned_fast_r` |
+| 35,568,790 | 1.03% | `load64_unsigned_fast_r` | `add_sub_register_x_sub_s_sh_n_rr_d` |
+| 28,877,040 | **0.84%** | `add_sub_register_x_sub_s_sh_n_rr_d` | `branch_ne_linked` |
+
+### Correction 1: NOP elimination is not worth doing
+
+G115 recorded that `nop` sat on one side of three of the ten most frequent pairs,
+about **3.7%**, and that acting on it was blocked behind sixteen lowering
+assertions and the instruction-evidence ledger. Over Geekbench, pairs involving
+`nop` are **0.24%** of the total.
+
+The boot figure was start-up code - dynamic loading and initialisation, where
+folded-away instructions cluster - and it does not survive contact with compute
+kernels. **G115 is closed rather than merely deferred: the evidence-contract work
+it needs is not justified by a quarter of a percent.** This is exactly the check
+G113 asked for, and it saved the effort rather than confirming it.
+
+### Correction 2: the valuable conditional pair is the register form
+
+G111 fused guest `CMP`-**immediate** with `B.cond`, chosen by eye before the
+histogram existed, and moved the aggregate by almost nothing. The register form -
+`CMP Xn, Xm` then `B.cond`, which appears here as
+`add_sub_register_x_sub_s_sh_n_rr_d` followed by `branch_eq_linked` or
+`branch_ne_linked` - is **3.49% combined**, the fourth and ninth most frequent
+pairs in real workloads. The immediate form does not reach this table at all.
+
+So the mechanism G111 proved was right and it was pointed at the rarer half of
+its own instruction class. The register form is the next fusion to build, and it
+reuses G111's machinery directly: same flag round-trip to remove, same
+`follow_block_link` exit, same narrow decode conditions.
+
+### What else the workloads rank
+
+`LDP`+`LDP` at 3.51% and `STP`+`STP` at 2.95% are the top two - consecutive
+register-pair transfers, which is prologue and epilogue code. Fusing a pair of
+pair-transfers would move four registers in one entry. Register `MOV`+`MOV` at
+2.95% and `MOV`+`BL` at 2.11% are argument-setup shapes.
+
+Note also what is **absent**: `ADRP`+`LDR` and `ADRP`+`ADD` led the boot capture
+and do not appear in the top sixteen here. G114 folded the latter and was
+accepted on a matched pair - single-core flat, multi-core +0.4% - so it stands,
+but its 15% and 19% probe figures should be read as the value of the idiom where
+it occurs rather than as a share of these workloads.
+
+The distribution is flatter than boot's: the top pair is 3.51% and no single
+fusion is transformative, which is the same conclusion from a much larger sample.
