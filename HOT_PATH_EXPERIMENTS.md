@@ -5024,3 +5024,75 @@ compiler output rather than anything boot-specific, so the ranking is unlikely t
 be upended, but a compute kernel's mix is not the same as a dynamic loader's and
 the capture should be repeated over Geekbench before the ranking is trusted for
 anything beyond choosing the next trial.
+
+## G114: folding guest ADRP + ADD into one entry
+
+Accepted under condition 2, and it is the largest focused-probe result of this
+campaign - **15% on P-cores and 19% on E-cores** - for a change that adds no
+gadget to the bank at all.
+
+**This is G113 paying for itself immediately.** The histogram ranked
+`ADRP` + `ADD` third among adjacent pairs in real translated code at 1.5%, well
+ahead of the conditional shape G111 fused by eye. It would not have been chosen
+otherwise.
+
+### Why it costs nothing
+
+The translator already folds `ADRP` to a constant - `pc_relative` is a three-word
+entry that stores a precomputed address into Rd. So the
+`adrp xN, sym` / `add xN, xN, #:lo12:sym` idiom that names everything in
+position-independent code was two entries and two dispatches computing something
+translation already knew.
+
+When the `ADD` rewrites the same register it reads, the page value it consumes is
+dead the moment it is produced, so the pair collapses into the **existing**
+`pc_relative` entry carrying the final address. No new gadget, no bank growth,
+no selection table - 116 bytes of decoder, against the 3,840 bytes G111 spent on
+56 entries.
+
+**Restricted to the exact idiom:** 64-bit, no flags, no shifted immediate, and
+`Rd == Rn ==` the ADRP destination. Anything else leaves the page value
+architecturally observable and is left alone, which is why a re-capture shows the
+pair halving rather than vanishing. Neither instruction can fault, so nothing can
+be delivered between them and retiring both together is sound.
+
+### Measured
+
+`tests/perf/guest_pc_relative_address_loop.S`, four independent addresses per
+iteration so no single dependency chain dominates, summed rather than
+dereferenced so it measures address materialisation and not the memory path.
+
+| median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| P-core | 1.392 s, 1.394 s | 1.638 s, 1.641 s |
+| E-core | 4.193 s, 4.246 s | 5.191 s, 5.265 s |
+
+**15% and 19%**, no overlap in either order on either class. As with G111 the two
+classes agree, because what is removed is a dispatch.
+
+### Result
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 79 | 491 |
+| candidate (result) | 79 | **493** |
+
+Single-core identical, multi-core +0.4% and inside the band, so acceptance is
+condition 2 on the focused control. Multi-core gains are led by File Compression
++4.0%, Navigation +3.8% and HTML5 Browser +3.5%; the largest losses are Horizon
+Detection -4.8% and Object Remover -3.2%, both inside their own spread across the
+day's gadget runs (790-830 and 660-692 respectively).
+
+The aggregate again moves far less than the probe, for the same reason as G111:
+the probe is made entirely of the folded idiom, and Geekbench contains it at the
+1.5% the histogram measured.
+
+### What this suggests next
+
+`ADRP` + `LDR` is the **top** pair at 2.7%, nearly twice this one, and the same
+argument applies - the address is a translation-time constant, so a fused entry
+would load from a known address without materialising the base into `CpuState`
+and reloading it. It is deliberately not attempted here: that fusion lands inside
+the software-MMU translate, cross-page and fault paths, which the plan calls the
+correctness-critical host boundary, and it deserves its own trial rather than
+being appended to this one.
