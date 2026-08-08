@@ -5645,3 +5645,65 @@ sits behind G42's TLB. A future reader of this plan should take from B-1 that th
 question to ask of a lock is how many threads share it and how often, and that
 the answer is cheap to get by deleting it in a throwaway build and measuring
 before designing a replacement.
+
+## G122: C-2, the FIFO ticket turn - neutral, and the bistability was already gone
+
+Implemented, measured against a matched control, reverted. The measurement also
+answers a question left open since G108.
+
+### The change
+
+G47 rejected a `std::mutex` turn for the reservation publication gate on measured
+regressions and specified the replacement: a FIFO ticket turn whose contended
+waiters park with atomic wait/notify. That was built - a ticket taken on arrival,
+waiters parked on a single `serving` counter, release advancing it by one - in
+place of the `compare_exchange` loop on a bool, where every queued helper raced
+for the same flag and the winner was whichever thread the scheduler favoured.
+
+572/572 unit, 45/45 tooling, 8/8 TSan.
+
+### Measured
+
+Three runs of each build, `--engine jit`, 10 vCPUs, because the question was
+about variance rather than a single score.
+
+| | multi-core | spread | mean |
+| --- | --- | ---: | ---: |
+| control, HEAD without C-2 | 822, 808, 791 | **3.9%** | 807 |
+| C-2 ticket turn | 789, 811, 786 | 3.2% | 795 |
+
+**Neutral.** The ranges overlap, the spreads are the same to within a run, and
+C-2's mean is 1.4% lower. There is nothing here to accept, so it is reverted.
+
+### The finding that matters more
+
+G108 measured this engine at **701, 829 and 834** on an unchanged binary - a 19%
+spread, with per-section values bimodal rather than distributed, which is what
+made the JIT aggregate useless for deciding anything and forced G102's rejection
+to be retracted.
+
+**The control above spreads 3.9%.** The bistability is gone, and it was gone
+*before* C-2 - so the ticket turn did not fix it, and neither did anything about
+the gate's fairness. What changed between G108 and now is the set of accepted
+work: G109 removed most of the stale-block validation the JIT was doing on every
+lookup, and **G121 removed the per-address-space lifecycle lease that every
+thread took on every MMU operation**. A convoy needs a contended serialization
+point; G121 removed the one every engine shares.
+
+That is a satisfying resolution of a loose end - the gate was blamed for a convoy
+that was mostly somewhere else - but it is inference from the sequence, not a
+controlled attribution. Confirming it would mean re-running G108's binary today,
+which was not done.
+
+### Consequences
+
+- **C-2 is closed as measured-neutral.** G52's 44-56% of sampled time in
+  `wait_for_jit_store_phase` remains the strongest argument that this gate
+  matters, but two attempts on it - G47's mutex turn and this ticket turn - have
+  now both failed to produce a measurable improvement, and the third possibility
+  in the plan, B-3's spin-hint change, was itself retracted. The gate should not
+  be attempted again without a profile taken *now*, since the surrounding code has
+  changed substantially.
+- **B-3 becomes measurable.** It was reopened in G108 because a 19% band could
+  not resolve an 8% claim. At 3.9% it can, and re-measuring it is now an ordinary
+  trial rather than a blocked one.
