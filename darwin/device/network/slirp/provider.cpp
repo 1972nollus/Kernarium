@@ -56,6 +56,13 @@ bool configure_nonblocking(int descriptor) noexcept
 		fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0;
 }
 
+bool configure_close_on_exec(int descriptor) noexcept
+{
+	const int flags = fcntl(descriptor, F_GETFD);
+	return flags >= 0 &&
+		fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) >= 0;
+}
+
 bool create_pipe(std::array<UniqueFd, 2> &result) noexcept
 {
 	std::array<int, 2> descriptors{};
@@ -63,11 +70,15 @@ bool create_pipe(std::array<UniqueFd, 2> &result) noexcept
 		return false;
 	result[0].reset(descriptors[0]);
 	result[1].reset(descriptors[1]);
-	if (configure_nonblocking(result[0].get()) &&
+	if (configure_close_on_exec(result[0].get()) &&
+	    configure_close_on_exec(result[1].get()) &&
+	    configure_nonblocking(result[0].get()) &&
 	    configure_nonblocking(result[1].get()))
 		return true;
+	const int error = errno;
 	result[0].reset();
 	result[1].reset();
+	errno = error;
 	return false;
 }
 

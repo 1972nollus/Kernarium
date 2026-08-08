@@ -109,6 +109,10 @@ static bool write_cannot_commit_after_stop()
 		static_cast<uml::network::SlirpProvider *>(network.value);
 	const auto processed_before =
 		provider->processed_transmits_for_testing();
+	const int irq = uml_slirp_net_irq_fd(network.value);
+	const int irq_flags = irq < 0 ? -1 : fcntl(irq, F_GETFD);
+	if (irq_flags < 0 || (irq_flags & FD_CLOEXEC) == 0)
+		return false;
 	std::array<std::byte, 64> frame{};
 	std::atomic_int result{-EINPROGRESS};
 	provider->pause_next_write_before_commit_for_testing();
