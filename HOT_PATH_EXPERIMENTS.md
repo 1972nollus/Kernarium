@@ -4762,3 +4762,98 @@ multi-core move in the wrong direction inside the noise band, and shipping a
 change on that basis is what this log exists to prevent. It is recorded here as
 available if shipped iOS binary size ever becomes a binding constraint, where
 0.4% of `__text` would be judged on size rather than on speed.
+
+## G111: G-2, guest CMP-immediate fused with a following B.cond
+
+Accepted under condition 2, and it is the first change in this campaign to move
+a gadget probe by more than a few percent on **both** core classes.
+
+### Why fusion and not more instruction removal
+
+The campaign has now measured the same lesson three times from different angles.
+G106 removed 3,968 instructions from the bank and measured flat. G107 removed a
+load and a stream update per gadget and measured 0.55% on P-cores and nothing on
+E-cores. G105 explains both: the bodies are not short of issue slots, they are
+waiting on the threaded indirect branch. G8 said exactly this in the first place.
+
+Fusion is the only lever that attacks that directly, because it removes a
+dispatch rather than an instruction. Trial 5 measured it at +0.83% composite and
+was reverted in July as "marginal and workload-dependent" - **before** G8
+established what the limiter was.
+
+### The change
+
+Unfused, guest `CMP #imm` followed by `B.cond` costs a dispatch between two
+entries that share nothing but the flags, and the flags make a system-register
+round trip in each direction: the compare ends `mrs x27, nzcv` and the branch
+begins `msr nzcv, x27`, purely because they are separate entries.
+
+The fused entry removes the dispatch and the `msr`. **The `mrs` stays**, and that
+is a correctness point rather than an oversight: the guest's NZCV is
+architecturally live after the branch, so the block has to leave it in x27
+whichever way the branch goes. `MRS` does not disturb PSTATE, so it sits between
+the `SUBS` and the `CSEL` that reads its flags.
+
+Counted against the pair it replaces, the body is 12 instructions where the two
+entries were 16, and one of the four removed is the indirect branch.
+
+`DecodeContext` gains the instructions following the current one and the builder
+loop becomes indexed, so a fusing decoder can see what comes next and advance
+`compiled` past everything it consumed.
+
+**Deliberately narrow about what it will fuse.** Only the plain `B.cond` form -
+`BC.cond` shares the top byte but carries a different hint. Only `Rn != 31`,
+because 31 means SP for this instruction class. Only the fourteen real
+conditions, because the always forms have no fused entry and the selector returns
+nullptr for them. Every excluded case falls through to the unfused pair
+unchanged, which is why the differential suite passes without a single new
+allowance.
+
+### Measured
+
+`tests/perf/guest_compare_branch_pair_loop.S` had to be written: every existing
+loop counter is `subs xN, xN, #1` with a real destination, which is not the fused
+shape, so no existing probe exercises this path at all.
+
+| median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| P-core | 4.811 s, 4.816 s | 5.108 s, 5.111 s |
+| E-core | 11.689 s, 11.540 s | 12.461 s, 12.363 s |
+
+**5.8% on P-cores and 6.5% on E-cores**, no overlap in either order on either
+class. Unlike G104 the two classes agree, which is the signature of removing a
+dispatch rather than instructions: both are limited by it.
+
+### Result
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 78 | 480 |
+| candidate (result) | 78 | **483** |
+
+Single-core identical, multi-core +0.6% and inside the band, so the acceptance
+is condition 2 on the focused control. The largest section move against the
+candidate is single-core Clang, 48 to 45; that section has read 45 to 50 across
+the day's gadget runs, so it is inside its own spread.
+
+**Why the aggregate barely moves, stated plainly:** this is one instruction pair
+out of many. Conditionals in real code also arrive as `SUBS` with a live
+destination, as `CBZ`/`CBNZ`, as `TBZ`/`TBNZ`, and as `CMP` of two registers,
+none of which this fuses. The probe is entirely the fused shape and moves 5.8%;
+Geekbench contains a few percent of it and moves accordingly.
+
+The bank grows 3,840 bytes for 56 entries. G110 measured a 0.41% size change
+moving 7,622 entries as producing nothing, so this is inside the budget by an
+order of magnitude.
+
+### The generalization this earns
+
+G-2's step 3 asks for a measured superinstruction pass rather than one hand-
+picked pair, and this result is the argument for it: a single narrow pair is
+worth 5.8% of the shape it covers, so the return comes from **coverage**. The
+next pairs to take, in the order the profile suggests, are `SUBS`-with-
+destination + `B.cond` (the loop-counter shape every probe here uses), `CMP`
+register + `B.cond`, and `CBZ`/`CBNZ`, which is already a single instruction but
+ends a block and so pays the same boundary cost. The translation-time pair
+histogram the plan describes is worth building before guessing further, and the
+lookahead plumbing it needs is now in `DecodeContext`.
