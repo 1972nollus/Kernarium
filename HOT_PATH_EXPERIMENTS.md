@@ -5096,3 +5096,48 @@ and reloading it. It is deliberately not attempted here: that fusion lands insid
 the software-MMU translate, cross-page and fault paths, which the plan calls the
 correctness-critical host boundary, and it deserves its own trial rather than
 being appended to this one.
+
+## G115: eliminating NOP entries - blocked on the lowering-evidence contract
+
+Not measured. Recorded because the candidate is a good one, the blocker is
+specific, and the next person should not rediscover it.
+
+### The candidate
+
+G113's histogram put `nop` on one side of three of the ten most frequent
+adjacent pairs - `nop`+`return_cached` at 1.3%, `integer_pair_load64`+`nop` at
+1.3%, `nop`+`integer_pair_store64` at 1.1%, about **3.7% of all adjacent pairs
+between them**. A `nop` entry costs a full threaded indirect dispatch to do
+nothing, and there are 26 sites where the translator emits one for an
+instruction it has already folded away: `MOVZ` into XZR, a discarded
+system-register read, an architectural `NOP`.
+
+Emitting nothing looked sound, and as far as the *engine* goes it is: a gadget is
+not the unit of retirement. `compiled` counts guest instructions and the builder
+advances it either way, blocks are entered at word zero and always end with a
+terminal entry, and nothing maps a stream offset back to an instruction index. A
+block whose every instruction folds away would simply be its terminal entry.
+
+### Why it stopped
+
+Sixteen unit tests fail, all with the same shape - "discarded PC-relative result
+was not folded to NOP". They assert **which entry each instruction lowers to**,
+which is this project's instruction-evidence discipline rather than an incidental
+expectation. "Folded to a NOP entry" is the currently documented lowering for
+these instructions, and "folded away entirely" is a different claim that has to
+be made deliberately: sixteen lowering assertions and the corresponding evidence
+ledger entries, across the engines that share the ledger.
+
+That is a contract change, not a translator tweak, and it is not something to
+push through at the end of a long session on the strength of a histogram
+estimate. The change itself is a one-line flip once the contract is updated - the
+sites were converted to a named `emit_nop()` helper precisely so the decision
+lives in one place - so the cost is entirely in the evidence, not in the code.
+
+### What it is worth doing first
+
+Re-capture the histogram over the Geekbench workloads before spending that
+effort. The 3.7% figure comes from guest boot and userland start-up, where
+`nop`-adjacent pairs may be inflated by dynamic-loader and start-up code that
+does a lot of register shuffling. If the share holds on compute kernels the work
+is clearly justified; if it collapses, it is not.
