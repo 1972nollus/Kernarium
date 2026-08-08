@@ -62,10 +62,20 @@ target_compile_options(uml_arm64_execution_helpers PRIVATE
 set_target_properties(uml_arm64_execution_helpers PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
+# Off by default so production translation is byte-identical. Build a separate
+# tree with -DUML_GADGET_PAIR_HISTOGRAM=ON and set
+# DARWIN_UML_GADGET_PAIR_HISTOGRAM to a path to capture which adjacent gadget
+# pairs a workload actually translates, which is what G-2's remaining step needs
+# in order to choose fusion candidates by frequency rather than by eye.
+option(UML_GADGET_PAIR_HISTOGRAM
+    "Count adjacent gadget pairs during translation (diagnostic builds only)"
+    OFF)
+
 add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
+    arm64/gadgets/pair_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
     # their *_impl.ipp fragments so the whole per-instruction decode chain
     # inlines as one unit; see the comment at the top of that file.
@@ -85,6 +95,8 @@ target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(uml_arm64_gadgets PRIVATE
+    UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization

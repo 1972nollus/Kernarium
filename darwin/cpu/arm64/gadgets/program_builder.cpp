@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program_builder_decode.hpp"
 #include "gadget_selection.hpp"
+#include "pair_histogram.hpp"
 
 #include <algorithm>
 #include <span>
@@ -58,6 +59,7 @@ BuildResult Builder::build(
 		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
+	[[maybe_unused]] const void *previous_gadget = nullptr;
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
@@ -89,6 +91,7 @@ BuildResult Builder::build(
 			resolve_indirect_link,
 			options,
 		};
+		const auto emitted_start = words.size();
 		DecodeResult decoded = DecodeResult::decoded;
 		switch (production_decode_starts[instruction >> 24]) {
 		case ProductionDecodeStart::branch_system:
@@ -112,6 +115,16 @@ BuildResult Builder::build(
 		case ProductionDecodeStart::exception:
 			decoded = decode_exception(context);
 			break;
+		}
+		/* The first word a decode emits is its gadget pointer, which is
+		 * what makes the adjacent-pair record cheap: no separate pass and
+		 * no knowledge of operand shapes. Compiled out entirely unless the
+		 * histogram build is selected. */
+		if (words.size() > emitted_start) {
+			const auto *emitted = reinterpret_cast<const void *>(
+				words[emitted_start]);
+			diagnostics::record_gadget_pair(previous_gadget, emitted);
+			previous_gadget = emitted;
 		}
 		if (decoded != DecodeResult::decoded) {
 			return {Program{guest_address, compiled, std::move(words),
