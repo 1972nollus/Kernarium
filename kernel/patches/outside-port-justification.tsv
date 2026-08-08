@@ -4,7 +4,6 @@ path	owner	disposition	origin_patch	next_version_policy	rationale
 arch/arm64/Makefile.um	arm64-uml-port	keep	0009	carry	ARCH=um with SUBARCH=arm64 requires the architecture selection and generated-header wiring at this upstream-owned path.
 mm/filemap.c	pending-upstream	upstream	0012	drop-when-base-contains-fix	Independent zero-length cachestat range correction required by the port's guest workload; isolated as its own upstream candidate.
 scripts/Makefile.vmlinux	darwin-host-build	upstream	0011	retest-and-upstream	Select the Darwin-compatible host ELF definitions for the final vmlinux link without changing Linux-host behavior.
-scripts/include/elf_darwin_compat.h	darwin-host-build	upstream	0011	retest-and-upstream	Central compatibility definitions replace scattered Darwin host-tool ELF assumptions.
 scripts/insert-sys-cert.c	darwin-host-build	upstream	0011	retest-and-upstream	Use the shared host ELF compatibility contract for a build tool compiled on Darwin.
 scripts/link-vmlinux.sh	darwin-host-build	upstream	0011	retest-and-upstream	Avoid Linux-only linker options when the kernel host is Darwin.
 scripts/mod/file2alias.c	darwin-host-build	upstream	0011	retest-and-upstream	Use the shared host ELF compatibility contract for Darwin-built modpost tools.

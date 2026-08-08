@@ -13,7 +13,6 @@ arch/um/drivers/ubd_user.c	uml-devices	keep-kernel	outer host owns Darwin file a
 arch/um/drivers/virtio_uml.c	uml-devices	keep-kernel	outer host owns vhost-user GPU service	upstream-with-port	Virtio discovery, queues, and IRQ delivery remain kernel responsibilities; the generic 64-bit DMA-mask correction is isolated as topic 0014 so next-version policy can drop it independently from Darwin topic 0010.
 arch/um/drivers/vnc_input.c	uml-devices	keep-kernel	outer host owns VNC server and input transport	carry	The outer provider emits events; Linux input-device registration and event injection stay in the kernel.
 scripts/Makefile.vmlinux	darwin-host-build	keep-build	outer wrapper cannot replace Kbuild internals	upstream	Final vmlinux host-tool selection occurs before the emulator can run.
-scripts/include/elf_darwin_compat.h	darwin-host-build	keep-build	outer wrapper cannot provide compile-time ELF types	upstream	One shared compatibility header keeps Darwin definitions local to Kbuild host tools.
 scripts/insert-sys-cert.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	The tool directly parses ELF structures during the kernel build.
 scripts/link-vmlinux.sh	darwin-host-build	keep-build	outer wrapper may invoke but cannot safely rewrite link policy	upstream	The script owns linker capability selection for the final image.
 scripts/mod/file2alias.c	darwin-host-build	keep-build	outer wrapper cannot alter compiled host-tool types	upstream	Modpost ELF parsing requires the common Darwin-compatible definitions.

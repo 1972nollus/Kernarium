@@ -5,18 +5,16 @@ Subject: [PATCH 08/11] kbuild: make host ELF tools portable to Darwin
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- scripts/Makefile.vmlinux            |  7 ++-
- scripts/include/elf_darwin_compat.h | 81 +++++++++++++++++++++++++++++
- scripts/insert-sys-cert.c           |  4 ++
- scripts/link-vmlinux.sh             |  6 ++-
- scripts/mod/file2alias.c            |  6 +++
- scripts/mod/mk_elfconfig.c          |  4 ++
- scripts/mod/modpost.c               |  4 ++
- scripts/mod/modpost.h               | 11 ++++
- scripts/recordmcount.c              |  5 ++
- scripts/sorttable.c                 |  5 ++
- 10 files changed, 131 insertions(+), 2 deletions(-)
- create mode 100644 scripts/include/elf_darwin_compat.h
+ scripts/Makefile.vmlinux   |  7 ++++++-
+ scripts/insert-sys-cert.c  |  4 ++++
+ scripts/link-vmlinux.sh    |  6 +++++-
+ scripts/mod/file2alias.c   |  6 ++++++
+ scripts/mod/mk_elfconfig.c |  4 ++++
+ scripts/mod/modpost.c      |  4 ++++
+ scripts/mod/modpost.h      | 10 ++++++++++
+ scripts/recordmcount.c     |  4 ++++
+ scripts/sorttable.c        |  4 ++++
+ 9 files changed, 47 insertions(+), 2 deletions(-)
 
 diff --git a/scripts/Makefile.vmlinux b/scripts/Makefile.vmlinux
 index 276c3134a..fbe545bd4 100644
@@ -37,93 +35,6 @@ index 276c3134a..fbe545bd4 100644
                                      chmod -x $@
  
  OBJCOPYFLAGS_modules.builtin.modinfo := -j .modinfo -O binary
-diff --git a/scripts/include/elf_darwin_compat.h b/scripts/include/elf_darwin_compat.h
-new file mode 100644
-index 000000000..f4c381dc4
---- /dev/null
-+++ b/scripts/include/elf_darwin_compat.h
-@@ -0,0 +1,81 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
-+#ifndef ELF_DARWIN_COMPAT_H
-+#define ELF_DARWIN_COMPAT_H
-+
-+/*
-+ * The repository-owned Darwin libelf header supplies the base ELF layouts.
-+ * These additional values cover relocation namespaces inspected by host
-+ * tools and come from the corresponding processor ABIs.
-+ */
-+#ifndef STT_LOPROC
-+#define STT_LOPROC 13
-+#endif
-+#ifndef STT_SPARC_REGISTER
-+#define STT_SPARC_REGISTER 13
-+#endif
-+
-+#ifndef R_386_NONE
-+#define R_386_NONE 0
-+#define R_386_32 1
-+#define R_386_PC32 2
-+#endif
-+#ifndef R_X86_64_NONE
-+#define R_X86_64_NONE 0
-+#define R_X86_64_64 1
-+#endif
-+#ifndef R_390_64
-+#define R_390_64 22
-+#endif
-+#ifndef R_AARCH64_NONE
-+#define R_AARCH64_NONE 0
-+#define R_AARCH64_ABS64 257
-+#define R_AARCH64_CALL26 283
-+#endif
-+#ifndef R_ARM_NONE
-+#define R_ARM_NONE 0
-+#define R_ARM_PC24 1
-+#define R_ARM_ABS32 2
-+#define R_ARM_REL32 3
-+#define R_ARM_THM_PC22 10
-+#define R_ARM_THM_CALL 10
-+#define R_ARM_CALL 28
-+#define R_ARM_JUMP24 29
-+#define R_ARM_THM_JUMP24 30
-+#define R_ARM_MOVW_ABS_NC 43
-+#define R_ARM_MOVT_ABS 44
-+#define R_ARM_THM_MOVW_ABS_NC 47
-+#define R_ARM_THM_MOVT_ABS 48
-+#define R_ARM_THM_JUMP19 51
-+#endif
-+#ifndef R_LARCH_32
-+#define R_LARCH_32 1
-+#define R_LARCH_64 2
-+#define R_LARCH_MARK_LA 20
-+#define R_LARCH_SOP_PUSH_PLT_PCREL 29
-+#define R_LARCH_SUB32 55
-+#define R_LARCH_RELAX 100
-+#define R_LARCH_ALIGN 102
-+#endif
-+#ifndef R_MIPS_32
-+#define R_MIPS_32 2
-+#define R_MIPS_26 4
-+#define R_MIPS_LO16 6
-+#define R_MIPS_64 18
-+#endif
-+#ifndef R_PPC_ADDR32
-+#define R_PPC_ADDR32 1
-+#endif
-+#ifndef R_PPC64_ADDR64
-+#define R_PPC64_ADDR64 38
-+#endif
-+#ifndef R_RISCV_SUB32
-+#define R_RISCV_SUB32 39
-+#endif
-+#ifndef R_SH_DIR32
-+#define R_SH_DIR32 1
-+#endif
-+#ifndef R_SPARC_64
-+#define R_SPARC_64 32
-+#endif
-+
-+#endif
 diff --git a/scripts/insert-sys-cert.c b/scripts/insert-sys-cert.c
 index 8902836c2..7ad9f099d 100644
 --- a/scripts/insert-sys-cert.c
@@ -214,7 +125,7 @@ index 010c398f6..c86a7eae3 100644
  #include <stdio.h>
  #include <ctype.h>
 diff --git a/scripts/mod/modpost.h b/scripts/mod/modpost.h
-index 2aecb8f25..4d8ee5eec 100644
+index 2aecb8f25..38fd6308d 100644
 --- a/scripts/mod/modpost.h
 +++ b/scripts/mod/modpost.h
 @@ -1,5 +1,11 @@
@@ -229,13 +140,12 @@ index 2aecb8f25..4d8ee5eec 100644
  #include <stdbool.h>
  #include <stdio.h>
  #include <stdlib.h>
-@@ -10,7 +16,12 @@
+@@ -10,7 +16,11 @@
  #include <sys/mman.h>
  #include <fcntl.h>
  #include <unistd.h>
 +#ifdef __APPLE__
 +#include <libelf.h>
-+#include <elf_darwin_compat.h>
 +#else
  #include <elf.h>
 +#endif
@@ -243,16 +153,15 @@ index 2aecb8f25..4d8ee5eec 100644
  
  #include <list_types.h>
 diff --git a/scripts/recordmcount.c b/scripts/recordmcount.c
-index 3e4f54799..1b432183d 100644
+index 3e4f54799..c3ee90a26 100644
 --- a/scripts/recordmcount.c
 +++ b/scripts/recordmcount.c
-@@ -25,7 +25,12 @@
+@@ -25,7 +25,11 @@
  #include <sys/mman.h>
  #include <sys/stat.h>
  #include <getopt.h>
 +#ifdef __APPLE__
 +#include <libelf.h>
-+#include <elf_darwin_compat.h>
 +#else
  #include <elf.h>
 +#endif
@@ -260,16 +169,15 @@ index 3e4f54799..1b432183d 100644
  #include <stdio.h>
  #include <stdlib.h>
 diff --git a/scripts/sorttable.c b/scripts/sorttable.c
-index deed676bf..00a844dbb 100644
+index deed676bf..64f8788db 100644
 --- a/scripts/sorttable.c
 +++ b/scripts/sorttable.c
-@@ -24,7 +24,12 @@
+@@ -24,7 +24,11 @@
  #include <sys/mman.h>
  #include <sys/stat.h>
  #include <getopt.h>
 +#ifdef __APPLE__
 +#include <libelf.h>
-+#include <elf_darwin_compat.h>
 +#else
  #include <elf.h>
 +#endif
