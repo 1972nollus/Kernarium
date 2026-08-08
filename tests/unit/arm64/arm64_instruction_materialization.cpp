@@ -744,13 +744,10 @@ private:
     configured_ = true;
     const auto *explicit_output =
         std::getenv("UML_INSTRUCTION_INPUT_MATERIALIZATION");
-    const auto *raw = std::getenv("UML_INSTRUCTION_RAW_EVIDENCE");
     const bool explicit_enabled =
         explicit_output != nullptr && explicit_output[0] != '\0' &&
         explicit_output[0] != '0';
-    const bool compatibility_enabled =
-        raw != nullptr && raw[0] != '\0' && raw[0] != '0';
-    if (!explicit_enabled && !compatibility_enabled)
+    if (!explicit_enabled)
       return;
     const auto *test = std::getenv("UML_INSTRUCTION_EVIDENCE_TEST");
     if (test == nullptr || test[0] == '\0')
@@ -765,14 +762,10 @@ private:
         std::string_view{locked} != lock_marker(test, canonical_base))
       configuration_error("evidence producer runner lock binding differs");
     const auto expected_output = canonical_base + ".inputs.jsonl.gz";
-    if (explicit_enabled) {
-      output_path_ = canonical_output_path(explicit_output);
-      if (output_path_ != expected_output)
-        configuration_error(
-            "materialization output differs from evidence producer binding");
-    } else {
-      output_path_ = expected_output;
-    }
+    output_path_ = canonical_output_path(explicit_output);
+    if (output_path_ != expected_output)
+      configuration_error(
+          "materialization output differs from evidence producer binding");
     std::error_code error;
     std::filesystem::create_directories(
         std::filesystem::path{output_path_}.parent_path(), error);

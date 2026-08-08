@@ -48,8 +48,8 @@ struct InstructionInputMaterialization final {
  * assign every producer a unique UML_INSTRUCTION_INPUT_MATERIALIZATION path.
  * Ordinary unit-only graphs and every production target leave it unset,
  * making this a single predictable branch with no serialization or retained
- * state. UML_INSTRUCTION_RAW_EVIDENCE remains a manual compatibility switch
- * that derives the historical sidecar path from UML_INSTRUCTION_EVIDENCE.
+ * state. Raw instruction-evidence recording is independent and does not
+ * implicitly enable this multi-gigabyte sidecar stream.
  */
 void record_instruction_input_materialization(
     const InstructionInputMaterialization &materialization,

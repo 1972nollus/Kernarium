@@ -12,6 +12,7 @@ import gzip
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +58,7 @@ from join_a64_input_materializations import (
     CHECKPOINT_METADATA_ALLOWANCE_BYTES,
     CONTRIBUTION_CHECKPOINT_HEADER_SCHEMA,
     CONTRACT_MANIFEST_SCHEMA,
+    DEFAULT_SPOOL_BYTES_PER_CONTRIBUTION,
     ContributionSpool,
     SPOOL_METADATA_ALLOWANCE_BYTES,
     declaration,
@@ -93,6 +95,14 @@ def expect_failure(action, message: str) -> None:
     except ValueError:
         return
     raise AssertionError(message)
+
+
+def failure_message(action) -> str:
+    try:
+        action()
+    except ValueError as error:
+        return str(error)
+    raise AssertionError("expected action to fail")
 
 
 def state() -> dict[str, object]:
@@ -1358,6 +1368,7 @@ def high_cardinality_spool_fixture() -> None:
         capped_root = Path(capped_root_name)
         cap = 128 * 1024
         hit_cap = False
+        cap_message = ""
         with ContributionSpool(capped_root, maximum_bytes=cap) as spool:
             for index in range(100000):
                 changed = dict(raw)
@@ -1370,15 +1381,139 @@ def high_cardinality_spool_fixture() -> None:
                         f"bounded-input-{index:08d}",
                         (),
                     )
-                except ValueError:
+                except ValueError as error:
                     hit_cap = True
+                    cap_message = str(error)
                     break
             require(hit_cap, "SQLite contribution spool hard cap was not hit")
+            require(
+                "hard byte cap" in cap_message,
+                "a real max-page-count failure lost its cap diagnostic",
+            )
             require(
                 spool.maximum_bytes is not None
                 and spool.path.stat().st_size <= spool.maximum_bytes <= cap,
                 "SQLite contribution spool exceeded its hard byte cap",
             )
+
+    require(
+        DEFAULT_SPOOL_BYTES_PER_CONTRIBUTION == 2048,
+        "the production spool default regressed below the measured profile",
+    )
+
+
+class FailingConnection:
+    def __init__(self, path: Path, phase: str, *, full: bool = False) -> None:
+        self.connection = sqlite3.connect(path)
+        self.phase = phase
+        self.full = full
+
+    def failure(self) -> sqlite3.OperationalError:
+        error = sqlite3.OperationalError(f"fixture {self.phase} failure")
+        if self.full:
+            error.sqlite_errorcode = sqlite3.SQLITE_FULL
+        return error
+
+    def execute(self, sql: str, parameters=()):
+        if self.phase == "initialization" and "CREATE TABLE" in sql:
+            raise self.failure()
+        if self.phase == "insert" and sql.startswith("INSERT INTO"):
+            raise self.failure()
+        return self.connection.execute(sql, parameters)
+
+    def commit(self) -> None:
+        if self.phase == "commit":
+            raise self.failure()
+        self.connection.commit()
+
+    def close(self) -> None:
+        self.connection.close()
+
+
+def spool_failure_fixture() -> None:
+    raw = raw_contract_tsv(materialization())
+
+    def add_one(spool: ContributionSpool) -> None:
+        spool.add("aggregate-fixture", raw, "raw-fixture", "input-fixture", ())
+
+    with tempfile.TemporaryDirectory(
+        prefix="a64-spool-open-"
+    ) as root_name:
+        root = Path(root_name)
+
+        def fail_open(_path: Path):
+            raise sqlite3.OperationalError("fixture open failure")
+
+        message = failure_message(
+            lambda: ContributionSpool(
+                root, connection_factory=fail_open
+            ).__enter__()
+        )
+        require(
+            "SQLite initialization failed" in message,
+            "SQLite connection failure lost its initialization diagnostic",
+        )
+        require(
+            list(root.iterdir()) == [],
+            "SQLite connection failure left spool debris",
+        )
+
+    for phase in ("initialization", "insert", "commit"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"a64-spool-{phase}-"
+        ) as root_name:
+            root = Path(root_name)
+
+            def factory(path: Path, phase=phase):
+                return FailingConnection(path, phase)
+
+            def run() -> None:
+                with ContributionSpool(
+                    root, maximum_bytes=16 * 1024 * 1024,
+                    connection_factory=factory,
+                ) as spool:
+                    add_one(spool)
+                    spool.finish()
+
+            message = failure_message(run)
+            require(
+                f"SQLite {phase} failed" in message
+                and "hard byte cap" not in message,
+                f"unrelated SQLite {phase} failure was misclassified",
+            )
+            require(
+                list(root.iterdir()) == [],
+                f"SQLite {phase} failure left spool debris",
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="a64-spool-filesystem-full-"
+    ) as root_name:
+        root = Path(root_name)
+
+        def full_factory(path: Path):
+            return FailingConnection(path, "insert", full=True)
+
+        def run_full() -> None:
+            with ContributionSpool(
+                root, maximum_bytes=64 * 1024 * 1024,
+                connection_factory=full_factory,
+            ) as spool:
+                add_one(spool)
+
+        with patch(
+            "join_a64_input_materializations.shutil.disk_usage",
+            return_value=SimpleNamespace(free=0),
+        ):
+            message = failure_message(run_full)
+        require(
+            "backing filesystem is full" in message,
+            "filesystem exhaustion was misreported as a spool cap hit",
+        )
+        require(
+            list(root.iterdir()) == [],
+            "filesystem exhaustion left spool debris",
+        )
 
 
 def storage_and_output_policy_fixture() -> None:
@@ -1521,6 +1656,7 @@ def main() -> int:
     aggregate_join_fixture()
     absent_producer_fixture()
     high_cardinality_spool_fixture()
+    spool_failure_fixture()
     storage_and_output_policy_fixture()
     print("A64 concrete input materialization schema/streaming negatives passed")
     return 0

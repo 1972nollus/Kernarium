@@ -28,16 +28,17 @@ selected without the inputs it requires. With the option off the suite
 registers 618 tests and leaves a 12 KiB evidence directory; with it on the
 suite registers 619 and regenerates the full profile.
 
-Two known costs apply when it is enabled:
+Two storage-policy facts apply when it is enabled:
 
-- The spool capacity policy is `expected_contributions * 1024 + 4 MiB` per
-  producer, which is too small for producers whose rows carry long
-  native-feature alternative lists. `arm64-atomic-floating-allocation`
-  overflows its 165,044,224-byte cap at 164,941,824 bytes and reports
-  `contribution spool exceeded its hard byte cap`. Pass
-  `--spool-bytes-per-contribution 2048` to clear it. Note that the same message
-  is also produced for genuine disk exhaustion, because the handler catches
-  every `sqlite3.DatabaseError`.
+- The bounded spool reserves `expected_contributions * 2048 + 4 MiB` per
+  producer. The failed worst 16 KiB producer declared 157,080 contributions
+  and reached 164,941,824 indexed bytes before completion: a lower bound of
+  1,050.05 bytes per declared contribution, which exhausted the former 1,024
+  allowance. A direct replay completed at 2,048 and the join advanced to the
+  separately stale aggregate-manifest check. Diagnostics distinguish a bounded
+  `max_page_count` hit, backing-filesystem exhaustion, and unrelated SQLite
+  failures; initialization, insertion, and commit failures are tested for
+  cleanup.
 - The sidecar codec is zlib level 6, chosen in
   `tests/unit/arm64/arm64_instruction_materialization.cpp`. Measured on a real
   120 MB sample, gzip level 9 recovers only 2.4%, while `xz -1` is **1.98x
@@ -184,20 +185,19 @@ Production completion checklist (all remain open):
 
 > **Seventh-audit qualification (2026-08-04):** the checkmarks below are a
 > historical implementation ledger, not current mechanical proof that all
-> variants are complete. The evidence schema currently permits exactly one
-> record for each of the 983 stable entry IDs and credits only its selected
-> case/word. It therefore cannot prove exhaustive coverage of every width,
-> form, alias, state combination, valid/reserved partition, or feature variant.
-> In addition, the allocation generator derives its form label and selected
-> word from test-owned catalogs; its external decoder classifies only that
-> selected word. Separately, feature validation compares requirements copied
-> between test-owned inventory and binding fields. Whole-pipeline consistent
-> mutations can still validate. Closure now
-> requires independent variant identities plus an authoritative form-to-
-> allocation and allocation-to-feature oracle, with removal, duplication,
-> cross-variant-swap, reserved-field, and regenerated-catalog negatives. Do not
-> treat or reaffirm the checked boxes as complete until those gates pass for
-> both page modes and the exact production objects of all three engines. The
+> variants are complete. The schema and validator now support multiple exact
+> semantic identities and reject removal, duplication, and cross-variant
+> swaps. The binding-independent pinned Arm XML model covers 2,396 allocated
+> form/decode intersections and 6,225 allocated/unallocated decode partitions,
+> including dependent fields and feature rules. However, the checked semantic
+> artifact still contains only 4,744 representative harness-declared contracts
+> (2,372 per page profile), every one marked incomplete; current validation
+> reports **0/983 variant-complete entries**. Allocation coverage and raw
+> invocation counts do not independently establish expected behavior for every
+> operand, state, valid/reserved, and feature partition. Do not treat or
+> reaffirm the checked boxes as complete until the fresh two-profile campaign
+> and independent expected-result review pass for both page modes and the exact
+> production objects of all three engines. The
 > shared fault model must also preserve instruction-fetch versus data-read
 > direction through the runtime/kernel boundary, and translated-engine
 > exception tests must prove

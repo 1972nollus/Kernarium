@@ -353,6 +353,45 @@ def cxx_runner_fixtures(runner: Path, directory: Path) -> None:
             "successful producer did not publish its complete output set: "
             f"{successful_publication.returncode}: {successful_publication.stdout}"
         )
+
+    raw_only_producer = "runner-raw-only-publication"
+    raw_only_environment = runner_environment(directory, raw_only_producer)
+    raw_only_environment["UML_INSTRUCTION_RAW_EVIDENCE"] = "1"
+    raw_only_finals = (
+        directory / f"{raw_only_producer}.tsv",
+        directory / f"{raw_only_producer}.tsv.raw",
+    )
+    stale_materialization = (
+        directory / f"{raw_only_producer}.tsv.inputs.jsonl.gz"
+    )
+    stale_native = directory / f"{raw_only_producer}.tsv.native"
+    stale_materialization.write_bytes(b"stale-materialization")
+    stale_native.write_bytes(b"stale-native")
+    raw_only_outputs = (
+        "import os,pathlib\n"
+        "base=pathlib.Path(os.environ['UML_INSTRUCTION_EVIDENCE'])\n"
+        "base.write_text('stable_id\\tsection\\tfixture\\n')\n"
+        "pathlib.Path(str(base)+'.raw').write_text("
+        "'ctest\\tcase\\tfixture\\n')\n"
+    )
+    raw_only_publication = subprocess.run(
+        [str(runner), sys.executable, "-B", "-c", raw_only_outputs],
+        env=raw_only_environment,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if (
+        raw_only_publication.returncode != 0
+        or not all(path.is_file() for path in raw_only_finals)
+        or stale_materialization.exists()
+        or stale_native.exists()
+    ):
+        raise AssertionError(
+            "raw-only producer did not publish an exact output set: "
+            f"{raw_only_publication.returncode}: {raw_only_publication.stdout}"
+        )
     if list(directory.glob(".producer.*.runner-stage.*")):
         raise AssertionError("native runner left producer staging debris")
 

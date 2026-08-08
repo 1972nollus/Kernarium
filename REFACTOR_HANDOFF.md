@@ -19,10 +19,10 @@ index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.
 Status changed on 2026-08-06: a gadget-engine performance campaign began;
 input-materialization recording became opt-in, removing 6.6 GiB of build-tree
 cost from ordinary runs; `arm64-input-materialization-join`, which is now
-registered only with that option, is the single failure in an otherwise clean
-618/619 16 KiB unit selection, for two independent reasons — an undersized
-contribution-spool capacity constant, and a frozen aggregate manifest that
-predates the current test sources; and an **intermittent vCPU stall under long
+registered only with that option, exposed an undersized contribution-spool
+capacity constant and a frozen aggregate manifest that predates the current
+test sources. The capacity defect is fixed on the current tree; the stale
+two-profile publication remains open. An **intermittent vCPU stall under long
 Geekbench runs is open and blocking guest benchmarking**. See
 [Status change 2026-08-06](#status-change-2026-08-06-performance-campaign-and-a-newly-diagnosed-blocker)
 below; that failure is an artifact-staleness blocker, not a behavioral defect,
@@ -59,8 +59,8 @@ enforcement.
 
 | Finding | Current evidence | Acceptance requirement |
 | --- | --- | --- |
-| Instruction allocation and native-feature evidence is still circular | `generate_a64_instruction_allocations.py` takes both the architectural label and selected word from the test inventory/binding catalogs. The external decoder classifies that selected word and the generator infers a mask by single-bit flips; it never independently maps the architectural form to the expected decoder allocation or required host features. A consistently reassigned form regenerated and validated, as did a consistently unrelated feature skip. A two-bit scan found 127 words across 70 stable IDs that satisfy checked-in masks but are rejected or reclassified by the decoder; for example, `0b221427` satisfies one current `ffe00000/0b200000` mask while the decoder rejects it. | Derive form-to-allocation and allocation-to-feature metadata from an independent authoritative source, including dependent/reserved-field constraints. Add end-to-end negatives that mutate every test-owned catalog, regenerate the oracle, and still must fail. Pin or explicitly review the oracle version and test checked-in regeneration parity. Regenerate page-size reports only after these negatives pass. |
-| The 983-row evidence is representative-per-entry, not variant-complete | Bindings contain exactly 983 unique stable IDs and the validator rejects multiple evidence records for an ID. The recorder credits only the one case/word matching that binding. `current_variant_model` is a generic label, not an independently enumerated set of widths, forms, aliases, state combinations, invalid/reserved partitions, or feature variants. The large test sweep may exercise many combinations, but the current ledger cannot prove none is missing. | Introduce independent variant identities/manifests and permit multiple variant records per instruction entry. Bind every required valid and invalid partition to its expected state/event/memory result and all eligible engines. Add removal, duplication, and cross-variant-swap negatives. Do not mark an entry complete from one representative word. |
+| Independent instruction allocation and native-feature authority is implemented; current-host regeneration remains an acceptance replay | The pinned Arm XML oracle now publishes 2,396 binding-independent form/decode intersections across all 983 entries plus 6,225 allocated/unallocated decode partitions, including dependent/reserved predicates, word-selected features, fallback rules, semantic feature rules, operation digests, and alias digests. Selected bindings must resolve through that model and a pinned LLVM decoder. Removal, duplication, form/feature swap, reserved-field, regenerated-catalog, and official-index negatives pass. | With the pinned 2026-06 instruction and system-register archives plus LLVM 22.1.8 available, regenerate the required/allocation/decode artifacts and require byte parity before the next two-profile publication. This is verification of the implemented independent authority, not permission to infer behavioral completeness. |
+| Semantic evidence is still representative, not variant-complete | The schema and validator now permit multiple independently identified execution records, and removal, duplication, cross-variant-result-swap, semantic-removal, and semantic-swap negatives pass. The checked artifact nevertheless contains only 4,744 harness-declared semantic contracts (2,372 per page profile), all explicitly `entry_complete=0`; current validation reports **0/983 variant-complete entries**. The much larger raw sweep and 2,396-row allocation model enumerate execution obligations but do not independently supply expected state/event/memory results for every operand, state, valid/reserved, and feature partition. | Complete fresh opt-in materialization joins and the exact two-profile official-semantics campaign, then independently review/bind every required semantic partition to expected architectural results for all eligible engines. Keep `--require-variant-complete` failing until those reviewed totals exist; do not mark an entry complete from representative or aggregate counts alone. |
 | Instruction-fetch fault direction is erased before Linux receives it | The public engine result distinguishes read, write, and execute, but interpreter results, translated TLB metadata, gadget/JIT fetch failures, the shared translated adapter, and the C bridge reduce the direction to read/write. The bridge exports only a write bit. Linux then guesses execute when the fault address equals the instruction pointer, so a data read at that address or a true execute-permission fault can be retried with the wrong permission. The common harness repeats the same collapse and cannot detect it. | Preserve read/write/execute through all three engines, translated fault metadata, the mirrored host/kernel ABI, and the Linux consumer. Test an unmapped/non-executable entry fetch, a data read whose address equals the current PC, ordinary read/write faults, exact address/PC, zero retirement, and retry behavior; advance ABI identity, refresh the Linux topic, and replay both page modes. |
 | Gadget exception cleanup can violate the common engine contract | Gadget blocks intentionally leave the guest floating-point environment active between translated blocks. Ordinary exits restore/materialize it, but if a later allocation or translation throws, the `noexcept` adapter returns fatal after `GadgetExecutor::end_execution()`, which ends only MMU execution. Direct `CpuEngine` callers can receive a fatal result with guest host-state still active and lazy architectural state not materialized. The native-code executor already restores this state in its cleanup. | Inject a second-block allocation/translation failure after the first block activates native floating-point state. Require a documented retirement count, materialized `CpuState`, restored host environment, balanced begin/end, and successful engine reuse. Run the same exception-contract test against the native-code engine. |
 | Retired memory-domain guards are unbounded and allocation-fallible | Every run receives a monotonic domain. Both software and initialized 4 KiB native registries permanently insert that domain into `retired_domains_`, even when no address space existed. N runs retain N software keys and another N native keys in 4 KiB mode. Insertion failure is swallowed; a delayed resolver can then recreate state for a retired domain after the live entry is erased. | Make retirement allocation-free and use bounded lifetime/identity state that prevents an in-flight old resolver from publishing after retirement. Add 100,000-run bounded-metadata tests for both page modes, deterministic delayed-resolver/retire interleavings, allocation-failure coverage or a structural no-allocation proof, and immediate next-run retry. |
@@ -180,16 +180,17 @@ sample `xz -1` is 1.98x smaller than the current zlib level 6 at comparable
 write cost, and `zstd -3` is 2.13x smaller and 9x faster. Raising zlib to level
 9 recovers only 2.4% and is not worth doubling write time.
 
-**The join itself still fails when enabled.** With the option on, it is the only
-failure in the 16 KiB selection: **618 of 619 tests pass** in 549.89 seconds at
-`ctest -j 16` with a complete 450-file evidence profile. Neither blocker is
-caused by the performance changes below; both were reproduced before any engine
-source was edited.
+**The historical complete join failed when enabled.** With the option on, it
+was the only failure in the 16 KiB selection: **618 of 619 tests passed** in
+549.89 seconds at `ctest -j 16` with a complete 450-file evidence profile.
+Neither finding was caused by the performance changes below; both were
+reproduced before any engine source was edited. The first is now fixed; the
+second still requires a fresh complete two-profile publication.
 
-There are two, and the first masks the second.
+There were two, and the first masked the second.
 
-**Blocker A: the contribution-spool capacity policy is too small.** The join
-sizes each producer's SQLite spool as
+**Resolved: the contribution-spool capacity policy was too small.** The join
+previously sized each producer's SQLite spool as
 `expected_contributions * spool_bytes_per_contribution + 4 MiB` and enforces it
 with `PRAGMA max_page_count`. For `arm64-atomic-floating-allocation` the 16 KiB
 profile declares 157,080 contributions, giving a 165,044,224-byte cap at the
@@ -198,15 +199,19 @@ SQLite raised `database or disk is full`, which a broad `except
 sqlite3.DatabaseError` reports as `contribution spool exceeded its hard byte
 cap`. Free disk at the time was 38.8 GB, so this is a capacity-policy shortfall,
 not exhausted storage: rows carrying long native-feature alternative lists
-average more than 1,024 bytes. Passing
-`--spool-bytes-per-contribution 2048` clears it. Two secondary defects are worth
-fixing alongside: the `except sqlite3.DatabaseError` arm reports every SQLite
-failure as a cap overflow, including genuine disk exhaustion, and the
-pre-flight `require_checkpoint_free_space` check cannot catch this because it
-uses the same underestimate.
+average more than 1,024 bytes. The current bounded default is 2,048 bytes per
+contribution plus 4 MiB; the affected producer completed at that setting and
+the join advanced to the separately stale aggregate check. The failed run's
+size divided by its declared total is a 1,050.05-byte lower bound; the
+successful replay, rather than that incomplete-run estimate alone, establishes
+that 2,048 is sufficient. The preflight calculation uses the same corrected
+bound. Error handling distinguishes a bounded
+`max_page_count` hit, backing-filesystem exhaustion, and unrelated SQLite
+failures, with end-to-end initialization/insertion/commit cleanup fixtures.
 
-**Blocker B: the frozen aggregate manifest predates the working tree.** With
-blocker A worked around, the join proceeds and fails on the underlying problem.
+**Remaining blocker: the frozen aggregate manifest predates the working
+tree.** With the capacity defect fixed, the join proceeds and fails on the
+underlying problem.
 It maps each raw producer contract to an aggregate identity and rejects any
 identity absent from the frozen manifest, reporting `<raw-contract> maps to
 unknown/out-of-profile <aggregate>`. `aggregate_id` is a SHA-256 over 24
@@ -229,29 +234,25 @@ evidence at lines 286 and 310, while the manifest expects 62, 284, and 298. The
 manifest was last committed at `d15e98c`, before the current uncommitted test
 sources, so roughly three quarters of producers are expected to be stale.
 
-Blocker B is therefore an artifact-staleness blocker, not a behavioral defect:
+The remaining stale publication is therefore an artifact-staleness blocker,
+not a behavioral defect:
 it validates instruction *evidence* bookkeeping, and the behavioral unit tests
 that gate engine changes are unaffected.
 
-Repair of blocker B requires the documented complete two-profile publication in
+Repair requires the documented complete two-profile publication in
 `A64_INSTRUCTION_PROGRESS.md`: all 449 `*.tsv.raw` producers present in both a
 4 KiB and a 16 KiB evidence directory, both full profile TSVs, then
 `freeze_a64_aggregate_manifest.py`. Partial producer replacement and
 validator-side writes are explicitly unsupported.
 
-**This repair is deliberately not performed yet.** The seventh-audit P1 finding
-above requires deriving form-to-allocation and feature metadata from an
-independent source and adding catalog-mutation negatives *before* regenerating,
-and states that page-size reports are to be regenerated only after those
-negatives pass. Refreezing now would republish a 32,169-row bound artifact
-through exactly the circular method that finding is about. The blocker is
-recorded here so the refreeze happens as part of closing that finding rather
-than as a way to turn one test green.
-
-Blocker A is independent of that finding and can be fixed on its own: it is a
-capacity constant, touches no audited artifact, and fixing it makes the test
-report the real problem instead of a misleading one. It is left open here only
-because it changes nothing until blocker B is also resolved.
+The independent-allocation prerequisite is now implemented by the pinned Arm
+XML required-variant/decode models and end-to-end catalog mutation negatives.
+That does not make a stale partial refreeze valid: replacement still requires
+fresh raw and input-materialization evidence for all 449 producers in both page
+profiles and one locked publication. This multi-gigabyte operation remains an
+explicit opt-in acceptance workflow, never a standard CTest side effect. The
+separate behavioral-variant completeness gate remains open until every
+required semantic partition is independently specified and executed.
 
 ### New: vCPU stall regression introduced by this refactor, root cause open
 

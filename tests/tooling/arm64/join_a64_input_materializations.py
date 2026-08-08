@@ -160,6 +160,14 @@ ENGINE_ORDER = {
 SCOPE_ORDER = {"instruction": 0, "program": 1}
 SPOOL_METADATA_ALLOWANCE_BYTES = 4 * 1024 * 1024
 CHECKPOINT_METADATA_ALLOWANCE_BYTES = 1024 * 1024
+# The largest failed 16 KiB producer declared 157,080 contributions and reached
+# 164,941,824 bytes before completion: at least 1,050.05 bytes per declared
+# contribution including indexes.  It exhausted the former 1,024-byte
+# allowance, then completed at 2,048 and advanced to aggregate validation.
+# This direct successful replay keeps the bound finite without guessing from
+# the incomplete failure-run row count.
+DEFAULT_SPOOL_BYTES_PER_CONTRIBUTION = 2048
+SQLITE_CAP_PROXIMITY_PAGES = 256
 
 
 def arguments() -> argparse.Namespace:
@@ -212,7 +220,9 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--checkpoint-directory", type=Path)
     parser.add_argument("--free-space-reserve-gib", type=float, default=2.0)
     parser.add_argument(
-        "--spool-bytes-per-contribution", type=int, default=1024
+        "--spool-bytes-per-contribution",
+        type=int,
+        default=DEFAULT_SPOOL_BYTES_PER_CONTRIBUTION,
     )
     parser.add_argument(
         "--checkpoint-bytes-per-contribution", type=int, default=128
@@ -660,9 +670,16 @@ def evidence_sort_key_blob(raw: dict[str, str]) -> bytes:
 class ContributionSpool:
     """Disk-backed exact contribution ordering with constant Python payload RAM."""
 
-    def __init__(self, root: Path, maximum_bytes: int | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        maximum_bytes: int | None = None,
+        *,
+        connection_factory: Callable[[Path], Any] = sqlite3.connect,
+    ) -> None:
         self._root = root
         self._requested_maximum_bytes = maximum_bytes
+        self._connection_factory = connection_factory
         self._maximum_bytes: int | None = None
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
         self._database: sqlite3.Connection | None = None
@@ -679,8 +696,8 @@ class ContributionSpool:
         )
         path = Path(self._temporary.name) / "contributions.sqlite3"
         self._path = path
-        self._database = sqlite3.connect(path)
         try:
+            self._database = self._connection_factory(path)
             self._database.execute("PRAGMA journal_mode=OFF")
             self._database.execute("PRAGMA synchronous=OFF")
             self._database.execute("PRAGMA temp_store=FILE")
@@ -730,14 +747,20 @@ class ContributionSpool:
                 "ON contribution (aggregate_id, input_id)"
             )
         except (sqlite3.DatabaseError, ValueError) as error:
-            self._database.close()
-            self._database = None
+            message = (
+                self._storage_failure_message("initialization", error)
+                if isinstance(error, sqlite3.DatabaseError)
+                else None
+            )
+            if self._database is not None:
+                self._database.close()
+                self._database = None
             self._temporary.cleanup()
             self._temporary = None
             self._path = None
             if isinstance(error, ValueError):
                 raise
-            raise ValueError("contribution spool cap is too small") from error
+            raise ValueError(message) from error
         return self
 
     def __exit__(self, *_args: object) -> None:
@@ -765,6 +788,51 @@ class ContributionSpool:
     def maximum_bytes(self) -> int | None:
         return self._maximum_bytes
 
+    def _storage_failure_message(
+        self, operation: str, error: sqlite3.DatabaseError
+    ) -> str:
+        """Describe SQLite failure without misreporting every error as a cap hit."""
+        code = getattr(error, "sqlite_errorcode", None)
+        if code != sqlite3.SQLITE_FULL:
+            return f"contribution spool SQLite {operation} failed: {error}"
+
+        size = 0
+        if self._path is not None:
+            try:
+                size = self._path.stat().st_size
+            except OSError:
+                pass
+        try:
+            free = shutil.disk_usage(self._root).free
+        except OSError:
+            free = -1
+        remaining = (
+            max(self._maximum_bytes - size, 0)
+            if self._maximum_bytes is not None
+            else None
+        )
+        proximity = SQLITE_CAP_PROXIMITY_PAGES * 4096
+        if (
+            remaining is not None
+            and remaining <= proximity
+            and free > remaining + proximity
+        ):
+            return (
+                "contribution spool reached its hard byte cap "
+                f"during {operation} (database={size}, cap={self._maximum_bytes})"
+            )
+        if free >= 0 and free <= proximity:
+            return (
+                "contribution spool backing filesystem is full "
+                f"during {operation} (database={size}, free={free})"
+            )
+        return (
+            "contribution spool database or filesystem capacity was exhausted "
+            f"during {operation} (database={size}, cap="
+            f"{self._maximum_bytes if self._maximum_bytes is not None else 'none'}, "
+            f"free={free if free >= 0 else 'unknown'})"
+        )
+
     def add(
         self,
         aggregate_id: str,
@@ -791,13 +859,13 @@ class ContributionSpool:
                 "duplicate raw/input contract mapping reached contribution spool"
             ) from error
         except sqlite3.DatabaseError as error:
-            raise ValueError("contribution spool exceeded its hard byte cap") from error
+            raise ValueError(self._storage_failure_message("insert", error)) from error
 
     def finish(self) -> None:
         try:
             self.database.commit()
         except sqlite3.DatabaseError as error:
-            raise ValueError("contribution spool exceeded its hard byte cap") from error
+            raise ValueError(self._storage_failure_message("commit", error)) from error
         if (
             self.maximum_bytes is not None
             and self.path.stat().st_size > self.maximum_bytes
@@ -1751,7 +1819,7 @@ def join_materializations(
     contract_index_output: Path | None = None,
     checkpoint_directory: Path | None = None,
     free_space_reserve_bytes: int = 0,
-    spool_bytes_per_contribution: int = 1024,
+    spool_bytes_per_contribution: int = DEFAULT_SPOOL_BYTES_PER_CONTRIBUTION,
     checkpoint_bytes_per_contribution: int = 128,
     deferred_checkpoints: list[CheckpointInfo] | None = None,
 ) -> list[dict[str, str]]:

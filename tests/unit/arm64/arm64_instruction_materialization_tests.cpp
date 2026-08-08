@@ -50,6 +50,26 @@ void configure_child(const std::string &base) {
     fail("cannot configure child environment");
 }
 
+void configure_raw_only_child(const std::string &base) {
+  std::error_code error;
+  const std::filesystem::path requested{base};
+  const auto canonical_base =
+      (std::filesystem::canonical(requested.parent_path(), error) /
+       requested.filename())
+          .string();
+  if (error)
+    fail("cannot canonicalize raw-only child evidence path");
+  const std::string marker =
+      "v1\nmaterialization-contract\n" + canonical_base;
+  if (setenv("UML_INSTRUCTION_RAW_EVIDENCE", "1", 1) != 0 ||
+      setenv("UML_INSTRUCTION_EVIDENCE", canonical_base.c_str(), 1) != 0 ||
+      unsetenv("UML_INSTRUCTION_INPUT_MATERIALIZATION") != 0 ||
+      setenv("UML_INSTRUCTION_EVIDENCE_TEST", "materialization-contract", 1) !=
+          0 ||
+      setenv("UML_INSTRUCTION_EVIDENCE_LOCKED", marker.c_str(), 1) != 0)
+    fail("cannot configure raw-only child environment");
+}
+
 [[nodiscard]] InstructionInputMaterialization make_record(
     std::span<const ProgramWord> code, std::span<const std::byte> page,
     const uml::cpu::arm64::CpuState &state,
@@ -107,6 +127,20 @@ void emit_duplicate(const std::string &base) {
   record.before_engine_effect_id = "install-test-state/v1";
   for (unsigned invocation = 0; invocation < repeated_contracts; ++invocation)
     record_instruction_input_materialization(record, location);
+  std::exit(0);
+}
+
+void emit_raw_only(const std::string &base) {
+  configure_raw_only_child(base);
+  constexpr std::uint32_t instruction = 0xd503201fU;
+  constexpr std::array evidence_words{instruction};
+  constexpr std::array code{ProgramWord{.offset = 0,
+                                        .instruction = instruction}};
+  const auto page = code_page(instruction);
+  uml::cpu::arm64::CpuState state{};
+  const auto record = make_record(code, page, state, evidence_words);
+  record_instruction_input_materialization(record,
+                                           std::source_location::current());
   std::exit(0);
 }
 
@@ -357,6 +391,11 @@ int main() {
     fail("interrupted child published a materialization output");
   if (unlink(interrupted_ready.c_str()) != 0)
     fail("cannot remove interrupted-child readiness");
+
+  const auto raw_only_status = wait_for_child(spawn(emit_raw_only, base));
+  if (!WIFEXITED(raw_only_status) || WEXITSTATUS(raw_only_status) != 0 ||
+      std::filesystem::exists(materialization_path))
+    fail("raw evidence implicitly enabled input materialization");
 
   const auto duplicate_status = wait_for_child(spawn(emit_duplicate, base));
   if (!WIFEXITED(duplicate_status) || WEXITSTATUS(duplicate_status) != 0)
