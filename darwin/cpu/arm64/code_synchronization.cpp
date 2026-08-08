@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "code_synchronization.hpp"
+
 #include "uml_darwin_static_mmu.h"
 
 #include <atomic>
-#include <cstdint>
 
 extern "C" [[gnu::noinline]] void
 uml_arm64_guest_code_synchronize(std::uint64_t address) noexcept

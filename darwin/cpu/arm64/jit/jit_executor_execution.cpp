@@ -2,6 +2,15 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/instructions/load_store_memory.hpp"
+#include "uml_darwin_static_mmu.h"
+
+#include <array>
+#include <cstring>
+#include <optional>
+#include <span>
+
 namespace uml::cpu::arm64 {
 
 [[nodiscard]] Event JitExecutor::Implementation::run_block(CpuState &cpu, StaticGuestMemory &memory,

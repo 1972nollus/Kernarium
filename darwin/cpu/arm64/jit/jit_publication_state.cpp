@@ -2,6 +2,8 @@
 
 #include "jit_publication.hpp"
 
+#include <algorithm>
+
 namespace uml::cpu::arm64 {
 
 std::atomic<unsigned> active_jit_reservations{};

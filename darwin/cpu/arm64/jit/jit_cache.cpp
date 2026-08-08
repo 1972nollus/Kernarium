@@ -2,6 +2,11 @@
 
 #include "jit_cache.hpp"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
+
 namespace uml::cpu::arm64 {
 
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)

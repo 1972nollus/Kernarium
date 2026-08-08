@@ -4,10 +4,21 @@
 #include "jit_compiler_families.hpp"
 #include "jit_diagnostics.hpp"
 #include "jit_emitter.hpp"
-#include "jit_publication.hpp"
+#include "jit_runtime_contract.hpp"
 #include "jit_semantic_memory.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <vector>
+
+namespace uml::cpu::arm64::detail {
+struct AtomicFloating;
+}
+
 namespace uml::cpu::arm64 {
+
+using ::uml::memory::Access;
 
 class JitCompiler final : private jit::JitCompilerFamilies {
 public:

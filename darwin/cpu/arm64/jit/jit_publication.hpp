@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "jit_linking.hpp"
+#include "cpu/arm64/cpu_state.hpp"
+
+#include <atomic>
+#include <mutex>
+#include <unordered_set>
+#include <vector>
 
 namespace uml::cpu::arm64 {
 

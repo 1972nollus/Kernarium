@@ -2,6 +2,27 @@
 
 #include "jit_compiler.hpp"
 
+#include "cpu/arm64/detail/atomic_floating.hpp"
+#include "cpu/arm64/detail/bfloat_dot.hpp"
+#include "cpu/arm64/detail/bfloat_matrix.hpp"
+#include "cpu/arm64/detail/bfloat_multiply.hpp"
+#include "cpu/arm64/detail/floating_arithmetic.hpp"
+#include "cpu/arm64/detail/floating_compare.hpp"
+#include "cpu/arm64/detail/floating_complex.hpp"
+#include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/detail/floating_fused.hpp"
+#include "cpu/arm64/detail/floating_horizontal.hpp"
+#include "cpu/arm64/detail/floating_integer_conversion.hpp"
+#include "cpu/arm64/detail/floating_reciprocal.hpp"
+#include "cpu/arm64/detail/floating_round.hpp"
+#include "cpu/arm64/detail/floating_scale.hpp"
+#include "cpu/arm64/detail/fp8.hpp"
+#include "cpu/arm64/detail/gcs.hpp"
+#include "cpu/arm64/detail/half_dot.hpp"
+#include "cpu/arm64/detail/half_fused_long.hpp"
+#include "cpu/arm64/detail/half_matrix.hpp"
+#include "cpu/arm64/detail/instruction_helpers.hpp"
+
 namespace uml::cpu::arm64 {
 
 bool JitCompiler::emit_common_control_flow(std::uint32_t instruction, std::uint64_t pc,

@@ -2,6 +2,8 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "uml_darwin_static_mmu.h"
+
 namespace uml::cpu::arm64 {
 
 [[nodiscard]] void *JitExecutor::Implementation::execution_context(unsigned long generation) {

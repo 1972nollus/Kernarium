@@ -3,7 +3,20 @@
 #include "jit_semantic_memory.hpp"
 #include "jit_publication.hpp"
 
+#include "cpu/arm64/dispatcher.hpp"
+#include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/fp_environment.hpp"
+#include "cpu/arm64/memory_transfer.hpp"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstring>
+#include <span>
+
 namespace uml::cpu::arm64 {
+
+using ::uml::memory::Access;
 
 void
 activate_native_fp_environment(CpuState &cpu) noexcept {

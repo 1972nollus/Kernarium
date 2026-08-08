@@ -1,13 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "jit_arena.hpp"
 #include "jit_cache.hpp"
+#include "jit_executor.hpp"
+#include "jit_publication.hpp"
+#include "jit_runtime_contract.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <vector>
 
 #ifndef UML_JIT_RUNTIME_DIAGNOSTICS
 #define UML_JIT_RUNTIME_DIAGNOSTICS 0
 #endif
 
 namespace uml::cpu::arm64 {
+
+using ::uml::memory::Access;
+using ::uml::memory::StaticGuestMemory;
+using ::uml::memory::Tlb;
 
 class JitExecutor::Implementation final {
 public:

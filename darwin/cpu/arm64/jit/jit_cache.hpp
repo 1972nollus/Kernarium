@@ -2,6 +2,17 @@
 #pragma once
 
 #include "jit_compiler.hpp"
+#include "jit_executor.hpp"
+#include "jit_linking.hpp"
+#include "jit_runtime_contract.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 namespace uml::cpu::arm64 {
 

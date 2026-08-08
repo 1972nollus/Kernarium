@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "jit_cache.hpp"
+#include "jit_publication.hpp"
+#include "jit_test_api.hpp"
+
+#include "cpu/arm64/instructions/load_store_memory.hpp"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <semaphore>
+#include <span>
+#include <thread>
+#include <vector>
 
 namespace uml::cpu::arm64 {
 

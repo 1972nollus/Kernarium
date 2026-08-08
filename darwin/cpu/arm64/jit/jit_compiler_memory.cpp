@@ -2,6 +2,12 @@
 
 #include "jit_compiler.hpp"
 
+#include "cpu/arm64/detail/atomic_floating.hpp"
+
+#include <algorithm>
+#include <array>
+#include <bit>
+
 namespace uml::cpu::arm64 {
 
 void JitCompiler::emit_translate(unsigned address, Access access,

@@ -2,6 +2,15 @@
 
 #include "jit_compiler.hpp"
 
+#include "cpu/arm64/code_synchronization.hpp"
+#include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/detail/fp_state_access.hpp"
+#include "cpu/arm64/detail/instruction_helpers.hpp"
+
+#include <algorithm>
+#include <array>
+#include <limits>
+
 namespace uml::cpu::arm64 {
 
 JitCompiler::JitCompiler(bool enable_guarded_control_flow,

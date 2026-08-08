@@ -110,3 +110,10 @@ void reservation_store(std::uintptr_t key) noexcept;
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address);
 
 } // namespace uml::cpu::arm64::load_store_detail
+
+namespace uml::cpu::arm64 {
+
+extern "C" void uml_arm64_jit_invalidate_store_ranges(
+    const std::uint64_t *ranges, std::size_t count) noexcept;
+
+} // namespace uml::cpu::arm64

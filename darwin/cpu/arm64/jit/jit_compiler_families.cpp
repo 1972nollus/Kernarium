@@ -3,6 +3,13 @@
 #include "jit_compiler_families.hpp"
 #include "jit_emitter.hpp"
 #include "jit_linking.hpp"
+#include "jit_runtime_contract.hpp"
+
+#include "cpu/arm64/detail/bfloat_multiply.hpp"
+#include "cpu/arm64/detail/fp8.hpp"
+#include "cpu/arm64/detail/half_fused_long.hpp"
+
+#include <algorithm>
 
 namespace uml::cpu::arm64::jit {
 

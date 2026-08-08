@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "memory/tlb.hpp"
+#include "memory_transfer.hpp"
 
-#include "cpu/arm64/cpu_state.hpp"
 #include "uml_darwin_guest.h"
 
 #include <algorithm>

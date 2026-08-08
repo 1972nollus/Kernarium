@@ -336,6 +336,75 @@ def verify_common_harness_boundary_ownership(source_root: Path) -> None:
         )
 
 
+def verify_jit_private_header_ownership(source_root: Path) -> None:
+    """Keep executor, publication, translation, and test contracts explicit."""
+    jit_root = source_root / "darwin" / "cpu" / "arm64" / "jit"
+
+    def direct_includes(relative: str) -> set[str]:
+        content = (jit_root / relative).read_text(encoding="utf-8")
+        return set(
+            re.findall(r'^\s*#\s*include\s*"([^"]+)"', content, re.MULTILINE)
+        )
+
+    linking = direct_includes("jit_linking.hpp")
+    forbidden_linking = {
+        "jit_arena.hpp",
+        "jit_compiler_families.hpp",
+        "jit_executor.hpp",
+        "jit_test_api.hpp",
+        "cpu/arm64/dispatcher.hpp",
+        "cpu/arm64/fp_environment.hpp",
+        "memory/tlb.hpp",
+    }
+    forbidden_linking.update(
+        include for include in linking if include.startswith("cpu/arm64/detail/")
+    )
+    require(
+        linking.isdisjoint(forbidden_linking),
+        "link records regained unrelated private dependencies: "
+        f"{sorted(linking & forbidden_linking)}",
+    )
+    require(
+        not linking,
+        f"link records have an unreviewed direct dependency: {sorted(linking)}",
+    )
+
+    publication = direct_includes("jit_publication.hpp")
+    require(
+        "cpu/arm64/cpu_state.hpp" in publication and
+        "jit_linking.hpp" not in publication,
+        "store publication no longer owns its CpuState dependency directly",
+    )
+    compiler = direct_includes("jit_compiler.hpp")
+    require(
+        {"jit_linking.hpp", "jit_publication.hpp"}.isdisjoint(compiler),
+        "the translation interface depends on executor publication/link records",
+    )
+    cache = direct_includes("jit_cache.hpp")
+    require(
+        "jit_linking.hpp" in cache,
+        "the cache does not own its link-record dependency directly",
+    )
+
+    expected_direct_bridges = {
+        "jit_compiler.cpp": "cpu/arm64/code_synchronization.hpp",
+        "jit_semantic_memory.cpp": "cpu/arm64/memory_transfer.hpp",
+        "jit_executor_execution.cpp":
+            "cpu/arm64/instructions/load_store_memory.hpp",
+    }
+    for source, interface in expected_direct_bridges.items():
+        require(
+            interface in direct_includes(source),
+            f"{source} relies transitively on {interface}",
+        )
+
+    test_support = direct_includes("jit_test_support.cpp")
+    require(
+        {"jit_publication.hpp", "jit_test_api.hpp"} <= test_support,
+        "JIT test support relies on a production header to import test state",
+    )
+
+
 def symbols(nm: Path, objects: list[Path], undefined: bool) -> set[str]:
     result: set[str] = set()
     arguments = ["-u"] if undefined else ["-gU"]
@@ -559,6 +628,7 @@ def main() -> int:
     )
     verify_gadget_builder_ownership(options.source_root, gadget_objects)
     verify_common_harness_boundary_ownership(options.source_root)
+    verify_jit_private_header_ownership(options.source_root)
     forbidden_production_test_symbols = {
         symbol
         for symbol in production_symbols

@@ -2,6 +2,11 @@
 
 #include "jit_executor_internal.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <span>
+
 namespace uml::cpu::arm64 {
 
 [[nodiscard]] JitCacheValidationResult JitExecutor::Implementation::validate_stale_block(
