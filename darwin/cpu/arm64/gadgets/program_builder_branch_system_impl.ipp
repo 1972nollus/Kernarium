@@ -307,9 +307,43 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
 		} else {
+			auto folded = value;
+			std::size_t consumed = 1;
+			/* ADRP is already folded to a constant here, so the
+			 * `adrp xN, sym` / `add xN, xN, #:lo12:sym` idiom that
+			 * dominates position-independent code is two entries and two
+			 * dispatches computing something translation already knows.
+			 * When the ADD rewrites the same register it read, the page
+			 * value it consumes is dead the moment it is produced, so the
+			 * pair collapses into this one entry carrying the final
+			 * address - no extra gadget and no bank growth.
+			 *
+			 * G113 measured this as the third most frequent adjacent pair
+			 * in translated code at 1.5%, behind only ADRP+LDR and a
+			 * load-pair repeat.
+			 *
+			 * Restricted to the exact idiom: 64-bit, no flags, no shifted
+			 * immediate, and Rd == Rn == the ADRP destination. Anything
+			 * else leaves the page value observable and is left alone.
+			 * Neither instruction can fault, so nothing can be delivered
+			 * between them and retiring both together is sound. */
+			if (!context.following.empty()) {
+				const auto next = context.following.front();
+				const bool add_immediate =
+					(next & 0xffc0'0000U) == 0x9100'0000U;
+				if (add_immediate && (next & 31U) == destination &&
+				    ((next >> 5) & 31U) == destination) {
+					folded += (next >> 10) & 0xfffU;
+					consumed = 2;
+				}
+			}
 			emit(words, uml_arm64_gadget_pc_relative);
 			emit(words, static_cast<std::uintptr_t>(destination * 8U));
-			emit(words, value);
+			emit(words, folded);
+			/* Account for the folded ADD only; Builder::build() adds the
+			 * ADRP itself when a decode returns `decoded`. */
+			if (consumed == 2)
+				++compiled;
 		}
 	} else if (instruction == 0xd500'401fU) {
 		emit(words, uml_arm64_gadget_cfinv);
