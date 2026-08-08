@@ -340,6 +340,85 @@ gadget branch_\name\()_linked
 	follow_block_link x8
 .endm
 
+/* G-2 superinstruction: guest CMP of two registers followed by B.cond.
+ *
+ * G116's histogram over a full Geekbench run ranks this pair fourth and ninth
+ * of 47,494 - `branch_eq_linked` after it at 2.65% and `branch_ne_linked` at
+ * 0.84%, 3.49% together - while the immediate form fused in G111 does not reach
+ * the table at all. Same mechanism, the half of the instruction class that
+ * actually occurs.
+ *
+ * Stream operand is the compare's own encoding, whose left and right register
+ * byte offsets sit at bits 16 and 32, followed by the taken and fall-through
+ * words. Only the unshifted register-register form with an XZR destination is
+ * fused; a shift, an extension or a real destination falls through to the pair.
+ */
+.macro compare_register_branch bits64, width, name, condition
+gadget compare_register_branch_\width\()_\name
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream]
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.if \bits64
+	subs xzr, x15, x16
+	.else
+	subs wzr, w15, w16
+	.endif
+	mrs x27, nzcv
+	csel x9, x19, x20, \condition
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+.endm
+
+.macro compare_register_branch_linked bits64, width, name, condition
+gadget compare_register_branch_\width\()_\name\()_linked
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream]
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.if \bits64
+	subs xzr, x15, x16
+	.else
+	subs wzr, w15, w16
+	.endif
+	mrs x27, nzcv
+	csel x8, x19, x20, \condition
+	follow_block_link x8
+.endm
+
+.macro compare_register_branch_pair name, condition
+compare_register_branch 1, x, \name, \condition
+compare_register_branch 0, w, \name, \condition
+compare_register_branch_linked 1, x, \name, \condition
+compare_register_branch_linked 0, w, \name, \condition
+.endm
+
+compare_register_branch_pair eq, eq
+compare_register_branch_pair ne, ne
+compare_register_branch_pair hs, hs
+compare_register_branch_pair lo, lo
+compare_register_branch_pair mi, mi
+compare_register_branch_pair pl, pl
+compare_register_branch_pair vs, vs
+compare_register_branch_pair vc, vc
+compare_register_branch_pair hi, hi
+compare_register_branch_pair ls, ls
+compare_register_branch_pair ge, ge
+compare_register_branch_pair lt, lt
+compare_register_branch_pair gt, gt
+compare_register_branch_pair le, le
+
+.purgem compare_register_branch_pair
+.purgem compare_register_branch
+.purgem compare_register_branch_linked
+
 /* G-2 superinstruction: guest CMP-immediate immediately followed by B.cond.
  *
  * That pair is the most common control-flow shape there is, and unfused it

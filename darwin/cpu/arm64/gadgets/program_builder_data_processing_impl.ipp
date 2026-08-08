@@ -196,14 +196,59 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			right * sizeof(std::uint64_t);
 		const unsigned transform = extended ? 0U :
 			shift == 0U ? 0U : shift_type + 1U;
+		const auto operand = destination_offset |
+			(static_cast<std::uintptr_t>(left_offset) << 16) |
+			(static_cast<std::uintptr_t>(right_offset) << 32) |
+			(static_cast<std::uintptr_t>(shift) << 48);
+		/* Guest CMP of two registers followed by B.cond. G116 ranks this
+		 * fourth and ninth of 47,494 pairs over a full Geekbench run, 3.49%
+		 * together, where the immediate form G111 fused does not reach the
+		 * table. Same mechanism: the dispatch between the two entries goes,
+		 * and with it the msr that reloads the flags the compare just wrote.
+		 *
+		 * Only the plain unshifted register-register form with an XZR
+		 * destination: an extension, a shift, or a real destination leaves
+		 * something the fused entry does not compute, and falls through to
+		 * the unfused pair unchanged. */
+		if (set_flags && (instruction & 0x4000'0000U) != 0 && !extended &&
+		    shift == 0U && destination == 31U && !left_zero &&
+		    !right_zero && !context.following.empty() &&
+		    (context.following.front() & 0xff00'0010U) == 0x5400'0000U) {
+			const auto branch = context.following.front();
+			if (const auto fused = compare_register_branch_gadget(
+				    is_64_bit, branch & 15U, resolve_link != nullptr);
+			    fused != nullptr) {
+				const auto branch_address =
+					address + sizeof(instruction);
+				const auto displacement = sign_extend(
+					static_cast<std::uint64_t>(
+						(branch >> 5) & 0x7ffffU) << 2,
+					21);
+				const auto target = static_cast<std::uint64_t>(
+					static_cast<std::int64_t>(branch_address) +
+					displacement);
+				const auto fallthrough =
+					branch_address + sizeof(branch);
+				emit(words, fused);
+				emit(words, operand);
+				if (resolve_link) {
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(target)));
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(fallthrough)));
+				} else {
+					emit(words, target);
+					emit(words, fallthrough);
+				}
+				compiled += 2;
+				return DecodeResult::terminal;
+			}
+		}
 		emit(words, add_sub_register_gadget(is_64_bit,
 			(instruction & 0x4000'0000U) != 0, set_flags, extended,
 			transform, (instruction >> 13) & 7U, shift != 0U,
 			left_zero, right_zero, destination_discard));
-		emit(words, destination_offset |
-			(static_cast<std::uintptr_t>(left_offset) << 16) |
-			(static_cast<std::uintptr_t>(right_offset) << 32) |
-			(static_cast<std::uintptr_t>(shift) << 48));
+		emit(words, operand);
 	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'1000U) {
 		emit(words, mte_irg_gadget(
 			((instruction >> 5) & 31U) == 31U,

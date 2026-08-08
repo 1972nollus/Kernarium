@@ -251,6 +251,81 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	words.push_back(operand);
 }
 
+/* Fused CMP of two registers + B.cond, the shape G116 ranks fourth. */
+[[nodiscard]] Gadget compare_register_branch_gadget(
+	bool wide, unsigned condition, bool linked) noexcept
+{
+	static constexpr std::array wide_direct{
+		uml_arm64_gadget_compare_register_branch_x_eq,
+		uml_arm64_gadget_compare_register_branch_x_ne,
+		uml_arm64_gadget_compare_register_branch_x_hs,
+		uml_arm64_gadget_compare_register_branch_x_lo,
+		uml_arm64_gadget_compare_register_branch_x_mi,
+		uml_arm64_gadget_compare_register_branch_x_pl,
+		uml_arm64_gadget_compare_register_branch_x_vs,
+		uml_arm64_gadget_compare_register_branch_x_vc,
+		uml_arm64_gadget_compare_register_branch_x_hi,
+		uml_arm64_gadget_compare_register_branch_x_ls,
+		uml_arm64_gadget_compare_register_branch_x_ge,
+		uml_arm64_gadget_compare_register_branch_x_lt,
+		uml_arm64_gadget_compare_register_branch_x_gt,
+		uml_arm64_gadget_compare_register_branch_x_le,
+	};
+	static constexpr std::array narrow_direct{
+		uml_arm64_gadget_compare_register_branch_w_eq,
+		uml_arm64_gadget_compare_register_branch_w_ne,
+		uml_arm64_gadget_compare_register_branch_w_hs,
+		uml_arm64_gadget_compare_register_branch_w_lo,
+		uml_arm64_gadget_compare_register_branch_w_mi,
+		uml_arm64_gadget_compare_register_branch_w_pl,
+		uml_arm64_gadget_compare_register_branch_w_vs,
+		uml_arm64_gadget_compare_register_branch_w_vc,
+		uml_arm64_gadget_compare_register_branch_w_hi,
+		uml_arm64_gadget_compare_register_branch_w_ls,
+		uml_arm64_gadget_compare_register_branch_w_ge,
+		uml_arm64_gadget_compare_register_branch_w_lt,
+		uml_arm64_gadget_compare_register_branch_w_gt,
+		uml_arm64_gadget_compare_register_branch_w_le,
+	};
+	static constexpr std::array wide_linked{
+		uml_arm64_gadget_compare_register_branch_x_eq_linked,
+		uml_arm64_gadget_compare_register_branch_x_ne_linked,
+		uml_arm64_gadget_compare_register_branch_x_hs_linked,
+		uml_arm64_gadget_compare_register_branch_x_lo_linked,
+		uml_arm64_gadget_compare_register_branch_x_mi_linked,
+		uml_arm64_gadget_compare_register_branch_x_pl_linked,
+		uml_arm64_gadget_compare_register_branch_x_vs_linked,
+		uml_arm64_gadget_compare_register_branch_x_vc_linked,
+		uml_arm64_gadget_compare_register_branch_x_hi_linked,
+		uml_arm64_gadget_compare_register_branch_x_ls_linked,
+		uml_arm64_gadget_compare_register_branch_x_ge_linked,
+		uml_arm64_gadget_compare_register_branch_x_lt_linked,
+		uml_arm64_gadget_compare_register_branch_x_gt_linked,
+		uml_arm64_gadget_compare_register_branch_x_le_linked,
+	};
+	static constexpr std::array narrow_linked{
+		uml_arm64_gadget_compare_register_branch_w_eq_linked,
+		uml_arm64_gadget_compare_register_branch_w_ne_linked,
+		uml_arm64_gadget_compare_register_branch_w_hs_linked,
+		uml_arm64_gadget_compare_register_branch_w_lo_linked,
+		uml_arm64_gadget_compare_register_branch_w_mi_linked,
+		uml_arm64_gadget_compare_register_branch_w_pl_linked,
+		uml_arm64_gadget_compare_register_branch_w_vs_linked,
+		uml_arm64_gadget_compare_register_branch_w_vc_linked,
+		uml_arm64_gadget_compare_register_branch_w_hi_linked,
+		uml_arm64_gadget_compare_register_branch_w_ls_linked,
+		uml_arm64_gadget_compare_register_branch_w_ge_linked,
+		uml_arm64_gadget_compare_register_branch_w_lt_linked,
+		uml_arm64_gadget_compare_register_branch_w_gt_linked,
+		uml_arm64_gadget_compare_register_branch_w_le_linked,
+	};
+	if (condition >= wide_direct.size())
+		return nullptr;
+	if (linked)
+		return wide ? wide_linked[condition] : narrow_linked[condition];
+	return wide ? wide_direct[condition] : narrow_direct[condition];
+}
+
 /* Fused CMP-immediate + B.cond. Conditions 14 and 15 are the always forms,
  * which the branch decoder folds before it ever reaches a fusion, so they have
  * no fused entry and select nothing here. */

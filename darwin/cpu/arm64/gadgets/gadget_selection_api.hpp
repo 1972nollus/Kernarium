@@ -311,6 +311,10 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] Gadget pointer_auth_load_gadget(bool, bool, bool, bool) noexcept;
 [[nodiscard]] std::uintptr_t pointer_auth_load_operand(unsigned int, unsigned int, std::int64_t) noexcept;
 [[nodiscard]] bool pointer_auth_lr_unavailable(std::uint32_t) noexcept;
+/* Fused guest CMP of two registers + B.cond. */
+[[nodiscard]] Gadget compare_register_branch_gadget(
+	bool wide, unsigned int condition, bool linked) noexcept;
+
 /* Fused guest CMP-immediate + B.cond. Returns nullptr for a condition with no
  * fused entry, which is the caller's signal to emit the two gadgets. */
 [[nodiscard]] Gadget compare_immediate_branch_gadget(
