@@ -5346,3 +5346,37 @@ distribution.
 Also worth noting: the Navigation multi-core regression from G101 is still open
 and was hypothesised to be contention on exactly this `mappings_mutex`. If the
 cheap change is valid, it tests that hypothesis directly and far sooner.
+
+### G118 addendum: the premise is false, measured
+
+The hypothesis above was tested rather than left standing, by instrumenting
+`translate()` to count how often it observes a non-zero execution-reader count
+and running the miss-heavy probe:
+
+| | translates |
+| --- | ---: |
+| inside an execution-reader window | 10,682,369 |
+| **outside** | **131,587** |
+
+**About 1.2% of translates run outside a reader window**, so the execution gate
+does *not* already exclude every translate from a concurrent mapping mutation,
+and dropping the `shared_lock` in `translate()` would be a data race on the host
+security boundary for roughly one call in eighty. **The cheap alternative is
+withdrawn as stated.**
+
+This is worth the instrumentation it cost. The argument was structurally sound -
+every mutation really does quiesce, and the two production callers really are
+reached from guest execution - and it was still wrong, because some path reaches
+`translate()` outside the window. An argument of that shape is exactly what gets
+acted on without checking.
+
+**What remains actionable.** The invariant is not true, but it may be
+*establishable*: 1.2% is small enough that the offending callers are likely one
+or two specific paths rather than a pervasive pattern. Identifying them - by
+splitting the counter per call site across `tlb.cpp` and `StaticGuestMemory`, and
+across the fault, cross-page and translation-time fetch paths - would say whether
+they can be brought inside a reader window or must keep the lock. If they can,
+the cheap change becomes available again and the assertion proposed above turns
+it into something the suite enforces. If they cannot, B-1 step 2 needs the radix
+table after all, and this measurement is the justification for spending that
+effort rather than an assumption that it was needed.
