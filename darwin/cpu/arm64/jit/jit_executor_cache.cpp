@@ -11,13 +11,53 @@ namespace uml::cpu::arm64 {
   if (block.instruction_count == 0 ||
       block.instruction_count > guest_words.size())
     return JitCacheValidationResult::mismatch;
-  for (std::size_t index = 0; index < block.instruction_count; ++index) {
-    std::array<std::byte, sizeof(std::uint32_t)> current{};
-    if (!memory.fetch(block.pc + index * sizeof(std::uint32_t), current))
-      return JitCacheValidationResult::fault;
-    if (std::memcmp(current.data(), &guest_words[index],
-                    current.size()) != 0)
-      return JitCacheValidationResult::mismatch;
+
+  /*
+   * This runs on every stale hit in production builds, and it used to do the
+   * job in the slowest available shape: one virtual fetch through the software
+   * TLB per instruction, plus a four-byte memcmp, up to 64 times, for at most
+   * 256 contiguous bytes. Fetch page-bounded runs instead and compare each run
+   * once, which is the same page-splitting loop fetch_instruction_window()
+   * already uses in the gadget executor.
+   *
+   * Fault reporting has to stay exactly as it was: the old loop returned
+   * mismatch as soon as a word differed, and only reported fault for an
+   * unreadable word it actually reached. A bulk fetch cannot tell which of
+   * those applies when it fails, so a failed run falls back to the
+   * word-at-a-time path over that run rather than reporting either outcome
+   * for the whole span.
+   */
+  constexpr std::uint64_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
+  SavedGuestWords fetched{};
+  std::size_t index = 0;
+  while (index < block.instruction_count) {
+    const auto address = block.pc + index * sizeof(std::uint32_t);
+    const auto page_remaining =
+        guest_page_size - (address & (guest_page_size - 1));
+    auto run = std::min<std::size_t>(
+        block.instruction_count - index,
+        static_cast<std::size_t>(page_remaining / sizeof(std::uint32_t)));
+    /* A valid A64 pc is word aligned; keep a malformed one deterministic
+     * rather than constructing an empty span. */
+    if (run == 0)
+      run = 1;
+    const auto words = std::span{fetched}.subspan(index, run);
+    if (memory.fetch(address, std::as_writable_bytes(words))) {
+      if (std::memcmp(words.data(), &guest_words[index],
+                      run * sizeof(std::uint32_t)) != 0)
+        return JitCacheValidationResult::mismatch;
+      index += run;
+      continue;
+    }
+    for (std::size_t step = 0; step < run; ++step) {
+      std::array<std::byte, sizeof(std::uint32_t)> word{};
+      if (!memory.fetch(address + step * sizeof(std::uint32_t), word))
+        return JitCacheValidationResult::fault;
+      if (std::memcmp(word.data(), &guest_words[index + step],
+                      word.size()) != 0)
+        return JitCacheValidationResult::mismatch;
+    }
+    index += run;
   }
 
   /*
