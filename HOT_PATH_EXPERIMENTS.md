@@ -4702,3 +4702,63 @@ constraint. Step 3, keeping the loop rolled, is satisfied by construction.
 
 This also remains largely moot if C-1's page-granular code epochs land, since
 most stale hits would stop happening at all.
+
+## G110: G-7, the gadget bank's size budget, measured rather than assumed
+
+No runtime change kept. G-7 asked for an I-cache and binary-size budget before
+any bank-growing trial is judged. Rather than assume a cost, the question was
+posed as an experiment using an artifact G106 already produced: does making the
+bank **smaller** by a realistic amount help?
+
+### The experiment
+
+G106's fold removes 3,968 instructions from the bank. Padded, it holds the
+layout and measures flat. **Unpadded** it shrinks `__text` from 3,868,312 to
+3,852,440 - **15,872 bytes, 0.41%** - and moves 7,622 of 9,663 entries. That is
+exactly the change a bank-size question wants: same work, less code, different
+layout.
+
+Matched pair, back to back, 10 vCPUs, `--engine gadgets`, host load medians 4.70
+and 4.91 cores.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline, full bank (result) | 78 | 487 |
+| candidate, 15.9 KiB smaller (result) | 78 | 479 |
+
+**Single-core is identical and multi-core is -1.6%, inside the 1.7% band.**
+Shrinking the bank by 0.41% and relocating three quarters of its entries
+produced nothing measurable, in either direction.
+
+### The budget this establishes
+
+The video's "~2% from code-cache pressure alone" came from rolling up an
+unrolled loop in a much smaller code footprint. It does not reproduce here at
+this scale, and the reason is visible in the shape of the bank: 9,663 entries
+across 3.8 MB is far larger than any L1I regardless, and a translated block
+executes a scattered handful of them, so the working set is set by which gadgets
+a workload uses rather than by how large the bank is in total.
+
+**Consequently the constraint G-7 was written to impose is much looser than the
+plan assumed.** A bank-growing trial of this magnitude - G-2's fused pairs,
+G-4's duplicated SIMD variants - should not be expected to pay an I-cache
+penalty at 0.4%, and should not be scoped down on that fear. What remains worth
+watching is a growth large enough to change the *number of distinct entries a
+hot loop touches*, which is a different quantity from total bank size and is not
+measured by this experiment.
+
+**Not measured:** L1I and iTLB miss rates directly. That needs performance
+counters, which on macOS means private kperf interfaces or Instruments rather
+than anything scriptable from this harness. The end-to-end experiment above
+answers the question G-7 was actually asked - whether to constrain bank growth -
+without them, and is recorded in their place rather than pretending they were
+collected.
+
+### Binary size
+
+The 15,872 bytes are real and the fold is correct - it passes 572/572 with the
+same semantics. It is not kept, because its only measured effect on speed is a
+multi-core move in the wrong direction inside the noise band, and shipping a
+change on that basis is what this log exists to prevent. It is recorded here as
+available if shipped iOS binary size ever becomes a binding constraint, where
+0.4% of `__text` would be judged on size rather than on speed.
