@@ -5380,3 +5380,44 @@ the cheap change becomes available again and the assertion proposed above turns
 it into something the suite enforces. If they cannot, B-1 step 2 needs the radix
 table after all, and this measurement is the justification for spending that
 effort rather than an assumption that it was needed.
+
+### G118 second addendum: the exception is a single named caller
+
+The 1.2% was attributed by bucketing out-of-window translates on
+`__builtin_return_address(0)` and resolving the buckets with `dladdr`. There is
+exactly one:
+
+| out-of-window translates | caller |
+| ---: | --- |
+| 131,072 | `darwin_uml_static_vm_retry_fault` |
+
+Nothing else appears. Every translate from the software-TLB miss path and from
+`StaticGuestMemory` is inside a reader window, as the argument predicted; the
+fault-retry path is the sole exception, and it reaches `translate()` through
+`with_address_space` from `darwin_uml_vm_retry_fault` in `static_api.cpp` -
+the host-side fault handler, which by construction runs when guest execution has
+already stopped rather than inside it.
+
+**That makes the cheap change available again in a narrower form.** The hot path
+does not need the lock; one cold caller does. Two shapes fit:
+
+1. Split the entry points - an unlocked `translate()` for the execution path and
+   a locked `translate_unsynchronised()` for `retry_fault` - so the fault handler
+   keeps excluding writers while the miss path stops paying for it. Smallest
+   change, and the asymmetry is explicit in the names.
+2. Bring `retry_fault` inside a reader window, restoring a single uniform
+   invariant that the proposed debug assertion could then enforce everywhere.
+   Cleaner, but it changes when the fault handler can run against a quiescing
+   writer, which needs its own thought.
+
+Either way the measurement now says which locks are load-bearing rather than
+leaving it to argument, and B-1 step 2's radix table is not needed to remove the
+`mappings_mutex` acquisition from the miss path. What the radix table would still
+buy is the hash lookup and the `shared_ptr<MappedBacking>` dereference, which is
+a smaller and separately measurable prize.
+
+**Sequence for the next attempt:** take shape 1, keep every other reader and all
+writers unchanged, add the debug assertion for the execution path only, measure
+with `guest_mmu_miss_walk_loop` and a matched gadget pair, and check Navigation
+multi-core specifically - G101 left it 3.4% down and hypothesised contention on
+exactly this mutex.
