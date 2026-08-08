@@ -4631,3 +4631,74 @@ controls and on single-core, and treat any multi-core aggregate move under about
 
 The gadget engine is not affected. Its measurements across the day span 77-80
 single-core and 479-498 multi-core, and it has no equivalent of this gate.
+
+## G109: B-5 step 1, bulk block validation
+
+Accepted on its focused control. `validate_stale_block()` is **23% faster** at
+ten workers with the candidate winning both orders and no overlap. The JIT
+Geekbench aggregate could not adjudicate it and is reported as such rather than
+dressed up either way - see G108.
+
+### The change
+
+`validate_stale_block()` runs on every stale hit in production builds, and G44
+measured 245,339 of 315,215 misses as stale-sequence retranslations of an
+already-cached PC, so this is a hot path rather than a corner. It was written in
+the slowest available shape: up to 64 iterations, each a full virtual
+`StaticGuestMemory::fetch()` through the software TLB plus a four-byte `memcmp`,
+for at most 256 contiguous bytes.
+
+It now fetches page-bounded runs and compares each run once, reusing the
+page-splitting loop `fetch_instruction_window()` already uses in the gadget
+executor.
+
+**Fault reporting is preserved exactly, and that is the whole correctness
+argument.** The old loop returned `mismatch` as soon as a word differed and
+`fault` only for an unreadable word it actually reached, so a span containing a
+mismatch *before* an unreadable word reports mismatch. A bulk fetch that fails
+cannot tell which case it is in, so a failed run falls back to the
+word-at-a-time path over that run rather than reporting either outcome for the
+whole span. The plan called for exactly this and it is the reason the change is
+low risk.
+
+### Measured
+
+`guest_syscall_boundary_loop`, `--engine jit`, 10 vCPUs, 10 workers, median of 3:
+
+| | candidate | baseline |
+| --- | ---: | ---: |
+| pass A | 26.638 s | 34.006 s |
+| pass B (reversed) | 25.180 s | 32.965 s |
+
+About 23%, no overlap. Syscall-heavy guest work advances the change counters
+constantly, so nearly every lookup arrives as a stale hit and this function
+dominates - which is why the effect is so visible here and would not be on a
+compute-bound workload.
+
+### What the aggregate says, which is nothing
+
+| `--engine jit` | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 250 | 829 |
+| candidate (result) | 242 | 771 |
+
+Read on its own this looks like a 7% multi-core regression. It is not
+interpretable: G108 measured 701 and 834 from consecutive runs of one unchanged
+image, so this pair sits inside the band, and the single-core gap of 250 to 242
+is inside the 235-250 range the same engine produced all day. **Acceptance
+therefore rests on the focused control and on the structural argument - strictly
+less work for identical semantics - not on the aggregate.** Recorded that way
+deliberately: this is the same shape of evidence that produced G102's withdrawn
+rejection, read correctly this time.
+
+### Not done
+
+Step 2, the video's NEON compare accumulating with `MLA` or a `UABA` digest, is
+deliberately not attempted. G105 measured Apple P-cores at three loads against
+four vector operations per cycle, the inverse of the Cortex-A7xx ratio the
+video's 22-38% came from, so the vectorisation half of B-5 has no reason to pay
+here and would be spending vector width to relieve a port that is not the
+constraint. Step 3, keeping the loop rolled, is satisfied by construction.
+
+This also remains largely moot if C-1's page-granular code epochs land, since
+most stale hits would stop happening at all.
