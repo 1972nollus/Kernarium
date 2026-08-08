@@ -5421,3 +5421,67 @@ writers unchanged, add the debug assertion for the execution path only, measure
 with `guest_mmu_miss_walk_loop` and a matched gadget pair, and check Navigation
 multi-core specifically - G101 left it 3.4% down and hypothesised contention on
 exactly this mutex.
+
+## G119: removing the mapping lock from the miss path - measured, and it buys nothing
+
+Implemented, measured, reverted. This closes out B-1 step 2's central premise.
+
+### The change
+
+Following G118's attribution, `translate()` skipped the `shared_lock` on
+`mappings_mutex` whenever the calling thread already held its own execution
+reader window on that generation - which the instrumentation put at 98.8% of
+translates - and kept the lock otherwise, so `retry_fault` and any future
+out-of-window caller stay correct by falling through the branch rather than by
+an invariant someone has to remember.
+
+The test is deliberately about *this* thread rather than the gate's reader
+count: a non-zero count belonging to other threads proves nothing, because a
+writer that has closed the gate proceeds the moment the count reaches zero and a
+caller outside a window would still be reading.
+
+572/572 unit and 8/8 TSan.
+
+### Measured
+
+`guest_mmu_miss_walk_loop`, ten threads sharing one address space so every one
+of them contends for the same `mappings_mutex`, medians of 3 and then of 5, in
+alternating order:
+
+| | candidate | baseline |
+| --- | ---: | ---: |
+| round 1 | 5.340 s, 4.871 s | 4.962 s, 4.837 s |
+| round 2 | 4.978 s, 5.142 s | 5.035 s, 5.053 s |
+
+**Every pair overlaps.** Removing the lock from 99% of the acquisitions on the
+probe built to maximise contention for it produces no measurable change, so it
+is reverted: a change on the host security boundary that buys nothing is pure
+risk.
+
+### What this settles
+
+B-1's premise was that "two mutex acquisitions, two hash lookups, and contended
+atomic refcount round-trips per miss" cost real time, and that libc++'s
+`shared_mutex` is expensive because `lock_shared()` takes a real internal
+`std::mutex`. G101 confirmed half of that - removing the **registry** lock and
+its hash lookup was worth 21% on this same probe and 1.55% of Geekbench
+multi-core. G119 now shows the other half is worth nothing: the per-generation
+`mappings_mutex` is not where the time goes.
+
+**So B-1 step 2's radix table is not justified by lock removal.** What remains of
+its case is the hash lookup and the `shared_ptr<MappedBacking>` dereference on a
+hit - a much narrower claim than the plan makes, and one that should be measured
+on its own before a lock-free three-level table is written across 36 call sites
+on the correctness-critical host boundary.
+
+The difference between the two locks is worth naming, because it is the
+generalisable part: the registry lock was **process-global**, taken by every vCPU
+thread for every miss regardless of which guest process they were in, while
+`mappings_mutex` is **per generation**, so it is only contended by threads inside
+the same guest address space and is already sharded by exactly the thing that
+varies. G42's 16,384-set TLB in front of it means the surviving traffic is low
+enough that the acquisition does not show up.
+
+Navigation multi-core, still 3.4% down since G101 and hypothesised to be
+contention on this mutex, is therefore **not** explained by it. That hypothesis
+is withdrawn and the section needs a different explanation.
