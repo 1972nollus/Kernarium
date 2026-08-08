@@ -59,7 +59,16 @@ Counts &thread_counts()
 	return *counts;
 }
 
-[[nodiscard]] std::string symbol_name(const void *address)
+/* dladdr is far too slow to call per entry per dump once the table reaches
+ * twenty thousand pairs, and the dump repeats over the whole table each time.
+ * Addresses repeat heavily across pairs, so one lookup each is enough. */
+std::unordered_map<const void *, std::string> &symbol_cache()
+{
+	static std::unordered_map<const void *, std::string> cache;
+	return cache;
+}
+
+[[nodiscard]] std::string resolve_symbol_name(const void *address)
 {
 	Dl_info info{};
 	if (address != nullptr && dladdr(address, &info) != 0 &&
@@ -74,6 +83,14 @@ Counts &thread_counts()
 	char buffer[32];
 	std::snprintf(buffer, sizeof(buffer), "%p", address);
 	return buffer;
+}
+
+[[nodiscard]] const std::string &symbol_name(const void *address)
+{
+	auto &cache = symbol_cache();
+	if (const auto found = cache.find(address); found != cache.end())
+		return found->second;
+	return cache.emplace(address, resolve_symbol_name(address)).first->second;
 }
 
 void dump()
