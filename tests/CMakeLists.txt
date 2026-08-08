@@ -152,8 +152,11 @@ endif()
 if(UML_BUILD_UNIT_TESTS AND UML_BUILD_TOOLING_TESTS)
     list(APPEND _uml_required_conditional_tests
         arm64-instruction-evidence-reset
-        arm64-instruction-evidence
-        arm64-input-materialization-join)
+        arm64-instruction-evidence)
+    if(UML_INSTRUCTION_INPUT_MATERIALIZATION)
+        list(APPEND _uml_required_conditional_tests
+            arm64-input-materialization-join)
+    endif()
 endif()
 if(UML_BUILD_UNIT_TESTS)
     if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
