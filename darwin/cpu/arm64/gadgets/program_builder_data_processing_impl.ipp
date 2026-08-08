@@ -13,6 +13,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 	auto &compiled = context.compiled;
 	auto &words = context.words;
 	const auto &options = context.options;
+	const auto &resolve_link = context.resolve_link;
 
 	if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
 		const unsigned operation = (instruction >> 29) & 3U;
@@ -110,18 +111,60 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		return DecodeResult::terminal;
 	} else if ((instruction & 0x1f80'0000U) == 0x1100'0000U) {
 		const bool set_flags = (instruction & 0x2000'0000U) != 0;
+		const bool subtract = (instruction & 0x4000'0000U) != 0;
+		const bool wide = (instruction & 0x8000'0000U) != 0;
 		const unsigned destination = instruction & 31U;
 		const unsigned source = (instruction >> 5) & 31U;
 		const auto immediate = static_cast<std::uintptr_t>(
 			(instruction >> 10) & 0xfffU) <<
 			((instruction & 0x0040'0000U) != 0 ? 12U : 0U);
-		emit(words, add_sub_immediate_gadget(
-			(instruction & 0x8000'0000U) != 0,
-			(instruction & 0x4000'0000U) != 0, set_flags,
-			source == 31U, destination == 31U));
-		emit(words, destination |
+		const auto operand = destination |
 			(static_cast<std::uintptr_t>(source) << 8) |
-			(immediate << 16));
+			(immediate << 16);
+		/* Guest CMP is SUBS with an XZR destination, and it is followed by
+		 * B.cond often enough to be worth one entry rather than two. Only
+		 * the plain B.cond form is fused: BC.cond shares the top byte but
+		 * carries a different hint, and Rn == 31 means SP here, so both fall
+		 * through to the unfused pair unchanged. A condition with no fused
+		 * entry - the always forms - selects nullptr and does the same. */
+		if (set_flags && subtract && destination == 31U &&
+		    source != 31U && !context.following.empty() &&
+		    (context.following.front() & 0xff00'0010U) == 0x5400'0000U) {
+			const auto branch = context.following.front();
+			if (const auto fused = compare_immediate_branch_gadget(
+				    wide, branch & 15U, resolve_link != nullptr);
+			    fused != nullptr) {
+				const auto branch_address =
+					address + sizeof(instruction);
+				const auto displacement = sign_extend(
+					static_cast<std::uint64_t>(
+						(branch >> 5) & 0x7ffffU) << 2,
+					21);
+				const auto target = static_cast<std::uint64_t>(
+					static_cast<std::int64_t>(branch_address) +
+					displacement);
+				const auto fallthrough =
+					branch_address + sizeof(branch);
+				emit(words, fused);
+				emit(words, operand);
+				if (resolve_link) {
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(target)));
+					emit(words, reinterpret_cast<std::uintptr_t>(
+						resolve_link(fallthrough)));
+				} else {
+					emit(words, target);
+					emit(words, fallthrough);
+				}
+				/* Both guest instructions retired. */
+				compiled += 2;
+				return DecodeResult::terminal;
+			}
+		}
+		emit(words, add_sub_immediate_gadget(
+			wide, subtract, set_flags,
+			source == 31U, destination == 31U));
+		emit(words, operand);
 	} else if ((instruction & 0x1f20'0000U) == 0x0b00'0000U ||
 		   (instruction & 0x1fe0'0000U) == 0x0b20'0000U) {
 		const bool extended = (instruction & 0x0020'0000U) != 0;

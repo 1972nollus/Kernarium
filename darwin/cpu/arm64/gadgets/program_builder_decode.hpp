@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory_resource>
+#include <span>
 #include <vector>
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -13,6 +14,11 @@ struct DecodeContext final {
 	std::uint64_t guest_address;
 	std::uint64_t address;
 	std::uint32_t instruction;
+	/* The instructions after this one, for the decoders that fuse a pair into
+	 * a single entry. Empty at the end of the window, so a decoder must check
+	 * before reading it, and a fusing decoder owns advancing `compiled` past
+	 * everything it consumed. */
+	std::span<const std::uint32_t> following;
 	std::size_t &compiled;
 	bool &program_accesses_fp_state;
 	std::pmr::vector<std::uintptr_t> &words;

@@ -340,6 +340,89 @@ gadget branch_\name\()_linked
 	follow_block_link x8
 .endm
 
+/* G-2 superinstruction: guest CMP-immediate immediately followed by B.cond.
+ *
+ * That pair is the most common control-flow shape there is, and unfused it
+ * costs a full threaded dispatch between two gadgets that have nothing to say
+ * to each other except the flags. Worse, the flags make the round trip through
+ * a system register twice - the compare ends with `mrs x27, nzcv` and the
+ * branch begins with `msr nzcv, x27` - purely because the two halves are
+ * separate entries.
+ *
+ * Fusing removes the dispatch and the `msr`. The `mrs` stays: the guest's NZCV
+ * is architecturally live after the branch, so the block must leave it in x27
+ * whichever way the branch goes. MRS does not disturb PSTATE, so it can sit
+ * between the SUBS and the CSEL that reads its flags.
+ *
+ * Stream operand is the compare's own encoding - Rn at bits 8..12, immediate
+ * from bit 16 - followed by the taken and fall-through words the conditional
+ * branch already took. Rn == 31 means SP for this instruction class and is left
+ * to the unfused path rather than given a variant.
+ */
+.macro compare_immediate_branch bits64, width, name, condition
+gadget compare_immediate_branch_\width\()_\name
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream]
+	ubfx w10, w8, #8, #5
+	ldr x15, [_cpu, x10, lsl #3]
+	lsr x11, x8, #16
+	.if \bits64
+	subs xzr, x15, x11
+	.else
+	subs wzr, w15, w11
+	.endif
+	mrs x27, nzcv
+	csel x9, x19, x20, \condition
+	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+.endm
+
+.macro compare_immediate_branch_linked bits64, width, name, condition
+gadget compare_immediate_branch_\width\()_\name\()_linked
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream]
+	ubfx w10, w8, #8, #5
+	ldr x15, [_cpu, x10, lsl #3]
+	lsr x11, x8, #16
+	.if \bits64
+	subs xzr, x15, x11
+	.else
+	subs wzr, w15, w11
+	.endif
+	mrs x27, nzcv
+	csel x8, x19, x20, \condition
+	follow_block_link x8
+.endm
+
+.macro compare_immediate_branch_pair name, condition
+compare_immediate_branch 1, x, \name, \condition
+compare_immediate_branch 0, w, \name, \condition
+compare_immediate_branch_linked 1, x, \name, \condition
+compare_immediate_branch_linked 0, w, \name, \condition
+.endm
+
+compare_immediate_branch_pair eq, eq
+compare_immediate_branch_pair ne, ne
+compare_immediate_branch_pair hs, hs
+compare_immediate_branch_pair lo, lo
+compare_immediate_branch_pair mi, mi
+compare_immediate_branch_pair pl, pl
+compare_immediate_branch_pair vs, vs
+compare_immediate_branch_pair vc, vc
+compare_immediate_branch_pair hi, hi
+compare_immediate_branch_pair ls, ls
+compare_immediate_branch_pair ge, ge
+compare_immediate_branch_pair lt, lt
+compare_immediate_branch_pair gt, gt
+compare_immediate_branch_pair le, le
+
+.purgem compare_immediate_branch_pair
+.purgem compare_immediate_branch
+.purgem compare_immediate_branch_linked
+
 conditional_branch eq, eq
 conditional_branch ne, ne
 conditional_branch hs, hs

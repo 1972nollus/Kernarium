@@ -58,7 +58,12 @@ BuildResult Builder::build(
 		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
-	for (const auto instruction : instructions) {
+	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
+	 * see what follows the instruction it was handed. `compiled` is the loop
+	 * position as well as the retired count, and a fusing decoder advances it
+	 * past both instructions itself. */
+	while (compiled < instructions.size()) {
+		const auto instruction = instructions[compiled];
 		program_accesses_fp_state = program_accesses_fp_state ||
 			uml::cpu::arm64::detail::
 				instruction_accesses_fp_state(instruction);
@@ -76,6 +81,7 @@ BuildResult Builder::build(
 			guest_address,
 			address,
 			instruction,
+			instructions.subspan(compiled + 1),
 			compiled,
 			program_accesses_fp_state,
 			words,
