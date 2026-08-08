@@ -11,7 +11,6 @@ struct Provider final {
 	int (*irq_fd)(void *){};
 	int (*read)(void *, void *, std::size_t){};
 	int (*write)(void *, const void *, std::size_t){};
-	void (*stop)(void *){};
 };
 
 [[nodiscard]] Provider resolve_active_provider() noexcept;

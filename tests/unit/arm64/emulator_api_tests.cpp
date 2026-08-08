@@ -44,6 +44,11 @@ extern "C" void uml_slirp_net_destroy(void *) noexcept;
 
 namespace {
 
+template<typename Provider>
+concept HasStopCallback = requires(Provider provider) { provider.stop; };
+
+static_assert(!HasStopCallback<uml::network::Provider>);
+
 bool native_arguments_valid;
 bool execution_option_was_stripped;
 bool native_inputs_were_mutable;
