@@ -5560,3 +5560,88 @@ over the domain-lifetime suite is the gate that matters.
 
 That is a self-contained piece of concurrency work with a 31% probe result
 waiting behind it, and it is the single highest-value item left in Part B.
+
+## G121: the lifecycle lease replaced with a published per-thread flag
+
+Accepted. This is what B-1 was looking for, and the plan did not name it.
+
+### The change
+
+Every call through `with_address_space` constructed an `AddressSpaceAccess`,
+whose constructor took a `shared_lock` on the address space's `lifecycle_mutex_`
+and held it for the whole operation - the mechanism by which `retire()` waited
+for in-flight work. That lock is **per address space**, so all ten vCPU threads
+of one guest process serialize on it.
+
+It is replaced by the pattern `jit_publication.hpp` already uses for
+`jit_store_participants`: each thread publishes the address space it is operating
+on into its own slot, and teardown scans the slots instead of excluding everyone.
+
+**The fences are the design, not a detail.** An access stores its slot and then
+reads `retired_`; retirement stores `retired_` and then reads the slots. Both
+sides are `seq_cst`, so the two stores are totally ordered and at least one side
+observes the other - an access the scan does not see is guaranteed to see the
+retirement and back out. Relaxing either side reopens exactly the window the
+lease closed. The slot registry takes a mutex for registration and for the scan,
+but an access clears its own slot from its destructor without it, so a scan
+always makes progress even while an exiting thread waits to unregister.
+
+### Measured
+
+| `guest_mmu_miss_walk_loop`, 10 threads, median of 3 | candidate | baseline |
+| --- | ---: | ---: |
+| both orders | 3.544 s, 3.462 s | 4.905 s, 4.797 s |
+
+**About 28%**, against 31% for the throwaway build in G120 that simply deleted
+the lock - so the slot store and load cost roughly a tenth of what they replace.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 81 | 507 |
+| candidate (result) | 81 | **515** |
+
+Single-core identical, multi-core **+1.6%**, with **13 of 16 multi-core sections
+improving** - led by Object Remover +10.1%, Photo Filter +5.2%, PDF Renderer
++3.9% and Structure from Motion +3.6%. Only Horizon Detection -1.5% and Object
+Detection -0.4% move against it, both inside their spread.
+
+The candidate ran on the **busier** host of the two - load medians 3.41 against
+1.93 cores - so the comparison is if anything against it. Gates: 572/572 unit,
+45/45 tooling, **8/8 TSan**, which is the gate that matters for a change that
+replaces a lock with fences.
+
+### Where the campaign now stands against the refactor
+
+G100 recorded the pre-refactor build at 81 single-core and 514 multi-core, and
+the post-refactor regression that started this campaign at 77 and 477.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| pre-refactor (G100's record) | 81 | 514 |
+| post-refactor band | 77 | 477 |
+| now | **81** | **515** |
+
+**Stated carefully:** the 514 was measured on a different day, and G101 is the
+entry that established cross-day comparisons are not safe here - the same binary
+read 80/495 and 79/479 on consecutive days. Today's host is quieter than most of
+this campaign's runs, which lifts the whole level. So the right claim is that the
+matched pairs show the regression closed by the changes recorded here, not that
+515 and 514 are directly comparable numbers.
+
+### What this says about B-1 as the plan wrote it
+
+The plan proposed three steps and named two locks. Measured:
+
+| lock | scope | worth |
+| --- | --- | ---: |
+| registry `mutex_` (step 1) | process-global | 21% probe, +1.55% Geekbench MC |
+| `lifecycle_mutex_` lease (**not in the plan**) | per address space | **28% probe, +1.6% Geekbench MC** |
+| `mappings_mutex` (step 2's target) | per generation | 0% |
+
+The predictor is scope, not the lock's type or the cost of libc++'s
+`shared_mutex`. Both locks that paid are taken by every thread touching the same
+address space on every miss; the one that did not is sharded per generation and
+sits behind G42's TLB. A future reader of this plan should take from B-1 that the
+question to ask of a lock is how many threads share it and how often, and that
+the answer is cheap to get by deleting it in a throwaway build and measuring
+before designing a replacement.
