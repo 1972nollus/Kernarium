@@ -4478,3 +4478,85 @@ mechanical, the correctness risk is understood, and the unit suite covers it -
 an earlier version of this transform with a fixed-line-count scope silently left
 `str d0, [x13]` un-rebased in one gadget and was caught immediately by
 `arm64-simd-shift-immediate-left`.
+
+## G107: G-1, hoisting the successor fetch - measured on one family, not adopted
+
+Not rejected and not accepted. A representative family was converted to establish
+what the mechanism is worth before paying for the bank-wide version, and it is
+worth much less than the plan assumed. The trial is reverted; the item stays
+open with its cost now known.
+
+### What was converted
+
+`add_sub_immediate_fast`, chosen because it is hot, has a dedicated control in
+`guest_add_immediate_loop.S`, and is the only shape where the change is
+unambiguously safe:
+
+```
+-	ldr x8, [_stream], #8      ...body...   next_gadget   (ldr x8; br x8)
++	ldp x8, x14, [_stream], #16  ...body...   br x14
+```
+
+Three properties make it safe here that do **not** hold bank-wide, and they are
+the real cost of the full change:
+
+1. **It is never the last entry in a block.** `Builder::build()` always appends a
+   terminal gadget, so the word after the operand exists. A terminal gadget that
+   prefetched would read past the end of `program.words()`, and
+   `program_contains_stream()` bounds `stream` to `[begin, end)`, so it would
+   also stop finding its own program. The bank-wide version needs either an exact
+   list of gadgets that can end a block or a sentinel word appended to every
+   program.
+2. **It touches no memory, so it has no fault path.** Prefetching advances
+   `_stream` past the successor before the body runs, so any gadget that can
+   fault mid-body would be observed at a stream position one word further along
+   than today, which the cold-exit and checkpoint machinery reads.
+3. **The body leaves x14 free.** There is no spare register bank-wide - the body
+   here already uses x8, x9, x10, x11, x15, x16 and x27 - so the full version
+   needs a reserved successor register and an audit that no gadget clobbers it.
+
+Layout held constant: **0 of 9,663 entries moved, `__text` byte-identical.**
+572/572 unit.
+
+### Measured
+
+| `guest_add_immediate_loop`, median of 3 | candidate | baseline |
+| --- | ---: | ---: |
+| P-core, both orders | 3.360 s, 3.353 s | 3.372 s, 3.373 s |
+| E-core, round 1 | 8.895 s, 8.593 s | 8.395 s, 8.478 s |
+| E-core, round 2 (reversed) | 8.449 s, 8.420 s | 8.451 s, 8.392 s |
+
+**P-core: +0.55%**, small but clean - the candidate's worst run beats the
+baseline's best. **E-core: inconclusive.** Round 1 looked like a 3.5%
+regression and round 2 overlaps completely, so round 1's two high candidate
+samples were noise. Recorded that way rather than picking the half that suits
+either story.
+
+### Why so little, and what the trial could not test
+
+The plan expected "one fewer load and one fewer stream update per gadget" to be
+a direct throughput gain because loads are the scarce port. G105 confirms loads
+are scarce - three per cycle on P-cores, two on E-cores - but the gadget body is
+not short of load slots, it is waiting on the indirect branch. LDP also very
+likely cracks to two micro-operations on these cores, so "one fewer load" is one
+fewer *instruction* rather than one fewer load slot, which is the same shape as
+G106 and comes out the same way.
+
+**The trial cannot test the mechanism's other half.** The plan's second claim is
+that resolving the branch target at the top of the body lets a mispredict be
+detected and repaired earlier, which pays on polymorphic gadget sequences.
+`guest_add_immediate_loop` runs one gadget repeatedly, so its indirect branch is
+perfectly predicted and there is no mispredict to repair sooner. Testing that
+claim needs enough of the bank converted for a mixed workload to run prefetched
+gadgets throughout - which is the whole change, including the reserved register
+and the terminal-gadget work above.
+
+### Disposition
+
+G-1 stays open, with the balance of evidence changed: the load-throughput half of
+its rationale is measured at about half a percent on the family's own control,
+and the mispredict half is untested and untestable incrementally. A future
+attempt should treat the reserved successor register and the program sentinel as
+the first deliverables, not as details, and should measure against a
+deliberately polymorphic probe rather than a single-gadget loop - no such probe
+exists yet.
