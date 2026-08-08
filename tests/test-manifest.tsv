@@ -5,7 +5,7 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cmake	tooling	retained	generated CTest registrations require exactly one manifest-matching suite label
 -	symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained	rejects link, object, aggregate, and include edges in both directions across every concrete engine kind
 -	engine-object-boundary-audit	tests/tooling/cmake/test_engine_object_boundaries.py	tooling	retained	proves neutral helper ownership, production conformance composition, dead-symbol removal, stable engine entry disassembly, and that the five gadget decode families keep one fragment each behind exactly one textual composer
--	gadget-bank-layout-snapshot	tests/tooling/cmake/test_gadget_bank_layout.py	tooling	retained	self-tests the layout comparator and records every gadget entry offset and 64-byte cache-line phase so a later trial can prove it moved no unrelated entry
+-	gadget-bank-layout-snapshot	tests/tooling/cmake/test_gadget_bank_layout.py	tooling	retained	self-tests the layout comparator and records every gadget entry offset and 64-byte cache-line phase so a later trial can prove it moved no unrelated entry, reading the linked image where one is built because the gadget objects are bitcode under IPO and hide the 87 C++-defined entries
 -	arm64-engine-harness	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained	raw concrete input recorder deduplication and conflicting-payload rejection
 -	arm64-deferred-fp-state	tests/unit/arm64	unit	retained	existing registered test

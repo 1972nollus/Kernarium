@@ -314,6 +314,23 @@ def main() -> int:
         type=object_list,
         help="pipe-separated gadget objects from the accepted build",
     )
+    # Reading the linked image is strictly better than reading the objects, and
+    # since G99 turned on interprocedural optimization it is the only way to see
+    # the whole bank: the gadget objects are now bitcode, so nm reports the
+    # 9,576 entries defined in assembly and none of the 87 defined in C++. Those
+    # 87 are not inert - G101 caught them moving 752 bytes and changing
+    # cache-line phase while every assembly entry stayed put, which an
+    # object-based snapshot cannot see at all.
+    parser.add_argument(
+        "--image",
+        type=object_list,
+        help="linked image to read the bank from, in place of --objects",
+    )
+    parser.add_argument(
+        "--baseline-image",
+        type=object_list,
+        help="linked image from the accepted build",
+    )
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--write-baseline", type=Path)
     parser.add_argument("--acknowledge", type=Path)
@@ -322,19 +339,25 @@ def main() -> int:
     arguments = parser.parse_args()
 
     self_test()
-    if arguments.self_test and arguments.objects is None:
+    sources = arguments.image or arguments.objects
+    if arguments.self_test and sources is None:
         print("gadget bank layout comparator self-test passed")
         return 0
 
     require(
-        arguments.objects is not None,
-        "--objects is required unless only --self-test is requested",
+        sources is not None,
+        "--image or --objects is required unless only --self-test is requested",
     )
     require(
-        arguments.baseline is None or arguments.baseline_objects is None,
-        "--baseline and --baseline-objects are mutually exclusive",
+        arguments.image is None or arguments.objects is None,
+        "--image and --objects are mutually exclusive",
     )
-    current = bank_layout(arguments.nm, arguments.objects)
+    baseline_sources = arguments.baseline_image or arguments.baseline_objects
+    require(
+        arguments.baseline is None or baseline_sources is None,
+        "--baseline and a baseline image/object set are mutually exclusive",
+    )
+    current = bank_layout(arguments.nm, sources)
 
     if arguments.write_baseline is not None:
         arguments.write_baseline.parent.mkdir(parents=True, exist_ok=True)
@@ -343,16 +366,16 @@ def main() -> int:
             f"wrote {len(current)} gadget entries to "
             f"{arguments.write_baseline}"
         )
-        if arguments.baseline is None and arguments.baseline_objects is None:
+        if arguments.baseline is None and baseline_sources is None:
             return 0
 
     require(
-        arguments.baseline is not None or arguments.baseline_objects is not None,
-        "--baseline, --baseline-objects, or --write-baseline is required",
+        arguments.baseline is not None or baseline_sources is not None,
+        "--baseline, a baseline image/object set, or --write-baseline is required",
     )
     baseline = (
-        bank_layout(arguments.nm, arguments.baseline_objects)
-        if arguments.baseline_objects is not None
+        bank_layout(arguments.nm, baseline_sources)
+        if baseline_sources is not None
         else read_layout(arguments.baseline)
     )
     patterns = read_acknowledgements(arguments.acknowledge)

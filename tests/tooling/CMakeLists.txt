@@ -141,12 +141,26 @@ uml_add_tooling_test(
 # The snapshot is what a later optimization trial compares against with
 # --baseline, so an accepted build always leaves behind the evidence needed to
 # prove that a gadget-body change did not move unrelated entries.
+#
+# Prefer the linked image. Since G99 turned on interprocedural optimization the
+# gadget objects are bitcode, so reading them shows the 9,576 entries defined in
+# assembly and none of the 87 defined in C++ - and G101 caught exactly those 87
+# moving 752 bytes and changing cache-line phase while every assembly entry
+# stayed put. A configuration that does not build the emulator still gets the
+# partial snapshot, which is better than none.
+if(TARGET uml-darwin)
+    set(_uml_gadget_layout_source --image $<TARGET_FILE:uml-darwin>)
+else()
+    set(_uml_gadget_layout_source
+        --objects $<JOIN:$<TARGET_OBJECTS:uml_arm64_gadgets>,|>)
+endif()
+
 uml_add_tooling_test(
     NAME gadget-bank-layout-snapshot
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_gadget_bank_layout.py
         --nm ${UML_ENGINE_NM_TOOL}
-        --objects $<JOIN:$<TARGET_OBJECTS:uml_arm64_gadgets>,|>
+        ${_uml_gadget_layout_source}
         --write-baseline
             ${CMAKE_BINARY_DIR}/reports/gadget-bank-layout.tsv
     LABELS audit;cpu
