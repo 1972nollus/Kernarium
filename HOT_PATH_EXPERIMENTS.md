@@ -5274,3 +5274,75 @@ that N can be fifty rather than three. The histogram, the lookahead in
 generation. That is a different and larger piece of engineering than the plan's
 step 3 describes, and it should be costed against the few tenths of a percent
 that three pairs bought before it is started.
+
+## G118: B-1 step 2 may not need a radix table at all
+
+No change made. This records a structural finding that, if its one open premise
+holds, replaces the plan's largest and riskiest item with a much smaller one. It
+is written down rather than acted on because the premise needs verification that
+belongs at the start of a session, not the end of one.
+
+### What the plan assumed
+
+B-1 step 2 proposes replacing the per-generation `unordered_map<page, Mapping>`
+and its `shared_mutex` with a lock-free three-level radix table, so a translate
+becomes three atomic loads with no lock. That is a substantial rewrite of the
+host security boundary - 36 `mappings` call sites, the mapping-change history
+`Tlb::reconcile_changes` depends on, and G3's additive versus destructive batch
+classification all have to survive it.
+
+### What the code actually does
+
+**Every mapping mutation already quiesces execution.** `map`, `protect`, `unmap`,
+`destroy`, `rebind` and `end_batch` each construct an `ExecutionQuiesce`, which
+closes the execution gate and then waits for `execution_reader_mask` to drain
+before touching the table:
+
+```
+	ExecutionQuiesce quiesce{state, generation};
+	std::lock_guard lock{state->mappings_mutex};
+```
+
+So a writer cannot run concurrently with anything inside an execution-reader
+window. If `translate()` only ever runs inside such a window - and its two
+production callers, the software TLB miss path in `tlb.cpp` and
+`StaticGuestMemory`, are both reached from guest execution - then **the
+`shared_lock` it takes on `mappings_mutex` is excluding something that the
+execution gate has already excluded.** Removing it would be a few lines rather
+than a rewrite, and would deliver most of what step 2 was for.
+
+### The premise that has to be verified first, and one thing that already
+### complicates it
+
+The mutex cannot simply be deleted: `copy_from_buffer` is a **kernel-side** reader
+that takes it and is explicitly designed to run in parallel with guest execution -
+its comment says so - so it is not inside an execution-reader window and writers
+must keep excluding it. The proposal is therefore narrower than "drop the lock":
+it is "drop the lock *in `translate()` only*", leaving every other reader and all
+writers exactly as they are. That is sound if and only if:
+
+1. every production caller of `translate()` is inside an execution-reader window,
+   for the whole call, on every path including the fault and cross-page ones; and
+2. the unit tests that call `darwin_uml_static_vm_translate` directly - there are
+   several, in `native_mmu_tests`, `static_mmu_batch_tests` and
+   `arm64_jit_cache_validation_tests` - either establish that window or are
+   single-threaded with respect to mapping mutation.
+
+Point 1 is the real work. It is an invariant the code currently does not state or
+enforce anywhere, and making it load-bearing means asserting it - a debug-build
+check that `translate()` observes a non-zero reader count would turn an argument
+into something the test suite proves on every run.
+
+### Why this is worth doing before the radix table
+
+If the invariant holds, the cheap change removes one of the two remaining locks
+on the miss path for a few lines and no new data structure, and the radix table's
+remaining value is the hash lookup and the `shared_ptr<MappedBacking>`
+dereference rather than the lock. That is a much smaller prize than the plan
+assumed, and it should be measured before committing to the rewrite - the same
+mistake G-2 made by assuming fusion was a large lever before G116 measured the
+distribution.
+
+Also worth noting: the Navigation multi-core regression from G101 is still open
+and was hypothesised to be contention on exactly this `mappings_mutex`. If the
+cheap change is valid, it tests that hypothesis directly and far sooner.
