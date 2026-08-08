@@ -1,6 +1,7 @@
 source	category	required_feature	runner	retention
 guest_add_immediate_loop.S	integer	base	run_guest_link_bench.py	Matched control for ADD-immediate lowering and gadget layout changes.
 guest_atomic_add_loop.S	atomic	lse	run_guest_link_bench.py	Private-counter control for direct atomic lowering and multicore scaling.
+guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP-immediate followed by B.cond, the shape a translated block ends on. The loop counters in the other probes are subs with a real destination and so never take the fused path.
 guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
 guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures fixed guest-register retention across a linked backward edge.
