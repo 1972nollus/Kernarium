@@ -187,6 +187,13 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-compiler-selection
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_toolchain.sh
+        ${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-next-version-policy-actions
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_next_version_policy.sh
     LABELS kernel;audit

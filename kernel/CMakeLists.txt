@@ -108,51 +108,76 @@ if(NOT UML_KERNEL_JOBS MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "UML_KERNEL_JOBS must be a positive integer")
 endif()
 find_program(UML_KERNEL_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
-find_program(UML_KERNEL_CC_EXECUTABLE NAMES clang REQUIRED)
-find_program(UML_KERNEL_HOST_CC_EXECUTABLE NAMES clang REQUIRED)
-find_program(UML_KERNEL_LD_EXECUTABLE NAMES ld.lld REQUIRED)
-get_filename_component(UML_KERNEL_TOOLCHAIN_DIR
-    "${UML_KERNEL_CC_EXECUTABLE}" DIRECTORY)
 
-# Prefer the LLVM binutils shipped beside a selected LLVM clang. Kbuild's
-# standard archive flags are not supported by Apple ar; this compatibility
-# choice is not a project promise that separate builds have identical hashes.
-# Users can still set any cache override explicitly for a nonstandard
-# toolchain.
-function(uml_default_kernel_llvm_tool variable tool)
-    set(_uml_kernel_tool_candidate_variable "_uml_kernel_${tool}_candidate")
-    find_program(${_uml_kernel_tool_candidate_variable}
-        NAMES "llvm-${tool}"
-        HINTS "${UML_KERNEL_TOOLCHAIN_DIR}"
-        NO_DEFAULT_PATH)
-    if(${_uml_kernel_tool_candidate_variable})
-        set(${variable} "${${_uml_kernel_tool_candidate_variable}}" PARENT_SCOPE)
-    else()
-        set(${variable} "" PARENT_SCOPE)
-    endif()
-endfunction()
-uml_default_kernel_llvm_tool(UML_KERNEL_AR_DEFAULT ar)
-uml_default_kernel_llvm_tool(UML_KERNEL_NM_DEFAULT nm)
-uml_default_kernel_llvm_tool(UML_KERNEL_OBJCOPY_DEFAULT objcopy)
-uml_default_kernel_llvm_tool(UML_KERNEL_OBJDUMP_DEFAULT objdump)
-uml_default_kernel_llvm_tool(UML_KERNEL_READELF_DEFAULT readelf)
-uml_default_kernel_llvm_tool(UML_KERNEL_STRIP_DEFAULT strip)
+# Apple Clang releases can accept __counted_by while failing on the type
+# expressions Linux 6.18 uses. Select by capability during configure rather
+# than allowing a long Kbuild to fail later. Explicit overrides are
+# authoritative; otherwise a caller-supplied toolchain root precedes the
+# configured compiler and PATH. LLVM companion tools come from the selected
+# compiler directory so an unrelated PATH entry cannot silently mix versions.
+include("${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake")
+set(_uml_kernel_toolchain_root_default "$ENV{UML_KERNEL_TOOLCHAIN_ROOT}")
+set(UML_KERNEL_TOOLCHAIN_ROOT "${_uml_kernel_toolchain_root_default}" CACHE PATH
+    "LLVM installation root used for the Linux kernel build")
+set(_uml_kernel_cc_default "$ENV{UML_KERNEL_CC}")
+set(UML_KERNEL_CC "${_uml_kernel_cc_default}" CACHE FILEPATH
+    "Explicit Linux kernel compiler override")
+set(_uml_kernel_host_cc_default "$ENV{UML_KERNEL_HOST_CC}")
+set(UML_KERNEL_HOST_CC "${_uml_kernel_host_cc_default}" CACHE FILEPATH
+    "Explicit Linux host-tool compiler override")
+set(_uml_kernel_ld_default "$ENV{UML_KERNEL_LD}")
+set(UML_KERNEL_LD "${_uml_kernel_ld_default}" CACHE FILEPATH
+    "Explicit Linux kernel linker override")
+foreach(_uml_kernel_tool IN ITEMS AR NM OBJCOPY OBJDUMP READELF STRIP)
+    set(_uml_kernel_tool_default "$ENV{UML_KERNEL_${_uml_kernel_tool}}")
+    set(UML_KERNEL_${_uml_kernel_tool} "${_uml_kernel_tool_default}"
+        CACHE FILEPATH
+        "Explicit Linux kernel llvm tool override")
+endforeach()
+
+uml_select_kernel_toolchain(
+    WORK_DIR "${CMAKE_CURRENT_BINARY_DIR}/toolchain-probes"
+    TOOLCHAIN_ROOT "${UML_KERNEL_TOOLCHAIN_ROOT}"
+    CONFIGURED_CC "${CMAKE_C_COMPILER}"
+    COMPILER_CANDIDATES clang
+    REQUESTED_CC "${UML_KERNEL_CC}"
+    REQUESTED_HOST_CC "${UML_KERNEL_HOST_CC}"
+    REQUESTED_LD "${UML_KERNEL_LD}"
+    REQUESTED_AR "${UML_KERNEL_AR}"
+    REQUESTED_NM "${UML_KERNEL_NM}"
+    REQUESTED_OBJCOPY "${UML_KERNEL_OBJCOPY}"
+    REQUESTED_OBJDUMP "${UML_KERNEL_OBJDUMP}"
+    REQUESTED_READELF "${UML_KERNEL_READELF}"
+    REQUESTED_STRIP "${UML_KERNEL_STRIP}"
+    OUT_CC _uml_kernel_selected_cc
+    OUT_HOST_CC _uml_kernel_selected_host_cc
+    OUT_LD _uml_kernel_selected_ld
+    OUT_AR _uml_kernel_selected_ar
+    OUT_NM _uml_kernel_selected_nm
+    OUT_OBJCOPY _uml_kernel_selected_objcopy
+    OUT_OBJDUMP _uml_kernel_selected_objdump
+    OUT_READELF _uml_kernel_selected_readelf
+    OUT_STRIP _uml_kernel_selected_strip)
+set(UML_KERNEL_CC_EXECUTABLE "${_uml_kernel_selected_cc}" CACHE INTERNAL
+    "Capability-checked Linux kernel compiler" FORCE)
+set(UML_KERNEL_HOST_CC_EXECUTABLE "${_uml_kernel_selected_host_cc}"
+    CACHE INTERNAL "Capability-checked Linux host-tool compiler" FORCE)
+set(UML_KERNEL_LD_EXECUTABLE "${_uml_kernel_selected_ld}" CACHE INTERNAL
+    "Resolved Linux kernel linker" FORCE)
+foreach(_uml_kernel_tool IN ITEMS AR NM OBJCOPY OBJDUMP READELF STRIP)
+    string(TOLOWER "${_uml_kernel_tool}" _uml_kernel_tool_name)
+    set(UML_KERNEL_${_uml_kernel_tool}_EXECUTABLE
+        "${_uml_kernel_selected_${_uml_kernel_tool_name}}" CACHE INTERNAL
+        "Resolved Linux kernel llvm-${_uml_kernel_tool_name} tool" FORCE)
+endforeach()
+
+# Kbuild's deterministic archive flag is unsupported by Apple ar. Requiring
+# the companion LLVM tools beside the selected compiler prevents a late build
+# failure and keeps automatic selection within one coherent tool family.
 set(UML_KERNEL_CROSS_COMPILE "" CACHE STRING
     "Optional tool prefix passed to Kbuild (Darwin UML is native by default)")
 set(UML_KERNEL_LLVM "" CACHE STRING
     "Optional Kbuild LLVM selector (for example 1 or a tool-prefix)")
-set(UML_KERNEL_AR "${UML_KERNEL_AR_DEFAULT}" CACHE FILEPATH
-    "Archiver override passed to Kbuild")
-set(UML_KERNEL_NM "${UML_KERNEL_NM_DEFAULT}" CACHE FILEPATH
-    "nm override passed to Kbuild")
-set(UML_KERNEL_OBJCOPY "${UML_KERNEL_OBJCOPY_DEFAULT}" CACHE FILEPATH
-    "objcopy override passed to Kbuild")
-set(UML_KERNEL_OBJDUMP "${UML_KERNEL_OBJDUMP_DEFAULT}" CACHE FILEPATH
-    "objdump override passed to Kbuild")
-set(UML_KERNEL_READELF "${UML_KERNEL_READELF_DEFAULT}" CACHE FILEPATH
-    "readelf override passed to Kbuild")
-set(UML_KERNEL_STRIP "${UML_KERNEL_STRIP_DEFAULT}" CACHE FILEPATH
-    "strip override passed to Kbuild")
 set(UML_KERNEL_PROFILE production CACHE STRING
     "Darwin UML kernel policy profile (core, desktop, or production)")
 set_property(CACHE UML_KERNEL_PROFILE PROPERTY STRINGS core desktop production)
@@ -183,12 +208,12 @@ add_custom_command(
             "UML_KERNEL_CROSS_COMPILE=${UML_KERNEL_CROSS_COMPILE}"
             "UML_KERNEL_LLVM=${UML_KERNEL_LLVM}"
             "UML_KERNEL_JOBS=${UML_KERNEL_JOBS}"
-            "UML_KERNEL_AR=${UML_KERNEL_AR}"
-            "UML_KERNEL_NM=${UML_KERNEL_NM}"
-            "UML_KERNEL_OBJCOPY=${UML_KERNEL_OBJCOPY}"
-            "UML_KERNEL_OBJDUMP=${UML_KERNEL_OBJDUMP}"
-            "UML_KERNEL_READELF=${UML_KERNEL_READELF}"
-            "UML_KERNEL_STRIP=${UML_KERNEL_STRIP}"
+            "UML_KERNEL_AR=${UML_KERNEL_AR_EXECUTABLE}"
+            "UML_KERNEL_NM=${UML_KERNEL_NM_EXECUTABLE}"
+            "UML_KERNEL_OBJCOPY=${UML_KERNEL_OBJCOPY_EXECUTABLE}"
+            "UML_KERNEL_OBJDUMP=${UML_KERNEL_OBJDUMP_EXECUTABLE}"
+            "UML_KERNEL_READELF=${UML_KERNEL_READELF_EXECUTABLE}"
+            "UML_KERNEL_STRIP=${UML_KERNEL_STRIP_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
             --source "${UML_KERNEL_SOURCE_DIR}"
             --build "${UML_KERNEL_BUILD_DIR}"
@@ -200,6 +225,7 @@ add_custom_command(
             "${PROJECT_SOURCE_DIR}/kernel/config/containers.fragment"
             "${UML_KERNEL_PAGE_FRAGMENT}"
             "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin.env"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/host_compat.h"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/libelf.h"

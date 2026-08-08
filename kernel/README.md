@@ -69,7 +69,17 @@ system libelf. Darwin UML is a native arm64 Mach-O build, so its cross-tool
 prefix is empty by default; set one only for a host that genuinely requires it.
 Linux 6.18 needs a compiler that supports `__counted_by` flexible arrays in
 type expressions (recent upstream LLVM does; some Apple Clang releases do not).
-The build script diagnoses that incompatibility before Kbuild. Set
+The CMake kernel graph probes this capability during configuration. It prefers
+an explicit `UML_KERNEL_CC`, then `UML_KERNEL_TOOLCHAIN_ROOT/bin/clang`, and
+then the configured compiler or `clang` on `PATH`. It does not query a host
+package manager or bake in an installation layout. `UML_KERNEL_HOST_CC` and
+the individual tool overrides remain authoritative. Automatically selected
+LLVM companion tools must live beside the selected compiler; `ld.lld` may
+also come from `PATH` because distributions can package it separately. The
+host compiler builds utilities and is checked for availability only; it need
+not support the target compiler's Linux-specific language constructs. The
+standalone build script repeats the target compiler check before Kbuild. Set
+`UML_KERNEL_TOOLCHAIN_ROOT` or
 `UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,OBJDUMP,READELF,
 STRIP,LLVM,JOBS}` for a non-default host setup.
 When LLVM binutils live beside the selected `clang`, the build helper and the
