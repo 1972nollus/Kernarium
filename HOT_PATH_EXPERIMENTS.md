@@ -4396,3 +4396,85 @@ no iOS device in this loop, and the XCFramework has no in-repo app target to run
 it from. The E-core column here is an M1 Ultra Icestorm cluster, which is the
 closest available stand-in and is the right shape of core, but a phone's E-cores
 and its thermal envelope are not measured and should not be claimed.
+
+## G106: G-5, folding the vector-bank base into the load displacement - rejected
+
+Rejected as a performance change: **3,968 instructions removed from the gadget
+bank and no measurable effect on either core class.** Reverted. The result is
+worth recording because it is the first prediction G105's model made that was
+then tested, and it came out the way the model said.
+
+### The change
+
+`UML_GADGET_CPU_V0` is 272, a multiple of 16, so it is encodable as a scaled
+immediate on a 128-bit load. 43 SIMD gadget bodies formed the vector-bank base
+and then indexed off it:
+
+```
+add x11, _cpu, #UML_GADGET_CPU_V0
+add x12, x11, x10, lsl #4
+ldr q0, [x12]
+```
+
+which folds to two instructions:
+
+```
+add x12, _cpu, x10, lsl #4
+ldr q0, [x12, #UML_GADGET_CPU_V0]
+```
+
+Every access through a re-based register has to move with it, including the ones
+that already carry a displacement - `str xzr, [x13, #8]` becomes
+`[x13, #UML_GADGET_CPU_V0 + 8]`. Sites where a derived register reaches an
+`LD1`/`ST1` are excluded, because the structure loads have no immediate-offset
+form; two sites were skipped for that and for the base escaping into arithmetic.
+
+Across the expanded bank this removed **3,968 instructions**, shrinking `__text`
+by 15,872 bytes.
+
+### Measured with the layout pinned, and it is flat
+
+Padding after each affected entry's terminating `next_gadget` restored every
+length: **0 of 9,663 entries moved and `__text` came out byte-identical at
+3,868,296**. Without that padding 7,622 of 9,663 entries move, which is the
+confound in its natural state and worth recording as a second calibration of
+G96's finding.
+
+| median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| P-core `guest_simd_three_same_add_loop` | 2.550 s, 2.553 s | 2.556 s, 2.553 s |
+| P-core `guest_simd_basic_fadd_loop` | 2.558 s, 2.561 s | 2.562 s, 2.561 s |
+| E-core `guest_simd_three_same_add_loop` | 6.829 s, 6.784 s | 6.834 s, 6.764 s |
+
+Every pair overlaps. No Geekbench run was spent on it: a change that cannot be
+distinguished from its control on the probe built to expose it has nothing for
+the aggregate to confirm.
+
+### Why it is flat, and why G104 was not
+
+G105 measured Apple P-cores at 3 loads and 4 vector operations per cycle and
+E-cores at 2 and 2, with gadget bodies issue-bound on E-cores and dispatch-bound
+on P-cores. The instruction removed here is an `add` that feeds address
+generation, which has slack ahead of the vector load that consumes it - it is
+not on the critical path, and neither core is short of the integer ALU port it
+uses. G104 removed instructions from **dependency chains** instead: `bic`->`orr`
+at depth three became a single `bfi`, and `mov`->`sub` at depth two became a
+`neg`. That is the distinction G8 drew in the first place - "the threaded
+indirect dispatch, rather than the removed integer adds, limits this workload" -
+and it now has a mechanism and a matched pair of examples on both sides of it.
+
+**The operative rule for the rest of Part A: count dependency depth, not
+instructions.** An instruction-count reduction that leaves the chain depth
+unchanged should be expected to measure flat even on E-cores, and should be
+screened on a probe before any Geekbench time is spent on it.
+
+### What is left of it
+
+The unpadded fold is 15,872 bytes smaller, about 0.4% of `__text`. That is a
+binary-size and I-cache question, not a speed one, and it belongs to G-7, which
+asks for L1I and iTLB miss rates and a budget before any bank-size trial is
+judged. It is recorded here so G-7 has a ready candidate: the transform is
+mechanical, the correctness risk is understood, and the unit suite covers it -
+an earlier version of this transform with a fixed-line-count scope silently left
+`str d0, [x13]` un-rebased in one gadget and was caught immediately by
+`arm64-simd-shift-immediate-left`.
