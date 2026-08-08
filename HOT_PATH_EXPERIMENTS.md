@@ -5204,3 +5204,73 @@ it occurs rather than as a share of these workloads.
 
 The distribution is flatter than boot's: the top pair is 3.51% and no single
 fusion is transformative, which is the same conclusion from a much larger sample.
+
+## G117: fusing guest CMP of two registers with B.cond, and G-2's ceiling
+
+Accepted under condition 2, and it settles what superinstruction fusion is worth
+in this engine.
+
+### The change
+
+G116 ranked `CMP Xn, Xm` followed by `B.cond` fourth and ninth of 47,494 pairs
+over a full Geekbench run - 2.65% with `B.eq`, 0.84% with `B.ne`, **3.49%
+together** - while the immediate form G111 fused by eye does not reach the table.
+This is the same mechanism aimed at the half of the instruction class that
+actually occurs: the dispatch between the two entries goes, and with it the `msr`
+that reloads the flags the compare just wrote.
+
+56 entries, 4,276 bytes. Only the plain unshifted register-register form with an
+XZR destination; an extension, a shift or a real destination falls through to the
+unfused pair unchanged.
+
+| median of 3, both orders | candidate | baseline |
+| --- | ---: | ---: |
+| P-core | 4.827 s, 4.811 s | 5.090 s, 5.073 s |
+| E-core | 11.220 s, 11.147 s | 11.707 s, 13.442 s |
+
+**5.2% on P-cores** with no overlap. E-core is directionally the same but one
+baseline sample sits at 13.4 s against another at 11.7 s, so it is reported as
+consistent rather than precise.
+
+| | single-core | multi-core |
+| --- | ---: | ---: |
+| baseline (result) | 80 | 489 |
+| candidate (result) | 80 | 489 |
+
+**Both aggregates identical.** No section moves outside its own spread - the
+largest, Navigation multi-core at -3.5%, sits inside today's 1077-1144 range, and
+single-core has six sections up, eight flat and two down. Condition 2 is
+satisfied: the focused control improves and nothing regresses beyond run-to-run
+variation.
+
+### The ceiling, which is the real result
+
+This is the best-targeted fusion available - the fourth most frequent pair in
+real workloads, chosen from a 3.45-billion-sample histogram rather than by
+intuition - and it moves the aggregate by **zero measurable points**. The
+arithmetic is unforgiving and worth writing down:
+
+> 3.49% of adjacent pairs, times roughly 5% saved on the pair, is about 0.17% of
+> translated execution. That is an order of magnitude below what a Geekbench
+> aggregate can resolve.
+
+G116 measured the distribution as flat - the single most common pair is 3.51%,
+and it takes a hundred pairs to reach 46% of the total. **So superinstruction
+fusion cannot be a large win in this engine unless it is applied across dozens of
+pairs**, and each pair costs 56 bank entries plus a decode condition. Three
+fusions are now accepted (G111, G114, G117) and together they are worth a few
+tenths of a percent on the aggregate while each is worth 5-15% on its own shape.
+
+That is not a reason to revert them - they are real, they cost almost nothing,
+and they compound - but it retires the expectation that G-2 was a large lever.
+Trial 5's original +0.83% composite now looks like the right order of magnitude
+for the whole idea rather than a floor, and the plan's framing of that figure as
+"a floor rather than a ceiling" is not supported by what the histogram shows.
+
+**What would change that conclusion:** a fusion pass that generates entries for
+the top N pairs mechanically rather than one hand-written family at a time, so
+that N can be fifty rather than three. The histogram, the lookahead in
+`DecodeContext` and three worked examples now exist; the missing piece is
+generation. That is a different and larger piece of engineering than the plan's
+step 3 describes, and it should be costed against the few tenths of a percent
+that three pairs bought before it is started.
