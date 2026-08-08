@@ -121,6 +121,9 @@ public:
 	/* Guest exits, including an internal host-resource failure, are returned as
 	 * ExecutionResult. This boundary is noexcept because it is called from the
 	 * fixed-arity C kernel bridge; concrete engines must not unwind through it.
+	 * Before returning, an engine must also commit any guest state held in host
+	 * architectural registers and release its engine-private execution state.
+	 * Callers must never need an engine-specific cleanup operation after run().
 	 */
 	[[nodiscard]] virtual ExecutionResult run(ExecutionRequest &) noexcept = 0;
 };

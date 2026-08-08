@@ -311,6 +311,31 @@ def verify_gadget_builder_ownership(
     )
 
 
+def verify_common_harness_boundary_ownership(source_root: Path) -> None:
+    """Do not let conformance repair state after a production engine run."""
+    harness = (
+        source_root
+        / "tests"
+        / "unit"
+        / "arm64"
+        / "arm64_engine_test_support.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "restore_native_fp_environment" not in harness,
+        "common conformance performs engine-specific state restoration after "
+        "the public engine boundary",
+    )
+    for marker in (
+        "gadget_fp_active",
+        "gadget_fpmr_active",
+        "gadget_indirect_miss",
+    ):
+        require(
+            marker in harness,
+            f"common conformance does not reject leaked {marker} state",
+        )
+
+
 def symbols(nm: Path, objects: list[Path], undefined: bool) -> set[str]:
     result: set[str] = set()
     arguments = ["-u"] if undefined else ["-gU"]
@@ -533,6 +558,7 @@ def main() -> int:
         options.production_archive, production_symbols, options.guest_page_size
     )
     verify_gadget_builder_ownership(options.source_root, gadget_objects)
+    verify_common_harness_boundary_ownership(options.source_root)
     forbidden_production_test_symbols = {
         symbol
         for symbol in production_symbols

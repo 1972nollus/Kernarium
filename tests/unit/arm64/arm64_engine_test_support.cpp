@@ -10,7 +10,6 @@
 #include "cpu/engine.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
-#include "cpu/arm64/fp_environment.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/engine_factory.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -590,8 +589,6 @@ void install_program(
         .instruction_budget = execution_limit,
     };
     const auto result = engine.run(request);
-    if (selected != Engine::interpreter)
-      arm64::restore_native_fp_environment(outcome.cpu);
     outcome.event = event_for(result.reason);
     outcome.instructions = result.retired_instructions;
     outcome.fault = {result.fault.address, result.fault.access};
@@ -626,7 +623,6 @@ void install_program(
   };
   const auto result =
       ::uml::cpu::arm64::detail::run_translated(executor, request);
-  arm64::restore_native_fp_environment(outcome.cpu);
   outcome.event = event_for(result.reason);
   outcome.instructions = result.retired_instructions;
   outcome.fault = {result.fault.address, result.fault.access};
@@ -1471,6 +1467,17 @@ public:
       if (test_case.after_engine != nullptr)
         test_case.after_engine(
             test_case.execution_context, current_engine, generation_);
+
+      /* The public engine boundary owns translated host-state restoration and
+       * executor cleanup. Do not repair leaked state in this common harness:
+       * doing so would let the full instruction matrix pass while a direct
+       * production caller observes an active guest FP environment or a stale
+       * indirect-link marker. */
+      if (outcome.cpu.gadget_fp_active ||
+          outcome.cpu.gadget_fpmr_active ||
+          outcome.cpu.gadget_indirect_miss != nullptr)
+        fail(test_case.name, current_engine, diagnostic_instruction,
+             "engine-private execution state escaped the public boundary");
 
       if (outcome.event != test_case.event) {
         std::fprintf(stderr,
