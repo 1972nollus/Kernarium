@@ -4560,3 +4560,74 @@ attempt should treat the reserved successor register and the program sentinel as
 the first deliverables, not as details, and should measure against a
 deliberately polymorphic probe rather than a single-gadget loop - no such probe
 exists yet.
+
+## G108: the JIT multi-core noise band, and a retraction of G102
+
+**The JIT engine's multi-core aggregate varies by 19% between consecutive runs of
+an unchanged binary.** Every JIT conclusion in this log that rests on a single
+matched pair is therefore unsupported, including G102's rejection of B-3. This
+section records the band and retracts that rejection.
+
+### The measurement
+
+The same image, `--engine jit`, 10 vCPUs, two runs back to back with nothing
+changed between them and host load medians of 4.76 and 4.57 cores:
+
+| run | single-core | multi-core |
+| --- | ---: | ---: |
+| (result) | 242 | **701** |
+| (result) | 245 | **834** |
+
+**701 to 834 is 19.0%.** That same image had scored 829 half an hour earlier as
+another trial's baseline, so three runs of one binary span 701, 829, 834.
+
+Single-core is far steadier: 235, 237, 241, 242, 242, 243, 245, 250 across the
+day, a 6.4% range, and no single-core conclusion here moved by more than that.
+
+### Why, and what it should have been read as
+
+The variance is not spread evenly. Object Detection multi-core reads 212, 239,
+242, 243, 270, 283, 374, 378 across these runs - a bimodal split around 250 and
+370 rather than a distribution around a mean. Asset Compression, Object Remover
+and Horizon Detection do the same. That is a scaling collapse that either
+happens in a run or does not, which is the signature of a lock convoy rather
+than of measurement noise, and it points at the same publication gate G52
+measured at 44-56% of sampled emulator time and G47 already failed to fix.
+
+There was also an order artifact hiding in plain sight. Across three JIT pairs I
+ran the candidate first and the baseline second, and the first run scored lower
+every single time - 728 before 790, 737 before 811, 771 before 829. Three
+unrelated changes producing the same 8% deficit should have been read as a
+property of the harness, not of the code.
+
+### Retraction: G102 does not establish that ISB spin hints regress the JIT
+
+G102 rejected B-3 on "a 8.5% JIT multi-core regression with no overlap between
+four runs", candidates at 728 and 737 against baselines at 790 and 811. Every one
+of those four numbers is inside the 701-834 band an unchanged binary produces.
+**The rejection is withdrawn.** What G102 established stands only in part:
+
+- Still valid: the change is layout-neutral (`__text` byte-identical, no gadget
+  entry moved), it passes every correctness gate, and the two gadget-path sites
+  are unreached by any probe.
+- No longer supported: that ISB backoff costs anything on the JIT engine, and
+  the whole diagnosis built on top of that - including the claim that the second
+  variant "did not recover", which compared two numbers that were never
+  distinguishable in the first place.
+
+B-3 returns to open. Re-measuring it needs a protocol that can resolve a few
+percent on this engine, which a single pair cannot: either many repetitions per
+arm, or a focused control that reaches the gate directly, or C-2 landing first so
+the bistability is gone. The change itself remains reverted, because it was never
+shown to help either.
+
+### Standing rule for JIT measurements
+
+A JIT multi-core comparison needs the same treatment the gadget engine got in
+G96: a band established from repeated runs of the accepted build, before any
+trial is judged against it. Until that exists, judge JIT changes on focused
+controls and on single-core, and treat any multi-core aggregate move under about
+20% as no information at all.
+
+The gadget engine is not affected. Its measurements across the day span 77-80
+single-core and 479-498 multi-core, and it has no equivalent of this gate.
