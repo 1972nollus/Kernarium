@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_address_space.hpp"
+#include "native_retry_validation_test_support.hpp"
 #include "mach_vm_protection_test_support.hpp"
 #include "allocation_fault.hpp"
 #include "uml_darwin_memory.h"
@@ -75,8 +76,9 @@ private:
 
 class ReservedSlot final {
 public:
-	explicit ReservedSlot(bool native_bridge_address = false)
-		: size_{static_cast<std::size_t>(getpagesize())}
+	explicit ReservedSlot(bool native_bridge_address = false,
+		std::size_t host_pages = 1)
+		: size_{host_pages * static_cast<std::size_t>(getpagesize())}
 	{
 		void *hint = native_bridge_address ?
 			reinterpret_cast<void *>(0x7f00'0000'0000ULL) : nullptr;
@@ -291,6 +293,98 @@ void test_absent_quarter_and_alias_coherency()
 		"final quarter unmap failed");
 }
 
+void test_prot_none_shadow_flush_and_release()
+{
+	TemporaryBacking backing;
+	ReservedSlot slot{true};
+	auto space = uml::memory::native_address_space();
+	require(space != nullptr, "PROT_NONE shadow domain unavailable");
+	const auto initial_mappings = space->mapping_count_for_testing();
+	const auto initial_slots = space->materialized_slot_count_for_testing();
+	const auto address = slot.address() + guest_page_size;
+	constexpr std::size_t marker_offset = 83;
+	const auto no_access = [&] {
+		return (uml::testing::current_vm_protection(
+			reinterpret_cast<void *>(address)) &
+			(PROT_READ | PROT_WRITE | PROT_EXEC)) == 0;
+	};
+
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
+		"PROT_NONE dirty-drop fixture map failed");
+	*reinterpret_cast<volatile std::byte *>(address + marker_offset) =
+		std::byte{0x6b};
+	require(darwin_uml_vm_protect(reinterpret_cast<void *>(address),
+		guest_page_size, PROT_NONE) == 0 && no_access(),
+		"PROT_NONE dirty-drop fixture remained accessible");
+	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
+		guest_page_size) == 0,
+		"PROT_NONE dirty shadow drop failed");
+	require(backing.read_byte(guest_page_size + marker_offset) ==
+			std::byte{0x6b},
+		"PROT_NONE dirty shadow drop omitted the modified byte");
+	require(no_access(),
+		"PROT_NONE dirty shadow drop did not restore exact protection");
+	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
+		guest_page_size) == 0,
+		"PROT_NONE dirty-drop fixture cleanup failed");
+
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0 &&
+		darwin_uml_vm_protect(reinterpret_cast<void *>(address),
+			guest_page_size, PROT_NONE) == 0,
+		"PROT_NONE all-absent fixture setup failed");
+	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
+		guest_page_size) == 0,
+		"PROT_NONE sole-quarter unmap failed");
+	require(space->mapping_count_for_testing() == initial_mappings &&
+		space->materialized_slot_count_for_testing() == initial_slots &&
+		!uml::testing::vm_address_is_mapped(
+			reinterpret_cast<void *>(address)),
+		"PROT_NONE all-absent unmap retained its host slot");
+
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+		2 * guest_page_size, guest_page_size,
+		PROT_READ | PROT_WRITE, 0, 1) == 0,
+		"PROT_NONE flush-error fixture map failed");
+	*reinterpret_cast<volatile std::byte *>(address + marker_offset) =
+		std::byte{0x7c};
+	require(darwin_uml_vm_protect(reinterpret_cast<void *>(address),
+		guest_page_size, PROT_NONE) == 0,
+		"PROT_NONE flush-error fixture protect failed");
+	const int backing_fd = backing.fd();
+	const int rescue_fd = dup(backing_fd);
+	require(rescue_fd >= 0, "PROT_NONE flush-error rescue dup failed");
+	if (close(backing_fd) != 0) {
+		(void)close(rescue_fd);
+		require(false, "PROT_NONE flush-error close failed");
+	}
+	errno = 0;
+	const int failed_drop = darwin_uml_vm_drop(
+		reinterpret_cast<void *>(address), guest_page_size);
+	const int failed_drop_errno = errno;
+	const int restored_fd = dup2(rescue_fd, backing_fd);
+	const int rescue_close = close(rescue_fd);
+	require(restored_fd == backing_fd && rescue_close == 0,
+		"PROT_NONE flush-error backing restore failed");
+	require(failed_drop == -1 && failed_drop_errno == EBADF,
+		"PROT_NONE flush read failure did not propagate EBADF");
+	require(no_access(),
+		"failed PROT_NONE shadow drop did not restore exact protection");
+	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
+		guest_page_size) == 0 &&
+		backing.read_byte(2 * guest_page_size + marker_offset) ==
+			std::byte{0x7c} && no_access(),
+		"PROT_NONE shadow drop did not retry after protection restoration");
+	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
+		guest_page_size) == 0 &&
+		space->mapping_count_for_testing() == initial_mappings &&
+		space->materialized_slot_count_for_testing() == initial_slots &&
+		!uml::testing::vm_address_is_mapped(
+			reinterpret_cast<void *>(address)),
+		"PROT_NONE flush-error fixture retained its host slot");
+}
+
 void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 {
 	TemporaryBacking backing;
@@ -324,7 +418,7 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 		base + guest_page_size), guest_page_size) == 0,
 		"partial drop rejected an owned direct mapping");
 	require(darwin_uml_vm_retry_fault(base + guest_page_size,
-		0, 1) == 0, "direct mapping reported a synthetic retry");
+		0, 1) == 1, "direct mapping did not authorize a write retry");
 	require(darwin_uml_vm_protect(reinterpret_cast<void *>(base), slot.size(),
 		PROT_READ) == 0,
 		"full aligned direct protect failed");
@@ -340,6 +434,17 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 		space->materialized_slot_count_for_testing() == initial_slots &&
 		space->direct_mapping_count_for_testing() == initial_direct,
 		"aligned direct-routing fixture retained state");
+}
+
+void test_direct_retry_validates_ownership_mapping_and_permissions()
+{
+	TemporaryBacking backing;
+	ReservedSlot arena{true, 4};
+	const auto host_page_size = static_cast<std::size_t>(getpagesize());
+	uml::testing::exercise_native_retry_direct(arena.address(),
+		arena.address() + host_page_size,
+		arena.address() + 2 * host_page_size, host_page_size,
+		backing.fd(), require);
 }
 
 void test_direct_mapping_transitions_to_isolated_quarters()
@@ -923,7 +1028,9 @@ int main()
 		test_shadow_publication_precedes_software_mapping();
 		test_backing_index_tracks_rebind_unmap_and_retire();
 		test_absent_quarter_and_alias_coherency();
+		test_prot_none_shadow_flush_and_release();
 		test_bridge_uses_direct_shared_mapping_for_aligned_ranges();
+		test_direct_retry_validates_ownership_mapping_and_permissions();
 		test_direct_mapping_transitions_to_isolated_quarters();
 		test_failed_direct_transition_is_atomic_and_retryable();
 		test_shadow_protect_rejects_holes_without_mutation();

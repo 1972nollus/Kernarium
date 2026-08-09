@@ -220,6 +220,20 @@ uml_add_tooling_test(
     LABELS kernel;audit
     TIMEOUT 30)
 
+# A CLI configuration always supplies the prepared replay. A tooling-only
+# configuration may opt in by naming one explicitly; the fixture itself is
+# host-only and rootfs-free.
+if(DEFINED UML_KERNEL_SOURCE_DIR AND
+   EXISTS "${UML_KERNEL_SOURCE_DIR}/arch/um/kernel/tlb.c")
+    uml_add_tooling_test(
+        NAME darwin-init-mm-tlb-policy
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py
+            --linux-source ${UML_KERNEL_SOURCE_DIR}
+        LABELS kernel;audit
+        TIMEOUT 30)
+endif()
+
 uml_add_tooling_test(
     NAME abi-declaration-identity
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/abi/test_declaration_identity.sh

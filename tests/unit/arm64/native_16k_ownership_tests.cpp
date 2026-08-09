@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
+#include "native_retry_validation_test_support.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -977,9 +978,10 @@ int owned_bridge_lifecycle(void *opaque)
 			darwin_uml_vm_sync_from_backing(
 				state.address + page_size) == 0;
 	if (valid)
-		valid = darwin_uml_vm_retry_fault(state.address, 0, 0) == 0 &&
-			darwin_uml_vm_retry_fault(state.address, 0, 1) == 0 &&
-			darwin_uml_vm_retry_fault(state.address, 1, 0) == 0;
+		valid = darwin_uml_vm_retry_fault(state.address, 0, 0) == 1 &&
+			darwin_uml_vm_retry_fault(state.address, 0, 1) == 1 &&
+			darwin_uml_vm_retry_fault(state.address, 1, 0) == 0 &&
+			darwin_uml_vm_retry_fault(state.address, 1, 1) == 0;
 	if (valid)
 		valid = darwin_uml_vm_unmap_generation(17,
 			reinterpret_cast<void *>(state.address), page_size) == 0;
@@ -1021,6 +1023,14 @@ void test_owned_bridge_lifecycle(const HighAddressArena &arena)
 		backing.byte(0) == 0x51 && backing.byte(1) == 0x62 &&
 		counts_are_zero(),
 		"owned native bridge lifecycle did not complete atomically");
+}
+
+void test_direct_retry_validates_ownership_mapping_and_permissions(
+	const HighAddressArena &arena)
+{
+	TemporaryBacking backing{0x93};
+	uml::testing::exercise_native_retry_direct(arena.page(24),
+		arena.page(25), arena.page(26), page_size, backing.fd(), require);
 }
 
 struct TwoPageRollbackState final {
@@ -1204,7 +1214,7 @@ int main(int argc, char **argv)
 
 		require(counts_are_zero(),
 			"native ownership test started with retained state");
-		HighAddressArena arena{24};
+		HighAddressArena arena{28};
 		test_nonoverlap_concurrency_and_leaked_cleanup(arena);
 		test_same_address_collision_and_retry(arena);
 		test_retire_acquire_handoff(arena);
@@ -1213,6 +1223,7 @@ int main(int argc, char **argv)
 		test_unowned_host_mapping_is_replaced(arena);
 		test_owned_bridge_lifecycle(arena);
 		test_direct_software_publication_is_identity(arena);
+		test_direct_retry_validates_ownership_mapping_and_permissions(arena);
 		test_two_page_rollback(arena);
 		run_failure_retry(arena, 17,
 			uml::memory::testing::AllocationSite::none, false);

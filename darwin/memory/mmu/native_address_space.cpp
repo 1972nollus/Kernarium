@@ -35,12 +35,17 @@ namespace {
 	return size;
 }
 
+[[nodiscard]] std::uintptr_t host_slot_for(std::uintptr_t address) noexcept
+{
+	return address & ~(host_page_size() - 1);
+}
+
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 constexpr std::uintptr_t guest_page_size = 4096;
 
 [[nodiscard]] std::uintptr_t slot_for(std::uintptr_t address) noexcept
 {
-	return address & ~(host_page_size() - 1);
+	return host_slot_for(address);
 }
 
 [[nodiscard]] int shadow_data_protection(int protection) noexcept
@@ -166,6 +171,12 @@ struct Ownership final {
 
 class HostOwnershipRegistry final {
 public:
+	enum class DirectRetryStatus : std::uint8_t {
+		absent,
+		denied,
+		permitted,
+	};
+
 	int map_direct(std::uint64_t owner, std::uintptr_t address, int fd,
 		std::uint64_t offset, std::uint64_t length, int protection)
 	{
@@ -434,6 +445,71 @@ public:
 					return -1;
 				}
 			}
+			return 0;
+		} catch (...) {
+			errno = EIO;
+			return -1;
+		}
+	}
+
+	int inspect_direct_retry(std::uint64_t owner, std::uintptr_t address,
+		bool execute, bool write, DirectRetryStatus &status) const noexcept
+	{
+		status = DirectRetryStatus::absent;
+		try {
+			std::lock_guard lock{mutex_};
+			const auto found = owners_.find(host_slot_for(address));
+			if (found == owners_.end())
+				return 0;
+			if (!is_direct_ownership(found->second, owner)) {
+				errno = EBUSY;
+				return -1;
+			}
+
+			vm_address_t region_start = static_cast<vm_address_t>(address);
+			vm_size_t region_size = 0;
+			vm_region_basic_info_data_64_t info{};
+			mach_msg_type_number_t info_count =
+				VM_REGION_BASIC_INFO_COUNT_64;
+			mach_port_t object_name = MACH_PORT_NULL;
+			const auto result = vm_region_64(
+				mach_task_self(), &region_start, &region_size,
+				VM_REGION_BASIC_INFO_64,
+				reinterpret_cast<vm_region_info_t>(&info),
+				&info_count, &object_name);
+			if (object_name != MACH_PORT_NULL)
+				(void)mach_port_deallocate(mach_task_self(), object_name);
+
+			if (result == KERN_INVALID_ADDRESS) {
+				status = DirectRetryStatus::denied;
+				return 0;
+			}
+			if (result != KERN_SUCCESS) {
+				errno = EIO;
+				return -1;
+			}
+			if (info_count < VM_REGION_BASIC_INFO_COUNT_64 ||
+			    region_size == 0) {
+				errno = EIO;
+				return -1;
+			}
+			const auto start = static_cast<std::uintptr_t>(region_start);
+			const auto size = static_cast<std::uintptr_t>(region_size);
+			if (address < start || address - start >= size) {
+				status = DirectRetryStatus::denied;
+				return 0;
+			}
+
+			vm_prot_t required = VM_PROT_NONE;
+			if (execute)
+				required |= VM_PROT_EXECUTE;
+			if (write)
+				required |= VM_PROT_WRITE;
+			if (!execute && !write)
+				required = VM_PROT_READ;
+			status = (info.protection & required) == required ?
+				DirectRetryStatus::permitted :
+				DirectRetryStatus::denied;
 			return 0;
 		} catch (...) {
 			errno = EIO;
@@ -767,9 +843,35 @@ int NativeAddressSpace::sync_direct(
 int NativeAddressSpace::retry_direct(
 	std::uintptr_t address, bool execute, bool write)
 {
-	(void)execute;
-	(void)write;
-	return sync_direct(address, 1);
+	std::lock_guard lock{mutex_};
+	if (retired_.load(std::memory_order_acquire)) {
+		errno = ESHUTDOWN;
+		return -1;
+	}
+	auto *registry = host_ownership_registry();
+	if (registry == nullptr) {
+		errno = ENOMEM;
+		return -1;
+	}
+	HostOwnershipRegistry::DirectRetryStatus status;
+	if (registry->inspect_direct_retry(
+		    ownership_id_, address, execute, write, status) != 0)
+		return -1;
+
+	const bool locally_owned = direct_slots_.contains(host_slot_for(address));
+	if (status == HostOwnershipRegistry::DirectRetryStatus::absent) {
+		if (locally_owned) {
+			errno = EFAULT;
+			return -1;
+		}
+		return 0;
+	}
+	if (!locally_owned) {
+		errno = EFAULT;
+		return -1;
+	}
+	return status == HostOwnershipRegistry::DirectRetryStatus::permitted ?
+		1 : 0;
 }
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
@@ -1071,14 +1173,40 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 	auto found = mappings_.find(page);
 	if (found == mappings_.end() || !found->second.loaded)
 		return 0;
+	const auto slot = slot_for(page);
+	const auto protection = slot_protections_.find(slot);
+	if (!materialized_slots_.contains(slot) ||
+	    protection == slot_protections_.end()) {
+		errno = EFAULT;
+		return -1;
+	}
+	const int original_protection = protection->second;
+	/* An unyoung kernel PTE can leave dirty shadow bytes behind PROT_NONE.
+	 * Publishing those bytes must not recursively fault in the host. Add only
+	 * the read permission needed by this copy and restore the exact tracked
+	 * protection on both success and failure; never add write or execute here.
+	 */
+	const bool lifted = (original_protection & PROT_READ) == 0;
+	if (lifted && mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+		original_protection | PROT_READ) != 0)
+		return -1;
+	const auto finish = [&](int result) noexcept {
+		const int saved_errno = errno;
+		if (lifted && mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+			original_protection) != 0)
+			return -1;
+		if (result != 0)
+			errno = saved_errno;
+		return result;
+	};
 	std::array<std::byte, guest_page_size> backing{};
 	const auto *current = reinterpret_cast<const std::byte *>(page);
 	if (std::memcmp(current, found->second.original.data(),
 		guest_page_size) == 0)
-		return 0;
+		return finish(0);
 	if (read_exact(found->second.fd, found->second.offset,
 		backing.data(), backing.size()) < 0)
-		return -1;
+		return finish(-1);
 	const bool backing_changed = backing != found->second.original;
 	/* Merge disjoint native-shadow and shared-backing writes byte-for-byte.
 	 * A whole-page pwrite would lose a sibling CPU's update to an unrelated
@@ -1100,13 +1228,13 @@ int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 			 backing[position] == found->second.original[position]);
 		if (write_exact(found->second.fd, found->second.offset + first,
 			current + first, position - first) < 0)
-			return -1;
+			return finish(-1);
 	}
 	found->second.original = backing;
 	/* A later reconcile reloads shared bytes that changed independently while
 	 * retaining every disjoint native write merged above. */
 	found->second.loaded = !backing_changed;
-	return 0;
+	return finish(0);
 }
 
 int NativeAddressSpace::flush_slot_locked(std::uintptr_t slot)

@@ -5707,3 +5707,107 @@ which was not done.
 - **B-3 becomes measurable.** It was reopened in G108 because a 19% band could
   not resolve an 8% claim. At 3.9% it can, and re-measuring it is now an ordinary
   trial rather than a blocked one.
+
+## G123: serialize Darwin kernel mappings and repair 4 KiB slots as a unit
+
+Accepted as a correctness repair. The matched hot-path screen shows no
+performance regression.
+
+### The regression and why the old implementation appeared to work
+
+The post-refactor 4 KiB build reached systemd and then repeatedly took a native
+translation fault in kernel vmalloc memory. It failed under both JIT and gadgets,
+while the 16 KiB build passed. An unmasked reproduction placed the fault in the
+SLUB allocation path with a Linux PTE still present but its 16 KiB Darwin host
+slot absent.
+
+The ordering defect predates the refactor. Two `init_mm` walkers could overlap:
+an older walker could snapshot an absent PTE, a newer walker could publish and
+map a present PTE, and then the older walker could unmap last. In the 4 KiB guest
+profile, applying an absent lower quarter before a present upper quarter could
+also remove the whole 16 KiB host slot between those two operations. The fault
+recovery path then saw an empty pending-range set and retried the same missing
+host mapping indefinitely.
+
+A complete substitution of the pre-refactor native-MMU implementation made one
+bounded boot pass, but it did so by restoring untracked global state and stale
+mapping behavior. That rollback removed per-run ownership and retirement,
+direct/shadow transition atomicity, alias publication, checked error boundaries,
+and the tests that protect them. Smaller publication, singleton, and shadow-loop
+rollback trials did not restore a correct boot. The rollback was therefore a
+diagnostic, not a shippable fix.
+
+### The forward repair
+
+- Every Darwin `init_mm` synchronization is serialized from before the pending
+  range is snapshotted and cleared until the walk has applied or requeued every
+  range, including internal `-EAGAIN` retries. A same-task owner marker converts
+  a nested host fault into a bounded error instead of self-deadlocking.
+- The 4 KiB profile reads the four PTEs belonging to one Darwin host slot,
+  flushes dirty shadow bytes first, maps every present quarter, and only then
+  removes absent quarters. An error preserves the complete pending range for
+  retry.
+- Kernel vmalloc fault repair explicitly republishes the exact Linux page and
+  resumes only when the host bridge proves that the requested mapping and
+  permission now exist. Direct mappings are checked against both ownership
+  metadata and the actual Mach VM region.
+- Publishing a dirty `PROT_NONE` shadow temporarily adds read permission only
+  for the copy and restores the exact tracked protection on every success and
+  error path.
+
+The broader fact that generic vmalloc writers do not publish all four PTEs as
+one atomic operation is not overclaimed here. A racing writer queues a later
+serialized replay; exact fault repair republishes a missing page. Temporary
+sibling permission granularity remains a pre-existing host-page constraint, not
+something this repair claims to eliminate.
+
+### Correctness acceptance
+
+- Canonical Linux replay: tree
+  `92749de0046c6c82e901db75f57eeec3500cf358`; 161 changed files, 12 outside
+  the port; manifest, topology, policy, ABI, and exact import checks pass.
+- Full production kernels build under LLVM 22.1.8 in both page profiles.
+- Focused Release tests pass in both profiles; focused ASan/UBSan and the full
+  eight-test TSan gate pass. The new policy fixture rejects 24 mutations of the
+  serialization, retry, slot-ordering, and fault-validation invariants.
+- Immutable-rootfs systemd matrix, 10 vCPUs and 8 GiB: 4 KiB JIT 3/3, 4 KiB
+  gadgets 3/3, 16 KiB JIT 1/1, and 16 KiB gadgets 1/1. Every valid run reached
+  systemd as PID 1, reported the expected page size, passed the tmpfs OverlayFS
+  checks, shut down normally, and emitted no fatal, POSIX-fault, RCU-stall,
+  panic, BUG, or Oops marker.
+- `rootfs.img` remained mode 0444, size 8,589,934,592, SHA-256
+  `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
+
+One discarded boot attempt used a process-wide file-size limit and stopped
+before guest output because the limit also covered the emulator's sparse RAM
+backing. The accepted runs instead bounded only console output and repeated
+fatal markers. Two discarded probe attempts were likewise harness-only: one
+lacked host process-inspection permission, and one mistakenly multiplied the
+payload's own ten threads by ten uploader workers. Neither contributes a timing
+or correctness result.
+
+### Performance boundary and measurement
+
+No CPU engine, translated execution path, software-MMU lookup, or ordinary
+user-MM synchronization implementation changed. In the 16 KiB build the 4 KiB
+slot helpers compile out; normalized `__um_tlb_sync` remains 362 instructions
+and its normalized disassembly is identical to the control. The added
+checks execute only when kernel or user mappings actually need synchronization
+or on fault recovery, not on a normal guest boundary with no pending PTE work.
+
+The matched 16 KiB gadgets `guest_mmu_miss_walk_loop` control used 10 guest
+CPUs, one process with ten internal threads, two counterbalanced orders, and
+three repetitions per invocation:
+
+| pooled median | pre-fix control | forward repair |
+| --- | ---: | ---: |
+| wall | 3.699 s | **3.609 s** |
+| host CPU | 28.595 s | **28.410 s** |
+
+Both order pairs favor the candidate. The approximately 2.4% wall difference
+is not attributed to this cold-path repair, but it rules out a meaningful
+regression on the MMU-miss workload that protected G101/G119/G121. A full
+Geekbench comparison remains the final refactor-campaign acceptance rather than
+being spent on this isolated kernel correctness fix.
+
+Evidence is in `.build/results/forward-init-mm/`.

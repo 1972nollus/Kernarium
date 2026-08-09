@@ -1,20 +1,20 @@
-From 44d4981f399c4c1159aeed6308c0365e5725e47f Mon Sep 17 00:00:00 2001
+From 91dfe70f538184506049d8de1ce53fa4d29d4d1e Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
 Subject: [PATCH 02/14] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, large-page handling, same-process address-space lifetime, and user-access behavior in one reviewable final-state topic.
 ---
- arch/um/kernel/hugetlb.c         | 250 ++++++++++++++++++
+ arch/um/kernel/hugetlb.c         | 250 +++++++++++++
  arch/um/kernel/mem.c             |  13 +
  arch/um/kernel/skas/Makefile     |   5 +
- arch/um/kernel/skas/mmu.c        |  33 ++-
- arch/um/kernel/skas/mmu_darwin.c |  87 ++++++
- arch/um/kernel/skas/process.c    | 113 +++++++-
- arch/um/kernel/skas/uaccess.c    | 224 +++++++++++++---
- arch/um/kernel/tlb.c             | 436 +++++++++++++++++++++++++++++--
- arch/um/kernel/trap.c            |  14 +-
- 9 files changed, 1095 insertions(+), 80 deletions(-)
+ arch/um/kernel/skas/mmu.c        |  33 +-
+ arch/um/kernel/skas/mmu_darwin.c | 102 ++++++
+ arch/um/kernel/skas/process.c    | 113 +++++-
+ arch/um/kernel/skas/uaccess.c    | 224 ++++++++++--
+ arch/um/kernel/tlb.c             | 585 +++++++++++++++++++++++++++++--
+ arch/um/kernel/trap.c            |  41 ++-
+ 9 files changed, 1284 insertions(+), 82 deletions(-)
  create mode 100644 arch/um/kernel/hugetlb.c
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
@@ -401,7 +401,7 @@ index afe9a2f25..009577885 100644
  				 * NOTE: Currently executing syscalls by
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
 new file mode 100644
-index 000000000..a901375a8
+index 000000000..5ad85f4e0
 --- /dev/null
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -0,0 +1,102 @@
@@ -993,7 +993,7 @@ index 198269e38..85f0da3e6 100644
  }
  EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index cf7e0d440..ed2c60044 100644
+index cf7e0d440..ad0d6ab60 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -6,6 +6,7 @@
@@ -1059,7 +1059,125 @@ index cf7e0d440..ed2c60044 100644
  static int kern_map(struct mm_id *mm_idp,
  		    unsigned long virt, unsigned long len, int prot,
  		    int phys_fd, unsigned long long offset)
-@@ -54,38 +96,160 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -41,6 +83,117 @@ static int kern_unmap(struct mm_id *mm_idp,
+ 	return os_unmap_memory((void *)virt, len);
+ }
+ 
++#if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
++#define DARWIN_HOST_PAGE_SIZE	(16UL * 1024)
++
++static_assert(PAGE_SIZE == 4096);
++static_assert(DARWIN_HOST_PAGE_SIZE == 4 * PAGE_SIZE);
++static_assert(PTRS_PER_PTE % 4 == 0);
++static_assert(PMD_SIZE % DARWIN_HOST_PAGE_SIZE == 0);
++
++static int darwin_map_init_mm_pte(struct vm_ops *ops,
++				  unsigned long addr, pte_t pteval)
++{
++	unsigned long phys = pte_val(pteval) & PAGE_MASK;
++	__u64 offset;
++	int fd = phys_mapping(phys, &offset);
++	int r = pte_read(pteval);
++	int w = pte_write(pteval);
++	int x = pte_exec(pteval);
++	int prot;
++
++	if (!pte_young(pteval)) {
++		r = 0;
++		w = 0;
++	} else if (!pte_dirty(pteval)) {
++		w = 0;
++	}
++	prot = (r ? UM_PROT_READ : 0) |
++	       (w ? UM_PROT_WRITE : 0) |
++	       (x ? UM_PROT_EXEC : 0);
++	if (x)
++		prot |= UM_PROT_GUEST_CODE;
++	return ops->mmap(ops->mm_idp, addr, PAGE_SIZE, prot, fd, offset);
++}
++
++static noinline int update_init_mm_pte_slot(pmd_t *pmd,
++					     unsigned long addr,
++					     struct vm_ops *ops)
++{
++	pte_t snapshots[4];
++	pte_t *pte;
++	spinlock_t *ptl;
++	unsigned int index;
++	int ret;
++
++	if (WARN_ON_ONCE(ops->mm != &init_mm ||
++			 (addr & (DARWIN_HOST_PAGE_SIZE - 1))))
++		return -EINVAL;
++
++	/* A 16 KiB-aligned group of four PTEs cannot cross either a PTE page or a
++	 * PMD boundary. Read every PTE before any host operation, then release the
++	 * page-table lock before the potentially sleeping host calls. Generic
++	 * vmalloc writers can update these PTEs without this lock, so the four
++	 * values are not claimed to be one atomic snapshot. Such a writer publishes
++	 * its pending range after updating the PTEs, so the serialized later walk
++	 * reapplies the completed state instead of losing the newer change. The
++	 * exact fault repair separately republishes a page when host access faults.
++	 */
++	pte = pte_offset_kernel(pmd, addr);
++	ptl = darwin_pte_lockptr(&init_mm, pmd);
++	spin_lock(ptl);
++	for (index = 0; index < ARRAY_SIZE(snapshots); ++index)
++		snapshots[index] = ptep_get(pte + index);
++	spin_unlock(ptl);
++
++	/* Flush every dirty quarter in the existing 16 KiB shadow before a newly
++	 * present quarter is loaded from the same backing. This call never removes
++	 * a mapping; an error leaves the whole slot unapplied for retry.
++	 */
++	ret = os_drop_memory((void *)addr, DARWIN_HOST_PAGE_SIZE);
++	if (ret)
++		return ret;
++
++	/* Install every present quarter before removing any absent one. A kernel
++	 * thread can execute from this slot while the logical update is applied;
++	 * keeping at least one intended mapping live prevents a transient 16 KiB
++	 * host hole during moves between quarters.
++	 */
++	for (index = 0; index < ARRAY_SIZE(snapshots); ++index) {
++		if (!pte_present(snapshots[index]))
++			continue;
++		ret = darwin_map_init_mm_pte(ops, addr + index * PAGE_SIZE,
++					      snapshots[index]);
++		if (ret)
++			return ret;
++	}
++	for (index = 0; index < ARRAY_SIZE(snapshots); ++index) {
++		if (pte_present(snapshots[index]))
++			continue;
++		ret = ops->unmap(ops->mm_idp, addr + index * PAGE_SIZE,
++				 PAGE_SIZE);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static noinline int update_init_mm_pte_range(pmd_t *pmd,
++					      unsigned long addr,
++					      unsigned long end,
++					      struct vm_ops *ops)
++{
++	int ret = 0;
++
++	if (WARN_ON_ONCE(ops->mm != &init_mm || end <= addr ||
++			 ((addr | end) & (DARWIN_HOST_PAGE_SIZE - 1))))
++		return -EINVAL;
++	for (; addr < end && !ret; addr += DARWIN_HOST_PAGE_SIZE)
++		ret = update_init_mm_pte_slot(pmd, addr, ops);
++	return ret;
++}
++#endif
++
+ void report_enomem(void)
+ {
+ 	printk(KERN_ERR "UML ran out of memory on the host side! "
+@@ -54,38 +207,164 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  {
  	pte_t *pte;
  	int ret = 0;
@@ -1068,6 +1186,10 @@ index cf7e0d440..ed2c60044 100644
 +	spinlock_t *ptl;
 +#else
  	pte = pte_offset_kernel(pmd, addr);
++#endif
++#if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
++	if (unlikely(ops->mm == &init_mm))
++		return update_init_mm_pte_range(pmd, addr, end, ops);
 +#endif
  	do {
 -		if (!pte_needsync(*pte))
@@ -1229,7 +1351,7 @@ index cf7e0d440..ed2c60044 100644
  	return ret;
  }
  
-@@ -104,14 +268,61 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
+@@ -104,14 +383,61 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
  			if (pmd_needsync(*pmd)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1292,7 +1414,7 @@ index cf7e0d440..ed2c60044 100644
  static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
  				   unsigned long end,
  				   struct vm_ops *ops)
-@@ -127,10 +338,14 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
+@@ -127,10 +453,14 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
  			if (pud_needsync(*pud)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1309,7 +1431,7 @@ index cf7e0d440..ed2c60044 100644
  	} while (pud++, addr = next, ((addr < end) && !ret));
  	return ret;
  }
-@@ -150,7 +365,9 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -150,7 +480,9 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  			if (p4d_needsync(*p4d)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1319,7 +1441,7 @@ index cf7e0d440..ed2c60044 100644
  			}
  		} else
  			ret = update_pud_range(p4d, addr, next, ops);
-@@ -158,17 +375,105 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -158,17 +490,105 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  	return ret;
  }
  
@@ -1427,7 +1549,7 @@ index cf7e0d440..ed2c60044 100644
  	if (mm == &init_mm) {
  		ops.mmap = kern_map;
  		ops.unmap = kern_unmap;
-@@ -176,30 +481,85 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -176,29 +596,118 @@ int um_tlb_sync(struct mm_struct *mm)
  		ops.mmap = map;
  		ops.unmap = unmap;
  	}
@@ -1491,12 +1613,44 @@ index cf7e0d440..ed2c60044 100644
  	mm->context.sync_tlb_range_from = 0;
  	mm->context.sync_tlb_range_to = 0;
 +#endif
++
++	return ret;
++}
++
++#ifdef UML_HOST_DARWIN
++static struct task_struct *init_mm_tlb_owner;
++
++static noinline int um_tlb_sync_init_mm(void)
++{
++	int ret;
  
++	/* A host fault inside an init_mm host mapping operation re-enters the
++	 * kernel synchronously in the same UML task. Waiting for our own mutex
++	 * would deadlock forever; return a bounded error for the fault path to
++	 * diagnose instead. Other tasks wait normally and preserve walker order.
++	 */
++	if (READ_ONCE(init_mm_tlb_owner) == current)
++		return -EDEADLK;
++	mutex_lock(&init_mm.context.turnstile);
++	if (WARN_ON_ONCE(READ_ONCE(init_mm_tlb_owner) != NULL)) {
++		ret = -EIO;
++		goto clear_owner;
++	}
++	WRITE_ONCE(init_mm_tlb_owner, current);
++	ret = __um_tlb_sync(&init_mm, false);
++clear_owner:
++	WRITE_ONCE(init_mm_tlb_owner, NULL);
++	mutex_unlock(&init_mm.context.turnstile);
  	return ret;
  }
- 
++#endif
++
 +int um_tlb_sync(struct mm_struct *mm)
 +{
++#ifdef UML_HOST_DARWIN
++	if (unlikely(mm == &init_mm))
++		return um_tlb_sync_init_mm();
++#endif
 +	return __um_tlb_sync(mm, false);
 +}
 +
@@ -1519,14 +1673,15 @@ index cf7e0d440..ed2c60044 100644
 +	 * may schedule, and a scheduled-out UML task must never retain a mutex
 +	 * needed by the sibling that was selected to run.
 +	 */
++	if (WARN_ON_ONCE(mm == &init_mm))
++		return -EINVAL;
 +	return __um_tlb_sync(mm, true);
 +}
 +#endif
-+
+ 
  void flush_tlb_all(void)
  {
- 	/*
-@@ -212,11 +572,31 @@ void flush_tlb_all(void)
+@@ -212,11 +721,31 @@ void flush_tlb_all(void)
  	flush_tlb_mm(current->mm);
  }
  
@@ -1560,10 +1715,22 @@ index cf7e0d440..ed2c60044 100644
 +	}
  }
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 5b80a3a89..264c93e56 100644
+index 5b80a3a89..1c8cd2c41 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -142,6 +142,9 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -17,6 +17,11 @@
+ #include <os.h>
+ #include <skas.h>
+ 
++#ifdef UML_HOST_DARWIN
++extern int darwin_uml_vm_retry_fault(unsigned long address, int execute,
++				     int write);
++#endif
++
+ /*
+  * NOTE: UML does not have exception tables. As such, this is almost a copy
+  * of the code in mm/memory.c, only adjusting the logic to simply check whether
+@@ -142,6 +147,9 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  {
  	struct mm_struct *mm = current->mm;
  	struct vm_area_struct *vma;
@@ -1573,7 +1740,7 @@ index 5b80a3a89..264c93e56 100644
  	pmd_t *pmd;
  	pte_t *pte;
  	int err = -EFAULT;
-@@ -203,7 +206,15 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -203,7 +211,15 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  			goto retry;
  		}
  
@@ -1589,7 +1756,7 @@ index 5b80a3a89..264c93e56 100644
  		pte = pte_offset_kernel(pmd, address);
  	} while (!pte_present(*pte));
  	err = 0;
-@@ -316,7 +327,7 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -316,17 +332,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	if (!is_user && regs)
  		current->thread.segv_regs = container_of(regs, struct pt_regs, regs);
  
@@ -1597,8 +1764,38 @@ index 5b80a3a89..264c93e56 100644
 +	if (!is_user && address >= start_vm && address < end_vm) {
  		/*
  		 * Kernel has pending updates from set_ptes that were not
- 		 * flushed yet. Syncing them should fix the pagefault (if not
-@@ -375,7 +386,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+-		 * flushed yet. Syncing them should fix the pagefault (if not
+-		 * we'll get here again and panic).
++		 * flushed yet. Force the exact faulting Linux page into this
++		 * snapshot even when an interrupted outer walker already cleared
++		 * its pending range.
+ 		 */
++#ifdef UML_HOST_DARWIN
++		unsigned long page = address & PAGE_MASK;
++
++		um_tlb_mark_sync(&init_mm, page, page + PAGE_SIZE);
++#endif
+ 		err = um_tlb_sync(&init_mm);
+ 		if (err == -ENOMEM)
+ 			report_enomem();
+ 		if (err)
+ 			panic("Failed to sync kernel TLBs: %d", err);
++#ifdef UML_HOST_DARWIN
++		/* A successful walker return is not enough: an absent PTE, wrong
++		 * permission, or failed host repair would otherwise retry this same
++		 * native fault indefinitely. Retry only after the host proves that
++		 * the requested access is now backed by the current mapping.
++		 */
++		err = darwin_uml_vm_retry_fault(address, FAULT_EXECUTE(fi),
++						is_write);
++		if (err != 1)
++			panic("Darwin: kernel TLB repair did not restore %#lx: %d",
++			      address, err);
++#endif
+ 		goto out;
+ 	}
+ 	else if (current->pagefault_disabled) {
+@@ -375,7 +409,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		panic("Kernel mode fault at addr 0x%lx, ip 0x%lx",
  		      address, ip);
  	}
