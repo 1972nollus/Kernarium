@@ -28,6 +28,12 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-darwin-host-compat
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_host_compat.sh
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-next-version-policy-actions
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_next_version_policy.sh
     LABELS kernel;audit

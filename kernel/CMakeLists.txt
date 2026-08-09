@@ -228,6 +228,8 @@ add_custom_command(
             "${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin.env"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/host_compat.h"
+            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/byteswap.h"
+            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/elf.h"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/libelf.h"
             "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/bin/find"
             "${PROJECT_SOURCE_DIR}/kernel/abi/sync.sh"

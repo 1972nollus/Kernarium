@@ -62,11 +62,13 @@ clean stale managed replay branch, and it never replaces the source directory
 itself.
 
 `kernel/config/` owns page-size fragments. `kernel/toolchain/darwin.env` owns
-portable compiler/linker/tool defaults. Darwin host tools get their ELF ABI
-layouts from the selected Linux source through the project-owned compatibility
-header under `kernel/toolchain/darwin-host`; they do not discover or link a
-system libelf. Darwin UML is a native arm64 Mach-O build, so its cross-tool
-prefix is empty by default; set one only for a host that genuinely requires it.
+portable compiler/linker/tool defaults. Darwin host tools resolve their
+unmodified `<elf.h>`, `<libelf.h>`, and `<byteswap.h>` includes through the
+project-owned compatibility headers under `kernel/toolchain/darwin-host`.
+Their ELF ABI layouts come from the selected Linux source, and they do not
+discover or link a system libelf. Darwin UML is a native arm64 Mach-O build,
+so its cross-tool prefix is empty by default; set one only for a host that
+genuinely requires it.
 Linux 6.18 needs a compiler that supports `__counted_by` flexible arrays in
 type expressions (recent upstream LLVM does; some Apple Clang releases do not).
 The CMake kernel graph probes this capability during configuration. It prefers
