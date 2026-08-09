@@ -460,12 +460,34 @@ foreach(SOURCE_SIZE_METADATA_ERROR IN LISTS SOURCE_SIZE_METADATA_ERRORS)
         "source-size review metadata: ${SOURCE_SIZE_METADATA_ERROR}")
 endforeach()
 
-# Active implementation/docs must use the neutral module vocabulary.  Historical
-# planning records are deliberately excluded from this terminology check.
+# Keep project documentation together. The root retains only the agent guide,
+# its compatibility link, and the conventional human-facing README.
+file(GLOB ROOT_MARKDOWN_DOCUMENTS LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/*.md")
+set(ROOT_MARKDOWN_ALLOWLIST
+    AGENTS.md
+    CLAUDE.md
+    README.md)
+foreach(ROOT_MARKDOWN_DOCUMENT IN LISTS ROOT_MARKDOWN_DOCUMENTS)
+    get_filename_component(ROOT_MARKDOWN_NAME
+        "${ROOT_MARKDOWN_DOCUMENT}" NAME)
+    if(NOT ROOT_MARKDOWN_NAME IN_LIST ROOT_MARKDOWN_ALLOWLIST)
+        list(APPEND VIOLATIONS
+            "${ROOT_MARKDOWN_DOCUMENT}: project documentation belongs under docs/")
+    endif()
+endforeach()
+
+# Active implementation/docs must use the neutral module vocabulary. Historical
+# planning and evidence archives are deliberately excluded from this terminology
+# check even though they now live with the active documentation under docs/.
 file(GLOB_RECURSE TERMINOLOGY_FILES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/darwin/*"
     "${SOURCE_ROOT}/cmake/*"
     "${SOURCE_ROOT}/docs/*.md")
+list(REMOVE_ITEM TERMINOLOGY_FILES
+    "${SOURCE_ROOT}/docs/HOT_PATH_EXPERIMENTS.md"
+    "${SOURCE_ROOT}/docs/REFACTORING_PLAN.md"
+    "${SOURCE_ROOT}/docs/REFACTOR_HANDOFF.md")
 foreach(PATH IN LISTS TERMINOLOGY_FILES)
     if(IS_DIRECTORY "${PATH}")
         continue()

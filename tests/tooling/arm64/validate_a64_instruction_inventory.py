@@ -204,7 +204,7 @@ def validate_requirement(value: str, stable_id: str) -> None:
 def main() -> int:
     repository = Path(__file__).resolve().parents[3]
     inventory = repository / "tests/unit/arm64/a64_instruction_inventory.tsv"
-    progress = repository / "A64_INSTRUCTION_PROGRESS.md"
+    progress = repository / "docs/A64_INSTRUCTION_PROGRESS.md"
     # The feature representation is a neutral platform contract shared by the
     # Apple probe and CPU engines. Neither side owns the other's types.
     host_features = repository / "darwin/platform/host_capabilities.hpp"

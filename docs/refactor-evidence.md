@@ -21,7 +21,7 @@ a dated evidence archive.
 | Explicit limitations | Verification was local-only; this repository has no hosted CI workflow. Full LTP was unavailable and not run because the payload was absent. Input materialization remains opt-in (about 6.6 GiB for a complete profile), and semantic evidence remains **0/983 variant-complete**. Rootfs-management redesign is deferred and source-size thresholds are advisory. The user explicitly directed that the final Geekbench rerun be skipped after all other tasks, so historical and focused controls are preserved without a new final score. |
 
 The authoritative handoff is in
-[`../REFACTOR_HANDOFF.md`](../REFACTOR_HANDOFF.md); commands and external
+[`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md); commands and external
 prerequisites are in [`testing.md`](testing.md).
 
 ## Seventh-audit evidence (historical; superseded)

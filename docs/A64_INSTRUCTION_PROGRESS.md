@@ -117,7 +117,7 @@ and two-profile promotion tooling is implemented. The multi-day official run
 has **not** been executed, so it does not close or reaffirm any historical
 instruction checkbox below. The canonical, copy/paste executable 4 KiB +
 16 KiB command chain is
-[`docs/testing.md`](docs/testing.md#exact-official-a64-campaign). It starts
+[`testing.md`](testing.md#exact-official-a64-campaign). It starts
 from fresh unit evidence and includes materialization joins, authority-filtered
 sharding, immutable plans, an exact four-shard pilot per profile, full resume,
 independent verification, locked promotion, and promotion `--verify-only`.

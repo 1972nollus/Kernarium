@@ -34,7 +34,7 @@ intentionally skipped at the user's direction. The preserved historical
 measurements and focused hot-path controls remain the performance evidence; no
 new end-to-end Geekbench result is claimed for this final baseline.
 
-[`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the detailed evidence
+[`docs/refactor-evidence.md`](refactor-evidence.md) is the detailed evidence
 index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.
 
 ## Seventh-audit handoff (historical; superseded)
@@ -695,7 +695,7 @@ introduced in **d15e98c "Refactor half-way"** - the commit at which the
 benchmark first misbehaved.
 
 **Fix applied.** `GuestPageHash` in
-[address_space_types.hpp](darwin/memory/mmu/address_space_types.hpp) folds the
+[address_space_types.hpp](../darwin/memory/mmu/address_space_types.hpp) folds the
 page number through a multiply-shift finalizer, so the distribution no longer
 depends on the bucket count the container happens to choose. The reservation and
 its allocation checkpoint are unchanged. `GenerationState::mappings` is left on
@@ -1230,7 +1230,7 @@ failure and replay-topology gaps qualify those historical results.
   cohesive or order-sensitive files may remain larger without an exception.
   Optional context records an owner, factual size at review time, rationale,
   and date in
-  [`docs/source-size-reviews.tsv`](docs/source-size-reviews.tsv).
+  [`docs/source-size-reviews.tsv`](source-size-reviews.tsv).
 - Interpreter integration is deliberately lightweight: shell arithmetic and
   CPU/HWCAP inspection. Heavy Node.js, Go, browser, and benchmark workloads are
   not run through the interpreter.
@@ -1471,7 +1471,7 @@ pass claims:
 - repeated controlled gadget/JIT performance medians.
 
 Their prerequisites and commands are documented in
-[`docs/testing.md`](docs/testing.md). Missing external inputs do not leave a
+[`docs/testing.md`](testing.md). Missing external inputs do not leave a
 repository item open by themselves, but they also do not close the repository-
 owned seventh-audit checklist above. Rootfs provisioning, identity, locking,
 and maintenance are intentionally excluded until the testing-image redesign.

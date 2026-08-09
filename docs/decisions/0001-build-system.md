@@ -36,4 +36,4 @@ parallel Bazel or Meson source manifests.
 ## References
 
 The trade-off analysis and primary references are retained in
-`REFACTORING_PLAN.md` under “Build and test system decision”.
+`docs/REFACTORING_PLAN.md` under “Build and test system decision”.

@@ -26,8 +26,8 @@
 
 This document is a historical design snapshot, not the current handoff. A new
 chat must start with [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md), then read
-[`kernel/README.md`](kernel/README.md) for the implemented Linux source model
-and [`docs/testing.md`](docs/testing.md) for current commands. Use the phased
+[`kernel/README.md`](../kernel/README.md) for the implemented Linux source model
+and [`docs/testing.md`](testing.md) for current commands. Use the phased
 material below as design rationale only where the handoff has not superseded
 it.
 
@@ -1058,7 +1058,7 @@ Exit gate: the final acceptance checklist below is completely checked.
 This section is preserved as the 2026-08-01 planning handoff. It is not the
 operational entry point now that the refactor has been performed. A brand-new
 chat must use [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md) first, then
-[`kernel/README.md`](kernel/README.md) and [`docs/testing.md`](docs/testing.md).
+[`kernel/README.md`](../kernel/README.md) and [`docs/testing.md`](testing.md).
 Treat the dates, paths, counts, commands, and passing claims below as historical
 context unless those current documents explicitly confirm them.
 

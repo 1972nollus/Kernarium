@@ -28,8 +28,8 @@ other acceptance task completed, so no new final-baseline Geekbench score is
 claimed.
 
 [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md) is the authoritative acceptance
-record. [`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the detailed
-evidence index; [`docs/testing.md`](docs/testing.md) contains current commands
+record. [`docs/refactor-evidence.md`](refactor-evidence.md) is the detailed
+evidence index; [`docs/testing.md`](testing.md) contains current commands
 and acceptance boundaries.
 
 ## Seventh-audit progress snapshot (historical; superseded)
@@ -49,7 +49,7 @@ source change.
 At the time, [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md) was the authoritative
 acceptance-level checklist.
 
-[`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the detailed
+[`docs/refactor-evidence.md`](refactor-evidence.md) is the detailed
 evidence index. [`REFACTORING_PLAN.md`](REFACTORING_PLAN.md) remains the original
 specification and records the clarified policy that generated build metadata
 does not need to be byte-for-byte deterministic.

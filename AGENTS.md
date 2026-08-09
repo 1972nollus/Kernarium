@@ -13,17 +13,17 @@ release plus an ordered patch series.
 
 Before changing code, read the documents that own the relevant truth:
 
-1. `REFACTOR_HANDOFF.md` — current accepted state, limitations, and external
+1. `docs/REFACTOR_HANDOFF.md` — current accepted state, limitations, and external
    work that is not claimed.
 2. `docs/testing.md` — canonical commands, prerequisites, and campaign scope.
 3. `docs/architecture.md` — enforced dependency direction and ownership.
 4. The relevant subsystem guide: `darwin/README.md`,
    `dependencies/README.md`, `kernel/README.md`, or `kernel/abi/README.md`.
 
-`REFACTORING_PLAN.md` is a historical proposed plan. Its old paths, counts,
+`docs/REFACTORING_PLAN.md` is a historical proposed plan. Its old paths, counts,
 open checklists, per-domain label proposal, and blanket implementation-fragment
 language are not current requirements where the authoritative documents have
-superseded them. `REFACTOR_PROGRESS.md` is the compact current summary and
+superseded them. `docs/REFACTOR_PROGRESS.md` is the compact current summary and
 `docs/refactor-evidence.md` is the evidence index. Preserve explicitly dated
 historical sections as history.
 
@@ -269,7 +269,7 @@ outside engine inner loops.
 Correctness tests alone do not prove unchanged performance. Use focused probes
 and matched measurements appropriate to the affected path, then record
 accepted and rejected trials, controls, and limitations in
-`HOT_PATH_EXPERIMENTS.md`. Full Geekbench is a separate manual campaign, not an
+`docs/HOT_PATH_EXPERIMENTS.md`. Full Geekbench is a separate manual campaign, not an
 ordinary correctness gate. Keep `tests/perf/probes.tsv` exact when adding,
 renaming, or removing a performance probe.
 
@@ -295,7 +295,7 @@ renaming, or removing a performance probe.
   evidence campaign. The official A64 semantics campaign can run for days and
   is outside ordinary CTest.
 - Historical 983-entry evidence is not exhaustive variant correctness. Follow
-  the current completeness boundary in `A64_INSTRUCTION_PROGRESS.md`.
+  the current completeness boundary in `docs/A64_INSTRUCTION_PROGRESS.md`.
 
 ## Source-size policy
 
@@ -307,6 +307,9 @@ stale, duplicate, or malformed rows fail the audit because they make the report
 misleading.
 
 ## Documentation is part of every change
+
+Keep project documentation under `docs/`. The repository root is reserved for
+`AGENTS.md`, its one-line `CLAUDE.md` link, and an optional `README.md`.
 
 Keep documentation and manifests synchronized in the same change whenever
 their truth changes:
@@ -324,11 +327,11 @@ their truth changes:
   copies, and consumers as applicable;
 - test registration or ownership -> `tests/test-manifest.tsv`, plus the
   migration ledger for renames/removals;
-- instruction evidence or completeness -> `A64_INSTRUCTION_PROGRESS.md`;
-- performance mechanism or measurement -> `HOT_PATH_EXPERIMENTS.md`;
-- LTP policy or result -> `LTP_PROGRESS.md`;
+- instruction evidence or completeness -> `docs/A64_INSTRUCTION_PROGRESS.md`;
+- performance mechanism or measurement -> `docs/HOT_PATH_EXPERIMENTS.md`;
+- LTP policy or result -> `docs/LTP_PROGRESS.md`;
 - accepted baseline, acceptance evidence, or limitations -> current sections
-  of `REFACTOR_HANDOFF.md`, `REFACTOR_PROGRESS.md`, and
+  of `docs/REFACTOR_HANDOFF.md`, `docs/REFACTOR_PROGRESS.md`, and
   `docs/refactor-evidence.md`.
 
 Do not rewrite dated historical evidence as though it were current. Record only
