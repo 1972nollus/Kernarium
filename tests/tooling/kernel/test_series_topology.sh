@@ -34,9 +34,11 @@ git -C "$SOURCE" commit -q -m 'topic two'
 COMMIT_TWO=$(git -C "$SOURCE" rev-parse HEAD)
 CANONICAL_TIP=$COMMIT_TWO
 
-git -C "$SOURCE" format-patch -1 --stdout "$COMMIT_ONE" \
+git -C "$SOURCE" format-patch --subject-prefix='PATCH 1/2' -1 \
+	--stdout "$COMMIT_ONE" \
 	> "$FIXTURE/kernel/patches/series/0001.patch"
-git -C "$SOURCE" format-patch -1 --stdout "$COMMIT_TWO" \
+git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 \
+	--stdout "$COMMIT_TWO" \
 	> "$FIXTURE/kernel/patches/series/0002.patch"
 printf '%s\n' 'UML_KERNEL_PATCH_COUNT=2' \
 	> "$FIXTURE/kernel/patches/metadata.env"
@@ -109,6 +111,56 @@ cp "$WORK_DIRECTORY/canonical-0001.patch" \
 write_manifest
 verify_manifest
 
+awk '
+	!changed && /^Subject: \[PATCH 1\/2\] / {
+		sub(/\[PATCH 1\/2\]/, "[PATCH 2/2]")
+		changed = 1
+	}
+	{ print }
+	END { if (!changed) exit 2 }
+' "$WORK_DIRECTORY/canonical-0001.patch" \
+	> "$FIXTURE/kernel/patches/series/0001.patch"
+write_manifest
+WRONG_ORDINAL="$WORK_DIRECTORY/wrong-subject-ordinal.err"
+if verify_manifest 2>"$WRONG_ORDINAL"; then
+	printf '%s\n' \
+		'manifest verifier accepted the wrong patch Subject ordinal' >&2
+	exit 1
+fi
+if ! grep -F -q 'expected [PATCH 1/2]' "$WRONG_ORDINAL"; then
+	printf '%s\n' \
+		'manifest verifier rejected the Subject ordinal for the wrong reason' >&2
+	sed -n '1,20p' "$WRONG_ORDINAL" >&2
+	exit 1
+fi
+
+awk '
+	!changed && /^Subject: \[PATCH 1\/2\] / {
+		sub(/\[PATCH 1\/2\]/, "[PATCH 1/3]")
+		changed = 1
+	}
+	{ print }
+	END { if (!changed) exit 2 }
+' "$WORK_DIRECTORY/canonical-0001.patch" \
+	> "$FIXTURE/kernel/patches/series/0001.patch"
+write_manifest
+WRONG_TOTAL="$WORK_DIRECTORY/wrong-subject-total.err"
+if verify_manifest 2>"$WRONG_TOTAL"; then
+	printf '%s\n' \
+		'manifest verifier accepted the wrong patch Subject total' >&2
+	exit 1
+fi
+if ! grep -F -q 'expected [PATCH 1/2]' "$WRONG_TOTAL"; then
+	printf '%s\n' \
+		'manifest verifier rejected the Subject total for the wrong reason' >&2
+	sed -n '1,20p' "$WRONG_TOTAL" >&2
+	exit 1
+fi
+cp "$WORK_DIRECTORY/canonical-0001.patch" \
+	"$FIXTURE/kernel/patches/series/0001.patch"
+write_manifest
+verify_manifest
+
 verify "$CANONICAL_TIP"
 
 printf '%s\n' 'path	topic_orders	rationale' \
@@ -127,7 +179,7 @@ git -C "$SOURCE" switch -q -c overlap-policy-case "$CANONICAL_TIP"
 printf '%s\n' changed > "$SOURCE/arch/um/one"
 git -C "$SOURCE" add arch/um/one
 git -C "$SOURCE" commit -q -m 'overlap policy topic'
-git -C "$SOURCE" format-patch -1 --stdout HEAD \
+git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 --stdout HEAD \
 	> "$FIXTURE/kernel/patches/series/0002.patch"
 write_manifest
 if verify_manifest 2>/dev/null; then

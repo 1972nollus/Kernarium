@@ -69,7 +69,7 @@ class ManifestRow:
     paths: frozenset[str]
 
 
-def patch_subject(contents: bytes) -> str:
+def patch_mail_subject(contents: bytes) -> str:
     header = contents.split(b"\n\n", 1)[0].decode("utf-8")
     lines = header.splitlines()
     subject = ""
@@ -82,9 +82,17 @@ def patch_subject(contents: bytes) -> str:
             subject += " " + line.strip()
         elif collecting:
             break
-    subject = re.sub(r"^\[PATCH[^]]*\]\s*", "", subject)
     if not subject:
         fail("patch mail has no subject")
+    return subject
+
+
+def patch_subject(contents: bytes) -> str:
+    subject = re.sub(
+        r"^\[PATCH[^]]*\]\s*", "", patch_mail_subject(contents)
+    )
+    if not subject:
+        fail("patch mail has no subject after its prefix")
     return subject
 
 
@@ -222,6 +230,15 @@ def manifest(root: Path) -> list[ManifestRow]:
             fail(f"manifest patch is missing: {patch}")
         contents = patch.read_bytes()
         verify_added_source_whitespace(filename, contents)
+        prefix_width = len(str(expected_count))
+        expected_prefix = "[PATCH] " if expected_count == 1 else (
+            f"[PATCH {expected_order:0{prefix_width}d}/{expected_count}] "
+        )
+        if not patch_mail_subject(contents).startswith(expected_prefix):
+            fail(
+                f"patch mail Subject prefix mismatch for {filename}; "
+                f"expected {expected_prefix.rstrip()}"
+            )
         actual_digest = hashlib.sha256(contents).hexdigest()
         if actual_digest != digest:
             fail(f"patch hash mismatch for {filename}")

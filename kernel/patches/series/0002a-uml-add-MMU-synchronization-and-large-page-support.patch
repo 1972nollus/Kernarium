@@ -1,7 +1,7 @@
 From 44d4981f399c4c1159aeed6308c0365e5725e47f Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:04 +0900
-Subject: [PATCH] uml: add MMU synchronization and large-page support
+Subject: [PATCH 02/14] uml: add MMU synchronization and large-page support
 
 Keep page-table synchronization, large-page handling, same-process address-space lifetime, and user-access behavior in one reviewable final-state topic.
 ---
