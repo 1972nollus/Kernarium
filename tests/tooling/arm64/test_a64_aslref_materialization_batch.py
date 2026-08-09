@@ -195,9 +195,15 @@ def generated_directory_preflight_fixture(root: Path) -> None:
 def main() -> int:
     options = arguments()
     repository = Path(__file__).resolve().parents[3]
-    tooling_cmake = (
-        repository / "tests/tooling/CMakeLists.txt"
-    ).read_text(encoding="utf-8")
+    tooling_root = repository / "tests/tooling"
+    tooling_registration_files = [
+        tooling_root / "CMakeLists.txt",
+        *sorted(tooling_root.rglob("*.cmake")),
+    ]
+    tooling_cmake = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in tooling_registration_files
+    )
     require(
         "probe_a64_aslref_materialization_batch.py" not in tooling_cmake,
         "slow materialization execution probe entered ordinary CTest",
