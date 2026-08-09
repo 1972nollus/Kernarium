@@ -24,6 +24,7 @@ target_compile_options(uml_test_allocation_failure PRIVATE
 # CPU conformance and engine/runtime tests have their own directory scope.
 # This keeps the suite entry point small while preserving one explicit source
 # manifest per test domain.
+add_custom_target(unit-test-binaries)
 add_subdirectory(arm64)
 add_subdirectory(memory)
 add_subdirectory(runtime)
