@@ -51,11 +51,16 @@ function(_uml_write_ctest_fixture LABEL_DECLARATION)
 endfunction()
 
 function(_uml_run_manifest_audit EXPECT_SUCCESS EXPECTED_DIAGNOSTIC)
+    set(REQUIRED_CONDITIONAL_TESTS "")
+    if(ARGC GREATER 2)
+        set(REQUIRED_CONDITIONAL_TESTS "${ARGV2}")
+    endif()
     execute_process(
         COMMAND "${CMAKE_COMMAND}"
             "-DBUILD_ROOT=${TEST_ROOT}/build"
             "-DMANIFEST=${TEST_ROOT}/tests/test-manifest.tsv"
             -DEXPECTED_SUITES=tooling
+            "-DREQUIRED_CONDITIONAL_TESTS=${REQUIRED_CONDITIONAL_TESTS}"
             -P "${AUDIT_SCRIPT}"
         RESULT_VARIABLE RESULT
         OUTPUT_VARIABLE OUTPUT
@@ -80,6 +85,26 @@ endfunction()
 _uml_write_ctest_fixture(
     "set_tests_properties([=[suite-label-sample]=] PROPERTIES LABELS [=[tooling]=])\n")
 _uml_run_manifest_audit(TRUE "")
+
+string(REPLACE
+    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
+    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tconditional"
+    CONDITIONAL_MANIFEST_CONTENT "${MANIFEST_CONTENT}")
+file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv"
+    "${CONDITIONAL_MANIFEST_CONTENT}")
+_uml_run_manifest_audit(FALSE
+    "Registered conditional test is missing from REQUIRED_CONDITIONAL_TESTS")
+_uml_run_manifest_audit(TRUE "" suite-label-sample)
+
+# Requiring a conditional row must make deletion of its active CTest
+# registration observable even while the manifest entry remains intact.
+file(WRITE "${TEST_ROOT}/build/CTestTestfile.cmake" "")
+_uml_run_manifest_audit(FALSE
+    "Required tooling test is absent from the generated CTest registry"
+    suite-label-sample)
+file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv" "${MANIFEST_CONTENT}")
+_uml_write_ctest_fixture(
+    "set_tests_properties([=[suite-label-sample]=] PROPERTIES LABELS [=[tooling]=])\n")
 
 string(REPLACE
     "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"

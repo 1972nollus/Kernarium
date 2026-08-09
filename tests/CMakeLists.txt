@@ -172,6 +172,10 @@ endif()
 if(TARGET uml_slirp_network_tests)
     list(APPEND _uml_required_conditional_tests slirp-network-arp)
 endif()
+if(UML_BUILD_UNIT_TESTS AND TARGET uml_gpu_service)
+    list(APPEND _uml_required_conditional_tests
+        gpu-transport-wire-ownership)
+endif()
 if(TARGET uml_gpu_service_fd_tests)
     list(APPEND _uml_required_conditional_tests gpu-service-fd-ownership)
 endif()
@@ -190,6 +194,11 @@ if(TARGET uml_embedded_kernel_serialization_tests)
 endif()
 if(UML_BUILD_TOOLING_TESTS AND TARGET uml-vnc-smoke-client)
     list(APPEND _uml_required_conditional_tests virtio-gpu-vnc-smoke)
+endif()
+if(UML_BUILD_TOOLING_TESTS AND DEFINED UML_KERNEL_SOURCE_DIR AND
+   EXISTS "${UML_KERNEL_SOURCE_DIR}/arch/um/kernel/tlb.c")
+    list(APPEND _uml_required_conditional_tests
+        darwin-init-mm-tlb-policy)
 endif()
 if(UML_BUILD_INTEGRATION_TESTS AND UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     list(APPEND _uml_required_conditional_tests

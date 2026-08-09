@@ -268,6 +268,15 @@ foreach(ROW IN LISTS CTEST_ROWS)
         message(FATAL_ERROR
             "Registered test is not retained in ${MANIFEST}: ${TEST_NAME}")
     endif()
+    if(DISPOSITION STREQUAL "conditional")
+        list(FIND REQUIRED_CONDITIONAL_TESTS "${TEST_NAME}"
+            CONDITIONAL_REQUIRED_INDEX)
+        if(CONDITIONAL_REQUIRED_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "Registered conditional test is missing from "
+                "REQUIRED_CONDITIONAL_TESTS: ${TEST_NAME}")
+        endif()
+    endif()
 
     # Inspect the generated CTest registry, not only helper bookkeeping. This
     # catches a raw or post-registration mutation that omits the suite label or
@@ -338,7 +347,7 @@ foreach(MANIFEST_INDEX RANGE 0 ${MANIFEST_LAST_INDEX})
     list(FIND CTEST_NAMES "${CURRENT_NAME}" CTEST_INDEX)
     if(CTEST_INDEX EQUAL -1)
         message(FATAL_ERROR
-            "Retained ${SUITE} test is absent from the generated CTest registry: ${CURRENT_NAME}")
+            "Required ${SUITE} test is absent from the generated CTest registry: ${CURRENT_NAME}")
     endif()
 endforeach()
 
