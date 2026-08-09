@@ -30,8 +30,15 @@ kernel bridge identity.
 `kernel/abi/identity.env`, the `darwin_uml_*.h` files, and
 `uml_tlb_sync_ranges.h` are the canonical plain-C host/Linux bridge. The bridge
 umbrella preserves source compatibility while CPU, host-service, memory, and
-network consumers include their narrow contracts. Files below `darwin/include`
-and in a replayed Linux tree are generated copies and must not be edited.
+network consumers include their narrow contracts. `kernel/abi/sync.sh` is the
+exact generated-copy authority. Its host outputs under `darwin/include/` are
+`uml_darwin_abi.h`, `uml_darwin_abi_identity.h`, `uml_darwin_cpu.h`,
+`uml_darwin_host.h`, `uml_darwin_memory.h`, `uml_darwin_network.h`,
+`uml_darwin_bridge.h`, and `uml/tlb_sync_ranges.h`; corresponding replay
+headers are generated too. Do not edit those copies directly.
+The host-only `darwin/include/uml_darwin_guest.h`,
+`darwin/include/uml_darwin_static_mmu.h`, and `darwin/include/uml_elf64.h` are
+authored in place and are not sync outputs.
 
 For an intentional bridge declaration change:
 
