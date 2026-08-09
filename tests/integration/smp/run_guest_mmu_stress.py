@@ -26,14 +26,18 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument(
         "--root-device",
-        default="/dev/ubda1",
-        help="read-only root partition provided by the immutable GPT image",
+        default="/dev/ubda",
+        help="raw EROFS root device (default: /dev/ubda)",
     )
     parser.add_argument(
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
-        help="bootstrap a writable tmpfs OverlayFS shell from /bin/sh",
+        default=True,
+        help=(
+            "bootstrap the required writable tmpfs OverlayFS shell from "
+            "/bin/sh (default and retained for CLI compatibility)"
+        ),
     )
     parser.add_argument(
         "--systemd-overlay",

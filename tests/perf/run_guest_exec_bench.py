@@ -23,7 +23,11 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--root-device", default="/dev/ubda1")
+    parser.add_argument(
+        "--root-device",
+        default="/dev/ubda",
+        help="raw EROFS root block device (default: /dev/ubda)",
+    )
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--executions", type=int, default=5000)

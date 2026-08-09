@@ -1,5 +1,10 @@
 # Geekbench 6 workload profile
 
+> Historical G9 profile analysis. The current runner uses the Geekbench 6
+> payload from `rootfs.erofs` under `/opt` with `--no-upload`; the
+> user-directed final scoring run was skipped, so this capture is not evidence
+> for the EROFS migration.
+
 ## Capture
 
 The accepted G9 run captured one five-second macOS stack sample at the start

@@ -29,28 +29,32 @@ void test_defaults_and_engine_selection()
 	const char *arguments[]{"uml-test", "--execution-engine=interpreter",
 		"console=ttyS0"};
 	const auto options = uml::emulator::prepare_emulator_options(
-		3, arguments, "/tmp/rootfs.img", true);
+		3, arguments, "/tmp/rootfs.erofs", true);
 	require(options.valid, "valid emulator options were rejected");
 	require(options.engine ==
 			uml::runtime::ExecutionEngine::interpreter,
 		"execution engine was not parsed");
 	require(contains(options, "console=ttyS0"), "kernel argument was lost");
-	require(contains(options, "ubd0r=/tmp/rootfs.img"),
+	require(contains(options, "ubd0c=/tmp/rootfs.erofs"),
 		"rootfs default was not added");
-	require(contains(options, "root=/dev/ubda1"), "root default was not added");
-	require(contains(options, "init=/sbin/uml-overlay-init"), "init default was not added");
+	require(contains(options, "root=/dev/ubda"), "root default was not added");
+	require(contains(options, "rootfstype=erofs"),
+		"EROFS root type was not added");
+	require(contains(options, "init=/bin/sh"),
+		"interactive shell init was not added");
+	require(!contains(options, "init=/sbin/uml-overlay-init"),
+		"removed image-local overlay init was injected");
 	require(contains(options, "mem=256M"), "memory default was not added");
 	require(contains(options, "ip=dhcp"), "network default was not added");
-	require(contains(options, "ro"), "read-only default was not added");
 	require(!contains(options, "--execution-engine=interpreter"),
 		"host execution option leaked into the kernel command line");
 }
 
 void test_explicit_defaults_are_preserved()
 {
-	const char *arguments[]{"console=ttyS0", "ubd0r=/custom/rootfs",
-		"root=/dev/custom", "init=/custom-init", "mem=512M", "ip=dhcp",
-		"ro", "--execution-engine", "gadgets"};
+	const char *arguments[]{"console=ttyS0", "ubd0c=/custom/rootfs.erofs",
+		"root=/dev/custom", "rootfstype=erofs", "init=/custom-init",
+		"mem=512M", "ip=dhcp", "--execution-engine", "gadgets"};
 	const auto options = uml::emulator::prepare_emulator_options(
 		9, arguments, "/unused/rootfs", true);
 	require(options.valid, "explicit emulator options were rejected");
@@ -58,50 +62,28 @@ void test_explicit_defaults_are_preserved()
 		"separate engine argument was not parsed");
 	require(options.arguments.size() == 7,
 		"explicit kernel policy values were duplicated");
-	require(!contains(options, "rw"), "read-write policy overrode read-only");
-
-	const char *writable_mapping[]{"ubd0=/custom/rootfs"};
-	require(!uml::emulator::prepare_emulator_options(
-			1, writable_mapping, "/unused/rootfs", false)
-			.valid,
-		"writable rootfs mapping was accepted");
-	for (const char *mapping : {
-		     "ubd0s=/custom/rootfs", "ubd0c=/custom/rootfs",
-		     "ubd0d=/custom/rootfs", "ubd0t=/custom/rootfs",
-		     "ubd0"}) {
-		const char *flagged_mapping[]{mapping};
-		require(!uml::emulator::prepare_emulator_options(
-				1, flagged_mapping, "/unused/rootfs", false)
-				.valid,
-			"writable or malformed flagged rootfs mapping was accepted");
-	}
-	const char *flagged_read_only_mapping[]{"ubd0rscdt=/custom/rootfs"};
+	const char *explicit_mapping[]{"ubd0c=/custom/rootfs.erofs"};
 	require(uml::emulator::prepare_emulator_options(
-			1, flagged_read_only_mapping, "/unused/rootfs", false)
+			1, explicit_mapping, "/unused/rootfs.erofs", false)
 			.valid,
-		"read-only flagged rootfs mapping was rejected");
-	const char *writable_root[]{"rw"};
-	require(!uml::emulator::prepare_emulator_options(
-			1, writable_root, "/unused/rootfs", false)
-			.valid,
-		"writable root mount was accepted");
+		"explicit EROFS mapping was rejected");
 }
 
 void test_invalid_and_informational_inputs()
 {
 	const char *invalid_engine[]{"--execution-engine=unknown"};
 	require(!uml::emulator::prepare_emulator_options(
-			1, invalid_engine, "/tmp/rootfs.img", false)
+		1, invalid_engine, "/tmp/rootfs.erofs", false)
 			.valid,
 		"unknown execution engine was accepted");
 	const char *missing_value[]{"--execution-engine"};
 	require(!uml::emulator::prepare_emulator_options(
-			1, missing_value, "/tmp/rootfs.img", false)
+		1, missing_value, "/tmp/rootfs.erofs", false)
 			.valid,
 		"missing execution engine value was accepted");
 	const char *removed_option[]{"--jit-gadget-fallback=off"};
 	require(!uml::emulator::prepare_emulator_options(
-			1, removed_option, "/tmp/rootfs.img", false)
+		1, removed_option, "/tmp/rootfs.erofs", false)
 			.valid,
 		"removed fallback option was accepted");
 	const char *help[]{"--help"};
@@ -116,7 +98,7 @@ void test_invalid_and_informational_inputs()
 	const char *placeholder[]{"unused"};
 	require(!uml::emulator::prepare_emulator_options(
 			std::numeric_limits<int>::max(), placeholder,
-			"/tmp/rootfs.img", false).valid,
+			"/tmp/rootfs.erofs", false).valid,
 		"argument count that overflows the kernel-entry ABI was accepted");
 }
 

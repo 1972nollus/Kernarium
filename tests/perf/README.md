@@ -13,23 +13,34 @@ python3 tests/tooling/performance/test_cli.py
 
 Geekbench runs without a profiler by default. Pass `--profile-dir` only for a
 separate diagnostic run; matched gadget/JIT score campaigns must omit it.
-The runner uses the shared `systemd_overlay` boot mode: the immutable image is
-mounted read-only, a tmpfs-backed OverlayFS is constructed from a temporary
-PID-1 shell, and systemd becomes the real PID 1 before measurement. Do not
-replace this with `overlay_shell`; historical comparison points used systemd.
+The runner invokes the image-local payload at
+`/opt/geekbench/release/geekbench6 --no-upload`, so it
+does not prompt to upload results and has no network permission flag or
+host/guest connectivity preflight. The shared
+`systemd_overlay` boot mode uses the EROFS image as the lower filesystem,
+constructs a tmpfs-backed OverlayFS from a temporary PID-1 shell, and makes
+systemd the real PID 1 before measurement. The image owns the tty0 getty and
+login policy; the runner does not replace it in the overlay. Do not replace
+this with `overlay_shell`; historical comparison points used systemd. After
+login and before starting either the optional profiler or Geekbench, the
+runner stops Docker, its socket, containerd, and the `apt-daily` and
+`apt-daily-upgrade` service/timer pairs. It verifies that none remains active,
+then syncs the guest. This preparation is bounded by `--quiesce-timeout`
+(120 seconds by default), and a failure or timeout aborts the run before any
+measurement begins. All service-state changes live in the disposable overlay.
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.img -- \
+tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
   python3 tests/perf/run_guest_geekbench.py \
     --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.img \
+    --rootfs rootfs.erofs \
     --console-log .build/results/geekbench-gadgets-16k.log \
-    --engine gadgets --cpus 10 --memory 8G --allow-network
+    --engine gadgets --cpus 10 --memory 8G
 ```
 
-`--allow-network` is mandatory. The runner checks host connectivity before
-boot and guest DNS/HTTPS after systemd login, so a missing host-network grant
-fails in seconds instead of after the benchmark has finished computing.
+The payload is already present in `rootfs.erofs`; the runner neither downloads
+it nor opts into an upload. No host-network grant is part of this local
+campaign.
 
 For a diagnostic run created with `--profile-dir`, keep analysis outside the
 scored comparison and use the checked-in readers directly:
@@ -68,15 +79,17 @@ not CTest tests and are not dependencies of unit or integration suite
 aggregates. Run one explicitly through the generic uploader:
 
 ```sh
-python3 tests/perf/run_guest_link_bench.py \
-  --emulator .build/presets/macos-integration/bin/uml-darwin \
-  --rootfs rootfs.img \
-  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_link_loop \
-  --engine gadgets --cpus 10 --workers 10
+tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
+  python3 tests/perf/run_guest_link_bench.py \
+    --emulator .build/presets/macos-integration/bin/uml-darwin \
+    --rootfs rootfs.erofs \
+    --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_link_loop \
+    --engine gadgets --cpus 10 --workers 10
 ```
 
 `guest_atomic_add_loop.S` is the sole payload requiring the host toolchain's
 LSE assembler support. `guest_tlb_128m_alias_loop.S` is meaningful only for a
 16 KiB guest build. The remaining payloads are usable with either supported
-guest page profile. Benchmark execution still requires the integration rootfs
-and should record the same host/build/engine context as every other campaign.
+guest page profile. Benchmark execution still requires the integration EROFS
+image and should record the same host/build/engine context as every other
+campaign.

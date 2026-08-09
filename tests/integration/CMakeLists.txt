@@ -27,7 +27,7 @@ add_custom_target(guest-smp-parallel
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
         --emulator $<TARGET_FILE:uml-darwin>
         --rootfs ${UML_INTEGRATION_ROOTFS}
-        --root-device /dev/ubda1
+        --root-device /dev/ubda
         --overlay-shell
     DEPENDS uml-darwin
     COMMENT "Running standalone guest SMP integration suite"
@@ -47,6 +47,7 @@ function(uml_add_ltp_engine_campaign ENGINE)
             --emulator $<TARGET_FILE:uml-darwin>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --manifest ${PROJECT_SOURCE_DIR}/tests/integration/ltp/verified-tests.tsv
+            --modules-builtin ${UML_KERNEL_BUILD_DIR}/modules.builtin
             --engine ${ENGINE}
             --results-dir ${_results}
             --jobs ${UML_LTP_JOBS}
@@ -61,8 +62,8 @@ uml_add_ltp_engine_campaign(jit)
 add_custom_target(guest-ltp-verified)
 add_dependencies(guest-ltp-verified guest-ltp-gadgets guest-ltp-jit)
 
-# Every guest campaign uses the immutable image wrapper, which validates the
-# GPT layout, mode, and digest both before launch and after cleanup.  The fast
+# Every guest campaign uses the EROFS image wrapper, which validates the raw
+# filesystem contract and digest before launch and after cleanup.  The fast
 # suite contains short real boots; full adds topology, MMU, and rendering work.
 uml_add_guest_integration_test(
     NAME guest-overlay-systemd-smoke
@@ -72,6 +73,35 @@ uml_add_guest_integration_test(
         --rootfs ${UML_INTEGRATION_ROOTFS}
         --timeout 240
         --command "test -d /run/systemd/system && grep -qx systemd /proc/1/comm"
+        --command "getent passwd uml >/dev/null"
+        --command "test \"$(id -u uml)\" -ne 0"
+        --command "test \"$(getent passwd uml | cut -d: -f6)\" = /home/uml"
+        --command "runuser -u uml -- sudo -n true"
+        --command "systemctl is-enabled --quiet getty@tty0.service"
+        --command "timeout 30 sh -c 'until systemctl is-active --quiet getty@tty0.service
+do
+    sleep 1
+done'"
+        --command "timeout 60 sh -c 'until systemctl is-active --quiet docker.service
+do
+    sleep 1
+done'"
+        --command "docker info --format '{{.Driver}}' | grep -Eq '^overlay(fs|2)$'"
+        --command "docker info --format '{{.DockerRootDir}}' | grep -qx /var/lib/docker"
+        --command "test -x /opt/ltp/testcases/bin/getpid01"
+        --command "test -x /opt/node/bin/node"
+        --command "/opt/geekbench/release/geekbench6 --no-upload --version >/dev/null"
+        --command "test -x /usr/sbin/mkfs.ext2"
+        --command "test -x /usr/sbin/mke2fs"
+        --command "test -x /usr/sbin/mkfs.ext3"
+        --command "test -x /usr/sbin/mkfs.ext4"
+        --command "test -x /usr/sbin/debugfs"
+        --command "test -x /usr/sbin/ip"
+        --command "/usr/sbin/ip -Version 2>&1 | grep -q '^ip utility, iproute2-'"
+        --command "test -x /usr/bin/bc"
+        --command "test -x /usr/bin/quota"
+        --command "test -x /usr/sbin/quotacheck"
+        --command "test -x /usr/sbin/e4crypt"
     LABELS guest;overlay;systemd;smoke
     TIMEOUT 300
     PROCESSORS 2
@@ -138,7 +168,7 @@ uml_add_guest_integration_test(
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_mmu_stress.py
         --emulator $<TARGET_FILE:uml-darwin>
         --rootfs ${UML_INTEGRATION_ROOTFS}
-        --root-device /dev/ubda1
+        --root-device /dev/ubda
         --overlay-shell
         --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
         --cpus 10

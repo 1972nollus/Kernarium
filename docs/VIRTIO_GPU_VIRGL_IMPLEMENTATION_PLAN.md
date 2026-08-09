@@ -106,7 +106,7 @@ shared-memory requests are required.
 - Run unit tests and the host VNC smoke test.
 - Run a headless CGL/virglrenderer smoke test.
 
-### Gate 2: immutable guest OpenGL
+### Gate 2: verified EROFS guest OpenGL
 
 Boot with a temporary overlay and verify:
 
@@ -115,9 +115,13 @@ Boot with a temporary overlay and verify:
 - `eglinfo -B -p gbm` succeeds;
 - desktop OpenGL and OpenGL ES renderers identify
   `virgl (Apple ...)`, not llvmpipe or Zink;
-- the frozen `rootfs.img` mode, size, and SHA-256 remain unchanged.
+- the raw `rootfs.erofs` image is mounted at `/dev/ubda` beneath the tmpfs
+  overlay and its manifested format and digest verify before and after the run.
 
-This gate has passed with Mesa 26.1.2 and `virgl (Apple M1 Ultra)`.
+This rendered gate passed in the dated partitioned-image campaign with Mesa
+26.1.2 and `virgl (Apple M1 Ultra)`. The current EROFS runner and bounded
+overlay/systemd guest path pass, but the full rendered EROFS GPU campaign was
+not rerun during the rootfs migration.
 
 ### Gate 3: display scanout
 
@@ -135,7 +139,7 @@ This gate has passed with a 1280x720 Plasma framebuffer captured through VNC.
 - Interact through VNC and verify mouse and keyboard input.
 - Confirm the Folder View desktop runs without the crashing `desktop:/` KIO
   worker.
-- Shut down cleanly and re-check the immutable rootfs guard.
+- Shut down cleanly and re-check the EROFS manifest guard.
 
 This gate has passed. `kwin_wayland` and `plasmashell` remain running, GBM/EGL
 reports `virgl (Apple M1 Ultra)`, the VNC framebuffer contains the Plasma
@@ -144,8 +148,11 @@ reports no Virtio-GPU protocol errors or desktop-process crashes.
 
 ## Current status
 
-All four gates pass. KDE Plasma Wayland is functional over VNC with accelerated
-Virgl OpenGL on the host. Apple core-profile compatibility fixes in
-virglrenderer translate its legacy GLSL 1.30 shaders to GLSL 1.50 and avoid
-requiring promoted extensions that Apple OpenGL does not advertise. The final
-guest audit reports `VIRGL_COMMAND_ERRORS=0`.
+All four implementation gates passed in the dated partitioned-image campaign.
+KDE Plasma Wayland was functional over VNC with accelerated Virgl OpenGL on the
+host, and the final guest audit reported `VIRGL_COMMAND_ERRORS=0`. Apple core-
+profile compatibility fixes in virglrenderer translate its legacy GLSL 1.30
+shaders to GLSL 1.50 and avoid requiring promoted extensions that Apple OpenGL
+does not advertise. Current launchers use raw EROFS and no longer inspect Unix
+mode; a complete KDE/VNC/WebGL EROFS requalification remains an explicit
+external campaign rather than an inferred pass.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a command under a shared lock with immutable-rootfs pre/post checks."""
+"""Run a command under a shared lock with EROFS integrity pre/post checks."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -17,7 +17,7 @@ from verify import DEFAULT_MANIFEST, ROOT, VerificationError, verify
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, default=ROOT / "rootfs.img")
+    parser.add_argument("--image", type=Path, default=ROOT / "rootfs.erofs")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     options = parser.parse_args(arguments)

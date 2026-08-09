@@ -11,9 +11,13 @@ The supported workflow on macOS is:
 ```sh
 dependencies/prepare.sh
 dependencies/build.sh
-UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
-  cmake --preset macos-integration
+cmake --preset macos-integration
 ```
+
+The checked integration presets already select the canonical source and
+page-specific kernel build directories under `/Volumes/<case-sensitive-volume>`. See
+[`../docs/testing.md`](../docs/testing.md) for explicit overrides when using a
+different case-sensitive volume.
 
 `prepare.sh` is the only step that accesses the network. It downloads each
 HTTPS source archive into `.build/dependency-cache`, verifies its SHA-256,

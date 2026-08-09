@@ -16,6 +16,15 @@
 > decode-family `.ipp` fragments behind one composer is a measured exception to
 > the blanket implementation-fragment language below and must be preserved.
 
+> **Superseding rootfs interpretation (2026-08-09):** the deferred rootfs
+> amendment and every partitioned `rootfs.img`, writable `rootfs.ext2`,
+> `/dev/ubda1`, `ubd0r`, mode-0444, or in-place maintenance instruction below
+> are historical. Current workflows use the unified raw `rootfs.erofs` at
+> `/dev/ubda`, verify its manifest before and after a campaign, and rely on
+> EROFS rather than Unix mode or a read-only block argument. LTP and benchmarks
+> come from `/opt`; Geekbench 6 runs locally with `--no-upload`. See
+> [`testing.md`](testing.md) for executable commands.
+
 - Status: proposed; planning snapshot audited 2026-08-01
 - Scope: organization and maintainability without changing guest-visible
   behavior or reducing performance
@@ -54,7 +63,8 @@ historical plan below:
    model will be redesigned. They are not refactor acceptance gates. Existing
    protections may remain, but do not expand or refactor them now. Continue to
    avoid incidental destructive image changes unless a later task explicitly
-   authorizes the new testing workflow.
+   authorizes the new testing workflow. This dated deferral is superseded by
+   the 2026-08-09 EROFS interpretation above.
 4. Source-size guidance is advisory rather than a strict 1,000-line policy.
    Split mixed responsibilities into logical owners, but permit cohesive,
    order-sensitive, generated-like, or hot-path units to remain longer when the
@@ -1279,14 +1289,15 @@ were standalone targets, and some configurations still referred to writable
 `rootfs.ext2`. Those observations explain the original migration plan; they
 are not current commands or open policy exceptions.
 
-In the implemented layout, full LTP is never registered in CTest. It runs as
+In the layout implemented during this dated refactor snapshot, full LTP was
+never registered in CTest. It ran as
 standalone, engine-parameterized `guest-ltp-gadgets` and `guest-ltp-jit`
 campaigns, with `guest-ltp-verified` as their convenience aggregate. The
 `run_guest_smp.py` topology/hotplug workload is likewise available only through
 the standalone `guest-smp-parallel` target. The shorter shared-MM stress remains
 an integration CTest because it is a bounded acceptance fixture rather than the
-standalone SMP campaign. Current guest workflows use the immutable partitioned
-`rootfs.img` under an in-memory overlay; see `docs/testing.md`.
+standalone SMP campaign. At that time guest workflows used the partitioned
+`rootfs.img` under an in-memory overlay; that is not the current rootfs policy.
 
 The seven Python CTest cases identified for porting or reclassification in that
 historical snapshot were:
@@ -1319,21 +1330,19 @@ tests/integration/ltp/run_guest_ltp.py
 tests/perf/run_guest_geekbench.py
 ```
 
-`tests/integration/gpu/run_rootfs_maintenance.py` is deliberately absent from that list.
-It is a destructive maintenance tool, not a test: it changes `rootfs.img` from
-0444 to writable, boots it with a writable UBD mapping, modifies the image, and
-then returns its mode to 0444 with different contents. Never include it in
-“all integration workflows” or run it during this refactor without separate
-explicit user authorization,
-a verified backup/recovery plan, and a deliberate new baseline decision. Move
-it to `tools/rootfs` in the test-layout phase.
+At that snapshot, `tests/integration/gpu/run_rootfs_maintenance.py` was
+deliberately absent from that list. It was a destructive maintenance tool, not
+a test: it changed `rootfs.img` from 0444 to writable, booted it with a writable
+UBD mapping, modified the image, and then returned its mode to 0444 with
+different contents. The snapshot therefore excluded it from “all integration
+workflows” without separate authorization and a backup plan. The current EROFS
+workflow has no in-place maintenance tool.
 
-### Safe boot and permission policy
+### Historical safe boot and permission policy (2026-08-01)
 
-Use the partitioned image, a read-only UBD mapping, and the tmpfs OverlayFS
-launcher. Never rely on the CLI's bare default rootfs search for final
-integration or performance validation because it can select writable
-`rootfs.ext2`.
+The snapshot required the partitioned image, a read-only UBD mapping, and the
+tmpfs OverlayFS launcher, and did not permit the CLI's bare default rootfs
+search because it could select writable `rootfs.ext2`.
 
 Console/systemd example:
 

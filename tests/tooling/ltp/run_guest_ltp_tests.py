@@ -5,7 +5,11 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import base64
+import gzip
 import pathlib
+import shlex
+import subprocess
 import sys
 import tempfile
 import threading
@@ -15,6 +19,54 @@ from unittest import mock
 LTP_ROOT = pathlib.Path(__file__).resolve().parents[2] / "integration/ltp"
 sys.path.insert(0, str(LTP_ROOT))
 import run_guest_ltp as runner  # noqa: E402
+import guest as guest_support  # noqa: E402
+
+
+class GuestConsoleWriteTests(unittest.TestCase):
+    def test_console_write_retries_short_writes_until_complete(self) -> None:
+        guest = guest_support.Guest.__new__(guest_support.Guest)
+        guest._master = 17
+        guest._process = mock.Mock()
+        guest._process.poll.return_value = None
+        payload = b"overlay-bootstrap\n"
+        received = bytearray()
+
+        def short_write(descriptor: int, remaining: memoryview) -> int:
+            self.assertEqual(descriptor, 17)
+            count = min(3, len(remaining))
+            received.extend(bytes(remaining[:count]))
+            return count
+
+        with mock.patch.object(
+            guest_support.os, "write", side_effect=short_write
+        ) as write_mock:
+            guest._write(payload.decode())
+
+        self.assertEqual(bytes(received), payload)
+        self.assertGreater(write_mock.call_count, 1)
+
+    def test_console_write_waits_after_nonblocking_backpressure(self) -> None:
+        guest = guest_support.Guest.__new__(guest_support.Guest)
+        guest._master = 23
+        guest._process = mock.Mock()
+        guest._process.poll.return_value = None
+
+        with (
+            mock.patch.object(
+                guest_support.os,
+                "write",
+                side_effect=(BlockingIOError(), len(b"command\n")),
+            ) as write_mock,
+            mock.patch.object(
+                guest_support.select,
+                "select",
+                return_value=([], [23], []),
+            ) as select_mock,
+        ):
+            guest._write("command\n")
+
+        self.assertEqual(write_mock.call_count, 2)
+        select_mock.assert_called_once()
 
 
 class ResultParsingTests(unittest.TestCase):
@@ -72,8 +124,200 @@ class ResultParsingTests(unittest.TestCase):
             "cve/cve-2020-11494",
             "cve/cve-2020-14416",
         }
+        expected.update({
+            "mm/thp01",
+            "mm/thp02",
+            "mm/thp04",
+            "syscalls/cachestat03",
+            "syscalls/futex_wake04",
+            "syscalls/memfd_create03",
+            "syscalls/memfd_create04",
+            "controllers/cgroup_fj_function_hugetlb",
+            "hugetlb/hugefallocate01",
+            "hugetlb/hugefallocate02",
+            "hugetlb/hugefork01",
+            "hugetlb/hugefork02",
+            "hugetlb/hugemmap01",
+            "hugetlb/hugemmap02",
+            "hugetlb/hugemmap04",
+            "hugetlb/hugemmap05",
+            "hugetlb/hugemmap06",
+            "hugetlb/hugemmap07",
+            "hugetlb/hugemmap08",
+            "hugetlb/hugemmap09",
+            "hugetlb/hugemmap10",
+            "hugetlb/hugemmap11",
+            "hugetlb/hugemmap12",
+            "hugetlb/hugemmap13",
+            "hugetlb/hugemmap14",
+            "hugetlb/hugemmap15",
+            "hugetlb/hugemmap16",
+            "hugetlb/hugemmap17",
+            "hugetlb/hugemmap18",
+            "hugetlb/hugemmap19",
+            "hugetlb/hugemmap20",
+            "hugetlb/hugemmap21",
+            "hugetlb/hugemmap22",
+            "hugetlb/hugemmap23",
+            "hugetlb/hugemmap24",
+            "hugetlb/hugemmap25",
+            "hugetlb/hugemmap26",
+            "hugetlb/hugemmap27",
+            "hugetlb/hugemmap28",
+            "hugetlb/hugemmap29",
+            "hugetlb/hugemmap30",
+            "hugetlb/hugemmap31",
+            "hugetlb/hugemmap34",
+            "hugetlb/hugemmap05_1",
+            "hugetlb/hugemmap05_2",
+            "hugetlb/hugemmap05_3",
+            "hugetlb/hugeshmat01",
+            "hugetlb/hugeshmat02",
+            "hugetlb/hugeshmat03",
+            "hugetlb/hugeshmat04",
+            "hugetlb/hugeshmat05",
+            "hugetlb/hugeshmctl01",
+            "hugetlb/hugeshmctl02",
+            "hugetlb/hugeshmctl03",
+            "hugetlb/hugeshmdt01",
+            "hugetlb/hugeshmget01",
+            "hugetlb/hugeshmget02",
+            "hugetlb/hugeshmget03",
+            "hugetlb/hugeshmget05",
+            "hugetlb/hugeshmget06",
+            "can/can_filter",
+            "can/can_rcv_own_msgs",
+            "can/can_bcm01",
+            "cve/cve-2011-0999",
+            "cve/cve-2017-1000405",
+            "cve/cve-2021-3609",
+            "controllers/cgroup_fj_stress_hugetlb_2_2_none",
+            "controllers/cgroup_fj_stress_hugetlb_3_3_none",
+            "controllers/cgroup_fj_stress_hugetlb_4_4_none",
+            "controllers/cgroup_fj_stress_hugetlb_2_9_none",
+            "controllers/cgroup_fj_stress_hugetlb_10_3_none",
+            "controllers/cgroup_fj_stress_hugetlb_1_200_none",
+            "controllers/cgroup_fj_stress_hugetlb_200_1_none",
+            "controllers/cgroup_fj_stress_hugetlb_2_2_one",
+            "controllers/cgroup_fj_stress_hugetlb_3_3_one",
+            "controllers/cgroup_fj_stress_hugetlb_4_4_one",
+            "controllers/cgroup_fj_stress_hugetlb_2_9_one",
+            "controllers/cgroup_fj_stress_hugetlb_10_3_one",
+            "controllers/cgroup_fj_stress_hugetlb_1_200_one",
+            "controllers/cgroup_fj_stress_hugetlb_200_1_one",
+            "controllers/cgroup_fj_stress_hugetlb_2_2_each",
+            "controllers/cgroup_fj_stress_hugetlb_3_3_each",
+            "controllers/cgroup_fj_stress_hugetlb_4_4_each",
+            "controllers/cgroup_fj_stress_hugetlb_2_9_each",
+            "controllers/cgroup_fj_stress_hugetlb_10_3_each",
+            "controllers/cgroup_fj_stress_hugetlb_1_200_each",
+            "controllers/cgroup_fj_stress_hugetlb_200_1_each",
+            "hugetlb/hugemmap32",
+        })
+        self.assertEqual(len(verified), 2_428)
+        self.assertEqual(len(disabled), 135)
+        self.assertEqual(len(verified) + len(disabled), 2_563)
         self.assertEqual(set(disabled), expected)
         self.assertTrue(expected.isdisjoint(verified))
+
+    def test_updated_rootfs_requalification_is_reflected_in_manifest(self) -> None:
+        cases = {
+            case.key: case
+            for case in runner.load_manifest(LTP_ROOT / "verified-tests.tsv")
+        }
+        strict_passes = {
+            "syscalls/fanotify22",
+            "syscalls/mmap16",
+            "syscalls/quotactl01",
+            "syscalls/quotactl04",
+            "syscalls/quotactl06",
+            "syscalls/quotactl08",
+            "syscalls/statx05",
+            "syscalls/statx06",
+            "syscalls/statx09",
+            "containers/netns_netlink",
+            "commands/mkfs01_ext3_sh",
+            "commands/mkfs01_ext4_sh",
+            "fs/binfmt_misc01",
+            "fs/binfmt_misc02",
+            "fs/quota_remount_test01",
+            "kernel_misc/zram03",
+        }
+        metadata_driver_passes = {
+            "containers/netns_breakns_ip_ipv4_netlink",
+            "containers/netns_breakns_ip_ipv6_netlink",
+            "containers/netns_breakns_ip_ipv4_ioctl",
+            "containers/netns_breakns_ip_ipv6_ioctl",
+            "containers/netns_breakns_ns_exec_ipv4_netlink",
+            "containers/netns_breakns_ns_exec_ipv6_netlink",
+            "containers/netns_breakns_ns_exec_ipv4_ioctl",
+            "containers/netns_breakns_ns_exec_ipv6_ioctl",
+            "containers/netns_comm_ip_ipv4_netlink",
+            "containers/netns_comm_ip_ipv6_netlink",
+            "containers/netns_comm_ip_ipv4_ioctl",
+            "containers/netns_comm_ip_ipv6_ioctl",
+            "containers/netns_comm_ns_exec_ipv4_netlink",
+            "containers/netns_comm_ns_exec_ipv6_netlink",
+            "containers/netns_comm_ns_exec_ipv4_ioctl",
+            "containers/netns_comm_ns_exec_ipv6_ioctl",
+            "containers/netns_sysfs",
+        }
+        strict_passes |= metadata_driver_passes
+        userspace_exemptions = {
+            "syscalls/fallocate04",
+            "syscalls/fallocate05",
+            "syscalls/fallocate06",
+            "syscalls/fanotify13",
+            "syscalls/fanotify24",
+            "syscalls/preadv203",
+            "syscalls/preadv203_64",
+            "syscalls/quotactl09",
+            "syscalls/statx10",
+            "kernel_misc/zram01",
+            "kernel_misc/zram02",
+        }
+        requalified = strict_passes | userspace_exemptions
+        self.assertEqual(len(strict_passes), 33)
+        self.assertEqual(len(requalified), 44)
+        self.assertEqual(
+            {cases[key].expectation for key in strict_passes}, {"pass"}
+        )
+        self.assertEqual(
+            {cases[key].expectation for key in userspace_exemptions},
+            {"userspace-exempt"},
+        )
+        self.assertEqual(
+            cases["syscalls/statx05"].reason,
+            "All four encrypted and plain ext4 statx attribute assertions "
+            "pass",
+        )
+        self.assertEqual(
+            cases["fs/quota_remount_test01"].reason,
+            "Quota usage changes after the ext3 read-only and read-write "
+            "remount cycle",
+        )
+        self.assertEqual(
+            cases["syscalls/quotactl01"].reason,
+            "All 36 user and group quota-control assertions pass across the "
+            "vfsv0 and vfsv1 formats",
+        )
+        self.assertEqual(
+            cases["syscalls/quotactl06"].reason,
+            "All 22 quota error-path assertions pass across the vfsv0 and "
+            "vfsv1 formats",
+        )
+        self.assertEqual(
+            cases["kernel_misc/zram01"].reason,
+            "All 12 applicable zram lifecycle and compression checks pass; "
+            "one retired max_comp_streams attribute probe is skipped",
+        )
+        self.assertTrue(cases["kernel_misc/zram01"].serial)
+        self.assertEqual(
+            cases["kernel_misc/zram01"].kernel_arguments, ("ncpus=1",)
+        )
+        self.assertTrue(all(
+            "BusyBox ip" not in cases[key].reason for key in requalified
+        ))
 
     def test_disabled_manifest_records_design_omissions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -98,14 +342,14 @@ class ResultParsingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate disabled case"):
                 runner.load_disabled_manifest(path)
 
-    def test_guest_disk_is_declared_read_only(self) -> None:
+    def test_guest_disk_uses_raw_erofs_root(self) -> None:
         arguments = runner.emulator_arguments(
-            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.img"), "1G"
+            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"), "1G"
         )
         self.assertIn("--execution-engine=jit", arguments)
-        self.assertIn("ubd0r=rootfs.img", arguments)
-        self.assertNotIn("ubd0=rootfs.img", arguments)
-        self.assertIn("ro", arguments)
+        self.assertIn("ubd0c=rootfs.erofs", arguments)
+        self.assertIn("root=/dev/ubda", arguments)
+        self.assertIn("rootfstype=erofs", arguments)
         self.assertNotIn("uml_ltp_workspace=ext2", arguments)
 
     def test_boot_timeout_allows_parallel_host_startup_contention(self) -> None:
@@ -113,25 +357,726 @@ class ResultParsingTests(unittest.TestCase):
 
     def test_overlay_shell_bootstrap_mounts_only_disposable_writable_state(self) -> None:
         bootstrap = runner.OVERLAY_SHELL_BOOTSTRAP
+        self.assertEqual(bootstrap.splitlines()[0], "{")
+        self.assertEqual(bootstrap.splitlines()[-2], "}")
+        self.assertIn(
+            guest_support.OVERLAY_READY_MARKER, bootstrap.splitlines()[-1]
+        )
+        self.assertLessEqual(max(map(len, bootstrap.splitlines())), 512)
         self.assertIn("lowerdir=/mnt/lower,upperdir=/mnt/upper", bootstrap)
         self.assertIn("mount -t proc proc /proc", bootstrap)
         self.assertIn("mount -t sysfs sysfs /sys", bootstrap)
+        self.assertIn("mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run", bootstrap)
         self.assertIn("mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp", bootstrap)
-        self.assertIn("exec /bin/sh", bootstrap)
+        self.assertIn("uml_ltp_workspace=ext2", bootstrap)
+        self.assertIn("command -v mkfs.ext2", bootstrap)
+        self.assertIn("command -v mke2fs", bootstrap)
+        self.assertIn("LTP ext2 workspace requires mkfs.ext2 or mke2fs", bootstrap)
+        self.assertIn('"$workspace_mkfs" -q -t ext2', bootstrap)
+        self.assertIn("mount -t ext2 -o noatime", bootstrap)
+        self.assertLess(
+            bootstrap.index("set +e"),
+            bootstrap.index(guest_support.OVERLAY_READY_MARKER),
+        )
+        self.assertLess(
+            bootstrap.index("set +u"),
+            bootstrap.index(guest_support.OVERLAY_READY_MARKER),
+        )
+        self.assertNotIn("exec /bin/sh", bootstrap)
         self.assertNotIn("exec /lib/systemd/systemd", bootstrap)
+
+    def test_modules_builtin_validation_is_canonical_and_exhaustive(self) -> None:
+        entries = tuple(
+            f"kernel/drivers/audit/driver_{index:03}.ko"
+            for index in range(250)
+        )
+        data = ("\n".join(entries) + "\n").encode()
+        self.assertEqual(runner.validate_modules_builtin(data), entries)
+        invalid = (
+            b"",
+            b"kernel/drivers/net/veth.ko",
+            b"/kernel/drivers/net/veth.ko\n",
+            b"kernel/../veth.ko\n",
+            b"kernel/drivers/net/veth.ko\n\n",
+            b"kernel/drivers/net/veth.ko\nkernel/drivers/net/veth.ko\n",
+            b"kernel/drivers/net/veth.o\n",
+            b"\xff\n",
+        )
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    runner.validate_modules_builtin(value)
+
+    def test_modules_builtin_loader_requires_sibling_kernel_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            build = pathlib.Path(directory) / "build"
+            release = build / "include/config/kernel.release"
+            release.parent.mkdir(parents=True)
+            modules_builtin = build / "modules.builtin"
+            data = b"kernel/fs/binfmt_misc.ko\nkernel/drivers/net/veth.ko\n"
+            modules_builtin.write_bytes(data)
+            release.write_text("6.18.41-test\n", encoding="utf-8")
+            self.assertEqual(
+                runner.load_modules_builtin(modules_builtin),
+                (data, "6.18.41-test"),
+            )
+            release.write_text("bad release\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid sibling"):
+                runner.load_modules_builtin(modules_builtin)
+
+    def test_ltp_builtin_driver_metadata_feeds_complete_kbuild_output(self) -> None:
+        entries = (
+            "kernel/fs/binfmt_misc.ko",
+            "kernel/fs/quota/quota_v2.ko",
+            "kernel/drivers/block/zram/zram.ko",
+            "kernel/drivers/net/dummy.ko",
+            "kernel/drivers/net/wireguard/wireguard.ko",
+            "kernel/drivers/net/veth.ko",
+            "kernel/net/netfilter/nf_tables.ko",
+        ) + tuple(
+            f"kernel/drivers/audit/driver_{index:03}.ko"
+            for index in range(243)
+        )
+        data = ("\n".join(entries) + "\n").encode()
+        self.assertGreaterEqual(len(data), 7797)
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            release = modules_root / "test-release"
+            release.mkdir(parents=True)
+            outside_builtin = root / "outside-modules.builtin"
+            outside_dep = root / "outside-modules.dep"
+            outside_builtin.write_text("kernel/drivers/net/geneve.ko\n")
+            outside_dep.write_text("kernel/drivers/net/geneve.ko:\n")
+            (release / "modules.builtin").symlink_to(outside_builtin)
+            (release / "modules.dep").symlink_to(outside_dep)
+            config = root / "config.gz"
+            tools_root = root / "run/uml-ltp-tools"
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write("# CONFIG_MODULES is not set\n")
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                data,
+                "test-release",
+                str(modules_root),
+                str(config),
+                ("gzip", "-cd"),
+                ("printf", "test-release"),
+                tools_root=str(tools_root),
+            )
+            self.assertLessEqual(max(map(len, setup.splitlines())), 512)
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual((release / "modules.dep").read_text(), "")
+            self.assertEqual((release / "modules.builtin").read_bytes(), data)
+            self.assertFalse((release / "modules.dep").is_symlink())
+            self.assertFalse((release / "modules.builtin").is_symlink())
+            self.assertEqual(
+                outside_builtin.read_text(), "kernel/drivers/net/geneve.ko\n"
+            )
+            self.assertEqual(
+                outside_dep.read_text(), "kernel/drivers/net/geneve.ko:\n"
+            )
+            self.assertTrue((tools_root / "kmod").stat().st_mode & 0o111)
+            self.assertEqual((tools_root / "modprobe").readlink(), pathlib.Path("kmod"))
+            self.assertEqual((tools_root / "rmmod").readlink(), pathlib.Path("kmod"))
+            self.assertFalse((root / "usr/bin/modprobe").exists())
+
+            def run_tool(
+                name: str, *arguments: str
+            ) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [str(tools_root / name), *arguments],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            accepted = (
+                ("modprobe", "binfmt_misc"),
+                ("modprobe", "-a", "binfmt_misc", "veth"),
+                ("modprobe", "--all", "quota_v2", "zram"),
+                ("kmod", "modprobe", "nf_tables"),
+            )
+            for invocation in accepted:
+                with self.subTest(invocation=invocation):
+                    result = run_tool(*invocation)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+            rejected = (
+                ("modprobe",),
+                ("modprobe", "geneve"),
+                ("modprobe", "kernel/fs/binfmt_misc.ko"),
+                ("modprobe", "binfmt_misc", "veth"),
+                ("modprobe", "zram", "num_devices=2"),
+                ("modprobe", "-q", "binfmt_misc"),
+                ("modprobe", "-r", "binfmt_misc"),
+                ("modprobe", "--remove", "binfmt_misc"),
+                ("rmmod", "zram"),
+                ("kmod", "rmmod", "zram"),
+                ("kmod", "depmod"),
+            )
+            for invocation in rejected:
+                with self.subTest(invocation=invocation):
+                    self.assertNotEqual(run_tool(*invocation).returncode, 0)
+
+            with (release / "modules.builtin").open("a", encoding="utf-8") as output:
+                output.write("kernel/drivers/net/geneve.ko\n")
+            self.assertNotEqual(run_tool("modprobe", "geneve").returncode, 0)
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write(
+                    "# CONFIG_MODULES is not set\nCONFIG_MODULES=y\n"
+                )
+            self.assertNotEqual(run_tool("modprobe", "binfmt_misc").returncode, 0)
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write("CONFIG_MODULES=y\n")
+            self.assertNotEqual(run_tool("modprobe", "binfmt_misc").returncode, 0)
+            config.unlink()
+            self.assertNotEqual(run_tool("modprobe", "binfmt_misc").returncode, 0)
+
+    def test_ltp_builtin_driver_metadata_rejects_release_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            config = root / "config.gz"
+            tools_root = root / "run/uml-ltp-tools"
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write("# CONFIG_MODULES is not set\n")
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                b"kernel/fs/binfmt_misc.ko\n",
+                "expected-release",
+                str(modules_root),
+                str(config),
+                ("gzip", "-cd"),
+                ("printf", "wrong-release"),
+                tools_root=str(tools_root),
+            )
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("kernel release mismatch", completed.stderr)
+            self.assertFalse(modules_root.exists())
+            self.assertFalse(tools_root.exists())
+
+    def test_ltp_builtin_driver_metadata_rejects_contradictory_config(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            config = root / "config.gz"
+            tools_root = root / "run/uml-ltp-tools"
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write(
+                    "# CONFIG_MODULES is not set\nCONFIG_MODULES=y\n"
+                )
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                b"kernel/drivers/net/veth.ko\n",
+                "test-release",
+                str(modules_root),
+                str(config),
+                ("gzip", "-cd"),
+                ("printf", "test-release"),
+                tools_root=str(tools_root),
+            )
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("requires CONFIG_MODULES=n", completed.stderr)
+            self.assertFalse(modules_root.exists())
+            self.assertFalse(tools_root.exists())
+
+    def test_ltp_builtin_driver_metadata_rejects_config_reader_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            tools_root = root / "run/uml-ltp-tools"
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                b"kernel/drivers/net/veth.ko\n",
+                "test-release",
+                str(modules_root),
+                str(root / "missing-config"),
+                ("false",),
+                ("printf", "test-release"),
+                tools_root=str(tools_root),
+            )
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(modules_root.exists())
+            self.assertFalse(tools_root.exists())
+
+    def test_ltp_builtin_driver_metadata_does_not_fake_loadable_modules(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            config = root / "config.gz"
+            tools_root = root / "run/uml-ltp-tools"
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write("CONFIG_MODULES=y\n")
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                b"kernel/drivers/net/veth.ko\n",
+                "test-release",
+                str(modules_root),
+                str(config),
+                ("gzip", "-cd"),
+                ("printf", "test-release"),
+                tools_root=str(tools_root),
+            )
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("requires CONFIG_MODULES=n", completed.stderr)
+            self.assertFalse(modules_root.exists())
+            self.assertFalse(tools_root.exists())
+
+    def test_ltp_builtin_driver_metadata_replaces_stale_regular_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            modules_root = root / "modules"
+            tools_root = root / "run/uml-ltp-tools"
+            release = modules_root / "test-release"
+            release.mkdir(parents=True)
+            modules_dep = release / "modules.dep"
+            modules_builtin = release / "modules.builtin"
+            modules_dep.write_text("real-module.ko:\n")
+            modules_builtin.write_text("kernel/real-builtin.ko\n")
+            config = root / "config.gz"
+            with gzip.open(config, "wt", encoding="utf-8") as output:
+                output.write("# CONFIG_MODULES is not set\n")
+            setup = runner.ltp_builtin_driver_metadata_setup(
+                b"kernel/drivers/net/veth.ko\n",
+                "test-release",
+                str(modules_root),
+                str(config),
+                ("gzip", "-cd"),
+                ("printf", "test-release"),
+                tools_root=str(tools_root),
+            )
+            completed = subprocess.run(
+                ["/bin/sh", "-c", setup],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(modules_dep.read_text(), "")
+            self.assertEqual(
+                modules_builtin.read_text(), "kernel/drivers/net/veth.ko\n"
+            )
+
+    def test_ltp_metadata_transport_is_bounded_and_round_trips(self) -> None:
+        large_script = "\n".join(
+            f": metadata_{index:04}_{index * 2654435761:016x}"
+            for index in range(800)
+        )
+        large_transport = runner.ltp_metadata_transport(large_script)
+        self.assertGreater(len(large_transport.append_chunks), 1)
+        commands = (
+            large_transport.initialize,
+            *large_transport.append_chunks,
+            large_transport.execute,
+            large_transport.cleanup,
+        )
+        self.assertLessEqual(
+            max(len(command.encode()) for command in commands),
+            runner.LTP_METADATA_TRANSPORT_MAX_COMMAND_BYTES,
+        )
+        self.assertNotIn(large_script, "\n".join(commands))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            transport_root = root / "transport"
+            sentinel = root / "sentinel"
+            script = (
+                "printf '%s' transported > "
+                + shlex.quote(str(sentinel))
+            )
+            transport = runner.ltp_metadata_transport(
+                script, str(transport_root)
+            )
+            for command in (
+                transport.initialize,
+                *transport.append_chunks,
+                transport.execute,
+                transport.cleanup,
+            ):
+                completed = subprocess.run(
+                    ["/bin/sh", "-c", command],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(sentinel.read_text(), "transported")
+            self.assertFalse(transport_root.exists())
+
+    def test_ltp_metadata_transport_cleans_decode_decompress_and_script_failures(
+        self,
+    ) -> None:
+        failure_cases = (
+            ("decode", "%%%", "LTP metadata transport decode failed", None),
+            (
+                "decompress",
+                base64.b64encode(b"not a gzip stream").decode(),
+                "LTP metadata transport decompress failed",
+                None,
+            ),
+            ("script", None, "LTP metadata setup script failed", 23),
+        )
+        for name, replacement, diagnostic, expected_code in failure_cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                transport_root = root / "transport"
+                setup_script = "exit 23" if name == "script" else ":"
+                transport = runner.ltp_metadata_transport(
+                    setup_script, str(transport_root)
+                )
+                initialized = subprocess.run(
+                    ["/bin/sh", "-c", transport.initialize],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(initialized.returncode, 0, initialized.stderr)
+                if replacement is None:
+                    append_commands = transport.append_chunks
+                else:
+                    payload_path = shlex.quote(
+                        str(transport_root / "setup.sh.gz.b64")
+                    )
+                    append_commands = (
+                        f"printf '%s' {shlex.quote(replacement)} > {payload_path}",
+                    )
+                for command in append_commands:
+                    appended = subprocess.run(
+                        ["/bin/sh", "-c", command],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(appended.returncode, 0, appended.stderr)
+                executed = subprocess.run(
+                    ["/bin/sh", "-c", transport.execute],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if expected_code is None:
+                    self.assertNotEqual(executed.returncode, 0)
+                else:
+                    self.assertEqual(executed.returncode, expected_code)
+                self.assertIn(diagnostic, executed.stderr)
+                self.assertFalse(transport_root.exists())
+                cleaned = subprocess.run(
+                    ["/bin/sh", "-c", transport.cleanup],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
+
+    def test_ltp_overlay_boot_prepares_builtin_driver_metadata(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._overlay_shell = True
+        guest.builtin_driver_metadata_setup = "\n".join(
+            f": metadata_{index:04}_{index * 2654435761:016x}"
+            for index in range(800)
+        )
+        transport = runner.ltp_metadata_transport(
+            guest.builtin_driver_metadata_setup
+        )
+        self.assertGreater(len(transport.append_chunks), 1)
+        guest.run_command = mock.Mock(
+            return_value=runner.CommandResult(0, "")
+        )
+        with mock.patch.object(
+            runner.GuestHarness, "boot_and_login"
+        ) as boot_and_login:
+            guest.boot_and_login(17)
+        boot_and_login.assert_called_once_with(17)
+        self.assertEqual(
+            guest.run_command.call_args_list,
+            [
+                mock.call("stty -echo", 17),
+                mock.call(transport.initialize, 17),
+                *(mock.call(command, 17) for command in transport.append_chunks),
+                mock.call(transport.execute, 17),
+                mock.call(transport.cleanup, 17),
+                mock.call("stty echo", 17),
+            ],
+        )
+        self.assertLessEqual(
+            max(
+                len(call.args[0].encode())
+                for call in guest.run_command.call_args_list
+            ),
+            runner.LTP_METADATA_TRANSPORT_MAX_COMMAND_BYTES,
+        )
+
+    def test_ltp_overlay_boot_requires_configured_metadata(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._overlay_shell = True
+        guest.builtin_driver_metadata_setup = None
+        with (
+            mock.patch.object(runner.GuestHarness, "boot_and_login"),
+            self.assertRaisesRegex(RuntimeError, "was not configured"),
+        ):
+            guest.boot_and_login()
+
+    def test_ltp_overlay_boot_cleans_and_restores_after_unacknowledged_chunk(
+        self,
+    ) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._overlay_shell = True
+        guest.builtin_driver_metadata_setup = "\n".join(
+            f": metadata_{index:04}_{index * 2654435761:016x}"
+            for index in range(800)
+        )
+        transport = runner.ltp_metadata_transport(
+            guest.builtin_driver_metadata_setup
+        )
+        failed_chunk = transport.append_chunks[1]
+
+        def run_command(command, _timeout_seconds):
+            if command == failed_chunk:
+                raise TimeoutError("missing END acknowledgement")
+            return runner.CommandResult(0, "")
+
+        guest.run_command = mock.Mock(side_effect=run_command)
+        with (
+            mock.patch.object(runner.GuestHarness, "boot_and_login"),
+            self.assertRaisesRegex(
+                RuntimeError, "transport chunk 2/.+not acknowledged"
+            ),
+        ):
+            guest.boot_and_login()
+        commands = [call.args[0] for call in guest.run_command.call_args_list]
+        self.assertIn(transport.cleanup, commands)
+        self.assertEqual(commands[-1], "stty echo")
+        self.assertNotIn(transport.execute, commands)
+
+    def test_ltp_overlay_boot_finalizes_disable_and_initialize_failures(
+        self,
+    ) -> None:
+        for failed_stage in ("stty -echo", "initialize"):
+            with self.subTest(failed_stage=failed_stage):
+                guest = object.__new__(runner.Guest)
+                guest._overlay_shell = True
+                guest.builtin_driver_metadata_setup = "metadata setup"
+                transport = runner.ltp_metadata_transport(
+                    guest.builtin_driver_metadata_setup
+                )
+                failed_command = (
+                    "stty -echo"
+                    if failed_stage == "stty -echo"
+                    else transport.initialize
+                )
+
+                def run_command(command, _timeout_seconds):
+                    if command == failed_command:
+                        return runner.CommandResult(1, "injected failure")
+                    return runner.CommandResult(0, "")
+
+                guest.run_command = mock.Mock(side_effect=run_command)
+                with (
+                    mock.patch.object(
+                        runner.GuestHarness, "boot_and_login"
+                    ),
+                    self.assertRaisesRegex(RuntimeError, "injected failure"),
+                ):
+                    guest.boot_and_login()
+                commands = [
+                    call.args[0]
+                    for call in guest.run_command.call_args_list
+                ]
+                self.assertEqual(commands[-1], "stty echo")
+                if failed_stage == "initialize":
+                    self.assertEqual(
+                        commands[-2:], [transport.cleanup, "stty echo"]
+                    )
+                else:
+                    self.assertNotIn(transport.cleanup, commands)
+                self.assertNotIn(transport.execute, commands)
+
+    def test_ltp_overlay_boot_reports_execute_and_finalization_failures(
+        self,
+    ) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._overlay_shell = True
+        guest.builtin_driver_metadata_setup = "metadata setup"
+        transport = runner.ltp_metadata_transport(
+            guest.builtin_driver_metadata_setup
+        )
+
+        def run_command(command, _timeout_seconds):
+            if command == transport.execute:
+                return runner.CommandResult(
+                    1, "LTP metadata transport decompress failed"
+                )
+            if command == transport.cleanup:
+                return runner.CommandResult(1, "cleanup refused")
+            return runner.CommandResult(0, "")
+
+        guest.run_command = mock.Mock(side_effect=run_command)
+        with (
+            mock.patch.object(runner.GuestHarness, "boot_and_login"),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "decode/decompress/setup execution failed.+finalization",
+            ),
+        ):
+            guest.boot_and_login()
+        commands = [call.args[0] for call in guest.run_command.call_args_list]
+        self.assertEqual(commands[-2:], [transport.cleanup, "stty echo"])
+
+    def test_ltp_overlay_boot_fails_if_echo_restore_fails(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._overlay_shell = True
+        guest.builtin_driver_metadata_setup = "metadata setup"
+        transport = runner.ltp_metadata_transport(
+            guest.builtin_driver_metadata_setup
+        )
+
+        def run_command(command, _timeout_seconds):
+            if command == "stty echo":
+                return runner.CommandResult(1, "tty restore failed")
+            return runner.CommandResult(0, "")
+
+        guest.run_command = mock.Mock(side_effect=run_command)
+        with (
+            mock.patch.object(runner.GuestHarness, "boot_and_login"),
+            self.assertRaisesRegex(RuntimeError, "console-echo restore"),
+        ):
+            guest.boot_and_login()
+        commands = [call.args[0] for call in guest.run_command.call_args_list]
+        self.assertEqual(commands[-2:], [transport.cleanup, "stty echo"])
 
     def test_systemd_overlay_bootstrap_mounts_only_disposable_writable_state(self) -> None:
         bootstrap = runner.SYSTEMD_OVERLAY_BOOTSTRAP
+        self.assertEqual(bootstrap.splitlines()[0], "{")
+        self.assertEqual(bootstrap.splitlines()[-1], "}")
+        self.assertLessEqual(max(map(len, bootstrap.splitlines())), 512)
+        docker_tmpfs = (
+            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
+        )
         self.assertIn("lowerdir=/mnt/lower,upperdir=/mnt/upper", bootstrap)
         self.assertIn("pivot_root . .uml-lower", bootstrap)
+        self.assertIn("mkdir -p /var/lib/docker", bootstrap)
+        self.assertIn(docker_tmpfs, bootstrap)
+        self.assertNotIn("getty@tty0.service", bootstrap)
+        self.assertNotIn("agetty --autologin", bootstrap)
+        self.assertNotIn("useradd", bootstrap)
+        self.assertNotIn("groupadd", bootstrap)
         self.assertIn("exec /lib/systemd/systemd", bootstrap)
+        self.assertLess(
+            bootstrap.index("pivot_root . .uml-lower"),
+            bootstrap.index(docker_tmpfs),
+        )
+        self.assertLess(
+            bootstrap.index(docker_tmpfs),
+            bootstrap.index("exec /lib/systemd/systemd"),
+        )
         self.assertNotIn("mount -o remount,rw", bootstrap)
+
+    def test_systemd_overlay_login_reuses_uml_and_requires_noninteractive_sudo(
+        self,
+    ) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._systemd_overlay = True
+        guest._init_shell = False
+        guest._overlay_shell = False
+        guest._swap_path = None
+        guest._cgroup1 = None
+        guest._cgroup2_nsdelegate = False
+        guest._transcript = bytearray(b"x" * 101)
+        patterns = []
+        writes = []
+        commands = []
+        search_offsets = []
+
+        class Match:
+            @staticmethod
+            def end():
+                return 73
+
+        def read_until(pattern, _timeout_seconds, _search_from=0):
+            patterns.append(pattern.pattern)
+            search_offsets.append(_search_from)
+            return Match()
+
+        def run_command(command, _timeout_seconds=30):
+            commands.append(command)
+            return runner.CommandResult(0, "")
+
+        guest._read_until = read_until
+        guest._write = writes.append
+        guest.run_command = run_command
+
+        guest.boot_and_login()
+
+        self.assertEqual(writes[0], runner.SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
+        self.assertIn(rb" login:\s*uml \(automatic login\)", patterns)
+        self.assertNotIn(rb" login:\s*root \(automatic login\)", patterns)
+        self.assertIn(rb"(?:^|\r?\n)[^\r\n]*\$ $", patterns)
+        self.assertIn(73, search_offsets)
+        self.assertEqual(search_offsets[-1], len(guest._transcript))
+        self.assertEqual(patterns[-1], rb"(?:^|\r?\n)[^\r\n]*# $")
+        self.assertEqual(commands, ['test "$(id -un)" = uml && sudo -n true'])
+        self.assertEqual(writes[-1], "exec sudo -n /bin/sh\n")
+
+    def test_systemd_overlay_login_rejects_missing_noninteractive_sudo(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest._systemd_overlay = True
+        guest._init_shell = False
+        guest._overlay_shell = False
+        guest._swap_path = None
+        guest._cgroup1 = None
+        guest._cgroup2_nsdelegate = False
+
+        class Match:
+            @staticmethod
+            def end():
+                return 0
+
+        guest._read_until = lambda *_args, **_kwargs: Match()
+        guest._write = lambda _text: None
+        guest.run_command = lambda *_args, **_kwargs: runner.CommandResult(
+            1, "sudo: a password is required"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "noninteractive sudo"):
+            guest.boot_and_login()
 
     def test_guest_shell_boot_modes_are_mutually_exclusive(self) -> None:
         with self.assertRaisesRegex(ValueError, "mutually exclusive"):
             runner.Guest(
                 pathlib.Path("uml-darwin"),
-                pathlib.Path("rootfs.img"),
+                pathlib.Path("rootfs.erofs"),
                 "1G",
                 "tmpfs",
                 init_shell=True,
@@ -140,7 +1085,7 @@ class ResultParsingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mutually exclusive"):
             runner.Guest(
                 pathlib.Path("uml-darwin"),
-                pathlib.Path("rootfs.img"),
+                pathlib.Path("rootfs.erofs"),
                 "1G",
                 "tmpfs",
                 overlay_shell=True,
@@ -159,24 +1104,24 @@ class ResultParsingTests(unittest.TestCase):
 
     def test_ext2_workspace_is_opt_in(self) -> None:
         arguments = runner.emulator_arguments(
-            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.img"),
+            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"),
             "1G", "ext2",
         )
         self.assertIn("uml_ltp_workspace=ext2", arguments)
 
     def test_kernel_arguments_are_appended(self) -> None:
         arguments = runner.emulator_arguments(
-            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.img"),
+            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"),
             "1G", kernel_arguments=("ncpus=2",),
         )
         self.assertEqual(arguments[-1], "ncpus=2")
 
     def test_disposable_swap_disk_is_separate_from_rootfs(self) -> None:
         arguments = runner.emulator_arguments(
-            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.img"),
+            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"),
             "1G", swap_path=pathlib.Path("/tmp/swap.img"),
         )
-        self.assertIn("ubd0r=rootfs.img", arguments)
+        self.assertIn("ubd0c=rootfs.erofs", arguments)
         self.assertIn("ubd1=/tmp/swap.img", arguments)
 
     def test_swap_size_uses_binary_suffixes(self) -> None:
@@ -303,7 +1248,7 @@ class ResultParsingTests(unittest.TestCase):
 
     def test_execution_engine_is_explicitly_selected(self) -> None:
         arguments = runner.emulator_arguments(
-            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.img"), "1G",
+            pathlib.Path("uml-darwin"), pathlib.Path("rootfs.erofs"), "1G",
             engine="gadgets",
         )
         self.assertEqual(arguments[1], "--execution-engine=gadgets")
@@ -348,18 +1293,22 @@ WARNINGS 0
         command = runner.ltp_guest_command("./helper.sh 'argument'")
         self.assertIn(
             "mkdir -p /tmp/uml-ltp-case "
-            "/usr/lib/ltp-testsuite/output &&",
+            "/tmp/uml-ltp-output &&",
             command,
         )
         self.assertIn(
             "chmod 1777 /tmp/uml-ltp-case "
-            "/usr/lib/ltp-testsuite/output &&",
+            "/tmp/uml-ltp-output &&",
             command,
         )
         self.assertIn(
-            "cd /usr/lib/ltp-testsuite/testcases/bin &&", command
+            "cd /opt/ltp/testcases/bin &&", command
         )
-        self.assertIn("LTPROOT=/usr/lib/ltp-testsuite", command)
+        self.assertIn(
+            "PATH=/run/uml-ltp-tools:/opt/ltp/testcases/bin:$PATH",
+            command,
+        )
+        self.assertIn("LTPROOT=/opt/ltp", command)
         self.assertIn("TMPDIR=/tmp/uml-ltp-case", command)
         self.assertIn("LTP_TIMEOUT_MUL=4", command)
 
@@ -403,6 +1352,9 @@ page dumped because: still mapped when deleted
         )
         result = runner.Result(case, 32, {"skipped": 1}, "")
         self.assertTrue(runner.accepted(result))
+        self.assertFalse(runner.accepted(
+            runner.Result(case, 2, {"passed": 7, "skipped": 1}, "cannot fork")
+        ))
 
     def test_hardware_failure_exemption_requires_assertion_failure(self) -> None:
         case = runner.Case(
@@ -816,13 +1768,23 @@ page dumped because: still mapped when deleted
     def test_host_pressure_cases_require_explicit_cli_option(self) -> None:
         required = [
             "--emulator", "uml-darwin",
-            "--rootfs", "rootfs.img",
+            "--rootfs", "rootfs.erofs",
             "--manifest", "verified-tests.tsv",
+            "--modules-builtin", "kernel-build/modules.builtin",
         ]
         defaults = runner.parse_arguments(required)
         explicit = runner.parse_arguments(required + ["--run-host-pressure"])
         self.assertFalse(defaults.run_host_pressure)
         self.assertTrue(explicit.run_host_pressure)
+
+    def test_ltp_cmake_campaign_feeds_exact_kernel_metadata(self) -> None:
+        cmake = (LTP_ROOT.parent / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn(
+            "--modules-builtin ${UML_KERNEL_BUILD_DIR}/modules.builtin",
+            cmake,
+        )
+        self.assertNotIn('command -v modprobe', cmake)
+        self.assertNotIn('command -v rmmod', cmake)
 
     def test_explicit_host_pressure_selection_preserves_all_cases(self) -> None:
         ordinary = runner.Case(

@@ -25,7 +25,11 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--root-device", default="/dev/ubda1")
+    parser.add_argument(
+        "--root-device",
+        default="/dev/ubda",
+        help="raw EROFS root block device (default: /dev/ubda)",
+    )
     parser.add_argument("--binary", required=True, type=pathlib.Path)
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--workers", type=int, default=10)
@@ -62,7 +66,7 @@ def parse_arguments() -> argparse.Namespace:
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
-        help="boot rootfs.img through a writable tmpfs OverlayFS shell",
+        help="boot the EROFS root through a writable tmpfs OverlayFS shell",
     )
     boot_mode.add_argument(
         "--systemd-overlay",
@@ -136,6 +140,7 @@ def main() -> int:
         ),
         init_shell=arguments.shell_init,
         overlay_shell=arguments.overlay_shell,
+        systemd_overlay=not (arguments.shell_init or arguments.overlay_shell),
         engine=arguments.engine,
         core_class=arguments.core_class,
     )

@@ -1,12 +1,14 @@
 # Refactor evidence
 
-## Current acceptance evidence (2026-08-09)
+## Current acceptance evidence (2026-08-10)
 
 The accepted implementation baseline is
 `783bfcf7e2447f8f981830a158bec3f402b08d97`. It names the code under test rather
-than the later documentation-only reconciliation commit. This table supersedes
-all older audit status and open-work claims below; the remainder of this file is
-a dated evidence archive.
+than the later documentation-only reconciliation commit. The unified-EROFS
+migration is recorded separately because it did not rerun every host, package,
+sanitizer, or performance campaign from that baseline. This table supersedes
+all older audit status and open-work claims below; the remainder of this file
+is a dated evidence archive.
 
 | Area | Final local evidence and boundary |
 | --- | --- |
@@ -16,9 +18,11 @@ a dated evidence archive.
 | Ordinary host | Unit passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in both profiles. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB and 576/624 at 4 KiB. Input materialization was off, zero sidecars were emitted, and final quiescence required no cleanup action. |
 | Source-size advisory | The final report covered 1,247 files: 105 above a guideline, 87 without optional review context, and 12 changed in size since review. `source-size-advisory-policy` passed. These counts are navigation/ownership signals only; crossing a guideline or changing size is not an acceptance failure. |
 | Sanitizers and devices | Full ASan+UBSan passed 572/572 in 710.45 seconds; TSan passed 8/8 in 5.14 seconds; malformed-loader ASan passed 1/1. Normal and ASan GPU graphs each passed 5/5 units plus the 1/1 VNC tooling test; the GPU graph audit covered 595 targets and 628 registrations. |
-| Guests | `integration-fast` passed 5/5 at 16 KiB in 153.40 seconds and 5/5 at 4 KiB in 84.69 seconds. Standalone 10-vCPU SMP passed at 8.19 and 8.03 effective host cores. The immutable rootfs remained mode 0444, 8,589,934,592 bytes, SHA-256 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`. |
+| Refactor-baseline guests | `integration-fast` passed 5/5 at 16 KiB in 153.40 seconds and 5/5 at 4 KiB in 84.69 seconds. Standalone 10-vCPU SMP passed at 8.19 and 8.03 effective host cores. The old partitioned-image observation belongs only to that dated baseline. |
+| Unified EROFS migration | Final host workflows passed 572/572 units plus 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both rebuilt production profiles passed all five regenerated `integration-fast` paths with the raw EROFS image at `/dev/ubda`: 16 KiB 5/5 in 58.80 seconds and 4 KiB 5/5 in 64.75 seconds. Focused rootfs verification/provisioning, overlay launcher, GPU/network/LTP/performance runner, emulator-option, and API contracts pass. EROFS replaces mode, `ubd0r`, and `ro` enforcement. The 16 KiB guest emits the upstream experimental EROFS subpage-compression warning for the image's 4 KiB filesystem blocks; the 4 KiB guest does not. Accepted image identity is SHA-256 `73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91`, 3,802,316,800 bytes, UUID `b84fcbe2-0673-4126-8f81-bdee45997306`; the checked manifest and release statement remain authoritative. |
+| Unified-image payloads | `/opt/ltp`, `/opt/node/bin/node`, and local benchmark payloads are present. The LTP manifests are 2,428 verified plus 135 disabled, disjoint and totaling 2,563; 88 were moved for intentionally absent `CONFIG_HUGETLBFS` (79), `CONFIG_TRANSPARENT_HUGEPAGE` (5), and `CONFIG_CAN` (4). The final-image focused boundary is 44 gadgets-engine rows, all accepted; `statx05` passed 4/0 in both profiles and the exact live `zram01` row passed 12/1 with rc 0 in 167.6 seconds. Full LTP was not rerun. Geekbench 6 defaults to its `/opt` executable with `--no-upload`; the final scoring run remains skipped. |
 | Apple package | The accepted artifact is `.build/final-package-acceptance-783bfcf-20260809/UMLEmulator.xcframework`. Its acceptance-side sorted payload-hash manifest (an observed digest, not a file inside the bundle) has SHA-256 `ea2d55c8602bc2914d467b9ed589923beda15a6cadd44f2f08d99f73d69ad9a1`. The three slices passed staging, architecture, final-link, executable-publication, and consumer audits. Archive evidence was 71 ordinary Mach-O plus exactly 9 ThinLTO gadget members for macOS, and 70 ordinary plus exactly 9 ThinLTO members for each iOS slice. Raw and installed-tree consumers passed; the real Xcode consumer reported `BUILD SUCCEEDED`, with only a non-fatal locked-iPhone discovery warning. |
-| Explicit limitations | Verification was local-only; this repository has no hosted CI workflow. Full LTP was unavailable and not run because the payload was absent. Input materialization remains opt-in (about 6.6 GiB for a complete profile), and semantic evidence remains **0/983 variant-complete**. Rootfs-management redesign is deferred and source-size thresholds are advisory. The user explicitly directed that the final Geekbench rerun be skipped after all other tasks, so historical and focused controls are preserved without a new final score. |
+| Explicit limitations | Verification was local-only; this repository has no hosted CI workflow. Full LTP was not run for the migration even though its payload is now available. Input materialization remains opt-in (about 6.6 GiB for a complete profile), and semantic evidence remains **0/983 variant-complete**. Source-size thresholds are advisory. The user explicitly directed that the final Geekbench rerun be skipped, so historical and focused controls are preserved without a new score. External KDE/VNC, rendered WebGL, full SMP, and full performance campaigns were not requalified merely by migrating the rootfs. |
 
 The authoritative handoff is in
 [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md); commands and external

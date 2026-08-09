@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Verify that the manual overlay launcher cannot weaken rootfs policy."""
+"""Verify the manual overlay launcher pins the unified EROFS boot contract."""
 
 from __future__ import annotations
 
@@ -48,24 +48,53 @@ def main() -> int:
     parser.add_argument("--launcher", required=True, type=Path)
     arguments = parser.parse_args()
 
+    launcher_source = arguments.launcher.read_text(encoding="utf-8")
+    require(
+        "getty@tty0.service" not in launcher_source
+        and "agetty --autologin" not in launcher_source
+        and "useradd" not in launcher_source
+        and "groupadd" not in launcher_source,
+        "launcher must preserve the image-owned account and tty0 getty setup",
+    )
+    require(
+        "mkdir -p /var/lib/docker" in launcher_source
+        and "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
+        in launcher_source,
+        "launcher must put Docker state on a disposable tmpfs before systemd",
+    )
+    docker_mount = launcher_source.index(
+        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
+    )
+    require(
+        launcher_source.index("pivot_root . .uml-lower") < docker_mount
+        < launcher_source.index("exec /lib/systemd/systemd"),
+        "launcher must mount Docker state after the pivot and before systemd",
+    )
+    require(
+        'exec "$rootfs_wrapper" --rootfs "$rootfs" --' in launcher_source,
+        "launcher must execute the guest under the verified-rootfs wrapper",
+    )
+
     with tempfile.TemporaryDirectory(prefix="uml-overlay-launcher-") as name:
-        rootfs = Path(name) / "rootfs image.img"
+        rootfs = Path(name) / "rootfs image.erofs"
         rootfs.touch()
 
         valid = run(arguments.launcher, rootfs, "quiet")
         require(valid.returncode == 0, f"valid dry run failed:\n{valid.stdout}")
         command = shlex.split(valid.stdout)
         require(
-            f"ubd0r={rootfs}" in command and "ro" in command,
-            f"dry run lacks the read-only disk and mount options:\n{valid.stdout}",
+            f"ubd0c={rootfs}" in command
+            and "root=/dev/ubda" in command
+            and "rootfstype=erofs" in command,
+            f"dry run lacks the raw EROFS boot options:\n{valid.stdout}",
         )
 
         rejected = {
-            "rw": "writable-root kernel argument",
-            "ro": "supplied by the launcher",
-            "ubd0=/tmp/writable.img": "controlled by the launcher",
-            "ubd0r=/tmp/other.img": "controlled by the launcher",
-            "root=/dev/ubda": "controlled by the launcher",
+            "ubd0=/tmp/other.erofs": "controlled by the launcher",
+            "ubd0c=/tmp/other.erofs": "controlled by the launcher",
+            "ubd0r=/tmp/other.erofs": "controlled by the launcher",
+            "root=/dev/ubdb": "controlled by the launcher",
+            "rootfstype=ext4": "controlled by the launcher",
             "init=/bin/sh": "controlled by the launcher",
             "mem=1G": "controlled by the launcher",
             "console=null": "controlled by the launcher",
@@ -83,7 +112,7 @@ def main() -> int:
                 f"{kernel_argument}\n{result.stdout}",
             )
 
-    print("overlay launcher read-only option policy tests passed")
+    print("overlay launcher EROFS option policy tests passed")
     return 0
 
 

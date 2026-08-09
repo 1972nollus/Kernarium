@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot the GPU test guest without ever writing the base root filesystem."""
+"""Boot the GPU test guest from the unified EROFS root filesystem."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
-import fcntl
 import hashlib
 import json
 import os
@@ -16,21 +15,28 @@ from pathlib import Path
 import select
 import shlex
 import signal
-import stat
 import subprocess
 import sys
 import time
-from typing import Any, Sequence
+from typing import Any, BinaryIO, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
-DEFAULT_ROOTFS = REPO_ROOT / "rootfs.img"
+DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_BASELINE = REPO_ROOT / "tools" / "rootfs" / "manifest.json"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/gpu-test-artifacts"
 PASS_MARKER = "UML_GPU_OVERLAY_TEST: PASS"
 FAIL_MARKER = "UML_GPU_OVERLAY_TEST: FAIL"
-PROTECTED_ARGUMENTS = ("ubd0", "root=", "init=", "mem=", "console=", "systemd.unit=")
+PROTECTED_ARGUMENTS = (
+    "ubd0",
+    "root=",
+    "rootfstype=",
+    "init=",
+    "mem=",
+    "console=",
+    "systemd.unit=",
+)
 
 
 class SafetyError(RuntimeError):
@@ -53,7 +59,6 @@ def image_snapshot(path: Path) -> dict[str, Any]:
         "size": image_stat.st_size,
         "inode": image_stat.st_ino,
         "mtime_ns": image_stat.st_mtime_ns,
-        "mode": stat.S_IMODE(image_stat.st_mode),
     }
 
 
@@ -62,7 +67,9 @@ def load_baseline(path: Path) -> dict[str, Any]:
         baseline = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise SafetyError(f"cannot read rootfs manifest {path}: {error}") from error
-    if baseline.get("schema_version") not in (1, 2):
+    if not isinstance(baseline, dict):
+        raise SafetyError(f"rootfs manifest must be a JSON object: {path}")
+    if baseline.get("schema_version") != 3:
         raise SafetyError(f"unsupported rootfs manifest schema in {path}")
     if not isinstance(baseline.get("sha256"), str):
         raise SafetyError(f"rootfs manifest has no SHA-256 in {path}")
@@ -71,43 +78,26 @@ def load_baseline(path: Path) -> dict[str, Any]:
     return baseline
 
 
-def enforce_image_immutable(
+def verify_image_integrity(
     rootfs: Path, baseline: dict[str, Any]
-) -> tuple[int, dict[str, Any]]:
+) -> dict[str, Any]:
     if not rootfs.is_file():
         raise SafetyError(f"rootfs is not a regular file: {rootfs}")
-    image_stat = rootfs.stat()
-    mode = stat.S_IMODE(image_stat.st_mode)
-    if mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+    snapshot = image_snapshot(rootfs)
+    if snapshot["size"] != baseline["size"]:
         raise SafetyError(
-            f"rootfs has writable permission bits ({mode:04o}); expected a frozen image"
+            f"rootfs size changed: {snapshot['size']} != {baseline['size']}"
         )
-
-    descriptor = os.open(rootfs, os.O_RDONLY)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        snapshot = image_snapshot(rootfs)
-        if snapshot["size"] != baseline["size"]:
-            raise SafetyError(
-                f"rootfs size changed: {snapshot['size']} != {baseline['size']}"
-            )
-        if snapshot["sha256"] != baseline["sha256"]:
-            raise SafetyError(
-                "rootfs SHA-256 does not match the immutable manifest: "
-                f"{snapshot['sha256']} != {baseline['sha256']}"
-            )
-        return descriptor, snapshot
-    except BaseException:
-        os.close(descriptor)
-        raise
+    if snapshot["sha256"] != baseline["sha256"]:
+        raise SafetyError(
+            "rootfs SHA-256 does not match the EROFS manifest: "
+            f"{snapshot['sha256']} != {baseline['sha256']}"
+        )
+    return snapshot
 
 
 def validate_extra_arguments(arguments: Sequence[str]) -> None:
     for argument in arguments:
-        if argument == "rw":
-            raise SafetyError("the writable-root kernel argument 'rw' is forbidden")
-        if argument == "ro":
-            raise SafetyError("'ro' is supplied by the harness and must not be repeated")
         if any(argument.startswith(prefix) for prefix in PROTECTED_ARGUMENTS):
             raise SafetyError(f"kernel argument is controlled by the harness: {argument}")
 
@@ -123,9 +113,9 @@ def build_command(
     validate_extra_arguments(extra_arguments)
     return [
         str(emulator.resolve()),
-        f"ubd0r={rootfs.resolve()}",
+        f"ubd0c={rootfs.resolve()}",
         f"root={root_device}",
-        "ro",
+        "rootfstype=erofs",
         "init=/bin/sh",
         f"mem={memory}",
         "console=tty0",
@@ -167,29 +157,23 @@ case ",$(findmnt -n -o OPTIONS -T /)," in
     *,rw,*) ;;
     *) echo "overlay check failed: root overlay is not writable"; status=1 ;;
 esac
-check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower)" ext4 "lower filesystem type"
-case ",$(findmnt -n -o OPTIONS -T /.uml-lower)," in
-    *,ro,*) ;;
-    *) echo "overlay check failed: lower filesystem is not read-only"; status=1 ;;
-esac
+check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower)" erofs "lower filesystem type"
 check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower/mnt)" tmpfs "upper backing type"
-check_equal "$(cat /sys/block/ubda/ro)" 1 "base block device read-only flag"
+check_equal "$(findmnt -n -o FSTYPE -T /var/lib/docker)" tmpfs "Docker state filesystem type"
 
 probe="/etc/.uml-overlay-write-probe"
 if ! : > "$probe"; then
     echo "overlay check failed: upper layer is not writable"
-    status=1
-elif [ -e "/.uml-lower$probe" ]; then
-    echo "overlay check failed: write reached the lower root"
     status=1
 fi
 rm -f "$probe"
 
 if [ "$status" -eq 0 ]; then
     # Keep command-level shell failures (including expansion errors caused by
-    # malformed test input) inside a subshell so the immutable-root result and
+    # malformed test input) inside a subshell so the EROFS-root result and
     # orderly-poweroff footer always run.
     (
+        set -e
 {command_block if command_block else "        :"}
     )
     status=$?
@@ -222,7 +206,7 @@ fail()
 }}
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt || fail "tmpfs mount"
 mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || fail "overlay workspace"
-mount -o bind / /mnt/lower || fail "read-only lower bind"
+mount -o bind / /mnt/lower || fail "EROFS lower bind"
 mount -t overlay overlay -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root ||
     fail "overlay mount"
 mount -t devtmpfs devtmpfs /mnt/root/dev || fail "devtmpfs mount"
@@ -236,13 +220,15 @@ printf '%s\\n' \\
     'nameserver 8.8.8.8' \\
     'nameserver 10.0.2.3' \\
     'options timeout:1 attempts:3 rotate' > /etc/resolv.conf
+mkdir -p /var/lib/docker
+mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker || fail "Docker state tmpfs"
 mkdir -p /usr/local/libexec /etc/systemd/system/multi-user.target.wants
 printf '%s' \\
 {encoded_arguments} | base64 -d > /usr/local/libexec/uml-gpu-overlay-test
 chmod 0755 /usr/local/libexec/uml-gpu-overlay-test
 cat > /etc/systemd/system/uml-gpu-overlay-test.service <<'EOF'
 [Unit]
-Description=Darwin UML immutable-root GPU test guard
+Description=Darwin UML EROFS-root GPU test guard
 After=local-fs.target
 Before=display-manager.service
 
@@ -259,7 +245,7 @@ WantedBy=multi-user.target
 EOF
 ln -sf ../uml-gpu-overlay-test.service \
     /etc/systemd/system/multi-user.target.wants/uml-gpu-overlay-test.service
-echo "Darwin UML root overlay: lower=read-only, upper=tmpfs"
+echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
 exec /lib/systemd/systemd
 """
     return bootstrap.encode("utf-8")
@@ -275,6 +261,22 @@ def terminate_process(process: subprocess.Popen[bytes]) -> None:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
+
+
+def write_all(stream: BinaryIO, payload: bytes) -> None:
+    """Write an entire init-shell payload even when the pipe short-writes."""
+    offset = 0
+    while offset < len(payload):
+        try:
+            written = stream.write(payload[offset:])
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            select.select([], [stream], [], 0.25)
+            continue
+        if written is None or written <= 0:
+            raise RuntimeError("guest bootstrap pipe stopped accepting input")
+        offset += written
 
 
 def run_guest(
@@ -300,8 +302,7 @@ def run_guest(
     pending = bytearray()
 
     try:
-        process.stdin.write(bootstrap)
-        process.stdin.write(b"\n")
+        write_all(process.stdin, bootstrap + b"\n")
         process.stdin.flush()
         with console_log.open("wb") as log:
             while process.poll() is None:
@@ -338,12 +339,12 @@ def write_json(path: Path, value: Any) -> None:
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Boot a tmpfs-overlay GPU guest while protecting rootfs.img"
+        description="Boot a tmpfs-overlay GPU guest from rootfs.erofs"
     )
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    parser.add_argument("--root-device", default="/dev/ubda1")
+    parser.add_argument("--root-device", default="/dev/ubda")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--unit", default="multi-user.target")
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
@@ -352,7 +353,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--command",
         action="append",
         default=[],
-        help="shell command to run after the immutable-overlay checks (repeatable)",
+        help="shell command to run after the EROFS-overlay checks (repeatable)",
     )
     parser.add_argument(
         "--no-auto-poweroff",
@@ -376,13 +377,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if not emulator.is_file() or not os.access(emulator, os.X_OK):
         raise SafetyError(f"emulator is not executable: {emulator}")
 
-    descriptor = -1
     before: dict[str, Any] | None = None
     artifact_directory: Path | None = None
     result: dict[str, Any] = {}
     failure: BaseException | None = None
     try:
-        descriptor, before = enforce_image_immutable(rootfs, baseline)
+        before = verify_image_integrity(rootfs, baseline)
         command = build_command(
             emulator,
             rootfs,
@@ -427,7 +427,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             }
         )
         if not saw_pass or saw_fail:
-            raise RuntimeError("guest immutable-overlay verification did not pass")
+            raise RuntimeError("guest EROFS-overlay verification did not pass")
         return 0
     except BaseException as error:
         failure = error
@@ -447,8 +447,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 write_json(artifact_directory / "run.json", result)
             if not unchanged and failure is None:
                 raise SafetyError("rootfs changed while the guest was running")
-        if descriptor >= 0:
-            os.close(descriptor)
 
 
 if __name__ == "__main__":

@@ -1,25 +1,56 @@
 # Testing and preparation
 
-## Latest accepted local baseline (2026-08-09)
+## Current accepted state (2026-08-10)
 
-Implementation baseline
-`783bfcf7e2447f8f981830a158bec3f402b08d97` passed the ordinary 16 KiB and
-4 KiB unit suites at 572/572 and 573/573, respectively, with tooling at 51/51
-in each profile. Full ASan+UBSan passed 572/572, TSan passed 8/8, the malformed
-loader ASan gate passed 1/1, and both normal and sanitized GPU configurations
-passed 5/5 units plus the 1/1 VNC tooling test. `integration-fast` passed 5/5
-in each page profile, and the standalone SMP workload reached 8.19 and 8.03
-effective host cores at 16 KiB and 4 KiB. The three-slice Apple package and its
-raw, installed-tree, and real Xcode consumers passed. The immutable rootfs
-remained mode 0444, 8,589,934,592 bytes, SHA-256
-`501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
+The complete refactor acceptance remains anchored at implementation baseline
+`783bfcf7e2447f8f981830a158bec3f402b08d97`. That baseline passed the ordinary
+16 KiB and 4 KiB unit suites at 572/572 and 573/573, respectively, with
+tooling at 51/51 in each profile. Full ASan+UBSan passed 572/572, TSan passed
+8/8, the malformed loader ASan gate passed 1/1, and both normal and sanitized
+GPU configurations passed 5/5 units plus the 1/1 VNC tooling test.
+`integration-fast` passed 5/5 in each page profile, and the standalone SMP
+workload reached 8.19 and 8.03 effective host cores at 16 KiB and 4 KiB. The
+three-slice Apple package and its raw, installed-tree, and real Xcode consumers
+passed. Those results are not silently reattributed to the later rootfs
+migration.
 
-These results were produced locally; no hosted CI workflow exists. The LTP
-payload was absent, so full LTP was not run. Instruction input materialization
-was off and emitted zero sidecars; it remains an explicit, storage-intensive
-opt-in. Rootfs-management redesign remains deferred. The final Geekbench rerun
-was intentionally skipped at the user's direction after all other acceptance
-tasks completed, so this baseline makes no new end-to-end Geekbench claim.
+The subsequent unified-rootfs migration supersedes the old partitioned-image
+policy. Its final host workflows passed 572/572 units plus 49/49 tooling tests
+at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both production page profiles were
+rebuilt; the final regenerated `integration-fast` suites passed 5/5 in 58.80
+seconds at 16 KiB and 5/5 in 64.75 seconds at 4 KiB with raw EROFS at
+`/dev/ubda`: overlay/systemd, interpreter, gadgets, JIT, and deterministic
+SLiRP. Focused rootfs, provisioning, launcher, GPU-runner, LTP-runner,
+network-runner, performance-runner, emulator-option, and API contracts also
+pass. The 16 KiB guest reports
+the upstream `EXPERIMENTAL EROFS subpage compressed block support in use`
+warning because the image has 4 KiB filesystem blocks; the 4 KiB guest does
+not. This is a recorded upstream filesystem warning, not a failed mount or an
+emulator diagnostic.
+
+`rootfs.erofs` now supplies LTP at `/opt/ltp`, Node at `/opt/node/bin/node`,
+`e2fsprogs` formatters (`mkfs.ext2`, `mkfs.ext3`, and `mkfs.ext4`),
+`/usr/sbin/debugfs`, `/usr/sbin/e4crypt`, the full iproute2 `ip`, `bc` 1.07.1,
+the 4.09 `quota`/`quotacheck` suite (`quota` is `/usr/bin/quota`), and
+benchmark payloads under `/opt`. The manifests contain
+2,428 verified LTP cases and 135 disabled cases, with no overlap; 88 cases
+moved to disabled
+because they require deliberately absent `CONFIG_HUGETLBFS` (79),
+`CONFIG_TRANSPARENT_HUGEPAGE` (5), or `CONFIG_CAN` (4). This migration did not
+run or claim the full LTP campaign. The credited final-image boundary is a
+44-case focused gadgets-engine qualification: every live expectation was
+accepted, `statx05` passed four assertions in both page profiles, and the
+single-vCPU serialized `zram01` run returned zero with 12 TPASS and one
+packaged-test TCONF in 167.6 seconds. The user-directed final Geekbench scoring
+run remains skipped; the local Geekbench 6 command uses `--no-upload`, and no
+new score is claimed.
+
+All results were produced locally; no hosted CI workflow exists. Instruction
+input materialization was off for the complete refactor acceptance and remains
+an explicit, storage-intensive opt-in. The current rootfs size, digest, EROFS
+superblock fields, and UUID are single-sourced in
+`tools/rootfs/manifest.json` and its checked release statement instead of being
+copied into this runbook.
 
 Use CMake/Ninja and CTest as the first-party source of truth. The `unit` suite
 is host-only, contains no Python, and neither configures a kernel nor reads a
@@ -40,8 +71,8 @@ configuration inputs, ABI identity, and a recorded build procedure. Git,
 Kbuild, compiler, linker, and Xcode-generated timestamps, commit IDs, build
 IDs, user/host fields, package layouts, and output hashes stay authentic and
 may differ between runs; record them as observations rather than rewriting
-metadata or requiring byte equality. The signed `rootfs.img` digest is
-intentionally stricter because it identifies an immutable input.
+metadata or requiring byte equality. The signed `rootfs.erofs` digest is
+intentionally stricter because it identifies the unified guest input.
 
 ## Green checkpoints and bisectable commits
 
@@ -84,14 +115,11 @@ ctest --preset instruction-evidence-4k
 ```
 
 Prepare full integration explicitly. Linux must be replayed on a
-case-sensitive filesystem. A local case-sensitive APFS sparse bundle is one
-portable option when no suitable volume already exists:
-
-```sh
-hdiutil create -size 80g -type SPARSEBUNDLE -fs APFSX \
-  -volname Kernel .build/Kernel.sparsebundle
-hdiutil attach .build/Kernel.sparsebundle
-```
+case-sensitive filesystem. The canonical source and page-specific kernel build
+trees stay on the dedicated `/Volumes/<case-sensitive-volume>` volume at `linux`,
+`build-16k`, and `build-4k`. Do not create or attach a repository-local
+sparsebundle for the canonical workflow, and do not substitute a transient
+case-sensitive mount under `/tmp`.
 
 Source preparation, dependency-prefix construction, and Linux replay are
 explicit mutating setup steps. Kernel preparation authenticates the official
@@ -116,11 +144,25 @@ dependencies/verify-prefix.sh \
   --deployment-target 14.0
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
 kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --skip-build
-python3 tools/rootfs/verify.py --image rootfs.img
-UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
-  cmake --preset macos-integration
+python3 tools/rootfs/verify.py --image rootfs.erofs
+cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
+```
+
+The checked integration presets pin `/Volumes/<case-sensitive-volume>/linux`,
+`/Volumes/<case-sensitive-volume>/build-16k`, and
+`/Volumes/<case-sensitive-volume>/build-4k`. For another case-sensitive layout, override
+both cache paths during each configure rather than relying on an environment
+prefix:
+
+```sh
+cmake --preset macos-integration \
+  -DUML_KERNEL_SOURCE_DIR=/other/case-sensitive/linux \
+  -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-16k
+cmake --preset macos-integration-4k \
+  -DUML_KERNEL_SOURCE_DIR=/other/case-sensitive/linux \
+  -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-4k
 ```
 
 `dependencies/prepare.sh --verify` authenticates the already prepared source
@@ -156,27 +198,45 @@ tests. Shell-oriented workloads boot an explicit writable tmpfs
 OverlayFS shell; that is intentional and avoids relying on a systemd getty for
 PTY interaction, while `guest-overlay-systemd-smoke` validates the production
 systemd path separately.  The shared-MM workload is a CMake-built freestanding
-arm64/Linux executable, so the immutable rootfs does not need a guest compiler.
+arm64/Linux executable, so the EROFS image does not need a guest compiler.
 
-Guest tests validate the lower image before and after each campaign, serialize
-it with the rootfs lock, obtain dynamic VNC ports through LibVNCServer's
-5900-and-up auto-port search, and terminate guest process groups.  The VNC
-smoke is mandatory when registered: it does not convert a headless graphics
-failure into a skip.
+The bare CLI defaults to `init=/bin/sh`. Systemd-oriented launchers host-feed
+their OverlayFS bootstrap to that temporary PID 1 shell, mount the EROFS lower
+and tmpfs upper/work directories, then enter the overlay and start systemd.
+They do not depend on a custom bootstrap executable inside the image. The
+image owns the enabled tty0 getty and its login policy; launchers must preserve
+that unit instead of creating a replacement symlink, drop-in, or autologin
+override in the overlay. Before starting systemd, the bootstrap mounts tmpfs at
+`/var/lib/docker` so Docker's `overlayfs` or `overlay2` storage backend is not
+nested on the writable root OverlayFS. KDE/VNC and WebGL launchers reuse the
+image's non-root `uml`
+account and must not create `plasma` or another desktop account in the overlay.
+
+Guest tests validate the EROFS image before and after each campaign, coordinate
+with provisioning through the rootfs lock, map the shared image with `ubd0c=`,
+and boot `root=/dev/ubda rootfstype=erofs`. EROFS supplies the read-only lower-
+filesystem contract; do not add host-mode, `ubd0r`, or `ro` checks. The `c`
+mapping disables UML's host-file lock but does not make raw `/dev/ubda` safe
+scratch space, so no test may target the root block device for destructive
+block-I/O probes. The wrapper's pre/post digest check remains the artifact-
+integrity boundary. Guest tests obtain dynamic VNC ports through
+LibVNCServer's 5900-and-up auto-port search and terminate guest process groups.
+The VNC smoke is mandatory when registered: it does not convert a headless
+graphics failure into a skip.
 
 External network, KDE/VNC, and rendered WebGL workflows are opt-in because
 they need network/GUI permission:
 
 ```sh
-UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
-  cmake --preset macos-integration \
+cmake --preset macos-integration \
   -DUML_ENABLE_EXTERNAL_NETWORK_TESTS=ON
 ctest --preset integration-full
 ```
 
-Full LTP is independently selected, never a unit test.  It requires an
-immutable image that contains `/usr/lib/ltp-testsuite`; run it separately per
-engine and preserve the rootfs wrapper:
+Full LTP is independently selected, never a unit test. The unified image
+contains it at `/opt/ltp`; run it separately per engine and preserve the rootfs
+wrapper. Cases whose required kernel options are deliberately disabled belong
+in `disabled-tests.tsv` rather than prompting config re-enablement:
 
 ```sh
 cmake --build .build/presets/macos-integration --target guest-ltp-gadgets
@@ -186,6 +246,34 @@ cmake --build .build/presets/macos-integration --target guest-ltp-verified
 python3 tests/integration/ltp/run_guest_ltp.py --help
 ```
 
+A direct focused run must name the matching Kbuild metadata explicitly; the
+runner validates its complete canonical path inventory and sibling kernel
+release before booting cases:
+
+```sh
+tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
+  python3 tests/integration/ltp/run_guest_ltp.py \
+    --emulator .build/presets/macos-integration/bin/uml-darwin \
+    --rootfs rootfs.erofs \
+    --manifest tests/integration/ltp/verified-tests.tsv \
+    --modules-builtin /Volumes/<case-sensitive-volume>/build-16k/modules.builtin \
+    --case containers/netns_sysfs
+```
+
+The CMake engine targets supply the corresponding
+`${UML_KERNEL_BUILD_DIR}/modules.builtin` automatically. The harness copies
+that complete file byte-exact into disposable OverlayFS state and replaces
+`modules.dep` with an empty file only when the running config proves
+`CONFIG_MODULES=n`. The generated setup is gzip-compressed on the host and
+transported through independently acknowledged base64 append commands below
+2 KiB; a final bounded command decodes, decompresses, executes, and removes the
+staging files under `/run`, and the harness restores console echo on every
+path. It also places fail-closed overlay-only `kmod`, `modprobe`, and `rmmod`
+names ahead of the LTP binary directory in `PATH`. Fake loads are no-ops
+limited to exact built-in names from the validated metadata; removal,
+parameters, unknown names, and unsupported operations fail. The immutable
+rootfs does not need kmod for this static-kernel accommodation.
+
 The 10-core topology, utilization, and hotplug workload is also deliberately
 outside CTest. Run its standalone target explicitly:
 
@@ -193,20 +281,41 @@ outside CTest. Run its standalone target explicitly:
 cmake --build .build/presets/macos-integration --target guest-smp-parallel
 ```
 
-Provisioning an image is explicit and verifies a detached signature over a
-small digest statement plus the manifested image SHA-256; it refuses to
-replace an existing image without `--replace`. Use publisher-supplied local
-artifacts, or set the four `UML_ROOTFS_*` release variables named in the
-manifest and pass `--allow-network`. The repository intentionally cannot invent
-the release URL or trusted public key. Authorized writable-image maintenance is
-`tools/rootfs/maintenance.py` and is intentionally outside all presets.
+Provisioning an image is explicit and always verifies the manifested image
+SHA-256; it refuses to replace an existing image without `--replace`. Local
+artifacts must be authenticated out of band before being supplied with
+`--source`. Network acquisition additionally verifies a detached signature
+over the release digest statement: set the four `UML_ROOTFS_*` release
+variables named in the manifest and pass `--allow-network`. The repository
+intentionally cannot invent the release URL or trusted public key. EROFS
+updates are complete image rebuilds followed by verified
+`tools/rootfs/provision.py --replace`; in-place writable maintenance is
+unsupported.
 
 Use stock macOS commands when manually inspecting the image:
 
 ```sh
-stat -f 'mode=%Sp size=%z bytes' rootfs.img
-shasum -a 256 rootfs.img
+stat -f 'size=%z bytes' rootfs.erofs
+shasum -a 256 rootfs.erofs
 ```
+
+Guest benchmarks use payloads already installed under `/opt`; they do not
+download inputs at run time. Geekbench 6 runs locally without an Internet
+preflight or upload permission gate:
+
+```sh
+tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
+  python3 tests/perf/run_guest_geekbench.py \
+    --emulator .build/presets/macos-integration/bin/uml-darwin \
+    --rootfs rootfs.erofs \
+    --console-log .build/results/geekbench-gadgets-16k.log \
+    --engine gadgets --cpus 10 --memory 8G
+```
+
+The runner's default guest command is
+`/opt/geekbench/release/geekbench6 --no-upload`.
+See [`../tests/perf/README.md`](../tests/perf/README.md) for profiling and probe
+commands. Full Geekbench scoring remains a separate manual campaign.
 
 Sanitizer, iOS, XCFramework, benchmark, and guest-workload runs are separate
 acceptance campaigns.  Typical host-product commands are:

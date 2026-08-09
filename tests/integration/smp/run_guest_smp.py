@@ -47,9 +47,10 @@ def parse_arguments() -> argparse.Namespace:
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
+        default=True,
         help=(
-            "bootstrap a writable tmpfs OverlayFS shell from /bin/sh "
-            "(required by the partitioned production rootfs)"
+            "bootstrap the required writable tmpfs OverlayFS shell from "
+            "/bin/sh (default and retained for CLI compatibility)"
         ),
     )
     parser.add_argument(

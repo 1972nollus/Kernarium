@@ -102,35 +102,73 @@ Run both page profiles for page-size-sensitive CPU, memory, ABI, kernel, or
 guest changes. The default guest page size is 16 KiB; 4 KiB is a supported
 compatibility profile, not an optional approximation.
 
-## Integration tests and immutable rootfs
+## Integration tests and unified EROFS rootfs
 
 Integration requires a clean replayed Linux source on a case-sensitive
 filesystem and the verified private dependency prefix:
 
 ```sh
-UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
-  cmake --workflow --preset check-integration
-UML_KERNEL_SOURCE_DIR=/Volumes/<case-sensitive-volume>/linux \
-  cmake --workflow --preset check-integration-4k
+cmake --workflow --preset check-integration
+cmake --workflow --preset check-integration-4k
 ```
 
-- `rootfs.img` is an ignored immutable input governed by
+The checked presets pin `/Volumes/<case-sensitive-volume>/linux` and the matching
+`/Volumes/<case-sensitive-volume>/build-16k` or `/Volumes/<case-sensitive-volume>/build-4k` kernel
+directory. A non-canonical layout must override both `UML_KERNEL_SOURCE_DIR`
+and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
+
+- `rootfs.erofs` is the ignored, unified guest image governed by
   `tools/rootfs/manifest.json`. Verify it with:
 
   ```sh
-  python3 tools/rootfs/verify.py --image rootfs.img
+  python3 tools/rootfs/verify.py --image rootfs.erofs
   ```
 
 - Ordinary guest runs must use `tools/rootfs/with-verified-rootfs.sh`, which
-  verifies the image before and after execution and serializes access.
-- Never modify, replace, resize, chmod, or delete the rootfs during normal
-  development or testing. `tools/rootfs/maintenance.py` is the exceptional
-  writable path and requires explicit user authorization.
+  verifies the pinned EROFS format and digest before and after execution and
+  coordinates with provisioning. Map the shared root image with `ubd0c=` so
+  UML does not take a conflicting host-file lock when guests run in parallel,
+  and boot it as `root=/dev/ubda rootfstype=erofs`. EROFS itself supplies the
+  read-only filesystem contract; do not add Unix-mode, `ubd0r`, or `ro`
+  enforcement. The `c` flag disables UML's host-file lock; it does not make the
+  raw `/dev/ubda` block device suitable as scratch space. Never direct a test
+  that overwrites a block device at the root device, and keep the wrapper's
+  pre/post digest verification around every campaign.
+- Rootfs updates are whole-image operations: build and sign a new EROFS
+  artifact, update its checked manifest and release statement, then install it
+  with `tools/rootfs/provision.py --replace`. There is no in-place writable
+  maintenance workflow.
+- The image owns the enabled tty0 getty and its login policy. Systemd launchers
+  may host-feed the tmpfs OverlayFS bootstrap, but must not synthesize or
+  override the getty unit in the overlay. Before starting systemd, that
+  bootstrap mounts tmpfs at `/var/lib/docker` so Docker's `overlayfs` or
+  `overlay2` storage backend is not nested on the writable root overlay.
+  KDE/VNC and WebGL launchers must reuse
+  the image's non-root `uml` account; never synthesize `plasma` or another
+  desktop account in the overlay.
 - External-network, KDE/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
-- Full LTP requires `/usr/lib/ltp-testsuite` in the immutable image. Do not
-  claim an LTP result when the payload is absent.
+- Full LTP uses `/opt/ltp` from `rootfs.erofs`. Tests that require deliberately
+  removed kernel configuration must be listed in `disabled-tests.tsv`; do not
+  re-enable those flags merely to increase the LTP count. Each campaign must
+  pass the selected `${UML_KERNEL_BUILD_DIR}/modules.builtin`; the runner
+  release-checks and copies its complete contents into disposable OverlayFS
+  state so built-in-driver discovery matches the embedded kernel. The host
+  compresses that generated setup and sends it through independently
+  acknowledged commands below 2 KiB; the final guest command executes and
+  removes staging under `/run`, and console echo is restored on every path.
+  With `CONFIG_MODULES=n`, that same disposable overlay supplies fail-closed
+  `kmod`, `modprobe`, and `rmmod` command names: only exact build-proven
+  built-ins may receive no-op load success, while removals, parameters,
+  unknown names, and unsupported operations fail. Do not add kmod to the
+  immutable image for this accommodation. The unified image also carries
+  `e2fsprogs` (`mkfs.ext2`, `mkfs.ext3`, `mkfs.ext4`, `mke2fs`, `debugfs`, and
+  `e4crypt`), the full iproute2 `ip` utility, `bc`, and `quota`; the fast
+  integration smoke pins those userspace prerequisites.
+- Benchmarks and supporting runtimes come from `/opt` in the same image.
+  Geekbench runs its local payload with `--no-upload`, without an Internet
+  preflight or upload permission gate.
 
 ## Dependency provenance
 

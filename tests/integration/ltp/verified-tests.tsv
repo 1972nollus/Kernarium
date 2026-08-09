@@ -49,7 +49,6 @@ syscalls	capset04	capset04	pass	60	Setting capabilities on another process is re
 syscalls	cacheflush01	cacheflush01	hardware-exempt	60	LTP reports that the arm64 guest ABI has no cacheflush syscall
 syscalls	cachestat01	cachestat01	pass	90	All thirty-five ext2 cache, eviction, and dirty-page accounting checks pass
 syscalls	cachestat02	cachestat02	pass	60	All twenty cache accounting checks pass from one through 512 pages
-syscalls	cachestat03	cachestat03	pass	60	Invalid descriptors, pointers, flags, and hugetlbfs return the required cachestat errors
 syscalls	cachestat04	cachestat04	pass	90	All 117 regular and non-regular descriptor cachestat result checks pass
 syscalls	chdir01	chdir01	pass	60	All 32 root and unprivileged chdir results pass on ext2 and tmpfs
 syscalls	chdir04	chdir04	pass	60	All three chdir error-path checks return the expected errors
@@ -187,9 +186,9 @@ syscalls	faccessat02	faccessat02	pass	120	Both faccessat error-path checks pass
 syscalls	fallocate01	fallocate01	pass	180	All four basic fallocate checks pass
 syscalls	fallocate02	fallocate02	pass	180	All eight fallocate error-path checks pass
 syscalls	fallocate03	fallocate03	pass	180	All eight fallocate mode checks pass
-syscalls	fallocate04	fallocate04	userspace-exempt	180	Available ext2 and tmpfs modes pass; built-in ext4 cannot be tested because mkfs.ext4 is absent
-syscalls	fallocate05	fallocate05	userspace-exempt	180	All six tmpfs full-filesystem checks pass; ext4 cannot be tested because mkfs.ext4 is absent
-syscalls	fallocate06	fallocate06	userspace-exempt	240	Eight tmpfs allocation and punch-hole checks pass; ext4 and copy-on-write filesystems lack rootfs formatters	4G
+syscalls	fallocate04	fallocate04	userspace-exempt	180	All five ext4 and two supported tmpfs operations pass; ext2 and ext3 lack fallocate while tmpfs lacks zero-range support
+syscalls	fallocate05	fallocate05	userspace-exempt	180	All six ext4 and six tmpfs full-filesystem checks pass; ext2 and ext3 report fallocate unsupported
+syscalls	fallocate06	fallocate06	userspace-exempt	240	All eight ext4 and eight tmpfs allocation checks pass; ext2 and ext3 lack fallocate while ext4 and tmpfs lack copy-on-write	4G
 syscalls	fanotify01	fanotify01	pass	180	All 156 basic fanotify event and mark checks pass
 syscalls	fanotify02	fanotify02	pass	180	All eight fanotify permission-event checks pass
 syscalls	fanotify03	fanotify03	pass	180	All 25 fanotify mark and event checks pass
@@ -202,7 +201,7 @@ syscalls	fanotify09	fanotify09	pass	180	All 76 fanotify event-mask checks pass
 syscalls	fanotify10	fanotify10	userspace-exempt	180	1047 applicable ignored-mask checks pass; LTP skips three legacy flag combinations that do not take effect
 syscalls	fanotify11	fanotify11	pass	180	Both fanotify checks pass after adding generic scalar Advanced SIMD compare-to-zero support
 syscalls	fanotify12	fanotify12	pass	180	All ten fanotify checks pass
-syscalls	fanotify13	fanotify13	userspace-exempt	180	108 ext2 and tmpfs checks pass; unavailable formatters and unsupported overlay mark modes account for 28 skips
+syscalls	fanotify13	fanotify13	userspace-exempt	180	All 216 applicable ext2 ext3 ext4 and tmpfs checks pass; LTP skips 56 unsupported OverlayFS mark combinations
 syscalls	fanotify14	fanotify14	pass	180	All 126 fanotify checks pass
 syscalls	fanotify15	fanotify15	pass	180	All 20 fanotify checks pass
 syscalls	fanotify16	fanotify16	pass	180	All 308 fanotify checks pass
@@ -211,9 +210,9 @@ syscalls	fanotify18	fanotify18	pass	180	All nine fanotify checks pass
 syscalls	fanotify19	fanotify19	pass	180	All 16 fanotify checks pass
 syscalls	fanotify20	fanotify20	pass	180	All four fanotify checks pass
 syscalls	fanotify21	fanotify21	pass	180	All 22 fanotify checks pass
-syscalls	fanotify22	fanotify22	userspace-exempt	180	The rootfs package lacks the debugfs utility required before this case can exercise the kernel
+syscalls	fanotify22	fanotify22	pass	180	All four ext4 filesystem error-event cases pass with debugfs from e2fsprogs
 syscalls	fanotify23	fanotify23	pass	180	All six fanotify checks pass
-syscalls	fanotify24	fanotify24	userspace-exempt	180	Pre-content events require an HSM-enabled filesystem; ext4 is built in but the rootfs lacks mkfs.ext4
+syscalls	fanotify24	fanotify24	userspace-exempt	180	All 174 supported ext3 and ext4 pre-access event checks pass; ext2 and tmpfs lack FAN_PRE_ACCESS
 syscalls	fchdir01	fchdir01	pass	120	The basic fchdir check passes
 syscalls	fchdir02	fchdir02	pass	120	The fchdir descriptor error check passes
 syscalls	fchdir03	fchdir03	pass	120	The fchdir permission and directory check passes
@@ -667,7 +666,7 @@ syscalls	mmap12	mmap12	pass	240	Mmap large-offset check passes
 syscalls	mmap13	mmap13	pass	240	Mmap boundary check passes
 syscalls	mmap14	mmap14	pass	240	Mmap address selection check passes
 syscalls	mmap15	mmap15	pass	240	Mmap file coherence check passes
-syscalls	mmap16	mmap16	userspace-exempt	240	Built-in ext4 is detected but the installed rootfs lacks mkfs.ext4, so the test exits before mapping its scratch filesystem
+syscalls	mmap16	mmap16	pass	240	All ten ext4 shared-mapping regression iterations pass
 syscalls	mmap17	mmap17	pass	240	Mmap unaligned-file-offset check passes
 syscalls	mmap18	mmap18	pass	240	All four mmap shared-write checks pass
 syscalls	mmap19	mmap19	pass	240	Mmap page-cache coherence check passes
@@ -878,8 +877,8 @@ syscalls	preadv201	preadv201	pass	240	All preadv2 basic data and flag checks pas
 syscalls	preadv201_64	preadv201_64	pass	240	All large-file preadv2 basic data and flag checks pass
 syscalls	preadv202	preadv202	pass	240	All preadv2 validation checks pass
 syscalls	preadv202_64	preadv202_64	pass	240	All large-file preadv2 validation checks pass
-syscalls	preadv203	preadv203	userspace-exempt	240	RWF_NOWAIT reaches ext2 and tmpfs but both filesystems lack NOWAIT reads; installed rootfs lacks mkfs.ext4 for the enabled supporting filesystem
-syscalls	preadv203_64	preadv203_64	userspace-exempt	240	Large-file RWF_NOWAIT reaches ext2 and tmpfs but both lack NOWAIT reads; installed rootfs lacks mkfs.ext4 for the enabled supporting filesystem
+syscalls	preadv203	preadv203	userspace-exempt	240	Ext3 and ext4 RWF_NOWAIT checks pass; ext2 and tmpfs report NOWAIT reads unsupported
+syscalls	preadv203_64	preadv203_64	userspace-exempt	240	Large-file ext3 and ext4 RWF_NOWAIT checks pass; ext2 and tmpfs report NOWAIT reads unsupported
 syscalls	profil01	profil01	pass	240	Process execution profiling behavior passes
 syscalls	process_vm_readv01	process_vm01 -r	pass	240	All cross-process vectored read cases pass
 syscalls	process_vm_readv02	process_vm_readv02	pass	240	Cross-process vectored read permission enforcement passes
@@ -926,15 +925,15 @@ syscalls	pwritev201	pwritev201	pass	240	All pwritev2 basic data and flag checks 
 syscalls	pwritev201_64	pwritev201_64	pass	240	All large-file pwritev2 basic data and flag checks pass
 syscalls	pwritev202	pwritev202	pass	240	All pwritev2 validation checks pass
 syscalls	pwritev202_64	pwritev202_64	pass	240	All large-file pwritev2 validation checks pass
-syscalls	quotactl01	quotactl01	userspace-exempt	240	Kernel quota support and both formats are built in; installed rootfs lacks quotacheck so LTP exits before the syscall
+syscalls	quotactl01	quotactl01	pass	240	All 36 user and group quota-control assertions pass across the vfsv0 and vfsv1 formats
 syscalls	quotactl02	quotactl02	userspace-exempt	240	XFS and quota support are built in; installed LTP compiled out the case because xfs/xqm.h was missing
 syscalls	quotactl03	quotactl03	userspace-exempt	240	XFS and quota support are built in; installed LTP compiled out the case because xfs/xqm.h was missing
-syscalls	quotactl04	quotactl04	userspace-exempt	240	Ext4 and quota support are built in; installed rootfs lacks mkfs.ext4 so LTP exits before the syscall
+syscalls	quotactl04	quotactl04	pass	240	All 16 project-quota operations pass through quotactl and quotactl_fd
 syscalls	quotactl05	quotactl05	userspace-exempt	240	XFS and quota support are built in; installed LTP compiled out the case because xfs/xqm.h was missing
-syscalls	quotactl06	quotactl06	userspace-exempt	240	Kernel quota support and both formats are built in; installed rootfs lacks quotacheck so LTP exits before the syscall
+syscalls	quotactl06	quotactl06	pass	240	All 22 quota error-path assertions pass across the vfsv0 and vfsv1 formats
 syscalls	quotactl07	quotactl07	userspace-exempt	240	XFS and quota support are built in; installed LTP compiled out the case because xfs/xqm.h was missing
-syscalls	quotactl08	quotactl08	userspace-exempt	240	Ext4 and quota support are built in; installed rootfs lacks mkfs.ext4 so LTP exits before the syscall
-syscalls	quotactl09	quotactl09	userspace-exempt	240	Ext4 and quota support are built in; installed rootfs lacks mkfs.ext4 so LTP exits before the syscall
+syscalls	quotactl08	quotactl08	pass	240	All 36 user and group quota operations pass through quotactl and quotactl_fd
+syscalls	quotactl09	quotactl09	userspace-exempt	240	Ten applicable quota error paths pass; each syscall variant skips one inapplicable descriptor-specific error
 syscalls	read01	read01	pass	240	Basic read data transfer passes
 syscalls	read02	read02	pass	240	All read error and direct-I/O checks pass on the volatile ext2 workspace	ext2
 syscalls	read03	read03	pass	240	Read end-of-file behavior passes
@@ -1445,12 +1444,9 @@ syscalls	futex_waitv03	futex_waitv03	pass	240	The second guarded futex_waitv mul
 syscalls	futex_wake01	futex_wake01	pass	240	All six futex wake count and sharing variants pass
 syscalls	futex_wake02	futex_wake02	pass	240	futex wake returns exact counts from one through ten and zero with no waiters
 syscalls	futex_wake03	futex_wake03	pass	240	Process-shared futex wake returns exact child counts from one through ten and zero
-syscalls	futex_wake04	futex_wake04	pass	240	Futex wake works across a reserved 2 MiB HugeTLB-backed mapping
 syscalls	futex_wait_bitset01	futex_wait_bitset01	pass	240	Futex bitset waits time out accurately on monotonic and realtime clocks
 syscalls	memfd_create01	memfd_create01	pass	240	All memfd sealing resize mapping duplicate and reopen semantics pass
 syscalls	memfd_create02	memfd_create02	pass	240	memfd_create validates names and accepts or rejects all tested flags correctly
-syscalls	memfd_create03	memfd_create03	pass	240	HugeTLB memfd write alignment page-size and allocation-limit semantics pass
-syscalls	memfd_create04	memfd_create04	pass	240	memfd accepts the supported 2 MiB hugepage size and rejects eight unsupported sizes
 syscalls	copy_file_range01	copy_file_range01	userspace-exempt	240	All 576 same-filesystem jobs pass; LTP skips optional cross-filesystem copies on ext2 and tmpfs
 syscalls	copy_file_range02	copy_file_range02	userspace-exempt	240	All 18 applicable error paths pass; optional cross-device cases are skipped	ext2
 syscalls	copy_file_range03	copy_file_range03	pass	240	Both libc and raw copy_file_range paths update timestamps correctly
@@ -1458,12 +1454,12 @@ syscalls	statx01	statx01	pass	240	statx reports correct file metadata mount IDs 
 syscalls	statx02	statx02	pass	240	statx handles empty paths file size and symlink no-follow semantics
 syscalls	statx03	statx03	pass	240	statx returns all expected descriptor address flag and pathname errors
 syscalls	statx04	statx04	pass	240	statx reports all supported ext2 and tmpfs inode attribute flags
-syscalls	statx05	statx05	userspace-exempt	240	The installed rootfs lacks mkfs.ext4 so the ext4-only statx case cannot start
-syscalls	statx06	statx06	userspace-exempt	240	The installed rootfs lacks mkfs.ext4 so this second ext4-only statx case cannot start
+syscalls	statx05	statx05	pass	240	All four encrypted and plain ext4 statx attribute assertions pass
+syscalls	statx06	statx06	pass	240	All four ext4 birth modification access and change timestamp assertions pass
 syscalls	statx07	statx07	userspace-exempt	240	The installed rootfs lacks exportfs so the export-handle statx case cannot start
 syscalls	statx08	statx08	userspace-exempt	240	All 18 applicable attribute checks pass; tmpfs lacks only compression flags
-syscalls	statx09	statx09	userspace-exempt	240	FS_VERITY is built in but the installed rootfs lacks mkfs.ext4 for the ext4-only case
-syscalls	statx10	statx10	userspace-exempt	240	The case supports only ext4 and xfs while the installed rootfs provides neither formatter
+syscalls	statx09	statx09	pass	240	All four ext4 FS_VERITY statx flag set and unset assertions pass
+syscalls	statx10	statx10	userspace-exempt	240	Both ext4 direct-I/O alignment assertions pass; ext2 ext3 and tmpfs are inapplicable while the xfs formatter remains absent
 syscalls	statx11	statx11	pass	240	Loop-device DMA alignment and logical block size match statx expectations
 syscalls	statx12	statx12	pass	240	Mount-root statx attributes are correct by path and fd on ext2 and tmpfs
 syscalls	membarrier01	membarrier01	pass	240	All supported and unsupported membarrier command semantics pass
@@ -1558,7 +1554,7 @@ fs	read_all_dev	read_all -d /dev -p -q -r 3	pass	240	Parallel bounded reader com
 fs	read_all_proc	read_all -d /proc -q -r 3	pass	300	Bounded reader completes procfs without failures skips or warnings
 fs	read_all_sys	read_all -d /sys -q -r 3	pass	300	Bounded reader completes sysfs without failures skips or warnings
 fs	fs_racer	fs_racer.sh -t 5	userspace-exempt	120	All installed race helpers run and clean up successfully but the upstream script's success path emits no LTP result tag	host-pressure
-fs	quota_remount_test01	quota_remount_test01.sh	userspace-exempt	300	Static quota support is enabled but the installed package lacks the required mkfs.ext3 formatter
+fs	quota_remount_test01	quota_remount_test01.sh	pass	300	Quota usage changes after the ext3 read-only and read-write remount cycle
 fs	isofs	isofs.sh	userspace-exempt	300	Built-in ISO9660 Joliet and zisofs support is enabled but the installed rootfs lacks every ISO image creator
 fs	fs_fill	fs_fill	pass	300	Both concurrent fill patterns pass on ext2 and tmpfs with 22 writers and repeated ENOSPC recovery	4G	host-pressure
 fs	binfmt_misc01	binfmt_misc01.sh	pass	180	All nine invalid binary-format registrations are rejected without a crash
@@ -1653,9 +1649,6 @@ mm	oom03	oom03	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exi
 mm	oom04	oom04	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
 mm	oom05	oom05	libc-exempt	600	Installed LTP lacks libnuma API version 2 and exits before exercising this NUMA-aware OOM workload
 mm	swapping01	swapping01 -i 5	pass	900	All five over-RAM allocation iterations swap 285 to 376 MiB without heavy-swapping failure	tmpfs	swap=2G	host-pressure
-mm	thp01	thp01 -I 120	pass	600	All 9593 fork and memory-pressure liveness assertions pass across the configured 120-second interval	tmpfs	host-pressure
-mm	thp02	thp02	pass	300	All four aligned and unaligned 8 MiB transparent-huge-page mremap combinations complete and userspace remains healthy
-mm	thp04	thp04	pass	300	Fuzzy concurrent huge-zero-page access completes with the shared zero page still clean	host-pressure
 mm	vma01	vma01	pass	300	Parent and child create and discover both expected three-page VMAs at distinct addresses
 mm	vma02	vma02	libc-exempt	300	Installed LTP lacks libnuma API version 2 and exits before exercising either VMA workload
 mm	vma03	vma03	hardware-exempt	300	Native arm64 has no legacy mmap2 syscall and LTP exits before executing either case
@@ -1789,24 +1782,24 @@ containers	mqns_03_unshare	mqns_03 -m unshare	pass	120	Both namespaced queues pe
 containers	mqns_03_clone	mqns_03 -m clone	pass	120	Clone-created namespace queues persist across an mqueue filesystem unmount and remount
 containers	mqns_04_unshare	mqns_04 -m unshare	pass	120	The parent can observe the unshared child queue mount but cannot create queue files directly
 containers	mqns_04_clone	mqns_04 -m clone	pass	120	The parent can observe the cloned child queue mount but cannot create queue files directly
-containers	netns_netlink	netns_netlink	userspace-broken-exempt	120	Built-in veth is available, but the rootfs BusyBox ip applet lacks the ip link add operation required by LTP setup
-containers	netns_breakns_ip_ipv4_netlink	netns_breakns.sh	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_breakns_ip_ipv6_netlink	netns_breakns.sh -6	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_breakns_ip_ipv4_ioctl	netns_breakns.sh -I	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_breakns_ip_ipv6_ioctl	netns_breakns.sh -6I	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_breakns_ns_exec_ipv4_netlink	netns_breakns.sh -e	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_breakns_ns_exec_ipv6_netlink	netns_breakns.sh -6e	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_breakns_ns_exec_ipv4_ioctl	netns_breakns.sh -eI	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_breakns_ns_exec_ipv6_ioctl	netns_breakns.sh -6eI	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_comm_ip_ipv4_netlink	netns_comm.sh	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_comm_ip_ipv6_netlink	netns_comm.sh -6	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_comm_ip_ipv4_ioctl	netns_comm.sh -I	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_comm_ip_ipv6_ioctl	netns_comm.sh -6I	userspace-exempt	120	The rootfs BusyBox ip applet lacks the netns subcommand required by this LTP script
-containers	netns_comm_ns_exec_ipv4_netlink	netns_comm.sh -e	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_comm_ns_exec_ipv6_netlink	netns_comm.sh -6e	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_comm_ns_exec_ipv4_ioctl	netns_comm.sh -eI	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_comm_ns_exec_ipv6_ioctl	netns_comm.sh -6eI	userspace-broken-exempt	120	BusyBox ip ignores veth peer naming attributes and causes a duplicate auto-generated veth0 name during LTP setup
-containers	netns_sysfs	netns_sysfs.sh	pass	120	A dummy interface is visible only inside its network and mount namespace across all three assertions
+containers	netns_netlink	netns_netlink	pass	120	iproute2 creates the built-in veth peers and the interface-change netlink assertion passes
+containers	netns_breakns_ip_ipv4_netlink	netns_breakns.sh	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ip_ipv6_netlink	netns_breakns.sh -6	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ip_ipv4_ioctl	netns_breakns.sh -I	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ip_ipv6_ioctl	netns_breakns.sh -6I	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ns_exec_ipv4_netlink	netns_breakns.sh -e	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ns_exec_ipv6_netlink	netns_breakns.sh -6e	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ns_exec_ipv4_ioctl	netns_breakns.sh -eI	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_breakns_ns_exec_ipv6_ioctl	netns_breakns.sh -6eI	pass	120	Both ip and ifconfig address changes against a veth hidden from the target namespace fail as expected
+containers	netns_comm_ip_ipv4_netlink	netns_comm.sh	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ip_ipv6_netlink	netns_comm.sh -6	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ip_ipv4_ioctl	netns_comm.sh -I	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ip_ipv6_ioctl	netns_comm.sh -6I	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ns_exec_ipv4_netlink	netns_comm.sh -e	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ns_exec_ipv6_netlink	netns_comm.sh -6e	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ns_exec_ipv4_ioctl	netns_comm.sh -eI	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_comm_ns_exec_ipv6_ioctl	netns_comm.sh -6eI	pass	120	Both veth peers and namespaced loopback exchange packets successfully across all three assertions
+containers	netns_sysfs	netns_sysfs.sh	pass	120	All three dummy-interface sysfs namespace-isolation assertions pass
 containers	shmnstest_none	shmnstest -m none	pass	120	A plain cloned child finds the parent System V shared-memory identifier
 containers	shmnstest_clone	shmnstest -m clone	pass	120	A clone-created IPC namespace hides the parent System V shared-memory identifier
 containers	shmnstest_unshare	shmnstest -m unshare	pass	120	An unshared IPC namespace hides the parent System V shared-memory identifier
@@ -1975,7 +1968,6 @@ controllers	cgroup_fj_function_blkio	cgroup_fj_function.sh blkio	pass	300	All ni
 controllers	cgroup_fj_function_net_cls	cgroup_fj_function.sh net_cls	pass	300	All nine legacy network-class controller mount, hierarchy, task, and cleanup checks pass	cgroup1=net_cls
 controllers	cgroup_fj_function_perf_event	cgroup_fj_function.sh perf_event	pass	300	All nine legacy performance-event controller mount, hierarchy, task, and cleanup checks pass	cgroup1=perf_event
 controllers	cgroup_fj_function_net_prio	cgroup_fj_function.sh net_prio	pass	300	All nine legacy network-priority controller mount, hierarchy, task, and cleanup checks pass	cgroup1=net_prio
-controllers	cgroup_fj_function_hugetlb	cgroup_fj_function.sh hugetlb	pass	300	All nine legacy HugeTLB controller mount, hierarchy, task, and cleanup checks pass	cgroup1=hugetlb
 controllers	cpuset_base_ops	cpuset_base_ops_testset.sh	hardware-exempt	300	The installed case requires at least two NUMA memory nodes; this UML guest correctly exposes one	cgroup1=cpuset	host-pressure
 controllers	cpuset_inherit	cpuset_inherit_testset.sh	hardware-exempt	300	The installed case requires the NUMA node sysfs interface; UML arm64 has no selectable NUMA topology	cgroup1=cpuset	host-pressure
 controllers	cpuset_exclusive	cpuset_exclusive_test.sh	hardware-exempt	300	Exclusive-memory-node checks require at least two NUMA nodes; this UML guest is UMA	cgroup1=cpuset	host-pressure
@@ -2016,58 +2008,6 @@ power_management_tests	runpwtests02	runpwtests02.sh	hardware-exempt	300	The pack
 power_management_tests	runpwtests03	runpwtests03.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
 power_management_tests	runpwtests04	runpwtests04.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
 power_management_tests	runpwtests06	runpwtests06.sh	hardware-exempt	300	The packaged test supports only physical x86 power-management hardware and reports the arm64 architecture unsupported
-hugetlb	hugefallocate01	hugefallocate01	pass	300	HugeTLB fallocate deletion returns both reserved pages to the free pool
-hugetlb	hugefallocate02	hugefallocate02	pass	300	HugeTLB fallocate frees the correct number of surplus pages after unlink
-hugetlb	hugefork01	hugefork01	pass	300	Parent and child preserve independent private HugeTLB mappings across fork
-hugetlb	hugefork02	hugefork02	pass	600	Multiple processes share and validate the same HugeTLB mapping
-hugetlb	hugemmap01	hugemmap01	pass	300	A basic HugeTLB file mapping succeeds and preserves data
-hugetlb	hugemmap02	hugemmap02	pass	300	HugeTLB shared mappings remain coherent across processes
-hugetlb	hugemmap04	hugemmap04	pass	300	A 128-page HugeTLB file mapping succeeds
-hugetlb	hugemmap05	hugemmap05	pass	300	HugeTLB overcommit and reservation accounting succeeds
-hugetlb	hugemmap06	hugemmap06	pass	300	HugeTLB private mappings handle COW and reservation accounting correctly	host-pressure
-hugetlb	hugemmap07	hugemmap07	pass	300	HugeTLB mappings honor the tested file-size and fault semantics
-hugetlb	hugemmap08	hugemmap08	pass	300	Both HugeTLB mmap regression checks pass
-hugetlb	hugemmap09	hugemmap09	pass	300	A private HugeTLB write does not alter the shared mapping
-hugetlb	hugemmap10	hugemmap10	pass	300	The HugeTLB mmap10 regression passes
-hugetlb	hugemmap11	hugemmap11	pass	300	Direct I/O to and from HugeTLB memory succeeds
-hugetlb	hugemmap12	hugemmap12	pass	300	HugeTLB reservation accounting returns to baseline after fadvise and close
-hugetlb	hugemmap13	hugemmap13	pass	300	A HugeTLB mapping succeeds at the requested fixed address
-hugetlb	hugemmap14	hugemmap14	pass	300	The HugeTLB mmap14 regression passes
-hugetlb	hugemmap15	hugemmap15	pass	300	All 64 executable HugeTLB remaps deliver SIGILL at the expected UDF address
-hugetlb	hugemmap16	hugemmap16	pass	300	The HugeTLB mmap16 regression passes
-hugetlb	hugemmap17	hugemmap17	pass	300	A high-address HugeTLB mapping succeeds at 0xa0000000
-hugetlb	hugemmap18	hugemmap18	pass	300	The HugeTLB mmap18 regression passes
-hugetlb	hugemmap19	hugemmap19	pass	300	The misaligned-offset replacement mapping preserves consistent HugeTLB accounting
-hugetlb	hugemmap20	hugemmap20	pass	300	HugeTLB mlock and munlock work for private shared and MAP_LOCKED mappings
-hugetlb	hugemmap21	hugemmap21	pass	300	The HugeTLB mmap21 regression passes
-hugetlb	hugemmap22	hugemmap22	pass	300	Both HugeTLB remap iterations preserve the mapped data
-hugetlb	hugemmap23	hugemmap23	pass	300	All six HugeTLB mprotect permission-transition matrices pass
-hugetlb	hugemmap24	hugemmap24	pass	300	The HugeTLB mmap24 regression passes
-hugetlb	hugemmap25	hugemmap25	pass	300	HugeTLB mremap near a normal mapping rejects the invalid fixed move
-hugetlb	hugemmap26	hugemmap26	pass	300	The HugeTLB mmap26 regression passes
-hugetlb	hugemmap27	hugemmap27	pass	300	Stealing a fully reserved HugeTLB page delivers the expected SIGSEGV
-hugetlb	hugemmap28	hugemmap28	pass	300	The HugeTLB mmap28 regression passes
-hugetlb	hugemmap29	hugemmap29	pass	300	Shared and private HugeTLB mappings preserve the required data semantics
-hugetlb	hugemmap30	hugemmap30	pass	300	The HugeTLB mmap30 regression passes
-hugetlb	hugemmap31	hugemmap31	pass	300	Two shared HugeTLB mappings observe coherent data
-hugetlb	hugemmap34	hugemmap34	hardware-exempt	300	The test covers PowerPC segment conversion and stack-growth hardware semantics only
-hugetlb	hugemmap05_1	hugemmap05 -m	pass	300	HugeTLB overcommit succeeds with the private-mapping variant
-hugetlb	hugemmap05_2	hugemmap05 -s	pass	300	HugeTLB overcommit succeeds with the shared-memory variant
-hugetlb	hugemmap05_3	hugemmap05 -s -m	pass	300	HugeTLB overcommit succeeds with the shared-memory private-mapping variant
-hugetlb	hugeshmat01	hugeshmat01 -i 5	pass	300	All fifteen HugeTLB shmat attach and data checks pass across five iterations
-hugetlb	hugeshmat02	hugeshmat02 -i 5	pass	300	All ten HugeTLB shmat error-path checks pass across five iterations
-hugetlb	hugeshmat03	hugeshmat03 -i 5	pass	300	All five permission-denied HugeTLB shmat checks return EACCES
-hugetlb	hugeshmat04	hugeshmat04 -i 5	pass	600	All fifteen large HugeTLB shmat checks pass with the required guest memory	4G
-hugetlb	hugeshmat05	hugeshmat05 -i 5	pass	300	Five HugeTLB shmat boundary-size regression iterations pass
-hugetlb	hugeshmctl01	hugeshmctl01 -i 5	pass	300	All twenty HugeTLB shmctl metadata and permission checks pass
-hugetlb	hugeshmctl02	hugeshmctl02 -i 5	libc-exempt	300	All thirty applicable checks pass; only bad-pointer EFAULT checks intentionally skipped through libc
-hugetlb	hugeshmctl03	hugeshmctl03 -i 5	pass	300	All fifteen HugeTLB shmctl ownership and removal checks pass
-hugetlb	hugeshmdt01	hugeshmdt01 -i 5	pass	300	All five HugeTLB shmdt detach checks pass
-hugetlb	hugeshmget01	hugeshmget01 -i 10	pass	300	All ten basic HugeTLB shmget allocation checks pass
-hugetlb	hugeshmget02	hugeshmget02 -i 10	pass	300	All forty HugeTLB shmget flag and reuse checks pass
-hugetlb	hugeshmget03	hugeshmget03 -i 10	pass	300	All ten HugeTLB shmget permission checks pass
-hugetlb	hugeshmget05	hugeshmget05 -i 10	pass	300	All ten HugeTLB shmget resource-limit checks pass
-hugetlb	hugeshmget06	hugeshmget06 -i 10	pass	300	All ten HugeTLB shmget size and accounting checks pass
 commands	ar_sh	export TCdat=$LTPROOT/testcases/bin; ar01.sh	userspace-broken-exempt	300	BusyBox ar lacks GNU append option syntax and the rootfs also lacks stat
 commands	ld01_sh	ld01.sh	userspace-exempt	300	The rootfs intentionally omits the GCC development toolchain required by this command test
 commands	ldd01_sh	ldd01.sh	userspace-failure-exempt	300	The rootfs omits the ldd development helper and the legacy script misreports that missing command as TFAIL
@@ -2085,8 +2025,8 @@ commands	du01_sh	du01.sh	userspace-exempt	300	The rootfs omits stat which the pa
 commands	df01_sh	df01.sh	userspace-error-exempt	300	The rootfs omits stat and the legacy script exits on an empty arithmetic operand before assertions
 commands	mkfs01_sh	mkfs01.sh	pass	300	All five generic mkfs and ext2 formatting checks pass
 commands	mkfs01_ext2_sh	mkfs01.sh -f ext2	pass	300	All five explicit ext2 formatting checks pass
-commands	mkfs01_ext3_sh	mkfs01.sh -f ext3	userspace-exempt	300	The rootfs omits the mkfs.ext3 formatter requested by this command test
-commands	mkfs01_ext4_sh	mkfs01.sh -f ext4	userspace-exempt	300	The rootfs omits the mkfs.ext4 formatter requested by this command test
+commands	mkfs01_ext3_sh	mkfs01.sh -f ext3	pass	300	All five explicit ext3 format mount bad-block scan version and help checks pass
+commands	mkfs01_ext4_sh	mkfs01.sh -f ext4	pass	300	All five explicit ext4 format mount bad-block scan version and help checks pass
 commands	mkfs01_xfs_sh	mkfs01.sh -f xfs	userspace-exempt	300	The rootfs omits the mkfs.xfs formatter requested by this command test
 commands	mkfs01_btrfs_sh	mkfs01.sh -f btrfs	userspace-exempt	300	The rootfs omits the mkfs.btrfs formatter requested by this command test
 commands	mkfs01_minix_sh	mkfs01.sh -f minix	userspace-exempt	300	The rootfs omits the mkfs.minix formatter requested by this command test
@@ -2106,9 +2046,6 @@ commands	sysctl02_sh	sysctl02.sh	userspace-exempt	300	All three applicable overf
 commands	shell_test01	echo "SUCCESS" | shell_pipe01.sh	pass	300	The shell pipeline transports stdin and the comparison passes
 hyperthreading	smt_smp_enabled	smt_smp_enabled.sh	hardware-exempt	300	The legacy suite is hard-coded to x86 SMT topology and rejects native arm64 before assertions
 hyperthreading	smt_smp_affinity	smt_smp_affinity.sh	hardware-exempt	300	The legacy suite is hard-coded to x86 SMT topology and rejects native arm64 before affinity assertions
-can	can_filter	ip link add dev vcan0 type vcan && ip link set dev vcan0 up && can_filter -d vcan0	pass	300	All 36 SocketCAN filter send and receive assertions pass using the built-in virtual CAN device
-can	can_rcv_own_msgs	ip link add dev vcan0 type vcan && ip link set dev vcan0 up && can_rcv_own_msgs -d vcan0	pass	300	All five CAN loopback and receive-own-message combinations pass on vcan
-can	can_bcm01	ip link add dev vcan0 type vcan && ip link set dev vcan0 up && can_bcm01	pass	300	The CAN broadcast-manager concurrency regression completes without corruption	host-pressure
 cpuhotplug	cpuhotplug02	cpuhotplug02.sh -c 1 -l 1	userspace-broken-exempt	180	CPU1 offlines successfully before the packaged script uses GNU ps --pid and --no-headers options that BusyBox does not provide	host-pressure
 cpuhotplug	cpuhotplug03	cpuhotplug03.sh -c 1 -l 1	userspace-broken-exempt	180	CPU1 comes online successfully before the packaged script uses the unavailable GNU ps --no-headers option to inspect its spin workers	host-pressure
 cpuhotplug	cpuhotplug04	cpuhotplug04.sh -l 1	pass	180	Linux rejects offlining the last online CPU as required	host-pressure
@@ -2127,7 +2064,6 @@ input	input03	input03	pass	180	The mousedev compatibility stream reports the com
 input	input04	input04	pass	180	An empty relative move correctly emits no input events
 input	input05	input05	pass	180	A relative move on an unregistered axis correctly emits no events
 input	input06	input06	pass	180	Virtual keyboard autorepeat produces input data through uinput and evdev
-cve	cve-2011-0999	thp01 -I 120	pass	300	Transparent huge-page split and collapse sampling completes all 5440 assertions
 cve	cve-2011-2496	vma03	hardware-exempt	180	Native arm64 has no legacy mmap2 syscall ABI
 cve	cve-2012-0957	uname04	pass	180	Both uname boundary checks pass
 cve	cve-2014-0196	cve-2014-0196	pass	300	Concurrent pseudo-terminal write sampling completes without corruption
@@ -2173,7 +2109,6 @@ cve	cve-2017-1000111	setsockopt07	pass	180	The IPv6 socket-option validation reg
 cve	cve-2017-1000112	setsockopt05	pass	180	The UDP fragmentation socket-option regression passes
 cve	cve-2017-1000364	stack_clash	pass	180	The guarded stack-growth check passes
 cve	cve-2017-1000380	snd_timer01	hardware-exempt	180	The case requires a physical ALSA timer device and the emulator intentionally exposes no sound hardware
-cve	cve-2017-1000405	thp04	pass	300	The transparent huge-page concurrency sampling loop completes cleanly	host-pressure
 cve	cve-2018-5803	sctp_big_chunk	pass	180	The oversized SCTP chunk validation check passes
 cve	cve-2018-6927	futex_cmp_requeue02	pass	180	All three futex comparison and requeue checks pass
 cve	cve-2018-7566	snd_seq01	hardware-exempt	180	The case requires a physical ALSA sequencer device and the emulator intentionally exposes no sound hardware
@@ -2196,7 +2131,6 @@ cve	cve-2020-25705	icmp_rate_limit01	pass	180	The ICMP rate-limiter state check 
 cve	cve-2020-29373	io_uring02	pass	180	The io_uring personality and credential lifetime check passes
 cve	cve-2020-36557	pty06	pass	300	The pseudo-terminal concurrency sampling loop completes cleanly	host-pressure
 cve	cve-2021-3444	bpf_prog05	pass	180	All five 32-bit divide and modulo verifier and execution checks pass
-cve	cve-2021-3609	ip link add dev vcan0 type vcan && ip link set dev vcan0 up && can_bcm01	pass	300	The virtual CAN broadcast-manager concurrency regression completes cleanly	host-pressure
 cve	cve-2021-4034	execve06	pass	180	The execve environment and argument boundary check passes
 cve	cve-2021-4197_1	cgroup_core01	pass	180	The cgroup core permission check passes
 cve	cve-2021-4197_2	cgroup_core02	pass	180	The delegated cgroup-v2 release-agent check passes	cgroup2=nsdelegate
@@ -2239,7 +2173,7 @@ kernel_misc	cpufreq_boost	cpufreq_boost	hardware-exempt	180	The case requires a 
 kernel_misc	uaccess	uaccess	static-kernel-exempt	180	The packaged case requires a runtime-loaded user-access test module
 kernel_misc	rcu_torture	rcu_torture.sh	static-kernel-exempt	180	The packaged case requires loading and unloading a runtime torture module
 kernel_misc	lock_torture	lock_torture.sh	static-kernel-exempt	180	The packaged case requires loading and unloading a runtime torture module
-kernel_misc	zram01	zram01.sh	userspace-partial-broken-exempt	300	Five device checks pass before the minimal formatter creates a 1 KiB filesystem incompatible with the device's 4 KiB logical block size
+kernel_misc	zram01	zram01.sh	userspace-exempt	300	All 12 applicable zram lifecycle and compression checks pass; one retired max_comp_streams attribute probe is skipped	kernel-arg=ncpus=1	serial
 kernel_misc	zram02	zram02.sh	userspace-exempt	420	All applicable swap-device paths pass; one retired attribute probe is skipped	4G
 kernel_misc	zram03	zram03	pass	300	The full compressed-memory write read and reset cycle passes
 kernel_misc	umip_basic_test	umip_basic_test	hardware-exempt	180	The packaged case is specific to an unavailable x86 instruction-control facility
@@ -2468,27 +2402,6 @@ controllers	cgroup_fj_stress_net_prio_2_9_each	cgroup_fj_stress.sh net_prio 2 9 
 controllers	cgroup_fj_stress_net_prio_10_3_each	cgroup_fj_stress.sh net_prio 10 3 each	pass	900	All 1,111 tasks attach to their network-priority controller groups and clean up	4G	cgroup1=net_prio	host-pressure
 controllers	cgroup_fj_stress_net_prio_1_200_each	cgroup_fj_stress.sh net_prio 1 200 each	pass	600	A distinct task attaches to every group in the 201-level network-priority controller tree	cgroup1=net_prio	host-pressure
 controllers	cgroup_fj_stress_net_prio_200_1_each	cgroup_fj_stress.sh net_prio 200 1 each	pass	600	A distinct task attaches to every group in the 201-group wide network-priority controller tree	cgroup1=net_prio	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_2_none	cgroup_fj_stress.sh hugetlb 2 2 none	pass	600	The seven-group HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_3_3_none	cgroup_fj_stress.sh hugetlb 3 3 none	pass	600	The 40-group HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_4_4_none	cgroup_fj_stress.sh hugetlb 4 4 none	pass	600	The 341-group HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_9_none	cgroup_fj_stress.sh hugetlb 2 9 none	pass	600	The 1,023-group HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_10_3_none	cgroup_fj_stress.sh hugetlb 10 3 none	pass	600	The 1,111-group HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_1_200_none	cgroup_fj_stress.sh hugetlb 1 200 none	pass	600	The 201-level deep HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_200_1_none	cgroup_fj_stress.sh hugetlb 200 1 none	pass	600	The 201-group wide HugeTLB controller tree is created and removed cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_2_one	cgroup_fj_stress.sh hugetlb 2 2 one	pass	600	One task moves through the full seven-group HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_3_3_one	cgroup_fj_stress.sh hugetlb 3 3 one	pass	600	One task moves through the full 40-group HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_4_4_one	cgroup_fj_stress.sh hugetlb 4 4 one	pass	600	One task moves through the full 341-group HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_9_one	cgroup_fj_stress.sh hugetlb 2 9 one	pass	900	One task moves through the full 1,023-group HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_10_3_one	cgroup_fj_stress.sh hugetlb 10 3 one	pass	900	One task moves through the full 1,111-group HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_1_200_one	cgroup_fj_stress.sh hugetlb 1 200 one	pass	600	One task moves through the full 201-level HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_200_1_one	cgroup_fj_stress.sh hugetlb 200 1 one	pass	600	One task moves through the full 201-group wide HugeTLB controller tree cleanly	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_2_each	cgroup_fj_stress.sh hugetlb 2 2 each	pass	600	A distinct task attaches to every group in the seven-group HugeTLB controller tree	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_3_3_each	cgroup_fj_stress.sh hugetlb 3 3 each	pass	600	A distinct task attaches to every group in the 40-group HugeTLB controller tree	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_4_4_each	cgroup_fj_stress.sh hugetlb 4 4 each	pass	600	A distinct task attaches to every group in the 341-group HugeTLB controller tree	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_2_9_each	cgroup_fj_stress.sh hugetlb 2 9 each	pass	900	All 1,023 tasks attach to their HugeTLB controller groups and clean up	4G	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_10_3_each	cgroup_fj_stress.sh hugetlb 10 3 each	pass	900	All 1,111 tasks attach to their HugeTLB controller groups and clean up	4G	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_1_200_each	cgroup_fj_stress.sh hugetlb 1 200 each	pass	600	A distinct task attaches to every group in the 201-level HugeTLB controller tree	cgroup1=hugetlb	host-pressure
-controllers	cgroup_fj_stress_hugetlb_200_1_each	cgroup_fj_stress.sh hugetlb 200 1 each	pass	600	A distinct task attaches to every group in the 201-group wide HugeTLB controller tree	cgroup1=hugetlb	host-pressure
 controllers	cpuacct_1_1	cpuacct.sh 1 1	pass	300	Both per-group and aggregate CPU-accounting usage assertions pass	cgroup1=cpuacct	host-pressure
 controllers	cpuacct_1_10	cpuacct.sh 1 10	pass	300	Both CPU-accounting assertions pass for ten tasks in one subgroup	cgroup1=cpuacct	host-pressure
 controllers	cpuacct_10_10	cpuacct.sh 10 10	pass	300	Both CPU-accounting assertions pass for 100 tasks across ten subgroups	cgroup1=cpuacct	host-pressure
@@ -2513,5 +2426,4 @@ controllers	pids_8_50	pids.sh 8 50 0	pass	300	A child limit below its parent rej
 controllers	pids_8_100	pids.sh 8 100 0	pass	300	A child limit below its parent rejects the excess fork for 100 tasks	host-pressure
 controllers	pids_9_50	pids.sh 9 50 0	pass	300	All five task and subtree migration assertions pass with 50 tasks	host-pressure
 controllers	pids_9_100	pids.sh 9 100 0	pass	300	All five task and subtree migration assertions pass with 100 tasks	host-pressure
-hugetlb	hugemmap32	hugemmap32	pass	600	One 1 GiB HugeTLB page can be allocated and released through the upper-level guest mapping	4G	kernel-arg=hugepagesz=1G	host-pressure
 controllers	controllers	test_controllers.sh	userspace-legacy-matrix-exempt	7200	Legacy aggregate completes kernel controller stress but retains architecture arithmetic and packaged-tool matrix failures	4G	host-pressure

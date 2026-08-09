@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the immutable rootfs image before and after guest campaigns."""
+"""Verify the pinned EROFS rootfs image before and after guest campaigns."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import hashlib
 import json
-import stat
 import struct
 import sys
 import uuid
@@ -18,10 +17,13 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = ROOT / "tools" / "rootfs" / "manifest.json"
+EROFS_SUPERBLOCK_OFFSET = 1024
+EROFS_SUPERBLOCK_SIZE = 144
+EROFS_MAGIC = 0xE0F5E1E2
 
 
 class VerificationError(RuntimeError):
-    """The image does not match the checked-in immutable fixture contract."""
+    """The image does not match the checked-in EROFS fixture contract."""
 
 
 def digest(path: Path) -> str:
@@ -44,75 +46,83 @@ def text(value: Any, field: str) -> str:
     return value
 
 
-def parse_partition_table(path: Path, manifest: dict[str, Any]) -> None:
-    layout = manifest.get("partition_table")
-    if not isinstance(layout, dict):
-        raise VerificationError("manifest has no partition_table")
-    sector_size = integer(layout.get("sector_size"), "partition_table.sector_size")
-    if sector_size != 512:
-        raise VerificationError("only a 512-byte-sector rootfs fixture is supported")
-    mbr_expected = layout.get("protective_mbr")
-    gpt_expected = layout.get("gpt")
-    partitions = layout.get("partitions")
-    if not isinstance(mbr_expected, dict) or not isinstance(gpt_expected, dict):
-        raise VerificationError("manifest partition-table metadata is incomplete")
-    if not isinstance(partitions, list) or not partitions:
-        raise VerificationError("manifest has no required partition entries")
+def hexadecimal(value: Any, field: str) -> int:
+    try:
+        return int(text(value, field), 16)
+    except ValueError as error:
+        raise VerificationError(f"manifest field {field} must be hexadecimal") from error
+
+
+def parse_erofs_superblock(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    layout = manifest.get("filesystem")
+    if not isinstance(layout, dict) or layout.get("format") != "erofs":
+        raise VerificationError("manifest has no EROFS filesystem contract")
+    offset = integer(layout.get("superblock_offset"), "filesystem.superblock_offset")
+    if offset != EROFS_SUPERBLOCK_OFFSET:
+        raise VerificationError("unsupported EROFS superblock offset")
 
     with path.open("rb") as image:
-        mbr = image.read(sector_size)
-        if len(mbr) != sector_size or mbr[510:512] != b"\x55\xaa":
-            raise VerificationError("rootfs does not have a valid protective MBR")
-        entry = mbr[446:462]
-        if entry[4] != int(text(mbr_expected.get("type"), "protective_mbr.type"), 16):
-            raise VerificationError("protective MBR type does not match manifest")
-        first_lba, sector_count = struct.unpack_from("<II", entry, 8)
-        if first_lba != integer(mbr_expected.get("first_lba"), "protective_mbr.first_lba"):
-            raise VerificationError("protective MBR first LBA does not match manifest")
-        if sector_count != integer(mbr_expected.get("sector_count"), "protective_mbr.sector_count"):
-            raise VerificationError("protective MBR sector count does not match manifest")
+        image.seek(offset)
+        superblock = image.read(EROFS_SUPERBLOCK_SIZE)
+    if len(superblock) != EROFS_SUPERBLOCK_SIZE:
+        raise VerificationError("rootfs EROFS superblock is truncated")
 
-        image.seek(sector_size * integer(gpt_expected.get("header_lba"), "gpt.header_lba"))
-        header = image.read(sector_size)
-        if header[:8] != b"EFI PART":
-            raise VerificationError("rootfs does not have a GPT header")
-        header_size = struct.unpack_from("<I", header, 12)[0]
-        if header_size < 92 or header_size > sector_size:
-            raise VerificationError("rootfs GPT header size is invalid")
-        current_lba = struct.unpack_from("<Q", header, 24)[0]
-        first_usable_lba, last_usable_lba = struct.unpack_from("<QQ", header, 40)
-        entries_lba = struct.unpack_from("<Q", header, 72)[0]
-        entry_count, entry_size = struct.unpack_from("<II", header, 80)
-        expected_values = {
-            "header_lba": current_lba,
-            "first_usable_lba": first_usable_lba,
-            "last_usable_lba": last_usable_lba,
-            "partition_entry_lba": entries_lba,
-            "partition_entry_count": entry_count,
-            "partition_entry_size": entry_size,
-        }
-        for field, actual in expected_values.items():
-            if actual != integer(gpt_expected.get(field), f"gpt.{field}"):
-                raise VerificationError(f"GPT {field} does not match manifest")
+    magic = struct.unpack_from("<I", superblock, 0)[0]
+    if magic != EROFS_MAGIC:
+        raise VerificationError("rootfs does not have an EROFS superblock")
+    blkszbits = superblock[12]
+    if blkszbits < 9 or blkszbits > 16:
+        raise VerificationError("rootfs EROFS block-size shift is invalid")
+    block_size = 1 << blkszbits
+    blocks = struct.unpack_from("<I", superblock, 36)[0]
+    if blocks == 0 or blocks * block_size != path.stat().st_size:
+        raise VerificationError("rootfs EROFS block count does not cover the image")
+    try:
+        volume_name = superblock[64:80].split(b"\0", 1)[0].decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise VerificationError("rootfs EROFS volume name is not UTF-8") from error
 
-        for expected in partitions:
-            if not isinstance(expected, dict):
-                raise VerificationError("manifest partition entry is not an object")
-            number = integer(expected.get("number"), "partition.number")
-            if number < 1 or number > entry_count:
-                raise VerificationError(f"partition number {number} is outside the GPT table")
-            image.seek(entries_lba * sector_size + (number - 1) * entry_size)
-            entry = image.read(entry_size)
-            if len(entry) != entry_size:
-                raise VerificationError(f"partition {number} entry is truncated")
-            type_guid = str(uuid.UUID(bytes_le=entry[:16]))
-            first_lba, last_lba = struct.unpack_from("<QQ", entry, 32)
-            if type_guid != text(expected.get("type_guid"), "partition.type_guid"):
-                raise VerificationError(f"partition {number} type GUID does not match manifest")
-            if first_lba != integer(expected.get("first_lba"), "partition.first_lba"):
-                raise VerificationError(f"partition {number} first LBA does not match manifest")
-            if last_lba != integer(expected.get("last_lba"), "partition.last_lba"):
-                raise VerificationError(f"partition {number} last LBA does not match manifest")
+    actual = {
+        "magic": magic,
+        "checksum": struct.unpack_from("<I", superblock, 4)[0],
+        "feature_compat": struct.unpack_from("<I", superblock, 8)[0],
+        "block_size": block_size,
+        "blocks": blocks,
+        "inodes": struct.unpack_from("<Q", superblock, 16)[0],
+        "uuid": str(uuid.UUID(bytes=superblock[48:64])),
+        "volume_name": volume_name,
+        "feature_incompat": struct.unpack_from("<I", superblock, 80)[0],
+        "available_compr_algs": struct.unpack_from("<H", superblock, 84)[0],
+        "extra_devices": struct.unpack_from("<H", superblock, 86)[0],
+    }
+    expected = {
+        "magic": hexadecimal(layout.get("magic"), "filesystem.magic"),
+        "checksum": hexadecimal(layout.get("checksum"), "filesystem.checksum"),
+        "feature_compat": hexadecimal(
+            layout.get("feature_compat"), "filesystem.feature_compat"
+        ),
+        "block_size": integer(layout.get("block_size"), "filesystem.block_size"),
+        "blocks": integer(layout.get("blocks"), "filesystem.blocks"),
+        "inodes": integer(layout.get("inodes"), "filesystem.inodes"),
+        "uuid": text(layout.get("uuid"), "filesystem.uuid"),
+        "volume_name": text(layout.get("volume_name"), "filesystem.volume_name"),
+        "feature_incompat": hexadecimal(
+            layout.get("feature_incompat"), "filesystem.feature_incompat"
+        ),
+        "available_compr_algs": hexadecimal(
+            layout.get("available_compr_algs"),
+            "filesystem.available_compr_algs",
+        ),
+        "extra_devices": integer(
+            layout.get("extra_devices"), "filesystem.extra_devices"
+        ),
+    }
+    for field, expected_value in expected.items():
+        if actual[field] != expected_value:
+            raise VerificationError(
+                f"rootfs EROFS {field} does not match manifest"
+            )
+    return actual
 
 
 def verify(image: Path, manifest_path: Path) -> dict[str, Any]:
@@ -120,27 +130,35 @@ def verify(image: Path, manifest_path: Path) -> dict[str, Any]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise VerificationError(f"cannot read rootfs manifest {manifest_path}: {error}") from error
+    if not isinstance(manifest, dict):
+        raise VerificationError("rootfs manifest must be a JSON object")
+    if manifest.get("schema_version") != 3:
+        raise VerificationError("rootfs manifest has an unsupported schema")
+    if text(manifest.get("image"), "image") != "rootfs.erofs":
+        raise VerificationError("rootfs manifest does not name rootfs.erofs")
     if not image.is_file():
         raise VerificationError(f"rootfs is not a regular file: {image}")
     details = image.stat()
     expected_size = integer(manifest.get("size"), "size")
     if details.st_size != expected_size:
         raise VerificationError(f"rootfs size is {details.st_size}, expected {expected_size}")
-    expected_mode = int(text(manifest.get("frozen_mode"), "frozen_mode"), 8)
-    actual_mode = stat.S_IMODE(details.st_mode)
-    if actual_mode != expected_mode:
-        raise VerificationError(f"rootfs mode is {actual_mode:04o}, expected {expected_mode:04o}")
     actual_digest = digest(image)
     expected_digest = text(manifest.get("sha256"), "sha256")
     if actual_digest != expected_digest:
         raise VerificationError("rootfs SHA-256 does not match manifest")
-    parse_partition_table(image, manifest)
-    return {"image": str(image), "sha256": actual_digest, "size": details.st_size, "mode": f"{actual_mode:04o}"}
+    filesystem = parse_erofs_superblock(image, manifest)
+    return {
+        "image": str(image),
+        "sha256": actual_digest,
+        "size": details.st_size,
+        "filesystem": "erofs",
+        "uuid": filesystem["uuid"],
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, default=ROOT / "rootfs.img")
+    parser.add_argument("--image", type=Path, default=ROOT / "rootfs.erofs")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--quiet", action="store_true")
     arguments = parser.parse_args()

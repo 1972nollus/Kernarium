@@ -76,8 +76,9 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_UNIT_TESTS": false,
         "UML_BUILD_INTEGRATION_TESTS": true,
-        "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.img",
-        "UML_KERNEL_SOURCE_DIR": "$env{UML_KERNEL_SOURCE_DIR}",
+        "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.erofs",
+        "UML_KERNEL_SOURCE_DIR": "/Volumes/Kernel/linux",
+        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-16k",
         "UML_KERNEL_JOBS": "2"
       }
     },
@@ -87,7 +88,8 @@
       "inherits": "macos-integration",
       "binaryDir": "${sourceDir}/.build/presets/${presetName}",
       "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false
+        "UML_GUEST_16K_PAGES": false,
+        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-4k"
       }
     },
     {

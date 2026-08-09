@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 from guest import Guest  # noqa: E402
 
 
-NODE = "/root/.nvm/versions/node/v24.18.0/bin/node"
+NODE = "/opt/node/bin/node"
 SLIRP_DNS_PROBE = (
     'const dgram=require("dgram");'
     'const socket=dgram.createSocket("udp4");'
@@ -103,8 +103,8 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
-        ("root=/dev/ubda1",),
-        # The production rootfs is partitioned and is intentionally entered
+        (),
+        # The production rootfs is raw EROFS and is intentionally entered
         # through a temporary init shell.  This smoke exercises the kernel
         # DHCP/SLiRP path there; guest-overlay-systemd-smoke separately proves
         # the overlay pivot and real systemd boot.

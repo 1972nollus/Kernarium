@@ -25,8 +25,14 @@ The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`.
 `UML_GUEST_16K_PAGES=ON` is the default; set it to `OFF` for the independently
 tested 4 KiB compatibility build.
 
-Guest integration always uses the immutable GPT image `rootfs.img`, partition
-`/dev/ubda1`, and `ubd0r=... ro`. The temporary writable root is a tmpfs
-OverlayFS. The CLI rejects writable root mappings; no normal CMake target or
-test modifies the image. See [`../docs/testing.md`](../docs/testing.md) for
-preparation and run commands.
+Guest integration uses the unified raw EROFS image `rootfs.erofs` at
+`/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with
+`ubd0c=` to avoid a conflicting host-file lock. EROFS supplies the read-only
+lower filesystem; workloads that need writable state use a tmpfs OverlayFS.
+The image owns tty0 getty enablement and login policy; host-fed OverlayFS
+launchers preserve it rather than installing a transient getty override, and
+mount tmpfs at `/var/lib/docker` before systemd to avoid nested OverlayFS. No
+KDE/VNC or WebGL launcher creates a desktop account: both reuse the image's
+non-root `uml` user and never synthesize `plasma`. No Unix-mode or read-only
+block-argument policy is needed. See
+[`../docs/testing.md`](../docs/testing.md) for preparation and run commands.

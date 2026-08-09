@@ -24,21 +24,6 @@ namespace {
 	});
 }
 
-[[nodiscard]] bool has_writable_primary_block_device(
-	const std::vector<std::string> &arguments)
-{
-	for (const auto &argument : arguments) {
-		constexpr std::string_view device{"ubd0"};
-		if (!argument.starts_with(device))
-			continue;
-		const auto separator = argument.find('=', device.size());
-		if (separator == std::string::npos ||
-		    argument.find('r', device.size()) >= separator)
-			return true;
-	}
-	return false;
-}
-
 [[nodiscard]] bool informational(
 	const std::vector<std::string> &arguments)
 {
@@ -114,35 +99,26 @@ EmulatorOptions prepare_emulator_options(
 		prepared.arguments.emplace_back("uml-darwin");
 	if (informational(prepared.arguments))
 		return prepared;
-	// The project rootfs is a frozen GPT image. Every valid UML block-device
-	// flag combination is writable unless it contains `r`; accepting only the
-	// plain `ubd0=` spelling here would leave `ubd0s=`, `ubd0c=`, and the other
-	// flag variants able to bypass OverlayFS and damage the shared fixture.
-	if (has_writable_primary_block_device(prepared.arguments)) {
-		prepared.valid = false;
-		return prepared;
-	}
+	// The unified rootfs is a raw EROFS image. The UBD `c` flag suppresses its
+	// host-file lock so parallel guests can share the image; the rootfs sidecar
+	// coordinates provisioning, while EROFS supplies the filesystem contract.
 	if (!has_prefix(prepared.arguments, "ubd0")) {
 		if (rootfs.empty()) {
 			prepared.valid = false;
 			return prepared;
 		}
-		prepared.arguments.emplace_back("ubd0r=" + std::string(rootfs));
+		prepared.arguments.emplace_back("ubd0c=" + std::string(rootfs));
 	}
 	if (!has_prefix(prepared.arguments, "root="))
-		prepared.arguments.emplace_back("root=/dev/ubda1");
+		prepared.arguments.emplace_back("root=/dev/ubda");
+	if (!has_prefix(prepared.arguments, "rootfstype="))
+		prepared.arguments.emplace_back("rootfstype=erofs");
 	if (!has_prefix(prepared.arguments, "init="))
-		prepared.arguments.emplace_back("init=/sbin/uml-overlay-init");
+		prepared.arguments.emplace_back("init=/bin/sh");
 	if (!has_prefix(prepared.arguments, "mem="))
 		prepared.arguments.emplace_back("mem=256M");
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
-	if (has_argument(prepared.arguments, "rw")) {
-		prepared.valid = false;
-		return prepared;
-	}
-	if (!has_argument(prepared.arguments, "ro"))
-		prepared.arguments.emplace_back("ro");
 	return prepared;
 }
 

@@ -10,9 +10,11 @@ else()
         "${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment")
 endif()
 
-# Each CMake binary tree owns a page-variant-specific Kbuild directory. The
-# checked 16 KiB and 4 KiB presets can therefore build concurrently without
-# reusing or replacing one another's .config, objects, or embedded vmlinux.
+# By default, each CMake binary tree owns a page-variant-specific Kbuild
+# directory. The canonical integration presets override that default with
+# dedicated 16 KiB and 4 KiB trees on /Volumes/Kernel, so concurrent
+# builds still never reuse or replace one another's .config, objects, or
+# embedded vmlinux.
 include("${PROJECT_SOURCE_DIR}/kernel/CMakeBuildLayout.cmake")
 uml_kernel_build_layout(
     BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}"
@@ -30,9 +32,9 @@ set(UML_KERNEL_SOURCE_DIR "${PROJECT_SOURCE_DIR}/linux" CACHE PATH
     "Prepared official Linux UML source checkout")
 if(UML_KERNEL_SOURCE_DIR STREQUAL "")
     message(FATAL_ERROR
-        "UML_KERNEL_SOURCE_DIR is empty. Integration presets require the "
-        "UML_KERNEL_SOURCE_DIR environment variable to name a clean prepared "
-        "Linux checkout on a case-sensitive filesystem.")
+        "UML_KERNEL_SOURCE_DIR is empty. Name a clean prepared Linux checkout "
+        "on a case-sensitive filesystem; canonical integration presets pin "
+        "/Volumes/Kernel/linux.")
 endif()
 if(NOT EXISTS "${UML_KERNEL_SOURCE_DIR}/Makefile")
     message(FATAL_ERROR

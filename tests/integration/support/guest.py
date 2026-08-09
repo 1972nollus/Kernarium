@@ -22,43 +22,79 @@ from collections.abc import Sequence
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BOOT_TIMEOUT_SECONDS = 90
+CONSOLE_WRITE_TIMEOUT_SECONDS = 30
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
-OVERLAY_SHELL_BOOTSTRAP = (
-    "set -eu; "
-    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt; "
-    "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root; "
-    "mount -o bind / /mnt/lower; "
-    "mount -t overlay overlay "
-    "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; "
-    "mount -t devtmpfs devtmpfs /mnt/root/dev; "
-    "mkdir -p /mnt/root/.uml-lower; "
-    "cd /mnt/root; "
-    "pivot_root . .uml-lower; "
-    "rm -f /etc/resolv.conf; "
-    "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
-    "'nameserver 10.0.2.3' > /etc/resolv.conf; "
-    "mount -t proc proc /proc; "
-    "mount -t sysfs sysfs /sys; "
-    "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp; "
-    "exec /bin/sh"
+OVERLAY_READY_MARKER = "__UML_OVERLAY_READY__"
+OVERLAY_SHELL_BOOTSTRAP = "\n".join(
+    (
+        "{",
+        "set -eu",
+        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
+        "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root",
+        "mount -o bind / /mnt/lower",
+        "mount -t overlay overlay "
+        "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root",
+        "mount -t devtmpfs devtmpfs /mnt/root/dev",
+        "mkdir -p /mnt/root/.uml-lower",
+        "cd /mnt/root",
+        "pivot_root . .uml-lower",
+        "rm -f /etc/resolv.conf",
+        "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
+        "'nameserver 10.0.2.3' > /etc/resolv.conf",
+        "mount -t proc proc /proc",
+        "mount -t sysfs sysfs /sys",
+        "mkdir -p /run",
+        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run",
+        "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
+        'case " $(cat /proc/cmdline) " in',
+        '*" uml_ltp_workspace=ext2 "*)',
+        "workspace_image=/run/uml-ltp-workspace.ext2",
+        'dd if=/dev/zero of="$workspace_image" bs=1M count=0 seek=512 2>/dev/null',
+        "workspace_loop=$(losetup -f)",
+        'losetup "$workspace_loop" "$workspace_image"',
+        "if command -v mkfs.ext2 >/dev/null 2>&1; then",
+        "workspace_mkfs=mkfs.ext2",
+        "elif command -v mke2fs >/dev/null 2>&1; then",
+        "workspace_mkfs=mke2fs",
+        "else",
+        "echo 'LTP ext2 workspace requires mkfs.ext2 or mke2fs' >&2",
+        "exit 127",
+        "fi",
+        '"$workspace_mkfs" -q -t ext2 "$workspace_loop"',
+        'mount -t ext2 -o noatime "$workspace_loop" /tmp',
+        "chmod 1777 /tmp",
+        ";;",
+        "esac",
+        "set +e",
+        "set +u",
+        ":",
+        "}",
+        f"printf '\\n{OVERLAY_READY_MARKER}\\n'",
+    )
 )
-SYSTEMD_OVERLAY_BOOTSTRAP = (
-    "set -eu; "
-    "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt; "
-    "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root; "
-    "mount -o bind / /mnt/lower; "
-    "mount -t overlay overlay "
-    "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root; "
-    "mount -t devtmpfs devtmpfs /mnt/root/dev; "
-    "mkdir -p /mnt/root/.uml-lower; "
-    "cd /mnt/root; "
-    "pivot_root . .uml-lower; "
-    "rm -f /etc/resolv.conf; "
-    "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
-    "'nameserver 10.0.2.3' > /etc/resolv.conf; "
-    "if [ -x /lib/systemd/systemd ]; then exec /lib/systemd/systemd; fi; "
-    "exec /usr/lib/systemd/systemd"
+SYSTEMD_OVERLAY_BOOTSTRAP = "\n".join(
+    (
+        "{",
+        "set -eu",
+        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
+        "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root",
+        "mount -o bind / /mnt/lower",
+        "mount -t overlay overlay "
+        "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root",
+        "mount -t devtmpfs devtmpfs /mnt/root/dev",
+        "mkdir -p /mnt/root/.uml-lower",
+        "cd /mnt/root",
+        "pivot_root . .uml-lower",
+        "rm -f /etc/resolv.conf",
+        "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
+        "'nameserver 10.0.2.3' > /etc/resolv.conf",
+        "mkdir -p /var/lib/docker",
+        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker",
+        "if [ -x /lib/systemd/systemd ]; then exec /lib/systemd/systemd; fi",
+        "exec /usr/lib/systemd/systemd",
+        "}",
+    )
 )
 
 
@@ -98,7 +134,7 @@ def emulator_arguments(
     workspace: str = "tmpfs",
     kernel_arguments: Sequence[str] = (),
     swap_path: pathlib.Path | None = None,
-    init_path: str = "/sbin/uml-overlay-init",
+    init_path: str = "/sbin/init",
     engine: str = "jit",
     core_class: str = "performance",
 ) -> list[str]:
@@ -106,8 +142,9 @@ def emulator_arguments(
         *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
-        f"ubd0r={rootfs}",
-        "ro",
+        f"ubd0c={rootfs}",
+        "root=/dev/ubda",
+        "rootfstype=erofs",
         f"init={init_path}",
         f"mem={memory}",
     ]
@@ -214,7 +251,7 @@ class Guest:
                     self._swap_path,
                     "/bin/sh"
                     if init_shell or overlay_shell or systemd_overlay
-                    else "/sbin/uml-overlay-init",
+                    else "/sbin/init",
                     engine,
                     core_class,
                 ),
@@ -259,19 +296,45 @@ class Guest:
             raise RuntimeError("Guest was not constructed with an init-shell mode")
         self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
         if self._overlay_shell:
+            search_from = len(self._transcript)
             self._write(OVERLAY_SHELL_BOOTSTRAP + "\n")
-            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+            self._read_until(
+                re.compile(
+                    rb"(?:^|\r?\n)"
+                    + re.escape(OVERLAY_READY_MARKER.encode())
+                    + rb"\r?\n"
+                ),
+                timeout_seconds,
+                search_from,
+            )
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
         if self._systemd_overlay:
             self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
             self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
-            self._read_until(
-                re.compile(rb" login:\s*root \(automatic login\)", re.MULTILINE),
+            login = self._read_until(
+                re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
                 timeout_seconds,
             )
             self._read_until(
-                re.compile(rb"(?:^|\r?\n)[^\r\n]*# $"), timeout_seconds
+                re.compile(rb"(?:^|\r?\n)[^\r\n]*\$ $"),
+                timeout_seconds,
+                login.end(),
+            )
+            sudo = self.run_command(
+                'test "$(id -un)" = uml && sudo -n true', timeout_seconds
+            )
+            if sudo.return_code != 0:
+                raise RuntimeError(
+                    "image-owned uml login lacks noninteractive sudo: "
+                    + sudo.output
+                )
+            search_from = len(self._transcript)
+            self._write("exec sudo -n /bin/sh\n")
+            self._read_until(
+                re.compile(rb"(?:^|\r?\n)[^\r\n]*# $"),
+                timeout_seconds,
+                search_from,
             )
         elif self._init_shell or self._overlay_shell:
             self.boot_to_shell(timeout_seconds)
@@ -392,7 +455,31 @@ class Guest:
         return self._normal_output(bytes(self._transcript))
 
     def _write(self, text: str) -> None:
-        os.write(self._master, text.encode())
+        payload = memoryview(text.encode())
+        offset = 0
+        deadline = time.monotonic() + CONSOLE_WRITE_TIMEOUT_SECONDS
+        while offset < len(payload):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("guest console write exceeded 30s")
+            try:
+                written = os.write(self._master, payload[offset:])
+            except InterruptedError:
+                continue
+            except BlockingIOError:
+                written = 0
+            if written > 0:
+                offset += written
+                continue
+            if self._process.poll() is not None:
+                raise BrokenPipeError("guest exited during console write")
+            readable, writable, _ = select.select(
+                [self._master], [self._master], [], min(remaining, 0.25)
+            )
+            if readable:
+                self._drain()
+            if not writable:
+                continue
 
     def _read_until(
         self,

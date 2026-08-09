@@ -305,7 +305,7 @@ VERIFY_TEMPLATE = r"""(() => {
 
 LAUNCHER_TEMPLATE = """#!/bin/sh
 set -eu
-runtime=/run/user/1000
+runtime="/run/user/$(id -u uml)"
 remaining=120
 while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
     if [ "$remaining" -le 0 ]; then
@@ -319,13 +319,13 @@ xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
     head -n 1)"
 test -n "$xauthority"
 rm -rf /tmp/chromium-webgl-samples
-runuser -u plasma -- env \
+runuser -u uml -- env \
     DISPLAY=:0 \
     XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" \
     glxinfo -B
-exec runuser -u plasma -- env \
-    HOME=/home/plasma \
+exec runuser -u uml -- env \
+    HOME=/home/uml \
     DISPLAY=:0 \
     WAYLAND_DISPLAY=wayland-0 \
     XAUTHORITY="$xauthority" \
@@ -434,7 +434,7 @@ def main() -> int:
     parser.add_argument(
         "--rootfs",
         type=Path,
-        default=REPO_ROOT / "rootfs.img",
+        default=REPO_ROOT / "rootfs.erofs",
     )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
@@ -499,7 +499,7 @@ def main() -> int:
         ]
     )
     command = boot_kde_vnc.build_harness_command(launcher_options)
-    separator = command.index("--")
+    separator = boot_kde_vnc.guest_argument_separator(command)
     overlay_commands = (
         install_text(
             "/var/tmp/uml-webgl-samples-extension/manifest.json", MANIFEST

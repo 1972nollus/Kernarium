@@ -55,7 +55,7 @@ option(UML_BUILD_TOOLING_TESTS
     "Build and register host-only repository/tooling validation tests"
     ${_uml_build_tooling_tests_default})
 set(UML_INTEGRATION_ROOTFS "" CACHE FILEPATH
-    "Immutable lower rootfs image used by integration tests")
+    "Unified EROFS rootfs image used by integration tests")
 set(UML_INSTRUCTION_MATERIALIZATION_WORK_ROOT "" CACHE PATH
     "Optional external root for large instruction-materialization join state")
 # Every unit test emits one compressed input-materialization sidecar when this

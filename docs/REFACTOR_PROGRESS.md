@@ -1,6 +1,6 @@
 # Refactor progress
 
-## Current campaign result (2026-08-09)
+## Current campaign result (2026-08-10)
 
 The refactor campaign is accepted at implementation baseline
 `783bfcf7e2447f8f981830a158bec3f402b08d97`. The final Linux source is the
@@ -8,7 +8,9 @@ The refactor campaign is accepted at implementation baseline
 bounded at 155 changed files and 6 outside-port files. The host/kernel bridge is
 ABI v6 (`0x6524b65f20239ea1`); the installed public API remains v4
 (`0xd9a69804d3303044`). G99, G100, G121, and the G123 forward repair remain in
-the accepted implementation.
+the accepted implementation. The later unified-EROFS migration supersedes the
+baseline's old partitioned-image workflow; it does not relabel the broader
+baseline evidence as newly rerun.
 
 Final local acceptance passed 572/572 ordinary 16 KiB units, 573/573 ordinary
 4 KiB units, 51/51 tooling tests in each profile, 572/572 ASan+UBSan, 8/8 TSan,
@@ -18,14 +20,31 @@ the 10-vCPU SMP workload reached 8.19 and 8.03 effective host cores. All three
 Apple slices passed package/consumer acceptance and formed the XCFramework; a
 real Xcode consumer build succeeded.
 
-This is local-only evidence: no hosted CI workflow exists. Full LTP was not run
-because its payload was absent. Input materialization remained off and produced
-zero sidecars; it stays opt-in, and the instruction evidence remains
-**0/983 variant-complete**. Rootfs management remains deferred, source-size
-guidance remains advisory, and the immutable rootfs was unchanged. The final
-Geekbench rerun was intentionally skipped at the user's direction after every
-other acceptance task completed, so no new final-baseline Geekbench score is
-claimed.
+For the EROFS migration, the final host workflows passed 572/572 units plus
+49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both rebuilt
+production page profiles then passed the regenerated five-test
+`integration-fast` paths with raw `rootfs.erofs` at `/dev/ubda`: 5/5 in 58.80
+seconds at 16 KiB and 5/5 in 64.75 seconds at 4 KiB. Focused rootfs,
+provisioning, launcher, runner, emulator-option, and API contracts also pass.
+EROFS itself supplies the read-only lower-filesystem contract, so mode,
+`ubd0r`, and `ro` enforcement are gone. The 16 KiB profile records the upstream
+experimental subpage-compression warning because the EROFS image uses 4 KiB
+filesystem blocks; the 4 KiB profile does not. The current artifact identity
+is owned only by `tools/rootfs/manifest.json` and its release statement.
+
+The image now provides `/opt/ltp`; the manifests contain 2,428 verified and 135
+disabled cases with no overlap. Exactly 88 cases were disabled because they
+require deliberately absent HugeTLBFS, transparent-huge-page, or CAN policy.
+Full LTP was not rerun for this migration. The credited final-image evidence is
+44 focused gadgets-engine rows, all accepted, including `statx05` at 4/0 in
+both profiles and `zram01` at 12/1 with rc 0 in 167.6 seconds. Geekbench uses
+its local `/opt` payload with `--no-upload`, but the final scoring run remains
+intentionally skipped and no new score is claimed.
+
+This is local-only evidence: no hosted CI workflow exists. Input
+materialization remained off for the full refactor acceptance and stays
+opt-in; instruction evidence remains **0/983 variant-complete**. Source-size
+guidance remains advisory.
 
 [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md) is the authoritative acceptance
 record. [`docs/refactor-evidence.md`](refactor-evidence.md) is the detailed

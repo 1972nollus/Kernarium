@@ -1,8 +1,9 @@
 # A64 Base and SIMD/FP instruction implementation progress
 
-> Historical execution log. References to `rootfs.ext2` describe pre-refactor
-> results; use the immutable `rootfs.img` workflow documented in
-> `docs/testing.md` for current work.
+> Historical execution log. References to `rootfs.ext2`, partitioned
+> `rootfs.img`, or `/dev/ubda1` describe dated pre-EROFS results; use the
+> unified `rootfs.erofs` workflow documented in `docs/testing.md` for current
+> work.
 
 ## Current completeness boundary (2026-08-09)
 

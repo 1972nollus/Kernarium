@@ -595,14 +595,13 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
 -	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
 -	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	authenticated digest-statement provisioning and tamper rejection
--	rootfs-maintenance-safety	tests/tooling/rootfs/test_maintenance.py	tooling	retained	explicit authorization, full-run lock, refreeze, and process-group cleanup
--	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	rejects writable or duplicate rootfs options and all launcher-owned kernel argument overrides
--	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only runner safety self-test
+-	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	pins the raw EROFS device, filesystem type, and launcher-owned kernel arguments
+-	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only EROFS integrity and overlay runner self-test
 -	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher option self-test
 -	chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained	host-only metrics parser self-test
 -	network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained	keeps host-network probes out of the deterministic SLiRP smoke
 -	jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test
--	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, and network-gate smoke
+-	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, and image-local no-upload Geekbench policy
 -	arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained	host-only inventory consistency audit
 -	arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained	rejects form confusion, unreachable words, and undeclared exact-encoding aliases
 -	arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained	rejects missing, duplicate, swapped, count, digest, reserved-predicate, feature-gate, oracle-locator, and page-profile aggregate drift
@@ -636,7 +635,7 @@ dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/
 -	dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
 -	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private static arm64 prefix provenance and content validation
 -	dependency-production-link-allowlist	tests/tooling/dependencies/test_verify_production_link.sh	tooling	retained	final link permits only build, Apple SDK/toolchain, and verified private-prefix inputs
--	guest-overlay-systemd-smoke	tests/integration	integration	retained	immutable OverlayFS and systemd guest boot
+-	guest-overlay-systemd-smoke	tests/integration	integration	retained	EROFS lower, required /opt plus LTP userspace and offline Geekbench payload, image-owned uml tty0 login, Docker tmpfs overlayfs/overlay2 state, and systemd guest boot
 -	guest-interpreter-smoke	tests/integration/jit	integration	retained	lightweight interpreter kernel, shell, and CPU-feature smoke
 -	guest-gadgets-smoke	tests/integration/jit	integration	retained	gadget-engine guest dynamic-code smoke
 -	guest-jit-smoke	tests/integration/jit	integration	retained	JIT-engine guest dynamic-code smoke

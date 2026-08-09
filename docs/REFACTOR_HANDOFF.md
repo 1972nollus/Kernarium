@@ -1,38 +1,41 @@
 # Refactor handoff
 
-## Current authoritative status (2026-08-09)
+## Current authoritative status (2026-08-10)
 
-The refactor campaign and the forward 4 KiB Darwin mapping repair are accepted
+The refactor campaign and forward 4 KiB Darwin mapping repair remain accepted
 at implementation baseline
-`783bfcf7e2447f8f981830a158bec3f402b08d97`. That commit identifies the code
-that was tested; this documentation-only reconciliation intentionally does not
-describe its own eventual commit as the tested HEAD. This section supersedes
-every older "current", "open", or completeness statement below. Those sections
-remain dated audit and experiment history, not current blockers.
+`783bfcf7e2447f8f981830a158bec3f402b08d97`. The later unified-EROFS migration
+supersedes that baseline's rootfs workflow without reattributing its broader
+host, sanitizer, package, or performance evidence to the migration checkpoint.
+This section supersedes every older "current", "open", or completeness
+statement below. Those sections remain dated audit and experiment history, not
+current blockers or current rootfs instructions.
 
 | Boundary | Accepted state |
 | --- | --- |
 | Linux source | The signed Linux 6.18.41 package replays 14 ordered topics to canonical tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Policy is bounded at 155 changed files and 6 files outside the Darwin port. Both embedded kernels matched their corresponding `vmlinux` artifacts. |
 | Interfaces | The independent host/kernel bridge is ABI v6, fingerprint `0x6524b65f20239ea1`. The installed public API remains v4, fingerprint `0xd9a69804d3303044`. |
 | Preserved repairs | G99 gadget ThinLTO, G100's exactly five audited decode-family `.ipp` fragments, G121's published per-thread address-space lifecycle slots, and G123's serialized Darwin `init_mm`/4 KiB host-slot repair are retained. The pre-refactor rollback used to diagnose G123 is not retained. |
-| Host acceptance | Ordinary unit suites passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in each profile. ASan+UBSan passed 572/572 in 710.45 seconds, TSan passed 8/8 in 5.14 seconds, and the malformed-loader ASan gate passed 1/1. Normal and ASan GPU graphs each passed 5/5 unit tests plus the 1/1 VNC tooling test. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB, 576/624 at 4 KiB, and 595/628 in the GPU graph. Input materialization was off and produced zero sidecars. |
-| Guest acceptance | `integration-fast` passed 5/5 at 16 KiB in 153.40 seconds and 5/5 at 4 KiB in 84.69 seconds. The standalone 10-vCPU SMP workload passed at 8.19 and 8.03 effective host cores, respectively. The immutable rootfs remained mode 0444, 8,589,934,592 bytes, SHA-256 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`. |
+| Refactor host acceptance | At baseline `783bfcf7`, ordinary unit suites passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in each profile. ASan+UBSan passed 572/572 in 710.45 seconds, TSan passed 8/8 in 5.14 seconds, and the malformed-loader ASan gate passed 1/1. Normal and ASan GPU graphs each passed 5/5 unit tests plus the 1/1 VNC tooling test. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB, 576/624 at 4 KiB, and 595/628 in the GPU graph. Input materialization was off and produced zero sidecars. |
+| Refactor guest acceptance | At the same baseline, `integration-fast` passed 5/5 at 16 KiB and 5/5 at 4 KiB. The standalone 10-vCPU SMP workload passed at 8.19 and 8.03 effective host cores, respectively. Its retired partitioned-image observations remain historical evidence only. |
+| Unified EROFS migration | Final host workflows passed 572/572 units plus 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both rebuilt production profiles then passed the regenerated five-test `integration-fast` suite using raw `rootfs.erofs` at `/dev/ubda`: 16 KiB 5/5 in 58.80 seconds and 4 KiB 5/5 in 64.75 seconds. Focused verifier, provisioning, launcher, runner, emulator-option, and API contracts pass. EROFS owns the read-only lower-filesystem property; host mode, `ubd0r`, and `ro` are not acceptance mechanisms. The 16 KiB profile emits the upstream experimental subpage-compression warning for the image's 4 KiB filesystem blocks; the 4 KiB profile does not. The accepted image is SHA-256 `73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91`, size 3,802,316,800 bytes, UUID `b84fcbe2-0673-4126-8f81-bdee45997306`; the checked manifest and release statement remain authoritative. |
+| LTP and benchmarks | The unified image supplies LTP at `/opt/ltp`, Node at `/opt/node/bin/node`, and benchmarks under `/opt`. The manifests now contain 2,428 verified and 135 disabled LTP cases with no overlap; 88 require three deliberately absent kernel configurations. The credited final-image boundary is 44 focused gadgets-engine cases, all accepted; `statx05` passed 4/0 in both page profiles and the exact live `zram01` row passed 12/1 with rc 0 in 167.6 seconds. Full LTP was not rerun. Geekbench 6 uses the local payload with `--no-upload`; the user-directed final scoring run remains skipped and no new score is claimed. |
 | Apple package | The macOS, iOS-device, and iOS-simulator slices passed archive, architecture, executable-publication, staging, and consumer audits and formed the three-slice XCFramework. The archive verifier observed 71 ordinary Mach-O members plus exactly 9 ThinLTO gadget members on macOS and 70 ordinary plus exactly 9 ThinLTO gadget members in each iOS slice. Raw and installed-tree consumers passed, and the real Xcode consumer reported `BUILD SUCCEEDED`; its locked-iPhone discovery warning was non-fatal. |
 
 Acceptance is deliberately bounded. Input materialization remains explicit
 opt-in because a complete profile is about 6.6 GiB; ordinary acceptance ran
 with it off. The instruction ledger still reports **0/983 variant-complete**
 entries, so historical 983-entry checkmarks and representative semantic
-contracts are not an exhaustive architectural-semantics claim. The LTP payload
-was absent, so full LTP was not run or claimed. Rootfs-management redesign
-remains deferred, and source-size thresholds remain advisory ownership signals,
-not gates.
+contracts are not an exhaustive architectural-semantics claim. Full LTP remains
+an explicit external campaign even though its payload is now present. Source-
+size thresholds remain advisory ownership signals, not gates.
 
 All verification above was local; the repository has no hosted CI workflow.
 After every other acceptance task completed, the final Geekbench rerun was
 intentionally skipped at the user's direction. The preserved historical
-measurements and focused hot-path controls remain the performance evidence; no
-new end-to-end Geekbench result is claimed for this final baseline.
+measurements and focused hot-path controls remain the performance evidence.
+The EROFS migration removes the upload/network gate and uses `--no-upload`, but
+does not create a new end-to-end Geekbench result.
 
 [`docs/refactor-evidence.md`](refactor-evidence.md) is the detailed evidence
 index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.

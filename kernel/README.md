@@ -55,8 +55,11 @@ plausible Makefile, branch name, or locally cloned upstream tree is never
 accepted.
 
 Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
-represent several upstream paths that differ only by case. A case-sensitive
-APFS volume or sparse image is therefore required:
+represent several upstream paths that differ only by case. The canonical
+checkout is the dedicated APFS case-sensitive volume mounted at
+`/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
+`build-16k` and `build-4k` on that volume. Transient case-sensitive mounts under
+`/tmp` are not used for the canonical source or build trees:
 
 ```sh
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
@@ -95,7 +98,9 @@ cannot hold both values. There is no `--profile` selector and no optional
 policy layer: a symbol absent from `common.fragment` is absent from the
 product. Because UML deliberately ships without loadable-module support, every
 capability a guest distribution can use has to be built in there, including
-the control groups systemd requires to start at all.
+the control groups systemd requires to start at all. Per-file filesystem
+encryption is likewise built in through `CONFIG_FS_ENCRYPTION=y`; the LTP
+`statx05` boundary validates encrypted and plain ext4 attribute reporting.
 
 Three constraints bound what may be added. Loadable modules stay off because
 module text would be dynamically published executable memory inside the host
@@ -106,6 +111,13 @@ on it. `CONFIG_HOSTFS` stays off because it lets the guest mount an arbitrary
 host directory, which would move the reachable host filesystem from
 emulator-side policy into guest control; host data is shared through an
 explicit device or image instead.
+
+`CONFIG_HUGETLBFS`, `CONFIG_TRANSPARENT_HUGEPAGE`, and `CONFIG_CAN` are also
+deliberately absent from the shipped policy. LTP cases that require those
+features are owned by `tests/integration/ltp/disabled-tests.tsv`; do not add a
+kernel feature solely to make its packaged test runnable. Change the kernel
+policy, LTP manifests, and `docs/LTP_PROGRESS.md` together if that product
+decision is revisited.
 
 ## Toolchain
 

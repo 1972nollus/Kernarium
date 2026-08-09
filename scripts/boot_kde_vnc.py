@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot KDE Plasma in the immutable GPU guest and expose its VNC display."""
+"""Boot KDE Plasma from the EROFS guest and expose its VNC display."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -16,21 +16,21 @@ from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
+ROOTFS_WRAPPER = REPO_ROOT / "tools/rootfs/with-verified-rootfs.sh"
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
-DEFAULT_ROOTFS = REPO_ROOT / "rootfs.img"
+DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_BASELINE = REPO_ROOT / "tools/rootfs/manifest.json"
 
 KDE_OVERLAY_COMMANDS = (
-    "getent passwd plasma >/dev/null || "
-    "useradd --create-home --uid 1000 --shell /bin/bash plasma",
-    "usermod -a -G video,render,input plasma",
-    "install -d -m 0755 -o plasma -g plasma "
-    "/home/plasma/Desktop /home/plasma/Documents /home/plasma/Downloads "
-    "/home/plasma/Music /home/plasma/Pictures /home/plasma/Public "
-    "/home/plasma/Templates /home/plasma/Videos /home/plasma/.config "
-    "/home/plasma/.local/share/pki "
-    "/home/plasma/.local/share/Trash/files "
-    "/home/plasma/.local/share/Trash/info",
+    "getent passwd uml >/dev/null",
+    "usermod -a -G video,render,input uml",
+    "install -d -m 0755 -o uml -g uml "
+    "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
+    "/home/uml/Music /home/uml/Pictures /home/uml/Public "
+    "/home/uml/Templates /home/uml/Videos /home/uml/.config "
+    "/home/uml/.local/share/pki "
+    "/home/uml/.local/share/Trash/files "
+    "/home/uml/.local/share/Trash/info",
     "printf '%s\\n' "
     "'XDG_DESKTOP_DIR=\"$HOME/Desktop\"' "
     "'XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"' "
@@ -40,8 +40,8 @@ KDE_OVERLAY_COMMANDS = (
     "'XDG_MUSIC_DIR=\"$HOME/Music\"' "
     "'XDG_PICTURES_DIR=\"$HOME/Pictures\"' "
     "'XDG_VIDEOS_DIR=\"$HOME/Videos\"' "
-    "> /home/plasma/.config/user-dirs.dirs",
-    "chown plasma:plasma /home/plasma/.config/user-dirs.dirs",
+    "> /home/uml/.config/user-dirs.dirs",
+    "chown uml:uml /home/uml/.config/user-dirs.dirs",
     # KInfoCenter 6.3 counts Mesa's CPU-only Lavapipe Vulkan device as the
     # guest GPU and labels an otherwise accelerated Virgl session "llvmpipe".
     # This OpenGL-only guest has no Vulkan render path, so hide that software
@@ -51,22 +51,22 @@ KDE_OVERLAY_COMMANDS = (
     # The desktop:/ KIO worker crashes under UML. Keep Plasma's normal Folder
     # View containment, but point it directly at the user's Desktop directory
     # so it uses the stable local-file worker instead. This edits only the
-    # tmpfs overlay; the frozen guest image remains unchanged.
+    # tmpfs overlay; the EROFS guest image remains unchanged.
     "sed -i "
     "'s#<default>desktop:/</default>#"
-    "<default>file:///home/plasma/Desktop</default>#' "
+    "<default>file:///home/uml/Desktop</default>#' "
     "/usr/share/plasma/plasmoids/org.kde.desktopcontainment/"
     "contents/config/main.xml",
     "install -d -m 0755 /etc/sddm.conf.d",
-    "printf '%s\\n' '[Autologin]' 'User=plasma' 'Session=plasma' "
+    "printf '%s\\n' '[Autologin]' 'User=uml' 'Session=plasma' "
     "'Relogin=false' > /etc/sddm.conf.d/uml-autologin.conf",
     # A benchmark must remain visible and continuously rendered after its
     # warm-up period. Disable Plasma's idle lock in the disposable overlay so
     # long diagnostic or measurement runs cannot be replaced by the lock
     # screen.
     "printf '%s\\n' '[Daemon]' 'Autolock=false' 'LockOnResume=false' "
-    "'Timeout=0' > /home/plasma/.config/kscreenlockerrc; "
-    "chown plasma:plasma /home/plasma/.config/kscreenlockerrc",
+    "'Timeout=0' > /home/uml/.config/kscreenlockerrc; "
+    "chown uml:uml /home/uml/.config/kscreenlockerrc",
 )
 
 
@@ -147,13 +147,19 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="verify the frozen image and print the emulator command",
+        help="verify the EROFS image and print the emulator command",
     )
     return parser.parse_args(arguments)
 
 
 def build_harness_command(options: argparse.Namespace) -> list[str]:
     command = [
+        str(ROOTFS_WRAPPER),
+        "--rootfs",
+        str(options.rootfs),
+        "--manifest",
+        str(options.baseline),
+        "--",
         sys.executable,
         str(GUEST_HARNESS),
         "--emulator",
@@ -195,6 +201,14 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     return command
 
 
+def guest_argument_separator(command: Sequence[str]) -> int:
+    """Locate the GPU harness separator after the rootfs wrapper boundary."""
+    separators = [index for index, argument in enumerate(command) if argument == "--"]
+    if not separators:
+        raise ValueError("GPU harness command has no kernel-argument separator")
+    return separators[-1]
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     authentication = (
@@ -214,7 +228,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
     print("Press Ctrl-C in this terminal to stop the guest.", file=sys.stderr)
-    os.execv(sys.executable, build_harness_command(options))
+    command = build_harness_command(options)
+    os.execv(command[0], command)
     return 1
 
 

@@ -38,7 +38,7 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             "--emulator",
             "/tmp/uml-darwin",
             "--rootfs",
-            "/tmp/rootfs.img",
+            "/tmp/rootfs.erofs",
         ]
         if external:
             arguments.extend(["--external", "--external-host", "example.test"])

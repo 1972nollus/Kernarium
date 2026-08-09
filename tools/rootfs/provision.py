@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the immutable rootfs from a verified local or release artifact."""
+"""Provision the pinned EROFS rootfs from a verified local or release artifact."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -95,7 +95,7 @@ def relative_to_manifest(value: str | None, manifest_path: Path) -> Path | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "rootfs.img")
+    parser.add_argument("--output", type=Path, default=ROOT / "rootfs.erofs")
     parser.add_argument("--source", type=Path, help="verified local artifact to copy")
     parser.add_argument("--url", help="authenticated HTTPS release artifact URL")
     parser.add_argument("--statement", type=Path, help="signed release digest statement")
@@ -147,9 +147,14 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         with image_lock(output, exclusive=True, blocking=False):
+            if output.exists() and not arguments.replace:
+                raise VerificationError(
+                    f"refusing to replace existing image {output}; pass "
+                    "--replace after preserving any required artifact"
+                )
             with tempfile.TemporaryDirectory(dir=output.parent, prefix=".rootfs-provision-") as temporary:
                 temporary_path = Path(temporary)
-                staged = temporary_path / "rootfs.img"
+                staged = temporary_path / "rootfs.erofs"
                 if source:
                     if not source.is_file():
                         raise VerificationError(f"local source is not a regular file: {source}")
@@ -176,13 +181,12 @@ def main() -> int:
                     verify_signature(staged_statement, staged_signature, public_key)
                     verify_release_statement(staged_statement, manifest)
                     copy_from_url(url, staged)
-                os.chmod(staged, 0o444)
                 verify(staged, manifest_path)
                 os.replace(staged, output)
                 verify(output, manifest_path)
     except (OSError, VerificationError) as error:
         return fail(str(error))
-    print(f"provisioned and verified immutable rootfs: {output}")
+    print(f"provisioned and verified EROFS rootfs: {output}")
     return 0
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Advisory sidecar locking shared by immutable and writable rootfs users."""
+"""Advisory sidecar locking shared by rootfs verification and provisioning."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.

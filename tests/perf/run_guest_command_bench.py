@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a matched command repeatedly in a read-only overlay-root guest."""
+"""Run a matched command repeatedly in an EROFS overlay-root guest."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -26,7 +26,11 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--root-device", default="/dev/ubda1")
+    parser.add_argument(
+        "--root-device",
+        default="/dev/ubda",
+        help="raw EROFS root block device (default: /dev/ubda)",
+    )
     parser.add_argument("--command", required=True)
     parser.add_argument("--cpus", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=3)
@@ -62,7 +66,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--shell-init",
         action="store_true",
-        help="boot /bin/sh directly (for rootfs images without overlay init)",
+        help="boot /bin/sh directly from the EROFS image",
     )
     return parser.parse_args()
 
@@ -87,6 +91,7 @@ def main() -> int:
         "tmpfs",
         tuple(extra_arguments),
         init_shell=arguments.shell_init,
+        systemd_overlay=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
     )

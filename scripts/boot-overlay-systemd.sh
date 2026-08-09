@@ -7,8 +7,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "${script_dir}/.." && pwd -P)"
 
 emulator="${UML_EMULATOR:-${repo_root}/.build/presets/macos-integration/bin/uml-darwin}"
-rootfs="${UML_ROOTFS:-${repo_root}/rootfs.img}"
-root_device="${UML_ROOT_DEVICE:-/dev/ubda1}"
+rootfs="${UML_ROOTFS:-${repo_root}/rootfs.erofs}"
+rootfs_wrapper="${repo_root}/tools/rootfs/with-verified-rootfs.sh"
+root_device="${UML_ROOT_DEVICE:-/dev/ubda}"
 memory="${UML_MEMORY:-8G}"
 systemd_unit="${UML_SYSTEMD_UNIT:-multi-user.target}"
 dry_run=false
@@ -19,15 +20,14 @@ usage()
 	cat <<EOF
 Usage: $(basename "$0") [options] [-- kernel-argument ...]
 
-Boot Darwin UML with a read-only disk image, a tmpfs-backed OverlayFS root,
+Boot Darwin UML with an EROFS image, a tmpfs-backed OverlayFS root,
 and systemd as PID 1.
 
 Options:
   --emulator PATH     Emulator executable
                       (default: .build/presets/macos-integration/bin/uml-darwin)
-  --rootfs PATH       Read-only root filesystem image
-                      (default: rootfs.img)
-  --root-device PATH  Guest root block device (default: /dev/ubda1)
+  --rootfs PATH       EROFS root filesystem image (default: rootfs.erofs)
+  --root-device PATH  Guest root block device (default: /dev/ubda)
   --memory SIZE       Guest memory (default: 8G)
   --unit UNIT         Initial systemd unit (default: multi-user.target)
   --dry-run           Print the command without booting
@@ -47,15 +47,7 @@ validate_kernel_argument()
 {
 	argument=$1
 	case "$argument" in
-	rw)
-		echo "$0: the writable-root kernel argument 'rw' is forbidden" >&2
-		exit 2
-		;;
-	ro)
-		echo "$0: 'ro' is supplied by the launcher and must not be repeated" >&2
-		exit 2
-		;;
-	ubd0*=*|root=*|init=*|mem=*|console=*|systemd.unit=*)
+	ubd0*=*|root=*|rootfstype=*|init=*|mem=*|console=*|systemd.unit=*)
 		echo "$0: kernel argument is controlled by the launcher: $argument" >&2
 		exit 2
 		;;
@@ -147,9 +139,9 @@ done
 
 command=(
 	"$emulator"
-	"ubd0r=$rootfs"
+	"ubd0c=$rootfs"
 	"root=$root_device"
-	"ro"
+	"rootfstype=erofs"
 	"init=/bin/sh"
 	"mem=$memory"
 	"console=tty0"
@@ -178,7 +170,7 @@ mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt ||
 mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root ||
 	fail "overlay workspace"
 mount -o bind / /mnt/lower ||
-	fail "read-only lower bind"
+	fail "EROFS lower bind"
 mount -t overlay overlay \
 	-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
 	/mnt/root ||
@@ -200,7 +192,11 @@ printf '%s\n' \
 	'nameserver 10.0.2.3' \
 	'options timeout:1 attempts:3 rotate' > /etc/resolv.conf ||
 	fail "install user-network resolver configuration"
-echo "Darwin UML root overlay: lower=read-only, upper=tmpfs"
+mkdir -p /var/lib/docker ||
+	fail "Docker state directory"
+mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker ||
+	fail "Docker state tmpfs"
+echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
 if [ -x /lib/systemd/systemd ]; then
 	exec /lib/systemd/systemd
 fi
@@ -211,7 +207,7 @@ fail "systemd executable not found"
 GUEST_BOOTSTRAP
 )"
 
-echo "Booting $root_device from $rootfs read-only"
+echo "Booting $root_device from $rootfs as EROFS"
 echo "Overlay upper/work: tmpfs; init: systemd ($systemd_unit)"
 python3_executable="${PYTHON3:-$(command -v python3 || true)}"
 [[ -n "$python3_executable" && -x "$python3_executable" ]] || {
@@ -220,7 +216,7 @@ python3_executable="${PYTHON3:-$(command -v python3 || true)}"
 }
 
 export UML_GUEST_BOOTSTRAP="$bootstrap_script"
-exec "$python3_executable" -c '
+exec "$rootfs_wrapper" --rootfs "$rootfs" -- "$python3_executable" -c '
 import os
 import select
 import signal

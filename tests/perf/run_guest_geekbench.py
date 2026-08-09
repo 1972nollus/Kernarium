@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Geekbench in a systemd guest with a read-only overlay root."""
+"""Run the image-local Geekbench payload in a systemd EROFS guest."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -7,8 +7,6 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import pathlib
-import socket
-import ssl
 import subprocess
 import sys
 import threading
@@ -20,7 +18,15 @@ sys.path.insert(0, str(TESTS / "integration" / "support"))
 from guest import CORE_CLASSES, Guest  # noqa: E402
 
 
-UPLOAD_HOST = "browser.geekbench.com"
+QUIESCENCE_UNITS = (
+    "docker.service",
+    "docker.socket",
+    "containerd.service",
+    "apt-daily.timer",
+    "apt-daily-upgrade.timer",
+    "apt-daily.service",
+    "apt-daily-upgrade.service",
+)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -35,9 +41,16 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--console-log", required=True, type=pathlib.Path)
     parser.add_argument(
         "--command",
-        default="/root/release/geekbench6",
+        default=(
+            "/opt/geekbench/release/geekbench6 "
+            "--no-upload"
+        ),
     )
-    parser.add_argument("--root-device", default="/dev/ubda1")
+    parser.add_argument(
+        "--root-device",
+        default="/dev/ubda",
+        help="raw EROFS root block device (default: /dev/ubda)",
+    )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument(
@@ -54,12 +67,13 @@ def parse_arguments() -> argparse.Namespace:
             "to background QoS so it runs on the E-cores that dominate iOS"
         ),
     )
-    parser.add_argument(
-        "--allow-network",
-        action="store_true",
-        help="acknowledge that Geekbench uploads results to the public service",
-    )
     parser.add_argument("--timeout", type=int, default=7200)
+    parser.add_argument(
+        "--quiesce-timeout",
+        type=int,
+        default=120,
+        help="seconds allowed for systemd background work to stop",
+    )
     parser.add_argument("--sample-seconds", type=int, default=5)
     parser.add_argument(
         "--sample-command",
@@ -68,18 +82,27 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def verify_upload_network() -> None:
-    """Fail before guest boot when host network permission is unavailable."""
+def quiesce_guest(guest: Guest, timeout_seconds: int) -> None:
+    """Stop system services that would perturb a benchmark measurement."""
+    units = " ".join(QUIESCENCE_UNITS)
+    command = (
+        f"systemctl stop {units} && "
+        f"for unit in {units}; do "
+        "if systemctl is-active --quiet \"$unit\"; then "
+        "printf 'benchmark quiescence failed: %s is still active\\n' "
+        '"$unit" >&2; exit 1; fi; done && sync'
+    )
     try:
-        with socket.create_connection((UPLOAD_HOST, 443), timeout=10) as stream:
-            context = ssl.create_default_context()
-            with context.wrap_socket(stream, server_hostname=UPLOAD_HOST):
-                pass
-    except OSError as error:
+        result = guest.run_command(command, timeout_seconds)
+    except TimeoutError as error:
         raise RuntimeError(
-            "Geekbench network preflight failed; grant host-network permission "
-            "before retrying"
+            "guest benchmark quiescence timed out after "
+            f"{timeout_seconds} seconds"
         ) from error
+    if result.return_code != 0:
+        raise RuntimeError(
+            "guest benchmark quiescence failed: " + result.output
+        )
 
 
 def mirror_transcript(
@@ -107,13 +130,12 @@ def main() -> int:
     arguments = parse_arguments()
     if arguments.cpus < 1 or arguments.cpus > 64:
         raise ValueError("--cpus must be between 1 and 64")
-    if arguments.timeout < 1 or arguments.sample_seconds < 1:
+    if (
+        arguments.timeout < 1
+        or arguments.quiesce_timeout < 1
+        or arguments.sample_seconds < 1
+    ):
         raise ValueError("timeouts must be positive")
-    if not arguments.allow_network:
-        raise ValueError(
-            "--allow-network is required because Geekbench uploads its result"
-        )
-    verify_upload_network()
 
     if arguments.profile_dir is not None:
         arguments.profile_dir.mkdir(parents=True, exist_ok=True)
@@ -149,16 +171,7 @@ def main() -> int:
         mirror.start()
         mirror_ready.wait()
         guest.boot_and_login(180)
-        network = guest.run_command(
-            f"getent ahostsv4 {UPLOAD_HOST} >/dev/null && "
-            f"curl -sSI --max-time 30 https://{UPLOAD_HOST}/ >/dev/null",
-            60,
-        )
-        if network.return_code != 0:
-            raise RuntimeError(
-                "guest benchmark network preflight failed; verify host-network "
-                "permission and SLiRP DNS forwarding"
-            )
+        quiesce_guest(guest, arguments.quiesce_timeout)
         if arguments.profile_dir is not None:
             profiler = subprocess.Popen(
                 (

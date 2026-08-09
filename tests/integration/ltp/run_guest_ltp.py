@@ -6,8 +6,10 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import base64
 import concurrent.futures
 import dataclasses
+import gzip
 import json
 import os
 import pathlib
@@ -75,15 +77,293 @@ SERIAL_OPTION = "serial"
 CGROUP2_NSDELEGATE_OPTION = "cgroup2=nsdelegate"
 KERNEL_ARGUMENT_PREFIX = "kernel-arg="
 CGROUP1_CONTROLLER = re.compile(r"^[a-z0-9_]+$")
-LTP_ROOT = "/usr/lib/ltp-testsuite"
+LTP_ROOT = "/opt/ltp"
 LTP_BIN = f"{LTP_ROOT}/testcases/bin"
+LTP_OUTPUT = "/tmp/uml-ltp-output"
+LTP_DISPOSABLE_TOOLS = "/run/uml-ltp-tools"
+LTP_METADATA_TRANSPORT_ROOT = "/run/uml-ltp-metadata-transport"
+LTP_METADATA_TRANSPORT_CHUNK_CHARS = 1024
+LTP_METADATA_TRANSPORT_MAX_COMMAND_BYTES = 2048
 LTP_TIMEOUT_MUL = 4
+MODULES_BUILTIN_ENTRY = re.compile(
+    r"^kernel/(?:[A-Za-z0-9._+-]+/)*[A-Za-z0-9._+-]+\.ko$"
+)
+KERNEL_RELEASE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
 # Keep every ordinary guest single-vCPU.  Workloads which intentionally
 # exercise more than one CPU are manifest-tagged host-pressure, retain the full
 # guest topology, and run alone at the end of the suite.
 DEFAULT_PARALLEL_GUEST_CPUS = 1
 _ACTIVE_GUESTS: set["Guest"] = set()
 _ACTIVE_GUESTS_LOCK = threading.Lock()
+
+
+def validate_modules_builtin(data: bytes) -> tuple[str, ...]:
+    """Validate canonical Kbuild ``modules.builtin`` bytes."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("modules.builtin is not UTF-8 text") from error
+    if not text or not text.endswith("\n"):
+        raise ValueError("modules.builtin must be nonempty and newline-terminated")
+    entries = tuple(text.splitlines())
+    if any(
+        not MODULES_BUILTIN_ENTRY.fullmatch(entry)
+        or any(part in (".", "..") for part in entry.split("/"))
+        for entry in entries
+    ):
+        raise ValueError(
+            "modules.builtin entries must be canonical kernel/.../*.ko paths"
+        )
+    if len(entries) != len(set(entries)):
+        raise ValueError("modules.builtin contains duplicate entries")
+    return entries
+
+
+def load_modules_builtin(path: pathlib.Path) -> tuple[bytes, str]:
+    """Load Kbuild metadata and its exact sibling kernel release."""
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"cannot read modules.builtin: {path}: {error}") from error
+    validate_modules_builtin(data)
+    release_path = path.parent / "include/config/kernel.release"
+    try:
+        release_text = release_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(
+            f"cannot read sibling kernel release: {release_path}: {error}"
+        ) from error
+    release_lines = release_text.splitlines()
+    if (
+        len(release_lines) != 1
+        or not KERNEL_RELEASE_VALUE.fullmatch(release_lines[0])
+    ):
+        raise ValueError(f"invalid sibling kernel release file: {release_path}")
+    return data, release_lines[0]
+
+
+def ltp_builtin_driver_metadata_setup(
+    modules_builtin_data: bytes,
+    expected_kernel_release: str,
+    modules_root: str = "/lib/modules",
+    kernel_config: str = "/proc/config.gz",
+    config_reader: tuple[str, ...] = ("zcat",),
+    release_reader: tuple[str, ...] = ("uname", "-r"),
+    base64_decoder: tuple[str, ...] = ("base64", "-d"),
+    tools_root: str = LTP_DISPOSABLE_TOOLS,
+) -> str:
+    """Expose authoritative Kbuild built-in metadata in disposable state.
+
+    ``TST_NEEDS_DRIVERS`` searches ``modules.dep`` and ``modules.builtin`` for
+    ``/<driver>.ko``. The complete metadata comes from the exact kernel build,
+    and is accepted only when its sibling release matches the running guest.
+    A fail-closed kmod shim recognizes only exact built-in names when loadable
+    modules are disabled; unsupported operations and parameters fail.
+    """
+    entries = validate_modules_builtin(modules_builtin_data)
+    module_names = tuple(
+        dict.fromkeys(
+            entry.rsplit("/", 1)[-1].removesuffix(".ko")
+            for entry in entries
+        )
+    )
+    if not KERNEL_RELEASE_VALUE.fullmatch(expected_kernel_release):
+        raise ValueError("expected kernel release is invalid")
+    for name, command in (
+        ("config reader", config_reader),
+        ("release reader", release_reader),
+        ("base64 decoder", base64_decoder),
+    ):
+        if not command:
+            raise ValueError(f"{name} command must be nonempty")
+    reader = " ".join(shlex.quote(argument) for argument in config_reader)
+    release_command = " ".join(
+        shlex.quote(argument) for argument in release_reader
+    )
+    decoder = " ".join(shlex.quote(argument) for argument in base64_decoder)
+    payload = base64.b64encode(modules_builtin_data).decode("ascii")
+    payload_chunks = tuple(
+        payload[offset : offset + 256]
+        for offset in range(0, len(payload), 256)
+    )
+    lines = [
+        "(",
+        "set -eu",
+        f"modules_root={shlex.quote(modules_root)}",
+        f"expected_kernel_release={shlex.quote(expected_kernel_release)}",
+        f"kernel_release=$({release_command})",
+        'if [ "$kernel_release" != "$expected_kernel_release" ]; then',
+        "printf '%s\\n' \"kernel release mismatch: expected "
+        '$expected_kernel_release, running $kernel_release" >&2',
+        "exit 1",
+        "fi",
+        f"kernel_config={shlex.quote(kernel_config)}",
+        f"tools_root={shlex.quote(tools_root)}",
+        'modules_dir="$modules_root/$kernel_release"',
+        'modules_dep="$modules_dir/modules.dep"',
+        'modules_builtin="$modules_dir/modules.builtin"',
+        f'kernel_config_text=$({reader} "$kernel_config")',
+        "modules_unset_count=$(printf '%s\\n' \"$kernel_config_text\" | "
+        "grep -cx '# CONFIG_MODULES is not set' || true)",
+        "modules_set_count=$(printf '%s\\n' \"$kernel_config_text\" | "
+        "grep -c '^CONFIG_MODULES=' || true)",
+        'if [ "$modules_unset_count" -ne 1 ] || '
+        '[ "$modules_set_count" -ne 0 ]; then',
+        "printf '%s\\n' 'LTP static-kmod overlay requires CONFIG_MODULES=n' >&2",
+        "exit 1",
+        "fi",
+        'if [ -L "$modules_root" ] || [ -L "$modules_dir" ]; then',
+        "printf '%s\\n' 'refusing symlinked LTP module metadata directory' >&2",
+        "exit 1",
+        "fi",
+        'mkdir -p "$modules_dir"',
+        'modules_builtin_tmp="$modules_dir/.modules.builtin.uml-ltp.$$"',
+        'modules_dep_tmp="$modules_dir/.modules.dep.uml-ltp.$$"',
+        'kmod_tmp="$tools_root/.kmod.uml-ltp.$$"',
+        "trap 'rm -f \"$modules_builtin_tmp\" \"$modules_dep_tmp\" "
+        "\"$kmod_tmp\"' 0 1 2 15",
+        "{",
+    ]
+    lines.extend(
+        f"printf '%s\\n' {shlex.quote(chunk)}" for chunk in payload_chunks
+    )
+    lines.extend([
+        f'}} | {decoder} > "$modules_builtin_tmp"',
+        'chmod 0644 "$modules_builtin_tmp"',
+        ': > "$modules_dep_tmp"',
+        'chmod 0644 "$modules_dep_tmp"',
+        'mv -f "$modules_builtin_tmp" "$modules_builtin"',
+        'mv -f "$modules_dep_tmp" "$modules_dep"',
+    ])
+    shim_lines = (
+        "#!/bin/sh",
+        "set -eu",
+        f"modules_root={shlex.quote(modules_root)}",
+        f"kernel_release={shlex.quote(expected_kernel_release)}",
+        f"kernel_config={shlex.quote(kernel_config)}",
+        f'kernel_config_text=$({reader} "$kernel_config")',
+        "modules_unset_count=$(printf '%s\\n' \"$kernel_config_text\" | "
+        "grep -cx '# CONFIG_MODULES is not set' || true)",
+        "modules_set_count=$(printf '%s\\n' \"$kernel_config_text\" | "
+        "grep -c '^CONFIG_MODULES=' || true)",
+        'if [ "$modules_unset_count" -ne 1 ] || '
+        '[ "$modules_set_count" -ne 0 ]; then',
+        "exit 1",
+        "fi",
+        'modules_builtin="$modules_root/$kernel_release/modules.builtin"',
+        '[ -r "$modules_builtin" ] || exit 1',
+        'tool=${0##*/}',
+        'if [ "$tool" = kmod ]; then',
+        '[ "${1-}" = modprobe ] || exit 1',
+        "shift",
+        "tool=modprobe",
+        "fi",
+        '[ "$tool" = modprobe ] || exit 1',
+        "load_all=0",
+        'case "${1-}" in',
+        "-a|--all) load_all=1; shift ;;",
+        "-r|--remove) exit 1 ;;",
+        "-*) exit 1 ;;",
+        "esac",
+        '[ "$#" -gt 0 ] || exit 1',
+        '[ "$load_all" -eq 1 ] || [ "$#" -eq 1 ] || exit 1',
+        "for driver do",
+        'case "$driver" in',
+        "''|-*|*[!A-Za-z0-9._+-]*) exit 1 ;;",
+        "esac",
+        'case "$driver" in',
+    ) + tuple(
+        f"{shlex.quote(module_name)}) ;;" for module_name in module_names
+    ) + (
+        "*) exit 1 ;;",
+        "esac",
+        "done",
+        "exit 0",
+    )
+    lines.extend((
+        'if [ -L "$tools_root" ]; then',
+        "printf '%s\\n' 'refusing symlinked LTP tools directory' >&2",
+        "exit 1",
+        "fi",
+        'mkdir -p "$tools_root"',
+        'chmod 0755 "$tools_root"',
+        'kmod_tool="$tools_root/kmod"',
+        "{",
+    ))
+    lines.extend(
+        f"printf '%s\\n' {shlex.quote(line)}" for line in shim_lines
+    )
+    lines.extend((
+        '} > "$kmod_tmp"',
+        'chmod 0755 "$kmod_tmp"',
+        'mv -f "$kmod_tmp" "$kmod_tool"',
+        'ln -sf kmod "$tools_root/modprobe"',
+        'ln -sf kmod "$tools_root/rmmod"',
+        ")",
+    ))
+    return "\n".join(lines)
+
+
+@dataclasses.dataclass(frozen=True)
+class MetadataTransport:
+    initialize: str
+    append_chunks: tuple[str, ...]
+    execute: str
+    cleanup: str
+
+
+def ltp_metadata_transport(
+    setup_script: str,
+    transport_root: str = LTP_METADATA_TRANSPORT_ROOT,
+    chunk_chars: int = LTP_METADATA_TRANSPORT_CHUNK_CHARS,
+) -> MetadataTransport:
+    """Build bounded, acknowledged commands for one setup script."""
+    if not setup_script:
+        raise ValueError("LTP metadata setup script must be nonempty")
+    if chunk_chars < 1:
+        raise ValueError("LTP metadata transport chunk size must be positive")
+    compressed = gzip.compress(setup_script.encode("utf-8"), mtime=0)
+    payload = base64.b64encode(compressed).decode("ascii")
+    chunks = tuple(
+        payload[offset : offset + chunk_chars]
+        for offset in range(0, len(payload), chunk_chars)
+    )
+    root = shlex.quote(transport_root)
+    initialize = (
+        f"umask 077 && rm -rf -- {root} && mkdir {root} && "
+        f": > {root}/setup.sh.gz.b64"
+    )
+    append_chunks = tuple(
+        f"printf '%s' {shlex.quote(chunk)} >> {root}/setup.sh.gz.b64"
+        for chunk in chunks
+    )
+    execute = " ".join((
+        "(",
+        "set -eu;",
+        f"transport={root};",
+        'payload="$transport/setup.sh.gz.b64";',
+        'compressed="$transport/setup.sh.gz";',
+        'script="$transport/setup.sh";',
+        "trap 'rm -rf -- \"$transport\"' 0 1 2 15;",
+        'if ! base64 -d < "$payload" > "$compressed.tmp"; then',
+        "echo 'LTP metadata transport decode failed' >&2; exit 1; fi;",
+        'mv -f "$compressed.tmp" "$compressed";',
+        'if ! gzip -dc "$compressed" > "$script.tmp"; then',
+        "echo 'LTP metadata transport decompress failed' >&2; exit 1; fi;",
+        'chmod 0700 "$script.tmp";',
+        'mv -f "$script.tmp" "$script";',
+        'if /bin/sh "$script"; then :; else',
+        "rc=$?; echo 'LTP metadata setup script failed' >&2; exit \"$rc\"; fi;",
+        ")",
+    ))
+    cleanup = f"rm -rf -- {root} && test ! -e {root}"
+    commands = (initialize, *append_chunks, execute, cleanup)
+    if any(
+        len(command.encode("utf-8")) > LTP_METADATA_TRANSPORT_MAX_COMMAND_BYTES
+        for command in commands
+    ):
+        raise ValueError("LTP metadata transport command exceeds safe PTY size")
+    return MetadataTransport(initialize, append_chunks, execute, cleanup)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -154,10 +434,10 @@ def kernel_failure(output: str) -> str | None:
 def ltp_guest_command(command: str, tmpdir: str = "/tmp/uml-ltp-case") -> str:
     """Build the command environment used by LTP's scenario executor."""
     return (
-        f"mkdir -p {tmpdir} {LTP_ROOT}/output && "
-        f"chmod 1777 {tmpdir} {LTP_ROOT}/output && "
+        f"mkdir -p {tmpdir} {LTP_OUTPUT} && "
+        f"chmod 1777 {tmpdir} {LTP_OUTPUT} && "
         f"cd {LTP_BIN} && "
-        f"PATH={LTP_BIN}:$PATH "
+        f"PATH={LTP_DISPOSABLE_TOOLS}:{LTP_BIN}:$PATH "
         f"LTPROOT={LTP_ROOT} "
         f"TMPDIR={tmpdir} "
         f"LTP_TIMEOUT_MUL={LTP_TIMEOUT_MUL} "
@@ -167,6 +447,90 @@ def ltp_guest_command(command: str, tmpdir: str = "/tmp/uml-ltp-case") -> str:
 
 class Guest(GuestHarness):
     """Shared guest harness with LTP result and health interpretation."""
+
+    builtin_driver_metadata_setup: str | None = None
+
+    def _run_metadata_transport_command(
+        self,
+        command: str,
+        stage: str,
+        timeout_seconds: int,
+    ) -> None:
+        try:
+            result = self.run_command(command, timeout_seconds)
+        except Exception as error:
+            raise RuntimeError(
+                f"LTP metadata {stage} was not acknowledged: {error}"
+            ) from error
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"LTP metadata {stage} failed: {result.output}"
+            )
+
+    def boot_and_login(
+        self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS
+    ) -> None:
+        super().boot_and_login(timeout_seconds)
+        if not self._overlay_shell:
+            return
+        if self.builtin_driver_metadata_setup is None:
+            raise RuntimeError("LTP built-in driver metadata was not configured")
+        transport = ltp_metadata_transport(
+            self.builtin_driver_metadata_setup
+        )
+        primary_error: Exception | None = None
+        finalization_errors: list[Exception] = []
+        restore_echo = False
+        cleanup_transport = False
+        try:
+            restore_echo = True
+            self._run_metadata_transport_command(
+                "stty -echo", "console-echo disable", timeout_seconds
+            )
+            cleanup_transport = True
+            self._run_metadata_transport_command(
+                transport.initialize, "transport initialization", timeout_seconds
+            )
+            total_chunks = len(transport.append_chunks)
+            for index, command in enumerate(transport.append_chunks, start=1):
+                self._run_metadata_transport_command(
+                    command,
+                    f"transport chunk {index}/{total_chunks}",
+                    timeout_seconds,
+                )
+            self._run_metadata_transport_command(
+                transport.execute,
+                "decode/decompress/setup execution",
+                timeout_seconds,
+            )
+        except Exception as error:
+            primary_error = error
+
+        if cleanup_transport:
+            try:
+                self._run_metadata_transport_command(
+                    transport.cleanup, "transport cleanup", timeout_seconds
+                )
+            except Exception as error:
+                finalization_errors.append(error)
+        if restore_echo:
+            try:
+                self._run_metadata_transport_command(
+                    "stty echo", "console-echo restore", timeout_seconds
+                )
+            except Exception as error:
+                finalization_errors.append(error)
+
+        if primary_error is not None:
+            if finalization_errors:
+                details = "; ".join(str(error) for error in finalization_errors)
+                raise RuntimeError(
+                    f"{primary_error}; metadata finalization also failed: {details}"
+                ) from primary_error
+            raise primary_error
+        if finalization_errors:
+            details = "; ".join(str(error) for error in finalization_errors)
+            raise RuntimeError(f"LTP metadata finalization failed: {details}")
 
     def run(self, case: Case) -> Result:
         token = uuid.uuid4().hex
@@ -608,7 +972,7 @@ def accepted(result: Result) -> bool:
     if failed != 0 or broken != 0:
         return False
     if skipped > 0:
-        return True
+        return result.return_code in (0, 32)
     return (
         result.case.expectation == "userspace-exempt"
         and result.return_code == 0
@@ -621,6 +985,15 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--manifest", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--modules-builtin",
+        required=True,
+        type=pathlib.Path,
+        help=(
+            "authoritative modules.builtin from the exact kernel build; "
+            "include/config/kernel.release must be present beside it"
+        ),
+    )
     parser.add_argument(
         "--engine",
         choices=("gadgets", "jit"),
@@ -746,10 +1119,21 @@ def main() -> int:
         arguments.rootfs,
         arguments.manifest,
         arguments.disabled_manifest,
+        arguments.modules_builtin,
     ):
         if not path.is_file():
             print(f"missing required file: {path}", file=sys.stderr)
             return 2
+    try:
+        modules_builtin_data, expected_kernel_release = load_modules_builtin(
+            arguments.modules_builtin
+        )
+        Guest.builtin_driver_metadata_setup = ltp_builtin_driver_metadata_setup(
+            modules_builtin_data, expected_kernel_release
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     cases = load_manifest(arguments.manifest)
     disabled = load_disabled_manifest(arguments.disabled_manifest)
     if arguments.jobs < 1:

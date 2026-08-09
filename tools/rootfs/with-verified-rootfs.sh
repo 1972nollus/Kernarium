@@ -1,16 +1,16 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Run one guest campaign only after the immutable lower image verifies, then
+# Run one guest campaign only after the EROFS image verifies, then
 # verify it again even when the campaign fails.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-ROOTFS=${UML_INTEGRATION_ROOTFS:-"$ROOT_DIR/rootfs.img"}
+ROOTFS=${UML_INTEGRATION_ROOTFS:-"$ROOT_DIR/rootfs.erofs"}
 MANIFEST=${UML_ROOTFS_MANIFEST:-"$ROOT_DIR/tools/rootfs/manifest.json"}
 
 usage()
 {
-	printf '%s\n' "Usage: tools/rootfs/with-verified-rootfs.sh [--rootfs PATH] -- COMMAND [ARG ...]" >&2
+	printf '%s\n' "Usage: tools/rootfs/with-verified-rootfs.sh [--rootfs PATH] [--manifest PATH] -- COMMAND [ARG ...]" >&2
 }
 
 while [ "$#" -gt 0 ]; do

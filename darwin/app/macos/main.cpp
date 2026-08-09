@@ -314,7 +314,6 @@ bool usable_rootfs(const std::filesystem::path &path)
 {
 	struct stat details {};
 	return stat(path.c_str(), &details) == 0 && S_ISREG(details.st_mode) &&
-		(details.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) == 0 &&
 		access(path.c_str(), R_OK) == 0;
 }
 
@@ -335,7 +334,7 @@ std::optional<std::filesystem::path> locate_rootfs()
 		auto path = canonical_rootfs(configured);
 		if (!path)
 			std::fprintf(stderr,
-				"UML_ROOTFS is not a readable immutable rootfs image: %s\n",
+				"UML_ROOTFS is not a readable EROFS image: %s\n",
 				configured);
 		return path;
 	}
@@ -347,12 +346,12 @@ std::optional<std::filesystem::path> locate_rootfs()
 		auto parent = std::filesystem::canonical(executable.data(), error)
 			.parent_path();
 		if (!error)
-			if (auto path = canonical_rootfs(parent / "rootfs.img"))
+			if (auto path = canonical_rootfs(parent / "rootfs.erofs"))
 				return path;
 	}
-	if (auto path = canonical_rootfs("rootfs.img"))
+	if (auto path = canonical_rootfs("rootfs.erofs"))
 		return path;
-	std::fputs("rootfs.img was not found beside the executable or in the "
+	std::fputs("rootfs.erofs was not found beside the executable or in the "
 		"current directory\n", stderr);
 	return std::nullopt;
 }

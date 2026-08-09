@@ -1,26 +1,154 @@
 # Darwin UML LTP progress
 
-> Historical execution log. References to `rootfs.ext2` describe pre-refactor
-> results; use the immutable `rootfs.img` workflow documented in
-> `docs/testing.md` for current work.
+> Historical execution log. References to `rootfs.ext2`, partitioned
+> `rootfs.img`, or `/dev/ubda1` describe dated pre-EROFS results; use the
+> unified `rootfs.erofs` workflow documented in `docs/testing.md` for current
+> work.
 
-Last updated: 2026-07-26 (Asia/Tokyo)
+Last updated: 2026-08-10 (Asia/Tokyo)
 
 ## Scope and rules
 
-- Installed LTP version: `20260130` under `/usr/lib/ltp-testsuite`.
+- Current unified-image LTP root: `/opt/ltp` in `rootfs.erofs`. The version and
+  historical results below describe the dated campaigns that produced them.
+- Current production-kernel scheduling has 2,428 verified entries and 135
+  disabled entries. The disabled set includes 79 `CONFIG_HUGETLBFS`-dependent,
+  five `CONFIG_TRANSPARENT_HUGEPAGE`-dependent, and four `CONFIG_CAN`-dependent
+  cases because those options are deliberately absent; these current counts
+  supersede the historical campaign totals below without rewriting them.
 - Full-suite scope: all 2,563 cases referenced by `scenario_groups/default`, run one test at a time.
 - The installed `runtest/syscalls-ipc` supplies the 57 IPC cases referenced by the absent `runtest/ipc` alias.
 - Results predating the static-gadget/MMU refactor are not credited. This campaign restarted from case 1.
 - Exemptions require evidence of missing physical hardware/architecture or a faulty userspace library.
-- Missing kernel features are enabled and retested; they are not exemptions, except loadable modules, which are deliberately excluded so the kernel contains no dynamically loaded code.
+- A missing kernel feature is not automatically enabled for LTP. Cases that
+  require a deliberately absent product-policy option belong in
+  `tests/integration/ltp/disabled-tests.tsv`; the kernel policy must not be
+  widened merely to increase the scheduled count. The currently removed
+  HugeTLBFS, transparent-huge-page, and CAN options follow this rule; loadable-
+  module cases retain their separately documented static-kernel expectations.
 - KSM is intentionally disabled because host-backed guest RAM does not benefit from an in-guest duplicate-page scanner; 17 KSM-specific or KSM-dependent scenario entries are listed in `tests/integration/ltp/disabled-tests.tsv` and are never scheduled.
 - Hardware-facing VT and network/synchronous-serial TTY drivers are intentionally disabled because the emulator exposes a host-backed serial console rather than physical display, keyboard, or serial-network devices; the four direct PTY cases and their three CVE-scenario duplicates are listed in the disabled manifest.
 - Twenty-two controller cases that require globally expensive kernel diagnostics are disabled. Those diagnostics are absent from the production configuration, and the earlier configuration-only accommodations for those cases were removed.
 - Every credited result is also present in `tests/integration/ltp/verified-tests.tsv` and rerunnable by the host suite.
 - Ordinary cases always run with one guest CPU. Tests which intentionally exercise multiple CPUs are tagged `host-pressure`, retain the full host-backed SMP topology, and are excluded by default; `--run-host-pressure` explicitly includes that serialized tail after the ordinary parallel phase.
 
-## Fresh baseline
+## Current unified-image manifest boundary (2026-08-10)
+
+This migration changed scheduling policy, not the historical full-campaign
+results. No full gadget or JIT LTP campaign was run for the rootfs migration;
+the focused current-image qualification below must not be read as a new full
+suite result.
+
+| Manifest disposition | Cases | Current reason |
+|---|---:|---|
+| Verified/scheduled | 2,428 | Scheduled under carried-forward expectations; the full suite was not rerun for this image migration |
+| Disabled | 135 | 47 prior policy exclusions plus 88 cases that require deliberately absent kernel configuration |
+| Total | 2,563 | Exact default-scenario inventory; the manifests are disjoint |
+
+The 88 newly disabled cases are 79 requiring `CONFIG_HUGETLBFS`, five
+requiring `CONFIG_TRANSPARENT_HUGEPAGE`, and four requiring `CONFIG_CAN`.
+Their explicit scenario/test identities and reasons live in
+`tests/integration/ltp/disabled-tests.tsv`. The tooling contract verifies the
+2,428/135 split and zero overlap.
+
+## Focused unified-image qualification (2026-08-10)
+
+An initial precursor-image 16 KiB JIT diagnostic completed 37 cases selected
+to investigate the new `e2fsprogs` and `iproute2` payloads in LTP version
+`20260529`. It finished in 18.45 seconds and established 20 candidate outcomes,
+while 17 network cases stopped at LTP's built-in-driver metadata preflight.
+That run is not credited as final-image evidence. All credited final-image
+runs used the gadgets engine; they resolved the metadata preflight and
+established the 44 accepted cases below.
+
+`TST_NEEDS_DRIVERS` searches the version-matched text files `modules.dep` and
+`modules.builtin`; it does not load a module. Each LTP campaign now requires
+the complete `modules.builtin` from its selected `UML_KERNEL_BUILD_DIR`. The
+runner validates every entry as a canonical `kernel/.../*.ko` path, validates
+the sibling `include/config/kernel.release` against guest `uname -r`, and
+generates the complete setup script on the host. The harness gzip-compresses
+that script and sends its base64 text in independent 1,024-character append
+commands; every command is below 2 KiB and must receive its own serial-console
+completion marker before the next chunk is sent. One final bounded command
+atomically decodes, decompresses, and executes the staged script under `/run`,
+then removes every transport file. Console echo is restored after success or
+failure. Only after `/proc/config.gz` proves that loadable modules are disabled
+does the script replace any stale version-matched `modules.builtin` with the
+exact host bytes and replace `modules.dep` with an empty file. These changes
+exist only in the per-guest OverlayFS upper.
+
+The current `/opt/ltp` payload has 17 `TST_NEEDS_DRIVERS` declarations covering
+15 distinct driver names. Both canonical page-profile builds identify seven
+of them as built in: `binfmt_misc`, `quota_v2`, `nf_tables`, `zram`, `dummy`,
+`wireguard`, and `veth`. The remaining `geneve`, `macsec`, `mpls_router`,
+`mpls_iptunnel`, `mpls_gso`, `nfsd`, `sch_netem`, and `sch_teql` drivers are
+absent and are therefore never claimed by the fed Kbuild metadata. Of those
+declarations, the scheduled manifest uses `binfmt_misc`, `quota_v2`, `zram`,
+`dummy`, and `veth`; `nf_tables` and `wireguard` occur only in unscheduled
+network scenarios.
+
+An earlier precursor-image focused 17-case 16 KiB JIT diagnostic finished in
+10.06 seconds with
+every namespace case clean: all eight `netns_breakns` variants produced two
+`TPASS`, all eight `netns_comm` variants produced three `TPASS`, and
+`netns_sysfs` produced three `TPASS`. Evidence counts below are
+`TPASS`/`TCONF`.
+
+After `CONFIG_FS_ENCRYPTION=y` was pinned in the production fragment, a final
+16 KiB gadgets run accepted all 31 selected live-manifest cases in 25.4
+seconds. That selection covered `statx05`, the quota, binfmt, namespace,
+formatter, ext2-workspace, `zram02`, and `zram03` boundaries. A separate 4 KiB
+gadgets confirmation also accepted `statx05` with four TPASS results.
+The 15 remaining table cases were then rerun together against the final EROFS
+digest with the 16 KiB gadgets engine: all 15 live expectations were accepted,
+all commands returned zero, and the run completed in 13.37 seconds with no
+failure, broken, or warning result.
+
+| Current disposition | Cases | Focused evidence |
+|---|---:|---|
+| Confirmed strict pass | 33 | `fanotify22` 4/0, `mmap16` 10/0, `quotactl01` 36/0, `quotactl04` 16/0, `quotactl06` 22/0, `quotactl08` 36/0, `statx05` 4/0, `statx06` 4/0, `statx09` 4/0, `netns_netlink` 1/0, explicit ext3/ext4 `mkfs01` 5/0 each, `binfmt_misc01` 9/0, `binfmt_misc02` 6/0, `quota_remount_test01` 1/0, eight `netns_breakns` variants 2/0 each, eight `netns_comm` variants 3/0 each, `netns_sysfs` 3/0, and `zram03` 1/0 |
+| Confirmed userspace/filesystem exemption | 11 | `fallocate04` 7/3, `fallocate05` 12/2, `fallocate06` 16/4, `fanotify13` 216/56, `fanotify24` 174/2, both `preadv203` builds 2/2 each, `quotactl09` 10/2, `statx10` 2/3, `zram01` 12/1, and `zram02` 6/1 because their retired attribute probes are inapplicable |
+
+The generic `mkfs01`, explicit ext2 `mkfs01`, and ext2-workspace `read02`
+controls each passed all five assertions. The final image supplies `bc` 1.07.1,
+`/usr/sbin/e4crypt`, and the `quota`/`quotacheck` 4.09 suite, with `quota` at
+`/usr/bin/quota`.
+`quota_remount_test01` now passes its quota-accounting remount check, while
+`quotactl01` passes all 36 user/group quota-control assertions and `quotactl06`
+passes all 22 quota error-path assertions across the `vfsv0` and `vfsv1`
+formats.
+
+The exact live-manifest 16 KiB gadgets `zram01` run completed in 167.6 seconds
+with 12 TPASS results, one TCONF for the retired `max_comp_streams` attribute,
+return code zero, and `accepted=true`. The live manifest records that packaged-
+test limitation as a userspace exemption and runs the process-heavy case
+serially with the same one-vCPU topology used by ordinary cases; its 300-second
+bound remains sufficient for the measured gadgets run.
+
+The strict `binfmt_misc01` and `binfmt_misc02` scripts independently require a
+`modprobe` command even when `binfmt_misc` is built in. The strict `zram03`
+binary likewise checks for both `modprobe` and `rmmod`, although its current
+zram-control path does not load or unload the built-in driver. Real kmod cannot
+perform those operations with `CONFIG_MODULES=n`, so the LTP overlay supplies
+disposable `kmod`, `modprobe`, and `rmmod` command names under
+`/run/uml-ltp-tools` and puts that directory first in each case's `PATH`.
+The shim rechecks `CONFIG_MODULES=n` on every invocation. A load succeeds as a
+no-op only for an exact built-in basename embedded from the validated host
+metadata; multiple names require `-a` or `--all`. Unknown names, parameters,
+other options or kmod operations, and every removal request fail. In the
+installed binfmt helper, removal is conditional on a preceding load; a
+correctly advertised built-in is already present in `/proc/filesystems`, so
+the fake removal path is not part of the normal strict cases. This deliberately
+does not imitate unload/reload semantics for a static kernel.
+
+The prior binfmt probes that reported `TCONF: 'modprobe' not found` predate the
+disposable command suite. Final-image reruns now establish 9 TPASS for
+`binfmt_misc01`, 6 TPASS for `binfmt_misc02`, and 1 TPASS for `zram03`.
+`zram02` also completes all six applicable phases with only its retired
+attribute probe reported as TCONF. These results come from executed tests, not
+from inferring behavior from package or metadata presence.
+
+## 2026-07 historical fresh baseline
 
 | Check | Result | Evidence |
 |---|---:|---|
@@ -29,7 +157,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | Root filesystem | Pass | Canonical ext2 image is `/dev/ubda` read-only; volatile upper/work layers are tmpfs-backed overlayfs |
 | Installed LTP | Pass | Version `20260130`; default scenario contains 2,563 cases |
 
-## Suite summary
+## 2026-07 historical suite summary
 
 | Scenario | Cases | Pass | Fail | Exempt | Disabled | Pending | Notes |
 |---|---:|---:|---:|---:|---:|---:|---|
@@ -63,7 +191,7 @@ Last updated: 2026-07-26 (Asia/Tokyo)
 | watchqueue | 9 | 9 | 0 | 0 | 0 | 0 | Complete; all producer events and queue metadata paths pass |
 | **Total** | **2563** | **2123** | **0** | **393** | **47** | **0** | |
 
-## Current refactored-emulator qualification
+## 2026-07 refactored-emulator qualification (historical)
 
 | Check | Result | Evidence |
 |---|---:|---|

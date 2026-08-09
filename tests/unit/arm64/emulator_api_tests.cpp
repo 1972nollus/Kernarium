@@ -120,7 +120,7 @@ void test_c_api_rejects_inconsistent_creation_inputs()
 	const uml_emulator_config inconsistent_image{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/rootfs.img",
+		.rootfs_path = "/tmp/rootfs.erofs",
 		.kernel_image = nullptr,
 		.kernel_image_size = 1,
 	};
@@ -333,11 +333,15 @@ int native_kernel(int argc, char *const argv[], char *const envp[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
 	const bool rootfs = std::ranges::any_of(arguments, [](const char *argument) {
-		return std::strcmp(argument, "ubd0r=/tmp/rootfs.img") == 0;
+		return std::strcmp(argument, "ubd0c=/tmp/rootfs.erofs") == 0;
 	});
 	const bool root = std::ranges::any_of(arguments, [](const char *argument) {
-		return std::strcmp(argument, "root=/dev/ubda1") == 0;
+		return std::strcmp(argument, "root=/dev/ubda") == 0;
 	});
+	const bool root_type = std::ranges::any_of(
+		arguments, [](const char *argument) {
+			return std::strcmp(argument, "rootfstype=erofs") == 0;
+		});
 	const bool environment = envp != nullptr && envp[0] != nullptr &&
 		std::strcmp(envp[0], "UML_TEST=1") == 0;
 	execution_option_was_stripped = std::ranges::none_of(
@@ -345,7 +349,7 @@ int native_kernel(int argc, char *const argv[], char *const envp[])
 			return std::string_view{argument}.starts_with(
 				"--execution-engine");
 		});
-	native_arguments_valid = rootfs && root && environment;
+	native_arguments_valid = rootfs && root && root_type && environment;
 	unsigned char mac[6]{};
 	unsigned int mtu{};
 	const unsigned char frame[4]{1, 2, 3, 4};
@@ -523,7 +527,7 @@ void test_native_entry()
 		.read = network_read,
 		.write = network_write,
 	};
-	char rootfs_path[]{"/tmp/rootfs.img"};
+	char rootfs_path[]{"/tmp/rootfs.erofs"};
 	uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
@@ -942,7 +946,7 @@ void test_injected_user_network_requests_dhcp()
 	const uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/rootfs.img",
+		.rootfs_path = "/tmp/rootfs.erofs",
 		.kernel_image = nullptr,
 		.kernel_image_size = 0,
 		.native_kernel_entry = native_dhcp_kernel,

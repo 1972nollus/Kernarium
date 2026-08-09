@@ -100,7 +100,7 @@ def main() -> int:
         default=REPOSITORY / ".build" / "cmake-macos" / "bin" / "uml-darwin",
     )
     parser.add_argument(
-        "--rootfs", type=pathlib.Path, default=REPOSITORY / "rootfs.img"
+        "--rootfs", type=pathlib.Path, default=REPOSITORY / "rootfs.erofs"
     )
     parser.add_argument("--memory", default="8G")
     parser.add_argument(
@@ -113,15 +113,16 @@ def main() -> int:
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
-        (
-            "root=/dev/ubda1",
-            f"--execution-engine={arguments.engine}",
-        ),
+        (f"--execution-engine={arguments.engine}",),
         init_shell=True,
     )
     try:
         guest.boot_to_shell(180)
-        command(guest, "mount -t proc proc /proc")
+        command(
+            guest,
+            "mount -t proc proc /proc && "
+            "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
+        )
 
         auxv = auxiliary_vector(guest)
         actual_hwcap = auxv.get(16)
@@ -168,7 +169,7 @@ def main() -> int:
             )
             return 0
 
-        node = "/root/.nvm/versions/node/v24.18.0/bin/node"
+        node = "/opt/node/bin/node"
         node_path = command(guest, f"test -x {shlex.quote(node)} && echo present")
         if "present" not in node_path:
             raise RuntimeError(f"Node executable is missing: {node}")

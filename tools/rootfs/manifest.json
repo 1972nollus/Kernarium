@@ -1,9 +1,8 @@
 {
-  "schema_version": 2,
-  "image": "rootfs.img",
-  "sha256": "501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5",
-  "size": 8589934592,
-  "frozen_mode": "0444",
+  "schema_version": 3,
+  "image": "rootfs.erofs",
+  "sha256": "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91",
+  "size": 3802316800,
   "acquisition": {
     "method": "authenticated release artifact",
     "url_environment": "UML_ROOTFS_URL",
@@ -12,38 +11,46 @@
     "public_key_environment": "UML_ROOTFS_PUBLIC_KEY",
     "required_verification": "detached OpenSSL signature over a small release digest statement, followed by this pinned image SHA-256"
   },
-  "partition_table": {
-    "scheme": "gpt",
-    "sector_size": 512,
-    "protective_mbr": {
-      "type": "0xee",
-      "first_lba": 1,
-      "sector_count": 16777215
-    },
-    "gpt": {
-      "header_lba": 1,
-      "first_usable_lba": 2048,
-      "last_usable_lba": 16777182,
-      "partition_entry_lba": 2,
-      "partition_entry_count": 128,
-      "partition_entry_size": 128
-    },
-    "partitions": [
-      {
-        "number": 1,
-        "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
-        "first_lba": 2048,
-        "last_lba": 16775167
-      }
-    ]
+  "filesystem": {
+    "format": "erofs",
+    "superblock_offset": 1024,
+    "magic": "0xe0f5e1e2",
+    "checksum": "0xaaf1ff11",
+    "feature_compat": "0x00000007",
+    "feature_incompat": "0x00000003",
+    "available_compr_algs": "0x0008",
+    "extra_devices": 0,
+    "block_size": 4096,
+    "blocks": 928300,
+    "inodes": 202634,
+    "uuid": "b84fcbe2-0673-4126-8f81-bdee45997306",
+    "volume_name": "rootfs"
   },
   "installed_guest": {
     "architecture": "arm64",
-    "distribution": "Debian GNU/Linux 13 (trixie)",
-    "chromium": "150.0.7871.100-1~deb13u1",
-    "mesa": "26.1.2-1~bpo13+1",
-    "kde_plasma_desktop": "5:162",
-    "kwin_wayland": "4:6.3.6",
-    "vulkan_tools": "1.4.304.0+dfsg1-2"
+    "payload_root": "/opt",
+    "ltp_root": "/opt/ltp",
+    "node": "/opt/node/bin/node",
+    "utilities": {
+      "mkfs_ext2": "/usr/sbin/mkfs.ext2",
+      "mkfs_ext3": "/usr/sbin/mkfs.ext3",
+      "mkfs_ext4": "/usr/sbin/mkfs.ext4",
+      "mke2fs": "/usr/sbin/mke2fs",
+      "debugfs": "/usr/sbin/debugfs",
+      "ip": "/usr/sbin/ip",
+      "bc": "/usr/bin/bc",
+      "quota": "/usr/bin/quota",
+      "quotacheck": "/usr/sbin/quotacheck",
+      "e4crypt": "/usr/sbin/e4crypt"
+    },
+    "benchmarks": {
+      "geekbench5": "/opt/geekbench/release/geekbench5",
+      "geekbench6": "/opt/geekbench/release/geekbench6",
+      "geekbench7": "/opt/geekbench/release/geekbench7",
+      "hpl": "/opt/hpl/xhpl",
+      "passmark": "/opt/passmark/PerformanceTest_Linux_ARM64",
+      "unixbench": "/opt/unixbench/Run"
+    },
+    "graphics_conformance_root": "/opt/vk-gl-cts"
   }
 }
