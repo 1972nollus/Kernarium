@@ -207,6 +207,16 @@ def marker_pattern(marker: str) -> re.Pattern[bytes]:
     )
 
 
+# A console prompt does not always begin a line with CRLF. When bash execs a
+# replacement shell it first emits its bracketed-paste reset, and the terminal
+# then returns the carriage without a line feed, so the sequence reaching the
+# transcript is `\r\n<ESC>[?2004l\r# `. Anchoring on `\r?\n` alone cannot match
+# that prompt at all, because `[^\r\n]*` may not cross the bare carriage
+# return, so `exec sudo -n /bin/sh` timed out with the prompt already on screen.
+# Accept a lone `\r` as a line start as well.
+LINE_START = rb"(?:^|\r?\n|\r)"
+
+
 class Guest:
     """One emulator process controlled through its serial console."""
 
@@ -296,13 +306,13 @@ class Guest:
         """Reach a root shell supplied by an explicit init-shell boot mode."""
         if not (self._init_shell or self._overlay_shell):
             raise RuntimeError("Guest was not constructed with an init-shell mode")
-        self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+        self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
         if self._overlay_shell:
             search_from = len(self._transcript)
             self._write(OVERLAY_SHELL_BOOTSTRAP + "\n")
             self._read_until(
                 re.compile(
-                    rb"(?:^|\r?\n)"
+                    LINE_START
                     + re.escape(OVERLAY_READY_MARKER.encode())
                     + rb"\r?\n"
                 ),
@@ -312,14 +322,14 @@ class Guest:
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
         if self._systemd_overlay:
-            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
             self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
             login = self._read_until(
                 re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
                 timeout_seconds,
             )
             self._read_until(
-                re.compile(rb"(?:^|\r?\n)[^\r\n]*\$ $"),
+                re.compile(LINE_START + rb"[^\r\n]*\$ $"),
                 timeout_seconds,
                 login.end(),
             )
@@ -334,7 +344,7 @@ class Guest:
             search_from = len(self._transcript)
             self._write("exec sudo -n /bin/sh\n")
             self._read_until(
-                re.compile(rb"(?:^|\r?\n)[^\r\n]*# $"),
+                re.compile(LINE_START + rb"[^\r\n]*# $"),
                 timeout_seconds,
                 search_from,
             )
@@ -345,7 +355,7 @@ class Guest:
                 re.compile(rb" login:\s*$", re.MULTILINE), timeout_seconds
             )
             self._write("root\n")
-            self._read_until(re.compile(rb"(?:^|\r?\n)# $"), timeout_seconds)
+            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
         if self._swap_path is not None:
             result = self.run_command(
                 "mkswap /dev/ubdb >/dev/null && swapon /dev/ubdb",

@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import base64
 import gzip
 import pathlib
+import re
 import shlex
 import subprocess
 import sys
@@ -1051,12 +1052,48 @@ class ResultParsingTests(unittest.TestCase):
         self.assertEqual(writes[0], runner.SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
         self.assertIn(rb" login:\s*uml \(automatic login\)", patterns)
         self.assertNotIn(rb" login:\s*root \(automatic login\)", patterns)
-        self.assertIn(rb"(?:^|\r?\n)[^\r\n]*\$ $", patterns)
+        self.assertIn(guest_support.LINE_START + rb"[^\r\n]*\$ $", patterns)
         self.assertIn(73, search_offsets)
         self.assertEqual(search_offsets[-1], len(guest._transcript))
-        self.assertEqual(patterns[-1], rb"(?:^|\r?\n)[^\r\n]*# $")
+        self.assertEqual(patterns[-1], guest_support.LINE_START + rb"[^\r\n]*# $")
         self.assertEqual(commands, ['test "$(id -un)" = uml && sudo -n true'])
         self.assertEqual(writes[-1], "exec sudo -n /bin/sh\n")
+
+    def test_prompt_patterns_match_the_bytes_a_real_console_emits(self) -> None:
+        """Pin the prompt matchers against transcripts, not against themselves.
+
+        The sibling test above mocks `_read_until`, so it only compares pattern
+        strings and cannot tell a working matcher from a broken one. A Geekbench
+        run timed out with `# ` already on screen because bash emits its
+        bracketed-paste reset and a bare carriage return when it execs a
+        replacement shell, and `[^\\r\\n]*` may not cross that carriage return.
+        """
+        root_prompt = re.compile(guest_support.LINE_START + rb"[^\r\n]*# $")
+        user_prompt = re.compile(guest_support.LINE_START + rb"[^\r\n]*\$ $")
+
+        exec_replacement_shell = (
+            b" sudo -n /bin/sh\r\n"
+            b"\x1b[?2004huml@debian-rootfs:~$ exec sudo -n /bin/sh\r\n"
+            b"\x1b[?2004l\r# "
+        )
+        self.assertIsNotNone(root_prompt.search(exec_replacement_shell))
+
+        for transcript in (
+            b"\r\n# ",
+            b"\n# ",
+            b"# ",
+            b"\r\n\x1b[?2004l\rdebian-rootfs:~# ",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertIsNotNone(root_prompt.search(transcript))
+
+        self.assertIsNotNone(
+            user_prompt.search(b"\r\n\x1b[?2004h\ruml@debian-rootfs:~$ ")
+        )
+
+        # The anchor must still not match a prompt buried mid-line, which is
+        # what the `[^\r\n]*` bound is there to prevent.
+        self.assertIsNone(root_prompt.search(b"\r\nnot a prompt # yet\r\n"))
 
     def test_systemd_overlay_login_rejects_missing_noninteractive_sudo(self) -> None:
         guest = object.__new__(runner.Guest)
