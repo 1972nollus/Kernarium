@@ -77,9 +77,41 @@ host's memory; hosts with more headroom may override `UML_KERNEL_JOBS` or
 clean stale managed replay branch, and it never replaces the source directory
 itself.
 
-`kernel/config/` owns page-size fragments. `kernel/toolchain/darwin.env` owns
-portable compiler/linker/tool defaults. Darwin host tools resolve their
-unmodified `<elf.h>`, `<libelf.h>`, and `<byteswap.h>` includes through the
+## Kernel configuration
+
+One kernel configuration ships. `kernel/config/common.fragment` is the entire
+policy; `kernel/build-kernel.sh` copies it verbatim as the starting `.config`,
+applies exactly one page-size fragment through `scripts/config`, and then runs
+`olddefconfig` so every unlisted symbol takes its Kconfig default.
+
+```text
+kernel/config/common.fragment    the whole shipped policy
+kernel/config/page-16k.fragment  guest page size, default
+kernel/config/page-4k.fragment   guest page size, compatibility profile
+```
+
+Guest page size is the only axis that varies, because a single `.config`
+cannot hold both values. There is no `--profile` selector and no optional
+policy layer: a symbol absent from `common.fragment` is absent from the
+product. Because UML deliberately ships without loadable-module support, every
+capability a guest distribution can use has to be built in there, including
+the control groups systemd requires to start at all.
+
+Three constraints bound what may be added. Loadable modules stay off because
+module text would be dynamically published executable memory inside the host
+process, requiring the same Apple dynamic-code entitlement as the JIT engine.
+SELinux, Smack, and AppArmor are all `LSM_FLAG_EXCLUSIVE`, so exactly one can
+be active; Smack is the validated choice and the recorded LTP results depend
+on it. `CONFIG_HOSTFS` stays off because it lets the guest mount an arbitrary
+host directory, which would move the reachable host filesystem from
+emulator-side policy into guest control; host data is shared through an
+explicit device or image instead.
+
+## Toolchain
+
+`kernel/toolchain/darwin.env` owns portable compiler/linker/tool defaults.
+Darwin host tools resolve their unmodified `<elf.h>`, `<libelf.h>`, and
+`<byteswap.h>` includes through the
 project-owned compatibility headers under `kernel/toolchain/darwin-host`.
 Their ELF ABI layouts come from the selected Linux source, and they do not
 discover or link a system libelf. Darwin UML is a native arm64 Mach-O build,

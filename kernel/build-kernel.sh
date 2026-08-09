@@ -19,14 +19,14 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/build-kernel.sh --source PATH --build PATH --page-size 16k|4k
-                              [--profile core|desktop|production] [--jobs N]
+                              [--jobs N]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
-OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. The
-production profile adds desktop and container policy; core and desktop builds
-omit the later optional fragments. The output directory must be outside the
-Linux source tree. Darwin host-tool compatibility is injected from
+OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
+kernel policy ships: kernel/config/common.fragment is the whole configuration
+and only the page-size fragment varies. The output directory must be outside
+the Linux source tree. Darwin host-tool compatibility is injected from
 kernel/toolchain/darwin-host.
 EOF
 }
@@ -34,7 +34,6 @@ EOF
 SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
-PROFILE=production
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--source)
@@ -57,11 +56,6 @@ while [ "$#" -gt 0 ]; do
 		UML_KERNEL_JOBS=$2
 		shift 2
 		;;
-	--profile)
-		[ "$#" -ge 2 ] || fail "--profile requires core, desktop, or production"
-		PROFILE=$2
-		shift 2
-		;;
 	-h|--help)
 		usage
 		exit 0
@@ -79,10 +73,6 @@ done
 case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
-esac
-case "$PROFILE" in
-core|desktop|production) ;;
-*) fail "--profile must be core, desktop, or production" ;;
 esac
 case "$UML_KERNEL_JOBS" in
 *[!0-9]*|'') fail "UML_KERNEL_JOBS must be a positive integer" ;;
@@ -213,12 +203,6 @@ esac
 [ -f "$CONFIG_FRAGMENT" ] || fail "missing page-size config fragment: $CONFIG_FRAGMENT"
 [ -f "$CONFIG_DIR/common.fragment" ] || fail "missing common config fragment"
 cp "$CONFIG_DIR/common.fragment" "$BUILD_DIR/.config"
-if [ "$PROFILE" != core ]; then
-	apply_config_fragment "$CONFIG_DIR/desktop.fragment"
-fi
-if [ "$PROFILE" = production ]; then
-	apply_config_fragment "$CONFIG_DIR/containers.fragment"
-fi
 apply_config_fragment "$CONFIG_FRAGMENT"
 run_make olddefconfig
 run_make -j"$UML_KERNEL_JOBS"

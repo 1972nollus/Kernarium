@@ -178,13 +178,6 @@ set(UML_KERNEL_CROSS_COMPILE "" CACHE STRING
     "Optional tool prefix passed to Kbuild (Darwin UML is native by default)")
 set(UML_KERNEL_LLVM "" CACHE STRING
     "Optional Kbuild LLVM selector (for example 1 or a tool-prefix)")
-set(UML_KERNEL_PROFILE production CACHE STRING
-    "Darwin UML kernel policy profile (core, desktop, or production)")
-set_property(CACHE UML_KERNEL_PROFILE PROPERTY STRINGS core desktop production)
-if(NOT UML_KERNEL_PROFILE MATCHES "^(core|desktop|production)$")
-    message(FATAL_ERROR
-        "UML_KERNEL_PROFILE must be core, desktop, or production")
-endif()
 
 add_custom_target(uml_kernel_source_verify
     COMMAND "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
@@ -218,11 +211,8 @@ add_custom_command(
             --source "${UML_KERNEL_SOURCE_DIR}"
             --build "${UML_KERNEL_BUILD_DIR}"
             --page-size "${UML_KERNEL_PAGE_VARIANT}"
-            --profile "${UML_KERNEL_PROFILE}"
     DEPENDS
             "${PROJECT_SOURCE_DIR}/kernel/config/common.fragment"
-            "${PROJECT_SOURCE_DIR}/kernel/config/desktop.fragment"
-            "${PROJECT_SOURCE_DIR}/kernel/config/containers.fragment"
             "${UML_KERNEL_PAGE_FRAGMENT}"
             "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
             "${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake"
