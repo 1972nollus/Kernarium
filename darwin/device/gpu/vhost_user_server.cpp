@@ -88,6 +88,16 @@ void configureOutputDescriptor(int descriptor)
     }
 }
 
+void flushReadinessOutput()
+{
+    if (std::fflush(stdout) == 0)
+        return;
+    const int flushError = errno;
+    throw std::runtime_error(
+        "VNC readiness output flush failed: " +
+        std::string(std::strerror(flushError)));
+}
+
 class SocketPathCleanup final {
 public:
     explicit SocketPathCleanup(std::filesystem::path path)
@@ -1344,6 +1354,7 @@ void VhostUserServer::runConnected(
         static_cast<unsigned int>(vncPort_),
         display_.width(),
         display_.height());
+    flushReadinessOutput();
     if (ready)
         ready();
     const int transferred = guard.release();
@@ -1410,6 +1421,7 @@ void VhostUserServer::run(
         static_cast<unsigned int>(vncPort_),
         display_.width(),
         display_.height());
+    flushReadinessOutput();
     if (ready)
         ready();
 
