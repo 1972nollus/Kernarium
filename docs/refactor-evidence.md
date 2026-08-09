@@ -1,15 +1,33 @@
 # Refactor evidence
 
-This index records the open seventh independent audit on 2026-08-04 plus
-relevant dated observations from earlier campaigns. The seventh pass supersedes
-the sixth pass's repository-complete claim. Rootfs file management is
-explicitly excluded until the testing-image redesign, and campaigns needing
-external inputs remain external acceptance rather than source-refactor work.
-The authoritative checklist is in
+## Current acceptance evidence (2026-08-09)
+
+The accepted implementation baseline is
+`783bfcf7e2447f8f981830a158bec3f402b08d97`. It names the code under test rather
+than the later documentation-only reconciliation commit. This table supersedes
+all older audit status and open-work claims below; the remainder of this file is
+a dated evidence archive.
+
+| Area | Final local evidence and boundary |
+| --- | --- |
+| Linux replay | The authenticated Linux 6.18.41 package plus 14 canonical topics replayed to tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Manifest, exact topic identity, topology/overlap, ABI, and delta policy passed at 155 changed files and 6 outside the Darwin port. Both embedded kernel payloads exactly matched their corresponding `vmlinux` hashes. |
+| ABI | Host/kernel bridge ABI v6 is `0x6524b65f20239ea1`; installed public API v4 is `0xd9a69804d3303044`. Declaration identity, mirrored-header, compile-time layout, and consumer checks passed. |
+| Retained mechanisms | G99 keeps ThinLTO on the gadget translation library. G100 keeps exactly five audited decode-family `.ipp` fragments behind one composer. G121 keeps the published per-thread lifecycle-slot protocol. G123 keeps the forward `init_mm` serialization and whole-Darwin-slot 4 KiB repair; the diagnostic pre-refactor rollback is absent. |
+| Ordinary host | Unit passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in both profiles. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB and 576/624 at 4 KiB. Input materialization was off, zero sidecars were emitted, and final quiescence required no cleanup action. |
+| Source-size advisory | The final report covered 1,247 files: 105 above a guideline, 87 without optional review context, and 12 changed in size since review. `source-size-advisory-policy` passed. These counts are navigation/ownership signals only; crossing a guideline or changing size is not an acceptance failure. |
+| Sanitizers and devices | Full ASan+UBSan passed 572/572 in 710.45 seconds; TSan passed 8/8 in 5.14 seconds; malformed-loader ASan passed 1/1. Normal and ASan GPU graphs each passed 5/5 units plus the 1/1 VNC tooling test; the GPU graph audit covered 595 targets and 628 registrations. |
+| Guests | `integration-fast` passed 5/5 at 16 KiB in 153.40 seconds and 5/5 at 4 KiB in 84.69 seconds. Standalone 10-vCPU SMP passed at 8.19 and 8.03 effective host cores. The immutable rootfs remained mode 0444, 8,589,934,592 bytes, SHA-256 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`. |
+| Apple package | The accepted artifact is `.build/final-package-acceptance-783bfcf-20260809/UMLEmulator.xcframework`. Its acceptance-side sorted payload-hash manifest (an observed digest, not a file inside the bundle) has SHA-256 `ea2d55c8602bc2914d467b9ed589923beda15a6cadd44f2f08d99f73d69ad9a1`. The three slices passed staging, architecture, final-link, executable-publication, and consumer audits. Archive evidence was 71 ordinary Mach-O plus exactly 9 ThinLTO gadget members for macOS, and 70 ordinary plus exactly 9 ThinLTO members for each iOS slice. Raw and installed-tree consumers passed; the real Xcode consumer reported `BUILD SUCCEEDED`, with only a non-fatal locked-iPhone discovery warning. |
+| Explicit limitations | Verification was local-only; this repository has no hosted CI workflow. Full LTP was unavailable and not run because the payload was absent. Input materialization remains opt-in (about 6.6 GiB for a complete profile), and semantic evidence remains **0/983 variant-complete**. Rootfs-management redesign is deferred and source-size thresholds are advisory. The user explicitly directed that the final Geekbench rerun be skipped after all other tasks, so historical and focused controls are preserved without a new final score. |
+
+The authoritative handoff is in
 [`../REFACTOR_HANDOFF.md`](../REFACTOR_HANDOFF.md); commands and external
 prerequisites are in [`testing.md`](testing.md).
 
-## Seventh-audit evidence
+## Seventh-audit evidence (historical; superseded)
+
+The following records the open seventh independent audit on 2026-08-04. It is
+preserved to show what drove the subsequent work and is not the current status.
 
 | Area | Fresh evidence and consequence |
 | --- | --- |
@@ -280,7 +298,7 @@ earlier broad matrices remain
 parseable passing evidence for their dated configurations and are retained
 below rather than relabeled as new runs.
 
-## Verification host and tree
+## Verification host and tree (historical)
 
 - macOS 26.3 (25D125), Darwin 25.3.0, arm64
 - CMake 4.1.1 and Ninja 1.11.1
@@ -368,7 +386,7 @@ lacked optional review context, and five reviewed files had changed in size.
 The fresh seventh-audit source-size counts are recorded above; all such counts
 are informational and cohesive logical units may remain large.
 
-## Linux, dependencies, ABI, and rootfs
+## Linux, dependencies, ABI, and rootfs (historical)
 
 The exact Linux replay uses the signed official `linux-6.18.41.tar.xz` release
 package (SHA-256
@@ -420,7 +438,7 @@ lifetime, and process-group cleanup are covered by host tests. No writable
 rootfs maintenance was performed. These properties are no longer current
 refactor acceptance gates.
 
-## Apple package and executable memory
+## Apple package and executable memory (historical)
 
 `scripts/build-xcframework.sh` rebuilt all three arm64 aggregate archives,
 linked raw-build and installed-tree genuine C and C++ consumers for every
@@ -483,7 +501,7 @@ the overall multi-core score is effectively flat.
 | Ray Tracer | 98 | 961 |
 | Structure from Motion | 74 | 620 |
 
-## External acceptance
+## External acceptance (historical)
 
 The following are intentionally not local pass claims because their inputs are
 outside the repository:

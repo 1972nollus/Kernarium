@@ -1,7 +1,46 @@
 # Refactor handoff
 
-This is the authoritative status as of the seventh independent audit on
-2026-08-04. Repository-owned work remains open. The seventh audit supersedes
+## Current authoritative status (2026-08-09)
+
+The refactor campaign and the forward 4 KiB Darwin mapping repair are accepted
+at implementation baseline
+`783bfcf7e2447f8f981830a158bec3f402b08d97`. That commit identifies the code
+that was tested; this documentation-only reconciliation intentionally does not
+describe its own eventual commit as the tested HEAD. This section supersedes
+every older "current", "open", or completeness statement below. Those sections
+remain dated audit and experiment history, not current blockers.
+
+| Boundary | Accepted state |
+| --- | --- |
+| Linux source | The signed Linux 6.18.41 package replays 14 ordered topics to canonical tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Policy is bounded at 155 changed files and 6 files outside the Darwin port. Both embedded kernels matched their corresponding `vmlinux` artifacts. |
+| Interfaces | The independent host/kernel bridge is ABI v6, fingerprint `0x6524b65f20239ea1`. The installed public API remains v4, fingerprint `0xd9a69804d3303044`. |
+| Preserved repairs | G99 gadget ThinLTO, G100's exactly five audited decode-family `.ipp` fragments, G121's published per-thread address-space lifecycle slots, and G123's serialized Darwin `init_mm`/4 KiB host-slot repair are retained. The pre-refactor rollback used to diagnose G123 is not retained. |
+| Host acceptance | Ordinary unit suites passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in each profile. ASan+UBSan passed 572/572 in 710.45 seconds, TSan passed 8/8 in 5.14 seconds, and the malformed-loader ASan gate passed 1/1. Normal and ASan GPU graphs each passed 5/5 unit tests plus the 1/1 VNC tooling test. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB, 576/624 at 4 KiB, and 595/628 in the GPU graph. Input materialization was off and produced zero sidecars. |
+| Guest acceptance | `integration-fast` passed 5/5 at 16 KiB in 153.40 seconds and 5/5 at 4 KiB in 84.69 seconds. The standalone 10-vCPU SMP workload passed at 8.19 and 8.03 effective host cores, respectively. The immutable rootfs remained mode 0444, 8,589,934,592 bytes, SHA-256 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`. |
+| Apple package | The macOS, iOS-device, and iOS-simulator slices passed archive, architecture, executable-publication, staging, and consumer audits and formed the three-slice XCFramework. The archive verifier observed 71 ordinary Mach-O members plus exactly 9 ThinLTO gadget members on macOS and 70 ordinary plus exactly 9 ThinLTO gadget members in each iOS slice. Raw and installed-tree consumers passed, and the real Xcode consumer reported `BUILD SUCCEEDED`; its locked-iPhone discovery warning was non-fatal. |
+
+Acceptance is deliberately bounded. Input materialization remains explicit
+opt-in because a complete profile is about 6.6 GiB; ordinary acceptance ran
+with it off. The instruction ledger still reports **0/983 variant-complete**
+entries, so historical 983-entry checkmarks and representative semantic
+contracts are not an exhaustive architectural-semantics claim. The LTP payload
+was absent, so full LTP was not run or claimed. Rootfs-management redesign
+remains deferred, and source-size thresholds remain advisory ownership signals,
+not gates.
+
+All verification above was local; the repository has no hosted CI workflow.
+After every other acceptance task completed, the final Geekbench rerun was
+intentionally skipped at the user's direction. The preserved historical
+measurements and focused hot-path controls remain the performance evidence; no
+new end-to-end Geekbench result is claimed for this final baseline.
+
+[`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the detailed evidence
+index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.
+
+## Seventh-audit handoff (historical; superseded)
+
+This was the authoritative status as of the seventh independent audit on
+2026-08-04. Repository-owned work remained open. The seventh audit superseded
 the sixth-audit completeness claim: it found two instruction-evidence closure
 gaps, multiple runtime/device correctness gaps, unfinished engine and Linux
 modularization, and structural-test gaps. The sixth-audit implementation and
@@ -13,10 +52,8 @@ acceptance and is not represented as a local pass. Rootfs file management is
 still deferred as described below; none of the seventh-audit findings reopens
 it.
 
-[`docs/refactor-evidence.md`](docs/refactor-evidence.md) is the evidence
-index. [`REFACTOR_PROGRESS.md`](REFACTOR_PROGRESS.md) is the compact summary.
-
-Status changed on 2026-08-06: a gadget-engine performance campaign began;
+The historical status changed on 2026-08-06: a gadget-engine performance
+campaign began;
 input-materialization recording became opt-in, removing 6.6 GiB of build-tree
 cost from ordinary runs; `arm64-input-materialization-join`, which is now
 registered only with that option, exposed an undersized contribution-spool
@@ -29,10 +66,10 @@ below; that failure is an artifact-staleness blocker, not a behavioral defect,
 and its repair is intentionally deferred into the existing instruction-evidence
 P1 finding.
 
-## Working-tree safety
+## Seventh-audit working-tree snapshot (historical; superseded)
 
 The historical refactor base was
-`618b68658013b83394efef367570fa2c36113eb0`. The current outer HEAD is
+`618b68658013b83394efef367570fa2c36113eb0`. The then-current outer HEAD was
 `b931e9b682e7b4bde4a4824c2e2142676052e1e1` (`Major refactor`). At the seventh-
 audit baseline, the implementation and documentation existed as 155 modified
 or deleted tracked status entries plus 56 untracked status entries (58
@@ -48,9 +85,11 @@ serialization, or rootfs cleanup as part of this refactor. Existing wrappers
 may remain in use, and incidental destructive image changes still require
 separate authorization.
 
-## Seventh independent audit: open checklist
+## Seventh independent audit: historical open checklist (superseded)
 
-The following items are current. Fix them before using any historical
+The following items were current for that audit. They are retained to explain
+the subsequent campaign, not as unfinished requirements. At that time, they
+had to be fixed before using any historical
 "complete" statement below. Source-size thresholds remain advisory; the
 modularity findings are about ownership and dependency shape, not line-count
 enforcement.
@@ -131,7 +170,7 @@ enforcement.
 | Dependency and policy checks | current pinned release-source manifest, pristine LibVNCServer 0.9.15, private prefix, ABI identities, Linux manifest/topology/next-version fixtures, and isolated topic 0011 checks pass |
 | Guest/performance/product acceptance | no guest boot, rootfs mutation, LTP, browser, benchmark, current kernel replay/build, current CLI final link, or current package rebuild was performed; the seventh audit remains open |
 
-### Confirmed current invariants
+### Confirmed seventh-audit invariants (historical)
 
 - All three CPU engines implement the common virtual interface, direct factory
   selection is in place, the native-code engine has no gadget link/object
@@ -158,8 +197,9 @@ enforcement.
 
 ## Status change 2026-08-06: performance campaign and a newly diagnosed blocker
 
-This section records work started after the seventh audit. It does not close any
-seventh-audit finding.
+**Historical and superseded by the current status at the top of this file.**
+This section records work started after the seventh audit. At that time it did
+not close any seventh-audit finding.
 
 ### Changed: input materialization is now opt-in, and its join has two blockers
 
@@ -1342,7 +1382,7 @@ Historically, the rootfs finished mode `0444`, size 8,589,934,592 bytes, SHA-256
 `501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
 This is retained as evidence, not as a current refactor gate.
 
-## Linux and dependency provenance
+## Linux and dependency provenance (historical)
 
 The Linux series starts from the signed official `linux-6.18.41.tar.xz`
 release package (SHA-256
@@ -1419,7 +1459,7 @@ SHA-256
 `31df1439d98fe6b4773b9a6c05c00f85078e92e2cea701a44b844fe91bf7b86c`.
 Repeated matched gadget/JIT campaigns remain external acceptance, as below.
 
-## External acceptance not claimed
+## External acceptance not claimed (historical)
 
 These require inputs outside the repository and are intentionally not local
 pass claims:

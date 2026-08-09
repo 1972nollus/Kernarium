@@ -1,11 +1,38 @@
 # Testing and preparation
 
+## Latest accepted local baseline (2026-08-09)
+
+Implementation baseline
+`783bfcf7e2447f8f981830a158bec3f402b08d97` passed the ordinary 16 KiB and
+4 KiB unit suites at 572/572 and 573/573, respectively, with tooling at 51/51
+in each profile. Full ASan+UBSan passed 572/572, TSan passed 8/8, the malformed
+loader ASan gate passed 1/1, and both normal and sanitized GPU configurations
+passed 5/5 units plus the 1/1 VNC tooling test. `integration-fast` passed 5/5
+in each page profile, and the standalone SMP workload reached 8.19 and 8.03
+effective host cores at 16 KiB and 4 KiB. The three-slice Apple package and its
+raw, installed-tree, and real Xcode consumers passed. The immutable rootfs
+remained mode 0444, 8,589,934,592 bytes, SHA-256
+`501770dcce8223a3b7b41c475413ccb5f733291e190dcb23964890b50dafc0e5`.
+
+These results were produced locally; no hosted CI workflow exists. The LTP
+payload was absent, so full LTP was not run. Instruction input materialization
+was off and emitted zero sidecars; it remains an explicit, storage-intensive
+opt-in. Rootfs-management redesign remains deferred. The final Geekbench rerun
+was intentionally skipped at the user's direction after all other acceptance
+tasks completed, so this baseline makes no new end-to-end Geekbench claim.
+
 Use CMake/Ninja and CTest as the first-party source of truth. The `unit` suite
 is host-only, contains no Python, and neither configures a kernel nor reads a
 rootfs. Native emulator behavior tests are C++/assembly. The separately owned
 `tooling` checks may use shell, CMake, or Python for build/source contracts;
 they remain host-only and are selected alongside `unit` by the standard unit
 workflow rather than becoming guest integration tests.
+
+Every first-party registration has exactly one enforced primary suite label:
+`unit`, `tooling`, or `integration`. The test manifest, registration helpers,
+and owner paths enforce that suite-level taxonomy. Domain words in names and
+source ownership remain useful, but secondary per-domain labels and a specific
+per-domain subdirectory layout are optional organization, not acceptance gates.
 
 Reproducibility here means pinned official release archive and signature
 identities, patch bytes and order, verified prepared source trees,
@@ -189,10 +216,13 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-`unit-tsan` intentionally runs the four tests labelled `tsan`: the static MMU
-gate, static runtime, JIT publication concurrency, and runtime context
-lifecycle. It does not select the instruction-evidence reset. The full normal
-and ASan/UBSan suites retain exhaustive instruction coverage.
+`unit-tsan` intentionally runs eight tests labelled `tsan`:
+`emulator-native-16k-ownership`, `static-mmu-batch`,
+`arm64-pc-alignment-contract`, `arm64-static-runtime`,
+`arm64-jit-publication_gate`, `memory-domain-lifetime`,
+`runtime-route-transaction`, and `runtime-context-lifecycle`. It does not
+select the instruction-evidence reset. The full normal and ASan/UBSan suites
+retain the complete registered ordinary instruction-test selection.
 
 The two GPU workflows are host-only and rootfs-free. They configure the GPU
 graph, build both GPU unit fixtures and all registered tooling fixtures plus
@@ -212,20 +242,20 @@ unit-enabled tree its evidence validator requires a preceding unit producer
 run, as provided by `check-unit`; in the tooling-only tree that conditional
 validator is not registered.
 
-The combined unit/tooling graph also records one compressed input-
-materialization sidecar per unit producer. The
-`arm64-input-materialization-join` tooling check deliberately requires the
-complete producer set, so selecting that check without first completing the
-matching unit run fails instead of yielding a partial index. Raw sidecars stay
-under the build tree. The resumable checkpoints and contract index can be
-placed on a larger volume by setting the CMake cache path
+With `UML_INSTRUCTION_INPUT_MATERIALIZATION=OFF`, the ordinary combined
+unit/tooling graph writes no input sidecars and does not register
+`arm64-input-materialization-join`. Setting the option to `ON` makes each unit
+producer record one compressed sidecar and registers exactly that join. The
+join deliberately requires the complete producer set, so selecting it without
+first completing the matching unit run fails instead of yielding a partial
+index. Raw sidecars stay under the build tree. The resumable checkpoints and
+contract index can be placed on a larger volume by setting the CMake cache path
 `UML_INSTRUCTION_MATERIALIZATION_WORK_ROOT`; page-size-specific subdirectories
 are added automatically. The registered join preserves at least 5 GiB on the
 checkpoint volume and rejects a producer before its bounded working estimate
-would consume that reserve. This is an exhaustive tooling gate over roughly
-30 million contributions and 449 producer shards per page profile, not a
-fixture-scale check: it remains in the standard combined unit/tooling workflow,
-uses resumable checkpoints, and has a bounded four-hour CTest timeout.
+would consume that reserve. This opt-in exhaustive tooling gate covers roughly
+30 million contributions and 449 producer shards per page profile, uses
+resumable checkpoints, and has a bounded four-hour CTest timeout.
 
 ## Exact official A64 campaign
 
@@ -270,10 +300,12 @@ mkdir -p "$WORK"/join-4k "$WORK"/join-16k \
   "$WORK"/local-promotion "$WORK"/promotion
 
 cd "$REPO"
-cmake --preset macos-unit-4k
+cmake --preset macos-unit-4k \
+  -DUML_INSTRUCTION_INPUT_MATERIALIZATION=ON
 cmake --build --preset unit-test-binaries-4k
 ctest --preset unit-4k
-cmake --preset macos-unit-16k
+cmake --preset macos-unit-16k \
+  -DUML_INSTRUCTION_INPUT_MATERIALIZATION=ON
 cmake --build --preset unit-test-binaries
 ctest --preset unit
 

@@ -15,6 +15,22 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
+## Latest accepted replay (2026-08-09)
+
+At outer implementation baseline
+`783bfcf7e2447f8f981830a158bec3f402b08d97`, the manifest contains 14 ordered
+topics and replays to canonical tree
+`5b7b50cd573b7a1077586955cad9cf13770df35d`. The exact delta policy is 155
+changed files with 6 outside the Darwin port. Both 16 KiB and 4 KiB kernels
+built from that replay, and their embedded payloads exactly matched their
+corresponding `vmlinux` artifacts during final local guest acceptance.
+
+The host/kernel bridge is ABI v6 with fingerprint `0x6524b65f20239ea1`; the
+separate installed emulator API remains v4 with fingerprint
+`0xd9a69804d3303044`. These are dated accepted identities, while the manifest,
+metadata, ABI checks, and replay commands below remain the durable enforcement
+mechanisms.
+
 The ordered project patch files and
 their SHA-256/stable patch IDs are in
 [`patches/series/manifest.tsv`](patches/series/manifest.tsv). The expected

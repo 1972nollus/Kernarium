@@ -4,17 +4,29 @@
 > results; use the immutable `rootfs.img` workflow documented in
 > `docs/testing.md` for current work.
 
+## Current completeness boundary (2026-08-09)
+
+The accepted refactor baseline does not turn the historical inventory
+checkmarks below into exhaustive semantics evidence. Input materialization is
+still explicit opt-in and off for ordinary acceptance; the final host run
+emitted zero sidecars. A complete 16 KiB profile remains roughly 6.6 GiB, and
+the exact official-semantics campaign has not been executed. The checked
+semantic records remain representative and report **0/983 variant-complete
+entries**. The 516/516 Base and 467/467 SIMD/FP headings therefore mean that
+each catalog entry has historical exercised evidence, not that every form,
+width, alias, state, feature, reserved, fault, and operand partition is complete.
+
 Source: `ISA_A64_xml_A_profile-2026-06.pdf`, Arm A64 ISA XML for A-profile architecture, 2026-06, document 111182 (ID102025).
 
 Scope: all entries in the PDF inventories `A64 -- Base Instructions (alphabetic order)` (516 entries) and `A64 -- SIMD and Floating-point Instructions (alphabetic order)` (467 entries). Aliases, grouped mnemonics, scalar/vector forms, addressing forms, element widths, architectural feature variants, and every distinct encoding described by an entry must be tested before that entry is complete.
 
 ## Enabling input materialization
 
-Input-materialization sidecars are **opt-in** and off by default. Every unit
-test writes one `<producer>.tsv.inputs.jsonl.gz` when they are enabled, and only
-`arm64-input-materialization-join` reads them. A complete 16 KiB profile costs
-roughly **6.6 GiB** of compressed sidecars against 3.4 MiB of ordinary evidence,
-so an ordinary unit or tooling run must not pay for them.
+Input-materialization sidecars are **opt-in** and off by default. Every evidence
+producer writes one `<producer>.tsv.inputs.jsonl.gz` when they are enabled, and
+only `arm64-input-materialization-join` reads them. A complete 16 KiB profile
+costs roughly **6.6 GiB** of compressed sidecars against 3.4 MiB of ordinary
+evidence, so an ordinary unit or tooling run must not pay for them.
 
 Configure with the option to record sidecars and register the join:
 
@@ -23,10 +35,11 @@ cmake -S . -B .build/presets/macos-unit-16k \
   -DUML_INSTRUCTION_INPUT_MATERIALIZATION=ON
 ```
 
-The producers and the join share this one option, so the join can never be
-selected without the inputs it requires. With the option off the suite
-registers 618 tests and leaves a 12 KiB evidence directory; with it on the
-suite registers 619 and regenerates the full profile.
+The producers and the join share this one option, so the join is never
+registered in a graph whose producers cannot emit sidecars. With the option
+off, the join is not registered and producers write no sidecars. With it on,
+producers can write the sidecars and the suite adds exactly the join
+registration; enabling the option does not mean the producers have already run.
 
 Two storage-policy facts apply when it is enabled:
 
@@ -805,8 +818,9 @@ evidence; use the seventh-audit qualification and refactor handoff instead.
   compared with production object references, immutable native-table
   relocations, and assembly-internal targets. The 16 KiB and 4 KiB symbol
   sets were identical and that pass reported an empty unused-definition set.
-  The seventh audit has since found one unreachable fatal helper/wrapper, so
-  current closure requires its removal or an explicit documented ABI purpose.
+  The seventh audit later reported one unreachable fatal helper/wrapper, so
+  closure at that time required its removal or an explicit documented ABI
+  purpose.
 - Host acceleration: gadgets use exact AArch64 host operations and extensions
   where their semantics match, including scalar/vector arithmetic, atomic
   operations, floating-point/vector execution, and specialized block/vector

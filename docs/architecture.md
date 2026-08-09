@@ -24,6 +24,16 @@ CPU/TLB layout contract. C++ static assertions in
 the assembly consumers verify it. The JIT does not include gadget
 implementation files.
 
+## Test ownership and taxonomy
+
+The enforced test taxonomy is suite-level. Every first-party CTest registration
+has exactly one primary label, `unit`, `tooling`, or `integration`, and that
+label must match `tests/test-manifest.tsv`. Registration helpers and canonical
+owner paths make the suite boundary mechanically auditable. Domain information
+belongs in test names, manifest ownership, and source location; secondary
+per-domain labels and any particular per-domain subdirectory layout are
+optional organization rather than architecture or acceptance requirements.
+
 ## Executable-memory policy
 
 Interpreter state, gadget program buffers, software-MMU backing, and 4 KiB

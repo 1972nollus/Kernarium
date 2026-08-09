@@ -6,6 +6,16 @@
 > status and [`REFACTOR_HANDOFF.md`](REFACTOR_HANDOFF.md) for acceptance-gate
 > status.
 
+> **Current interpretation (2026-08-09):** the per-domain unit labels and the
+> physical per-domain subdirectory sketch in this plan are historical optional
+> polish, not current acceptance requirements. The enforced taxonomy is
+> suite-level: every first-party test owns exactly one manifest-matching primary
+> suite, `unit`, `tooling`, or `integration`. Test names and owner paths carry
+> domain information; secondary domain labels and further directory moves are
+> optional. Likewise, the accepted G100 arrangement of exactly five audited
+> decode-family `.ipp` fragments behind one composer is a measured exception to
+> the blanket implementation-fragment language below and must be preserved.
+
 - Status: proposed; planning snapshot audited 2026-08-01
 - Scope: organization and maintainability without changing guest-visible
   behavior or reducing performance
@@ -655,6 +665,12 @@ only after functional tests and workload measurements show equivalent behavior
 and acceptable performance.
 
 ## Test reorganization
+
+> Historical design detail: the layout and `unit`-plus-domain labeling below
+> were aspirational examples. Current enforcement requires exactly one primary
+> suite label (`unit`, `tooling`, or `integration`) and manifest-matching suite
+> ownership. Additional domain labels or moves into the sketched subdirectories
+> are optional polish, not unfinished refactor work.
 
 ### Final layout
 
