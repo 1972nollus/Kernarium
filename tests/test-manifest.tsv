@@ -36,7 +36,7 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional	partial header and payload shutdown require the in-process service's separately owned endpoint wake rather than timeout polling
 -	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove mutating command failure atomicity and same-operation retry
 -	gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional	post-listen event-thread construction failure releases the VNC server and permits immediate retry
--	vnc-input-boundary	tests/unit/gpu/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
+-	vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
 -	native-4k-shadow-mmu	tests/unit/arm64	unit	conditional	4 KiB-only native shadow-MMU coverage
 -	emulator-native-4k-admission	tests/unit/arm64	unit	conditional	4 KiB native callback runs serialize identical process addresses and support queued cancellation and retry
 -	emulator-native-16k-ownership	tests/unit/arm64	unit	conditional	16 KiB native callback domains own high mappings, reject cross-handle collisions atomically, and retire leaked mappings

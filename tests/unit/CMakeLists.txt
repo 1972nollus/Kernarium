@@ -42,6 +42,7 @@ uml_add_unit_test(
     NAME emulator-c-api-boundary
     COMMAND uml_emulator_c_api_boundary_tests)
 
+add_subdirectory(input/vnc)
 add_subdirectory(gpu)
 
 get_property(_uml_registered_unit_binary_targets GLOBAL PROPERTY
