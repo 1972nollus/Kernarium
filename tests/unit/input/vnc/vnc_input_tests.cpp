@@ -19,7 +19,7 @@ void require(bool condition, const char* message)
 
 void keySymbolsMapToStableGuestCodes()
 {
-    using uml::gpu::input::keyCode;
+    using uml::input::vnc::keyCode;
 
     require(keyCode('a') == 30 && keyCode('A') == 30,
         "letter key symbols did not share a physical key code");
@@ -34,33 +34,33 @@ void keySymbolsMapToStableGuestCodes()
 void inputDeliveryContainsSinkFailuresAndCanRetry()
 {
     const std::array events{
-        uml::gpu::VncInputEvent{.type = 1, .code = 30, .value = 1},
-        uml::gpu::VncInputEvent{.type = 0, .code = 0, .value = 0},
+        uml::input::vnc::VncInputEvent{.type = 1, .code = 30, .value = 1},
+        uml::input::vnc::VncInputEvent{.type = 0, .code = 0, .value = 0},
     };
-    require(uml::gpu::input::tryDeliver({}, events),
+    require(uml::input::vnc::tryDeliver({}, events),
         "an intentionally absent input sink was reported as failed");
 
     std::size_t delivered = 0;
-    uml::gpu::VncInputSink sink = [&](const auto received) {
+    uml::input::vnc::VncInputSink sink = [&](const auto received) {
         require(received.size() == events.size() &&
                 received[0].code == events[0].code &&
                 received[1].type == events[1].type,
             "input delivery changed an event sequence");
         ++delivered;
     };
-    require(uml::gpu::input::tryDeliver(sink, events) && delivered == 1,
+    require(uml::input::vnc::tryDeliver(sink, events) && delivered == 1,
         "valid input delivery failed");
 
     sink = [](auto) { throw std::bad_alloc {}; };
-    require(!uml::gpu::input::tryDeliver(sink, events),
+    require(!uml::input::vnc::tryDeliver(sink, events),
         "an input-sink allocation failure escaped or was reported as success");
 
     sink = [](auto) { throw SinkFailure {}; };
-    require(!uml::gpu::input::tryDeliver(sink, events),
+    require(!uml::input::vnc::tryDeliver(sink, events),
         "a non-standard input-sink exception escaped or reported success");
 
     sink = [&](auto) { ++delivered; };
-    require(uml::gpu::input::tryDeliver(sink, events) && delivered == 2,
+    require(uml::input::vnc::tryDeliver(sink, events) && delivered == 2,
         "input delivery could not retry after a contained sink exception");
 }
 

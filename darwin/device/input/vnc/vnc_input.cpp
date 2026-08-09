@@ -6,7 +6,7 @@
 #include <cctype>
 #include <utility>
 
-namespace uml::gpu::input {
+namespace uml::input::vnc {
 namespace {
 
 using Key = std::pair<std::uint32_t, std::uint16_t>;
@@ -133,4 +133,4 @@ bool tryDeliver(
     }
 }
 
-} // namespace uml::gpu::input
+} // namespace uml::input::vnc

@@ -26,6 +26,8 @@ extern "C" {
 namespace uml::gpu {
 namespace {
 
+namespace vnc_input = uml::input::vnc;
+
 constexpr std::uint8_t opaqueAlpha = 0xffU;
 
 class ScreenInitializationGuard final {
@@ -123,7 +125,7 @@ VncDisplay::VncDisplay(
     std::string password,
     std::uint32_t width,
     std::uint32_t height,
-    VncInputSink inputSink)
+    vnc_input::VncInputSink inputSink)
     : width_(width)
     , height_(height)
     , inputSink_(std::move(inputSink))
@@ -417,22 +419,22 @@ void VncDisplay::handleKey(bool down, std::uint32_t keySymbol) noexcept
 {
     if (!inputSink_)
         return;
-    const auto code = input::keyCode(keySymbol);
+    const auto code = vnc_input::keyCode(keySymbol);
     if (!code)
         return;
     const std::array events {
-        VncInputEvent {
-            .type = input::eventKey,
+        vnc_input::VncInputEvent {
+            .type = vnc_input::eventKey,
             .code = *code,
             .value = down ? 1 : 0,
         },
-        VncInputEvent {
-            .type = input::eventSync,
-            .code = input::syncReport,
+        vnc_input::VncInputEvent {
+            .type = vnc_input::eventSync,
+            .code = vnc_input::syncReport,
             .value = 0,
         },
     };
-    if (!input::tryDeliver(inputSink_, events))
+    if (!vnc_input::tryDeliver(inputSink_, events))
         reportInputFailure();
 }
 
@@ -446,32 +448,45 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
         const auto clamped = std::clamp(
             coordinate, 0, static_cast<int>(extent - 1U));
         return static_cast<std::int32_t>(
-            static_cast<std::int64_t>(clamped) * input::absoluteMaximum /
+            static_cast<std::int64_t>(clamped) *
+                vnc_input::absoluteMaximum /
             static_cast<std::int64_t>(extent - 1U));
     };
 
-    std::array<VncInputEvent, 10> events {};
+    std::array<vnc_input::VncInputEvent, 10> events {};
     std::size_t count = 0;
     const auto append = [&](std::uint16_t type,
                             std::uint16_t code,
                             std::int32_t value) {
         events[count++] = {.type = type, .code = code, .value = value};
     };
-    append(input::eventAbsolute, input::absoluteX, scale(x, width_));
-    append(input::eventAbsolute, input::absoluteY, scale(y, height_));
-    append(input::eventKey, input::buttonLeft, buttonMask & 1);
-    append(input::eventKey, input::buttonMiddle, (buttonMask >> 1) & 1);
-    append(input::eventKey, input::buttonRight, (buttonMask >> 2) & 1);
+    append(vnc_input::eventAbsolute, vnc_input::absoluteX, scale(x, width_));
+    append(vnc_input::eventAbsolute, vnc_input::absoluteY, scale(y, height_));
+    append(vnc_input::eventKey, vnc_input::buttonLeft, buttonMask & 1);
+    append(
+        vnc_input::eventKey,
+        vnc_input::buttonMiddle,
+        (buttonMask >> 1) & 1);
+    append(
+        vnc_input::eventKey,
+        vnc_input::buttonRight,
+        (buttonMask >> 2) & 1);
     if ((buttonMask & 8) != 0)
-        append(input::eventRelative, input::relativeWheel, 1);
+        append(vnc_input::eventRelative, vnc_input::relativeWheel, 1);
     if ((buttonMask & 16) != 0)
-        append(input::eventRelative, input::relativeWheel, -1);
+        append(vnc_input::eventRelative, vnc_input::relativeWheel, -1);
     if ((buttonMask & 32) != 0)
-        append(input::eventRelative, input::relativeHorizontalWheel, -1);
+        append(
+            vnc_input::eventRelative,
+            vnc_input::relativeHorizontalWheel,
+            -1);
     if ((buttonMask & 64) != 0)
-        append(input::eventRelative, input::relativeHorizontalWheel, 1);
-    append(input::eventSync, input::syncReport, 0);
-    if (!input::tryDeliver(inputSink_, std::span(events).first(count)))
+        append(
+            vnc_input::eventRelative,
+            vnc_input::relativeHorizontalWheel,
+            1);
+    append(vnc_input::eventSync, vnc_input::syncReport, 0);
+    if (!vnc_input::tryDeliver(inputSink_, std::span(events).first(count)))
         reportInputFailure();
 }
 

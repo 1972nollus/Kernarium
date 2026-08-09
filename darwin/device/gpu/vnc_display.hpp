@@ -41,7 +41,7 @@ public:
         std::string password,
         std::uint32_t width,
         std::uint32_t height,
-        VncInputSink inputSink = {});
+        uml::input::vnc::VncInputSink inputSink = {});
     ~VncDisplay();
 
     VncDisplay(const VncDisplay&) = delete;
@@ -86,7 +86,7 @@ private:
 
     std::uint32_t width_;
     std::uint32_t height_;
-    VncInputSink inputSink_;
+    uml::input::vnc::VncInputSink inputSink_;
     std::vector<std::uint8_t> framebuffer_;
     std::string password_;
     std::array<char*, 2> passwordList_ {};

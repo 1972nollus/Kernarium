@@ -221,7 +221,8 @@ private:
                 options_.width,
                 options_.height,
                 false,
-                [this](std::span<const VncInputEvent> events) {
+                [this](
+                    std::span<const uml::input::vnc::VncInputEvent> events) {
                     sendInput(events);
                 });
             server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
@@ -240,7 +241,8 @@ private:
         }
     }
 
-    void sendInput(std::span<const VncInputEvent> events) noexcept
+    void sendInput(
+        std::span<const uml::input::vnc::VncInputEvent> events) noexcept
     {
         const auto bytes = events.size_bytes();
         const auto sent = ::send(

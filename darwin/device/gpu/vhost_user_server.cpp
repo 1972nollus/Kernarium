@@ -353,7 +353,7 @@ VhostUserServer::VhostUserServer(
     std::uint32_t width,
     std::uint32_t height,
     bool selfTestPattern,
-    VncInputSink inputSink)
+    uml::input::vnc::VncInputSink inputSink)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , vncPort_(vncPort)

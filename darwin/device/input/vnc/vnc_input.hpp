@@ -6,7 +6,7 @@
 #include <optional>
 #include <span>
 
-namespace uml::gpu {
+namespace uml::input::vnc {
 
 struct [[gnu::packed]] VncInputEvent {
     std::uint16_t type;
@@ -16,8 +16,6 @@ struct [[gnu::packed]] VncInputEvent {
 
 using VncInputSink =
     std::function<void(std::span<const VncInputEvent> events)>;
-
-namespace input {
 
 constexpr std::uint16_t eventSync = 0;
 constexpr std::uint16_t eventKey = 1;
@@ -47,8 +45,6 @@ constexpr std::int32_t absoluteMaximum = 32767;
     const VncInputSink& sink,
     std::span<const VncInputEvent> events) noexcept;
 
-} // namespace input
-
 static_assert(sizeof(VncInputEvent) == 8);
 
-} // namespace uml::gpu
+} // namespace uml::input::vnc

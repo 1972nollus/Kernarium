@@ -29,7 +29,7 @@ public:
         std::uint32_t width,
         std::uint32_t height,
         bool selfTestPattern,
-        VncInputSink inputSink = {});
+        uml::input::vnc::VncInputSink inputSink = {});
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
