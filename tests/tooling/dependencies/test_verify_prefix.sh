@@ -2,12 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -eu
 
-DEPENDENCY_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../../dependencies" && pwd)
-VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
-ARCHIVE_TOOL="$DEPENDENCY_DIR/source_archive.py"
+SOURCE_DEPENDENCY_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../../dependencies" && pwd)
 DEPLOYMENT_TARGET=14.0
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-prefix.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
+DEPENDENCY_DIR="$TEST_ROOT/dependencies"
+mkdir -p "$DEPENDENCY_DIR"
+cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
+	"$SOURCE_DEPENDENCY_DIR/prepare.sh" \
+	"$SOURCE_DEPENDENCY_DIR/source_archive.py" \
+	"$DEPENDENCY_DIR/"
+VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
+PREPARE="$DEPENDENCY_DIR/prepare.sh"
+ARCHIVE_TOOL="$DEPENDENCY_DIR/source_archive.py"
 
 fail()
 {
@@ -18,6 +25,17 @@ fail()
 sha256_file()
 {
 	shasum -a 256 "$1" | awk '{print $1}'
+}
+
+dependency_policy_hash()
+{
+	build_script_sha256=$(sha256_file "$BUILD_SCRIPT")
+	prepare_script_sha256=$(sha256_file "$PREPARE")
+	{
+		printf 'linux-um-darwin-dependency-policy-v1\n'
+		printf 'build.sh\t%s\n' "$build_script_sha256"
+		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
+	} | shasum -a 256 | awk '{print $1}'
 }
 
 verify()
@@ -68,8 +86,9 @@ expect_failure()
 }
 
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
-MANIFEST="$TEST_ROOT/manifest.tsv"
+MANIFEST="$DEPENDENCY_DIR/manifest.tsv"
 BUILD_SCRIPT="$TEST_ROOT/build.sh"
+PATCH="$DEPENDENCY_DIR/patches/fixture.patch"
 BASE_PREFIX="$TEST_ROOT/prefix"
 FAILURE_NUMBER=0
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
@@ -78,10 +97,24 @@ mkdir -p "$BASE_PREFIX/include/glib-2.0" \
 	"$BASE_PREFIX/include/rfb" \
 	"$BASE_PREFIX/include/virgl" \
 	"$BASE_PREFIX/lib/glib-2.0/include" \
-	"$BASE_PREFIX/share/uml-dependencies"
-printf '%s\n' fixture >"$MANIFEST"
+	"$BASE_PREFIX/share/uml-dependencies" \
+	"$DEPENDENCY_DIR/patches"
+cat >"$PATCH" <<'EOF'
+--- a/fixture.txt
++++ b/fixture.txt
+@@ -1 +1 @@
+-upstream
++project-patched
+EOF
+PATCH_HASH=$(sha256_file "$PATCH")
+cat >"$MANIFEST" <<EOF
+name	version	kind	archive_url	archive_file	archive_sha256	archive_root	prepared_tree_sha256	patch	patch_sha256
+fixture	1.0	release	https://example.invalid/fixture-1.0.tar.gz	fixture-1.0.tar.gz	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	fixture-1.0	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	patches/fixture.patch	$PATCH_HASH
+EOF
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$BUILD_SCRIPT"
 cp "$MANIFEST" "$MANIFEST.original"
+cp "$PATCH" "$PATCH.original"
+cp "$PREPARE" "$PREPARE.original"
 
 required_headers='include/zlib.h
 include/zconf.h
@@ -125,7 +158,7 @@ printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 done
 
 MANIFEST_HASH=$(sha256_file "$MANIFEST")
-BUILD_POLICY_HASH=$(sha256_file "$BUILD_SCRIPT")
+BUILD_POLICY_HASH=$(dependency_policy_hash)
 ARCHIVE_TOOL_HASH=$(sha256_file "$ARCHIVE_TOOL")
 
 # GLib installs debugger helpers whose filenames embed an ELF shared-library
@@ -150,6 +183,19 @@ built_at_utc	2026-08-03T00:00:00Z
 compiler	fixture clang
 EOF
 
+verify "$BASE_PREFIX" >/dev/null
+
+printf '%s\n' '# changed patch bytes' >>"$PATCH"
+expect_failure "changed dependency patch" "$BASE_PREFIX"
+cp "$PATCH.original" "$PATCH"
+
+mv "$PATCH" "$PATCH.absent"
+expect_failure "deleted dependency patch" "$BASE_PREFIX"
+mv "$PATCH.absent" "$PATCH"
+
+printf '%s\n' '# changed preparation policy' >>"$PREPARE"
+expect_failure "changed dependency preparation policy" "$BASE_PREFIX"
+cp "$PREPARE.original" "$PREPARE"
 verify "$BASE_PREFIX" >/dev/null
 
 CASE_PREFIX="$TEST_ROOT/missing-file"

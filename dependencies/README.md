@@ -37,11 +37,14 @@ version, and each copied source tree is rehashed before configuration. Its
 CMake dependency fallback is disabled so probes cannot discover host package
 manager libraries. Publication is transactional: CMake accepts the prefix only
 after its receipt, complete payload hash, required headers, real static-archive
-format and architecture, deployment target, safe symbolic links, and absence
-of shared libraries have been verified. The payload digest is an observation
-of that particular build, so it detects later drift without requiring two
-independent builds to have identical bytes. Configure and ordinary compilation
-never download or discover a third-party library from the host.
+format and architecture, deployment target, safe symbolic links, current
+manifest/patch validation, preparation/build-policy identity, and absence of
+shared libraries have been verified. The existing build-policy receipt field
+binds both `prepare.sh` and `build.sh`; changing either requires a new prefix.
+The payload digest is an observation of that particular build, so it detects
+later drift without requiring two independent builds to have identical bytes.
+Configure and ordinary compilation never download or discover a third-party
+library from the host.
 
 The final prefix deliberately omits upstream CMake package exports and libtool
 metadata. They are not used by this project and can serialize build-only paths.

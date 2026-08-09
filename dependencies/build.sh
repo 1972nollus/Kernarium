@@ -11,6 +11,7 @@ SOURCE_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
 PREFIX=${UML_DEPENDENCY_PREFIX:-"$ROOT_DIR/.build/dependencies/macos-arm64"}
 WORK_ROOT=${UML_DEPENDENCY_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build"}
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
+PREPARE_SCRIPT="$ROOT_DIR/dependencies/prepare.sh"
 JOBS=${UML_DEPENDENCY_JOBS:-8}
 DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-14.0}
 CHECK_MANIFEST_ONLY=0
@@ -102,7 +103,7 @@ verify_build_manifest()
 [ -r "$MANIFEST" ] || fail "dependency manifest is unavailable: $MANIFEST"
 UML_DEPENDENCY_MANIFEST="$MANIFEST" \
 UML_DEPENDENCY_PATCH_ROOT="$ROOT_DIR/dependencies" \
-	"$ROOT_DIR/dependencies/prepare.sh" --validate-manifest-only >/dev/null
+	"$PREPARE_SCRIPT" --validate-manifest-only >/dev/null
 verify_build_manifest
 BUILD_DEPENDENCIES=$(printf '%s\n' "$BUILD_RECIPES" | awk -F '|' '{print $1}')
 [ "$CHECK_MANIFEST_ONLY" -eq 0 ] || {
@@ -162,7 +163,7 @@ if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	exit 0
 fi
 
-"$ROOT_DIR/dependencies/prepare.sh" --root "$SOURCE_ROOT" --verify
+"$PREPARE_SCRIPT" --root "$SOURCE_ROOT" --verify
 
 SDK_ROOT=$($XCRUN --sdk macosx --show-sdk-path)
 [ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid macOS SDK path"
@@ -518,8 +519,16 @@ reject_embedded_path "$STAGE" "$TEMP_ROOT"
 RECEIPT_DIR="$STAGE/share/uml-dependencies"
 mkdir -p -- "$RECEIPT_DIR"
 manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
-build_policy_sha256=$($SHASUM -a 256 "$ROOT_DIR/dependencies/build.sh" |
+build_script_sha256=$($SHASUM -a 256 "$ROOT_DIR/dependencies/build.sh" |
 	awk '{print $1}')
+prepare_script_sha256=$($SHASUM -a 256 "$PREPARE_SCRIPT" | awk '{print $1}')
+build_policy_sha256=$(
+	{
+		printf 'linux-um-darwin-dependency-policy-v1\n'
+		printf 'build.sh\t%s\n' "$build_script_sha256"
+		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
+	} | $SHASUM -a 256 | awk '{print $1}'
+)
 archive_tool_sha256=$($SHASUM -a 256 \
 	"$ROOT_DIR/dependencies/source_archive.py" | awk '{print $1}')
 payload_tree_sha256=$($PYTHON "$ROOT_DIR/dependencies/source_archive.py" \

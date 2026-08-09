@@ -79,11 +79,12 @@ ctest --preset integration-fast
 trees; it does not construct or verify the compiled dependency prefix.
 `dependencies/build.sh` builds that private arm64 static prefix without network
 access and publishes it transactionally. CMake configuration independently
-checks the prefix receipt, manifest/build-policy identities, deployment target,
-complete payload observation, real archive format, arm64 architecture, static
-linkage, and absence of ambient/staging paths before integration targets can
-consume it. The payload hash protects one built prefix against modification;
-it is not a cross-build byte-reproducibility requirement.
+checks current manifest/patch validation, the receipt's preparation/build-
+policy identity, deployment target, complete payload observation, real archive
+format, arm64 architecture, static linkage, and absence of ambient/staging
+paths before integration targets can consume it. The payload hash protects one
+built prefix against modification; it is not a cross-build byte-reproducibility
+requirement.
 
 Host build tools and the Apple SDK may come from the configured toolchain or
 PATH. Production third-party library headers and binaries may come only from

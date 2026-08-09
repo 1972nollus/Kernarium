@@ -8,6 +8,7 @@ BUILD_SCRIPT=
 DEPLOYMENT_TARGET=
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ARCHIVE_TOOL="$SCRIPT_DIR/source_archive.py"
+PREPARE_SCRIPT="$SCRIPT_DIR/prepare.sh"
 
 fail()
 {
@@ -51,6 +52,17 @@ command -v shasum >/dev/null 2>&1 || fail "shasum build tool is required"
 command -v xcrun >/dev/null 2>&1 || fail "xcrun build tool is required"
 command -v grep >/dev/null 2>&1 || fail "grep build tool is required"
 [ -x "$ARCHIVE_TOOL" ] || fail "source archive verifier is missing: $ARCHIVE_TOOL"
+[ -x "$PREPARE_SCRIPT" ] || fail "source preparation policy is missing: $PREPARE_SCRIPT"
+
+if ! manifest_validation=$(
+	UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+	UML_DEPENDENCY_PATCH_ROOT="$SCRIPT_DIR" \
+		"$PREPARE_SCRIPT" --validate-manifest-only 2>&1
+); then
+	printf '%s\n' "$manifest_validation" >&2
+	fail "dependency source policy validation failed"
+fi
+
 XCRUN_AR=$(xcrun --find ar)
 [ -x "$XCRUN_AR" ] || fail "xcrun returned an invalid ar build tool"
 XCRUN_OTOOL=$(xcrun --find otool)
@@ -82,13 +94,21 @@ receipt_value()
 }
 
 expected_manifest=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
-expected_build_policy=$(shasum -a 256 "$BUILD_SCRIPT" | awk '{print $1}')
+build_script_sha256=$(shasum -a 256 "$BUILD_SCRIPT" | awk '{print $1}')
+prepare_script_sha256=$(shasum -a 256 "$PREPARE_SCRIPT" | awk '{print $1}')
+expected_build_policy=$(
+	{
+		printf 'linux-um-darwin-dependency-policy-v1\n'
+		printf 'build.sh\t%s\n' "$build_script_sha256"
+		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
+	} | shasum -a 256 | awk '{print $1}'
+)
 expected_archive_tool=$(shasum -a 256 "$ARCHIVE_TOOL" | awk '{print $1}')
 [ "$(receipt_value schema)" = 2 ] || fail "unsupported receipt schema"
 [ "$(receipt_value manifest_sha256)" = "$expected_manifest" ] ||
 	fail "prefix was built from a different dependency manifest"
 [ "$(receipt_value build_policy_sha256)" = "$expected_build_policy" ] ||
-	fail "prefix was built with a different dependency build policy"
+	fail "prefix was built with a different dependency preparation/build policy"
 [ "$(receipt_value archive_tool_sha256)" = "$expected_archive_tool" ] ||
 	fail "prefix was built with a different source archive verifier"
 [ "$(receipt_value platform)" = macos ] || fail "prefix is not a macOS build"
