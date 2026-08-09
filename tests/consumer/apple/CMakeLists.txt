@@ -8,13 +8,16 @@ set(UML_EMULATOR_LIBRARY "" CACHE FILEPATH
     "Raw UMLEmulator archive used only for final-slice verification")
 set(UML_EMULATOR_HEADERS "" CACHE PATH
     "Raw UMLEmulator include root used only for final-slice verification")
+set(UML_EMULATOR_XCFRAMEWORK "" CACHE PATH
+    "Final UMLEmulator XCFramework used for Xcode slice-selection verification")
 set(UML_EXPECTED_GUEST_PAGE_SIZE "16384" CACHE STRING
     "Expected installed package guest page size")
 
 if(UML_EMULATOR_PACKAGE_PREFIX)
-    if(UML_EMULATOR_LIBRARY OR UML_EMULATOR_HEADERS)
+    if(UML_EMULATOR_LIBRARY OR UML_EMULATOR_HEADERS OR
+       UML_EMULATOR_XCFRAMEWORK)
         message(FATAL_ERROR
-            "Select either the installed package or a raw final slice")
+            "Select exactly one installed package, raw final slice, or XCFramework")
     endif()
     if(NOT IS_ABSOLUTE "${UML_EMULATOR_PACKAGE_PREFIX}")
         message(FATAL_ERROR
@@ -38,6 +41,21 @@ if(UML_EMULATOR_PACKAGE_PREFIX)
         message(FATAL_ERROR "Installed release package contains profiling")
     endif()
     set(_uml_emulator_consumer_target UML::Emulator)
+elseif(UML_EMULATOR_XCFRAMEWORK)
+    if(UML_EMULATOR_LIBRARY OR UML_EMULATOR_HEADERS)
+        message(FATAL_ERROR
+            "Select exactly one installed package, raw final slice, or XCFramework")
+    endif()
+    if(NOT IS_ABSOLUTE "${UML_EMULATOR_XCFRAMEWORK}" OR
+       NOT IS_DIRECTORY "${UML_EMULATOR_XCFRAMEWORK}")
+        message(FATAL_ERROR
+            "UML_EMULATOR_XCFRAMEWORK must name an existing absolute XCFramework")
+    endif()
+    add_library(uml_emulator_external INTERFACE)
+    target_link_libraries(uml_emulator_external INTERFACE
+        "${UML_EMULATOR_XCFRAMEWORK}"
+        "$<$<LINK_LANGUAGE:C,OBJC>:c++>")
+    set(_uml_emulator_consumer_target uml_emulator_external)
 else()
     if(NOT IS_ABSOLUTE "${UML_EMULATOR_LIBRARY}" OR
        NOT EXISTS "${UML_EMULATOR_LIBRARY}")

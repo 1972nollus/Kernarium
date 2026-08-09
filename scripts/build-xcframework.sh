@@ -8,6 +8,8 @@ output=${UML_XCFRAMEWORK_OUTPUT:-"$build_root/UMLEmulator.xcframework"}
 toolchain="$project_root/cmake/toolchains/Apple.cmake"
 dependency_prefix=${UML_DEPENDENCY_PREFIX:-"$project_root/.build/dependencies/macos-arm64"}
 archive_comparator="$project_root/tests/tooling/cmake/test_engine_object_boundaries.py"
+archive_verifier="$project_root/scripts/verify-apple-static-archive.py"
+xcframework_stager="$project_root/scripts/create-apple-xcframework.py"
 
 fail()
 {
@@ -113,21 +115,7 @@ verify_archive()
 	platform=$1
 	archive=$2
 	audit_dir=$3
-	case "$platform" in
-	macos)
-		expected_platform=1
-		expected_minos=14.0
-		;;
-	ios)
-		expected_platform=2
-		expected_minos=16.0
-		;;
-	ios-simulator)
-		expected_platform=7
-		expected_minos=16.0
-		;;
-	*) fail "unknown archive platform: $platform" ;;
-	esac
+	expected_link_time_root=$4
 
 	[ -f "$archive" ] || fail "missing $platform archive: $archive"
 	architectures=$(xcrun lipo -archs "$archive")
@@ -136,61 +124,16 @@ verify_archive()
 
 	mkdir -p -- "$audit_dir"
 	xcrun ar -t "$archive" > "$audit_dir/members.txt"
-	member_count=$(awk '
-		NF && $0 !~ /^__.SYMDEF/ { ++count }
-		END { print count + 0 }
-	' "$audit_dir/members.txt")
-	[ "$member_count" -gt 0 ] || fail "$platform archive has no object members"
-
-	xcrun otool -l "$archive" > "$audit_dir/load-commands.txt"
-	awk -v expected_count="$member_count" \
-		-v expected_platform="$expected_platform" \
-		-v expected_minos="$expected_minos" '
-		function finish_member() {
-			if (member == "")
-				return
-			++members
-			if (build_versions != 1 || platform != expected_platform ||
-			    minos != expected_minos) {
-				printf("invalid build metadata for %s: versions=%d platform=%s minos=%s\n",
-				       member, build_versions, platform, minos) > "/dev/stderr"
-				failed = 1
-			}
-		}
-		/\.a\([^()]+\):$/ {
-			finish_member()
-			member = $0
-			build_versions = 0
-			platform = ""
-			minos = ""
-			in_build_version = 0
-			next
-		}
-		$1 == "cmd" {
-			in_build_version = ($2 == "LC_BUILD_VERSION")
-			if (in_build_version)
-				++build_versions
-			next
-		}
-		in_build_version && $1 == "platform" && platform == "" {
-			platform = $2
-			next
-		}
-		in_build_version && $1 == "minos" && minos == "" {
-			minos = $2
-			next
-		}
-		END {
-			finish_member()
-			if (members != expected_count) {
-				printf("archive metadata covered %d of %d members\n",
-				       members, expected_count) > "/dev/stderr"
-				failed = 1
-			}
-			exit failed
-		}
-	' "$audit_dir/load-commands.txt" ||
-		fail "$platform archive contains a wrong-platform or wrong-version member"
+	# ThinLTO retains Clang's absolute source_filename. The verifier permits that
+	# only for byte-identical objects from the configured gadget target; ordinary
+	# or unknown members retain the strict source/build-path privacy policy.
+	python3 -B "$archive_verifier" \
+		--archive "$archive" \
+		--platform "$platform" \
+		--expected-link-time-object-root "$expected_link_time_root" \
+		--forbidden-path "$project_root" \
+		--forbidden-path "$work_root" ||
+		fail "$platform archive object metadata or provenance is invalid"
 
 	xcrun nm -gU "$archive" > "$audit_dir/global-defined.txt"
 	awk '
@@ -220,14 +163,6 @@ verify_archive()
 		}
 	' "$audit_dir/global-defined.txt" ||
 		fail "$platform archive does not implement the exact public C API"
-
-	LC_ALL=C strings "$archive" > "$audit_dir/strings.txt"
-	if grep -F "$project_root" "$audit_dir/strings.txt" >/dev/null; then
-		fail "$platform archive contains a source-tree path"
-	fi
-	if grep -F "$work_root" "$audit_dir/strings.txt" >/dev/null; then
-		fail "$platform archive contains a package build-tree path"
-	fi
 
 	if [ "$platform" != macos ]; then
 		xcrun nm -o "$archive" > "$audit_dir/all-symbols.txt"
@@ -291,6 +226,30 @@ build_consumer()
 	fi
 }
 
+build_xcode_xcframework_consumer()
+{
+	xcframework=$1
+	consumer_dir=$2
+	clean_build_environment cmake \
+		-S "$project_root/tests/consumer/apple" \
+		-B "$consumer_dir" -G Xcode \
+		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+		-DUML_APPLE_PLATFORM=macos \
+		-DUML_EMULATOR_XCFRAMEWORK="$xcframework" \
+		-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
+		-DCMAKE_C_FLAGS:STRING= \
+		-DCMAKE_CXX_FLAGS:STRING= \
+		-DCMAKE_OBJC_FLAGS:STRING= \
+		-DCMAKE_EXE_LINKER_FLAGS:STRING=
+	cmake --build "$consumer_dir" --config Release \
+		--target uml-emulator-external-consumer \
+			uml-emulator-external-c-consumer \
+			uml-emulator-external-objc-consumer --parallel
+	"$consumer_dir/Release/uml-emulator-external-consumer"
+	"$consumer_dir/Release/uml-emulator-external-c-consumer"
+	"$consumer_dir/Release/uml-emulator-external-objc-consumer"
+}
+
 build_slice()
 {
 	platform=$1
@@ -333,7 +292,9 @@ build_slice()
 		--no-tests=error -R '^engine-object-boundary-audit$'
 
 	library="$build_dir/darwin/emulator/libuml_emulator.a"
-	verify_archive "$platform" "$library" "$build_dir/package-audit/built"
+	link_time_root="$build_dir/darwin/cpu/CMakeFiles/uml_arm64_gadgets.dir"
+	verify_archive "$platform" "$library" "$build_dir/package-audit/built" \
+		"$link_time_root"
 
 	install_dir="$build_dir/install"
 	cmake --install "$build_dir" --config Release --prefix "$install_dir"
@@ -348,14 +309,23 @@ build_slice()
 	[ -f "$install_dir/lib/cmake/UMLEmulator/UMLEmulatorConfig.cmake" ] ||
 		fail "$platform install is missing its CMake package metadata"
 	verify_archive "$platform" "$installed_library" \
-		"$build_dir/package-audit/installed"
+		"$build_dir/package-audit/installed" "$link_time_root"
 	build_consumer "$platform" package "$install_dir" "" \
 		"$build_dir/installed-external-consumer"
 
 	case "$platform" in
-	macos) macos_install=$install_dir ;;
-	ios) ios_install=$install_dir ;;
-	ios-simulator) ios_simulator_install=$install_dir ;;
+	macos)
+		macos_install=$install_dir
+		macos_link_time_root=$link_time_root
+		;;
+	ios)
+		ios_install=$install_dir
+		ios_link_time_root=$link_time_root
+		;;
+	ios-simulator)
+		ios_simulator_install=$install_dir
+		ios_simulator_link_time_root=$link_time_root
+		;;
 	esac
 }
 
@@ -364,11 +334,12 @@ verify_final_slice()
 	platform=$1
 	identifier=$2
 	install_dir=$3
+	expected_link_time_root=$4
 	slice_root="$staged_output/$identifier"
 	final_library="$slice_root/libuml_emulator.a"
 	final_headers="$slice_root/Headers"
 	verify_archive "$platform" "$final_library" \
-		"$work_root/final-audit/$platform"
+		"$work_root/final-audit/$platform" "$expected_link_time_root"
 	compare_static_archives "$install_dir/lib/libuml_emulator.a" "$final_library"
 	cmp "$install_dir/include/uml/emulator.h" \
 		"$final_headers/uml/emulator.h"
@@ -411,18 +382,21 @@ staged_output="$package_stage/UMLEmulator.xcframework"
 macos_install=''
 ios_install=''
 ios_simulator_install=''
+macos_link_time_root=''
+ios_link_time_root=''
+ios_simulator_link_time_root=''
 build_slice macos
 build_slice ios
 build_slice ios-simulator
 
-xcodebuild -create-xcframework \
-	-library "$macos_install/lib/libuml_emulator.a" \
-	-headers "$macos_install/include" \
-	-library "$ios_install/lib/libuml_emulator.a" \
-	-headers "$ios_install/include" \
-	-library "$ios_simulator_install/lib/libuml_emulator.a" \
-	-headers "$ios_simulator_install/include" \
-	-output "$staged_output"
+# xcodebuild's XCFramework assembler treats LLVM link-time objects as unknown
+# archive headers. Stage the documented v1.0 layout directly so the accepted
+# gadget ThinLTO objects remain byte-identical to the audited slice archives.
+python3 -B "$xcframework_stager" \
+	--slice "macos=$macos_install" \
+	--slice "ios=$ios_install" \
+	--slice "ios-simulator=$ios_simulator_install" \
+	--output "$staged_output"
 
 plist="$staged_output/Info.plist"
 [ -f "$plist" ] || fail "XCFramework has no Info.plist: $staged_output"
@@ -473,9 +447,12 @@ fi
 	[ "$saw_simulator" -eq 1 ] ||
 	fail "XCFramework does not contain one exact supported slice per platform"
 
-verify_final_slice macos macos-arm64 "$macos_install"
-verify_final_slice ios ios-arm64 "$ios_install"
-verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install"
+verify_final_slice macos macos-arm64 "$macos_install" "$macos_link_time_root"
+verify_final_slice ios ios-arm64 "$ios_install" "$ios_link_time_root"
+verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install" \
+	"$ios_simulator_link_time_root"
+build_xcode_xcframework_consumer "$staged_output" \
+	"$work_root/final-xcode-consumer/macos"
 
 rm -rf -- "$output"
 mv -- "$staged_output" "$output"
