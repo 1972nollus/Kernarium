@@ -342,16 +342,31 @@ Update this `AGENTS.md` whenever repository layout, supported commands,
 invariants, generated-file ownership, or documentation responsibilities
 change. `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
 
-## Git and workspace hygiene
+## Commit and workspace hygiene
+
+A completed feature or bug fix must end in a green, bisectable local commit.
+Once the relevant focused checks and the complete affected workflow pass,
+stage and commit the coherent change without waiting for a separate
+request. This is standing authorization for local commits at verified working
+states; it is not authorization to push or rewrite history.
 
 - Inspect `git status --short` before and after work. Preserve unrelated user
   changes and do not stage them.
+- Treat each commit as an independently working checkpoint. Do not commit
+  temporary diagnostics, incomplete implementations, regressions introduced by
+  the change, or an emulator state that fails its applicable validation.
+- Keep logically distinct changes in separate commits, but include the tests,
+  documentation, manifests, ABI identities, and generated copies required by
+  the implementation in the same commit that changes their truth.
+- When an external prerequisite or permission prevents the required validation,
+  leave the change uncommitted and report the blocker.
 - Do not commit `.build/`, `linux/`, rootfs images, PDFs, IDE state, caches, or
   generated build output.
 - Do not delete or overwrite a rootfs, replay checkout, dependency prefix, or
   another developer's artifacts without explicit authorization.
 - Keep pure moves, behavior changes, performance changes, and provenance or
   generated-file updates independently reviewable.
-- Do not stage, commit, push, or rewrite history unless the user requests it.
+- Do not push, force-push, rebase, amend, or otherwise rewrite history unless
+  the user requests it.
 - Before handoff, report changed files, checks actually run, checks not run,
   and remaining external prerequisites.

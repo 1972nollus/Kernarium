@@ -43,6 +43,27 @@ may differ between runs; record them as observations rather than rewriting
 metadata or requiring byte equality. The signed `rootfs.img` digest is
 intentionally stricter because it identifies an immutable input.
 
+## Green checkpoints and bisectable commits
+
+Every completed feature or bug fix ends in a local commit only after
+proportionate validation shows that the affected emulator state works. Start
+with the narrow target or exact test, then run the complete supported workflow
+for the affected subsystem. Page-size-sensitive CPU, memory, ABI, kernel, and
+guest changes require both 16 KiB and 4 KiB coverage; GPU, loader, package, and
+guest workflows are required when those paths change.
+
+A green checkpoint has no known failure in the affected behavior and includes
+the tests, documentation, manifests, ABI identities, and generated copies that
+the implementation requires. Each commit must contain one coherent change
+and pass its applicable checks independently so `git bisect` can identify the
+first regression. Do not commit an incomplete implementation, a temporary
+diagnostic, or a knowingly broken emulator state. If an external input,
+credential, host permission, or unavailable campaign prevents required
+validation, leave the change uncommitted and report the missing prerequisite.
+
+This policy requires verified local commits; it does not authorize pushing,
+rebasing, amending, force-pushing, or otherwise rewriting shared history.
+
 ```sh
 cmake --preset macos-unit-16k
 cmake --build --preset unit-test-binaries
