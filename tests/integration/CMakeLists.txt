@@ -62,6 +62,28 @@ uml_add_ltp_engine_campaign(jit)
 add_custom_target(guest-ltp-verified)
 add_dependencies(guest-ltp-verified guest-ltp-gadgets guest-ltp-jit)
 
+set(UML_DOCKER_HELLO_WORLD
+    "${CMAKE_CURRENT_BINARY_DIR}/docker-hello-world")
+add_custom_command(
+    OUTPUT "${UML_DOCKER_HELLO_WORLD}"
+    COMMAND "${CMAKE_CXX_COMPILER}"
+        --target=aarch64-unknown-linux-gnu
+        -nostdlib
+        -static
+        -fuse-ld=lld
+        -Wl,-e,_start
+        "${CMAKE_CURRENT_SOURCE_DIR}/docker/hello_world.S"
+        -o "${UML_DOCKER_HELLO_WORLD}"
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT=${UML_DOCKER_HELLO_WORLD}
+        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/docker/hello_world.S"
+    COMMENT "Building the offline arm64 Docker hello-world payload"
+    VERBATIM)
+add_custom_target(uml-docker-hello-world
+    DEPENDS "${UML_DOCKER_HELLO_WORLD}")
+add_dependencies(integration-test-binaries uml-docker-hello-world)
+
 # Every guest campaign uses the EROFS image wrapper, which validates the raw
 # filesystem contract and digest before launch and after cleanup.  The fast
 # suite contains short real boots; full adds topology, MMU, and rendering work.
@@ -72,6 +94,7 @@ uml_add_guest_integration_test(
         --emulator $<TARGET_FILE:uml-darwin>
         --rootfs ${UML_INTEGRATION_ROOTFS}
         --timeout 240
+        --docker-hello-world-binary ${UML_DOCKER_HELLO_WORLD}
         --command "test -d /run/systemd/system && grep -qx systemd /proc/1/comm"
         --command "getent passwd uml >/dev/null"
         --command "test \"$(id -u uml)\" -ne 0"
@@ -88,6 +111,8 @@ do
 done'"
         --command "docker info --format '{{.Driver}}' | grep -Eq '^overlay(fs|2)$'"
         --command "docker info --format '{{.DockerRootDir}}' | grep -qx /var/lib/docker"
+        --command "test \"$(findmnt -n -o FSTYPE -T /var/lib/containerd)\" = tmpfs"
+        --command "test -x /usr/bin/docker"
         --command "test -x /opt/ltp/testcases/bin/getpid01"
         --command "test -x /opt/node/bin/node"
         --command "/opt/geekbench/release/geekbench6 --no-upload --version >/dev/null"

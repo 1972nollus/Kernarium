@@ -9,6 +9,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import base64
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tarfile
 import time
 from typing import Any, BinaryIO, Sequence
 
@@ -28,6 +30,8 @@ DEFAULT_BASELINE = REPO_ROOT / "tools" / "rootfs" / "manifest.json"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/gpu-test-artifacts"
 PASS_MARKER = "UML_GPU_OVERLAY_TEST: PASS"
 FAIL_MARKER = "UML_GPU_OVERLAY_TEST: FAIL"
+DOCKER_HELLO_WORLD_IMAGE = "uml/hello-world:local"
+MAX_DOCKER_HELLO_WORLD_SIZE = 1024 * 1024
 PROTECTED_ARGUMENTS = (
     "ubd0",
     "root=",
@@ -102,6 +106,82 @@ def validate_extra_arguments(arguments: Sequence[str]) -> None:
             raise SafetyError(f"kernel argument is controlled by the harness: {argument}")
 
 
+def load_docker_hello_world(path: Path) -> bytes:
+    try:
+        payload = path.read_bytes()
+    except OSError as error:
+        raise SafetyError(
+            f"cannot read Docker hello-world payload {path}: {error}"
+        ) from error
+    if not payload.startswith(b"\x7fELF"):
+        raise SafetyError(f"Docker hello-world payload is not an ELF file: {path}")
+    if not payload or len(payload) > MAX_DOCKER_HELLO_WORLD_SIZE:
+        raise SafetyError(
+            "Docker hello-world payload has an invalid size: "
+            f"{len(payload)} bytes"
+        )
+    return payload
+
+
+def make_docker_rootfs_archive(payload: bytes) -> bytes:
+    archive_stream = io.BytesIO()
+    member = tarfile.TarInfo("hello")
+    member.mode = 0o755
+    member.uid = 0
+    member.gid = 0
+    member.uname = "root"
+    member.gname = "root"
+    member.mtime = 0
+    member.size = len(payload)
+    with tarfile.open(
+        fileobj=archive_stream,
+        mode="w",
+        format=tarfile.USTAR_FORMAT,
+    ) as archive:
+        archive.addfile(member, io.BytesIO(payload))
+    return archive_stream.getvalue()
+
+
+def make_docker_hello_world_smoke(payload: bytes) -> str:
+    encoded_archive = base64.b64encode(
+        make_docker_rootfs_archive(payload)
+    ).decode("ascii")
+    encoded_lines = " \\\n".join(
+        f"        '{encoded_archive[offset : offset + 512]}'"
+        for offset in range(0, len(encoded_archive), 512)
+    )
+    return f"""docker_hello_world_image='{DOCKER_HELLO_WORLD_IMAGE}'
+docker_hello_world_container='uml-hello-world-smoke'
+docker_hello_world_archive='/run/uml-docker-hello-world.tar'
+docker_hello_world_output='/run/uml-docker-hello-world.out'
+docker_hello_world_cleanup()
+{{
+    timeout 10 docker rm -f \\
+        "$docker_hello_world_container" >/dev/null 2>&1 || true
+    timeout 10 docker image rm -f \\
+        "$docker_hello_world_image" >/dev/null 2>&1 || true
+    rm -f "$docker_hello_world_archive" "$docker_hello_world_output"
+}}
+trap docker_hello_world_cleanup EXIT HUP INT TERM
+printf '%s' \\
+{encoded_lines} | base64 -d > "$docker_hello_world_archive"
+timeout 30 docker import \\
+    "$docker_hello_world_archive" "$docker_hello_world_image" >/dev/null
+docker image inspect "$docker_hello_world_image" >/dev/null
+if ! timeout 30 docker run \\
+    --name "$docker_hello_world_container" \\
+    --rm --pull=never --network none \\
+    "$docker_hello_world_image" /hello > "$docker_hello_world_output" 2>&1
+then
+    cat "$docker_hello_world_output"
+    exit 1
+fi
+grep -Fxq 'Hello from Docker!' "$docker_hello_world_output"
+cat "$docker_hello_world_output"
+trap - EXIT HUP INT TERM
+docker_hello_world_cleanup"""
+
+
 def build_command(
     emulator: Path,
     rootfs: Path,
@@ -125,8 +205,15 @@ def build_command(
     ]
 
 
-def make_test_script(commands: Sequence[str], auto_poweroff: bool) -> str:
-    command_block = "\n".join(commands)
+def make_test_script(
+    commands: Sequence[str],
+    auto_poweroff: bool,
+    docker_hello_world: bytes | None = None,
+) -> str:
+    command_parts = list(commands)
+    if docker_hello_world is not None:
+        command_parts.append(make_docker_hello_world_smoke(docker_hello_world))
+    command_block = "\n".join(command_parts)
     poweroff_block = """
 echo "UML_GPU_OVERLAY_TEST: requesting normal poweroff"
 # Ask systemd to enter poweroff.target without waiting for wall(1) delivery.
@@ -160,6 +247,7 @@ esac
 check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower)" erofs "lower filesystem type"
 check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower/mnt)" tmpfs "upper backing type"
 check_equal "$(findmnt -n -o FSTYPE -T /var/lib/docker)" tmpfs "Docker state filesystem type"
+check_equal "$(findmnt -n -o FSTYPE -T /var/lib/containerd)" tmpfs "containerd state filesystem type"
 
 probe="/etc/.uml-overlay-write-probe"
 if ! : > "$probe"; then
@@ -222,6 +310,8 @@ printf '%s\\n' \\
     'options timeout:1 attempts:3 rotate' > /etc/resolv.conf
 mkdir -p /var/lib/docker
 mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker || fail "Docker state tmpfs"
+mkdir -p /var/lib/containerd
+mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd || fail "containerd state tmpfs"
 mkdir -p /usr/local/libexec /etc/systemd/system/multi-user.target.wants
 printf '%s' \\
 {encoded_arguments} | base64 -d > /usr/local/libexec/uml-gpu-overlay-test
@@ -356,6 +446,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="shell command to run after the EROFS-overlay checks (repeatable)",
     )
     parser.add_argument(
+        "--docker-hello-world-binary",
+        type=Path,
+        help=(
+            "freestanding arm64/Linux payload to import and execute in the "
+            "offline Docker smoke"
+        ),
+    )
+    parser.add_argument(
         "--no-auto-poweroff",
         action="store_true",
         help="leave the guest running after its checks instead of shutting down normally",
@@ -383,6 +481,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     failure: BaseException | None = None
     try:
         before = verify_image_integrity(rootfs, baseline)
+        docker_hello_world = None
+        if options.docker_hello_world_binary is not None:
+            docker_hello_world = load_docker_hello_world(
+                options.docker_hello_world_binary.resolve()
+            )
         command = build_command(
             emulator,
             rootfs,
@@ -392,7 +495,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
             options.kernel_arguments,
         )
         test_script = make_test_script(
-            options.command, auto_poweroff=not options.no_auto_poweroff
+            options.command,
+            auto_poweroff=not options.no_auto_poweroff,
+            docker_hello_world=docker_hello_world,
         )
         bootstrap = make_bootstrap(test_script)
         result = {
@@ -401,6 +506,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "baseline": str(options.baseline.resolve()),
             "auto_poweroff": not options.no_auto_poweroff,
         }
+        if options.docker_hello_world_binary is not None:
+            result["docker_hello_world"] = {
+                "path": str(options.docker_hello_world_binary.resolve()),
+                "sha256": hashlib.sha256(docker_hello_world or b"").hexdigest(),
+            }
         if options.dry_run:
             print(shlex.join(command))
             print(f"rootfs SHA-256 verified: {before['sha256']}")

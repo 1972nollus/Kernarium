@@ -141,9 +141,13 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 - The image owns the enabled tty0 getty and its login policy. Systemd launchers
   may host-feed the tmpfs OverlayFS bootstrap, but must not synthesize or
   override the getty unit in the overlay. Before starting systemd, that
-  bootstrap mounts tmpfs at `/var/lib/docker` so Docker's `overlayfs` or
-  `overlay2` storage backend is not nested on the writable root overlay.
-  KDE/VNC and WebGL launchers must reuse
+  bootstrap mounts separate tmpfs filesystems at `/var/lib/docker` and
+  `/var/lib/containerd` so Docker storage and containerd state are not nested
+  on the writable root overlay. `guest-overlay-systemd-smoke` builds its
+  freestanding arm64/Linux hello-world payload from repository source, wraps it
+  in a deterministic rootfs archive, imports it into the disposable Docker
+  state, and runs it with `--pull=never --network none`; it must not depend on a
+  registry or external network. KDE/VNC and WebGL launchers must reuse
   the image's non-root `uml` account; never synthesize `plasma` or another
   desktop account in the overlay.
 - External-network, KDE/VNC, WebGL, full LTP, SMP, performance, and official

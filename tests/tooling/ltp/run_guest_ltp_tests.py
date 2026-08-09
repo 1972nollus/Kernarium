@@ -984,10 +984,15 @@ class ResultParsingTests(unittest.TestCase):
         docker_tmpfs = (
             "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
         )
+        containerd_tmpfs = (
+            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd"
+        )
         self.assertIn("lowerdir=/mnt/lower,upperdir=/mnt/upper", bootstrap)
         self.assertIn("pivot_root . .uml-lower", bootstrap)
         self.assertIn("mkdir -p /var/lib/docker", bootstrap)
         self.assertIn(docker_tmpfs, bootstrap)
+        self.assertIn("mkdir -p /var/lib/containerd", bootstrap)
+        self.assertIn(containerd_tmpfs, bootstrap)
         self.assertNotIn("getty@tty0.service", bootstrap)
         self.assertNotIn("agetty --autologin", bootstrap)
         self.assertNotIn("useradd", bootstrap)
@@ -999,6 +1004,10 @@ class ResultParsingTests(unittest.TestCase):
         )
         self.assertLess(
             bootstrap.index(docker_tmpfs),
+            bootstrap.index(containerd_tmpfs),
+        )
+        self.assertLess(
+            bootstrap.index(containerd_tmpfs),
             bootstrap.index("exec /lib/systemd/systemd"),
         )
         self.assertNotIn("mount -o remount,rw", bootstrap)

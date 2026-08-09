@@ -31,8 +31,12 @@ Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 lower filesystem; workloads that need writable state use a tmpfs OverlayFS.
 The image owns tty0 getty enablement and login policy; host-fed OverlayFS
 launchers preserve it rather than installing a transient getty override, and
-mount tmpfs at `/var/lib/docker` before systemd to avoid nested OverlayFS. No
-KDE/VNC or WebGL launcher creates a desktop account: both reuse the image's
-non-root `uml` user and never synthesize `plasma`. No Unix-mode or read-only
-block-argument policy is needed. See
+mount separate tmpfs filesystems at `/var/lib/docker` and
+`/var/lib/containerd` before systemd to keep Docker and containerd state off the
+root overlay. The systemd integration smoke imports a deterministic rootfs
+archive containing a source-built freestanding arm64/Linux hello-world payload
+into that disposable state and runs it with `--pull=never --network none`, with
+no registry dependency. No KDE/VNC or WebGL launcher creates a desktop account:
+both reuse the image's non-root `uml` user and never synthesize `plasma`. No
+Unix-mode or read-only block-argument policy is needed. See
 [`../docs/testing.md`](../docs/testing.md) for preparation and run commands.

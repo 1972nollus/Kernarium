@@ -91,6 +91,8 @@ SYSTEMD_OVERLAY_BOOTSTRAP = "\n".join(
         "'nameserver 10.0.2.3' > /etc/resolv.conf",
         "mkdir -p /var/lib/docker",
         "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker",
+        "mkdir -p /var/lib/containerd",
+        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd",
         "if [ -x /lib/systemd/systemd ]; then exec /lib/systemd/systemd; fi",
         "exec /usr/lib/systemd/systemd",
         "}",

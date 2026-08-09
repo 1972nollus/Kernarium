@@ -36,9 +36,10 @@ pre-measurement quiescence phase: after systemd login and before profiling or
 Geekbench, the runner stops Docker, its socket, containerd, and both apt
 update/upgrade service/timer pairs, verifies that none remains active, and
 syncs. Failure or timeout aborts measurement, and the service-state changes
-remain in the disposable OverlayFS upper. The final regenerated EROFS guest
-suites passed 5/5 in 58.80 seconds at 16 KiB and 5/5 in 64.75 seconds at 4 KiB;
-these are correctness smokes, not benchmark results. The 16 KiB guest's upstream experimental
+remain in the disposable OverlayFS upper. The latest regenerated EROFS guest
+suites passed 5/5 in 65.42 seconds at 16 KiB and 5/5 in 69.33 seconds at 4 KiB;
+their offline Docker hello-world check uses disposable Docker/containerd tmpfs
+state and is a correctness smoke, not a benchmark result. The 16 KiB guest's upstream experimental
 subpage-compression warning for a 4 KiB-block EROFS image is recorded as a
 filesystem limitation, not as a performance result. All partitioned
 `rootfs.img`, upload, and mode-0444 observations below remain dated experiment

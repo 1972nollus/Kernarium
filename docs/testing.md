@@ -17,10 +17,14 @@ migration.
 The subsequent unified-rootfs migration supersedes the old partitioned-image
 policy. Its final host workflows passed 572/572 units plus 49/49 tooling tests
 at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both production page profiles were
-rebuilt; the final regenerated `integration-fast` suites passed 5/5 in 58.80
-seconds at 16 KiB and 5/5 in 64.75 seconds at 4 KiB with raw EROFS at
+rebuilt; the latest regenerated `integration-fast` suites passed 5/5 in 65.42
+seconds at 16 KiB and 5/5 in 69.33 seconds at 4 KiB with raw EROFS at
 `/dev/ubda`: overlay/systemd, interpreter, gadgets, JIT, and deterministic
-SLiRP. Focused rootfs, provisioning, launcher, GPU-runner, LTP-runner,
+SLiRP. The complete integration workflows also passed 52/52 tooling checks in
+each profile. Their overlay/systemd tests passed in 34.06 and 38.19 seconds,
+respectively, with separate Docker and containerd tmpfs mounts and an offline
+source-built hello-world container. Focused rootfs, provisioning, launcher,
+GPU-runner, LTP-runner,
 network-runner, performance-runner, emulator-option, and API contracts also
 pass. The 16 KiB guest reports
 the upstream `EXPERIMENTAL EROFS subpage compressed block support in use`
@@ -207,10 +211,15 @@ They do not depend on a custom bootstrap executable inside the image. The
 image owns the enabled tty0 getty and its login policy; launchers must preserve
 that unit instead of creating a replacement symlink, drop-in, or autologin
 override in the overlay. Before starting systemd, the bootstrap mounts tmpfs at
-`/var/lib/docker` so Docker's `overlayfs` or `overlay2` storage backend is not
-nested on the writable root OverlayFS. KDE/VNC and WebGL launchers reuse the
-image's non-root `uml`
-account and must not create `plasma` or another desktop account in the overlay.
+`/var/lib/docker` and `/var/lib/containerd` so Docker storage and containerd
+state are not nested on the writable root OverlayFS. The
+`guest-overlay-systemd-smoke` target builds a freestanding arm64/Linux
+hello-world executable from repository source, packages it as a deterministic
+rootfs archive, imports that archive into the disposable Docker state, and runs
+the resulting local image with `--pull=never --network none`. The smoke has no
+registry or external-network dependency. KDE/VNC and WebGL launchers reuse the
+image's non-root `uml` account and must not create `plasma` or another desktop
+account in the overlay.
 
 Guest tests validate the EROFS image before and after each campaign, coordinate
 with provisioning through the rootfs lock, map the shared image with `ubd0c=`,

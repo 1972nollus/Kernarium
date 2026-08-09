@@ -62,13 +62,23 @@ def main() -> int:
         in launcher_source,
         "launcher must put Docker state on a disposable tmpfs before systemd",
     )
+    require(
+        "mkdir -p /var/lib/containerd" in launcher_source
+        and "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd"
+        in launcher_source,
+        "launcher must put containerd state on a disposable tmpfs before systemd",
+    )
     docker_mount = launcher_source.index(
         "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
     )
+    containerd_mount = launcher_source.index(
+        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd"
+    )
     require(
         launcher_source.index("pivot_root . .uml-lower") < docker_mount
-        < launcher_source.index("exec /lib/systemd/systemd"),
-        "launcher must mount Docker state after the pivot and before systemd",
+        < containerd_mount < launcher_source.index("exec /lib/systemd/systemd"),
+        "launcher must mount Docker and containerd state after the pivot and "
+        "before systemd",
     )
     require(
         'exec "$rootfs_wrapper" --rootfs "$rootfs" --' in launcher_source,

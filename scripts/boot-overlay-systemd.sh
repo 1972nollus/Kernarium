@@ -196,6 +196,10 @@ mkdir -p /var/lib/docker ||
 	fail "Docker state directory"
 mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker ||
 	fail "Docker state tmpfs"
+mkdir -p /var/lib/containerd ||
+	fail "containerd state directory"
+mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd ||
+	fail "containerd state tmpfs"
 echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
 if [ -x /lib/systemd/systemd ]; then
 	exec /lib/systemd/systemd

@@ -15,10 +15,14 @@ The canonical repository-owned workflow is under [`../../tools/rootfs`](../../to
 EROFS images are rebuilt as complete artifacts; there is no in-place writable
 maintenance path. The artifact also owns tty0 getty enablement and login
 policy; launchers must not inject a replacement getty unit into their tmpfs
-overlay. Systemd OverlayFS launchers mount a separate tmpfs at
-`/var/lib/docker` before systemd starts so Docker storage is not nested on the
-root overlay. Desktop and WebGL launchers reuse the image's non-root `uml`
-account and never create a `plasma` account in the overlay.
+overlay. Systemd OverlayFS launchers mount separate tmpfs filesystems at
+`/var/lib/docker` and `/var/lib/containerd` before systemd starts so Docker and
+containerd state are not nested on the root overlay. The systemd integration
+smoke imports a deterministic rootfs archive containing its source-built,
+freestanding arm64/Linux hello-world payload into that disposable state and
+runs it with `--pull=never --network none`; it never needs a registry. Desktop
+and WebGL launchers reuse the image's non-root `uml` account and never create a
+`plasma` account in the overlay.
 
 No build or test target consumes the scripts in this directory. Keep them
 data-only unless a future image-construction workflow deliberately adopts and

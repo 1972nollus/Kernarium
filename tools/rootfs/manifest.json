@@ -37,6 +37,7 @@
       "mkfs_ext4": "/usr/sbin/mkfs.ext4",
       "mke2fs": "/usr/sbin/mke2fs",
       "debugfs": "/usr/sbin/debugfs",
+      "docker": "/usr/bin/docker",
       "ip": "/usr/sbin/ip",
       "bc": "/usr/bin/bc",
       "quota": "/usr/bin/quota",

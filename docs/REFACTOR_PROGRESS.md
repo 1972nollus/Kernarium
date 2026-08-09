@@ -23,8 +23,12 @@ real Xcode consumer build succeeded.
 For the EROFS migration, the final host workflows passed 572/572 units plus
 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both rebuilt
 production page profiles then passed the regenerated five-test
-`integration-fast` paths with raw `rootfs.erofs` at `/dev/ubda`: 5/5 in 58.80
-seconds at 16 KiB and 5/5 in 64.75 seconds at 4 KiB. Focused rootfs,
+`integration-fast` paths with raw `rootfs.erofs` at `/dev/ubda`: 5/5 in 65.42
+seconds at 16 KiB and 5/5 in 69.33 seconds at 4 KiB. The corresponding
+complete workflows passed 52/52 tooling checks in each profile. Their
+overlay/systemd tests passed in 34.06 and 38.19 seconds with separate Docker
+and containerd tmpfs mounts and an offline source-built hello-world container.
+Focused rootfs,
 provisioning, launcher, runner, emulator-option, and API contracts also pass.
 EROFS itself supplies the read-only lower-filesystem contract, so mode,
 `ubd0r`, and `ro` enforcement are gone. The 16 KiB profile records the upstream
