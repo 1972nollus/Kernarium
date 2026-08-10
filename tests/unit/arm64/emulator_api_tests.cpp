@@ -333,6 +333,9 @@ unsigned long expected_guest_hwcap()
 		{"hw.optional.arm.FEAT_FHM", 23},
 		{"hw.optional.arm.FEAT_LRCPC2", 26},
 		{"hw.optional.arm.FEAT_FlagM", 27},
+		{"hw.optional.arm.FEAT_LSE2", 25},
+		{"hw.optional.arm.FEAT_SB", 29},
+		{"hw.optional.arm.FEAT_DIT", 24},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))

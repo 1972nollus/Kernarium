@@ -29,8 +29,11 @@ constexpr unsigned long hwcap_sha3 = 1UL << 17;
 constexpr unsigned long hwcap_asimddp = 1UL << 20;
 constexpr unsigned long hwcap_sha512 = 1UL << 21;
 constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
+constexpr unsigned long hwcap_dit = 1UL << 24;
+constexpr unsigned long hwcap_uscat = 1UL << 25;
 constexpr unsigned long hwcap_ilrcpc = 1UL << 26;
 constexpr unsigned long hwcap_flagm = 1UL << 27;
+constexpr unsigned long hwcap_sb = 1UL << 29;
 constexpr unsigned long hwcap2_flagm2 = 1UL << 7;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
@@ -106,6 +109,18 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	 * core_integer.inc and executed correctly by all three engines. */
 	if (host.has(::uml::platform::ArmFeature::flag_m))
 		result |= hwcap_flagm;
+	/* FEAT_LSE2, advertised as USCAT: the guarantee that an LSE atomic on an
+	 * address that is not naturally aligned is still single-copy atomic rather
+	 * than a fault. No new encoding, so what is verified is the behaviour of
+	 * the existing atomics on an unaligned address. */
+	if (host.has(::uml::platform::ArmFeature::lse2))
+		result |= hwcap_uscat;
+	/* SB, the speculation barrier, which both translating engines lower. */
+	if (host.has(::uml::platform::ArmFeature::sb))
+		result |= hwcap_sb;
+	/* FEAT_DIT: PSTATE.DIT is settable and readable through MSR/MRS. */
+	if (host.has(::uml::platform::ArmFeature::dit))
+		result |= hwcap_dit;
 	return result;
 }
 

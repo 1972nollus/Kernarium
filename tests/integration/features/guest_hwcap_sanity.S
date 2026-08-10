@@ -47,6 +47,9 @@
 	.equ E_SETF,		15
 	.equ E_AXFLAG,		16
 	.equ E_XAFLAG,		17
+	.equ E_USCAT,		18
+	.equ E_SB,		19
+	.equ E_DIT,		20
 
 	/* The shared probe runner accepts a payload only when it prints exactly
 	 * "OK" and exits zero, so a failure reports the family by name on stdout
@@ -263,6 +266,36 @@ _start:
 	cmp	x23, x24
 	b.ne	.Lfail_xaflag
 
+	/* FEAT_LSE2 (HWCAP_USCAT): an LSE atomic on an address that is not
+	 * naturally aligned must still complete single-copy atomically rather than
+	 * fault. Offset 4 from a 16-byte aligned base is 4-byte aligned and so is
+	 * unaligned for an 8-byte access. Verified natively before use. */
+	add	x23, x19, #4
+	movz	x24, #0x4444
+	movk	x24, #0x3333, lsl #16
+	movk	x24, #0x2222, lsl #32
+	movk	x24, #0x1111, lsl #48
+	str	x24, [x23]
+	mov	x25, #1
+	ldadd	x25, x26, [x23]
+	cmp	x26, x24
+	b.ne	.Lfail_uscat
+	ldr	x27, [x23]
+	add	x24, x24, #1
+	cmp	x27, x24
+	b.ne	.Lfail_uscat
+
+	/* FEAT_SB: the speculation barrier must execute and retire. */
+	sb
+
+	/* FEAT_DIT: setting PSTATE.DIT must be observable through MRS. */
+	msr	dit, #1
+	mrs	x23, dit
+	movz	x24, #0x100, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_dit
+	msr	dit, #0
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -289,6 +322,8 @@ _start:
 .Lfail_setf:		fail E_SETF, msg_setf
 .Lfail_axflag:		fail E_AXFLAG, msg_axflag
 .Lfail_xaflag:		fail E_XAFLAG, msg_xaflag
+.Lfail_uscat:		fail E_USCAT, msg_uscat
+.Lfail_dit:		fail E_DIT, msg_dit
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -361,6 +396,10 @@ msg_axflag:
 	.ascii "FAIL axflag     \n"
 msg_xaflag:
 	.ascii "FAIL xaflag     \n"
+msg_uscat:
+	.ascii "FAIL uscat      \n"
+msg_dit:
+	.ascii "FAIL dit        \n"
 success_message:
 	.ascii "OK\n"
 
