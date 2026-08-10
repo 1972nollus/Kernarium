@@ -6,8 +6,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
-#include <cstring>
 #include <memory>
 #include <memory_resource>
 #include <optional>
@@ -586,7 +584,6 @@ const BuildResult &GadgetExecutor::store(
 	if (context == nullptr)
 		return ::uml::cpu::EngineEvent::fatal;
 	std::array<std::uint32_t, block_instruction_count> instructions;
-	bool instructions_loaded = false;
 	const auto sequences =
 		darwin_uml_static_vm_execution_context_sequences(context);
 	preempted_ = sequences.execution_interrupt != 0;
@@ -615,7 +612,6 @@ const BuildResult &GadgetExecutor::store(
 				fault.access);
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
-		instructions_loaded = true;
 		const auto window = std::span{instructions}.first(count);
 		auto decoded = arm64::gadgets::Builder{}.build(
 			cpu.pc, window,
@@ -630,13 +626,6 @@ const BuildResult &GadgetExecutor::store(
 		selected = std::cref(store(cpu.pc, std::move(decoded)));
 	}
 	const auto &built = selected->get();
-	if (!built.complete) {
-		std::fprintf(stderr,
-			"Darwin static unsupported instruction pc=%#llx value=%#x compiled=%zu\n",
-			static_cast<unsigned long long>(built.stop_address),
-			built.stop_instruction,
-			built.program.instruction_count());
-	}
 	if (built.program.instruction_count() == 0) {
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
@@ -675,38 +664,6 @@ const BuildResult &GadgetExecutor::store(
 			cpu.pc);
 	}
 	cpu.gadget_indirect_miss = nullptr;
-	if (event == ::uml::cpu::EngineEvent::fatal ||
-	    event == ::uml::cpu::EngineEvent::illegal_instruction) {
-		std::array<std::byte, sizeof(std::uint32_t)> current_encoded{};
-		std::uint32_t current_instruction = 0;
-		const bool current_fetched = memory.fetch(cpu.pc, current_encoded);
-		if (current_fetched)
-			std::memcpy(&current_instruction, current_encoded.data(),
-				current_encoded.size());
-		std::fprintf(stderr,
-			"Darwin static terminal event=%d block=%#llx current-pc=%#llx current-instruction=%#x fetched=%u count=%zu\n",
-			static_cast<int>(event),
-			static_cast<unsigned long long>(built.program.guest_address()),
-			static_cast<unsigned long long>(cpu.pc),
-			current_instruction, current_fetched ? 1U : 0U,
-			built.program.instruction_count());
-		for (std::size_t index = 0;
-		     index < built.program.instruction_count(); ++index) {
-			const auto address = built.program.guest_address() + index * 4;
-			std::uint32_t instruction = 0;
-			if (instructions_loaded) {
-				instruction = instructions[index];
-			} else {
-				std::array<std::byte, sizeof(instruction)> encoded{};
-				if (memory.fetch(address, encoded))
-					std::memcpy(&instruction, encoded.data(),
-						    encoded.size());
-			}
-			std::fprintf(stderr,
-				"Darwin static terminal instruction pc=%#llx value=%#x\n",
-				static_cast<unsigned long long>(address), instruction);
-		}
-	}
 	return event;
 }
 
@@ -733,11 +690,6 @@ const BuildResult &GadgetExecutor::store(
 		cpu.pc, std::span{&instruction, 1}, {},
 		std::pmr::get_default_resource(), {}, build_options_);
 	if (!built.complete || built.program.instruction_count() != 1) {
-		std::fprintf(stderr,
-			"Darwin static unsupported instruction pc=%#llx value=%#x compiled=%zu\n",
-			static_cast<unsigned long long>(built.stop_address),
-			built.stop_instruction,
-			built.program.instruction_count());
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
