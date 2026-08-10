@@ -210,6 +210,73 @@ native_jscvt_subnormal_flags_correct() noexcept
 #endif
 }
 
+/*
+ * Apple spells these sysctls with the architecture's own capitalization -
+ * `FEAT_DotProd`, `FEAT_FlagM`, `FEAT_PAuth`, `FEAT_WFxT` - while this
+ * project's labels are lowercase with underscores. `sysctlbyname` is
+ * case-sensitive, so deriving the name from the label alone queried
+ * `FEAT_dotprod` and missed every single one: no feature was ever answered by
+ * sysctl, and detection silently fell through to the SIGILL instruction probe.
+ * A feature with no probe then reported unsupported on a host that has it.
+ *
+ * Only the spellings that differ need an entry; anything absent keeps the
+ * derived name and, failing that, the probe.
+ */
+struct ArmFeatureSysctlName final {
+	ArmFeature feature;
+	std::string_view name;
+};
+
+inline constexpr std::array arm_feature_sysctl_names{
+	ArmFeatureSysctlName{ArmFeature::aes, "AES"},
+	ArmFeatureSysctlName{ArmFeature::afp, "AFP"},
+	ArmFeatureSysctlName{ArmFeature::bf16, "BF16"},
+	ArmFeatureSysctlName{ArmFeature::bti, "BTI"},
+	ArmFeatureSysctlName{ArmFeature::crc32, "CRC32"},
+	ArmFeatureSysctlName{ArmFeature::cssc, "CSSC"},
+	ArmFeatureSysctlName{ArmFeature::dit, "DIT"},
+	ArmFeatureSysctlName{ArmFeature::dotprod, "DotProd"},
+	ArmFeatureSysctlName{ArmFeature::dpb, "DPB"},
+	ArmFeatureSysctlName{ArmFeature::dpb2, "DPB2"},
+	ArmFeatureSysctlName{ArmFeature::ebf16, "EBF16"},
+	ArmFeatureSysctlName{ArmFeature::fcma, "FCMA"},
+	ArmFeatureSysctlName{ArmFeature::fhm, "FHM"},
+	ArmFeatureSysctlName{ArmFeature::flag_m, "FlagM"},
+	ArmFeatureSysctlName{ArmFeature::flag_m2, "FlagM2"},
+	ArmFeatureSysctlName{ArmFeature::fp16, "FP16"},
+	ArmFeatureSysctlName{ArmFeature::frintts, "FRINTTS"},
+	ArmFeatureSysctlName{ArmFeature::hbc, "HBC"},
+	ArmFeatureSysctlName{ArmFeature::i8mm, "I8MM"},
+	ArmFeatureSysctlName{ArmFeature::jscvt, "JSCVT"},
+	ArmFeatureSysctlName{ArmFeature::lrcpc, "LRCPC"},
+	ArmFeatureSysctlName{ArmFeature::lrcpc2, "LRCPC2"},
+	ArmFeatureSysctlName{ArmFeature::lse, "LSE"},
+	ArmFeatureSysctlName{ArmFeature::mte, "MTE"},
+	ArmFeatureSysctlName{ArmFeature::mte2, "MTE2"},
+	ArmFeatureSysctlName{ArmFeature::pauth, "PAuth"},
+	ArmFeatureSysctlName{ArmFeature::pmull, "PMULL"},
+	ArmFeatureSysctlName{ArmFeature::rdm, "RDM"},
+	ArmFeatureSysctlName{ArmFeature::sb, "SB"},
+	ArmFeatureSysctlName{ArmFeature::sha1, "SHA1"},
+	ArmFeatureSysctlName{ArmFeature::sha256, "SHA256"},
+	ArmFeatureSysctlName{ArmFeature::sha3, "SHA3"},
+	ArmFeatureSysctlName{ArmFeature::sha512, "SHA512"},
+	ArmFeatureSysctlName{ArmFeature::sme, "SME"},
+	ArmFeatureSysctlName{ArmFeature::specres, "SPECRES"},
+	ArmFeatureSysctlName{ArmFeature::specres2, "SPECRES2"},
+	ArmFeatureSysctlName{ArmFeature::ssbs, "SSBS"},
+	ArmFeatureSysctlName{ArmFeature::wfxt, "WFxT"},
+};
+
+[[nodiscard]] inline constexpr std::string_view arm_feature_sysctl_name(
+	ArmFeature feature) noexcept
+{
+	for (const auto &entry : arm_feature_sysctl_names)
+		if (entry.feature == feature)
+			return entry.name;
+	return {};
+}
+
 [[nodiscard]] inline bool query_host_arm_feature(
 	ArmFeature feature) noexcept
 {
@@ -219,8 +286,9 @@ native_jscvt_subnormal_flags_correct() noexcept
 	if (feature == ArmFeature::advanced_simd)
 		return query_host_arm_feature("hw.optional.neon", true);
 
-	const auto label =
-		arm_feature_labels[static_cast<std::size_t>(feature)];
+	const auto exact = arm_feature_sysctl_name(feature);
+	const auto label = exact.empty() ?
+		arm_feature_labels[static_cast<std::size_t>(feature)] : exact;
 	std::array<char, 64> name{};
 	const int length = std::snprintf(
 		name.data(), name.size(), "hw.optional.arm.FEAT_%.*s",
