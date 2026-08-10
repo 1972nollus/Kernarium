@@ -6478,3 +6478,85 @@ observed at all.
   the store-publication protocol with 27 `state` call sites, so it wants TSan
   and a stress campaign of its own rather than being appended to another
   session's work. It was deliberately not started here.
+
+## G132: B-3's second half, the store scan made lock-free
+
+Accepted. G131 located the cost: 5,113,608 iterations of
+`JitExclusiveOperationScope`'s wait loop over four multi-core workloads, each
+one taking `jit_store_participants_mutex` and running `any_of` over a vector of
+participant pointers - 5.1 million lock acquire/release pairs and linear scans
+inside a protocol that is otherwise deliberately lock-free.
+
+### The change
+
+A participant's observable store state moves out of `JitStoreParticipant` and
+into a slot in a static array; the participant holds a pointer to its slot and
+`state` becomes an accessor. Registration and release keep the existing mutex,
+which is cold - once per executor. The scan reads a flat array of atomics with
+no lock and no pointer chasing.
+
+**The store path is untouched.** G102 deferred this half because the obvious
+implementation, an atomic count of non-idle participants, "would put a contended
+global read-modify-write on `JitBlockPublication`'s deliberately lock-free
+direct-store path to speed up a rare waiter, which is the shape G33 and G34 were
+rejected for." That objection is correct and does not apply here: a participant
+still only stores its own state, at a different address.
+
+### Why the mutex was there, and why it is no longer needed
+
+It was not ordering the states. Those are `seq_cst` on both the store and the
+scan, which is what orders them against `jit_exclusive_operation_phase`; the
+Dekker pattern between a publishing store and a helper announcing itself is
+unchanged. The mutex was preventing the scan from dereferencing a participant
+that had been destroyed - `unregister` says so directly.
+
+Slots remove that hazard instead of guarding it. The scan reads static storage
+that outlives every participant, never dereferences a participant, and a
+released slot reads `idle`, which is exactly what "no published store" means.
+Release stores `idle` before clearing the claim, so a scan racing a release sees
+either the participant's final state or `idle`, and once the participant is gone
+those mean the same thing.
+
+Three further properties are deliberate rather than incidental:
+
+- **Exhaustion cannot break correctness.** `jit_store_slot_capacity` is 1024. A
+  participant that cannot claim a slot keeps publishing into its own storage and
+  joins an overflow list the scan consults under the mutex, exactly as every
+  participant did before. Exhaustion costs speed, never visibility.
+- **The scan bound only grows.** Shrinking it would race a participant still
+  publishing through a lower index. A released slot reads `idle`, so scanning
+  one costs a load and cannot produce a false positive. Registration claims the
+  lowest free slot, which keeps the bound tight across a long run.
+- **Copying a participant is a compile error.** `published_` points into the
+  object until a shared slot is claimed, so a copy or move would leave one
+  aliasing the other's storage. All four are deleted.
+
+### Measured
+
+The multi-core score could not resolve this and is reported as unusable rather
+than as a result: across eight arms, Object Detection ran 350 to 972 and Photo
+Filter 340 to 846 - the bimodal per-workload behaviour G108 documented, which
+G122 cleared only for the *aggregate*. `guest_reservation_store_loop` was also
+tried and is too short at 0.074 s wall, with both arms fully overlapping.
+
+So the mechanism was timed directly. One binary, the previous mutex scan behind
+an environment variable, multi-core Object Detection and Photo Filter, ABBA.
+The dump fires on a fixed wait count, so **both arms measured exactly 180,225
+gate waits** and the times are directly comparable.
+
+| arm | time in the wait loop | mean |
+| --- | --- | ---: |
+| mutex and vector scan | 272.37 ms, 272.50 ms | 272.4 ms |
+| **lock-free slot scan** | **247.67 ms, 242.56 ms** | **245.1 ms** |
+
+**10.0% less time in the gate wait loop**, with no overlap between the arms and
+the control reproducing to 0.05%. No multi-core regression was observed; the
+scores are simply too noisy to claim anything from, in either direction.
+
+### Gates
+
+TSan 8/8 including `arm64-jit-publication_gate`, unit 572/572 at 16 KiB,
+573/573 at 4 KiB, ASan/UBSan 572/572, tooling 50/50. Both page profiles were run
+because the change is in shared host code. The measurement switch and the wait
+timer were removed before the gates above were re-run, so they cover exactly the
+code that ships.

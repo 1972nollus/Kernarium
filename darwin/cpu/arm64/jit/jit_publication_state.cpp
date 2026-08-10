@@ -3,10 +3,15 @@
 #include "jit_publication.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 
 namespace uml::cpu::arm64 {
 
 std::atomic<unsigned> active_jit_reservations{};
+std::array<JitStoreSlot, jit_store_slot_capacity> jit_store_slots{};
+std::atomic<std::size_t> jit_store_slot_limit{};
+std::atomic<std::size_t> jit_store_overflow_count{};
 std::mutex jit_store_participants_mutex;
 std::vector<JitStoreParticipant *> jit_store_participants;
 alignas(64) std::atomic<unsigned> jit_exclusive_operation_phase{};
@@ -19,12 +24,34 @@ thread_local JitStoreParticipant *current_jit_store_participant{};
 
 bool has_published_jit_store(
     const JitStoreParticipant *excluded) noexcept {
+  /* The hot path: a bounded scan of stable storage with no lock taken. The
+   * states are seq_cst on both sides, so they order against
+   * jit_exclusive_operation_phase without help from a mutex; the mutex this
+   * replaces was preventing a scan from dereferencing a destroyed participant,
+   * which slots make impossible. */
+  const auto *excluded_slot =
+      excluded != nullptr ? excluded->published_ : nullptr;
+  const auto limit = jit_store_slot_limit.load(std::memory_order_acquire);
+  for (std::size_t index = 0; index < limit; ++index) {
+    const auto *slot = &jit_store_slots[index];
+    if (slot == excluded_slot)
+      continue;
+    if (slot->state.load(std::memory_order_seq_cst) != JitStoreState::idle)
+      return true;
+  }
+  /* Only reached if the slot array was exhausted, which needs more than
+   * jit_store_slot_capacity live participants. Those keep their own slot and
+   * are scanned here under the mutex, exactly as every participant was before,
+   * so exhaustion degrades speed rather than correctness. */
+  if (jit_store_overflow_count.load(std::memory_order_acquire) == 0)
+    return false;
   std::scoped_lock lock{jit_store_participants_mutex};
   return std::ranges::any_of(
       jit_store_participants,
       [excluded](const JitStoreParticipant *participant) {
         return participant != excluded &&
-               participant->state.load(std::memory_order_seq_cst) !=
+               participant->published_ == &participant->local_ &&
+               participant->state().load(std::memory_order_seq_cst) !=
                    JitStoreState::idle;
       });
 }
@@ -73,18 +100,56 @@ void register_jit_store_participant(JitStoreParticipant &participant) {
       jit_store_participants.end())
     return;
   jit_store_participants.push_back(&participant);
+
+  /* Claim the lowest free slot so the scan bound stays tight across a run that
+   * registers and releases many participants over time. Registration is cold -
+   * once per executor - so a linear search costs nothing that matters. */
+  for (std::size_t index = 0; index < jit_store_slot_capacity; ++index) {
+    bool expected = false;
+    if (!jit_store_slots[index].claimed.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel,
+            std::memory_order_relaxed))
+      continue;
+    jit_store_slots[index].state.store(JitStoreState::idle,
+                                       std::memory_order_seq_cst);
+    participant.published_ = &jit_store_slots[index];
+    /* Publish the bound after the slot reads idle, so a scan that first
+     * observes this index cannot see uninitialised state. The participant
+     * cannot have published a store yet: it registers before it runs. */
+    std::size_t limit = jit_store_slot_limit.load(std::memory_order_relaxed);
+    while (limit <= index &&
+           !jit_store_slot_limit.compare_exchange_weak(
+               limit, index + 1, std::memory_order_release,
+               std::memory_order_relaxed))
+      ;
+    return;
+  }
+  /* No slot left. The participant keeps publishing into its own storage and
+   * the scan finds it through the overflow path. */
+  jit_store_overflow_count.fetch_add(1, std::memory_order_release);
 }
 
 void unregister_jit_store_participant(JitStoreParticipant &participant) {
   std::scoped_lock lock{jit_store_participants_mutex};
-  /* The scan takes this same mutex, so erasing the sole entry waits for any
-   * in-flight scan and no later scan can observe the participant. A repeated
-   * unregister therefore has no lifetime work left to perform. */
   const auto found =
       std::ranges::find(jit_store_participants, &participant);
   if (found == jit_store_participants.end())
     return;
   jit_store_participants.erase(found);
+
+  if (participant.published_ == &participant.local_) {
+    jit_store_overflow_count.fetch_sub(1, std::memory_order_release);
+    return;
+  }
+  /* Release the slot idle-first. A scan racing this sees either the
+   * participant's final state or idle, and both mean the same thing once the
+   * participant is gone. The slot itself is static, so an in-flight scan that
+   * is already reading it stays inside live storage - which is the hazard the
+   * mutex used to cover. */
+  auto *slot = participant.published_;
+  participant.published_ = &participant.local_;
+  slot->state.store(JitStoreState::idle, std::memory_order_seq_cst);
+  slot->claimed.store(false, std::memory_order_release);
 }
 
 bool begin_jit_reservation(CpuState &cpu) {

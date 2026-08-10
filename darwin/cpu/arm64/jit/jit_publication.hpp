@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/cpu_state.hpp"
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <unordered_set>
@@ -17,9 +18,70 @@ enum class JitStoreState : unsigned {
   tracked,
 };
 
+/*
+ * A participant's observable store state lives in a slot rather than in the
+ * participant, so that scanning it needs no lock.
+ *
+ * G131 counted 5,113,608 iterations of the wait loop in
+ * JitExclusiveOperationScope over four multi-core workloads, each one taking
+ * jit_store_participants_mutex and running any_of over a vector of participant
+ * pointers - 5.1 million lock acquire/release pairs and linear scans inside a
+ * protocol that is otherwise deliberately lock-free.
+ *
+ * The mutex was not ordering the states, which are seq_cst on both sides; it
+ * was keeping the scan from dereferencing a participant that had been
+ * destroyed. Slots remove that hazard rather than guard it: the scan reads
+ * stable storage that outlives every participant, a released slot reads idle -
+ * which is exactly "no published store" - and no participant is ever
+ * dereferenced. G102 rejected the obvious alternative, an atomic count of
+ * non-idle participants, because it would put a contended read-modify-write on
+ * the lock-free direct-store path to speed up a waiter. Nothing here touches
+ * that path: a participant still only stores its own state, at a different
+ * address.
+ */
+struct alignas(64) JitStoreSlot final {
+  std::atomic<JitStoreState> state{JitStoreState::idle};
+  std::atomic<bool> claimed{false};
+};
+
+/* Slots are static so the scan never races an allocation. The bound is a
+ * capacity, not an assumption: a participant that cannot claim one keeps its
+ * own slot and joins an overflow list the scan consults under the mutex, so
+ * exhaustion costs speed and never correctness. */
+inline constexpr std::size_t jit_store_slot_capacity = 1024;
+extern std::array<JitStoreSlot, jit_store_slot_capacity> jit_store_slots;
+/* Only ever grows. A released slot reads idle, so scanning one costs a load
+ * and cannot produce a false positive; shrinking it would race a participant
+ * that is still publishing through a lower index. */
+extern std::atomic<std::size_t> jit_store_slot_limit;
+extern std::atomic<std::size_t> jit_store_overflow_count;
+
 struct JitStoreParticipant final {
-  alignas(64) std::atomic<JitStoreState> state{JitStoreState::idle};
+  JitStoreParticipant() = default;
+
+  /* published_ points into this object until the participant claims a shared
+   * slot, so a copy or a move would leave one of the two aliasing the other's
+   * storage. Nothing needs to copy a participant; deleting these makes any
+   * attempt a compile error rather than a dangling publication. */
+  JitStoreParticipant(const JitStoreParticipant &) = delete;
+  JitStoreParticipant &operator=(const JitStoreParticipant &) = delete;
+  JitStoreParticipant(JitStoreParticipant &&) = delete;
+  JitStoreParticipant &operator=(JitStoreParticipant &&) = delete;
+
+  [[nodiscard]] std::atomic<JitStoreState> &state() const noexcept {
+    return published_->state;
+  }
+
   std::atomic<CpuState *> reservation_cpu{};
+
+  /* Declared before published_ so it is constructed before its address is
+   * taken. An unregistered participant publishes here and is invisible to the
+   * scan, which is what an unregistered participant meant before as well. */
+  JitStoreSlot local_{};
+  /* Written only by the owning thread, in register/unregister, and read only
+   * by the owner on its own store path. The scan reads the slot array, never
+   * this pointer, so publication does not have to be synchronised. */
+  JitStoreSlot *published_{&local_};
 };
 
 extern std::atomic<unsigned> active_jit_reservations;
@@ -85,12 +147,12 @@ public:
       JitStoreParticipant &participant, const CpuState &cpu) noexcept
       : participant_{participant} {
     current_jit_store_participant = &participant_;
-    participant_.state.store(JitStoreState::checking,
+    participant_.state().store(JitStoreState::checking,
                              std::memory_order_seq_cst);
     auto phase =
         jit_exclusive_operation_phase.load(std::memory_order_seq_cst);
     if (jit_exclusive_operation_is_active(phase)) {
-      participant_.state.store(JitStoreState::idle,
+      participant_.state().store(JitStoreState::idle,
                                std::memory_order_seq_cst);
       waiting_ = true;
       jit_waiting_store_count_value.fetch_add(1,
@@ -104,12 +166,12 @@ public:
           phase =
               jit_exclusive_operation_phase.load(std::memory_order_seq_cst);
         }
-        participant_.state.store(JitStoreState::checking,
+        participant_.state().store(JitStoreState::checking,
                                  std::memory_order_seq_cst);
         phase =
             jit_exclusive_operation_phase.load(std::memory_order_seq_cst);
         if (jit_exclusive_operation_is_active(phase)) {
-          participant_.state.store(JitStoreState::idle,
+          participant_.state().store(JitStoreState::idle,
                                    std::memory_order_seq_cst);
         }
       } while (jit_exclusive_operation_is_active(phase));
@@ -121,7 +183,7 @@ public:
         (active != 1 ||
          participant_.reservation_cpu.load(std::memory_order_seq_cst) !=
              &cpu);
-    participant_.state.store(tracked_ ? JitStoreState::tracked
+    participant_.state().store(tracked_ ? JitStoreState::tracked
                                       : JitStoreState::direct,
                              std::memory_order_seq_cst);
     if (waiting_) {
@@ -135,7 +197,7 @@ public:
   JitBlockPublication &operator=(const JitBlockPublication &) = delete;
 
   [[gnu::always_inline]] ~JitBlockPublication() {
-    participant_.state.store(JitStoreState::idle, std::memory_order_seq_cst);
+    participant_.state().store(JitStoreState::idle, std::memory_order_seq_cst);
     current_jit_store_participant = nullptr;
   }
 

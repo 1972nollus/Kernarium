@@ -109,7 +109,7 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
     store_started.acquire();
     while (jit_waiting_store_count(jit_exclusive_operation_phase.load(
                std::memory_order_seq_cst)) == 0U ||
-           participant.state.load(std::memory_order_seq_cst) !=
+           participant.state().load(std::memory_order_seq_cst) !=
                JitStoreState::idle)
       std::this_thread::yield();
   };
@@ -140,7 +140,7 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
       jit_waiting_store_count(phase_before_release) == 1U &&
       store_order.load(std::memory_order_relaxed) == 0U &&
       second_helper_order.load(std::memory_order_relaxed) == 0U &&
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle;
 
   release_first_helper.release();
@@ -156,7 +156,7 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
       second_helper_order.load(std::memory_order_relaxed) == 0U &&
       jit_exclusive_operation_is_active(phase_while_store_runs) &&
       jit_waiting_store_count(phase_while_store_runs) == 0U &&
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::direct;
 
   release_store.release();
@@ -165,7 +165,7 @@ waiting_store_precedes_queued_helper_for_testing(bool queue_helper_first) {
 
   const bool completed_in_order =
       second_helper_order.load(std::memory_order_relaxed) == 2U &&
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_gate_is_quiescent_for_testing();
   unregister_jit_store_participant(participant);
@@ -223,12 +223,12 @@ bool normal_store_leaves_exclusive_gate_unchanged_for_testing() {
     JitBlockPublication publication{participant, cpu};
     direct_without_mutation =
         !publication.needs_tracking() &&
-        participant.state.load(std::memory_order_seq_cst) ==
+        participant.state().load(std::memory_order_seq_cst) ==
             JitStoreState::direct &&
         jit_exclusive_operation_phase.load(std::memory_order_seq_cst) == 0U;
   }
   const bool unchanged_after =
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_operation_phase.load(std::memory_order_seq_cst) == 0U;
   unregister_jit_store_participant(participant);
@@ -274,7 +274,7 @@ bool store_first_publication_handshake_for_testing() {
   helper.join();
 
   const bool idle =
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_gate_is_quiescent_for_testing();
   unregister_jit_store_participant(participant);
@@ -337,9 +337,9 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
   second_store_started.acquire();
   while (jit_waiting_store_count(jit_exclusive_operation_phase.load(
              std::memory_order_seq_cst)) != 2U ||
-         first_participant.state.load(std::memory_order_seq_cst) !=
+         first_participant.state().load(std::memory_order_seq_cst) !=
              JitStoreState::idle ||
-         second_participant.state.load(std::memory_order_seq_cst) !=
+         second_participant.state().load(std::memory_order_seq_cst) !=
              JitStoreState::idle)
     std::this_thread::yield();
 
@@ -369,9 +369,9 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
   const bool both_stores_won_phase =
       jit_exclusive_operation_is_active(phase_before_release) &&
       stores_waiting_before_release == 2U &&
-      first_participant.state.load(std::memory_order_seq_cst) ==
+      first_participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::direct &&
-      second_participant.state.load(std::memory_order_seq_cst) ==
+      second_participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::direct &&
       !helper_crossed_both_stores;
 
@@ -381,7 +381,7 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
   const bool helper_crossed_second_store =
       queued_helper_entered.try_acquire();
   const bool helper_waited_for_second =
-      second_participant.state.load(std::memory_order_seq_cst) ==
+      second_participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::direct &&
       !helper_crossed_second_store;
 
@@ -394,9 +394,9 @@ bool all_waiting_stores_precede_queued_helper_for_testing() {
 
   const bool completed =
       helper_observed_releases.load(std::memory_order_seq_cst) == 2U &&
-      first_participant.state.load(std::memory_order_seq_cst) ==
+      first_participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
-      second_participant.state.load(std::memory_order_seq_cst) ==
+      second_participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_gate_is_quiescent_for_testing();
   unregister_jit_store_participant(second_participant);
@@ -425,7 +425,7 @@ bool late_store_waits_for_current_helper_for_testing() {
     JitBlockPublication publication{participant, cpu};
     store_entered.release();
   }};
-  while (participant.state.load(std::memory_order_seq_cst) !=
+  while (participant.state().load(std::memory_order_seq_cst) !=
          JitStoreState::idle)
     std::this_thread::yield();
   const bool parked = !store_entered.try_acquire();
@@ -436,7 +436,7 @@ bool late_store_waits_for_current_helper_for_testing() {
   store.join();
   const bool completed =
       parked &&
-      participant.state.load(std::memory_order_seq_cst) ==
+      participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_gate_is_quiescent_for_testing();
   unregister_jit_store_participant(participant);
@@ -494,7 +494,7 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
   const bool helper_crossed_store = shared->helper_entered.try_acquire();
   const bool tracked_before_invalidation =
       shared->tracked.load(std::memory_order_seq_cst) &&
-      shared->participant.state.load(std::memory_order_seq_cst) ==
+      shared->participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::tracked &&
       !helper_crossed_store;
   shared->begin_invalidation.release();
@@ -522,7 +522,7 @@ bool tracked_store_invalidation_does_not_deadlock_for_testing() {
 
   const bool completed =
       tracked_before_invalidation && !helper_crossed_store &&
-      shared->participant.state.load(std::memory_order_seq_cst) ==
+      shared->participant.state().load(std::memory_order_seq_cst) ==
           JitStoreState::idle &&
       jit_exclusive_gate_is_quiescent_for_testing();
   end_jit_reservation(shared->reservation_cpu);
@@ -607,7 +607,7 @@ bool publication_gate_randomized_stress_for_testing() {
 
   const bool all_idle = std::ranges::all_of(
       participants, [](const auto &participant) {
-        return participant.state.load(std::memory_order_seq_cst) ==
+        return participant.state().load(std::memory_order_seq_cst) ==
                JitStoreState::idle;
       });
   const bool completed =
@@ -644,11 +644,11 @@ bool publication_participant_lifetime_is_idempotent_for_testing() {
                        1U;
   }
 
-  participant.state.store(JitStoreState::direct,
+  participant.state().store(JitStoreState::direct,
                           std::memory_order_seq_cst);
   const bool visible_while_registered =
       has_published_jit_store(nullptr);
-  participant.state.store(JitStoreState::idle, std::memory_order_seq_cst);
+  participant.state().store(JitStoreState::idle, std::memory_order_seq_cst);
   unregister_jit_store_participant(participant);
   unregister_jit_store_participant(participant);
 
