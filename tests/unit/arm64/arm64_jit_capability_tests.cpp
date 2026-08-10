@@ -19,8 +19,17 @@ constexpr unsigned long hwcap_sha1 = 1UL << 5;
 constexpr unsigned long hwcap_sha2 = 1UL << 6;
 constexpr unsigned long hwcap_crc32 = 1UL << 7;
 constexpr unsigned long hwcap_atomics = 1UL << 8;
+constexpr unsigned long hwcap_fphp = 1UL << 9;
+constexpr unsigned long hwcap_asimdhp = 1UL << 10;
+constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
+constexpr unsigned long hwcap_jscvt = 1UL << 13;
 constexpr unsigned long hwcap_sha3 = 1UL << 17;
+constexpr unsigned long hwcap_asimddp = 1UL << 20;
 constexpr unsigned long hwcap_sha512 = 1UL << 21;
+constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
+constexpr unsigned long hwcap2_frint = 1UL << 8;
+constexpr unsigned long hwcap2_i8mm = 1UL << 13;
+constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 constexpr std::uint64_t feature_gate_pc = 0x4f90'0000;
 
 [[nodiscard]] constexpr std::uint32_t pstate_immediate(
@@ -51,13 +60,37 @@ void guest_capabilities_match_host()
 			   host.has(::uml::cpu::ArmFeature::lse));
 	require_propagated(capabilities, hwcap_sha3, host.sha3);
 	require_propagated(capabilities, hwcap_sha512, host.sha512);
+	/* The dot family is advertised on exactly the predicate the gadget bank
+	 * and the JIT use to select their native dot paths, so the guest can only
+	 * be handed these opcodes where an engine executes them. */
+	require_propagated(capabilities, hwcap_asimddp,
+			   host.has(::uml::cpu::ArmFeature::dotprod));
+	require_propagated(capabilities, hwcap_fphp, host.fp16);
+	require_propagated(capabilities, hwcap_asimdhp, host.fp16);
+	require_propagated(capabilities, hwcap_asimdrdm,
+			   host.has(::uml::cpu::ArmFeature::rdm));
+	require_propagated(capabilities, hwcap_asimdfhm,
+			   host.has(::uml::cpu::ArmFeature::fhm));
+	require_propagated(capabilities, hwcap_jscvt,
+			   host.has(::uml::cpu::ArmFeature::jscvt) &&
+				   host.jscvt_subnormal_flags_correct);
 
 	constexpr auto advertised =
 		hwcap_fp | hwcap_asimd | hwcap_aes | hwcap_pmull | hwcap_sha1 |
-		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_sha3 |
-		hwcap_sha512;
+		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_fphp |
+		hwcap_asimdhp | hwcap_asimdrdm | hwcap_jscvt | hwcap_sha3 |
+		hwcap_asimddp | hwcap_sha512 | hwcap_asimdfhm;
 	require((capabilities & ~advertised) == 0);
-	require(darwin_uml_guest_hwcap2() == 0);
+
+	const auto capabilities2 = darwin_uml_guest_hwcap2();
+	require_propagated(capabilities2, hwcap2_i8mm,
+			   host.has(::uml::cpu::ArmFeature::i8mm));
+	require_propagated(capabilities2, hwcap2_frint,
+			   host.has(::uml::cpu::ArmFeature::frintts));
+	require_propagated(capabilities2, hwcap2_bf16,
+			   host.has(::uml::cpu::ArmFeature::bf16));
+	constexpr auto advertised2 = hwcap2_frint | hwcap2_i8mm | hwcap2_bf16;
+	require((capabilities2 & ~advertised2) == 0);
 }
 
 [[nodiscard]] bool is_host_key_operation(std::uint32_t instruction)

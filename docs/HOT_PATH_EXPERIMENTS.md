@@ -5932,3 +5932,68 @@ Three lessons, all cheap to state and expensive to learn:
 `--kernel-argument` was added to the Geekbench runner for this, which is what
 makes a same-binary boot-parameter A/B possible. Evidence is in
 `.build/results/psi-abba-*` and `geekbench-head-gadgets-*`.
+
+## G125: B-6, the guest feature surface was starving the vector workloads
+
+Accepted, and the largest single result in this campaign. `virtual_hwcap()`
+advertised nine features and `darwin_uml_guest_hwcap2()` returned zero
+unconditionally, while both engines had implemented far more. Guest libraries
+select their vector paths from those words, so every unadvertised family was
+running a fallback the engines never needed it to run.
+
+### The contract
+
+A family is advertised only where an engine has committed to executing it, on
+the **identical host predicate its native paths already use**. DotProd rides
+`ArmFeature::dotprod`, the same gate `gadget_memory_selection.cpp` and
+`JitCompilerFamilies::emit_simd_dot` use; half precision rides the `fp16` probe
+that `gadget_simd_selection.cpp` and `jit_compiler_floating.cpp` use; JSCVT
+additionally requires `jscvt_subnormal_flags_correct`, because without it the
+engines decline the native encoding. The interpreter implements all of these in
+software through the dispatcher, so no engine can be handed an opcode it will
+not execute. On this host I8MM and BF16 stay dark, correctly - the host lacks
+them.
+
+Added: HWCAP FPHP, ASIMDHP, ASIMDRDM, JSCVT, ASIMDDP, ASIMDFHM; HWCAP2 FRINT,
+I8MM, BF16.
+
+### Measured with targeted workloads, not the full suite
+
+Geekbench 6.7.1 runs single workloads (`--section`/`--workload`), which
+turns a 55-minute suite into a few minutes and reports rates at three
+significant figures instead of a rounded integer score. Single-core, gadgets,
+interleaved candidate/control against one frozen control binary, n=2 per arm:
+
+| workload | control | candidate | change |
+| --- | ---: | ---: | ---: |
+| Object Detection | 0.96 img/s | 2.34 img/s | **+144.3%** |
+| Photo Filter | 1.02 img/s | 1.88 img/s | **+83.4%** |
+| Background Blur | 0.29 img/s | 0.47 img/s | **+63.8%** |
+| Structure from Motion | 2.45 Kpx/s | 3.11 Kpx/s | **+27.2%** |
+| Horizon Detection | 3.37 Mpx/s | 3.70 Mpx/s | +9.8% |
+| HDR | 2.96 Mpx/s | 3.00 Mpx/s | +1.3% |
+| Ray Tracer | 96.40 Kpx/s | 94.60 Kpx/s | -1.9% |
+
+The features separate cleanly by workload, which is the evidence that these are
+real mechanisms and not drift. An earlier DotProd-only build moved Object
+Detection identically (+144%) but left Background Blur at 69 against 69; adding
+half precision is what moved Blur and Photo Filter. Ray Tracer, which is scalar
+FP, is flat to slightly down and is the one to watch in the full suite.
+
+**These magnitudes are why targeted measurement mattered.** G124 put the
+multi-core aggregate band at 2.8%; a +144% workload win is worth roughly 2% of
+the aggregate once it is averaged with fifteen others, which the full suite
+would have reported as barely more than noise.
+
+### The rest of the surface is host-limited, not implementation-limited
+
+MOPS would be the largest remaining general-computing win - glibc routes
+`memcpy`/`memset` through CPY*/SET* when it is advertised - but this host does
+not implement it, and emulating it in software would be slower than the guest's
+existing NEON fallback. The same applies to CSSC, ECV, AFP, RPRES, WFxT, HBC and
+SVE. What remains genuinely implementable is LRCPC/LRCPC2 and FCMA, which the
+host and the JIT have but the gadget bank does not, then FLAGM/FLAGM2 and LSE2,
+which are not yet in `ArmFeature` at all.
+
+Gates: 621/621 unit. The fail-closed allowlist in `arm64-jit-capability` caught
+every bit added here and was extended, not relaxed.

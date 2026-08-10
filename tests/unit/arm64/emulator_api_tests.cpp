@@ -320,8 +320,38 @@ unsigned long expected_guest_hwcap()
 		{"hw.optional.arm.FEAT_SHA256", 6},
 		{"hw.optional.arm.FEAT_CRC32", 7},
 		{"hw.optional.arm.FEAT_LSE", 8},
+		{"hw.optional.arm.FEAT_FP16", 9},
+		{"hw.optional.arm.FEAT_FP16", 10},
+		{"hw.optional.arm.FEAT_RDM", 12},
 		{"hw.optional.arm.FEAT_SHA3", 17},
+		/* HWCAP_ASIMDDP. Advertised only where the gadget bank and the JIT
+		 * select their native dot paths, which is the same host predicate. */
+		{"hw.optional.arm.FEAT_DotProd", 20},
 		{"hw.optional.arm.FEAT_SHA512", 21},
+		{"hw.optional.arm.FEAT_FHM", 23},
+	};
+	for (const auto &feature : optional)
+		if (host_feature(feature.sysctl))
+			result |= 1UL << feature.bit;
+	return result;
+}
+
+/* HWCAP_JSCVT additionally depends on a runtime probe of this core's subnormal
+ * flag behaviour, which a sysctl cannot answer. Compare every other bit exactly
+ * and leave that one to arm64-jit-capability, which checks the real predicate.
+ */
+constexpr unsigned long hwcap_probe_dependent = 1UL << 13;
+
+unsigned long expected_guest_hwcap2()
+{
+	unsigned long result = 0;
+	const struct {
+		const char *sysctl;
+		unsigned bit;
+	} optional[]{
+		{"hw.optional.arm.FEAT_FRINTTS", 8},
+		{"hw.optional.arm.FEAT_I8MM", 13},
+		{"hw.optional.arm.FEAT_BF16", 14},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))
@@ -513,10 +543,11 @@ int native_dhcp_kernel(int argc, char *const argv[], char *const[])
 void test_native_entry()
 {
 	const auto expected_hwcap = expected_guest_hwcap();
-	require(darwin_uml_guest_hwcap() == expected_hwcap,
+	require((darwin_uml_guest_hwcap() & ~hwcap_probe_dependent) ==
+			(expected_hwcap & ~hwcap_probe_dependent),
 		"guest HWCAP does not match the host-safe virtual CPU");
-	require(darwin_uml_guest_hwcap2() == 0,
-		"guest exposed an unimplemented HWCAP2 extension");
+	require(darwin_uml_guest_hwcap2() == expected_guest_hwcap2(),
+		"guest HWCAP2 does not match the host-safe virtual CPU");
 
 	NetworkState network_state;
 	uml_emulator_network_callbacks network{
@@ -576,7 +607,8 @@ void test_native_entry()
 		UML_EMULATOR_OK &&
 		capabilities.userspace_execution == UML_EMULATOR_STATIC_GADGETS,
 		"handle-local gadget selection was not retained");
-	require(darwin_uml_guest_hwcap() == expected_hwcap,
+	require((darwin_uml_guest_hwcap() & ~hwcap_probe_dependent) ==
+			(expected_hwcap & ~hwcap_probe_dependent),
 		"gadget selection changed the virtual CPU contract");
 	require(execution_option_was_stripped,
 		"host execution option leaked into kernel arguments");
