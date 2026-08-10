@@ -6231,3 +6231,71 @@ SIMD, floating and vector unit tests pass with residency disabled, so the slower
 arm is a valid comparison and not a broken one. The diagnostic switch was
 reverted and the tree rebuilt; it is not committed, because a runtime check in
 the translation path is not something production should carry.
+
+## G129: G-4's two gadget-shaped routes, one refuted and one blocked
+
+No change kept. G128 established that vector residency is worth 32-68% on the
+workloads that matter. This asks the question that decides whether the gadget
+engine can collect any of it, because the JIT's mechanism does not port
+directly.
+
+### Why the JIT's design does not port
+
+The JIT allocates a resident slot per block and emits `q6`, `q17` or whichever
+host register it chose into the instruction it is generating. **A gadget body
+cannot do that**: it is assembled once, ahead of time, and names its host
+registers statically. A fixed guest-to-host bank therefore needs one gadget
+variant per operand register combination - 32x32x32 for a three-operand shape -
+which is not a bank anyone can build. Only two routes remain.
+
+### Route 1: fuse adjacent SIMD instructions - measured, and it will not do it
+
+If pairs of SIMD instructions were fused, the intermediate could stay in a
+scratch vector register instead of round-tripping through `CpuState`, with no
+fixed mapping needed at all. That requires a concentrated pair distribution, so
+it was measured with the existing `UML_GADGET_PAIR_HISTOGRAM` build over
+Object Detection, Background Blur, Photo Filter and Ray Tracer - the four
+workloads G128 measured.
+
+| | share of all translated adjacencies |
+| --- | ---: |
+| both sides FP or SIMD | **6.3%** (82,448 of 1,310,720) |
+| exactly one side | 5.4% |
+
+**There is no head to attack.** 2,677 distinct FP/SIMD pairs; the largest,
+`floating_madd_single -> floating_madd_single`, is 0.63% of all pairs, and the
+top eighteen together are 44% of FP pairs but only 2.8% of everything. Fusing
+the best few cannot reach a mechanism worth tens of percent. This is the same
+shape G117 found when it retired the expectation that G-2 was a large lever, and
+it is a second independent confirmation of that lesson rather than a new one.
+
+### Route 2: a fixed bank with per-variant selection - blocked on instrumentation
+
+This remains open, and it needs the register-triple distribution: if real
+translated code concentrates its SIMD operands on a few registers, a bounded set
+of variants covers most accesses, and if it does not, the route is dead.
+
+**That distribution is not cheaply measurable today, which is itself the
+finding.** The obvious hook points, `simd_unary_operand` and
+`simd_ternary_operand` in
+[gadget_simd_selection.cpp:422](darwin/cpu/arm64/gadgets/gadget_simd_selection.cpp:422),
+have **one call site each**. Almost all SIMD operand words are built inline,
+across roughly twenty separate decode branches of
+`program_builder_floating_simd_impl.ipp`, each recomputing
+`offsetof(CpuState, vectors) + index * sizeof(VectorRegister)` by hand. An
+attempt to instrument the two helpers was written, built and run, and captured
+essentially nothing; it was reverted rather than committed, because dead
+instrumentation that looks like coverage is worse than none.
+
+Anyone taking route 2 should first fold that offset computation into one
+shared helper the decode fragments call. That is a refactor worth doing on its
+own terms - it removes twenty hand-inlined copies of one address calculation -
+and it creates the single choke point this measurement needs.
+
+### Where G-4 stands
+
+The prize is measured and large (G128). Route 1 is refuted with numbers. Route 2
+is neither refuted nor available: it is blocked on a small, well-defined
+refactor rather than on a judgement call. G-4 stays open with a concrete next
+step, which is a better position than the one Trial 10 left it in, where the
+prize itself was believed to be zero.
