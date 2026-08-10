@@ -199,7 +199,18 @@ class GpuGuestSafetyTests(unittest.TestCase):
             "--docker-hello-world-binary ${UML_DOCKER_HELLO_WORLD}",
             source,
         )
-        self.assertNotIn("docker run --rm hello-world", source)
+        # Ordinary acceptance must never reach a registry; the offline smoke
+        # imports a locally built payload instead. A registry pull is allowed
+        # only behind the external-network opt-in, so scope the prohibition to
+        # the unconditional part of the graph. Checking the whole file would
+        # also forbid the sanctioned opt-in campaign, and checking nothing
+        # would let a pull drift back into the default suite.
+        guard = "if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)"
+        self.assertIn(guard, source)
+        unconditional, opt_in = source.split(guard, 1)
+        self.assertNotIn("docker run", unconditional)
+        self.assertNotIn("docker pull", unconditional)
+        self.assertIn("docker run --rm hello-world", opt_in)
 
     def test_bootstrap_chunks_large_test_scripts_for_the_init_tty(self) -> None:
         bootstrap = run_gpu_guest.make_bootstrap("x" * 16_384).decode()

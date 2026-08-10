@@ -261,6 +261,23 @@ cmake --preset macos-integration \
 ctest --preset integration-full
 ```
 
+`guest-docker-hello-world` joins that opt-in set. `guest-overlay-systemd-smoke`
+already proves Docker runs a locally imported image with no network; this one
+covers the path a real user takes instead — registry DNS and TLS over SLiRP, an
+image pull, and container networking over the `docker0` bridge. It is also the
+broadest Go exercise in the suite, because `dockerd`, `containerd` and the
+client all read HWCAP-gated system registers during startup. Run it directly
+against either engine with:
+
+```sh
+tools/rootfs/with-verified-rootfs.sh -- \
+  python3 tests/integration/gpu/run_gpu_guest.py \
+    --emulator .build/presets/macos-integration/bin/uml-darwin \
+    --rootfs rootfs.erofs \
+    --command "docker run --rm hello-world" \
+    -- --execution-engine=gadgets
+```
+
 Full LTP is independently selected, never a unit test. The unified image
 contains it at `/opt/ltp`; run it separately per engine and preserve the rootfs
 wrapper. Cases whose required kernel options are deliberately disabled belong

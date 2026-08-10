@@ -216,6 +216,32 @@ if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
         PROCESSORS 2
         RESOURCE_GROUPS cpus:2)
 
+    # guest-overlay-systemd-smoke proves Docker runs a locally imported image
+    # with no network at all.  This proves the rest of the path a real user
+    # takes: registry DNS and TLS over SLiRP, an image pull, and container
+    # networking over the docker0 bridge.  It also exercises a large amount of
+    # Go: dockerd, containerd and the client all read HWCAP-gated system
+    # registers at startup, which is how the missing MRS/MSR DIT encoding was
+    # found.  A benchmark cannot see that failure; nothing in Geekbench
+    # executes those instructions.
+    uml_add_guest_integration_test(
+        NAME guest-docker-hello-world
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
+            --emulator $<TARGET_FILE:uml-darwin>
+            --rootfs ${UML_INTEGRATION_ROOTFS}
+            --timeout 600
+            --command "timeout 180 sh -c 'until systemctl is-active --quiet docker.service
+do
+    sleep 1
+done'"
+            --command "docker run --rm hello-world | grep -Fxq 'Hello from Docker!'"
+            --command "docker image rm -f hello-world >/dev/null"
+        LABELS guest;docker;network;external;full
+        TIMEOUT 900
+        PROCESSORS 4
+        RESOURCE_GROUPS cpus:4)
+
     uml_add_guest_integration_test(
         NAME guest-kde-vnc-webgl-aquarium
         COMMAND ${Python3_EXECUTABLE}

@@ -642,6 +642,7 @@ dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/
 -	guest-slirp-network	tests/integration/network	integration	retained	deterministic SLiRP gateway guest smoke
 guest-smp-topology	guest-smp-topology	tests/integration/smp	integration	removed	run_guest_smp.py is an explicit standalone guest campaign, not a CTest registration
 -	guest-mmu-stress	tests/integration/smp	integration	retained	10-vCPU shared-MM and mapping stress campaign
+-	guest-docker-hello-world	tests/integration	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission and pulls the official hello-world image over SLiRP onto the docker0 bridge
 -	guest-external-network	tests/integration/network	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
 -	guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
 -	guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
