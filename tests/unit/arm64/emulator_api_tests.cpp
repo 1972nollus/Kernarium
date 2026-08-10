@@ -332,6 +332,7 @@ unsigned long expected_guest_hwcap()
 		{"hw.optional.arm.FEAT_SHA512", 21},
 		{"hw.optional.arm.FEAT_FHM", 23},
 		{"hw.optional.arm.FEAT_LRCPC2", 26},
+		{"hw.optional.arm.FEAT_FlagM", 27},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))
@@ -352,6 +353,7 @@ unsigned long expected_guest_hwcap2()
 		const char *sysctl;
 		unsigned bit;
 	} optional[]{
+		{"hw.optional.arm.FEAT_FlagM2", 7},
 		{"hw.optional.arm.FEAT_FRINTTS", 8},
 		{"hw.optional.arm.FEAT_I8MM", 13},
 		{"hw.optional.arm.FEAT_BF16", 14},

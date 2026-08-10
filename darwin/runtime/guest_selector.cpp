@@ -30,6 +30,8 @@ constexpr unsigned long hwcap_asimddp = 1UL << 20;
 constexpr unsigned long hwcap_sha512 = 1UL << 21;
 constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
 constexpr unsigned long hwcap_ilrcpc = 1UL << 26;
+constexpr unsigned long hwcap_flagm = 1UL << 27;
+constexpr unsigned long hwcap2_flagm2 = 1UL << 7;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
@@ -100,6 +102,10 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 		result |= hwcap_lrcpc;
 	if (host.has(::uml::platform::ArmFeature::lrcpc2))
 		result |= hwcap_ilrcpc;
+	/* CFINV, RMIF, SETF8 and SETF16, implemented in the gadget bank's
+	 * core_integer.inc and executed correctly by all three engines. */
+	if (host.has(::uml::platform::ArmFeature::flag_m))
+		result |= hwcap_flagm;
 	return result;
 }
 
@@ -134,6 +140,10 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	/* BFDOT/BFMMLA/BFCVT. */
 	if (host.has(::uml::platform::ArmFeature::bf16))
 		result |= hwcap2_bf16;
+	/* AXFLAG and XAFLAG, which convert between the Arm and alternate
+	 * floating-point condition-flag encodings. */
+	if (host.has(::uml::platform::ArmFeature::flag_m2))
+		result |= hwcap2_flagm2;
 	return result;
 }
 

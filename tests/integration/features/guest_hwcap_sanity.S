@@ -5,7 +5,7 @@
  * G125 advertises a family only where an engine has committed to executing it,
  * but binary analysis of Geekbench 5, 6 and 7 found that several of those
  * families never appear in any of those binaries: zero LDAPR, LDAPUR, STLUR,
- * FCADD, FCMLA, SQRDMLAH, FMLAL, FJCVTZS and FRINT32/64 across all three. A
+ * FCADD, FCMLA, CFINV, RMIF, SETF, AXFLAG, XAFLAG, SQRDMLAH, FMLAL, FJCVTZS and FRINT32/64 across all three. A
  * benchmark therefore cannot tell us whether those advertisements are honest -
  * a flat score is what both "correct" and "broken" look like when nothing
  * executes the instruction.
@@ -42,6 +42,11 @@
 	.equ E_FRINT32Z,	10
 	.equ E_FP16,		11
 	.equ E_FMLAL,		12
+	.equ E_CFINV,		13
+	.equ E_RMIF,		14
+	.equ E_SETF,		15
+	.equ E_AXFLAG,		16
+	.equ E_XAFLAG,		17
 
 	/* The shared probe runner accepts a payload only when it prints exactly
 	 * "OK" and exits zero, so a failure reports the family by name on stdout
@@ -199,6 +204,65 @@ _start:
 	fcmp	s2, s3
 	b.ne	.Lfail_fmlal
 
+	/* FEAT_FlagM: CFINV inverts PSTATE.C and leaves the rest alone, so from
+	 * all-clear the result is C set. Every expected NZCV word below was taken
+	 * from running the same instruction natively on an arm64 host rather than
+	 * derived by reading, because these encode flag semantics that are easy to
+	 * transcribe backwards. */
+	msr	nzcv, xzr
+	cfinv
+	mrs	x23, nzcv
+	movz	x24, #0x2000, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_cfinv
+
+	/* RMIF rotates its source right by the shift then inserts the low four
+	 * bits into NZCV under the mask. Source 5 with shift 0 and mask 0b1111
+	 * gives Z and V set. */
+	msr	nzcv, xzr
+	mov	x25, #5
+	rmif	x25, #0, #15
+	mrs	x23, nzcv
+	movz	x24, #0x5000, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_rmif
+
+	/* SETF8 sets N, Z and V from an 8-bit value and leaves C. 0x80 is
+	 * negative and does not fit, so N and V set. SETF16 does the same for a
+	 * 16-bit value. */
+	msr	nzcv, xzr
+	mov	w26, #0x80
+	setf8	w26
+	mrs	x23, nzcv
+	movz	x24, #0x9000, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_setf
+	msr	nzcv, xzr
+	movz	w26, #0x8000
+	setf16	w26
+	mrs	x23, nzcv
+	cmp	x23, x24
+	b.ne	.Lfail_setf
+
+	/* FEAT_FlagM2: AXFLAG rewrites the Arm floating-point unordered encoding
+	 * (C and V set) into the alternate form (Z set). */
+	movz	x27, #0x3000, lsl #16
+	msr	nzcv, x27
+	axflag
+	mrs	x23, nzcv
+	movz	x24, #0x4000, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_axflag
+
+	/* XAFLAG is the inverse direction: Z back to C and V. */
+	movz	x27, #0x4000, lsl #16
+	msr	nzcv, x27
+	xaflag
+	mrs	x23, nzcv
+	movz	x24, #0x3000, lsl #16
+	cmp	x23, x24
+	b.ne	.Lfail_xaflag
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -220,6 +284,11 @@ _start:
 .Lfail_frint32z:	fail E_FRINT32Z, msg_frint32z
 .Lfail_fp16:		fail E_FP16, msg_fp16
 .Lfail_fmlal:		fail E_FMLAL, msg_fmlal
+.Lfail_cfinv:		fail E_CFINV, msg_cfinv
+.Lfail_rmif:		fail E_RMIF, msg_rmif
+.Lfail_setf:		fail E_SETF, msg_setf
+.Lfail_axflag:		fail E_AXFLAG, msg_axflag
+.Lfail_xaflag:		fail E_XAFLAG, msg_xaflag
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -282,6 +351,16 @@ msg_fp16:
 	.ascii "FAIL fp16       \n"
 msg_fmlal:
 	.ascii "FAIL fmlal      \n"
+msg_cfinv:
+	.ascii "FAIL cfinv      \n"
+msg_rmif:
+	.ascii "FAIL rmif       \n"
+msg_setf:
+	.ascii "FAIL setf       \n"
+msg_axflag:
+	.ascii "FAIL axflag     \n"
+msg_xaflag:
+	.ascii "FAIL xaflag     \n"
 success_message:
 	.ascii "OK\n"
 
