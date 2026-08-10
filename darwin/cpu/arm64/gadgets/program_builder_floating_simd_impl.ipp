@@ -100,13 +100,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			detail::decode_bfloat_conversion(instruction);
 		   bfloat.recognized) {
 		emit(words, bfloat_conversion_gadget(bfloat));
-		constexpr auto vector_base = offsetof(CpuState, vectors);
-		constexpr auto vector_size = sizeof(VectorRegister);
-		static_assert(vector_base + 31U * vector_size <= 0xffffU);
-		const auto destination = vector_base +
-			(instruction & 31U) * vector_size;
-		const auto source = vector_base +
-			((instruction >> 5) & 31U) * vector_size;
+		const auto destination = vector_operand_offset(instruction & 31U);
+		const auto source =
+			vector_operand_offset((instruction >> 5) & 31U);
 		emit(words, destination |
 			(static_cast<std::uintptr_t>(source) << 16U) |
 			(static_cast<std::uintptr_t>(bfloat.scalar) << 32U) |
@@ -303,14 +299,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			emit(words, detail::floating_horizontal_operand(
 				instruction, floating_horizontal));
 		} else {
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(
-						uml::cpu::arm64::
-							VectorRegister);
-			};
-			emit(words, vector_offset(instruction & 31U));
-			emit(words, vector_offset(
+			emit(words, vector_operand_offset(instruction & 31U));
+			emit(words, vector_operand_offset(
 				(instruction >> 5) & 31U));
 			const bool uses_second =
 				floating_horizontal.form ==
@@ -323,7 +313,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 					detail::FloatingHorizontalForm::
 						vector_pairwise;
 			if (uses_second)
-				emit(words, vector_offset(
+				emit(words, vector_operand_offset(
 					(instruction >> 16) & 31U));
 			if (fp_controls_checked)
 				emit(words,
@@ -357,15 +347,11 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			return DecodeResult::terminal;
 		}
 		emit(words, gadget);
-		const auto vector_offset = [](unsigned index) {
-			return offsetof(CpuState, vectors) +
-				index * sizeof(VectorRegister);
-		};
-		emit(words, vector_offset(instruction & 31U));
-		emit(words, vector_offset((instruction >> 5) & 31U));
-		emit(words, vector_offset((instruction >> 16) & 31U));
+		emit(words, vector_operand_offset(instruction & 31U));
+		emit(words, vector_operand_offset((instruction >> 5) & 31U));
+		emit(words, vector_operand_offset((instruction >> 16) & 31U));
 		if (fused_floating.scalar)
-			emit(words, vector_offset(
+			emit(words, vector_operand_offset(
 				(instruction >> 10) & 31U));
 	} else if (const auto basic_floating =
 			detail::decode_basic_floating_arithmetic(instruction);
@@ -382,15 +368,11 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		if (basic_floating.scalar) {
 			emit(words, detail::basic_floating_operand(instruction));
 		} else {
-			const auto vector_offset = [](unsigned index) {
-				return offsetof(CpuState, vectors) +
-					index * sizeof(VectorRegister);
-			};
 			emit(words,
-				vector_offset(instruction & 31U) |
-				(static_cast<std::uintptr_t>(vector_offset(
+				vector_operand_offset(instruction & 31U) |
+				(static_cast<std::uintptr_t>(vector_operand_offset(
 					(instruction >> 5) & 31U)) << 16) |
-				(static_cast<std::uintptr_t>(vector_offset(
+				(static_cast<std::uintptr_t>(vector_operand_offset(
 					(instruction >> 16) & 31U)) << 32));
 		}
 	} else if ((instruction & 0xff20'7c00U) == 0x1e20'4000U ||
@@ -443,16 +425,10 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			return DecodeResult::terminal;
 		}
 		emit(words, gadget);
-		constexpr auto vector_base = offsetof(CpuState, vectors);
-		constexpr auto vector_size =
-			sizeof(uml::cpu::arm64::VectorRegister);
-		static_assert(vector_base + 31U * vector_size <= 0xffffU);
-		const auto destination = vector_base +
-			(instruction & 31U) * vector_size;
-		const auto left = vector_base +
-			((instruction >> 5) & 31U) * vector_size;
-		const auto right = vector_base +
-			((instruction >> 16) & 31U) * vector_size;
+		const auto destination = vector_operand_offset(instruction & 31U);
+		const auto left = vector_operand_offset((instruction >> 5) & 31U);
+		const auto right =
+			vector_operand_offset((instruction >> 16) & 31U);
 		emit(words, destination | (left << 16) | (right << 32));
 	} else if ((instruction & 0xffe0'8000U) == 0xce00'0000U ||
 		   (instruction & 0xffe0'8000U) == 0xce20'0000U) {
@@ -465,41 +441,26 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			 uml_arm64_gadget_simd_bcax_soft) :
 			(native ? uml_arm64_gadget_simd_eor3_native :
 			 uml_arm64_gadget_simd_eor3_soft));
-		const auto vector_offset = [](unsigned index) {
-			return offsetof(CpuState, vectors) +
-				index * sizeof(
-					uml::cpu::arm64::VectorRegister);
-		};
-		emit(words, vector_offset(instruction & 31U));
-		emit(words, vector_offset((instruction >> 5) & 31U));
-		emit(words, vector_offset((instruction >> 16) & 31U));
-		emit(words, vector_offset((instruction >> 10) & 31U));
+		emit(words, vector_operand_offset(instruction & 31U));
+		emit(words, vector_operand_offset((instruction >> 5) & 31U));
+		emit(words, vector_operand_offset((instruction >> 16) & 31U));
+		emit(words, vector_operand_offset((instruction >> 10) & 31U));
 	} else if ((instruction & 0xffe0'fc00U) == 0xce60'8c00U) {
 		emit(words, !options.force_software_sha3 &&
 				host_has_sha3() ?
 			uml_arm64_gadget_simd_rax1_native :
 			uml_arm64_gadget_simd_rax1_soft);
-		const auto vector_offset = [](unsigned index) {
-			return offsetof(CpuState, vectors) +
-				index * sizeof(
-					uml::cpu::arm64::VectorRegister);
-		};
-		emit(words, vector_offset(instruction & 31U));
-		emit(words, vector_offset((instruction >> 5) & 31U));
-		emit(words, vector_offset((instruction >> 16) & 31U));
+		emit(words, vector_operand_offset(instruction & 31U));
+		emit(words, vector_operand_offset((instruction >> 5) & 31U));
+		emit(words, vector_operand_offset((instruction >> 16) & 31U));
 	} else if ((instruction & 0xffe0'0000U) == 0xce80'0000U) {
 		emit(words, simd_xar_gadget(
 			(instruction >> 10) & 63U,
 			!options.force_software_sha3 &&
 				host_has_sha3()));
-		const auto vector_offset = [](unsigned index) {
-			return offsetof(CpuState, vectors) +
-				index * sizeof(
-					uml::cpu::arm64::VectorRegister);
-		};
-		emit(words, vector_offset(instruction & 31U));
-		emit(words, vector_offset((instruction >> 5) & 31U));
-		emit(words, vector_offset((instruction >> 16) & 31U));
+		emit(words, vector_operand_offset(instruction & 31U));
+		emit(words, vector_operand_offset((instruction >> 5) & 31U));
+		emit(words, vector_operand_offset((instruction >> 16) & 31U));
 	} else if ((instruction & 0xffff'8c00U) == 0x4e28'0800U) {
 		const auto gadget = simd_aes_gadget(
 			(instruction >> 12) & 7U,
@@ -511,14 +472,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 return DecodeResult::terminal;
                         }
                         emit(words, gadget);
-                        const auto vector_offset = [](unsigned index) {
-                          return offsetof(CpuState, vectors) +
-                                 index *
-                                     sizeof(
-                                         uml::cpu::arm64::VectorRegister);
-                        };
-                        emit(words, vector_offset(instruction & 31U));
-                        emit(words, vector_offset((instruction >> 5) & 31U));
+                        emit(words, vector_operand_offset(instruction & 31U));
+                        emit(words, vector_operand_offset((instruction >> 5) & 31U));
                 } else if ((instruction & 0xffe0'8c00U) == 0x5e00'0000U) {
                   const auto gadget = simd_sha_three_gadget(
                       (instruction >> 12) & 7U,
@@ -530,13 +485,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xffff'8c00U) == 0x5e28'0800U) {
                   const auto gadget = simd_sha_two_gadget(
                       (instruction >> 12) & 3U,
@@ -548,36 +499,24 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
                 } else if ((instruction & 0xffe0'fc00U) == 0xce60'8000U ||
                            (instruction & 0xffe0'fc00U) == 0xce60'8400U ||
                            (instruction & 0xffe0'fc00U) == 0xce60'8800U) {
                   emit(words, simd_sha512_three_gadget(
                                   instruction,
                                   options.force_software_fixed_transforms));
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xffff'fc00U) == 0xcec0'8000U) {
                   emit(words, !options.force_software_fixed_transforms &&
                                       host_has_sha512()
                                   ? uml_arm64_gadget_simd_sha512su0
                                   : uml_arm64_gadget_simd_sha512su0_soft);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
                 } else if ((instruction & 0xffe0'fc00U) == 0xce60'c000U ||
                            (instruction & 0xffe0'fc00U) == 0xce60'c400U ||
                            (instruction & 0xffe0'fc00U) == 0xce60'c800U) {
@@ -598,49 +537,33 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                  ? uml_arm64_gadget_simd_sm4ekey
                                  : uml_arm64_gadget_simd_sm4ekey_soft);
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xffe0'8000U) == 0xce40'0000U) {
                   emit(words, !options.force_software_fixed_transforms &&
                                       host_has_sm3()
                                   ? uml_arm64_gadget_simd_sm3ss1
                                   : uml_arm64_gadget_simd_sm3ss1_soft);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
-                  emit(words, vector_offset((instruction >> 10) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 10) & 31U));
                 } else if ((instruction & 0xffe0'c000U) == 0xce40'8000U) {
                   emit(words,
                        simd_sm3tt_gadget(
                            (instruction >> 10) & 3U, (instruction >> 12) & 3U,
                            options.force_software_fixed_transforms));
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xffff'fc00U) == 0xcec0'8400U) {
                   emit(words, !options.force_software_fixed_transforms &&
                                       host_has_sm4()
                                   ? uml_arm64_gadget_simd_sm4e
                                   : uml_arm64_gadget_simd_sm4e_soft);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
                 } else if ((instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
                            (instruction & 0xffe0'8000U) == 0xce60'0000U ||
                            (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
@@ -701,13 +624,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(uml::cpu::arm64::VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0x9f20'f400U) == 0x0e00'a400U) {
                   const bool q = (instruction & 0x4000'0000U) != 0;
                   const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
@@ -726,13 +645,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                        : SimdDotSignedness::signed_signed;
                   emit(words, simd_matrix_gadget(signedness,
                                                  options.force_software_i8mm));
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xbf20'f400U) == 0x2e00'8400U ||
                            (instruction & 0xff20'f400U) == 0x7e00'8400U) {
                   const bool scalar = (instruction & 0x1000'0000U) != 0;
@@ -752,13 +667,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     emit(words, address);
                   } else {
                     emit(words, gadget);
-                    const auto vector_offset = [](unsigned index) {
-                      return offsetof(CpuState, vectors) +
-                             index * sizeof(VectorRegister);
-                    };
-                    emit(words, vector_offset(instruction & 31U));
-                    emit(words, vector_offset((instruction >> 5) & 31U));
-                    emit(words, vector_offset((instruction >> 16) & 31U));
+                    emit(words, vector_operand_offset(instruction & 31U));
+                    emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                    emit(words, vector_operand_offset((instruction >> 16) & 31U));
                   }
                 } else if (const auto floating_conversion =
                                detail::decode_simd_floating_precision_vector(
@@ -807,16 +718,12 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U) |
+                  emit(words, vector_operand_offset(instruction & 31U) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset((instruction >> 5) & 31U))
+                                       vector_operand_offset((instruction >> 5) & 31U))
                                    << 16) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset((instruction >> 16) & 31U))
+                                       vector_operand_offset((instruction >> 16) & 31U))
                                    << 32));
                 } else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
                             (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
@@ -835,16 +742,12 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U) |
+                  emit(words, vector_operand_offset(instruction & 31U) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset((instruction >> 5) & 31U))
+                                       vector_operand_offset((instruction >> 5) & 31U))
                                    << 16) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset((instruction >> 16) & 31U))
+                                       vector_operand_offset((instruction >> 16) & 31U))
                                    << 32));
                 } else if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
                            (instruction & 0x00c0'0000U) != 0U) {
@@ -889,25 +792,21 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, simd_table_lookup_gadget(
                                   (instruction & 0x1000U) != 0, count,
                                   (instruction & 0x4000'0000U) != 0));
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
                   const unsigned first = (instruction >> 5) & 31U;
                   emit(words,
-                       vector_offset(instruction & 31U) |
+                       vector_operand_offset(instruction & 31U) |
                            (static_cast<std::uintptr_t>(
-                                vector_offset((instruction >> 16) & 31U))
+                                vector_operand_offset((instruction >> 16) & 31U))
                             << 16) |
-                           (static_cast<std::uintptr_t>(vector_offset(first))
+                           (static_cast<std::uintptr_t>(vector_operand_offset(first))
                             << 32) |
                            (static_cast<std::uintptr_t>(
-                                vector_offset((first + 1U) & 31U))
+                                vector_operand_offset((first + 1U) & 31U))
                             << 48));
                   if (count > 2U)
-                    emit(words, vector_offset((first + 2U) & 31U) |
+                    emit(words, vector_operand_offset((first + 2U) & 31U) |
                                     (static_cast<std::uintptr_t>(
-                                         vector_offset((first + 3U) & 31U))
+                                         vector_operand_offset((first + 3U) & 31U))
                                      << 16));
                 } else if ((instruction & 0x9ff8'0400U) == 0x0f00'0400U) {
                   /* This allocation overlaps the broad shift-immediate masks
@@ -962,13 +861,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if ((instruction & 0xbfff'fc00U) == 0x0ef8'f800U ||
                            (instruction & 0xbfff'fc00U) == 0x2ef8'f800U ||
                            (instruction & 0xbf3f'fc00U) == 0x0e20'f800U ||
@@ -1056,13 +951,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(uml::cpu::arm64::VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset(element.register_index));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset(element.register_index));
                 } else if (((instruction & 0x9f00'0400U) == 0x0f00'0000U ||
                             (instruction & 0xdf00'0400U) == 0x5f00'0000U) &&
                            ((((instruction >> 12) & 15U) == 1U &&
@@ -1091,16 +982,12 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U) |
+                  emit(words, vector_operand_offset(instruction & 31U) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset((instruction >> 5) & 31U))
+                                       vector_operand_offset((instruction >> 5) & 31U))
                                    << 16) |
                                   (static_cast<std::uintptr_t>(
-                                       vector_offset(element->register_index))
+                                       vector_operand_offset(element->register_index))
                                    << 32));
                   if (!host_has_afp())
                     emit(words, instruction);
@@ -1137,14 +1024,10 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     emit(words, instruction);
                     emit(words, address);
                   } else {
-                    const auto vector_offset = [](unsigned index) {
-                      return offsetof(CpuState, vectors) +
-                             index * sizeof(VectorRegister);
-                    };
                     emit(words, gadget);
-                    emit(words, vector_offset(instruction & 31U));
-                    emit(words, vector_offset((instruction >> 5) & 31U));
-                    emit(words, vector_offset(element->register_index));
+                    emit(words, vector_operand_offset(instruction & 31U));
+                    emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                    emit(words, vector_operand_offset(element->register_index));
                   }
                 } else if ((instruction & 0xdf00'0400U) == 0x5f00'0000U &&
                            is_simd_indexed_scalar_reserved(
@@ -1290,22 +1173,18 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   const unsigned destination = instruction & 31U;
                   const unsigned left = (instruction >> 5) & 31U;
                   const unsigned right = (instruction >> 16) & 31U;
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
                   if (operation == 2U && left == right && q &&
                       destination == left) {
                     emit(words, uml_arm64_gadget_nop);
                   } else if (operation == 2U && left == right) {
                     emit(words, simd_move_gadget(q));
-                    emit(words, vector_offset(destination));
-                    emit(words, vector_offset(left));
+                    emit(words, vector_operand_offset(destination));
+                    emit(words, vector_operand_offset(left));
                   } else {
                     emit(words, simd_bitwise_gadget(operation, q));
-                    emit(words, vector_offset(destination));
-                    emit(words, vector_offset(left));
-                    emit(words, vector_offset(right));
+                    emit(words, vector_operand_offset(destination));
+                    emit(words, vector_operand_offset(left));
+                    emit(words, vector_operand_offset(right));
                   }
                 } else if ((instruction & 0xbfe0'8400U) == 0x2e00'0000U) {
                   const bool q = (instruction & 0x4000'0000U) != 0;
@@ -1503,13 +1382,9 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     return DecodeResult::terminal;
                   }
                   emit(words, gadget);
-                  const auto vector_offset = [](unsigned index) {
-                    return offsetof(CpuState, vectors) +
-                           index * sizeof(VectorRegister);
-                  };
-                  emit(words, vector_offset(instruction & 31U));
-                  emit(words, vector_offset((instruction >> 5) & 31U));
-                  emit(words, vector_offset((instruction >> 16) & 31U));
+                  emit(words, vector_operand_offset(instruction & 31U));
+                  emit(words, vector_operand_offset((instruction >> 5) & 31U));
+                  emit(words, vector_operand_offset((instruction >> 16) & 31U));
                 } else if (((instruction & 0x9f3f'fc00U) == 0x0e20'8800U ||
                             (instruction & 0x9f3f'fc00U) == 0x0e20'9800U ||
                             (instruction & 0x9f3f'fc00U) == 0x0e20'a800U ||

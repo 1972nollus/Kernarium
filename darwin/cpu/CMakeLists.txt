@@ -71,11 +71,19 @@ option(UML_GADGET_PAIR_HISTOGRAM
     "Count adjacent gadget pairs during translation (diagnostic builds only)"
     OFF)
 
+# Also off by default, and for the same reason. G-4 needs to know how far a
+# fixed guest-to-host vector bank would reach, and that is decided by how
+# concentrated translated code's vector operand registers are.
+option(UML_GADGET_SIMD_OPERAND_HISTOGRAM
+    "Count guest SIMD operand registers during translation (diagnostic only)"
+    OFF)
+
 add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp
     arm64/gadgets/pair_histogram.cpp
+    arm64/gadgets/simd_operand_histogram.cpp
     # program_builder.cpp textually composes the five decode families from
     # their *_impl.ipp fragments so the whole per-instruction decode chain
     # inlines as one unit; see the comment at the top of that file.
@@ -96,7 +104,8 @@ target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
-    UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>)
+    UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
+    UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization

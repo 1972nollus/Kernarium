@@ -2,13 +2,37 @@
 #pragma once
 
 #include "program.hpp"
+#include "simd_operand_histogram.hpp"
 
+#include "cpu/arm64/cpu_state.hpp"
+
+#include <cstddef>
 #include <cstdint>
 #include <memory_resource>
 #include <span>
 #include <vector>
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
+
+/* The byte offset of a guest vector register inside CpuState, which every
+ * SIMD and floating-point operand word in the decode fragments is built from.
+ *
+ * This was written out by hand in twenty-seven separate places, each one
+ * redeclaring the same lambda. Beyond the duplication, that left the engine
+ * with no single point where a guest vector operand is named, so G-4 could not
+ * measure which registers translated code actually uses without editing every
+ * copy - and G129 reverted an attempt that hooked the two helpers which do have
+ * a shared form and captured almost nothing. One helper gives the measurement a
+ * choke point and the bank a place to consult a mapping.
+ */
+[[nodiscard]] inline std::size_t vector_operand_offset(unsigned index) noexcept
+{
+	diagnostics::record_simd_operand(index);
+	return offsetof(CpuState, vectors) + index * sizeof(VectorRegister);
+}
+
+static_assert(offsetof(CpuState, vectors) + 31U * sizeof(VectorRegister) <=
+	0xffffU, "a vector operand offset must fit the 16-bit operand field");
 
 struct DecodeContext final {
 	std::uint64_t guest_address;
