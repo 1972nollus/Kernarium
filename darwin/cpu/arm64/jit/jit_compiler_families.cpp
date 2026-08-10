@@ -595,8 +595,10 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
 
   const auto half_long =
       arm64::detail::decode_half_fused_long(instruction);
+  /* Must agree exactly with emit_half_fused_long's predicate, or the register
+   * constraint and the emitter disagree about which instructions are native. */
   if (half_long.recognized && half_long.by_element &&
-      host.has(ArmFeature::fhm) && host.has(ArmFeature::afp))
+      host.has(ArmFeature::fhm))
     return (instruction >> 16U) & 15U;
 
   const auto bfloat_long =

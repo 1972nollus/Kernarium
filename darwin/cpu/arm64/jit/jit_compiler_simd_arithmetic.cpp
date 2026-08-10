@@ -135,9 +135,7 @@ JitCompilerFamilies::emit_bfloat_dot(std::uint32_t instruction) {
 JitCompilerFamilies::emit_half_dot(std::uint32_t instruction) {
   const auto decoded = arm64::detail::decode_half_dot(instruction);
   const auto &host = host_capabilities();
-  if (!decoded.recognized ||
-      !host.has(ArmFeature::f16f32dot) ||
-      !host.has(ArmFeature::afp))
+  if (!decoded.recognized || !host.has(ArmFeature::f16f32dot))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5U) & 31U;
@@ -161,9 +159,14 @@ JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_half_fused_long(instruction);
   const auto &host = host_capabilities();
-  if (!decoded.recognized ||
-      !host.has(ArmFeature::fhm) ||
-      !host.has(ArmFeature::afp))
+  /* FEAT_AFP is deliberately not required here. It selects alternate handling
+   * of denormals and NaNs through FPCR.AH/FIZ/NEP and says nothing about
+   * whether FMLAL/FMLSL exist or how they compute. Requiring it made the JIT
+   * refuse a perfectly executable instruction on every host without AFP - this
+   * one included - so a guest that took the ASIMDFHM advertisement at its word
+   * got SIGILL under the JIT while the gadget bank, which gates on `fhm`
+   * alone, ran it correctly. */
+  if (!decoded.recognized || !host.has(ArmFeature::fhm))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5U) & 31U;
@@ -203,8 +206,7 @@ JitCompilerFamilies::emit_half_matrix(std::uint32_t instruction) {
   const auto &host = host_capabilities();
   const auto feature = decoded.widening ?
       ArmFeature::f16f32mm : ArmFeature::f16mm;
-  if (!decoded.valid || !host.has(feature) ||
-      !host.has(ArmFeature::afp))
+  if (!decoded.valid || !host.has(feature))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5U) & 31U;
