@@ -23,6 +23,7 @@ compile_commands.json
 ._*
 
 # Editor and IDE state
+/.claude/
 .idea/
 .vscode/
 *.swp
