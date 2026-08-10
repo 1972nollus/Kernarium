@@ -766,6 +766,14 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 			uml_arm64_gadget_sysreg_nzcv_write_r, !zero};
 	if (system == 0xd53b'e000U)
 		return {uml_arm64_gadget_sysreg_cntfrq_read, true};
+	if (system == 0xd53b'42a0U)
+		return {uml_arm64_gadget_sysreg_dit_read, true};
+	if (system == 0xd51b'42a0U)
+		return {zero ? uml_arm64_gadget_sysreg_dit_write_z :
+			uml_arm64_gadget_sysreg_dit_write_r, !zero};
+	/* CNTVCT_EL0 is the residual case.  This selector has no illegal result,
+	 * so it may only be reached for encodings the program builder's decode
+	 * gate already accepted; the two lists must be extended together. */
 	return {uml_arm64_gadget_sysreg_cntvct_read, true};
 }
 

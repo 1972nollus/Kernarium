@@ -382,7 +382,9 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		   (instruction & 0xffff'ffe0U) == 0xd53b'4200U ||
 		   (instruction & 0xffff'ffe0U) == 0xd51b'4200U ||
 		   (instruction & 0xffff'ffe0U) == 0xd53b'e000U ||
-		   (instruction & 0xffff'ffe0U) == 0xd53b'e040U) {
+		   (instruction & 0xffff'ffe0U) == 0xd53b'e040U ||
+		   (instruction & 0xffff'ffe0U) == 0xd53b'42a0U ||
+		   (instruction & 0xffff'ffe0U) == 0xd51b'42a0U) {
 		const auto selected = system_register_gadget(instruction);
 		emit(words, selected.gadget);
 		if (selected.operand)

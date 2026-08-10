@@ -307,6 +307,8 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 		DecodeEntry{0xffff'ffe0U, 0xd51b'4200U, &Dispatcher::system_register},
 		DecodeEntry{0xffff'ffe0U, 0xd53b'e000U, &Dispatcher::system_register},
 		DecodeEntry{0xffff'ffe0U, 0xd53b'e040U, &Dispatcher::system_register},
+		DecodeEntry{0xffff'ffe0U, 0xd53b'42a0U, &Dispatcher::system_register},
+		DecodeEntry{0xffff'ffe0U, 0xd51b'42a0U, &Dispatcher::system_register},
 		/* Decode the complete scalar and pair system-register allocations after
 		 * the implemented EL0 registers. The strict handlers diagnose every
 		 * inaccessible register instead of falling through as unsupported. */

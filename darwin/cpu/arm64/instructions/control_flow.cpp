@@ -300,6 +300,15 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 	else if (system_register == 0xd53b'e040U)
 		cpu.write_register(
 			transfer, detail::read_host_virtual_counter(), false);
+	else if (system_register == 0xd53b'42a0U)
+		/* DIT reads as Zeros(39):PSTATE.DIT:Zeros(24); the same PSTATE bit
+		 * the MSR immediate form writes, so a guest that sets DIT must be
+		 * able to read it back through the register form. */
+		cpu.write_register(
+			transfer, cpu.pstate_dit ? 0x0100'0000ULL : 0ULL, false);
+	else if (system_register == 0xd51b'42a0U)
+		cpu.pstate_dit =
+			(cpu.read_register(transfer, false) & 0x0100'0000ULL) != 0;
 	else
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};

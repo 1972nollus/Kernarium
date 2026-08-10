@@ -215,6 +215,25 @@ void condition_flags(test::Harness &harness)
 		});
 }
 
+void data_independent_timing(test::Harness &harness)
+{
+	/* DIT is PSTATE.DIT presented as a system register.  The architecture
+	 * defines the read as Zeros(39):PSTATE.DIT:Zeros(24) and the write as
+	 * PSTATE.DIT = X[t]<24>, so the register form has to agree with the MSR
+	 * immediate form that writes the same bit.  Go's runtime reads it through
+	 * MRS whenever HWCAP_DIT is advertised. */
+	const auto timing =
+		engine_tests::NativeRequirements::features(
+			::uml::cpu::ArmFeature::dit);
+	check_read(harness, "base-read-data-independent-timing", 0xd53b'42a0U,
+		test::state().pstate_dit ? 0x0100'0000ULL : 0ULL, timing);
+	check_write(harness, "base-write-data-independent-timing", 0xd51b'42a0U,
+		timing,
+		[](arm64::CpuState &expected, std::uint64_t source) {
+			expected.pstate_dit = (source & 0x0100'0000ULL) != 0;
+		});
+}
+
 void fixed_read_only_registers(test::Harness &harness)
 {
 	check_read(harness, "base-read-cache-zero-identification",
@@ -381,6 +400,7 @@ int main()
 	floating_status_boundary_round_trips(harness);
 	floating_mode(harness);
 	condition_flags(harness);
+	data_independent_timing(harness);
 	fixed_read_only_registers(harness);
 	virtual_counter(harness);
 	virtual_counter_is_monotonic(harness);

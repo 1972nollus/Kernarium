@@ -292,6 +292,14 @@ below. Five checked boxes on one representative case are not sufficient:
   feature-off/on matrices cover every SSBS, DIT, TCO, SM/ZA immediate and
   every FPMR transfer register; supported paths contain no runtime feature
   check.
+- [x] `MRS <Xt>, DIT` and `MSR DIT, <Xt>` (S3_3_C4_C2_5) now accompany the
+  `MSR DIT, #imm` form in all three engines, covering every transfer register
+  in both directions. The read produces `Zeros(39):PSTATE.DIT:Zeros(24)` and
+  the write takes only `X[t]<24>`, so RES0 bits never reach guest state. Only
+  the immediate form existed before, which made `HWCAP_DIT` unusable: Go's
+  runtime reads the register whenever that bit is advertised, so every Go
+  binary in the guest — including `dockerd` and `docker` — took SIGILL at
+  startup. Found by running Docker in a networked guest, not by a benchmark.
 - [x] The shared harness supports single instructions, sparse multi-instruction
   programs, branches across translated blocks, mapped read/write/execute
   regions, allocation tags, and fault-atomic memory checks.

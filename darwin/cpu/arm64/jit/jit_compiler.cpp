@@ -609,6 +609,25 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       /* The guest write supersedes any formerly resident host value. */
       assume_flags_in_memory();
       return true;
+    /* DIT is the register view of PSTATE.DIT that the MSR immediate form
+     * writes: read is Zeros(39):PSTATE.DIT:Zeros(24), write takes X[t]<24>.
+     * Both directions are gated on the same feature as that immediate form so
+     * a guest can always read back what it just set under this engine. */
+    case 0xd53b'42a0U: // DIT
+      if (!translation_supports(ArmFeature::dit))
+        return false;
+      write_destination([&](unsigned destination) {
+        emitter_.load_b(destination, 15, offsetof(CpuState, pstate_dit));
+        emitter_.ubfm(destination, destination, 40, 39); // lsl #24
+      });
+      return true;
+    case 0xd51b'42a0U:
+      if (!translation_supports(ArmFeature::dit))
+        return false;
+      copy_source_to_scratch();
+      emitter_.ubfm(8, 8, 24, 24); // ubfx #24, #1
+      emitter_.store_b(8, 15, offsetof(CpuState, pstate_dit));
+      return true;
     case 0xd53b'e000U: // CNTFRQ_EL0
       write_destination([&](unsigned destination) {
         emitter_.emit(0xd53b'e000U | destination);

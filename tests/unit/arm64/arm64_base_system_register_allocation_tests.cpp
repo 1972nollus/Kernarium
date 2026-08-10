@@ -28,6 +28,8 @@ namespace {
 		0xd51b'4200U, // NZCV write
 		0xd53b'e000U, // CNTFRQ_EL0
 		0xd53b'e040U, // CNTVCT_EL0
+		0xd53b'42a0U, // DIT read
+		0xd51b'42a0U, // DIT write
 	})
 		if (system == value)
 			return true;

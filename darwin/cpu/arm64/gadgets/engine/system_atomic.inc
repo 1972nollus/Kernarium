@@ -472,6 +472,30 @@ gadget sysreg_nzcv_write_z
 	mov w27, wzr
 	next_gadget
 
+/* DIT is PSTATE.DIT presented as a system register: the architecture defines
+ * the read as Zeros(39):PSTATE.DIT:Zeros(24) and the write as
+ * PSTATE.DIT = X[t]<24>, so bit 24 is the only live position in either
+ * direction.  Go's runtime reads it through MRS whenever HWCAP_DIT is
+ * advertised, so the register form has to exist wherever the MSR immediate
+ * form does. */
+gadget sysreg_dit_read
+	ldr x8, [_stream], #8
+	ldrb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	lsl x9, x9, #24
+	str x9, [_cpu, x8]
+	next_gadget
+
+gadget sysreg_dit_write_r
+	ldr x8, [_stream], #8
+	ldr x9, [_cpu, x8]
+	ubfx x9, x9, #24, #1
+	strb w9, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	next_gadget
+
+gadget sysreg_dit_write_z
+	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_DIT]
+	next_gadget
+
 .macro pstate_store name, offset, value
 gadget pstate_\name\()_\value
 .if \value
