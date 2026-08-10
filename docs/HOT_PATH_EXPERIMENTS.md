@@ -6159,3 +6159,75 @@ as a suspected emulator bug.
 Limitations: single host, single engine, and the ratios above compare rates
 across machines of very different absolute speed. The claim is only about the
 **shape** of each workload's multi-core scaling, not about any absolute score.
+
+## G128: G-4's prize, sized on the engine that already has the mechanism
+
+No change kept. This measures what vector residency is worth before spending
+any effort building it into the gadget bank, because G-4's whole history is a
+change that was rejected on a measurement that could not see it.
+
+### Why Trial 10's rejection proved nothing
+
+Trial 10 mapped guest V0-V7 to host Q16-Q23 and was rejected after profiles
+found "zero mapped operations" in File Copy, Dhrystone and Pipe Throughput -
+three workloads with no SIMD in them. Its composite moved +0.10%, which the log
+itself records as not causally attributable. That is a null measurement, not a
+refutation, and repeating the implementation without first fixing the
+measurement would have risked repeating the outcome.
+
+### The JIT already implements what G-4 asks for
+
+`JitCompilerFamilies` keeps eighteen host vector registers - q6, q7 and q16-q31
+- as per-block resident slots with `loaded`/`dirty` tracking, and falls back to
+`load_q` straight from `CpuState` when no slot is free. **That fallback is
+exactly the gadget engine's permanent behaviour**, so turning residency off in
+the JIT reproduces the gadget bank's vector cost model on an engine where the
+mechanism can be switched rather than written.
+
+The gadget engine has no equivalent: `simd_three_same_vector`
+([floating_simd.inc:2675](darwin/cpu/arm64/gadgets/engine/floating_simd.inc:2675))
+loads both operands and stores the result through `CpuState` on every single
+guest SIMD instruction, and nothing in `darwin/cpu/arm64/gadgets/` mentions
+residency at all.
+
+### Measured
+
+One binary for both arms, selected by an environment variable read once, so no
+rebuild happened between runs and the arms cannot differ by code layout. JIT,
+10 vCPUs, 8 GiB, no systemd, single-core, ABBA ordered, n=2 per arm.
+
+| workload | residency on | residency off | residency is worth |
+| --- | ---: | ---: | ---: |
+| Ray Tracer | 359.3, 338.3 Kpx/s | 198.5, 215.9 Kpx/s | **+68.3%** |
+| Photo Filter | 6.24, 5.71 img/s | 3.77, 3.68 img/s | **+60.4%** |
+| Object Detection | 9.55, 9.41 img/s | 6.60, 6.59 img/s | **+43.7%** |
+| Background Blur | 1.37, 1.31 img/s | 1.01, 1.02 img/s | **+32.0%** |
+
+No arm overlaps the other on any workload, and each arm reproduces itself.
+
+**Ray Tracer is the result that changes the picture.** It is scalar floating
+point, so a "vector" bank should not reach it - except that AArch64 scalar FP
+lives in the same register file, so residency covers it too. It gains the most
+of the four. That also bears on G126's open Ray Tracer regression, which was
+recorded as unexplained precisely because no advertised vector family should
+touch a scalar FP workload.
+
+### What this does and does not establish
+
+It establishes that the `CpuState` round-trip on vector and scalar-FP operands
+is a first-order cost on exactly the workloads G125 and G126 moved, and that
+**G-4's prize is real and large** - the opposite of Trial 10's finding.
+
+It does not predict the gadget engine's gain. The JIT allocates slots per block
+and can keep a value in a register across many instructions; a gadget bank
+cannot allocate, because each gadget is a separately compiled body, so it needs
+a fixed guest-to-host convention plus per-variant gadget selection - the plan's
+step 2. A fixed eight-register convention captures less than eighteen
+per-block-allocated slots. These numbers are therefore an **upper bound on the
+mechanism's value**, not a forecast of the trial's result.
+
+Correctness under the off arm was checked rather than assumed: 264/264 JIT,
+SIMD, floating and vector unit tests pass with residency disabled, so the slower
+arm is a valid comparison and not a broken one. The diagnostic switch was
+reverted and the tree rebuilt; it is not committed, because a runtime check in
+the translation path is not something production should carry.
