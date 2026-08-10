@@ -5846,3 +5846,89 @@ acceptance rather than being spent on this isolated kernel correctness fix; the
 current disposition above records its later user-directed skip.
 
 Evidence is in `.build/results/forward-init-mm/`.
+
+## G124: the post-migration Geekbench baseline, and a PSI result withdrawn
+
+Two outcomes. The gadget baseline is re-measured on the unified EROFS image, and
+a `CONFIG_PSI` regression this entry first claimed is withdrawn as an artifact of
+run ordering. The withdrawal is the more useful half.
+
+### Benchmarking was broken and no one had noticed
+
+Every guest prompt matcher anchored on `(?:^|\r?\n)` and bounded the line with
+`[^\r\n]*`. When bash execs a replacement shell it emits its bracketed-paste
+reset and the terminal returns the carriage without a line feed, so the
+transcript reads `\r\n<ESC>[?2004l\r# ` and the bounded run cannot cross that
+bare `\r`. The last step of the systemd-overlay login is exactly that sequence,
+so `exec sudo -n /bin/sh` timed out at 180 seconds with the prompt already on
+screen, taking Geekbench, the command and link benchmarks, and LTP with it.
+
+It survived because the EROFS migration introduced the `uml` login and the
+`exec sudo` step, and the final Geekbench run after that migration was skipped by
+user direction, so nothing exercised the path again. The covering test mocked
+`_read_until` and compared the pattern string to itself, which passes equally for
+a matcher that never matches anything. Fixed in `0f6a6fc`, with the patterns
+pinned against real console bytes instead.
+
+### The current baseline
+
+16 KiB gadgets, 10 vCPUs, 8 GiB, P-cores, `rootfs.erofs`, image-local Geekbench
+6.7.1 with `--no-upload`. Nine complete runs:
+
+| single-core | multi-core |
+| --- | --- |
+| 80-81 | 503-517, mean 511 |
+
+The multi-core band is **2.8% wide**, materially wider than this campaign has
+generally assumed. Several past entries treated 1-2% aggregate differences as
+signal; against this band they are not, and conclusions of that size drawn from
+unreplicated aggregate pairs should be re-read with suspicion.
+
+**The G121 reference of 81/515 is not comparable and cannot be made comparable.**
+The `c98f003` emulator rejects the current invocation outright: its
+`has_writable_primary_block_device` check refuses `ubd0c=`, and it forces
+`root=/dev/ubda1` plus `ro` for a GPT ext4 image. It cannot boot a raw EROFS
+root at all. No same-day control against that build is constructible, so no
+regression against 515 is demonstrable in either direction. 515 also falls
+inside the band above.
+
+### The withdrawn PSI result
+
+`f209f56` added `CONFIG_PSI=y`. A first experiment ran two default runs
+(02:00-03:50) and then two `psi=0` runs (03:55-05:50) and reported 13 of 16
+multi-core workloads faster without PSI, mean +0.82%, sign test p about 0.0009,
+with single-core flat at +0.14% and a 4/3/9 split. That was accepted here as a
+mechanism-consistent finding and a `CONFIG_PSI_DEFAULT_DISABLED=y` fix was
+prepared.
+
+**It does not replicate.** The design ran all of one arm and then all of the
+other, so elapsed time and arm were perfectly confounded. Re-run as ABBA on one
+binary, with both arms passing the parameter explicitly so the compiled default
+is irrelevant:
+
+| arm | multi-core | mean | range |
+| --- | --- | ---: | ---: |
+| `psi=1` | 503, 514 | 508.5 | 11 |
+| `psi=0` | 510, 512 | 511.0 | 2 |
+
+The `psi=1` range **fully contains** the `psi=0` range. The same per-workload
+analysis that produced 13/1/2 now produces 11/4/1, p about 0.12, with individual
+workloads swinging as much as -4.5% and +4.2% - an order of magnitude above the
+0.5% being claimed. The kernel config change was reverted unbuilt into the
+product.
+
+Three lessons, all cheap to state and expensive to learn:
+
+- **Per-workload consistency does not validate a block-ordered design.** 13 of 16
+  agreeing is exactly what a systematic host-condition difference produces. The
+  sign test measures consistency, not causation, and is blind to the confound.
+- **Flat single-core alongside moved multi-core is not corroboration.** Single-core
+  uses 1 of 20 host cores and is far less sensitive to host load than the
+  10-core phase, so drift produces that same asymmetry unaided.
+- **A rebuild between arms voids the comparison.** A confirmation run built from a
+  fresh kernel landed at 509 and was read as evidence against PSI; it was not
+  evidence either way, because the binary had changed.
+
+`--kernel-argument` was added to the Geekbench runner for this, which is what
+makes a same-binary boot-parameter A/B possible. Evidence is in
+`.build/results/psi-abba-*` and `geekbench-head-gadgets-*`.

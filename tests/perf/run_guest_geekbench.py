@@ -51,6 +51,17 @@ def parse_arguments() -> argparse.Namespace:
         default="/dev/ubda",
         help="raw EROFS root block device (default: /dev/ubda)",
     )
+    parser.add_argument(
+        "--kernel-argument",
+        action="append",
+        default=[],
+        metavar="ARGUMENT",
+        help=(
+            "append one extra guest kernel argument; repeatable. Isolating a "
+            "kernel policy that the config turns on by default, such as "
+            "'psi=0', needs a matched pair of runs that differ only here"
+        ),
+    )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument(
@@ -148,6 +159,7 @@ def main() -> int:
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
+            *arguments.kernel_argument,
         ),
         systemd_overlay=True,
         engine=arguments.engine,
