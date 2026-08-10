@@ -6082,3 +6082,80 @@ no systemd - which also removes the 120-second quiescence phase and everything
 it was there to stop. `tools/guest-shell.py` boots in about 5 seconds against
 roughly 90 and streams the console live, so a long run's progress is visible
 instead of arriving only at the end.
+
+## G127: C-4, Text Processing does not scale on real hardware either
+
+No change made. C-4 has been open since G3 on the premise that Multi-Core Text
+Processing running at roughly 1.2-1.4 host cores "fails to scale in *every*
+engine, so it is probably one fixable serialization - and that fix would help
+gadgets too." **The premise is wrong, and two reference devices settle it.**
+
+### The measurement
+
+Gadgets, 10 vCPUs, 8 GiB, `tools/guest-shell.py` with no systemd, single
+Geekbench workloads selected with `--section`/`--workload`. Multi-core Text
+Processing reproduced across four runs at 61, 62, 62 and 61 - 4.90 to 4.99
+pages/sec - so the number below is not one noisy sample.
+
+| | single-core | multi-core | ratio |
+| --- | ---: | ---: | ---: |
+| Text Processing | 4.05 pages/s | 4.99 pages/s | **1.23x** |
+| File Compression | 14.7 MB/s | 82.7 MB/s | **5.63x** |
+
+**File Compression was measured in the same boot, immediately before Text
+Processing.** That is the control the earlier flags never had: the same binary,
+guest, host and topology reach 5.6x on one workload and 1.2x on the other, so
+whatever limits Text Processing is not a serialization the emulator imposes on
+all multi-core work.
+
+Host CPU confirms it directly. File Compression's multi-core phase held
+**4.6 to 6.3 host cores**; Text Processing held **1.1 to 1.7**, oscillating
+between roughly 113% and 165% rather than climbing.
+
+### What the guest itself sees
+
+Sampling `procs_running` once a second inside the guest, then all thread states
+system-wide with `ps -eLo stat=`:
+
+| workload | runnable threads |
+| --- | --- |
+| Text Processing | **R=2 in 156 of 175 samples** |
+| File Compression | reaches R=8, R=11 and R=12 |
+
+One of those two is the sampling loop itself, so Text Processing presents about
+**one runnable thread**. `procs_blocked` was 0 in every sample, so its other
+threads are sleeping rather than waiting on I/O: the guest kernel has nothing to
+place on the other vCPUs, and the emulator is idle for want of work rather than
+serializing work it has.
+
+### The reference devices
+
+Two Geekbench Browser results, one of them the **same 6.7.1 for Linux
+AArch64 binary this campaign runs**:
+
+| device | cores | SC | MC | ratio |
+| --- | ---: | ---: | ---: | ---: |
+| iPhone 17 Pro Max (A19 Pro) | 6 | 290.2 pages/s | 348.2 pages/s | **1.20x** |
+| Raspberry Pi 4 Model B | 4 | 24.9 pages/s | 29.6 pages/s | **1.19x** |
+| this emulator, gadgets | 10 | 4.05 pages/s | 4.99 pages/s | **1.23x** |
+
+Geekbench 6 Text Processing is near-serial by construction, and native silicon
+gets 1.19-1.20x from it. **This emulator gets 1.23x - marginally more than
+either reference.** There is no missing parallelism to recover.
+
+The same comparison shows the multi-core path is healthy rather than merely
+adequate. File Compression scales 5.63x here against 2.55x on the A19 Pro's six
+heterogeneous cores and 1.13x on the Pi 4, which is memory-bandwidth bound.
+
+### Disposition
+
+**C-4 is closed as measured, with no defect found.** It should not be reopened
+on the aggregate multi-core score alone. Reopening it needs a workload whose
+scaling ratio here is materially below the same workload's ratio on comparable
+native hardware - which is the comparison C-4 was missing for its whole life,
+and the reason a workload property survived three separate flags (G3, G44, G94)
+as a suspected emulator bug.
+
+Limitations: single host, single engine, and the ratios above compare rates
+across machines of very different absolute speed. The claim is only about the
+**shape** of each workload's multi-core scaling, not about any absolute score.
