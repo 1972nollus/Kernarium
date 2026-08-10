@@ -23,10 +23,13 @@ constexpr unsigned long hwcap_fphp = 1UL << 9;
 constexpr unsigned long hwcap_asimdhp = 1UL << 10;
 constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
 constexpr unsigned long hwcap_jscvt = 1UL << 13;
+constexpr unsigned long hwcap_fcma = 1UL << 14;
+constexpr unsigned long hwcap_lrcpc = 1UL << 15;
 constexpr unsigned long hwcap_sha3 = 1UL << 17;
 constexpr unsigned long hwcap_asimddp = 1UL << 20;
 constexpr unsigned long hwcap_sha512 = 1UL << 21;
 constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
+constexpr unsigned long hwcap_ilrcpc = 1UL << 26;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
@@ -81,6 +84,22 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	if (host.has(::uml::platform::ArmFeature::jscvt) &&
 	    host.jscvt_subnormal_flags_correct)
 		result |= hwcap_jscvt;
+	/* FCADD/FCMLA. The gadget bank carries a dedicated complex family
+	 * (`floating_complex_vector`, selected through `floating_complex_gadget`)
+	 * and the JIT emits it natively. */
+	if (host.has(::uml::platform::ArmFeature::fcma))
+		result |= hwcap_fcma;
+	/* LDAPR, and LDAPUR/STLUR for the offset forms. The gadget bank has a
+	 * complete native RCpc set: `rcpc_load_gadgets` covers every size and both
+	 * sign-extension shapes, `rcpc_store_gadgets` every store size. An acquire
+	 * load the guest selects therefore stays on a fast path instead of falling
+	 * back, which matters because this is what a C++ `memory_order_acquire`
+	 * load lowers to. No Geekbench release emits these, so their value is in
+	 * ordinary concurrent guest code rather than in a benchmark score. */
+	if (host.has(::uml::platform::ArmFeature::lrcpc))
+		result |= hwcap_lrcpc;
+	if (host.has(::uml::platform::ArmFeature::lrcpc2))
+		result |= hwcap_ilrcpc;
 	return result;
 }
 

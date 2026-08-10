@@ -23,10 +23,13 @@ constexpr unsigned long hwcap_fphp = 1UL << 9;
 constexpr unsigned long hwcap_asimdhp = 1UL << 10;
 constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
 constexpr unsigned long hwcap_jscvt = 1UL << 13;
+constexpr unsigned long hwcap_fcma = 1UL << 14;
+constexpr unsigned long hwcap_lrcpc = 1UL << 15;
 constexpr unsigned long hwcap_sha3 = 1UL << 17;
 constexpr unsigned long hwcap_asimddp = 1UL << 20;
 constexpr unsigned long hwcap_sha512 = 1UL << 21;
 constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
+constexpr unsigned long hwcap_ilrcpc = 1UL << 26;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
@@ -74,12 +77,19 @@ void guest_capabilities_match_host()
 	require_propagated(capabilities, hwcap_jscvt,
 			   host.has(::uml::cpu::ArmFeature::jscvt) &&
 				   host.jscvt_subnormal_flags_correct);
+	require_propagated(capabilities, hwcap_fcma,
+			   host.has(::uml::cpu::ArmFeature::fcma));
+	require_propagated(capabilities, hwcap_lrcpc,
+			   host.has(::uml::cpu::ArmFeature::lrcpc));
+	require_propagated(capabilities, hwcap_ilrcpc,
+			   host.has(::uml::cpu::ArmFeature::lrcpc2));
 
 	constexpr auto advertised =
 		hwcap_fp | hwcap_asimd | hwcap_aes | hwcap_pmull | hwcap_sha1 |
 		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_fphp |
 		hwcap_asimdhp | hwcap_asimdrdm | hwcap_jscvt | hwcap_sha3 |
-		hwcap_asimddp | hwcap_sha512 | hwcap_asimdfhm;
+		hwcap_asimddp | hwcap_sha512 | hwcap_asimdfhm | hwcap_fcma |
+		hwcap_lrcpc | hwcap_ilrcpc;
 	require((capabilities & ~advertised) == 0);
 
 	const auto capabilities2 = darwin_uml_guest_hwcap2();

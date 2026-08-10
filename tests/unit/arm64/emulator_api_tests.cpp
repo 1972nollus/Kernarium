@@ -323,12 +323,15 @@ unsigned long expected_guest_hwcap()
 		{"hw.optional.arm.FEAT_FP16", 9},
 		{"hw.optional.arm.FEAT_FP16", 10},
 		{"hw.optional.arm.FEAT_RDM", 12},
+		{"hw.optional.arm.FEAT_FCMA", 14},
+		{"hw.optional.arm.FEAT_LRCPC", 15},
 		{"hw.optional.arm.FEAT_SHA3", 17},
 		/* HWCAP_ASIMDDP. Advertised only where the gadget bank and the JIT
 		 * select their native dot paths, which is the same host predicate. */
 		{"hw.optional.arm.FEAT_DotProd", 20},
 		{"hw.optional.arm.FEAT_SHA512", 21},
 		{"hw.optional.arm.FEAT_FHM", 23},
+		{"hw.optional.arm.FEAT_LRCPC2", 26},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))
