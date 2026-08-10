@@ -45,6 +45,27 @@ filesystem limitation, not as a performance result. All partitioned
 `rootfs.img`, upload, and mode-0444 observations below remain dated experiment
 evidence rather than current run instructions.
 
+### Native Virtio-GPU presentation path (2026-08-10)
+
+The native macOS display path is a structural latency and bandwidth change,
+not a scored CPU benchmark. Virglrenderer's public resource information returns
+the GL texture that already backs the selected guest resource. A CGL
+framebuffer blit copies that texture into IOSurface storage on the GPU, and a
+Metal texture created from the same IOSurface is sampled into the window
+drawable. The direct-path unit fixture proves a resource flush does not call
+`virgl_renderer_get_rect` or the CPU display update once native presentation
+accepts the frame.
+
+Two IOSurfaces were accepted over a single surface because OpenGL must not
+overwrite storage still referenced by an in-flight Metal command buffer. A
+third queued surface and FIFO presentation were rejected: the implementation
+keeps at most one Metal presentation in flight and replaces an older ready
+slot with the newest guest frame. Thus the second slot is a producer/consumer
+hazard boundary, not another frame of intentional buffering. VNC and
+unsupported GL targets retain the measurement-independent CPU fallback. No
+frame latency or throughput number is claimed until an interactive rendered
+campaign is captured on controlled display hardware.
+
 ## Historical controlled benchmark
 
 - Release production gadget build; debug interpreter run path disabled.
@@ -5997,3 +6018,61 @@ which are not yet in `ArmFeature` at all.
 
 Gates: 621/621 unit. The fail-closed allowlist in `arm64-jit-capability` caught
 every bit added here and was extended, not relaxed.
+
+## G126: the guest feature surface, measured end to end
+
+Accepted. Full Geekbench 6.7.1, HEAD against a frozen build of `d2970da`'s
+`darwin/` tree - the state before any of this work - on one host, ABBA ordered,
+no systemd, 16 KiB gadgets, 10 vCPUs, 8 GiB.
+
+| aggregate | control | candidate | change |
+| --- | --- | --- | ---: |
+| single-core | 80, 80 | **94, 93** | **+16.9%** |
+| multi-core | 506, 498 | **558, 542** | **+9.6%** |
+
+Neither arm overlaps the other on either metric, and the control reproduced to a
+single point single-core across both of its runs.
+
+### Where it comes from
+
+| workload | single-core | multi-core |
+| --- | ---: | ---: |
+| Object Detection | **+142.2%** | **+96.5%** |
+| Photo Filter | **+80.5%** | +16.7% |
+| Background Blur | **+61.7%** | +15.5% |
+| Photo Library | **+44.0%** | **+35.0%** |
+| Structure from Motion | **+30.0%** | +23.6% |
+| Horizon Detection | +8.8% | +8.6% |
+
+Every one of these is a workload that selects a vector path from HWCAP. Photo
+Library was not in the targeted set and is the one result the full suite found
+that the focused runs did not; the other five match their targeted measurements
+closely, which is the check that the targeted method was measuring the right
+thing.
+
+The families added after the vector set - LRCPC, LRCPC2, FCMA, FLAGM, FLAGM2,
+USCAT, SB, DIT - contribute nothing here and were never expected to. Disassembly
+of Geekbench 5.5.1, 6.7.1 and 7.0.0 counts zero occurrences of all of them.
+They are carried on the evidence of `guest_hwcap_sanity.S`, which executes each
+one and checks its result, not on a benchmark score.
+
+### What moved against it
+
+Object Remover multi-core -6.5% is the largest regression and sits outside the
+2.8% multi-core band G124 established, so it is probably real rather than noise.
+PDF Renderer -3.2%, Ray Tracer -2.1% and Asset Compression -1.0% multi-core are
+inside or near that band. Ray Tracer is scalar floating point and no advertised
+family should reach it; it read -1.9% in targeted testing and -2.1% here, which
+is consistent enough across two independent measurements to be worth a look
+rather than dismissal. None of these offsets a +16.9% and +9.6% aggregate, but
+they are recorded as open rather than explained.
+
+### Method
+
+The measurement rules this campaign paid to learn were all applied: one frozen
+binary per arm built before the campaign so no rebuild happened between runs,
+ABBA ordering so linear host drift cancels by position, and a guest shell with
+no systemd - which also removes the 120-second quiescence phase and everything
+it was there to stop. `tools/guest-shell.py` boots in about 5 seconds against
+roughly 90 and streams the console live, so a long run's progress is visible
+instead of arriving only at the end.

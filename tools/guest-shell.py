@@ -23,11 +23,35 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import pathlib
 import sys
+import threading
+import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1] / "tests"
 sys.path.insert(0, str(TESTS / "integration" / "support"))
 from guest import CORE_CLASSES, Guest  # noqa: E402
+
+
+def mirror_console(guest: Guest, stop: threading.Event, ready: threading.Event) -> None:
+    """Copy new console bytes to stdout while Guest owns the PTY reader.
+
+    `run_command` only returns once its end marker arrives, so a long command
+    like a full benchmark would otherwise produce nothing for its whole run and
+    give no way to tell progress from a wedge. Guest appends everything it reads
+    to `_transcript`, so following that buffer streams the console without
+    competing for the descriptor.
+    """
+    offset = 0
+    ready.set()
+    while True:
+        available = len(guest._transcript)
+        if available > offset:
+            sys.stdout.buffer.write(bytes(guest._transcript[offset:available]))
+            sys.stdout.buffer.flush()
+            offset = available
+        elif stop.is_set():
+            return
+        time.sleep(0.1)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -53,6 +77,11 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--core-class", choices=CORE_CLASSES, default="performance")
     parser.add_argument("--boot-timeout", type=int, default=300)
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the live console stream and print only command output",
+    )
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument(
         "--root-device",
@@ -83,11 +112,24 @@ def main() -> int:
         core_class=arguments.core_class,
     )
     status = 0
+    stop = threading.Event()
+    mirror: threading.Thread | None = None
+    if not arguments.quiet:
+        ready = threading.Event()
+        mirror = threading.Thread(
+            target=mirror_console,
+            args=(guest, stop, ready),
+            name="guest-console-mirror",
+            daemon=True,
+        )
+        mirror.start()
+        ready.wait()
     try:
         guest.boot_and_login(arguments.boot_timeout)
         for command in arguments.command:
             result = guest.run_command(command, arguments.timeout)
-            print(result.output, flush=True)
+            if arguments.quiet:
+                print(result.output, flush=True)
             if result.return_code != 0:
                 print(
                     f"command exited {result.return_code}: {command}",
@@ -97,6 +139,9 @@ def main() -> int:
                 status = result.return_code
         guest.shutdown(60)
     finally:
+        stop.set()
+        if mirror is not None:
+            mirror.join(timeout=5)
         guest.close()
     return status
 
