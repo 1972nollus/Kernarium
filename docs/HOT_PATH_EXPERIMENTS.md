@@ -6387,3 +6387,94 @@ twice (G128 bounds it above at 32-68%, this bounds the buildable version at
 variant explosion that made route 2 look impossible is resolved by restricting
 residency to the destination. The diagnostic switches used here were reverted;
 neither is committed.
+
+## G131: B-3, the profile G122 required, and why the score route failed
+
+No runtime change kept. G122 reopened B-3 as "an ordinary trial rather than a
+blocked one" and separately required that the gate not be touched again "without
+a profile taken *now*". Both were attempted. The score comparison failed for a
+reason worth recording, and the profile found something the score never could.
+
+### The score comparison could not resolve it, and the failure is instructive
+
+B-3 step 1 replaces the gate's `yield` - architecturally a no-op on a machine
+with no SMT, so the loop has no backoff at all - with `isb`, a real backoff.
+Measured as one binary with both arms behind an environment variable, JIT,
+10 vCPUs, multi-core Clang, Object Detection, Photo Filter and Ray Tracer, ABBA.
+
+| workload | by run position: A B B A |
+| --- | --- |
+| Clang | 407, 434, 430, 434 |
+| **Object Detection** | **404, 437, 865, 840** |
+| Photo Filter | 347, 360, 495, 380 |
+| Ray Tracer | 861, 1530, 1318, 1068 |
+
+**Object Detection doubles between position 2 and position 3.** That tracks run
+order, not arm, and the cause is mundane: the host had been building and running
+unit suites immediately before, and was still settling. Within-arm spread
+reaches 2.08x, against the 3.9% band G122 established for the multi-core
+*aggregate*. Individual multi-core workloads are far noisier than the aggregate
+those 3.9% were measured on, so B-3 was never resolvable this way at n=2, and
+running more arms would have bought precision on a confounded quantity.
+
+ABBA is what made this visible rather than misleading: with A at positions 1 and
+4 and B at 2 and 3, a monotonic drift largely cancels in the arm means, and the
+by-position sequence exposes the drift directly. Reported as a failed
+measurement, not as a result.
+
+### The profile, which is decisive
+
+Counting the mechanism instead of its score, over the same four multi-core
+workloads:
+
+| | count | per gate entry |
+| --- | ---: | ---: |
+| `JitExclusiveOperationScope` entries | 262,181 | - |
+| spin hints executed in `jit_gate_value_changed` | **22,369,571** | 85.3 |
+| iterations of the `has_published_jit_store` loop | **5,113,608** | 19.5 |
+
+The gate is hot, so B-3's premise survives. But the second row is the finding.
+`jit_gate_value_changed` spins at most 64 times before parking on
+`atomic::wait`, and it averages 85 hints per entry, so waiters routinely
+exhaust the spin and park - which is the behaviour the 64-iteration budget was
+chosen for, and it bounds what any substitute hint can be worth.
+
+**The third row is where the cost actually is.** Every one of those 5.1 million
+iterations calls `has_published_jit_store`, which takes
+`jit_store_participants_mutex` and runs `any_of` over the participant vector.
+That is **5.1 million mutex acquire/release pairs and 5.1 million linear scans**
+in a four-workload run, on a gate whose own protocol is otherwise lock-free.
+
+### The fix, specified
+
+G102 deferred this half because "the natural implementation, an atomic count of
+non-idle participants, would put a contended global read-modify-write on
+`JitBlockPublication`'s deliberately lock-free direct-store path to speed up a
+rare waiter, which is the shape G33 and G34 were rejected for." That objection
+is correct and is avoidable, because the waiter does not need a count - it needs
+to read the states without a lock.
+
+Move the observable state out of `JitStoreParticipant` and into a stable,
+index-addressed slot array; the participant holds a slot index and its `state`
+becomes an accessor onto that slot. Registration and release keep the existing
+mutex, which is cold. The scan then reads a flat array of atomics with no lock
+and no pointer chasing, and **the store path is unchanged** - a participant
+still only stores its own state, at a different address, so nothing is added to
+the lock-free path and G102's objection does not apply.
+
+The lifetime hazard that forces the mutex today disappears with it: the scan
+never dereferences a participant, so a released slot simply reads `idle`, which
+is exactly what "no published store" means. A destroyed participant cannot be
+observed at all.
+
+### Disposition
+
+- **B-3 step 1, the ISB substitution, is neither accepted nor rejected.** The
+  measurement was confounded; the profile bounds its value by showing waiters
+  exhaust the spin budget and park regardless. Re-measuring it needs a quiesced
+  host and the multi-core aggregate, not per-workload scores.
+- **B-3's second half is now the substantiated item**, with 5.1 million lock
+  acquisitions behind it rather than an argument. It is a concurrency change on
+  the store-publication protocol with 27 `state` call sites, so it wants TSan
+  and a stress campaign of its own rather than being appended to another
+  session's work. It was deliberately not started here.
