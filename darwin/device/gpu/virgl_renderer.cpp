@@ -318,6 +318,22 @@ int VirglRenderer::readResourceRectangle(
     return checkGlDispatchResult(0);
 }
 
+int VirglRenderer::resourceTexture(
+    std::uint32_t resourceId,
+    std::uint32_t& textureId) noexcept
+{
+    virgl_renderer_resource_info information {};
+    const int result = virgl_renderer_resource_get_info(
+        static_cast<int>(resourceId), &information);
+    const int checkedResult = checkGlDispatchResult(result);
+    if (checkedResult != 0)
+        return checkedResult;
+    if (information.tex_id == 0)
+        return EINVAL;
+    textureId = information.tex_id;
+    return 0;
+}
+
 int VirglRenderer::createFenceAndWait(
     std::uint32_t contextId,
     std::uint32_t ringIndex,

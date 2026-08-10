@@ -147,10 +147,10 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   freestanding arm64/Linux hello-world payload from repository source, wraps it
   in a deterministic rootfs archive, imports it into the disposable Docker
   state, and runs it with `--pull=never --network none`; it must not depend on a
-  registry or external network. KDE/VNC and WebGL launchers must reuse
+  registry or external network. KDE native/VNC and WebGL launchers must reuse
   the image's non-root `uml` account; never synthesize `plasma` or another
   desktop account in the overlay.
-- External-network, KDE/VNC, WebGL, full LTP, SMP, performance, and official
+- External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
 - Full LTP uses `/opt/ltp` from `rootfs.erofs`. Tests that require deliberately

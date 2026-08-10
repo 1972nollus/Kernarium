@@ -94,7 +94,7 @@ void flushReadinessOutput()
         return;
     const int flushError = errno;
     throw std::runtime_error(
-        "VNC readiness output flush failed: " +
+        "GPU readiness output flush failed: " +
         std::string(std::strerror(flushError)));
 }
 
@@ -353,19 +353,20 @@ VhostUserServer::VhostUserServer(
     std::uint32_t width,
     std::uint32_t height,
     bool selfTestPattern,
-    uml::input::vnc::VncInputSink inputSink)
+    uml::input::vnc::VncInputSink inputSink,
+    DisplayMode displayMode)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
-    , vncPort_(vncPort)
-    , display_(
+    , display_(makeDisplay(
+          displayMode,
           vncBindAddress_,
           vncPort,
           std::move(vncPassword),
           width,
           height,
-          std::move(inputSink))
+          std::move(inputSink)))
     , gpu_(
-          display_,
+          *display_,
           [this](std::uint64_t address, std::span<std::uint8_t> destination) {
               return readGuest(address, destination);
           },
@@ -376,9 +377,8 @@ VhostUserServer::VhostUserServer(
                   std::span(pointer, length);
           })
 {
-    vncPort_ = display_.port();
     if (selfTestPattern)
-        display_.fillSelfTestPattern();
+        display_->fillSelfTestPattern();
 }
 
 VhostUserServer::~VhostUserServer()
@@ -1346,14 +1346,16 @@ void VhostUserServer::runConnected(
     UniqueDescriptor guard {connection};
     setCloseOnExec(connection);
     configureOutputDescriptor(connection);
-    std::fprintf(
-        stdout,
-        "Virtio-GPU vhost-user transport: in-process socketpair\n"
-        "VNC display: %s:%u (%ux%u)\n",
-        vncBindAddress_.c_str(),
-        static_cast<unsigned int>(vncPort_),
-        display_.width(),
-        display_.height());
+    std::fprintf(stdout,
+        "Virtio-GPU vhost-user transport: in-process socketpair\n");
+    if (const auto port = display_->vncPort()) {
+        std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
+            vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
+            display_->width(), display_->height());
+    } else {
+        std::fprintf(stdout, "Native Metal display: %ux%u\n",
+            display_->width(), display_->height());
+    }
     flushReadinessOutput();
     if (ready)
         ready();
@@ -1412,15 +1414,16 @@ void VhostUserServer::run(
             "vhost-user socket permission update failed: " +
             std::string(std::strerror(errno)));
     }
-    std::fprintf(
-        stdout,
-        "Virtio-GPU vhost-user socket: %s\n"
-        "VNC display: %s:%u (%ux%u)\n",
-        socketPath_.c_str(),
-        vncBindAddress_.c_str(),
-        static_cast<unsigned int>(vncPort_),
-        display_.width(),
-        display_.height());
+    std::fprintf(stdout, "Virtio-GPU vhost-user socket: %s\n",
+        socketPath_.c_str());
+    if (const auto port = display_->vncPort()) {
+        std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
+            vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
+            display_->width(), display_->height());
+    } else {
+        std::fprintf(stdout, "Native Metal display: %ux%u\n",
+            display_->width(), display_->height());
+    }
     flushReadinessOutput();
     if (ready)
         ready();

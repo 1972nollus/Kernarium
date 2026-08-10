@@ -8,7 +8,8 @@ Provide accelerated guest OpenGL through Mesa Virgl:
 2. Virtio-GPU commands cross UML's in-process vhost-user transport;
 3. host virglrenderer executes them with caller-provided CGL contexts;
 4. CGL selects the Apple GPU;
-5. scanout contents are copied to the VNC framebuffer;
+5. scanout contents are presented either in a native Metal window or through
+   the VNC framebuffer;
 6. KDE Plasma runs through the accelerated DRM device.
 
 Guest Zink/Venus, resource blobs, a host-visible shared-memory aperture,
@@ -31,7 +32,9 @@ VirglRenderer + virglrenderer
         |
 CGL / Apple OpenGL / Apple GPU
 
-Virtio-GPU scanout -> VncDisplay -> VNC client
+Virtio-GPU scanout -> Display
+                     |-> CGL texture -> IOSurface -> MetalKit window
+                     `-> CPU readback -> VncDisplay -> VNC client
 
 VNC keyboard/pointer events
         |
@@ -52,7 +55,8 @@ thread-affinity rule is part of the implementation contract.
 
 - Build virglrenderer as a static library with OpenGL enabled and Venus
   disabled.
-- Link the GPU emulator with OpenGL, LibVNCServer, and libepoxy.
+- Link the GPU emulator with OpenGL, Metal/MetalKit, IOSurface,
+  LibVNCServer, and libepoxy.
 - Keep rendering in the emulator process; no helper process or host display
   server is required.
 
@@ -68,7 +72,18 @@ Implement:
 - `RESOURCE_CREATE_3D`;
 - 3D transfers and command submission;
 - ordered fences;
-- readback of the active Virgl scanout into the VNC framebuffer.
+- direct native presentation of supported 2D Virgl scanouts, with readback of
+  the active scanout for VNC and native fallback.
+
+Virglrenderer owns a GL texture for each guest resource; it does not own the
+host window or a presentation swapchain. Guest DRM/KMS may rotate multiple
+resource IDs, but those CGL textures are not IOSurface-backed and therefore
+cannot be imported directly by Metal. Native mode uses two IOSurface bridge
+slots for cross-API lifetime safety. A CGL framebuffer blit is GPU-to-GPU,
+Metal consumes at most one slot at a time, the window layer is limited to two
+drawables, and a newer ready frame replaces an older one rather than waiting in
+a display FIFO. This avoids both CPU transfer and an additional queued frame
+of latency.
 
 Advertise only the device features used by this path:
 
@@ -128,8 +143,13 @@ not rerun during the rootfs migration.
 - Exercise a deterministic DRM/KMS or compositor frame.
 - Connect the VNC smoke client.
 - Verify the captured framebuffer is non-blank and changes after damage.
+- Open the native Metal window and verify scanout plus keyboard/pointer input.
+- Prove an accepted native 3D scanout skips renderer readback and CPU display
+  update; retain VNC and unsupported-resource fallback coverage.
 
-This gate has passed with a 1280x720 Plasma framebuffer captured through VNC.
+The VNC side of this gate passed with a 1280x720 Plasma framebuffer. The native
+window is a newer external GUI path and its interactive result must be recorded
+separately from that dated VNC evidence.
 
 ### Gate 4: KDE Plasma
 
@@ -150,9 +170,18 @@ reports no Virtio-GPU protocol errors or desktop-process crashes.
 
 All four implementation gates passed in the dated partitioned-image campaign.
 KDE Plasma Wayland was functional over VNC with accelerated Virgl OpenGL on the
-host, and the final guest audit reported `VIRGL_COMMAND_ERRORS=0`. Apple core-
+host, and the final guest audit reported `VIRGL_COMMAND_ERRORS=0`. The current
+launcher selects the native Metal window by default and preserves that dated
+VNC campaign through `--display vnc`. Apple core-
 profile compatibility fixes in virglrenderer translate its legacy GLSL 1.30
 shaders to GLSL 1.50 and avoid requiring promoted extensions that Apple OpenGL
 does not advertise. Current launchers use raw EROFS and no longer inspect Unix
 mode; a complete KDE/VNC/WebGL EROFS requalification remains an explicit
 external campaign rather than an inferred pass.
+
+A focused native-window launch at 800x500 with four guest vCPUs reached
+`graphical.target`, passed the overlay guard, and exercised the direct
+CGL/IOSurface/Metal message before manual Ctrl-C shutdown. That proves native
+window startup and the GPU-only scanout selection, not keyboard/pointer
+interaction or a complete timed KDE qualification. The EROFS digest was
+reverified after the run.

@@ -13,6 +13,17 @@ emulator/  options and product composition
 app/macos/ CLI and embedded-kernel process adapter
 ```
 
+On macOS the Virtio-GPU display provider supports `vnc` and `native` modes.
+The native provider keeps Virgl scanout pixels on the GPU: it blits the CGL
+texture into one of two IOSurfaces and presents the same surface through
+MetalKit. The two slots protect OpenGL/Metal producer-consumer ownership; they
+are not a queued swapchain. Only the newest ready slot is retained and at most
+one Metal command buffer is in flight. The CAMetalLayer is limited to two
+drawables. Unsupported resource shapes fall back
+to the shared CPU scanout conversion used by VNC. AppKit remains on the process
+main thread while the synchronous emulator run moves to a worker whose signal
+mask preserves UML's SIGALRM timer contract.
+
 Each guest vCPU runtime owns its engine adapters for the life of its host
 thread. `CpuEngine::run()` is a synchronous, non-throwing-by-contract guest
 timeslice boundary: implementations return `ExecutionResult` for guest exits;

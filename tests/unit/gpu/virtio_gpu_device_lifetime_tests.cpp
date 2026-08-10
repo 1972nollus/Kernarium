@@ -157,6 +157,29 @@ public:
         return 0;
     }
 
+    int resourceTexture(
+        std::uint32_t resourceId,
+        std::uint32_t& textureId) noexcept override
+    {
+        if (!directPresentationEnabled)
+            return ENOTSUP;
+        textureId = 0x1234;
+        lastTextureResource = resourceId;
+        ++resourceTextureCount;
+        return 0;
+    }
+
+    bool presentOpenGl(const OpenGlScanout& scanout) noexcept override
+    {
+        if (!directPresentationEnabled)
+            return false;
+        lastOpenGlScanout = scanout;
+        ++directPresentationCount;
+        return true;
+    }
+
+    bool needsFullCpuFallback() const noexcept override { return false; }
+
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t,
         std::uint32_t,
@@ -252,6 +275,11 @@ public:
     unsigned createResourceCount {};
     unsigned transferCount {};
     unsigned readResourceCount {};
+    unsigned resourceTextureCount {};
+    unsigned directPresentationCount {};
+    bool directPresentationEnabled {};
+    std::uint32_t lastTextureResource {};
+    OpenGlScanout lastOpenGlScanout {};
     unsigned fenceCount {};
     const std::atomic_bool* lastFenceStopRequest {};
     unsigned unrefResourceCount {};
@@ -660,6 +688,22 @@ void rendererExecutionFailuresPreserveDeviceState()
         protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
+
+    dependencies.directPresentationEnabled = true;
+    const auto readsBeforeDirect = dependencies.readResourceCount;
+    const auto updatesBeforeDirect = dependencies.displayUpdateCount;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.resourceTextureCount == 1);
+    require(dependencies.directPresentationCount == 1);
+    require(dependencies.lastTextureResource == resource.resourceId);
+    require(dependencies.lastOpenGlScanout.textureId == 0x1234);
+    require(dependencies.lastOpenGlScanout.resourceTarget == resource.target);
+    require(dependencies.lastOpenGlScanout.width == scanout.rectangle.width);
+    require(dependencies.lastOpenGlScanout.height == scanout.rectangle.height);
+    require(dependencies.readResourceCount == readsBeforeDirect);
+    require(dependencies.displayUpdateCount == updatesBeforeDirect);
+    dependencies.directPresentationEnabled = false;
 
     scanout.resourceId = protocol::invalidResourceId;
     requireFirstAllocationFailsBeforeCommit(device, scanout);

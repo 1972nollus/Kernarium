@@ -3,7 +3,7 @@
 
 #include "protocol.hpp"
 #include "virgl_renderer.hpp"
-#include "vnc_display.hpp"
+#include "display.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -39,7 +39,7 @@ public:
         GuestMapper guestMapper);
 #else
     VirtioGpuDevice(
-        VncDisplay& display,
+        Display& display,
         GuestReader guestReader,
         GuestMapper guestMapper);
 #endif
@@ -70,6 +70,7 @@ private:
 
     struct VirglResource {
         protocol::GpuFormat format {};
+        std::uint32_t target {};
         std::uint32_t width {};
         std::uint32_t height {};
         std::vector<std::uint8_t> pixels;
@@ -100,7 +101,7 @@ private:
 #if UML_GPU_DEVICE_TESTING
     testing::VirtioGpuDeviceDependencies& dependencies_;
 #else
-    VncDisplay& display_;
+    Display& display_;
 #endif
     GuestReader guestReader_;
     GuestMapper guestMapper_;

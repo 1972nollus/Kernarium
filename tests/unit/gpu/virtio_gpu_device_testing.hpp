@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "display.hpp"
 #include "protocol.hpp"
 #include "virgl_renderer.hpp"
 
@@ -65,6 +66,12 @@ public:
         std::uint32_t y,
         std::uint32_t width,
         std::uint32_t height) = 0;
+    [[nodiscard]] virtual int resourceTexture(
+        std::uint32_t resourceId,
+        std::uint32_t& textureId) noexcept = 0;
+    [[nodiscard]] virtual bool presentOpenGl(
+        const OpenGlScanout& scanout) noexcept = 0;
+    [[nodiscard]] virtual bool needsFullCpuFallback() const noexcept = 0;
     [[nodiscard]] virtual int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,

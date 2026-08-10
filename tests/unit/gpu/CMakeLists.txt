@@ -144,6 +144,7 @@ endif()
 
 if(TARGET uml_gpu_display)
     add_library(uml_gpu_display_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vnc_display.cpp
         vnc_display_testing.cpp)
     target_link_libraries(uml_gpu_display_test_variant PUBLIC

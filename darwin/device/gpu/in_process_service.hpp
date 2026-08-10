@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "display.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -8,6 +10,7 @@
 namespace uml::gpu {
 
 struct InProcessGpuOptions {
+    DisplayMode displayMode {DisplayMode::vnc};
     std::string vncBindAddress {"127.0.0.1"};
     std::uint16_t vncPort {5900};
     std::string vncPassword;

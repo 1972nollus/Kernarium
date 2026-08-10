@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot KDE Plasma from the EROFS guest and expose its VNC display."""
+"""Boot KDE Plasma from the EROFS guest in a native or VNC display."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -111,18 +111,21 @@ def vnc_password(value: str) -> str:
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Boot KDE Plasma Wayland with Virgl and leave an external VNC "
-            "server running until Ctrl-C"
+            "Boot KDE Plasma Wayland with Virgl in a native Metal window "
+            "(or an external VNC server) until Ctrl-C"
         )
     )
     parser.add_argument(
+        "--display", choices=("native", "vnc"), default="native",
+        help="display backend (default: native)")
+    parser.add_argument(
         "--bind",
         type=ipv4_address,
-        default="127.0.0.1",
+        default=None,
         help="VNC IPv4 bind address (default: 127.0.0.1)",
     )
     parser.add_argument(
-        "--port", type=port_number, default=5900,
+        "--port", type=port_number, default=None,
         help="VNC TCP port (0 selects a dynamically bound port)")
     parser.add_argument(
         "--password",
@@ -149,7 +152,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         action="store_true",
         help="verify the EROFS image and print the emulator command",
     )
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    if options.display != "vnc" and any(
+        value is not None
+        for value in (options.bind, options.port, options.password)
+    ):
+        parser.error("--bind, --port, and --password require --display vnc")
+    if options.bind is None:
+        options.bind = "127.0.0.1"
+    if options.port is None:
+        options.port = 5900
+    return options
 
 
 def build_harness_command(options: argparse.Namespace) -> list[str]:
@@ -186,12 +199,16 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
             f"ncpus={options.cpus}",
             f"--execution-engine={options.engine}",
             "--gpu",
-            f"--gpu-vnc-bind={options.bind}",
-            f"--gpu-vnc-port={options.port}",
+            f"--gpu-display={options.display}",
         )
     )
-    if options.password is not None:
-        command.append(f"--gpu-vnc-password={options.password}")
+    if options.display == "vnc":
+        command.extend((
+            f"--gpu-vnc-bind={options.bind}",
+            f"--gpu-vnc-port={options.port}",
+        ))
+        if options.password is not None:
+            command.append(f"--gpu-vnc-password={options.password}")
     command.extend(
         (
             f"--gpu-width={options.width}",
@@ -211,17 +228,20 @@ def guest_argument_separator(command: Sequence[str]) -> int:
 
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
+    if options.display == "native":
+        print("A native Metal display window will open.", file=sys.stderr)
     authentication = (
         "with password authentication"
         if options.password is not None
         else "without authentication"
     )
-    print(
-        f"VNC will listen {authentication} on "
-        f"{options.bind}:{options.port}.",
-        file=sys.stderr,
-    )
-    if options.bind == "0.0.0.0":
+    if options.display == "vnc":
+        print(
+            f"VNC will listen {authentication} on "
+            f"{options.bind}:{options.port}.",
+            file=sys.stderr,
+        )
+    if options.display == "vnc" and options.bind == "0.0.0.0":
         print(
             "The server is reachable on every IPv4 interface; use "
             "--bind 127.0.0.1 for local-only access.",

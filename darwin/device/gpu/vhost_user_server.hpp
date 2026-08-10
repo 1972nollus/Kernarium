@@ -5,7 +5,7 @@
 #include "unique_descriptor.hpp"
 #include "vhost_user_message.hpp"
 #include "virtio_gpu_device.hpp"
-#include "vnc_display.hpp"
+#include "display.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
 #include <array>
@@ -29,7 +29,8 @@ public:
         std::uint32_t width,
         std::uint32_t height,
         bool selfTestPattern,
-        uml::input::vnc::VncInputSink inputSink = {});
+        uml::input::vnc::VncInputSink inputSink = {},
+        DisplayMode displayMode = DisplayMode::vnc);
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
@@ -110,8 +111,7 @@ private:
 
     std::filesystem::path socketPath_;
     std::string vncBindAddress_;
-    std::uint16_t vncPort_ {};
-    VncDisplay display_;
+    std::unique_ptr<Display> display_;
     VirtioGpuDevice gpu_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::vector<Mapping> mappings_;

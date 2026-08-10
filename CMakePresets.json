@@ -50,6 +50,7 @@
       "binaryDir": "${sourceDir}/.build/presets/${presetName}",
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_OBJCXX_FLAGS": "-fsanitize=address,undefined",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
     },

@@ -121,7 +121,7 @@ VirtioGpuDevice::VirtioGpuDevice(
 }
 #else
 VirtioGpuDevice::VirtioGpuDevice(
-    VncDisplay& display,
+    Display& display,
     GuestReader guestReader,
     GuestMapper guestMapper)
     : display_(display)
@@ -575,6 +575,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 VirglResource {
                     .format =
                         static_cast<protocol::GpuFormat>(create->format),
+                    .target = create->target,
                     .width = create->width,
                     .height = create->height,
                 });
@@ -1016,6 +1017,24 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             }
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
+            std::uint32_t textureId = 0;
+            if (UML_GPU_RENDERER.resourceTexture(
+                    flush->resourceId, textureId) == 0 &&
+                UML_GPU_DISPLAY.presentOpenGl(OpenGlScanout {
+                    .textureId = textureId,
+                    .resourceTarget = resource.target,
+                    .sourceWidth = resource.width,
+                    .sourceHeight = resource.height,
+                    .sourceX = scanoutRectangle_.x,
+                    .sourceY = scanoutRectangle_.y,
+                    .width = scanoutRectangle_.width,
+                    .height = scanoutRectangle_.height,
+                })) {
+                return success;
+            }
+            const auto fallbackDamage =
+                UML_GPU_DISPLAY.needsFullCpuFallback() ?
+                scanoutRectangle_ : *damage;
             std::vector<std::uint8_t> replacementPixels;
             try {
                 replacementPixels = resource.pixels;
@@ -1023,10 +1042,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                         flush->resourceId,
                         replacementPixels,
                         0,
-                        damage->x,
-                        damage->y,
-                        damage->width,
-                        damage->height) != 0) {
+                        fallbackDamage.x,
+                        fallbackDamage.y,
+                        fallbackDamage.width,
+                        fallbackDamage.height) != 0) {
                     return response(
                         *header,
                         protocol::GpuResponse::errorUnspecified);
@@ -1038,12 +1057,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                     static_cast<std::size_t>(resource.width) *
                         protocol::gpuBytesPerPixel,
                     resource.format,
-                    damage->x,
-                    damage->y,
-                    damage->x - scanoutRectangle_.x,
-                    damage->y - scanoutRectangle_.y,
-                    damage->width,
-                    damage->height);
+                    fallbackDamage.x,
+                    fallbackDamage.y,
+                    fallbackDamage.x - scanoutRectangle_.x,
+                    fallbackDamage.y - scanoutRectangle_.y,
+                    fallbackDamage.width,
+                    fallbackDamage.height);
             } catch (const std::bad_alloc&) {
                 return response(
                     *header, protocol::GpuResponse::errorOutOfMemory);

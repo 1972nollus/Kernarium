@@ -11,6 +11,7 @@ add_subdirectory(device/network)
 add_subdirectory(device/input/vnc)
 
 if(UML_TARGET_MACOS AND UML_BUILD_GPU)
+    enable_language(OBJCXX)
     add_subdirectory(device/gpu)
 endif()
 

@@ -113,7 +113,7 @@ DescriptorPair makeInputSocketPair()
     std::array<int, 2> descriptors {-1, -1};
     if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0) {
         throw std::runtime_error(
-            "in-process VNC input socketpair failed: " +
+            "in-process display input socketpair failed: " +
             std::string(std::strerror(errno)));
     }
     DescriptorPair result {
@@ -124,13 +124,13 @@ DescriptorPair makeInputSocketPair()
         ::fcntl(result[0].get(), F_SETFL, flags | O_NONBLOCK) != 0) {
         const int error = errno;
         throw std::runtime_error(
-            "configuring VNC input socket failed: " +
+            "configuring display input socket failed: " +
             std::string(std::strerror(error)));
     }
     if (::fcntl(result[0].get(), F_SETNOSIGPIPE, 1) != 0) {
         const int error = errno;
         throw std::runtime_error(
-            "configuring VNC input no-signal writes failed: " +
+            "configuring display input no-signal writes failed: " +
             std::string(std::strerror(error)));
     }
 #if UML_GPU_STARTUP_TESTING
@@ -224,7 +224,8 @@ private:
                 [this](
                     std::span<const uml::input::vnc::VncInputEvent> events) {
                     sendInput(events);
-                });
+                },
+                options_.displayMode);
             server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);
@@ -256,7 +257,7 @@ private:
         if (!reportedInputFailure_.exchange(true, std::memory_order_relaxed)) {
             std::fprintf(
                 stderr,
-                "Unable to forward VNC input to UML: %s\n",
+                "Unable to forward display input to UML: %s\n",
                 sent < 0 ? std::strerror(errno) : "short datagram");
         }
     }

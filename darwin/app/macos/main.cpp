@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "in_process_service.hpp"
 #include "link_profile_api.hpp"
+#include "native_display_application.hpp"
 #include "protocol.hpp"
 #include "uml/emulator.h"
 
@@ -216,6 +217,8 @@ bool informational(int argc, char *const argv[])
 
 struct HostGpuOptions {
 	bool enabled {};
+	uml::gpu::DisplayMode display_mode {uml::gpu::DisplayMode::vnc};
+	bool vnc_option_specified {};
 	std::string vnc_bind_address {"127.0.0.1"};
 	std::uint16_t vnc_port {5900};
 	std::string vnc_password;
@@ -255,7 +258,19 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 			argv[index] == nullptr ? std::string_view {} : argv[index];
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
+		} else if (argument.starts_with("--gpu-display=")) {
+			const auto mode = argument.substr(
+				std::string_view{"--gpu-display="}.size());
+			if (mode == "native")
+				prepared.gpu.display_mode = uml::gpu::DisplayMode::native;
+			else if (mode == "vnc")
+				prepared.gpu.display_mode = uml::gpu::DisplayMode::vnc;
+			else
+				throw std::invalid_argument(
+					"--gpu-display must be native or vnc");
+			prepared.gpu.enabled = true;
 		} else if (argument.starts_with("--gpu-vnc-bind=")) {
+			prepared.gpu.vnc_option_specified = true;
 			const auto address =
 				argument.substr(std::string_view{
 					"--gpu-vnc-bind="}.size());
@@ -266,6 +281,7 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 			prepared.gpu.vnc_bind_address = address;
 			prepared.gpu.enabled = true;
 		} else if (argument.starts_with("--gpu-vnc-password=")) {
+			prepared.gpu.vnc_option_specified = true;
 			const auto password =
 				argument.substr(std::string_view{
 					"--gpu-vnc-password="}.size());
@@ -275,9 +291,14 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 					"8 bytes");
 			prepared.gpu.vnc_password = password;
 			prepared.gpu.enabled = true;
-		} else if (parse_host_integer(
-				   argument, "--gpu-vnc-port=",
-				   prepared.gpu.vnc_port, true) ||
+		} else if (argument.starts_with("--gpu-vnc-port=")) {
+			if (!parse_host_integer(argument, "--gpu-vnc-port=",
+					prepared.gpu.vnc_port, true))
+				throw std::invalid_argument("invalid host option: " +
+					std::string(argument));
+			prepared.gpu.vnc_option_specified = true;
+			prepared.gpu.enabled = true;
+		} else if (
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
 			   parse_host_integer(
@@ -287,6 +308,10 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 			prepared.kernel.emplace_back(argument);
 		}
 	}
+	if (prepared.gpu.display_mode == uml::gpu::DisplayMode::native &&
+	    prepared.gpu.vnc_option_specified)
+		throw std::invalid_argument(
+			"--gpu-vnc-* options require --gpu-display=vnc");
 	return prepared;
 }
 
@@ -426,6 +451,7 @@ int main(int argc, char *argv[], char *envp[])
 			gpu_service =
 				std::make_unique<uml::gpu::InProcessGpuService>(
 					uml::gpu::InProcessGpuOptions{
+						.displayMode = prepared.gpu.display_mode,
 						.vncBindAddress =
 							prepared.gpu.vnc_bind_address,
 						.vncPort = prepared.gpu.vnc_port,
@@ -457,9 +483,16 @@ int main(int argc, char *argv[], char *envp[])
 	for (auto entry = envp; entry != nullptr && *entry != nullptr; ++entry)
 		environment.push_back(*entry);
 	environment.push_back(nullptr);
-	const int result = uml_emulator_run(
-		emulator.get(), static_cast<int>(arguments.size()), arguments.data(),
-		environment.data());
+	const auto run = [&] {
+		return uml_emulator_run(
+			emulator.get(), static_cast<int>(arguments.size()),
+			arguments.data(), environment.data());
+	};
+	const int result = prepared.gpu.enabled &&
+		prepared.gpu.display_mode == uml::gpu::DisplayMode::native ?
+		uml::gpu::runNativeDisplayApplication(
+			run, [&] { uml_emulator_request_stop(emulator.get()); }) :
+		run();
 	if (app_network)
 		app_network->shutdown();
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)

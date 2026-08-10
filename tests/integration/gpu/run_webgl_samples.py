@@ -489,6 +489,7 @@ def main() -> int:
     password = "webgl"
     launcher_options = boot_kde_vnc.parse_arguments(
         [
+            "--display", "vnc",
             "--port", str(port),
             "--password", password,
             "--emulator", str(options.emulator),

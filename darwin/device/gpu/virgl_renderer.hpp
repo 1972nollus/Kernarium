@@ -83,6 +83,9 @@ public:
         std::uint32_t y,
         std::uint32_t width,
         std::uint32_t height) noexcept;
+    [[nodiscard]] int resourceTexture(
+        std::uint32_t resourceId,
+        std::uint32_t& textureId) noexcept;
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,

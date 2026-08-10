@@ -20,6 +20,19 @@ the 10-vCPU SMP workload reached 8.19 and 8.03 effective host cores. All three
 Apple slices passed package/consumer acceptance and formed the XCFramework; a
 real Xcode consumer build succeeded.
 
+A post-baseline macOS display addition introduces `native` and `vnc` provider
+modes. `scripts/boot_kde_vnc.py` now selects a native Metal window unless
+`--display vnc` is requested. The native Virgl path shares two IOSurfaces
+between CGL and Metal, drops superseded ready frames instead of adding a FIFO,
+and retains CPU readback only as fallback. This does not reattribute the dated
+interactive KDE/VNC campaign as native-window acceptance. Both normal and
+ASan+UBSan GPU workflows passed 5/5 units plus the 1/1 VNC smoke, and the
+production CLI rebuilt with its link-closure audit. A focused 800x500,
+four-vCPU native run reached `graphical.target`, passed its overlay guard, and
+reported direct CGL/IOSurface/Metal presentation; the image digest was
+manually reverified after Ctrl-C. Native input interaction and timed latency
+remain unmeasured.
+
 For the EROFS migration, the final host workflows passed 572/572 units plus
 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. Both rebuilt
 production page profiles then passed the regenerated five-test

@@ -60,11 +60,17 @@ Two IOSurfaces were accepted over a single surface because OpenGL must not
 overwrite storage still referenced by an in-flight Metal command buffer. A
 third queued surface and FIFO presentation were rejected: the implementation
 keeps at most one Metal presentation in flight and replaces an older ready
-slot with the newest guest frame. Thus the second slot is a producer/consumer
+slot with the newest guest frame; CAMetalLayer is explicitly limited to two
+drawables. Thus the second slot is a producer/consumer
 hazard boundary, not another frame of intentional buffering. VNC and
 unsupported GL targets retain the measurement-independent CPU fallback. No
 frame latency or throughput number is claimed until an interactive rendered
 campaign is captured on controlled display hardware.
+
+The focused 800x500 native guest run reached `graphical.target` and logged the
+direct path, while both normal and sanitized host GPU gates passed. It was
+stopped manually and did not record frame timestamps, so it is correctness
+evidence only and does not change the no-latency-number boundary above.
 
 ## Historical controlled benchmark
 

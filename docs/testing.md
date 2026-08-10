@@ -233,8 +233,27 @@ LibVNCServer's 5900-and-up auto-port search and terminate guest process groups.
 The VNC smoke is mandatory when registered: it does not convert a headless
 graphics failure into a skip.
 
-External network, KDE/VNC, and rendered WebGL workflows are opt-in because
-they need network/GUI permission:
+The KDE launcher opens a native Metal window by default. Select VNC explicitly
+when a remote client or an automated capture runner is required:
+
+```sh
+python3 scripts/boot_kde_vnc.py
+python3 scripts/boot_kde_vnc.py --display vnc --port 5900
+```
+
+The launcher always passes the host-only `--gpu-display=native|vnc` option.
+`--bind`, `--port`, and `--password` configure only VNC and therefore require
+`--display vnc`. The bare `uml-darwin --gpu` host option retains VNC
+as its compatibility default, while the KDE launcher deliberately selects
+native mode. Native keyboard, pointer, and wheel events use the same inherited
+Virtio-input datagram boundary as VNC. The native Virgl path performs a GPU
+blit from the renderer's CGL texture into a two-slot IOSurface bridge and Metal
+presents that storage directly; there is no `glReadPixels`, CPU framebuffer
+copy, or extra FIFO frame queue on this path. CPU readback remains the fallback
+for unsupported scanout resources.
+
+External network, KDE native/VNC, and rendered WebGL workflows are opt-in
+because they need network/GUI permission:
 
 ```sh
 cmake --preset macos-integration \
@@ -339,7 +358,7 @@ cmake --preset macos-unit-16k-tsan
 cmake --build --preset tsan
 ctest --preset unit-tsan
 
-# Canonical rootfs-free GPU/VNC descriptor-ownership gates.
+# Canonical rootfs-free GPU/display descriptor-ownership gates.
 cmake --workflow --preset check-gpu
 cmake --workflow --preset check-gpu-asan-ubsan
 
@@ -367,8 +386,10 @@ The two GPU workflows are host-only and rootfs-free. They configure the GPU
 graph, build both GPU unit fixtures and all registered tooling fixtures plus
 the architecture audit, run the GPU unit selection, and then run the
 independently labelled `virtio-gpu-vnc-smoke` tooling check. This covers
-service ownership, VNC lifetime/port reuse, and the real LibVNCServer wiring
-normally or under ASan+UBSan. Loopback socket policy must permit the VNC
+service ownership, direct-presentation protocol bypass, VNC lifetime/port
+reuse, and the real LibVNCServer wiring normally or under ASan+UBSan. The
+interactive AppKit window remains an external GUI check; it is not opened by
+ordinary host acceptance. Loopback socket policy must permit the VNC
 port-reuse cases.
 
 The strict `unit` selection is Python-free. In configurations that enable both
