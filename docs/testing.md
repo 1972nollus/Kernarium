@@ -194,9 +194,27 @@ for a restricted builder.
 `integration-fast` runs host fixtures plus short real guest boots: the
 production overlay/systemd path, interpreter, gadgets, JIT, and deterministic
 SLiRP. The interpreter smoke intentionally stops after shell arithmetic and
-CPU/HWCAP checks; Node/V8/Wasm coverage is restricted to gadget and JIT runs.
-Do not add heavyweight Node.js, Go, or similar workloads to interpreter
-acceptance. `integration-full` (or `integration-full-4k` for the matching
+CPU/HWCAP checks.
+
+Keep the interpreter out of every heavy guest campaign, whether registered or
+run by hand. It is far slower than the translating engines — enough that a
+campaign finishing in minutes under gadgets or JIT may not finish in a
+practical time under it — and it buys no semantic coverage, because the unit
+suites already execute interpreter, gadgets, and JIT in order against one
+oracle for each case. Full LTP, Docker, KDE native/VNC, WebGL, SMP and
+shared-MM pressure, and every Geekbench measurement are therefore gadgets and
+JIT only, and `uml_add_ltp_engine_campaign` is registered for those two
+engines alone. Node/V8/Wasm coverage is likewise restricted to gadget and JIT
+runs; do not add heavyweight Node.js, Go, or similar workloads to interpreter
+acceptance.
+
+When an interpreter-specific question does arise, answer it with a focused
+probe instead of a campaign. A freestanding payload under
+`tools/guest-shell.py --engine interpreter` boots in seconds and isolates the
+instruction under test; that is how the missing `MRS <Xt>, DIT` encoding was
+confirmed on all three engines without booting Docker under the interpreter.
+
+`integration-full` (or `integration-full-4k` for the matching
 page profile) additionally selects the 10-vCPU SMP and shared-MM pressure
 tests. Shell-oriented workloads boot an explicit writable tmpfs
 OverlayFS shell; that is intentional and avoids relying on a systemd getty for

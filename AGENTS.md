@@ -153,6 +153,14 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 - External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
+- Heavy guest campaigns run on the gadget and JIT engines only, whether
+  registered or run by hand. The interpreter is the reference oracle, not a
+  campaign engine: it is far slower than the translating engines, and the unit
+  suites already execute interpreter, gadgets, and JIT in order against one
+  oracle, so a long campaign under it costs hours and proves nothing new. Its
+  registered coverage is the short `guest-interpreter-smoke` boot. Answer an
+  interpreter-specific question with a focused freestanding payload under
+  `tools/guest-shell.py --engine interpreter` instead.
 - Full LTP uses `/opt/ltp` from `rootfs.erofs`. Tests that require deliberately
   removed kernel configuration must be listed in `disabled-tests.tsv`; do not
   re-enable those flags merely to increase the LTP count. Each campaign must
