@@ -6299,3 +6299,91 @@ is neither refuted nor available: it is blocked on a small, well-defined
 refactor rather than on a judgement call. G-4 stays open with a concrete next
 step, which is a better position than the one Trial 10 left it in, where the
 prize itself was believed to be zero.
+
+## G130: G-4's fixed bank is worth 6-26%, and the shape it has to take
+
+No runtime change kept. G129 left route 2 - a fixed guest-to-host vector bank -
+blocked on a measurement that needed a choke point the code did not have. The
+preceding commit created it by folding twenty-seven hand-inlined copies of the
+vector operand offset into one helper, so both questions can now be answered.
+
+### Translated code concentrates its vector operands
+
+Captured with `UML_GADGET_SIMD_OPERAND_HISTOGRAM` over Object Detection,
+Background Blur, Photo Filter and Ray Tracer, gadgets, 10 vCPUs.
+
+| registers | share of vector operand accesses |
+| --- | ---: |
+| v0-v7 | **52.0%** |
+| v8-v15 | **2.6%** |
+| v16-v31 | 45.4% |
+
+| bank width | coverage | uniform would be |
+| ---: | ---: | ---: |
+| 4 | 33.1% | 12.5% |
+| 8 | **54.0%** | 25.0% |
+| 12 | 68.3% | 37.5% |
+| 16 | 80.8% | 50.0% |
+
+The distribution is concentrated at roughly twice uniform, and **v0-v7 is
+essentially the optimal eight**: the best eight by count are v0-v6 plus v16 at
+54.0%, against 52.0% for the contiguous low eight. Trial 10 picked the right
+registers. v8-v15 are nearly dead at 2.6%, which is what AAPCS64 predicts -
+they are callee-saved, so compilers avoid them in leaf vector code.
+
+Note the totals are snapshots at a 65,536-record dump boundary rather than
+whole-run counts, which is fine for proportions and is all that is claimed.
+
+### What a fixed eight-register bank would actually buy
+
+Measured, not extrapolated, by restricting the JIT's residency to guest v0-v7 -
+a fixed eight-register bank - and comparing against both its normal eighteen
+per-block slots and no residency at all. One binary, three modes selected by
+environment variable, palindromic order A C B B C A, n=2 per arm, single-core.
+
+| workload | none | **fixed v0-v7** | full | fixed over none | share of the gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Object Detection | 6.54 | **8.22** | 9.53 | **+25.6%** | 56% |
+| Ray Tracer | 216.85 | **263.00** | 320.25 | **+21.3%** | 45% |
+| Background Blur | 1.00 | **1.15** | 1.33 | **+15.5%** | 47% |
+| Photo Filter | 3.74 | **3.96** | 6.12 | **+6.0%** | 9% |
+
+No arm overlaps its neighbour on any workload. **A fixed eight-register bank is
+worth 6% to 26%** and recovers 9% to 56% of what full per-block allocation gives.
+Photo Filter is the outlier in both directions: it gains most from full
+residency and least from a fixed bank, so its working set is wider than eight
+registers.
+
+### The design this forces
+
+Residency only avoids a load if the value is already in a host register the
+gadget body names statically, so the bank costs one gadget variant per resident
+guest register **per operand position**. A three-operand shape with eight
+resident registers is 9^3 = 729 variants, which is not buildable. Two
+consequences follow, and they are what the next attempt should start from:
+
+1. **Only one operand position can be resident.** The destination is the one
+   worth taking, because the accumulate shapes read it, update it and write it
+   back, so residency removes a load *and* a store from each instruction rather
+   than one load. That is 8 variants per operation shape, not 729.
+2. **The top FP pair in G129's histogram is exactly that shape.**
+   `floating_madd_single -> floating_madd_single` is the largest FP adjacency at
+   0.63% of all pairs; a repeated accumulate into one register stores and
+   reloads it every iteration today.
+
+What remains genuinely hard is not the bank but the flush protocol: any gadget
+that is not residency-aware must observe the current value in `CpuState`, so the
+translator has to track which guest register is live in which host register
+across a block and emit a flush before every unaware access, and an exception
+between blocks must not leave guest state live in a host register. That is
+correctness-critical work on the host boundary, and it is the whole remaining
+cost of G-4.
+
+### Disposition
+
+G-4 is no longer blocked and is no longer speculative. The prize is measured
+twice (G128 bounds it above at 32-68%, this bounds the buildable version at
+6-26%), the register set is chosen by data rather than by intuition, and the
+variant explosion that made route 2 look impossible is resolved by restricting
+residency to the destination. The diagnostic switches used here were reverted;
+neither is committed.
