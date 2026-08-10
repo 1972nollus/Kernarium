@@ -590,6 +590,7 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-fp8-convert-down-rounding	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-fp8-convert-down-control	tests/unit/arm64	unit	retained	existing registered test
 -	slirp-network-arp	tests/tooling/network/slirp_arp_probe.cpp	tooling	conditional	host-only SLiRP contract registered when the optional provider is built
+-	guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained	the shared guest harness starts the emulator attached so a killed runner group takes the guest with it instead of orphaning a spinning emulator
 -	embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional	real embedded ELF handles serialize the fixed linked window and process-global Linux state
 -	virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional	host-only protocol fixture registered when GPU dependencies and tooling are built
 -	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics

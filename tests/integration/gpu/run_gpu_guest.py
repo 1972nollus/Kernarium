@@ -342,14 +342,20 @@ exec /lib/systemd/systemd
 
 
 def terminate_process(process: subprocess.Popen[bytes]) -> None:
+    """Stop a guest that shares this runner's process group.
+
+    The guest runs attached, so a runner killed outright takes it along instead
+    of leaving an orphan. That matters because an orphaned guest boots to idle
+    and still burns one to two host cores indefinitely.
+    """
     if process.poll() is not None:
         return
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        process.send_signal(signal.SIGTERM)
         process.wait(timeout=10)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
+            process.send_signal(signal.SIGKILL)
             process.wait(timeout=5)
 
 
@@ -382,7 +388,6 @@ def run_guest(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=0,
-        start_new_session=True,
     )
     assert process.stdin is not None
     assert process.stdout is not None

@@ -233,7 +233,6 @@ process = subprocess.Popen(
     sys.argv[1:],
     stdin=subprocess.PIPE,
     bufsize=0,
-    start_new_session=True,
 )
 stop_signal = None
 

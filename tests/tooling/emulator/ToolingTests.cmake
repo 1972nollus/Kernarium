@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+uml_add_tooling_test(
+    NAME guest-harness-attached-session
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/guest_harness_session_tests.py
+    LABELS emulator;guest
+    TIMEOUT 120)
+
 if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/embedded_kernel_serialization_tests.cpp)

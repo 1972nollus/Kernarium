@@ -1138,14 +1138,16 @@ class ResultParsingTests(unittest.TestCase):
                 systemd_overlay=True,
             )
 
-    def test_guest_termination_falls_back_to_direct_child_signal(self) -> None:
+    def test_guest_termination_signals_the_child_directly(self) -> None:
+        # The emulator shares this runner's process group, so terminate must
+        # signal the child alone. A group signal here would reach the runner
+        # itself and kill the harness along with the guest.
         guest = object.__new__(runner.Guest)
         guest._process = mock.Mock(pid=1234)
         guest._process.poll.return_value = None
-        with mock.patch.object(
-            runner.os, "killpg", side_effect=PermissionError
-        ):
+        with mock.patch.object(runner.os, "killpg") as killpg:
             guest.terminate()
+        killpg.assert_not_called()
         guest._process.send_signal.assert_called_once_with(runner.signal.SIGKILL)
 
     def test_ext2_workspace_is_opt_in(self) -> None:

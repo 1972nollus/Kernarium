@@ -550,7 +550,6 @@ def main() -> int:
             command,
             stdout=log,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
         )
         try:
             while time.monotonic() < deadline:

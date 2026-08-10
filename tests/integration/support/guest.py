@@ -271,7 +271,6 @@ class Guest:
                 stdout=slave,
                 stderr=slave,
                 close_fds=True,
-                start_new_session=True,
             )
         except BaseException:
             os.close(master)
@@ -290,17 +289,20 @@ class Guest:
         self._signal(signal.SIGKILL)
 
     def _signal(self, guest_signal: int) -> None:
-        """Signal the guest session, falling back to its leader if required."""
+        """Signal the emulator, which shares this harness's process group.
+
+        The emulator is started attached rather than in a session of its own, so
+        whatever kills the harness's group takes the guest with it. That is the
+        property worth having: a harness killed outright runs no cleanup code,
+        and a guest that survives one boots to idle and still burns one to two
+        host cores indefinitely, quietly oversubscribing every later benchmark
+        on the same host.
+        """
         if self._process.poll() is None:
             try:
-                os.killpg(self._process.pid, guest_signal)
+                self._process.send_signal(guest_signal)
             except ProcessLookupError:
                 pass
-            except PermissionError:
-                try:
-                    self._process.send_signal(guest_signal)
-                except ProcessLookupError:
-                    pass
 
     def boot_to_shell(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
         """Reach a root shell supplied by an explicit init-shell boot mode."""

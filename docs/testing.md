@@ -247,7 +247,16 @@ mapping disables UML's host-file lock but does not make raw `/dev/ubda` safe
 scratch space, so no test may target the root block device for destructive
 block-I/O probes. The wrapper's pre/post digest check remains the artifact-
 integrity boundary. Guest tests obtain dynamic VNC ports through
-LibVNCServer's 5900-and-up auto-port search and terminate guest process groups.
+LibVNCServer's 5900-and-up auto-port search.
+
+Guest runners start the emulator **attached**, in the runner's own process
+group, and signal that process directly. Whatever kills a runner's group -- a
+shell job, a CTest timeout, Ctrl-C -- therefore takes its guest with it. Do not
+reintroduce `start_new_session` or `killpg` here: a runner that is killed
+outright runs no cleanup code, and a guest that survives one boots to idle and
+still burns one to two host cores indefinitely, so a later benchmark silently
+measures an oversubscribed host. `guest-harness-attached-session` pins both
+halves of that property.
 The VNC smoke is mandatory when registered: it does not convert a headless
 graphics failure into a skip.
 

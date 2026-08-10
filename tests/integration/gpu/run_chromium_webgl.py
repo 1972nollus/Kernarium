@@ -9,7 +9,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import base64
 import json
-import os
 from pathlib import Path
 import re
 import shlex
@@ -304,13 +303,18 @@ def wait_for_log(
 
 
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
+    """Stop a guest that shares this runner's process group.
+
+    The guest runs attached, so a runner killed outright takes it along rather
+    than leaving an orphan burning host cores on an idle guest.
+    """
     if process.poll() is not None:
         return
-    os.killpg(process.pid, signal.SIGINT)
+    process.send_signal(signal.SIGINT)
     try:
         process.wait(timeout=45)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGTERM)
+        process.send_signal(signal.SIGTERM)
         process.wait(timeout=15)
 
 
@@ -524,7 +528,6 @@ def main() -> int:
             command,
             stdout=log,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
         )
         try:
             text = wait_for_log(
