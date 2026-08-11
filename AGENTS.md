@@ -397,7 +397,9 @@ their truth changes:
 - test registration or ownership -> `tests/test-manifest.tsv`, plus the
   migration ledger for renames/removals;
 - instruction evidence or completeness -> `docs/A64_INSTRUCTION_PROGRESS.md`;
-- performance mechanism or measurement -> `docs/HOT_PATH_EXPERIMENTS.md`;
+- performance mechanism or measurement -> `docs/HOT_PATH_EXPERIMENTS.md`,
+  plus `docs/JIT_CACHE_HANDOFF.md` for JIT cache, arena and translation-sharing
+  work in progress;
 - LTP policy or result -> `docs/LTP_PROGRESS.md`;
 - accepted baseline, acceptance evidence, or limitations -> current sections
   of `docs/REFACTOR_HANDOFF.md`, `docs/REFACTOR_PROGRESS.md`, and
