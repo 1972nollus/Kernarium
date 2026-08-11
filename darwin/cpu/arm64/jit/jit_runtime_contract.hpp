@@ -24,7 +24,7 @@ inline constexpr std::size_t maximum_block_instructions = 64;
  * 32,768 entries and thrashed into roughly 385 translations per distinct
  * block. Growing either the cache or the arena alone is not enough, and the
  * arena alone is actively harmful, because arena exhaustion calls
- * clear_cache(). See G132 and G134 in docs/HOT_PATH_EXPERIMENTS.md.
+ * clear_cache(). See G133 and G135 in docs/HOT_PATH_EXPERIMENTS.md.
  */
 inline constexpr std::size_t cache_ways = 4;
 inline constexpr std::size_t floating_transaction_arena_size = 16U * 1024U;

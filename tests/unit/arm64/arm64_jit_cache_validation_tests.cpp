@@ -561,7 +561,7 @@ void stale_sequence_control_reports_avoided_translation_work()
 		static_cast<unsigned long long>(control.diagnostics.translations));
 }
 
-/* G132: the block cache has to hold a real guest working set, not a fraction
+/* G133: the block cache has to hold a real guest working set, not a fraction
  * of one. A multi-core Clang and Object Detection campaign translates 283,353
  * distinct blocks; against the former 8192-set, 32,768-entry cache that
  * collapsed into roughly 385 retranslations per distinct block. Fill twice the
@@ -578,7 +578,7 @@ void the_cache_holds_more_than_twice_the_former_capacity()
 		blocks * 8U / DARWIN_UML_GUEST_PAGE_SIZE;
 	static_assert(blocks * 8U % DARWIN_UML_GUEST_PAGE_SIZE == 0);
 	/* The budget-derived cache must still hold well over the capacity the
-	 * fixed 8192-set geometry gave, or G132's finding has been undone.
+	 * fixed 8192-set geometry gave, or G133's finding has been undone.
 	 */
 	require(blocks <=
 		arm64::jit_cache_geometry().cache_sets * arm64::cache_ways);

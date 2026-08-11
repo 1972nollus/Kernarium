@@ -6,7 +6,7 @@ is open. Read it before changing anything under
 `darwin/cpu/arm64/jit/jit_cache*`, `jit_arena*` or `jit_shared_translations*`.
 
 This is a forward-looking summary. The authoritative records are
-`docs/HOT_PATH_EXPERIMENTS.md` (entries G127 to G134) for measurement detail,
+`docs/HOT_PATH_EXPERIMENTS.md` (entries G127 to G135) for measurement detail,
 and `AGENTS.md` for the invariants that must survive. Where they disagree with
 this document, they win.
 
@@ -16,11 +16,11 @@ this document, they win.
 
 | commit | what |
 | --- | --- |
-| `f97af21` | lock-free scan of published JIT store state (B-3, G131) |
+| `f97af21` | lock-free scan of published JIT store state (G131, G132) |
 | `29b8291` | `UML_JIT_PROFILE_OVERLAP`, cross-thread duplication counter |
-| `ff285cb` | block cache and arena sized to the guest working set (G132) |
-| `7b66207` | translations shared between executors (G133) |
-| `f5786b9` | cache geometry derived from a budget (G134) |
+| `ff285cb` | block cache and arena sized to the guest working set (G133) |
+| `7b66207` | translations shared between executors (G134) |
+| `f5786b9` | cache geometry derived from a budget (G135) |
 
 Geometry is derived per executor in
 `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` from a whole-process budget that
@@ -45,10 +45,10 @@ Multi-core Clang then Object Detection, JIT, 10 vCPUs, 8 GiB guest, Geekbench
 | | Clang | Object Detection | peak RSS |
 | --- | ---: | ---: | ---: |
 | before this work (8192 sets, 64 MiB arena) | 432 | 433 | 4682 MiB |
-| G132 peak (131072 sets, 512 MiB arena) | 794 | 1383 | 8229 MiB |
+| G133 peak (131072 sets, 512 MiB arena) | 794 | 1383 | 8229 MiB |
 | **accepted (budget derived)** | **695** | **1205** | **7569 MiB** |
 
-The accepted configuration is deliberately below the G132 peak: it trades about
+The accepted configuration is deliberately below the G133 peak: it trades about
 8% for a memory bound that follows the guest instead of ignoring it.
 
 ## The finding everything else rests on
@@ -65,7 +65,7 @@ The accepted configuration is deliberately below the G132 peak: it trades about
 **385 translations per distinct block**, factoring into **52x within-thread**
 retranslation and **7.4x cross-thread** duplication. The within-thread factor
 was seven times larger and was pure capacity: the cache held 32,768 entries
-against a 283,353 block working set. G132 addressed that and cut total
+against a 283,353 block working set. G133 addressed that and cut total
 translations from 109 million to under 4.2 million.
 
 Anyone re-opening this work should re-run that measurement first. It is cheap
@@ -138,7 +138,7 @@ the same sequence on baseline.
 ### 2. Share the saved guest words
 
 `saved_guest_words_` is 128 MiB per executor of verbatim guest instruction
-bytes, byte-identical in every executor, and since G133 stored a third time
+bytes, byte-identical in every executor, and since G134 stored a third time
 inside each shared translation entry. Replacing the 256-byte inline slot in the
 block cache with a pointer to the shared entry collapses it to about 1 MiB per
 executor.
@@ -157,7 +157,7 @@ because generated code embeds absolute link pointers. Two routes:
   register-pressure work, an indirection on the hottest path, and it
   reintroduces cross-thread link *activation*, which is the genuinely dangerous
   part: the shared `entries[]` and epoch protocol.
-- **Keep per-executor materialization** as G133 does and accept that the arena
+- **Keep per-executor materialization** as G134 does and accept that the arena
   stays private. This is the current design.
 
 Roughly 70% of a private budget is shareable in principle. The block cache
@@ -181,11 +181,38 @@ Object Detection, but n=1 on one arm proves nothing. Rerun it against the
 current geometry. `share_translations_between_executors` in
 `jit_runtime_contract.hpp` selects the arms.
 
-### 5. Untouched items from the original plan
+### 5. Other directions that were scoped but never started
 
-C-1, C-3, G-1, G-3, the G-4 implementation (destination-only vector residency
-plus its flush protocol, sized at 6-26% in G130), and the Object Remover
-regression noted in G126.
+These came from a planning document that does not live in this repository, so
+they are described rather than cited. None has been attempted.
+
+- **Page-granular code epochs.** Cache validity keys on one address-space-wide
+  `code_changes` counter, so faulting in a single executable page makes every
+  unrelated block unfindable. An earlier measurement found 245,339 of 315,215
+  misses, 77.8%, were stale-sequence retranslations of an already-cached PC.
+  Note that a page-granular invalidation prototype *was* built during this
+  work and measured: it cut discarded blocks 64% and moved no score, because
+  by then capacity rather than invalidation was the constraint. It is recorded
+  as rejected above. The idea remains the precondition for sharing translated
+  code more aggressively.
+- **Cross-block register contract.** Block boundaries still flush and reload
+  resident values. The ranking tooling already exists
+  (`analyze_jit_gpr_link_profile.py` with `DARWIN_UML_JIT_GPR_LINK_PROFILE`);
+  the open work is to rank fixed two-register banks over two Geekbench captures
+  and prototype the winner.
+- **Gadget engine: hoist the successor fetch out of the dispatch tail.** Every
+  gadget ends with the same two instructions across roughly 307 call sites.
+  Gadget-engine work, so it matters most for iOS, where gadgets are the
+  default engine.
+- **Gadget engine: re-validate the rejected micro-optimization class on
+  E-cores.** Every past rejection in that class was measured on P-cores under a
+  benchmark harness. Apple E-cores have much narrower issue width, so the
+  rejections may not hold for the iOS target.
+- **Gadget engine: vector residency.** A fixed eight-register guest-to-host
+  vector bank measured 6-26% in G130, which also established that it has to be
+  destination-only; the full cross-product would need 729 gadget variants. The
+  implementation, including its flush protocol, was never written.
+- **Object Remover regression**, noted in G126 and never chased.
 
 ## How to measure this without fooling yourself
 
@@ -247,11 +274,11 @@ the run is alive; the emulator does not report it.
 
 From `AGENTS.md`, and each of these has already caught a mistake in this work:
 
-- **G132/G134**: the cache geometry is budget-derived and pinned by
+- **G133/G135**: the cache geometry is budget-derived and pinned by
   `the_cache_holds_more_than_twice_the_former_capacity`. Every per-executor
   structure must stay inside the budget, because they multiply by vCPU count;
   fixed sizes previously reached 9 GiB at ten vCPUs.
-- **G133**: every pointer a translation embeds into its compiler's link tables
+- **G134**: every pointer a translation embeds into its compiler's link tables
   must be recorded as a `JitRelocation`, and only
   `ExecutableArena::store_relocated` may rewrite them. Miss one and a reusing
   executor branches through another executor's freed records. The pinning test

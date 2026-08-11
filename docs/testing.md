@@ -323,7 +323,7 @@ optional `K`, `M` or `G` suffix:
   rootfstype=erofs mem=8G ncpus=10
 ```
 
-Lowering it trades throughput for memory: the campaign in G134 of
+Lowering it trades throughput for memory: the campaign in G135 of
 `docs/HOT_PATH_EXPERIMENTS.md` measures about 8% on multi-core Clang and Object
 Detection between a 4 GiB and an 8 GiB budget. Raising it past half of guest
 memory is allowed but the host must have the memory to back it.

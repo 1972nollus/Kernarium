@@ -6561,7 +6561,7 @@ because the change is in shared host code. The measurement switch and the wait
 timer were removed before the gates above were re-run, so they cover exactly the
 code that ships.
 
-## G132: the block cache held 12% of the working set
+## G133: the block cache held 12% of the working set
 
 Accepted. `cache_sets` 8192 -> 131072 and `arena_size` 64 MiB -> 512 MiB in
 `darwin/cpu/arm64/jit/jit_runtime_contract.hpp`, pinned by
@@ -6651,7 +6651,7 @@ colliding offsets silently stopped colliding; it now derives the mask from
 `cache_sets` and uses offsets re-derived for the current geometry, and its
 static asserts fail loudly if the geometry changes again.
 
-## G133: translations shared between executors, and what G132 left it
+## G134: translations shared between executors, and what G133 left it
 
 Implemented and kept, measured neutral to negative on the campaign that
 motivated it. `SharedTranslationCache` in
@@ -6663,7 +6663,7 @@ the arms and ships enabled.
 
 ### What made sharing possible
 
-G132 measured 7.4x cross-thread duplication: ten executors translating the same
+G133 measured 7.4x cross-thread duplication: ten executors translating the same
 guest code into ten private caches. The obstacle was that a translation embeds
 absolute pointers into the link tables of the executor that compiled it, so the
 host code is not portable between executors.
@@ -6692,7 +6692,7 @@ cache from generation and `code_changes` invalidation.
 Over multi-core Clang then Object Detection, JIT, 10 vCPUs: **262,144
 translations published and 1.3 million reused against 291,000 misses**, an
 81% reuse rate, with the published count landing near the 283,353 distinct
-blocks G132 measured.
+blocks G133 measured.
 
 Same-session ABBA, four runs per arm, one constant between them:
 
@@ -6705,14 +6705,14 @@ Same-session ABBA, four runs per arm, one constant between them:
 overlapping ranges on the latter, so the true cost is somewhere between 3% and
 9%. Avoiding 1.3 million compilations bought nothing measurable.
 
-The reason is G132. Sizing the block cache to the working set cut total
+The reason is G133. Sizing the block cache to the working set cut total
 translations from 109 million to under 4.2 million, so the compilation this
 removes is no longer on the critical path, while the lookup and publication
 cost falls on every local miss. Object Detection has the long FP and SIMD
 blocks, so it carries the largest per-operation cost: up to a 256-byte guest
 word comparison per lookup and the same again per publication.
 
-The same-session control mattered. Measured against this morning's G132
+The same-session control mattered. Measured against this morning's G133
 numbers the loss looked like 10%; the control had itself drifted from 794 and
 1383 to 753 and 1271 over the session, and the real effect is 6%.
 
@@ -6749,15 +6749,15 @@ table. The engine object boundary audit rejected a first attempt that put the
 report's `getenv` in a production object; it is now inside
 `UML_ENABLE_JIT_PROFILE`.
 
-## G134: the JIT cache geometry is a budget, not a set of constants
+## G135: the JIT cache geometry is a budget, not a set of constants
 
-Accepted, and it corrects G132. `darwin/cpu/arm64/jit/jit_cache_geometry.cpp`
+Accepted, and it corrects G133. `darwin/cpu/arm64/jit/jit_cache_geometry.cpp`
 derives every per-executor JIT structure from a whole-process budget that
 defaults to half of guest memory, overridable with `--jit-cache-budget=`.
 
-### The regression G132 shipped
+### The regression G133 shipped
 
-G132 chose 131072 sets and a 512 MiB arena against multi-core Clang and Object
+G133 chose 131072 sets and a 512 MiB arena against multi-core Clang and Object
 Detection, recorded peak RSS rising from 4682 MiB to 8229 MiB, and judged that
 acceptable. It was measured on one campaign and never on a desktop, where the
 guest's code footprint is far larger and more diverse, and a KDE boot was
@@ -6776,7 +6776,7 @@ Sizes per executor, which multiply by the guest's CPU count:
 | `active_links_` reserves | 8 MiB | reserved |
 
 **916 MiB per executor, 9.0 GiB at ten vCPUs**, against roughly 119 MiB and
-1.2 GiB before G132.
+1.2 GiB before G133.
 
 The link tables are the part that was not a deliberate choice.
 `maximum_block_links` was `cache_sets * cache_ways * 2`, so raising the set
@@ -6805,7 +6805,7 @@ of ignoring it.
 
 ### Measured cost
 
-Same workload and host as G132 and G133, two runs:
+Same workload and host as G133 and G134, two runs:
 
 | | Clang | Object Detection | peak RSS |
 | --- | ---: | ---: | ---: |
@@ -6818,7 +6818,7 @@ suggests, because these structures are faulted in on use and Clang plus Object
 Detection never filled the 512 MiB arena. What changed decisively is the
 bound, which is what a desktop reaches and this campaign does not. A guest with
 more memory gets a larger budget and recovers the scores; a 16 GiB guest lands
-back on G132's geometry.
+back on G133's geometry.
 
 The desktop that motivated this was not re-measured, so the 30 GB figure is
 reported as the user observed it and the fix is claimed only against the
@@ -6828,10 +6828,10 @@ arithmetic and the campaign above.
 
 Roughly 70% of a per-executor budget is shareable in principle and is not yet
 shared. `saved_guest_words_` is a verbatim copy of guest instruction bytes,
-identical in every executor and now stored a third time inside the G133
+identical in every executor and now stored a third time inside the G134
 translation cache; replacing the 256-byte inline slot with a pointer to that
 shared entry would collapse it. The arena is per-executor only because
-generated code embeds absolute link pointers, which G133's relocation contract
+generated code embeds absolute link pointers, which G134's relocation contract
 rewrites per executor rather than removing; making generated code load the link
 table base from a register would make the arena shareable at the cost of one
 extra load per linked branch. The block cache genuinely resists sharing, since
