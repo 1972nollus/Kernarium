@@ -237,4 +237,103 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   link_sequence_initialized_ = false;
 }
 
+
+[[nodiscard]] SharedTranslationCache::CodegenProfile
+JitExecutor::Implementation::shared_codegen_profile() const noexcept {
+  return {.capabilities = host_capabilities_,
+          .guarded_control_flow = enable_guarded_control_flow_,
+          .pointer_authentication = enable_pointer_authentication_};
+}
+
+[[nodiscard]] bool JitExecutor::Implementation::materialize_shared_translation(
+    const SharedTranslation &translation) {
+  relocated_link_pointers_.clear();
+  for (const auto &relocation : translation.relocations) {
+    const void *pointer = nullptr;
+    switch (relocation.kind) {
+    case JitRelocationKind::direct_link: {
+      const auto *link = link_for(relocation.key);
+      pointer = link == nullptr ? nullptr : link->entries.data();
+      break;
+    }
+    case JitRelocationKind::indirect_link:
+      pointer = indirect_link_for(relocation.key);
+      break;
+    }
+    /* A full link table changes the shape the compiler would have emitted,
+     * so the recorded translation does not describe what this executor can
+     * run. The caller compiles for itself instead.
+     */
+    if (pointer == nullptr)
+      return false;
+    relocated_link_pointers_.push_back(
+        reinterpret_cast<std::uintptr_t>(pointer));
+  }
+  return true;
+}
+
+[[nodiscard]] CompiledBlock *
+JitExecutor::Implementation::install_shared_translation(
+    unsigned long generation, std::uint64_t changes, std::uint64_t pc,
+    std::span<const std::uint32_t> guest_words) {
+  if constexpr (!share_translations_between_executors)
+    return nullptr;
+  const auto translation = SharedTranslationCache::instance().find(
+      shared_codegen_profile(), pc, guest_words);
+  if (translation == nullptr ||
+      translation->guest_instructions > guest_words.size() ||
+      !materialize_shared_translation(*translation))
+    return nullptr;
+  auto *code = arena_.store_relocated(translation->words,
+                                      translation->relocations,
+                                      relocated_link_pointers_);
+  if (code == nullptr)
+    return nullptr;
+  const auto internal_entry =
+      reinterpret_cast<std::uintptr_t>(code) +
+      translation->internal_entry_word * sizeof(std::uint32_t);
+  return &store_native(
+      generation, changes, pc, sign_jit_function<JitFunction>(code),
+      internal_entry, guest_words.first(translation->guest_instructions),
+      translation->memory_write_mask, translation->direct_memory_write_mask,
+      translation->accesses_fp_state, translation->link_target_safe,
+      translation->native_fp, translation->native_fpmr,
+      translation->guest_illegal
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+      ,
+      translation->profile_read_before_write
+#endif
+  );
+}
+
+void JitExecutor::Implementation::publish_shared_translation(
+    std::uint64_t pc, std::span<const std::uint32_t> guest_words,
+    const JitCompiler::Result &compiled) {
+  if constexpr (!share_translations_between_executors)
+    return;
+  if (!compiled.relocatable)
+    return;
+  auto translation = std::make_shared<SharedTranslation>();
+  translation->words.assign(compiled.words.begin(), compiled.words.end());
+  translation->relocations.assign(compiled.relocations.begin(),
+                                  compiled.relocations.end());
+  translation->guest_words.assign(guest_words.begin(), guest_words.end());
+  translation->guest_instructions = compiled.guest_instructions;
+  translation->hot_words = compiled.hot_words;
+  translation->internal_entry_word = compiled.internal_entry_word;
+  translation->memory_write_mask = compiled.memory_write_mask;
+  translation->direct_memory_write_mask = compiled.direct_memory_write_mask;
+  translation->accesses_fp_state = compiled.accesses_fp_state;
+  translation->link_target_safe = compiled.link_target_safe;
+  translation->native_fp = compiled.native_fp;
+  translation->native_fpmr = compiled.native_fpmr;
+  translation->guest_illegal = compiled.guest_illegal;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  translation->profile_read_before_write = compiled.profile_read_before_write;
+#endif
+  SharedTranslationCache::instance().insert(shared_codegen_profile(), pc,
+                                            guest_words,
+                                            std::move(translation));
+}
+
 } // namespace uml::cpu::arm64

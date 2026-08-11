@@ -130,6 +130,32 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
          (static_cast<std::uint64_t>(retired) << 32U);
 }
 
+/*
+ * A translation embeds two kinds of pointer that belong to the executor that
+ * compiled it: the successor's JitBlockLink entry array and the indirect link
+ * site. Everything else it embeds is either translation-owned or a static host
+ * function address, which are identical in every executor. Recording where
+ * those two land lets one executor reuse another's translation by rewriting
+ * the pointers for its own link tables, so the expensive decode and emit
+ * happens once per distinct block instead of once per executor.
+ */
+inline constexpr bool share_translations_between_executors = true;
+
+enum class JitRelocationKind : std::uint8_t {
+  direct_link,
+  indirect_link,
+};
+
+struct JitRelocation final {
+  /* Index of the low half of the 64-bit literal pool slot. */
+  std::size_t word{};
+  /* Guest PC the pointer is resolved from: the branch target for a direct
+   * link, the branch source for an indirect one.
+   */
+  std::uint64_t key{};
+  JitRelocationKind kind{};
+};
+
 struct JitStoreRange final {
   /* The tracked-only program records the translated backing address so
    * distinct guest virtual aliases share one reservation identity.

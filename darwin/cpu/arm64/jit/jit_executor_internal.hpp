@@ -6,6 +6,7 @@
 #include "jit_executor.hpp"
 #include "jit_publication.hpp"
 #include "jit_runtime_contract.hpp"
+#include "jit_shared_translations.hpp"
 
 #include <array>
 #include <cstddef>
@@ -116,6 +117,22 @@ private:
       refresh_link(block);
   }
 
+  [[nodiscard]] SharedTranslationCache::CodegenProfile
+  shared_codegen_profile() const noexcept;
+  /* Rewrites a shared translation's link pointers to this executor's tables.
+   * False when a link record could not be obtained, in which case the
+   * translation's code shape does not match what this executor can run and it
+   * must compile for itself.
+   */
+  [[nodiscard]] bool
+  materialize_shared_translation(const SharedTranslation &translation);
+  [[nodiscard]] CompiledBlock *install_shared_translation(
+      unsigned long generation, std::uint64_t changes, std::uint64_t pc,
+      std::span<const std::uint32_t> guest_words);
+  void publish_shared_translation(
+      std::uint64_t pc, std::span<const std::uint32_t> guest_words,
+      const JitCompiler::Result &compiled);
+
   [[nodiscard]] JitCacheValidationResult validate_stale_block(
       const CompiledBlock &block, const SavedGuestWords &guest_words,
       std::uint64_t changes, StaticGuestMemory &memory);
@@ -165,6 +182,10 @@ private:
   std::uint64_t stamp_{};
   std::array<JitStoreRange, maximum_block_instructions>
       tracked_store_ranges_{};
+  /* Link pointers resolved for a reused translation, applied by the arena as
+   * it stores the code.
+   */
+  std::vector<std::uintptr_t> relocated_link_pointers_;
   JitStoreParticipant store_participant_;
   CpuState *current_cpu_{};
   std::uint32_t floating_point_syndrome_{};

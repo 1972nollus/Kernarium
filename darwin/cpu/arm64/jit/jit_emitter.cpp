@@ -191,6 +191,17 @@ void Arm64Emitter::load_stable_pointer(unsigned destination, std::uintptr_t valu
     load_literal_constant(destination, static_cast<std::uint64_t>(value));
   }
 
+void Arm64Emitter::load_relocatable_pointer(unsigned destination,
+                                            std::uintptr_t value,
+                                            JitRelocationKind kind,
+                                            std::uint64_t key) {
+    load_literal_constant(destination, static_cast<std::uint64_t>(value));
+    auto &patch = literal_patches_.back();
+    patch.relocatable = true;
+    patch.kind = kind;
+    patch.key = key;
+  }
+
 void Arm64Emitter::add_immediate(unsigned destination, unsigned source, unsigned immediate,
                      bool shift_12) {
     emit(0x9100'0000U | (shift_12 ? 1U << 22 : 0U) |
@@ -422,6 +433,10 @@ void Arm64Emitter::return_dynamic(std::size_t instructions) {
       if (literal_mask[index])
         continue;
       const auto patch = literal_patches_[index];
+      /* Spread across MOV-wide immediates rather than one slot, so another
+       * executor cannot rewrite it. See relocatable().
+       */
+      relocatable_ &= !patch.relocatable;
       const auto fallback = words_.size();
       if (!encode_unconditional_branch(patch.word, fallback,
                                        words_[patch.word]))
@@ -459,6 +474,8 @@ void Arm64Emitter::return_dynamic(std::size_t instructions) {
           0x5800'0000U |
           ((static_cast<std::uint32_t>(displacement) & 0x7ffffU) << 5U) |
           patch.destination;
+      if (patch.relocatable)
+        relocations_.push_back({target, patch.key, patch.kind});
       emit(static_cast<std::uint32_t>(patch.value));
       emit(static_cast<std::uint32_t>(patch.value >> 32U));
     }

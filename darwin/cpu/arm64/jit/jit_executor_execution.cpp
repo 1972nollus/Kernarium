@@ -77,89 +77,103 @@ namespace uml::cpu::arm64 {
       tlb_.fault_access = ::uml::memory::translated_access(fault.access);
       return Event::memory_fault;
     }
-    JitCompiler compiler{
-        enable_guarded_control_flow_, this,
-        &Implementation::resolve_block_link, false,
-        &Implementation::resolve_indirect_link
+    /*
+     * Another executor may already have decoded and emitted exactly these
+     * guest words at exactly this PC. Reuse that work by copying its
+     * translation and rewriting the link pointers for this executor's own
+     * tables; the host code, arena and link records all stay private.
+     */
+    const auto fetched = std::span{instructions}.first(count);
+    auto *shared = install_shared_translation(
+        generation, sequences.code_changes, cpu.pc, fetched);
+    if (shared != nullptr) {
+      block = shared;
+    } else {
+      JitCompiler compiler{
+          enable_guarded_control_flow_, this,
+          &Implementation::resolve_block_link, false,
+          &Implementation::resolve_indirect_link
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-        ,
-        /*persistent_linked_block_abi=*/
-        persistent_linked_block_abi_default,
-        this, &Implementation::resolve_direct_link_profile,
-        &Implementation::resolve_indirect_link_profile
+          ,
+          /*persistent_linked_block_abi=*/
+          persistent_linked_block_abi_default,
+          this, &Implementation::resolve_direct_link_profile,
+          &Implementation::resolve_indirect_link_profile
 #endif
-    };
-    compiler.set_pointer_authentication_enabled(
-        enable_pointer_authentication_);
-    const auto compiled =
-        compiler.compile(cpu.pc, std::span{instructions}.first(count));
-    {
-      const auto valid_compilation = [&](const auto &candidate) {
-        return !candidate.words.empty() && candidate.guest_instructions != 0 &&
-               candidate.guest_instructions <= instructions.size() &&
-               valid_link_state_metadata(candidate.accesses_fp_state,
-                                         candidate.native_fp,
-                                         candidate.native_fpmr);
       };
-      const auto install_compilation = [&](const auto &candidate,
-                                           void *code) {
-        const auto internal_entry =
-            reinterpret_cast<std::uintptr_t>(code) +
-            candidate.internal_entry_word * sizeof(std::uint32_t);
-        return &store_native(
-            generation, sequences.code_changes, cpu.pc,
-            sign_jit_function<JitFunction>(code), internal_entry,
-            std::span{instructions}.first(candidate.guest_instructions),
-            candidate.memory_write_mask, candidate.direct_memory_write_mask,
-            candidate.accesses_fp_state, candidate.link_target_safe,
-            candidate.native_fp, candidate.native_fpmr,
-            candidate.guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-            ,
-            candidate.profile_read_before_write
-#endif
-        );
-      };
-      if (!valid_compilation(compiled))
-        return run_semantic_instruction(cpu, memory, executed);
-      if (auto *code = arena_.store(compiled.words); code != nullptr) {
-        block = install_compilation(compiled, code);
-      } else {
-        profile_jit_arena_reset();
-#if UML_JIT_RUNTIME_DIAGNOSTICS
-        ++cache_validation_diagnostics_.arena_resets;
-#endif
-        clear_cache();
-        arena_.reset();
-
-        /*
-         * Link and PIC operands are absolute pointers into the descriptor
-         * tables. clear_cache() invalidates those tables, so the retry must
-         * be freshly lowered against their new storage rather than copying
-         * the now-stale first compilation into the reset arena.
-         */
-        JitCompiler retry_compiler{
-            enable_guarded_control_flow_, this,
-            &Implementation::resolve_block_link, false,
-            &Implementation::resolve_indirect_link
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-            ,
-            /*persistent_linked_block_abi=*/
-            persistent_linked_block_abi_default,
-            this, &Implementation::resolve_direct_link_profile,
-            &Implementation::resolve_indirect_link_profile
-#endif
+      compiler.set_pointer_authentication_enabled(
+          enable_pointer_authentication_);
+      const auto compiled = compiler.compile(cpu.pc, fetched);
+      {
+        const auto valid_compilation = [&](const auto &candidate) {
+          return !candidate.words.empty() && candidate.guest_instructions != 0 &&
+                 candidate.guest_instructions <= instructions.size() &&
+                 valid_link_state_metadata(candidate.accesses_fp_state,
+                                           candidate.native_fp,
+                                           candidate.native_fpmr);
         };
-        retry_compiler.set_pointer_authentication_enabled(
-            enable_pointer_authentication_);
-        const auto retry_compiled = retry_compiler.compile(
-            cpu.pc, std::span{instructions}.first(count));
-        if (!valid_compilation(retry_compiled))
+        const auto install_compilation = [&](const auto &candidate,
+                                             void *code) {
+          const auto internal_entry =
+              reinterpret_cast<std::uintptr_t>(code) +
+              candidate.internal_entry_word * sizeof(std::uint32_t);
+          return &store_native(
+              generation, sequences.code_changes, cpu.pc,
+              sign_jit_function<JitFunction>(code), internal_entry,
+              std::span{instructions}.first(candidate.guest_instructions),
+              candidate.memory_write_mask, candidate.direct_memory_write_mask,
+              candidate.accesses_fp_state, candidate.link_target_safe,
+              candidate.native_fp, candidate.native_fpmr,
+              candidate.guest_illegal
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+              ,
+              candidate.profile_read_before_write
+#endif
+          );
+        };
+        if (!valid_compilation(compiled))
           return run_semantic_instruction(cpu, memory, executed);
-        code = arena_.store(retry_compiled.words);
-        if (code == nullptr)
-          return run_semantic_instruction(cpu, memory, executed);
-        block = install_compilation(retry_compiled, code);
+        if (auto *code = arena_.store(compiled.words); code != nullptr) {
+          block = install_compilation(compiled, code);
+          publish_shared_translation(cpu.pc, fetched, compiled);
+        } else {
+          profile_jit_arena_reset();
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+          ++cache_validation_diagnostics_.arena_resets;
+#endif
+          clear_cache();
+          arena_.reset();
+
+          /*
+           * Link and PIC operands are absolute pointers into the descriptor
+           * tables. clear_cache() invalidates those tables, so the retry must
+           * be freshly lowered against their new storage rather than copying
+           * the now-stale first compilation into the reset arena.
+           */
+          JitCompiler retry_compiler{
+              enable_guarded_control_flow_, this,
+              &Implementation::resolve_block_link, false,
+              &Implementation::resolve_indirect_link
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+              ,
+              /*persistent_linked_block_abi=*/
+              persistent_linked_block_abi_default,
+              this, &Implementation::resolve_direct_link_profile,
+              &Implementation::resolve_indirect_link_profile
+#endif
+          };
+          retry_compiler.set_pointer_authentication_enabled(
+              enable_pointer_authentication_);
+          const auto retry_compiled = retry_compiler.compile(
+              cpu.pc, std::span{instructions}.first(count));
+          if (!valid_compilation(retry_compiled))
+            return run_semantic_instruction(cpu, memory, executed);
+          code = arena_.store(retry_compiled.words);
+          if (code == nullptr)
+            return run_semantic_instruction(cpu, memory, executed);
+          block = install_compilation(retry_compiled, code);
+          publish_shared_translation(cpu.pc, fetched, retry_compiled);
+        }
       }
     }
   }

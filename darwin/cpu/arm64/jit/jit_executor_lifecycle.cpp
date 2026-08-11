@@ -31,6 +31,7 @@ JitExecutor::Implementation::Implementation(
   active_links_.reserve(cache_sets * cache_ways);
   active_indirect_links_.reserve(cache_sets * cache_ways);
   register_jit_store_participant(store_participant_);
+  SharedTranslationCache::instance().add_executor();
 }
 
 JitExecutor::Implementation::~Implementation() {
@@ -41,6 +42,7 @@ JitExecutor::Implementation::~Implementation() {
 #endif
   release_current_reservation();
   unregister_jit_store_participant(store_participant_);
+  SharedTranslationCache::instance().remove_executor();
   darwin_uml_static_vm_execution_context_destroy(execution_context_);
 }
 

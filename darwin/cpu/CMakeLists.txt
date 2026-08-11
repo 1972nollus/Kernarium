@@ -159,7 +159,8 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_executor_linking.cpp
     arm64/jit/jit_linking.cpp
     arm64/jit/jit_publication_state.cpp
-    arm64/jit/jit_semantic_memory.cpp)
+    arm64/jit/jit_semantic_memory.cpp
+    arm64/jit/jit_shared_translations.cpp)
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})

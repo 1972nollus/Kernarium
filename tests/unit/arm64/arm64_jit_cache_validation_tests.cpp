@@ -2,6 +2,7 @@
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_runtime_contract.hpp"
+#include "cpu/arm64/jit/jit_shared_translations.hpp"
 
 #include <array>
 #include <chrono>
@@ -614,10 +615,76 @@ void the_cache_holds_more_than_twice_the_former_capacity()
 		blocks, static_cast<unsigned long long>(retranslated));
 }
 
+/* A translation embeds pointers into the link tables of the executor that
+ * compiled it, so reuse is only correct if every one of them is rewritten for
+ * the reusing executor. The first executor is destroyed before the second
+ * runs: a missed relocation therefore branches through freed memory, which
+ * the sanitizer gates catch rather than silently taking another executor's
+ * link.
+ */
+void a_second_executor_reuses_the_first_translation_safely()
+{
+	constexpr unsigned long generation = 8112;
+	constexpr std::uint64_t base = 0x140'0000;
+	JitBacking backing{1};
+	/* Two blocks, the first ending in a direct branch, so the translation
+	 * has a link pointer that has to be relocated.
+	 */
+	backing.put32(0, move_immediate(0, 7));
+	backing.put32(4, branch(base + 4, base + 8));
+	backing.put32(8, move_immediate(1, 9));
+	backing.put32(12, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+
+	const auto before =
+		arm64::SharedTranslationCache::instance().statistics();
+	const auto run_to_system_call = [&](JitExecutor &executor) {
+		arm64::CpuState cpu{};
+		cpu.pc = base;
+		for (unsigned step = 0; step < 8; ++step) {
+			const auto run = run_once(executor, memory, generation, cpu);
+			if (run.event == ::uml::cpu::EngineEvent::system_call)
+				return cpu;
+			require(run.event == ::uml::cpu::EngineEvent::continued);
+		}
+		require(false);
+		return cpu;
+	};
+	/* The second executor exists while the first compiles, because sharing
+	 * is only enabled for concurrent executors, but it does not run until
+	 * the first has been destroyed.
+	 */
+	JitExecutor second;
+	{
+		JitExecutor first;
+		const auto cpu = run_to_system_call(first);
+		require(cpu.registers[0] == 7);
+		require(cpu.registers[1] == 9);
+	}
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	require(published.insertions > before.insertions);
+
+	const auto cpu = run_to_system_call(second);
+	require(cpu.registers[0] == 7);
+	require(cpu.registers[1] == 9);
+	const auto reused =
+		arm64::SharedTranslationCache::instance().statistics();
+	require(reused.hits > published.hits);
+	std::fprintf(stderr,
+		"JIT shared translations: %llu published, %llu reused by the "
+		"second executor\n",
+		static_cast<unsigned long long>(published.insertions -
+			before.insertions),
+		static_cast<unsigned long long>(reused.hits - published.hits));
+}
+
 } // namespace
 
 int main()
 {
+	a_second_executor_reuses_the_first_translation_safely();
 	the_cache_holds_more_than_twice_the_former_capacity();
 	unrelated_page_change_reuses_exact_block();
 	in_block_change_rejects_saved_words();

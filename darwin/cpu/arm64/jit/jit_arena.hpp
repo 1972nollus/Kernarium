@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "jit_runtime_contract.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -21,6 +23,16 @@ public:
 	[[nodiscard]] bool valid() const noexcept;
 	[[nodiscard]] void *store(
 		std::span<const std::uint32_t> words) noexcept;
+	/* Stores a translation compiled by another executor, rewriting the
+	 * recorded literal slots to this executor's link pointers before the
+	 * instruction cache is published. Patching here rather than in a caller
+	 * owned buffer keeps every write to executable memory in this file and
+	 * saves copying the translation twice.
+	 */
+	[[nodiscard]] void *store_relocated(
+		std::span<const std::uint32_t> words,
+		std::span<const JitRelocation> relocations,
+		std::span<const std::uintptr_t> values) noexcept;
 	void reset() noexcept;
 
 	[[nodiscard]] static bool available() noexcept;

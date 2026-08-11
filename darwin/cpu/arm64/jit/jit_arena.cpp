@@ -50,6 +50,42 @@ void *ExecutableArena::store(
 	return destination;
 }
 
+void *ExecutableArena::store_relocated(
+	std::span<const std::uint32_t> words,
+	std::span<const JitRelocation> relocations,
+	std::span<const std::uintptr_t> values) noexcept
+{
+	if (relocations.size() != values.size())
+		return nullptr;
+	const auto bytes = words.size_bytes();
+	const auto aligned = (used_ + 15U) & ~std::size_t{15};
+	if (mapping_ == nullptr || bytes == 0 || aligned > size_ ||
+	    bytes > size_ - aligned)
+		return nullptr;
+	for (const auto &relocation : relocations)
+		if (relocation.word + 1U >= words.size())
+			return nullptr;
+	auto *destination = static_cast<std::byte *>(mapping_) + aligned;
+#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+	pthread_jit_write_protect_np(0);
+#endif
+	std::memcpy(destination, words.data(), bytes);
+	auto *stored = reinterpret_cast<std::uint32_t *>(destination);
+	for (std::size_t index = 0; index < relocations.size(); ++index) {
+		const auto value = static_cast<std::uint64_t>(values[index]);
+		stored[relocations[index].word] =
+			static_cast<std::uint32_t>(value);
+		stored[relocations[index].word + 1U] =
+			static_cast<std::uint32_t>(value >> 32U);
+	}
+#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+	pthread_jit_write_protect_np(1);
+#endif
+	sys_icache_invalidate(destination, bytes);
+	used_ = aligned + bytes;
+	return destination;
+}
+
 void ExecutableArena::reset() noexcept
 {
 	used_ = 0;

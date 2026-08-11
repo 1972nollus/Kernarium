@@ -60,6 +60,12 @@ public:
     std::size_t word;
     std::uint64_t value;
     unsigned destination;
+    /* Set only for executor-owned link pointers, which a reusing executor
+     * must rewrite. See JitRelocation in jit_runtime_contract.hpp.
+     */
+    bool relocatable{};
+    JitRelocationKind kind{};
+    std::uint64_t key{};
   };
 
   explicit Arm64Emitter(
@@ -95,6 +101,8 @@ public:
   void load_constant(unsigned destination, std::uint64_t value);
   void load_literal_constant(unsigned destination, std::uint64_t value);
   void load_stable_pointer(unsigned destination, std::uintptr_t value);
+  void load_relocatable_pointer(unsigned destination, std::uintptr_t value,
+                                JitRelocationKind kind, std::uint64_t key);
   void add_immediate(unsigned destination, unsigned source, unsigned immediate,
                      bool shift_12 = false);
   void subtract_immediate(unsigned destination, unsigned source,
@@ -117,6 +125,22 @@ public:
   void return_dynamic(std::size_t instructions);
   [[nodiscard]] std::span<const std::uint32_t> finish();
 
+  /* Valid after finish(). Empty when the translation embedded no executor
+   * owned pointer; see relocatable() for the case where one could not be
+   * recorded.
+   */
+  [[nodiscard]] std::span<const JitRelocation> relocations() const noexcept {
+    return relocations_;
+  }
+
+  /* False when a link pointer had to be materialized by a cold MOV-wide stub
+   * instead of a literal pool slot, which happens only for translations large
+   * enough to put the pool outside imm19 reach. Those cannot be reused by
+   * another executor, because the pointer is spread across instruction
+   * immediates rather than sitting in one relocatable slot.
+   */
+  [[nodiscard]] bool relocatable() const noexcept { return relocatable_; }
+
 private:
   static constexpr std::size_t unbound =
       std::numeric_limits<std::size_t>::max();
@@ -127,6 +151,8 @@ private:
   std::vector<std::size_t> labels_;
   std::vector<Patch> patches_;
   std::vector<StablePointerPatch> literal_patches_;
+  std::vector<JitRelocation> relocations_;
+  bool relocatable_{true};
   std::size_t literal_range_words_{};
   bool persistent_linked_block_abi_{};
   bool valid_{true};

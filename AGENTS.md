@@ -317,6 +317,16 @@ Do not casually remove or reshape these accepted mechanisms:
   `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. They are one
   resource: arena exhaustion clears the block cache, so shrinking either alone
   collapses the other into retranslation.
+- **G133:** the relocation contract that lets one executor reuse another's
+  translation. `JitRelocation` records the literal pool slots holding
+  executor-owned link pointers, and only
+  `ExecutableArena::store_relocated` rewrites them. Every pointer a
+  translation embeds into its compiler's link tables must be recorded, or a
+  reusing executor branches through another executor's freed records; the
+  pinning test in `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`
+  destroys the compiling executor first so a miss is a sanitizer failure
+  rather than silent corruption. Publication stays gated on two or more live
+  executors.
 
 For hot-path changes, preserve guest-visible behavior, exception/fault
 priority, retirement counts, memory ordering, engine defaults, HWCAP exposure,

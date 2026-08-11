@@ -1133,8 +1133,9 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
 #endif
 
   const auto fallback = emitter.make_label();
-  emitter.load_stable_pointer(
-      12, reinterpret_cast<std::uintptr_t>(link->entries.data()));
+  emitter.load_relocatable_pointer(
+      12, reinterpret_cast<std::uintptr_t>(link->entries.data()),
+      JitRelocationKind::direct_link, target);
   if (emitter.persistent_linked_block_abi()) {
     /*
      * Subtract the completed source while the descriptor pointer load is in
@@ -1246,7 +1247,9 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   const auto miss = emitter.make_label();
   const auto fallback = emitter.make_label();
   const auto undo_and_return_to_cpp = emitter.make_label();
-  emitter.load_stable_pointer(13, reinterpret_cast<std::uintptr_t>(site));
+  emitter.load_relocatable_pointer(
+      13, reinterpret_cast<std::uintptr_t>(site),
+      JitRelocationKind::indirect_link, source_pc);
   /*
    * Hide the independent budget update under the dependent PIC descriptor
    * load. Every miss or rejected matched entry rejoins at the one cold undo.

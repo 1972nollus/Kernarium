@@ -6650,3 +6650,101 @@ a private copy of `cache_index` hardcoding the 8192 mask, so its hand-picked
 colliding offsets silently stopped colliding; it now derives the mask from
 `cache_sets` and uses offsets re-derived for the current geometry, and its
 static asserts fail loudly if the geometry changes again.
+
+## G133: translations shared between executors, and what G132 left it
+
+Implemented and kept, measured neutral to negative on the campaign that
+motivated it. `SharedTranslationCache` in
+`darwin/cpu/arm64/jit/jit_shared_translations.cpp`, pinned by
+`a_second_executor_reuses_the_first_translation_safely` in
+`tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. The switch
+`share_translations_between_executors` in `jit_runtime_contract.hpp` selects
+the arms and ships enabled.
+
+### What made sharing possible
+
+G132 measured 7.4x cross-thread duplication: ten executors translating the same
+guest code into ten private caches. The obstacle was that a translation embeds
+absolute pointers into the link tables of the executor that compiled it, so the
+host code is not portable between executors.
+
+Those pointers enter the code at exactly two places,
+`emit_direct_linked_exit` and `emit_indirect_linked_exit`, and both arrive
+through `Arm64Emitter::load_literal_constant`, which parks the value in a
+64-bit tail literal pool slot. Recording the slot offset makes reuse a two-word
+rewrite. `load_relocatable_pointer` tags those literals, `finish()` records
+where they land, and a reusing executor copies the words into **its own** arena
+while `ExecutableArena::store_relocated` rewrites the slots to its own link
+records before publishing the instruction cache.
+
+Nothing executable, no arena and no link record is shared, and no lock exists
+on any path execution can reach. What is shared is decode and emit. A
+translation that had to materialize a pointer through a cold MOV-wide stub
+instead of a pool slot, which happens only when the pool falls outside imm19
+reach, is marked unshareable and reused by nobody.
+
+The key is the guest PC plus the exact guest words, so an entry is a pure
+function of its input and can never go stale. That deliberately decouples this
+cache from generation and `code_changes` invalidation.
+
+### It works, and it does not pay here
+
+Over multi-core Clang then Object Detection, JIT, 10 vCPUs: **262,144
+translations published and 1.3 million reused against 291,000 misses**, an
+81% reuse rate, with the published count landing near the 283,353 distinct
+blocks G132 measured.
+
+Same-session ABBA, four runs per arm, one constant between them:
+
+| | shared | control | delta |
+| --- | ---: | ---: | ---: |
+| Clang | 754, 756, 759, 749 | 761, 763, 725, 763 | **+0.2%** |
+| Object Detection | 1204, 1150, 1164, 1267 | 1308, 1301, 1274, 1202 | **-5.9%** |
+
+**Sharing is free on Clang and costs about 6% on Object Detection**, with
+overlapping ranges on the latter, so the true cost is somewhere between 3% and
+9%. Avoiding 1.3 million compilations bought nothing measurable.
+
+The reason is G132. Sizing the block cache to the working set cut total
+translations from 109 million to under 4.2 million, so the compilation this
+removes is no longer on the critical path, while the lookup and publication
+cost falls on every local miss. Object Detection has the long FP and SIMD
+blocks, so it carries the largest per-operation cost: up to a 256-byte guest
+word comparison per lookup and the same again per publication.
+
+The same-session control mattered. Measured against this morning's G132
+numbers the loss looked like 10%; the control had itself drifted from 794 and
+1383 to 753 and 1271 over the session, and the real effect is 6%.
+
+### Rejected along the way
+
+Two intermediate shapes were measured and discarded, both against the
+morning baseline before the drift was known, so treat them as ordering only:
+
+| | Clang | Object Detection |
+| --- | ---: | ---: |
+| one mutex for the whole cache | 721 | 1232 |
+| sharded 64 ways | 745 | 1279 |
+| sharded, single copy via `store_relocated` | 767 | 1245 |
+
+A single mutex convoyed ten executors on every miss and insertion. Sharding by
+guest PC recovered about a third of that, and having the arena apply the
+relocations as it stores removed a second full copy of every reused
+translation. Both are in the shipped form.
+
+An earlier version published unconditionally and made the instruction evidence
+suites pathological: a single-executor process copied and stored every one of
+millions of mostly-unique translations for a reader that never arrives, turning
+a 23-second test into more than 20 minutes. Publication is now gated on two or
+more live executors. Lookups stay unconditional because an empty cache makes
+them a hash probe.
+
+### Gates
+
+Unit 622/622 at 16 KiB including tooling, 573/573 at 4 KiB, ASan/UBSan 572/572,
+TSan 8/8. ASan carries real weight here: the pinning test destroys the
+compiling executor before the reusing one runs, so a missed relocation is a
+use-after-free rather than a silent branch through another executor's link
+table. The engine object boundary audit rejected a first attempt that put the
+report's `getenv` in a production object; it is now inside
+`UML_ENABLE_JIT_PROFILE`.

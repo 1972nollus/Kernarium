@@ -56,6 +56,12 @@ public:
 
   struct Result final {
     std::span<const std::uint32_t> words;
+    /* Where this translation embedded pointers into the compiling executor's
+     * link tables, and whether every one of them was recorded. Only a fully
+     * recorded translation may be reused by another executor.
+     */
+    std::span<const JitRelocation> relocations;
+    bool relocatable{};
     std::size_t guest_instructions{};
     std::size_t hot_words{};
     std::size_t internal_entry_word{};
@@ -371,6 +377,7 @@ private:
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
   std::vector<std::uint32_t> selected_words_;
+  std::vector<JitRelocation> selected_relocations_;
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

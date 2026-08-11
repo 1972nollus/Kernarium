@@ -154,6 +154,12 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
         selected_words_.assign(candidate.words.begin(),
                                candidate.words.end());
         candidate.words = selected_words_;
+        /* The candidate's emitter dies with candidate_compiler, so its
+         * relocation offsets must be owned here alongside its words.
+         */
+        selected_relocations_.assign(candidate.relocations.begin(),
+                                     candidate.relocations.end());
+        candidate.relocations = selected_relocations_;
         candidate.gpr_residency_plan = plan;
         selected = candidate;
         retained_gpr_plan = true;
@@ -317,6 +323,8 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto words = emitter_.finish();
     Result result{
         .words = words,
+        .relocations = emitter_.relocations(),
+        .relocatable = emitter_.relocatable(),
         .guest_instructions = count_,
         .hot_words = hot_words,
         .internal_entry_word = internal_entry_word,
