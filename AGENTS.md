@@ -310,13 +310,15 @@ Do not casually remove or reshape these accepted mechanisms:
   slot repair in the maintained Linux series, mutation-pinned by
   `tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py`. Do not restore the
   diagnostic pre-refactor rollback.
-- **G132:** the JIT `cache_sets` and `arena_size` pair in
-  `darwin/cpu/arm64/jit/jit_runtime_contract.hpp`, sized to hold a real guest
-  working set and pinned by
+- **G132/G134:** the JIT cache geometry in
+  `darwin/cpu/arm64/jit/jit_cache_geometry.cpp`, derived per executor from a
+  whole-process budget that defaults to half of guest memory, and pinned by
   `the_cache_holds_more_than_twice_the_former_capacity` in
-  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. They are one
-  resource: arena exhaustion clears the block cache, so shrinking either alone
-  collapses the other into retranslation.
+  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. The block cache and
+  the arena are one resource, because arena exhaustion clears the block cache,
+  so shrinking either share alone collapses the other into retranslation.
+  Keep every per-executor structure inside the budget: they multiply by the
+  guest's CPU count, and fixed sizes previously reached 9 GiB at ten vCPUs.
 - **G133:** the relocation contract that lets one executor reuse another's
   translation. `JitRelocation` records the literal pool slots holding
   executor-owned link pointers, and only

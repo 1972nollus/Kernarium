@@ -14,33 +14,19 @@ namespace uml::cpu::arm64 {
 using Event = ::uml::cpu::EngineEvent;
 
 inline constexpr std::size_t maximum_block_instructions = 64;
-inline constexpr std::size_t cache_ways = 4;
-/* The block cache and the arena are one coupled resource, sized together to
- * hold a real guest working set rather than a fraction of one.
+/* The block cache, its link tables and the arena are one coupled resource,
+ * and their sizes are now derived per executor from a whole-process budget
+ * rather than fixed here. See jit_cache_geometry.hpp.
  *
  * A multi-core Clang plus Object Detection campaign translates 283,353
- * distinct blocks. At the former 8192 sets the cache held 32,768 entries,
- * about 12% of that, and thrashed into roughly 385 retranslations per
- * distinct block. Growing either alone is not enough, and the arena alone is
- * actively harmful: arena exhaustion calls clear_cache(), so a large cache
- * that a small arena keeps discarding buys nothing, while a large arena
- * behind a small cache only holds more dead code. See G132 in
- * docs/HOT_PATH_EXPERIMENTS.md for the measured grid. Do not shrink either
- * without re-measuring that campaign; below the working set this collapses
- * into retranslation rather than degrading gently.
- *
- * The arena saturates here: 1 GiB measured no better than 512 MiB. Peak
- * resident size is the same across 256 MiB, 512 MiB and 1 GiB because the
- * mapping is faulted in on use, so the reservation buys headroom for a larger
- * guest working set at no measured cost.
+ * distinct blocks, and a cache holding a fraction of that collapses into
+ * retranslation rather than degrading gently: at the former 8192 sets it held
+ * 32,768 entries and thrashed into roughly 385 translations per distinct
+ * block. Growing either the cache or the arena alone is not enough, and the
+ * arena alone is actively harmful, because arena exhaustion calls
+ * clear_cache(). See G132 and G134 in docs/HOT_PATH_EXPERIMENTS.md.
  */
-inline constexpr std::size_t cache_sets = 131072;
-inline constexpr std::size_t maximum_block_links =
-    cache_sets * cache_ways * 2;
-inline constexpr std::size_t maximum_indirect_links = maximum_block_links;
-inline constexpr std::size_t arena_size = 512U * 1024U * 1024U;
-inline constexpr std::size_t tracked_store_arena_size =
-    32U * 1024U * 1024U;
+inline constexpr std::size_t cache_ways = 4;
 inline constexpr std::size_t floating_transaction_arena_size = 16U * 1024U;
 inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;

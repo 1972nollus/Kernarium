@@ -438,4 +438,16 @@ bool provide_memory_domain(std::uint64_t &domain) noexcept
 
 } // namespace
 
+
+void set_translation_cache_budget(std::size_t total_bytes,
+	unsigned executors) noexcept
+{
+	::uml::cpu::set_translation_cache_budget(total_bytes, executors);
+}
+
+std::size_t parse_translation_cache_quantity(const char *text) noexcept
+{
+	return ::uml::cpu::parse_translation_cache_quantity(text);
+}
+
 } // namespace uml::runtime

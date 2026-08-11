@@ -305,6 +305,29 @@ tools/rootfs/with-verified-rootfs.sh -- \
     -- --execution-engine=gadgets
 ```
 
+### JIT translation cache budget
+
+The JIT sizes its per-executor block cache, link tables and code arena from a
+whole-process budget split across the guest's CPUs. By default that budget is
+half of guest memory, read from the `mem=` argument the host passes the guest,
+so an eight-gigabyte ten-CPU guest spends about 3.4 GiB of host memory on
+translated-code caches rather than a fixed amount that ignores the guest.
+
+`--jit-cache-budget=` overrides the total. It is a host-only option, consumed
+before the kernel command line is built, and accepts a byte count with an
+optional `K`, `M` or `G` suffix:
+
+```sh
+.build/presets/macos-integration/bin/uml-darwin \
+  --jit-cache-budget=1G ubd0c=rootfs.erofs root=/dev/ubda \
+  rootfstype=erofs mem=8G ncpus=10
+```
+
+Lowering it trades throughput for memory: the campaign in G134 of
+`docs/HOT_PATH_EXPERIMENTS.md` measures about 8% on multi-core Clang and Object
+Detection between a 4 GiB and an 8 GiB budget. Raising it past half of guest
+memory is allowed but the host must have the memory to back it.
+
 Full LTP is independently selected, never a unit test. The unified image
 contains it at `/opt/ltp`; run it separately per engine and preserve the rootfs
 wrapper. Cases whose required kernel options are deliberately disabled belong

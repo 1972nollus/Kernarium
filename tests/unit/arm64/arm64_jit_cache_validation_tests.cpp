@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_cache.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/jit/jit_shared_translations.hpp"
 
@@ -313,30 +315,29 @@ void sequence_change_deactivates_unvalidated_successor_link()
 	require(diagnostics.validation_hits == 2);
 }
 
-[[nodiscard]] constexpr std::size_t cache_index(
-	unsigned long generation, std::uint64_t pc) noexcept
-{
-	const auto mixed = pc ^ (pc >> 17U) ^
-		(static_cast<std::uint64_t>(generation) * 0x9e37'79b9U);
-	return static_cast<std::size_t>(mixed) & (arm64::cache_sets - 1U);
-}
-
 void cache_replacement_keeps_validation_metadata_bounded()
 {
 	constexpr unsigned long generation = 8106;
 	constexpr std::uint64_t base = 0xa0'0000;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-	/* Offsets that land in one cache set, so five blocks contend for four
-	 * ways. They are specific to the set geometry and the static asserts
-	 * below fail loudly if cache_sets changes without re-deriving them.
+	/* Five offsets that land in one cache set, so they contend for four
+	 * ways. The set count is chosen at runtime from the cache budget, so
+	 * these are searched for rather than written down.
 	 */
-	constexpr std::array<std::size_t, 5> offsets{
-		0U, 0x8'0004U, 0x10'0008U, 0x18'000cU, 0x20'0030U};
-	constexpr std::size_t pages = offsets.back() / page + 1U;
-	static_assert(cache_index(generation, base + offsets[0]) ==
-		cache_index(generation, base + offsets[1]));
-	static_assert(cache_index(generation, base + offsets[0]) ==
-		cache_index(generation, base + offsets[4]));
+	const auto sets = arm64::jit_cache_geometry().cache_sets;
+	std::array<std::size_t, 5> offsets{};
+	{
+		const auto target = arm64::cache_index(generation, base, sets);
+		std::size_t found = 1;
+		for (std::size_t offset = 4; found < offsets.size();
+		     offset += 4) {
+			require(offset < (std::size_t{1} << 30U));
+			if (arm64::cache_index(generation, base + offset,
+				    sets) == target)
+				offsets[found++] = offset;
+		}
+	}
+	const std::size_t pages = offsets.back() / page + 1U;
 
 	JitBacking backing{pages};
 	for (const auto offset : offsets)
@@ -575,8 +576,12 @@ void the_cache_holds_more_than_twice_the_former_capacity()
 	constexpr std::size_t blocks = former_capacity * 2U;
 	constexpr std::size_t pages =
 		blocks * 8U / DARWIN_UML_GUEST_PAGE_SIZE;
-	static_assert(blocks <= arm64::cache_sets * arm64::cache_ways);
 	static_assert(blocks * 8U % DARWIN_UML_GUEST_PAGE_SIZE == 0);
+	/* The budget-derived cache must still hold well over the capacity the
+	 * fixed 8192-set geometry gave, or G132's finding has been undone.
+	 */
+	require(blocks <=
+		arm64::jit_cache_geometry().cache_sets * arm64::cache_ways);
 
 	JitBacking backing{pages};
 	for (std::size_t block = 0; block < blocks; ++block) {

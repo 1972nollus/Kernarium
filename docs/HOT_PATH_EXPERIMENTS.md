@@ -6748,3 +6748,99 @@ use-after-free rather than a silent branch through another executor's link
 table. The engine object boundary audit rejected a first attempt that put the
 report's `getenv` in a production object; it is now inside
 `UML_ENABLE_JIT_PROFILE`.
+
+## G134: the JIT cache geometry is a budget, not a set of constants
+
+Accepted, and it corrects G132. `darwin/cpu/arm64/jit/jit_cache_geometry.cpp`
+derives every per-executor JIT structure from a whole-process budget that
+defaults to half of guest memory, overridable with `--jit-cache-budget=`.
+
+### The regression G132 shipped
+
+G132 chose 131072 sets and a 512 MiB arena against multi-core Clang and Object
+Detection, recorded peak RSS rising from 4682 MiB to 8229 MiB, and judged that
+acceptable. It was measured on one campaign and never on a desktop, where the
+guest's code footprint is far larger and more diverse, and a KDE boot was
+reported using about 30 GB.
+
+Sizes per executor, which multiply by the guest's CPU count:
+
+| structure | bytes | resident |
+| --- | ---: | --- |
+| `block_cache_` | 52 MiB | value-initialised, so immediately |
+| `saved_guest_words_` | 128 MiB | faulted on use |
+| `arena_` | 512 MiB | faulted on use |
+| direct link table | 128 MiB | 1,048,576 x 128 B |
+| indirect link table | 56 MiB | 1,048,576 x 56 B |
+| `tracked_store_arena_` | 32 MiB | faulted on use |
+| `active_links_` reserves | 8 MiB | reserved |
+
+**916 MiB per executor, 9.0 GiB at ten vCPUs**, against roughly 119 MiB and
+1.2 GiB before G132.
+
+The link tables are the part that was not a deliberate choice.
+`maximum_block_links` was `cache_sets * cache_ways * 2`, so raising the set
+count by sixteen raised the link tables by sixteen as well, and `JitBlockLink`
+is `alignas(128)`. That is 184 MiB per executor that has nothing to do with
+wanting a larger block cache. The reservation was also twice what is
+reachable: a block the cache cannot hold cannot be a link target either, so
+the geometry now allocates one link per cached block.
+
+### What the budget buys
+
+The budget is split evenly across the guest's CPUs, and each executor spends
+its share at 30% lookup structures, 45% arena, 8% tracked stores, with the set
+count rounded down to a power of two and the link tables sized to the blocks
+the cache can hold.
+
+| guest | vCPUs | sets | arena | per executor | total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4 GiB | 10 | 32768 | 92 MiB | 177 MiB | **1.72 GiB** |
+| 8 GiB | 10 | 65536 | 184 MiB | 352 MiB | **3.44 GiB** |
+| 16 GiB | 10 | 131072 | 368 MiB | 673 MiB | 6.57 GiB |
+
+Against the fixed 9.0 GiB, an eight-gigabyte guest is bounded at 3.44 GiB and
+a four-gigabyte guest at 1.72 GiB, and the total now follows the guest instead
+of ignoring it.
+
+### Measured cost
+
+Same workload and host as G132 and G133, two runs:
+
+| | Clang | Object Detection | peak RSS |
+| --- | ---: | ---: | ---: |
+| fixed 131072 sets, 512 MiB arena | 753 | 1271 | 8229 MiB |
+| budget derived, 8 GiB guest | 699, 691 | 1207, 1203 | 7521, 7617 MiB |
+
+**About 8% on both scores for 660 MiB of resident memory on this campaign.**
+The resident saving is much smaller than the 5.6 GiB the worst-case arithmetic
+suggests, because these structures are faulted in on use and Clang plus Object
+Detection never filled the 512 MiB arena. What changed decisively is the
+bound, which is what a desktop reaches and this campaign does not. A guest with
+more memory gets a larger budget and recovers the scores; a 16 GiB guest lands
+back on G132's geometry.
+
+The desktop that motivated this was not re-measured, so the 30 GB figure is
+reported as the user observed it and the fix is claimed only against the
+arithmetic and the campaign above.
+
+### Still duplicated
+
+Roughly 70% of a per-executor budget is shareable in principle and is not yet
+shared. `saved_guest_words_` is a verbatim copy of guest instruction bytes,
+identical in every executor and now stored a third time inside the G133
+translation cache; replacing the 256-byte inline slot with a pointer to that
+shared entry would collapse it. The arena is per-executor only because
+generated code embeds absolute link pointers, which G133's relocation contract
+rewrites per executor rather than removing; making generated code load the link
+table base from a register would make the arena shareable at the cost of one
+extra load per linked branch. The block cache genuinely resists sharing, since
+72 of its 104 bytes per entry are executor-specific pointers and bookkeeping.
+
+### Gates
+
+Unit 572/572 at 16 KiB, 573/573 at 4 KiB, tooling 50/50 on both, ASan/UBSan
+572/572, TSan 8/8. `cache_replacement_keeps_validation_metadata_bounded` now
+searches for colliding offsets at run time instead of hardcoding offsets for
+one set count, and the capacity pin is a runtime requirement for the same
+reason.

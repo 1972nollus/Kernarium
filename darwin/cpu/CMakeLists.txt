@@ -152,6 +152,7 @@ set_target_properties(uml_arm64_jit PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_cache.cpp
+    arm64/jit/jit_cache_geometry.cpp
     arm64/jit/jit_diagnostics.cpp
     arm64/jit/jit_executor_cache.cpp
     arm64/jit/jit_executor_execution.cpp

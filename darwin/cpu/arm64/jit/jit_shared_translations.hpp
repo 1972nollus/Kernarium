@@ -107,11 +107,13 @@ private:
     std::shared_ptr<const SharedTranslation> translation;
   };
 
-  /* Bounds the cache at roughly twice the largest working set measured so
-   * far, so a pathological guest cannot grow it without limit. Once full the
-   * cache stops admitting and executors simply compile for themselves.
+  /* Bounded near the largest working set measured so far, 283,353 distinct
+   * blocks, so a pathological guest cannot grow it without limit. At roughly
+   * a kilobyte an entry this caps the shared cache near 256 MiB for the whole
+   * process. Once full it stops admitting and executors compile for
+   * themselves.
    */
-  static constexpr std::size_t maximum_entries = 1U << 20U;
+  static constexpr std::size_t maximum_entries = 1U << 18U;
   /* One mutex for every executor's misses and insertions serialised them into
    * a convoy that cost more than the compilation it saved. Shard by guest PC
    * so ten executors rarely contend, and pad each shard so their locks do not

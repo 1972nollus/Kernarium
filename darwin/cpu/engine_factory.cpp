@@ -2,6 +2,7 @@
 #include "engine_factory.hpp"
 
 #include "cpu/arm64/engine_adapters.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 
 namespace uml::cpu {
@@ -35,6 +36,18 @@ bool cpu_engine_available(EngineKind kind) noexcept
 void materialize_architectural_state(arm64::CpuState &cpu) noexcept
 {
 	arm64::restore_native_fp_environment(cpu);
+}
+
+
+void set_translation_cache_budget(std::size_t total_bytes,
+	unsigned executors) noexcept
+{
+	arm64::set_jit_cache_budget(total_bytes, executors);
+}
+
+std::size_t parse_translation_cache_quantity(const char *text) noexcept
+{
+	return arm64::parse_byte_quantity(text);
 }
 
 } // namespace uml::cpu

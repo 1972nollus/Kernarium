@@ -143,7 +143,10 @@ struct CacheSet final {
   std::array<CompiledBlock, cache_ways> ways{};
 };
 
-using BlockCache = std::array<CacheSet, cache_sets>;
+/* Sized at construction from the JIT cache budget; see
+ * jit_cache_geometry.hpp. cache_index() must be given the same set count.
+ */
+using BlockCache = std::vector<CacheSet>;
 using SavedGuestWords =
     std::array<std::uint32_t, maximum_block_instructions>;
 
@@ -151,7 +154,7 @@ struct SavedGuestWordSet final {
   std::array<SavedGuestWords, cache_ways> ways;
 };
 
-using SavedGuestWordCache = std::array<SavedGuestWordSet, cache_sets>;
+using SavedGuestWordCache = std::vector<SavedGuestWordSet>;
 
 struct CacheSlot final {
   CompiledBlock *block{};
@@ -159,10 +162,11 @@ struct CacheSlot final {
 };
 
 [[nodiscard]] constexpr std::size_t
-cache_index(unsigned long generation, std::uint64_t pc) noexcept {
+cache_index(unsigned long generation, std::uint64_t pc,
+            std::size_t sets) noexcept {
   const auto mixed = pc ^ (pc >> 17U) ^
                      (static_cast<std::uint64_t>(generation) * 0x9e37'79b9U);
-  return static_cast<std::size_t>(mixed) & (cache_sets - 1);
+  return static_cast<std::size_t>(mixed) & (sets - 1);
 }
 
 } // namespace uml::cpu::arm64

@@ -83,7 +83,7 @@ namespace uml::cpu::arm64 {
 [[nodiscard]] CompiledBlock *JitExecutor::Implementation::find(unsigned long generation,
                                   std::uint64_t changes, std::uint64_t pc,
                                   StaticGuestMemory &memory) {
-  const auto set_index = cache_index(generation, pc);
+  const auto set_index = cache_index(generation, pc, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
   auto &saved = (*saved_guest_words_)[set_index];
   CompiledBlock *stale{};
@@ -150,7 +150,7 @@ namespace uml::cpu::arm64 {
 [[nodiscard]] CacheSlot JitExecutor::Implementation::replacement(unsigned long generation,
                                     std::uint64_t changes,
                                     std::uint64_t pc) {
-  const auto set_index = cache_index(generation, pc);
+  const auto set_index = cache_index(generation, pc, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
   std::size_t selected_way = 0;
   for (std::size_t way = 0; way < set.ways.size(); ++way)

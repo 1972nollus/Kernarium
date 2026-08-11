@@ -3,6 +3,7 @@
 
 #include "runtime/execution_engine.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,6 +19,12 @@ struct EmulatorOptions final {
 	std::vector<std::string> arguments;
 	::uml::runtime::ExecutionEngine engine{
 		::uml::runtime::ExecutionEngine::automatic};
+	/* Whole-process budget for translated-code caches, split across the
+	 * guest's CPUs. Zero selects half of guest memory, which is what the
+	 * guest's own mem= argument reports; --jit-cache-budget= overrides it.
+	 */
+	std::size_t jit_cache_budget{};
+	unsigned guest_cpus{1};
 	bool valid{true};
 };
 

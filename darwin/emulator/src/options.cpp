@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
+#include <cstdlib>
 
 #include <algorithm>
 #include <limits>
 #include <string_view>
 
 namespace uml::emulator {
+
+constexpr std::string_view jit_cache_budget_prefix{"--jit-cache-budget="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -22,6 +25,33 @@ namespace {
 	return std::ranges::any_of(arguments, [&](const auto &argument) {
 		return argument.starts_with(prefix);
 	});
+}
+
+/* The guest's own memory size and CPU count, read from the kernel arguments
+ * the host is about to pass it. Both keep their kernel meaning; the host only
+ * reads them to decide how much it may spend on translated-code caches.
+ */
+[[nodiscard]] std::size_t guest_memory_bytes(
+	const std::vector<std::string> &arguments)
+{
+	for (const auto &argument : arguments)
+		if (argument.starts_with("mem="))
+			return ::uml::runtime::parse_translation_cache_quantity(
+				argument.substr(4).c_str());
+	return 0;
+}
+
+[[nodiscard]] unsigned guest_cpu_count(
+	const std::vector<std::string> &arguments)
+{
+	for (const auto &argument : arguments)
+		if (argument.starts_with("ncpus=")) {
+			const auto parsed = std::strtoul(
+				argument.c_str() + 6, nullptr, 10);
+			if (parsed != 0 && parsed <= 1024U)
+				return static_cast<unsigned>(parsed);
+		}
+	return 1;
 }
 
 [[nodiscard]] bool informational(
@@ -93,6 +123,21 @@ EmulatorOptions prepare_emulator_options(
 			prepared.valid = false;
 			return prepared;
 		}
+		if (argument.starts_with(jit_cache_budget_prefix)) {
+			/* Host-only, so it is consumed rather than handed to the
+			 * guest kernel.
+			 */
+			const std::string quantity{argument.substr(
+				jit_cache_budget_prefix.size())};
+			prepared.jit_cache_budget =
+				::uml::runtime::parse_translation_cache_quantity(
+					quantity.c_str());
+			if (prepared.jit_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
 		prepared.arguments.emplace_back(argument);
 	}
 	if (prepared.arguments.empty())
@@ -119,6 +164,10 @@ EmulatorOptions prepare_emulator_options(
 		prepared.arguments.emplace_back("mem=256M");
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
+	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
+	if (prepared.jit_cache_budget == 0)
+		prepared.jit_cache_budget =
+			guest_memory_bytes(prepared.arguments) / 2U;
 	return prepared;
 }
 

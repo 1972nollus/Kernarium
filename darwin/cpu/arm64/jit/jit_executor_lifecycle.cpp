@@ -10,16 +10,21 @@ JitExecutor::Implementation::Implementation(
     , JitExecutorDiagnosticsOptions diagnostics
 #endif
 )
-    : empty_link_{.guest_pc = 1},
-      links_{maximum_block_links},
-      indirect_links_{maximum_indirect_links, &empty_link_},
+    : geometry_{jit_cache_geometry()},
+      block_cache_{std::make_unique<BlockCache>(geometry_.cache_sets)},
+      saved_guest_words_{std::make_unique<SavedGuestWordCache>(
+          geometry_.cache_sets)},
+      empty_link_{.guest_pc = 1},
+      links_{geometry_.block_links},
+      indirect_links_{geometry_.indirect_links, &empty_link_},
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       arena_{diagnostics.code_arena_size == 0
-                 ? arena_size
+                 ? geometry_.arena_bytes
                  : diagnostics.code_arena_size},
 #else
-      arena_{arena_size},
+      arena_{geometry_.arena_bytes},
 #endif
+      tracked_store_arena_{geometry_.tracked_store_arena_bytes},
       enable_guarded_control_flow_{options.enable_guarded_control_flow},
       enable_pointer_authentication_{
           options.enable_pointer_authentication},
@@ -28,8 +33,8 @@ JitExecutor::Implementation::Implementation(
           diagnostics.reuse_validated_stale_blocks},
 #endif
       host_capabilities_{options.host_capabilities} {
-  active_links_.reserve(cache_sets * cache_ways);
-  active_indirect_links_.reserve(cache_sets * cache_ways);
+  active_links_.reserve(geometry_.cache_sets * cache_ways);
+  active_indirect_links_.reserve(geometry_.cache_sets * cache_ways);
   register_jit_store_participant(store_participant_);
   SharedTranslationCache::instance().add_executor();
 }

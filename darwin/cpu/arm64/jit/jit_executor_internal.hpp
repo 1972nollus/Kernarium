@@ -3,6 +3,7 @@
 
 #include "jit_arena.hpp"
 #include "jit_cache.hpp"
+#include "jit_cache_geometry.hpp"
 #include "jit_executor.hpp"
 #include "jit_publication.hpp"
 #include "jit_runtime_contract.hpp"
@@ -158,16 +159,16 @@ private:
   );
   void clear_cache() noexcept;
 
-  std::unique_ptr<BlockCache> block_cache_{std::make_unique<BlockCache>()};
-  std::unique_ptr<SavedGuestWordCache> saved_guest_words_{
-      std::make_unique_for_overwrite<SavedGuestWordCache>()};
+  JitCacheGeometry geometry_;
+  std::unique_ptr<BlockCache> block_cache_;
+  std::unique_ptr<SavedGuestWordCache> saved_guest_words_;
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
   JitIndirectLinkTable indirect_links_;
   std::vector<JitBlockLink *> active_links_;
   std::vector<JitIndirectLink *> active_indirect_links_;
-  jit::detail::ExecutableArena arena_{arena_size};
-  jit::detail::ExecutableArena tracked_store_arena_{tracked_store_arena_size};
+  jit::detail::ExecutableArena arena_;
+  jit::detail::ExecutableArena tracked_store_arena_;
   jit::detail::ExecutableArena floating_transaction_arena_{
       floating_transaction_arena_size};
   Tlb tlb_;

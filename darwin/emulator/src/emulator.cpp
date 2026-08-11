@@ -242,6 +242,11 @@ public:
 			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
+		/* Before any engine exists, so every executor derives its cache
+		 * geometry from the same budget.
+		 */
+		::uml::runtime::set_translation_cache_budget(
+			prepared.jit_cache_budget, prepared.guest_cpus);
 		auto &arguments = prepared.arguments;
 		std::vector<char *> argument_pointers;
 		argument_pointers.reserve(arguments.size() + 1);
