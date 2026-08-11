@@ -6560,3 +6560,93 @@ TSan 8/8 including `arm64-jit-publication_gate`, unit 572/572 at 16 KiB,
 because the change is in shared host code. The measurement switch and the wait
 timer were removed before the gates above were re-run, so they cover exactly the
 code that ships.
+
+## G132: the block cache held 12% of the working set
+
+Accepted. `cache_sets` 8192 -> 131072 and `arena_size` 64 MiB -> 512 MiB in
+`darwin/cpu/arm64/jit/jit_runtime_contract.hpp`, pinned by
+`the_cache_holds_more_than_twice_the_former_capacity` in
+`tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. This is the largest
+effect measured in this campaign and it supersedes the framing of G126 and the
+segmentation and page-granular-invalidation trials, which all attacked
+invalidation while the real constraint was capacity.
+
+### What the guest actually translates
+
+`UML_JIT_PROFILE_OVERLAP=1` records the distinct guest PCs each thread
+translates and merges them, counting how many threads translated each PC. Over
+multi-core Clang followed by Object Detection, JIT, 10 vCPUs:
+
+| | |
+| --- | ---: |
+| total block translations | 109,056,465 |
+| sum of per-thread distinct PCs | 2,095,646 |
+| **union of distinct PCs** | **283,353** |
+| PCs translated by exactly 10 threads | 197,859 (70%) |
+| PCs translated by exactly 1 thread | 79,072 (28%) |
+
+**385 translations per distinct block.** That factors into 52x within-thread
+retranslation (109.0M / 2.10M) and 7.4x cross-thread duplication (2.10M /
+283K). The within-thread factor is the larger by seven times, and it is pure
+capacity: the cache held 8192 sets x 4 ways = 32,768 entries against a 283,353
+block working set, about 12% of it.
+
+### The cache and the arena are one resource
+
+One binary shape per arm, same campaign, same host, JIT, 10 vCPUs. Scores are
+Geekbench 6.7.1 workload scores; RSS is the emulator's peak resident size.
+
+| sets | arena | Clang | Object Detection | peak RSS |
+| ---: | ---: | ---: | ---: | ---: |
+| 8192 | 64 MiB | 426, 431, 438 | 414, 441, 445 | 4682 MiB |
+| 8192 | 256 MiB | 310, 312 | 359, 361 | - |
+| 65536 | 64 MiB | 547, 528 | 1354, 1247 | - |
+| 65536 | 256 MiB | 756, 714 | 1330, 1241 | 8053, 8034 MiB |
+| 131072 | 64 MiB | 532, 529 | 1282, 1147 | 7015, 6902 MiB |
+| 131072 | 256 MiB | 800, 795, 813 | 1280, 1321, 1310 | 8243, 8106 MiB |
+| **131072** | **512 MiB** | **808, 779** | **1390, 1375** | 8164, 8294 MiB |
+| 131072 | 1024 MiB | 796, 804 | 1360, 1336 | 8048, 8044 MiB |
+
+Against the 8192/64 MiB baseline the accepted configuration is **+84% on Clang**
+(432 -> 794 mean) and **+219% on Object Detection** (433 -> 1383 mean).
+
+The arena saturates at 512 MiB. Clang is flat from 256 MiB upward (803, 794,
+800) and Object Detection gains about 6% from 256 MiB to 512 MiB on
+non-overlapping ranges (1280-1321 against 1375-1390) then gives it back at
+1 GiB. Peak resident size is unchanged across all three, 8046 MiB to 8229 MiB,
+because the arena is faulted in on use rather than on reservation, so the
+larger size is headroom for a bigger guest working set at no measured cost.
+
+Neither constant is sufficient alone, and the interaction has a sign change
+worth recording: **enlarging the arena alone makes Clang worse** (432 -> 311),
+because a large arena behind a small cache only holds more dead code, while at
+65536 sets and above the same arena change is a large gain (538 -> 735). Arena
+exhaustion calls `clear_cache()`, so a cache big enough to hold the working set
+is worthless if a small arena keeps discarding it. Object Detection saturates
+once the cache is large and is indifferent to the arena; Clang, with the larger
+code footprint, needs both.
+
+### What this cost, and what it did not fix
+
+Peak emulator RSS rises from 4682 MiB to about 8229 MiB at 10 vCPUs, roughly
++355 MiB per executor. Most of that is the arena, since `block_cache_` is
+value-initialised and therefore resident while `saved_guest_words_` uses
+`make_unique_for_overwrite` and faults in only what is touched.
+
+The 7.4x cross-thread duplication is untouched. Every executor still translates
+the same guest code into its own cache, which is both wasted work and the
+reason the memory cost multiplies by vCPU count. A shared cache in FEX's shape
+(one `CodeBuffer` owning a `GuestToHostMap` shared across threads, per-thread
+L1 in front) is the remaining route; it would reclaim most of the memory this
+entry spends and remove the 7.4x, at the cost of a lock on the compile path and
+a rework of the per-executor block-link ownership.
+
+### Gates
+
+Unit 572/572 at 16 KiB, 573/573 at 4 KiB, tooling 50/50. Both page profiles
+were run because the change alters cache geometry that the 4 KiB profile
+indexes differently. `cache_replacement_keeps_validation_metadata_bounded` kept
+a private copy of `cache_index` hardcoding the 8192 mask, so its hand-picked
+colliding offsets silently stopped colliding; it now derives the mask from
+`cache_sets` and uses offsets re-derived for the current geometry, and its
+static asserts fail loudly if the geometry changes again.

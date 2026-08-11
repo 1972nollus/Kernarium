@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_runtime_contract.hpp"
 
 #include <array>
 #include <chrono>
@@ -316,7 +317,7 @@ void sequence_change_deactivates_unvalidated_successor_link()
 {
 	const auto mixed = pc ^ (pc >> 17U) ^
 		(static_cast<std::uint64_t>(generation) * 0x9e37'79b9U);
-	return static_cast<std::size_t>(mixed) & (8192U - 1U);
+	return static_cast<std::size_t>(mixed) & (arm64::cache_sets - 1U);
 }
 
 void cache_replacement_keeps_validation_metadata_bounded()
@@ -324,8 +325,12 @@ void cache_replacement_keeps_validation_metadata_bounded()
 	constexpr unsigned long generation = 8106;
 	constexpr std::uint64_t base = 0xa0'0000;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+	/* Offsets that land in one cache set, so five blocks contend for four
+	 * ways. They are specific to the set geometry and the static asserts
+	 * below fail loudly if cache_sets changes without re-deriving them.
+	 */
 	constexpr std::array<std::size_t, 5> offsets{
-		0U, 0x2000U, 0x4000U, 0x6000U, 0x8000U};
+		0U, 0x8'0004U, 0x10'0008U, 0x18'000cU, 0x20'0030U};
 	constexpr std::size_t pages = offsets.back() / page + 1U;
 	static_assert(cache_index(generation, base + offsets[0]) ==
 		cache_index(generation, base + offsets[1]));
@@ -554,10 +559,66 @@ void stale_sequence_control_reports_avoided_translation_work()
 		static_cast<unsigned long long>(control.diagnostics.translations));
 }
 
+/* G132: the block cache has to hold a real guest working set, not a fraction
+ * of one. A multi-core Clang and Object Detection campaign translates 283,353
+ * distinct blocks; against the former 8192-set, 32,768-entry cache that
+ * collapsed into roughly 385 retranslations per distinct block. Fill twice the
+ * former capacity and require nearly all of it to survive a second pass, so
+ * shrinking the cache back fails here rather than only in a benchmark.
+ */
+void the_cache_holds_more_than_twice_the_former_capacity()
+{
+	constexpr unsigned long generation = 8111;
+	constexpr std::uint64_t base = 0x100'0000;
+	constexpr std::size_t former_capacity = 8192U * arm64::cache_ways;
+	constexpr std::size_t blocks = former_capacity * 2U;
+	constexpr std::size_t pages =
+		blocks * 8U / DARWIN_UML_GUEST_PAGE_SIZE;
+	static_assert(blocks <= arm64::cache_sets * arm64::cache_ways);
+	static_assert(blocks * 8U % DARWIN_UML_GUEST_PAGE_SIZE == 0);
+
+	JitBacking backing{pages};
+	for (std::size_t block = 0; block < blocks; ++block) {
+		backing.put32(block * 8U,
+			move_immediate(0, static_cast<unsigned>(block & 0xffffU)));
+		backing.put32(block * 8U + 4U, system_call);
+	}
+	JitMapping mapping{generation, base, backing, pages};
+	JitExecutor executor;
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+
+	for (std::size_t block = 0; block < blocks; ++block) {
+		cpu.pc = base + block * 8U;
+		const auto run = run_once(executor, memory, generation, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::system_call);
+	}
+	const auto filled = executor.cache_validation_diagnostics().translations;
+	require(filled == blocks);
+
+	for (std::size_t block = 0; block < blocks; ++block) {
+		cpu.pc = base + block * 8U;
+		const auto run = run_once(executor, memory, generation, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::system_call);
+	}
+	const auto retranslated =
+		executor.cache_validation_diagnostics().translations - filled;
+	/* Set-associative collisions evict a small tail. The former capacity
+	 * would have evicted essentially all of it, and an arena reset would
+	 * too, so this bound covers both regressions.
+	 */
+	require(retranslated * 50U < blocks);
+	std::fprintf(stderr,
+		"JIT cache capacity: %zu blocks filled, %llu retranslated on the "
+		"second pass\n",
+		blocks, static_cast<unsigned long long>(retranslated));
+}
+
 } // namespace
 
 int main()
 {
+	the_cache_holds_more_than_twice_the_former_capacity();
 	unrelated_page_change_reuses_exact_block();
 	in_block_change_rejects_saved_words();
 	executable_permission_change_rejects_saved_block();

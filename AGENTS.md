@@ -310,6 +310,13 @@ Do not casually remove or reshape these accepted mechanisms:
   slot repair in the maintained Linux series, mutation-pinned by
   `tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py`. Do not restore the
   diagnostic pre-refactor rollback.
+- **G132:** the JIT `cache_sets` and `arena_size` pair in
+  `darwin/cpu/arm64/jit/jit_runtime_contract.hpp`, sized to hold a real guest
+  working set and pinned by
+  `the_cache_holds_more_than_twice_the_former_capacity` in
+  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. They are one
+  resource: arena exhaustion clears the block cache, so shrinking either alone
+  collapses the other into retranslation.
 
 For hot-path changes, preserve guest-visible behavior, exception/fault
 priority, retirement counts, memory ordering, engine defaults, HWCAP exposure,
