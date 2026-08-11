@@ -6,11 +6,263 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <vector>
 
 namespace uml::cpu::arm64 {
 
 #if UML_ENABLE_JIT_PROFILE
 namespace {
+
+/* Cross-thread translation overlap.
+ *
+ * Every executor owns a private block cache, so two threads running the same
+ * guest code each translate it separately. This records the distinct guest PCs
+ * each thread translated and merges those sets to count how many threads
+ * translated each PC. The ratio of summed per-thread distinct PCs to their
+ * union is the duplicated work a shared cache would remove; a low ratio means
+ * a shared cache buys nothing and only adds a lock to the compile path.
+ */
+
+[[nodiscard]] bool jit_overlap_profile_enabled() noexcept {
+  static const bool enabled = [] {
+    const auto *value = std::getenv("UML_JIT_PROFILE_OVERLAP");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+[[nodiscard]] std::uint64_t jit_overlap_report_interval() noexcept {
+  static const std::uint64_t interval = [] {
+    const auto *value = std::getenv("UML_JIT_PROFILE_OVERLAP_INTERVAL");
+    if (value == nullptr || value[0] == '\0')
+      return std::uint64_t{1} << 20U;
+    const auto parsed = std::strtoull(value, nullptr, 0);
+    return parsed == 0 ? std::uint64_t{1} << 20U : parsed;
+  }();
+  return interval;
+}
+
+[[nodiscard]] std::size_t overlap_slot(std::uint64_t pc,
+                                       std::size_t mask) noexcept {
+  auto hash = pc * 0x9e3779b97f4a7c15ULL;
+  hash ^= hash >> 29U;
+  return static_cast<std::size_t>(hash) & mask;
+}
+
+/* Open-addressed set of guest PCs. Slot value 0 is empty; no guest block
+ * starts at PC 0, so no sentinel word is needed.
+ */
+class TranslatedPcSet final {
+public:
+  [[nodiscard]] bool insert(std::uint64_t pc) {
+    if (pc == 0)
+      return false;
+    if (slots_.empty() || (count_ + 1U) * 4U > slots_.size() * 3U)
+      grow();
+    if (!place(slots_, pc))
+      return false;
+    ++count_;
+    return true;
+  }
+
+private:
+  [[nodiscard]] static bool place(std::vector<std::uint64_t> &slots,
+                                  std::uint64_t pc) {
+    const auto mask = slots.size() - 1U;
+    for (auto index = overlap_slot(pc, mask);; index = (index + 1U) & mask) {
+      if (slots[index] == pc)
+        return false;
+      if (slots[index] == 0) {
+        slots[index] = pc;
+        return true;
+      }
+    }
+  }
+
+  void grow() {
+    std::vector<std::uint64_t> grown(
+        slots_.empty() ? std::size_t{1024} : slots_.size() * 2U);
+    for (const auto pc : slots_)
+      if (pc != 0)
+        (void)place(grown, pc);
+    slots_.swap(grown);
+  }
+
+  std::vector<std::uint64_t> slots_;
+  std::size_t count_{};
+};
+
+/* Guest PC to the number of distinct threads that translated it. Only the
+ * registry mutates this, and only under its mutex.
+ */
+class TranslatedPcCounts final {
+public:
+  TranslatedPcCounts() : keys_(4096), counts_(4096) {}
+
+  void add(std::uint64_t pc) {
+    const auto mask = keys_.size() - 1U;
+    for (auto index = overlap_slot(pc, mask);; index = (index + 1U) & mask) {
+      if (keys_[index] == pc) {
+        ++counts_[index];
+        return;
+      }
+      if (keys_[index] == 0) {
+        if (saturated_) {
+          ++overflow_;
+          return;
+        }
+        keys_[index] = pc;
+        counts_[index] = 1;
+        ++count_;
+        if (count_ * 4U > keys_.size() * 3U)
+          grow();
+        return;
+      }
+    }
+  }
+
+  [[nodiscard]] std::size_t size() const noexcept { return count_; }
+  [[nodiscard]] std::uint64_t overflow() const noexcept { return overflow_; }
+
+  void tally(std::span<std::uint64_t> shares) const {
+    for (std::size_t index = 0; index < keys_.size(); ++index) {
+      if (keys_[index] == 0)
+        continue;
+      const auto bucket = std::min<std::size_t>(counts_[index] - 1U,
+                                                shares.size() - 1U);
+      ++shares[bucket];
+    }
+  }
+
+private:
+  /* 8.4M distinct PCs before the table stops admitting new ones. A run that
+   * saturates reports its overflow count so the union stays honest.
+   */
+  static constexpr std::size_t maximum_slots = std::size_t{1} << 23U;
+
+  void grow() {
+    if (keys_.size() >= maximum_slots) {
+      saturated_ = true;
+      return;
+    }
+    std::vector<std::uint64_t> grown_keys(keys_.size() * 2U);
+    std::vector<std::uint32_t> grown_counts(keys_.size() * 2U);
+    const auto mask = grown_keys.size() - 1U;
+    for (std::size_t source = 0; source < keys_.size(); ++source) {
+      if (keys_[source] == 0)
+        continue;
+      auto index = overlap_slot(keys_[source], mask);
+      while (grown_keys[index] != 0)
+        index = (index + 1U) & mask;
+      grown_keys[index] = keys_[source];
+      grown_counts[index] = counts_[source];
+    }
+    keys_.swap(grown_keys);
+    counts_.swap(grown_counts);
+  }
+
+  std::vector<std::uint64_t> keys_;
+  std::vector<std::uint32_t> counts_;
+  std::size_t count_{};
+  std::uint64_t overflow_{};
+  bool saturated_{};
+};
+
+struct OverlapRegistry final {
+  std::mutex mutex;
+  TranslatedPcCounts counts;
+  unsigned threads{};
+  std::uint64_t translations{};
+  std::uint64_t distinct_sum{};
+  std::uint64_t next_report{};
+};
+
+OverlapRegistry &overlap_registry() noexcept {
+  /* Intentionally leaked. Thread-local recorders flush into it from their
+   * destructors, which can run after a function-local static would already
+   * have been destroyed.
+   */
+  static auto *registry = new OverlapRegistry{};
+  return *registry;
+}
+
+void report_translation_overlap(const OverlapRegistry &registry) {
+  std::array<std::uint64_t, 64> shares{};
+  registry.counts.tally(shares);
+  const auto onion = static_cast<double>(
+      std::max<std::size_t>(registry.counts.size(), 1));
+  std::fprintf(stderr,
+               "Darwin JIT translation overlap threads=%u translations=%llu "
+               "per-thread-distinct=%llu union-distinct=%zu duplication=%.2f "
+               "overflow=%llu shared-by=",
+               registry.threads,
+               static_cast<unsigned long long>(registry.translations),
+               static_cast<unsigned long long>(registry.distinct_sum),
+               registry.counts.size(),
+               static_cast<double>(registry.distinct_sum) / onion,
+               static_cast<unsigned long long>(registry.counts.overflow()));
+  const auto reported =
+      std::min<std::size_t>(std::max(registry.threads, 1U), shares.size());
+  for (std::size_t index = 0; index < reported; ++index)
+    std::fprintf(stderr, "%s%zu:%llu", index == 0 ? "" : ",", index + 1U,
+                 static_cast<unsigned long long>(shares[index]));
+  std::fputc('\n', stderr);
+}
+
+/* Per-thread recorder. The set is thread-private; only batched pending PCs
+ * cross into the registry, and only under its mutex.
+ */
+class ThreadOverlapRecorder final {
+public:
+  ThreadOverlapRecorder() {
+    auto &registry = overlap_registry();
+    std::scoped_lock registry_lock{registry.mutex};
+    ++registry.threads;
+  }
+
+  ~ThreadOverlapRecorder() { flush(); }
+
+  ThreadOverlapRecorder(const ThreadOverlapRecorder &) = delete;
+  ThreadOverlapRecorder &operator=(const ThreadOverlapRecorder &) = delete;
+
+  void record(std::uint64_t pc) {
+    ++translations_;
+    if (translated_.insert(pc))
+      pending_.push_back(pc);
+    if (pending_.size() >= flush_threshold ||
+        translations_ >= flush_threshold)
+      flush();
+  }
+
+private:
+  static constexpr std::size_t flush_threshold = 4096;
+
+  void flush() {
+    auto &registry = overlap_registry();
+    std::scoped_lock registry_lock{registry.mutex};
+    for (const auto pc : pending_)
+      registry.counts.add(pc);
+    registry.distinct_sum += pending_.size();
+    registry.translations += translations_;
+    pending_.clear();
+    translations_ = 0;
+    if (registry.translations < registry.next_report)
+      return;
+    registry.next_report = registry.translations + jit_overlap_report_interval();
+    report_translation_overlap(registry);
+  }
+
+  TranslatedPcSet translated_;
+  std::vector<std::uint64_t> pending_;
+  std::uint64_t translations_{};
+};
+
+void record_translation_overlap(std::uint64_t pc) {
+  if (!jit_overlap_profile_enabled())
+    return;
+  static thread_local ThreadOverlapRecorder recorder;
+  recorder.record(pc);
+}
 
 [[nodiscard]] bool jit_compile_profile_enabled() noexcept {
   static const bool enabled = [] {
@@ -247,6 +499,7 @@ void profile_jit_compilation(
 #if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
   dump_jit_gpr_pressure(pc, guest_words.size(), gpr_pressure);
 #endif
+  record_translation_overlap(pc);
   if (!jit_compile_profile_enabled())
     return;
   const auto guest_instructions = guest_words.size();
