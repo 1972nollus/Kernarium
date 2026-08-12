@@ -25,6 +25,8 @@ compile_commands.json
 /.claude/
 .idea/
 .vscode/
+xcuserdata/
+*.xcuserstate
 *.swp
 *.swo
 *~

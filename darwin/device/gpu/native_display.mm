@@ -1023,7 +1023,8 @@ void NativeDisplayState::shutdown() noexcept
 NativeDisplay::NativeDisplay(
     std::uint32_t width,
     std::uint32_t height,
-    native_input::VncInputSink inputSink)
+    native_input::VncInputSink inputSink,
+    void*)
     : state_(std::make_shared<NativeDisplayState>(
           width, height, std::move(inputSink)))
 {
@@ -1114,6 +1115,11 @@ void NativeDisplay::fillSelfTestPattern()
 bool NativeDisplay::presentOpenGl(const OpenGlScanout& scanout) noexcept
 {
     return state_->presentOpenGl(scanout);
+}
+
+bool NativeDisplay::presentMetal(const MetalScanout&) noexcept
+{
+    return false;
 }
 
 int runNativeDisplayApplication(

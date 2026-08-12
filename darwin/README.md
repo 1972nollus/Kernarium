@@ -24,6 +24,15 @@ to the shared CPU scanout conversion used by VNC. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 
+The opt-in Kernarium iOS Simulator runtime uses the same Virtio-GPU device and
+virglrenderer command path. Its platform display is UIKit/MetalKit: the pinned
+UTM libepoxy build loads EGL and GLES from ANGLE frameworks, ANGLE renders
+through Metal, and the native resource texture is sampled directly into the
+application-provided `MTKView`. VNC is deliberately not built for iOS.
+Unsupported resource layouts use the shared CPU scanout fallback. Platform
+source selection is exclusive, so the existing macOS AppKit, CGL, IOSurface,
+and LibVNCServer implementation is unchanged.
+
 Each guest task-carrier runtime owns its engine adapters for the life of its
 host thread. JIT adapters are lightweight: a JIT-capable emulator run retains
 at most one persistent executor per configured guest CPU in a process-global,
@@ -89,3 +98,11 @@ no registry dependency. No KDE/VNC or WebGL launcher creates a desktop account:
 both reuse the image's non-root `uml` user and never synthesize `plasma`. No
 Unix-mode or read-only block-argument policy is needed. See
 [`../docs/testing.md`](../docs/testing.md) for preparation and run commands.
+
+Kernarium uses the same EROFS-to-tmpfs-OverlayFS pivot as the macOS KDE
+launcher. The init shell mounts the overlay and devtmpfs, pivots into the
+writable view, creates separate Docker and containerd tmpfs mounts, installs
+only the disposable KDE setup unit, and execs the image's systemd for
+`graphical.target`. Kernel console bytes are relayed to application stdout.
+The base image remains read-only and the image's `uml` account and normal
+display-manager units own the desktop session.

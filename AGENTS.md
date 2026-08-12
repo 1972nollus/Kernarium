@@ -314,6 +314,9 @@ device -> memory / platform
   Linux patch data naturally contains kernel C sources.
 - Do not leave source-adjacent `__pycache__`, `.pyc`, temporary audit output,
   unowned sources, or empty first-party architecture directories.
+  The structural audit deliberately ignores `.DS_Store`, `__pycache__`,
+  `.pyc`, and `.pyo` as generated metadata, so incidental tool output does not
+  make an otherwise identical build fail; keep those paths Git-ignored.
 
 Executable-memory policy:
 

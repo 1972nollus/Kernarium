@@ -17,7 +17,8 @@ public:
     NativeDisplay(
         std::uint32_t width,
         std::uint32_t height,
-        uml::input::vnc::VncInputSink inputSink = {});
+        uml::input::vnc::VncInputSink inputSink = {},
+        void* nativeView = nullptr);
     ~NativeDisplay() override;
 
     NativeDisplay(const NativeDisplay&) = delete;
@@ -50,6 +51,8 @@ public:
     void fillSelfTestPattern() override;
     [[nodiscard]] bool presentOpenGl(
         const OpenGlScanout& scanout) noexcept override;
+    [[nodiscard]] bool presentMetal(
+        const MetalScanout& scanout) noexcept override;
     [[nodiscard]] bool needsFullCpuFallback() const noexcept override
     {
         return true;

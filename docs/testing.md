@@ -119,6 +119,69 @@ ctest --preset instruction-evidence
 ctest --preset instruction-evidence-4k
 ```
 
+## Kernarium iOS Simulator prototype
+
+`Kernarium/Kernarium.xcodeproj` is an arm64 iOS Simulator application that
+embeds the maintained 16 KiB UML kernel and boots `Documents/rootfs.erofs` with
+2 GiB of guest memory and four vCPUs. `ContentView` contains only an `MTKView`.
+SwiftUI lays it out inside the safe area, and the app deliberately uses the
+view's point dimensions as its drawable and guest pixel dimensions without
+applying the display scale.
+
+The graphics dependency prefix is separate from the macOS dependency prefix.
+It uses the exact UTM WebKit/ANGLE, libepoxy, and virglrenderer commits in
+[`../Kernarium/dependencies/utm-gpu-sources.tsv`](../Kernarium/dependencies/utm-gpu-sources.tsv).
+The build is offline and accepts only clean local checkouts at those commits:
+
+```sh
+Kernarium/scripts/build-ios-gpu-dependencies.sh \
+  --webkit /path/to/utm-WebKit \
+  --libepoxy /path/to/utm-libepoxy \
+  --virglrenderer /path/to/utm-virglrenderer
+
+# Read-only checks once the prefix exists.
+Kernarium/scripts/build-ios-gpu-dependencies.sh --verify-only
+cmake --preset kernarium-ios-simulator
+cmake --build --preset kernarium-ios-simulator
+```
+
+The canonical kernel image is `/Volumes/<case-sensitive-volume>/build-16k/linux`.
+Override `UML_KERNARIUM_KERNEL_IMAGE` explicitly when using another maintained
+16 KiB build. With one Simulator already booted, the following command builds
+the runtime and Xcode app, installs it, copies the EROFS image into the app's
+Documents directory, and only then launches the app with the guest console on
+the invoking terminal's stdout:
+
+```sh
+Kernarium/scripts/run-ios-simulator.sh \
+  --rootfs "$PWD/rootfs.erofs" \
+  --kernel /Volumes/<case-sensitive-volume>/build-16k/linux
+```
+
+The app exposes Documents through both `UIFileSharingEnabled` and
+`LSSupportsOpeningDocumentsInPlace`. Its target records the Extended Virtual
+Addressing capability in the Xcode project and the
+`com.apple.developer.kernel.extended-virtual-addressing` entitlement in
+`Kernarium.entitlements`. A checked-in shared scheme keeps Xcode's iOS and
+Simulator destinations attached to the application target. The entitlement is
+a device signing contract; Xcode carries it in the Simulator's simulated
+entitlement input even though the local Simulator code-signature entitlement
+dictionary is empty.
+
+The guest follows the same userspace path as `scripts/boot_kde_vnc.py`: an
+init shell binds the EROFS root as the OverlayFS lower layer, creates upper and
+work directories on tmpfs, mounts devtmpfs in the new root, pivots, mounts
+separate tmpfs filesystems at `/var/lib/docker` and `/var/lib/containerd`,
+installs the disposable KDE setup unit, and execs the rootfs systemd as PID 1.
+The requested `graphical.target` therefore uses the image's ordinary units,
+SDDM, and non-root `uml` account. The prototype does not synthesize a desktop
+user, modify the EROFS image, start VNC, or provide a host network backend.
+
+The current application runtime and ANGLE frameworks are Simulator arm64
+slices. The ordinary `ios-device` and `ios-simulator` library presets remain
+the supported core packaging paths; this prototype does not claim a physical
+device application build yet.
+
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build
 trees stay on the dedicated `/Volumes/<case-sensitive-volume>` volume at `linux`,

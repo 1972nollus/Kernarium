@@ -12,6 +12,25 @@ endif()
 
 include("${AUDIT_SCRIPT}")
 
+set(GENERATED_PATH_CASES
+    "${SOURCE_ROOT}/.DS_Store"
+    "${SOURCE_ROOT}/tests/tooling/__pycache__"
+    "${SOURCE_ROOT}/tests/tooling/__pycache__/runner.pyc"
+    "${SOURCE_ROOT}/tests/tooling/runner.pyo")
+foreach(GENERATED_PATH IN LISTS GENERATED_PATH_CASES)
+    uml_source_tree_generated_path_is_ignored(
+        "${GENERATED_PATH}" GENERATED_PATH_IGNORED)
+    if(NOT GENERATED_PATH_IGNORED)
+        message(FATAL_ERROR
+            "source audit did not ignore generated path: ${GENERATED_PATH}")
+    endif()
+endforeach()
+uml_source_tree_generated_path_is_ignored(
+    "${SOURCE_ROOT}/tests/tooling/runner.py" SOURCE_PATH_IGNORED)
+if(SOURCE_PATH_IGNORED)
+    message(FATAL_ERROR "source audit ignored an authored Python source")
+endif()
+
 # The main audit proves the live tree. Exercise one mutation in each restored
 # source-only contract family so removing the checks cannot silently leave only
 # their positive fixtures behind.

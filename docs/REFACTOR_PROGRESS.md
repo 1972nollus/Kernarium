@@ -1,5 +1,24 @@
 # Refactor progress
 
+## Kernarium iOS Simulator prototype (2026-08-12)
+
+The new `Kernarium` Xcode project embeds an opt-in iOS Simulator runtime and
+boots a four-vCPU, 2 GiB UML guest from `Documents/rootfs.erofs`. Its basic
+SwiftUI `ContentView` owns a safe-area `MTKView` whose point dimensions are the
+guest resolution. The real Virtio-GPU device and virglrenderer use pinned UTM
+libepoxy plus ANGLE/Metal and present the native Metal texture directly; the
+iOS target builds neither AppKit nor VNC, while the macOS graph remains on its
+existing AppKit/CGL/IOSurface/Metal and VNC paths.
+
+A fresh iPhone 17 Pro Max Simulator install was provisioned before launch with
+the 3,802,316,800-byte EROFS image. Console output proved four CPUs, 2 GiB
+memory, Virgl capsets, the EROFS-to-tmpfs OverlayFS pivot, normal systemd
+`graphical.target`, KDE setup, SDDM, and automatic `uml` login; a Simulator
+capture showed the complete Plasma desktop. The stock iOS package, Kernarium
+runtime/app, source audit, and canonical macOS GPU workflow passed. Extended
+Virtual Addressing and file sharing are project-owned metadata, and a shared
+scheme restores Xcode's platform-aware target/run configuration.
+
 ## Post-baseline JIT checkpoint (2026-08-12)
 
 This checkpoint completes the foundational JIT-cache boundary: one authoritative parsed

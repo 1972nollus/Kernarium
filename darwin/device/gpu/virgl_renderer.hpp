@@ -86,6 +86,9 @@ public:
     [[nodiscard]] int resourceTexture(
         std::uint32_t resourceId,
         std::uint32_t& textureId) noexcept;
+    [[nodiscard]] int resourceMetalTexture(
+        std::uint32_t resourceId,
+        void*& texture) noexcept;
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,
@@ -113,6 +116,7 @@ private:
         void* cookie,
         int scanoutIndex,
         void* context) noexcept;
+    static void* getEglDisplay(void* cookie) noexcept;
     static void writeFence(void* cookie, std::uint32_t fenceId) noexcept;
     static void writeContextFence(
         void* cookie,
@@ -129,6 +133,10 @@ private:
     std::unordered_map<std::uint64_t, std::uint64_t> retiredContextFences_;
     std::atomic_bool fenceCallbackFailed_ {};
     void* sharedGlContext_ {};
+#if UML_GPU_ANGLE_METAL
+    void* eglDisplay_ {};
+    void* eglConfig_ {};
+#endif
     std::uint32_t retiredFence_ {};
 };
 

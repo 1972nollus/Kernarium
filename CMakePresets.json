@@ -169,6 +169,21 @@
         "UML_BUILD_INTEGRATION_TESTS": false,
         "UML_BUILD_TOOLING_TESTS": false
       }
+    },
+    {
+      "name": "kernarium-ios-simulator",
+      "displayName": "Kernarium iOS Simulator prototype",
+      "inherits": "ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": false,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_KERNARIUM_RUNTIME": true,
+        "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-simulator-arm64",
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/linux"
+      }
     }
   ],
   "buildPresets": [
@@ -241,6 +256,11 @@
       "name": "ios-simulator",
       "configurePreset": "ios-simulator",
       "targets": ["uml_emulator", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator",
+      "configurePreset": "kernarium-ios-simulator",
+      "targets": ["KernariumRuntime", "architecture-audit"]
     }
   ],
   "testPresets": [

@@ -33,6 +33,28 @@ pristine 0.9.15 release archive and its canonical unmodified tree hash. There
 is no project-maintained post-release patch layer and no moving branch
 snapshot.
 
+The Kernarium iOS Simulator prototype has a separate graphics prefix at
+`.build/kernarium-gpu-dependencies/ios-simulator-arm64`. It follows UTM's iOS
+graphics composition because upstream desktop libepoxy/virglrenderer releases
+do not provide that Apple mobile loader path. The exact UTM Git commits and
+repositories are recorded in
+[`../Kernarium/dependencies/utm-gpu-sources.tsv`](../Kernarium/dependencies/utm-gpu-sources.tsv),
+and the platform contract is recorded in
+[`../Kernarium/dependencies/ios-simulator-arm64.tsv`](../Kernarium/dependencies/ios-simulator-arm64.tsv).
+`Kernarium/scripts/build-ios-gpu-dependencies.sh` performs no network access;
+it accepts clean caller-provided checkouts only when origin and HEAD match,
+copies them to a temporary build root, and publishes the prefix transactionally
+after verifying its receipts and Apple binary shape.
+
+That prefix contains static UTM libepoxy and virglrenderer archives plus the
+two ANGLE dynamic payloads repackaged as `EGL.framework` and
+`GLESv2.framework`. The app embeds both frameworks, while only libepoxy loads
+their APIs; the WebKit-derived GLES image retains its `LC_SUB_CLIENT` contract
+and is not linked directly by the application. CMake never searches ambient
+package prefixes for these libraries. This mobile prefix is not an input to
+the macOS GPU graph, whose authenticated release-source prefix and link policy
+remain unchanged.
+
 `build.sh` copies those verified trees into a temporary build area and creates
 only static arm64 libraries under `.build/dependencies/macos-arm64`. Its
 ordered build recipes must exactly match every manifest name and release

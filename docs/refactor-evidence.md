@@ -1,5 +1,15 @@
 # Refactor evidence
 
+## Kernarium iOS Simulator evidence (2026-08-12)
+
+| Area | Current evidence and boundary |
+| --- | --- |
+| Display composition | The guest uses the production Virtio-GPU/vhost-user device and virglrenderer. Pinned UTM libepoxy creates an ANGLE EGL display using the Metal backend; virglrenderer exports the native Metal resource and `ContentView` presents it through `MTKView`. The final Simulator frame showed the full Plasma desktop. No fake GPU or iOS VNC backend exists. |
+| Guest shape and startup | App stdout reported `Kernarium: booting 440x860 guest with mem=2G ncpus=4`, four online CPUs, 2,004,032 KiB available, two Virgl capsets, read-only EROFS, the tmpfs OverlayFS pivot, systemd 257, KDE setup, SDDM, and the image's automatic `uml` login. The 440x860 guest exactly matched the safe-area view in points. |
+| Rootfs and app metadata | The 3,802,316,800-byte `rootfs.erofs` was copied into a fresh Simulator app container's Documents directory before launch. The built app plist contains `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`. The target and entitlement source record Extended Virtual Addressing; the shared scheme exposes the iOS and Simulator run destinations without Xcode's empty-platform warning. |
+| Build and regression gates | `cmake --build --preset kernarium-ios-simulator`, the stock `ios-simulator` configure/build, and the final Xcode Simulator app build passed. `source-tree-cxx-only` passed with generated-path exclusions. The canonical macOS `cmake --workflow --preset check-gpu` passed its architecture audit, all 5/5 GPU units, and the 1/1 VNC smoke. |
+| Boundary | The working runtime and UTM graphics prefix are arm64 Simulator slices. Physical-device app packaging, UIKit keyboard/pointer translation, host networking, and performance measurement were not run or claimed. |
+
 ## Post-baseline JIT evidence (2026-08-12)
 
 The focused evidence below belongs to this repository checkpoint. It does not replace

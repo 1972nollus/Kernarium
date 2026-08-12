@@ -13,7 +13,9 @@
 #include <functional>
 #include <limits>
 #include <mach/mach.h>
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 #include <mach/mach_vm.h>
+#endif
 #include <mutex>
 #include <memory>
 #include <new>

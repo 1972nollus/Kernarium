@@ -46,15 +46,24 @@ target_include_directories(uml_memory_vm_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
 target_compile_features(uml_memory_vm_bridge PUBLIC cxx_std_20)
 target_compile_options(uml_memory_vm_bridge PRIVATE -Wall -Wextra -Werror)
+set(_uml_memory_has_native_vm ${UML_TARGET_MACOS})
+if(UML_APPLE_PLATFORM STREQUAL "ios-simulator" AND
+   UML_BUILD_KERNEL_RUNNER)
+    # The opt-in Kernarium prototype runs the same native UML kernel mapping
+    # contract as macOS. Ordinary iOS packages keep the software-MMU-only
+    # boundary because they do not enable the embedded ELF runner.
+    set(_uml_memory_has_native_vm ON)
+endif()
+
 target_compile_definitions(uml_memory_vm_bridge PRIVATE
     # A caller-supplied native Mach-O kernel also needs this bridge when the
-    # embedded ELF runner is disabled. iOS always uses the software MMU.
-    UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${UML_TARGET_MACOS}>
+    # embedded ELF runner is disabled.
+    UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_memory_vm_bridge PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-if(UML_TARGET_MACOS)
+if(_uml_memory_has_native_vm)
     set(_uml_native_mmu_sources
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu/native_address_space.cpp)
     add_library(uml_native_mmu OBJECT ${_uml_native_mmu_sources})

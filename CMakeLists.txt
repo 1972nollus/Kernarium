@@ -35,6 +35,11 @@ if(UML_APPLE_PLATFORM STREQUAL "macos")
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
     option(UML_BUILD_KERNEL_RUNNER
            "Build the embedded ELF kernel runner for the macOS CLI" ON)
+elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+    set(UML_TARGET_MACOS OFF)
+    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
+    option(UML_BUILD_KERNEL_RUNNER
+        "Build the prototype embedded ELF runner for iOS Simulator" OFF)
 else()
     set(UML_TARGET_MACOS OFF)
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
@@ -74,9 +79,17 @@ set(UML_DEPENDENCY_PREFIX
     "${PROJECT_SOURCE_DIR}/.build/dependencies/macos-arm64"
     CACHE PATH "Private prefix containing source-built host dependencies")
 option(UML_BUILD_GPU "Build the host GPU/display provider" ${UML_TARGET_MACOS})
+option(UML_BUILD_KERNARIUM_RUNTIME
+    "Build the iOS Simulator Kernarium application framework" OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
+
+if(UML_BUILD_GPU)
+    # Both native display implementations are Objective-C++. Keep that
+    # language out of ordinary CPU/library-only configurations.
+    enable_language(OBJCXX)
+endif()
 
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
@@ -139,11 +152,23 @@ if(UML_TARGET_MACOS AND (UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER))
     add_subdirectory(dependencies)
 endif()
 
+if(UML_BUILD_GPU AND NOT UML_TARGET_MACOS)
+    if(NOT UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+        message(FATAL_ERROR
+            "The UIKit/ANGLE GPU prototype currently supports iOS Simulator only")
+    endif()
+    include(Kernarium/Runtime/cmake/IosGpuDependencies.cmake)
+endif()
+
 if(UML_BUILD_CLI)
     add_subdirectory(kernel)
 endif()
 
 add_subdirectory(darwin)
+
+if(UML_BUILD_KERNARIUM_RUNTIME)
+    add_subdirectory(Kernarium/Runtime)
+endif()
 
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
    UML_BUILD_TOOLING_TESTS)

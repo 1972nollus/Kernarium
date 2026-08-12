@@ -29,6 +29,16 @@ struct OpenGlScanout {
     std::uint32_t height {};
 };
 
+struct MetalScanout {
+    void* texture {};
+    std::uint32_t sourceWidth {};
+    std::uint32_t sourceHeight {};
+    std::uint32_t sourceX {};
+    std::uint32_t sourceY {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+};
+
 class Display {
 public:
     virtual ~Display() = default;
@@ -74,6 +84,15 @@ public:
         (void)scanout;
         return false;
     }
+    /* ANGLE's Metal backend can expose a virgl scanout as the native
+     * MTLTexture it already renders into. The opaque pointer keeps UIKit and
+     * Objective-C types out of the platform-neutral device contract. */
+    [[nodiscard]] virtual bool presentMetal(
+        const MetalScanout& scanout) noexcept
+    {
+        (void)scanout;
+        return false;
+    }
     /* A native display can switch from direct GPU presentation to CPU
      * fallback after prior frames never populated its CPU framebuffer. */
     [[nodiscard]] virtual bool needsFullCpuFallback() const noexcept
@@ -92,6 +111,7 @@ protected:
     std::string vncPassword,
     std::uint32_t width,
     std::uint32_t height,
-    uml::input::vnc::VncInputSink inputSink = {});
+    uml::input::vnc::VncInputSink inputSink = {},
+    void* nativeView = nullptr);
 
 } // namespace uml::gpu

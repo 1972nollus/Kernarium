@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+field	value
+platform	ios-simulator
+architecture	arm64
+deployment_target	16.0
+graphics_api	ANGLE-EGL-GLES
+presentation_api	Metal

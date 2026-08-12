@@ -1,5 +1,33 @@
 # Refactor handoff
 
+## Kernarium iOS Simulator prototype checkpoint (2026-08-12)
+
+`Kernarium/Kernarium.xcodeproj` now boots the maintained UML kernel from a
+SwiftUI `ContentView` into the same Virtio-GPU/virglrenderer command path used
+on macOS. The iOS display implementation replaces AppKit/CGL only in the
+Simulator graph: UTM's pinned libepoxy and virglrenderer drive its pinned ANGLE
+Metal backend, and the resulting native `MTLTexture` is sampled by the app's
+`MTKView`. The macOS AppKit/CGL/IOSurface/Metal and VNC graph is unchanged.
+
+The app starts one four-vCPU, 2 GiB guest after its safe-area view has a real
+size, uses one guest pixel per host point, and relays the kernel console to app
+stdout. It boots `Documents/rootfs.erofs` read-only, constructs the same tmpfs
+OverlayFS root as `scripts/boot_kde_vnc.py`, mounts separate Docker and
+containerd tmpfs filesystems, and execs the image's normal systemd toward
+`graphical.target`. Documents file sharing and the Extended Virtual Addressing
+capability are recorded in project-owned plist, entitlement, target, and
+shared-scheme metadata.
+
+The final iPhone 17 Pro Max Simulator run copied the 3,802,316,800-byte EROFS
+image into a fresh app container before launch. App stdout reported a 440x860
+guest, four online CPUs, 2 GiB memory, both Virgl capsets, the EROFS/tmpfs
+overlay pivot, systemd, KDE setup, SDDM, and automatic `uml` login; the captured
+frame showed the complete Plasma desktop in the Metal view. The final
+`kernarium-ios-simulator` and stock `ios-simulator` builds passed, as did the
+canonical macOS `check-gpu` workflow (5/5 units and 1/1 VNC tooling). This is an
+arm64 Simulator prototype; a physical-device app, UIKit input translation, and
+a host network backend are not claimed.
+
 ## Post-baseline JIT checkpoint (2026-08-12)
 
 This repository checkpoint records the completed

@@ -225,7 +225,8 @@ private:
                     std::span<const uml::input::vnc::VncInputEvent> events) {
                     sendInput(events);
                 },
-                options_.displayMode);
+                options_.displayMode,
+                options_.nativeView);
             server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);

@@ -1,0 +1,5 @@
+framework module KernariumRuntime {
+    umbrella header "KernariumRuntime.h"
+    export *
+    module * { export * }
+}

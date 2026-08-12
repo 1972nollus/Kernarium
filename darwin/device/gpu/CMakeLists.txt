@@ -14,46 +14,73 @@ endfunction()
 # the data path and contains no reverse service callbacks.
 add_library(uml_gpu_renderer STATIC virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
-target_link_libraries(uml_gpu_renderer PRIVATE
-    UML::ThirdPartyVirglrenderer
-    "-framework AppKit"
-    "-framework CoreFoundation"
-    "-framework CoreGraphics"
-    "-framework Foundation"
-    "-framework IOKit"
-    "-framework IOSurface"
-    "-framework Metal"
-    "-framework OpenGL"
-    "-framework QuartzCore")
+target_compile_definitions(uml_gpu_renderer PRIVATE
+    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>)
+target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
+if(UML_TARGET_MACOS)
+    target_link_libraries(uml_gpu_renderer PRIVATE
+        "-framework AppKit"
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework Foundation"
+        "-framework IOKit"
+        "-framework IOSurface"
+        "-framework Metal"
+        "-framework OpenGL"
+        "-framework QuartzCore")
+else()
+    target_link_libraries(uml_gpu_renderer PRIVATE
+        "-framework Foundation"
+        "-framework Metal"
+        "-framework QuartzCore")
+endif()
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
-add_library(uml_gpu_display STATIC
+set(_uml_gpu_display_sources
     display.cpp
-    native_display.mm
-    scanout_framebuffer.cpp
-    vnc_display.cpp)
+    scanout_framebuffer.cpp)
+if(UML_TARGET_MACOS)
+    list(APPEND _uml_gpu_display_sources
+        native_display.mm
+        vnc_display.cpp)
+else()
+    list(APPEND _uml_gpu_display_sources native_display_ios.mm)
+endif()
+add_library(uml_gpu_display STATIC ${_uml_gpu_display_sources})
 uml_configure_gpu_component(uml_gpu_display)
 set_target_properties(uml_gpu_display PROPERTIES OBJCXX_STANDARD 20)
 target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(uml_gpu_display PRIVATE
+    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
 target_link_libraries(uml_gpu_display PUBLIC UML::VncInput)
-target_link_libraries(uml_gpu_display PRIVATE
-    UML::ThirdPartyVncServer
-    "-framework Accelerate"
-    "-framework AppKit"
-    "-framework IOSurface"
-    "-framework Metal"
-    "-framework MetalKit"
-    "-framework OpenGL"
-    "-framework QuartzCore")
+if(UML_TARGET_MACOS)
+    target_link_libraries(uml_gpu_display PRIVATE
+        UML::ThirdPartyVncServer
+        "-framework Accelerate"
+        "-framework AppKit"
+        "-framework IOSurface"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework OpenGL"
+        "-framework QuartzCore")
+else()
+    target_link_libraries(uml_gpu_display PRIVATE
+        "-framework Accelerate"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework QuartzCore"
+        "-framework UIKit")
+endif()
 add_dependencies(uml_gpu_display uml_dependency_prefix_verify)
 
 add_library(uml_gpu_protocol_device STATIC virtio_gpu_device.cpp)
 uml_configure_gpu_component(uml_gpu_protocol_device)
+target_compile_definitions(uml_gpu_protocol_device PRIVATE
+    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>)
 target_link_libraries(uml_gpu_protocol_device PUBLIC
     uml_gpu_renderer
     uml_gpu_display)

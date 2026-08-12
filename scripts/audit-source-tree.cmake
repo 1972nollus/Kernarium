@@ -5,6 +5,25 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+# OS metadata and interpreter caches are generated independently of the source
+# graph. They are already ignored by Git and must not make a structural build
+# depend on whether Finder or Python happened to visit the checkout.
+set(UML_STRUCTURAL_AUDIT_GENERATED_IGNORE_REGEXES
+    "(^|/)\\.DS_Store$"
+    "(^|/)__pycache__($|/)"
+    "\\.py[co]$")
+
+function(uml_source_tree_generated_path_is_ignored PATH OUT_IGNORED)
+    set(IGNORED FALSE)
+    foreach(PATTERN IN LISTS UML_STRUCTURAL_AUDIT_GENERATED_IGNORE_REGEXES)
+        if(PATH MATCHES "${PATTERN}")
+            set(IGNORED TRUE)
+            break()
+        endif()
+    endforeach()
+    set(${OUT_IGNORED} ${IGNORED} PARENT_SCOPE)
+endfunction()
+
 function(uml_collect_direct_quoted_includes PATH OUT_INCLUDES)
     if(NOT EXISTS "${PATH}")
         set(${OUT_INCLUDES} "" PARENT_SCOPE)
@@ -571,9 +590,9 @@ else()
 endif()
 
 # CTest already exports PYTHONDONTWRITEBYTECODE, but the same runners are also
-# invoked directly by developers and release scripts.  Make standalone
-# no-cache behavior a source-level contract, and reject any cache directory
-# that has already leaked into a first-party runner tree.
+# invoked directly by developers and release scripts. Make standalone
+# no-cache behavior a source-level contract. Incidental interpreter caches are
+# ignored as generated paths rather than turning a build into a cleanup task.
 file(GLOB_RECURSE FIRST_PARTY_PYTHON LIST_DIRECTORIES false
 	"${SOURCE_ROOT}/dependencies/*.py"
 	"${SOURCE_ROOT}/kernel/*.py"
@@ -585,18 +604,6 @@ foreach(PATH IN LISTS FIRST_PARTY_PYTHON)
     if(NOT CONTENT MATCHES "dont_write_bytecode[ \t]*=[ \t]*True")
         list(APPEND VIOLATIONS
             "${PATH}: standalone Python runner does not disable bytecode caches")
-    endif()
-endforeach()
-file(GLOB_RECURSE FIRST_PARTY_ENTRIES LIST_DIRECTORIES true
-	"${SOURCE_ROOT}/dependencies/*"
-	"${SOURCE_ROOT}/kernel/*"
-    "${SOURCE_ROOT}/scripts/*"
-    "${SOURCE_ROOT}/tests/*"
-    "${SOURCE_ROOT}/tools/*")
-foreach(PATH IN LISTS FIRST_PARTY_ENTRIES)
-    if(IS_DIRECTORY "${PATH}" AND PATH MATCHES "/__pycache__$")
-        list(APPEND VIOLATIONS
-            "${PATH}: source-adjacent Python bytecode cache is forbidden")
     endif()
 endforeach()
 
@@ -614,6 +621,10 @@ file(GLOB PREFIX_BACKUP_DEBRIS LIST_DIRECTORIES true
     "${SOURCE_ROOT}/.build/dependencies/*.pre-*")
 list(APPEND FORBIDDEN_DEBRIS ${ROOT_PDF_DEBRIS} ${PREFIX_BACKUP_DEBRIS})
 foreach(PATH IN LISTS FORBIDDEN_DEBRIS)
+    uml_source_tree_generated_path_is_ignored("${PATH}" GENERATED_IGNORED)
+    if(GENERATED_IGNORED)
+        continue()
+    endif()
     if(EXISTS "${PATH}" OR IS_SYMLINK "${PATH}")
         list(APPEND VIOLATIONS "${PATH}: obsolete ignored audit debris")
     endif()

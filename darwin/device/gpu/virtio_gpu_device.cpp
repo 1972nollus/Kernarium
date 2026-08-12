@@ -12,6 +12,10 @@
 #include <optional>
 #include <string_view>
 
+#ifndef UML_GPU_ANGLE_METAL
+#define UML_GPU_ANGLE_METAL 0
+#endif
+
 namespace uml::gpu {
 namespace {
 
@@ -1017,6 +1021,22 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             }
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
+#if UML_GPU_ANGLE_METAL
+            void* metalTexture = nullptr;
+            if (UML_GPU_RENDERER.resourceMetalTexture(
+                    flush->resourceId, metalTexture) == 0 &&
+                UML_GPU_DISPLAY.presentMetal(MetalScanout {
+                    .texture = metalTexture,
+                    .sourceWidth = resource.width,
+                    .sourceHeight = resource.height,
+                    .sourceX = scanoutRectangle_.x,
+                    .sourceY = scanoutRectangle_.y,
+                    .width = scanoutRectangle_.width,
+                    .height = scanoutRectangle_.height,
+                })) {
+                return success;
+            }
+#else
             std::uint32_t textureId = 0;
             if (UML_GPU_RENDERER.resourceTexture(
                     flush->resourceId, textureId) == 0 &&
@@ -1032,6 +1052,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                 })) {
                 return success;
             }
+#endif
             const auto fallbackDamage =
                 UML_GPU_DISPLAY.needsFullCpuFallback() ?
                 scanoutRectangle_ : *damage;

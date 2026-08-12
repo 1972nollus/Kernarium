@@ -60,11 +60,34 @@ write-protection, and instruction-cache publication logic is owned by
 debugger or jailbreak deployments, while sandboxed consumers can select the
 interpreter or precompiled gadget engine without entering that path.
 
-The direct native-VM branch and ELF loader are macOS-only and are compiled out
-for iOS; the shared bridge retains only software-MMU entry points there.
+The direct native-VM branch and ELF loader are compiled out of ordinary iOS
+device and Simulator libraries; the shared bridge retains only software-MMU
+entry points there. The opt-in `KernariumRuntime` composition enables the
+existing native bridge and embedded loader only for an arm64 iOS Simulator
+kernel run. It selects the precompiled gadget engine and does not alter the
+supported iOS package graph or authorize executable JIT publication.
 Executable-memory ownership is enforced in source architecture and functional
 JIT publication tests, not by comparing or attributing individual archive
 members.
+
+## iOS display composition
+
+Kernarium preserves the real Virtio-GPU protocol and renderer rather than
+substituting an application-owned framebuffer:
+
+```text
+Linux virtio-gpu -> vhost-user device -> virglrenderer -> libepoxy/EGL
+    -> UTM ANGLE Metal backend -> MTLTexture -> MTKView
+```
+
+The application passes an existing UIKit `MTKView` down through the GPU
+service. Virglrenderer exports the ANGLE-backed scanout as a native Metal
+texture, and the iOS display owner presents that texture with a small Metal
+draw pass. Unsupported resource shapes retain the existing CPU scanout
+conversion as a compatibility fallback. The iOS target contains no AppKit,
+CGL, or LibVNCServer dependency. Conversely, the macOS graph continues to
+compile its existing AppKit/CGL/IOSurface native display and VNC providers; it
+does not compile or link the UIKit implementation.
 
 `architecture-audit` combines four checks. Documentation paths in this file
 are validated by the same target, so a moved contract cannot leave a stale
@@ -76,6 +99,10 @@ architecture reference behind:
 - unowned implementation, empty-directory, retired-terminology, and
   implementation-fragment checks; and
 - the explicit CTest manifest and advisory source-size review records.
+
+Git-ignored OS and interpreter outputs (`.DS_Store`, `__pycache__`, `.pyc`,
+and `.pyo`) are excluded from structural decisions. Their incidental presence
+does not change the architecture graph or fail a build.
 
 The audit does not prove generated-code shape, performance, or a kernel boot.
 Those remain separate measured acceptance gates. The 800-line production,

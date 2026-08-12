@@ -354,7 +354,8 @@ VhostUserServer::VhostUserServer(
     std::uint32_t height,
     bool selfTestPattern,
     uml::input::vnc::VncInputSink inputSink,
-    DisplayMode displayMode)
+    DisplayMode displayMode,
+    void* nativeView)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , display_(makeDisplay(
@@ -364,7 +365,8 @@ VhostUserServer::VhostUserServer(
           std::move(vncPassword),
           width,
           height,
-          std::move(inputSink)))
+          std::move(inputSink),
+          nativeView))
     , gpu_(
           *display_,
           [this](std::uint64_t address, std::span<std::uint8_t> destination) {

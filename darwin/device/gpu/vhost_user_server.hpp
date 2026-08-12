@@ -30,7 +30,8 @@ public:
         std::uint32_t height,
         bool selfTestPattern,
         uml::input::vnc::VncInputSink inputSink = {},
-        DisplayMode displayMode = DisplayMode::vnc);
+        DisplayMode displayMode = DisplayMode::vnc,
+        void* nativeView = nullptr);
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
