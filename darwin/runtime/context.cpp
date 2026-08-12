@@ -4,6 +4,7 @@
 #include "cpu/engine_factory.hpp"
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
+#include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
 
 #include <algorithm>
@@ -439,15 +440,31 @@ bool provide_memory_domain(std::uint64_t &domain) noexcept
 } // namespace
 
 
-void set_translation_cache_budget(std::size_t total_bytes,
+bool set_translation_cache_budget(std::size_t total_bytes,
 	unsigned executors) noexcept
 {
-	::uml::cpu::set_translation_cache_budget(total_bytes, executors);
+	return ::uml::cpu::set_translation_cache_budget(total_bytes, executors);
+}
+
+bool acquire_translation_cache_run_session() noexcept
+{
+	return ::uml::cpu::acquire_translation_cache_run_session();
+}
+
+void release_translation_cache_run_session() noexcept
+{
+	::uml::cpu::release_translation_cache_run_session();
 }
 
 std::size_t parse_translation_cache_quantity(const char *text) noexcept
 {
 	return ::uml::cpu::parse_translation_cache_quantity(text);
+}
+
+unsigned default_guest_cpu_count() noexcept
+{
+	return std::clamp(::uml::platform::online_processor_count(), 1U,
+		maximum_guest_cpu_count);
 }
 
 } // namespace uml::runtime

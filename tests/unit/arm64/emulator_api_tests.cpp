@@ -601,14 +601,19 @@ void test_native_entry()
 		"macOS did not default to the native JIT");
 	char argument_zero[]{"uml-test"};
 	char argument_one[]{"--execution-engine=gadgets"};
+	char argument_two[]{"--jit-cache-budget=1G"};
+	char argument_three[]{"ncpus=1"};
 	char environment_zero[]{"UML_TEST=1"};
-	const char *arguments[]{argument_zero, argument_one};
+	const char *arguments[]{
+		argument_zero, argument_one, argument_two, argument_three};
 	const char *environment[]{environment_zero, nullptr};
-	require(uml_emulator_run(emulator.get(), 2, arguments, environment) == 73,
+	require(uml_emulator_run(emulator.get(), 4, arguments, environment) == 73,
 		"native entry result was not returned");
 	require(native_inputs_were_mutable &&
 		std::strcmp(argument_zero, "uml-test") == 0 &&
 		std::strcmp(argument_one, "--execution-engine=gadgets") == 0 &&
+		std::strcmp(argument_two, "--jit-cache-budget=1G") == 0 &&
+		std::strcmp(argument_three, "ncpus=1") == 0 &&
 		std::strcmp(environment_zero, "UML_TEST=1") == 0,
 		"run did not isolate caller-owned argument/environment buffers");
 	require(uml_emulator_get_capabilities(emulator.get(), &capabilities) ==
@@ -624,6 +629,17 @@ void test_native_entry()
 		"native entry arguments or network callbacks were invalid");
 	require(network_state.writes == 1,
 		"network callback was not invoked exactly once");
+	/* The gadget run's deliberately different JIT budget/CPU pair must not
+	 * freeze process-global JIT geometry. A later default JIT run publishes
+	 * its own pair and enters normally.
+	 */
+	const char *jit_arguments[]{
+		"uml-test", "--execution-engine=jit"};
+	require(uml_emulator_run(
+			emulator.get(), 2, jit_arguments, environment) == 73,
+		"a gadget-only configuration froze later JIT geometry");
+	require(network_state.writes == 2,
+		"the sequential JIT run did not enter the native kernel");
 
 	const char *invalid_arguments[]{
 		"uml-test", "--execution-engine=invalid"};
@@ -637,6 +653,16 @@ void test_native_entry()
 			emulator.get(), 2, invalid_fallback, environment) ==
 		-UML_EMULATOR_INVALID_ARGUMENT,
 		"removed JIT gadget fallback option was accepted");
+	const char *below_minimum_budget[]{
+		"uml-test", "--execution-engine=jit", "--jit-cache-budget=1K"};
+	require(uml_emulator_run(emulator.get(), 3, below_minimum_budget,
+			environment) == -UML_EMULATOR_RUNTIME_ERROR,
+		"below-minimum JIT budget did not fail launch clearly");
+	const char *incompatible_budget[]{
+		"uml-test", "--execution-engine=jit", "--jit-cache-budget=1G"};
+	require(uml_emulator_run(emulator.get(), 3, incompatible_budget,
+			environment) == -UML_EMULATOR_RUNTIME_ERROR,
+		"sequentially incompatible JIT budget did not fail launch clearly");
 }
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -787,14 +813,15 @@ void test_concurrent_handles_have_distinct_software_mmu_domains()
 		raw_a, uml_emulator_destroy};
 	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_b{
 		raw_b, uml_emulator_destroy};
-	const char *arguments[]{"uml-mmu-domain"};
+	const char *arguments[]{
+		"uml-mmu-domain", "--execution-engine=gadgets"};
 	int status_a = -1;
 	int status_b = -1;
 	std::thread thread_a{[&] {
-		status_a = uml_emulator_run(handle_a.get(), 1, arguments, nullptr);
+		status_a = uml_emulator_run(handle_a.get(), 2, arguments, nullptr);
 	}};
 	std::thread thread_b{[&] {
-		status_b = uml_emulator_run(handle_b.get(), 1, arguments, nullptr);
+		status_b = uml_emulator_run(handle_b.get(), 2, arguments, nullptr);
 	}};
 	thread_a.join();
 	thread_b.join();

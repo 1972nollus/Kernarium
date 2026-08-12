@@ -53,18 +53,6 @@ struct PayloadFingerprint final {
   return "v1\n" + std::string{test} + "\n" + std::string{evidence_path};
 }
 
-[[nodiscard]] mode_t output_mode(const std::string &path) {
-  struct stat status {};
-  if (::lstat(path.c_str(), &status) == 0) {
-    if (!S_ISREG(status.st_mode))
-      configuration_error("materialization output is not regular");
-    return status.st_mode & 07777;
-  }
-  if (errno != ENOENT)
-    configuration_error("cannot inspect materialization output");
-  return 0644;
-}
-
 [[nodiscard]] int open_staged_output(const std::string &path,
                                      std::string &temporary) {
   temporary = path + ".producer.tmp";
@@ -74,30 +62,10 @@ struct PayloadFingerprint final {
 #ifdef O_NOFOLLOW
   flags |= O_NOFOLLOW;
 #endif
-  const auto descriptor = ::open(temporary.c_str(), flags, 0600);
+  const auto descriptor = ::open(temporary.c_str(), flags, 0666);
   if (descriptor < 0)
     configuration_error("cannot create materialization staging file");
-  if (::fchmod(descriptor, output_mode(path)) != 0) {
-    ::close(descriptor);
-    configuration_error("cannot set materialization staging mode");
-  }
   return descriptor;
-}
-
-void sync_parent_directory(const std::string &path) {
-  auto flags = O_RDONLY | O_CLOEXEC;
-#ifdef O_DIRECTORY
-  flags |= O_DIRECTORY;
-#endif
-  const auto parent = std::filesystem::path{path}.parent_path();
-  const auto descriptor = ::open(parent.c_str(), flags);
-  if (descriptor < 0 || ::fsync(descriptor) != 0) {
-    if (descriptor >= 0)
-      ::close(descriptor);
-    configuration_error("cannot sync materialization output directory");
-  }
-  if (::close(descriptor) != 0)
-    configuration_error("cannot close materialization output directory");
 }
 
 [[nodiscard]] std::string stable_source_path(std::string_view path) {
@@ -611,12 +579,8 @@ public:
       configuration_error("cannot close " + output_path_);
     }
     output_ = nullptr;
-    if (::fsync(sync_descriptor_) != 0 || ::close(sync_descriptor_) != 0)
-      configuration_error("cannot sync " + temporary_path_);
-    sync_descriptor_ = -1;
     if (::rename(temporary_path_.c_str(), output_path_.c_str()) != 0)
       configuration_error("cannot publish " + output_path_);
-    sync_parent_directory(output_path_);
   }
 
   void add(const InstructionInputMaterialization &materialization,
@@ -773,21 +737,8 @@ private:
       configuration_error("cannot create output directory: " +
                           error.message());
     const auto descriptor = open_staged_output(output_path_, temporary_path_);
-#ifdef F_DUPFD_CLOEXEC
-    sync_descriptor_ = ::fcntl(descriptor, F_DUPFD_CLOEXEC, 0);
-#else
-    sync_descriptor_ = ::dup(descriptor);
-    if (sync_descriptor_ >= 0)
-      ::fcntl(sync_descriptor_, F_SETFD, FD_CLOEXEC);
-#endif
-    if (sync_descriptor_ < 0) {
-      ::close(descriptor);
-      configuration_error("cannot retain materialization staging descriptor");
-    }
     output_ = gzdopen(descriptor, "wb6");
     if (output_ == nullptr) {
-      ::close(sync_descriptor_);
-      sync_descriptor_ = -1;
       ::close(descriptor);
       configuration_error("cannot write " + temporary_path_);
     }
@@ -803,7 +754,6 @@ private:
   std::string test_name_;
   std::string output_path_;
   std::string temporary_path_;
-  int sync_descriptor_{-1};
   gzFile output_{};
   std::map<std::string, PayloadFingerprint> blobs_;
   std::map<std::string, PayloadFingerprint> contracts_;

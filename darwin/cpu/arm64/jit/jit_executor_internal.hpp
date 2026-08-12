@@ -12,9 +12,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #ifndef UML_JIT_RUNTIME_DIAGNOSTICS
@@ -27,10 +29,46 @@ using ::uml::memory::Access;
 using ::uml::memory::StaticGuestMemory;
 using ::uml::memory::Tlb;
 
+template <typename Pointer>
+class FixedPointerList final {
+public:
+  explicit FixedPointerList(std::size_t capacity)
+      : entries_{capacity == 0
+                     ? nullptr
+                     : std::make_unique_for_overwrite<Pointer[]>(capacity)},
+        capacity_{capacity} {}
+
+  void push_back(Pointer pointer) noexcept {
+    /* Every stable record can become active at most once per epoch. The
+     * corresponding fixed link table has the same capacity, so exhaustion is
+     * an internal invariant violation rather than a reason to allocate.
+     */
+    if (size_ >= capacity_)
+      std::terminate();
+    entries_[size_++] = pointer;
+  }
+
+  void clear() noexcept { size_ = 0; }
+  [[nodiscard]] std::size_t size() const noexcept { return size_; }
+  [[nodiscard]] Pointer *begin() noexcept { return entries_.get(); }
+  [[nodiscard]] Pointer *end() noexcept {
+    return size_ == 0 ? entries_.get() : entries_.get() + size_;
+  }
+  [[nodiscard]] const Pointer *begin() const noexcept { return entries_.get(); }
+  [[nodiscard]] const Pointer *end() const noexcept {
+    return size_ == 0 ? entries_.get() : entries_.get() + size_;
+  }
+
+private:
+  std::unique_ptr<Pointer[]> entries_;
+  std::size_t capacity_{};
+  std::size_t size_{};
+};
+
 class JitExecutor::Implementation final {
 public:
   explicit Implementation(
-      JitExecutorOptions options
+      JitCacheExecutorLease lease, JitExecutorOptions options
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       , JitExecutorDiagnosticsOptions diagnostics
 #endif
@@ -47,6 +85,7 @@ public:
   [[nodiscard]] std::uint64_t fault_address() const noexcept;
   [[nodiscard]] Access fault_access() const noexcept;
   [[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
+  [[nodiscard]] bool budget_admitted() const noexcept;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   [[nodiscard]] JitCacheValidationDiagnostics
   cache_validation_diagnostics() const noexcept;
@@ -125,18 +164,19 @@ private:
    * translation's code shape does not match what this executor can run and it
    * must compile for itself.
    */
-  [[nodiscard]] bool
+  [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
   materialize_shared_translation(const SharedTranslation &translation);
   [[nodiscard]] CompiledBlock *install_shared_translation(
       unsigned long generation, std::uint64_t changes, std::uint64_t pc,
       std::span<const std::uint32_t> guest_words);
-  void publish_shared_translation(
+  [[nodiscard]] std::shared_ptr<const SharedTranslation>
+  publish_shared_translation(
       std::uint64_t pc, std::span<const std::uint32_t> guest_words,
       const JitCompiler::Result &compiled);
 
   [[nodiscard]] JitCacheValidationResult validate_stale_block(
-      const CompiledBlock &block, const SavedGuestWords &guest_words,
-      std::uint64_t changes, StaticGuestMemory &memory);
+      const CompiledBlock &block, std::uint64_t changes,
+      StaticGuestMemory &memory);
   [[nodiscard]] CompiledBlock *find(unsigned long generation,
                                     std::uint64_t changes, std::uint64_t pc,
                                     StaticGuestMemory &memory);
@@ -147,6 +187,8 @@ private:
                               std::uint64_t pc, JitFunction function,
                               std::uintptr_t internal_entry,
                               std::span<const std::uint32_t> guest_words,
+                              std::shared_ptr<const std::uint32_t[]>
+                                  saved_guest_words,
                               std::uint64_t memory_write_mask,
                               std::uint64_t direct_memory_write_mask,
                               bool accesses_fp_state, bool link_target_safe,
@@ -159,21 +201,26 @@ private:
   );
   void clear_cache() noexcept;
 
+  JitCacheExecutorLease cache_lease_;
   JitCacheGeometry geometry_;
   std::unique_ptr<BlockCache> block_cache_;
-  std::unique_ptr<SavedGuestWordCache> saved_guest_words_;
+  /* Allocated without value-initializing the word payload. Private
+   * translations touch only their cache slots; shared translations retain
+   * the global immutable owner and leave these pages uncommitted.
+   */
+  std::shared_ptr<SavedGuestWordSet[]> fallback_saved_guest_words_;
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
   JitIndirectLinkTable indirect_links_;
-  std::vector<JitBlockLink *> active_links_;
-  std::vector<JitIndirectLink *> active_indirect_links_;
+  FixedPointerList<JitBlockLink *> active_links_;
+  FixedPointerList<JitIndirectLink *> active_indirect_links_;
   jit::detail::ExecutableArena arena_;
   jit::detail::ExecutableArena tracked_store_arena_;
-  jit::detail::ExecutableArena floating_transaction_arena_{
-      floating_transaction_arena_size};
+  jit::detail::ExecutableArena floating_transaction_arena_;
   Tlb tlb_;
   void *execution_context_{};
   unsigned long execution_generation_{};
+  StaticGuestMemory *prepared_memory_{};
   unsigned long mapping_generation_{};
   std::uint64_t mapping_changes_{};
   unsigned long link_generation_{};
@@ -193,6 +240,9 @@ private:
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   JitCacheValidationDiagnostics cache_validation_diagnostics_{};
   JitIndirectLinkDiagnostics indirect_link_diagnostics_{};
+  void *shared_publication_context_{};
+  JitExecutorDiagnosticsOptions::BeforeSharedPublication
+      before_shared_publication_{};
 #endif
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   JitGprLinkProfiler gpr_link_profile_{};

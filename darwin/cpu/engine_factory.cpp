@@ -39,10 +39,20 @@ void materialize_architectural_state(arm64::CpuState &cpu) noexcept
 }
 
 
-void set_translation_cache_budget(std::size_t total_bytes,
+bool set_translation_cache_budget(std::size_t total_bytes,
 	unsigned executors) noexcept
 {
-	arm64::set_jit_cache_budget(total_bytes, executors);
+	return arm64::set_jit_cache_budget(total_bytes, executors);
+}
+
+bool acquire_translation_cache_run_session() noexcept
+{
+	return arm64::acquire_jit_cache_run_session();
+}
+
+void release_translation_cache_run_session() noexcept
+{
+	arm64::release_jit_cache_run_session();
 }
 
 std::size_t parse_translation_cache_quantity(const char *text) noexcept

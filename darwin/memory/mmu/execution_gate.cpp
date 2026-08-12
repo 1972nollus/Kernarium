@@ -247,7 +247,7 @@ ExecutionQuiesce::~ExecutionQuiesce()
 	state_->execution_gate.notify_all();
 }
 
-#if UML_RUNTIME_PROFILING
+#if UML_RUNTIME_PROFILING && UML_MEMORY_PROFILE_TESTING
 namespace testing {
 
 std::size_t execution_gate_profile_count() noexcept

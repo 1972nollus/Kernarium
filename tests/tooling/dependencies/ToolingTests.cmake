@@ -28,7 +28,7 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME dependency-production-link-allowlist
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_production_link.sh
-    LABELS dependency;audit
+    NAME dependency-runtime-closure
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_runtime_dependencies.sh
+    LABELS dependency
     TIMEOUT 30)

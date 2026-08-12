@@ -71,9 +71,11 @@ public:
   explicit Arm64Emitter(
       bool persistent_linked_block_abi =
           persistent_linked_block_abi_default,
-      std::size_t literal_range_words = std::size_t{1} << 18U) noexcept;
+      std::size_t literal_range_words = std::size_t{1} << 18U,
+      bool linked_gpr_bank = carry_x8_x9_across_links) noexcept;
 
   [[nodiscard]] bool persistent_linked_block_abi() const noexcept;
+  [[nodiscard]] bool linked_gpr_bank_enabled() const noexcept;
   [[nodiscard]] Label make_label();
   void bind(Label label);
   void emit(std::uint32_t instruction);
@@ -88,6 +90,8 @@ public:
   void load_x_indexed_8(unsigned destination, unsigned base, unsigned index);
   void load_pair_x(unsigned first, unsigned second, unsigned base,
                    std::ptrdiff_t offset);
+  void store_pair_x(unsigned first, unsigned second, unsigned base,
+                    std::ptrdiff_t offset);
   void store_x(unsigned source, unsigned base, std::size_t offset);
   void load_w(unsigned destination, unsigned base, std::size_t offset);
   void store_w(unsigned source, unsigned base, std::size_t offset);
@@ -155,6 +159,7 @@ private:
   bool relocatable_{true};
   std::size_t literal_range_words_{};
   bool persistent_linked_block_abi_{};
+  bool linked_gpr_bank_{};
   bool valid_{true};
   void *exit_context_{};
   ExitFlush exit_flush_{};

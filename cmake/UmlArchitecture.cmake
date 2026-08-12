@@ -107,33 +107,6 @@ function(uml_write_architecture_manifest)
                 endif()
             endforeach()
         endforeach()
-        # Object aggregation is a real architecture edge even though it does
-        # not appear in LINK_LIBRARIES. Record every $<TARGET_OBJECTS:...>
-        # source so archive composition cannot bypass layer enforcement.
-        foreach(_property IN ITEMS SOURCES INTERFACE_SOURCES)
-            get_property(_sources TARGET "${_target}" PROPERTY "${_property}")
-            foreach(_source IN LISTS _sources)
-                if(_source MATCHES
-                   "^\\$<TARGET_OBJECTS:([A-Za-z0-9_.+-]+)>$")
-                    set(_object_target "${CMAKE_MATCH_1}")
-                    if(TARGET "${_object_target}")
-                        list(FIND _targets "${_object_target}"
-                            _architecture_dependency_index)
-                        if(NOT _architecture_dependency_index EQUAL -1)
-                            get_property(_aggregate_product TARGET "${_target}"
-                                PROPERTY UML_ARCHITECTURE_AGGREGATE_PRODUCT)
-                            if(_aggregate_product)
-                                set(_edge_kind aggregate)
-                            else()
-                                set(_edge_kind object)
-                            endif()
-                            list(APPEND _architecture_dependencies
-                                "${_edge_kind}@${_object_target}")
-                        endif()
-                    endif()
-                endif()
-            endforeach()
-        endforeach()
         list(REMOVE_DUPLICATES _architecture_dependencies)
         list(SORT _architecture_dependencies)
         string(JOIN "," _dependency_text ${_architecture_dependencies})

@@ -24,6 +24,17 @@ CPU/TLB layout contract. C++ static assertions in
 the assembly consumers verify it. The JIT does not include gadget
 implementation files.
 
+Opt-in build-local JIT reporting follows the same dependency direction: the
+app calls a private emulator facade, the emulator calls a runtime-owned bridge,
+and only that runtime bridge includes the CPU reporting contract. The facade is
+not part of the installed emulator ABI. The CPU-owned executor-pool profiler is
+compiled only into that profiling graph. It aggregates fixed wrapper-local
+records through a quiescent private registry; the borrow path never updates a
+process-global profiling counter. Successful borrows update bounded wrapper-
+local session/sequence slot masks. Quiescent aggregation keys them by session
+and sequence, so address reuse across runs remains distinct, and emits only
+fanout indicators rather than raw keys.
+
 ## Test ownership and taxonomy
 
 The enforced test taxonomy is suite-level. Every first-party CTest registration
@@ -50,10 +61,10 @@ debugger or jailbreak deployments, while sandboxed consumers can select the
 interpreter or precompiled gadget engine without entering that path.
 
 The direct native-VM branch and ELF loader are macOS-only and are compiled out
-for iOS; the shared bridge object retains only software-MMU entry points there.
-Apple packaging rejects an iOS device or simulator archive when an
-executable-memory primitive is referenced by any object other than the JIT
-arena.
+for iOS; the shared bridge retains only software-MMU entry points there.
+Executable-memory ownership is enforced in source architecture and functional
+JIT publication tests, not by comparing or attributing individual archive
+members.
 
 `architecture-audit` combines four checks. Documentation paths in this file
 are validated by the same target, so a moved contract cannot leave a stale

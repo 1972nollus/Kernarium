@@ -19,10 +19,7 @@ endif()
 
 # These are explicit guest campaigns, deliberately outside ordinary CTest.
 add_custom_target(guest-smp-parallel
-    COMMAND ${PROJECT_SOURCE_DIR}/tools/rootfs/with-verified-rootfs.sh
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --
-        ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
         --emulator $<TARGET_FILE:uml-darwin>
@@ -38,10 +35,7 @@ function(uml_add_ltp_engine_campaign ENGINE)
     set(_results
         "${PROJECT_BINARY_DIR}/results/refactor/ltp/${ENGINE}")
     add_custom_target(guest-ltp-${ENGINE}
-        COMMAND ${PROJECT_SOURCE_DIR}/tools/rootfs/with-verified-rootfs.sh
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-            --
-            ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+        COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
             ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/ltp/run_guest_ltp.py
             --emulator $<TARGET_FILE:uml-darwin>
@@ -84,9 +78,9 @@ add_custom_target(uml-docker-hello-world
     DEPENDS "${UML_DOCKER_HELLO_WORLD}")
 add_dependencies(integration-test-binaries uml-docker-hello-world)
 
-# Every guest campaign uses the EROFS image wrapper, which validates the raw
-# filesystem contract and digest before launch and after cleanup.  The fast
-# suite contains short real boots; full adds topology, MMU, and rendering work.
+# Guest campaigns share the EROFS image directly. The filesystem supplies the
+# read-only contract; writable guest state lives in disposable overlays. The
+# fast suite contains short real boots; full adds topology, MMU, and rendering.
 uml_add_guest_integration_test(
     NAME guest-overlay-systemd-smoke
     COMMAND ${Python3_EXECUTABLE}

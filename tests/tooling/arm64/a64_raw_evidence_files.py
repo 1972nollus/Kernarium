@@ -9,14 +9,13 @@ __import__("sys").dont_write_bytecode = True
 import gzip
 import hashlib
 import csv
-import fcntl
 import os
 import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Sequence, TextIO
+from typing import Callable, Iterator, Sequence, TextIO
 
 
 PLAIN_SUFFIX = ".tsv.raw"
@@ -200,215 +199,11 @@ def validate_publication_topology(
     return files, directories, reads
 
 
-def evidence_quiescence_lock_path(directory: Path) -> Path:
-    directory = lexical_absolute_path(directory)
-    return directory.parent / f"{directory.name}.lock"
-
-
-def _open_lock(
-    path: Path,
-    operation: int,
-    blocking: bool,
-    locked_identities: set[tuple[int, int]] | None = None,
-) -> int:
-    if path.is_symlink():
-        raise ValueError(f"publication lock is a symlink: {path}")
-    flags = os.O_RDWR | os.O_CREAT
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags, 0o600)
-    status = os.fstat(descriptor)
-    if not stat.S_ISREG(status.st_mode):
-        os.close(descriptor)
-        raise ValueError(f"publication lock is not regular: {path}")
-    identity = (status.st_dev, status.st_ino)
-    if locked_identities is not None and identity in locked_identities:
-        os.close(descriptor)
-        raise ValueError(f"raw evidence lock identities alias: {path}")
-    if not blocking:
-        operation |= fcntl.LOCK_NB
-    try:
-        fcntl.flock(descriptor, operation)
-    except BlockingIOError as error:
-        os.close(descriptor)
-        raise ValueError(f"raw evidence producer/compressor is active: {path}") from error
-    if locked_identities is not None:
-        locked_identities.add(identity)
-    return descriptor
-
-
-@contextmanager
-def evidence_quiescence_locks(
-    directories: tuple[Path, ...], *, exclusive: bool, blocking: bool
-):
-    canonical_directories = [
-        canonical_existing_directory(directory, "raw evidence path")
-        for directory in directories
-    ]
-    directory_identities = [
-        (directory.stat().st_dev, directory.stat().st_ino)
-        for directory in canonical_directories
-    ]
-    if len(directory_identities) != len(set(directory_identities)):
-        raise ValueError("raw evidence directory identities alias")
-    paths = sorted(
-        {
-            evidence_quiescence_lock_path(directory)
-            for directory in canonical_directories
-        },
-        key=lambda path: str(path),
-    )
-    descriptors: list[int] = []
-    locked_identities: set[tuple[int, int]] = set()
-    try:
-        for path in paths:
-            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-            descriptors.append(
-                _open_lock(path, operation, blocking, locked_identities)
-            )
-        yield tuple(canonical_directories)
-    finally:
-        for descriptor in reversed(descriptors):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
-
-
-def exclusive_evidence_locks(directories: tuple[Path, ...]):
-    return evidence_quiescence_locks(
-        directories, exclusive=True, blocking=True
-    )
-
-
-def producer_evidence_lock(directory: Path):
-    return evidence_quiescence_locks(
-        (directory,), exclusive=False, blocking=False
-    )
-
-
-@contextmanager
-def publication_target_locks(
-    targets: Iterable[Path], *, directory_targets: Iterable[Path] = (),
-    blocking: bool = True
-):
-    """Serialize target files by locking their canonical parent directories."""
-    safe_file_targets, safe_directory_targets, _reads = (
-        validate_publication_topology(
-            tuple(targets), directory_targets=tuple(directory_targets)
-        )
-    )
-    safe_targets = (*safe_file_targets, *safe_directory_targets)
-
-    parents_by_identity: dict[tuple[int, int], Path] = {}
-    for target in safe_targets:
-        parent = canonical_existing_directory(
-            target.parent, "publication target parent"
-        )
-        status = parent.stat()
-        identity = (status.st_dev, status.st_ino)
-        previous = parents_by_identity.get(identity)
-        if previous is None or str(parent) < str(previous):
-            parents_by_identity[identity] = parent
-    parent_paths = sorted(parents_by_identity.values(), key=lambda path: str(path))
-    descriptors: list[int] = []
-    try:
-        for path in parent_paths:
-            flags = os.O_RDONLY
-            if hasattr(os, "O_DIRECTORY"):
-                flags |= os.O_DIRECTORY
-            if hasattr(os, "O_CLOEXEC"):
-                flags |= os.O_CLOEXEC
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            descriptor = os.open(path, flags)
-            operation = fcntl.LOCK_EX
-            if not blocking:
-                operation |= fcntl.LOCK_NB
-            try:
-                fcntl.flock(descriptor, operation)
-            except BlockingIOError as error:
-                os.close(descriptor)
-                raise ValueError(
-                    f"publication parent is active: {path}"
-                ) from error
-            descriptors.append(descriptor)
-        for identity, path in parents_by_identity.items():
-            status = path.stat()
-            if (status.st_dev, status.st_ino) != identity:
-                raise ValueError(f"publication parent identity changed: {path}")
-        yield safe_targets
-        for identity, path in parents_by_identity.items():
-            status = path.stat()
-            if (status.st_dev, status.st_ino) != identity:
-                raise ValueError(f"publication parent identity changed: {path}")
-    finally:
-        for descriptor in reversed(descriptors):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            os.close(descriptor)
-
-
 @dataclass(frozen=True)
 class RawEvidenceFile:
     producer: str
     path: Path
     compressed: bool
-
-
-@dataclass(frozen=True)
-class FrozenReadIdentity:
-    lexical_path: Path
-    resolved_path: Path
-    device: int
-    inode: int
-    size: int
-    mtime_ns: int
-    ctime_ns: int
-    sha256: str
-
-
-def frozen_read_identity(path: Path) -> FrozenReadIdentity:
-    lexical = require_no_symlink_components(path, "publication read input")
-    if not lexical.is_file():
-        raise ValueError(f"publication read input is not a regular file: {lexical}")
-    before = lexical.stat()
-    digest = hashlib.sha256()
-    size = 0
-    with lexical.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            size += len(chunk)
-            digest.update(chunk)
-    after = lexical.stat()
-    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-    if any(getattr(before, field) != getattr(after, field) for field in fields):
-        raise ValueError(f"publication read input changed while hashing: {lexical}")
-    return FrozenReadIdentity(
-        lexical,
-        lexical.resolve(strict=True),
-        before.st_dev,
-        before.st_ino,
-        size,
-        before.st_mtime_ns,
-        before.st_ctime_ns,
-        digest.hexdigest(),
-    )
-
-
-def freeze_read_inputs(paths: Sequence[Path]) -> tuple[FrozenReadIdentity, ...]:
-    identities = tuple(frozen_read_identity(path) for path in paths)
-    for index, left in enumerate(identities):
-        for right in identities[index + 1 :]:
-            if paths_alias(left.lexical_path, right.lexical_path):
-                raise ValueError("publication read inputs alias each other")
-    return identities
-
-
-def recheck_read_inputs(identities: Sequence[FrozenReadIdentity]) -> None:
-    for expected in identities:
-        if frozen_read_identity(expected.lexical_path) != expected:
-            raise ValueError(
-                f"publication read input identity changed: {expected.lexical_path}"
-            )
 
 
 def atomic_publish_bytes(
@@ -418,13 +213,7 @@ def atomic_publish_bytes(
     before_replace: Callable[[], None] | None = None,
     validate_published: Callable[[], None] | None = None,
 ) -> None:
-    """Durably stage, verify, and replace a lock-protected file set.
-
-    Callers must acquire ``publication_target_locks`` first and complete all
-    semantic validation before calling this function. A bound multi-file set
-    remains fail-closed across a crash between replacements: consumers must
-    reject a mismatched identity member.
-    """
+    """Write validated bytes through temporary files and atomic replacement."""
     staged: list[tuple[Path, Path]] = []
     try:
         for original, payload in outputs:
@@ -435,28 +224,15 @@ def atomic_publish_bytes(
             )
             temporary = Path(temporary_name)
             staged.append((path, temporary))
-            mode = (
-                stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
-            )
-            os.fchmod(descriptor, mode)
             with os.fdopen(descriptor, "wb") as destination:
                 destination.write(payload)
                 destination.flush()
-                os.fsync(destination.fileno())
         if validate_staged is not None:
             validate_staged(staged)
         if before_replace is not None:
             before_replace()
         for path, temporary in staged:
             os.replace(temporary, path)
-        for parent in sorted(
-            {path.parent for path, _temporary in staged}, key=lambda item: str(item)
-        ):
-            descriptor = os.open(parent, os.O_RDONLY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
         if validate_published is not None:
             validate_published()
     finally:

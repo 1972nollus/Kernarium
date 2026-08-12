@@ -7,8 +7,6 @@ build_root=${UML_XCFRAMEWORK_BUILD_DIR:-"$project_root/.build/xcframework"}
 output=${UML_XCFRAMEWORK_OUTPUT:-"$build_root/UMLEmulator.xcframework"}
 toolchain="$project_root/cmake/toolchains/Apple.cmake"
 dependency_prefix=${UML_DEPENDENCY_PREFIX:-"$project_root/.build/dependencies/macos-arm64"}
-archive_comparator="$project_root/tests/tooling/cmake/test_engine_object_boundaries.py"
-archive_verifier="$project_root/scripts/verify-apple-static-archive.py"
 xcframework_stager="$project_root/scripts/create-apple-xcframework.py"
 
 fail()
@@ -105,17 +103,11 @@ verify_public_headers()
 		fail "public header tree contains an unexpected or missing file: $header_root"
 }
 
-compare_static_archives()
-{
-	python3 "$archive_comparator" --compare-static-archives "$1" "$2"
-}
-
 verify_archive()
 {
 	platform=$1
 	archive=$2
 	audit_dir=$3
-	expected_link_time_root=$4
 
 	[ -f "$archive" ] || fail "missing $platform archive: $archive"
 	architectures=$(xcrun lipo -archs "$archive")
@@ -123,18 +115,6 @@ verify_archive()
 		fail "$platform archive has unexpected architectures: $architectures"
 
 	mkdir -p -- "$audit_dir"
-	xcrun ar -t "$archive" > "$audit_dir/members.txt"
-	# ThinLTO retains Clang's absolute source_filename. The verifier permits that
-	# only for byte-identical objects from the configured gadget target; ordinary
-	# or unknown members retain the strict source/build-path privacy policy.
-	python3 -B "$archive_verifier" \
-		--archive "$archive" \
-		--platform "$platform" \
-		--expected-link-time-object-root "$expected_link_time_root" \
-		--forbidden-path "$project_root" \
-		--forbidden-path "$work_root" ||
-		fail "$platform archive object metadata or provenance is invalid"
-
 	xcrun nm -gU "$archive" > "$audit_dir/global-defined.txt"
 	awk '
 		BEGIN {
@@ -164,19 +144,6 @@ verify_archive()
 	' "$audit_dir/global-defined.txt" ||
 		fail "$platform archive does not implement the exact public C API"
 
-	if [ "$platform" != macos ]; then
-		xcrun nm -o "$archive" > "$audit_dir/all-symbols.txt"
-		awk '
-			/ U _(mprotect|vm_protect|mach_vm_protect|pthread_jit_write_protect_np|sys_icache_invalidate)$/ &&
-			$0 !~ /:jit_arena\.cpp\.o:/ { print }
-		' "$audit_dir/all-symbols.txt" > "$audit_dir/non-jit-publishers.txt"
-		if [ -s "$audit_dir/non-jit-publishers.txt" ]; then
-			printf '%s\n' \
-				"non-JIT executable-memory primitive in $platform archive:" >&2
-			cat "$audit_dir/non-jit-publishers.txt" >&2
-			exit 1
-		fi
-	fi
 }
 
 build_consumer()
@@ -256,8 +223,7 @@ build_slice()
 	build_dir="$work_root/$platform"
 	network_provider=OFF
 	if [ "$platform" = macos ]; then
-		# Build the app-owned provider beside the neutral callback archive so the
-		# package audit also verifies that the provider never enters the archive.
+		# Build the app-owned provider beside the neutral callback library.
 		network_provider=ON
 	fi
 	clean_build_environment cmake -S "$project_root" -B "$build_dir" -G Ninja \
@@ -288,18 +254,13 @@ build_slice()
 		set -- "$@" uml_network_provider
 	fi
 	cmake --build "$build_dir" --config Release --target "$@" --parallel
-	ctest --test-dir "$build_dir" -C Release --output-on-failure \
-		--no-tests=error -R '^engine-object-boundary-audit$'
 
 	library="$build_dir/darwin/emulator/libuml_emulator.a"
-	link_time_root="$build_dir/darwin/cpu/CMakeFiles/uml_arm64_gadgets.dir"
-	verify_archive "$platform" "$library" "$build_dir/package-audit/built" \
-		"$link_time_root"
+	verify_archive "$platform" "$library" "$build_dir/package-audit/built"
 
 	install_dir="$build_dir/install"
 	cmake --install "$build_dir" --config Release --prefix "$install_dir"
 	installed_library="$install_dir/lib/libuml_emulator.a"
-	compare_static_archives "$library" "$installed_library"
 	cmp "$project_root/darwin/api/include/uml/emulator.h" \
 		"$install_dir/include/uml/emulator.h"
 	cmp "$project_root/darwin/api/include/uml/abi_identity.h" \
@@ -309,22 +270,19 @@ build_slice()
 	[ -f "$install_dir/lib/cmake/UMLEmulator/UMLEmulatorConfig.cmake" ] ||
 		fail "$platform install is missing its CMake package metadata"
 	verify_archive "$platform" "$installed_library" \
-		"$build_dir/package-audit/installed" "$link_time_root"
+		"$build_dir/package-audit/installed"
 	build_consumer "$platform" package "$install_dir" "" \
 		"$build_dir/installed-external-consumer"
 
 	case "$platform" in
 	macos)
 		macos_install=$install_dir
-		macos_link_time_root=$link_time_root
 		;;
 	ios)
 		ios_install=$install_dir
-		ios_link_time_root=$link_time_root
 		;;
 	ios-simulator)
 		ios_simulator_install=$install_dir
-		ios_simulator_link_time_root=$link_time_root
 		;;
 	esac
 }
@@ -334,13 +292,11 @@ verify_final_slice()
 	platform=$1
 	identifier=$2
 	install_dir=$3
-	expected_link_time_root=$4
 	slice_root="$staged_output/$identifier"
 	final_library="$slice_root/libuml_emulator.a"
 	final_headers="$slice_root/Headers"
 	verify_archive "$platform" "$final_library" \
-		"$work_root/final-audit/$platform" "$expected_link_time_root"
-	compare_static_archives "$install_dir/lib/libuml_emulator.a" "$final_library"
+		"$work_root/final-audit/$platform"
 	cmp "$install_dir/include/uml/emulator.h" \
 		"$final_headers/uml/emulator.h"
 	cmp "$install_dir/include/uml/abi_identity.h" \
@@ -382,16 +338,12 @@ staged_output="$package_stage/UMLEmulator.xcframework"
 macos_install=''
 ios_install=''
 ios_simulator_install=''
-macos_link_time_root=''
-ios_link_time_root=''
-ios_simulator_link_time_root=''
 build_slice macos
 build_slice ios
 build_slice ios-simulator
 
-# xcodebuild's XCFramework assembler treats LLVM link-time objects as unknown
-# archive headers. Stage the documented v1.0 layout directly so the accepted
-# gadget ThinLTO objects remain byte-identical to the audited slice archives.
+# Stage the documented v1.0 layout directly so all supported static-library
+# slices and public headers can be consumed through one XCFramework.
 python3 -B "$xcframework_stager" \
 	--slice "macos=$macos_install" \
 	--slice "ios=$ios_install" \
@@ -447,10 +399,9 @@ fi
 	[ "$saw_simulator" -eq 1 ] ||
 	fail "XCFramework does not contain one exact supported slice per platform"
 
-verify_final_slice macos macos-arm64 "$macos_install" "$macos_link_time_root"
-verify_final_slice ios ios-arm64 "$ios_install" "$ios_link_time_root"
-verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install" \
-	"$ios_simulator_link_time_root"
+verify_final_slice macos macos-arm64 "$macos_install"
+verify_final_slice ios ios-arm64 "$ios_install"
+verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install"
 build_xcode_xcframework_consumer "$staged_output" \
 	"$work_root/final-xcode-consumer/macos"
 

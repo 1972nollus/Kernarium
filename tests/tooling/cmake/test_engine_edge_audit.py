@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Prove every concrete engine boundary with real configured edges."""
+"""Exercise concrete engine link and include boundaries."""
 
 from __future__ import annotations
 
@@ -35,9 +35,6 @@ EDGE_KINDS = (
     "link-transitive",
     "interface-link",
     "interface-transitive",
-    "object",
-    "aggregate",
-    "object-transitive",
     "include-relative",
     "include-target-owned-source",
     "include-basename",
@@ -49,7 +46,7 @@ INCLUDE_EDGE_KINDS = (
     "include-basename",
     "include-transitive",
 )
-CLASSIFIER_EDGE_KINDS = ("link", "object", "aggregate", "include")
+CLASSIFIER_EDGE_KINDS = ("link", "include")
 
 
 def run(
@@ -170,11 +167,7 @@ def write_fixture(
     source_domain.mkdir(parents=True)
     destination_domain.mkdir(parents=True)
 
-    destination_type = (
-        "OBJECT"
-        if edge_kind in ("object", "aggregate", "object-transitive")
-        else "STATIC"
-    )
+    destination_type = "STATIC"
     edge_commands: list[str] = []
     include_line = ""
     if edge_kind == "link":
@@ -191,28 +184,6 @@ def write_fixture(
                 f"{destination_target})",
                 f"target_link_libraries({source_target} PRIVATE "
                 "foreign_link_carrier)",
-            ]
-        )
-    elif edge_kind in ("object", "aggregate"):
-        edge_commands.append(
-            f"target_sources({source_target} PRIVATE "
-            f"$<TARGET_OBJECTS:{destination_target}>)"
-        )
-        if edge_kind == "aggregate":
-            edge_commands.append(
-                f"set_property(TARGET {source_target} PROPERTY "
-                "UML_ARCHITECTURE_AGGREGATE_PRODUCT TRUE)"
-            )
-    elif edge_kind == "object-transitive":
-        edge_commands.extend(
-            [
-                "add_library(foreign_object_carrier INTERFACE)",
-                "uml_declare_architecture_target(foreign_object_carrier "
-                "cpu shared)",
-                "target_sources(foreign_object_carrier INTERFACE "
-                f"$<TARGET_OBJECTS:{destination_target}>)",
-                f"target_link_libraries({source_target} PRIVATE "
-                "foreign_object_carrier)",
             ]
         )
     elif edge_kind == "include-relative":

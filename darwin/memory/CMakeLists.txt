@@ -22,6 +22,7 @@ target_compile_features(uml_static_mmu PUBLIC cxx_std_20)
 target_compile_options(uml_static_mmu PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_mmu PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=0
+    UML_MEMORY_PROFILE_TESTING=0
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_static_mmu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -102,6 +103,7 @@ if(UML_BUILD_UNIT_TESTS)
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_static_mmu_test_variant PUBLIC
         UML_MEMORY_ALLOCATION_TESTING=1
+        UML_MEMORY_PROFILE_TESTING=0
         UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
     set_target_properties(uml_static_mmu_test_variant PROPERTIES
         POSITION_INDEPENDENT_CODE ON)

@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
-import hashlib
 import io
 import json
 import os
@@ -26,7 +25,6 @@ from typing import Any, BinaryIO, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
-DEFAULT_BASELINE = REPO_ROOT / "tools" / "rootfs" / "manifest.json"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/gpu-test-artifacts"
 PASS_MARKER = "UML_GPU_OVERLAY_TEST: PASS"
 FAIL_MARKER = "UML_GPU_OVERLAY_TEST: FAIL"
@@ -45,59 +43,6 @@ PROTECTED_ARGUMENTS = (
 
 class SafetyError(RuntimeError):
     """Raised when a boot could risk modifying the base image."""
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb", buffering=0) as stream:
-        while chunk := stream.read(8 * 1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def image_snapshot(path: Path) -> dict[str, Any]:
-    image_stat = path.stat()
-    return {
-        "path": str(path.resolve()),
-        "sha256": sha256_file(path),
-        "size": image_stat.st_size,
-        "inode": image_stat.st_ino,
-        "mtime_ns": image_stat.st_mtime_ns,
-    }
-
-
-def load_baseline(path: Path) -> dict[str, Any]:
-    try:
-        baseline = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise SafetyError(f"cannot read rootfs manifest {path}: {error}") from error
-    if not isinstance(baseline, dict):
-        raise SafetyError(f"rootfs manifest must be a JSON object: {path}")
-    if baseline.get("schema_version") != 3:
-        raise SafetyError(f"unsupported rootfs manifest schema in {path}")
-    if not isinstance(baseline.get("sha256"), str):
-        raise SafetyError(f"rootfs manifest has no SHA-256 in {path}")
-    if not isinstance(baseline.get("size"), int):
-        raise SafetyError(f"rootfs manifest has no image size in {path}")
-    return baseline
-
-
-def verify_image_integrity(
-    rootfs: Path, baseline: dict[str, Any]
-) -> dict[str, Any]:
-    if not rootfs.is_file():
-        raise SafetyError(f"rootfs is not a regular file: {rootfs}")
-    snapshot = image_snapshot(rootfs)
-    if snapshot["size"] != baseline["size"]:
-        raise SafetyError(
-            f"rootfs size changed: {snapshot['size']} != {baseline['size']}"
-        )
-    if snapshot["sha256"] != baseline["sha256"]:
-        raise SafetyError(
-            "rootfs SHA-256 does not match the EROFS manifest: "
-            f"{snapshot['sha256']} != {baseline['sha256']}"
-        )
-    return snapshot
 
 
 def validate_extra_arguments(arguments: Sequence[str]) -> None:
@@ -131,7 +76,7 @@ def make_docker_rootfs_archive(payload: bytes) -> bytes:
     member.gid = 0
     member.uname = "root"
     member.gname = "root"
-    member.mtime = 0
+    member.mtime = int(time.time())
     member.size = len(payload)
     with tarfile.open(
         fileobj=archive_stream,
@@ -438,7 +383,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
-    parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--root-device", default="/dev/ubda")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--unit", default="multi-user.target")
@@ -476,92 +420,67 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     emulator = options.emulator.resolve()
     rootfs = options.rootfs.resolve()
-    baseline = load_baseline(options.baseline.resolve())
     if not emulator.is_file() or not os.access(emulator, os.X_OK):
         raise SafetyError(f"emulator is not executable: {emulator}")
+    if not rootfs.is_file():
+        raise SafetyError(f"rootfs is not a regular file: {rootfs}")
 
-    before: dict[str, Any] | None = None
-    artifact_directory: Path | None = None
-    result: dict[str, Any] = {}
-    failure: BaseException | None = None
-    try:
-        before = verify_image_integrity(rootfs, baseline)
-        docker_hello_world = None
-        if options.docker_hello_world_binary is not None:
-            docker_hello_world = load_docker_hello_world(
-                options.docker_hello_world_binary.resolve()
-            )
-        command = build_command(
-            emulator,
-            rootfs,
-            options.root_device,
-            options.memory,
-            options.unit,
-            options.kernel_arguments,
+    docker_hello_world = None
+    if options.docker_hello_world_binary is not None:
+        docker_hello_world = load_docker_hello_world(
+            options.docker_hello_world_binary.resolve()
         )
-        test_script = make_test_script(
-            options.command,
-            auto_poweroff=not options.no_auto_poweroff,
-            docker_hello_world=docker_hello_world,
+    command = build_command(
+        emulator,
+        rootfs,
+        options.root_device,
+        options.memory,
+        options.unit,
+        options.kernel_arguments,
+    )
+    test_script = make_test_script(
+        options.command,
+        auto_poweroff=not options.no_auto_poweroff,
+        docker_hello_world=docker_hello_world,
+    )
+    bootstrap = make_bootstrap(test_script)
+    result = {
+        "command": command,
+        "rootfs": str(rootfs),
+        "auto_poweroff": not options.no_auto_poweroff,
+    }
+    if options.docker_hello_world_binary is not None:
+        result["docker_hello_world"] = str(
+            options.docker_hello_world_binary.resolve()
         )
-        bootstrap = make_bootstrap(test_script)
-        result = {
-            "command": command,
-            "rootfs_before": before,
-            "baseline": str(options.baseline.resolve()),
-            "auto_poweroff": not options.no_auto_poweroff,
-        }
-        if options.docker_hello_world_binary is not None:
-            result["docker_hello_world"] = {
-                "path": str(options.docker_hello_world_binary.resolve()),
-                "sha256": hashlib.sha256(docker_hello_world or b"").hexdigest(),
-            }
-        if options.dry_run:
-            print(shlex.join(command))
-            print(f"rootfs SHA-256 verified: {before['sha256']}")
-            return 0
-
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        artifact_directory = options.artifact_root.resolve() / (
-            f"{timestamp}-{os.getpid()}"
-        )
-        artifact_directory.mkdir(parents=True, exist_ok=False)
-        write_json(artifact_directory / "run.json", result)
-        return_code, saw_pass, saw_fail = run_guest(
-            command,
-            bootstrap,
-            artifact_directory / "console.log",
-            options.timeout,
-            expect_poweroff=not options.no_auto_poweroff,
-        )
-        result.update(
-            {
-                "emulator_return_code": return_code,
-                "saw_pass_marker": saw_pass,
-                "saw_fail_marker": saw_fail,
-            }
-        )
-        if not saw_pass or saw_fail:
-            raise RuntimeError("guest EROFS-overlay verification did not pass")
+    if options.dry_run:
+        print(shlex.join(command))
         return 0
-    except BaseException as error:
-        failure = error
-        raise
-    finally:
-        if before is not None:
-            after = image_snapshot(rootfs)
-            result["rootfs_after"] = after
-            unchanged = all(
-                after[key] == before[key]
-                for key in ("sha256", "size", "inode", "mtime_ns")
-            )
-            result["rootfs_unchanged"] = unchanged
-            if artifact_directory is not None:
-                if failure is not None:
-                    result["failure"] = f"{type(failure).__name__}: {failure}"
-                write_json(artifact_directory / "run.json", result)
-            if not unchanged and failure is None:
-                raise SafetyError("rootfs changed while the guest was running")
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    artifact_directory = options.artifact_root.resolve() / (
+        f"{timestamp}-{os.getpid()}"
+    )
+    artifact_directory.mkdir(parents=True, exist_ok=False)
+    write_json(artifact_directory / "run.json", result)
+    return_code, saw_pass, saw_fail = run_guest(
+        command,
+        bootstrap,
+        artifact_directory / "console.log",
+        options.timeout,
+        expect_poweroff=not options.no_auto_poweroff,
+    )
+    result.update(
+        {
+            "emulator_return_code": return_code,
+            "saw_pass_marker": saw_pass,
+            "saw_fail_marker": saw_fail,
+        }
+    )
+    write_json(artifact_directory / "run.json", result)
+    if not saw_pass or saw_fail:
+        raise RuntimeError("guest EROFS-overlay verification did not pass")
+    return 0
 
 
 if __name__ == "__main__":

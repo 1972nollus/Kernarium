@@ -379,14 +379,16 @@ void production_specialization()
 
 int main()
 {
-	test::EngineHarness harness;
-	std::size_t cases = 0;
-	return_forms(harness, cases);
-	exception_return_is_illegal_at_el0(harness, cases);
-	zero_target_return(harness, cases);
-	production_specialization();
-	pauth::require_counts(harness, cases);
-	harness.print_summary("arm64-base-pauth-return");
+	{
+		test::EngineHarness harness;
+		std::size_t cases = 0;
+		return_forms(harness, cases);
+		exception_return_is_illegal_at_el0(harness, cases);
+		zero_target_return(harness, cases);
+		production_specialization();
+		pauth::require_counts(harness, cases);
+		harness.print_summary("arm64-base-pauth-return");
+	}
 
 	test::EngineHarness guarded_harness{
 		test::EngineHarnessOptions{

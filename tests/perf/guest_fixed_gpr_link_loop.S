@@ -3,8 +3,8 @@
  * Freestanding arm64/Linux fixed-GPR linked-block throughput control.
  *
  * The backward edge repeatedly links a block whose arithmetic keeps guest
- * x0/x1 live. This isolates the native JIT's fixed cross-block register bank
- * from guest-memory traffic.
+ * x0/x1 live. It is the matched non-bank control for fixed x8/x9 entry, exit,
+ * and link overhead, without guest-memory traffic.
  */
 
 	.equ NR_WRITE,		64
@@ -32,6 +32,25 @@ _start:
 	movz	x20, #(ITERATIONS & 0xffff)
 	movk	x20, #((ITERATIONS >> 16) & 0xffff), lsl #16
 	cmp	x0, x20
+	b.ne	.Lfailure
+	and	x21, x20, #3
+	cbnz	x21, .Lxor_nonzero
+	mov	x21, x20
+	b	.Lxor_ready
+.Lxor_nonzero:
+	cmp	x21, #1
+	b.eq	.Lxor_one
+	cmp	x21, #2
+	b.eq	.Lxor_plus_one
+	mov	x21, xzr
+	b	.Lxor_ready
+.Lxor_one:
+	mov	x21, #1
+	b	.Lxor_ready
+.Lxor_plus_one:
+	add	x21, x20, #1
+.Lxor_ready:
+	cmp	x1, x21
 	b.ne	.Lfailure
 
 	adrp	x1, success_message

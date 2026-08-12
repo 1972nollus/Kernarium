@@ -966,9 +966,12 @@ int main()
 		test_interpreter_scopes_unsupported_instruction_to_guest();
 		test_all_engines_scope_unsupported_instruction_to_guest();
 		test_all_engines_preserve_fault_direction_and_retry();
-		test_c_bridge_preserves_fault_direction_and_retry();
 		test_production_translated_exception_contract();
 		test_gadget_post_execution_failure_preserves_prefix_and_reuse();
+		/* C-bridge engines are retained by the compatibility context. Exercise
+		 * standalone JIT admission above before that process-lifetime cache
+		 * intentionally occupies the configured executor slot. */
+		test_c_bridge_preserves_fault_direction_and_retry();
 		test_interpreter_contains_memory_exceptions();
 		test_translated_internal_interrupt_obeys_fairness_budget();
 		test_translated_internal_interrupt_delivers_pending_interrupt();

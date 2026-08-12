@@ -308,7 +308,14 @@ move_wide_keep 1, 48, x3
  * deliberately contain no opcode tests or conditional branches. */
 .macro add_sub_immediate_fast bits64, subtract, flags, source_sp, destination_special, suffix
 gadget add_sub_immediate_\suffix
+#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
+	/* This family is non-faulting and leaves x14 free. Builder always emits a
+	 * terminal after a translated fallthrough, so the successor word exists
+	 * even when this is the final guest instruction in the block. */
+	ldp x8, x14, [_stream], #16
+#else
 	ldr x8, [_stream], #8
+#endif
 	.if \source_sp
 	ldr x15, [_cpu, #UML_GADGET_CPU_SP]
 	.else
@@ -356,7 +363,15 @@ gadget add_sub_immediate_\suffix
 	and w9, w8, #0x1f
 	str x16, [_cpu, x9, lsl #3]
 	.endif
+#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
+	br x14
+	/* The removed successor LDR is restored as unreachable padding. Every
+	 * affected entry therefore retains its baseline size and all later entry
+	 * addresses and 64-byte phases remain unchanged. */
+	.space 4
+#else
 	next_gadget
+#endif
 .endm
 
 .macro add_sub_immediate_modes bits64, subtract, flags, prefix

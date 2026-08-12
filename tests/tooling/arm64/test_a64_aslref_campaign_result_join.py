@@ -7,7 +7,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import copy
-import os
 import sqlite3
 import tempfile
 import tracemalloc
@@ -20,14 +19,12 @@ from join_a64_aslref_campaign_results import (
     PROMOTION_CONSERVATIVE_BYTES_PER_INPUT,
     build_promotions,
     install_official_results,
-    publish_or_resume_promotion_outputs,
-    promotion_output_lock,
-    promotion_identity,
+    publish_or_verify_promotion_output,
     require_promotion_capacity,
     summarize_promotion_bindings,
     tsv_payload,
-    validate_output_targets,
-    verify_promotion_outputs,
+    validate_output_target,
+    verify_promotion_output,
 )
 
 
@@ -108,10 +105,7 @@ def result_row(ordinal: int) -> dict[str, str]:
     return {
         "input_id": "input-contract-" + input_digest,
         "shard_id": f"shard-{shard:08d}",
-        "probe_report_sha256": digest,
-        "probe_result_sha256": digest,
         "input_results_sha256": digest,
-        "artifact_manifest_sha256": digest,
     }
 
 
@@ -265,7 +259,7 @@ def disk_backed_set_negatives(root: Path) -> None:
     try:
         first = result_row(0)
         second = result_row(1)
-        second["probe_report_sha256"] = "f" * 64
+        second["input_results_sha256"] = "f" * 64
         expect_failure(
             lambda: install_official_results(
                 inconsistent, iter((first, second))
@@ -385,75 +379,12 @@ def main() -> int:
     )
 
     payload = tsv_payload(rows)
-    identity = promotion_identity(
-        rows,
-        payload,
-        campaigns,
-        {"fixture": "frozen-aggregate-identity"},
-        "a" * 64,
-    )
-    nondefault_identity = promotion_identity(
-        rows,
-        payload,
-        campaigns,
-        {"fixture": "frozen-aggregate-identity"},
-        "a" * 64,
-        {
-            "maximum_database_bytes": 8192,
-            "maximum_merge_scratch_bytes": 1024,
-        },
-    )
-    require(
-        nondefault_identity["resource_caps"]
-        == {
-            "maximum_database_bytes": 8192,
-            "maximum_merge_scratch_bytes": 1024,
-        },
-        "nondefault promotion caps were not bound into the identity",
-    )
-    require(
-        identity["capacity_model"]["configured_database_cap_satisfies_model"]
-        is True
-        and nondefault_identity["capacity_model"][
-            "configured_database_cap_satisfies_model"
-        ]
-        is False,
-        "promotion capacity model was not bound to the configured cap",
-    )
     with tempfile.TemporaryDirectory(prefix="a64-result-join-") as temporary:
         root = Path(temporary).resolve()
         disk_backed_scale_fixture(root)
         disk_backed_set_negatives(root)
         sqlite_hard_cap_fixture(root)
         output = root / "promotions.tsv"
-        identity_output = root / "promotions.identity.json"
-        output.write_bytes(payload)
-        identity_output.write_text(
-            campaign.canonical_json(identity) + "\n", encoding="utf-8"
-        )
-        validate_output_targets(output, identity_output)
-        with promotion_output_lock(output, identity_output):
-            require(
-                (root / ".a64-aslref-promotion.lock").is_file(),
-                "promotion output pair lock was not created",
-            )
-        lock_alias = root / "lock-alias.tsv"
-        os.link(root / ".a64-aslref-promotion.lock", lock_alias)
-        expect_failure(
-            lambda: promotion_output_lock(
-                lock_alias, root / "lock-alias.identity.json"
-            ).__enter__(),
-            "hardlink alias of the promotion pair lock was accepted",
-        )
-        other_parent = root / "other-parent"
-        other_parent.mkdir()
-        expect_failure(
-            lambda: promotion_output_lock(
-                output, other_parent / "identity.json"
-            ).__enter__(),
-            "promotion outputs in different directories shared no pair lock",
-        )
-
         capacity_root = root / "capacity"
         capacity_work = capacity_root / "work"
         capacity_work.mkdir(parents=True)
@@ -478,203 +409,50 @@ def main() -> int:
             )
         finally:
             campaign.shutil.disk_usage = original_disk_usage
+        validate_output_target(output)
         require(
-            verify_promotion_outputs(
-                output, identity_output, rows, identity
-            )
-            == identity,
-            "fresh promotion artifacts did not verify",
+            publish_or_verify_promotion_output(
+                output, payload, rows, verify_only=False
+            )["row_count"]
+            == len(rows),
+            "fresh promotion TSV did not publish and verify",
         )
         require(
-            verify_promotion_outputs(
-                output, identity_output, rows, identity
-            )
-            == identity,
-            "promotion resume verification changed its result",
+            publish_or_verify_promotion_output(
+                output, payload, rows, verify_only=True
+            )["row_count"]
+            == len(rows),
+            "promotion verify-only result differs",
         )
 
         output.write_bytes(payload + b"\n")
         expect_failure(
-            lambda: verify_promotion_outputs(
-                output, identity_output, rows, identity
-            ),
+            lambda: verify_promotion_output(output, rows),
             "mutated promotion TSV was accepted",
         )
         output.write_bytes(payload)
-
-        changed_identity = dict(identity)
-        changed_identity["row_count"] = 1
-        identity_output.write_text(
-            campaign.canonical_json(changed_identity) + "\n", encoding="utf-8"
-        )
-        expect_failure(
-            lambda: verify_promotion_outputs(
-                output, identity_output, rows, identity
-            ),
-            "mutated promotion identity was accepted",
-        )
-        identity_output.write_text(
-            campaign.canonical_json(identity) + "\n", encoding="utf-8"
-        )
-
-        nonfinite = (campaign.canonical_json(identity) + "\n").replace(
-            '"row_count":2', '"row_count":NaN'
-        )
-        identity_output.write_text(nonfinite, encoding="utf-8")
-        expect_failure(
-            lambda: verify_promotion_outputs(
-                output, identity_output, rows, identity
-            ),
-            "non-standard NaN promotion identity was accepted",
-        )
-        identity_output.write_text(
-            campaign.canonical_json(identity) + "\n", encoding="utf-8"
-        )
-
-        expect_failure(
-            lambda: validate_output_targets(output, output),
-            "one path was accepted for both promotion outputs",
-        )
-        expect_failure(
-            lambda: validate_output_targets(
-                output, other_parent / "identity.json"
-            ),
-            "promotion output pair in different parents was accepted",
-        )
-        nested_output = root / "future-result"
-        nested_identity = nested_output / "identity.json"
-        expect_failure(
-            lambda: validate_output_targets(nested_output, nested_identity),
-            "ancestor/descendant promotion output pair was accepted",
-        )
-        require(
-            not nested_output.exists(),
-            "promotion topology preflight created an ancestor target",
-        )
-        hardlink_output = root / "hardlink-output.tsv"
-        hardlink_identity = root / "hardlink-identity.json"
-        hardlink_output.write_bytes(payload)
-        os.link(hardlink_output, hardlink_identity)
-        expect_failure(
-            lambda: validate_output_targets(
-                hardlink_output, hardlink_identity
-            ),
-            "hardlinked promotion output pair was accepted",
-        )
-        case_output = root / "Case-Promotion.tsv"
-        case_identity = root / "case-promotion.tsv"
-        case_output.write_bytes(payload)
-        if campaign.paths_alias(case_output, case_identity):
-            expect_failure(
-                lambda: validate_output_targets(case_output, case_identity),
-                "case-aliased promotion output pair was accepted",
-            )
         protected_root = root / "campaign-root"
         protected_root.mkdir()
         expect_failure(
-            lambda: validate_output_targets(
+            lambda: validate_output_target(
                 protected_root / "promotion.tsv",
-                root / "separate.identity.json",
                 forbidden_directories=[protected_root],
             ),
             "promotion output inside a campaign root was accepted",
         )
         expect_failure(
-            lambda: validate_output_targets(
+            lambda: validate_output_target(
                 output,
-                identity_output,
                 forbidden_files=[output],
             ),
             "promotion output aliasing a protected input was accepted",
         )
-        real_parent = root / "real-parent"
-        real_parent.mkdir()
-        linked_parent = root / "linked-parent"
-        os.symlink(real_parent.name, linked_parent)
+        missing = root / "missing.tsv"
         expect_failure(
-            lambda: validate_output_targets(
-                linked_parent / "promotion.tsv",
-                root / "separate.identity.json",
+            lambda: publish_or_verify_promotion_output(
+                missing, payload, rows, verify_only=True
             ),
-            "symlinked promotion-output ancestor was accepted",
-        )
-
-        output_only = root / "output-only.tsv"
-        output_only_identity = root / "output-only.identity.json"
-        output_only.write_bytes(payload)
-        require(
-            publish_or_resume_promotion_outputs(
-                output_only,
-                output_only_identity,
-                payload,
-                identity,
-                rows,
-                verify_only=False,
-            )
-            == identity,
-            "exact output-only crash state did not resume",
-        )
-
-        identity_only = root / "identity-only.tsv"
-        identity_only_identity = root / "identity-only.identity.json"
-        identity_only_identity.write_text(
-            campaign.canonical_json(identity) + "\n", encoding="utf-8"
-        )
-        publication_order: list[Path] = []
-        original_atomic_write = campaign.atomic_write
-
-        def record_atomic_write(path, content, policy):
-            publication_order.append(path)
-            return original_atomic_write(path, content, policy)
-
-        try:
-            campaign.atomic_write = record_atomic_write
-            require(
-                publish_or_resume_promotion_outputs(
-                    identity_only,
-                    identity_only_identity,
-                    payload,
-                    identity,
-                    rows,
-                    verify_only=False,
-                )
-                == identity,
-                "exact identity-only crash state did not resume",
-            )
-        finally:
-            campaign.atomic_write = original_atomic_write
-        require(
-            publication_order == [identity_only, identity_only_identity],
-            "promotion identity was not the last crash-resume replacement",
-        )
-
-        mismatched_partial = root / "mismatched-partial.tsv"
-        mismatched_identity = root / "mismatched-partial.identity.json"
-        mismatched_partial.write_bytes(payload + b"\n")
-        expect_failure(
-            lambda: publish_or_resume_promotion_outputs(
-                mismatched_partial,
-                mismatched_identity,
-                payload,
-                identity,
-                rows,
-                verify_only=False,
-            ),
-            "mismatched partial promotion output was resumed",
-        )
-        verify_only_partial = root / "verify-only-partial.tsv"
-        verify_only_identity = root / "verify-only-partial.identity.json"
-        verify_only_partial.write_bytes(payload)
-        expect_failure(
-            lambda: publish_or_resume_promotion_outputs(
-                verify_only_partial,
-                verify_only_identity,
-                payload,
-                identity,
-                rows,
-                verify_only=True,
-            ),
-            "verify-only mode repaired an incomplete promotion pair",
+            "verify-only mode created a missing promotion TSV",
         )
 
     print("A64 ASLRef campaign final result-join fixtures passed")

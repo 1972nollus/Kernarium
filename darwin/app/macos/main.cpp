@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "in_process_service.hpp"
-#include "link_profile_api.hpp"
 #include "native_display_application.hpp"
+#include "profile_reporter.hpp"
 #include "protocol.hpp"
 #include "uml/emulator.h"
 
@@ -495,8 +495,8 @@ int main(int argc, char *argv[], char *envp[])
 		run();
 	if (app_network)
 		app_network->shutdown();
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-	uml_emulator_report_jit_gpr_link_profile();
+#if UML_ENABLE_JIT_PROFILE
+	uml::emulator::report_jit_profiles();
 #endif
 	if (gpu_service)
 		gpu_service->stop();

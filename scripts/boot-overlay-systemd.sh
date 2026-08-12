@@ -8,7 +8,6 @@ repo_root="$(cd "${script_dir}/.." && pwd -P)"
 
 emulator="${UML_EMULATOR:-${repo_root}/.build/presets/macos-integration/bin/uml-darwin}"
 rootfs="${UML_ROOTFS:-${repo_root}/rootfs.erofs}"
-rootfs_wrapper="${repo_root}/tools/rootfs/with-verified-rootfs.sh"
 root_device="${UML_ROOT_DEVICE:-/dev/ubda}"
 memory="${UML_MEMORY:-8G}"
 systemd_unit="${UML_SYSTEMD_UNIT:-multi-user.target}"
@@ -220,7 +219,7 @@ python3_executable="${PYTHON3:-$(command -v python3 || true)}"
 }
 
 export UML_GUEST_BOOTSTRAP="$bootstrap_script"
-exec "$rootfs_wrapper" --rootfs "$rootfs" -- "$python3_executable" -c '
+exec "$python3_executable" -c '
 import os
 import select
 import signal

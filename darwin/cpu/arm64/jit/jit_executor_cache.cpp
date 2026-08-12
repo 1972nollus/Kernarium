@@ -5,16 +5,18 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <new>
 #include <span>
 
 namespace uml::cpu::arm64 {
 
-[[nodiscard]] JitCacheValidationResult JitExecutor::Implementation::validate_stale_block(
-    const CompiledBlock &block, const SavedGuestWords &guest_words,
-    std::uint64_t changes,
+[[nodiscard]] JitCacheValidationResult
+JitExecutor::Implementation::validate_stale_block(
+    const CompiledBlock &block, std::uint64_t changes,
     StaticGuestMemory &memory) {
   if (block.instruction_count == 0 ||
-      block.instruction_count > guest_words.size())
+      block.instruction_count > maximum_block_instructions ||
+      block.saved_guest_words == nullptr)
     return JitCacheValidationResult::mismatch;
 
   /*
@@ -33,7 +35,7 @@ namespace uml::cpu::arm64 {
    * for the whole span.
    */
   constexpr std::uint64_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-  SavedGuestWords fetched{};
+  GuestWordBuffer fetched{};
   std::size_t index = 0;
   while (index < block.instruction_count) {
     const auto address = block.pc + index * sizeof(std::uint32_t);
@@ -48,7 +50,7 @@ namespace uml::cpu::arm64 {
       run = 1;
     const auto words = std::span{fetched}.subspan(index, run);
     if (memory.fetch(address, std::as_writable_bytes(words))) {
-      if (std::memcmp(words.data(), &guest_words[index],
+      if (std::memcmp(words.data(), &block.saved_guest_words[index],
                       run * sizeof(std::uint32_t)) != 0)
         return JitCacheValidationResult::mismatch;
       index += run;
@@ -58,7 +60,8 @@ namespace uml::cpu::arm64 {
       std::array<std::byte, sizeof(std::uint32_t)> word{};
       if (!memory.fetch(address + step * sizeof(std::uint32_t), word))
         return JitCacheValidationResult::fault;
-      if (std::memcmp(word.data(), &guest_words[index + step],
+      if (std::memcmp(word.data(),
+                      &block.saved_guest_words[index + step],
                       word.size()) != 0)
         return JitCacheValidationResult::mismatch;
     }
@@ -85,9 +88,7 @@ namespace uml::cpu::arm64 {
                                   StaticGuestMemory &memory) {
   const auto set_index = cache_index(generation, pc, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
-  auto &saved = (*saved_guest_words_)[set_index];
   CompiledBlock *stale{};
-  std::size_t stale_way{};
   for (std::size_t way = 0; way < set.ways.size(); ++way) {
     auto &block = set.ways[way];
     if (block.function != nullptr && block.generation == generation &&
@@ -100,7 +101,6 @@ namespace uml::cpu::arm64 {
         block.pc == pc &&
         (stale == nullptr || block.stamp > stale->stamp)) {
       stale = &block;
-      stale_way = way;
     }
   }
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -114,7 +114,7 @@ namespace uml::cpu::arm64 {
   ++cache_validation_diagnostics_.validation_attempts;
 #endif
   const auto validation =
-      validate_stale_block(*stale, saved.ways[stale_way], changes, memory);
+      validate_stale_block(*stale, changes, memory);
   profile_jit_cache_validation(validation);
   switch (validation) {
   case JitCacheValidationResult::hit:
@@ -147,9 +147,8 @@ namespace uml::cpu::arm64 {
   return nullptr;
 }
 
-[[nodiscard]] CacheSlot JitExecutor::Implementation::replacement(unsigned long generation,
-                                    std::uint64_t changes,
-                                    std::uint64_t pc) {
+[[nodiscard]] CacheSlot JitExecutor::Implementation::replacement(
+    unsigned long generation, std::uint64_t changes, std::uint64_t pc) {
   const auto set_index = cache_index(generation, pc, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
   std::size_t selected_way = 0;
@@ -170,8 +169,8 @@ namespace uml::cpu::arm64 {
   selected->stamp = ++stamp_;
   return {
       .block = selected,
-      .guest_words =
-          &(*saved_guest_words_)[set_index].ways[selected_way],
+      .fallback_guest_words =
+          &fallback_saved_guest_words_[set_index].ways[selected_way],
   };
 }
 
@@ -179,6 +178,8 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             std::uint64_t pc, JitFunction function,
                             std::uintptr_t internal_entry,
                             std::span<const std::uint32_t> guest_words,
+                            std::shared_ptr<const std::uint32_t[]>
+                                saved_guest_words,
                             std::uint64_t memory_write_mask,
                             std::uint64_t direct_memory_write_mask,
                             bool accesses_fp_state, bool link_target_safe,
@@ -195,12 +196,27 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   accesses_fp_state = accesses_fp_state || native_fp || native_fpmr;
   const auto selected = replacement(generation, changes, pc);
   auto &block = *selected.block;
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+  const bool shared_validation_words = saved_guest_words != nullptr;
+#endif
+  if (saved_guest_words == nullptr) {
+    std::copy(guest_words.begin(), guest_words.end(),
+              selected.fallback_guest_words->begin());
+    saved_guest_words = std::shared_ptr<const std::uint32_t[]>{
+        fallback_saved_guest_words_, selected.fallback_guest_words->data()};
+  }
   block.function = function;
   block.internal_entry = internal_entry;
   block.link = link_for(pc);
+#if UML_ENABLE_JIT_PROFILE
+  profile_jit_target_link_refusal(block.link == nullptr);
+#endif
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+  cache_validation_diagnostics_.target_link_refusals +=
+      block.link == nullptr;
+#endif
   block.instruction_count = guest_words.size();
-  std::copy(guest_words.begin(), guest_words.end(),
-            selected.guest_words->begin());
+  block.saved_guest_words = std::move(saved_guest_words);
   block.memory_write_mask = memory_write_mask;
   block.direct_memory_write_mask = direct_memory_write_mask;
   block.accesses_fp_state = accesses_fp_state;
@@ -213,6 +229,10 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
 #endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   ++cache_validation_diagnostics_.translations;
+  if (shared_validation_words)
+    ++cache_validation_diagnostics_.shared_validation_word_installs;
+  else
+    ++cache_validation_diagnostics_.private_validation_word_installs;
 #endif
   ++compiled_in_link_sequence_;
   activate_link(block);
@@ -242,11 +262,18 @@ void JitExecutor::Implementation::clear_cache() noexcept {
 JitExecutor::Implementation::shared_codegen_profile() const noexcept {
   return {.capabilities = host_capabilities_,
           .guarded_control_flow = enable_guarded_control_flow_,
-          .pointer_authentication = enable_pointer_authentication_};
+          .pointer_authentication = enable_pointer_authentication_,
+          .persistent_linked_block_abi =
+              persistent_linked_block_abi_default,
+          .linked_x8_x9_bank = carry_x8_x9_across_links};
 }
 
-[[nodiscard]] bool JitExecutor::Implementation::materialize_shared_translation(
+[[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
+JitExecutor::Implementation::materialize_shared_translation(
     const SharedTranslation &translation) {
+  if (translation.relocations.size() >
+      maximum_shared_translation_relocations)
+    return SharedTranslationMaterializationFailure::invalid_metadata;
   relocated_link_pointers_.clear();
   for (const auto &relocation : translation.relocations) {
     const void *pointer = nullptr;
@@ -254,22 +281,26 @@ JitExecutor::Implementation::shared_codegen_profile() const noexcept {
     case JitRelocationKind::direct_link: {
       const auto *link = link_for(relocation.key);
       pointer = link == nullptr ? nullptr : link->entries.data();
+      if (pointer == nullptr)
+        return SharedTranslationMaterializationFailure::direct_link_capacity;
       break;
     }
     case JitRelocationKind::indirect_link:
       pointer = indirect_link_for(relocation.key);
+      if (pointer == nullptr)
+        return SharedTranslationMaterializationFailure::indirect_link_capacity;
       break;
+    default:
+      return SharedTranslationMaterializationFailure::invalid_metadata;
     }
     /* A full link table changes the shape the compiler would have emitted,
      * so the recorded translation does not describe what this executor can
      * run. The caller compiles for itself instead.
      */
-    if (pointer == nullptr)
-      return false;
     relocated_link_pointers_.push_back(
         reinterpret_cast<std::uintptr_t>(pointer));
   }
-  return true;
+  return std::nullopt;
 }
 
 [[nodiscard]] CompiledBlock *
@@ -278,23 +309,35 @@ JitExecutor::Implementation::install_shared_translation(
     std::span<const std::uint32_t> guest_words) {
   if constexpr (!share_translations_between_executors)
     return nullptr;
-  const auto translation = SharedTranslationCache::instance().find(
-      shared_codegen_profile(), pc, guest_words);
-  if (translation == nullptr ||
-      translation->guest_instructions > guest_words.size() ||
-      !materialize_shared_translation(*translation))
+  auto &cache = SharedTranslationCache::instance();
+  const auto translation =
+      cache.find(shared_codegen_profile(), pc, guest_words);
+  if (translation == nullptr)
     return nullptr;
+  if (!valid_shared_translation(*translation, guest_words)) {
+    cache.record_materialization_failure(
+        SharedTranslationMaterializationFailure::invalid_metadata);
+    return nullptr;
+  }
+  if (const auto failure = materialize_shared_translation(*translation)) {
+    cache.record_materialization_failure(*failure);
+    return nullptr;
+  }
   auto *code = arena_.store_relocated(translation->words,
                                       translation->relocations,
                                       relocated_link_pointers_);
-  if (code == nullptr)
+  if (code == nullptr) {
+    cache.record_materialization_failure(
+        SharedTranslationMaterializationFailure::arena_exhaustion);
     return nullptr;
+  }
   const auto internal_entry =
       reinterpret_cast<std::uintptr_t>(code) +
       translation->internal_entry_word * sizeof(std::uint32_t);
-  return &store_native(
+  auto *block = &store_native(
       generation, changes, pc, sign_jit_function<JitFunction>(code),
       internal_entry, guest_words.first(translation->guest_instructions),
+      translation->guest_words,
       translation->memory_write_mask, translation->direct_memory_write_mask,
       translation->accesses_fp_state, translation->link_target_safe,
       translation->native_fp, translation->native_fpmr,
@@ -304,36 +347,72 @@ JitExecutor::Implementation::install_shared_translation(
       translation->profile_read_before_write
 #endif
   );
+  cache.record_reuse();
+  return block;
 }
 
-void JitExecutor::Implementation::publish_shared_translation(
+std::shared_ptr<const SharedTranslation>
+JitExecutor::Implementation::publish_shared_translation(
     std::uint64_t pc, std::span<const std::uint32_t> guest_words,
     const JitCompiler::Result &compiled) {
   if constexpr (!share_translations_between_executors)
-    return;
+    return nullptr;
+  auto &cache = SharedTranslationCache::instance();
   if (!compiled.relocatable)
-    return;
-  auto translation = std::make_shared<SharedTranslation>();
-  translation->words.assign(compiled.words.begin(), compiled.words.end());
-  translation->relocations.assign(compiled.relocations.begin(),
-                                  compiled.relocations.end());
-  translation->guest_words.assign(guest_words.begin(), guest_words.end());
-  translation->guest_instructions = compiled.guest_instructions;
-  translation->hot_words = compiled.hot_words;
-  translation->internal_entry_word = compiled.internal_entry_word;
-  translation->memory_write_mask = compiled.memory_write_mask;
-  translation->direct_memory_write_mask = compiled.direct_memory_write_mask;
-  translation->accesses_fp_state = compiled.accesses_fp_state;
-  translation->link_target_safe = compiled.link_target_safe;
-  translation->native_fp = compiled.native_fp;
-  translation->native_fpmr = compiled.native_fpmr;
-  translation->guest_illegal = compiled.guest_illegal;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  translation->profile_read_before_write = compiled.profile_read_before_write;
+    return nullptr;
+  const auto validation_words =
+      guest_words.first(compiled.guest_instructions);
+  const auto profile = shared_codegen_profile();
+  const auto preflight = cache.preflight_publication(
+      profile, pc, validation_words,
+      {.host_words = compiled.words.size(),
+       .relocations = compiled.relocations.size(),
+       .guest_words = validation_words.size()},
+      compiled.direct_link_refusals,
+      compiled.indirect_link_refusals);
+  if (preflight.canonical != nullptr)
+    return preflight.canonical;
+  if (!preflight.may_construct)
+    return nullptr;
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+  if (before_shared_publication_ != nullptr)
+    before_shared_publication_(shared_publication_context_);
 #endif
-  SharedTranslationCache::instance().insert(shared_codegen_profile(), pc,
-                                            guest_words,
-                                            std::move(translation));
+  try {
+    auto translation = std::make_shared<SharedTranslation>();
+    auto saved_guest_words = std::make_shared_for_overwrite<std::uint32_t[]>(
+        validation_words.size());
+    std::copy(validation_words.begin(), validation_words.end(),
+              saved_guest_words.get());
+    translation->words.assign(compiled.words.begin(), compiled.words.end());
+    translation->relocations.assign(compiled.relocations.begin(),
+                                    compiled.relocations.end());
+    translation->direct_link_refusals = compiled.direct_link_refusals;
+    translation->indirect_link_refusals = compiled.indirect_link_refusals;
+    translation->guest_words = std::move(saved_guest_words);
+    translation->guest_word_count = validation_words.size();
+    translation->guest_instructions = compiled.guest_instructions;
+    translation->hot_words = compiled.hot_words;
+    translation->internal_entry_word = compiled.internal_entry_word;
+    translation->memory_write_mask = compiled.memory_write_mask;
+    translation->direct_memory_write_mask = compiled.direct_memory_write_mask;
+    translation->accesses_fp_state = compiled.accesses_fp_state;
+    translation->link_target_safe = compiled.link_target_safe;
+    translation->native_fp = compiled.native_fp;
+    translation->native_fpmr = compiled.native_fpmr;
+    translation->guest_illegal = compiled.guest_illegal;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+    translation->profile_read_before_write = compiled.profile_read_before_write;
+#endif
+    return cache.insert(profile, pc, validation_words, std::move(translation));
+  } catch (const std::bad_alloc &) {
+    /* Cross-executor publication is opportunistic. The already-stored native
+     * code remains valid and store_native() owns a preallocated private
+     * validation-word fallback, so allocation pressure must not become a
+     * guest-fatal engine exception.
+     */
+    return nullptr;
+  }
 }
 
 } // namespace uml::cpu::arm64

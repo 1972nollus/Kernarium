@@ -217,7 +217,7 @@ void linked_blocks_use_persistent_internal_entry()
 	constexpr std::array guest{0x1400'0001U}; // b pc + 4
 	const auto compiled =
 		uml::cpu::arm64::jit::testing::compile_linked_block(pc, guest);
-	constexpr std::array external_prologue{
+	constexpr std::array control_prologue{
 		0xa9bc'7bfdU, // stp x29, x30, [sp, #-64]!
 		0x9100'03fdU, // mov x29, sp
 		0xa901'07e0U, // stp x0, x1, [sp, #16]
@@ -229,11 +229,33 @@ void linked_blocks_use_persistent_internal_entry()
 		0xd282'0014U, // movz x20, #4096
 		0x3940'6275U, // ldrb w21, [x19, #24]
 	};
+	constexpr std::array bank_prologue{
+		0xa9bb'7bfdU, // stp x29, x30, [sp, #-80]!
+		0x9100'03fdU, // mov x29, sp
+		0xa901'07e0U, // stp x0, x1, [sp, #16]
+		0xa902'57e2U, // stp x2, x21, [sp, #32]
+		0xa903'53f3U, // stp x19, x20, [sp, #48]
+		0xa904'5ff6U, // stp x22, x23, [sp, #64]
+		0xaa00'03efU, // mov x15, x0
+		0xaa01'03eeU, // mov x14, x1
+		0xaa02'03f3U, // mov x19, x2
+		0xd282'0014U, // movz x20, #4096
+		0x3940'6275U, // ldrb w21, [x19, #24]
+		0xa944'5df6U, // ldp x22, x23, [x15, #64]
+	};
+	const auto bank = uml::cpu::arm64::jit::testing::
+		linked_x8_x9_bank_enabled();
+	const auto prologue_words = bank ? bank_prologue.size() :
+		control_prologue.size();
 	require(compiled.guest_instructions == 1);
-	require(compiled.internal_entry_word == external_prologue.size());
-	require(compiled.words.size() >= external_prologue.size());
-	require(std::equal(external_prologue.begin(), external_prologue.end(),
-			   compiled.words.begin()));
+	require(compiled.internal_entry_word == prologue_words);
+	require(compiled.words.size() >= prologue_words);
+	if (bank)
+		require(std::equal(bank_prologue.begin(), bank_prologue.end(),
+			compiled.words.begin()));
+	else
+		require(std::equal(control_prologue.begin(), control_prologue.end(),
+			compiled.words.begin()));
 
 	const auto hot = std::span<const std::uint32_t>{compiled.words}.first(
 		compiled.hot_words);
@@ -247,20 +269,33 @@ void linked_blocks_use_persistent_internal_entry()
 	require(std::find(hot.begin(), branch, 0xf940'0be0U) == branch);
 	require(std::find(hot.begin(), branch, 0xf940'0fe1U) == branch);
 	require(std::find(hot.begin(), branch, 0xf940'13e2U) == branch);
-	constexpr std::array external_epilogue{
+	constexpr std::array control_epilogue{
 		0xf900'0274U, // str x20, [x19]
 		0xa943'53f3U, // ldp x19, x20, [sp, #48]
 		0xf940'17f5U, // ldr x21, [sp, #40]
 		0xa8c4'7bfdU, // ldp x29, x30, [sp], #64
 		0xd65f'03c0U, // ret
 	};
-	for (const auto restoration : external_epilogue)
-		require(std::find(hot.begin(), branch, restoration) == branch);
-	require(std::search(hot.begin(), hot.end(),
-			    external_epilogue.begin(),
-			    external_epilogue.end()) != hot.end());
+	constexpr std::array bank_epilogue{
+		0xf900'0274U, // str x20, [x19]
+		0xa944'5ff6U, // ldp x22, x23, [sp, #64]
+		0xa943'53f3U, // ldp x19, x20, [sp, #48]
+		0xf940'17f5U, // ldr x21, [sp, #40]
+		0xa8c5'7bfdU, // ldp x29, x30, [sp], #80
+		0xd65f'03c0U, // ret
+	};
+	const auto require_restoration = [&](const auto &epilogue) {
+		for (const auto restoration : epilogue)
+			require(std::find(hot.begin(), branch, restoration) == branch);
+		require(std::search(hot.begin(), hot.end(), epilogue.begin(),
+			epilogue.end()) != hot.end());
+	};
+	if (bank)
+		require_restoration(bank_epilogue);
+	else
+		require_restoration(control_epilogue);
 	require(uml::cpu::arm64::jit::testing::
-			successful_link_host_word_savings() == 14);
+			successful_link_host_word_savings() == (bank ? 16 : 14));
 }
 
 void link_state_metadata_is_consistent()
@@ -364,6 +399,54 @@ void tracked_translation_has_no_successor_branch()
 	require(std::find(hot.begin(), hot.end(), 0xd61f'01a0U) == hot.end());
 }
 
+void conditional_direct_link_capacity_refusal_is_observable()
+{
+	constexpr std::uint64_t pc = 0x4fc5'0000;
+	constexpr std::array guest{0x5400'0040U}; // b.eq pc + 8
+	const auto unlinked =
+		uml::cpu::arm64::jit::testing::compile_block(pc, guest);
+	require(unlinked.direct_link_refusals == 0);
+
+	const auto complete = uml::cpu::arm64::jit::testing::
+		compile_linked_block_with_capacity(pc, guest, 2);
+	require(!complete.words.empty());
+	require(complete.guest_instructions == guest.size());
+	require(complete.direct_link_refusals == 0);
+
+	const auto one_missing = uml::cpu::arm64::jit::testing::
+		compile_linked_block_with_capacity(pc, guest, 1);
+	require(!one_missing.words.empty());
+	require(one_missing.guest_instructions == guest.size());
+	require(one_missing.direct_link_refusals == 1);
+
+	const auto both_missing = uml::cpu::arm64::jit::testing::
+		compile_linked_block_with_capacity(pc, guest, 0);
+	require(!both_missing.words.empty());
+	require(both_missing.guest_instructions == guest.size());
+	require(both_missing.direct_link_refusals == 2);
+}
+
+void indirect_link_capacity_refusal_is_observable()
+{
+	constexpr std::uint64_t pc = 0x4fc6'0000;
+	constexpr std::array guest{0xd61f'00a0U}; // br x5
+	const auto unlinked =
+		uml::cpu::arm64::jit::testing::compile_block(pc, guest);
+	require(unlinked.indirect_link_refusals == 0);
+
+	const auto complete = uml::cpu::arm64::jit::testing::
+		compile_indirect_linked_block_with_capacity(pc, guest, 1);
+	require(!complete.words.empty());
+	require(complete.guest_instructions == guest.size());
+	require(complete.indirect_link_refusals == 0);
+
+	const auto missing = uml::cpu::arm64::jit::testing::
+		compile_indirect_linked_block_with_capacity(pc, guest, 0);
+	require(!missing.words.empty());
+	require(missing.guest_instructions == guest.size());
+	require(missing.indirect_link_refusals == 1);
+}
+
 } // namespace
 
 int main()
@@ -371,6 +454,8 @@ int main()
 	require(jit_available() == 1);
 	guest_capabilities_match_host();
 	link_selector_layout_is_dense_and_compact();
+	conditional_direct_link_capacity_refusal_is_observable();
+	indirect_link_capacity_refusal_is_observable();
 	require(uml::cpu::arm64::jit::testing::block_link_table_is_bounded(1));
 	require(uml::cpu::arm64::jit::testing::block_link_table_is_bounded(7));
 	linked_blocks_use_persistent_internal_entry();

@@ -25,6 +25,7 @@ struct EmulatorOptions final {
 	 */
 	std::size_t jit_cache_budget{};
 	unsigned guest_cpus{1};
+	bool informational{};
 	bool valid{true};
 };
 

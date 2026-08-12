@@ -16,10 +16,8 @@ from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
-ROOTFS_WRAPPER = REPO_ROOT / "tools/rootfs/with-verified-rootfs.sh"
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
-DEFAULT_BASELINE = REPO_ROOT / "tools/rootfs/manifest.json"
 
 KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
@@ -146,11 +144,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
-    parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="verify the EROFS image and print the emulator command",
+        help="print the emulator command without booting",
     )
     options = parser.parse_args(arguments)
     if options.display != "vnc" and any(
@@ -167,20 +164,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def build_harness_command(options: argparse.Namespace) -> list[str]:
     command = [
-        str(ROOTFS_WRAPPER),
-        "--rootfs",
-        str(options.rootfs),
-        "--manifest",
-        str(options.baseline),
-        "--",
         sys.executable,
         str(GUEST_HARNESS),
         "--emulator",
         str(options.emulator),
         "--rootfs",
         str(options.rootfs),
-        "--baseline",
-        str(options.baseline),
         "--memory",
         options.memory,
         "--unit",
@@ -219,7 +208,7 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
 
 
 def guest_argument_separator(command: Sequence[str]) -> int:
-    """Locate the GPU harness separator after the rootfs wrapper boundary."""
+    """Locate the GPU harness kernel-argument separator."""
     separators = [index for index, argument in enumerate(command) if argument == "--"]
     if not separators:
         raise ValueError("GPU harness command has no kernel-argument separator")

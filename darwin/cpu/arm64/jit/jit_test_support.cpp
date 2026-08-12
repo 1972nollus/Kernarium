@@ -28,6 +28,8 @@ namespace {
       .words = std::vector<std::uint32_t>{compiled.words.begin(),
                                          compiled.words.end()},
       .hot_words = compiled.hot_words,
+      .direct_link_refusals = compiled.direct_link_refusals,
+      .indirect_link_refusals = compiled.indirect_link_refusals,
       .guest_instructions = compiled.guest_instructions,
       .internal_entry_word = compiled.internal_entry_word,
       .memory_write_mask = compiled.memory_write_mask,
@@ -737,6 +739,19 @@ CompiledCode compile_linked_block(
   return copied_code(compiler.compile(pc, instructions));
 }
 
+CompiledCode compile_linked_block_with_capacity(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::size_t capacity) {
+  JitBlockLinkTable links{capacity};
+  const auto resolver = +[](void *context,
+                            std::uint64_t target) -> const void * {
+    return static_cast<JitBlockLinkTable *>(context)->find_or_create(target);
+  };
+  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
+                       resolver};
+  return copied_code(compiler.compile(pc, instructions));
+}
+
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
 CompiledCode compile_gpr_profile_linked_block(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
@@ -926,6 +941,22 @@ CompiledCode compile_indirect_linked_block(
   return copied_code(compiler.compile(pc, instructions));
 }
 
+CompiledCode compile_indirect_linked_block_with_capacity(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::size_t capacity) {
+  JitBlockLink empty{.guest_pc = 1};
+  JitIndirectLinkTable links{capacity, &empty};
+  const auto resolver = +[](void *context,
+                            std::uint64_t source_pc) -> const void * {
+    return static_cast<JitIndirectLinkTable *>(context)->find_or_create(
+        source_pc);
+  };
+  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
+                       /*link_resolver=*/nullptr,
+                       /*track_direct_stores=*/false, resolver};
+  return copied_code(compiler.compile(pc, instructions));
+}
+
 CompiledCode compile_indirect_linked_block_memory_abi(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
@@ -987,6 +1018,10 @@ bool persistent_linked_block_abi_enabled() noexcept {
   return persistent_linked_block_abi_default;
 }
 
+bool linked_x8_x9_bank_enabled() noexcept {
+  return carry_x8_x9_across_links;
+}
+
 std::size_t persistent_link_successful_path_word_savings() noexcept {
   /*
    * Each successful edge removes the chain-pointer, selector-byte, and
@@ -1005,7 +1040,9 @@ std::size_t successful_link_host_word_savings() noexcept {
    */
   constexpr std::size_t legacy_tail_words = 5;
   constexpr std::size_t external_prologue_words =
-      persistent_linked_block_abi_default ? 10 : 6;
+      persistent_linked_block_abi_default
+          ? (carry_x8_x9_across_links ? 12 : 10)
+          : 6;
   constexpr std::size_t internal_tail_words = 1;
   return legacy_tail_words + external_prologue_words - internal_tail_words;
 }

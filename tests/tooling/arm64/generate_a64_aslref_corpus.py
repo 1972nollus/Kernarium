@@ -29,10 +29,6 @@ from a64_bounded_generation import (
     add_bounded_generation_arguments,
     workspace_from_options,
 )
-from a64_aslref_corpus_identity import (
-    corpus_identity_bytes,
-    validate_corpus_payloads,
-)
 from a64_aslref_dependencies import (
     AslDependencyCatalog,
     interface_declarations,
@@ -173,11 +169,6 @@ def arguments() -> argparse.Namespace:
         "--interface-queue-output",
         type=Path,
         default=repository / "tests/unit/arm64/a64_aslref_interface_queue.tsv",
-    )
-    parser.add_argument(
-        "--identity-output",
-        type=Path,
-        default=repository / "tests/unit/arm64/a64_aslref_corpus.identity.json",
     )
     parser.add_argument("--timeout-seconds", type=int, default=600)
     add_bounded_generation_arguments(parser)
@@ -509,7 +500,6 @@ def main() -> int:
         [
             options.output,
             options.interface_queue_output,
-            options.identity_output,
         ],
         [
             options.architecture_archive,
@@ -705,33 +695,16 @@ def main() -> int:
     validate_queue_rows(queue_rows)
     corpus_payload = render_tsv(COLUMNS, output_rows)
     queue_payload = render_tsv(QUEUE_COLUMNS, queue_rows)
-    identity_payload = corpus_identity_bytes(
-        publication.targets[0].name,
-        corpus_payload,
-        COLUMNS,
-        publication.targets[1].name,
-        queue_payload,
-        QUEUE_COLUMNS,
-    )
+    def validate_corpus_payload(_observed: bytes) -> None:
+        validate_corpus_rows(output_rows)
 
-    def validate_bound_set(_observed: bytes) -> None:
-        validate_corpus_payloads(
-            publication.targets[0].name,
-            corpus_payload,
-            COLUMNS,
-            publication.targets[1].name,
-            queue_payload,
-            QUEUE_COLUMNS,
-            identity_payload,
-            corpus_validator=validate_corpus_rows,
-            queue_validator=validate_queue_rows,
-        )
+    def validate_queue_payload(_observed: bytes) -> None:
+        validate_queue_rows(queue_rows)
 
     publication.publish_payloads(
         [
-            (publication.targets[0], corpus_payload, validate_bound_set),
-            (publication.targets[1], queue_payload, validate_bound_set),
-            (publication.targets[2], identity_payload, validate_bound_set),
+            (publication.targets[0], corpus_payload, validate_corpus_payload),
+            (publication.targets[1], queue_payload, validate_queue_payload),
         ]
     )
     typechecks = defaultdict(int)
@@ -744,8 +717,7 @@ def main() -> int:
         f"{len(queue_rows) - implemented_interfaces} unresolved, "
         f"{typechecks['strict-pass']} per-form strict passes, "
         "1 executed specimen, 0/2396 behavior-complete; wrote "
-        f"{options.output}, {options.interface_queue_output}, and "
-        f"{options.identity_output}"
+        f"{options.output} and {options.interface_queue_output}"
     )
     return 0
 

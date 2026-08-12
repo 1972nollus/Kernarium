@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Build deterministic, resumable, authority-filtered ASLRef campaign shards."""
+"""Build resumable, authority-filtered ASLRef campaign shards."""
 
 from __future__ import annotations
 
@@ -36,14 +36,12 @@ from join_a64_input_materializations import (
 )
 from a64_raw_evidence_files import (
     canonical_existing_directory,
-    exclusive_evidence_locks,
     require_no_symlink_components,
 )
 import run_a64_aslref_campaign as campaign
 
 
-SHARD_SET_SCHEMA = "uml.a64.aslref-campaign-shard-set/v2"
-POLICY_SCHEMA = "uml.a64.aslref-campaign-shard-policy/v1"
+SHARD_SET_SCHEMA = "uml.a64.aslref-campaign-shard-set/v3"
 SHARD_FILE = re.compile(r"shard-[0-9]{8}\.inputs\.jsonl\.gz\Z")
 STAGE_FILE = re.compile(
     r"shard-[0-9]{8}\.[0-9a-f]{32}\.inputs\.jsonl\.gz\.partial\Z"
@@ -54,7 +52,6 @@ DEFAULT_MAXIMUM_DATABASE_BYTES = 128 * 1024 * 1024 * 1024
 DEFAULT_MAXIMUM_MERGE_SCRATCH_BYTES = 16 * 1024 * 1024 * 1024
 SHARD_METADATA_NAMES = {
     "campaign.lock",
-    "shard-policy.json",
     "shard-set.json",
     "shard-input-list.txt",
 }
@@ -76,12 +73,6 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=repository
         / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
-    )
-    parser.add_argument(
-        "--aggregate-manifest-identity",
-        type=Path,
-        default=repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json",
     )
     parser.add_argument("--materialization-index", type=Path, required=True)
     parser.add_argument(
@@ -112,14 +103,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_MAXIMUM_MERGE_SCRATCH_BYTES,
     )
-    parser.add_argument(
-        "--directory-sync-policy",
-        choices=("require", "record-unsupported"),
-        default="require",
-    )
 
 
-def _canonical_output_directory(path: Path, policy: str) -> Path:
+def _canonical_output_directory(path: Path) -> Path:
     if not path.is_absolute():
         raise ValueError("campaign shard output directory must be absolute")
     cursor = Path(path.anchor)
@@ -136,13 +122,12 @@ def _canonical_output_directory(path: Path, policy: str) -> Path:
         raise ValueError("campaign shard output is not a nonsymlink directory")
     if not path.exists():
         path.mkdir()
-        campaign._fsync_directory(path.parent, policy)
     return campaign.require_root(path, "campaign shard output")
 
 
 def _canonical_sharding_roots(
     options: argparse.Namespace,
-) -> tuple[Path, Path, tuple[Path, ...], tuple[Path, ...]]:
+) -> tuple[Path, Path, tuple[Path, ...]]:
     local_root = campaign.require_root(
         options.local_temp_root, "campaign shard local temp root"
     )
@@ -162,7 +147,7 @@ def _canonical_sharding_roots(
         require_no_symlink_components(path, "campaign shard explicit input")
         for path in options.input_jsonl
     )
-    lock_directories = tuple(
+    source_directories = tuple(
         sorted(
             {*evidence_directories, *(path.parent for path in explicit_inputs)},
             key=str,
@@ -170,11 +155,10 @@ def _canonical_sharding_roots(
     )
 
     tooling_root = Path(__file__).resolve().parent
-    protected_directories = (*lock_directories, tooling_root)
+    protected_directories = (*source_directories, tooling_root)
     protected_files = (
         *explicit_inputs,
         options.aggregate_manifest.resolve(strict=False),
-        options.aggregate_manifest_identity.resolve(strict=False),
         options.materialization_index.resolve(strict=False),
         *(path.resolve(strict=False) for path in options.contract_manifest),
     )
@@ -198,7 +182,7 @@ def _canonical_sharding_roots(
         output_candidate, local_root
     ) or campaign._path_contains(local_root, output_candidate):
         raise ValueError("campaign shard output/local roots overlap")
-    return output_candidate, local_root, evidence_directories, lock_directories
+    return output_candidate, local_root, evidence_directories
 
 
 def _preflight_output_layout(root: Path) -> None:
@@ -357,9 +341,6 @@ def _load_authority(
     return campaign.load_authoritative_input(
         guest_page_size=options.guest_page_size,
         aggregate_manifest=options.aggregate_manifest.resolve(),
-        aggregate_manifest_identity=(
-            options.aggregate_manifest_identity.resolve()
-        ),
         materialization_index=options.materialization_index.resolve(),
         contract_manifests=[
             path.resolve() for path in options.contract_manifest
@@ -406,24 +387,21 @@ def _source_identities(
         if path.name in observed:
             raise ValueError("materialization source basenames repeat")
         identity = campaign.file_identity(path)
+        expected_identity = expected.get(path.name)
+        if expected_identity is None or expected_identity != (
+            identity["size"], identity["sha256"]
+        ):
+            raise ValueError(
+                f"materialization source identity differs: {path.name}"
+            )
         observed[path.name] = {
             "name": path.name,
             "path": identity["path"],
-            "size": identity["size"],
-            "sha256": identity["sha256"],
         }
     if set(observed) != set(expected):
         raise ValueError(
             "materialization sources differ from authoritative producers"
         )
-    for name, (size, digest) in expected.items():
-        if (
-            observed[name]["size"] != size
-            or observed[name]["sha256"] != digest
-        ):
-            raise ValueError(
-                f"materialization source identity differs: {name}"
-            )
     return [observed[name] for name in sorted(observed)]
 
 
@@ -461,7 +439,7 @@ class _CappedShardOutput:
         return int(self.raw.tell())  # type: ignore[attr-defined]
 
 
-class DeterministicShardWriter:
+class ShardWriter:
     def __init__(
         self,
         path: Path,
@@ -479,9 +457,7 @@ class DeterministicShardWriter:
         self.capped = _CappedShardOutput(
             self.raw, maximum_bytes, before_write
         )
-        self.compressed = gzip.GzipFile(
-            filename="", mode="wb", fileobj=self.capped, mtime=0
-        )
+        self.compressed = gzip.GzipFile(mode="wb", fileobj=self.capped)
 
     def _write(self, value: Mapping[str, object]) -> None:
         self.compressed.write(wire_json(value).encode("utf-8") + b"\n")
@@ -519,8 +495,6 @@ class DeterministicShardWriter:
             raise ValueError("campaign shard writer is already closed")
         try:
             self.compressed.close()
-            self.raw.flush()
-            os.fsync(self.raw.fileno())
         finally:
             self.raw.close()
             self.closed = True
@@ -619,43 +593,32 @@ def _iter_distinct_source_materializations(
 
 
 def _publish_generated_shard(
-    writer: DeterministicShardWriter,
+    writer: ShardWriter,
     root: Path,
     staging: Path,
-    policy: str,
     guest_page_size: int,
-) -> tuple[dict[str, object], dict[str, str]]:
+) -> dict[str, object]:
     count, identifier_digest = writer.finish()
     stage = writer.path
     final = root / f"{writer.shard_id}.inputs.jsonl.gz"
-    identity = campaign.file_identity(stage)
+    staged_count, staged_digest = campaign.scan_shard_input(
+        stage, guest_page_size=guest_page_size
+    )
+    if staged_count != count or staged_digest != identifier_digest:
+        raise ValueError(f"generated campaign shard differs: {final.name}")
     if final.exists():
         if final.is_symlink() or not final.is_file():
             raise ValueError(f"existing campaign shard is unsafe: {final.name}")
-        existing = campaign.file_identity(final)
-        if (
-            existing["size"] != identity["size"]
-            or existing["sha256"] != identity["sha256"]
-        ):
+        existing_count, existing_digest = campaign.scan_shard_input(
+            final, guest_page_size=guest_page_size
+        )
+        if existing_count != count or existing_digest != identifier_digest:
             raise ValueError(
                 f"existing campaign shard differs: {final.name}"
             )
         stage.unlink()
     else:
-        os.link(stage, final, follow_symlinks=False)
-        stage.unlink()
-    descriptor = os.open(
-        final,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-    )
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    outcomes = {
-        "staging": campaign._fsync_directory(staging, policy),
-        "output_root": campaign._fsync_directory(root, policy),
-    }
+        os.replace(stage, final)
     observed_count, observed_digest = campaign.scan_shard_input(
         final, guest_page_size=guest_page_size
     )
@@ -663,17 +626,12 @@ def _publish_generated_shard(
         raise ValueError(f"generated campaign shard differs: {final.name}")
     if any(staging.iterdir()):
         raise ValueError("campaign shard staging directory is not empty")
-    return (
-        {
-            "shard_id": writer.shard_id,
-            "path": str(final),
-            "size": identity["size"],
-            "sha256": identity["sha256"],
-            "contract_count": count,
-            "input_contract_ids_sha256": identifier_digest,
-        },
-        outcomes,
-    )
+    return {
+        "shard_id": writer.shard_id,
+        "path": str(final),
+        "contract_count": count,
+        "input_contract_ids_sha256": identifier_digest,
+    }
 
 
 def _manifest_payload(
@@ -682,8 +640,6 @@ def _manifest_payload(
     authority: Mapping[str, object],
     sources: Sequence[Mapping[str, object]],
     shards: Sequence[Mapping[str, object]],
-    policy: str,
-    sync_outcomes: Mapping[str, str],
 ) -> dict[str, object]:
     return {
         "schema": SHARD_SET_SCHEMA,
@@ -693,9 +649,6 @@ def _manifest_payload(
         "authoritative_input": dict(authority),
         "source_inputs": list(sources),
         "shards": list(shards),
-        "directory_sync_policy": policy,
-        "directory_sync_outcomes": dict(sync_outcomes),
-        "directory_sync_observations": sorted(set(sync_outcomes.values())),
     }
 
 
@@ -724,59 +677,12 @@ def _exact_json_equal(left: object, right: object) -> bool:
     return left == right
 
 
-def _require_stable_sync_outcomes(
-    expected: Mapping[str, str], observed: Mapping[str, str]
-) -> None:
-    if not _exact_json_equal(dict(expected), dict(observed)):
-        raise ValueError("campaign shard directory-sync outcome changed")
-
-
-def _reverify_frozen_inputs(
-    authority: Mapping[str, object],
-    sources: Sequence[Mapping[str, object]],
-) -> None:
-    for expected in sources:
-        observed = campaign.file_identity(Path(str(expected["path"])))
-        reduced = {
-            "name": Path(str(observed["path"])).name,
-            "path": observed["path"],
-            "size": observed["size"],
-            "sha256": observed["sha256"],
-        }
-        if not _exact_json_equal(reduced, dict(expected)):
-            raise ValueError(
-                f"materialization source changed: {expected['path']}"
-            )
-    identities: list[Mapping[str, object]] = []
-    for name in (
-        "aggregate_manifest",
-        "aggregate_manifest_identity_file",
-        "materialization_index",
-    ):
-        expected = authority[name]
-        if not isinstance(expected, Mapping):
-            raise ValueError("authoritative input identity differs")
-        identities.append(expected)
-    for name in ("contract_manifests", "checkpoint_files"):
-        expected_list = authority[name]
-        if not isinstance(expected_list, list) or any(
-            not isinstance(expected, Mapping) for expected in expected_list
-        ):
-            raise ValueError("authoritative input identity list differs")
-        identities.extend(expected_list)  # type: ignore[arg-type]
-    for expected in identities:
-        observed = campaign.file_identity(Path(str(expected["path"])))
-        if not _exact_json_equal(observed, dict(expected)):
-            raise ValueError(f"authoritative input changed: {expected['path']}")
-
-
 def _verify_shard_set(
     root: Path,
     manifest: Mapping[str, object],
     authority: Mapping[str, object],
     sources: Sequence[Mapping[str, object]],
     database: sqlite3.Connection,
-    current_sync_outcomes: Mapping[str, str] | None = None,
 ) -> Mapping[str, object]:
     expected_keys = {
         "schema",
@@ -786,9 +692,6 @@ def _verify_shard_set(
         "authoritative_input",
         "source_inputs",
         "shards",
-        "directory_sync_policy",
-        "directory_sync_outcomes",
-        "directory_sync_observations",
     }
     if set(manifest) != expected_keys or manifest["schema"] != SHARD_SET_SCHEMA:
         raise ValueError("campaign shard-set manifest schema differs")
@@ -809,40 +712,8 @@ def _verify_shard_set(
         or cap != campaign.MAX_SHARD_CONTRACTS
         or not _exact_json_equal(manifest["authoritative_input"], authority)
         or not _exact_json_equal(manifest["source_inputs"], list(sources))
-        or manifest["directory_sync_policy"]
-        not in campaign.DIRECTORY_SYNC_POLICIES
     ):
-        raise ValueError("campaign shard-set frozen binding differs")
-    observations = manifest["directory_sync_observations"]
-    outcomes = manifest["directory_sync_outcomes"]
-    if not isinstance(outcomes, dict) or set(outcomes) != {
-        "output_root",
-        "staging",
-    }:
-        raise ValueError("campaign shard-set sync outcomes differ")
-    for label, outcome in outcomes.items():
-        campaign._validate_sync_observation(
-            outcome, f"campaign shard-set {label} sync outcome"
-        )
-    if current_sync_outcomes is not None and not _exact_json_equal(
-        outcomes, dict(current_sync_outcomes)
-    ):
-        raise ValueError("campaign shard-set current sync outcomes differ")
-    if (
-        not isinstance(observations, list)
-        or not observations
-        or observations != sorted(set(outcomes.values()))
-    ):
-        raise ValueError("campaign shard-set sync observations differ")
-    for observation in observations:
-        campaign._validate_sync_observation(
-            observation, "campaign shard-set sync observation"
-        )
-    if (
-        manifest["directory_sync_policy"] == "require"
-        and observations != ["supported"]
-    ):
-        raise ValueError("required shard-set directory sync was unsupported")
+        raise ValueError("campaign shard-set binding differs")
     shards = manifest["shards"]
     if not isinstance(shards, list) or not shards:
         raise ValueError("campaign shard set is empty")
@@ -854,8 +725,6 @@ def _verify_shard_set(
         expected = {
             "shard_id",
             "path",
-            "size",
-            "sha256",
             "contract_count",
             "input_contract_ids_sha256",
         }
@@ -865,10 +734,6 @@ def _verify_shard_set(
         if row["shard_id"] != shard_id or row["path"] != str(path):
             raise ValueError("campaign shard-set path/ID differs")
         campaign.require_regular_file(path, "campaign shard")
-        identity = campaign.file_identity(path)
-        size = campaign._strict_integer(
-            row["size"], "campaign shard-set file size", 1
-        )
         count = campaign._strict_integer(
             row["contract_count"],
             "campaign shard-set contract count",
@@ -878,17 +743,13 @@ def _verify_shard_set(
         if index + 1 != len(shards) and count != campaign.MAX_SHARD_CONTRACTS:
             raise ValueError("nonfinal campaign shard is not full")
         if (
-            identity["size"] != size
-            or identity["sha256"] != row["sha256"]
-            or not isinstance(row["sha256"], str)
-            or campaign.SHA256.fullmatch(str(row["sha256"])) is None
-            or not isinstance(row["input_contract_ids_sha256"], str)
+            not isinstance(row["input_contract_ids_sha256"], str)
             or campaign.SHA256.fullmatch(
                 str(row["input_contract_ids_sha256"])
             )
             is None
         ):
-            raise ValueError("campaign shard-set file identity differs")
+            raise ValueError("campaign shard-set contract digest differs")
         observed_count, observed_digest = campaign.scan_shard_input(
             path,
             database,
@@ -904,17 +765,16 @@ def _verify_shard_set(
         expected_files.add(path.name)
     campaign.require_exact_authoritative_id_set(database)
     campaign.require_exact_authoritative_raw_bindings(database)
-    frozen_total = campaign._strict_integer(
+    declared_total = campaign._strict_integer(
         manifest["total_contracts"], "campaign shard-set total", 1
     )
     if (
-        frozen_total != total
+        declared_total != total
         or total != authority["input_contract_count"]
     ):
         raise ValueError("campaign shard-set total differs from authority")
     expected_root = {
         "campaign.lock",
-        "shard-policy.json",
         "shard-set.json",
         "shard-input-list.txt",
         ".staging",
@@ -928,44 +788,28 @@ def _verify_shard_set(
     expected_list = _input_list_payload(shards)
     if (root / "shard-input-list.txt").read_bytes() != expected_list:
         raise ValueError("campaign shard input list differs")
-    expected_policy = (
-        campaign.canonical_json(
-            {
-                "schema": POLICY_SCHEMA,
-                "directory_sync_policy": manifest["directory_sync_policy"],
-            }
-        )
-        + "\n"
-    ).encode("utf-8")
-    if (root / "shard-policy.json").read_bytes() != expected_policy:
-        raise ValueError("campaign shard policy differs")
     expected_manifest = (campaign.canonical_json(manifest) + "\n").encode(
         "utf-8"
     )
     if (root / "shard-set.json").read_bytes() != expected_manifest:
         raise ValueError("campaign shard-set publication differs")
-    _reverify_frozen_inputs(authority, sources)
     return manifest
 
 
-def _write_or_compare(path: Path, payload: bytes, policy: str) -> str:
+def _write_or_compare(path: Path, payload: bytes) -> None:
     if path.exists():
         if path.is_symlink() or not path.is_file() or path.read_bytes() != payload:
             raise ValueError(f"existing shard metadata differs: {path.name}")
-        with path.open("rb") as source:
-            os.fsync(source.fileno())
-        return campaign._fsync_directory(path.parent, policy)
-    return campaign.atomic_write(path, payload, policy)
+        return
+    campaign.atomic_write(path, payload)
 
 
 def _prepare_root(
     root: Path,
-    policy: str,
     maximum_metadata_bytes: int = DEFAULT_MAXIMUM_METADATA_BYTES,
-) -> tuple[Path, dict[str, str]]:
+) -> Path:
     allowed = {
         "campaign.lock",
-        "shard-policy.json",
         "shard-set.json",
         "shard-input-list.txt",
         ".staging",
@@ -988,27 +832,8 @@ def _prepare_root(
         if path.is_symlink() or not path.is_file() or STAGE_FILE.fullmatch(path.name) is None:
             raise ValueError(f"unsafe campaign shard stage entry: {path.name}")
         path.unlink()
-    sync_outcomes = {
-        "staging": campaign._fsync_directory(staging, policy),
-        "output_root": campaign._fsync_directory(root, policy),
-    }
-    policy_payload = (
-        campaign.canonical_json(
-            {"schema": POLICY_SCHEMA, "directory_sync_policy": policy}
-        )
-        + "\n"
-    ).encode("utf-8")
-    _require_metadata_cap(
-        root,
-        maximum_metadata_bytes,
-        {"shard-policy.json": policy_payload},
-    )
-    policy_sync = _write_or_compare(
-        root / "shard-policy.json", policy_payload, policy
-    )
-    if policy_sync != sync_outcomes["output_root"]:
-        raise ValueError("campaign shard root sync outcome changed")
-    return staging, sync_outcomes
+    _require_metadata_cap(root, maximum_metadata_bytes, {})
+    return staging
 
 
 def _generate(
@@ -1019,15 +844,14 @@ def _generate(
     authority: Mapping[str, object],
     sources: Sequence[Mapping[str, object]],
     database: sqlite3.Connection,
-    sync_outcomes: dict[str, str],
     local_root: Path,
     work_root: Path,
 ) -> Mapping[str, object]:
     shards: list[dict[str, object]] = []
-    writer: DeterministicShardWriter | None = None
+    writer: ShardWriter | None = None
     scanned = 0
 
-    def start_writer() -> DeterministicShardWriter:
+    def start_writer() -> ShardWriter:
         shard_id = f"shard-{len(shards):08d}"
         stage = staging / (
             f"{shard_id}.{uuid.uuid4().hex}.inputs.jsonl.gz.partial"
@@ -1035,7 +859,7 @@ def _generate(
         _require_sharding_capacity(
             options, root, local_root, work_root, staging
         )
-        return DeterministicShardWriter(
+        return ShardWriter(
             stage,
             shard_id,
             options.maximum_shard_bytes,
@@ -1072,37 +896,26 @@ def _generate(
             )
             writer.add(record)
             if writer.count == campaign.MAX_SHARD_CONTRACTS:
-                row, observed_sync = _publish_generated_shard(
+                row = _publish_generated_shard(
                     writer,
                     root,
                     staging,
-                    options.directory_sync_policy,
                     options.guest_page_size,
                 )
                 shards.append(row)
-                _require_stable_sync_outcomes(sync_outcomes, observed_sync)
                 writer = None
         if writer is not None:
-            row, observed_sync = _publish_generated_shard(
+            row = _publish_generated_shard(
                 writer,
                 root,
                 staging,
-                options.directory_sync_policy,
                 options.guest_page_size,
             )
             shards.append(row)
-            _require_stable_sync_outcomes(sync_outcomes, observed_sync)
             writer = None
     finally:
         if writer is not None:
             writer.abort()
-            observed_stage_sync = campaign._fsync_directory(
-                staging, options.directory_sync_policy
-            )
-            if observed_stage_sync != sync_outcomes["staging"]:
-                raise ValueError(
-                    "campaign shard staging sync outcome changed"
-                )
     if not shards:
         raise ValueError("no authoritative execution-ready inputs were sharded")
     campaign.require_exact_authoritative_id_set(database)
@@ -1114,14 +927,11 @@ def _generate(
     }
     if actual_files != expected_files:
         raise ValueError("campaign shard file set differs after generation")
-    _reverify_frozen_inputs(authority, sources)
     manifest = _manifest_payload(
         page=options.guest_page_size,
         authority=authority,
         sources=sources,
         shards=shards,
-        policy=options.directory_sync_policy,
-        sync_outcomes=sync_outcomes,
     )
     if (
         options.expected_total_contracts is not None
@@ -1143,20 +953,14 @@ def _generate(
     _require_sharding_capacity(
         options, root, local_root, work_root, staging
     )
-    list_sync = _write_or_compare(
+    _write_or_compare(
         root / "shard-input-list.txt",
         list_payload,
-        options.directory_sync_policy,
     )
-    if list_sync != sync_outcomes["output_root"]:
-        raise ValueError("campaign shard metadata sync outcome changed")
-    manifest_sync = _write_or_compare(
+    _write_or_compare(
         root / "shard-set.json",
         manifest_payload,
-        options.directory_sync_policy,
     )
-    if manifest_sync != sync_outcomes["output_root"]:
-        raise ValueError("campaign shard metadata sync outcome changed")
     _require_published_caps(root, options)
     database.execute("DELETE FROM contract_id")
     return _verify_shard_set(
@@ -1165,7 +969,6 @@ def _generate(
         authority,
         sources,
         database,
-        sync_outcomes,
     )
 
 
@@ -1212,21 +1015,17 @@ def _run_locked(
         ),
     ):
         campaign._strict_integer(value, label, minimum)
-    if options.directory_sync_policy not in campaign.DIRECTORY_SYNC_POLICIES:
-        raise ValueError("campaign shard directory-sync policy is invalid")
     input_paths = materialization_paths(
         evidence_directories, options.input_jsonl
     )
     sources = _source_identities(input_paths, options.contract_manifest)
-    root = _canonical_output_directory(
-        output_candidate, options.directory_sync_policy
-    )
+    root = _canonical_output_directory(output_candidate)
     _preflight_output_layout(root)
     _require_published_caps(root, options)
     _require_sharding_capacity(
         options, root, local_root, None, None
     )
-    with campaign.campaign_lock(root, options.directory_sync_policy):
+    with campaign.campaign_lock(root):
         _preflight_output_layout(root)
         _require_published_caps(root, options)
         with tempfile.TemporaryDirectory(
@@ -1246,7 +1045,7 @@ def _run_locked(
                     work_root,
                     None,
                 )
-                frozen_files = [
+                authority_files = [
                     Path(str(identity["path"]))
                     for key in (
                         "contract_manifests",
@@ -1254,19 +1053,18 @@ def _run_locked(
                     )
                     for identity in authority[key]  # type: ignore[index]
                 ]
-                frozen_files.extend(
+                authority_files.extend(
                     Path(str(authority[key]["path"]))  # type: ignore[index]
                     for key in (
                         "aggregate_manifest",
-                        "aggregate_manifest_identity_file",
                         "materialization_index",
                     )
                 )
-                all_frozen_files = [*input_paths, *frozen_files]
+                all_input_files = [*input_paths, *authority_files]
                 if any(
                     campaign._path_contains(root, path)
                     or campaign._path_contains(path, root)
-                    for path in all_frozen_files
+                    for path in all_input_files
                 ):
                     raise ValueError(
                         "campaign shard output aliases authoritative input"
@@ -1274,14 +1072,13 @@ def _run_locked(
                 if any(
                     campaign._path_contains(local_root, path)
                     or campaign._path_contains(path, local_root)
-                    for path in all_frozen_files
+                    for path in all_input_files
                 ):
                     raise ValueError(
                         "campaign shard local root aliases authoritative input"
                     )
-                staging, sync_outcomes = _prepare_root(
+                staging = _prepare_root(
                     root,
-                    options.directory_sync_policy,
                     options.maximum_metadata_bytes,
                 )
                 manifest_path = root / "shard-set.json"
@@ -1305,22 +1102,16 @@ def _run_locked(
                             options.maximum_metadata_bytes,
                             {"shard-input-list.txt": list_payload},
                         )
-                        list_sync = _write_or_compare(
+                        _write_or_compare(
                             root / "shard-input-list.txt",
                             list_payload,
-                            options.directory_sync_policy,
                         )
-                        if list_sync != sync_outcomes["output_root"]:
-                            raise ValueError(
-                                "campaign shard metadata sync outcome changed"
-                            )
                     verified = _verify_shard_set(
                         root,
                         manifest,
                         authority,
                         sources,
                         database,
-                        sync_outcomes,
                     )
                     _require_published_caps(root, options)
                     return verified
@@ -1332,7 +1123,6 @@ def _run_locked(
                     authority,
                     sources,
                     database,
-                    sync_outcomes,
                     local_root,
                     work_root,
                 )
@@ -1341,16 +1131,12 @@ def _run_locked(
 
 
 def run(options: argparse.Namespace) -> Mapping[str, object]:
-    (
+    output_candidate, local_root, evidence_directories = (
+        _canonical_sharding_roots(options)
+    )
+    return _run_locked(
+        options,
         output_candidate,
         local_root,
         evidence_directories,
-        lock_directories,
-    ) = _canonical_sharding_roots(options)
-    with exclusive_evidence_locks(lock_directories):
-        return _run_locked(
-            options,
-            output_candidate,
-            local_root,
-            evidence_directories,
-        )
+    )

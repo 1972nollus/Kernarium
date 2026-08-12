@@ -16,7 +16,6 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace uml::emulator::tests {
@@ -193,18 +192,6 @@ struct StagedTextOutput final {
   std::FILE *stream{};
 };
 
-[[nodiscard]] mode_t output_mode(const std::string &path) {
-  struct stat status {};
-  if (::lstat(path.c_str(), &status) == 0) {
-    if (!S_ISREG(status.st_mode))
-      configuration_error("evidence output is not regular");
-    return status.st_mode & 07777;
-  }
-  if (errno != ENOENT)
-    configuration_error("cannot inspect evidence output");
-  return 0644;
-}
-
 [[nodiscard]] StagedTextOutput open_staged_text_output(
     const std::string &path) {
   StagedTextOutput output{.path = path,
@@ -215,13 +202,9 @@ struct StagedTextOutput final {
 #ifdef O_NOFOLLOW
   flags |= O_NOFOLLOW;
 #endif
-  const auto descriptor = ::open(output.temporary.c_str(), flags, 0600);
+  const auto descriptor = ::open(output.temporary.c_str(), flags, 0666);
   if (descriptor < 0)
     configuration_error("cannot create evidence staging file");
-  if (::fchmod(descriptor, output_mode(path)) != 0) {
-    ::close(descriptor);
-    configuration_error("cannot set evidence staging mode");
-  }
   output.stream = ::fdopen(descriptor, "w");
   if (output.stream == nullptr) {
     ::close(descriptor);
@@ -230,11 +213,9 @@ struct StagedTextOutput final {
   return output;
 }
 
-void seal_staged_text_output(StagedTextOutput &output) {
+void close_staged_text_output(StagedTextOutput &output) {
   if (std::fflush(output.stream) != 0 || std::ferror(output.stream) != 0)
     configuration_error("cannot flush evidence staging stream");
-  if (::fsync(::fileno(output.stream)) != 0)
-    configuration_error("cannot sync evidence staging stream");
   if (std::fclose(output.stream) != 0)
     configuration_error("cannot close evidence staging stream");
   output.stream = nullptr;
@@ -243,22 +224,6 @@ void seal_staged_text_output(StagedTextOutput &output) {
 void publish_staged_text_output(const StagedTextOutput &output) {
   if (::rename(output.temporary.c_str(), output.path.c_str()) != 0)
     configuration_error("cannot publish evidence output");
-}
-
-void sync_parent_directory(const std::string &path) {
-  auto flags = O_RDONLY | O_CLOEXEC;
-#ifdef O_DIRECTORY
-  flags |= O_DIRECTORY;
-#endif
-  const auto parent = std::filesystem::path{path}.parent_path();
-  const auto descriptor = ::open(parent.c_str(), flags);
-  if (descriptor < 0 || ::fsync(descriptor) != 0) {
-    if (descriptor >= 0)
-      ::close(descriptor);
-    configuration_error("cannot sync evidence output directory");
-  }
-  if (::close(descriptor) != 0)
-    configuration_error("cannot close evidence output directory");
 }
 
 [[nodiscard]] std::vector<std::string> split_tsv(const std::string &line) {
@@ -360,11 +325,10 @@ public:
                    native_missing_features.c_str(), result_name(key.interpreter),
                    result_name(key.gadgets), result_name(key.jit));
     }
-    seal_staged_text_output(staged_output);
+    close_staged_text_output(staged_output);
 
     if (!raw_enabled_) {
       publish_staged_text_output(staged_output);
-      sync_parent_directory(path);
       return;
     }
 
@@ -422,10 +386,9 @@ public:
                    static_cast<unsigned long long>(occurrences));
       raw_invocations += occurrences;
     }
-    seal_staged_text_output(staged_raw_output);
+    close_staged_text_output(staged_raw_output);
     publish_staged_text_output(staged_output);
     publish_staged_text_output(staged_raw_output);
-    sync_parent_directory(path);
     std::fprintf(stderr,
                  "raw instruction evidence: %llu invocations, %zu unique "
                  "contracts, %zu representative bindings\n",

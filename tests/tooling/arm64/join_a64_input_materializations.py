@@ -30,7 +30,7 @@ import sys
 import tempfile
 import zlib
 from collections import defaultdict
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, TextIO
@@ -48,18 +48,11 @@ from a64_input_materialization import (
     validate_callback_contract_registry_use,
     validate_callback_registry_source_coverage,
 )
-from a64_aggregate_manifest_identity import (
-    read_manifest_identity,
-    validate_manifest_identity,
-)
 from a64_raw_evidence_files import (
     atomic_publish_bytes,
-    exclusive_evidence_locks,
-    freeze_read_inputs,
+    canonical_existing_directory,
     path_is_ancestor,
     paths_alias,
-    publication_target_locks,
-    recheck_read_inputs,
     require_no_symlink_components,
 )
 from aggregate_a64_raw_instruction_evidence import (
@@ -82,6 +75,9 @@ from generate_a64_aslref_aggregate_execution_plan import build_plan
 from generate_a64_instruction_allocations import exact_features
 from generate_a64_instruction_decode_partitions import COLUMNS as DECODE_COLUMNS
 from generate_a64_instruction_required_variants import COLUMNS as REQUIRED_COLUMNS
+from validate_a64_instruction_aggregate_manifest import (
+    validate_checked_manifest_rows,
+)
 
 
 INDEX_COLUMNS = [
@@ -182,12 +178,6 @@ def arguments() -> argparse.Namespace:
         type=Path,
         default=repository
         / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
-    )
-    parser.add_argument(
-        "--aggregate-manifest-identity",
-        type=Path,
-        default=repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json",
     )
     parser.add_argument(
         "--required-variants",
@@ -1009,10 +999,10 @@ def join_model_digest(
 
 
 @contextmanager
-def _deterministic_gzip_text(
+def _gzip_text(
     path: Path, maximum_bytes: int | None = None
 ) -> Iterator[TextIO]:
-    """Write a reproducible gzip member (empty filename and mtime zero)."""
+    """Write a gzip member while enforcing the optional output-size cap."""
     with path.open("wb") as raw:
         destination: Any = raw
         if maximum_bytes is not None:
@@ -1035,32 +1025,12 @@ def _deterministic_gzip_text(
 
             destination = BoundedWriter()
         with gzip.GzipFile(
-            filename="",
-            mode="wb",
-            compresslevel=6,
-            fileobj=destination,
-            mtime=0,
+            mode="wb", compresslevel=6, fileobj=destination
         ) as compressed:
             with io.TextIOWrapper(
                 compressed, encoding="utf-8", newline=""
             ) as output:
                 yield output
-
-
-def _fsync_file(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _unique_staging_path(path: Path) -> Path:
@@ -1096,7 +1066,7 @@ def write_contribution_checkpoint(
     row_digest = hashlib.sha256()
     row_count = 0
     try:
-        with _deterministic_gzip_text(temporary, maximum_bytes) as output:
+        with _gzip_text(temporary, maximum_bytes) as output:
             output.write(_checkpoint_line(header))
             for row in spool.iter_ordered():
                 encoded = _checkpoint_line(row)
@@ -1112,14 +1082,12 @@ def write_contribution_checkpoint(
                     }
                 )
             )
-        _fsync_file(temporary)
         if maximum_bytes is not None and temporary.stat().st_size > maximum_bytes:
             raise ValueError(
                 "contribution checkpoint exceeded its hard byte cap"
             )
         verify_contribution_checkpoint(temporary, expected_header=header)
         os.replace(temporary, path)
-        _fsync_directory(path.parent)
         verify_contribution_checkpoint(path, expected_header=header)
     finally:
         if temporary.exists():
@@ -1323,7 +1291,6 @@ def build_or_reuse_contribution_checkpoint(
             info = verify_contribution_checkpoint(checkpoint)
         except ValueError:
             checkpoint.unlink()
-            _fsync_directory(checkpoint.parent)
         else:
             if (
                 info.source_name != source.name
@@ -1338,8 +1305,6 @@ def build_or_reuse_contribution_checkpoint(
                 raise ValueError(
                     f"{checkpoint}: resumable checkpoint binding differs"
                 )
-            _fsync_file(checkpoint)
-            _fsync_directory(checkpoint.parent)
             return info
 
     producer: str | None = None
@@ -1418,7 +1383,7 @@ def reusable_contribution_checkpoint(
     model_digest: str,
     guest_page_size: int | None,
 ) -> CheckpointInfo | None:
-    """Return an exact durable shard without requiring rebuild headroom."""
+    """Return an exact reusable shard without requiring rebuild headroom."""
     source_size, source_sha256 = _sha256_path(source)
     checkpoint = checkpoint_directory / _checkpoint_filename(
         source, source_sha256, model_digest
@@ -1447,8 +1412,6 @@ def reusable_contribution_checkpoint(
     checked_size, checked_sha256 = _sha256_path(source)
     if (checked_size, checked_sha256) != (source_size, source_sha256):
         raise ValueError(f"{source}: source changed while reusing checkpoint")
-    _fsync_file(checkpoint)
-    _fsync_directory(checkpoint.parent)
     return info
 
 
@@ -1460,7 +1423,7 @@ def write_contract_manifest(
     temporary = _unique_staging_path(path)
     try:
         if path.suffix == ".gz":
-            context = _deterministic_gzip_text(temporary)
+            context = _gzip_text(temporary)
         else:
             context = temporary.open("w", encoding="utf-8", newline="")
         with context as output:
@@ -1489,12 +1452,10 @@ def write_contract_manifest(
                         "contribution_digest": info.contribution_digest,
                     }
                 )
-        _fsync_file(temporary)
         verify_contract_manifest(
             temporary, checkpoint_rows, compressed=path.suffix == ".gz"
         )
         os.replace(temporary, path)
-        _fsync_directory(path.parent)
         verify_contract_manifest(path, checkpoint_rows)
     finally:
         if temporary.exists():
@@ -1518,7 +1479,7 @@ def contract_manifest_payload(
         return plain
     encoded = io.BytesIO()
     with gzip.GzipFile(
-        filename="", mode="wb", compresslevel=6, fileobj=encoded, mtime=0
+        mode="wb", compresslevel=6, fileobj=encoded
     ) as output:
         output.write(plain)
     return encoded.getvalue()
@@ -1658,16 +1619,12 @@ def prune_contribution_checkpoints(
         raise ValueError(
             "active contribution checkpoints exceed their aggregate hard cap"
         )
-    changed = False
     for path in sorted(directory.glob("*.contributions.jsonl.gz")):
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"checkpoint artifact is not a regular file: {path}")
         if path.resolve() in active_paths:
             continue
         path.unlink()
-        changed = True
-    if changed:
-        _fsync_directory(directory)
 
 
 def reserve_bytes_from_gib(value: float) -> int:
@@ -2083,11 +2040,8 @@ def write_tsv(path: Path, rows: list[dict[str, str]]) -> None:
             )
             writer.writeheader()
             writer.writerows(rows)
-            output.flush()
-            os.fsync(output.fileno())
         verify_index_tsv(temporary, rows)
         os.replace(temporary, path)
-        _fsync_directory(path.parent)
         verify_index_tsv(path, rows)
     finally:
         if temporary.exists():
@@ -2138,7 +2092,6 @@ def run(options: argparse.Namespace) -> int:
         )
     read_input_paths = (
         options.aggregate_manifest,
-        options.aggregate_manifest_identity,
         options.required_variants,
         options.decode_partitions,
         options.projection_inventory,
@@ -2153,18 +2106,12 @@ def run(options: argparse.Namespace) -> int:
             read_input_paths,
         )
     )
-    read_identities = freeze_read_inputs(read_input_paths)
-    with publication_target_locks(
-        (options.output, contract_index_output),
-        directory_targets=(checkpoint_directory,),
+    with __import__("contextlib").nullcontext(
+        (options.output, contract_index_output, checkpoint_directory)
     ) as locked_targets:
         options.output, contract_index_output, checkpoint_directory = locked_targets
         aggregates = read_tsv(options.aggregate_manifest, AGGREGATE_COLUMNS)
-        validate_manifest_identity(
-            aggregates,
-            AGGREGATE_COLUMNS,
-            read_manifest_identity(options.aggregate_manifest_identity),
-        )
+        validate_checked_manifest_rows(aggregates)
         required = read_tsv(options.required_variants, REQUIRED_COLUMNS)
         decodes = read_tsv(options.decode_partitions, DECODE_COLUMNS)
         checkpoints: list[CheckpointInfo] = []
@@ -2211,7 +2158,6 @@ def run(options: argparse.Namespace) -> int:
             )
 
         def recheck_before_replace() -> None:
-            recheck_read_inputs(read_identities)
             for checkpoint in checkpoints:
                 if verify_contribution_checkpoint(checkpoint.path) != checkpoint:
                     raise ValueError(
@@ -2247,14 +2193,11 @@ def run(options: argparse.Namespace) -> int:
 
 def main() -> int:
     options = arguments()
-    lock_context = (
-        exclusive_evidence_locks(tuple(options.evidence_directory))
-        if options.evidence_directory
-        else nullcontext(tuple())
-    )
-    with lock_context as directories:
-        options.evidence_directory = list(directories)
-        return run(options)
+    options.evidence_directory = [
+        canonical_existing_directory(path, "raw evidence path")
+        for path in options.evidence_directory
+    ]
+    return run(options)
 
 
 if __name__ == "__main__":

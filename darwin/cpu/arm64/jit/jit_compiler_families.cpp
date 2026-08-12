@@ -21,12 +21,30 @@ void JitCompilerFamilies::attach_family_emitter(void *emitter,
   family_native_fp_ = native_fp;
   family_native_fpmr_ = native_fpmr;
   gpr_cache_enabled_ = enable_gpr_cache;
+  linked_gpr_bank_enabled_ =
+      enable_gpr_cache &&
+      static_cast<Arm64Emitter *>(emitter)->linked_gpr_bank_enabled();
 }
 
 void JitCompilerFamilies::attach_link_resolver(
     void *context, LinkResolver resolver) noexcept {
   link_context_ = context;
   link_resolver_ = resolver;
+}
+
+void JitCompilerFamilies::begin_link_observation() noexcept {
+  direct_link_refusals_ = 0;
+  indirect_link_refusals_ = 0;
+  linked_gpr_bank_dirty_mask_ = 0;
+  exit_linked_gpr_bank_published_ = false;
+}
+
+std::size_t JitCompilerFamilies::direct_link_refusals() const noexcept {
+  return direct_link_refusals_;
+}
+
+std::size_t JitCompilerFamilies::indirect_link_refusals() const noexcept {
+  return indirect_link_refusals_;
 }
 
 void JitCompilerFamilies::attach_indirect_link_resolver(
@@ -46,6 +64,8 @@ void JitCompilerFamilies::observe_gpr_access(
     unsigned guest, bool stack_pointer, bool reads, bool writes) noexcept {
   if (!gpr_residency_observation_enabled_ || guest > 31U ||
       (guest == 31U && !stack_pointer) || (!reads && !writes))
+    return;
+  if (linked_gpr_host(guest, stack_pointer))
     return;
 
   auto &observation = gpr_residency_guests_[guest];
@@ -154,7 +174,8 @@ void JitCompilerFamilies::apply_gpr_residency_plan(
     return;
   std::array<bool, 32> seen{};
   for (std::size_t index = 0; index < plan.count; ++index) {
-    if (plan.guests[index] >= seen.size() || seen[plan.guests[index]])
+    if (plan.guests[index] >= seen.size() || seen[plan.guests[index]] ||
+        linked_gpr_host(plan.guests[index], plan.guests[index] == 31U))
       return;
     seen[plan.guests[index]] = true;
   }
@@ -199,7 +220,7 @@ JitCompilerFamilies::gpr_profile_written_mask() const noexcept {
 
 std::uint32_t
 JitCompilerFamilies::gpr_profile_dirty_live_out_mask() const noexcept {
-  std::uint32_t result{};
+  std::uint32_t result{linked_gpr_bank_dirty_mask_};
   for (const auto &slot : gpr_slots_)
     if (slot.dirty &&
         (slot.guest < 31U ||
@@ -476,6 +497,16 @@ JitCompilerFamilies::find_gpr_slot(unsigned guest,
   return std::nullopt;
 }
 
+std::optional<unsigned> JitCompilerFamilies::linked_gpr_host(
+    unsigned guest, bool stack_pointer) const noexcept {
+  if (!linked_gpr_bank_enabled_ || (guest == 31U && stack_pointer))
+    return std::nullopt;
+  for (std::size_t index = 0; index < linked_gpr_guests.size(); ++index)
+    if (linked_gpr_guests[index] == guest)
+      return linked_gpr_hosts[index];
+  return std::nullopt;
+}
+
 std::optional<std::size_t>
 JitCompilerFamilies::allocate_gpr_slot(unsigned guest,
                                        bool stack_pointer) {
@@ -507,6 +538,8 @@ JitCompilerFamilies::read_native_gpr(unsigned guest, bool stack_pointer,
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   if (guest == 31U && !stack_pointer)
     return {31U, true};
+  if (const auto host = linked_gpr_host(guest, stack_pointer))
+    return {*host, true};
   auto slot = find_gpr_slot(guest, stack_pointer);
   if (!slot)
     slot = allocate_gpr_slot(guest, stack_pointer);
@@ -539,6 +572,10 @@ JitCompilerFamilies::write_native_gpr(unsigned guest, bool stack_pointer,
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   if (guest == 31U && !stack_pointer)
     return {31U, true};
+  if (const auto host = linked_gpr_host(guest, stack_pointer)) {
+    linked_gpr_bank_dirty_mask_ |= std::uint32_t{1} << guest;
+    return {*host, true};
+  }
   auto slot = find_gpr_slot(guest, stack_pointer);
   if (!slot)
     slot = allocate_gpr_slot(guest, stack_pointer);
@@ -851,6 +888,11 @@ void JitCompilerFamilies::load_gpr(unsigned host, unsigned guest,
     emitter.move_x(host, 31);
     return;
   }
+  if (const auto linked_host = linked_gpr_host(guest, stack_pointer)) {
+    if (*linked_host != host)
+      emitter.move_x(host, *linked_host);
+    return;
+  }
   const auto slot = find_gpr_slot(guest, stack_pointer);
   if (slot) {
     if (!gpr_slots_[*slot].loaded) {
@@ -879,6 +921,12 @@ void JitCompilerFamilies::store_gpr(unsigned host, unsigned guest,
   if (guest == 31U && !stack_pointer)
     return;
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
+  if (const auto linked_host = linked_gpr_host(guest, stack_pointer)) {
+    if (*linked_host != host)
+      emitter.move_x(*linked_host, host);
+    linked_gpr_bank_dirty_mask_ |= std::uint32_t{1} << guest;
+    return;
+  }
   const auto slot = find_gpr_slot(guest, stack_pointer);
   if (slot) {
     if (resident_gpr_hosts[*slot] != host)
@@ -921,6 +969,22 @@ void JitCompilerFamilies::flush_gprs(std::uint16_t mask) {
   }
 }
 
+void JitCompilerFamilies::flush_linked_gpr_bank() {
+  if (!linked_gpr_bank_enabled_)
+    return;
+  static_cast<Arm64Emitter *>(family_emitter_)
+      ->store_pair_x(linked_gpr_hosts[0], linked_gpr_hosts[1], 15,
+                     register_offset(linked_gpr_guests[0], false));
+}
+
+void JitCompilerFamilies::reload_linked_gpr_bank() {
+  if (!linked_gpr_bank_enabled_)
+    return;
+  static_cast<Arm64Emitter *>(family_emitter_)
+      ->load_pair_x(linked_gpr_hosts[0], linked_gpr_hosts[1], 15,
+                    register_offset(linked_gpr_guests[0], false));
+}
+
 void JitCompilerFamilies::flush_vectors(std::uint32_t mask) {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   for (std::size_t index = 0; index < vector_slots_.size(); ++index) {
@@ -951,6 +1015,12 @@ void JitCompilerFamilies::flush_exit_gprs() {
   const auto vector_mask =
       exit_vector_mask_set_ ? exit_vector_mask_ : dirty_vector_mask();
   flush_gprs(gpr_mask);
+  /* The predecessor may have dirtied the implicit chain bank. A block cannot
+   * infer that fact from its own translation metadata, so ordinary boundaries
+   * publish both values unconditionally. Terminal helpers already received a
+   * canonical pair before their call and may replace it in CpuState. */
+  if (!exit_linked_gpr_bank_published_)
+    flush_linked_gpr_bank();
   flush_vectors(vector_mask);
   /*
    * Exit code can be emitted on one arm of a generated branch.  Publish a
@@ -961,16 +1031,34 @@ void JitCompilerFamilies::flush_exit_gprs() {
   flush_flags_for_exit();
   exit_gpr_mask_set_ = false;
   exit_vector_mask_set_ = false;
+  exit_linked_gpr_bank_published_ = false;
+}
+
+void JitCompilerFamilies::flush_link_transition_state() {
+  const auto gpr_mask =
+      exit_gpr_mask_set_ ? exit_gpr_mask_ : dirty_gpr_mask();
+  const auto vector_mask =
+      exit_vector_mask_set_ ? exit_vector_mask_ : dirty_vector_mask();
+  /* Successful links retain x22/x23. Every rejecting arm below eventually
+   * uses return_constant(), whose exit hook publishes that fixed pair. */
+  flush_gprs(gpr_mask);
+  flush_vectors(vector_mask);
+  flush_flags_for_exit();
+  exit_gpr_mask_set_ = false;
+  exit_vector_mask_set_ = false;
+  exit_linked_gpr_bank_published_ = false;
 }
 
 void JitCompilerFamilies::spill_gprs_for_returning_call() {
   flush_gprs(dirty_gpr_mask());
+  flush_linked_gpr_bank();
   flush_vectors(dirty_vector_mask());
   spill_flags_for_internal_clobber();
 }
 
 void JitCompilerFamilies::reload_gprs_after_call() {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
+  reload_linked_gpr_bank();
   for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
     const auto &slot = gpr_slots_[index];
     if (slot.guest == unbound_guest)
@@ -989,12 +1077,25 @@ void JitCompilerFamilies::reload_gprs_after_call() {
   }
 }
 
+void JitCompilerFamilies::publish_linked_gprs_for_returning_call() {
+  flush_linked_gpr_bank();
+}
+
+void JitCompilerFamilies::reload_linked_gprs_after_returning_call() {
+  reload_linked_gpr_bank();
+}
+
 void JitCompilerFamilies::spill_gprs_for_terminal_call() {
   const auto gpr_mask =
       exit_gpr_mask_set_ ? exit_gpr_mask_ : dirty_gpr_mask();
   const auto vector_mask =
       exit_vector_mask_set_ ? exit_vector_mask_ : dirty_vector_mask();
   flush_gprs(gpr_mask);
+  flush_linked_gpr_bank();
+  /* A terminal helper may update architectural x8/x9 and may clobber the
+   * caller-saved CpuState pointer in x15. The generic return hook must neither
+   * dereference x15 nor republish the pre-helper x22/x23 values afterward. */
+  exit_linked_gpr_bank_published_ = linked_gpr_bank_enabled_;
   flush_vectors(vector_mask);
   spill_flags_for_internal_clobber();
   /*
@@ -1010,6 +1111,9 @@ void JitCompilerFamilies::spill_gprs_for_terminal_call() {
 
 void JitCompilerFamilies::flush_and_invalidate_gprs() {
   flush_gprs(dirty_gpr_mask());
+  /* Constrained native sequences materialize architectural registers from
+   * CpuState, so the fixed linked bank must be canonical there as well. */
+  flush_linked_gpr_bank();
   /*
    * Keep every slot's architectural identity stable for cold exits recorded
    * before this point. The constrained native sequence may overwrite the host
@@ -1020,6 +1124,13 @@ void JitCompilerFamilies::flush_and_invalidate_gprs() {
     slot.loaded = false;
     slot.dirty = false;
   }
+}
+
+void JitCompilerFamilies::reload_gprs_after_constrained_sequence() {
+  /* Dynamic slots remain invalid and reload lazily. The fixed linked bank has
+   * no per-block loaded state, so re-establish it eagerly after x0-x7 are
+   * repurposed or written through CpuState. */
+  reload_linked_gpr_bank();
 }
 
 void JitCompilerFamilies::store_pc(std::uint64_t pc) {
@@ -1102,12 +1213,12 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   std::uint64_t *profile_counter{};
   const auto profile_dirty_live_out = gpr_profile_dirty_live_out_mask();
 #endif
-  flush_exit_gprs();
+  flush_link_transition_state();
   /*
    * Unlike an exit emitted on only one branch arm, every path entering this
-   * linked-exit sequence executes the flush above.  CpuState is therefore
-   * canonical before the publication/fairness comparisons take ownership of
-   * host NZCV.
+   * linked-exit sequence publishes the ordinary resident state above. The
+   * fixed x8/x9 bank remains live only on the successful BR; every fallback
+   * reaches return_constant() and canonicalizes it before C++.
    */
   assume_flags_in_memory();
   set_exit_gpr_mask(0);
@@ -1118,6 +1229,13 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
           : static_cast<const JitBlockLink *>(
                 link_resolver_(link_context_, target));
   if (link == nullptr) {
+    /* No resolver deliberately selects fully unlinked code. A configured
+     * resolver returning null means its stable table refused this target,
+     * currently because that table reached capacity. The fallback remains
+     * correct executor-private code, but it is observably degraded and must
+     * not become the canonical shared translation for these guest bytes.
+     */
+    direct_link_refusals_ += link_resolver_ != nullptr;
     store_pc(target);
     emitter.return_constant(Event::continued, count);
     return;
@@ -1214,10 +1332,11 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   const auto profile_dirty_live_out = gpr_profile_dirty_live_out_mask();
 #endif
-  flush_exit_gprs();
+  flush_link_transition_state();
   /*
-   * CpuState is canonical before host-only comparisons take ownership of
-   * NZCV. Internal successors reload guest flags on demand.
+   * Ordinary CpuState and NZCV are canonical before host-only comparisons.
+   * The fixed x8/x9 bank remains live only on the successful PIC branch;
+   * miss/fallback arms publish it through return_constant().
    */
   assume_flags_in_memory();
   set_exit_gpr_mask(0);
@@ -1229,6 +1348,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
           : static_cast<const JitIndirectLink *>(
                 indirect_link_resolver_(indirect_link_context_, source_pc));
   if (site == nullptr) {
+    indirect_link_refusals_ += indirect_link_resolver_ != nullptr;
     emitter.store_x(8, 15, offsetof(CpuState, pc));
     emitter.return_constant(Event::continued, count);
     return;

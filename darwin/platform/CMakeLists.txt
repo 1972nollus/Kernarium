@@ -17,10 +17,22 @@ target_compile_definitions(uml_run_routing PRIVATE
 set_target_properties(uml_run_routing PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
+add_library(uml_host_topology OBJECT host_topology.cpp)
+add_library(UML::HostTopology ALIAS uml_host_topology)
+uml_declare_architecture_target(uml_host_topology platform)
+target_link_libraries(uml_host_topology PRIVATE UML::PlatformContract)
+target_include_directories(uml_host_topology PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_host_topology PUBLIC cxx_std_20)
+target_compile_options(uml_host_topology PRIVATE -Wall -Wextra -Werror)
+set_target_properties(uml_host_topology PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 add_library(uml_platform_component INTERFACE)
 add_library(UML::PlatformComponent ALIAS uml_platform_component)
 uml_declare_architecture_target(uml_platform_component platform)
 target_link_libraries(uml_platform_component INTERFACE
     UML::PlatformContract)
 target_sources(uml_platform_component INTERFACE
-    $<TARGET_OBJECTS:uml_run_routing>)
+    $<TARGET_OBJECTS:uml_run_routing>
+    $<TARGET_OBJECTS:uml_host_topology>)

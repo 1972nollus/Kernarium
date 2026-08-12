@@ -609,15 +609,17 @@ void production_specialization()
 
 int main()
 {
-	test::EngineHarness harness;
-	std::size_t cases = 0;
-	register_modifier_forms(harness, cases);
-	zero_modifier_forms(harness, cases);
-	zero_target_forms(harness, cases);
-	reserved_zero_modifier_encodings(harness, cases);
-	production_specialization();
-	pauth::require_counts(harness, cases);
-	harness.print_summary("arm64-base-pauth-branch");
+	{
+		test::EngineHarness harness;
+		std::size_t cases = 0;
+		register_modifier_forms(harness, cases);
+		zero_modifier_forms(harness, cases);
+		zero_target_forms(harness, cases);
+		reserved_zero_modifier_encodings(harness, cases);
+		production_specialization();
+		pauth::require_counts(harness, cases);
+		harness.print_summary("arm64-base-pauth-branch");
+	}
 
 	test::EngineHarness guarded_harness{
 		test::EngineHarnessOptions{

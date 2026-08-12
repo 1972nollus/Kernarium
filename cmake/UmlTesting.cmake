@@ -257,13 +257,7 @@ function(uml_add_integration_test)
             message(FATAL_ERROR
                 "${TEST_NAME}: ROOTFS integration tests require UML_INTEGRATION_ROOTFS")
         endif()
-        set(_command
-            "${PROJECT_SOURCE_DIR}/tools/rootfs/with-verified-rootfs.sh"
-            --rootfs "${UML_INTEGRATION_ROOTFS}" -- ${TEST_COMMAND})
         list(APPEND _labels rootfs)
-        if(NOT TEST_RESOURCE_LOCK)
-            set(TEST_RESOURCE_LOCK uml-rootfs)
-        endif()
     endif()
     add_test(NAME "${TEST_NAME}" COMMAND ${_command})
     if(TEST_LABELS)

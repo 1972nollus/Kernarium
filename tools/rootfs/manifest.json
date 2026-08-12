@@ -3,14 +3,6 @@
   "image": "rootfs.erofs",
   "sha256": "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91",
   "size": 3802316800,
-  "acquisition": {
-    "method": "authenticated release artifact",
-    "url_environment": "UML_ROOTFS_URL",
-    "statement_url_environment": "UML_ROOTFS_STATEMENT_URL",
-    "signature_url_environment": "UML_ROOTFS_SIGNATURE_URL",
-    "public_key_environment": "UML_ROOTFS_PUBLIC_KEY",
-    "required_verification": "detached OpenSSL signature over a small release digest statement, followed by this pinned image SHA-256"
-  },
   "filesystem": {
     "format": "erofs",
     "superblock_offset": 1024,
@@ -25,33 +17,5 @@
     "inodes": 202634,
     "uuid": "b84fcbe2-0673-4126-8f81-bdee45997306",
     "volume_name": "rootfs"
-  },
-  "installed_guest": {
-    "architecture": "arm64",
-    "payload_root": "/opt",
-    "ltp_root": "/opt/ltp",
-    "node": "/opt/node/bin/node",
-    "utilities": {
-      "mkfs_ext2": "/usr/sbin/mkfs.ext2",
-      "mkfs_ext3": "/usr/sbin/mkfs.ext3",
-      "mkfs_ext4": "/usr/sbin/mkfs.ext4",
-      "mke2fs": "/usr/sbin/mke2fs",
-      "debugfs": "/usr/sbin/debugfs",
-      "docker": "/usr/bin/docker",
-      "ip": "/usr/sbin/ip",
-      "bc": "/usr/bin/bc",
-      "quota": "/usr/bin/quota",
-      "quotacheck": "/usr/sbin/quotacheck",
-      "e4crypt": "/usr/sbin/e4crypt"
-    },
-    "benchmarks": {
-      "geekbench5": "/opt/geekbench/release/geekbench5",
-      "geekbench6": "/opt/geekbench/release/geekbench6",
-      "geekbench7": "/opt/geekbench/release/geekbench7",
-      "hpl": "/opt/hpl/xhpl",
-      "passmark": "/opt/passmark/PerformanceTest_Linux_ARM64",
-      "unixbench": "/opt/unixbench/Run"
-    },
-    "graphics_conformance_root": "/opt/vk-gl-cts"
   }
 }

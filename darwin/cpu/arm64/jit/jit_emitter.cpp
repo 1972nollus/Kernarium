@@ -6,13 +6,19 @@ namespace uml::cpu::arm64 {
 
 Arm64Emitter::Arm64Emitter(
       bool persistent_linked_block_abi,
-      std::size_t literal_range_words) noexcept
+      std::size_t literal_range_words,
+      bool linked_gpr_bank) noexcept
       : literal_range_words_{
             std::min(literal_range_words, std::size_t{1} << 18U)},
-        persistent_linked_block_abi_{persistent_linked_block_abi} {}
+        persistent_linked_block_abi_{persistent_linked_block_abi},
+        linked_gpr_bank_{persistent_linked_block_abi && linked_gpr_bank} {}
 
 [[nodiscard]] bool Arm64Emitter::persistent_linked_block_abi() const noexcept {
     return persistent_linked_block_abi_;
+  }
+
+[[nodiscard]] bool Arm64Emitter::linked_gpr_bank_enabled() const noexcept {
+    return linked_gpr_bank_;
   }
 
 [[nodiscard]] Arm64Emitter::Label Arm64Emitter::make_label() {
@@ -85,6 +91,18 @@ void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
     const auto scaled =
         static_cast<std::uint32_t>(offset / 8) & 0x7fU;
     emit(0xa940'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
+         ((base & 31U) << 5U) | (first & 31U));
+  }
+
+void Arm64Emitter::store_pair_x(unsigned first, unsigned second,
+                                unsigned base, std::ptrdiff_t offset) {
+    if ((offset % 8) != 0 || offset < -512 || offset > 504) {
+      valid_ = false;
+      return;
+    }
+    const auto scaled =
+        static_cast<std::uint32_t>(offset / 8) & 0x7fU;
+    emit(0xa900'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
          ((base & 31U) << 5U) | (first & 31U));
   }
 
@@ -282,17 +300,22 @@ void Arm64Emitter::prologue() {
        * store lowering consumes that stable stack ABI. x19-x21 remain private
        * to the outer generated invocation and survive every host helper.
        */
-      emit(0xa9bc'7bfdU); // stp x29, x30, [sp, #-64]!
+      emit(linked_gpr_bank_ ? 0xa9bb'7bfdU
+                            : 0xa9bc'7bfdU); // -80 or -64.
       emit(0x9100'03fdU); // mov x29, sp
       emit(0xa901'07e0U); // stp x0, x1, [sp, #16]
       emit(0xa902'57e2U); // stp x2, x21, [sp, #32]
       emit(0xa903'53f3U); // stp x19, x20, [sp, #48]
+      if (linked_gpr_bank_)
+        emit(0xa904'5ff6U); // stp x22, x23, [sp, #64]
       move_x(15, 0);
       move_x(14, 1);
       move_x(19, 2);
       static_assert(maximum_chain_instructions <= 0xffffU);
       load_constant(20, maximum_chain_instructions);
       load_b(21, 19, offsetof(JitChainState, link_selector));
+      if (linked_gpr_bank_)
+        load_pair_x(22, 23, 15, register_offset(8, false));
       return;
     }
     emit(0xa9bd'7bfdU); // stp x29, x30, [sp, #-48]!
@@ -311,9 +334,12 @@ void Arm64Emitter::epilogue() {
        * returns, then restore every host callee-saved register.
        */
       store_x(20, 19, offsetof(JitChainState, remaining_instructions));
+      if (linked_gpr_bank_)
+        emit(0xa944'5ff6U); // ldp x22, x23, [sp, #64]
       emit(0xa943'53f3U); // ldp x19, x20, [sp, #48]
       emit(0xf940'17f5U); // ldr x21, [sp, #40]
-      emit(0xa8c4'7bfdU); // ldp x29, x30, [sp], #64
+      emit(linked_gpr_bank_ ? 0xa8c5'7bfdU
+                            : 0xa8c4'7bfdU); // +80 or +64.
       emit(0xd65f'03c0U);
       return;
     }

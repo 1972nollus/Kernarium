@@ -11,6 +11,10 @@
 #define UML_RUNTIME_PROFILING 0
 #endif
 
+#ifndef UML_MEMORY_PROFILE_TESTING
+#define UML_MEMORY_PROFILE_TESTING 0
+#endif
+
 namespace uml::memory {
 
 [[nodiscard]] bool execution_reader_begin(
@@ -33,7 +37,7 @@ private:
 #endif
 };
 
-#if UML_RUNTIME_PROFILING
+#if UML_RUNTIME_PROFILING && UML_MEMORY_PROFILE_TESTING
 namespace testing {
 [[nodiscard]] std::size_t execution_gate_profile_count() noexcept;
 }

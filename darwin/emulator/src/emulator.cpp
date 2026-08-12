@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "device.hpp"
 #include "options.hpp"
+#include "profile_reporter.hpp"
 #include "context.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -33,6 +34,35 @@ std::condition_variable process_address_space_changed;
 std::size_t process_address_space_shared_runs;
 std::size_t process_address_space_waiting_exclusive_runs;
 bool process_address_space_exclusive_run;
+
+class TranslationCacheRunScope final {
+public:
+	TranslationCacheRunScope() noexcept = default;
+
+	[[nodiscard]] bool enter(bool required) noexcept
+	{
+		required_ = required;
+		entered_ = !required ||
+			::uml::runtime::acquire_translation_cache_run_session();
+		return entered_;
+	}
+
+	~TranslationCacheRunScope()
+	{
+		if (required_ && entered_)
+			::uml::runtime::release_translation_cache_run_session();
+	}
+
+	TranslationCacheRunScope(const TranslationCacheRunScope &) = delete;
+	TranslationCacheRunScope &operator=(
+		const TranslationCacheRunScope &) = delete;
+
+	[[nodiscard]] bool entered() const noexcept { return entered_; }
+
+private:
+	bool required_{};
+	bool entered_{};
+};
 
 enum class AddressSpaceAdmissionMode : std::uint8_t {
 	none,
@@ -229,6 +259,12 @@ public:
 		ProcessAddressSpaceAdmission process_admission{
 			address_space_admission_mode()};
 		::uml::runtime::RunScope run_scope{runtime_};
+		/* Declared after RunScope so the session-owned executor pool drains
+		 * first on scope exit. Thread states retain only lightweight JIT
+		 * wrappers; Context::end_run() then retires those wrappers and their
+		 * memory domain after no pooled cache can still refer to it.
+		 */
+		TranslationCacheRunScope translation_cache_run;
 		if (!run_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
 #if UML_EMULATOR_ADMISSION_TESTING
@@ -242,11 +278,25 @@ public:
 			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
-		/* Before any engine exists, so every executor derives its cache
-		 * geometry from the same budget.
+		const bool jit_run = !prepared.informational &&
+			runtime_.execution_engine() ==
+				::uml::runtime::ExecutionEngine::jit;
+		/* Native callback handles remain independent embedding domains and use
+		 * standalone executors. Only the embedded kernel activates the managed
+		 * multi-vCPU executor pool.
 		 */
-		::uml::runtime::set_translation_cache_budget(
-			prepared.jit_cache_budget, prepared.guest_cpus);
+		const bool managed_jit_run = jit_run &&
+			native_kernel_entry_ == nullptr;
+		/* Before any JIT engine exists, so every executor derives its cache
+		 * geometry from the same budget. Data-only engines neither allocate
+		 * these resources nor claim the process-global configuration.
+		 */
+		if (jit_run &&
+		    !::uml::runtime::set_translation_cache_budget(
+				prepared.jit_cache_budget, prepared.guest_cpus))
+			return -UML_EMULATOR_RUNTIME_ERROR;
+		if (!translation_cache_run.enter(managed_jit_run))
+			return -UML_EMULATOR_RUNTIME_ERROR;
 		auto &arguments = prepared.arguments;
 		std::vector<char *> argument_pointers;
 		argument_pointers.reserve(arguments.size() + 1);
@@ -278,9 +328,18 @@ public:
 				static_cast<int>(arguments.size()),
 				argument_pointers.data(), environment_pointers.data());
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
-		return uml_elf_run(kernel_.data(), kernel_.size(),
+		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
 			static_cast<int>(arguments.size()), argument_pointers.data(),
 			environment_pointers.data());
+#if UML_ENABLE_JIT_PROFILE
+		/* The maintained embedded entry returns only after its execution
+		 * carriers have retired. Capture the quiescent profile before the
+		 * session-owned executor pool releases several GiB of cache storage;
+		 * the app boundary repeats this idempotently before its std::_Exit().
+		 */
+		report_jit_profiles();
+#endif
+		return result;
 #else
 		return -UML_EMULATOR_UNSUPPORTED;
 #endif

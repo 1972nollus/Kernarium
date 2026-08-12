@@ -2,12 +2,11 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	source-tree-cxx-only	tests/tooling/cmake/test_source_tree_audit.cmake	tooling	retained	structural source-tree audit
 -	source-size-advisory-policy	tests/tooling/cmake/test_source_size_report.cmake	tooling	retained	advisory source-size policy regression test
 -	xcframework-output-safety	tests/tooling/cmake/test_xcframework_destination.sh	tooling	retained	supported aggregate name and non-destructive build-root containment rejection
--	apple-static-archive-metadata	tests/tooling/cmake/test_apple_static_archive_verifier.sh	tooling	retained	ordinary Mach-O metadata/path privacy and exact gadget-target link-time object provenance with foreign, malformed, mixed-architecture, deployment-target, unaudited-target, impostor, path-leak, and archive-name escape negatives
--	apple-xcframework-staging	tests/tooling/cmake/test_create_apple_xcframework.sh	tooling	retained	deterministic standard v1.0 three-slice staging with exact payload preservation and malformed, duplicate, missing, unsupported, symlink, and existing-output negatives
+-	apple-xcframework-staging	tests/tooling/cmake/test_create_apple_xcframework.sh	tooling	retained	standard v1.0 three-slice staging with complete nonempty payloads plus malformed, duplicate, missing, unsupported, symlink, and existing-output negatives
+-	jit-profile-preset-contract	tests/tooling/cmake/test_jit_profile_preset.py	tooling	retained	checked profiling configure, build, focused tooling, and workflow presets inherit the production integration graph, isolate profiling to their build tree, and retain every documented runtime control in the profiling executable
+-	jit-profile-final-report-contract	tests/tooling/cmake/test_jit_profile_final_report.py	tooling	conditional	profiling-only native fixture links the private emulator-to-runtime reporting facade and proves nonblocking-descriptor backpressure completion, same-write leading-LF framing after an unterminated foreign prefix through both writer APIs, quiescent retired/live TLS draining, deterministic executor-pool wrapper, slot, waiter, session-keyed sequence wrapper/slot fanout and standalone-lifetime aggregation without raw keys, nonconsecutive and cross-wrapper slot associations, live-to-retired idempotence, a pool-only changed final, FILE-lock-independent output, reconstructible concurrent expansion chunks, changed-state cumulative finals across sequential activity, and silence for unchanged explicit repeats and for subsequent compile/overlap/shared normal-exit callbacks
 -	test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cmake	tooling	retained	generated CTest registrations require exactly one manifest-matching suite label
--	symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained	rejects link, object, aggregate, and include edges in both directions across every concrete engine kind
--	engine-object-boundary-audit	tests/tooling/cmake/test_engine_object_boundaries.py	tooling	retained	proves neutral helper ownership, production conformance composition, dead-symbol removal, stable engine entry disassembly, and that the five gadget decode families keep one fragment each behind exactly one textual composer
--	gadget-bank-layout-snapshot	tests/tooling/cmake/test_gadget_bank_layout.py	tooling	retained	self-tests the layout comparator and records every gadget entry offset and 64-byte cache-line phase so a later trial can prove it moved no unrelated entry, reading the linked image where one is built because the gadget objects are bitcode under IPO and hide the 87 C++-defined entries
+-	symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained	rejects link and include edges in both directions across every concrete engine kind
 -	kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained	deterministic configure-time target capability selection, host-compiler distinction, override precedence, coherent companion tools, missing-tool diagnostics, and reused-cache invalidation
 -	kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained	unmodified Linux elf/libelf and byteswap includes resolve through repository headers while topic 0008 retains only Darwin Kbuild behavior and file2alias collision handling
 -	arm64-engine-harness	tests/unit/arm64	unit	retained	existing registered test
@@ -16,15 +15,14 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	arm64-host-instruction-probe	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-native-hardware-oracle	tests/unit/arm64/native_hardware_oracle_tests.cpp	unit	retained	subprocess-isolated independent host execution with exact feature, signal, memory, and timeout evidence
 -	arm64-aslref-module-composition	tests/tooling/arm64/test_a64_aslref_module_composition.py	tooling	retained	owner modules replace exact official state boundaries without duplicate or cross-family declarations
--	arm64-aslref-corpus-identity	tests/tooling/arm64/validate_a64_aslref_corpus.py	tooling	retained	configure and tooling validation reject missing, noncanonical, renamed, or split-generation allocation corpus/interface queue trios
--	arm64-one-shot-publication-safety	tests/tooling/arm64/test_a64_one_shot_publications.py	tooling	retained	frozen inputs, alias and ancestry rejection, durable staged sets, identity-last corpus binding, and concurrent parent serialization fail closed
+-	arm64-aslref-corpus-validation	tests/tooling/arm64/validate_a64_aslref_corpus.py	tooling	retained	configure and tooling validation directly check the allocation corpus and interface queue schemas and semantics
 -	arm64-aslref-execution-oracle	tests/tooling/arm64/test_a64_aslref_execution_oracle.py	tooling	retained	validates checked representative official-ASL execution partitions, exact instruction-function mapping, semantic witness identity, and aggregate-plan parity
 -	arm64-aslref-materialization-batch	tests/tooling/arm64/test_a64_aslref_materialization_batch.py	tooling	retained	validates bounded batch policy, generated-output path isolation and exact reserve boundaries, pinned implementation-defined projection completeness and ranges, PAC dependency normalization, and MOPS whole-sequence topology
--	arm64-aslref-campaign-publication	tests/tooling/arm64/test_a64_aslref_campaign.py	tooling	retained	validates immutable source and page-profile binding, authoritative input-set equality, bounded four-worker execution, success-only atomic publication, exact artifact integrity, and resume behavior
--	arm64-aslref-campaign-pilot	tests/tooling/arm64/test_a64_aslref_campaign_pilot.py	tooling	retained	runs exactly the first four 1024-contract shards of a complete frozen plan with four workers, forbids pilot promotion/reporting, and proves byte-preserving full-campaign resume with honest invocation accounting
+-	arm64-aslref-campaign-publication	tests/tooling/arm64/test_a64_aslref_campaign.py	tooling	retained	validates page-profile binding, authoritative input-set equality, bounded four-worker execution, success-only atomic publication, semantic artifact validation, and resume behavior
+-	arm64-aslref-campaign-pilot	tests/tooling/arm64/test_a64_aslref_campaign_pilot.py	tooling	retained	runs exactly the first four 1024-contract shards of a complete plan with four workers, forbids pilot promotion/reporting, and proves full-campaign resume with honest invocation accounting
 -	arm64-aslref-campaign-authority	tests/tooling/arm64/test_a64_aslref_campaign_authority.py	tooling	retained	proves canonical multi-producer authoritative joins and rejects same-count replacement, cross-aggregate swap, duplicate, payload mutation, mixed-page input, and symlinked checkpoints
--	arm64-aslref-campaign-sharding	tests/tooling/arm64/test_a64_aslref_campaign_sharding.py	tooling	retained	proves full-snapshot evidence locking, bounded-fan-in authority merging and producer-at-a-time deduplication, deterministic hard-capped shards/metadata, durable publication, indexed exact-set joins, and byte-preserving resume
--	arm64-aslref-campaign-result-join	tests/tooling/arm64/test_a64_aslref_campaign_result_join.py	tooling	retained	requires separate verified 4K and 16K campaigns, disk-backed indexed exact result bindings, bounded aggregate streaming, hard database capacity, and identity-last output-pair publication before promotion
+-	arm64-aslref-campaign-sharding	tests/tooling/arm64/test_a64_aslref_campaign_sharding.py	tooling	retained	proves bounded-fan-in authority merging and producer-at-a-time deduplication, hard-capped shards/metadata, semantic validation, indexed exact-set joins, and resume
+-	arm64-aslref-campaign-result-join	tests/tooling/arm64/test_a64_aslref_campaign_result_join.py	tooling	retained	requires separate verified 4K and 16K campaigns, disk-backed indexed exact result bindings, bounded aggregate streaming, hard database capacity, and semantic TSV verification before promotion
 -	arm64-aslref-user-state-interface	tests/tooling/arm64/test_a64_aslref_user_state_interface.py	tooling	retained	validates exact X/W accessor widths and negative narrow writes, with configured pinned ASLRef and architecture inputs enabling direct official-semantics execution
 -	uml-tlb-sync-ranges	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-tlb-layout	tests/unit/arm64	unit	retained	existing registered test
@@ -48,13 +46,18 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-floating-trap-vector	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-floating-trap-control	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-floating-trap-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-terminal-count	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-gadget-terminal-count	tests/unit/arm64	unit	retained	terminal retirement, fault-prefix accounting, link suffix correction, and a final ADD-immediate reaching Builder's complete synthetic terminal stream
+-	arm64-gadget-successor-hoist-structure	tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp	unit	retained	pins every word and all register fields in all 32 ADD/SUB-immediate entries plus the probe's exact one-predecessor/eight-successor and register-counter loop topology in both A/B configurations
 -	arm64-static-runtime	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-static-boundary-state	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-static-translation	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-runtime	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-capability	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-cache_validation	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-jit-cache-geometry	tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp	unit	retained	minimum, representative, and extreme geometry plus the process-global shared-cache share stay inside the whole budget, publication is atomic, concurrent standalone executor leases stop at the published count, exactly one JIT run session is live, and standalone leases are excluded during managed sessions
+-	arm64-jit-shared-translation-cache	tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp	unit	retained	fallback executor admission is bounded, concurrent publication deduplicates owners, canonical ownership survives peer retirement, failed insertion reservations remain visible, and shard entry and cumulative process-byte ceilings reject excess entries
+-	arm64-jit-executor-pool	tests/unit/arm64/arm64_jit_executor_pool_tests.cpp	unit	retained	more persistent task-thread wrappers than the one-executor budget reuse one slot across CPU states, distinct per-thread memory objects at one generation, later generations and backings, while queued borrowers precede tight preferred reborrows, N+1 tasks wait and wake, and drain rejects stale or incompatible wrappers while preserving active-borrow teardown and recovery
+-	arm64-jit-executor-pool-multislot	tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp	unit	retained	four cacheline-separated exact-session availability cells retain lowest-slot fallback, exclusive concurrent preferred-slot transfers, FIFO priority over a tight reborrow, exact idle/active accounting, deferred drain and restart, stale pre-claim rejection across sessions, and standalone-lease exclusion throughout managed activation
 -	arm64-jit-barrier_codegen	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-barrier_runtime	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-illegal_runtime	tests/unit/arm64	unit	retained	existing registered test
@@ -590,23 +593,23 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-fp8-convert-down-rounding	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-fp8-convert-down-control	tests/unit/arm64	unit	retained	existing registered test
 -	slirp-network-arp	tests/tooling/network/slirp_arp_probe.cpp	tooling	conditional	host-only SLiRP contract registered when the optional provider is built
--	guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained	the shared guest harness starts the emulator attached so a killed runner group takes the guest with it instead of orphaning a spinning emulator
+-	guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained	the shared guest harness starts the emulator attached so a killed runner group takes the guest with it instead of orphaning a spinning emulator, and exposes the attached process's observed read-only return status
 -	embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional	real embedded ELF handles serialize the fixed linked window and process-global Linux state
 -	virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional	host-only protocol fixture registered when GPU dependencies and tooling are built
 -	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
 -	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
--	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	authenticated digest-statement provisioning and tamper rejection
+-	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	provision-time local artifact validation, authenticated release installation, tamper rejection, and atomic no-replace publication
 -	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	pins the raw EROFS device, filesystem type, and launcher-owned kernel arguments
--	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only EROFS integrity and overlay runner self-test
+-	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only raw EROFS mapping, protected kernel arguments, and overlay runner self-test
 -	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher proves native display default and explicit VNC compatibility mode
 -	chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained	host-only metrics parser self-test
 -	network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained	keeps host-network probes out of the deterministic SLiRP smoke
 -	jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test
--	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, and image-local no-upload Geekbench policy
+-	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, image-local no-upload Geekbench policy, source-audited orderly-shutdown and status-zero enforcement for all four timing entry points, and dynamically tested Geekbench/guest-shell failure precedence
 -	arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained	host-only inventory consistency audit
 -	arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained	rejects form confusion, unreachable words, and undeclared exact-encoding aliases
 -	arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained	rejects missing, duplicate, swapped, count, digest, reserved-predicate, feature-gate, oracle-locator, and page-profile aggregate drift
--	arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained	proves deterministic gzip parity and resumable replacement while rejecting duplicate, mismatched, symlink, and truncated raw evidence
+-	arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained	proves lossless gzip replacement and resumability while rejecting duplicate, mismatched, symlink, and truncated raw evidence
 -	arm64-input-materialization-negative-fixtures	tests/tooling/arm64/test_a64_input_materialization.py	tooling	retained	validates canonical content-addressed raw inputs, projection mutations, callback descriptors, corruption, and disk-backed join ordering
 -	arm64-aslref-system-state	tests/tooling/arm64/test_a64_aslref_system_state.py	tooling	retained	validates the projected system-state bridge, all exposed selector contracts, official XML provenance, and official read/write instruction procedures
 -	arm64-instruction-evidence-reset	tests/unit/arm64/reset_instruction_evidence.cmake	unit	conditional	CMake-only unit setup that clears stale per-test evidence before producers run
@@ -621,10 +624,6 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	runtime-exit-order	tests/unit/runtime	unit	retained	legacy context teardown cannot call a destroyed software-memory registry
 -	cpu-engine-contract	tests/unit	unit	retained	explicit CPU engine boundary coverage
 -	arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained	subprocess-isolated cross-engine and C-bridge PC-alignment signal contract with retry and cache reuse
--	cpu-interpreter-isolated-link	tests/unit	unit	retained	interpreter adapter declares every link dependency
--	cpu-gadget-isolated-link	tests/unit	unit	retained	gadget adapter declares every link dependency
--	cpu-jit-isolated-link	tests/unit	unit	retained	JIT adapter declares every link dependency
--	cpu-factory-isolated-link	tests/unit	unit	retained	common factory declares every concrete engine dependency
 -	kernel-release-source-preparer	tests/tooling/kernel/test_materialize_release.sh	tooling	retained	offline signed-release materialization and tamper rejection
 -	kernel-series-topology	tests/tooling/kernel/test_series_topology.sh	tooling	retained	exact patch-count, patch-ID, subject/order, and no-merge history rejection
 -	kernel-cmake-build-layout	tests/tooling/kernel/test_cmake_build_layout.cmake	tooling	retained	page-mode integration configurations own distinct binary-tree-local Kbuild directories and vmlinux outputs
@@ -634,8 +633,8 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	dependency-source-archive-verifier	tests/tooling/dependencies/test_source_archive.sh	tooling	retained	safe archive extraction and canonical prepared-tree identity
 dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/test_prepare.sh	tooling	retained	offline release archive preparation and tamper rejection
 -	dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
--	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private static arm64 prefix provenance and content validation
--	dependency-production-link-allowlist	tests/tooling/dependencies/test_verify_production_link.sh	tooling	retained	final link permits only build, Apple SDK/toolchain, and verified private-prefix inputs
+-	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private prefix manifest, required payload, symlink exclusion, static arm64 format, platform, and deployment compatibility
+-	dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained	production executables may depend dynamically only on Apple system libraries without object or link-map attribution
 -	guest-overlay-systemd-smoke	tests/integration	integration	retained	EROFS lower, required /opt plus LTP userspace and offline Geekbench payload, image-owned uml tty0 login, Docker and containerd tmpfs state, offline source-built hello-world container execution, and systemd guest boot
 -	guest-interpreter-smoke	tests/integration/jit	integration	retained	lightweight interpreter kernel, shell, and CPU-feature smoke
 -	guest-gadgets-smoke	tests/integration/jit	integration	retained	gadget-engine guest dynamic-code smoke

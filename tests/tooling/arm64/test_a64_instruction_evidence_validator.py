@@ -15,7 +15,6 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from a64_raw_evidence_files import producer_evidence_lock
 
 
 SOURCE = Path(__file__).with_name("validate_a64_instruction_evidence.py")
@@ -865,27 +864,6 @@ def main() -> int:
                 "failed evidence validation replaced the prior report: "
                 + failed.stdout
             )
-        with producer_evidence_lock(evidence_directory):
-            waiting = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            try:
-                import time
-
-                time.sleep(0.05)
-                if waiting.poll() is not None:
-                    raise AssertionError(
-                        "evidence validator bypassed an active producer gate"
-                    )
-            finally:
-                if waiting.poll() is None:
-                    waiting.terminate()
-                    waiting.wait(timeout=5.0)
-        if report.read_bytes() != b"old-report":
-            raise AssertionError("contended validator partially wrote its report")
     print("A64 exact-evidence variant/oracle fixtures passed: 22")
     return 0
 

@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
-#include <cstdlib>
-
 #include <algorithm>
+#include <charconv>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <string_view>
 
 namespace uml::emulator {
@@ -31,27 +32,122 @@ namespace {
  * the host is about to pass it. Both keep their kernel meaning; the host only
  * reads them to decide how much it may spend on translated-code caches.
  */
+[[nodiscard]] unsigned memory_digit(char character) noexcept
+{
+	if (character >= '0' && character <= '9')
+		return static_cast<unsigned>(character - '0');
+	if (character >= 'a' && character <= 'f')
+		return static_cast<unsigned>(character - 'a') + 10U;
+	if (character >= 'A' && character <= 'F')
+		return static_cast<unsigned>(character - 'A') + 10U;
+	return 16U;
+}
+
+/* Linux memparse() uses simple_strtoull(..., base 0), then applies one
+ * case-insensitive K/M/G/T/P/E suffix and leaves any following text to its
+ * caller. UML's mem= setup ignores that end pointer, so the host must do the
+ * same when deriving the budget: base prefixes, unsigned wrap, suffixes and
+ * trailing text are all guest-visible kernel behavior here.
+ */
+[[nodiscard]] std::size_t parse_guest_memory_quantity(
+	std::string_view text) noexcept
+{
+	if (text.empty())
+		return 0;
+	unsigned base = 10;
+	std::size_t cursor = 0;
+	if (text.front() == '0') {
+		base = 8;
+		if (text.size() >= 3 && (text[1] == 'x' || text[1] == 'X') &&
+		    memory_digit(text[2]) < 16U) {
+			base = 16;
+			cursor = 2;
+		}
+	}
+	std::uint64_t value = 0;
+	while (cursor < text.size()) {
+		const auto digit = memory_digit(text[cursor]);
+		if (digit >= base)
+			break;
+		value = value * base + digit;
+		++cursor;
+	}
+	unsigned shifts = 0;
+	if (cursor < text.size()) {
+		switch (text[cursor]) {
+		case 'K': case 'k': shifts = 1; break;
+		case 'M': case 'm': shifts = 2; break;
+		case 'G': case 'g': shifts = 3; break;
+		case 'T': case 't': shifts = 4; break;
+		case 'P': case 'p': shifts = 5; break;
+		case 'E': case 'e': shifts = 6; break;
+		default: break;
+		}
+	}
+	while (shifts-- != 0)
+		value <<= 10U;
+	return static_cast<std::size_t>(value);
+}
+
 [[nodiscard]] std::size_t guest_memory_bytes(
 	const std::vector<std::string> &arguments)
 {
+	std::size_t bytes = 0;
 	for (const auto &argument : arguments)
 		if (argument.starts_with("mem="))
-			return ::uml::runtime::parse_translation_cache_quantity(
-				argument.substr(4).c_str());
-	return 0;
+			bytes = parse_guest_memory_quantity(
+				std::string_view{argument}.substr(4));
+	return bytes;
+}
+
+[[nodiscard]] std::optional<int> parse_guest_cpu_count(
+	std::string_view text) noexcept
+{
+	/* kstrtoint() accepts one terminal newline and rejects every other
+	 * trailing byte. Kernel command-line arguments do not ordinarily carry
+	 * one, but matching it here keeps the cache-budget divisor exact for
+	 * embedding callers too.
+	 */
+	if (!text.empty() && text.back() == '\n')
+		text.remove_suffix(1);
+	if (text.empty())
+		return std::nullopt;
+	if (text.front() == '+') {
+		text.remove_prefix(1);
+		if (text.empty() || text.front() == '+' || text.front() == '-')
+			return std::nullopt;
+	}
+	int parsed = 0;
+	const auto result = std::from_chars(
+		text.data(), text.data() + text.size(), parsed, 10);
+	if (result.ec != std::errc{} ||
+	    result.ptr != text.data() + text.size())
+		return std::nullopt;
+	return parsed;
 }
 
 [[nodiscard]] unsigned guest_cpu_count(
-	const std::vector<std::string> &arguments)
+	const std::vector<std::string> &arguments) noexcept
 {
-	for (const auto &argument : arguments)
-		if (argument.starts_with("ncpus=")) {
-			const auto parsed = std::strtoul(
-				argument.c_str() + 6, nullptr, 10);
-			if (parsed != 0 && parsed <= 1024U)
-				return static_cast<unsigned>(parsed);
-		}
-	return 1;
+	std::optional<unsigned> explicit_count;
+	for (const auto &argument : arguments) {
+		constexpr std::string_view prefix{"ncpus="};
+		if (!argument.starts_with(prefix))
+			continue;
+		const auto parsed = parse_guest_cpu_count(
+			std::string_view{argument}.substr(prefix.size()));
+		/* The kernel consumes a malformed value but leaves the preceding
+		 * valid value (or its automatic default) unchanged.
+		 */
+		if (!parsed)
+			continue;
+		explicit_count = static_cast<unsigned>(std::clamp(
+			*parsed, 1,
+			static_cast<int>(
+				::uml::runtime::maximum_guest_cpu_count)));
+	}
+	return explicit_count ? *explicit_count :
+		::uml::runtime::default_guest_cpu_count();
 }
 
 [[nodiscard]] bool informational(
@@ -142,11 +238,13 @@ EmulatorOptions prepare_emulator_options(
 	}
 	if (prepared.arguments.empty())
 		prepared.arguments.emplace_back("uml-darwin");
-	if (informational(prepared.arguments))
+	if (informational(prepared.arguments)) {
+		prepared.informational = true;
 		return prepared;
+	}
 	// The unified rootfs is a raw EROFS image. The UBD `c` flag suppresses its
-	// host-file lock so parallel guests can share the image; the rootfs sidecar
-	// coordinates provisioning, while EROFS supplies the filesystem contract.
+	// host-file lock so parallel guests can share the image; EROFS supplies the
+	// read-only filesystem contract.
 	if (!has_prefix(prepared.arguments, "ubd0")) {
 		if (rootfs.empty()) {
 			prepared.valid = false;

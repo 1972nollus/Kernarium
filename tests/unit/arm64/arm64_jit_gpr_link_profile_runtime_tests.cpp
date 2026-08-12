@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
@@ -24,6 +26,9 @@ using uml::memory::StaticGuestMemory;
 using Event = ::uml::cpu::EngineEvent;
 
 constexpr std::uint32_t system_call = 0xd400'0001U;
+
+static_assert(!arm64::share_translations_between_executors,
+              "profile counter pointers cannot cross executor lifetimes");
 
 [[nodiscard]] constexpr std::uint32_t
 add_immediate(unsigned destination, unsigned source,
@@ -574,6 +579,8 @@ void explicit_shutdown_hook_writes_one_global_snapshot() {
 } // namespace
 
 int main() {
+  require(arm64::set_jit_cache_budget(
+      256U * 1024U * 1024U, 2));
   require(jit_available() == 1);
   direct_profile_counts_only_taken_successes();
   pic_slots_are_attributed_and_drained_before_replacement_and_reset();

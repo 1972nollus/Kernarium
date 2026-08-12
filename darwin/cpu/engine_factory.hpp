@@ -13,11 +13,18 @@ namespace uml::cpu {
 [[nodiscard]] bool cpu_engine_available(EngineKind kind) noexcept;
 
 /* Publishes the whole-process budget for translated-code caches, split across
- * the guest's CPUs. Startup calls this once, before any engine exists; see
+ * the guest's CPUs. The first valid pair owns process-wide geometry; identical
+ * repeats succeed and incompatible later runs fail. See
  * arm64/jit/jit_cache_geometry.hpp for what the budget buys.
  */
-void set_translation_cache_budget(std::size_t total_bytes,
+[[nodiscard]] bool set_translation_cache_budget(std::size_t total_bytes,
 	unsigned executors) noexcept;
+
+/* Serializes JIT-capable emulator runs before any guest vCPU can allocate an
+ * executor slot. Other engine kinds do not take this process-wide session.
+ */
+[[nodiscard]] bool acquire_translation_cache_run_session() noexcept;
+void release_translation_cache_run_session() noexcept;
 
 /* Parses a byte count with an optional K/M/G suffix. Zero if unparsable. */
 [[nodiscard]] std::size_t parse_translation_cache_quantity(

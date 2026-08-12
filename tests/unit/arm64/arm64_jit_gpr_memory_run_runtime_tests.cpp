@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_immediate_memory_test_support.hpp"
 #include "jit_test_support.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <array>
@@ -749,6 +750,8 @@ void tracked_store_runs_track_every_range() {
 } // namespace
 
 int main() {
+  engine::require(arm64::set_jit_cache_budget(
+      256U * 1024U * 1024U, 3));
   engine::EngineHarness harness;
   every_scalar_variant(harness);
   alias_and_order_cases(harness);

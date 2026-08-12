@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Reject a missing, split-generation, or noncanonical A64 ASLRef corpus."""
+"""Validate the checked A64 ASLRef corpus and interface queue directly."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from a64_aslref_corpus_identity import validate_corpus_trio
 from generate_a64_aslref_corpus import (
     COLUMNS,
     QUEUE_COLUMNS,
+    read_tsv,
     validate_corpus_rows,
     validate_queue_rows,
 )
@@ -32,28 +32,16 @@ def arguments() -> argparse.Namespace:
         type=Path,
         default=repository / "tests/unit/arm64/a64_aslref_interface_queue.tsv",
     )
-    parser.add_argument(
-        "--identity",
-        type=Path,
-        default=repository / "tests/unit/arm64/a64_aslref_corpus.identity.json",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
     options = arguments()
-    validate_corpus_trio(
-        options.corpus,
-        COLUMNS,
-        options.interface_queue,
-        QUEUE_COLUMNS,
-        options.identity,
-        corpus_validator=validate_corpus_rows,
-        queue_validator=validate_queue_rows,
-    )
+    validate_corpus_rows(read_tsv(options.corpus, COLUMNS))
+    validate_queue_rows(read_tsv(options.interface_queue, QUEUE_COLUMNS))
     print(
-        "A64 ASLRef corpus generation identity passed: "
-        f"{options.corpus}, {options.interface_queue}, {options.identity}"
+        "A64 ASLRef corpus validation passed: "
+        f"{options.corpus}, {options.interface_queue}"
     )
     return 0
 

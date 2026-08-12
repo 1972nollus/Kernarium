@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Promote two verified page-profile ASLRef campaigns by exact frozen join."""
+"""Promote two verified page-profile ASLRef campaigns by exact join."""
 
 from __future__ import annotations
 
@@ -8,24 +8,20 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import csv
-import fcntl
 import hashlib
 import io
-import os
 import sqlite3
 import tempfile
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Sequence
 
-from a64_aggregate_manifest_identity import validate_manifest_identity
 from aggregate_a64_raw_instruction_evidence import OUTPUT_COLUMNS as AGGREGATE_COLUMNS
 from join_a64_input_materializations import INDEX_COLUMNS
 import run_a64_aslref_campaign as campaign
 
 
 PROMOTION_SCHEMA = "uml.a64.aslref-campaign-promotion/v1"
-IDENTITY_SCHEMA = "uml.a64.aslref-campaign-promotion-identity/v2"
 EXPECTED_ALLOCATED_VALID_AGGREGATES = 17_283
 DEFAULT_MAX_PROMOTION_DATABASE_BYTES = 128 * 1024 * 1024 * 1024
 PROMOTION_CAPACITY_INPUTS = 40_000_000
@@ -51,8 +47,6 @@ PROMOTION_COLUMNS = [
     "official_asl_shard_count",
     "official_asl_shard_ids_sha256",
     "official_asl_result_binding_sha256",
-    "campaign_plan_sha256",
-    "campaign_report_sha256",
     "join_model_digest",
     "engine_execution_evidence",
     "official_asl_execution",
@@ -102,7 +96,6 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--campaign-16k-plan", type=Path, required=True)
     parser.add_argument("--campaign-16k-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--identity-output", type=Path, required=True)
     parser.add_argument("--local-temp-root", type=Path, required=True)
     parser.add_argument(
         "--minimum-local-free-gib", type=float, default=20.0
@@ -150,12 +143,7 @@ def _iter_result_rows(
             yield {
                 "input_id": str(result["input_contract_id"]),
                 "shard_id": shard_id,
-                "probe_report_sha256": str(success["probe_report_sha256"]),
-                "probe_result_sha256": str(success["probe_result_sha256"]),
                 "input_results_sha256": str(success["input_results_sha256"]),
-                "artifact_manifest_sha256": str(
-                    success["artifact_manifest_sha256"]
-                ),
             }
 
 
@@ -172,10 +160,8 @@ def install_official_results(
 ) -> int:
     database.execute(
         "CREATE TABLE verified_shard("
-        "shard_id TEXT PRIMARY KEY, probe_report_sha256 TEXT NOT NULL, "
-        "probe_result_sha256 TEXT NOT NULL, "
-        "input_results_sha256 TEXT NOT NULL, "
-        "artifact_manifest_sha256 TEXT NOT NULL) WITHOUT ROWID"
+        "shard_id TEXT PRIMARY KEY, input_results_sha256 TEXT NOT NULL) "
+        "WITHOUT ROWID"
     )
     database.execute(
         "CREATE TABLE official_result("
@@ -188,34 +174,23 @@ def install_official_results(
             if set(row) != {
                 "input_id",
                 "shard_id",
-                "probe_report_sha256",
-                "probe_result_sha256",
                 "input_results_sha256",
-                "artifact_manifest_sha256",
             }:
                 raise ValueError("official ASL input-result row differs")
             if campaign.INPUT_ID.fullmatch(str(row["input_id"])) is None:
                 raise ValueError("official ASL result input identity differs")
             if campaign.SHARD_ID.fullmatch(str(row["shard_id"])) is None or any(
                 campaign.SHA256.fullmatch(str(row[name])) is None
-                for name in (
-                    "probe_report_sha256",
-                    "probe_result_sha256",
-                    "input_results_sha256",
-                    "artifact_manifest_sha256",
-                )
+                for name in ("input_results_sha256",)
             ):
                 raise ValueError("verified shard result identity differs")
             shard = tuple(str(row[name]) for name in (
                 "shard_id",
-                "probe_report_sha256",
-                "probe_result_sha256",
                 "input_results_sha256",
-                "artifact_manifest_sha256",
             ))
             if current_shard is None or shard[0] != current_shard[0]:
                 database.execute(
-                    "INSERT INTO verified_shard VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO verified_shard VALUES (?, ?)",
                     shard,
                 )
                 current_shard = shard
@@ -235,8 +210,7 @@ def install_official_results(
 
 PROMOTION_BINDING_QUERY = (
     "SELECT b.aggregate_id, b.input_id, b.raw_id, r.shard_id, "
-    "s.probe_report_sha256, s.probe_result_sha256, "
-    "s.input_results_sha256, s.artifact_manifest_sha256 "
+    "s.input_results_sha256 "
     "FROM authoritative_binding AS b "
     "JOIN official_result AS r ON r.input_id = b.input_id "
     "JOIN verified_shard AS s ON s.shard_id = r.shard_id "
@@ -351,10 +325,7 @@ def summarize_promotion_bindings(
             input_id,
             raw_id,
             shard_id,
-            probe_report_sha256,
-            probe_result_sha256,
             input_results_sha256,
-            artifact_manifest_sha256,
         ) = values
         _add_digest_row(binding_digest, (input_id, raw_id))
         _add_digest_row(
@@ -363,10 +334,7 @@ def summarize_promotion_bindings(
                 input_id,
                 raw_id,
                 shard_id,
-                probe_report_sha256,
-                probe_result_sha256,
                 input_results_sha256,
-                artifact_manifest_sha256,
             ),
         )
         binding_count += 1
@@ -417,8 +385,6 @@ def collect_campaign(
         minimum_local_free_gib,
         False,
     )
-    report_path = root / "campaign-report.json"
-
     authoritative = plan["authoritative_input"]
     assert isinstance(authoritative, dict)
     with tempfile.TemporaryDirectory(
@@ -457,9 +423,6 @@ def collect_campaign(
             guest_page_size=int(plan["guest_page_size"]),
             aggregate_manifest=Path(
                 str(authoritative["aggregate_manifest"]["path"])
-            ),
-            aggregate_manifest_identity=Path(
-                str(authoritative["aggregate_manifest_identity_file"]["path"])
             ),
             materialization_index=Path(
                 str(authoritative["materialization_index"]["path"])
@@ -523,8 +486,6 @@ def collect_campaign(
         database.close()
     if observed_authority != authoritative:
         raise ValueError("campaign authority changed during promotion join")
-    campaign.require_plan_snapshot(plan_path, plan_bytes)
-
     index_rows = campaign.read_tsv(
         Path(str(authoritative["materialization_index"]["path"])),
         INDEX_COLUMNS,
@@ -535,10 +496,9 @@ def collect_campaign(
     return {
         "page": int(plan["guest_page_size"]),
         "plan": plan,
-        "plan_identity": campaign.file_identity(plan_path),
+        "plan_path": plan_path,
         "root": root,
         "report": report,
-        "report_identity": campaign.file_identity(report_path),
         "result_count": result_count,
         "aggregate_summaries": aggregate_summaries,
         "index": index,
@@ -563,7 +523,7 @@ def build_promotions(
     }
     if len(allocated) != expected_allocated_valid_count:
         raise ValueError(
-            "frozen allocated-valid aggregate count differs: "
+            "allocated-valid aggregate count differs: "
             f"{len(allocated)} != {expected_allocated_valid_count}"
         )
 
@@ -606,7 +566,7 @@ def build_promotions(
         }
         if page_index_eligible != page_allocated:
             raise ValueError(
-                f"{page}: frozen execution-ready index coverage differs"
+                f"{page}: execution-ready index coverage differs"
             )
         if set(summaries) != page_allocated:
             raise ValueError("allocated-valid aggregate binding coverage differs")
@@ -646,11 +606,7 @@ def build_promotions(
                 raise ValueError(
                     f"{aggregate_id}: authoritative binding count differs"
                 )
-            plan_identity = record["plan_identity"]
-            report_identity = record["report_identity"]
             authority = record["authority"]
-            assert isinstance(plan_identity, Mapping)
-            assert isinstance(report_identity, Mapping)
             assert isinstance(authority, Mapping)
             output.append(
                 {
@@ -676,8 +632,6 @@ def build_promotions(
                     "official_asl_result_binding_sha256": str(
                         summary["result_digest"]
                     ),
-                    "campaign_plan_sha256": str(plan_identity["sha256"]),
-                    "campaign_report_sha256": str(report_identity["sha256"]),
                     "join_model_digest": str(authority["join_model_digest"]),
                     "engine_execution_evidence": (
                         "interpreter+gadgets+jit-or-host-feature-skip"
@@ -708,162 +662,30 @@ def tsv_payload(rows: Sequence[Mapping[str, str]]) -> bytes:
     return output.getvalue().encode("utf-8")
 
 
-def promotion_identity(
-    rows: Sequence[Mapping[str, str]],
-    payload: bytes,
-    records: Sequence[Mapping[str, object]],
-    frozen_identity: Mapping[str, object],
-    join_model_digest: object,
-    resource_caps: Mapping[str, int] | None = None,
-) -> dict[str, object]:
-    if resource_caps is None:
-        resource_caps = {
-            "maximum_database_bytes": (
-                DEFAULT_MAX_PROMOTION_DATABASE_BYTES
-            ),
-            "maximum_merge_scratch_bytes": (
-                campaign.DEFAULT_MAX_AUTHORITY_MERGE_SCRATCH_BYTES
-            ),
-        }
-    if set(resource_caps) != {
-        "maximum_database_bytes", "maximum_merge_scratch_bytes"
-    }:
-        raise ValueError("promotion resource-cap binding differs")
-    for name, value in resource_caps.items():
-        campaign._strict_integer(
-            value,
-            f"promotion {name}",
-            4096 if name == "maximum_database_bytes" else 1,
-        )
-    return {
-        "schema": IDENTITY_SCHEMA,
-        "aggregate_manifest_identity": dict(frozen_identity),
-        "join_model_digest": join_model_digest,
-        "resource_caps": dict(resource_caps),
-        "capacity_model": {
-            "maximum_input_contracts": PROMOTION_CAPACITY_INPUTS,
-            "conservative_bytes_per_input": (
-                PROMOTION_CONSERVATIVE_BYTES_PER_INPUT
-            ),
-            "safety_factor_numerator": PROMOTION_CAPACITY_SAFETY_NUMERATOR,
-            "safety_factor_denominator": PROMOTION_CAPACITY_SAFETY_DENOMINATOR,
-            "required_database_bytes": PROMOTION_CAPACITY_REQUIRED_BYTES,
-            "configured_database_cap_satisfies_model": (
-                resource_caps["maximum_database_bytes"]
-                >= PROMOTION_CAPACITY_REQUIRED_BYTES
-            ),
-        },
-        "row_count": len(rows),
-        "guest_page_size_counts": {
-            "4096": sum(row["guest_page_size"] == "4096" for row in rows),
-            "16384": sum(row["guest_page_size"] == "16384" for row in rows),
-        },
-        "columns_sha256": hashlib.sha256(
-            ("\t".join(PROMOTION_COLUMNS) + "\n").encode("ascii")
-        ).hexdigest(),
-        "tsv_sha256": hashlib.sha256(payload).hexdigest(),
-        "campaigns": [
-            {
-                "guest_page_size": record["page"],
-                "campaign_plan": record["plan_identity"],
-                "campaign_report": record["report_identity"],
-                "published_probe_result_binding_count": record["report"][
-                    "published_probe_result_binding_count"
-                ],
-                "published_probe_result_bindings_sha256": record["report"][
-                    "published_probe_result_bindings_sha256"
-                ],
-            }
-            for record in records
-        ],
-        "official_semantic_status": "official-asl-executed",
-        "allocation_behavior_complete": True,
-        "unresolved_requirements": "none",
-    }
-
-
 def canonical_output_target(path: Path, label: str) -> Path:
     return campaign.canonical_write_target(path, label)
 
 
-@contextmanager
-def promotion_output_lock(output: Path, identity_output: Path):
-    canonical_output = canonical_output_target(output, "promotion output")
-    canonical_identity = canonical_output_target(
-        identity_output, "promotion identity output"
-    )
-    if not campaign.paths_alias(
-        canonical_output.parent, canonical_identity.parent
-    ):
-        raise ValueError("promotion output pair must share one directory")
-    lock_path = canonical_output.parent / ".a64-aslref-promotion.lock"
-    if campaign.paths_alias(
-        canonical_output, lock_path
-    ) or campaign.paths_alias(canonical_identity, lock_path):
-        raise ValueError("promotion output aliases its pair lock")
-    if lock_path.is_symlink() or (
-        lock_path.exists() and not lock_path.is_file()
-    ):
-        raise ValueError("promotion output-pair lock is unsafe")
-    created = not lock_path.exists()
-    descriptor = os.open(
-        lock_path,
-        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        if created:
-            os.fsync(descriptor)
-            campaign._fsync_directory(lock_path.parent, "require")
-        yield
-    finally:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-
-
-def validate_output_targets(
+def validate_output_target(
     output: Path,
-    identity_output: Path,
     *,
     forbidden_directories: Sequence[Path] = (),
     forbidden_files: Sequence[Path] = (),
 ) -> None:
     canonical_output = canonical_output_target(output, "promotion output")
-    canonical_identity = canonical_output_target(
-        identity_output, "promotion identity output"
+    campaign.validate_write_target_isolation(
+        canonical_output,
+        forbidden_directories=forbidden_directories,
+        forbidden_files=forbidden_files,
+        label="promotion TSV",
     )
-    if not campaign.paths_alias(
-        canonical_output.parent, canonical_identity.parent
-    ):
-        raise ValueError("promotion output pair must share one directory")
-    if campaign._path_contains(
-        canonical_output, canonical_identity
-    ) or campaign._path_contains(canonical_identity, canonical_output):
-        raise ValueError("promotion TSV and identity outputs alias one file")
-    for target, label in (
-        (canonical_output, "promotion TSV"),
-        (canonical_identity, "promotion identity"),
-    ):
-        campaign.validate_write_target_isolation(
-            target,
-            forbidden_directories=forbidden_directories,
-            forbidden_files=forbidden_files,
-            label=label,
-        )
 
 
-def verify_promotion_outputs(
+def verify_promotion_output(
     output: Path,
-    identity_output: Path,
     expected_rows: Sequence[Mapping[str, str]],
-    expected_identity: Mapping[str, object],
 ) -> Mapping[str, object]:
-    for path, label in (
-        (output, "promotion TSV"),
-        (identity_output, "promotion identity"),
-    ):
-        campaign.require_regular_file(path, label)
+    campaign.require_regular_file(output, "promotion TSV")
     payload = output.read_bytes()
     try:
         text = payload.decode("utf-8")
@@ -882,59 +704,36 @@ def verify_promotion_outputs(
         raise ValueError("promotion TSV is not canonical")
     if observed_rows != list(expected_rows):
         raise ValueError("promotion rows differ from verified campaign join")
-    identity = campaign.read_canonical_json(identity_output)
-    if identity != expected_identity:
-        raise ValueError("promotion identity differs from verified campaign join")
-    if identity["tsv_sha256"] != hashlib.sha256(payload).hexdigest():
-        raise ValueError("promotion identity TSV digest differs")
-    return identity
+    return {
+        "schema": PROMOTION_SCHEMA,
+        "row_count": len(observed_rows),
+        "guest_page_size_counts": {
+            "4096": sum(row["guest_page_size"] == "4096" for row in observed_rows),
+            "16384": sum(row["guest_page_size"] == "16384" for row in observed_rows),
+        },
+        "official_semantic_status": "official-asl-executed",
+        "allocation_behavior_complete": True,
+        "unresolved_requirements": "none",
+    }
 
 
-def publish_or_resume_promotion_outputs(
+def publish_or_verify_promotion_output(
     output: Path,
-    identity_output: Path,
     payload: bytes,
-    identity: Mapping[str, object],
     expected_rows: Sequence[Mapping[str, str]],
     *,
     verify_only: bool,
 ) -> Mapping[str, object]:
-    output_exists = output.exists()
-    identity_exists = identity_output.exists()
-    if output_exists and identity_exists:
-        return verify_promotion_outputs(
-            output, identity_output, expected_rows, identity
-        )
     if verify_only:
-        raise ValueError("promotion outputs do not exist for verification")
-    identity_payload = (campaign.canonical_json(identity) + "\n").encode(
-        "utf-8"
-    )
-    if output_exists:
-        if campaign.require_regular_file(
-            output, "partial promotion TSV"
-        ).read_bytes() != payload:
-            raise ValueError("partial promotion TSV differs from verified join")
-        campaign.atomic_write(identity_output, identity_payload, "require")
-    elif identity_exists:
-        if campaign.read_canonical_json(identity_output) != identity:
-            raise ValueError(
-                "partial promotion identity differs from verified join"
-            )
-        identity_output.unlink()
-        campaign._fsync_directory(identity_output.parent, "require")
-        campaign.atomic_write(output, payload, "require")
-        campaign.atomic_write(identity_output, identity_payload, "require")
+        if not output.exists():
+            raise ValueError("promotion output does not exist for verification")
     else:
-        campaign.atomic_write(output, payload, "require")
-        campaign.atomic_write(identity_output, identity_payload, "require")
-    return verify_promotion_outputs(
-        output, identity_output, expected_rows, identity
-    )
+        campaign.atomic_write(output, payload)
+    return verify_promotion_output(output, expected_rows)
 
 
 def run(options: argparse.Namespace) -> Mapping[str, object]:
-    validate_output_targets(options.output, options.identity_output)
+    validate_output_target(options.output)
     local_temp_root = campaign.require_root(
         options.local_temp_root, "promotion local temp root"
     )
@@ -962,29 +761,26 @@ def run(options: argparse.Namespace) -> Mapping[str, object]:
     roots = [root for _plan, root in specifications]
     if len(set(roots)) != 2:
         raise ValueError("4K and 16K campaigns require distinct output roots")
-    with promotion_output_lock(options.output, options.identity_output):
-        with ExitStack() as stack:
-            for root in sorted(roots, key=lambda path: path.as_posix()):
-                stack.enter_context(
-                    campaign.campaign_lock(
-                        root, "record-unsupported", create=False
-                    )
+    with ExitStack() as stack:
+        for root in sorted(roots, key=lambda path: path.as_posix()):
+            stack.enter_context(
+                campaign.campaign_lock(root, create=False)
+            )
+        records = [
+            collect_campaign(
+                plan,
+                root,
+                lock_held=True,
+                local_temp_root=local_temp_root,
+                minimum_local_free_gib=options.minimum_local_free_gib,
+                maximum_database_bytes=options.maximum_database_bytes,
+                maximum_merge_scratch_bytes=(
+                    options.maximum_merge_scratch_bytes
                 )
-            records = [
-                collect_campaign(
-                    plan,
-                    root,
-                    lock_held=True,
-                    local_temp_root=local_temp_root,
-                    minimum_local_free_gib=options.minimum_local_free_gib,
-                    maximum_database_bytes=options.maximum_database_bytes,
-                    maximum_merge_scratch_bytes=(
-                        options.maximum_merge_scratch_bytes
-                    ),
-                )
-                for plan, root in specifications
-            ]
-            return finish_run(options, records)
+            )
+            for plan, root in specifications
+        ]
+        return finish_run(options, records)
 
 
 def finish_run(
@@ -998,13 +794,11 @@ def finish_run(
     second = authorities[1]
     assert isinstance(first, Mapping) and isinstance(second, Mapping)
     if (
-        first["aggregate_manifest_identity"]
-        != second["aggregate_manifest_identity"]
-        or first["aggregate_manifest"]["sha256"]  # type: ignore[index]
+        first["aggregate_manifest"]["sha256"]  # type: ignore[index]
         != second["aggregate_manifest"]["sha256"]  # type: ignore[index]
         or first["join_model_digest"] != second["join_model_digest"]
     ):
-        raise ValueError("4K/16K campaigns do not share one frozen join model")
+        raise ValueError("4K/16K campaigns do not share one join model")
     plans = [record["plan"] for record in records]
     if any(not isinstance(plan, Mapping) for plan in plans):
         raise ValueError("campaign plan snapshot differs")
@@ -1013,42 +807,12 @@ def finish_run(
     assert isinstance(first_plan, Mapping) and isinstance(second_plan, Mapping)
     if first_plan["probe"] != second_plan["probe"]:
         raise ValueError("4K/16K campaigns use different official probe tools")
-    first_freeze = {
-        str(entry["path"]): entry for entry in first_plan["source_freeze"]  # type: ignore[index]
-    }
-    second_freeze = {
-        str(entry["path"]): entry for entry in second_plan["source_freeze"]  # type: ignore[index]
-    }
-    probe = first_plan["probe"]
-    assert isinstance(probe, Mapping)
-    for value in probe.values():
-        if not isinstance(value, str):
-            continue
-        if value not in first_freeze or first_freeze[value] != second_freeze.get(value):
-            raise ValueError(
-                "4K/16K campaigns lack identical frozen official/probe input "
-                f"{value}"
-            )
     aggregate_path = Path(str(first["aggregate_manifest"]["path"]))  # type: ignore[index]
     aggregates = campaign.read_tsv(aggregate_path, AGGREGATE_COLUMNS)
-    frozen_identity = first["aggregate_manifest_identity"]
-    assert isinstance(frozen_identity, Mapping)
-    validate_manifest_identity(aggregates, AGGREGATE_COLUMNS, frozen_identity)
+    campaign.validate_aggregate_manifest(aggregates, 4096)
+    campaign.validate_aggregate_manifest(aggregates, 16384)
     rows = build_promotions(aggregates, records)
     payload = tsv_payload(rows)
-    identity = promotion_identity(
-        rows,
-        payload,
-        records,
-        frozen_identity,
-        first["join_model_digest"],
-        {
-            "maximum_database_bytes": options.maximum_database_bytes,
-            "maximum_merge_scratch_bytes": (
-                options.maximum_merge_scratch_bytes
-            ),
-        },
-    )
     protected_directories = [
         Path(str(record["root"])) for record in records
     ]
@@ -1059,34 +823,24 @@ def finish_run(
     )
     protected_files: list[Path] = []
     for record in records:
-        plan_identity = record["plan_identity"]
+        plan_path = record["plan_path"]
         plan = record["plan"]
-        assert isinstance(plan_identity, Mapping)
+        assert isinstance(plan_path, Path)
         assert isinstance(plan, Mapping)
-        protected_files.append(Path(str(plan_identity["path"])))
-        for entry in plan["source_freeze"]:  # type: ignore[index]
-            assert isinstance(entry, Mapping)
-            path = Path(str(entry["path"]))
-            if entry["kind"] in {"tree", "python-runtime"}:
-                protected_directories.append(path)
-            else:
-                protected_files.append(path)
+        protected_files.append(plan_path)
         for shard in plan["shards"]:  # type: ignore[index]
             assert isinstance(shard, Mapping)
             source = shard["input"]
             assert isinstance(source, Mapping)
             protected_files.append(Path(str(source["path"])))
-    validate_output_targets(
+    validate_output_target(
         options.output,
-        options.identity_output,
         forbidden_directories=protected_directories,
         forbidden_files=protected_files,
     )
-    return publish_or_resume_promotion_outputs(
+    return publish_or_verify_promotion_output(
         options.output,
-        options.identity_output,
         payload,
-        identity,
         rows,
         verify_only=options.verify_only,
     )

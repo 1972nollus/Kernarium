@@ -1136,7 +1136,9 @@ def _parse_canonical_event(
 
 
 def _open_input(path: Path) -> BinaryIO:
-    if path.suffix == ".gz":
+    with path.open("rb") as probe:
+        gzip_magic = probe.read(2) == b"\x1f\x8b"
+    if path.suffix == ".gz" or gzip_magic:
         return gzip.open(path, "rb")
     return path.open("rb")
 

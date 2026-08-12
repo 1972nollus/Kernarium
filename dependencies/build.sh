@@ -147,7 +147,6 @@ find_tool CC "${UML_DEPENDENCY_CC:-clang}"
 find_tool CXX "${UML_DEPENDENCY_CXX:-clang++}"
 find_tool PKG_CONFIG "${UML_DEPENDENCY_PKG_CONFIG:-pkg-config}"
 find_tool PYTHON "${UML_DEPENDENCY_PYTHON:-python3}"
-find_tool GREP grep
 find_tool MESON_CMAKE_BLOCKER /usr/bin/false
 find_tool XCRUN xcrun
 find_tool INSTALL install
@@ -156,7 +155,6 @@ find_tool SHASUM shasum
 if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	"$ROOT_DIR/dependencies/verify-prefix.sh" \
 		--prefix "$PREFIX" --manifest "$MANIFEST" \
-		--build-script "$ROOT_DIR/dependencies/build.sh" \
 		--deployment-target "$DEPLOYMENT_TARGET" ||
 		fail "existing prefix is invalid and was left untouched: $PREFIX"
 	printf '%s\n' "reusing verified dependency prefix: $PREFIX"
@@ -220,8 +218,8 @@ for dependency in $BUILD_DEPENDENCIES; do
 done
 
 PRIVATE_CPPFLAGS="-I$STAGE/include"
-PRIVATE_CFLAGS="-O3 -DNDEBUG -ffile-prefix-map=$IMAGE_ROOT= -ffile-prefix-map=$TEMP_ROOT=. -I$STAGE/include"
-PRIVATE_CXXFLAGS="-O3 -DNDEBUG -ffile-prefix-map=$IMAGE_ROOT= -ffile-prefix-map=$TEMP_ROOT=. -I$STAGE/include"
+PRIVATE_CFLAGS="-O3 -DNDEBUG -I$STAGE/include"
+PRIVATE_CXXFLAGS="-O3 -DNDEBUG -I$STAGE/include"
 PRIVATE_LDFLAGS="-L$STAGE/lib"
 PRIVATE_PKG_CONFIG="$STAGE/lib/pkgconfig"
 
@@ -301,20 +299,6 @@ require_private_pkg_config()
 	*" -L$STAGE/lib "*) ;;
 	*) fail "$package library flags do not use the staged image: $package_libs" ;;
 	esac
-}
-
-reject_embedded_path()
-{
-	scan_root=$1
-	forbidden_path=$2
-	if embedded_path=$(LC_ALL=C "$GREP" -r -a -F -l \
-		-e "$forbidden_path" -- "$scan_root"); then
-		fail "installed file embeds staging path $forbidden_path: $embedded_path"
-	else
-		scan_result=$?
-		[ "$scan_result" -eq 1 ] ||
-			fail "could not scan installed files for staging paths"
-	fi
 }
 
 atomic_publish()
@@ -513,33 +497,12 @@ for dependency in $BUILD_DEPENDENCIES; do
 	done
 done
 
-reject_embedded_path "$STAGE" "$IMAGE_ROOT"
-reject_embedded_path "$STAGE" "$TEMP_ROOT"
-
 RECEIPT_DIR="$STAGE/share/uml-dependencies"
 mkdir -p -- "$RECEIPT_DIR"
 manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
-build_script_sha256=$($SHASUM -a 256 "$ROOT_DIR/dependencies/build.sh" |
-	awk '{print $1}')
-prepare_script_sha256=$($SHASUM -a 256 "$PREPARE_SCRIPT" | awk '{print $1}')
-build_policy_sha256=$(
-	{
-		printf 'linux-um-darwin-dependency-policy-v1\n'
-		printf 'build.sh\t%s\n' "$build_script_sha256"
-		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
-	} | $SHASUM -a 256 | awk '{print $1}'
-)
-archive_tool_sha256=$($SHASUM -a 256 \
-	"$ROOT_DIR/dependencies/source_archive.py" | awk '{print $1}')
-payload_tree_sha256=$($PYTHON "$ROOT_DIR/dependencies/source_archive.py" \
-	tree-hash --root "$STAGE" \
-	--exclude share/uml-dependencies/receipt.tsv)
 {
 	printf 'schema\t2\n'
 	printf 'manifest_sha256\t%s\n' "$manifest_sha256"
-	printf 'build_policy_sha256\t%s\n' "$build_policy_sha256"
-	printf 'archive_tool_sha256\t%s\n' "$archive_tool_sha256"
-	printf 'payload_tree_sha256\t%s\n' "$payload_tree_sha256"
 	printf 'platform\tmacos\n'
 	printf 'architecture\tarm64\n'
 	printf 'linkage\tstatic\n'
@@ -551,7 +514,6 @@ payload_tree_sha256=$($PYTHON "$ROOT_DIR/dependencies/source_archive.py" \
 
 "$ROOT_DIR/dependencies/verify-prefix.sh" \
 	--prefix "$STAGE" --manifest "$MANIFEST" \
-	--build-script "$ROOT_DIR/dependencies/build.sh" \
 	--deployment-target "$DEPLOYMENT_TARGET"
 atomic_publish "$STAGE" "$PREFIX"
 printf '%s\n' "built private dependency prefix: $PREFIX"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Fail-closed publication for deterministic, one-shot A64 tooling outputs."""
+"""Small validated atomic writer for A64 tooling outputs."""
 
 from __future__ import annotations
 
@@ -12,14 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from a64_raw_evidence_files import (
-    FrozenReadIdentity,
-    atomic_publish_bytes,
-    freeze_read_inputs,
-    publication_target_locks,
-    recheck_read_inputs,
-    validate_publication_topology,
-)
+from a64_raw_evidence_files import atomic_publish_bytes, validate_publication_topology
 
 
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -67,11 +60,10 @@ def _validate_tsv_payload(
 
 @dataclass(frozen=True)
 class OneShotPublication:
-    """A frozen input snapshot and its non-aliasing output targets."""
+    """Validated non-aliasing output targets."""
 
     targets: tuple[Path, ...]
     read_inputs: tuple[Path, ...]
-    frozen_inputs: tuple[FrozenReadIdentity, ...]
 
     @classmethod
     def prepare(
@@ -82,15 +74,13 @@ class OneShotPublication:
         safe_targets, _directories, safe_inputs = validate_publication_topology(
             tuple(targets), read_inputs=tuple(read_inputs)
         )
-        frozen = freeze_read_inputs(safe_inputs)
-        return cls(safe_targets, safe_inputs, frozen)
+        return cls(safe_targets, safe_inputs)
 
     def recheck(self) -> None:
         validate_publication_topology(
             self.targets,
             read_inputs=self.read_inputs,
         )
-        recheck_read_inputs(self.frozen_inputs)
 
     def publish_tsvs(
         self,
@@ -141,8 +131,7 @@ class OneShotPublication:
         self,
         outputs: Sequence[tuple[Path, bytes, Callable[[bytes], None]]],
     ) -> None:
-        with publication_target_locks(self.targets):
-            self.publish_payloads_locked(outputs)
+        self.publish_payloads_locked(outputs)
 
     def publish_payloads_locked(
         self,
@@ -168,38 +157,9 @@ class OneShotPublication:
                 f"{MAX_OUTPUT_SET_BYTES} bytes"
             )
 
-        expected = {
-            path: (payload, validator)
-            for path, payload, validator in outputs
-        }
-
-        def validate_paths(paths: Sequence[tuple[Path, Path]]) -> None:
-            if tuple(path for path, _temporary in paths) != self.targets:
-                raise ValueError("staged publication target set changed")
-            for path, temporary in paths:
-                payload, validator = expected[path]
-                observed = temporary.read_bytes()
-                if observed != payload:
-                    raise ValueError(f"staged publication bytes differ: {path}")
-                validator(observed)
-
-        def validate_published() -> None:
-            for path in self.targets:
-                payload, validator = expected[path]
-                observed = path.read_bytes()
-                if observed != payload:
-                    raise ValueError(f"published bytes differ: {path}")
-                validator(observed)
-
-        def recheck_before_replace() -> None:
-            self.recheck()
-            if before_replace is not None:
-                before_replace()
-
         self.recheck()
+        if before_replace is not None:
+            before_replace()
         atomic_publish_bytes(
             [(path, payload) for path, payload, _validator in outputs],
-            validate_staged=validate_paths,
-            before_replace=recheck_before_replace,
-            validate_published=validate_published,
         )

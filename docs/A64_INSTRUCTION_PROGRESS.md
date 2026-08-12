@@ -61,36 +61,15 @@ Two storage-policy facts apply when it is enabled:
   the 6.6 GiB profile, but both need a vendored compressor: neither `lzma.h`
   nor `libzstd` is present in the macOS SDK.
 
-## Frozen aggregate-manifest publication
+## Aggregate manifest and raw evidence
 
-The frozen manifest and identity are published only as one complete two-profile
-operation. Partial producer replacement and validator-side writes are not
-supported, so neither file can be refreshed through a weaker path:
+The aggregate manifest is an ordinary version-controlled TSV. Consumers
+validate its schema and semantic bindings directly; there is no second checked
+identity file, source-tree seal, or two-file publication protocol. Review the
+TSV change together with the 4 KiB and 16 KiB evidence that produced it.
 
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -B \
-  tests/tooling/arm64/freeze_a64_aggregate_manifest.py \
-  --full-4k-manifest /absolute/path/to/full-4k.tsv \
-  --full-16k-manifest /absolute/path/to/full-16k.tsv \
-  --evidence-4k /absolute/path/to/4k/instruction-evidence \
-  --evidence-16k /absolute/path/to/16k/instruction-evidence \
-  --output tests/unit/arm64/a64_instruction_aggregate_manifest.tsv \
-  --identity-output \
-    tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json
-```
-
-Full publication enumerates the exact 449 `*.tsv.raw` producer basenames in
-each evidence directory, independently regenerates each profile aggregate from
-those raw files with the checked required/decode models and pinned decoder,
-and requires the supplied profile TSV to match that derivation exactly. It then
-validates both profile sources, their exact page/cardinality, producer and
-identity sets, canonical ordering, allocation model, and declared profile
-exceptions before staging the bound manifest/identity replacement.
-An interrupted replacement is fail-closed because consumers reject a mismatched
-pair, and rerunning the same command resumes from the validated profile inputs.
-
-Large completed raw profiles can be preserved losslessly in deterministic gzip
-form after their aggregate has been validated:
+Large completed raw profiles can be compressed losslessly after their
+aggregate has been validated:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -B \
@@ -101,15 +80,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B \
 ```
 
 Readers accept exactly one `producer.tsv.raw` or `producer.tsv.raw.gz` for each
-of the frozen 449 producer names. They reject missing producers, symlinks,
+of the 449 producer names. They reject missing producers, symlinks,
 truncated streams, and duplicate plain/compressed basenames. Compression holds
 a directory-scoped lock, reserves a conservative hard upper bound of twice the
 raw size plus 1 MiB for its temporary gzip, and verifies the staged member
 against the original uncompressed size and digest before removing the plain
 file. A matching duplicate left by an interrupted replacement is verified and
-resumed, while a mismatch fails closed.
-The emitted canonical compression identity records every producer's raw and
-compressed size/digest.
+resumed, while a mismatch fails closed. Gzip header metadata and compressed
+bytes are not required to match between runs.
 
 ## Exact official-semantics campaign gate (not yet executed)
 
@@ -120,18 +98,12 @@ instruction checkbox below. The canonical, copy/paste executable 4 KiB +
 16 KiB command chain is
 [`testing.md`](testing.md#exact-official-a64-campaign). It starts
 from fresh unit evidence and includes materialization joins, authority-filtered
-sharding, immutable plans, an exact four-shard pilot per profile, full resume,
-independent verification, locked promotion, and promotion `--verify-only`.
+sharding, replaceable plans, an exact four-shard pilot per profile, full resume,
+independent verification, atomic promotion, and promotion `--verify-only`.
 
-Current frozen aggregate identity (2026-08-05):
-
-- 32,169 aggregate rows: 16,084 for 4 KiB and 16,085 for 16 KiB;
-- aggregate-ID SHA-256
-  `00ebf4703abb2e9c59050d4e7f00418dcb6b5f61f0e61dddbe566c51f2057d66`;
-- aggregate-row SHA-256
-  `f42d770d290b88135f5da3eb04793d516cd89723e614b4e2911499fcc5541c0`.
-
-These are aggregate counts, not official input-contract counts. Never reuse a
+The current checked manifest has 32,169 aggregate rows: 16,084 for 4 KiB and
+16,085 for 16 KiB. These are aggregate counts, not official input-contract
+counts. Never reuse a
 prior or estimated contract total. Each fresh sharding pass writes its exact
 authority-filtered `total_contracts` to `shard-set.json`; that value is then
 re-supplied to sharding and planning through `--expected-total-contracts`.
@@ -143,27 +115,26 @@ The campaign implementation now has the following fail-closed properties:
   disk-backed and the per-input lookup is forced through the
   `authoritative_binding_by_input` index;
 - sharding reconstructs one producer at a time, caps shards at 1,024 unique
-  authority-bound contracts, holds canonical exclusive evidence locks for its
-  full source/authority/publication snapshot, emits deterministic gzip, and can
-  regenerate or byte-verify a partially published shard set;
-- plan schema v4 freezes the exact Python runtime/source closure, official
-  tools, checkpoints, aggregate identity, shard identities, and hard limits
-  for encoded input, artifact bytes/files, and captured logs;
-- pilot/run reserve the frozen per-worker output/local maximum before every
+  authority-bound contracts, and validates every resumed shard by its semantic
+  contract IDs;
+  gzip metadata and compressed bytes may differ when shards are regenerated;
+- plan schema v5 records the selected tool/input paths, authoritative semantic
+  bindings, shard identities, and hard limits for encoded input, artifact
+  bytes/files, and captured logs. It does not hash the Python runtime, source
+  tree, repository tools, archive, PDF, or other user-supplied source paths;
+- pilot/run reserve the configured per-worker output/local maximum before every
   submission and recheck after every completion. A failure consumes the whole
   completed batch before any refill, cancels queued work, terminates active
   probe process groups, and removes only its uniquely owned local partials;
-- published shard trees are immutable resume points. Low-space and in-flight
+- published shard trees are resume points. Low-space and in-flight
   interruption fixtures prove no campaign report is emitted, no child/temp
-  debris remains, and a later run preserves every prior `SUCCESS.json` byte;
-- all metadata publication is file-before-directory synced. The production
-  chain uses `--directory-sync-policy require`, so unsupported directory
-  `fsync` is fatal rather than silently weakening evidence;
-- final promotion locks both profile roots in canonical order, reconstructs
-  both exact authorities under explicit database/scratch caps, stores results
+  debris remains, and a later run semantically validates prior successful
+  shards before resuming;
+- metadata publication uses temporary files followed by ordinary rename;
+- final promotion reconstructs both exact authorities under explicit
+  database/scratch caps, stores results
   in locally rooted SQLite, streams indexed bindings aggregate by aggregate,
-  publishes a bound TSV/identity pair, and verifies the same pair without
-  repair.
+  publishes the promotion TSV atomically, and verifies it semantically.
 
 Bounded scale evidence from the 2026-08-05 fixture run merged 262,144 sorted
 checkpoint contributions from 64 synthetic producers with fan-in 8. Peak
@@ -186,10 +157,10 @@ Production completion checklist (all remain open):
 - [ ] Run fresh 4 KiB and 16 KiB unit evidence and prove exactly 449 v4
   materialization sidecars per profile.
 - [ ] Finish and verify both complete materialization joins/checkpoint sets.
-- [ ] Derive, publish, and exact-resume both deterministic shard sets; record
-  their fresh totals and identities.
-- [ ] Build both immutable v4 plans with the source PDF/archive and official
-  tool closure frozen.
+- [ ] Derive, publish, and exact-resume both shard sets; record their fresh
+  semantic totals.
+- [ ] Build both v5 plans after authenticating the official architecture input
+  and selecting the official tools.
 - [ ] Pass each four-worker, four-full-shard pilot without a campaign report.
 - [ ] Resume both complete campaigns, then run independent reserved-scratch
   verification.

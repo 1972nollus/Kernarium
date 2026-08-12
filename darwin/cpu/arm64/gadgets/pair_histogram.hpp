@@ -16,9 +16,9 @@
  *
  * This records what really gets translated, so further pairs are chosen by
  * frequency rather than by intuition. It is compiled out entirely unless
- * UML_GADGET_PAIR_HISTOGRAM is 1, so production translation is byte-identical -
- * the same discipline G49's pressure counters and the JIT's runtime diagnostics
- * already follow.
+ * UML_GADGET_PAIR_HISTOGRAM is 1, so ordinary translation has no diagnostic
+ * instrumentation, matching G49's pressure counters and the JIT's runtime
+ * diagnostics.
  *
  * Set DARWIN_UML_GADGET_PAIR_HISTOGRAM to a path to have the counts written
  * there at exit, most-frequent first, with symbol names resolved through

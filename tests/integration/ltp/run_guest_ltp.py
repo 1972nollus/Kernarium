@@ -322,7 +322,7 @@ def ltp_metadata_transport(
         raise ValueError("LTP metadata setup script must be nonempty")
     if chunk_chars < 1:
         raise ValueError("LTP metadata transport chunk size must be positive")
-    compressed = gzip.compress(setup_script.encode("utf-8"), mtime=0)
+    compressed = gzip.compress(setup_script.encode("utf-8"))
     payload = base64.b64encode(compressed).decode("ascii")
     chunks = tuple(
         payload[offset : offset + chunk_chars]

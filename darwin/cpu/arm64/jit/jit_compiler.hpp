@@ -62,6 +62,13 @@ public:
      */
     std::span<const JitRelocation> relocations;
     bool relocatable{};
+    /* Configured link resolvers can refuse stable direct or indirect records
+     * when their bounded tables are full. Such code remains correct through
+     * the ordinary C++ fallback, but is a degraded private result rather than
+     * a canonical cross-executor translation.
+     */
+    std::size_t direct_link_refusals{};
+    std::size_t indirect_link_refusals{};
     std::size_t guest_instructions{};
     std::size_t hot_words{};
     std::size_t internal_entry_word{};

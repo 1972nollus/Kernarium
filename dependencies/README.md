@@ -40,18 +40,16 @@ version, and each copied source tree is rehashed before configuration. Its
 `pkg-config` search is restricted to that staging prefix, and Meson's optional
 CMake dependency fallback is disabled so probes cannot discover host package
 manager libraries. Publication is transactional: CMake accepts the prefix only
-after its receipt, complete payload hash, required headers, real static-archive
-format and architecture, deployment target, safe symbolic links, current
-manifest/patch validation, preparation/build-policy identity, and absence of
-shared libraries have been verified. The existing build-policy receipt field
-binds both `prepare.sh` and `build.sh`; changing either requires a new prefix.
-The payload digest is an observation of that particular build, so it detects
-later drift without requiring two independent builds to have identical bytes.
+after its receipt, required headers, real static-archive
+format and architecture, deployment target, current manifest/patch validation,
+and absence of shared libraries have been verified. Git owns changes to the
+preparation and build scripts; the prefix receipt does not duplicate their
+identity or hash the complete installed product.
 Configure and ordinary compilation never download or discover a third-party
 library from the host.
 
 The final prefix deliberately omits upstream CMake package exports and libtool
-metadata. They are not used by this project and can serialize build-only paths.
+metadata. They are not used by this project.
 Production consumers use the exact imported static archives declared in
 [`cmake/UmlThirdPartyTargets.cmake`](cmake/UmlThirdPartyTargets.cmake).
 
@@ -69,8 +67,10 @@ not imported into the production link graph:
 | `libgthread-2.0.a` | GLib compatibility archive; threading resolves through base GLib and pthreads |
 | `libpcre2-posix.a` | PCRE2 companion output; only the native PCRE2-8 API is linked |
 
-The prefix verifier rejects any additional archive, and inspects every Mach-O
-member for arm64 macOS platform metadata and the configured deployment target.
+The prefix verifier rejects symlinks, shared libraries, and undocumented static
+archives, and checks each archive's arm64 format. The production application
+also rejects non-system dynamic-library dependencies after linking. Neither
+check inventories or attributes individual object/archive members.
 
 The paths can be overridden explicitly:
 

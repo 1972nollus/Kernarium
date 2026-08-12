@@ -25,11 +25,8 @@ from pathlib import Path
 from a64_one_shot_publication import OneShotPublication
 from a64_raw_evidence_files import (
     canonical_existing_directory,
-    exclusive_evidence_locks,
-    frozen_read_identity,
     path_is_ancestor,
     paths_alias,
-    publication_target_locks,
     require_no_symlink_components,
     validate_publication_topology,
 )
@@ -290,22 +287,18 @@ def main() -> int:
     validate_publication_topology(
         [target], read_inputs=[options.bindings, options.allocations]
     )
-
-    with exclusive_evidence_locks(directories) as locked_directories:
-        snapshot = evidence_file_paths(locked_directories)
-        publication = OneShotPublication.prepare(
-            [target], [options.bindings, options.allocations, *snapshot]
-        )
-        with publication_target_locks(publication.targets):
-            published_target = publication.targets[0]
-            old_identity = None
-            preserved: dict[tuple[str, str], tuple[str, str, str]] = {}
-            legacy_migration = False
-            if published_target.exists():
-                old_identity = frozen_read_identity(published_target)
-                preserved, legacy_migration = preserved_semantics(
-                    published_target
-                )
+    snapshot = evidence_file_paths(directories)
+    publication = OneShotPublication.prepare(
+        [target], [options.bindings, options.allocations, *snapshot]
+    )
+    with __import__("contextlib").nullcontext():
+        published_target = publication.targets[0]
+        preserved: dict[tuple[str, str], tuple[str, str, str]] = {}
+        legacy_migration = False
+        if published_target.exists():
+            preserved, legacy_migration = preserved_semantics(
+                published_target
+            )
 
             bindings = read_tsv(options.bindings, BINDING_COLUMNS)
             allocations = read_tsv(options.allocations, ALLOCATION_COLUMNS)
@@ -412,18 +405,13 @@ def main() -> int:
                 )
             output_rows.sort(key=lambda row: (row["stable_id"], row["semantic_id"]))
 
-            def recheck_old_output_and_evidence() -> None:
+            def recheck_evidence() -> None:
                 if evidence_file_paths(locked_directories) != snapshot:
                     raise ValueError("execution evidence file set changed")
-                if old_identity is None:
-                    if published_target.exists():
-                        raise ValueError("semantic-contract output appeared during run")
-                elif frozen_read_identity(published_target) != old_identity:
-                    raise ValueError("semantic-contract output changed during run")
 
             publication.publish_tsvs_locked(
                 [(published_target, SEMANTIC_COLUMNS, output_rows)],
-                before_replace=recheck_old_output_and_evidence,
+                before_replace=recheck_evidence,
             )
     print(
         f"A64 semantic contracts harvested: {len(output_rows)} variants across "

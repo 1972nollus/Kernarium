@@ -22,7 +22,8 @@ enum class JitCacheValidationResult {
 void profile_jit_compilation(
     std::uint64_t pc, std::span<const std::uint32_t> guest_words,
     std::span<const std::uint32_t> host_words, std::size_t hot_words,
-    bool tracked
+    bool tracked, std::size_t direct_link_refusals,
+    std::size_t indirect_link_refusals
 #if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
     ,
     const jit::JitGprPressureProfile &gpr_pressure
@@ -30,13 +31,23 @@ void profile_jit_compilation(
 );
 void profile_jit_cache_replacement(bool eviction) noexcept;
 void profile_jit_arena_reset() noexcept;
+void profile_jit_link_table_state(
+    std::size_t direct_size, std::size_t direct_capacity,
+    std::size_t indirect_size, std::size_t indirect_capacity) noexcept;
+void profile_jit_target_link_refusal(bool refused) noexcept;
 void profile_jit_sequence_transition(bool generation_changed,
                                      std::uint64_t discarded_blocks) noexcept;
 void profile_jit_cache_validation(JitCacheValidationResult result) noexcept;
+/* Called only after translation is quiescent and task carriers have retired.
+ * It drains live thread-local recorders and emits each enabled cumulative
+ * report whose state changed since the preceding call.
+ */
+void report_final_jit_diagnostics() noexcept;
 #else
 inline constexpr void profile_jit_compilation(
     std::uint64_t, std::span<const std::uint32_t>,
-    std::span<const std::uint32_t>, std::size_t, bool
+    std::span<const std::uint32_t>, std::size_t, bool, std::size_t,
+    std::size_t
 #if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
     ,
     const jit::JitGprPressureProfile &
@@ -44,6 +55,9 @@ inline constexpr void profile_jit_compilation(
 ) noexcept {}
 inline constexpr void profile_jit_cache_replacement(bool) noexcept {}
 inline constexpr void profile_jit_arena_reset() noexcept {}
+inline constexpr void profile_jit_link_table_state(
+    std::size_t, std::size_t, std::size_t, std::size_t) noexcept {}
+inline constexpr void profile_jit_target_link_refusal(bool) noexcept {}
 inline constexpr void profile_jit_sequence_transition(
     bool, std::uint64_t) noexcept {}
 inline constexpr void profile_jit_cache_validation(

@@ -188,6 +188,14 @@ def main() -> int:
                 f"{consumed:.3f}s host CPU ({utilization:.2f} cores)",
                 flush=True,
             )
+        shutdown_ok = guest.shutdown(60)
+        emulator_status = guest.return_code
+        if not shutdown_ok:
+            raise RuntimeError("emulator did not halt cleanly within 60 seconds")
+        if emulator_status != 0:
+            raise RuntimeError(
+                f"emulator exited with status {emulator_status}"
+            )
     finally:
         guest.close()
 

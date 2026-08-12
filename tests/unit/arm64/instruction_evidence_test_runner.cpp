@@ -194,10 +194,9 @@ void remove_stale_staging(const std::filesystem::path &directory,
   return false;
 }
 
-void validate_and_sync_stage_member(const std::filesystem::path &stage,
-                                    const std::filesystem::path &final,
-                                    std::string_view expected_prefix,
-                                    bool gzip_stream) {
+void validate_stage_member(const std::filesystem::path &stage,
+                           std::string_view expected_prefix,
+                           bool gzip_stream) {
   auto flags = O_RDWR | O_CLOEXEC;
 #ifdef O_NOFOLLOW
   flags |= O_NOFOLLOW;
@@ -205,12 +204,9 @@ void validate_and_sync_stage_member(const std::filesystem::path &stage,
   const auto descriptor = ::open(stage.c_str(), flags);
   if (descriptor < 0)
     fail("cannot open producer staging member");
-  struct stat before {};
-  struct stat after {};
-  if (::lstat(stage.c_str(), &before) != 0 ||
-      ::fstat(descriptor, &after) != 0 || !S_ISREG(after.st_mode) ||
-      before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
-      after.st_size <= 0) {
+  struct stat status {};
+  if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) ||
+      status.st_size <= 0) {
     ::close(descriptor);
     fail("producer staging member identity is invalid");
   }
@@ -233,19 +229,8 @@ void validate_and_sync_stage_member(const std::filesystem::path &stage,
     ::close(descriptor);
     fail("producer staging member has an unexpected header");
   }
-  struct stat final_status {};
-  if (::lstat(final.c_str(), &final_status) == 0) {
-    if (!S_ISREG(final_status.st_mode) ||
-        ::fchmod(descriptor, final_status.st_mode & 07777) != 0) {
-      ::close(descriptor);
-      fail("canonical producer output is not replaceable");
-    }
-  } else if (errno != ENOENT) {
-    ::close(descriptor);
-    fail("cannot inspect canonical producer output");
-  }
-  if (::fsync(descriptor) != 0 || ::close(descriptor) != 0)
-    fail("cannot sync producer staging member");
+  if (::close(descriptor) != 0)
+    fail("cannot close producer staging member");
 }
 
 void publish_or_remove(const std::filesystem::path &stage,
@@ -257,21 +242,6 @@ void publish_or_remove(const std::filesystem::path &stage,
   }
   if (::unlink(final.c_str()) != 0 && errno != ENOENT)
     fail("cannot remove stale canonical producer output");
-}
-
-void sync_directory(const std::filesystem::path &directory) {
-  auto flags = O_RDONLY | O_CLOEXEC;
-#ifdef O_DIRECTORY
-  flags |= O_DIRECTORY;
-#endif
-  const auto descriptor = ::open(directory.c_str(), flags);
-  if (descriptor < 0 || ::fsync(descriptor) != 0) {
-    if (descriptor >= 0)
-      ::close(descriptor);
-    fail("cannot sync producer output directory");
-  }
-  if (::close(descriptor) != 0)
-    fail("cannot close producer output directory");
 }
 
 } // namespace
@@ -302,19 +272,9 @@ int main(int argc, char **argv) {
       canonical_output(canonical_directory, evidence_file.filename().string());
   if (canonical_evidence.string().find('\n') != std::string::npos)
     fail("evidence path contains a marker delimiter");
-  const auto gate_path = canonical_directory.parent_path() /
-                         (canonical_directory.filename().string() + ".lock");
   const auto producer_path =
       canonical_directory / ("." + producer + ".producer.lock");
-  const auto gate = open_lock(gate_path, LOCK_SH);
   const auto producer_lock = open_lock(producer_path, LOCK_EX);
-  struct stat gate_status {};
-  struct stat producer_status {};
-  if (::fstat(gate, &gate_status) != 0 ||
-      ::fstat(producer_lock, &producer_status) != 0 ||
-      (gate_status.st_dev == producer_status.st_dev &&
-       gate_status.st_ino == producer_status.st_ino))
-    fail("producer and publication lock identities alias");
 
   const auto canonical_raw =
       std::filesystem::path{canonical_evidence.string() + ".raw"};
@@ -448,29 +408,23 @@ int main(int argc, char **argv) {
         (!materialization_enabled && has_materialization))
       fail("successful producer output set is incomplete");
     if (has_evidence)
-      validate_and_sync_stage_member(staging_evidence, canonical_evidence,
-                                     "stable_id\tsection\t", false);
+      validate_stage_member(staging_evidence, "stable_id\tsection\t", false);
     if (has_raw)
-      validate_and_sync_stage_member(staging_raw, canonical_raw,
-                                     "ctest\tcase\t", false);
+      validate_stage_member(staging_raw, "ctest\tcase\t", false);
     if (has_materialization)
-      validate_and_sync_stage_member(staging_materialization,
-                                     canonical_materialization, {}, true);
+      validate_stage_member(staging_materialization, {}, true);
     if (has_native)
-      validate_and_sync_stage_member(staging_native, canonical_native,
-                                     "oracle_case_id\tctest\t", false);
+      validate_stage_member(staging_native, "oracle_case_id\tctest\t", false);
 
     publish_or_remove(staging_native, canonical_native, has_native);
     publish_or_remove(staging_materialization, canonical_materialization,
                       has_materialization);
     publish_or_remove(staging_raw, canonical_raw, has_raw);
     publish_or_remove(staging_evidence, canonical_evidence, has_evidence);
-    sync_directory(canonical_directory);
   }
   cleanup_staging_base(active_staging_base);
   active_staging_base.clear();
   ::close(producer_lock);
-  ::close(gate);
   if (had_remaining_group)
     return 125;
   if (forwarded_signal != 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)

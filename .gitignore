@@ -5,7 +5,6 @@
 /rootfs.ext2
 /rootfs.erofs
 *.img
-.rootfs.*.uml-lock
 .rootfs-provision-*/
 
 # Official Linux checkout is maintained as its own repository; the outer tree

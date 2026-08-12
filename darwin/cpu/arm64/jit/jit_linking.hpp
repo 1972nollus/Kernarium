@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <unordered_map>
 
 namespace uml::cpu::arm64 {
 
@@ -147,13 +146,29 @@ struct JitIndirectLink final {
 class JitBlockLinkTable final {
 public:
   explicit JitBlockLinkTable(std::size_t capacity);
+  ~JitBlockLinkTable();
+
+  JitBlockLinkTable(const JitBlockLinkTable &) = delete;
+  JitBlockLinkTable &operator=(const JitBlockLinkTable &) = delete;
+
   [[nodiscard]] JitBlockLink *find_or_create(std::uint64_t pc);
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
+  [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
+
+  /* Exact requested backing storage plus conservative allocator metadata.
+   * The table uses a fixed record array and a 50%-load open-address index, so
+   * this value cannot grow as records are populated.
+   */
+  [[nodiscard]] static std::size_t
+  allocation_bytes(std::size_t capacity) noexcept;
 
 private:
   std::size_t capacity_{};
-  std::unordered_map<std::uint64_t, std::unique_ptr<JitBlockLink>> entries_;
+  std::size_t size_{};
+  std::size_t index_capacity_{};
+  JitBlockLink *records_{};
+  std::unique_ptr<std::uint32_t[]> index_;
 };
 
 /*
@@ -166,17 +181,29 @@ class JitIndirectLinkTable final {
 public:
   JitIndirectLinkTable(std::size_t capacity,
                        const JitBlockLink *empty_link);
+  ~JitIndirectLinkTable();
+
+  JitIndirectLinkTable(const JitIndirectLinkTable &) = delete;
+  JitIndirectLinkTable &operator=(const JitIndirectLinkTable &) = delete;
+
   [[nodiscard]] JitIndirectLink *find_or_create(std::uint64_t source_pc);
   [[nodiscard]] JitIndirectLink *find(
       std::uint64_t source_pc) const noexcept;
   void reset(JitIndirectLink &site) const noexcept;
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
+  [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
+
+  [[nodiscard]] static std::size_t
+  allocation_bytes(std::size_t capacity) noexcept;
 
 private:
   std::size_t capacity_{};
+  std::size_t size_{};
+  std::size_t index_capacity_{};
   const JitBlockLink *empty_link_{};
-  std::unordered_map<std::uint64_t, std::unique_ptr<JitIndirectLink>> entries_;
+  JitIndirectLink *records_{};
+  std::unique_ptr<std::uint32_t[]> index_;
 };
 
 static_assert(

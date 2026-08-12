@@ -21,8 +21,8 @@
  * question rather than one of two.
  *
  * Compiled out entirely unless UML_GADGET_SIMD_OPERAND_HISTOGRAM is 1, so
- * production translation is byte-identical, matching the discipline the
- * adjacent-pair histogram and the JIT's runtime diagnostics already follow.
+ * ordinary translation has no diagnostic instrumentation, matching the
+ * adjacent-pair histogram and the JIT's runtime diagnostics.
  *
  * Set DARWIN_UML_GADGET_SIMD_OPERAND_HISTOGRAM to a path to have the counts
  * written there. Counting is per thread into a fixed array and merged at dump

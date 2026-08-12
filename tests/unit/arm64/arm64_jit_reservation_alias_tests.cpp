@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <array>
@@ -363,6 +364,8 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
 } // namespace
 
 int main() {
+  require(uml::cpu::arm64::set_jit_cache_budget(
+      256U * 1024U * 1024U, 10));
   native_single_block_case();
   native_linked_loop_case();
   native_compare_retry_case(true);

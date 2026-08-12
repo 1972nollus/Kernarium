@@ -134,12 +134,17 @@ hot_code(const jit_test::CompiledCode &compiled, std::size_t expected_guest) {
     require(((current >> 5U) & 31U) == 8U,
             "coalesced memory operation bypassed checked host base x8");
     const auto transfer = current & 31U;
+    const auto guest_transfer = guest & 31U;
     const bool zero_register = (guest & 31U) == 31U;
+    const bool linked_bank_transfer =
+        jit_test::linked_x8_x9_bank_enabled() &&
+        ((guest_transfer == 8U && transfer == 22U) ||
+         (guest_transfer == 9U && transfer == 23U));
     const bool safe_transfer =
         transfer == 3U || transfer == 4U || transfer == 5U ||
         transfer == 6U || transfer == 7U || transfer == 9U ||
         transfer == 12U || transfer == 13U || transfer == 17U ||
-        (zero_register && transfer == 31U);
+        (zero_register && transfer == 31U) || linked_bank_transfer;
     require(safe_transfer,
             "coalesced memory operation used an executor-owned host register");
     ++count;

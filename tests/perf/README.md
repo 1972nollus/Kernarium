@@ -2,7 +2,7 @@
 
 This directory owns manual performance campaigns. It is deliberately outside
 the unit and integration correctness presets: a benchmark result is meaningful
-only with a recorded host, power state, build, rootfs digest, engine, topology,
+only with a recorded host, power state, build, rootfs path, engine, topology,
 and repeated matched runs.
 
 Run the cheap entry-point check after changing shared integration helpers:
@@ -30,12 +30,11 @@ then syncs the guest. This preparation is bounded by `--quiesce-timeout`
 measurement begins. All service-state changes live in the disposable overlay.
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
-  python3 tests/perf/run_guest_geekbench.py \
-    --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.erofs \
-    --console-log .build/results/geekbench-gadgets-16k.log \
-    --engine gadgets --cpus 10 --memory 8G
+python3 tests/perf/run_guest_geekbench.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --console-log .build/results/geekbench-gadgets-16k.log \
+  --engine gadgets --cpus 10 --memory 8G
 ```
 
 The payload is already present in `rootfs.erofs`; the runner neither downloads
@@ -61,7 +60,7 @@ and host-core use between two diagnostic captures.
 assembly payloads in this directory. Each row records the mechanism measured,
 minimum guest instruction feature, common runner, and why the probe remains a
 useful control. The inventory is intentionally conservative: history and
-source inspection found a distinct purpose for all 37 payloads, so none was
+source inspection found a distinct purpose for all 39 payloads, so none was
 removed merely because its filename was not referenced by another source
 file. The source-tree audit requires a one-to-one match between the inventory
 and `guest_*.S`, validates the self-checking entry-point contract, and requires
@@ -79,13 +78,17 @@ not CTest tests and are not dependencies of unit or integration suite
 aggregates. Run one explicitly through the generic uploader:
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
-  python3 tests/perf/run_guest_link_bench.py \
-    --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.erofs \
-    --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_link_loop \
-    --engine gadgets --cpus 10 --workers 10
+python3 tests/perf/run_guest_link_bench.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_link_loop \
+  --engine gadgets --cpus 10 --workers 10
 ```
+
+A timing runner succeeds only after the measured command completes, the guest
+halts within 60 seconds, and the emulator exits with status zero. A forced
+`close()` remains cleanup for a failed run; it cannot turn that run into
+performance evidence.
 
 `guest_atomic_add_loop.S` is the sole payload requiring the host toolchain's
 LSE assembler support. `guest_tlb_128m_alias_loop.S` is meaningful only for a
@@ -93,3 +96,17 @@ LSE assembler support. `guest_tlb_128m_alias_loop.S` is meaningful only for a
 guest page profile. Benchmark execution still requires the integration EROFS
 image and should record the same host/build/engine context as every other
 campaign.
+
+`guest_gadget_polymorphic_successor_loop.S` is the focused control for the
+default-off `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` experiment. Its
+eight identical ADD-immediate predecessors all select one gadget entry, while
+their successors select eight distinct gadget families. Compare separate OFF
+and ON build trees on both host core classes; the ordinary production build
+must leave the option OFF.
+
+`guest_fixed_x8_x9_link_loop.S` is the sensitive probe for the default-off
+JIT x8/x9 cross-block carry experiment: its linked loop keeps exactly guest
+x8 and x9 live. `guest_fixed_gpr_link_loop.S` is the historical x0/x1 loop and
+matched overhead control; both probes now self-check both live values after the
+loop. Compare them from the same OFF and ON build trees; a carry result is
+meaningful only when the x8/x9 probe moves beyond the control's variance.

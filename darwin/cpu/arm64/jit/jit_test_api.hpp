@@ -17,6 +17,8 @@ namespace uml::cpu::arm64::jit::testing {
 struct CompiledCode final {
   std::vector<std::uint32_t> words;
   std::size_t hot_words{};
+  std::size_t direct_link_refusals{};
+  std::size_t indirect_link_refusals{};
   std::size_t guest_instructions{};
   std::size_t internal_entry_word{};
   std::uint64_t memory_write_mask{};
@@ -64,12 +66,22 @@ compile_linked_block(std::uint64_t pc,
                      std::span<const std::uint32_t> instructions);
 
 [[nodiscard]] CompiledCode
+compile_linked_block_with_capacity(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::size_t capacity);
+
+[[nodiscard]] CompiledCode
 compile_linked_block_memory_abi(
     std::uint64_t pc, std::span<const std::uint32_t> instructions);
 
 [[nodiscard]] CompiledCode
 compile_indirect_linked_block(
     std::uint64_t pc, std::span<const std::uint32_t> instructions);
+
+[[nodiscard]] CompiledCode
+compile_indirect_linked_block_with_capacity(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::size_t capacity);
 
 [[nodiscard]] CompiledCode
 compile_indirect_linked_block_memory_abi(
@@ -116,6 +128,7 @@ compile_gpr_pressure_profile_block(
 #endif
 
 [[nodiscard]] bool persistent_linked_block_abi_enabled() noexcept;
+[[nodiscard]] bool linked_x8_x9_bank_enabled() noexcept;
 [[nodiscard]] std::size_t
 persistent_link_successful_path_word_savings() noexcept;
 [[nodiscard]] std::size_t successful_link_host_word_savings() noexcept;

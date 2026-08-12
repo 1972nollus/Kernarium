@@ -121,7 +121,7 @@ shared-memory requests are required.
 - Run unit tests and the host VNC smoke test.
 - Run a headless CGL/virglrenderer smoke test.
 
-### Gate 2: verified EROFS guest OpenGL
+### Gate 2: EROFS guest OpenGL
 
 Boot with a temporary overlay and verify:
 
@@ -131,7 +131,8 @@ Boot with a temporary overlay and verify:
 - desktop OpenGL and OpenGL ES renderers identify
   `virgl (Apple ...)`, not llvmpipe or Zink;
 - the raw `rootfs.erofs` image is mounted at `/dev/ubda` beneath the tmpfs
-  overlay and its manifested format and digest verify before and after the run.
+  overlay. EROFS provides the read-only lower-filesystem contract; the run does
+  not hash the image before or after execution.
 
 This rendered gate passed in the dated partitioned-image campaign with Mesa
 26.1.2 and `virgl (Apple M1 Ultra)`. The current EROFS runner and bounded
@@ -159,7 +160,7 @@ separately from that dated VNC evidence.
 - Interact through VNC and verify mouse and keyboard input.
 - Confirm the Folder View desktop runs without the crashing `desktop:/` KIO
   worker.
-- Shut down cleanly and re-check the EROFS manifest guard.
+- Shut down cleanly.
 
 This gate has passed. `kwin_wayland` and `plasmashell` remain running, GBM/EGL
 reports `virgl (Apple M1 Ultra)`, the VNC framebuffer contains the Plasma
@@ -184,4 +185,4 @@ A focused native-window launch at 800x500 with four guest vCPUs reached
 CGL/IOSurface/Metal message before manual Ctrl-C shutdown. That proves native
 window startup and the GPU-only scanout selection, not keyboard/pointer
 interaction or a complete timed KDE qualification. The EROFS digest was
-reverified after the run.
+recorded by that dated run but is not a current acceptance mechanism.

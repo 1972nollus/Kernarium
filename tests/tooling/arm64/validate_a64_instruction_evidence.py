@@ -32,10 +32,7 @@ from a64_architecture_oracle import SOURCE_ORACLE  # noqa: E402
 from validate_a64_instruction_inventory import FEATURE_TOKENS  # noqa: E402
 from a64_raw_evidence_files import (  # noqa: E402
     atomic_publish_bytes,
-    exclusive_evidence_locks,
-    freeze_read_inputs,
-    publication_target_locks,
-    recheck_read_inputs,
+    canonical_existing_directory,
     require_no_symlink_components,
     validate_publication_topology,
 )
@@ -1401,15 +1398,6 @@ def run(options: argparse.Namespace) -> int:
     )
     report = options.report
     validate_publication_topology((report,), read_inputs=catalog_inputs)
-    read_identities = freeze_read_inputs(catalog_inputs)
-    expected_evidence_paths = tuple(
-        require_no_symlink_components(path, "evidence input")
-        for path in evidence_inputs
-    )
-    expected_registration_paths = tuple(
-        require_no_symlink_components(path, "CTest registration input")
-        for path in registration_files
-    )
     tests = registered_tests(
         options.build_root,
         options.registered_tests_file,
@@ -1478,42 +1466,6 @@ def run(options: argparse.Namespace) -> int:
     exact = bind_exact(evidence, bindings, semantic_contracts)
     payload = report_payload(exact)
 
-    def recheck_validation_inputs() -> None:
-        recheck_read_inputs(read_identities)
-        current_evidence_paths = tuple(
-            require_no_symlink_components(path, "evidence input")
-            for path in sorted(
-                candidate
-                for candidate in options.evidence_directory.glob("*.tsv")
-                if candidate.name != "stable-id-bindings.tsv"
-            )
-        )
-        if current_evidence_paths != expected_evidence_paths:
-            fail("exact evidence file set changed during validation")
-        if options.build_root is not None:
-            current_registration_paths = tuple(
-                require_no_symlink_components(
-                    path, "CTest registration input"
-                )
-                for path in sorted(
-                    options.build_root.rglob("CTestTestfile.cmake")
-                )
-            )
-            if current_registration_paths != expected_registration_paths:
-                fail("CTest registration file set changed during validation")
-        if (
-            registered_tests(
-                options.build_root,
-                options.registered_tests_file,
-                options.command_runner,
-                ctest_tool,
-            )
-            != tests
-        ):
-            fail("registered CTest set changed during validation")
-        if read_evidence(options.evidence_directory, tests) != evidence:
-            fail("exact evidence contents changed during validation")
-
     def validate_staged(staged: list[tuple[Path, Path]]) -> None:
         if len(staged) != 1 or staged[0][1].read_bytes() != payload:
             fail("staged evidence report differs")
@@ -1525,7 +1477,6 @@ def run(options: argparse.Namespace) -> int:
     atomic_publish_bytes(
         ((report, payload),),
         validate_staged=validate_staged,
-        before_replace=recheck_validation_inputs,
         validate_published=validate_published,
     )
     jit_executed = sum(row["jit_result"] in EXECUTED_RESULTS for row in exact)
@@ -1544,23 +1495,22 @@ def run(options: argparse.Namespace) -> int:
 
 def main() -> int:
     options = arguments()
-    with exclusive_evidence_locks(
-        (options.evidence_directory,)
-    ) as directories:
-        options.evidence_directory = directories[0]
-        report = options.evidence_directory / "stable-id-bindings.tsv"
-        with publication_target_locks((report,)) as outputs:
-            options.report = outputs[0]
-            with workspace_from_options(
-                options,
-                source_root=Path(__file__).resolve().parents[3],
-                publication_targets=outputs,
-                prefix="a64-evidence-validator-",
-            ) as workspace:
-                options.command_runner = BoundedCommandRunner(
-                    workspace, options.timeout_seconds
-                )
-                return run(options)
+    options.evidence_directory = canonical_existing_directory(
+        options.evidence_directory, "evidence directory"
+    )
+    report = options.evidence_directory / "stable-id-bindings.tsv"
+    outputs = (report,)
+    options.report = report
+    with workspace_from_options(
+        options,
+        source_root=Path(__file__).resolve().parents[3],
+        publication_targets=outputs,
+        prefix="a64-evidence-validator-",
+    ) as workspace:
+        options.command_runner = BoundedCommandRunner(
+            workspace, options.timeout_seconds
+        )
+        return run(options)
 
 
 if __name__ == "__main__":

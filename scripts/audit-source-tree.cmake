@@ -5,6 +5,272 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+function(uml_collect_direct_quoted_includes PATH OUT_INCLUDES)
+    if(NOT EXISTS "${PATH}")
+        set(${OUT_INCLUDES} "" PARENT_SCOPE)
+        return()
+    endif()
+    file(READ "${PATH}" CONTENT)
+    string(REGEX MATCHALL
+        "(^|\n)[ \t]*#[ \t]*include[ \t]+\"[^\"]+\""
+        INCLUDE_DIRECTIVES "${CONTENT}")
+    set(INCLUDES)
+    foreach(INCLUDE_DIRECTIVE IN LISTS INCLUDE_DIRECTIVES)
+        string(REGEX REPLACE
+            ".*\"([^\"]+)\".*" "\\1" INCLUDE_NAME
+            "${INCLUDE_DIRECTIVE}")
+        list(APPEND INCLUDES "${INCLUDE_NAME}")
+    endforeach()
+    set(${OUT_INCLUDES} "${INCLUDES}" PARENT_SCOPE)
+endfunction()
+
+function(uml_audit_protected_engine_source_contracts ROOT OUT_VIOLATIONS)
+    set(CONTRACT_VIOLATIONS)
+
+    # G100 keeps the five measured decode families in one compiler-visible
+    # translation unit without turning .ipp into a general implementation-
+    # include convention. Check source ownership directly; object and archive
+    # composition are intentionally outside this audit.
+    set(GADGET_ROOT "${ROOT}/darwin/cpu/arm64/gadgets")
+    set(GADGET_COMPOSER "${GADGET_ROOT}/program_builder.cpp")
+    set(GADGET_INTERFACE "${GADGET_ROOT}/program_builder_decode.hpp")
+    set(GADGET_FUNCTIONS
+        decode_branch_system
+        decode_data_processing
+        decode_exception
+        decode_floating_simd
+        decode_load_store)
+    set(GADGET_FRAGMENTS
+        program_builder_branch_system_impl.ipp
+        program_builder_data_processing_impl.ipp
+        program_builder_exception_impl.ipp
+        program_builder_floating_simd_impl.ipp
+        program_builder_load_store_impl.ipp)
+
+    file(GLOB_RECURSE DARWIN_IPP_FILES RELATIVE "${ROOT}"
+        "${ROOT}/darwin/*.ipp")
+    list(SORT DARWIN_IPP_FILES)
+    set(EXPECTED_DARWIN_IPP_FILES)
+    foreach(FRAGMENT IN LISTS GADGET_FRAGMENTS)
+        list(APPEND EXPECTED_DARWIN_IPP_FILES
+            "darwin/cpu/arm64/gadgets/${FRAGMENT}")
+    endforeach()
+    list(SORT EXPECTED_DARWIN_IPP_FILES)
+    if(NOT "${DARWIN_IPP_FILES}" STREQUAL "${EXPECTED_DARWIN_IPP_FILES}")
+        list(APPEND CONTRACT_VIOLATIONS
+            "${GADGET_ROOT}: G100 permits exactly its five decode-family .ipp files")
+    endif()
+
+    if(NOT EXISTS "${GADGET_COMPOSER}")
+        list(APPEND CONTRACT_VIOLATIONS
+            "${GADGET_COMPOSER}: G100 composer is missing")
+        set(GADGET_COMPOSER_CONTENT "")
+        set(GADGET_COMPOSER_INCLUDES)
+    else()
+        file(READ "${GADGET_COMPOSER}" GADGET_COMPOSER_CONTENT)
+        uml_collect_direct_quoted_includes(
+            "${GADGET_COMPOSER}" GADGET_COMPOSER_INCLUDES)
+    endif()
+    if(NOT EXISTS "${GADGET_INTERFACE}")
+        list(APPEND CONTRACT_VIOLATIONS
+            "${GADGET_INTERFACE}: G100 decode interface is missing")
+        set(GADGET_INTERFACE_CONTENT "")
+    else()
+        file(READ "${GADGET_INTERFACE}" GADGET_INTERFACE_CONTENT)
+    endif()
+
+    set(COMPOSED_GADGET_FRAGMENTS)
+    foreach(INCLUDE_NAME IN LISTS GADGET_COMPOSER_INCLUDES)
+        if(INCLUDE_NAME MATCHES
+           "^program_builder_[A-Za-z0-9_]+_impl\\.ipp$")
+            list(APPEND COMPOSED_GADGET_FRAGMENTS "${INCLUDE_NAME}")
+        endif()
+    endforeach()
+    list(SORT COMPOSED_GADGET_FRAGMENTS)
+    set(SORTED_GADGET_FRAGMENTS ${GADGET_FRAGMENTS})
+    list(SORT SORTED_GADGET_FRAGMENTS)
+    if(NOT "${COMPOSED_GADGET_FRAGMENTS}" STREQUAL
+           "${SORTED_GADGET_FRAGMENTS}")
+        list(APPEND CONTRACT_VIOLATIONS
+            "${GADGET_COMPOSER}: G100 composer does not include exactly the five decode-family fragments")
+    endif()
+
+    list(LENGTH GADGET_FUNCTIONS GADGET_FUNCTION_COUNT)
+    if(GADGET_FUNCTION_COUNT GREATER 0)
+        math(EXPR GADGET_FUNCTION_LAST "${GADGET_FUNCTION_COUNT} - 1")
+        foreach(INDEX RANGE 0 ${GADGET_FUNCTION_LAST})
+            list(GET GADGET_FUNCTIONS ${INDEX} FUNCTION_NAME)
+            list(GET GADGET_FRAGMENTS ${INDEX} FRAGMENT_NAME)
+            set(FRAGMENT_PATH "${GADGET_ROOT}/${FRAGMENT_NAME}")
+            set(DEFINITION_PATTERN
+                "DecodeResult[ \t\r\n]+${FUNCTION_NAME}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*[{]")
+            set(DECLARATION_PATTERN
+                "\\[\\[nodiscard\\]\\][ \t\r\n]+DecodeResult[ \t\r\n]+${FUNCTION_NAME}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*;")
+            if(NOT GADGET_INTERFACE_CONTENT MATCHES "${DECLARATION_PATTERN}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${GADGET_INTERFACE}: G100 interface does not declare ${FUNCTION_NAME}")
+            endif()
+            if(GADGET_INTERFACE_CONTENT MATCHES "${DEFINITION_PATTERN}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${GADGET_INTERFACE}: G100 interface implements ${FUNCTION_NAME}")
+            endif()
+            if(GADGET_COMPOSER_CONTENT MATCHES "${DEFINITION_PATTERN}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${GADGET_COMPOSER}: G100 composer defines ${FUNCTION_NAME} directly")
+            endif()
+            if(NOT EXISTS "${FRAGMENT_PATH}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${FRAGMENT_PATH}: G100 decode-family fragment is missing")
+                continue()
+            endif()
+            file(READ "${FRAGMENT_PATH}" FRAGMENT_CONTENT)
+            if(NOT FRAGMENT_CONTENT MATCHES "${DEFINITION_PATTERN}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${FRAGMENT_PATH}: G100 fragment does not own ${FUNCTION_NAME}")
+            endif()
+            foreach(OTHER_FUNCTION IN LISTS GADGET_FUNCTIONS)
+                if(OTHER_FUNCTION STREQUAL FUNCTION_NAME)
+                    continue()
+                endif()
+                set(OTHER_DEFINITION_PATTERN
+                    "DecodeResult[ \t\r\n]+${OTHER_FUNCTION}\\([ \t\r\n]*DecodeContext[ \t\r\n]+&context[ \t\r\n]*\\)[ \t\r\n]*[{]")
+                if(FRAGMENT_CONTENT MATCHES "${OTHER_DEFINITION_PATTERN}")
+                    list(APPEND CONTRACT_VIOLATIONS
+                        "${FRAGMENT_PATH}: G100 fragment also defines ${OTHER_FUNCTION}")
+                endif()
+            endforeach()
+        endforeach()
+    endif()
+
+    file(GLOB_RECURSE FIRST_PARTY_CXX_FILES LIST_DIRECTORIES false
+        "${ROOT}/darwin/*.cpp"
+        "${ROOT}/darwin/*.cc"
+        "${ROOT}/darwin/*.cxx"
+        "${ROOT}/darwin/*.h"
+        "${ROOT}/darwin/*.hh"
+        "${ROOT}/darwin/*.hpp"
+        "${ROOT}/darwin/*.ipp"
+        "${ROOT}/tests/*.cpp"
+        "${ROOT}/tests/*.cc"
+        "${ROOT}/tests/*.cxx"
+        "${ROOT}/tests/*.h"
+        "${ROOT}/tests/*.hh"
+        "${ROOT}/tests/*.hpp"
+        "${ROOT}/tests/*.ipp")
+    foreach(PATH IN LISTS FIRST_PARTY_CXX_FILES)
+        if(PATH STREQUAL GADGET_COMPOSER)
+            continue()
+        endif()
+        file(READ "${PATH}" CONTENT)
+        if(CONTENT MATCHES
+           "(^|\n)[ \t]*#[ \t]*include[ \t]+[<\"]program_builder_[A-Za-z0-9_]+_impl\\.ipp[>\"]")
+            list(APPEND CONTRACT_VIOLATIONS
+                "${PATH}: G100 decode-family fragments may be included only by program_builder.cpp")
+        endif()
+    endforeach()
+
+    # The common conformance harness observes leaked engine state; it must not
+    # repair engine-specific state after the public run boundary.
+    set(HARNESS
+        "${ROOT}/tests/unit/arm64/arm64_engine_test_support.cpp")
+    if(NOT EXISTS "${HARNESS}")
+        list(APPEND CONTRACT_VIOLATIONS
+            "${HARNESS}: common engine conformance harness is missing")
+    else()
+        file(READ "${HARNESS}" HARNESS_CONTENT)
+        if(HARNESS_CONTENT MATCHES "restore_native_fp_environment")
+            list(APPEND CONTRACT_VIOLATIONS
+                "${HARNESS}: common conformance performs engine-specific state restoration")
+        endif()
+        foreach(MARKER IN ITEMS
+                gadget_fp_active gadget_fpmr_active gadget_indirect_miss)
+            if(NOT HARNESS_CONTENT MATCHES "${MARKER}")
+                list(APPEND CONTRACT_VIOLATIONS
+                    "${HARNESS}: common conformance does not reject leaked ${MARKER} state")
+            endif()
+        endforeach()
+    endif()
+
+    # Keep executor, publication, translation, and test contracts explicit by
+    # auditing direct source includes rather than built object membership.
+    set(JIT_ROOT "${ROOT}/darwin/cpu/arm64/jit")
+    set(REQUIRED_JIT_FILES
+        jit_linking.hpp
+        jit_publication.hpp
+        jit_compiler.hpp
+        jit_cache.hpp
+        jit_compiler.cpp
+        jit_semantic_memory.cpp
+        jit_executor_execution.cpp
+        jit_test_support.cpp)
+    foreach(JIT_FILE IN LISTS REQUIRED_JIT_FILES)
+        if(NOT EXISTS "${JIT_ROOT}/${JIT_FILE}")
+            list(APPEND CONTRACT_VIOLATIONS
+                "${JIT_ROOT}/${JIT_FILE}: protected JIT source contract is missing")
+        endif()
+    endforeach()
+
+    uml_collect_direct_quoted_includes(
+        "${JIT_ROOT}/jit_linking.hpp" JIT_LINKING_INCLUDES)
+    if(JIT_LINKING_INCLUDES)
+        list(APPEND CONTRACT_VIOLATIONS
+            "${JIT_ROOT}/jit_linking.hpp: link records have unreviewed direct dependencies: ${JIT_LINKING_INCLUDES}")
+    endif()
+
+    uml_collect_direct_quoted_includes(
+        "${JIT_ROOT}/jit_publication.hpp" JIT_PUBLICATION_INCLUDES)
+    if(NOT "cpu/arm64/cpu_state.hpp" IN_LIST JIT_PUBLICATION_INCLUDES OR
+       "jit_linking.hpp" IN_LIST JIT_PUBLICATION_INCLUDES)
+        list(APPEND CONTRACT_VIOLATIONS
+            "${JIT_ROOT}/jit_publication.hpp: store publication must own CpuState directly without link records")
+    endif()
+
+    uml_collect_direct_quoted_includes(
+        "${JIT_ROOT}/jit_compiler.hpp" JIT_COMPILER_INCLUDES)
+    if("jit_linking.hpp" IN_LIST JIT_COMPILER_INCLUDES OR
+       "jit_publication.hpp" IN_LIST JIT_COMPILER_INCLUDES)
+        list(APPEND CONTRACT_VIOLATIONS
+            "${JIT_ROOT}/jit_compiler.hpp: translation interface depends on executor publication/link records")
+    endif()
+
+    uml_collect_direct_quoted_includes(
+        "${JIT_ROOT}/jit_cache.hpp" JIT_CACHE_INCLUDES)
+    if(NOT "jit_linking.hpp" IN_LIST JIT_CACHE_INCLUDES)
+        list(APPEND CONTRACT_VIOLATIONS
+            "${JIT_ROOT}/jit_cache.hpp: cache does not own its link-record dependency directly")
+    endif()
+
+    set(JIT_BRIDGE_SOURCES
+        jit_compiler.cpp
+        jit_semantic_memory.cpp
+        jit_executor_execution.cpp)
+    set(JIT_BRIDGE_INCLUDES
+        cpu/arm64/code_synchronization.hpp
+        cpu/arm64/memory_transfer.hpp
+        cpu/arm64/instructions/load_store_memory.hpp)
+    foreach(INDEX RANGE 0 2)
+        list(GET JIT_BRIDGE_SOURCES ${INDEX} JIT_BRIDGE_SOURCE)
+        list(GET JIT_BRIDGE_INCLUDES ${INDEX} JIT_BRIDGE_INCLUDE)
+        uml_collect_direct_quoted_includes(
+            "${JIT_ROOT}/${JIT_BRIDGE_SOURCE}" JIT_SOURCE_INCLUDES)
+        if(NOT "${JIT_BRIDGE_INCLUDE}" IN_LIST JIT_SOURCE_INCLUDES)
+            list(APPEND CONTRACT_VIOLATIONS
+                "${JIT_ROOT}/${JIT_BRIDGE_SOURCE}: relies transitively on ${JIT_BRIDGE_INCLUDE}")
+        endif()
+    endforeach()
+
+    uml_collect_direct_quoted_includes(
+        "${JIT_ROOT}/jit_test_support.cpp" JIT_TEST_SUPPORT_INCLUDES)
+    foreach(REQUIRED_INCLUDE IN ITEMS jit_publication.hpp jit_test_api.hpp)
+        if(NOT "${REQUIRED_INCLUDE}" IN_LIST JIT_TEST_SUPPORT_INCLUDES)
+            list(APPEND CONTRACT_VIOLATIONS
+                "${JIT_ROOT}/jit_test_support.cpp: test support does not include ${REQUIRED_INCLUDE} directly")
+        endif()
+    endforeach()
+
+    set(${OUT_VIOLATIONS} "${CONTRACT_VIOLATIONS}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -159,6 +425,10 @@ foreach(PATH IN LISTS CXX_SOURCES)
             "${PATH}: CPU header creates anonymous per-translation-unit ownership")
     endif()
 endforeach()
+
+uml_audit_protected_engine_source_contracts(
+    "${SOURCE_ROOT}" PROTECTED_ENGINE_SOURCE_VIOLATIONS)
+list(APPEND VIOLATIONS ${PROTECTED_ENGINE_SOURCE_VIOLATIONS})
 
 # All first-party CTest registrations must pass through the suite helpers so
 # manifest ownership, labels, fixture policy, and aggregate binary dependencies

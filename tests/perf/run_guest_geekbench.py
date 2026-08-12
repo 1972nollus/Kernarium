@@ -216,6 +216,11 @@ def main() -> int:
             raise RuntimeError(
                 "guest did not halt cleanly after Geekbench"
             )
+        emulator_status = guest.return_code
+        if emulator_status != 0:
+            raise RuntimeError(
+                f"emulator exited with status {emulator_status} after Geekbench"
+            )
     finally:
         if profiler is not None and profiler.poll() is None:
             profiler.terminate()

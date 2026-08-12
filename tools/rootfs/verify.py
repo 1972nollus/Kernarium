@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the pinned EROFS rootfs image before and after guest campaigns."""
+"""Authenticate a rootfs artifact before provisioning it."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.

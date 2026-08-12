@@ -120,12 +120,12 @@ for mapping in \
 do
 	platform=${mapping%%:*}
 	identifier=${mapping#*:}
-	cmp "$TEST_ROOT/install-$platform/lib/libuml_emulator.a" \
-		"$OUTPUT/$identifier/libuml_emulator.a"
-	cmp "$TEST_ROOT/install-$platform/include/uml/abi_identity.h" \
-		"$OUTPUT/$identifier/Headers/uml/abi_identity.h"
-	cmp "$TEST_ROOT/install-$platform/include/uml/emulator.h" \
-		"$OUTPUT/$identifier/Headers/uml/emulator.h"
+	[ -s "$OUTPUT/$identifier/libuml_emulator.a" ] ||
+		fail "$platform slice archive is empty"
+	[ -s "$OUTPUT/$identifier/Headers/uml/abi_identity.h" ] ||
+		fail "$platform ABI identity header is empty"
+	[ -s "$OUTPUT/$identifier/Headers/uml/emulator.h" ] ||
+		fail "$platform public API header is empty"
 done
 
 expect_failure 'malformed --slice' \

@@ -50,14 +50,33 @@ JitExecutor::Implementation::resolve_indirect_link_profile(void *context, const 
 #endif
 
 [[nodiscard]] JitBlockLink *JitExecutor::Implementation::link_for(std::uint64_t pc) {
-  return links_.find_or_create(pc);
+  auto *link = links_.find_or_create(pc);
+#if UML_ENABLE_JIT_PROFILE
+  profile_jit_link_table_state(links_.size(), links_.capacity(),
+                               indirect_links_.size(),
+                               indirect_links_.capacity());
+#endif
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+  if (links_.size() >
+      cache_validation_diagnostics_.direct_link_table_high_water)
+    cache_validation_diagnostics_.direct_link_table_high_water =
+        links_.size();
+#endif
+  return link;
 }
 
 [[nodiscard]] JitIndirectLink *
 JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
   auto *site = indirect_links_.find_or_create(source_pc);
+#if UML_ENABLE_JIT_PROFILE
+  profile_jit_link_table_state(links_.size(), links_.capacity(),
+                               indirect_links_.size(),
+                               indirect_links_.capacity());
+#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   indirect_link_diagnostics_.capacity_refusals += site == nullptr;
+  if (indirect_links_.size() > indirect_link_diagnostics_.table_high_water)
+    indirect_link_diagnostics_.table_high_water = indirect_links_.size();
 #endif
   return site;
 }

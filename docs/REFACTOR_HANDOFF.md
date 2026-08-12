@@ -1,5 +1,28 @@
 # Refactor handoff
 
+## Post-baseline JIT checkpoint (2026-08-12)
+
+This repository checkpoint records the completed
+foundational JIT mechanisms and the focused evidence actually collected so far;
+it does not replace the broad
+accepted baseline below or attribute that baseline's full host, sanitizer,
+guest, Linux, or package matrices to this working tree.
+
+| Boundary | Current checkpoint and evidence |
+| --- | --- |
+| Whole-process budget | The host parses `ncpus=` and `mem=` with the maintained kernel's defaulting, clamping, repeated-argument, base, and suffix rules, then publishes budget and expected executor count as one first-valid pair. The bounded shared-cache carve is reserved first. The per-executor remainder accounts eager CPU/TLB state, the block cache, complete fallback saved-word slab, fixed link arrays and indexes, active lists, relocation scratch, and rounded executable/tracked/floating arenas. Direct and indirect link storage is fixed-capacity and address-stable; capacity refusal takes the semantic unlinked path and is reported rather than growing beyond the bound. |
+| Shared translations | The cache is bounded by entries and accounted bytes, and its key includes PC, the exact consumed guest-word prefix, and the complete code-generation profile. An admitted entry owns immutable validation words; noncanonical blocks alias an executor's fully accounted fallback slab. `matched=` now means only an exact lookup. `reused=` advances after metadata validation, private-link resolution, relocated private-arena storage, and installation; invalid metadata, direct/indirect capacity, and arena exhaustion are materialization failures that fall back to local compilation. A degraded compilation cannot become a new canonical entry. |
+| Executor lifetime | A managed run retains at most the configured guest CPU count of executors. Lightweight task carriers borrow them exclusively with FIFO waiter priority; the pool is session, memory-domain, and code-generation-profile bound and drains before domain retirement. Pooling exposed a same-sequence migration bug: a new carrier's distinct `StaticGuestMemory` could skip `memory.prepare()`. Prepared-memory identity is now reset at every begin/end boundary and is separate from conditional executor-TLB preparation. Focused pool tests pass in both page profiles and under ASan/UBSan and TSan. |
+| Final reporting | The private app-to-emulator-to-runtime-to-CPU facade explicitly reports compile/overlap, executor pool, then shared after task carriers join but before pool teardown; the app may repeat it idempotently. Compile/overlap and shared retain normal-exit callbacks, while pool reporting is intentionally explicit-only because its snapshot requires the quiescent pre-drain boundary. Records use bounded private formatting and direct descriptor writes, beginning with an LF in the same write so unrelated partial PTY text cannot prefix the schema. Short writes and `EINTR` resume the exact suffix; `EAGAIN`/`EWOULDBLOCK` waits with `poll(POLLOUT)` and then resumes. No task carrier takes or flushes stderr's shared `FILE` lock. |
+| Focused host gate | `cmake --workflow --preset check-jitprof` passed 2/2 after the backpressure and same-write leading-LF framing fixes. Its fixture holds the stderr `FILE` lock, fills a nonblocking pipe with an unterminated prefix to `EAGAIN`, proves the writer blocks until a reader drains it, checks leading-LF framing through both writer APIs, exercises concurrent long continuation records, and checks unchanged/changed final phases. The associated architecture audit covered 56 targets, 50 layered targets, and 57 registrations with no forbidden edge or cycle. |
+| Rejected framing diagnostic | `.build/results/jit-cache-handoff/jit-profile-pool-shared-final-current-source-20260812/README.md` preserves one current-source attempt and no retry. The guest command, benchmark pipeline, emulator, workloads, three finals, and terminal order passed, but physical line 188 placed exactly 39 shell continuation prompts before the otherwise complete first compile record. Because stdout/stderr already shared the emulator PTY, this was rejected rather than repaired in parsing or by separating only the outer streams. |
+| Accepted current-source diagnostic | `.build/results/jit-cache-handoff/jit-profile-line-framing-current-source-20260812/README.md` records the post-framing run. Guest command, `tee`, and emulator statuses were zero; Clang 758 and Object Detection 1257 are diagnostic/unscored. All 1,450 physical profile records start exactly with `Darwin JIT` and end in LF: 1,445 periodic compile, two periodic shared, and exactly one compile, pool, and shared final, with zero overlap/expansion/GPR/malformed records. The 39 prompts remain intact on their own line, finals follow stop in compile→pool→shared order, and nothing follows shared. Direct/indirect link occupancy is 262,144/262,144 and 21,469/262,144, with 60,380 direct, zero indirect, and 46,381 target refusals. Shared final: 5,131,797 matches, 5,127,800 reuses, 5,672,507 admission rejections, zero insertion failures/retained failure bytes, 3,986 direct-capacity plus 11 arena failures, and 268,434,608/268,435,456 accounted bytes. |
+| Pool mechanism trace | `.build/results/jit-cache-handoff/executor-pool-mechanism-trace-final-setup-corrected-20260812/README.md` records the accepted unscored mechanism counters. P recorded 18,002,647 borrows, 99.9971% remembered-slot return, 0.0029% fallback, 1.000081 cell probes per borrow, 1,461 failed CASes, no waiters, and ten one-time constructions; E recorded 6,002,142 borrows, 99.9998% remembered-slot return, 0.0004% fallback, 1.000005 probes per borrow, 35 failed CASes, no waiters, and four one-time constructions. Thus frequent acquisition scanning, CAS retry, waiter traffic, and reconstruction are excluded as explanations for the rejected A/B. The trace saw exactly 10/4 nonnull sequence identities with only 0/2 wrapper sequence changes, yet all 10/4 identities used multiple slots with maximum fanout 9/4. That fanout is a lifetime ORed set rather than borrow-weighted churn; Linux's sequence pointer identifies a vCPU interrupt source, not a JIT-cache key, while wrapper preference missed on only 0.002883%/0.000183% of P/E borrows. Sequence affinity is therefore closed without code. |
+| Fixed x8/x9 carry closure | The default-off prototype closed its missing 4 KiB ON focused/architecture gate and 16 KiB ON ASan/UBSan focused gate, then ran a matched OFF/ON 2x2 control campaign at P10 and E4 with one worker. Results are in `.build/results/jit-cache-handoff/carry-x8-x9-matched-perf-final-20260812/README.md`. P raw/normalized wall improved 4.443%/5.091% and normalized CPU 5.614%; E raw improved 2.503%, control improved 3.100%, normalized wall regressed 0.616%, and normalized CPU improved 2.025%. The strict result is P PASS/E FAIL/overall FAIL. The user separately accepts the prototype under a tolerance allowing E regression below twice the measured P gain. Default remains OFF because the microprobe is not representative-workload evidence. |
+| G107 successor-hoist closure | The default-off 32-entry add/sub-immediate prototype passed focused Release 16 KiB and 4 KiB OFF/ON tests plus 16 KiB ON ASan/UBSan. The matched P10/E4 campaign retained 96 scored samples. P polymorphic/control wall improved 13.723512%/0.516300%, giving 13.207211 points difference-in-differences; E improved 7.258795%/5.481481%, giving 1.777314 points. Polymorphic host CPU improved 13.888889%/9.683605% on P/E, ranges do not overlap, and all halves remain beneficial. The dynamic policy and original stricter screen pass; the stronger 2-point difference-in-differences preference fails on E overall and by half. Results are in `.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`. The selector remains OFF pending a representative workload. |
+| Residual gadget experiments | The historical G8/G17/G36 E-core remeasurement item is closed without a new run: none clears the prospective `P > 2%` eligibility gate, and G106 later showed the same noncritical instruction-count class flat on P and E. G130 vector residency remains optional future default-off work, not a handoff blocker. Its reverted JIT diagnostic measured a 6-26% fixed-v0-v7 bound, but the gadget engine has no resident/dirty state or flush protocol. Reopening requires a bounded destination-only nonfaulting accumulate prototype, complete boundary flushing and focused 16/4 KiB plus sanitizer correctness, followed by a matched P-first/E-conditional control-normalized campaign under the dynamic policy. A focused pass would still need representative gadget-workload evidence before enabling a default. |
+| Measured boundary | The saved-word `A B B A A B B A` medians remain -0.34% Clang, -2.16% Object Detection, and +0.62% maximum RSS; the score deltas are inside the 2.8% band and RSS does not show a win. Both final-profile artifacts are diagnostics without matched controls; the failed one is retained as failure evidence and the accepted post-framing scores are explicitly unscored. The current `check-jitprof` host workflow passes 2/2. The global-mask executor-pool A/B and corrected exact-session-token repeat are rejected; the pool remains required for the guest-CPU executor cap and budget correctness. The shortened sharing ON/OFF/OFF/ON Geekbench sequence also rejects the memory hypothesis: median peak tree RSS is 11,385,044,992 bytes ON versus 11,067,219,968 OFF (+2.87%), while two-run score samples are too unstable for a causal speed claim. No shared-cache memory exception applies. Current broad host acceptance passes 573/573 ordinary 16 KiB units and 47/47 tooling tests, plus 574/574 ordinary 4 KiB units and 47/47 tooling tests. `scripts/build-xcframework.sh` passes all three Apple slices and installed, raw, and Xcode consumer builds. Full sanitizer and complete integration workflows are not credited to this checkpoint. |
+
 ## Current authoritative status (2026-08-10)
 
 The refactor campaign and forward 4 KiB Darwin mapping repair remain accepted
@@ -13,15 +36,19 @@ current blockers or current rootfs instructions.
 
 | Boundary | Accepted state |
 | --- | --- |
-| Linux source | The signed Linux 6.18.41 package replays 14 ordered topics to canonical tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Policy is bounded at 155 changed files and 6 files outside the Darwin port. Both embedded kernels matched their corresponding `vmlinux` artifacts. |
+| Linux source | The signed Linux 6.18.41 package replays 14 ordered topics to canonical tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Policy is bounded at 155 changed files and 6 files outside the Darwin port. Both supported page-profile kernel builds completed for the accepted campaign. |
 | Interfaces | The independent host/kernel bridge is ABI v6, fingerprint `0x6524b65f20239ea1`. The installed public API remains v4, fingerprint `0xd9a69804d3303044`. |
 | Preserved repairs | G99 gadget ThinLTO, G100's exactly five audited decode-family `.ipp` fragments, G121's published per-thread address-space lifecycle slots, and G123's serialized Darwin `init_mm`/4 KiB host-slot repair are retained. The pre-refactor rollback used to diagnose G123 is not retained. |
 | Refactor host acceptance | At baseline `783bfcf7`, ordinary unit suites passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in each profile. ASan+UBSan passed 572/572 in 710.45 seconds, TSan passed 8/8 in 5.14 seconds, and the malformed-loader ASan gate passed 1/1. Normal and ASan GPU graphs each passed 5/5 unit tests plus the 1/1 VNC tooling test. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB, 576/624 at 4 KiB, and 595/628 in the GPU graph. Input materialization was off and produced zero sidecars. |
 | Refactor guest acceptance | At the same baseline, `integration-fast` passed 5/5 at 16 KiB and 5/5 at 4 KiB. The standalone 10-vCPU SMP workload passed at 8.19 and 8.03 effective host cores, respectively. Its retired partitioned-image observations remain historical evidence only. |
-| Unified EROFS migration | Final host workflows passed 572/572 units plus 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. The latest complete integration workflows passed 52/52 tooling checks and the regenerated five-test `integration-fast` suite in each profile using raw `rootfs.erofs` at `/dev/ubda`: 16 KiB 5/5 in 65.42 seconds and 4 KiB 5/5 in 69.33 seconds. The overlay/systemd test passed in 34.06 and 38.19 seconds, respectively, with separate tmpfs filesystems for Docker and containerd plus an offline source-built hello-world container run with pulling and networking disabled. Focused verifier, provisioning, launcher, runner, emulator-option, and API contracts pass. EROFS owns the read-only lower-filesystem property; host mode, `ubd0r`, and `ro` are not acceptance mechanisms. The 16 KiB profile emits the upstream experimental subpage-compression warning for the image's 4 KiB filesystem blocks; the 4 KiB profile does not. The accepted image is SHA-256 `73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91`, size 3,802,316,800 bytes, UUID `b84fcbe2-0673-4126-8f81-bdee45997306`; the checked manifest and release statement remain authoritative. |
+| Unified EROFS migration | Final host workflows passed 572/572 units plus 49/49 tooling at 16 KiB and 573/573 plus 49/49 at 4 KiB. The latest complete integration workflows passed 52/52 tooling checks and the regenerated five-test `integration-fast` suite in each profile using raw `rootfs.erofs` at `/dev/ubda`: 16 KiB 5/5 in 65.42 seconds and 4 KiB 5/5 in 69.33 seconds. The overlay/systemd test passed in 34.06 and 38.19 seconds, respectively, with separate tmpfs filesystems for Docker and containerd plus an offline source-built hello-world container run with pulling and networking disabled. Provisioning, launcher, runner, emulator-option, and API contracts pass. EROFS owns the read-only lower-filesystem property; host mode, per-run hashes, sidecar locks, `ubd0r`, and `ro` are not acceptance mechanisms. The 16 KiB profile emits the upstream experimental subpage-compression warning for the image's 4 KiB filesystem blocks; the 4 KiB profile does not. |
 | LTP and benchmarks | The unified image supplies LTP at `/opt/ltp`, Node at `/opt/node/bin/node`, and benchmarks under `/opt`. The manifests now contain 2,428 verified and 135 disabled LTP cases with no overlap; 88 require three deliberately absent kernel configurations. The credited final-image boundary is 44 focused gadgets-engine cases, all accepted; `statx05` passed 4/0 in both page profiles and the exact live `zram01` row passed 12/1 with rc 0 in 167.6 seconds. Full LTP was not rerun. Geekbench 6 uses the local payload with `--no-upload`; the user-directed final scoring run remains skipped and no new score is claimed. |
-| Apple package | The macOS, iOS-device, and iOS-simulator slices passed archive, architecture, executable-publication, staging, and consumer audits and formed the three-slice XCFramework. The archive verifier observed 71 ordinary Mach-O members plus exactly 9 ThinLTO gadget members on macOS and 70 ordinary plus exactly 9 ThinLTO gadget members in each iOS slice. Raw and installed-tree consumers passed, and the real Xcode consumer reported `BUILD SUCCEEDED`; its locked-iPhone discovery warning was non-fatal. |
-| Post-baseline native display | The macOS CLI now accepts `--gpu-display=native|vnc`; the KDE launcher selects native by default and retains VNC through `--display vnc`. Supported Virgl 2D scanouts take a GPU-only CGL-to-IOSurface-to-Metal path with two hazard slots, latest-frame replacement, and no additional FIFO. VNC and unsupported resources retain CPU fallback. Normal and ASan+UBSan GPU workflows each passed 5/5 units plus the 1/1 VNC smoke. The canonical production CLI rebuilt and verified its static-link closure. A focused 800x500, four-vCPU native launch reached `graphical.target`, passed the overlay guard, and logged direct CGL/IOSurface/Metal presentation; the EROFS digest was manually reverified after Ctrl-C. Keyboard/pointer interaction and a timed latency measurement were not claimed. This source change does not retroactively turn the dated KDE/VNC evidence into native-window evidence. |
+| Apple package | The macOS, iOS-device, and iOS-simulator slices passed platform, API, staging, package-shape, and consumer checks and formed the three-slice XCFramework. Raw and installed-tree consumers passed, and the real Xcode consumer reported `BUILD SUCCEEDED`; its locked-iPhone discovery warning was non-fatal. |
+| Post-baseline native display | The macOS CLI now accepts `--gpu-display=native|vnc`; the KDE launcher selects native by default and retains VNC through `--display vnc`. Supported Virgl 2D scanouts take a GPU-only CGL-to-IOSurface-to-Metal path with two hazard slots, latest-frame replacement, and no additional FIFO. VNC and unsupported resources retain CPU fallback. Normal and ASan+UBSan GPU workflows each passed 5/5 units plus the 1/1 VNC smoke. The canonical production CLI rebuilt with its supported dependencies. A focused 800x500, four-vCPU native launch reached `graphical.target`, passed the overlay guard, and logged direct CGL/IOSurface/Metal presentation before Ctrl-C. Keyboard/pointer interaction and a timed latency measurement were not claimed. This source change does not retroactively turn the dated KDE/VNC evidence into native-window evidence. |
+
+Current guest runs use EROFS directly without per-run hashing or a sidecar
+lock. Only explicit provisioning reads `tools/rootfs/manifest.json` to
+authenticate an input image.
 
 Acceptance is deliberately bounded. Input materialization remains explicit
 opt-in because a complete profile is about 6.6 GiB; ordinary acceptance ran
@@ -61,7 +88,7 @@ campaign began;
 input-materialization recording became opt-in, removing 6.6 GiB of build-tree
 cost from ordinary runs; `arm64-input-materialization-join`, which is now
 registered only with that option, exposed an undersized contribution-spool
-capacity constant and a frozen aggregate manifest that predates the current
+capacity constant and a checked aggregate manifest that predates the current
 test sources. The capacity defect is fixed on the current tree; the stale
 two-profile publication remains open. An **intermittent vCPU stall under long
 Geekbench runs is open and blocking guest benchmarking**. See
@@ -253,11 +280,11 @@ bound. Error handling distinguishes a bounded
 `max_page_count` hit, backing-filesystem exhaustion, and unrelated SQLite
 failures, with end-to-end initialization/insertion/commit cleanup fixtures.
 
-**Remaining blocker: the frozen aggregate manifest predates the working
+**Remaining blocker: the checked aggregate manifest predates the working
 tree.** With the capacity defect fixed, the join proceeds and fails on the
 underlying problem.
 It maps each raw producer contract to an aggregate identity and rejects any
-identity absent from the frozen manifest, reporting `<raw-contract> maps to
+identity absent from the checked manifest, reporting `<raw-contract> maps to
 unknown/out-of-profile <aggregate>`. `aggregate_id` is a SHA-256 over 24
 columns that include `source_file` and `source_line`, so any movement of test
 source lines invalidates every identity derived from the moved code.
@@ -267,7 +294,7 @@ from the current tree:
 
 | Quantity | Value |
 | --- | --- |
-| Producers in the frozen manifest | 449 |
+| Producers in the checked manifest | 449 |
 | Producers compared | 47 |
 | Identical | 11 |
 | Drifted | 36 |
@@ -285,15 +312,15 @@ that gate engine changes are unaffected.
 
 Repair requires the documented complete two-profile publication in
 `A64_INSTRUCTION_PROGRESS.md`: all 449 `*.tsv.raw` producers present in both a
-4 KiB and a 16 KiB evidence directory, both full profile TSVs, then
-`freeze_a64_aggregate_manifest.py`. Partial producer replacement and
-validator-side writes are explicitly unsupported.
+4 KiB and a 16 KiB evidence directory, both full profile TSVs, then direct
+semantic validation of the combined replacement TSV. Partial producer
+replacement and validator-side writes are explicitly unsupported.
 
 The independent-allocation prerequisite is now implemented by the pinned Arm
 XML required-variant/decode models and end-to-end catalog mutation negatives.
-That does not make a stale partial refreeze valid: replacement still requires
+That does not make a stale partial replacement valid: replacement still requires
 fresh raw and input-materialization evidence for all 449 producers in both page
-profiles and one locked publication. This multi-gigabyte operation remains an
+profiles. This multi-gigabyte operation remains an
 explicit opt-in acceptance workflow, never a standard CTest side effect. The
 separate behavioral-variant completeness gate remains open until every
 required semantic partition is independently specified and executed.

@@ -2,6 +2,7 @@
 #include "arm64_floating_trap_test_support.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdio>
 
 namespace test = arm64_floating_trap_test;
@@ -121,26 +122,35 @@ void comparison_rolls_back_nzcv(test::engine::EngineHarness &harness)
 		test::scalar_native());
 }
 
-void javascript_conversion_rolls_back_gpr_and_nzcv(
+void javascript_conversion_rolls_back_x8_x9_and_nzcv(
 	test::engine::EngineHarness &harness)
 {
-	/* FJCVTZS W8, D9 would write zero and clear NZCV for +Infinity.
-	 * The enabled invalid-operation trap must preserve both the complete
-	 * X8 value and the pre-instruction condition flags.
+	/* FJCVTZS W8/W9, D9 would write zero and clear NZCV for +Infinity.
+	 * The enabled invalid-operation trap must preserve each complete fixed-bank
+	 * destination, the other bank register, and the pre-instruction flags.
 	 */
-	constexpr std::uint32_t instruction = 0x1e7e'0128U;
-	auto initial = test::state(42U);
-	initial.fpcr = test::enable_for(test::fpsr_invalid);
-	initial.fpsr |= test::fpsr_divide_by_zero;
-	initial.registers[8] = 0xfedc'ba98'7654'3210ULL;
-	initial.nzcv = 0xb000'0000U;
-	test::write_lane(initial, 9U, 0U, 8U,
-		0x7ff0'0000'0000'0000ULL);
-	test::check_trap(harness,
-		"JavaScript conversion GPR and NZCV rollback",
-		instruction, initial, test::fpsr_invalid, 0U,
-		test::engine::NativeRequirements::features(
-			::uml::cpu::ArmFeature::jscvt));
+	constexpr std::array instructions{
+		0x1e7e'0128U, // fjcvtzs w8, d9
+		0x1e7e'0129U, // fjcvtzs w9, d9
+	};
+	constexpr std::array names{
+		"JavaScript conversion X8 and NZCV rollback",
+		"JavaScript conversion X9 and NZCV rollback",
+	};
+	for (std::size_t index = 0; index < instructions.size(); ++index) {
+		auto initial = test::state(42U + index);
+		initial.fpcr = test::enable_for(test::fpsr_invalid);
+		initial.fpsr |= test::fpsr_divide_by_zero;
+		initial.registers[8] = 0xfedc'ba98'7654'3210ULL;
+		initial.registers[9] = 0x0123'4567'89ab'cdefULL;
+		initial.nzcv = 0xb000'0000U;
+		test::write_lane(initial, 9U, 0U, 8U,
+			0x7ff0'0000'0000'0000ULL);
+		test::check_trap(harness, names[index], instructions[index], initial,
+			test::fpsr_invalid, 0U,
+			test::engine::NativeRequirements::features(
+				::uml::cpu::ArmFeature::jscvt));
+	}
 }
 
 } // namespace
@@ -152,7 +162,7 @@ int main()
 	every_exception_cause(harness);
 	simultaneous_causes(harness);
 	comparison_rolls_back_nzcv(harness);
-	javascript_conversion_rolls_back_gpr_and_nzcv(harness);
+	javascript_conversion_rolls_back_x8_x9_and_nzcv(harness);
 	harness.print_summary("arm64-floating-trap-scalar");
 	return 0;
 }

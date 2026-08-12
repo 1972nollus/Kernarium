@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Plan, run, resume, and verify immutable ASLRef execution shards."""
+"""Plan, run, resume, and verify ASLRef execution shards."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import concurrent.futures
 import csv
-import errno
 import fcntl
 import gzip
 import hashlib
@@ -22,7 +21,6 @@ import re
 import shutil
 import sqlite3
 import sys
-import sysconfig
 import tempfile
 import threading
 import time
@@ -31,10 +29,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, Sequence
 
-from a64_aggregate_manifest_identity import (
-    read_manifest_identity,
-    validate_manifest_identity,
-)
 from a64_bounded_generation import (
     BoundedWorkspace,
     GenerationLimits,
@@ -61,10 +55,9 @@ from join_a64_input_materializations import (
 )
 
 
-PLAN_SCHEMA = "uml.a64.aslref-shard-campaign-plan/v4"
-ARTIFACT_SCHEMA = "uml.a64.aslref-shard-artifact-manifest/v1"
-SUCCESS_SCHEMA = "uml.a64.aslref-shard-success/v3"
-REPORT_SCHEMA = "uml.a64.aslref-shard-campaign-report/v4"
+PLAN_SCHEMA = "uml.a64.aslref-shard-campaign-plan/v5"
+SUCCESS_SCHEMA = "uml.a64.aslref-shard-success/v5"
+REPORT_SCHEMA = "uml.a64.aslref-shard-campaign-report/v6"
 PILOT_SCHEMA = "uml.a64.aslref-shard-campaign-pilot/v1"
 SHARD_ID = re.compile(r"shard-[0-9]{8}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -77,9 +70,7 @@ DEFAULT_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_ARTIFACT_FILES = 4096
 DEFAULT_MAX_LOG_BYTES = 8 * 1024 * 1024
 PROBE_MINIMUM_GENERATED_FREE_GIB = 1.0
-DIRECTORY_SYNC_UNSUPPORTED = {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
 MAX_ARTIFACT_SCALAR = (1 << 63) - 1
-DIRECTORY_SYNC_POLICIES = {"require", "record-unsupported"}
 ISOLATED_PYTHON_FLAGS = ("-E", "-s", "-S", "-B")
 MAX_CHECKPOINT_MERGE_FAN_IN = 32
 DEFAULT_MAX_AUTHORITY_DATABASE_BYTES = 128 * 1024 * 1024 * 1024
@@ -140,147 +131,7 @@ def file_identity(path: Path) -> dict[str, object]:
     }
 
 
-def tree_identity(path: Path) -> dict[str, object]:
-    root = path.resolve()
-    digest = hashlib.sha256()
-    size = 0
-    count = 0
-    for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
-        relative = candidate.relative_to(root)
-        if "__pycache__" in relative.parts or candidate.name in {".DS_Store"}:
-            continue
-        if candidate.is_symlink():
-            raise ValueError(f"frozen source tree contains symlink {candidate}")
-        if not candidate.is_file():
-            continue
-        encoded = relative.as_posix().encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        identity = file_identity(candidate)
-        digest.update(int(identity["size"]).to_bytes(8, "big"))
-        digest.update(bytes.fromhex(str(identity["sha256"])))
-        size += int(identity["size"])
-        count += 1
-    if count == 0:
-        raise ValueError(f"frozen source tree is empty: {path}")
-    return {
-        "kind": "tree",
-        "path": str(root),
-        "size": size,
-        "file_count": count,
-        "sha256": digest.hexdigest(),
-    }
-
-
-def python_runtime_identity(path: Path) -> dict[str, object]:
-    """Freeze the isolated (-S) stdlib load tree and resolved link files."""
-    root = path.resolve(strict=True)
-    digest = hashlib.sha256()
-    size = 0
-    count = 0
-    for candidate in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
-        relative = candidate.relative_to(root)
-        if (
-            "__pycache__" in relative.parts
-            or candidate.name == ".DS_Store"
-            or relative.parts[:1] == ("site-packages",)
-        ):
-            continue
-        encoded = relative.as_posix().encode("utf-8")
-        if candidate.is_symlink():
-            link = os.readlink(candidate).encode("utf-8")
-            resolved = candidate.resolve(strict=True)
-            if resolved.is_dir():
-                try:
-                    resolved.relative_to(root)
-                except ValueError as error:
-                    raise ValueError(
-                        "isolated Python runtime has an external directory "
-                        f"symlink: {candidate}"
-                    ) from error
-                target_kind = b"internal-directory"
-                target_size = 0
-                target_digest = b""
-            elif resolved.is_file():
-                identity = file_identity(resolved)
-                target_kind = b"file"
-                target_size = int(identity["size"])
-                target_digest = bytes.fromhex(str(identity["sha256"]))
-            else:
-                raise ValueError(
-                    f"isolated Python runtime link target is unsupported: {candidate}"
-                )
-            digest.update(b"L")
-            digest.update(len(encoded).to_bytes(8, "big"))
-            digest.update(encoded)
-            digest.update(len(link).to_bytes(8, "big"))
-            digest.update(link)
-            digest.update(len(target_kind).to_bytes(8, "big"))
-            digest.update(target_kind)
-            digest.update(target_size.to_bytes(8, "big"))
-            digest.update(target_digest)
-            size += len(link) + target_size
-            count += 1
-            continue
-        if not candidate.is_file():
-            continue
-        identity = file_identity(candidate)
-        digest.update(b"F")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        digest.update(int(identity["size"]).to_bytes(8, "big"))
-        digest.update(bytes.fromhex(str(identity["sha256"])))
-        size += int(identity["size"])
-        count += 1
-    if count == 0:
-        raise ValueError(f"isolated Python runtime tree is empty: {path}")
-    return {
-        "kind": "python-runtime",
-        "path": str(root),
-        "size": size,
-        "file_count": count,
-        "sha256": digest.hexdigest(),
-    }
-
-
-def python_library_path() -> Path:
-    framework = Path(sys.base_prefix).resolve(strict=True) / "Python"
-    if framework.is_file():
-        return framework.resolve(strict=True)
-    library = sysconfig.get_config_var("LDLIBRARY")
-    directory = sysconfig.get_config_var("LIBDIR")
-    if isinstance(library, str) and isinstance(directory, str):
-        candidate = (Path(directory) / library).resolve(strict=True)
-        if candidate.is_file():
-            return candidate
-    return Path(sys.executable).resolve(strict=True)
-
-
-def path_identity(path: Path) -> dict[str, object]:
-    if path.is_symlink():
-        raise ValueError(f"frozen source path is a symlink: {path}")
-    if path.is_file():
-        return file_identity(path)
-    if path.is_dir():
-        return tree_identity(path)
-    raise ValueError(f"frozen source path is absent: {path}")
-
-
-def _fsync_directory(path: Path, policy: str) -> str:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        try:
-            os.fsync(descriptor)
-            return "supported"
-        except OSError as error:
-            if error.errno not in DIRECTORY_SYNC_UNSUPPORTED or policy == "require":
-                raise
-            return f"unsupported-errno-{error.errno}"
-    finally:
-        os.close(descriptor)
-
-
-def atomic_write(path: Path, payload: bytes, directory_sync_policy: str) -> str:
+def atomic_write(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -289,10 +140,7 @@ def atomic_write(path: Path, payload: bytes, directory_sync_policy: str) -> str:
     try:
         with os.fdopen(descriptor, "wb") as output:
             output.write(payload)
-            output.flush()
-            os.fsync(output.fileno())
-        os.rename(temporary, path)
-        return _fsync_directory(path.parent, directory_sync_policy)
+        os.replace(temporary, path)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -316,11 +164,6 @@ def parse_canonical_json(payload: bytes, label: str) -> Mapping[str, object]:
 
 def read_canonical_json(path: Path) -> Mapping[str, object]:
     return parse_canonical_json(path.read_bytes(), str(path))
-
-
-def require_plan_snapshot(plan_path: Path, plan_bytes: bytes) -> None:
-    if plan_path.read_bytes() != plan_bytes:
-        raise ValueError("campaign plan changed during the operation")
 
 
 def sha256_ids(identifiers: Iterable[str]) -> tuple[int, str]:
@@ -428,6 +271,23 @@ def read_tsv(path: Path, columns: Sequence[str]) -> list[dict[str, str]]:
     if output.getvalue() != text:
         raise ValueError(f"{path}: TSV is not canonical")
     return rows
+
+
+def validate_aggregate_manifest(
+    rows: Sequence[Mapping[str, str]], guest_page_size: int
+) -> None:
+    """Validate the version-controlled manifest without a redundant sidecar."""
+    identifiers = [row["aggregate_id"] for row in rows]
+    if identifiers != sorted(set(identifiers)):
+        raise ValueError("aggregate manifest IDs are not sorted unique")
+    pages = {row["guest_page_size"] for row in rows}
+    if not pages <= {"4096", "16384"} or str(guest_page_size) not in pages:
+        raise ValueError("aggregate manifest does not cover the requested page profile")
+    if any(
+        re.fullmatch(r"aggregate-[0-9a-f]{20}", value) is None
+        for value in identifiers
+    ):
+        raise ValueError("aggregate manifest contains an invalid aggregate ID")
 
 
 def _digest_tuples(rows: Iterable[Sequence[str]]) -> tuple[int, str]:
@@ -598,7 +458,7 @@ def authoritative_database_identity(
     return contract_count, contract_digest, binding_count, binding_digest
 
 
-def _iter_frozen_checkpoint_contributions(
+def _iter_checkpoint_contributions(
     path: Path,
 ) -> Iterator[Mapping[str, object]]:
     """Read a checkpoint already verified by verify_contribution_checkpoint."""
@@ -758,7 +618,7 @@ def _write_checkpoint_merge_run(
             raw if scratch_budget is None else _BudgetedBinaryWriter(raw, scratch_budget)
         )
         with gzip.GzipFile(
-            filename="", mode="wb", compresslevel=1, fileobj=output_file, mtime=0
+            mode="wb", compresslevel=1, fileobj=output_file
         ) as output:
             for row in rows:
                 output.write((canonical_json(row) + "\n").encode("utf-8"))
@@ -769,7 +629,7 @@ def _write_checkpoint_merge_run(
         progress_callback(count)
 
 
-def merge_frozen_checkpoint_contributions(
+def merge_checkpoint_contributions(
     paths: Sequence[Path],
     *,
     scratch_root: Path | None = None,
@@ -802,7 +662,7 @@ def merge_frozen_checkpoint_contributions(
                     (
                         _iter_checkpoint_merge_run(path)
                         if owned
-                        else _iter_frozen_checkpoint_contributions(path)
+                        else _iter_checkpoint_contributions(path)
                     )
                     for path, owned in group
                 ]
@@ -827,7 +687,7 @@ def merge_frozen_checkpoint_contributions(
             (
                 _iter_checkpoint_merge_run(path)
                 if owned
-                else _iter_frozen_checkpoint_contributions(path)
+                else _iter_checkpoint_contributions(path)
             )
             for path, owned in streams
         ]
@@ -869,7 +729,6 @@ def load_authoritative_input(
     *,
     guest_page_size: int,
     aggregate_manifest: Path,
-    aggregate_manifest_identity: Path,
     materialization_index: Path,
     contract_manifests: Sequence[Path],
     database: sqlite3.Connection,
@@ -881,18 +740,13 @@ def load_authoritative_input(
     aggregate_manifest = require_regular_file(
         aggregate_manifest, "aggregate manifest"
     )
-    aggregate_manifest_identity = require_regular_file(
-        aggregate_manifest_identity, "aggregate manifest identity"
-    )
     materialization_index = require_regular_file(
         materialization_index, "materialization index"
     )
     aggregate_manifest_file_identity = file_identity(aggregate_manifest)
-    aggregate_identity_file_identity = file_identity(aggregate_manifest_identity)
     materialization_index_file_identity = file_identity(materialization_index)
     aggregates = read_tsv(aggregate_manifest, AGGREGATE_COLUMNS)
-    frozen_identity = read_manifest_identity(aggregate_manifest_identity)
-    validate_manifest_identity(aggregates, AGGREGATE_COLUMNS, frozen_identity)
+    validate_aggregate_manifest(aggregates, guest_page_size)
     scoped = {
         row["aggregate_id"]: row
         for row in aggregates
@@ -1010,7 +864,7 @@ def load_authoritative_input(
         database.execute("PRAGMA database_list").fetchone()[2]
     )
     scratch_root = Path(database_path).parent if database_path else None
-    for contribution in merge_frozen_checkpoint_contributions(
+    for contribution in merge_checkpoint_contributions(
         checkpoint_paths,
         scratch_root=scratch_root,
         progress_callback=progress_callback,
@@ -1051,14 +905,13 @@ def load_authoritative_input(
             progress_callback(contribution_count)
     if progress_callback is not None:
         progress_callback(contribution_count)
-    frozen_authority_files = [
+    authority_files = [
         aggregate_manifest_file_identity,
-        aggregate_identity_file_identity,
         materialization_index_file_identity,
         *(contract_manifest_identities[str(path)] for path in sorted_manifests),
         *(checkpoint_files[str(path.resolve())] for path in checkpoint_paths),
     ]
-    for expected_file in frozen_authority_files:
+    for expected_file in authority_files:
         path = Path(str(expected_file["path"]))
         if file_identity(path) != expected_file:
             raise ValueError(
@@ -1090,7 +943,7 @@ def load_authoritative_input(
         ):
             raise ValueError(
                 f"{aggregate_id}: authoritative checkpoint aggregate "
-                "declarations/identities differ from frozen index"
+                "declarations/identities differ from the materialization index"
             )
     bound_aggregates = {
         str(row[0])
@@ -1120,8 +973,6 @@ def load_authoritative_input(
         "schema": "uml.a64.aslref-authoritative-input/v1",
         "guest_page_size": guest_page_size,
         "aggregate_manifest": aggregate_manifest_file_identity,
-        "aggregate_manifest_identity": dict(frozen_identity),
-        "aggregate_manifest_identity_file": aggregate_identity_file_identity,
         "materialization_index": materialization_index_file_identity,
         "contract_manifests": [
             contract_manifest_identities[str(path)] for path in sorted_manifests
@@ -1148,7 +999,6 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
         "guest_page_size",
         "shard_contract_cap",
         "total_contracts",
-        "source_freeze",
         "authoritative_input",
         "probe",
         "shards",
@@ -1171,35 +1021,9 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
         or value["shard_contract_cap"] != MAX_SHARD_CONTRACTS
     ):
         raise ValueError("campaign shard cap differs from 1024")
-    freezes = value["source_freeze"]
-    if not isinstance(freezes, list) or not freezes:
-        raise ValueError("campaign source freeze is empty")
-    freeze_paths: list[str] = []
-    for entry in freezes:
-        if not isinstance(entry, dict) or set(entry) != {
-            "kind", "path", "size", "file_count", "sha256"
-        }:
-            raise ValueError("campaign source-freeze entry differs")
-        if entry["kind"] not in {"file", "tree", "python-runtime"}:
-            raise ValueError("campaign source-freeze kind differs")
-        if not isinstance(entry["path"], str) or not Path(entry["path"]).is_absolute():
-            raise ValueError("campaign source-freeze path is not absolute")
-        if str(Path(entry["path"]).resolve(strict=True)) != entry["path"]:
-            raise ValueError("campaign source-freeze path is not canonical")
-        _strict_integer(entry["size"], "campaign source-freeze size")
-        _strict_integer(
-            entry["file_count"], "campaign source-freeze file count", 1
-        )
-        if not isinstance(entry["sha256"], str) or SHA256.fullmatch(entry["sha256"]) is None:
-            raise ValueError("campaign source-freeze digest differs")
-        freeze_paths.append(entry["path"])
-    if freeze_paths != sorted(set(freeze_paths)):
-        raise ValueError("campaign source-freeze paths are not sorted unique")
-
     authoritative = value["authoritative_input"]
     authoritative_keys = {
         "schema", "guest_page_size", "aggregate_manifest",
-        "aggregate_manifest_identity", "aggregate_manifest_identity_file",
         "materialization_index", "contract_manifests", "join_model_digest",
         "checkpoint_files",
         "page_aggregate_count", "eligible_aggregate_count",
@@ -1239,8 +1063,7 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
         ) is None:
             raise ValueError(f"campaign authoritative {name} differs")
     for name in (
-        "aggregate_manifest", "aggregate_manifest_identity_file",
-        "materialization_index",
+        "aggregate_manifest", "materialization_index",
     ):
         entry = authoritative[name]
         if not isinstance(entry, dict) or set(entry) != {
@@ -1257,8 +1080,6 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
         _strict_integer(entry["size"], f"campaign authoritative {name} size")
         if entry["file_count"] != 1 or isinstance(entry["file_count"], bool):
             raise ValueError(f"campaign authoritative {name} file count differs")
-    if not isinstance(authoritative["aggregate_manifest_identity"], dict):
-        raise ValueError("campaign aggregate-manifest identity differs")
     contract_manifests = authoritative["contract_manifests"]
     if not isinstance(contract_manifests, list) or not contract_manifests:
         raise ValueError("campaign authoritative contract manifests are empty")
@@ -1306,7 +1127,7 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
 
     probe = value["probe"]
     probe_keys = {
-        "path", "python", "python_library", "python_runtime", "architecture_root",
+        "path", "python", "architecture_root",
         "aslref", "bundler", "features_json",
         "closure_capture_directory", "required_variants", "interface",
         "observer", "timeout_seconds", "max_rss_kib", "max_encoded_bytes",
@@ -1323,61 +1144,6 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
             raise ValueError(f"campaign probe {name} is not an absolute path")
     for name in numeric_probe_keys:
         _strict_integer(probe[name], f"campaign probe {name}", 1)
-
-    freeze_by_path = {
-        str(entry["path"]): entry for entry in freezes
-    }
-    required_probe_kinds = {
-        "path": "file",
-        "python": "file",
-        "python_library": "file",
-        "python_runtime": "python-runtime",
-        "architecture_root": "tree",
-        "aslref": "file",
-        "bundler": "file",
-        "features_json": "file",
-        "closure_capture_directory": "tree",
-        "required_variants": "file",
-        "interface": "file",
-        "observer": "file",
-    }
-    for name, kind in required_probe_kinds.items():
-        path = str(probe[name])
-        if path not in freeze_by_path or freeze_by_path[path]["kind"] != kind:
-            raise ValueError(
-                f"campaign probe {name} lacks an exact {kind} source freeze"
-            )
-    interface_parent = str(Path(str(probe["interface"])).parent)
-    if (
-        interface_parent not in freeze_by_path
-        or freeze_by_path[interface_parent]["kind"] != "tree"
-    ):
-        raise ValueError("campaign probe module directory lacks a source freeze")
-    for name in (
-        "aggregate_manifest",
-        "aggregate_manifest_identity_file",
-        "materialization_index",
-    ):
-        entry = authoritative[name]
-        assert isinstance(entry, dict)
-        if freeze_by_path.get(str(entry["path"])) != entry:
-            raise ValueError(
-                f"campaign authoritative {name} lacks its exact source freeze"
-            )
-    for entry in contract_manifests:
-        assert isinstance(entry, dict)
-        if freeze_by_path.get(str(entry["path"])) != entry:
-            raise ValueError(
-                "campaign authoritative contract manifest lacks its exact "
-                "source freeze"
-            )
-    for entry in checkpoint_files:
-        assert isinstance(entry, dict)
-        if freeze_by_path.get(str(entry["path"])) != entry:
-            raise ValueError(
-                "campaign authoritative checkpoint file lacks its exact "
-                "source freeze"
-            )
 
     shards = value["shards"]
     if not isinstance(shards, list) or not shards:
@@ -1396,17 +1162,12 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
         if shard_id != f"shard-{index:08d}":
             raise ValueError("campaign shard IDs are not contiguous canonical IDs")
         source = shard["input"]
-        if not isinstance(source, dict) or set(source) != {
-            "path", "size", "sha256"
-        }:
-            raise ValueError(f"{shard_id}: input identity differs")
+        if not isinstance(source, dict) or set(source) != {"path"}:
+            raise ValueError(f"{shard_id}: input path differs")
         if not isinstance(source["path"], str) or not Path(source["path"]).is_absolute():
             raise ValueError(f"{shard_id}: input path is not absolute")
         if str(Path(source["path"]).resolve(strict=True)) != source["path"]:
             raise ValueError(f"{shard_id}: input path is not canonical")
-        _strict_integer(source["size"], f"{shard_id}: input size", 1)
-        if not isinstance(source["sha256"], str) or SHA256.fullmatch(source["sha256"]) is None:
-            raise ValueError(f"{shard_id}: input digest differs")
         count = shard["contract_count"]
         _strict_integer(
             count,
@@ -1429,17 +1190,6 @@ def validate_plan(value: Mapping[str, object]) -> Mapping[str, object]:
     if value["total_contracts"] != authoritative["input_contract_count"]:
         raise ValueError("campaign total differs from authoritative input set")
     return value
-
-
-def verify_source_freeze(plan: Mapping[str, object]) -> None:
-    for expected in plan["source_freeze"]:  # type: ignore[index]
-        assert isinstance(expected, dict)
-        if expected["kind"] == "python-runtime":
-            observed = python_runtime_identity(Path(str(expected["path"])))
-        else:
-            observed = path_identity(Path(str(expected["path"])))
-        if observed != expected:
-            raise ValueError(f"frozen source changed: {expected['path']}")
 
 
 def require_authority_capacity(
@@ -1531,7 +1281,7 @@ def verify_authoritative_plan(
                 or digest != shard["input_contract_ids_sha256"]
             ):
                 raise ValueError(
-                    f"{shard['shard_id']}: frozen campaign shard identity differs"
+                    f"{shard['shard_id']}: campaign shard identity differs"
                 )
             require_authority_capacity(
                 local_temp_root,
@@ -1544,9 +1294,6 @@ def verify_authoritative_plan(
             guest_page_size=int(plan["guest_page_size"]),
             aggregate_manifest=Path(
                 str(authoritative["aggregate_manifest"]["path"])
-            ),
-            aggregate_manifest_identity=Path(
-                str(authoritative["aggregate_manifest_identity_file"]["path"])
             ),
             materialization_index=Path(
                 str(authoritative["materialization_index"]["path"])
@@ -1628,12 +1375,6 @@ def plan_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
     )
-    parser.add_argument(
-        "--aggregate-manifest-identity",
-        type=Path,
-        default=repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json",
-    )
     parser.add_argument("--materialization-index", type=Path, required=True)
     parser.add_argument(
         "--contract-manifest", action="append", type=Path, required=True
@@ -1667,7 +1408,6 @@ def plan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-log-bytes", type=int, default=DEFAULT_MAX_LOG_BYTES
     )
-    parser.add_argument("--freeze-path", action="append", type=Path, default=[])
 
 
 def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
@@ -1714,10 +1454,6 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
     configured_paths = {
         "path": options.probe.resolve(),
         "python": Path(sys.executable).resolve(strict=True),
-        "python_library": python_library_path(),
-        "python_runtime": Path(
-            sysconfig.get_path("stdlib")
-        ).resolve(strict=True),
         "architecture_root": options.architecture_root.resolve(),
         "aslref": options.aslref.resolve(),
         "bundler": options.bundler.resolve(),
@@ -1727,16 +1463,14 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         "interface": options.interface.resolve(),
         "observer": options.observer.resolve(),
     }
-    freeze_paths = {
+    protected_paths = {
         *configured_paths.values(),
         configured_paths["interface"].parent,
         options.aggregate_manifest.resolve(),
-        options.aggregate_manifest_identity.resolve(),
         options.materialization_index.resolve(),
         *(path.resolve() for path in options.contract_manifest),
-        *(path.resolve() for path in options.freeze_path),
     }
-    protected_plan_inputs = [input_list, *input_paths, *freeze_paths]
+    protected_plan_inputs = [input_list, *input_paths, *protected_paths]
     if _path_contains(local_temp_root, output_target) or _path_contains(
         output_target, local_temp_root
     ):
@@ -1746,9 +1480,8 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         or _path_contains(path, local_temp_root)
         for path in protected_plan_inputs
     ):
-        raise ValueError("plan local root aliases a frozen source/input")
+        raise ValueError("plan local root aliases a source/input")
     preflight_directories = [
-        configured_paths["python_runtime"],
         configured_paths["architecture_root"],
         configured_paths["closure_capture_directory"],
         configured_paths["interface"].parent,
@@ -1756,7 +1489,7 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
     validate_write_target_isolation(
         output_target,
         forbidden_directories=preflight_directories,
-        forbidden_files=[input_list, *input_paths, *freeze_paths],
+        forbidden_files=[input_list, *input_paths, *protected_paths],
         label="campaign plan output",
     )
     shards: list[dict[str, object]] = []
@@ -1780,7 +1513,6 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         )
         for index, path in enumerate(input_paths):
             shard_id = f"shard-{index:08d}"
-            identity = file_identity(path)
             count, digest = scan_shard_input(
                 path, database, shard_id, options.guest_page_size
             )
@@ -1790,11 +1522,7 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
             shards.append(
                 {
                     "shard_id": shard_id,
-                    "input": {
-                        "path": identity["path"],
-                        "size": identity["size"],
-                        "sha256": identity["sha256"],
-                    },
+                    "input": {"path": str(path.resolve())},
                     "contract_count": count,
                     "input_contract_ids_sha256": digest,
                 }
@@ -1809,9 +1537,6 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         authoritative = load_authoritative_input(
             guest_page_size=options.guest_page_size,
             aggregate_manifest=options.aggregate_manifest.resolve(),
-            aggregate_manifest_identity=(
-                options.aggregate_manifest_identity.resolve()
-            ),
             materialization_index=options.materialization_index.resolve(),
             contract_manifests=[
                 path.resolve() for path in options.contract_manifest
@@ -1836,21 +1561,6 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
             ),
         )
         database.close()
-    checkpoint_files = authoritative["checkpoint_files"]
-    assert isinstance(checkpoint_files, list)
-    freeze_paths.update(
-        Path(str(entry["path"]))
-        for entry in checkpoint_files
-        if isinstance(entry, Mapping)
-    )
-    source_freeze = [
-        (
-            python_runtime_identity(path)
-            if path == configured_paths["python_runtime"]
-            else path_identity(path)
-        )
-        for path in sorted(freeze_paths, key=lambda item: str(item))
-    ]
     if options.expected_total_contracts is not None and total != options.expected_total_contracts:
         raise ValueError(
             f"planned {total} contracts, expected {options.expected_total_contracts}"
@@ -1861,7 +1571,6 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         "guest_page_size": options.guest_page_size,
         "shard_contract_cap": MAX_SHARD_CONTRACTS,
         "total_contracts": total,
-        "source_freeze": source_freeze,
         "authoritative_input": authoritative,
         "probe": {
             **{name: str(path) for name, path in configured_paths.items()},
@@ -1876,17 +1585,13 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
     }
     validate_plan(plan)
     protected_directories = [
-        Path(str(entry["path"]))
-        for entry in source_freeze
-        if entry["kind"] in {"tree", "python-runtime"}
+        configured_paths["architecture_root"],
+        configured_paths["closure_capture_directory"],
+        configured_paths["interface"].parent,
     ]
     protected_files = [
         input_list,
-        *(
-            Path(str(entry["path"]))
-            for entry in source_freeze
-            if entry["kind"] == "file"
-        ),
+        *(path for path in protected_paths if path.is_file()),
         *(Path(str(shard["input"]["path"])) for shard in shards),
     ]
     validate_write_target_isolation(
@@ -1896,17 +1601,7 @@ def build_plan(options: argparse.Namespace) -> Mapping[str, object]:
         label="campaign plan output",
     )
     payload = (canonical_json(plan) + "\n").encode("utf-8")
-    if output_target.exists():
-        if output_target.read_bytes() != payload:
-            raise ValueError(
-                "campaign plan output already contains a different plan"
-            )
-        return plan
-    atomic_write(
-        output_target,
-        payload,
-        "require",
-    )
+    atomic_write(output_target, payload)
     return plan
 
 
@@ -1935,15 +1630,6 @@ def _strict_positive_number(value: object, label: str) -> float:
     return float(value)
 
 
-def _validate_sync_observation(value: object, label: str) -> str:
-    if not isinstance(value, str) or (
-        value != "supported"
-        and re.fullmatch(r"unsupported-errno-[1-9][0-9]*", value) is None
-    ):
-        raise ValueError(f"{label} is not a directory-sync observation")
-    return value
-
-
 def validate_published_probe_semantics(
     directory: Path,
     shard: Mapping[str, object],
@@ -1966,12 +1652,6 @@ def validate_published_probe_semantics(
     source_path = require_regular_file(
         Path(str(source["path"])), "published shard input"
     )
-    source_identity = file_identity(source_path)
-    if (
-        source_identity["size"] != source["size"]
-        or source_identity["sha256"] != source["sha256"]
-    ):
-        raise ValueError("published shard input file identity changed")
     identifiers: list[str] = []
     count, identifier_digest = scan_shard_input(
         source_path,
@@ -2030,7 +1710,7 @@ def validate_published_probe_semantics(
     )
     expected_workflow = {
         "purpose": "official-execution-shard-pending-campaign-join",
-        "semantic_coverage_promotion": "requires-exact-frozen-join",
+        "semantic_coverage_promotion": "requires-exact-join",
         "unique_input_contracts": count,
         "failures": 0,
         "guest_page_size": guest_page_size,
@@ -2041,8 +1721,6 @@ def validate_published_probe_semantics(
         "input_sources": [
             {
                 "path": str(source_path),
-                "size": source["size"],
-                "sha256": source["sha256"],
             }
         ],
     }
@@ -2122,89 +1800,35 @@ def validate_published_probe_semantics(
     ):
         raise ValueError("published probe report/result resource binding differs")
     _strict_positive_number(report.get("contracts_per_second"), "probe throughput")
-    return {
-        "probe_report_sha256": str(file_identity(report_path)["sha256"]),
-        "probe_result_sha256": str(file_identity(result_path)["sha256"]),
-        "input_results_sha256": result_digest,
-    }
+    return {"input_results_sha256": result_digest}
 
 
-def _artifact_manifest(directory: Path) -> Mapping[str, object]:
-    files = []
-    for path in sorted(directory.rglob("*"), key=lambda item: item.as_posix()):
-        if path.is_symlink():
-            raise ValueError(f"artifact contains symlink {path}")
-        if not path.is_file() or path.name in {
-            "artifact-manifest.json", "SUCCESS.json"
-        }:
-            continue
-        identity = file_identity(path)
-        files.append(
-            {
-                "path": path.relative_to(directory).as_posix(),
-                "size": identity["size"],
-                "sha256": identity["sha256"],
-            }
-        )
-    if not files:
-        raise ValueError("shard artifact is empty")
-    return {"schema": ARTIFACT_SCHEMA, "files": files}
-
-
-def _verify_artifact(directory: Path, manifest: Mapping[str, object]) -> None:
+def _artifact_usage(directory: Path) -> tuple[int, int]:
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("artifact root is not a nonsymlink directory")
-    if set(manifest) != {"schema", "files"} or manifest["schema"] != ARTIFACT_SCHEMA:
-        raise ValueError("artifact manifest schema differs")
-    files = manifest["files"]
-    if not isinstance(files, list) or not files:
-        raise ValueError("artifact manifest has no files")
-    expected_paths = []
-    for entry in files:
-        if not isinstance(entry, dict) or set(entry) != {"path", "size", "sha256"}:
-            raise ValueError("artifact manifest entry differs")
-        relative = Path(str(entry["path"]))
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("artifact manifest path escapes its shard")
-        path = directory / relative
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"artifact is not a nonsymlink file: {relative}")
-        identity = file_identity(path)
-        _strict_integer(entry["size"], f"artifact {relative} size")
-        if (
-            not isinstance(entry["sha256"], str)
-            or SHA256.fullmatch(entry["sha256"]) is None
-            or identity["size"] != entry["size"]
-            or identity["sha256"] != entry["sha256"]
-        ):
-            raise ValueError(f"published artifact differs: {relative}")
-        expected_paths.append(relative.as_posix())
-    if expected_paths != sorted(set(expected_paths)):
-        raise ValueError("artifact manifest paths are not sorted unique")
-    actual_paths = []
-    actual_directories = []
+    file_count = 0
+    byte_count = 0
     for path in directory.rglob("*"):
         if path.is_symlink():
             raise ValueError(f"artifact contains symlink {path}")
-        if path.is_file():
-            actual_paths.append(path.relative_to(directory).as_posix())
-        elif path.is_dir():
-            actual_directories.append(path.relative_to(directory).as_posix())
-        else:
+        if path.is_dir():
+            continue
+        if not path.is_file():
             raise ValueError(f"artifact contains unsupported entry {path}")
-    metadata = {"artifact-manifest.json"}
-    if (directory / "SUCCESS.json").exists():
-        metadata.add("SUCCESS.json")
-    if set(actual_paths) != set(expected_paths) | metadata:
-        raise ValueError("artifact actual file set differs from its manifest")
-    expected_directories = {
-        parent.as_posix()
-        for relative in map(Path, expected_paths)
-        for parent in relative.parents
-        if parent != Path(".")
-    }
-    if set(actual_directories) != expected_directories:
-        raise ValueError("artifact actual directory set differs from its manifest")
+        if path.name == "SUCCESS.json":
+            continue
+        relative = path.relative_to(directory).as_posix()
+        if (
+            len(relative.encode("utf-8"))
+            > CAMPAIGN_ARTIFACT_RELATIVE_PATH_BYTES
+            or re.fullmatch(r"[A-Za-z0-9._/-]+", relative) is None
+        ):
+            raise ValueError("campaign artifact path is outside the safe bound")
+        file_count += 1
+        byte_count += path.stat().st_size
+    if file_count == 0:
+        raise ValueError("shard artifact is empty")
+    return file_count, byte_count
 
 
 def _copy_artifact(source: Path, destination: Path) -> None:
@@ -2220,56 +1844,28 @@ def _copy_artifact(source: Path, destination: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         with path.open("rb") as input_file, target.open("xb") as output_file:
             shutil.copyfileobj(input_file, output_file, 1024 * 1024)
-            output_file.flush()
-            os.fsync(output_file.fileno())
-
-
-def _fsync_directory_tree(path: Path, policy: str) -> str:
-    directories = [path]
-    directories.extend(
-        candidate
-        for candidate in path.rglob("*")
-        if candidate.is_dir() and not candidate.is_symlink()
-    )
-    observations = {
-        _fsync_directory(directory, policy)
-        for directory in sorted(
-            directories,
-            key=lambda item: (-len(item.parts), item.as_posix()),
-        )
-    }
-    if len(observations) != 1:
-        raise ValueError(
-            "artifact directories produced inconsistent sync outcomes"
-        )
-    return next(iter(observations))
 
 
 def verify_published_shard(
     directory: Path,
-    plan_sha256: str,
+    campaign_id: str,
     shard: Mapping[str, object],
     guest_page_size: int,
 ) -> Mapping[str, object]:
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError(f"{directory}: published shard is not a directory")
-    for name in ("SUCCESS.json", "artifact-manifest.json"):
-        path = directory / name
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"{directory}: {name} is not a nonsymlink file")
+    path = directory / "SUCCESS.json"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{directory}: SUCCESS.json is not a nonsymlink file")
     success = read_canonical_json(directory / "SUCCESS.json")
     if set(success) != {
-        "schema", "campaign_plan_sha256", "shard_id", "contract_count",
-        "input_contract_ids_sha256", "artifact_manifest_sha256",
-        "artifact_file_count", "artifact_bytes", "elapsed_seconds",
-        "peak_rss_kib", "directory_sync_policy", "directory_sync_outcomes",
-        "probe_report_sha256", "probe_result_sha256", "input_results_sha256",
+        "schema", "campaign_id", "shard_id", "contract_count",
+        "input_contract_ids_sha256", "elapsed_seconds", "peak_rss_kib",
+        "input_results_sha256",
     } or success["schema"] != SUCCESS_SCHEMA:
         raise ValueError(f"{directory}: shard success schema differs")
     for name in (
-        "campaign_plan_sha256", "input_contract_ids_sha256",
-        "artifact_manifest_sha256", "probe_report_sha256",
-        "probe_result_sha256", "input_results_sha256",
+        "input_contract_ids_sha256", "input_results_sha256",
     ):
         if not isinstance(success[name], str) or SHA256.fullmatch(success[name]) is None:
             raise ValueError(f"{directory}: shard success {name} differs")
@@ -2284,154 +1880,78 @@ def verify_published_shard(
         1,
         MAX_SHARD_CONTRACTS,
     )
-    _strict_integer(success["artifact_file_count"], "shard artifact file count", 1)
-    _strict_integer(success["artifact_bytes"], "shard artifact bytes")
     _strict_positive_number(success["elapsed_seconds"], "shard elapsed time")
     _strict_integer(success["peak_rss_kib"], "shard peak RSS")
-    if success["directory_sync_policy"] not in DIRECTORY_SYNC_POLICIES:
-        raise ValueError(f"{directory}: shard directory-sync policy differs")
-    outcomes = success["directory_sync_outcomes"]
-    if not isinstance(outcomes, dict) or set(outcomes) != {
-        "artifact_stage", "campaign_root", "shards_parent"
-    }:
-        raise ValueError(f"{directory}: shard directory-sync outcomes differ")
-    for name, observation in outcomes.items():
-        _validate_sync_observation(
-            observation, f"shard directory-sync outcome {name}"
-        )
-        if (
-            success["directory_sync_policy"] == "require"
-            and observation != "supported"
-        ):
-            raise ValueError(f"{directory}: required directory sync was unsupported")
     expected = {
-        "campaign_plan_sha256": plan_sha256,
+        "campaign_id": campaign_id,
         "shard_id": shard["shard_id"],
         "contract_count": shard["contract_count"],
         "input_contract_ids_sha256": shard["input_contract_ids_sha256"],
     }
     if any(success[name] != value for name, value in expected.items()):
         raise ValueError(f"{directory}: shard success binding differs")
-    manifest_path = directory / "artifact-manifest.json"
-    manifest_identity = file_identity(manifest_path)
-    if manifest_identity["sha256"] != success["artifact_manifest_sha256"]:
-        raise ValueError(f"{directory}: artifact manifest digest differs")
-    manifest = read_canonical_json(manifest_path)
-    _verify_artifact(directory, manifest)
+    file_count, byte_count = _artifact_usage(directory)
     semantic_identity = validate_published_probe_semantics(
         directory, shard, guest_page_size
     )
     if any(success[name] != value for name, value in semantic_identity.items()):
         raise ValueError(f"{directory}: published probe semantic digest differs")
-    files = manifest["files"]
-    assert isinstance(files, list)
-    if success["artifact_file_count"] != len(files):
-        raise ValueError(f"{directory}: artifact file count differs")
-    if success["artifact_bytes"] != sum(int(item["size"]) for item in files):
-        raise ValueError(f"{directory}: artifact byte count differs")
-    return success
-
-
-def require_resume_durability(
-    success: Mapping[str, object], requested_policy: str
-) -> None:
-    if requested_policy not in DIRECTORY_SYNC_POLICIES:
-        raise ValueError("requested directory-sync policy differs")
-    if success["directory_sync_policy"] != requested_policy:
-        raise ValueError(
-            "published shard durability policy differs from resumed run"
-        )
-    outcomes = success["directory_sync_outcomes"]
-    assert isinstance(outcomes, dict)
-    if requested_policy == "require" and any(
-        observation != "supported" for observation in outcomes.values()
-    ):
-        raise ValueError("required resume encountered unsupported directory sync")
+    return {
+        **success,
+        "artifact_file_count": file_count,
+        "artifact_bytes": byte_count,
+    }
 
 
 def publish_shard(
     artifact: Path,
     output_root: Path,
-    plan_sha256: str,
+    campaign_id: str,
     shard: Mapping[str, object],
     elapsed: float,
     peak_rss_kib: int,
-    directory_sync_policy: str,
     guest_page_size: int,
 ) -> Mapping[str, object]:
     shard_id = str(shard["shard_id"])
     final = output_root / "shards" / shard_id
     if final.exists():
-        existing = verify_published_shard(
-            final, plan_sha256, shard, guest_page_size
-        )
-        require_resume_durability(existing, directory_sync_policy)
-        return existing
+        return verify_published_shard(final, campaign_id, shard, guest_page_size)
     staging_root = output_root / ".staging"
     staging_root.mkdir(exist_ok=True)
     stage = staging_root / f"{shard_id}.{uuid.uuid4().hex}.partial"
     try:
-        manifest = _artifact_manifest(artifact)
-        atomic_write(
-            artifact / "artifact-manifest.json",
-            (canonical_json(manifest) + "\n").encode("utf-8"),
-            directory_sync_policy,
-        )
         _copy_artifact(artifact, stage)
-        copied_manifest = read_canonical_json(stage / "artifact-manifest.json")
-        _verify_artifact(stage, copied_manifest)
+        file_count, byte_count = _artifact_usage(stage)
         semantic_identity = validate_published_probe_semantics(
             stage, shard, guest_page_size
         )
-        manifest_identity = file_identity(stage / "artifact-manifest.json")
-        files = copied_manifest["files"]
-        assert isinstance(files, list)
         (output_root / "shards").mkdir(exist_ok=True)
-        campaign_root_sync = _fsync_directory(
-            output_root, directory_sync_policy
-        )
-        stage_sync = _fsync_directory_tree(stage, directory_sync_policy)
-        parent_sync = _fsync_directory(
-            output_root / "shards", directory_sync_policy
-        )
         success = {
             "schema": SUCCESS_SCHEMA,
-            "campaign_plan_sha256": plan_sha256,
+            "campaign_id": campaign_id,
             "shard_id": shard_id,
             "contract_count": shard["contract_count"],
             "input_contract_ids_sha256": shard["input_contract_ids_sha256"],
-            "artifact_manifest_sha256": manifest_identity["sha256"],
-            "artifact_file_count": len(files),
-            "artifact_bytes": sum(int(item["size"]) for item in files),
             "elapsed_seconds": round(elapsed, 6),
             "peak_rss_kib": peak_rss_kib,
-            "directory_sync_policy": directory_sync_policy,
-            "directory_sync_outcomes": {
-                "artifact_stage": stage_sync,
-                "campaign_root": campaign_root_sync,
-                "shards_parent": parent_sync,
-            },
             **semantic_identity,
         }
-        success_sync = atomic_write(
+        atomic_write(
             stage / "SUCCESS.json",
             (canonical_json(success) + "\n").encode("utf-8"),
-            directory_sync_policy,
         )
-        final_stage_sync = _fsync_directory_tree(
-            stage, directory_sync_policy
-        )
-        if success_sync != stage_sync or final_stage_sync != stage_sync:
-            raise ValueError("artifact-stage directory sync outcome changed")
         if final.exists():
             raise ValueError(f"published shard appeared concurrently: {final}")
         os.rename(stage, final)
-        final_parent_sync = _fsync_directory(final.parent, directory_sync_policy)
-        if final_parent_sync != parent_sync:
-            raise ValueError("shards-parent directory sync outcome changed")
-        return verify_published_shard(
-            final, plan_sha256, shard, guest_page_size
+        verified = verify_published_shard(
+            final, campaign_id, shard, guest_page_size
         )
+        if (
+            verified["artifact_file_count"] != file_count
+            or verified["artifact_bytes"] != byte_count
+        ):
+            raise ValueError("published shard resource accounting differs")
+        return verified
     finally:
         if stage.exists():
             shutil.rmtree(stage)
@@ -2574,27 +2094,21 @@ def _require_not_cancelled(
 
 def run_one_shard(
     plan: Mapping[str, object],
-    plan_sha256: str,
+    campaign_id: str,
     shard: Mapping[str, object],
     output_root: Path,
     local_temp_root: Path,
-    directory_sync_policy: str,
     cancel_event: threading.Event | None = None,
 ) -> Mapping[str, object]:
     _require_not_cancelled(cancel_event, shard["shard_id"])
     final = output_root / "shards" / str(shard["shard_id"])
     if final.exists():
-        existing = verify_published_shard(
-            final, plan_sha256, shard, int(plan["guest_page_size"])
+        return verify_published_shard(
+            final, campaign_id, shard, int(plan["guest_page_size"])
         )
-        require_resume_durability(existing, directory_sync_policy)
-        return existing
     source = shard["input"]
     assert isinstance(source, dict)
     path = Path(str(source["path"]))
-    identity = file_identity(path)
-    if identity["size"] != source["size"] or identity["sha256"] != source["sha256"]:
-        raise ValueError(f"{shard['shard_id']}: frozen shard input changed")
     count, digest = scan_shard_input(
         path, guest_page_size=int(plan["guest_page_size"])
     )
@@ -2662,17 +2176,13 @@ def run_one_shard(
             raise ValueError(f"{shard['shard_id']}: probe success contract differs")
         require_artifact_limits(artifact, plan)
         _require_not_cancelled(cancel_event, shard["shard_id"])
-        after = file_identity(path)
-        if after != identity:
-            raise ValueError(f"{shard['shard_id']}: shard input changed during execution")
         return publish_shard(
             artifact,
             output_root,
-            plan_sha256,
+            campaign_id,
             shard,
             elapsed,
             int(report["peak_rss_kib"]),
-            directory_sync_policy,
             int(plan["guest_page_size"]),
         )
     finally:
@@ -2696,10 +2206,6 @@ def run_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_MAX_AUTHORITY_MERGE_SCRATCH_BYTES,
     )
-    parser.add_argument(
-        "--directory-sync-policy", choices=("require", "record-unsupported"),
-        default="require",
-    )
 
 
 def require_root(path: Path, label: str) -> Path:
@@ -2719,9 +2225,6 @@ def validate_run_root_isolation(
     local_temp_root: Path | None,
 ) -> None:
     protected: list[tuple[Path, str]] = [(plan_path, "file")]
-    for entry in plan["source_freeze"]:  # type: ignore[index]
-        assert isinstance(entry, Mapping)
-        protected.append((Path(str(entry["path"])), str(entry["kind"])))
     for shard in plan["shards"]:  # type: ignore[index]
         assert isinstance(shard, Mapping)
         source = shard["input"]
@@ -2730,7 +2233,7 @@ def validate_run_root_isolation(
     for path, _kind in protected:
         if _path_contains(output_root, path) or _path_contains(path, output_root):
             raise ValueError(
-                "campaign output root aliases a frozen plan/source/input path: "
+                "campaign output root aliases its plan/input path: "
                 f"{path}"
             )
     if local_temp_root is None:
@@ -2744,7 +2247,7 @@ def validate_run_root_isolation(
             local_temp_root, path
         ):
             raise ValueError(
-                "campaign local temporary root aliases a frozen plan/source/input: "
+                "campaign local temporary root aliases its plan/input path: "
                 f"{path}"
             )
 
@@ -2848,10 +2351,10 @@ LOCAL_SHARD_STAGE = re.compile(
 def campaign_local_workspace(
     local_temp_root: Path,
     output_root: Path,
-    plan_sha256: str,
+    campaign_id: str,
 ) -> Iterator[Path]:
     owner = hashlib.sha256(
-        (plan_sha256 + "\0" + str(output_root)).encode("utf-8")
+        (campaign_id + "\0" + str(output_root)).encode("utf-8")
     ).hexdigest()[:32]
     workspace = local_temp_root / f".a64-campaign-{owner}"
     if LOCAL_WORKSPACE.fullmatch(workspace.name) is None:
@@ -2884,7 +2387,6 @@ def campaign_local_workspace(
 @contextmanager
 def campaign_lock(
     output_root: Path,
-    directory_sync_policy: str,
     *,
     create: bool = True,
 ):
@@ -2893,7 +2395,6 @@ def campaign_lock(
         raise ValueError("campaign lock is not a nonsymlink file")
     if not create and not path.is_file():
         raise ValueError("campaign lock is missing")
-    created = not path.exists()
     flags = (
         os.O_RDWR | os.O_CREAT
         if create
@@ -2905,10 +2406,6 @@ def campaign_lock(
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise ValueError("another campaign runner holds the output-root lock") from error
-        if create:
-            os.fsync(descriptor)
-        if create and created:
-            _fsync_directory(output_root, directory_sync_policy)
         yield
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -2918,11 +2415,10 @@ def campaign_lock(
 def validate_campaign_report(
     report: Mapping[str, object],
     plan: Mapping[str, object],
-    plan_sha256: str,
     results: Sequence[Mapping[str, object]],
 ) -> Mapping[str, object]:
     expected_keys = {
-        "schema", "campaign_id", "campaign_plan_sha256", "shards",
+        "schema", "campaign_id", "shards",
         "contracts", "workers", "invocation_elapsed_seconds",
         "published_this_run_contracts_per_second",
         "preexisting_shard_count", "preexisting_contract_count",
@@ -2932,8 +2428,7 @@ def validate_campaign_report(
         "published_this_run_shard_ids_sha256",
         "sum_shard_peak_rss_kib", "maximum_shard_peak_rss_kib",
         "published_artifact_bytes", "published_file_count",
-        "directory_sync_policy", "failures", "semantic_promotion",
-        "directory_sync_observations", "campaign_directory_sync_outcome",
+        "failures", "semantic_promotion",
         "published_probe_result_binding_count",
         "published_probe_result_bindings_sha256",
     }
@@ -2944,16 +2439,12 @@ def validate_campaign_report(
     result_binding_count, result_binding_digest = _digest_tuples(
         (
             str(shard["shard_id"]),
-            str(result["probe_report_sha256"]),
-            str(result["probe_result_sha256"]),
             str(result["input_results_sha256"]),
-            str(result["artifact_manifest_sha256"]),
         )
         for shard, result in zip(shards, results, strict=True)
     )
     fixed = {
         "campaign_id": plan["campaign_id"],
-        "campaign_plan_sha256": plan_sha256,
         "shards": len(results),
         "contracts": plan["total_contracts"],
         "sum_shard_peak_rss_kib": sum(
@@ -2966,10 +2457,10 @@ def validate_campaign_report(
             int(result["artifact_bytes"]) for result in results
         ),
         "published_file_count": sum(
-            int(result["artifact_file_count"]) + 2 for result in results
+            int(result["artifact_file_count"]) + 1 for result in results
         ),
         "failures": 0,
-        "semantic_promotion": "requires-exact-frozen-join",
+        "semantic_promotion": "requires-exact-join",
         "published_probe_result_binding_count": result_binding_count,
         "published_probe_result_bindings_sha256": result_binding_digest,
     }
@@ -3064,35 +2555,11 @@ def validate_campaign_report(
         )
     ):
         raise ValueError("campaign report timing/throughput differs")
-    policies = {str(result["directory_sync_policy"]) for result in results}
-    if (
-        len(policies) != 1
-        or report["directory_sync_policy"] not in policies
-        or report["directory_sync_policy"] not in DIRECTORY_SYNC_POLICIES
-    ):
-        raise ValueError("campaign report durability policy differs")
-    campaign_sync = _validate_sync_observation(
-        report["campaign_directory_sync_outcome"],
-        "campaign directory-sync outcome",
-    )
-    shard_syncs = {
-        str(observation)
-        for result in results
-        for observation in result["directory_sync_outcomes"].values()  # type: ignore[union-attr]
-    }
-    observations = report["directory_sync_observations"]
-    if (
-        not isinstance(observations, list)
-        or observations != sorted(shard_syncs | {campaign_sync})
-    ):
-        raise ValueError("campaign directory-sync observations differ")
-    if report["directory_sync_policy"] == "require" and observations != ["supported"]:
-        raise ValueError("campaign required directory sync was unsupported")
     return report
 
 
 def _verified_results(
-    output_root: Path, plan: Mapping[str, object], plan_sha256: str
+    output_root: Path, plan: Mapping[str, object]
 ) -> list[Mapping[str, object]]:
     shards = plan["shards"]
     assert isinstance(shards, list)
@@ -3116,7 +2583,7 @@ def _verified_results(
     return [
         verify_published_shard(
             shard_root / str(shard["shard_id"]),
-            plan_sha256,
+            str(plan["campaign_id"]),
             shard,
             int(plan["guest_page_size"]),
         )
@@ -3200,7 +2667,7 @@ def pilot_campaign(options: argparse.Namespace) -> Mapping[str, object]:
         options.minimum_local_free_gib,
         0,
     )
-    with campaign_lock(output_root, options.directory_sync_policy):
+    with campaign_lock(output_root):
         return _pilot_campaign_locked(
             options,
             plan_path,
@@ -3220,7 +2687,6 @@ def _pilot_campaign_locked(
     local_temp_root: Path,
 ) -> Mapping[str, object]:
     preflight_campaign_output_root(output_root)
-    require_plan_snapshot(plan_path, plan_bytes)
     allowed = {"campaign-plan.json", "campaign.lock", "shards", ".staging"}
     unrelated = sorted(
         path.name for path in output_root.iterdir() if path.name not in allowed
@@ -3232,20 +2698,19 @@ def _pilot_campaign_locked(
         )
     if (output_root / "campaign-report.json").exists():
         raise ValueError("pilot must not run against a completed campaign report")
-    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-    frozen_plan = output_root / "campaign-plan.json"
-    if frozen_plan.exists():
-        if frozen_plan.is_symlink() or not frozen_plan.is_file():
-            raise ValueError("frozen campaign plan is not a nonsymlink file")
-        if frozen_plan.read_bytes() != plan_bytes:
+    campaign_id = str(plan["campaign_id"])
+    published_plan = output_root / "campaign-plan.json"
+    if published_plan.exists():
+        if published_plan.is_symlink() or not published_plan.is_file():
+            raise ValueError("published campaign plan is not a nonsymlink file")
+        if read_canonical_json(published_plan) != plan:
             raise ValueError("pilot output root is bound to another campaign plan")
     else:
-        atomic_write(frozen_plan, plan_bytes, options.directory_sync_policy)
+        atomic_write(published_plan, plan_bytes)
     shard_root = output_root / "shards"
     staging = output_root / ".staging"
     shard_root.mkdir(exist_ok=True)
     staging.mkdir(exist_ok=True)
-    _fsync_directory(output_root, options.directory_sync_policy)
     for path in (shard_root, staging):
         if path.is_symlink() or not path.is_dir():
             raise ValueError("pilot shard/staging root is not a directory")
@@ -3258,8 +2723,6 @@ def _pilot_campaign_locked(
         ):
             raise ValueError(f"pilot staging contains an unsafe entry: {path.name}")
         shutil.rmtree(path)
-    _fsync_directory(staging, options.directory_sync_policy)
-    verify_source_freeze(plan)
     verify_authoritative_plan(
         plan,
         local_temp_root=local_temp_root,
@@ -3276,16 +2739,13 @@ def _pilot_campaign_locked(
     preexisting = {path.name for path in shard_root.iterdir()}
     if not preexisting <= set(selected_by_id):
         raise ValueError("pilot output contains a shard outside its first four")
-    before_success: dict[str, bytes] = {}
     for name in sorted(preexisting):
-        result = verify_published_shard(
+        verify_published_shard(
             shard_root / name,
-            plan_sha256,
+            campaign_id,
             selected_by_id[name],
             int(plan["guest_page_size"]),
         )
-        require_resume_durability(result, options.directory_sync_policy)
-        before_success[name] = (shard_root / name / "SUCCESS.json").read_bytes()
     missing = [
         shard for shard in selected
         if str(shard["shard_id"]) not in preexisting
@@ -3293,7 +2753,7 @@ def _pilot_campaign_locked(
     started = time.perf_counter()
     cancel_event = threading.Event()
     with campaign_local_workspace(
-        local_temp_root, output_root, plan_sha256
+        local_temp_root, output_root, campaign_id
     ) as local_workspace:
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             pending: set[concurrent.futures.Future[Mapping[str, object]]] = set()
@@ -3311,11 +2771,10 @@ def _pilot_campaign_locked(
                         pool.submit(
                             run_one_shard,
                             plan,
-                            plan_sha256,
+                            campaign_id,
                             shard,
                             output_root,
                             local_workspace,
-                            options.directory_sync_policy,
                             cancel_event,
                         )
                     )
@@ -3353,31 +2812,21 @@ def _pilot_campaign_locked(
         results.append(
             verify_published_shard(
                 shard_root / name,
-                plan_sha256,
+                campaign_id,
                 shard,
                 int(plan["guest_page_size"]),
             )
         )
-        if name in before_success and (
-            shard_root / name / "SUCCESS.json"
-        ).read_bytes() != before_success[name]:
-            raise ValueError("pilot resume changed an existing SUCCESS artifact")
     result_count, result_digest = _digest_tuples(
         (
             str(shard["shard_id"]),
-            str(result["probe_report_sha256"]),
-            str(result["probe_result_sha256"]),
             str(result["input_results_sha256"]),
-            str(result["artifact_manifest_sha256"]),
         )
         for shard, result in zip(selected, results, strict=True)
     )
-    verify_source_freeze(plan)
-    require_plan_snapshot(plan_path, plan_bytes)
     return {
         "schema": PILOT_SCHEMA,
         "campaign_id": plan["campaign_id"],
-        "campaign_plan_sha256": plan_sha256,
         "workers": 4,
         "shards": 4,
         "contracts": 4 * MAX_SHARD_CONTRACTS,
@@ -3411,7 +2860,7 @@ def run_campaign(options: argparse.Namespace) -> Mapping[str, object]:
         options.minimum_local_free_gib,
         0,
     )
-    with campaign_lock(output_root, options.directory_sync_policy):
+    with campaign_lock(output_root):
         return _run_campaign_locked(
             options,
             plan_path,
@@ -3431,7 +2880,6 @@ def _run_campaign_locked(
     local_temp_root: Path,
 ) -> Mapping[str, object]:
     preflight_campaign_output_root(output_root)
-    require_plan_snapshot(plan_path, plan_bytes)
     allowed = {
         "campaign-plan.json", "campaign-report.json", "campaign.lock",
         "shards", ".staging",
@@ -3441,18 +2889,17 @@ def _run_campaign_locked(
     )
     if unrelated:
         raise ValueError("output root is not dedicated: " + ",".join(unrelated[:3]))
-    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-    frozen_plan = output_root / "campaign-plan.json"
-    if frozen_plan.exists():
-        if frozen_plan.is_symlink() or not frozen_plan.is_file():
-            raise ValueError("frozen campaign plan is not a nonsymlink file")
-        if frozen_plan.read_bytes() != plan_bytes:
+    campaign_id = str(plan["campaign_id"])
+    published_plan = output_root / "campaign-plan.json"
+    if published_plan.exists():
+        if published_plan.is_symlink() or not published_plan.is_file():
+            raise ValueError("published campaign plan is not a nonsymlink file")
+        if read_canonical_json(published_plan) != plan:
             raise ValueError("output root is bound to another campaign plan")
     else:
-        atomic_write(frozen_plan, plan_bytes, options.directory_sync_policy)
+        atomic_write(published_plan, plan_bytes)
     (output_root / "shards").mkdir(exist_ok=True)
     (output_root / ".staging").mkdir(exist_ok=True)
-    _fsync_directory(output_root, options.directory_sync_policy)
     for path in (output_root / "shards", output_root / ".staging"):
         if path.is_symlink() or not path.is_dir():
             raise ValueError("campaign shard/staging root is not a directory")
@@ -3468,8 +2915,6 @@ def _run_campaign_locked(
         ):
             raise ValueError(f"campaign staging contains an unsafe entry: {path.name}")
         shutil.rmtree(path)
-    _fsync_directory(staging, options.directory_sync_policy)
-    verify_source_freeze(plan)
     verify_authoritative_plan(
         plan,
         local_temp_root=local_temp_root,
@@ -3489,11 +2934,10 @@ def _run_campaign_locked(
     for name in sorted(preexisting_names):
         existing = verify_published_shard(
             shard_root / name,
-            plan_sha256,
+            campaign_id,
             shard_by_id[name],
             int(plan["guest_page_size"]),
         )
-        require_resume_durability(existing, options.directory_sync_policy)
     preexisting_contracts = sum(
         int(shard_by_id[name]["contract_count"])
         for name in preexisting_names
@@ -3505,7 +2949,7 @@ def _run_campaign_locked(
     )
     cancel_event = threading.Event()
     with campaign_local_workspace(
-        local_temp_root, output_root, plan_sha256
+        local_temp_root, output_root, campaign_id
     ) as local_workspace:
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=options.workers
@@ -3529,9 +2973,8 @@ def _run_campaign_locked(
                         len(pending) + 1,
                     )
                     pending[pool.submit(
-                        run_one_shard, plan, plan_sha256, shard, output_root,
-                        local_workspace, options.directory_sync_policy,
-                        cancel_event,
+                        run_one_shard, plan, campaign_id, shard, output_root,
+                        local_workspace, cancel_event,
                     )] = shard
                 while pending:
                     done, _ = concurrent.futures.wait(
@@ -3567,11 +3010,10 @@ def _run_campaign_locked(
                         pending[pool.submit(
                             run_one_shard,
                             plan,
-                            plan_sha256,
+                            campaign_id,
                             shard,
                             output_root,
                             local_workspace,
-                            options.directory_sync_policy,
                             cancel_event,
                         )] = shard
             except BaseException:
@@ -3579,16 +3021,14 @@ def _run_campaign_locked(
                 for future in pending:
                     future.cancel()
                 raise
-    verify_source_freeze(plan)
-    results = _verified_results(output_root, plan, plan_sha256)
+    results = _verified_results(output_root, plan)
     report_path = output_root / "campaign-report.json"
     if report_path.exists():
         if report_path.is_symlink() or not report_path.is_file():
             raise ValueError("campaign report is not a nonsymlink file")
         report = validate_campaign_report(
-            read_canonical_json(report_path), plan, plan_sha256, results
+            read_canonical_json(report_path), plan, results
         )
-        require_plan_snapshot(plan_path, plan_bytes)
         return report
     elapsed = time.perf_counter() - started
     report_elapsed = round(elapsed, 6)
@@ -3604,29 +3044,17 @@ def _run_campaign_locked(
         (name,) for name in sorted(published_names)
     )
     total_bytes = sum(int(result["artifact_bytes"]) for result in results)
-    total_files = sum(int(result["artifact_file_count"]) + 2 for result in results)
+    total_files = sum(int(result["artifact_file_count"]) + 1 for result in results)
     result_binding_count, result_binding_digest = _digest_tuples(
         (
             str(shard["shard_id"]),
-            str(result["probe_report_sha256"]),
-            str(result["probe_result_sha256"]),
             str(result["input_results_sha256"]),
-            str(result["artifact_manifest_sha256"]),
         )
         for shard, result in zip(shards, results, strict=True)
     )
-    campaign_sync = _fsync_directory(
-        output_root, options.directory_sync_policy
-    )
-    shard_syncs = {
-        str(observation)
-        for result in results
-        for observation in result["directory_sync_outcomes"].values()  # type: ignore[union-attr]
-    }
     report = {
         "schema": REPORT_SCHEMA,
         "campaign_id": plan["campaign_id"],
-        "campaign_plan_sha256": plan_sha256,
         "shards": len(shards),
         "contracts": plan["total_contracts"],
         "workers": options.workers,
@@ -3648,22 +3076,14 @@ def _run_campaign_locked(
         "maximum_shard_peak_rss_kib": max(int(result["peak_rss_kib"]) for result in results),
         "published_artifact_bytes": total_bytes,
         "published_file_count": total_files,
-        "directory_sync_policy": options.directory_sync_policy,
-        "directory_sync_observations": sorted(shard_syncs | {campaign_sync}),
-        "campaign_directory_sync_outcome": campaign_sync,
         "failures": 0,
-        "semantic_promotion": "requires-exact-frozen-join",
+        "semantic_promotion": "requires-exact-join",
         "published_probe_result_binding_count": result_binding_count,
         "published_probe_result_bindings_sha256": result_binding_digest,
     }
     payload = (canonical_json(report) + "\n").encode("utf-8")
-    report_sync = atomic_write(
-        report_path, payload, options.directory_sync_policy
-    )
-    if report_sync != campaign_sync:
-        raise ValueError("campaign-root directory sync outcome changed")
-    validated = validate_campaign_report(report, plan, plan_sha256, results)
-    require_plan_snapshot(plan_path, plan_bytes)
+    atomic_write(report_path, payload)
+    validated = validate_campaign_report(report, plan, results)
     return validated
 
 
@@ -3684,22 +3104,19 @@ def verify_campaign_locked(
 ) -> Mapping[str, object]:
     if plan_bytes is None:
         plan_bytes = plan_path.read_bytes()
-    require_plan_snapshot(plan_path, plan_bytes)
     allowed = {
         "campaign-plan.json", "campaign-report.json", "campaign.lock",
         "shards", ".staging",
     }
     if any(path.name not in allowed for path in output_root.iterdir()):
         raise ValueError("campaign output root contains unrelated entries")
-    frozen = output_root / "campaign-plan.json"
+    published_plan = output_root / "campaign-plan.json"
     report_path = output_root / "campaign-report.json"
-    for path in (frozen, report_path):
+    for path in (published_plan, report_path):
         if path.is_symlink() or not path.is_file():
             raise ValueError("campaign metadata is not a nonsymlink file")
-    if frozen.read_bytes() != plan_bytes:
+    if read_canonical_json(published_plan) != plan:
         raise ValueError("published campaign plan differs")
-    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
-    verify_source_freeze(plan)
     if verify_authority:
         verify_authoritative_plan(
             plan,
@@ -3710,12 +3127,10 @@ def verify_campaign_locked(
                 maximum_authority_merge_scratch_bytes
             ),
         )
-    results = _verified_results(output_root, plan, plan_sha256)
+    results = _verified_results(output_root, plan)
     report = validate_campaign_report(
-        read_canonical_json(report_path), plan, plan_sha256, results
+        read_canonical_json(report_path), plan, results
     )
-    verify_source_freeze(plan)
-    require_plan_snapshot(plan_path, plan_bytes)
     return report
 
 
@@ -3731,7 +3146,7 @@ def verify_campaign(options: argparse.Namespace) -> Mapping[str, object]:
         "verification local",
     )
     preflight_campaign_output_root(output_root)
-    with campaign_lock(output_root, "record-unsupported", create=False):
+    with campaign_lock(output_root, create=False):
         preflight_campaign_output_root(output_root)
         plan_bytes = plan_path.read_bytes()
         plan = validate_plan(parse_canonical_json(plan_bytes, str(plan_path)))

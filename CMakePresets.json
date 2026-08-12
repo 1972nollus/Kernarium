@@ -22,6 +22,9 @@
         "UML_BUILD_UNIT_TESTS": true,
         "UML_BUILD_INTEGRATION_TESTS": false,
         "UML_BUILD_TOOLING_TESTS": true,
+        "UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST": false,
+        "UML_JIT_CARRY_X8_X9_ACROSS_LINKS": false,
+        "UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS": true,
         "UML_GUEST_16K_PAGES": true
       }
     },
@@ -91,6 +94,15 @@
       "cacheVariables": {
         "UML_GUEST_16K_PAGES": false,
         "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-4k"
+      }
+    },
+    {
+      "name": "macos-jitprof",
+      "displayName": "macOS JIT profiling emulator",
+      "inherits": "macos-integration",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_ENABLE_RUNTIME_PROFILING": true
       }
     },
     {
@@ -194,6 +206,11 @@
       "name": "macos-integration-4k",
       "configurePreset": "macos-integration-4k",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-jitprof",
+      "configurePreset": "macos-jitprof",
+      "targets": ["tooling-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-all",
@@ -386,6 +403,22 @@
       "configurePreset": "macos-integration-4k"
     },
     {
+      "name": "tooling-jitprof",
+      "configurePreset": "macos-jitprof",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "^(jit-profile-final-report-contract|jit-profile-preset-contract)$"
+        }
+      },
+      "execution": {
+        "jobs": 1,
+        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+      }
+    },
+    {
       "name": "tooling-all",
       "inherits": "tooling-unit",
       "configurePreset": "macos-all"
@@ -526,6 +559,14 @@
         {"type": "build", "name": "macos-integration-4k"},
         {"type": "test", "name": "tooling-integration-4k"},
         {"type": "test", "name": "integration-fast-4k"}
+      ]
+    },
+    {
+      "name": "check-jitprof",
+      "steps": [
+        {"type": "configure", "name": "macos-jitprof"},
+        {"type": "build", "name": "macos-jitprof"},
+        {"type": "test", "name": "tooling-jitprof"}
       ]
     },
     {

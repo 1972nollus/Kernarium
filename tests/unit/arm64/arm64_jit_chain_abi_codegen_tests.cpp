@@ -271,7 +271,7 @@ void frame_shape_saves_and_restores_host_chain_registers() {
   constexpr std::uint64_t pc = 0x5a00'0000;
   constexpr std::array guest{0xd400'0001U}; // svc #0
   const auto compiled = jit_test::compile_block(pc, guest);
-  constexpr std::array prologue{
+  constexpr std::array control_prologue{
       0xa9bc'7bfdU, // stp x29, x30, [sp, #-64]!
       0x9100'03fdU, // mov x29, sp
       0xa901'07e0U, // stp x0, x1, [sp, #16]
@@ -283,25 +283,232 @@ void frame_shape_saves_and_restores_host_chain_registers() {
       0xd282'0014U, // mov x20, #4096
       0x3940'6275U, // ldrb w21, [x19, #24]
   };
-  constexpr std::array epilogue{
+  constexpr std::array bank_prologue{
+      0xa9bb'7bfdU, // stp x29, x30, [sp, #-80]!
+      0x9100'03fdU, // mov x29, sp
+      0xa901'07e0U, // stp x0, x1, [sp, #16]
+      0xa902'57e2U, // stp x2, x21, [sp, #32]
+      0xa903'53f3U, // stp x19, x20, [sp, #48]
+      0xa904'5ff6U, // stp x22, x23, [sp, #64]
+      0xaa00'03efU, // mov x15, x0
+      0xaa01'03eeU, // mov x14, x1
+      0xaa02'03f3U, // mov x19, x2
+      0xd282'0014U, // mov x20, #4096
+      0x3940'6275U, // ldrb w21, [x19, #24]
+      0xa944'5df6U, // ldp x22, x23, [x15, #64]
+  };
+  constexpr std::array control_epilogue{
       0xf900'0274U, // str x20, [x19]
       0xa943'53f3U, // ldp x19, x20, [sp, #48]
       0xf940'17f5U, // ldr x21, [sp, #40]
       0xa8c4'7bfdU, // ldp x29, x30, [sp], #64
       0xd65f'03c0U, // ret
   };
+  constexpr std::array bank_epilogue{
+      0xf900'0274U, // str x20, [x19]
+      0xa944'5ff6U, // ldp x22, x23, [sp, #64]
+      0xa943'53f3U, // ldp x19, x20, [sp, #48]
+      0xf940'17f5U, // ldr x21, [sp, #40]
+      0xa8c5'7bfdU, // ldp x29, x30, [sp], #80
+      0xd65f'03c0U, // ret
+  };
 
   require(jit_test::persistent_linked_block_abi_enabled(),
           "persistent linked-block ABI is not the translation default");
-  require(compiled.internal_entry_word == prologue.size(),
-          "internal entry does not skip the complete outer frame");
-  require(std::equal(prologue.begin(), prologue.end(),
-                     compiled.words.begin()),
-          "persistent linked-block prologue changed");
-  require(std::search(compiled.words.begin(), compiled.words.end(),
-                      epilogue.begin(), epilogue.end()) !=
-              compiled.words.end(),
-          "persistent linked-block epilogue changed");
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(compiled.internal_entry_word == bank_prologue.size(),
+            "bank internal entry does not skip setup");
+    require(std::equal(bank_prologue.begin(), bank_prologue.end(),
+                       compiled.words.begin()),
+            "bank persistent linked-block prologue changed");
+    require(std::search(compiled.words.begin(), compiled.words.end(),
+                        bank_epilogue.begin(), bank_epilogue.end()) !=
+                compiled.words.end(),
+            "bank persistent linked-block epilogue changed");
+  } else {
+    require(compiled.internal_entry_word == control_prologue.size(),
+            "control internal entry does not skip setup");
+    require(std::equal(control_prologue.begin(), control_prologue.end(),
+                       compiled.words.begin()),
+            "control persistent linked-block prologue changed");
+    require(std::search(compiled.words.begin(), compiled.words.end(),
+                        control_epilogue.begin(), control_epilogue.end()) !=
+                compiled.words.end(),
+            "control persistent linked-block epilogue changed");
+  }
+
+  const auto memory_abi =
+      jit_test::compile_linked_block_memory_abi(pc, guest);
+  constexpr std::array memory_prologue{
+      0xa9bd'7bfdU, // stp x29, x30, [sp, #-48]!
+      0x9100'03fdU, // mov x29, sp
+      0xa901'07e0U, // stp x0, x1, [sp, #16]
+      0xf900'13e2U, // str x2, [sp, #32]
+      0xaa00'03efU, // mov x15, x0
+      0xaa01'03eeU, // mov x14, x1
+  };
+  require(memory_abi.internal_entry_word == memory_prologue.size() &&
+              std::equal(memory_prologue.begin(), memory_prologue.end(),
+                         memory_abi.words.begin()),
+          "nonpersistent ABI changed with the x8/x9 experiment");
+}
+
+void successful_links_carry_the_fixed_pair_without_memory_traffic() {
+  constexpr std::uint64_t pc = 0x5a00'1000;
+  constexpr std::array guest{
+      0x9100'0508U, // add x8, x8, #1
+      0x9100'0929U, // add x9, x9, #2
+      0x1400'0001U, // b pc + 4
+  };
+  const auto compiled = jit_test::compile_linked_block(pc, guest);
+  const auto hot = hot_code(compiled);
+  const auto branch = std::find(hot.begin(), hot.end(), 0xd61f'01a0U);
+  require(branch != hot.end(), "fixed-bank block has no linked BR");
+  constexpr std::uint32_t bank_load = 0xa944'5df6U;
+  constexpr std::uint32_t bank_store = 0xa904'5df6U;
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(count_word(hot, 0x9100'06d6U) == 1 &&
+                count_word(hot, 0x9100'0af7U) == 1,
+            "guest x8/x9 do not use fixed host x22/x23");
+    require(count_word(hot, bank_load) == 1,
+            "fixed bank is not loaded exactly once at outer entry");
+    require(std::find(hot.begin(), branch, bank_store) == branch,
+            "successful link publishes the fixed bank");
+    require(std::find(branch, hot.end(), bank_store) != hot.end(),
+            "link fallback does not publish the fixed bank");
+  } else {
+    require(count_word(hot, bank_load) == 0 &&
+                count_word(hot, bank_store) == 0,
+            "control arm contains fixed-bank traffic");
+  }
+}
+
+void ls64_x8_group_has_explicit_fixed_bank_boundaries() {
+  constexpr std::uint64_t pc = 0x5a00'2000;
+  constexpr std::uint32_t bank_load = 0xa944'5df6U;
+  constexpr std::uint32_t bank_store = 0xa904'5df6U;
+  constexpr std::array cases{
+      std::array{0xf83f'd0c8U, 0xd400'0001U}, // ld64b x8, [x6]
+      std::array{0xf83f'90c8U, 0xd400'0001U}, // st64b x8, [x6]
+  };
+  constexpr std::array native_words{0xf83f'd100U, 0xf83f'9100U};
+
+  for (std::size_t index = 0; index < cases.size(); ++index) {
+    const auto compiled = jit_test::compile_block_with_feature_override(
+        pc + index * 0x100U, cases[index],
+        ::uml::cpu::ArmFeature::ls64, true);
+    const auto hot = hot_code(compiled);
+    const auto native = std::find(hot.begin(), hot.end(), native_words[index]);
+    require(native != hot.end(), "LS64 did not retain its native operation");
+
+    if (jit_test::linked_x8_x9_bank_enabled()) {
+      const auto body = hot.begin() +
+                        static_cast<std::ptrdiff_t>(
+                            compiled.internal_entry_word);
+      require(body <= native,
+              "LS64 native operation precedes the internal entry");
+      require(std::find(body, native, bank_store) != native,
+              "LS64 did not publish x8/x9 before materializing x0-x7");
+      require(std::find(native + 1, hot.end(), bank_load) != hot.end(),
+              "LS64 did not reload x8/x9 after the constrained sequence");
+    } else {
+      require(count_word(hot, bank_load) == 0 &&
+                  count_word(hot, bank_store) == 0,
+              "control LS64 shape contains fixed-bank traffic");
+    }
+  }
+}
+
+void continuing_tlb_helper_publishes_and_reloads_the_fixed_pair() {
+  constexpr std::uint64_t pc = 0x5a00'3000;
+  constexpr std::array guest{
+      0x9100'0508U, // add x8, x8, #1
+      0x3940'00c0U, // ldrb w0, [x6]
+      0x9100'0929U, // add x9, x9, #2
+      0xd400'0001U, // svc #0
+  };
+  constexpr std::uint32_t bank_load = 0xa944'5df6U;
+  constexpr std::uint32_t bank_store = 0xa904'5df6U;
+  const auto compiled = jit_test::compile_block(pc, guest);
+  const auto all = std::span<const std::uint32_t>{compiled.words};
+  require(compiled.hot_words <= all.size(),
+          "TLB helper hot boundary exceeds generated code");
+  const auto cold = all.subspan(compiled.hot_words);
+  require(count_word(cold, 0xd63f'0200U) != 0,
+          "memory cold paths contain no host call");
+
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    std::optional<std::size_t> returning_call;
+    for (std::size_t index = 0; index + 1U < cold.size(); ++index)
+      if (cold[index] == 0xd63f'0200U && cold[index + 1U] == bank_load) {
+        require(!returning_call.has_value(),
+                "more than one memory helper reloads the fixed bank");
+        returning_call = index;
+      }
+    require(returning_call.has_value(),
+            "TLB miss helper did not reload x8/x9 before continuing");
+    require(std::find(cold.begin(),
+                      cold.begin() + static_cast<std::ptrdiff_t>(
+                                         *returning_call),
+                      bank_store) !=
+                cold.begin() +
+                    static_cast<std::ptrdiff_t>(*returning_call),
+            "TLB miss helper did not publish x8/x9 before C++");
+  } else {
+    require(count_word(cold, bank_load) == 0 &&
+                count_word(cold, bank_store) == 0,
+            "control TLB helper shape contains fixed-bank traffic");
+  }
+}
+
+void terminal_helper_publishes_the_bank_only_before_calling_cpp() {
+  constexpr std::uint64_t pc = 0x5a00'3800;
+  constexpr std::array guest{
+      0xc85f'7c08U, // ldxr x8, [x0]
+  };
+  constexpr std::uint32_t bank_load = 0xa944'5df6U;
+  constexpr std::uint32_t bank_store = 0xa904'5df6U;
+  const auto compiled = jit_test::compile_block(pc, guest);
+  const auto all = std::span<const std::uint32_t>{compiled.words};
+  const auto call = std::find(all.begin(), all.end(), 0xd63f'0200U);
+  require(call != all.end(), "exclusive terminal helper has no C++ call");
+
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(std::find(all.begin(), call, bank_store) != call,
+            "terminal helper did not publish x8/x9 before C++");
+    require(std::find(call + 1, all.end(), bank_store) == all.end(),
+            "terminal helper republishes stale x8/x9 after C++");
+    require(std::find(call + 1, all.end(), bank_load) == all.end(),
+            "terminal helper reloads an unused x8/x9 bank after C++");
+  } else {
+    require(count_word(all, bank_load) == 0 &&
+                count_word(all, bank_store) == 0,
+            "control terminal-helper shape contains fixed-bank traffic");
+  }
+}
+
+void memory_base_x8_uses_the_fixed_bank() {
+  constexpr std::uint64_t pc = 0x5a00'4000;
+  constexpr std::array guest{
+      0x3940'0100U, // ldrb w0, [x8]
+      0xd400'0001U, // svc #0
+  };
+  constexpr std::uint32_t move_base_from_bank = 0xaa16'03e8U;
+  constexpr std::uint32_t load_base_from_state = 0xf940'21e8U;
+  const auto compiled = jit_test::compile_block(pc, guest);
+  const auto hot = hot_code(compiled);
+
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(count_word(hot, move_base_from_bank) == 1,
+            "guest x8 memory base did not use fixed host x22");
+    require(count_word(hot, load_base_from_state) == 0,
+            "guest x8 memory base reloaded stale CpuState");
+  } else {
+    require(count_word(hot, move_base_from_bank) == 0,
+            "control memory-base shape uses the fixed bank");
+    require(count_word(hot, load_base_from_state) == 1,
+            "control memory-base shape stopped loading CpuState");
+  }
 }
 
 void direct_success_path_has_scheduled_remaining_budget() {
@@ -500,6 +707,11 @@ int main() {
   two_pointer_literals_use_the_fixed_capacity_pool();
   two_out_of_range_literals_use_independent_cold_fallbacks();
   frame_shape_saves_and_restores_host_chain_registers();
+  successful_links_carry_the_fixed_pair_without_memory_traffic();
+  ls64_x8_group_has_explicit_fixed_bank_boundaries();
+  continuing_tlb_helper_publishes_and_reloads_the_fixed_pair();
+  terminal_helper_publishes_the_bank_only_before_calling_cpp();
+  memory_base_x8_uses_the_fixed_bank();
   direct_success_path_has_scheduled_remaining_budget();
   conditional_arms_each_use_the_persistent_path();
   pic_success_path_has_scheduled_remaining_budget();

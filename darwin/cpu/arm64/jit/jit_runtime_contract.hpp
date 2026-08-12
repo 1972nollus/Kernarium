@@ -35,6 +35,20 @@ inline constexpr std::size_t maximum_chain_instructions = 4096;
 /* Translation-time only: generated blocks select one ABI shape. */
 inline constexpr bool persistent_linked_block_abi_default = true;
 
+/*
+ * Experimental exact A/B arm for the fixed cross-block guest-GPR bank.
+ * Non-CMake consumers retain the control shape unless they opt in explicitly.
+ */
+#ifndef UML_JIT_CARRY_X8_X9_ACROSS_LINKS
+#define UML_JIT_CARRY_X8_X9_ACROSS_LINKS 0
+#endif
+#if UML_JIT_CARRY_X8_X9_ACROSS_LINKS && \
+    defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+#error "The fixed linked GPR bank is incompatible with GPR link profiling"
+#endif
+inline constexpr bool carry_x8_x9_across_links =
+    UML_JIT_CARRY_X8_X9_ACROSS_LINKS != 0;
+
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {
   const auto op0 = (instruction >> 25U) & 15U;
@@ -125,7 +139,21 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
  * the pointers for its own link tables, so the expensive decode and emit
  * happens once per distinct block instead of once per executor.
  */
-inline constexpr bool share_translations_between_executors = true;
+/* The guest-GPR link profiler also embeds executor-owned counter pointers.
+ * Those diagnostic pointers are intentionally not part of the production
+ * relocation ABI, so a profiling build must keep translations private to the
+ * executor that owns the counters.
+ */
+#ifndef UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS
+#define UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS 1
+#endif
+
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+inline constexpr bool share_translations_between_executors = false;
+#else
+inline constexpr bool share_translations_between_executors =
+    UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS != 0;
+#endif
 
 enum class JitRelocationKind : std::uint8_t {
   direct_link,

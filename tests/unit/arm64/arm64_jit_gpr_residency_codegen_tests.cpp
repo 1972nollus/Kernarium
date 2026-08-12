@@ -117,17 +117,49 @@ void repeated_late_pair_replaces_single_use_bindings() {
           code_base, pressure_guest);
   require(planned.guest_instructions == pressure_guest.size(),
           "JIT split the GPR pressure block");
-  require(planned.gpr_residency_planned,
-          "JIT did not retain the profitable GPR plan");
   require(!unplanned.gpr_residency_planned,
           "test-only baseline unexpectedly planned GPR residency");
+  require_same_metadata(planned, unplanned);
+
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(!planned.gpr_residency_planned &&
+                planned.gpr_estimated_avoided_accesses == 0U,
+            "fixed linked GPRs entered dynamic residency planning");
+    require(planned.words == unplanned.words &&
+                planned.hot_words == unplanned.hot_words,
+            "fixed linked GPRs changed the no-plan control shape");
+
+    std::array<std::uint32_t, 4> late_native{};
+    std::size_t late_count{};
+    for (const auto word : hot_code(planned)) {
+      if ((word & ~register_mask) !=
+              (pressure_guest[4] & ~register_mask) ||
+          destination(word) != 22U)
+        continue;
+      require(late_count < late_native.size(),
+              "JIT emitted too many fixed-bank additions");
+      late_native[late_count++] = word;
+    }
+    require(late_count == late_native.size(),
+            "JIT omitted a fixed-bank addition");
+    require(left(late_native[0]) == 23U &&
+                right(late_native[0]) == 23U,
+            "first fixed-bank addition used the wrong host source");
+    for (std::size_t index = 1; index < late_native.size(); ++index)
+      require(left(late_native[index]) == 22U &&
+                  right(late_native[index]) == 23U,
+              "fixed-bank dependency escaped its host registers");
+    return;
+  }
+
+  require(planned.gpr_residency_planned,
+          "JIT did not retain the profitable GPR plan");
   require(planned.gpr_estimated_avoided_accesses == 9U,
           "GPR planner reported the wrong avoided-access estimate");
   require(planned.hot_words + 9U == unplanned.hot_words,
           "GPR planner did not remove exactly nine hot instructions");
   require(planned.words.size() < unplanned.words.size(),
           "GPR planner did not reduce total generated code");
-  require_same_metadata(planned, unplanned);
 
   const auto planned_hot = hot_code(planned);
   const auto unplanned_hot = hot_code(unplanned);
@@ -159,6 +191,50 @@ void repeated_late_pair_replaces_single_use_bindings() {
     require(left(late_native[index]) == 17U &&
                 right(late_native[index]) == 13U,
             "late dependency was not kept in its selected host register");
+}
+
+void fixed_pair_leaves_all_dynamic_slots_available() {
+  if (!jit_test::linked_x8_x9_bank_enabled())
+    return;
+
+  constexpr std::array guest{
+      pressure_guest[0],
+      pressure_guest[1],
+      pressure_guest[2],
+      pressure_guest[3],
+      add_register(8U, 9U, 9U),
+      add_register(10U, 11U, 11U),
+      add_register(10U, 10U, 11U),
+      add_register(10U, 10U, 11U),
+      add_register(10U, 10U, 11U),
+  };
+  const auto planned =
+      jit_test::compile_block(code_base + 0x800U, guest);
+  const auto unplanned =
+      jit_test::compile_block_without_gpr_residency_planning(
+          code_base + 0x800U, guest);
+
+  require(planned.gpr_residency_planned,
+          "fixed linked GPRs reduced the dynamic residency capacity");
+  require(!unplanned.gpr_residency_planned,
+          "test-only baseline unexpectedly planned GPR residency");
+  require(planned.gpr_estimated_avoided_accesses == 9U,
+          "fixed-bank pressure changed the dynamic traffic estimate");
+  require(planned.hot_words + 9U == unplanned.hot_words,
+          "eight-slot dynamic plan removed the wrong hot-code count");
+  require(planned.words.size() < unplanned.words.size(),
+          "eight-slot dynamic plan did not reduce total generated code");
+  require_same_metadata(planned, unplanned);
+
+  std::size_t fixed_additions{};
+  for (const auto word : hot_code(planned))
+    fixed_additions +=
+        (word & ~register_mask) ==
+            (guest[4] & ~register_mask) &&
+        destination(word) == 22U && left(word) == 23U &&
+        right(word) == 23U;
+  require(fixed_additions == 1U,
+          "dynamic pressure displaced the fixed linked GPR pair");
 }
 
 void low_pressure_code_stays_byte_identical() {
@@ -239,10 +315,16 @@ void linked_pressure_block_retains_the_smaller_plan() {
       jit_test::compile_linked_block(code_base + 0x4000U, guest);
   require(compiled.guest_instructions == guest.size(),
           "linked pressure block did not compile completely");
-  require(compiled.gpr_residency_planned,
-          "linked pressure block rejected its smaller GPR plan");
-  require(compiled.gpr_estimated_avoided_accesses == 9U,
-          "linked pressure block changed the GPR traffic estimate");
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(!compiled.gpr_residency_planned &&
+                compiled.gpr_estimated_avoided_accesses == 0U,
+            "linked fixed GPRs entered dynamic residency planning");
+  } else {
+    require(compiled.gpr_residency_planned,
+            "linked pressure block rejected its smaller GPR plan");
+    require(compiled.gpr_estimated_avoided_accesses == 9U,
+            "linked pressure block changed the GPR traffic estimate");
+  }
   require(!compiled.words.empty() && compiled.link_target_safe,
           "linked pressure plan corrupted link metadata");
 }
@@ -251,6 +333,7 @@ void linked_pressure_block_retains_the_smaller_plan() {
 
 int main() {
   repeated_late_pair_replaces_single_use_bindings();
+  fixed_pair_leaves_all_dynamic_slots_available();
   low_pressure_code_stays_byte_identical();
   no_benefit_pressure_keeps_first_use_allocation();
   fetched_words_after_terminal_do_not_affect_selection();

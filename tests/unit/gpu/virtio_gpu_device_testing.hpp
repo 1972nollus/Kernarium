@@ -13,10 +13,9 @@
 
 namespace uml::gpu::testing {
 
-/* Test-only dependency boundary for VirtioGpuDevice. The production object
- * is compiled with UML_GPU_DEVICE_TESTING=0 and calls VirglRenderer and
- * VncDisplay directly, so this virtual surface adds no production field,
- * branch, or indirect call. */
+/* Test-only dependency boundary for VirtioGpuDevice. Ordinary builds use
+ * UML_GPU_DEVICE_TESTING=0 and call VirglRenderer and VncDisplay directly, so
+ * this virtual surface adds no production field, branch, or indirect call. */
 class VirtioGpuDeviceDependencies {
 public:
     virtual ~VirtioGpuDeviceDependencies() = default;

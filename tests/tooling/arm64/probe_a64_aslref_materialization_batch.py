@@ -4443,7 +4443,7 @@ def run(
         "campaign_workflow": (
             {
                 "purpose": "official-execution-shard-pending-campaign-join",
-                "semantic_coverage_promotion": "requires-exact-frozen-join",
+                "semantic_coverage_promotion": "requires-exact-join",
                 "unique_input_contracts": len(source_records),
                 "failures": 0,
                 "guest_page_size": next(iter(page_sizes)),
@@ -4464,8 +4464,6 @@ def run(
                 "input_sources": [
                     {
                         "path": str(path.resolve()),
-                        "size": path.stat().st_size,
-                        "sha256": file_sha256(path),
                     }
                     for path in options.input_jsonl
                 ],

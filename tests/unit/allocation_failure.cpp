@@ -8,6 +8,7 @@
 namespace {
 
 thread_local bool fail_next;
+thread_local std::size_t successful_allocations_before_failure;
 thread_local bool count_allocations;
 thread_local std::size_t allocation_count;
 thread_local uml::testing::AllocationFailure last_failure;
@@ -18,6 +19,10 @@ thread_local uml::testing::AllocationFailure last_failure;
 {
 	if (!fail_next)
 		return false;
+	if (successful_allocations_before_failure != 0) {
+		--successful_allocations_before_failure;
+		return false;
+	}
 	fail_next = false;
 	last_failure = {size, alignment, form, true};
 	return true;
@@ -59,7 +64,13 @@ namespace uml::testing {
 
 void fail_next_allocation() noexcept
 {
+	fail_after_allocations(0);
+}
+
+void fail_after_allocations(std::size_t successful_allocations) noexcept
+{
 	last_failure = {};
+	successful_allocations_before_failure = successful_allocations;
 	fail_next = true;
 }
 
@@ -67,6 +78,7 @@ bool cancel_pending_allocation_failure() noexcept
 {
 	const bool pending = fail_next;
 	fail_next = false;
+	successful_allocations_before_failure = 0;
 	return pending;
 }
 

@@ -213,15 +213,29 @@ void miss_call_is_cold_and_has_no_resident_spills() {
           "TLB miss call did not pass the guest address directly");
   require(all[arguments + 2] == move_wide(2, 1),
           "TLB miss call did not materialize write access in x2");
-  for (std::size_t index = arguments + 3; index < call; ++index)
+  constexpr std::uint32_t bank_store = 0xa904'5df6U;
+  constexpr std::uint32_t bank_load = 0xa944'5df6U;
+  auto call_setup = arguments + 3U;
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(call_setup < call && all[call_setup] == bank_store,
+            "TLB miss call did not publish the fixed x8/x9 bank");
+    ++call_setup;
+  }
+  for (std::size_t index = call_setup; index < call; ++index)
     require((all[index] & 31U) == 16U,
             "TLB miss call contains an inline spill or reload");
-  require(call + 3U < all.size() && all[call + 1U] == move_x(8, 0) &&
-              is_compare_zero_x(all[call + 2U], 8),
+  auto result = call + 1U;
+  if (jit_test::linked_x8_x9_bank_enabled()) {
+    require(result < all.size() && all[result] == bank_load,
+            "TLB miss call did not reload the fixed x8/x9 bank");
+    ++result;
+  }
+  require(result + 2U < all.size() && all[result] == move_x(8, 0) &&
+              is_compare_zero_x(all[result + 1U], 8),
           "TLB miss result was not consumed without a context reload");
-  require(is_unconditional_branch(all[call + 3U]) &&
+  require(is_unconditional_branch(all[result + 2U]) &&
               unconditional_branch_target(
-                  call + 3U, all[call + 3U]) ==
+                  result + 2U, all[result + 2U]) ==
                   static_cast<std::ptrdiff_t>(continuation),
           "successful TLB miss does not rejoin the exact memory continuation");
 
@@ -229,14 +243,15 @@ void miss_call_is_cold_and_has_no_resident_spills() {
   /*
    * Deferring the second-way probe and preserving miss bridge leaves a
    * 25-word single-store hot body. The persistent linked-block ABI contributes
-   * seven fixed prologue/epilogue words. Keep one word of headroom for a
-   * harmless frame-shape change, but do not permit either translation fallback
-   * to move back into the hot prefix. The measured complete block is 76 words;
-   * its cold-tail size is checked separately by the structural assertions
-   * above.
+   * seven fixed prologue/epilogue words. The opt-in bank adds four hot words
+   * and ten total words: outer save/load/store/restore, the returning TLB
+   * pair, and one pair at each terminal cold exit. Keep the control ceiling
+   * exact while allowing only that structurally pinned experiment overhead.
    */
-  constexpr std::size_t persistent_hot_frame_words = 7;
-  constexpr std::size_t persistent_total_frame_words = 13;
+  const std::size_t persistent_hot_frame_words =
+      7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
+  const std::size_t persistent_total_frame_words =
+      13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
   require(compiled.hot_words <= 26 + persistent_hot_frame_words,
           "single-store JIT hot expansion lost the deferred-translation budget");
   require(compiled.words.size() <= 66 + persistent_total_frame_words,
@@ -245,13 +260,14 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 #else
   /*
    * The 4K translation has no second-way probe, and its deferred miss leaves a
-   * 27-word single-store hot body. Allow the same one-word frame-shape
-   * headroom on top of the seven fixed linked-block ABI words. The measured
-   * complete block remains 74 words because tail-pool alignment absorbs the
-   * removed hot word.
+   * 27-word single-store hot body. The fixed-bank allowances match the 16K
+   * shape: four outer hot words and ten total words across the returning and
+   * terminal cold boundaries. The control arm retains its original ceiling.
    */
-  constexpr std::size_t persistent_hot_frame_words = 7;
-  constexpr std::size_t persistent_total_frame_words = 13;
+  const std::size_t persistent_hot_frame_words =
+      7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
+  const std::size_t persistent_total_frame_words =
+      13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
   require(compiled.hot_words <= 28 + persistent_hot_frame_words,
           "single-store 4K JIT hot expansion lost the "
           "deferred-translation budget");

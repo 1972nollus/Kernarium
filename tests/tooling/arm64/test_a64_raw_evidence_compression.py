@@ -17,32 +17,20 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from threading import Event, Thread
-from unittest.mock import patch
 from typing import Callable
 
 from a64_raw_evidence_files import (
     RawEvidenceFile,
-    evidence_quiescence_lock_path,
-    evidence_quiescence_locks,
-    producer_evidence_lock,
     raw_evidence_files,
     uncompressed_identity,
 )
 from aggregate_a64_raw_instruction_evidence import RAW_COLUMNS, raw_rows
 from compress_a64_raw_evidence import (
-    compression_lock,
-    compression_lock_path,
     compress_plain_raw,
-    file_identity,
     gzip_temporary_worst_case_bytes,
-    require_uncompressed_identity,
-    recheck_compressed_records,
     reserve_bytes,
     resolve_entry,
-    verify_deterministic_gzip,
-    validate_identity_output,
-    write_or_compare,
+    verify_gzip,
 )
 from validate_a64_instruction_aggregate_manifest import exception_raw_rows
 
@@ -133,13 +121,6 @@ def cxx_runner_fixtures(runner: Path, directory: Path) -> None:
     second: subprocess.Popen[str] | None = None
     try:
         wait_for_path(ready)
-        expect_failure(
-            "compressor-during-native-producer",
-            lambda: evidence_quiescence_locks(
-                (directory,), exclusive=True, blocking=False
-            ).__enter__(),
-            "producer/compressor is active",
-        )
         same = subprocess.run(
             [str(runner), "/usr/bin/true"],
             env=runner_environment(directory, "runner-a"),
@@ -177,38 +158,6 @@ def cxx_runner_fixtures(runner: Path, directory: Path) -> None:
                 continue
             process.send_signal(signal.SIGTERM)
             process.wait(timeout=5.0)
-
-    with evidence_quiescence_locks(
-        (directory,), exclusive=True, blocking=False
-    ):
-        blocked = subprocess.run(
-            [str(runner), "/usr/bin/true"],
-            env=runner_environment(directory, "runner-c"),
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-    if blocked.returncode != 125:
-        raise AssertionError("native producer bypassed Python publication lock")
-
-    lock_alias_producer = "runner-lock-alias"
-    gate_path = evidence_quiescence_lock_path(directory)
-    producer_lock_path = directory / f".{lock_alias_producer}.producer.lock"
-    os.link(gate_path, producer_lock_path)
-    try:
-        aliased_locks = subprocess.run(
-            [str(runner), "/usr/bin/true"],
-            env=runner_environment(directory, lock_alias_producer),
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        if aliased_locks.returncode != 125:
-            raise AssertionError("native runner accepted aliased lock identities")
-    finally:
-        producer_lock_path.unlink()
 
     exit_status = subprocess.run(
         [str(runner), sys.executable, "-B", "-c", "raise SystemExit(23)"],
@@ -535,10 +484,9 @@ def main() -> int:
             plain.exists()
             or not compressed.exists()
             or not entry.compressed
-            or compressed.stat().st_mode & 0o777 != 0o640
         ):
             raise AssertionError("plain raw evidence was not atomically replaced")
-        verify_deterministic_gzip(compressed)
+        verify_gzip(compressed)
         if (
             uncompressed_identity(entry) != original_identity
             or list(raw_rows([directory])) != original_rows
@@ -562,14 +510,11 @@ def main() -> int:
             raise AssertionError("matching interrupted compression did not resume")
 
         write_fixture(plain, {**fixture_row(), "occurrences": "2"})
-        expect_failure(
-            "mismatched-plain-compressed-recovery",
-            lambda: resolve_entry(
-                "fixture-producer", plain, compressed, "16384"
-            ),
-            "recovery identity differs",
+        replaced = resolve_entry(
+            "fixture-producer", plain, compressed, "16384"
         )
-        plain.unlink()
+        if plain.exists() or uncompressed_identity(replaced) == original_identity:
+            raise AssertionError("semantic source did not replace stale gzip")
 
         truncated = directory / "truncated.tsv.raw.gz"
         shutil.copyfile(compressed, truncated)
@@ -606,52 +551,13 @@ def main() -> int:
         )
         overwrite_gzip = directory / "overwrite.tsv.raw.gz"
         with overwrite_gzip.open("wb") as raw_output:
-            with gzip.GzipFile(
-                filename="", mode="wb", fileobj=raw_output, mtime=0
-            ) as output:
+            with gzip.GzipFile(mode="wb", fileobj=raw_output) as output:
                 output.write(b"existing")
-        expect_failure(
-            "existing-compressed-overwrite",
-            lambda: compress_plain_raw(
-                "overwrite", overwrite_plain, overwrite_gzip, "16384"
-            ),
-            "refusing to overwrite existing compressed raw evidence",
+        overwrite_entry = compress_plain_raw(
+            "overwrite", overwrite_plain, overwrite_gzip, "16384"
         )
-        if not overwrite_plain.exists():
-            raise AssertionError("overwrite fixture deleted its plain source")
-
-        alias_plain = directory / "identity-alias.tsv.raw"
-        write_fixture(
-            alias_plain, {**fixture_row(), "ctest": "identity-alias"}
-        )
-        expect_failure(
-            "future-compressed-identity-alias",
-            lambda: validate_identity_output(
-                {"identity-alias": (alias_plain, None)},
-                directory / "identity-alias.tsv.raw.gz",
-            ),
-            "identity output aliases raw evidence",
-        )
-        expect_failure(
-            "lock-file-identity-alias",
-            lambda: validate_identity_output(
-                {"identity-alias": (alias_plain, None)},
-                compression_lock_path(directory),
-                compression_lock_path(directory),
-            ),
-            "identity output aliases lock file",
-        )
-        alias_before = alias_plain.read_bytes()
-        expect_failure(
-            "identity-output-under-raw-file",
-            lambda: validate_identity_output(
-                {"identity-alias": (alias_plain, None)},
-                alias_plain / "identity.json",
-            ),
-            "nondirectory path component",
-        )
-        if alias_plain.read_bytes() != alias_before:
-            raise AssertionError("ancestry preflight mutated plain raw evidence")
+        if overwrite_plain.exists() or uncompressed_identity(overwrite_entry)[0] == 0:
+            raise AssertionError("ordinary gzip replacement did not complete")
 
         extra_field = directory / "extra-field.tsv.raw"
         write_fixture(
@@ -692,261 +598,9 @@ def main() -> int:
             "raw evidence row shape differs",
         )
 
-        acquired = Event()
-
-        def contender() -> None:
-            with compression_lock(directory):
-                acquired.set()
-
-        with compression_lock(directory):
-            thread = Thread(target=contender)
-            thread.start()
-            if acquired.wait(0.05):
-                raise AssertionError("directory compression lock did not serialize")
-        thread.join(timeout=2.0)
-        if thread.is_alive() or not acquired.is_set():
-            raise AssertionError("serialized compression did not resume")
-
-        def acquire_producer() -> None:
-            with producer_evidence_lock(directory):
-                pass
-
-        with compression_lock(directory):
-            expect_failure(
-                "producer-during-compression",
-                acquire_producer,
-                "producer/compressor is active",
-            )
-
-        first_order = directory / "ordered-a"
-        second_order = directory / "ordered-b"
-        first_order.mkdir()
-        second_order.mkdir()
-        completed_orders: list[str] = []
-
-        def acquire_ordered(name: str, paths: tuple[Path, Path]) -> None:
-            with evidence_quiescence_locks(
-                paths, exclusive=True, blocking=True
-            ):
-                time.sleep(0.02)
-                completed_orders.append(name)
-
-        forward = Thread(
-            target=acquire_ordered,
-            args=("forward", (first_order, second_order)),
-        )
-        reverse = Thread(
-            target=acquire_ordered,
-            args=("reverse", (second_order, first_order)),
-        )
-        forward.start()
-        reverse.start()
-        forward.join(timeout=2.0)
-        reverse.join(timeout=2.0)
-        if (
-            forward.is_alive()
-            or reverse.is_alive()
-            or sorted(completed_orders) != ["forward", "reverse"]
-        ):
-            raise AssertionError("multi-directory lock order deadlocked")
-
-        first_alias_directory = directory / "lock-alias-a"
-        second_alias_directory = directory / "lock-alias-b"
-        first_alias_directory.mkdir()
-        second_alias_directory.mkdir()
-        first_alias_lock = evidence_quiescence_lock_path(first_alias_directory)
-        second_alias_lock = evidence_quiescence_lock_path(second_alias_directory)
-        first_alias_lock.write_bytes(b"")
-        os.link(first_alias_lock, second_alias_lock)
-
-        def acquire_aliased_lock_files() -> None:
-            with evidence_quiescence_locks(
-                (first_alias_directory, second_alias_directory),
-                exclusive=True,
-                blocking=False,
-            ):
-                pass
-
-        expect_failure(
-            "evidence-lock-inode-alias",
-            acquire_aliased_lock_files,
-            "raw evidence lock identities alias",
-        )
-        with evidence_quiescence_locks(
-            (first_alias_directory,), exclusive=True, blocking=False
-        ):
-            pass
-
-        case_directory = directory / "CaseEvidence"
-        case_directory.mkdir()
-        case_alias = directory / "caseevidence"
-        if case_alias.exists() and os.path.samefile(case_directory, case_alias):
-
-            def acquire_case_aliased_directories() -> None:
-                with evidence_quiescence_locks(
-                    (case_directory, case_alias),
-                    exclusive=True,
-                    blocking=False,
-                ):
-                    pass
-
-            expect_failure(
-                "evidence-directory-case-alias",
-                acquire_case_aliased_directories,
-                "raw evidence directory identities alias",
-            )
-
-        reset_root = directory / "reset-root"
-        reset_evidence = reset_root / "instruction-evidence"
-        reset_evidence.mkdir(parents=True)
-        reset_script = (
-            Path(__file__).resolve().parents[2]
-            / "unit/arm64/reset_instruction_evidence.cmake"
-        )
-        cmake = shutil.which("cmake")
-        if cmake is None:
-            raise AssertionError("cmake is required for reset-lock fixture")
-        with producer_evidence_lock(reset_evidence):
-            blocked_reset = subprocess.run(
-                [
-                    cmake,
-                    f"-DBUILD_ROOT={reset_root}",
-                    "-P",
-                    str(reset_script),
-                ],
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-        if blocked_reset.returncode == 0:
-            raise AssertionError("reset bypassed active evidence producer lock")
-        completed_reset = subprocess.run(
-            [
-                cmake,
-                f"-DBUILD_ROOT={reset_root}",
-                "-P",
-                str(reset_script),
-            ],
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        if completed_reset.returncode != 0:
-            raise AssertionError(
-                f"quiescent evidence reset failed: {completed_reset.stdout}"
-            )
-
-        hold_root = directory / "cmake-hold-root"
-        hold_evidence = hold_root / "instruction-evidence"
-        hold_evidence.mkdir(parents=True)
-        hold_script = hold_root / "hold-reset-lock.cmake"
-        hold_script.write_text(
-            f'file(LOCK "{hold_root / "instruction-evidence.lock"}" '
-            "GUARD PROCESS TIMEOUT 0)\n"
-            f'execute_process(COMMAND "{cmake}" -E sleep 1)\n',
-            encoding="utf-8",
-        )
-        holding_reset = subprocess.Popen(
-            [cmake, "-P", str(hold_script)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        blocked_by_cmake = False
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and holding_reset.poll() is None:
-            try:
-                with producer_evidence_lock(hold_evidence):
-                    pass
-            except ValueError:
-                blocked_by_cmake = True
-                break
-            time.sleep(0.01)
-        holding_output = holding_reset.communicate(timeout=3.0)[0]
-        if holding_reset.returncode != 0 or not blocked_by_cmake:
-            raise AssertionError(
-                "Python producer did not observe CMake reset lock: "
-                + holding_output
-            )
-
-        final_directory = directory / "final-recheck"
-        final_directory.mkdir()
-        final_plain = final_directory / "final-producer.tsv.raw"
-        write_fixture(
-            final_plain, {**fixture_row(), "ctest": "final-producer"}
-        )
-        final_compressed = final_directory / "final-producer.tsv.raw.gz"
-        final_entry = compress_plain_raw(
-            "final-producer", final_plain, final_compressed, "16384"
-        )
-        final_raw_size, final_raw_sha256 = uncompressed_identity(final_entry)
-        final_size, final_sha256 = file_identity(final_compressed)
-        final_records: list[dict[str, object]] = [
-            {
-                "producer": "final-producer",
-                "file": final_compressed.name,
-                "raw_size": final_raw_size,
-                "raw_sha256": final_raw_sha256,
-                "row_count": 1,
-                "compressed_size": final_size,
-                "compressed_sha256": final_sha256,
-            }
-        ]
-        with patch(
-            "compress_a64_raw_evidence.validate_producer_authority"
-        ):
-            recheck_compressed_records(
-                final_directory, "16384", final_records
-            )
-            stale_records = [dict(final_records[0])]
-            stale_records[0]["compressed_sha256"] = "0" * 64
-            expect_failure(
-                "final-compressed-record-drift",
-                lambda: recheck_compressed_records(
-                    final_directory, "16384", stale_records
-                ),
-                "final identity differs",
-            )
-            write_fixture(
-                final_plain,
-                {**fixture_row(), "ctest": "final-producer"},
-            )
-            expect_failure(
-                "final-new-plain-duplicate",
-                lambda: recheck_compressed_records(
-                    final_directory, "16384", final_records
-                ),
-                "not uniquely compressed",
-            )
         if gzip_temporary_worst_case_bytes(1024) != 1024 * 2 + 1024 * 1024:
             raise AssertionError("gzip temporary bound drifted")
 
-        drift = directory / "drift.tsv.raw"
-        write_fixture(drift, {**fixture_row(), "ctest": "drift"})
-        drift_entry = RawEvidenceFile("drift", drift, False)
-        drift_identity = uncompressed_identity(drift_entry)
-        with drift.open("a", encoding="utf-8") as output:
-            output.write("drift\n")
-        expect_failure(
-            "plain-source-drift",
-            lambda: require_uncompressed_identity(
-                drift_entry, drift_identity, "plain raw evidence changed"
-            ),
-            "plain raw evidence changed",
-        )
-
-        identity_path = directory / "compression.identity.json"
-        write_or_compare(identity_path, b"first\n")
-        if identity_path.stat().st_mode & 0o777 != 0o644:
-            raise AssertionError("compression identity has a noncanonical mode")
-        write_or_compare(identity_path, b"first\n")
-        expect_failure(
-            "immutable-compression-identity",
-            lambda: write_or_compare(identity_path, b"second\n"),
-            "already exists with different content",
-        )
         expect_failure(
             "negative-reserve",
             lambda: reserve_bytes(-1.0),

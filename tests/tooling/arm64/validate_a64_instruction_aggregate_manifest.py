@@ -14,14 +14,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from a64_aggregate_manifest_identity import (
-    read_manifest_identity,
-    validate_manifest_identity,
-)
 from a64_raw_evidence_files import (
-    exclusive_evidence_locks,
+    canonical_existing_directory,
     open_raw_text,
     raw_evidence_file,
+    raw_evidence_files,
+    validate_producer_authority,
+    validate_raw_profile,
 )
 from aggregate_a64_raw_instruction_evidence import (
     EXECUTED,
@@ -69,6 +68,7 @@ PROFILE_EXCEPTION_COLUMNS = [
     "architecture_encoding",
     "reason",
 ]
+FULL_PROFILE_COUNTS = {"4096": 16084, "16384": 16085}
 
 
 def arguments() -> argparse.Namespace:
@@ -90,12 +90,6 @@ def arguments() -> argparse.Namespace:
         "--manifest",
         type=Path,
         default=repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
-    )
-    parser.add_argument(
-        "--manifest-identity",
-        type=Path,
-        default=repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json",
     )
     parser.add_argument(
         "--profile-exceptions",
@@ -513,16 +507,154 @@ def compare_manifest(
         raise ValueError("aggregate evidence differs from checked manifest")
 
 
-def read_bound_manifest(
-    manifest_path: Path, identity_path: Path
-) -> list[dict[str, str]]:
+def validate_checked_manifest_rows(
+    manifest: list[dict[str, str]],
+) -> None:
+    """Validate the checked two-profile TSV directly, without a hash sidecar."""
+    expected_total = sum(FULL_PROFILE_COUNTS.values())
+    if len(manifest) != expected_total:
+        raise ValueError(
+            f"checked aggregate manifest has {len(manifest)} rows; "
+            f"expected {expected_total}"
+        )
+    pages = Counter(row["guest_page_size"] for row in manifest)
+    if pages != Counter(FULL_PROFILE_COUNTS):
+        raise ValueError(
+            "checked aggregate manifest page counts differ: "
+            f"{dict(sorted(pages.items()))}"
+        )
+    identifiers = [row["aggregate_id"] for row in manifest]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("checked aggregate manifest has duplicate aggregate IDs")
+    if identifiers != sorted(identifiers):
+        raise ValueError("checked aggregate manifest is not in aggregate-ID order")
+    for index, row in enumerate(manifest, start=2):
+        if row["aggregate_id"] != aggregate_id(row):
+            raise ValueError(
+                f"checked aggregate row {index}: aggregate ID does not "
+                "match its semantic identity"
+            )
+    stable_ids = {
+        page: {
+            row["stable_id"]
+            for row in manifest
+            if row["guest_page_size"] == page
+        }
+        for page in FULL_PROFILE_COUNTS
+    }
+    if stable_ids["4096"] != stable_ids["16384"]:
+        raise ValueError("checked aggregate manifest profile stable-ID sets differ")
+
+
+def read_checked_manifest(manifest_path: Path) -> list[dict[str, str]]:
     manifest = read_tsv(manifest_path, OUTPUT_COLUMNS)
-    validate_manifest_identity(
-        manifest,
-        OUTPUT_COLUMNS,
-        read_manifest_identity(identity_path),
-    )
+    validate_checked_manifest_rows(manifest)
     return manifest
+
+
+def full_publication_rows(
+    rows_4k: list[dict[str, str]],
+    rows_16k: list[dict[str, str]],
+    expected_producers: dict[str, set[str]],
+) -> list[dict[str, str]]:
+    """Validate the exact complete profile union and return canonical rows."""
+    profiles = {"4096": rows_4k, "16384": rows_16k}
+    producer_sets: dict[str, set[str]] = {}
+    stable_id_sets: dict[str, set[str]] = {}
+    profile_ids: dict[str, set[str]] = {}
+    for page, rows in profiles.items():
+        wrong_pages = sorted(
+            {row["guest_page_size"] for row in rows if row["guest_page_size"] != page}
+        )
+        if wrong_pages:
+            raise ValueError(
+                f"full {page} source contains cross-page rows: {wrong_pages}"
+            )
+        identifiers = [row["aggregate_id"] for row in rows]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError(f"full {page} source contains duplicate aggregate IDs")
+        mismatched = [
+            row["aggregate_id"]
+            for row in rows
+            if row["aggregate_id"] != aggregate_id(row)
+        ]
+        if mismatched:
+            raise ValueError(
+                f"full {page} source contains an invalid aggregate identity: "
+                f"{mismatched[:1]}"
+            )
+        expected_order = sorted(
+            rows, key=lambda row: (row["stable_id"], row["aggregate_id"])
+        )
+        if rows != expected_order:
+            raise ValueError(f"full {page} source is not in canonical source order")
+        expected_count = FULL_PROFILE_COUNTS[page]
+        if len(rows) != expected_count:
+            raise ValueError(
+                f"full {page} source has {len(rows)} rows; expected {expected_count}"
+            )
+        producers = {row["producer"] for row in rows}
+        expected_page_producers = expected_producers.get(page)
+        if expected_page_producers is None:
+            raise ValueError(f"full {page} source lacks a producer authority")
+        validate_producer_authority(expected_page_producers, page)
+        if producers != expected_page_producers:
+            missing = sorted(expected_page_producers - producers)
+            extra = sorted(producers - expected_page_producers)
+            raise ValueError(
+                f"full {page} source producer set differs from raw evidence; "
+                f"missing={missing[:3]}, extra={extra[:3]}"
+            )
+        producer_sets[page] = producers
+        stable_id_sets[page] = {row["stable_id"] for row in rows}
+        profile_ids[page] = set(identifiers)
+
+    if producer_sets["4096"] != producer_sets["16384"]:
+        raise ValueError("full profile producer sets differ")
+    if stable_id_sets["4096"] != stable_id_sets["16384"]:
+        raise ValueError("full profile stable-ID sets differ")
+    overlap = profile_ids["4096"] & profile_ids["16384"]
+    if overlap:
+        raise ValueError(
+            "full profile aggregate identity sets overlap: "
+            + ",".join(sorted(overlap)[:3])
+        )
+    combined = sorted(
+        [*rows_4k, *rows_16k], key=lambda row: row["aggregate_id"]
+    )
+    expected_total = sum(FULL_PROFILE_COUNTS.values())
+    if len(combined) != expected_total or len(
+        {row["aggregate_id"] for row in combined}
+    ) != expected_total:
+        raise ValueError("full publication identity set/cardinality differs")
+    return combined
+
+
+def raw_producer_authority(
+    directory: Path, page: str
+) -> tuple[set[str], list[Path]]:
+    entries = raw_evidence_files(directory)
+    producers = {entry.producer for entry in entries}
+    validate_producer_authority(producers, page)
+    for entry in entries:
+        validate_raw_profile(entry, page)
+    return producers, [entry.path for entry in entries]
+
+
+def require_exact_raw_derivation(
+    supplied: list[dict[str, str]],
+    derived: list[dict[str, str]],
+    page: str,
+) -> None:
+    if supplied == derived:
+        return
+    supplied_ids = {row["aggregate_id"] for row in supplied}
+    derived_ids = {row["aggregate_id"] for row in derived}
+    raise ValueError(
+        f"full {page} source does not exactly derive from supplied raw "
+        f"evidence; missing={sorted(derived_ids - supplied_ids)[:3]}, "
+        f"extra={sorted(supplied_ids - derived_ids)[:3]}"
+    )
 
 
 def canonical_combined_rows(
@@ -551,7 +683,7 @@ def run(options: argparse.Namespace) -> int:
     )
     compare_profiles(rows_4k, rows_16k, excluded_4k, excluded_16k)
     combined = canonical_combined_rows(rows_4k, rows_16k)
-    manifest = read_bound_manifest(options.manifest, options.manifest_identity)
+    manifest = read_checked_manifest(options.manifest)
     compare_manifest(combined, manifest)
     print(
         f"A64 aggregate manifest: 983/983 IDs, {len(rows_4k)} 4K and "
@@ -563,11 +695,13 @@ def run(options: argparse.Namespace) -> int:
 
 def main() -> int:
     options = arguments()
-    with exclusive_evidence_locks(
-        (options.evidence_4k, options.evidence_16k)
-    ) as directories:
-        options.evidence_4k, options.evidence_16k = directories
-        return run(options)
+    options.evidence_4k = canonical_existing_directory(
+        options.evidence_4k, "4K evidence directory"
+    )
+    options.evidence_16k = canonical_existing_directory(
+        options.evidence_16k, "16K evidence directory"
+    )
+    return run(options)
 
 
 if __name__ == "__main__":

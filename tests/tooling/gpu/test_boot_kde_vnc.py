@@ -37,36 +37,33 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("ncpus=6", command[separator + 1 :])
         self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
 
-    def test_webgl_commands_extend_the_inner_gpu_harness(self) -> None:
+    def test_webgl_commands_extend_the_gpu_harness(self) -> None:
         options = boot_kde_vnc.parse_arguments([])
         command = boot_kde_vnc.build_harness_command(options)
-        wrapper_separator = command.index("--")
         guest_separator = boot_kde_vnc.guest_argument_separator(command)
-        self.assertGreater(guest_separator, wrapper_separator)
+        self.assertGreater(
+            guest_separator, command.index(str(boot_kde_vnc.GUEST_HARNESS))
+        )
         for runner_name in ("run_chromium_webgl.py", "run_webgl_samples.py"):
             runner = (GPU_INTEGRATION / runner_name).read_text(encoding="utf-8")
             self.assertIn(
                 "boot_kde_vnc.guest_argument_separator(command)", runner
             )
 
-    def test_guest_harness_runs_under_verified_rootfs_wrapper(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
-            ["--rootfs", "/tmp/rootfs.erofs", "--baseline", "/tmp/manifest.json"]
-        )
+    def test_guest_harness_runs_directly(self) -> None:
+        options = boot_kde_vnc.parse_arguments(["--rootfs", "/tmp/rootfs.erofs"])
         command = boot_kde_vnc.build_harness_command(options)
-        self.assertEqual(command[0], str(boot_kde_vnc.ROOTFS_WRAPPER))
+        self.assertEqual(command[0], sys.executable)
         self.assertEqual(
-            command[1:7],
+            command[1:6],
             [
+                str(boot_kde_vnc.GUEST_HARNESS),
+                "--emulator",
+                str(options.emulator),
                 "--rootfs",
                 "/tmp/rootfs.erofs",
-                "--manifest",
-                "/tmp/manifest.json",
-                "--",
-                sys.executable,
             ],
         )
-        self.assertIn(str(boot_kde_vnc.GUEST_HARNESS), command[7:])
 
     def test_desktop_idle_lock_is_disabled_in_overlay(self) -> None:
         commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)

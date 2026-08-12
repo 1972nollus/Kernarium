@@ -31,6 +31,7 @@ add_executable(uml_execution_gate_profile_tests
 target_include_directories(uml_execution_gate_profile_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_definitions(uml_execution_gate_profile_tests PRIVATE
+    UML_MEMORY_PROFILE_TESTING=1
     UML_RUNTIME_PROFILING=1)
 target_compile_features(uml_execution_gate_profile_tests PRIVATE cxx_std_20)
 target_compile_options(uml_execution_gate_profile_tests PRIVATE

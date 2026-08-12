@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "allocation_failure.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_cache.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_runtime_contract.hpp"
 #include "cpu/arm64/jit/jit_shared_translations.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -13,6 +15,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -29,6 +32,13 @@ using uml::memory::StaticGuestMemory;
 
 constexpr std::uint32_t system_call = 0xd400'0001U;
 
+static_assert(sizeof(arm64::CacheSet) ==
+              arm64::cache_ways * sizeof(arm64::CompiledBlock));
+static_assert(sizeof(arm64::CacheSet) <
+              arm64::cache_ways *
+                  (sizeof(arm64::CompiledBlock) +
+                   arm64::maximum_saved_guest_word_bytes));
+
 [[nodiscard]] constexpr std::uint32_t
 move_immediate(unsigned destination, unsigned immediate) noexcept
 {
@@ -43,6 +53,12 @@ branch(std::uint64_t source, std::uint64_t target) noexcept
 		static_cast<std::int64_t>(source)) / 4;
 	return 0x1400'0000U |
 		(static_cast<std::uint32_t>(displacement) & 0x03ff'ffffU);
+}
+
+[[nodiscard]] constexpr std::uint32_t
+branch_register(unsigned source) noexcept
+{
+	return 0xd61f'0000U | ((source & 31U) << 5U);
 }
 
 struct Run final {
@@ -70,6 +86,126 @@ void write_mapped32(unsigned long generation, std::uint64_t address,
 	std::memcpy(destination, &value, sizeof(value));
 }
 
+struct PublicationAllocationFailure final {
+	std::size_t successful_allocations{};
+};
+
+[[nodiscard]] std::shared_ptr<arm64::SharedTranslation>
+shared_translation_for(std::span<const std::uint32_t> guest_words);
+
+void fail_shared_publication_allocation(void *opaque) noexcept
+{
+	const auto *failure =
+		static_cast<const PublicationAllocationFailure *>(opaque);
+	uml::testing::fail_after_allocations(failure->successful_allocations);
+}
+
+void publication_allocation_failure_installs_private_code(
+	unsigned long generation, std::uint64_t base,
+	std::size_t successful_allocations,
+	bool preseed_entry_vector = false)
+{
+	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+	JitBacking backing{2};
+	backing.put32(0, move_immediate(0, 19));
+	backing.put32(4, system_call);
+	JitMapping mapping{generation, base, backing, 2};
+	PublicationAllocationFailure failure{successful_allocations};
+	const JitExecutorOptions options{};
+	JitExecutor executor{
+		options,
+		JitExecutorDiagnosticsOptions{
+			.shared_publication_context = &failure,
+			.before_shared_publication =
+				&fail_shared_publication_allocation,
+		}};
+	/* Sharing is gated on two live executors. The peer need not run. */
+	[[maybe_unused]] JitExecutor publication_peer;
+	StaticGuestMemory memory;
+	arm64::CpuState cpu{};
+	auto &shared_cache = arm64::SharedTranslationCache::instance();
+	if (preseed_entry_vector) {
+		/* Keep the same map node but a different exact translation identity.
+		 * The production lookup and preflight therefore miss, try_emplace()
+		 * finds the existing node without allocating, and allocation offset
+		 * three deterministically reaches vector<Entry>::push_back after the
+		 * candidate's object, validation-array, and host-word allocations.
+		 */
+		const std::array occupant_words{
+			move_immediate(0, 18), system_call};
+		const arm64::SharedTranslationCache::CodegenProfile profile{
+			.capabilities = options.host_capabilities,
+			.guarded_control_flow = options.enable_guarded_control_flow,
+			.pointer_authentication =
+				options.enable_pointer_authentication,
+		};
+		require(shared_cache.insert(
+			profile, base, occupant_words,
+			shared_translation_for(occupant_words)) != nullptr);
+	}
+	const auto before = shared_cache.statistics();
+
+	cpu.pc = base;
+	auto run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 2);
+	require(cpu.registers[0] == 19);
+	require(uml::testing::last_allocation_failure().observed);
+	require(!uml::testing::cancel_pending_allocation_failure());
+	auto diagnostics = executor.cache_validation_diagnostics();
+	require(diagnostics.translations == 1);
+	require(diagnostics.private_validation_word_installs == 1);
+	require(diagnostics.shared_validation_word_installs == 0);
+	const auto after_failure =
+		shared_cache.statistics();
+	require(after_failure.insertions == before.insertions);
+	require(after_failure.rejected == before.rejected);
+	require(after_failure.entries == before.entries);
+	require(after_failure.payload_bytes == before.payload_bytes);
+	require(after_failure.accounted_bytes == before.accounted_bytes);
+
+	/* An unrelated code-sequence change forces exact saved-word validation.
+	 * Reusing the block proves the private fallback owner survived the failed
+	 * opportunistic publication.
+	 */
+	darwin_uml_static_vm_invalidate_code(base + page);
+	cpu.pc = base;
+	cpu.registers[0] = 0;
+	run = run_once(executor, memory, generation, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 2);
+	require(cpu.registers[0] == 19);
+	diagnostics = executor.cache_validation_diagnostics();
+	require(diagnostics.translations == 1);
+	require(diagnostics.validation_attempts == 1);
+	require(diagnostics.validation_hits == 1);
+	require(diagnostics.private_validation_word_installs == 1);
+	require(diagnostics.shared_validation_word_installs == 0);
+}
+
+void publication_allocation_failures_install_private_code()
+{
+	if constexpr (!arm64::share_translations_between_executors)
+		return;
+
+	/* A two-instruction SVC block performs exactly three candidate allocations:
+	 * the shared object/control block, validation array, and nonempty host-word
+	 * vector. Offset zero fails construction; offset three first reaches a new
+	 * unordered-map node, then reaches existing entry-vector growth when that
+	 * same-PC node is pre-seeded.
+	 */
+	publication_allocation_failure_installs_private_code(
+		/*generation=*/8118, /*base=*/0x158'0000,
+		/*successful_allocations=*/0);
+	publication_allocation_failure_installs_private_code(
+		/*generation=*/8119, /*base=*/0x15c'0000,
+		/*successful_allocations=*/3);
+	publication_allocation_failure_installs_private_code(
+		/*generation=*/8120, /*base=*/0x160'0000,
+		/*successful_allocations=*/3,
+		/*preseed_entry_vector=*/true);
+}
+
 void unrelated_page_change_reuses_exact_block()
 {
 	constexpr unsigned long generation = 8101;
@@ -88,7 +224,10 @@ void unrelated_page_change_reuses_exact_block()
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
 	require(run.executed == 2);
 	require(cpu.registers[0] == 1);
-	require(executor.cache_validation_diagnostics().translations == 1);
+	auto diagnostics = executor.cache_validation_diagnostics();
+	require(diagnostics.translations == 1);
+	require(diagnostics.private_validation_word_installs == 1);
+	require(diagnostics.shared_validation_word_installs == 0);
 
 	darwin_uml_static_vm_invalidate_code(base + page);
 	cpu.pc = base;
@@ -97,12 +236,14 @@ void unrelated_page_change_reuses_exact_block()
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
 	require(run.executed == 2);
 	require(cpu.registers[0] == 1);
-	const auto diagnostics = executor.cache_validation_diagnostics();
+	diagnostics = executor.cache_validation_diagnostics();
 	require(diagnostics.translations == 1);
 	require(diagnostics.validation_attempts == 1);
 	require(diagnostics.validation_hits == 1);
 	require(diagnostics.validation_mismatches == 0);
 	require(diagnostics.validation_faults == 0);
+	require(diagnostics.private_validation_word_installs == 1);
+	require(diagnostics.shared_validation_word_installs == 0);
 }
 
 void in_block_change_rejects_saved_words()
@@ -620,76 +761,656 @@ void the_cache_holds_more_than_twice_the_former_capacity()
 		blocks, static_cast<unsigned long long>(retranslated));
 }
 
+void saved_word_owners_remain_inside_representative_budgets()
+{
+	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
+	struct Expectation final {
+		std::size_t guest_bytes;
+		std::size_t cache_sets;
+	};
+	constexpr std::array expectations{
+		Expectation{4U * gib, 32768},
+		Expectation{8U * gib, 65536},
+		Expectation{16U * gib, 131072},
+	};
+	for (const auto &expectation : expectations) {
+		const auto whole_process_budget = expectation.guest_bytes / 2U;
+		const auto geometry =
+			arm64::derive_jit_cache_geometry(whole_process_budget, 10);
+		const auto shared = arm64::derive_shared_translation_cache_budget(
+			whole_process_budget, 10);
+		require(geometry.cache_sets == expectation.cache_sets);
+		require(geometry.total_bytes() * 10U + shared <=
+			whole_process_budget);
+	}
+}
+
+[[nodiscard]] std::shared_ptr<arm64::SharedTranslation>
+shared_translation_for(std::span<const std::uint32_t> guest_words)
+{
+	auto translation = std::make_shared<arm64::SharedTranslation>();
+	auto saved =
+		std::make_shared_for_overwrite<std::uint32_t[]>(guest_words.size());
+	std::copy(guest_words.begin(), guest_words.end(), saved.get());
+	translation->guest_words = std::move(saved);
+	translation->guest_word_count = guest_words.size();
+	translation->guest_instructions = guest_words.size();
+	translation->words = {0xd503'201fU, 0xd65f'03c0U};
+	translation->hot_words = translation->words.size();
+	translation->internal_entry_word = 1;
+	return translation;
+}
+
+void a_full_shared_translation_shard_requires_private_fallback()
+{
+	arm64::SharedTranslationCache cache{1};
+	cache.add_executor();
+	cache.add_executor();
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	constexpr std::uint64_t pc = 0x138'0000;
+	const std::array first_words{system_call};
+	const std::array second_words{move_immediate(0, 1)};
+
+	const auto first = cache.insert(profile, pc, first_words,
+		shared_translation_for(first_words));
+	require(first != nullptr);
+	const auto duplicate = cache.insert(profile, pc, first_words,
+		shared_translation_for(first_words));
+	require(duplicate == first);
+	auto statistics = cache.statistics();
+	require(statistics.entries == 1);
+	require(statistics.insertions == 1);
+	require(statistics.rejected == 0);
+	const auto refused = cache.insert(profile, pc, second_words,
+		shared_translation_for(second_words));
+	require(refused == nullptr);
+	statistics = cache.statistics();
+	require(statistics.entries == 1);
+	require(statistics.insertions == 1);
+	require(statistics.rejected == 1);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
+void shared_translation_payload_bytes_are_bounded()
+{
+	arm64::SharedTranslationCache cache{/*shard_capacity=*/8,
+		/*maximum_accounted_bytes=*/1};
+	cache.add_executor();
+	cache.add_executor();
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	constexpr std::uint64_t pc = 0x139'0000;
+	const std::array words{system_call};
+	require(cache.insert(profile, pc, words,
+		shared_translation_for(words)) == nullptr);
+	const auto statistics = cache.statistics();
+	require(statistics.entries == 0);
+	require(statistics.insertions == 0);
+	require(statistics.rejected == 1);
+	require(statistics.payload_bytes == 0);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
 /* A translation embeds pointers into the link tables of the executor that
  * compiled it, so reuse is only correct if every one of them is rewritten for
  * the reusing executor. The first executor is destroyed before the second
  * runs: a missed relocation therefore branches through freed memory, which
  * the sanitizer gates catch rather than silently taking another executor's
- * link.
+ * link. The source and reused target also exchange modified x8/x9 state, so
+ * the successful relocated edge pins the fixed carry-bank contract.
  */
 void a_second_executor_reuses_the_first_translation_safely()
 {
 	constexpr unsigned long generation = 8112;
 	constexpr std::uint64_t base = 0x140'0000;
+	constexpr auto target = base + 0x40;
 	JitBacking backing{1};
 	/* Two blocks, the first ending in a direct branch, so the translation
 	 * has a link pointer that has to be relocated.
 	 */
 	backing.put32(0, move_immediate(0, 7));
-	backing.put32(4, branch(base + 4, base + 8));
-	backing.put32(8, move_immediate(1, 9));
-	backing.put32(12, system_call);
+	backing.put32(4, 0x9100'0508U); // add x8, x8, #1
+	backing.put32(8, 0x9100'0929U); // add x9, x9, #2
+	backing.put32(12, branch(base + 12, target));
+	backing.put32(target - base, move_immediate(1, 9));
+	backing.put32(target - base + 4,
+		0x8b09'0108U); // add x8, x8, x9
+	backing.put32(target - base + 8,
+		0x9100'1129U); // add x9, x9, #4
+	backing.put32(target - base + 12, system_call);
 	JitMapping mapping{generation, base, backing, 1};
 	StaticGuestMemory memory;
 
 	const auto before =
 		arm64::SharedTranslationCache::instance().statistics();
+	struct Completion final {
+		arm64::CpuState cpu;
+		unsigned invocations;
+		std::size_t final_executed;
+	};
 	const auto run_to_system_call = [&](JitExecutor &executor) {
 		arm64::CpuState cpu{};
 		cpu.pc = base;
+		cpu.registers[8] = 10;
+		cpu.registers[9] = 20;
 		for (unsigned step = 0; step < 8; ++step) {
 			const auto run = run_once(executor, memory, generation, cpu);
 			if (run.event == ::uml::cpu::EngineEvent::system_call)
-				return cpu;
+				return Completion{cpu, step + 1U, run.executed};
 			require(run.event == ::uml::cpu::EngineEvent::continued);
 		}
 		require(false);
-		return cpu;
+		return Completion{};
 	};
 	/* The second executor exists while the first compiles, because sharing
 	 * is only enabled for concurrent executors, but it does not run until
 	 * the first has been destroyed.
 	 */
 	JitExecutor second;
+	std::uint64_t first_private_installs{};
+	std::uint64_t first_shared_installs{};
 	{
 		JitExecutor first;
-		const auto cpu = run_to_system_call(first);
-		require(cpu.registers[0] == 7);
-		require(cpu.registers[1] == 9);
+		const auto cold = run_to_system_call(first);
+		require(cold.invocations == 2);
+		require(cold.cpu.registers[0] == 7);
+		require(cold.cpu.registers[1] == 9);
+		require(cold.cpu.registers[8] == 33);
+		require(cold.cpu.registers[9] == 26);
+		const auto linked = run_to_system_call(first);
+		require(linked.invocations == 1 && linked.final_executed == 8);
+		require(linked.cpu.registers[0] == 7);
+		require(linked.cpu.registers[1] == 9);
+		require(linked.cpu.registers[8] == 33);
+		require(linked.cpu.registers[9] == 26);
+		const auto diagnostics = first.cache_validation_diagnostics();
+		first_private_installs =
+			diagnostics.private_validation_word_installs;
+		first_shared_installs =
+			diagnostics.shared_validation_word_installs;
 	}
 	const auto published =
 		arm64::SharedTranslationCache::instance().statistics();
-	require(published.insertions > before.insertions);
+	if constexpr (arm64::share_translations_between_executors) {
+		require(published.insertions > before.insertions);
+		require(first_shared_installs > 0);
+		require(first_private_installs == 0);
+	} else {
+		require(published.insertions == before.insertions);
+		require(first_shared_installs == 0);
+		require(first_private_installs > 0);
+	}
 
-	const auto cpu = run_to_system_call(second);
-	require(cpu.registers[0] == 7);
-	require(cpu.registers[1] == 9);
+	const auto cold = run_to_system_call(second);
+	require(cold.invocations == 2);
+	require(cold.cpu.registers[0] == 7);
+	require(cold.cpu.registers[1] == 9);
+	require(cold.cpu.registers[8] == 33);
+	require(cold.cpu.registers[9] == 26);
+	const auto linked = run_to_system_call(second);
+	require(linked.invocations == 1 && linked.final_executed == 8);
+	require(linked.cpu.registers[0] == 7);
+	require(linked.cpu.registers[1] == 9);
+	require(linked.cpu.registers[8] == 33);
+	require(linked.cpu.registers[9] == 26);
 	const auto reused =
 		arm64::SharedTranslationCache::instance().statistics();
-	require(reused.hits > published.hits);
+	const auto second_diagnostics = second.cache_validation_diagnostics();
+	require(second_diagnostics.target_link_refusals == 0);
+	require(second_diagnostics.direct_link_table_capacity > 0);
+	require(second_diagnostics.direct_link_table_high_water > 0);
+	require(second_diagnostics.direct_link_table_high_water <=
+		second_diagnostics.direct_link_table_capacity);
+	if constexpr (arm64::share_translations_between_executors) {
+		require(reused.matches > published.matches);
+		require(reused.reuses > published.reuses);
+		require(second_diagnostics.shared_validation_word_installs > 0);
+		require(second_diagnostics.private_validation_word_installs == 0);
+	} else {
+		require(reused.matches == published.matches);
+		require(reused.reuses == published.reuses);
+		require(second_diagnostics.shared_validation_word_installs == 0);
+		require(second_diagnostics.private_validation_word_installs > 0);
+	}
 	std::fprintf(stderr,
 		"JIT shared translations: %llu published, %llu reused by the "
 		"second executor\n",
 		static_cast<unsigned long long>(published.insertions -
 			before.insertions),
-		static_cast<unsigned long long>(reused.hits - published.hits));
+		static_cast<unsigned long long>(reused.reuses - published.reuses));
+}
+
+/* The direct-link case above pins one relocation kind. BR translations embed
+ * an executor-owned PIC site as well. Train the publisher's site before its
+ * destruction so an unrelocated reuse would read that freed site and branch
+ * through the publisher's freed target record/code. The surviving executor
+ * must instead observe a cold miss, train its own site, and then take its own
+ * hot PIC path. Its source modifies x8/x9 and its target consumes both, so the
+ * final run also proves carried state across that relocated successful edge.
+ */
+void a_second_executor_reuses_an_indirect_translation_safely()
+{
+	constexpr unsigned long generation = 8113;
+	constexpr std::uint64_t base = 0x144'0000;
+	constexpr auto target = base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, 0x9100'0508U); // add x8, x8, #1
+	backing.put32(4, 0x9100'0929U); // add x9, x9, #2
+	backing.put32(8, branch_register(5));
+	backing.put32(target - base,
+		0x8b09'0108U); // add x8, x8, x9
+	backing.put32(target - base + 4,
+		0x9100'1129U); // add x9, x9, #4
+	backing.put32(target - base + 8, move_immediate(0, 11));
+	backing.put32(target - base + 12, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+
+	const auto run_active_block = [&](JitExecutor &executor,
+		arm64::CpuState &cpu) {
+		std::size_t executed = 0;
+		const auto event =
+			executor.run_block(cpu, memory, generation, executed);
+		return Run{event, executed};
+	};
+	const auto before =
+		arm64::SharedTranslationCache::instance().statistics();
+
+	/* Publication requires two concurrent executors. Keep the consumer alive
+	 * but idle until the publisher's PIC has been trained and taken.
+	 */
+	JitExecutor second;
+	{
+		JitExecutor first;
+		JitExecutor excess;
+		require(first.budget_admitted());
+		require(second.budget_admitted());
+		require(!excess.budget_admitted());
+		require(!excess.begin_execution(generation, base));
+		arm64::CpuState excess_cpu{};
+		StaticGuestMemory excess_memory;
+		std::size_t excess_executed = 1;
+		require(excess.run_block(excess_cpu, excess_memory, generation,
+			excess_executed) == ::uml::cpu::EngineEvent::fatal);
+		require(excess_executed == 0);
+		arm64::CpuState cpu{};
+		cpu.pc = base;
+		cpu.registers[5] = target;
+		cpu.registers[8] = 10;
+		cpu.registers[9] = 20;
+		require(first.begin_execution(generation, cpu.pc));
+
+		auto run = run_active_block(first, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::continued);
+		require(run.executed == 3);
+		require(cpu.pc == target);
+		require(cpu.registers[8] == 11 && cpu.registers[9] == 22);
+		run = run_active_block(first, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::system_call);
+		require(run.executed == 4);
+		require(cpu.registers[0] == 11);
+		require(cpu.registers[8] == 33 && cpu.registers[9] == 26);
+
+		cpu.pc = base;
+		cpu.registers[0] = 0;
+		cpu.registers[8] = 10;
+		cpu.registers[9] = 20;
+		run = run_active_block(first, cpu);
+		require(run.event == ::uml::cpu::EngineEvent::system_call);
+		require(run.executed == 7);
+		require(cpu.registers[0] == 11);
+		require(cpu.registers[8] == 33 && cpu.registers[9] == 26);
+		const auto links = first.indirect_link_diagnostics();
+		require(links.misses == 1);
+		require(links.trains == 1);
+		const auto cache = first.cache_validation_diagnostics();
+		require(cache.translations == 2);
+		if constexpr (arm64::share_translations_between_executors) {
+			require(cache.shared_validation_word_installs == 2);
+			require(cache.private_validation_word_installs == 0);
+		} else {
+			require(cache.shared_validation_word_installs == 0);
+			require(cache.private_validation_word_installs == 2);
+		}
+		first.end_execution();
+	}
+
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	if constexpr (arm64::share_translations_between_executors) {
+		require(published.insertions == before.insertions + 2);
+		require(published.misses == before.misses + 2);
+	} else {
+		require(published.insertions == before.insertions);
+		require(published.misses == before.misses);
+	}
+
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	cpu.registers[5] = target;
+	cpu.registers[8] = 10;
+	cpu.registers[9] = 20;
+	require(second.begin_execution(generation, cpu.pc));
+
+	/* A correctly relocated, executor-private PIC starts cold even though the
+	 * destroyed publisher had already trained the same guest target.
+	 */
+	auto run = run_active_block(second, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::continued);
+	require(run.executed == 3);
+	require(cpu.pc == target);
+	require(cpu.registers[8] == 11 && cpu.registers[9] == 22);
+	auto links = second.indirect_link_diagnostics();
+	require(links.misses == 1);
+	require(links.trains == 0);
+
+	run = run_active_block(second, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 4);
+	require(cpu.registers[0] == 11);
+	require(cpu.registers[8] == 33 && cpu.registers[9] == 26);
+	links = second.indirect_link_diagnostics();
+	require(links.misses == 1);
+	require(links.trains == 1);
+
+	cpu.pc = base;
+	cpu.registers[0] = 0;
+	cpu.registers[8] = 10;
+	cpu.registers[9] = 20;
+	run = run_active_block(second, cpu);
+	require(run.event == ::uml::cpu::EngineEvent::system_call);
+	require(run.executed == 7);
+	require(cpu.registers[0] == 11);
+	require(cpu.registers[8] == 33 && cpu.registers[9] == 26);
+	links = second.indirect_link_diagnostics();
+	require(links.misses == 1);
+	require(links.trains == 1);
+	require(links.unsafe_target_refusals == 0);
+	require(links.scope_rejections == 0);
+	require(links.capacity_refusals == 0);
+	require(links.table_capacity > 0);
+	require(links.table_high_water > 0);
+	require(links.table_high_water <= links.table_capacity);
+	second.end_execution();
+
+	const auto reused =
+		arm64::SharedTranslationCache::instance().statistics();
+	const auto cache = second.cache_validation_diagnostics();
+	require(cache.translations == 2);
+	if constexpr (arm64::share_translations_between_executors) {
+		require(reused.matches == published.matches + 2);
+		require(reused.reuses == published.reuses + 2);
+		require(reused.misses == published.misses);
+		require(cache.shared_validation_word_installs == 2);
+		require(cache.private_validation_word_installs == 0);
+	} else {
+		require(reused.matches == published.matches);
+		require(reused.reuses == published.reuses);
+		require(reused.misses == published.misses);
+		require(cache.shared_validation_word_installs == 0);
+		require(cache.private_validation_word_installs == 2);
+	}
+	std::fprintf(stderr,
+		"JIT shared indirect translation: %llu published, %llu reused, "
+		"%llu PIC miss, %llu PIC train\n",
+		static_cast<unsigned long long>(published.insertions -
+			before.insertions),
+		static_cast<unsigned long long>(reused.reuses - published.reuses),
+		static_cast<unsigned long long>(links.misses),
+		static_cast<unsigned long long>(links.trains));
+}
+
+void a_direct_link_capacity_match_is_not_counted_as_reuse()
+{
+	constexpr unsigned long generation = 8114;
+	constexpr std::uint64_t base = 0x148'0000;
+	constexpr auto target = base + 0x40;
+	JitBacking backing{1};
+	backing.put32(0, move_immediate(0, 13));
+	backing.put32(4, 0x9100'0508U); // add x8, x8, #1
+	backing.put32(8, 0x9100'0929U); // add x9, x9, #2
+	backing.put32(12, branch(base + 12, target));
+	backing.put32(target - base, 0x8b09'0108U); // add x8, x8, x9
+	backing.put32(target - base + 4, 0x9100'1129U); // add x9, x9, #4
+	backing.put32(target - base + 8, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+	JitExecutor publisher;
+	JitExecutor consumer{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{.direct_link_capacity = 0}};
+
+	const auto run_to_system_call = [&](JitExecutor &executor) {
+		arm64::CpuState cpu{};
+		cpu.pc = base;
+		cpu.registers[8] = 10;
+		cpu.registers[9] = 20;
+		for (unsigned step = 0; step < 4; ++step) {
+			const auto run = run_once(executor, memory, generation, cpu);
+			if (run.event == ::uml::cpu::EngineEvent::system_call)
+				return cpu;
+			require(run.event == ::uml::cpu::EngineEvent::continued);
+			require(cpu.pc == target);
+			require(cpu.registers[8] == 11 &&
+				cpu.registers[9] == 22);
+		}
+		require(false);
+		return cpu;
+	};
+
+	const auto published_cpu = run_to_system_call(publisher);
+	require(published_cpu.registers[0] == 13 &&
+		published_cpu.registers[8] == 33 &&
+		published_cpu.registers[9] == 26);
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	const auto consumer_cpu = run_to_system_call(consumer);
+	require(consumer_cpu.registers[0] == 13 &&
+		consumer_cpu.registers[8] == 33 &&
+		consumer_cpu.registers[9] == 26);
+	const auto after =
+		arm64::SharedTranslationCache::instance().statistics();
+	if constexpr (arm64::share_translations_between_executors) {
+		require(after.matches > published.matches);
+		require(after.materialization_direct_link_failures ==
+			published.materialization_direct_link_failures + 1U);
+		require(after.materialization_indirect_link_failures ==
+			published.materialization_indirect_link_failures);
+		require(after.degraded_rejected == published.degraded_rejected);
+		require(after.reuses < after.matches);
+	} else {
+		require(after.matches == published.matches);
+		require(after.reuses == published.reuses);
+	}
+	const auto diagnostics = consumer.cache_validation_diagnostics();
+	require(diagnostics.direct_link_table_capacity == 0);
+	require(diagnostics.direct_link_table_high_water == 0);
+	require(diagnostics.target_link_refusals > 0);
+	require(diagnostics.direct_link_refusals > 0);
+	if constexpr (arm64::share_translations_between_executors) {
+		/* The locally compiled source is degraded, but its exact canonical
+		 * owner remains usable for immutable validation words. Preflight must
+		 * find that owner before considering the refusal counts.
+		 */
+		require(diagnostics.private_validation_word_installs == 0);
+		require(diagnostics.shared_validation_word_installs > 0);
+	}
+}
+
+void an_indirect_link_capacity_match_is_not_counted_as_reuse()
+{
+	constexpr unsigned long generation = 8115;
+	constexpr std::uint64_t base = 0x14c'0000;
+	constexpr auto target = base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, 0x9100'0508U); // add x8, x8, #1
+	backing.put32(4, 0x9100'0929U); // add x9, x9, #2
+	backing.put32(8, branch_register(5));
+	backing.put32(target - base, 0x8b09'0108U); // add x8, x8, x9
+	backing.put32(target - base + 4, 0x9100'1129U); // add x9, x9, #4
+	backing.put32(target - base + 8, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+	JitExecutor publisher;
+	JitExecutor consumer{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{.indirect_link_capacity = 0}};
+
+	const auto run_to_system_call = [&](JitExecutor &executor) {
+		arm64::CpuState cpu{};
+		cpu.pc = base;
+		cpu.registers[5] = target;
+		cpu.registers[8] = 10;
+		cpu.registers[9] = 20;
+		for (unsigned step = 0; step < 4; ++step) {
+			const auto run = run_once(executor, memory, generation, cpu);
+			if (run.event == ::uml::cpu::EngineEvent::system_call)
+				return cpu;
+			require(run.event == ::uml::cpu::EngineEvent::continued);
+			require(cpu.pc == target);
+			require(cpu.registers[8] == 11 &&
+				cpu.registers[9] == 22);
+		}
+		require(false);
+		return cpu;
+	};
+
+	const auto published_cpu = run_to_system_call(publisher);
+	require(published_cpu.registers[8] == 33 &&
+		published_cpu.registers[9] == 26);
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	const auto consumer_cpu = run_to_system_call(consumer);
+	require(consumer_cpu.registers[8] == 33 &&
+		consumer_cpu.registers[9] == 26);
+	const auto after =
+		arm64::SharedTranslationCache::instance().statistics();
+	if constexpr (arm64::share_translations_between_executors) {
+		require(after.matches > published.matches);
+		require(after.materialization_indirect_link_failures ==
+			published.materialization_indirect_link_failures + 1U);
+		require(after.materialization_direct_link_failures ==
+			published.materialization_direct_link_failures);
+		require(after.reuses < after.matches);
+	} else {
+		require(after.matches == published.matches);
+		require(after.reuses == published.reuses);
+	}
+	const auto links = consumer.indirect_link_diagnostics();
+	require(links.table_capacity == 0);
+	require(links.table_high_water == 0);
+	require(links.capacity_refusals > 0);
+	const auto diagnostics = consumer.cache_validation_diagnostics();
+	require(diagnostics.indirect_link_refusals > 0);
+}
+
+void an_arena_capacity_match_is_not_counted_as_reuse()
+{
+	constexpr unsigned long generation = 8116;
+	constexpr std::uint64_t base = 0x150'0000;
+	JitBacking backing{1};
+	backing.put32(0, system_call);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+	JitExecutor publisher;
+	JitExecutor consumer{
+		JitExecutorOptions{},
+		JitExecutorDiagnosticsOptions{.code_arena_size = 1}};
+
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	require(run_once(publisher, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	const auto published =
+		arm64::SharedTranslationCache::instance().statistics();
+	cpu.pc = base;
+	require(run_once(consumer, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	const auto after =
+		arm64::SharedTranslationCache::instance().statistics();
+	if constexpr (arm64::share_translations_between_executors) {
+		require(after.matches == published.matches + 1U);
+		require(after.reuses == published.reuses);
+		require(after.materialization_arena_failures ==
+			published.materialization_arena_failures + 1U);
+	} else {
+		require(after.matches == published.matches);
+		require(after.reuses == published.reuses);
+	}
+	const auto diagnostics = consumer.cache_validation_diagnostics();
+	require(diagnostics.arena_resets == 1);
+	require(diagnostics.translations == 0);
+}
+
+void defensive_install_rejects_mutated_canonical_metadata()
+{
+	if constexpr (!arm64::share_translations_between_executors)
+		return;
+	constexpr unsigned long generation = 8117;
+	constexpr std::uint64_t base = 0x154'0000;
+	const std::array guest_words{system_call};
+	JitBacking backing{1};
+	backing.put32(0, guest_words[0]);
+	JitMapping mapping{generation, base, backing, 1};
+	StaticGuestMemory memory;
+	JitExecutor consumer;
+	auto candidate = shared_translation_for(guest_words);
+	{
+		JitExecutor publication_gate;
+		const JitExecutorOptions options{};
+		const arm64::SharedTranslationCache::CodegenProfile profile{
+			.capabilities = options.host_capabilities,
+			.guarded_control_flow = options.enable_guarded_control_flow,
+			.pointer_authentication =
+				options.enable_pointer_authentication,
+		};
+		require(arm64::SharedTranslationCache::instance().insert(
+			profile, base, guest_words, candidate) == candidate);
+		/* The production publisher relinquishes its mutable owner. This
+		 * mutation simulates corruption through a direct API caller and pins
+		 * the executor's independent install-time validation boundary.
+		 */
+		candidate->hot_words = 0;
+	}
+	const auto before =
+		arm64::SharedTranslationCache::instance().statistics();
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	require(run_once(consumer, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	const auto after =
+		arm64::SharedTranslationCache::instance().statistics();
+	require(after.matches == before.matches + 1U);
+	require(after.reuses == before.reuses);
+	require(after.materialization_invalid_metadata_failures ==
+		before.materialization_invalid_metadata_failures + 1U);
+	const auto diagnostics = consumer.cache_validation_diagnostics();
+	/* Install-time validation rejected the corrupted code metadata. The local
+	 * recompilation may still retain the exact canonical owner's independent
+	 * immutable guest-word storage, because publication preflight resolves that
+	 * owner before applying the live-executor admission gate.
+	 */
+	require(diagnostics.private_validation_word_installs == 0);
+	require(diagnostics.shared_validation_word_installs == 1);
 }
 
 } // namespace
 
 int main()
 {
+	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
+	require(arm64::set_jit_cache_budget(1U * gib, 2));
+	publication_allocation_failures_install_private_code();
+	defensive_install_rejects_mutated_canonical_metadata();
+	an_arena_capacity_match_is_not_counted_as_reuse();
+	an_indirect_link_capacity_match_is_not_counted_as_reuse();
+	a_direct_link_capacity_match_is_not_counted_as_reuse();
 	a_second_executor_reuses_the_first_translation_safely();
+	a_second_executor_reuses_an_indirect_translation_safely();
+	shared_translation_payload_bytes_are_bounded();
+	a_full_shared_translation_shard_requires_private_fallback();
+	saved_word_owners_remain_inside_representative_budgets();
 	the_cache_holds_more_than_twice_the_former_capacity();
 	unrelated_page_change_reuses_exact_block();
 	in_block_change_rejects_saved_words();

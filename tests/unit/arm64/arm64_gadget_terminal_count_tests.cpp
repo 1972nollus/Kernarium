@@ -209,6 +209,30 @@ void retiring_terminals_keep_their_instruction_count()
 	}
 }
 
+void add_immediate_at_block_tail_reaches_synthetic_terminal()
+{
+	/* Builder must append two complete words after the final ADD operand. The
+	 * successor-hoist candidate consumes the operand and terminal pointer in
+	 * one LDP, then the terminal consumes its fallthrough PC. */
+	constexpr std::array instructions{
+		0x9100'0694U, // add x20, x20, #1
+	};
+	const auto built = gadgets::Builder{}.build(code_base, instructions);
+	require(built.complete);
+	require(built.program.instruction_count() == 1U);
+	require(built.program.words().size() == 4U);
+
+	arm64::CpuState cpu{};
+	cpu.registers[20] = 41U;
+	::uml::memory::Tlb tlb;
+	std::size_t executed{};
+	const auto event = gadgets::execute(built.program, cpu, tlb, executed);
+	require(event == ::uml::cpu::EngineEvent::interrupt);
+	require(cpu.pc == code_base + sizeof(std::uint32_t));
+	require(cpu.registers[20] == 42U);
+	require(executed == 1U);
+}
+
 void linked_successor_terminal_subtracts_only_its_suffix()
 {
 	constexpr unsigned long generation = 760;
@@ -405,6 +429,7 @@ int main()
 	valid_prefix_before_implementation_gap_is_counted();
 	gcs_fault_excludes_the_faulting_instruction();
 	retiring_terminals_keep_their_instruction_count();
+	add_immediate_at_block_tail_reaches_synthetic_terminal();
 	linked_successor_terminal_subtracts_only_its_suffix();
 	linked_successor_fpcr_exit_subtracts_only_its_suffix();
 	reused_cache_slots_leave_no_live_stream_index_entries();

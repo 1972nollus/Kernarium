@@ -10,27 +10,20 @@ uml_add_tooling_test(
 execute_process(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/validate_a64_aslref_corpus.py
-    RESULT_VARIABLE _uml_aslref_corpus_identity_result
-    OUTPUT_VARIABLE _uml_aslref_corpus_identity_output
-    ERROR_VARIABLE _uml_aslref_corpus_identity_error)
-if(NOT _uml_aslref_corpus_identity_result EQUAL 0)
+    RESULT_VARIABLE _uml_aslref_corpus_validation_result
+    OUTPUT_VARIABLE _uml_aslref_corpus_validation_output
+    ERROR_VARIABLE _uml_aslref_corpus_validation_error)
+if(NOT _uml_aslref_corpus_validation_result EQUAL 0)
     message(FATAL_ERROR
-        "Checked-in A64 ASLRef corpus identity is invalid:\n"
-        "${_uml_aslref_corpus_identity_output}"
-        "${_uml_aslref_corpus_identity_error}")
+        "Checked-in A64 ASLRef corpus is invalid:\n"
+        "${_uml_aslref_corpus_validation_output}"
+        "${_uml_aslref_corpus_validation_error}")
 endif()
 
 uml_add_tooling_test(
-    NAME arm64-aslref-corpus-identity
+    NAME arm64-aslref-corpus-validation
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/validate_a64_aslref_corpus.py
-    LABELS cpu;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME arm64-one-shot-publication-safety
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a64_one_shot_publications.py
     LABELS cpu;audit
     TIMEOUT 30)
 

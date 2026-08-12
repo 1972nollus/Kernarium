@@ -14,7 +14,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from a64_aggregate_manifest_identity import read_manifest_identity  # noqa: E402
 from aggregate_a64_raw_instruction_evidence import (  # noqa: E402
     OUTPUT_COLUMNS as AGGREGATE_COLUMNS,
 )
@@ -26,6 +25,9 @@ from generate_a64_aslref_aggregate_execution_plan import (  # noqa: E402
 )
 from generate_a64_instruction_required_variants import (  # noqa: E402
     COLUMNS as REQUIRED_COLUMNS,
+)
+from validate_a64_instruction_aggregate_manifest import (  # noqa: E402
+    validate_checked_manifest_rows,
 )
 from run_a64_aslref_execution_oracle import (  # noqa: E402
     COLUMNS as EXECUTION_COLUMNS,
@@ -165,13 +167,10 @@ def aggregate_plan_fixtures(repository: Path) -> None:
     first = build_plan(aggregates, required, decodes)
     second = build_plan(aggregates, required, decodes)
     require(first == second, "aggregate execution plan regeneration drifted")
-    identity = read_manifest_identity(
-        repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json"
-    )
+    validate_checked_manifest_rows(aggregates)
     require(
-        len(first) == identity["row_count"],
-        "aggregate execution plan lost frozen identities",
+        len(first) == len(aggregates),
+        "aggregate execution plan lost checked manifest rows",
     )
     validate_plan(aggregates, required, decodes, first)
 

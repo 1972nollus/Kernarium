@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "jit_cache_geometry.hpp"
 #include "jit_runtime_contract.hpp"
 
 #include <array>
@@ -14,6 +15,12 @@
 #include <vector>
 
 namespace uml::cpu::arm64 {
+
+/* Translation stops at the first control-flow instruction. An unconditional
+ * or indirect exit owns one executor pointer; a conditional exit is the sole
+ * two-pointer case because it lowers both taken and fallthrough successors.
+ */
+inline constexpr std::size_t maximum_shared_translation_relocations = 2;
 
 /*
  * Translations shared between executors.
@@ -39,7 +46,20 @@ namespace uml::cpu::arm64 {
 struct SharedTranslation final {
   std::vector<std::uint32_t> words;
   std::vector<JitRelocation> relocations;
-  std::vector<std::uint32_t> guest_words;
+  /* Either nonzero count identifies correct executor-private code that fell
+   * back to C++ because its compiling executor could not allocate every
+   * requested stable link record. The shared cache rejects it without
+   * occupying the key so a later full translation can become canonical.
+   */
+  std::size_t direct_link_refusals{};
+  std::size_t indirect_link_refusals{};
+  /* Shared separately from the host code so a private block-cache entry can
+   * retain exactly the immutable prefix the compiler consumed. Bytes fetched
+   * after that prefix cannot affect this translation and are not part of its
+   * identity.
+   */
+  std::shared_ptr<const std::uint32_t[]> guest_words;
+  std::size_t guest_word_count{};
   std::size_t guest_instructions{};
   std::size_t hot_words{};
   std::size_t internal_entry_word{};
@@ -56,15 +76,83 @@ struct SharedTranslation final {
 };
 
 struct SharedTranslationStatistics final {
-  std::uint64_t hits{};
+  /* A match means find() identified a canonical translation for the fetched
+   * guest prefix. Reuse is narrower: the requesting executor resolved every
+   * private link pointer, copied the code into its arena, and installed the
+   * resulting block. Keeping the counters separate prevents capacity misses
+   * after a successful lookup from being reported as saved compilation.
+   */
+  std::uint64_t matches{};
+  std::uint64_t reuses{};
   std::uint64_t misses{};
   std::uint64_t insertions{};
   std::uint64_t rejected{};
+  std::uint64_t degraded_rejected{};
+  std::uint64_t malformed_rejected{};
+  /* A failed insertion can conservatively retain its complete budget charge
+   * after a new map node enlarged the bucket array and was then erased. These
+   * are accounted reservation bytes, not a claim about measured heap usage.
+   */
+  std::uint64_t insertion_failures{};
+  std::uint64_t failed_insertion_retained_accounted_bytes{};
+  std::uint64_t materialization_invalid_metadata_failures{};
+  std::uint64_t materialization_direct_link_failures{};
+  std::uint64_t materialization_indirect_link_failures{};
+  std::uint64_t materialization_arena_failures{};
   std::uint64_t entries{};
+  std::uint64_t payload_bytes{};
+  std::uint64_t accounted_bytes{};
+  std::uint64_t maximum_accounted_bytes{};
+
+  [[nodiscard]] std::uint64_t materialization_failures() const noexcept {
+    return materialization_invalid_metadata_failures +
+           materialization_direct_link_failures +
+           materialization_indirect_link_failures +
+           materialization_arena_failures;
+  }
 };
+
+struct SharedTranslationPublicationSizes final {
+  std::size_t host_words{};
+  std::size_t relocations{};
+  std::size_t guest_words{};
+};
+
+struct SharedTranslationPublicationPreflight final {
+  /* A canonical owner may race the caller's local compilation. Reuse it
+   * before consulting the capacity bounds, matching insert()'s ordering. */
+  std::shared_ptr<const SharedTranslation> canonical;
+  /* False with no canonical means publication is gated or definitely cannot
+   * fit. The caller must retain its private validation words. */
+  bool may_construct{};
+};
+
+enum class SharedTranslationMaterializationFailure : std::uint8_t {
+  invalid_metadata,
+  direct_link_capacity,
+  indirect_link_capacity,
+  arena_exhaustion,
+};
+
+/* Validates every field consumed while installing shared code. requested is
+ * the currently fetched guest span and may contain an unconsumed tail; the
+ * translation must own and exactly describe a nonempty prefix of it.
+ */
+[[nodiscard]] bool valid_shared_translation(
+    const SharedTranslation &translation,
+    std::span<const std::uint32_t> requested) noexcept;
 
 class SharedTranslationCache final {
 public:
+  /* maximum_accounted_bytes bounds storage retained by this cache, including
+   * its fixed shards, map/index overhead, and admitted translation ownership.
+   * A caller's not-yet-admitted candidate remains transient caller storage.
+   */
+  explicit SharedTranslationCache(
+      std::size_t shard_capacity = default_shard_maximum_entries,
+      std::size_t maximum_accounted_bytes =
+          maximum_shared_translation_cache_bytes) noexcept;
+
   /* Codegen options that change emitted code. Two executors may only share a
    * translation when these agree, so they are part of the identity of the
    * cache rather than of each entry.
@@ -73,6 +161,8 @@ public:
     ::uml::cpu::HostCapabilities capabilities{};
     bool guarded_control_flow{};
     bool pointer_authentication{};
+    bool persistent_linked_block_abi{persistent_linked_block_abi_default};
+    bool linked_x8_x9_bank{carry_x8_x9_across_links};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.
@@ -84,9 +174,50 @@ public:
   find(const CodegenProfile &profile, std::uint64_t guest_pc,
        std::span<const std::uint32_t> guest_words) const;
 
-  void insert(const CodegenProfile &profile, std::uint64_t guest_pc,
-              std::span<const std::uint32_t> guest_words,
-              std::shared_ptr<const SharedTranslation> translation);
+  /* Nonallocating advisory check for the production publisher. It first
+   * returns an exact canonical owner that raced local compilation, including
+   * after the publishing peer retires. Otherwise a new admission requires two
+   * live executors, then records exactly one degraded rejection when either
+   * refusal count is nonzero, or one capacity rejection when the shard is
+   * already full or an overflow-safe lower-bound charge for the supplied
+   * payload sizes cannot fit in the current accounting snapshot. insert()
+   * remains the authority for capacity consumed after this check and for
+   * actual vector capacities.
+   */
+  [[nodiscard]] SharedTranslationPublicationPreflight preflight_publication(
+      const CodegenProfile &profile, std::uint64_t guest_pc,
+      std::span<const std::uint32_t> guest_words,
+      SharedTranslationPublicationSizes sizes,
+      std::size_t direct_link_refusals,
+      std::size_t indirect_link_refusals);
+
+  /* Returns the canonical admitted entry, which may have been inserted by a
+   * racing executor or outlive its publishing peer. A null result means new
+   * publication is gated off or that the shard/byte capacity is full; the
+   * caller must retain private validation words.
+   */
+  [[nodiscard]] std::shared_ptr<const SharedTranslation>
+  insert(const CodegenProfile &profile, std::uint64_t guest_pc,
+         std::span<const std::uint32_t> guest_words,
+         std::shared_ptr<const SharedTranslation> translation);
+
+  [[nodiscard]] bool accepts_publications() const noexcept;
+
+  /* Returns true after recording exactly one refusal when a compiler result
+   * lost one or more requested stable links. Publication preflight calls this
+   * after its exact canonical lookup; insert() repeats the guard for direct API
+   * callers and tests.
+   */
+  [[nodiscard]] bool
+  refuse_degraded_publication(std::size_t direct_link_refusals,
+                              std::size_t indirect_link_refusals) noexcept;
+
+  /* Called only after an executor has materialized and installed a matched
+   * translation, or at the exact boundary where materialization failed.
+   */
+  void record_reuse() noexcept;
+  void record_materialization_failure(
+      SharedTranslationMaterializationFailure failure) noexcept;
 
   /* Sharing only pays when executors run at the same time. A process with a
    * single executor would otherwise copy and store every translation it
@@ -108,10 +239,10 @@ private:
   };
 
   /* Bounded near the largest working set measured so far, 283,353 distinct
-   * blocks, so a pathological guest cannot grow it without limit. At roughly
-   * a kilobyte an entry this caps the shared cache near 256 MiB for the whole
-   * process. Once full it stops admitting and executors compile for
-   * themselves.
+   * blocks, so a pathological guest cannot grow the entry metadata without
+   * limit. Retained host words, relocations and guest validation words have a
+   * separate byte cap. Once either limit is full, executors compile for
+   * themselves and retain validation bytes in their bounded private slab.
    */
   static constexpr std::size_t maximum_entries = 1U << 18U;
   /* One mutex for every executor's misses and insertions serialised them into
@@ -120,9 +251,8 @@ private:
    * share a cache line.
    */
   static constexpr std::size_t shard_count = 64;
-  static constexpr std::size_t shard_maximum_entries =
+  static constexpr std::size_t default_shard_maximum_entries =
       maximum_entries / shard_count;
-
   struct alignas(64) Shard final {
     mutable std::shared_mutex mutex;
     std::unordered_map<std::uint64_t, std::vector<Entry>> entries;
@@ -135,15 +265,46 @@ private:
     return static_cast<std::size_t>(hash) & (shard_count - 1U);
   }
 
+  [[nodiscard]] std::size_t entry_budget_charge(
+      const SharedTranslation &translation) const noexcept;
+  [[nodiscard]] static std::size_t
+  lower_bound_entry_budget_charge(
+      SharedTranslationPublicationSizes sizes) noexcept;
+  [[nodiscard]] static std::size_t
+  entry_budget_charge_from_payload(std::size_t payload_bytes) noexcept;
+  [[nodiscard]] bool budget_can_fit(std::size_t bytes) const noexcept;
+  [[nodiscard]] bool reserve_budget(std::size_t bytes) noexcept;
+  void release_budget(std::size_t bytes) noexcept;
+
   std::array<Shard, shard_count> shards_{};
   /* Counted outside the lock, so readers holding only a shared lock do not
    * race on them.
    */
-  mutable std::atomic<std::uint64_t> hits_{};
+  mutable std::atomic<std::uint64_t> matches_{};
+  std::atomic<std::uint64_t> reuses_{};
   mutable std::atomic<std::uint64_t> misses_{};
   std::atomic<std::uint64_t> insertions_{};
   std::atomic<std::uint64_t> rejected_{};
+  std::atomic<std::uint64_t> degraded_rejected_{};
+  std::atomic<std::uint64_t> malformed_rejected_{};
+  std::atomic<std::uint64_t> insertion_failures_{};
+  std::atomic<std::uint64_t>
+      failed_insertion_retained_accounted_bytes_{};
+  std::atomic<std::uint64_t> materialization_invalid_metadata_failures_{};
+  std::atomic<std::uint64_t> materialization_direct_link_failures_{};
+  std::atomic<std::uint64_t> materialization_indirect_link_failures_{};
+  std::atomic<std::uint64_t> materialization_arena_failures_{};
+  std::atomic<std::uint64_t> payload_bytes_{};
+  std::atomic<std::size_t> accounted_bytes_{};
   std::atomic<unsigned> live_executors_{};
+  std::size_t shard_capacity_;
+  std::size_t maximum_accounted_bytes_;
 };
+
+#if UML_ENABLE_JIT_PROFILE
+/* Emits the enabled process-global shared-cache summary only when its
+ * cumulative snapshot changed since the preceding call. */
+void report_final_shared_translation_statistics() noexcept;
+#endif
 
 } // namespace uml::cpu::arm64

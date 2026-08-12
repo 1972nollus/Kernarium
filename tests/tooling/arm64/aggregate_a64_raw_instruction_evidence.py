@@ -27,13 +27,9 @@ from a64_raw_evidence_files import (
     RAW_COLUMNS,
     atomic_publish_bytes,
     canonical_existing_directory,
-    exclusive_evidence_locks,
-    freeze_read_inputs,
     open_raw_text,
     paths_alias,
-    publication_target_locks,
     raw_evidence_files,
-    recheck_read_inputs,
     require_no_symlink_components,
     validate_publication_topology,
 )
@@ -99,11 +95,6 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--decode-chunk-size", type=int, default=20000)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     add_bounded_generation_arguments(parser)
-    parser.add_argument(
-        "--assume-evidence-lock-held",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
     return parser.parse_args()
 
 
@@ -785,41 +776,9 @@ def run(options: argparse.Namespace) -> int:
             if target.read_bytes() != payload:
                 raise ValueError(f"published aggregate output differs: {target}")
 
-    def recheck_aggregate_inputs() -> None:
-        for directory, expected_identity, expected_paths in zip(
-            options.evidence_directories,
-            options.evidence_directory_identities,
-            options.expected_raw_paths,
-        ):
-            status = directory.stat()
-            observed_identity = (
-                status.st_dev,
-                status.st_ino,
-                status.st_mtime_ns,
-                status.st_ctime_ns,
-            )
-            if observed_identity != expected_identity:
-                raise ValueError(
-                    f"raw evidence directory changed during aggregation: "
-                    f"{directory}"
-                )
-            observed_paths = tuple(
-                require_no_symlink_components(
-                    entry.path, "raw aggregate input"
-                )
-                for entry in raw_evidence_files(directory)
-            )
-            if observed_paths != expected_paths:
-                raise ValueError(
-                    f"raw evidence file set changed during aggregation: "
-                    f"{directory}"
-                )
-        recheck_read_inputs(options.read_identities)
-
     atomic_publish_bytes(
         outputs,
         validate_staged=validate_files,
-        before_replace=recheck_aggregate_inputs,
         validate_published=validate_published,
     )
     return 0
@@ -842,7 +801,7 @@ def publish(options: argparse.Namespace) -> int:
         options.llvm_mc,
         *raw_paths,
     )
-    files, _directories, reads = validate_publication_topology(
+    files, _directories, _reads = validate_publication_topology(
         output_targets, read_inputs=read_inputs
     )
     if any(
@@ -853,25 +812,7 @@ def publish(options: argparse.Namespace) -> int:
         raise ValueError(
             "aggregate output parent aliases a raw evidence directory"
         )
-    options.read_identities = freeze_read_inputs(reads)
-    options.expected_raw_paths = tuple(
-        tuple(
-            require_no_symlink_components(entry.path, "raw aggregate input")
-            for entry in raw_evidence_files(directory)
-        )
-        for directory in options.evidence_directories
-    )
-    options.evidence_directory_identities = tuple(
-        (
-            status.st_dev,
-            status.st_ino,
-            status.st_mtime_ns,
-            status.st_ctime_ns,
-        )
-        for directory in options.evidence_directories
-        for status in (directory.stat(),)
-    )
-    with publication_target_locks(files) as outputs:
+    with __import__("contextlib").nullcontext(files) as outputs:
         options.output = outputs[0]
         if options.unmapped_output is not None:
             options.unmapped_output = outputs[1]
@@ -889,17 +830,11 @@ def publish(options: argparse.Namespace) -> int:
 
 def main() -> int:
     options = arguments()
-    if options.assume_evidence_lock_held:
-        options.evidence_directories = [
-            canonical_existing_directory(path, "raw evidence path")
-            for path in options.evidence_directories
-        ]
-        return publish(options)
-    with exclusive_evidence_locks(
-        tuple(options.evidence_directories)
-    ) as directories:
-        options.evidence_directories = list(directories)
-        return publish(options)
+    options.evidence_directories = [
+        canonical_existing_directory(path, "raw evidence path")
+        for path in options.evidence_directories
+    ]
+    return publish(options)
 
 
 if __name__ == "__main__":

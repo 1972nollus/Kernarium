@@ -16,6 +16,10 @@ namespace uml::cpu::arm64 {
 [[nodiscard]] Event JitExecutor::Implementation::run_block(CpuState &cpu, StaticGuestMemory &memory,
                               unsigned long generation,
                               std::size_t &executed) {
+  if (!cache_lease_.admitted()) {
+    executed = 0;
+    return Event::fatal;
+  }
   const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
       host_capabilities_};
   executed = 0;
@@ -26,9 +30,17 @@ namespace uml::cpu::arm64 {
   preempted_ = sequences.execution_interrupt != 0;
   if (preempted_)
     return Event::interrupt;
-  if (mapping_generation_ != generation ||
-      mapping_changes_ != sequences.mapping_changes) {
+  const bool mapping_changed = mapping_generation_ != generation ||
+                               mapping_changes_ != sequences.mapping_changes;
+  /* StaticGuestMemory belongs to the task-carrier thread, while a pooled JIT
+   * executor may serve a different carrier on its next guest entry. Prepare
+   * each distinct per-entry memory object even when the executor's global
+   * generation/change view is already current. */
+  if (prepared_memory_ != &memory || mapping_changed) {
     memory.prepare(generation, sequences.mapping_changes);
+    prepared_memory_ = &memory;
+  }
+  if (mapping_changed) {
     tlb_.prepare(generation, sequences.mapping_changes);
     mapping_generation_ = generation;
     mapping_changes_ = sequences.mapping_changes;
@@ -104,6 +116,12 @@ namespace uml::cpu::arm64 {
       compiler.set_pointer_authentication_enabled(
           enable_pointer_authentication_);
       const auto compiled = compiler.compile(cpu.pc, fetched);
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+      cache_validation_diagnostics_.direct_link_refusals +=
+          compiled.direct_link_refusals;
+      cache_validation_diagnostics_.indirect_link_refusals +=
+          compiled.indirect_link_refusals;
+#endif
       {
         const auto valid_compilation = [&](const auto &candidate) {
           return !candidate.words.empty() && candidate.guest_instructions != 0 &&
@@ -112,15 +130,21 @@ namespace uml::cpu::arm64 {
                                            candidate.native_fp,
                                            candidate.native_fpmr);
         };
-        const auto install_compilation = [&](const auto &candidate,
-                                             void *code) {
+        const auto install_compilation =
+            [&](const auto &candidate, void *code,
+                const std::shared_ptr<const SharedTranslation> &translation) {
           const auto internal_entry =
               reinterpret_cast<std::uintptr_t>(code) +
               candidate.internal_entry_word * sizeof(std::uint32_t);
+          auto saved_guest_words =
+              translation == nullptr
+                  ? std::shared_ptr<const std::uint32_t[]>{}
+                  : translation->guest_words;
           return &store_native(
               generation, sequences.code_changes, cpu.pc,
               sign_jit_function<JitFunction>(code), internal_entry,
               std::span{instructions}.first(candidate.guest_instructions),
+              std::move(saved_guest_words),
               candidate.memory_write_mask, candidate.direct_memory_write_mask,
               candidate.accesses_fp_state, candidate.link_target_safe,
               candidate.native_fp, candidate.native_fpmr,
@@ -134,8 +158,8 @@ namespace uml::cpu::arm64 {
         if (!valid_compilation(compiled))
           return run_semantic_instruction(cpu, memory, executed);
         if (auto *code = arena_.store(compiled.words); code != nullptr) {
-          block = install_compilation(compiled, code);
-          publish_shared_translation(cpu.pc, fetched, compiled);
+          auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
+          block = install_compilation(compiled, code, shared);
         } else {
           profile_jit_arena_reset();
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -166,13 +190,20 @@ namespace uml::cpu::arm64 {
               enable_pointer_authentication_);
           const auto retry_compiled = retry_compiler.compile(
               cpu.pc, std::span{instructions}.first(count));
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+          cache_validation_diagnostics_.direct_link_refusals +=
+              retry_compiled.direct_link_refusals;
+          cache_validation_diagnostics_.indirect_link_refusals +=
+              retry_compiled.indirect_link_refusals;
+#endif
           if (!valid_compilation(retry_compiled))
             return run_semantic_instruction(cpu, memory, executed);
           code = arena_.store(retry_compiled.words);
           if (code == nullptr)
             return run_semantic_instruction(cpu, memory, executed);
-          block = install_compilation(retry_compiled, code);
-          publish_shared_translation(cpu.pc, fetched, retry_compiled);
+          auto shared =
+              publish_shared_translation(cpu.pc, fetched, retry_compiled);
+          block = install_compilation(retry_compiled, code, shared);
         }
       }
     }

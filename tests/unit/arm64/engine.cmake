@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # This family manifest is included by the ARM64 unit-test directory.
-    # Compose ordinary tests from the exact production engine objects. Only
-    # the two focused cache/link diagnostics substitute the counter-enabled
-    # executor variant; common conformance stays on the production object.
+    # Compose ordinary tests from the production engine targets. Focused JIT
+    # diagnostic tests substitute the counter-enabled executor variant;
+    # common conformance stays on the ordinary runtime path.
     set(UML_STATIC_RUNTIME_TEST_BASE_OBJECTS
-		$<TARGET_OBJECTS:uml_run_routing>
+        $<TARGET_OBJECTS:uml_host_topology>
+        $<TARGET_OBJECTS:uml_run_routing>
         $<TARGET_OBJECTS:uml_static_runtime>
         $<TARGET_OBJECTS:uml_cpu_engine_factory>
         $<TARGET_OBJECTS:uml_arm64_interpreter_engine>
@@ -222,38 +223,6 @@
 		COMMAND uml_arm64_pc_alignment_contract_tests
 		LABELS tsan)
 
-	foreach(_isolated_engine IN ITEMS interpreter gadget jit factory)
-		if(_isolated_engine STREQUAL "interpreter")
-			set(_isolated_kind 0)
-			set(_isolated_target uml_cpu_interpreter_component)
-		elseif(_isolated_engine STREQUAL "gadget")
-			set(_isolated_kind 1)
-			set(_isolated_target uml_cpu_gadget_component)
-		elseif(_isolated_engine STREQUAL "jit")
-			set(_isolated_kind 2)
-			set(_isolated_target uml_cpu_jit_component)
-		else()
-			set(_isolated_kind 3)
-			set(_isolated_target uml_cpu_engine_component)
-		endif()
-		add_executable(uml_cpu_${_isolated_engine}_isolated_link_tests
-			${PROJECT_SOURCE_DIR}/tests/unit/cpu_adapter_link_tests.cpp)
-		target_link_libraries(uml_cpu_${_isolated_engine}_isolated_link_tests
-			PRIVATE ${_isolated_target})
-		target_include_directories(
-			uml_cpu_${_isolated_engine}_isolated_link_tests PRIVATE
-			${PROJECT_SOURCE_DIR}/darwin)
-		target_compile_features(uml_cpu_${_isolated_engine}_isolated_link_tests
-			PRIVATE cxx_std_20)
-		target_compile_definitions(
-			uml_cpu_${_isolated_engine}_isolated_link_tests PRIVATE
-			UML_ISOLATED_ENGINE_KIND=${_isolated_kind})
-		target_compile_options(uml_cpu_${_isolated_engine}_isolated_link_tests
-			PRIVATE -Wall -Wextra -Werror)
-		uml_add_unit_test(NAME cpu-${_isolated_engine}-isolated-link
-			COMMAND uml_cpu_${_isolated_engine}_isolated_link_tests)
-	endforeach()
-
     add_executable(uml_arm64_dispatcher_internal_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_dispatcher_internal_tests.cpp
         $<TARGET_OBJECTS:uml_arm64_dispatch>)
@@ -329,6 +298,25 @@
     uml_add_unit_test(NAME arm64-gadget-terminal-count
         COMMAND uml_arm64_gadget_terminal_count_tests)
 
+    add_executable(uml_arm64_gadget_successor_hoist_structure_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+    target_include_directories(
+        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_definitions(
+        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
+        UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>)
+    target_compile_options(
+        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-gadget-successor-hoist-structure
+        COMMAND uml_arm64_gadget_successor_hoist_structure_tests)
+
     add_executable(uml_arm64_static_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_arm64_dispatch>
@@ -374,6 +362,82 @@
     uml_add_unit_test(NAME arm64-static-translation
         COMMAND uml_arm64_static_translation_tests)
 
+    add_executable(uml_arm64_jit_cache_geometry_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp)
+    target_link_libraries(uml_arm64_jit_cache_geometry_tests PRIVATE
+        uml_cpu_jit_component)
+    target_include_directories(uml_arm64_jit_cache_geometry_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    target_compile_features(uml_arm64_jit_cache_geometry_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_arm64_jit_cache_geometry_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-jit-cache-geometry
+        COMMAND uml_arm64_jit_cache_geometry_tests
+        LABELS tsan)
+
+    add_executable(uml_arm64_jit_shared_translation_cache_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp)
+    target_link_libraries(uml_arm64_jit_shared_translation_cache_tests PRIVATE
+        uml_cpu_jit_component
+        uml_test_allocation_failure)
+    target_include_directories(
+        uml_arm64_jit_shared_translation_cache_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_features(uml_arm64_jit_shared_translation_cache_tests
+        PRIVATE cxx_std_20)
+    target_compile_options(uml_arm64_jit_shared_translation_cache_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-jit-shared-translation-cache
+        COMMAND uml_arm64_jit_shared_translation_cache_tests
+        LABELS tsan)
+
+    add_executable(uml_arm64_jit_executor_pool_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_tests.cpp
+        $<TARGET_OBJECTS:uml_runtime_guest_selector>
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+    target_include_directories(uml_arm64_jit_executor_pool_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_arm64_jit_executor_pool_tests PRIVATE
+        cxx_std_20)
+    target_compile_definitions(uml_arm64_jit_executor_pool_tests PRIVATE
+        UML_JIT_RUNTIME_DIAGNOSTICS=1)
+    target_compile_options(uml_arm64_jit_executor_pool_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-jit-executor-pool
+        COMMAND uml_arm64_jit_executor_pool_tests
+        LABELS tsan)
+
+    add_executable(uml_arm64_jit_executor_pool_multislot_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp
+        $<TARGET_OBJECTS:uml_runtime_guest_selector>
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+    target_include_directories(
+        uml_arm64_jit_executor_pool_multislot_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_arm64_jit_executor_pool_multislot_tests
+        PRIVATE cxx_std_20)
+    target_compile_definitions(uml_arm64_jit_executor_pool_multislot_tests
+        PRIVATE UML_JIT_RUNTIME_DIAGNOSTICS=1)
+    target_compile_options(uml_arm64_jit_executor_pool_multislot_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-jit-executor-pool-multislot
+        COMMAND uml_arm64_jit_executor_pool_multislot_tests
+        LABELS tsan)
+
     foreach(JIT_TEST IN ITEMS
             runtime
             capability
@@ -405,6 +469,9 @@
             target_compile_definitions(
                 uml_arm64_jit_${JIT_TEST}_tests PRIVATE
                 UML_JIT_RUNTIME_DIAGNOSTICS=1)
+            target_link_libraries(
+                uml_arm64_jit_${JIT_TEST}_tests PRIVATE
+                uml_test_allocation_failure)
         endif()
         uml_add_unit_test(NAME arm64-jit-${JIT_TEST}
             COMMAND uml_arm64_jit_${JIT_TEST}_tests)
@@ -483,6 +550,11 @@
     endforeach()
 
     foreach(JIT_CHAIN_ABI_TEST IN ITEMS codegen runtime)
+        set(_uml_jit_chain_abi_objects ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+        if(JIT_CHAIN_ABI_TEST STREQUAL "runtime")
+            set(_uml_jit_chain_abi_objects
+                ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+        endif()
         add_executable(
             uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests.cpp
@@ -491,11 +563,14 @@
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+            ${_uml_jit_chain_abi_objects})
         if(JIT_CHAIN_ABI_TEST STREQUAL "runtime")
             target_sources(
                 uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests PRIVATE
                 ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_chain_abi_probe.S)
+            target_compile_definitions(
+                uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests PRIVATE
+                UML_JIT_RUNTIME_DIAGNOSTICS=1)
         endif()
         target_include_directories(
             uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests PRIVATE
@@ -508,6 +583,7 @@
         uml_add_unit_test(
             NAME arm64-jit-chain-abi-${JIT_CHAIN_ABI_TEST}
             COMMAND uml_arm64_jit_chain_abi_${JIT_CHAIN_ABI_TEST}_tests)
+        unset(_uml_jit_chain_abi_objects)
     endforeach()
 
     foreach(JIT_EXACT_RETIREMENT_TEST IN ITEMS codegen runtime)

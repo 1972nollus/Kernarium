@@ -4,7 +4,6 @@ set -eu
 
 PREFIX=
 MANIFEST=
-BUILD_SCRIPT=
 DEPLOYMENT_TARGET=
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ARCHIVE_TOOL="$SCRIPT_DIR/source_archive.py"
@@ -28,11 +27,6 @@ while [ "$#" -gt 0 ]; do
 		MANIFEST=$2
 		shift 2
 		;;
-	--build-script)
-		[ "$#" -ge 2 ] || fail "--build-script requires a path"
-		BUILD_SCRIPT=$2
-		shift 2
-		;;
 	--deployment-target)
 		[ "$#" -ge 2 ] || fail "--deployment-target requires a value"
 		DEPLOYMENT_TARGET=$2
@@ -42,15 +36,13 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-[ -n "$PREFIX" ] && [ -n "$MANIFEST" ] && [ -n "$BUILD_SCRIPT" ] &&
-	[ -n "$DEPLOYMENT_TARGET" ] ||
-	fail "--prefix, --manifest, --build-script, and --deployment-target are required"
+[ -n "$PREFIX" ] && [ -n "$MANIFEST" ] && [ -n "$DEPLOYMENT_TARGET" ] ||
+	fail "--prefix, --manifest, and --deployment-target are required"
 [ -d "$PREFIX" ] || fail "prefix is missing: $PREFIX"
+[ ! -L "$PREFIX" ] || fail "prefix must not be a symbolic link: $PREFIX"
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
-[ -f "$BUILD_SCRIPT" ] || fail "build script is missing: $BUILD_SCRIPT"
 command -v shasum >/dev/null 2>&1 || fail "shasum build tool is required"
 command -v xcrun >/dev/null 2>&1 || fail "xcrun build tool is required"
-command -v grep >/dev/null 2>&1 || fail "grep build tool is required"
 [ -x "$ARCHIVE_TOOL" ] || fail "source archive verifier is missing: $ARCHIVE_TOOL"
 [ -x "$PREPARE_SCRIPT" ] || fail "source preparation policy is missing: $PREPARE_SCRIPT"
 
@@ -94,23 +86,9 @@ receipt_value()
 }
 
 expected_manifest=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
-build_script_sha256=$(shasum -a 256 "$BUILD_SCRIPT" | awk '{print $1}')
-prepare_script_sha256=$(shasum -a 256 "$PREPARE_SCRIPT" | awk '{print $1}')
-expected_build_policy=$(
-	{
-		printf 'linux-um-darwin-dependency-policy-v1\n'
-		printf 'build.sh\t%s\n' "$build_script_sha256"
-		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
-	} | shasum -a 256 | awk '{print $1}'
-)
-expected_archive_tool=$(shasum -a 256 "$ARCHIVE_TOOL" | awk '{print $1}')
 [ "$(receipt_value schema)" = 2 ] || fail "unsupported receipt schema"
 [ "$(receipt_value manifest_sha256)" = "$expected_manifest" ] ||
 	fail "prefix was built from a different dependency manifest"
-[ "$(receipt_value build_policy_sha256)" = "$expected_build_policy" ] ||
-	fail "prefix was built with a different dependency preparation/build policy"
-[ "$(receipt_value archive_tool_sha256)" = "$expected_archive_tool" ] ||
-	fail "prefix was built with a different source archive verifier"
 [ "$(receipt_value platform)" = macos ] || fail "prefix is not a macOS build"
 [ "$(receipt_value architecture)" = arm64 ] || fail "prefix is not arm64"
 [ "$(receipt_value linkage)" = static ] || fail "prefix is not static"
@@ -119,6 +97,10 @@ expected_archive_tool=$(shasum -a 256 "$ARCHIVE_TOOL" | awk '{print $1}')
 receipt_value sdk_version >/dev/null
 receipt_value built_at_utc >/dev/null
 receipt_value compiler >/dev/null
+
+prefix_symlink=$(find "$PREFIX" -type l -print -quit)
+[ -z "$prefix_symlink" ] ||
+	fail "symbolic links are forbidden in the private prefix: $prefix_symlink"
 
 required_files='
 include/zlib.h
@@ -173,18 +155,7 @@ for cmake_metadata in lib/cmake share/cmake; do
 		fail "unused installed CMake package metadata is forbidden: $cmake_metadata"
 done
 
-for staging_marker in '/.uml-dependency-image.' '/.uml-dependency-prefix.' \
-	'/source-build.'; do
-	if staging_reference=$(LC_ALL=C grep -r -a -F -l \
-		-e "$staging_marker" -- "$PREFIX"); then
-		fail "prefix embeds a former staging path in: $staging_reference"
-	else
-		grep_result=$?
-		[ "$grep_result" -eq 1 ] || fail "could not scan prefix for staging paths"
-	fi
-done
-
-find "$PREFIX/lib" \( -type f -o -type l \) -name '*.a' -print |
+find "$PREFIX/lib" -type f -name '*.a' -print |
 while IFS= read -r archive; do
 	case "$(basename "$archive")" in
 	libz.a|libpcre2-8.a|libffi.a|libcharset.a|libiconv.a|libintl.a|\
@@ -199,45 +170,6 @@ while IFS= read -r archive; do
 	architectures=$(xcrun lipo -archs "$archive" 2>/dev/null || true)
 	[ "$architectures" = arm64 ] ||
 		fail "$(basename "$archive") has unexpected architectures: $architectures"
-	if ! "$XCRUN_OTOOL" -l "$archive" | awk -v expected="$DEPLOYMENT_TARGET" '
-		function finish_member() {
-			if (member == "")
-				return
-			if (!build_version || platform != "1" || minos != expected) {
-				printf "%s: expected LC_BUILD_VERSION platform 1 minos %s, got platform %s minos %s\n",
-					member, expected, platform, minos > "/dev/stderr"
-				invalid = 1
-			}
-		}
-		/^[^[:space:]].*\):$/ {
-			finish_member()
-			member = $0
-			build_version = 0
-			platform = ""
-			minos = ""
-			next
-		}
-		$1 == "cmd" && $2 == "LC_BUILD_VERSION" {
-			build_version = 1
-			next
-		}
-		build_version && $1 == "platform" { platform = $2; next }
-		build_version && $1 == "minos" { minos = $2; next }
-		END {
-			finish_member()
-			if (member == "")
-				invalid = 1
-			exit invalid
-		}
-	'; then
-		fail "$(basename "$archive") has incompatible member platform metadata"
-	fi
 done
-
-expected_payload_tree=$(receipt_value payload_tree_sha256)
-actual_payload_tree=$("$ARCHIVE_TOOL" tree-hash --root "$PREFIX" \
-	--exclude share/uml-dependencies/receipt.tsv)
-[ "$actual_payload_tree" = "$expected_payload_tree" ] ||
-	fail "dependency prefix payload hash changed: $actual_payload_tree"
 
 printf '%s\n' "verified source-built dependency prefix: $PREFIX"

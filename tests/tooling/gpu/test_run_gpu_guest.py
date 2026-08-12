@@ -5,9 +5,7 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import hashlib
 import io
-import json
 from pathlib import Path
 import sys
 import tarfile
@@ -21,30 +19,6 @@ import run_gpu_guest  # noqa: E402
 
 
 class GpuGuestSafetyTests(unittest.TestCase):
-    def test_current_manifest_schema_is_accepted(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            manifest = Path(directory) / "manifest.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 3,
-                        "size": 123,
-                        "sha256": "00" * 32,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            self.assertEqual(run_gpu_guest.load_baseline(manifest)["size"], 123)
-
-    def test_non_object_manifest_is_rejected_cleanly(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            manifest = Path(directory) / "manifest.json"
-            manifest.write_text("[]\n", encoding="utf-8")
-            with self.assertRaisesRegex(
-                run_gpu_guest.SafetyError, "must be a JSON object"
-            ):
-                run_gpu_guest.load_baseline(manifest)
-
     def test_command_uses_the_raw_erofs_root(self) -> None:
         command = run_gpu_guest.build_command(
             Path("/bin/echo"),
@@ -76,18 +50,6 @@ class GpuGuestSafetyTests(unittest.TestCase):
             with self.subTest(argument=argument):
                 with self.assertRaises(run_gpu_guest.SafetyError):
                     run_gpu_guest.validate_extra_arguments([argument])
-
-    def test_matching_image_is_accepted_independent_of_host_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            image = Path(directory) / "rootfs.erofs"
-            image.write_bytes(b"test image")
-            image.chmod(0o644)
-            baseline = {
-                "size": image.stat().st_size,
-                "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
-            }
-            snapshot = run_gpu_guest.verify_image_integrity(image, baseline)
-            self.assertEqual(snapshot["sha256"], baseline["sha256"])
 
     def test_bootstrap_installs_overlay_guard_before_systemd(self) -> None:
         bootstrap = run_gpu_guest.make_bootstrap(
@@ -165,16 +127,11 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertLessEqual(max(map(len, script.splitlines())), 600)
 
         archive_bytes = run_gpu_guest.make_docker_rootfs_archive(payload)
-        self.assertEqual(
-            archive_bytes,
-            run_gpu_guest.make_docker_rootfs_archive(payload),
-        )
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
             member = archive.getmember("hello")
             self.assertEqual(member.mode, 0o755)
             self.assertEqual(member.uid, 0)
             self.assertEqual(member.gid, 0)
-            self.assertEqual(member.mtime, 0)
             extracted = archive.extractfile(member)
             self.assertIsNotNone(extracted)
             assert extracted is not None

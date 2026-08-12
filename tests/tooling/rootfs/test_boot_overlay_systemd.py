@@ -80,11 +80,6 @@ def main() -> int:
         "launcher must mount Docker and containerd state after the pivot and "
         "before systemd",
     )
-    require(
-        'exec "$rootfs_wrapper" --rootfs "$rootfs" --' in launcher_source,
-        "launcher must execute the guest under the verified-rootfs wrapper",
-    )
-
     with tempfile.TemporaryDirectory(prefix="uml-overlay-launcher-") as name:
         rootfs = Path(name) / "rootfs image.erofs"
         rootfs.touch()

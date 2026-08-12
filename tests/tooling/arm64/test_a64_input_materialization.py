@@ -19,10 +19,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from a64_aslref_state_digest import POINTER_AUTH_KEYS
-from a64_aggregate_manifest_identity import (
-    read_manifest_identity,
-    validate_manifest_identity,
-)
 from a64_input_materialization import (
     CONTRACT_SCHEMA,
     EXCLUDED_CPU_STATE_FIELDS,
@@ -54,6 +50,9 @@ from a64_input_materialization import (
 from aggregate_a64_raw_instruction_evidence import OUTPUT_COLUMNS
 from generate_a64_instruction_decode_partitions import COLUMNS as DECODE_COLUMNS
 from generate_a64_instruction_required_variants import COLUMNS as REQUIRED_COLUMNS
+from validate_a64_instruction_aggregate_manifest import (
+    validate_checked_manifest_rows,
+)
 from join_a64_input_materializations import (
     CHECKPOINT_METADATA_ALLOWANCE_BYTES,
     CONTRIBUTION_CHECKPOINT_HEADER_SCHEMA,
@@ -823,15 +822,13 @@ def read_tsv(path: Path, columns: list[str]) -> list[dict[str, str]]:
         return list(reader)
 
 
-def aggregate_manifest_identity_fixture() -> None:
+def aggregate_manifest_validation_fixture() -> None:
     repository = Path(__file__).resolve().parents[3]
     manifest_path = (
         repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv"
     )
-    identity_path = manifest_path.with_suffix(".identity.json")
     rows = read_tsv(manifest_path, OUTPUT_COLUMNS)
-    identity = read_manifest_identity(identity_path)
-    validate_manifest_identity(rows, OUTPUT_COLUMNS, identity)
+    validate_checked_manifest_rows(rows)
 
     full_extent_ids = {
         "aggregate-fdf1b81297fb9e6783e1",
@@ -839,12 +836,12 @@ def aggregate_manifest_identity_fixture() -> None:
     }
     require(
         full_extent_ids <= {row["aggregate_id"] for row in rows},
-        "frozen manifest lacks the two full-extent aggregate identities",
+        "checked manifest lacks the two full-extent aggregate identities",
     )
     stale = [row for row in rows if row["aggregate_id"] not in full_extent_ids]
     require(len(stale) == 32167, "stale-manifest negative is not 32,167 rows")
     expect_failure(
-        lambda: validate_manifest_identity(stale, OUTPUT_COLUMNS, identity),
+        lambda: validate_checked_manifest_rows(stale),
         "stale 32,167-row aggregate manifest was accepted",
     )
 
@@ -854,7 +851,7 @@ def aggregate_manifest_identity_fixture() -> None:
         if row["aggregate_id"] != "aggregate-fdf1b81297fb9e6783e1"
     ]
     expect_failure(
-        lambda: validate_manifest_identity(missing, OUTPUT_COLUMNS, identity),
+        lambda: validate_checked_manifest_rows(missing),
         "aggregate manifest missing one new full-extent row was accepted",
     )
 
@@ -867,7 +864,7 @@ def aggregate_manifest_identity_fixture() -> None:
         first["guest_page_size"],
     )
     expect_failure(
-        lambda: validate_manifest_identity(cross_page, OUTPUT_COLUMNS, identity),
+        lambda: validate_checked_manifest_rows(cross_page),
         "cross-page-swapped full-extent rows were accepted",
     )
 
@@ -875,7 +872,7 @@ def aggregate_manifest_identity_fixture() -> None:
         [*rows, dict(rows[0])], key=lambda row: row["aggregate_id"]
     )
     expect_failure(
-        lambda: validate_manifest_identity(duplicate, OUTPUT_COLUMNS, identity),
+        lambda: validate_checked_manifest_rows(duplicate),
         "duplicate aggregate row was accepted",
     )
 
@@ -885,9 +882,7 @@ def aggregate_manifest_identity_fixture() -> None:
         [*rows, unrelated], key=lambda row: row["aggregate_id"]
     )
     expect_failure(
-        lambda: validate_manifest_identity(
-            unrelated_extra, OUTPUT_COLUMNS, identity
-        ),
+        lambda: validate_checked_manifest_rows(unrelated_extra),
         "unrelated extra aggregate row was accepted",
     )
 
@@ -1652,7 +1647,7 @@ def main() -> int:
     obligation_fixture()
     inventory_fixture()
     callback_registry_fixture()
-    aggregate_manifest_identity_fixture()
+    aggregate_manifest_validation_fixture()
     aggregate_join_fixture()
     absent_producer_fixture()
     high_cardinality_spool_fixture()

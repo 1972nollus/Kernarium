@@ -18,9 +18,7 @@
  * that declines functions this large. Composing them textually here is not a
  * shortcut around that decision: it is the only way to make the inliner see the
  * whole chain rather than leave it to a heuristic that has been measured to
- * decline. Each fragment still owns exactly one decode family, and
- * test_engine_object_boundaries.py enforces that this file remains their only
- * includer. */
+ * decline. Each fragment still owns exactly one decode family. */
 /* .ipp rather than .inc: every .inc in this tree is an assembly fragment of the
  * gadget bank, and editors do not treat .inc as C++. */
 #include "program_builder_branch_system_impl.ipp"

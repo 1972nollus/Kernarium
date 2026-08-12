@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
@@ -558,6 +559,8 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 
 int main()
 {
+	require(uml::cpu::arm64::set_jit_cache_budget(
+		256U * 1024U * 1024U, 3));
 	require(jit_available() == 1);
 	inline_tlb_and_cross_page_fallback();
 	write_fault_is_precise();

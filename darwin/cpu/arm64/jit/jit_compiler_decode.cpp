@@ -1654,7 +1654,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           : ls64_status      ? ArmFeature::ls64_v
                              : ArmFeature::ls64;
       if ((first & 1U) != 0U || first >= 24U ||
-          !host_capabilities().has(required)) {
+          !translation_supports(required)) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;

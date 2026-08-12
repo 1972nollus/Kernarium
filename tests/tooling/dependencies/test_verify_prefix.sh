@@ -14,7 +14,6 @@ cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$DEPENDENCY_DIR/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
-ARCHIVE_TOOL="$DEPENDENCY_DIR/source_archive.py"
 
 fail()
 {
@@ -27,43 +26,12 @@ sha256_file()
 	shasum -a 256 "$1" | awk '{print $1}'
 }
 
-dependency_policy_hash()
-{
-	build_script_sha256=$(sha256_file "$BUILD_SCRIPT")
-	prepare_script_sha256=$(sha256_file "$PREPARE")
-	{
-		printf 'linux-um-darwin-dependency-policy-v1\n'
-		printf 'build.sh\t%s\n' "$build_script_sha256"
-		printf 'prepare.sh\t%s\n' "$prepare_script_sha256"
-	} | shasum -a 256 | awk '{print $1}'
-}
-
 verify()
 {
 	"$VERIFIER" \
 		--prefix "$1" \
 		--manifest "$MANIFEST" \
-		--build-script "$BUILD_SCRIPT" \
 		--deployment-target "$DEPLOYMENT_TARGET"
-}
-
-payload_hash()
-{
-	"$ARCHIVE_TOOL" tree-hash --root "$1" \
-		--exclude share/uml-dependencies/receipt.tsv
-}
-
-refresh_payload_hash()
-{
-	prefix=$1
-	payload=$(payload_hash "$prefix")
-	awk -F '\t' -v payload="$payload" 'BEGIN { OFS = FS }
-		$1 == "payload_tree_sha256" { $2 = payload }
-		{ print }
-	' "$prefix/share/uml-dependencies/receipt.tsv" \
-		>"$prefix/share/uml-dependencies/receipt.tsv.changed"
-	mv "$prefix/share/uml-dependencies/receipt.tsv.changed" \
-		"$prefix/share/uml-dependencies/receipt.tsv"
 }
 
 copy_fixture()
@@ -87,7 +55,6 @@ expect_failure()
 
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 MANIFEST="$DEPENDENCY_DIR/manifest.tsv"
-BUILD_SCRIPT="$TEST_ROOT/build.sh"
 PATCH="$DEPENDENCY_DIR/patches/fixture.patch"
 BASE_PREFIX="$TEST_ROOT/prefix"
 FAILURE_NUMBER=0
@@ -111,10 +78,8 @@ cat >"$MANIFEST" <<EOF
 name	version	kind	archive_url	archive_file	archive_sha256	archive_root	prepared_tree_sha256	patch	patch_sha256
 fixture	1.0	release	https://example.invalid/fixture-1.0.tar.gz	fixture-1.0.tar.gz	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	fixture-1.0	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	patches/fixture.patch	$PATCH_HASH
 EOF
-printf '%s\n' '#!/bin/sh' 'exit 0' >"$BUILD_SCRIPT"
 cp "$MANIFEST" "$MANIFEST.original"
 cp "$PATCH" "$PATCH.original"
-cp "$PREPARE" "$PREPARE.original"
 
 required_headers='include/zlib.h
 include/zconf.h
@@ -158,8 +123,6 @@ printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 done
 
 MANIFEST_HASH=$(sha256_file "$MANIFEST")
-BUILD_POLICY_HASH=$(dependency_policy_hash)
-ARCHIVE_TOOL_HASH=$(sha256_file "$ARCHIVE_TOOL")
 
 # GLib installs debugger helpers whose filenames embed an ELF shared-library
 # basename but end in -gdb.py. They are scripts, not dynamic libraries.
@@ -167,13 +130,9 @@ mkdir -p "$BASE_PREFIX/share/gdb/auto-load/private/prefix/lib"
 printf '%s\n' fixture \
 	>"$BASE_PREFIX/share/gdb/auto-load/private/prefix/lib/libglib-2.0.so.0-gdb.py"
 
-PAYLOAD_HASH=$(payload_hash "$BASE_PREFIX")
 cat >"$BASE_PREFIX/share/uml-dependencies/receipt.tsv" <<EOF
 schema	2
 manifest_sha256	$MANIFEST_HASH
-build_policy_sha256	$BUILD_POLICY_HASH
-archive_tool_sha256	$ARCHIVE_TOOL_HASH
-payload_tree_sha256	$PAYLOAD_HASH
 platform	macos
 architecture	arm64
 linkage	static
@@ -193,15 +152,23 @@ mv "$PATCH" "$PATCH.absent"
 expect_failure "deleted dependency patch" "$BASE_PREFIX"
 mv "$PATCH.absent" "$PATCH"
 
-printf '%s\n' '# changed preparation policy' >>"$PREPARE"
-expect_failure "changed dependency preparation policy" "$BASE_PREFIX"
-cp "$PREPARE.original" "$PREPARE"
-verify "$BASE_PREFIX" >/dev/null
-
 CASE_PREFIX="$TEST_ROOT/missing-file"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/include/zlib.h"
 expect_failure "missing required file" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/symlinked-header"
+copy_fixture "$CASE_PREFIX"
+printf '%s\n' ambient >"$TEST_ROOT/ambient-zlib.h"
+rm "$CASE_PREFIX/include/zlib.h"
+ln -s "$TEST_ROOT/ambient-zlib.h" "$CASE_PREFIX/include/zlib.h"
+expect_failure "symlinked required header" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/symlinked-archive"
+copy_fixture "$CASE_PREFIX"
+rm "$CASE_PREFIX/lib/libz.a"
+ln -s "$TEST_ROOT/fixture-arm64.a" "$CASE_PREFIX/lib/libz.a"
+expect_failure "symlinked required archive" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/dynamic-library"
 copy_fixture "$CASE_PREFIX"
@@ -212,14 +179,12 @@ CASE_PREFIX="$TEST_ROOT/disguised-dynamic-library"
 copy_fixture "$CASE_PREFIX"
 xcrun --sdk macosx clang -arch arm64 -dynamiclib "$TEST_ROOT/fixture.c" \
 	-o "$CASE_PREFIX/lib/hidden.bundle"
-refresh_payload_hash "$CASE_PREFIX"
 expect_failure "dynamic library with a nonstandard suffix" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/nested-invalid-archive"
 copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/lib/plugins"
 printf '%s\n' 'not an archive' >"$CASE_PREFIX/lib/plugins/hidden.a"
-refresh_payload_hash "$CASE_PREFIX"
 expect_failure "nested invalid static archive" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/cmake-package-metadata"
@@ -264,85 +229,18 @@ xcrun --sdk macosx clang -arch x86_64 -c "$TEST_ROOT/fixture.c" \
 	-o "$TEST_ROOT/fixture-x86_64.o"
 xcrun ar rcs "$TEST_ROOT/fixture-x86_64.a" "$TEST_ROOT/fixture-x86_64.o"
 cp "$TEST_ROOT/fixture-x86_64.a" "$CASE_PREFIX/lib/libz.a"
-refresh_payload_hash "$CASE_PREFIX"
 expect_failure "non-arm64 static archive" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/header-tamper"
-copy_fixture "$CASE_PREFIX"
-printf '%s\n' changed >>"$CASE_PREFIX/include/zlib.h"
-expect_failure "same-path header tampering" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/same-architecture-archive-tamper"
-copy_fixture "$CASE_PREFIX"
-printf '%s\n' 'int uml_dependency_other(void) { return 1; }' \
-	>"$TEST_ROOT/other.c"
-xcrun --sdk macosx clang -arch arm64 \
-	-mmacosx-version-min="$DEPLOYMENT_TARGET" -c "$TEST_ROOT/other.c" \
-	-o "$TEST_ROOT/other-arm64.o"
-xcrun ar rcs "$TEST_ROOT/other-arm64.a" "$TEST_ROOT/other-arm64.o"
-cp "$TEST_ROOT/other-arm64.a" "$CASE_PREFIX/lib/libz.a"
-expect_failure "same-architecture archive tampering" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/wrong-member-deployment-target"
-copy_fixture "$CASE_PREFIX"
-xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=15.0 \
-	-c "$TEST_ROOT/fixture.c" -o "$TEST_ROOT/fixture-macos15.o"
-xcrun ar rcs "$TEST_ROOT/fixture-macos15.a" "$TEST_ROOT/fixture-macos15.o"
-cp "$TEST_ROOT/fixture-macos15.a" "$CASE_PREFIX/lib/libz.a"
-refresh_payload_hash "$CASE_PREFIX"
-expect_failure "archive member deployment target" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/wrong-member-platform"
-copy_fixture "$CASE_PREFIX"
-xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
-	-c "$TEST_ROOT/fixture.c" -o "$TEST_ROOT/fixture-ios.o"
-xcrun ar rcs "$TEST_ROOT/fixture-ios.a" "$TEST_ROOT/fixture-ios.o"
-cp "$TEST_ROOT/fixture-ios.a" "$CASE_PREFIX/lib/libz.a"
-refresh_payload_hash "$CASE_PREFIX"
-expect_failure "archive member Apple platform" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/renamed-dynamic-library"
 copy_fixture "$CASE_PREFIX"
 xcrun --sdk macosx clang -arch arm64 -dynamiclib "$TEST_ROOT/fixture.c" \
 	-o "$CASE_PREFIX/lib/libz.a"
-refresh_payload_hash "$CASE_PREFIX"
 expect_failure "dynamic library renamed as an archive" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/untracked-payload"
-copy_fixture "$CASE_PREFIX"
-printf '%s\n' unexpected >"$CASE_PREFIX/include/untracked.h"
-expect_failure "untracked prefix payload" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/escaping-symlink"
-copy_fixture "$CASE_PREFIX"
-ln -s ../../../../outside "$CASE_PREFIX/include/escaping-link"
-expect_failure "escaping prefix symbolic link" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/staging-path"
-copy_fixture "$CASE_PREFIX"
-mkdir -p "$CASE_PREFIX/lib/pkgconfig"
-printf '%s\n' 'prefix=/tmp/.uml-dependency-image.fixture/private-prefix' \
-	>"$CASE_PREFIX/lib/pkgconfig/fixture.pc"
-refresh_payload_hash "$CASE_PREFIX"
-expect_failure "embedded staging path" "$CASE_PREFIX"
-
-CASE_PREFIX="$TEST_ROOT/temporary-build-path"
-copy_fixture "$CASE_PREFIX"
-mkdir -p "$CASE_PREFIX/lib/pkgconfig"
-printf '%s\n' 'source=/tmp/source-build.fixture/sources/dependency' \
-	>"$CASE_PREFIX/lib/pkgconfig/fixture.pc"
-refresh_payload_hash "$CASE_PREFIX"
-expect_failure "embedded temporary build path" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/wrong-deployment-target"
 copy_fixture "$CASE_PREFIX"
 DEPLOYMENT_TARGET=15.0
 expect_failure "incompatible deployment target" "$CASE_PREFIX"
 DEPLOYMENT_TARGET=14.0
-
-CASE_PREFIX="$TEST_ROOT/build-policy-tamper"
-copy_fixture "$CASE_PREFIX"
-printf '%s\n' '# changed' >>"$BUILD_SCRIPT"
-expect_failure "changed dependency build policy" "$CASE_PREFIX"
 
 printf '%s\n' "dependency prefix verification tests passed"

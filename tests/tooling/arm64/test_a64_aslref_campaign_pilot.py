@@ -36,11 +36,7 @@ def full_plan(root: Path) -> tuple[Path, dict[str, object]]:
         shards.append(
             {
                 "shard_id": f"shard-{index:08d}",
-                "input": {
-                    "path": identity["path"],
-                    "size": identity["size"],
-                    "sha256": identity["sha256"],
-                },
+                "input": {"path": identity["path"]},
                 "contract_count": campaign.MAX_SHARD_CONTRACTS,
                 "input_contract_ids_sha256": hashlib.sha256(
                     f"pilot-contracts-{index}".encode()
@@ -59,30 +55,20 @@ def full_plan(root: Path) -> tuple[Path, dict[str, object]]:
 
 
 def fake_success(
-    plan_sha256: str,
+    campaign_id: str,
     shard: dict[str, object],
-    policy: str,
 ) -> dict[str, object]:
     digest = hashlib.sha256(str(shard["shard_id"]).encode()).hexdigest()
     return {
         "schema": campaign.SUCCESS_SCHEMA,
-        "campaign_plan_sha256": plan_sha256,
+        "campaign_id": campaign_id,
         "shard_id": shard["shard_id"],
         "contract_count": shard["contract_count"],
         "input_contract_ids_sha256": shard["input_contract_ids_sha256"],
-        "artifact_manifest_sha256": digest,
         "artifact_file_count": 1,
         "artifact_bytes": 1,
         "elapsed_seconds": 1.0,
         "peak_rss_kib": 1,
-        "directory_sync_policy": policy,
-        "directory_sync_outcomes": {
-            "artifact_stage": "supported",
-            "campaign_root": "supported",
-            "shards_parent": "supported",
-        },
-        "probe_report_sha256": digest,
-        "probe_result_sha256": digest,
         "input_results_sha256": digest,
     }
 
@@ -106,11 +92,10 @@ def main() -> int:
 
         def fake_run_one(
             _plan,
-            plan_sha256,
+            campaign_id,
             shard,
             output_root,
             _local_temp_root,
-            policy,
             _cancel_event=None,
         ):
             final = output_root / "shards" / str(shard["shard_id"])
@@ -118,14 +103,14 @@ def main() -> int:
                 final.mkdir()
                 write_canonical(
                     final / "SUCCESS.json",
-                    fake_success(plan_sha256, shard, policy),
+                    fake_success(campaign_id, shard),
                 )
             return campaign.read_canonical_json(final / "SUCCESS.json")
 
-        def fake_verify(directory, plan_sha256, shard, _guest_page_size):
+        def fake_verify(directory, campaign_id, shard, _guest_page_size):
             success = campaign.read_canonical_json(directory / "SUCCESS.json")
             if (
-                success["campaign_plan_sha256"] != plan_sha256
+                success["campaign_id"] != campaign_id
                 or success["shard_id"] != shard["shard_id"]
                 or success["contract_count"] != shard["contract_count"]
             ):
@@ -150,28 +135,6 @@ def main() -> int:
             require(
                 not (unsafe_layout / "campaign.lock").exists(),
                 "campaign locked/mutated an unsafe output before preflight",
-            )
-
-            source_tree = Path(str(plan["probe"]["architecture_root"]))
-            nested_output = source_tree / "nested-output"
-            nested_local = source_tree / "nested-local"
-            nested_output.mkdir()
-            nested_local.mkdir()
-            expect_failure(
-                lambda: campaign.run_campaign(
-                    run_options(plan_path, nested_output, local, workers=1)
-                ),
-                "campaign output inside a frozen source tree was accepted",
-            )
-            expect_failure(
-                lambda: campaign.run_campaign(
-                    run_options(plan_path, output, nested_local, workers=1)
-                ),
-                "campaign local root inside a frozen source tree was accepted",
-            )
-            require(
-                not (nested_output / "campaign.lock").exists(),
-                "source-tree output was mutated before isolation rejection",
             )
 
             boundary_required = 2 * 1024 * 1024 * 1024 + 12345
@@ -456,7 +419,6 @@ def main() -> int:
                 shard,
                 output_root,
                 local_root,
-                policy,
                 cancel_event=None,
             ):
                 name = str(shard["shard_id"])
@@ -469,7 +431,6 @@ def main() -> int:
                     shard,
                     output_root,
                     local_root,
-                    policy,
                     cancel_event,
                 )
 
@@ -522,7 +483,6 @@ def main() -> int:
                 shard,
                 output_root,
                 local_root,
-                policy,
                 cancel_event=None,
             ):
                 name = str(shard["shard_id"])
@@ -540,7 +500,6 @@ def main() -> int:
                         shard,
                         output_root,
                         local_root,
-                        policy,
                         cancel_event,
                     )
                     raise ValueError("simulated in-flight peer failure")

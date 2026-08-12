@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision the pinned EROFS rootfs from a verified local or release artifact."""
+"""Provision the pinned EROFS rootfs from a local or authenticated artifact."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -16,7 +16,6 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from image_lock import image_lock
 from verify import DEFAULT_MANIFEST, ROOT, VerificationError, text, verify
 
 
@@ -79,13 +78,6 @@ def verify_release_statement(statement: Path, manifest: dict[str, object]) -> No
             )
 
 
-def manifest_acquisition(manifest: dict[str, object]) -> dict[str, str]:
-    value = manifest.get("acquisition")
-    if not isinstance(value, dict):
-        return {}
-    return {key: item for key, item in value.items() if isinstance(item, str)}
-
-
 def relative_to_manifest(value: str | None, manifest_path: Path) -> Path | None:
     if not value:
         return None
@@ -96,7 +88,9 @@ def relative_to_manifest(value: str | None, manifest_path: Path) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "rootfs.erofs")
-    parser.add_argument("--source", type=Path, help="verified local artifact to copy")
+    parser.add_argument(
+        "--source", type=Path, help="local artifact to authenticate and copy"
+    )
     parser.add_argument("--url", help="authenticated HTTPS release artifact URL")
     parser.add_argument("--statement", type=Path, help="signed release digest statement")
     parser.add_argument("--statement-url", help="HTTPS URL of the release digest statement")
@@ -117,23 +111,20 @@ def main() -> int:
         manifest = load_manifest(manifest_path)
     except VerificationError as error:
         return fail(str(error))
-    acquisition = manifest_acquisition(manifest)
     source = arguments.source
-    url = arguments.url or os.environ.get("UML_ROOTFS_URL") or acquisition.get("artifact_url")
+    url = arguments.url or os.environ.get("UML_ROOTFS_URL")
     statement_url = (
         arguments.statement_url
         or os.environ.get("UML_ROOTFS_STATEMENT_URL")
-        or acquisition.get("statement_url")
     )
     signature_url = (
         arguments.signature_url
         or os.environ.get("UML_ROOTFS_SIGNATURE_URL")
-        or acquisition.get("signature_url")
     )
     statement = arguments.statement
     signature = arguments.signature
     public_key = arguments.public_key or relative_to_manifest(
-        os.environ.get("UML_ROOTFS_PUBLIC_KEY") or acquisition.get("public_key"),
+        os.environ.get("UML_ROOTFS_PUBLIC_KEY"),
         manifest_path,
     )
     if bool(source) == bool(url):
@@ -146,44 +137,56 @@ def main() -> int:
         )
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with image_lock(output, exclusive=True, blocking=False):
-            if output.exists() and not arguments.replace:
-                raise VerificationError(
-                    f"refusing to replace existing image {output}; pass "
-                    "--replace after preserving any required artifact"
-                )
-            with tempfile.TemporaryDirectory(dir=output.parent, prefix=".rootfs-provision-") as temporary:
-                temporary_path = Path(temporary)
-                staged = temporary_path / "rootfs.erofs"
-                if source:
-                    if not source.is_file():
-                        raise VerificationError(f"local source is not a regular file: {source}")
-                    shutil.copyfile(source, staged)
+        with tempfile.TemporaryDirectory(
+            dir=output.parent, prefix=".rootfs-provision-"
+        ) as temporary:
+            temporary_path = Path(temporary)
+            staged = temporary_path / "rootfs.erofs"
+            if source:
+                if not source.is_file():
+                    raise VerificationError(f"local source is not a regular file: {source}")
+                shutil.copyfile(source, staged)
+            else:
+                if not arguments.allow_network:
+                    raise VerificationError(
+                        "pass --allow-network before downloading a release artifact"
+                    )
+                if public_key is None or not public_key.is_file():
+                    raise VerificationError(
+                        "release acquisition requires a trusted public key"
+                    )
+                if bool(statement) == bool(statement_url):
+                    raise VerificationError(
+                        "provide exactly one local or HTTPS release statement"
+                    )
+                if bool(signature) == bool(signature_url):
+                    raise VerificationError(
+                        "provide exactly one local or HTTPS statement signature"
+                    )
+                staged_statement = temporary_path / "release-statement.json"
+                staged_signature = temporary_path / "release-statement.sig"
+                if statement:
+                    shutil.copyfile(statement, staged_statement)
                 else:
-                    if not arguments.allow_network:
-                        raise VerificationError("pass --allow-network before downloading a release artifact")
-                    if public_key is None or not public_key.is_file():
-                        raise VerificationError("release acquisition requires the repository-owned public key")
-                    if bool(statement) == bool(statement_url):
-                        raise VerificationError("provide exactly one local or HTTPS release statement")
-                    if bool(signature) == bool(signature_url):
-                        raise VerificationError("provide exactly one local or HTTPS statement signature")
-                    staged_statement = temporary_path / "release-statement.json"
-                    staged_signature = temporary_path / "release-statement.sig"
-                    if statement:
-                        shutil.copyfile(statement, staged_statement)
-                    else:
-                        copy_from_url(statement_url, staged_statement)
-                    if signature:
-                        shutil.copyfile(signature, staged_signature)
-                    else:
-                        copy_from_url(signature_url, staged_signature)
-                    verify_signature(staged_statement, staged_signature, public_key)
-                    verify_release_statement(staged_statement, manifest)
-                    copy_from_url(url, staged)
-                verify(staged, manifest_path)
+                    copy_from_url(statement_url, staged_statement)
+                if signature:
+                    shutil.copyfile(signature, staged_signature)
+                else:
+                    copy_from_url(signature_url, staged_signature)
+                verify_signature(staged_statement, staged_signature, public_key)
+                verify_release_statement(staged_statement, manifest)
+                copy_from_url(url, staged)
+            verify(staged, manifest_path)
+            if arguments.replace:
                 os.replace(staged, output)
-                verify(output, manifest_path)
+            else:
+                try:
+                    os.link(staged, output)
+                except FileExistsError as error:
+                    raise VerificationError(
+                        f"refusing to replace existing image {output}; pass "
+                        "--replace after preserving any required artifact"
+                    ) from error
     except (OSError, VerificationError) as error:
         return fail(str(error))
     print(f"provisioned and verified EROFS rootfs: {output}")

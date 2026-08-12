@@ -27,6 +27,9 @@ struct AllocationFailure final {
  * executable supplies the replacement allocation functions; production
  * objects contain no fault-injection field, symbol, or conditional branch. */
 void fail_next_allocation() noexcept;
+/* Permit this many matching-thread allocations to succeed, then fail the
+ * following allocation. Zero is equivalent to fail_next_allocation(). */
+void fail_after_allocations(std::size_t successful_allocations) noexcept;
 [[nodiscard]] bool cancel_pending_allocation_failure() noexcept;
 [[nodiscard]] AllocationFailure last_allocation_failure() noexcept;
 

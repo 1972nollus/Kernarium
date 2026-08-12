@@ -3,6 +3,9 @@
 set(_uml_emulator_boundary_sources
     src/emulator.cpp
     src/options.cpp)
+if(UML_ENABLE_JIT_PROFILE)
+    list(APPEND _uml_emulator_boundary_sources src/profile_reporter.cpp)
+endif()
 if(UML_BUILD_KERNEL_RUNNER)
     list(APPEND _uml_emulator_boundary_sources loader/elf_loader.cpp)
 endif()
@@ -42,8 +45,6 @@ add_library(uml_emulator STATIC
 
 add_library(UML::Emulator ALIAS uml_emulator)
 uml_declare_architecture_target(uml_emulator emulator)
-set_property(TARGET uml_emulator PROPERTY
-    UML_ARCHITECTURE_AGGREGATE_PRODUCT TRUE)
 
 target_link_libraries(uml_emulator PRIVATE
     UML::ApiContract
@@ -83,8 +84,6 @@ if(_uml_need_admission_test_variant)
         $<TARGET_OBJECTS:uml_emulator_boundary_test_variant>)
     uml_declare_architecture_target(
         uml_emulator_admission_test_variant emulator)
-    set_property(TARGET uml_emulator_admission_test_variant PROPERTY
-        UML_ARCHITECTURE_AGGREGATE_PRODUCT TRUE)
     set(_uml_test_runtime_core UML::RuntimeCore)
     if(TARGET uml_runtime_core_test_variant)
         set(_uml_test_runtime_core UML::RuntimeCoreTestVariant)

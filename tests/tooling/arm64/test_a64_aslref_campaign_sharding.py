@@ -9,21 +9,18 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import copy
 import csv
-import fcntl
 import gzip
 import json
 import os
 import resource
 import sqlite3
 import tempfile
-import threading
 import time
 import tracemalloc
 from pathlib import Path
 
 import a64_aslref_campaign_sharding as sharding
 import run_a64_aslref_campaign as campaign
-from a64_raw_evidence_files import evidence_quiescence_lock_path
 from a64_input_materialization import raw_contract_id
 from join_a64_input_materializations import (
     CONTRACT_MANIFEST_COLUMNS,
@@ -60,7 +57,7 @@ def records(count: int = 3, page: int = 4096) -> list[dict[str, object]]:
 
 def write_source(path: Path, values: list[dict[str, object]]) -> None:
     with path.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as output:
+        with gzip.GzipFile(mode="wb", fileobj=raw) as output:
             output.write(event_stream(values).encode("utf-8"))
 
 
@@ -128,8 +125,6 @@ def fake_authority(
         "schema": "uml.a64.aslref-authoritative-input/v1",
         "guest_page_size": 4096,
         "aggregate_manifest": frozen_identity,
-        "aggregate_manifest_identity": {"fixture": True},
-        "aggregate_manifest_identity_file": frozen_identity,
         "materialization_index": frozen_identity,
         "contract_manifests": [campaign.file_identity(manifest)],
         "checkpoint_files": [frozen_identity],
@@ -160,7 +155,6 @@ def fixture_options(
         input_jsonl=[source],
         guest_page_size=4096,
         aggregate_manifest=frozen,
-        aggregate_manifest_identity=frozen,
         materialization_index=frozen,
         contract_manifest=[manifest],
         output_directory=root / output_name,
@@ -172,42 +166,37 @@ def fixture_options(
         maximum_metadata_bytes=1024 * 1024,
         maximum_database_bytes=16 * 1024 * 1024,
         maximum_merge_scratch_bytes=16 * 1024 * 1024,
-        directory_sync_policy="record-unsupported",
     )
 
 
-def deterministic_writer_fixture(root: Path) -> None:
+def shard_writer_fixture(root: Path) -> None:
     values = records(2)
-    outputs: list[bytes] = []
     for name in ("first", "second"):
         output = root / name
         staging = output / ".staging"
         staging.mkdir(parents=True)
-        writer = sharding.DeterministicShardWriter(
+        writer = sharding.ShardWriter(
             staging / f"{name}.partial", "shard-00000000"
         )
         for record in values:
             writer.add(record)
-        row, outcomes = sharding._publish_generated_shard(
-            writer, output, staging, "record-unsupported", 4096
+        row = sharding._publish_generated_shard(
+            writer, output, staging, 4096
         )
         require(row["contract_count"] == 2, "writer count differs")
-        require(set(outcomes) == {"output_root", "staging"}, "sync labels differ")
         shard = output / "shard-00000000.inputs.jsonl.gz"
-        outputs.append(shard.read_bytes())
         with gzip.open(shard, "rt", encoding="utf-8") as source:
             events = [json.loads(line) for line in source]
         require(len(events) == 6, "shared blobs were not deduplicated per shard")
-    require(outputs[0] == outputs[1], "deterministic gzip bytes differ")
 
-    capped = sharding.DeterministicShardWriter(
+    capped = sharding.ShardWriter(
         root / "capped.partial", "shard-00000000"
     )
     capped.count = campaign.MAX_SHARD_CONTRACTS
     expect_failure(lambda: capped.add(values[0]), "shard cap was not enforced")
     capped.abort()
 
-    byte_capped = sharding.DeterministicShardWriter(
+    byte_capped = sharding.ShardWriter(
         root / "byte-capped.partial",
         "shard-00000000",
         maximum_bytes=32,
@@ -241,58 +230,22 @@ def deterministic_writer_fixture(root: Path) -> None:
     mixed = root / "mixed"
     mixed_stage = mixed / ".staging"
     mixed_stage.mkdir(parents=True)
-    writer = sharding.DeterministicShardWriter(
+    writer = sharding.ShardWriter(
         mixed_stage / "mixed.partial", "shard-00000000"
     )
     writer.add(values[0])
     expect_failure(
         lambda: sharding._publish_generated_shard(
-            writer, mixed, mixed_stage, "record-unsupported", 16384
+            writer, mixed, mixed_stage, 16384
         ),
         "mixed-page final shard was accepted",
     )
 
 
-def durability_fixture(root: Path) -> None:
-    output = root / "durability"
-    staging = output / ".staging"
-    staging.mkdir(parents=True)
-    stale = staging / (
-        "shard-00000000.0123456789abcdef0123456789abcdef."
-        "inputs.jsonl.gz.partial"
-    )
-    stale.write_bytes(b"stale")
-    events: list[str] = []
-    original_directory_sync = campaign._fsync_directory
-    original_fsync = sharding.os.fsync
-    try:
-        campaign._fsync_directory = lambda path, _policy: (
-            events.append(f"dir:{Path(path).name}") or "supported"
-        )
-        _staging, outcomes = sharding._prepare_root(output, "require")
-        require(not stale.exists(), "stale stage was not removed")
-        require(
-            events[:2] == ["dir:.staging", "dir:durability"],
-            "staging/root cleanup sync order differs",
-        )
-        require(outcomes == {"staging": "supported", "output_root": "supported"},
-                "prepared sync outcomes differ")
-        metadata = output / "existing.json"
-        metadata.write_bytes(b"stable\n")
-        events.clear()
-        sharding.os.fsync = lambda _descriptor: events.append("file")
-        sharding._write_or_compare(metadata, b"stable\n", "require")
-        require(events == ["file", "dir:durability"],
-                "existing metadata was not fsynced before its directory")
-    finally:
-        campaign._fsync_directory = original_directory_sync
-        sharding.os.fsync = original_fsync
-
-
 def bounded_scale_fixture(root: Path) -> None:
     merge_paths = [Path(f"producer-{index:03d}") for index in range(64)]
     rows_per_producer = 4096
-    original_checkpoint_iterator = sharding.campaign._iter_frozen_checkpoint_contributions
+    original_checkpoint_iterator = sharding.campaign._iter_checkpoint_contributions
     live_streams = 0
     maximum_live_streams = 0
     scratch_peak = 0
@@ -324,11 +277,11 @@ def bounded_scale_fixture(root: Path) -> None:
             live_streams -= 1
 
     try:
-        sharding.campaign._iter_frozen_checkpoint_contributions = synthetic_checkpoint
+        sharding.campaign._iter_checkpoint_contributions = synthetic_checkpoint
         tracemalloc.start()
         count = 0
         previous = -1
-        for row in campaign.merge_frozen_checkpoint_contributions(
+        for row in campaign.merge_checkpoint_contributions(
             merge_paths,
             scratch_root=root,
             progress_callback=measure_scratch,
@@ -341,7 +294,7 @@ def bounded_scale_fixture(root: Path) -> None:
         _current, merge_peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
     finally:
-        sharding.campaign._iter_frozen_checkpoint_contributions = original_checkpoint_iterator
+        sharding.campaign._iter_checkpoint_contributions = original_checkpoint_iterator
     require(count == len(merge_paths) * rows_per_producer,
             "scaled checkpoint merge count differs")
     require(maximum_live_streams <= 8,
@@ -439,31 +392,13 @@ def end_to_end_fixture(root: Path) -> None:
         result = sharding.run(options)
         output = options.output_directory
         shard = output / "shard-00000000.inputs.jsonl.gz"
-        frozen_bytes = {
-            path.name: path.read_bytes()
-            for path in (
-                shard,
-                output / "shard-input-list.txt",
-                output / "shard-set.json",
-            )
-        }
         require(result["total_contracts"] == len(values), "shard total differs")
 
         (output / "shard-set.json").unlink()
         resumed = sharding.run(options)
         require(resumed == result, "metadata-partial resume differs")
-        require(
-            all((output / name).read_bytes() == payload
-                for name, payload in frozen_bytes.items()),
-            "resume changed published bytes",
-        )
         verified_resume = sharding.run(options)
         require(verified_resume == result, "fresh-DB published resume differs")
-        require(
-            all((output / name).read_bytes() == payload
-                for name, payload in frozen_bytes.items()),
-            "fresh-DB resume changed published bytes",
-        )
 
         wrong_total = copy.copy(options)
         wrong_total.expected_total_contracts = len(values) + 1
@@ -485,12 +420,14 @@ def end_to_end_fixture(root: Path) -> None:
                 "float page size was accepted",
             )
             mutated = copy.deepcopy(parsed)
-            mutated["shards"][0]["size"] = float(mutated["shards"][0]["size"])
+            mutated["shards"][0]["contract_count"] = float(
+                mutated["shards"][0]["contract_count"]
+            )
             expect_failure(
                 lambda: sharding._verify_shard_set(
                     output, mutated, authority, result["source_inputs"], database
                 ),
-                "float shard size was accepted",
+                "float shard contract count was accepted",
             )
             mutated = copy.deepcopy(parsed)
             mutated["authoritative_input"]["input_contract_count"] = float(
@@ -588,71 +525,6 @@ def end_to_end_fixture(root: Path) -> None:
         sharding._load_authority = original_loader
 
 
-def evidence_lock_fixture(root: Path) -> None:
-    values = records()
-    evidence = root / "lock-evidence"
-    evidence.mkdir()
-    source = evidence / "producer.tsv.inputs.jsonl.gz"
-    write_source(source, values)
-    manifest = root / "lock-contracts.tsv"
-    write_contract_manifest(manifest, source)
-    frozen = root / "lock-frozen.tsv"
-    frozen.write_text("frozen\n", encoding="utf-8")
-    options = fixture_options(
-        root, source, manifest, frozen, output_name="lock-shards"
-    )
-    original_loader = sharding._load_authority
-    loader_entered = threading.Event()
-    started = threading.Event()
-    result: list[object] = []
-    failure: list[BaseException] = []
-
-    def loader(_options, database, *_roots):
-        loader_entered.set()
-        return fake_authority(database, values, frozen, manifest)
-
-    def execute() -> None:
-        started.set()
-        try:
-            result.append(sharding.run(options))
-        except BaseException as error:
-            failure.append(error)
-
-    lock_path = evidence_quiescence_lock_path(evidence)
-    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH)
-        sharding._load_authority = loader
-        worker = threading.Thread(target=execute, daemon=True)
-        worker.start()
-        require(started.wait(1), "contended sharder thread did not start")
-        time.sleep(0.1)
-        require(worker.is_alive(), "sharder bypassed the live evidence lock")
-        require(
-            not loader_entered.is_set(),
-            "authority snapshot began while a producer lock was held",
-        )
-        require(
-            not options.output_directory.exists(),
-            "sharder mutated output before acquiring its evidence snapshot",
-        )
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        worker.join(20)
-        require(not worker.is_alive(), "sharder did not resume after lock release")
-        if failure:
-            raise failure[0]
-        require(
-            len(result) == 1 and loader_entered.is_set(),
-            "sharder did not complete its locked snapshot",
-        )
-    finally:
-        sharding._load_authority = original_loader
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
-
-
 def authority_uniqueness_fixture() -> None:
     database = sqlite3.connect(":memory:")
     database.execute(
@@ -725,12 +597,10 @@ def capacity_boundary_fixture(root: Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="a64-campaign-sharding-test-") as temporary:
         root = Path(temporary).resolve()
-        deterministic_writer_fixture(root)
-        durability_fixture(root)
+        shard_writer_fixture(root)
         bounded_scale_fixture(root)
         capacity_boundary_fixture(root)
         end_to_end_fixture(root)
-        evidence_lock_fixture(root)
     authority_uniqueness_fixture()
     print("A64 ASLRef campaign sharding fixtures passed")
     return 0

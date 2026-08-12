@@ -284,6 +284,11 @@ class Guest:
     def process_id(self) -> int:
         return self._process.pid
 
+    @property
+    def return_code(self) -> int | None:
+        """Return the emulator status once it exits, otherwise ``None``."""
+        return self._process.poll()
+
     def terminate(self) -> None:
         """Force a guest worker to leave a blocking console operation."""
         self._signal(signal.SIGKILL)

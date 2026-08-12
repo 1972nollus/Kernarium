@@ -5,10 +5,12 @@ guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest
 guest_compare_register_branch_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP of two registers followed by B.cond. G116 ranks this pair fourth and ninth over a full Geekbench run while the immediate form does not reach the table, so the two shapes get separate probes.
 guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
-guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures fixed guest-register retention across a linked backward edge.
+guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Self-checking historical x0/x1 linked-loop control for the fixed x8/x9 bank's entry, exit, and link overhead.
+guest_fixed_x8_x9_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures the exact guest x8/x9 resident bank across a linked backward edge, paired with guest_fixed_gpr_link_loop.S as its overhead control.
 guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
 guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.
 guest_fp_polymorphic_indirect_loop.S	floating-state	base	run_guest_link_bench.py	Stresses floating-state exits at a polymorphic indirect branch site.
+guest_gadget_polymorphic_successor_loop.S	control-flow	base	run_guest_link_bench.py	Cycles one ADD-immediate gadget's indirect dispatch through eight distinct successor gadget families to isolate G107's early-target-fetch hypothesis.
 guest_gpr_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page scalar memory runs through an allocated base register.
 guest_indirect_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures monomorphic indirect-call and return successor linking.
 guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.

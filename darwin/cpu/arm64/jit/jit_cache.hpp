@@ -29,6 +29,13 @@ struct CompiledBlock final {
   std::uint64_t memory_write_mask{};
   std::uint64_t direct_memory_write_mask{};
   std::size_t instruction_count{};
+  /* Exact guest bytes used to validate this block after an unrelated global
+   * code-sequence change. Shared translations and every executor that
+   * materializes one retain the same immutable allocation; a translation that
+   * is not admitted to the shared cache aliases its executor's bounded
+   * fallback slab.
+   */
+  std::shared_ptr<const std::uint32_t[]> saved_guest_words;
   bool accesses_fp_state{};
   bool link_target_safe{};
   bool native_fp{};
@@ -147,19 +154,29 @@ struct CacheSet final {
  * jit_cache_geometry.hpp. cache_index() must be given the same set count.
  */
 using BlockCache = std::vector<CacheSet>;
-using SavedGuestWords =
+using GuestWordBuffer =
     std::array<std::uint32_t, maximum_block_instructions>;
-
 struct SavedGuestWordSet final {
-  std::array<SavedGuestWords, cache_ways> ways;
+  std::array<GuestWordBuffer, cache_ways> ways;
 };
-
-using SavedGuestWordCache = std::vector<SavedGuestWordSet>;
 
 struct CacheSlot final {
   CompiledBlock *block{};
-  SavedGuestWords *guest_words{};
+  GuestWordBuffer *fallback_guest_words{};
 };
+
+/* Geometry reserves this worst-case fallback payload for every cached block
+ * even though shared translations leave their corresponding slab pages
+ * untouched. Keeping the conservative charge makes rejected publications
+ * and single-executor fallbacks stay inside the whole-process budget.
+ */
+inline constexpr std::size_t maximum_saved_guest_word_bytes =
+    maximum_block_instructions * sizeof(std::uint32_t);
+/* Conservative room for the single allocation and shared-ownership metadata
+ * of an executor's fallback slab. The shared_ptr in each CompiledBlock is
+ * already part of sizeof(CompiledBlock).
+ */
+inline constexpr std::size_t saved_guest_word_slab_allocation_allowance = 64U;
 
 [[nodiscard]] constexpr std::size_t
 cache_index(unsigned long generation, std::uint64_t pc,

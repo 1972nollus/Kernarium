@@ -62,8 +62,8 @@ target_compile_options(uml_arm64_execution_helpers PRIVATE
 set_target_properties(uml_arm64_execution_helpers PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-# Off by default so production translation is byte-identical. Build a separate
-# tree with -DUML_GADGET_PAIR_HISTOGRAM=ON and set
+# Off by default so ordinary translation has no diagnostic instrumentation.
+# Build a separate tree with -DUML_GADGET_PAIR_HISTOGRAM=ON and set
 # DARWIN_UML_GADGET_PAIR_HISTOGRAM to a path to capture which adjacent gadget
 # pairs a workload actually translates, which is what G-2's remaining step needs
 # in order to choose fusion candidates by frequency rather than by eye.
@@ -76,6 +76,13 @@ option(UML_GADGET_PAIR_HISTOGRAM
 # concentrated translated code's vector operand registers are.
 option(UML_GADGET_SIMD_OPERAND_HISTOGRAM
     "Count guest SIMD operand registers during translation (diagnostic only)"
+    OFF)
+
+# G107's bounded A/B candidate.  Keep it disabled in ordinary products: only
+# the 32 non-faulting ADD/SUB-immediate entries have the register and stream
+# contract needed to fetch their successor together with their operand.
+option(UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
+    "Hoist successor fetch in ADD/SUB-immediate gadgets (experiment only)"
     OFF)
 
 add_library(uml_arm64_gadgets OBJECT
@@ -105,7 +112,8 @@ target_compile_options(uml_arm64_gadgets PRIVATE
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
-    UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>)
+    UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
+    UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -157,11 +165,18 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_executor_cache.cpp
     arm64/jit/jit_executor_execution.cpp
     arm64/jit/jit_executor_lifecycle.cpp
+    arm64/jit/jit_executor_pool.cpp
     arm64/jit/jit_executor_linking.cpp
     arm64/jit/jit_linking.cpp
     arm64/jit/jit_publication_state.cpp
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_shared_translations.cpp)
+if(UML_ENABLE_JIT_PROFILE)
+    list(APPEND _uml_cpu_jit_executor_sources
+        arm64/jit/jit_executor_pool_profile.cpp
+        arm64/jit/jit_profile_api.cpp
+        arm64/jit/jit_profile_output.cpp)
+endif()
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})
@@ -331,10 +346,9 @@ target_compile_options(uml_cpu_engine_factory PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_cpu_engine_factory PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-# OBJECT libraries keep production and test composition free from duplicate
-# compilation, but CMake does not propagate their object files transitively.
-# These link components are the supported, self-contained adapter graph for
-# consumers that need one engine (or the factory) in isolation.
+# OBJECT libraries avoid duplicate compilation, but CMake does not propagate
+# their contents transitively. These link components expose the supported
+# adapter graph for consumers that select one engine or the factory.
 add_library(uml_cpu_interpreter_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_interpreter_component cpu interpreter)
 target_link_libraries(uml_cpu_interpreter_component INTERFACE

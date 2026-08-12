@@ -13,12 +13,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #ifndef UML_JIT_RUNTIME_DIAGNOSTICS
 #define UML_JIT_RUNTIME_DIAGNOSTICS 0
 #endif
 
 namespace uml::cpu::arm64 {
+
+class JitExecutorPool;
 
 struct JitExecutorOptions final {
 	bool enable_guarded_control_flow{};
@@ -29,9 +32,21 @@ struct JitExecutorOptions final {
 
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 struct JitExecutorDiagnosticsOptions final {
+	using BeforeSharedPublication = void (*)(void *) noexcept;
+
 	bool reuse_validated_stale_blocks{true};
 	/* Zero selects the ordinary production arena size. */
 	std::size_t code_arena_size{};
+	/* Empty selects the production geometry. A supplied value, including
+	 * zero, caps the corresponding stable table for focused exhaustion tests.
+	 */
+	std::optional<std::size_t> direct_link_capacity;
+	std::optional<std::size_t> indirect_link_capacity;
+	/* Test-support-only boundary after the compiler and capacity preflight but
+	 * before the first opportunistic publication allocation. Production
+	 * executor objects preprocess this complete diagnostics structure out. */
+	void *shared_publication_context{};
+	BeforeSharedPublication before_shared_publication{};
 };
 
 struct JitCacheValidationDiagnostics final {
@@ -43,6 +58,13 @@ struct JitCacheValidationDiagnostics final {
 	std::uint64_t validation_sequence_races{};
 	std::uint64_t cache_replacements{};
 	std::uint64_t arena_resets{};
+	std::uint64_t private_validation_word_installs{};
+	std::uint64_t shared_validation_word_installs{};
+	std::uint64_t direct_link_refusals{};
+	std::uint64_t indirect_link_refusals{};
+	std::uint64_t target_link_refusals{};
+	std::uint64_t direct_link_table_high_water{};
+	std::uint64_t direct_link_table_capacity{};
 };
 
 struct JitIndirectLinkDiagnostics final {
@@ -52,6 +74,8 @@ struct JitIndirectLinkDiagnostics final {
 	std::uint64_t scope_rejections{};
 	std::uint64_t deactivated_sites{};
 	std::uint64_t capacity_refusals{};
+	std::uint64_t table_high_water{};
+	std::uint64_t table_capacity{};
 };
 #endif
 
@@ -93,6 +117,12 @@ public:
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
 	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
+	/* False when the process-wide configured executor ceiling was full, or when
+	 * standalone construction raced or overlapped a managed pool session. Such
+	 * an object owns no cache or executable mappings; begin_execution() fails
+	 * and run_block() fail-closes if called directly despite that result.
+	 */
+	[[nodiscard]] bool budget_admitted() const noexcept;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 	[[nodiscard]] JitCacheValidationDiagnostics
 	cache_validation_diagnostics() const noexcept;
@@ -105,6 +135,12 @@ public:
 #endif
 
 private:
+	friend class JitExecutorPool;
+	struct ManagedPoolConstruction final {};
+	[[nodiscard]] static std::unique_ptr<JitExecutor>
+	make_for_managed_pool(JitExecutorOptions options);
+	JitExecutor(ManagedPoolConstruction, JitExecutorOptions options);
+
 	class Implementation;
 	std::unique_ptr<Implementation> implementation_;
 };

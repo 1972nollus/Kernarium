@@ -97,7 +97,12 @@ void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
                   &uml_arm64_jit_tlb_translate_preserving_fpmr)
             : reinterpret_cast<const void *>(
                   &uml_arm64_jit_tlb_translate_preserving);
+    /* The bridge preserves dynamic host bindings, but every normal C++
+     * boundary still observes canonical guest x8/x9. Reload the continuing
+     * bank in case that boundary changes architectural state. */
+    publish_linked_gprs_for_returning_call();
     emitter_.call_preserving_flags(miss_bridge);
+    reload_linked_gprs_after_returning_call();
     emitter_.move_x(path.address, 0);
     emitter_.compare_zero(path.fault, path.address, true, false);
     emitter_.branch(path.continuation);
@@ -401,18 +406,22 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
       /* The accumulator form has already materialized its guest-specific
        * first word, so the native status-returning store is equivalent while
        * avoiding dependence on host privileged accumulator state.
-      */
-      emitter_.emit(0xf829'b100U); // st64bv x9, x0, [x8]
-      /* Normal mapped emulator memory defines its successful status as zero,
-       * independent of the host memory system's implementation-defined value.
        */
-      if (status_register != 31U)
-        store_gpr(31, status_register, false);
-      clear_local_exclusive_monitor();
+      emitter_.emit(0xf829'b100U); // st64bv x9, x0, [x8]
     } else {
       emitter_.emit(0xf83f'9100U); // st64b x0, [x8]
-      clear_local_exclusive_monitor();
     }
+    reload_gprs_after_constrained_sequence();
+    if (!load && (status || accdata) && status_register != 31U) {
+      /* Normal mapped emulator memory defines its successful status as zero,
+       * independent of the host memory system's implementation-defined value.
+       * Apply it after restoring the fixed bank in case the destination is
+       * guest x8 or x9.
+       */
+      store_gpr(31, status_register, false);
+    }
+    if (!load)
+      clear_local_exclusive_monitor();
   }
 
 [[nodiscard]] JitCompiler::Action JitCompiler::emit_exclusive_memory(std::uint32_t instruction,

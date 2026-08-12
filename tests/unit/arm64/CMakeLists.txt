@@ -61,35 +61,6 @@ if(UML_BUILD_UNIT_TESTS)
     include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-c.cmake")
 endif()
 
-# Object-library sources bypass the ordinary target link interface. Reject a
-# test graph that embeds both executor policies: besides defeating the
-# zero-cost boundary, it would make duplicate implementation ownership depend
-# on link order.
-get_property(_uml_arm64_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-foreach(_uml_arm64_target IN LISTS _uml_arm64_targets)
-    get_target_property(_uml_arm64_sources ${_uml_arm64_target} SOURCES)
-    if(NOT _uml_arm64_sources)
-        continue()
-    endif()
-    string(JOIN ";" _uml_arm64_source_text ${_uml_arm64_sources})
-    string(FIND "${_uml_arm64_source_text}"
-        "TARGET_OBJECTS:uml_arm64_jit_executor" _uml_has_production_executor)
-    string(FIND "${_uml_arm64_source_text}"
-        "TARGET_OBJECTS:uml_arm64_jit_diagnostics_executor"
-        _uml_has_diagnostics_executor)
-    if(NOT _uml_has_production_executor EQUAL -1 AND
-       NOT _uml_has_diagnostics_executor EQUAL -1)
-        message(FATAL_ERROR
-            "${_uml_arm64_target} embeds both JIT executor policies")
-    endif()
-endforeach()
-unset(_uml_arm64_source_text)
-unset(_uml_arm64_sources)
-unset(_uml_arm64_target)
-unset(_uml_arm64_targets)
-unset(_uml_has_production_executor)
-unset(_uml_has_diagnostics_executor)
-
 get_property(_uml_unit_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 set(_uml_unit_binary_targets)
 foreach(_target IN LISTS _uml_unit_targets)

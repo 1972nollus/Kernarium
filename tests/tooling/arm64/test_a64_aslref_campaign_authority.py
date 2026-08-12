@@ -18,10 +18,6 @@ import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from a64_aggregate_manifest_identity import (
-    aggregate_manifest_identity,
-    canonical_json,
-)
 from a64_input_materialization import AGGREGATE_SCHEMA, wire_json
 from aggregate_a64_raw_instruction_evidence import OUTPUT_COLUMNS
 from join_a64_input_materializations import (
@@ -117,7 +113,8 @@ def write_checkpoint(
         ),
     )
     encoded_rows = [
-        (canonical_json(dict(row)) + "\n").encode("utf-8") for row in ordered
+        (campaign.canonical_json(dict(row)) + "\n").encode("utf-8")
+        for row in ordered
     ]
     footer = {
         "schema": CONTRIBUTION_CHECKPOINT_FOOTER_SCHEMA,
@@ -125,10 +122,10 @@ def write_checkpoint(
         "contribution_digest": framed_digest(encoded_rows),
     }
     with gzip.open(path, "wb") as output:
-        output.write((canonical_json(header) + "\n").encode("utf-8"))
+        output.write((campaign.canonical_json(header) + "\n").encode("utf-8"))
         for line in encoded_rows:
             output.write(line)
-        output.write((canonical_json(footer) + "\n").encode("utf-8"))
+        output.write((campaign.canonical_json(footer) + "\n").encode("utf-8"))
     return verify_contribution_checkpoint(path)
 
 
@@ -247,16 +244,10 @@ def fixture(root: Path, mutation: str = "none") -> dict[str, object]:
 
     aggregate_manifest = root / "aggregates.tsv"
     write_tsv(aggregate_manifest, OUTPUT_COLUMNS, aggregate_rows)
-    identity = aggregate_manifest_identity(aggregate_rows, OUTPUT_COLUMNS)
-    aggregate_identity = root / "aggregates.identity.json"
-    aggregate_identity.write_text(
-        canonical_json(identity) + "\n", encoding="utf-8"
-    )
     materialization_index = root / "materialization-index.tsv"
     write_tsv(materialization_index, INDEX_COLUMNS, index_rows)
     return {
         "aggregate_manifest": aggregate_manifest,
-        "aggregate_identity": aggregate_identity,
         "materialization_index": materialization_index,
         "contract_manifest": contract_manifest,
         "checkpoints": checkpoints,
@@ -288,7 +279,6 @@ def load(value: Mapping[str, object], ids: set[str] | None = None):
         return campaign.load_authoritative_input(
             guest_page_size=4096,
             aggregate_manifest=Path(value["aggregate_manifest"]),
-            aggregate_manifest_identity=Path(value["aggregate_identity"]),
             materialization_index=Path(value["materialization_index"]),
             contract_manifests=[Path(value["contract_manifest"])],
             database=database,
@@ -399,7 +389,7 @@ def main() -> int:
         drift_root = root / "merge-drift"
         drift_root.mkdir()
         drift_fixture = fixture(drift_root)
-        original_merge = campaign.merge_frozen_checkpoint_contributions
+        original_merge = campaign.merge_checkpoint_contributions
 
         def drifting_merge(paths, **kwargs):
             yield from original_merge(paths, **kwargs)
@@ -407,13 +397,13 @@ def main() -> int:
                 output.write(b"drift")
 
         try:
-            campaign.merge_frozen_checkpoint_contributions = drifting_merge
+            campaign.merge_checkpoint_contributions = drifting_merge
             expect_failure(
                 lambda: load(drift_fixture),
                 "checkpoint mutation during the authority merge was accepted",
             )
         finally:
-            campaign.merge_frozen_checkpoint_contributions = original_merge
+            campaign.merge_checkpoint_contributions = original_merge
 
         symlink_root = root / "symlink"
         symlink_root.mkdir()

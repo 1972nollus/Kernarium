@@ -9,15 +9,11 @@ __import__("sys").dont_write_bytecode = True
 import copy
 import csv
 import hashlib
-import json
-import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
-from threading import Event, Thread
-from typing import Callable, Sequence
+from typing import Callable
 
 from aggregate_a64_raw_instruction_evidence import (
     OUTPUT_COLUMNS,
@@ -25,32 +21,23 @@ from aggregate_a64_raw_instruction_evidence import (
     aggregate_id,
     semantic_features_for_word,
 )
-from freeze_a64_aggregate_manifest import (
-    full_publication_rows,
-    raw_producer_authority,
-    require_exact_raw_derivation,
-    require_regular_raw_file,
-    validate_full_publication_paths,
-    validate_producer_authority,
-)
-from generate_a64_instruction_decode_partitions import COLUMNS as DECODE_COLUMNS
-from generate_a64_instruction_required_variants import COLUMNS as REQUIRED_COLUMNS
 from validate_a64_instruction_aggregate_manifest import (
     canonical_combined_rows,
     compare_manifest,
     compare_profiles,
+    full_publication_rows,
     parse_counter,
-    read_bound_manifest,
+    raw_producer_authority,
+    read_checked_manifest,
+    require_exact_raw_derivation,
+    validate_checked_manifest_rows,
     validate_rows,
 )
+from generate_a64_instruction_decode_partitions import COLUMNS as DECODE_COLUMNS
+from generate_a64_instruction_required_variants import COLUMNS as REQUIRED_COLUMNS
 from a64_raw_evidence_files import (
-    atomic_publish_bytes,
-    filesystem_is_case_sensitive,
-    freeze_read_inputs,
-    publication_target_locks,
-    recheck_read_inputs,
-    require_no_symlink_components,
-    validate_publication_topology,
+    require_regular_raw_file,
+    validate_producer_authority,
 )
 
 
@@ -62,44 +49,10 @@ def read(path: Path, columns: list[str]) -> list[dict[str, str]]:
         return list(reader)
 
 
-def publish_fixture(
-    outputs: tuple[tuple[Path, bytes], ...],
-    before_replace: Callable[[], None] | None = None,
-) -> None:
-    def validate_staged(staged: Sequence[tuple[Path, Path]]) -> None:
-        for (_target, payload), (_published, temporary) in zip(outputs, staged):
-            if temporary.read_bytes() != payload:
-                raise ValueError("staged fixture publication differs")
-
-    def validate_published() -> None:
-        for target, payload in outputs:
-            if target.read_bytes() != payload:
-                raise ValueError("published fixture publication differs")
-
-    atomic_publish_bytes(
-        outputs,
-        validate_staged=validate_staged,
-        before_replace=before_replace,
-        validate_published=validate_published,
-    )
-
-
 def expect_failure(name: str, action: Callable[[], object], text: str) -> None:
     try:
         action()
     except ValueError as error:
-        if text not in str(error):
-            raise AssertionError(f"{name}: unexpected error: {error}") from error
-        return
-    raise AssertionError(f"{name}: validator accepted the negative fixture")
-
-
-def expect_read_failure(
-    name: str, action: Callable[[], object], text: str
-) -> None:
-    try:
-        action()
-    except (OSError, ValueError) as error:
         if text not in str(error):
             raise AssertionError(f"{name}: unexpected error: {error}") from error
         return
@@ -379,6 +332,10 @@ def main() -> int:
         repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
         OUTPUT_COLUMNS,
     )
+    validate_checked_manifest_rows(checked)
+    read_checked_manifest(
+        repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv"
+    )
     full_4k = sorted(
         (item for item in checked if item["guest_page_size"] == "4096"),
         key=lambda item: (item["stable_id"], item["aggregate_id"]),
@@ -467,37 +424,6 @@ def main() -> int:
         ),
         "does not exactly derive from supplied raw evidence",
     )
-    expect_failure(
-        "full-publication-output-alias",
-        lambda: validate_full_publication_paths(
-            Path("4k.tsv"),
-            Path("16k.tsv"),
-            Path("output.tsv"),
-            Path("output.tsv"),
-        ),
-        "write targets alias each other",
-    )
-    expect_failure(
-        "full-publication-input-output-alias",
-        lambda: validate_full_publication_paths(
-            Path("4k.tsv"),
-            Path("16k.tsv"),
-            Path("4k.tsv"),
-            Path("identity.json"),
-        ),
-        "target aliases a read input",
-    )
-    expect_failure(
-        "full-publication-model-output-alias",
-        lambda: validate_full_publication_paths(
-            Path("4k.tsv"),
-            Path("16k.tsv"),
-            Path("required.tsv"),
-            Path("identity.json"),
-            (Path("required.tsv"),),
-        ),
-        "target aliases a read input",
-    )
     with tempfile.TemporaryDirectory(
         prefix="a64-full-publication-fixture-"
     ) as temporary_name:
@@ -510,108 +436,6 @@ def main() -> int:
             "full-publication-symlink-raw",
             lambda: require_regular_raw_file(link),
             "not a nonsymlink regular file",
-        )
-
-        nested_output = temporary / "publication"
-        expect_failure(
-            "full-publication-output-identity-ancestry",
-            lambda: validate_full_publication_paths(
-                temporary / "4k.tsv",
-                temporary / "16k.tsv",
-                nested_output,
-                nested_output / "identity.json",
-            ),
-            "impossible ancestry",
-        )
-        read_file = temporary / "read-model.tsv"
-        read_file.write_text("model\n", encoding="utf-8")
-        expect_failure(
-            "full-publication-output-under-read-file",
-            lambda: validate_full_publication_paths(
-                temporary / "4k.tsv",
-                temporary / "16k.tsv",
-                read_file / "output.tsv",
-                temporary / "identity.json",
-                (read_file,),
-            ),
-            "nondirectory path component",
-        )
-        if not filesystem_is_case_sensitive(temporary):
-            expect_failure(
-                "full-publication-case-variant-output-alias",
-                lambda: validate_full_publication_paths(
-                    temporary / "4k.tsv",
-                    temporary / "16k.tsv",
-                    temporary / "Result.tsv",
-                    temporary / "result.tsv",
-                ),
-                "write targets alias each other",
-            )
-
-        missing_parent = temporary / "missing-parent"
-        expect_failure(
-            "publication-lock-missing-parent",
-            lambda: publication_target_locks(
-                (missing_parent / "output.tsv",)
-            ).__enter__(),
-            "publication target parent is not a regular directory",
-        )
-        if missing_parent.exists():
-            raise AssertionError("missing-parent preflight left filesystem debris")
-
-        locked_manifest = temporary / "concurrent-manifest.tsv"
-        locked_identity = temporary / "concurrent-identity.json"
-        acquired = Event()
-
-        def contend_for_pair() -> None:
-            with publication_target_locks(
-                (locked_manifest, locked_identity)
-            ):
-                acquired.set()
-
-        with publication_target_locks((locked_manifest, locked_identity)):
-            contender = Thread(target=contend_for_pair)
-            contender.start()
-            if acquired.wait(0.05):
-                raise AssertionError("publication pair lock did not serialize")
-        contender.join(timeout=2.0)
-        if contender.is_alive() or not acquired.is_set():
-            raise AssertionError("publication pair contender did not resume")
-        if any(path.name.endswith("publication.lock") for path in temporary.iterdir()):
-            raise AssertionError("publication parent locking left lock debris")
-
-        real_parent = temporary / "real-parent"
-        real_parent.mkdir()
-        linked_output_parent = temporary / "linked-output-parent"
-        linked_output_parent.symlink_to(real_parent, target_is_directory=True)
-        expect_failure(
-            "publication-existing-parent-symlink",
-            lambda: require_no_symlink_components(
-                linked_output_parent / "output.tsv", "fixture output"
-            ),
-            "symlinked path component",
-        )
-        broken_parent = temporary / "broken-parent"
-        broken_parent.symlink_to(temporary / "absent", target_is_directory=True)
-        expect_failure(
-            "publication-broken-parent-symlink",
-            lambda: require_no_symlink_components(
-                broken_parent / "output.tsv", "fixture output"
-            ),
-            "symlinked path component",
-        )
-        switch_parent = temporary / "switch-parent"
-        switch_parent.mkdir()
-        switched_files, _switched_directories, _switched_reads = (
-            validate_publication_topology((switch_parent / "output.tsv",))
-        )
-        moved_parent = temporary / "switch-parent-moved"
-        switch_parent.rename(moved_parent)
-        switch_parent.symlink_to(real_parent, target_is_directory=True)
-        expect_failure(
-            "publication-swapped-parent",
-            lambda: publication_target_locks(switched_files).__enter__(),
-            "symlinked path component",
         )
 
         raw_directory = temporary / "complete-raw"
@@ -765,203 +589,7 @@ def main() -> int:
         if alias_aggregate.returncode == 0 or failed_raw_path.read_bytes() != raw_before:
             raise AssertionError("aggregate output/raw-input alias was not fail-closed")
 
-        model = temporary / "model.tsv"
-        model.write_text("frozen\n", encoding="utf-8")
-        identities = freeze_read_inputs((model,))
-        model.write_text("changed\n", encoding="utf-8")
-        expect_failure(
-            "full-publication-read-input-mutation",
-            lambda: recheck_read_inputs(identities),
-            "publication read input identity changed",
-        )
-        model.write_text("reversible\n", encoding="utf-8")
-        reversible_identity = freeze_read_inputs((model,))
-        original_status = model.stat()
-        time.sleep(0.01)
-        model.write_text("transient\n", encoding="utf-8")
-        model.write_text("reversible\n", encoding="utf-8")
-        os.utime(
-            model,
-            ns=(original_status.st_atime_ns, original_status.st_mtime_ns),
-        )
-        expect_failure(
-            "full-publication-reversible-input-mutation",
-            lambda: recheck_read_inputs(reversible_identity),
-            "publication read input identity changed",
-        )
-
-        first_parent = temporary / "first-parent"
-        first_parent.mkdir()
-        (first_parent / "input.tsv").write_text("same\n", encoding="utf-8")
-        linked_parent = temporary / "linked-parent"
-        linked_parent.symlink_to(first_parent, target_is_directory=True)
-        expect_failure(
-            "full-publication-parent-symlink",
-            lambda: freeze_read_inputs((linked_parent / "input.tsv",)),
-            "symlinked path component",
-        )
-
-        first_output = temporary / "bound-manifest.tsv"
-        second_output = temporary / "bound-identity.json"
-        first_output.write_bytes(b"old-manifest")
-        second_output.write_bytes(b"old-identity")
-        model.write_text("before-stage\n", encoding="utf-8")
-        staged_identity = freeze_read_inputs((model,))
-
-        def mutate_before_replace() -> None:
-            model.write_text("during-stage\n", encoding="utf-8")
-            recheck_read_inputs(staged_identity)
-
-        expect_failure(
-            "full-publication-staged-input-mutation",
-            lambda: publish_fixture(
-                (
-                    (first_output, b"new-manifest"),
-                    (second_output, b"new-identity"),
-                ),
-                before_replace=mutate_before_replace,
-            ),
-            "publication read input identity changed",
-        )
-        if (
-            first_output.read_bytes() != b"old-manifest"
-            or second_output.read_bytes() != b"old-identity"
-        ):
-            raise AssertionError("failed publication replaced a bound output")
-        first_output.chmod(0o640)
-        second_output.chmod(0o644)
-        publish_fixture(
-            (
-                (first_output, b"new-manifest"),
-                (second_output, b"new-identity"),
-            )
-        )
-        if (
-            first_output.stat().st_mode & 0o777 != 0o640
-            or second_output.stat().st_mode & 0o777 != 0o644
-        ):
-            raise AssertionError("publication replacement changed existing modes")
-        new_output = temporary / "new-mode.tsv"
-        publish_fixture(((new_output, b"new"),))
-        if new_output.stat().st_mode & 0o777 != 0o644:
-            raise AssertionError("new publication did not use canonical mode")
-
-        manifest_path = (
-            repository
-            / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv"
-        )
-        manifest_identity_path = manifest_path.with_suffix(".identity.json")
-        read_bound_manifest(manifest_path, manifest_identity_path)
-        stale_identity = temporary / "stale.identity.json"
-        stale_value = json.loads(
-            manifest_identity_path.read_text(encoding="utf-8")
-        )
-        stale_value["row_count"] += 1
-        stale_value["guest_page_size_counts"]["4096"] += 1
-        stale_identity.write_text(
-            json.dumps(
-                stale_value,
-                ensure_ascii=True,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        expect_failure(
-            "validator-stale-manifest-identity",
-            lambda: read_bound_manifest(manifest_path, stale_identity),
-            "differs from its frozen identity",
-        )
-        boolean_identity = temporary / "boolean.identity.json"
-        boolean_value = json.loads(
-            manifest_identity_path.read_text(encoding="utf-8")
-        )
-        boolean_value["row_count"] = True
-        boolean_identity.write_text(
-            json.dumps(
-                boolean_value,
-                ensure_ascii=True,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        expect_failure(
-            "validator-boolean-manifest-count",
-            lambda: read_bound_manifest(manifest_path, boolean_identity),
-            "invalid row_count",
-        )
-        expect_read_failure(
-            "validator-missing-manifest-identity",
-            lambda: read_bound_manifest(
-                manifest_path, temporary / "missing.identity.json"
-            ),
-            "No such file",
-        )
-
-        cli_directory = temporary / "cli-policy"
-        cli_directory.mkdir()
-        environment = {
-            name: value
-            for name, value in os.environ.items()
-            if not name.startswith("PYTHON")
-        }
-        for script_name, removed_option, required_arguments in (
-            (
-                "validate_a64_instruction_aggregate_manifest.py",
-                "--write-manifest",
-                (
-                    "--actual-4k", "unused-4k.tsv",
-                    "--actual-16k", "unused-16k.tsv",
-                    "--evidence-4k", "unused-4k",
-                    "--evidence-16k", "unused-16k",
-                ),
-            ),
-            (
-                "freeze_a64_aggregate_manifest.py",
-                "--base-manifest",
-                (
-                    "--full-4k-manifest", "unused-4k.tsv",
-                    "--full-16k-manifest", "unused-16k.tsv",
-                    "--evidence-4k", "unused-4k",
-                    "--evidence-16k", "unused-16k",
-                    "--output", "unused-output.tsv",
-                    "--identity-output", "unused-identity.json",
-                ),
-            ),
-        ):
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-E",
-                    "-s",
-                    "-B",
-                    str(Path(__file__).with_name(script_name)),
-                    removed_option,
-                    *required_arguments,
-                ],
-                cwd=cli_directory,
-                env=environment,
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            if (
-                completed.returncode == 0
-                or f"unrecognized arguments: {removed_option}"
-                not in completed.stdout
-            ):
-                raise AssertionError(
-                    f"removed publication option remains accepted: "
-                    f"{removed_option}: {completed.stdout}"
-                )
-        if any(cli_directory.iterdir()):
-            raise AssertionError("rejected publication CLI created output files")
-
-    print("A64 aggregate-manifest strict publication fixtures passed")
+    print("A64 aggregate-manifest semantic validation fixtures passed")
     return 0
 
 

@@ -24,13 +24,51 @@ to the shared CPU scanout conversion used by VNC. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 
-Each guest vCPU runtime owns its engine adapters for the life of its host
-thread. `CpuEngine::run()` is a synchronous, non-throwing-by-contract guest
-timeslice boundary: implementations return `ExecutionResult` for guest exits;
-allocation or host failures are reported as `fatal`. The virtual call occurs
-once at the guest-entry boundary, never in an interpreter step or translated
-block loop. Gadgets and JIT retain independent caches and do not fall back to
-one another.
+Each guest task-carrier runtime owns its engine adapters for the life of its
+host thread. JIT adapters are lightweight: a JIT-capable emulator run retains
+at most one persistent executor per configured guest CPU in a process-global,
+session-owned pool, and each adapter borrows one exclusively for its guest
+timeslice. This lets cache and code state follow scheduled guest work across
+more host task threads without multiplying retained memory beyond the
+whole-process JIT budget. The managed pool belongs to one active runtime
+memory domain: executors may switch guest generations and backings within that
+domain, but teardown drains them before the domain retires and no executor
+crosses into a later run or domain. Cacheline-separated availability cells
+publish the exact owning session token, so a stale claimant cannot consume a
+restarted session's executor. Standalone executor admission is closed from
+managed-session reservation through teardown; only the pool's tagged lease
+path may construct while that session is active. `CpuEngine::run()` is a
+synchronous,
+non-throwing-by-contract guest timeslice boundary: implementations return
+`ExecutionResult` for guest exits; allocation or host failures are reported as
+`fatal`. The virtual call occurs once at the guest-entry boundary, never in an
+interpreter step or translated block loop. Gadgets and JIT retain independent
+caches and do not fall back to one another.
+
+The opt-in macOS JIT-profiling product uses a private emulator facade, not the
+installed emulator ABI. That facade routes through a runtime-owned bridge to
+the CPU reporters; the app does not include a CPU-private diagnostics header.
+Once the embedded ELF entry has returned and retired its task carriers, the
+emulator drains both retired and still-live thread-local profile tails before
+releasing its executor pool. The CLI repeats that boundary after
+`uml_emulator_run()` returns and before its intentional `std::_Exit()`. Each
+changed cumulative report is written directly to stderr's descriptor. Its
+bounded buffer starts with an LF in the same write, so an unrelated partial PTY
+line cannot prefix the record schema; unchanged repeats are silent and require
+no stdio flush. Compile/overlap and shared retain normal-exit callbacks for
+non-CLI embeddings. Executor-pool reporting is intentionally explicit-only
+because its snapshot requires the quiescent pre-drain boundary.
+The dedicated `UML_JIT_PROFILE_EXECUTOR_POOL=1` mechanism trace is owned by the
+CPU profiling graph. JIT wrappers record borrow, slot, waiter and interrupt-
+sequence observations locally. Every successful borrow associates its captured
+session and nonnull sequence with the claimed slot in bounded storage; only
+wrapper lifetime and the quiescent final touch the registry mutex. The final
+merges by session/sequence, ORs slot masks, and emits only aggregate fanout, not
+raw keys. An unset control passes no profile into the pool and skips the
+post-claim population scan. Trace-build branches and enabled post-claim scans
+deliberately make those timings unfit for score comparisons. Ordinary products
+compile out the source, environment control, wrapper storage and every call
+site.
 
 The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`.
 `UML_GUEST_16K_PAGES=ON` is the default; set it to `OFF` for the independently
@@ -44,7 +82,7 @@ The image owns tty0 getty enablement and login policy; host-fed OverlayFS
 launchers preserve it rather than installing a transient getty override, and
 mount separate tmpfs filesystems at `/var/lib/docker` and
 `/var/lib/containerd` before systemd to keep Docker and containerd state off the
-root overlay. The systemd integration smoke imports a deterministic rootfs
+root overlay. The systemd integration smoke imports a local rootfs
 archive containing a source-built freestanding arm64/Linux hello-world payload
 into that disposable state and runs it with `--pull=never --network none`, with
 no registry dependency. No KDE/VNC or WebGL launcher creates a desktop account:

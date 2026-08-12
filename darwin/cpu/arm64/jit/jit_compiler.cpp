@@ -30,7 +30,9 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                        bool profile_gpr_pressure
 #endif
                        ) noexcept
-      : emitter_{persistent_linked_block_abi}, cold_{this},
+      : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U,
+                 carry_x8_x9_across_links && !track_direct_stores},
+        cold_{this},
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
@@ -136,6 +138,9 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
           candidate.memory_write_mask == selected.memory_write_mask &&
           candidate.direct_memory_write_mask ==
               selected.direct_memory_write_mask &&
+          candidate.direct_link_refusals == selected.direct_link_refusals &&
+          candidate.indirect_link_refusals ==
+              selected.indirect_link_refusals &&
           candidate.accesses_fp_state == selected.accesses_fp_state &&
           candidate.link_target_safe == selected.link_target_safe &&
           candidate.native_fp == selected.native_fp &&
@@ -172,7 +177,8 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
         guest_pc,
         instructions.first(
             std::min(selected.guest_instructions, instructions.size())),
-        selected.words, selected.hot_words, track_direct_stores_
+        selected.words, selected.hot_words, track_direct_stores_,
+        selected.direct_link_refusals, selected.indirect_link_refusals
 #if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
         ,
         selected.gpr_pressure
@@ -184,6 +190,7 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions,
                       bool observe_gpr_residency) {
+    begin_link_observation();
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
     begin_gpr_link_profile_block(guest_pc);
 #endif
@@ -325,6 +332,8 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         .words = words,
         .relocations = emitter_.relocations(),
         .relocatable = emitter_.relocatable(),
+        .direct_link_refusals = direct_link_refusals(),
+        .indirect_link_refusals = indirect_link_refusals(),
         .guest_instructions = count_,
         .hot_words = hot_words,
         .internal_entry_word = internal_entry_word,

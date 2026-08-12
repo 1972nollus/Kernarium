@@ -21,14 +21,13 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from a64_aggregate_manifest_identity import (
-    read_manifest_identity,
-    validate_manifest_identity,
-)
 from aggregate_a64_raw_instruction_evidence import OUTPUT_COLUMNS as AGGREGATE_COLUMNS
 from a64_one_shot_publication import OneShotPublication
 from generate_a64_aslref_behavior_status import status_id
 from generate_a64_instruction_required_variants import COLUMNS as REQUIRED_COLUMNS
+from validate_a64_instruction_aggregate_manifest import (
+    validate_checked_manifest_rows,
+)
 
 
 DECODE_COLUMNS = [
@@ -85,12 +84,6 @@ def arguments() -> argparse.Namespace:
         "--aggregate-manifest",
         type=Path,
         default=repository / "tests/unit/arm64/a64_instruction_aggregate_manifest.tsv",
-    )
-    parser.add_argument(
-        "--aggregate-manifest-identity",
-        type=Path,
-        default=repository
-        / "tests/unit/arm64/a64_instruction_aggregate_manifest.identity.json",
     )
     parser.add_argument(
         "--required-variants",
@@ -311,17 +304,12 @@ def main() -> int:
         [options.output],
         [
             options.aggregate_manifest,
-            options.aggregate_manifest_identity,
             options.required_variants,
             options.decode_partitions,
         ],
     )
     aggregates = read_tsv(options.aggregate_manifest, AGGREGATE_COLUMNS)
-    validate_manifest_identity(
-        aggregates,
-        AGGREGATE_COLUMNS,
-        read_manifest_identity(options.aggregate_manifest_identity),
-    )
+    validate_checked_manifest_rows(aggregates)
     required = read_tsv(options.required_variants, REQUIRED_COLUMNS)
     decodes = read_tsv(options.decode_partitions, DECODE_COLUMNS)
     if len(required) != 2396:

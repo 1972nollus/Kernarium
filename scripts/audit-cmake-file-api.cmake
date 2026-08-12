@@ -183,7 +183,7 @@ if(DEFINED ENGINE_EDGE_FIXTURES)
         list(GET FIXTURE_FIELDS 0 FIXTURE_SOURCE)
         list(GET FIXTURE_FIELDS 1 FIXTURE_DESTINATION)
         list(GET FIXTURE_FIELDS 2 FIXTURE_KIND)
-        if(NOT FIXTURE_KIND MATCHES "^(link|object|aggregate|include)$")
+        if(NOT FIXTURE_KIND MATCHES "^(link|include)$")
             message(FATAL_ERROR
                 "Unknown engine-edge fixture kind: ${FIXTURE_ROW}")
         endif()
@@ -229,7 +229,7 @@ if(DEFINED ENGINE_EDGE_ALLOWED_FIXTURES)
         list(GET FIXTURE_FIELDS 0 FIXTURE_SOURCE)
         list(GET FIXTURE_FIELDS 1 FIXTURE_DESTINATION)
         list(GET FIXTURE_FIELDS 2 FIXTURE_KIND)
-        if(NOT FIXTURE_KIND MATCHES "^(link|object|aggregate|include)$")
+        if(NOT FIXTURE_KIND MATCHES "^(link|include)$")
             message(FATAL_ERROR
                 "Unknown allowed engine-edge fixture kind: ${FIXTURE_ROW}")
         endif()
@@ -375,7 +375,7 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
         string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
         foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
             if(NOT DEPENDENCY MATCHES
-               "^(link|object|aggregate|include)@([A-Za-z0-9_.+-]+)$")
+               "^(link|include)@([A-Za-z0-9_.+-]+)$")
                 message(FATAL_ERROR
                     "Malformed architecture dependency for ${TARGET_NAME}: ${DEPENDENCY}")
             endif()
@@ -396,15 +396,6 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
             endif()
             uml_architecture_edge_allowed(
                 "${TARGET_LAYER}" "${DEPENDENCY_LAYER}" EDGE_ALLOWED)
-            # A complete static Apple product must physically package the
-            # runtime's lower-layer object files. This is not a source-level
-            # dependency and is permitted only when CMake explicitly marked
-            # the edge as aggregate-product composition.
-            if(NOT EDGE_ALLOWED AND DEPENDENCY_KIND STREQUAL "aggregate" AND
-               TARGET_LAYER STREQUAL "emulator" AND
-               DEPENDENCY_LAYER MATCHES "^(platform|memory|cpu|runtime|device)$")
-                set(EDGE_ALLOWED TRUE)
-            endif()
             if(NOT EDGE_ALLOWED)
                 message(FATAL_ERROR
                     "Forbidden declared ${DEPENDENCY_KIND} architecture edge: "
@@ -448,7 +439,7 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
             string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
             foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
                 if(DEPENDENCY MATCHES
-                   "^(link|object|aggregate|include)@([A-Za-z0-9_.+-]+)$")
+                   "^(link|include)@([A-Za-z0-9_.+-]+)$")
                     list(APPEND DECLARED_TARGET_DEPENDENCIES
                         "${CMAKE_MATCH_2}")
                 endif()
@@ -567,7 +558,7 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
                 # archives.  They remain authoritative for cycle detection,
                 # and for engine isolation: interface carriers must not hide
                 # a concrete engine dependency. Direct configured edges above
-                # retain the finer link/object/aggregate diagnostics and layer
+                # retain the finer direct-link diagnostics and layer
                 # direction without mistaking archive propagation for a
                 # source-level architecture dependency.
             endif()

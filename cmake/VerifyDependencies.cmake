@@ -7,19 +7,17 @@ include_guard(GLOBAL)
 
 function(uml_verify_dependency_prefix)
     cmake_parse_arguments(ARG ""
-        "PREFIX;MANIFEST;BUILD_SCRIPT;DEPLOYMENT_TARGET" "" ${ARGN})
-    if(NOT ARG_PREFIX OR NOT ARG_MANIFEST OR NOT ARG_BUILD_SCRIPT OR
-            NOT ARG_DEPLOYMENT_TARGET)
+        "PREFIX;MANIFEST;DEPLOYMENT_TARGET" "" ${ARGN})
+    if(NOT ARG_PREFIX OR NOT ARG_MANIFEST OR NOT ARG_DEPLOYMENT_TARGET)
         message(FATAL_ERROR
             "uml_verify_dependency_prefix requires PREFIX, MANIFEST, "
-            "BUILD_SCRIPT, and DEPLOYMENT_TARGET")
+            "and DEPLOYMENT_TARGET")
     endif()
 
     execute_process(
         COMMAND "${PROJECT_SOURCE_DIR}/dependencies/verify-prefix.sh"
             --prefix "${ARG_PREFIX}"
             --manifest "${ARG_MANIFEST}"
-            --build-script "${ARG_BUILD_SCRIPT}"
             --deployment-target "${ARG_DEPLOYMENT_TARGET}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _output

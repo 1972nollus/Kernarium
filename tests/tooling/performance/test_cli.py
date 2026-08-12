@@ -6,14 +6,18 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import ast
+import contextlib
 import importlib.util
+import io
 import pathlib
 import subprocess
 import sys
+import types
 from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "perf"
+TOOLS = pathlib.Path(__file__).resolve().parents[3] / "tools"
 RUNNERS = (
     "run_guest_geekbench.py",
     "run_guest_command_bench.py",
@@ -95,6 +99,18 @@ def load_runner_module(runner: str):
     spec = importlib.util.spec_from_file_location(module_name, source_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {runner}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_guest_shell_module():
+    source_path = TOOLS / "guest-shell.py"
+    spec = importlib.util.spec_from_file_location(
+        "performance_guest_shell_contract", source_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load guest-shell.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -235,6 +251,183 @@ def verify_geekbench_quiescence_contract() -> None:
         )
 
 
+def run_geekbench_shutdown_case(
+    command_status: int,
+    shutdown_ok: bool,
+    emulator_status: int | None,
+) -> tuple[int | None, RuntimeError | None, mock.Mock]:
+    module = load_runner_module("run_guest_geekbench.py")
+    arguments = types.SimpleNamespace(
+        emulator=pathlib.Path("emulator"),
+        rootfs=pathlib.Path("rootfs.erofs"),
+        profile_dir=None,
+        console_log=pathlib.Path("console.log"),
+        command="geekbench6 --no-upload",
+        root_device="/dev/ubda",
+        kernel_argument=[],
+        memory="8G",
+        cpus=10,
+        engine="jit",
+        core_class="performance",
+        timeout=30,
+        quiesce_timeout=30,
+        sample_seconds=1,
+        sample_command="/usr/bin/sample",
+    )
+    guest = mock.Mock()
+    guest.run_command.side_effect = (
+        types.SimpleNamespace(return_code=0, output=""),
+        types.SimpleNamespace(return_code=command_status, output="benchmark"),
+    )
+    guest.shutdown.return_value = shutdown_ok
+    guest.return_code = emulator_status
+
+    class MirrorThread:
+        def __init__(self, *, args, **_kwargs):
+            self._ready = args[2]
+
+        def start(self) -> None:
+            self._ready.set()
+
+        def join(self, timeout=None) -> None:
+            del timeout
+
+    status: int | None = None
+    error: RuntimeError | None = None
+    with (
+        mock.patch.object(module, "parse_arguments", return_value=arguments),
+        mock.patch.object(module, "Guest", return_value=guest),
+        mock.patch.object(module.threading, "Thread", MirrorThread),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
+        try:
+            status = module.main()
+        except RuntimeError as caught:
+            error = caught
+    guest.close.assert_called_once_with()
+    return status, error, guest
+
+
+def verify_geekbench_shutdown_contract() -> None:
+    status, error, guest = run_geekbench_shutdown_case(0, True, 0)
+    if status != 0 or error is not None:
+        raise RuntimeError(
+            "Geekbench runner rejected a clean emulator exit: "
+            f"status={status}, error={error}"
+        )
+    guest.shutdown.assert_called_once_with(60)
+
+    status, error, _ = run_geekbench_shutdown_case(0, True, 23)
+    if (
+        status is not None
+        or error is None
+        or "emulator exited with status 23" not in str(error)
+    ):
+        raise RuntimeError(
+            "Geekbench runner allowed a nonzero emulator exit to pass: "
+            f"status={status}, error={error}"
+        )
+
+    status, error, _ = run_geekbench_shutdown_case(7, True, 23)
+    if (
+        status is not None
+        or error is None
+        or "Geekbench exited with status 7" not in str(error)
+    ):
+        raise RuntimeError(
+            "Geekbench runner did not preserve benchmark failure precedence: "
+            f"status={status}, error={error}"
+        )
+
+
+def run_guest_shell_case(
+    command_status: int,
+    shutdown_ok: bool,
+    emulator_status: int | None,
+) -> tuple[int, str, mock.Mock]:
+    module = load_guest_shell_module()
+    arguments = types.SimpleNamespace(
+        emulator=pathlib.Path("emulator"),
+        rootfs=pathlib.Path("rootfs.erofs"),
+        memory="4G",
+        cpus=4,
+        root_device="/dev/ubda",
+        engine="jit",
+        core_class="performance",
+        quiet=True,
+        boot_timeout=30,
+        timeout=30,
+        command=["benchmark"],
+    )
+    guest = mock.Mock()
+    guest.run_command.return_value = types.SimpleNamespace(
+        return_code=command_status,
+        output="benchmark output",
+    )
+    guest.shutdown.return_value = shutdown_ok
+    guest.return_code = emulator_status
+    stderr = io.StringIO()
+    stdout = io.StringIO()
+    with (
+        mock.patch.object(module, "parse_arguments", return_value=arguments),
+        mock.patch.object(module, "Guest", return_value=guest),
+        contextlib.redirect_stdout(stdout),
+        contextlib.redirect_stderr(stderr),
+    ):
+        status = module.main()
+    guest.close.assert_called_once_with()
+    return status, stderr.getvalue(), guest
+
+
+def verify_guest_shell_shutdown_contract() -> None:
+    status, stderr, guest = run_guest_shell_case(0, True, 0)
+    if status != 0 or stderr:
+        raise RuntimeError(
+            "guest-shell rejected a successful command and clean emulator exit: "
+            f"status={status}, stderr={stderr!r}"
+        )
+    guest.shutdown.assert_called_once_with(60)
+
+    status, stderr, _ = run_guest_shell_case(0, False, None)
+    if status == 0 or "did not halt cleanly within 60 seconds" not in stderr:
+        raise RuntimeError(
+            "guest-shell allowed a successful command to mask shutdown timeout: "
+            f"status={status}, stderr={stderr!r}"
+        )
+
+    status, stderr, _ = run_guest_shell_case(0, True, 23)
+    if status == 0 or "emulator exited with status 23" not in stderr:
+        raise RuntimeError(
+            "guest-shell allowed a successful command to mask emulator failure: "
+            f"status={status}, stderr={stderr!r}"
+        )
+
+    status, stderr, _ = run_guest_shell_case(7, False, None)
+    if status != 7 or "did not halt cleanly within 60 seconds" not in stderr:
+        raise RuntimeError(
+            "guest-shell did not preserve command failure precedence across "
+            f"shutdown timeout: status={status}, stderr={stderr!r}"
+        )
+
+
+def verify_performance_runner_shutdown_contract() -> None:
+    for runner in RUNNERS:
+        source = (ROOT / runner).read_text(encoding="utf-8")
+        main_source = source[source.index("def main()") :]
+        shutdown = main_source.find("guest.shutdown(60)")
+        status = main_source.find("guest.return_code")
+        close = main_source.find("guest.close()")
+        if min(shutdown, status, close) < 0 or not shutdown < status < close:
+            raise RuntimeError(
+                f"{runner}: successful timing must require orderly shutdown "
+                "and status-0 emulator exit before close()"
+            )
+        if 'if emulator_status != 0:' not in main_source:
+            raise RuntimeError(
+                f"{runner}: nonzero emulator exit is not rejected"
+            )
+
+
 def verify_erofs_root_device_defaults() -> None:
     cases = (
         ("run_guest_geekbench.py", ["--console-log", "console.log"]),
@@ -247,26 +440,6 @@ def verify_erofs_root_device_defaults() -> None:
         if options.root_device != "/dev/ubda":
             raise RuntimeError(
                 f"{runner}: raw EROFS root must default to /dev/ubda"
-            )
-
-
-def verify_documented_rootfs_wrappers() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
-    entrypoints = [
-        index
-        for index, line in enumerate(readme)
-        if line.lstrip().startswith("python3 tests/perf/run_guest_")
-    ]
-    if not entrypoints:
-        raise RuntimeError("performance README has no guest-runner example")
-    expected = (
-        "tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \\"
-    )
-    for index in entrypoints:
-        if index == 0 or readme[index - 1].strip() != expected:
-            raise RuntimeError(
-                "performance guest-runner examples must use the verified-rootfs "
-                f"wrapper: {readme[index].strip()}"
             )
 
 
@@ -327,8 +500,10 @@ def verify_core_class_launcher() -> None:
 def main() -> int:
     verify_offline_geekbench_contract()
     verify_geekbench_quiescence_contract()
+    verify_geekbench_shutdown_contract()
+    verify_guest_shell_shutdown_contract()
+    verify_performance_runner_shutdown_contract()
     verify_erofs_root_device_defaults()
-    verify_documented_rootfs_wrappers()
     verify_core_class_launcher()
     for runner in RUNNERS:
         verify_engine_forwarding(runner)

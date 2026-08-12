@@ -127,8 +127,6 @@ materialize_with_metadata()
 	metadata=$1
 	destination=$2
 	cache=${3:-$CACHE}
-	GIT_AUTHOR_DATE="${GIT_AUTHOR_DATE:-}" \
-	GIT_COMMITTER_DATE="${GIT_COMMITTER_DATE:-}" \
 	UML_KERNEL_METADATA_PATH="$metadata" \
 	UML_KERNEL_GPG="$FAKE_GPG" \
 	UML_KERNEL_GPG_TEMP_ROOT="$GPG_TEMP_ROOT" \
@@ -145,7 +143,7 @@ materialize()
 
 SOURCE="$TEST_ROOT/source"
 START_TIME=$(date +%s)
-GIT_AUTHOR_DATE=946684800 GIT_COMMITTER_DATE=946684800 materialize "$SOURCE" >/dev/null
+materialize "$SOURCE" >/dev/null
 END_TIME=$(date +%s)
 
 [ "$(git -C "$SOURCE" branch --show-current)" = "${BASE_REF#refs/heads/}" ] ||

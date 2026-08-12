@@ -51,10 +51,9 @@ new score is claimed.
 
 All results were produced locally; no hosted CI workflow exists. Instruction
 input materialization was off for the complete refactor acceptance and remains
-an explicit, storage-intensive opt-in. The current rootfs size, digest, EROFS
-superblock fields, and UUID are single-sourced in
-`tools/rootfs/manifest.json` and its checked release statement instead of being
-copied into this runbook.
+an explicit, storage-intensive opt-in. The rootfs provisioning identity and
+EROFS superblock contract live in `tools/rootfs/manifest.json`; ordinary guest
+runs do not read or hash that manifest.
 
 Use CMake/Ninja and CTest as the first-party source of truth. The `unit` suite
 is host-only, contains no Python, and neither configures a kernel nor reads a
@@ -75,17 +74,19 @@ configuration inputs, ABI identity, and a recorded build procedure. Git,
 Kbuild, compiler, linker, and Xcode-generated timestamps, commit IDs, build
 IDs, user/host fields, package layouts, and output hashes stay authentic and
 may differ between runs; record them as observations rather than rewriting
-metadata or requiring byte equality. The signed `rootfs.erofs` digest is
-intentionally stricter because it identifies the unified guest input.
+metadata or requiring byte equality. Rootfs artifact authentication is limited
+to explicit provisioning and is not repeated around guest execution.
 
 ## Green checkpoints and bisectable commits
 
 Every completed feature or bug fix ends in a local commit only after
 proportionate validation shows that the affected emulator state works. Start
-with the narrow target or exact test, then run the complete supported workflow
-for the affected subsystem. Page-size-sensitive CPU, memory, ABI, kernel, and
-guest changes require both 16 KiB and 4 KiB coverage; GPU, loader, package, and
-guest workflows are required when those paths change.
+with the narrow target or exact test, then run the single canonical workflow
+that owns the changed subsystem. Do not repeat equivalent sanitizer, package,
+or guest matrices merely to create more evidence. Page-size-sensitive CPU,
+memory, ABI, kernel, and guest changes still require both 16 KiB and 4 KiB
+coverage; GPU, loader, package, and guest workflows are required only when
+those paths change.
 
 A green checkpoint has no known failure in the affected behavior and includes
 the tests, documentation, manifests, ABI identities, and generated copies that
@@ -144,11 +145,9 @@ dependencies/prepare.sh --verify
 dependencies/verify-prefix.sh \
   --prefix .build/dependencies/macos-arm64 \
   --manifest dependencies/manifest.tsv \
-  --build-script dependencies/build.sh \
   --deployment-target 14.0
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
 kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --skip-build
-python3 tools/rootfs/verify.py --image rootfs.erofs
 cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
@@ -173,12 +172,11 @@ cmake --preset macos-integration-4k \
 trees; it does not construct or verify the compiled dependency prefix.
 `dependencies/build.sh` builds that private arm64 static prefix without network
 access and publishes it transactionally. CMake configuration independently
-checks current manifest/patch validation, the receipt's preparation/build-
-policy identity, deployment target, complete payload observation, real archive
-format, arm64 architecture, static linkage, and absence of ambient/staging
-paths before integration targets can consume it. The payload hash protects one
-built prefix against modification; it is not a cross-build byte-reproducibility
-requirement.
+checks current manifest/patch validation, required payload presence, real
+archive format, deployment
+target, arm64 architecture, and static linkage before integration targets can
+consume it. The verifier checks compatibility, not product identity or byte
+equality.
 
 Host build tools and the Apple SDK may come from the configured toolchain or
 PATH. Production third-party library headers and binaries may come only from
@@ -232,21 +230,19 @@ override in the overlay. Before starting systemd, the bootstrap mounts tmpfs at
 `/var/lib/docker` and `/var/lib/containerd` so Docker storage and containerd
 state are not nested on the writable root OverlayFS. The
 `guest-overlay-systemd-smoke` target builds a freestanding arm64/Linux
-hello-world executable from repository source, packages it as a deterministic
-rootfs archive, imports that archive into the disposable Docker state, and runs
+hello-world executable from repository source, packages it as a local rootfs
+archive, imports that archive into the disposable Docker state, and runs
 the resulting local image with `--pull=never --network none`. The smoke has no
 registry or external-network dependency. KDE/VNC and WebGL launchers reuse the
 image's non-root `uml` account and must not create `plasma` or another desktop
 account in the overlay.
 
-Guest tests validate the EROFS image before and after each campaign, coordinate
-with provisioning through the rootfs lock, map the shared image with `ubd0c=`,
-and boot `root=/dev/ubda rootfstype=erofs`. EROFS supplies the read-only lower-
-filesystem contract; do not add host-mode, `ubd0r`, or `ro` checks. The `c`
-mapping disables UML's host-file lock but does not make raw `/dev/ubda` safe
-scratch space, so no test may target the root block device for destructive
-block-I/O probes. The wrapper's pre/post digest check remains the artifact-
-integrity boundary. Guest tests obtain dynamic VNC ports through
+Guest tests map the shared image directly with `ubd0c=` and boot
+`root=/dev/ubda rootfstype=erofs`. EROFS supplies the read-only lower-filesystem
+contract; do not add per-run hashing, sidecar locking, host-mode, `ubd0r`, or
+`ro` checks. The `c` mapping disables UML's host-file lock but does not make raw
+`/dev/ubda` safe scratch space, so no test may target the root block device for
+destructive block-I/O probes. Guest tests obtain dynamic VNC ports through
 LibVNCServer's 5900-and-up auto-port search.
 
 Guest runners start the emulator **attached**, in the runner's own process
@@ -297,21 +293,31 @@ client all read HWCAP-gated system registers during startup. Run it directly
 against either engine with:
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh -- \
-  python3 tests/integration/gpu/run_gpu_guest.py \
-    --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.erofs \
-    --command "docker run --rm hello-world" \
-    -- --execution-engine=gadgets
+python3 tests/integration/gpu/run_gpu_guest.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --command "docker run --rm hello-world" \
+  -- --execution-engine=gadgets
 ```
 
 ### JIT translation cache budget
 
 The JIT sizes its per-executor block cache, link tables and code arena from a
-whole-process budget split across the guest's CPUs. By default that budget is
-half of guest memory, read from the `mem=` argument the host passes the guest,
-so an eight-gigabyte ten-CPU guest spends about 3.4 GiB of host memory on
-translated-code caches rather than a fixed amount that ignores the guest.
+whole-process budget. A bounded process-global shared-translation share is
+reserved first, and the remainder is split across the guest's CPUs. By default
+the whole budget is half of guest memory, read from the `mem=` argument the host
+passes the guest, so an eight-gigabyte guest has a 4 GiB accounted ceiling for
+all retained JIT cache storage rather than a fixed amount that ignores the
+guest. This is an accounting bound, not a measured RSS claim.
+The host derives the divisor with the same policy as the maintained kernel:
+an explicit `ncpus=` value is clamped to 1 through `CONFIG_NR_CPUS` (64), while
+an omitted value selects the online host-processor count capped at 64. This
+keeps the whole-process bound intact for the kernel's automatic SMP default.
+Repeated `mem=` arguments also retain their UML meaning: the last occurrence
+wins, numeric prefixes select decimal, octal or hexadecimal as in base-zero
+parsing, and the case-insensitive suffix grammar is `K`, `M`, `G`, `T`, `P`,
+or `E`. UML ignores text after the parsed suffix, so the budget calculation does
+too. This kernel compatibility does not loosen the host-only option below.
 
 `--jit-cache-budget=` overrides the total. It is a host-only option, consumed
 before the kernel command line is built, and accepts a byte count with an
@@ -324,13 +330,184 @@ optional `K`, `M` or `G` suffix:
 ```
 
 Lowering it trades throughput for memory: the campaign in G135 of
-`docs/HOT_PATH_EXPERIMENTS.md` measures about 8% on multi-core Clang and Object
-Detection between a 4 GiB and an 8 GiB budget. Raising it past half of guest
+`docs/HOT_PATH_EXPERIMENTS.md` measured about 8% on multi-core Clang and Object
+Detection between the former fixed 131072-set/512-MiB-arena geometry and the
+4 GiB default budget of an 8 GiB guest. Raising the budget past half of guest
 memory is allowed but the host must have the memory to back it.
+Geometry scales down to one cache set and 16 KiB code and tracked-store arenas,
+and launch fails with `UML_EMULATOR_RUNTIME_ERROR` if even that accounted
+per-executor minimum does not fit. The configuration is process-wide and
+first-valid-pair-wins: another run may repeat the exact budget and CPU count,
+but an incompatible later or concurrent run fails instead of silently using a
+geometry derived from the winning run. An executor constructed before an
+explicit publication claims the documented 512 MiB, one-executor fallback pair.
+Within an admitted emulator run, the configured CPU count is also the exact
+ceiling on retained JIT executors. Task-carrier host threads keep lightweight
+engine wrappers and borrow those executors exclusively for each guest entry;
+an N+1 simultaneous borrower waits for a slot instead of constructing an
+unbudgeted executor or reporting lease exhaustion, and an already queued
+borrower takes priority over a tight preferred-slot reborrow. A managed session
+belongs to one active runtime memory domain. Executors may switch CPU states,
+guest generations, and backings within that domain; session teardown drains
+the pool before the domain retires, so they never cross runs or memory domains.
+A wrapper or borrower that survives an explicitly misordered teardown fails
+closed and cannot attach to a later session or a different code-generation
+capability profile. Idle ownership is published through one 128-byte-aligned
+atomic session-token cell per executor, so independent slots do not update one
+shared availability mask and an old session cannot claim a replacement
+executor even if its allocation reuses the same address. From registry
+reservation through final managed teardown, standalone executor construction
+is rejected; only the pool's private tagged lease path is admitted. The
+four-slot `arm64-jit-executor-pool-multislot` fixture pins lazy lowest-slot
+construction and fallback, concurrent exclusive handoff, FIFO priority, mixed
+idle/active drain, stale pre-claim restart, activation-window lease exclusion,
+and fresh-session recovery; the existing one-slot fixture retains the
+memory-preparation and stale-wrapper contracts.
+
+Every checked configure preset inherits an explicit production-selector
+contract: `UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS=ON`,
+`UML_JIT_CARRY_X8_X9_ACROSS_LINKS=OFF`, and
+`UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=OFF`. This includes the ordinary
+page profiles, integration, profiling, sanitizer, loader, GPU, and Apple
+library presets, so reconfiguring a canonical build tree cannot retain a stale
+experimental cache value. Use a separately named build tree and an explicit
+`-D` override for an A/B arm; do not mutate a canonical preset tree in place.
+The manually configured GPR-link profiling build is a source-level exception:
+it keeps executor-owned counter pointers private by disabling translation
+sharing, and it rejects the x8/x9 carry option as incompatible.
+
+The completed fixed-x8/x9 carry microprobe is recorded at
+`.build/results/jit-cache-handoff/carry-x8-x9-matched-perf-final-20260812/README.md`.
+It used separate Release build directories and a symmetric x0/x1 control,
+JIT/1 GiB/one worker, P10 and E4, repetition-1 warmup,
+and fixed `ABCD DCBA BADC CDAB` order. The strict result is P PASS/E
+FAIL/overall FAIL; a separately labeled user post-hoc cross-core tolerance
+accepts the prototype, but does not change the production selector. Keep
+`UML_JIT_CARRY_X8_X9_ACROSS_LINKS=OFF` in checked presets until a
+representative workload or Geekbench disposition supports enabling it. E-core
+results use `taskpolicy -c background`, which is a process-wide QoS clamp and
+must not be described as hardware affinity.
+
+### Opt-in JIT profiling emulator
+
+`macos-jitprof` inherits the release `macos-integration` configuration and
+changes only `UML_ENABLE_RUNTIME_PROFILING=ON`. It therefore uses the same
+verified dependency prefix, case-sensitive Linux source, 16 KiB kernel build,
+CLI, and device providers as the production comparison while keeping all
+profiling sources in a separate build tree. Build it and run its focused preset
+contract plus the retired-and-live-tail final-report fixture (including a
+deliberately held stderr `FILE` lock) with:
+
+```sh
+cmake --workflow --preset check-jitprof
+
+# Equivalent configure and build steps when the focused audits are not needed.
+cmake --preset macos-jitprof
+cmake --build --preset macos-jitprof
+```
+
+The profiling executable is
+`.build/presets/macos-jitprof/bin/uml-darwin`. The workflow does not boot a guest
+or establish benchmark evidence; measured campaigns use `tools/guest-shell.py`
+without `--quiet`, because profiling output is written to emulator stderr.
+`guest-shell.py`, the Geekbench runner, and the standalone timing runners
+report success only when their requested commands complete and the emulator
+then halts within the orderly-shutdown deadline with status zero. A shutdown
+timeout or nonzero emulator status fails the run without replacing an earlier
+command failure status; forced close remains cleanup rather than evidence.
+
+The principal runtime controls are `UML_JIT_PROFILE_COMPILE=1`,
+`UML_JIT_PROFILE_OVERLAP=1`,
+`UML_JIT_PROFILE_SHARED_TRANSLATIONS=1`, and the unscored mechanism trace
+`UML_JIT_PROFILE_EXECUTOR_POOL=1`. The first three emit periodic cumulative
+snapshots and a process-wide final summary after a clean, joined shutdown; the
+pool trace emits only its change-detected final.
+After the embedded ELF entry returns with its task carriers retired, the
+emulator invokes an explicit, idempotent reporting boundary before releasing
+the session-owned executor pool. The profiling CLI repeats that boundary after
+`uml_emulator_run()` returns and before its deliberate `std::_Exit()`. It merges
+both already-retired recorders and the sub-interval tail of every still-live
+thread-local compile/overlap recorder, then emits the executor-pool snapshot
+before invoking the global shared-cache reporter. When both snapshots changed,
+the pool record therefore precedes the shared record; change suppression may
+silence either record independently. Runtime records are formatted in bounded
+private memory and written
+directly to stderr's file descriptor with partial-write and interruption retry;
+a nonblocking descriptor waits for writable backpressure before resuming the
+exact unwritten suffix. Each bounded buffer carries a leading LF in that same
+descriptor write, terminating any unrelated partial PTY line before its
+parseable record body. They neither acquire nor flush the shared stderr `FILE`
+object. Compile/overlap and shared reporters retain normal-exit callbacks for
+non-CLI processes. The executor-pool reporter is intentionally explicit-only
+because it requires a quiescent pre-drain boundary. Unchanged explicit calls or
+subsequent compile/overlap/shared normal-exit callbacks emit no duplicate.
+If a process starts another embedded run or records more profiling activity,
+the next reporting boundary emits a new cumulative final, followed again by
+silence until the state changes. Expansion dumps use one bounded header and
+typed, numbered continuation records; concurrent long dumps remain separately
+reconstructible without a process-wide output lock.
+
+The executor-pool trace keeps ordinary counters and a fixed association set in
+each profiling-build JIT wrapper. Every successful borrow associates the
+wrapper's captured session and current nonnull sequence address with the
+claimed slot. The borrow path does not increment a process-global profiling
+atomic. Wrapper construction, retirement, cold
+standalone-lease lifetime events, and the quiescent final use one private
+registry mutex; retired and still-live wrapper records are aggregated at that
+boundary. The final reports borrow preference and fallback behavior, cell CAS
+attempts, waiter enqueue/wake/FIFO handoffs, managed construction, created and
+observed peak-live/borrowed populations, wrapper slot changes, null and changed
+interrupt-sequence observations, same-sequence/different-slot movement,
+bounded sequence wrapper fanout and extra-wrapper associations, distinct
+session/sequence identities, sequence multi-slot counts, extra slot
+associations, maximum slot fanout, overflow, and standalone construction/live
+peak. The merge keys by session and sequence, ORs wrapper-local slot masks, and
+never emits either key; the consecutive same-sequence/different-slot count is
+only supplemental transition evidence.
+`peak-borrowed-observed=` is a post-claim diagnostic scan, not a linearizable
+global maximum. Profiling code is excluded from ordinary builds. When the environment control is
+unset, the adapter passes a null profile and the pool skips the diagnostic
+post-claim scan. The profiling product still contains conditional branches,
+and trace-enabled runs add post-claim scans, so its timings are mechanism
+diagnostics and are unusable as benchmark or score evidence. The bounded pool
+final can exceed `PIPE_BUF`; it is emitted only at the quiescent reporting
+boundary, where no carrier profile producer remains, and the direct descriptor
+writer already resumes exact suffixes after partial writes, so it is not split
+into continuation records.
+Compile reporting defaults to every 4,096 blocks per translating host task
+thread, overlap reporting to every 2^20 translations after its first batched
+flush, and shared-translation reporting to every 65,536 publications. The
+shared report's process-wide fields include `entries=`, `published=`,
+`matched=`, `reused=`, `missed=`, `rejected=`, `degraded-rejected=`,
+`malformed-rejected=`, `insertion-failures=`,
+`failed-insertion-retained-accounted-bytes=`, `materialization-failures=`,
+`invalid-metadata=`, `direct-link-capacity=`, `indirect-link-capacity=`,
+`arena-exhaustion=`, `payload-bytes=`, `accounted-bytes=`, and
+`maximum-accounted-bytes=`. Retained failure bytes are conservative accounted
+reservation bytes after successful map insertion followed by entry-vector
+failure, not measured live heap bytes. An
+abnormal exit
+before the joined reporting boundary can still omit thread-local compile or
+overlap batches, so retain the guest completion marker, final lines, and normal
+emulator exit with every final-profile claim. The ordinary
+`macos-integration` product keeps this profiling code compiled out.
+
+The compile profile distinguishes branch-operand `direct-link-refusals=` and
+`indirect-link-refusals=` from `target-link-refusals=`, where the latter means a
+compiled block could not obtain its own stable target record during
+installation. `direct-link-table-high-water=` and
+`indirect-link-table-high-water=` are the maximum occupied records observed;
+their matching `*-capacity=` fields are the configured per-executor bounds.
+Periodic lines are cumulative for their translating host task thread, while
+the final line sums refusal/reset counts and takes the process-wide maximum of
+each table occupancy and capacity. `arena-resets=` counts failed primary
+code-arena stores that immediately trigger a whole block/link-cache clear and
+primary arena reset; it does not count the separate tracked-store or
+floating-transaction arena resets.
 
 Full LTP is independently selected, never a unit test. The unified image
-contains it at `/opt/ltp`; run it separately per engine and preserve the rootfs
-wrapper. Cases whose required kernel options are deliberately disabled belong
+contains it at `/opt/ltp`; run it separately per engine. Cases whose required
+kernel options are deliberately disabled belong
 in `disabled-tests.tsv` rather than prompting config re-enablement:
 
 ```sh
@@ -346,13 +523,12 @@ runner validates its complete canonical path inventory and sibling kernel
 release before booting cases:
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
-  python3 tests/integration/ltp/run_guest_ltp.py \
-    --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.erofs \
-    --manifest tests/integration/ltp/verified-tests.tsv \
-    --modules-builtin /Volumes/<case-sensitive-volume>/build-16k/modules.builtin \
-    --case containers/netns_sysfs
+python3 tests/integration/ltp/run_guest_ltp.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --manifest tests/integration/ltp/verified-tests.tsv \
+  --modules-builtin /Volumes/<case-sensitive-volume>/build-16k/modules.builtin \
+  --case containers/netns_sysfs
 ```
 
 The CMake engine targets supply the corresponding
@@ -376,41 +552,62 @@ outside CTest. Run its standalone target explicitly:
 cmake --build .build/presets/macos-integration --target guest-smp-parallel
 ```
 
-Provisioning an image is explicit and always verifies the manifested image
-SHA-256; it refuses to replace an existing image without `--replace`. Local
-artifacts must be authenticated out of band before being supplied with
-`--source`. Network acquisition additionally verifies a detached signature
-over the release digest statement: set the four `UML_ROOTFS_*` release
-variables named in the manifest and pass `--allow-network`. The repository
-intentionally cannot invent the release URL or trusted public key. EROFS
-updates are complete image rebuilds followed by verified
-`tools/rootfs/provision.py --replace`; in-place writable maintenance is
-unsupported.
-
-Use stock macOS commands when manually inspecting the image:
-
-```sh
-stat -f 'size=%z bytes' rootfs.erofs
-shasum -a 256 rootfs.erofs
-```
+Provisioning an image is explicit and authenticates the candidate against the
+pinned manifest before atomic installation. It refuses to replace an existing
+image without `--replace`. Network acquisition additionally verifies a
+detached signature over the release statement; pass the URL, statement,
+signature, trusted public key, and `--allow-network` explicitly or through the
+corresponding `UML_ROOTFS_*` environment variables. This work is performed once
+when installing an artifact, not before or after guest runs. EROFS updates are
+complete image replacements; in-place writable maintenance is unsupported.
 
 Guest benchmarks use payloads already installed under `/opt`; they do not
 download inputs at run time. Geekbench 6 runs locally without an Internet
 preflight or upload permission gate:
 
 ```sh
-tools/rootfs/with-verified-rootfs.sh --rootfs rootfs.erofs -- \
-  python3 tests/perf/run_guest_geekbench.py \
-    --emulator .build/presets/macos-integration/bin/uml-darwin \
-    --rootfs rootfs.erofs \
-    --console-log .build/results/geekbench-gadgets-16k.log \
-    --engine gadgets --cpus 10 --memory 8G
+python3 tests/perf/run_guest_geekbench.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs rootfs.erofs \
+  --console-log .build/results/geekbench-gadgets-16k.log \
+  --engine gadgets --cpus 10 --memory 8G
 ```
 
 The runner's default guest command is
 `/opt/geekbench/release/geekbench6 --no-upload`.
 See [`../tests/perf/README.md`](../tests/perf/README.md) for profiling and probe
 commands. Full Geekbench scoring remains a separate manual campaign.
+
+G107's bounded successor-fetch comparison is available only through the
+default-off `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. Use
+separate OFF and ON build directories. Explicitly keep translation sharing ON, x8/x9 carry
+OFF, and every profiling selector OFF. The exact focused host gates are
+`arm64-gadget-successor-hoist-structure` and `arm64-gadget-terminal-count`;
+run them with `architecture-audit` in 16 KiB and 4 KiB Release OFF/ON trees and
+repeat the focused tests in a 16 KiB ON
+ASan/UBSan tree. The timing payload is
+`guest_gadget_polymorphic_successor_loop`; its paired low-polymorphism
+same-family throughput control is `guest_add_immediate_loop`. Run both through
+`run_guest_link_bench.py` on performance and efficiency classes. The control is
+not literally monomorphic: its selected ADD
+branch sees itself 15 times and SUB once per loop.
+
+The completed 2026-08-12 comparison is recorded at
+`.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`.
+It used eight one-repetition preflights followed by 16 P then 16 E scored
+invocations, three samples each and no retry/deletion. P polymorphic/control
+wall improved 13.723512%/0.516300% with 13.207211 points
+difference-in-differences; E improved 7.258795%/5.481481% with 1.777314 points.
+Polymorphic host CPU improved 13.888889%/9.683605% on P/E; all wall ranges were
+disjoint and all counterbalanced halves were beneficial. The prospective
+dynamic policy (`P > 2%`, E regression strictly below twice measured P) and the
+original stricter screen both pass; the stronger 2-point
+difference-in-differences preference fails on E overall and by half. The host
+load gate was user-waived and E selection is QoS rather than hardware affinity,
+so retain every sample and the recorded load/spread limitations. The focused
+result does not authorize a production default or a bank-wide successor
+register rewrite. Keep the option OFF until a matched representative workload
+or Geekbench disposition supports enabling it.
 
 Sanitizer, iOS, XCFramework, benchmark, and guest-workload runs are separate
 acceptance campaigns.  Typical host-product commands are:
@@ -441,10 +638,12 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-`unit-tsan` intentionally runs eight tests labelled `tsan`:
+`unit-tsan` intentionally runs twelve tests labelled `tsan`:
 `emulator-native-16k-ownership`, `static-mmu-batch`,
 `arm64-pc-alignment-contract`, `arm64-static-runtime`,
-`arm64-jit-publication_gate`, `memory-domain-lifetime`,
+`arm64-jit-publication_gate`, `arm64-jit-cache-geometry`,
+`arm64-jit-shared-translation-cache`, `arm64-jit-executor-pool`,
+`arm64-jit-executor-pool-multislot`, `memory-domain-lifetime`,
 `runtime-route-transaction`, and `runtime-context-lifecycle`. It does not
 select the instruction-evidence reset. The full normal and ASan/UBSan suites
 retain the complete registered ordinary instruction-test selection.
@@ -494,28 +693,27 @@ checkpoints for each profile, and then executes the commands below. It can run
 for days and must remain outside ordinary CTest.
 
 Use a new absolute work root on a local filesystem. Output, scratch, and run
-roots are siblings, not nested within one another or any frozen input. The
-example official-tool paths are the paths found by the 2026-08-05 audit;
-replace any that no longer exist. `PDF` must point at the exact source PDF.
-Every `test` below must succeed before proceeding.
+roots are siblings. Authenticate the official Arm archive and source PDF before
+extracting the architecture input; that external acquisition check remains the
+release/version boundary. The campaign itself records selected paths and
+semantic input bindings but does not snapshot or repeatedly hash the archive,
+PDF, repository sources, Python runtime, or tools. The example official-tool
+paths are the paths found by the 2026-08-05 audit; replace any that no longer
+exist. Every `test` below must succeed before proceeding.
 
 ```sh
 REPO=/Users/dev/Downloads/linux-um-darwin
 WORK=/Volumes/<case-sensitive-volume>/a64-official-2026-06-run-001
 ARCH_ROOT=/private/tmp/a64-asl-2026-06.3oq9iS/ISA_A64_xml_A_profile-2026-06
-ARCHIVE=/private/tmp/ISA_A64_xml_A_profile-2026-06.tar.gz
 FEATURES=/private/tmp/a64-features-2026-06.S4QKh4/Features.json
 ASLREF=/private/tmp/aslref-inspect.k1syjc/herdtools7-aslref-v1.0_draft.2/_build/default/asllib/aslref.exe
 BUNDLER=/private/tmp/aslref-inspect.k1syjc/herdtools7-aslref-v1.0_draft.2/herd/libdir/asl-pseudocode/bundler.py
-PDF=/Volumes/<case-sensitive-volume>/spec/ISA_A64_xml_A_profile-2026-06.pdf
 
 test ! -e "$WORK"
 test -d "$ARCH_ROOT"
-test -f "$ARCHIVE"
 test -f "$FEATURES"
 test -x "$ASLREF"
 test -f "$BUNDLER"
-test -f "$PDF"
 
 mkdir -p "$WORK"/join-4k "$WORK"/join-16k \
   "$WORK"/shards-4k "$WORK"/shards-16k \
@@ -565,8 +763,7 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --evidence-directory "$EVIDENCE_16K" --guest-page-size 16384 \
   --materialization-index "$WORK/join-16k/index.tsv" \
@@ -576,8 +773,7 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 
 TOTAL_4K=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["total_contracts"])' "$WORK/shards-4k/shard-set.json")
 TOTAL_16K=$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["total_contracts"])' "$WORK/shards-16k/shard-set.json")
@@ -595,8 +791,7 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --evidence-directory "$EVIDENCE_16K" --guest-page-size 16384 \
   --materialization-index "$WORK/join-16k/index.tsv" \
@@ -607,8 +802,7 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py shard \
   --maximum-shard-bytes 536870912 --maximum-metadata-bytes 134217728 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
   --campaign-id a64-2026-06-4k \
@@ -626,8 +820,7 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
   --max-encoded-bytes 134217728 --max-artifact-bytes 536870912 \
   --max-artifact-files 4096 --max-log-bytes 8388608 \
   --maximum-authority-database-bytes 137438953472 \
-  --maximum-authority-merge-scratch-bytes 17179869184 \
-  --freeze-path "$ARCHIVE" --freeze-path "$PDF"
+  --maximum-authority-merge-scratch-bytes 17179869184
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
   --campaign-id a64-2026-06-16k \
   --input-list "$WORK/shards-16k/shard-input-list.txt" \
@@ -644,23 +837,20 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py plan \
   --max-encoded-bytes 134217728 --max-artifact-bytes 536870912 \
   --max-artifact-files 4096 --max-log-bytes 8388608 \
   --maximum-authority-database-bytes 137438953472 \
-  --maximum-authority-merge-scratch-bytes 17179869184 \
-  --freeze-path "$ARCHIVE" --freeze-path "$PDF"
+  --maximum-authority-merge-scratch-bytes 17179869184
 
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py pilot \
   --plan "$WORK/plans/campaign-4k.json" --output-root "$WORK/run-4k" \
   --local-temp-root "$WORK/local-run-4k" --workers 4 \
   --maximum-authority-database-bytes 137438953472 \
   --maximum-authority-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py pilot \
   --plan "$WORK/plans/campaign-16k.json" --output-root "$WORK/run-16k" \
   --local-temp-root "$WORK/local-run-16k" --workers 4 \
   --maximum-authority-database-bytes 137438953472 \
   --maximum-authority-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 
 # These commands resume the four pilot shards and run every remaining shard.
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py run \
@@ -668,15 +858,13 @@ python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py run \
   --local-temp-root "$WORK/local-run-4k" --workers 4 \
   --maximum-authority-database-bytes 137438953472 \
   --maximum-authority-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py run \
   --plan "$WORK/plans/campaign-16k.json" --output-root "$WORK/run-16k" \
   --local-temp-root "$WORK/local-run-16k" --workers 4 \
   --maximum-authority-database-bytes 137438953472 \
   --maximum-authority-merge-scratch-bytes 17179869184 \
-  --minimum-output-free-gib 20 --minimum-local-free-gib 20 \
-  --directory-sync-policy require
+  --minimum-output-free-gib 20 --minimum-local-free-gib 20
 
 python3 -B tests/tooling/arm64/run_a64_aslref_campaign.py verify \
   --plan "$WORK/plans/campaign-4k.json" --output-root "$WORK/run-4k" \
@@ -697,8 +885,7 @@ python3 -B tests/tooling/arm64/join_a64_aslref_campaign_results.py \
   --local-temp-root "$WORK/local-promotion" --minimum-local-free-gib 20 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --output "$WORK/promotion/a64_aslref_behavior_status.tsv" \
-  --identity-output "$WORK/promotion/a64_aslref_behavior_status.identity.json"
+  --output "$WORK/promotion/a64_aslref_behavior_status.tsv"
 python3 -B tests/tooling/arm64/join_a64_aslref_campaign_results.py \
   --campaign-4k-plan "$WORK/plans/campaign-4k.json" \
   --campaign-4k-root "$WORK/run-4k" \
@@ -707,51 +894,43 @@ python3 -B tests/tooling/arm64/join_a64_aslref_campaign_results.py \
   --local-temp-root "$WORK/local-promotion" --minimum-local-free-gib 20 \
   --maximum-database-bytes 137438953472 \
   --maximum-merge-scratch-bytes 17179869184 \
-  --output "$WORK/promotion/a64_aslref_behavior_status.tsv" \
-  --identity-output "$WORK/promotion/a64_aslref_behavior_status.identity.json" \
-  --verify-only
+  --output "$WORK/promotion/a64_aslref_behavior_status.tsv" --verify-only
 ```
 
 The first sharding pass derives the exact campaign counts from the freshly
 joined authority; never substitute aggregate-row counts or an older run's raw
-contract totals. The current frozen aggregate identity has 32,169 rows
-(16,084 at 4 KiB and 16,085 at 16 KiB), ID digest
-`00ebf4703abb2e9c59050d4e7f00418dcb6b5f61f0e61dddbe566c51f2057d66`,
-and row digest
-`f42d770d290b88135f5da3eb04793d516cd89723e614b4e2911499fcc5541c0`;
-those are aggregate identities, not campaign totals. The derived shard count
+contract totals. The checked aggregate manifest currently has 32,169 rows
+(16,084 at 4 KiB and 16,085 at 16 KiB); those row counts are not campaign
+totals. The derived shard count
 is `ceil(TOTAL/1024)`, and the pilot itself requires the first four shards to
 contain exactly 1,024 contracts each.
 
-`require` durability makes unsupported directory `fsync` fatal. Sharding and
-campaign publication fsync files before dependent metadata and sync staging,
-shard, and output directories before success. Run/pilot recheck both reserves
-before each submission and after every completion using the frozen artifact,
+Sharding and campaign publication use temporary files followed by rename.
+Run/pilot recheck both reserves
+before each submission and after every completion using the configured artifact,
 file-count, and combined-log caps for every active worker. On interruption,
 only exact owned `.a64-campaign-*` local workspaces and shard partials are
-recovered; published `SUCCESS.json` trees are verified and retained byte for
-byte. Sharding holds the canonical exclusive producer/evidence locks across
-source identity, authority reconstruction, generation, and final verification,
-so one shard set is a quiescent snapshot rather than a mixture of producer
-generations. A probe using `--generated-directory` rejects placement in any
+recovered; published `SUCCESS.json` trees are semantically verified and
+retained during resume. Sharding reconstructs one producer at a time and
+validates the completed semantic shard set. A probe using
+`--generated-directory` rejects placement in any
 source, input, or capture tree and checks its explicit
 `--minimum-generated-free-gib` reserve plus the artifact hard cap before it
-creates the directory. Promotion locks both profile roots in canonical order,
-keeps per-input results in its size-capped, locally rooted SQLite database,
+creates the directory. Promotion keeps per-input results in its size-capped,
+locally rooted SQLite database,
 streams indexed bindings one aggregate at a time, and verifies the complete
-frozen join before publishing or verifying its output pair.
+join before publishing or verifying its output TSV.
 The 128 GiB database caps are deliberate: the bounded promotion scale fixture
 measured 1,043 bytes per input at its peak after including the authority,
 campaign-ID, result, and normalized per-shard tables. The capacity model rounds
 to 1,536 bytes, allows 40 million inputs, and applies a 3/2 safety factor
-(92,160,000,000 required bytes). The promotion identity binds both that model
-and the actual database/scratch caps.
+(92,160,000,000 required bytes). The configured database and scratch caps are
+enforced directly during the join.
 
-`scripts/build-xcframework.sh` builds a complete aggregate archive, verifies
-its exact production-object membership and absence of test/profiling hooks,
-and links external C and C++ consumers for macOS, iOS device, and iOS
-simulator. It also rejects non-JIT executable-memory publication references in
-either iOS archive.
+`scripts/build-xcframework.sh` builds each supported slice, checks its platform,
+architecture, public API and package shape, and links external C, C++, and
+Objective-C consumers for macOS, iOS device, and iOS simulator. It does not
+compare or attribute individual archive members.
 Interpreter, gadgets, native-shadow mappings, and software-MMU storage remain
 data-only: no W+X mapping and no RW/RX transition. Executable publication is
 retained only in the explicitly selected JIT arena for entitled

@@ -87,6 +87,24 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.addCleanup(guest.close)
         self.assertEqual(os.getpgid(guest.process_id), os.getpgid(0))
 
+    def test_return_code_reports_the_attached_process_status(self) -> None:
+        self.emulator.write_text("#!/bin/sh\nexit 23\n", encoding="utf-8")
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+
+        deadline = time.monotonic() + 5
+        while guest.return_code is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(guest.return_code, 23)
+        with self.assertRaises(AttributeError):
+            guest.return_code = 0
+
     def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
         harness = subprocess.Popen(
             [sys.executable, "-c", HARNESS, str(self.emulator)],

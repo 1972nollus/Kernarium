@@ -12,8 +12,8 @@ command, and prints the output.
     tools/guest-shell.py --emulator .build/presets/macos-integration/bin/uml-darwin \\
         -c 'objdump -d /opt/geekbench/... | head'
 
-Wrap it in tools/rootfs/with-verified-rootfs.sh exactly like the other guest
-entry points so the image digest is checked before and after.
+The runner maps the EROFS image directly; writable state remains in its tmpfs
+OverlayFS upper layer.
 """
 
 from __future__ import annotations
@@ -137,7 +137,26 @@ def main() -> int:
                     flush=True,
                 )
                 status = result.return_code
-        guest.shutdown(60)
+        shutdown_ok = guest.shutdown(60)
+        if not shutdown_ok:
+            print(
+                "guest did not halt cleanly within 60 seconds",
+                file=sys.stderr,
+                flush=True,
+            )
+            if status == 0:
+                status = 1
+        else:
+            emulator_status = guest.return_code
+            if emulator_status != 0:
+                print(
+                    f"emulator exited with status {emulator_status} "
+                    "during shutdown",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if status == 0:
+                    status = 1
     finally:
         stop.set()
         if mirror is not None:

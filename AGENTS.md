@@ -46,9 +46,11 @@ historical sections as history.
 
 ## Canonical validation
 
-Use the narrowest relevant target or exact test first, then run the complete
-affected workflow before claiming completion. For a focused CTest, prefer an
-anchored expression:
+Use the narrowest relevant target or exact test first, then run the single
+canonical workflow that owns the changed behavior before claiming completion.
+Do not repeat equivalent presets, sanitizers, packages, or guest campaigns
+unless the change actually crosses those boundaries. For a focused CTest,
+prefer an anchored expression:
 
 ```sh
 ctest --test-dir .build/presets/macos-unit-16k \
@@ -68,6 +70,12 @@ GPU/VNC and loader workflows:
 cmake --workflow --preset check-gpu
 cmake --workflow --preset check-gpu-asan-ubsan
 cmake --workflow --preset check-loader-asan-ubsan
+```
+
+Opt-in JIT profiling product and focused structural audit:
+
+```sh
+cmake --workflow --preset check-jitprof
 ```
 
 Sanitizer and threading gates:
@@ -98,6 +106,30 @@ first-party source tree, CMake File API graph, test manifest, and advisory
 source-size report. It does not prove performance, generated-code shape, a
 kernel boot, or guest behavior.
 
+## Lean workflow policy
+
+Git is the source and history authority. Do not copy, freeze, seal, recursively
+hash, or make read-only a source tree, object set, product, or evidence
+directory for ordinary development or performance work. Separate build
+directories and the recorded revision/configure command are sufficient for an
+A/B. Do not require object/archive byte equality, object-level isolation, a
+common relink, or product hash manifests; validate behavior at the supported
+target, API, and workload boundaries.
+
+Let Git, Kbuild, the compiler, linker, archiver, and Xcode generate their real
+timestamps, versions, UUIDs, build IDs, user/host fields, and tool identities.
+Do not pass flags or macros whose only purpose is to normalize that metadata or
+make independent outputs deterministic. Stable ordering or identifiers remain
+appropriate only when they are part of a functional file format, ABI, protocol,
+or semantic test contract.
+
+Keep experiment artifacts compact: record the revision and dirty status,
+configure options, exact run command, raw relevant measurements, exit/shutdown
+status, and a concise result. Avoid inventories, full-tree/object manifests,
+duplicated products, and repeated preflight checks that do not affect the
+decision. Use the narrow focused checks followed by the single applicable
+workflow; do not rerun unrelated matrices or recreate already-green evidence.
+
 Run both page profiles for page-size-sensitive CPU, memory, ABI, kernel, or
 guest changes. The default guest page size is 16 KiB; 4 KiB is a supported
 compatibility profile, not an optional approximation.
@@ -117,26 +149,19 @@ The checked presets pin `/Volumes/<case-sensitive-volume>/linux` and the matchin
 directory. A non-canonical layout must override both `UML_KERNEL_SOURCE_DIR`
 and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 
-- `rootfs.erofs` is the ignored, unified guest image governed by
-  `tools/rootfs/manifest.json`. Verify it with:
-
-  ```sh
-  python3 tools/rootfs/verify.py --image rootfs.erofs
-  ```
-
-- Ordinary guest runs must use `tools/rootfs/with-verified-rootfs.sh`, which
-  verifies the pinned EROFS format and digest before and after execution and
-  coordinates with provisioning. Map the shared root image with `ubd0c=` so
-  UML does not take a conflicting host-file lock when guests run in parallel,
+- `rootfs.erofs` is the ignored, unified guest image. Ordinary guest runs use
+  it directly without hashing or sidecar locking. Map the shared image with
+  `ubd0c=` so UML does not take a conflicting host-file lock when guests run
+  in parallel,
   and boot it as `root=/dev/ubda rootfstype=erofs`. EROFS itself supplies the
   read-only filesystem contract; do not add Unix-mode, `ubd0r`, or `ro`
   enforcement. The `c` flag disables UML's host-file lock; it does not make the
   raw `/dev/ubda` block device suitable as scratch space. Never direct a test
-  that overwrites a block device at the root device, and keep the wrapper's
-  pre/post digest verification around every campaign.
+  that overwrites a block device at the root device.
 - Rootfs updates are whole-image operations: build and sign a new EROFS
-  artifact, update its checked manifest and release statement, then install it
-  with `tools/rootfs/provision.py --replace`. There is no in-place writable
+  artifact, update the provisioning manifest, then install it with
+  `tools/rootfs/provision.py --replace`. Provisioning authenticates the input;
+  it is not part of ordinary guest execution. There is no in-place writable
   maintenance workflow.
 - The image owns the enabled tty0 getty and its login policy. Systemd launchers
   may host-feed the tmpfs OverlayFS bootstrap, but must not synthesize or
@@ -145,7 +170,7 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   `/var/lib/containerd` so Docker storage and containerd state are not nested
   on the writable root overlay. `guest-overlay-systemd-smoke` builds its
   freestanding arm64/Linux hello-world payload from repository source, wraps it
-  in a deterministic rootfs archive, imports it into the disposable Docker
+  in a local rootfs archive, imports it into the disposable Docker
   state, and runs it with `--pull=never --network none`; it must not depend on a
   registry or external network. KDE native/VNC and WebGL launchers must reuse
   the image's non-root `uml` account; never synthesize `plasma` or another
@@ -200,9 +225,10 @@ other ambient package roots, `CMAKE_PREFIX_PATH`, or unrestricted
   dependencies/build.sh
   ```
 
-- Changes to `dependencies/manifest.tsv`, dependency patches, `prepare.sh`, or
-  `build.sh` invalidate the prefix receipt. Rebuild the prefix and run the
-  dependency tooling tests.
+- Changes to `dependencies/manifest.tsv`, authenticated source inputs, or
+  dependency patches invalidate the prefix receipt. Rebuild the prefix and run
+  the dependency tooling tests. Git reviews changes to `prepare.sh` and
+  `build.sh`; the receipt does not duplicate their identity.
 - Keep `dependencies/README.md` synchronized with source, version, patch,
   recipe, prefix-policy, or prerequisite changes.
 
@@ -276,7 +302,9 @@ device -> memory / platform
 - Source manifests and targets belong to their owning directory.
   `darwin/CMakeLists.txt` composes subdirectories; it does not own leaf source
   lists. Add every new implementation source to its owning target.
-- Keep test-only hooks in test/support variants and out of production objects.
+- Keep test-only hooks in test/support variants and out of production source
+  targets; source and runtime tests enforce that ownership without object-byte
+  proofs.
 - Do not introduce implementation-source includes (`.cpp`, `.cc`, `.cxx`,
   `.inc`, `_impl.hpp`, or `.ipp`) in C/C++. The five-file gadget composer
   exception described below is exact and mechanically audited. Assembly `.inc`
@@ -293,9 +321,9 @@ Executable-memory policy:
 - Only `darwin/cpu/arm64/jit/jit_arena.cpp` owns executable allocation,
   RW-to-RX publication, JIT write protection, and instruction-cache
   publication.
-- Direct native VM and ELF-loader paths are macOS-only. Do not weaken the iOS
-  archive audit that rejects executable-memory primitives outside the JIT
-  arena.
+- Direct native VM and ELF-loader paths are macOS-only. Keep the source
+  architecture audit that rejects executable-memory primitives outside the
+  JIT arena, and keep the supported iOS package/consumer builds green.
 
 ## Protected correctness and performance structures
 
@@ -317,8 +345,15 @@ Do not casually remove or reshape these accepted mechanisms:
   `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. The block cache and
   the arena are one resource, because arena exhaustion clears the block cache,
   so shrinking either share alone collapses the other into retranslation.
-  Keep every per-executor structure inside the budget: they multiply by the
-  guest's CPU count, and fixed sizes previously reached 9 GiB at ten vCPUs.
+  Publish the budget and expected executor count as one first-valid pair,
+  reserve the bounded shared-cache share first, and keep the complete eager and
+  retained per-executor allocation inside the remainder: implementation/TLB,
+  block cache, fallback saved-word slab, fixed link tables and indexes, active
+  pointer lists, relocation scratch, and rounded arenas. These structures
+  multiply by the guest's CPU count; predecessor fixed sizes reached 9 GiB at
+  ten vCPUs. Direct and indirect link tables must remain fixed-capacity stable
+  storage. Capacity refusal uses the semantic unlinked path and is reported; it
+  must not trigger unbudgeted growth.
 - **G134:** the relocation contract that lets one executor reuse another's
   translation. `JitRelocation` records the literal pool slots holding
   executor-owned link pointers, and only
@@ -327,8 +362,53 @@ Do not casually remove or reshape these accepted mechanisms:
   reusing executor branches through another executor's freed records; the
   pinning test in `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`
   destroys the compiling executor first so a miss is a sanitizer failure
-  rather than silent corruption. Publication stays gated on two or more live
-  executors.
+  rather than silent corruption. The shared key includes the exact consumed
+  guest words and complete code-generation profile. Validate all retained
+  metadata and resolve every private link before materialization; distinguish a
+  lookup match from a successfully installed reuse. Publication stays gated on
+  two or more live executors, the shared cache stays entry- and byte-bounded,
+  and a degraded compilation with a requested-link refusal must not occupy a
+  new canonical key. Shared translations own immutable saved validation words;
+  every noncanonical block aliases its executor's already-budgeted fallback
+  slab.
+- **JIT executor pool:** one managed run owns at most the configured guest CPU
+  count of executors. Wrappers borrow them per guest entry; session tokens and
+  the bound code-generation profile prevent cross-run reuse, and the pool
+  drains before its runtime memory domain. Idle availability is one
+  cacheline-separated, lock-free exact-session token per slot; zero means
+  uncreated, borrowed, or drain-claimed, and tokens never wrap. Managed-session
+  reservation excludes standalone executor leases through teardown; only the
+  private pool construction path is authorized while the session is active. A pooled
+  executor may move to a new task-carrier `StaticGuestMemory` with the same
+  generation/change tuple, so
+  `memory.prepare()` must run for each distinct per-entry memory object while
+  executor-TLB preparation remains conditional on mapping changes. Reset that
+  prepared-memory identity at every begin/end execution boundary.
+- **Opt-in JIT reporting:** task carriers must format bounded records privately
+  and write directly to the stderr descriptor with interruption/partial-write
+  handling; do not acquire or flush the shared stderr `FILE`. Each formatted
+  buffer starts with an LF in the same descriptor write, so unrelated
+  unterminated PTY output cannot prefix the record schema. The embedded ELF
+  explicit boundary reports compile/overlap, executor pool, then shared after
+  carriers join and before the executor pool drains; the app may repeat the
+  same change-detected, idempotent facade. Compile/overlap and shared retain
+  normal-exit callbacks. Pool reporting is intentionally explicit-only because
+  its snapshot requires a quiescent pre-drain boundary. An unchanged state
+  emits no duplicate final. The optional
+  executor-pool mechanism trace stays profiling-build-only, aggregates ordinary
+  wrapper-local borrow records at that quiescent boundary without global hot-
+  path profiling atomics, and never emits raw sequence addresses. Successful
+  borrows accumulate bounded session/sequence slot masks; final aggregation
+  keys them by session and sequence so pointer reuse across runs cannot merge
+  identities. The pool reporter is called before the shared-cache reporter, so
+  the pool record precedes the shared record when both changed; either may be
+  silent independently. Its observed post-claim population is not a
+  linearizable global maximum. When the environment control is unset, wrappers
+  pass a null profile and skip the post-claim scan. Trace-build branches and
+  trace-enabled scans are diagnostic, so timings from that build are not score
+  evidence. The bounded pool line may exceed `PIPE_BUF`, but it is emitted only
+  at the quiescent final boundary and the descriptor writer resumes partial
+  writes.
 
 For hot-path changes, preserve guest-visible behavior, exception/fault
 priority, retirement counts, memory ordering, engine defaults, HWCAP exposure,
@@ -381,7 +461,8 @@ Keep project documentation under `docs/`. The repository root is reserved for
 `AGENTS.md`, its one-line `CLAUDE.md` link, and an optional `README.md`.
 
 Keep documentation and manifests synchronized in the same change whenever
-their truth changes:
+their current contract changes. Do not copy every intermediate experiment or
+counter into every status document:
 
 - architecture, ownership, dependency direction, executable-memory policy, or
   test taxonomy -> `docs/architecture.md` and the relevant module README;
@@ -399,11 +480,14 @@ their truth changes:
 - instruction evidence or completeness -> `docs/A64_INSTRUCTION_PROGRESS.md`;
 - performance mechanism or measurement -> `docs/HOT_PATH_EXPERIMENTS.md`,
   plus `docs/JIT_CACHE_HANDOFF.md` for JIT cache, arena and translation-sharing
-  work in progress;
+  work in progress. These two own intermediate, rejected, and default-off
+  experiment detail;
 - LTP policy or result -> `docs/LTP_PROGRESS.md`;
-- accepted baseline, acceptance evidence, or limitations -> current sections
-  of `docs/REFACTOR_HANDOFF.md`, `docs/REFACTOR_PROGRESS.md`, and
-  `docs/refactor-evidence.md`.
+- accepted supported default, baseline, or externally relevant limitation -> a
+  compact current-section update in `docs/REFACTOR_HANDOFF.md`, with
+  `docs/REFACTOR_PROGRESS.md` and `docs/refactor-evidence.md` updated only when
+  their summary/index truth changes. Prefer a link to the owning detailed
+  document over duplicating full counters in all three.
 
 Do not rewrite dated historical evidence as though it were current. Record only
 checks actually run, distinguish a tested implementation commit from a later
@@ -416,10 +500,10 @@ change. `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
 ## Commit and workspace hygiene
 
 A completed feature or bug fix must end in a green, bisectable local commit.
-Once the relevant focused checks and the complete affected workflow pass,
-stage and commit the coherent change without waiting for a separate
-request. This is standing authorization for local commits at verified working
-states; it is not authorization to push or rewrite history.
+Once the relevant focused checks and the single applicable workflow pass,
+stage and commit the coherent change without waiting for a separate request.
+This is standing authorization for local commits at verified working states;
+it is not authorization to push or rewrite history.
 
 - Inspect `git status --short` before and after work. Preserve unrelated user
   changes and do not stage them.
