@@ -55,10 +55,13 @@ hot_code(const jit_test::CompiledCode &compiled) {
 }
 
 constexpr std::array persistent_capability_selection{
-    0xf875'798dU, // ldr x13, [x12, x21, lsl #3]
+    0xb940'298dU, // ldr w13, [x12, #40]: allowed selector mask.
+    0x9ad5'25adU, // lsrv x13, x13, x21: select the capability bit.
 };
 constexpr std::uint32_t paired_link_metadata =
-    0xa97f'2590U; // ldp x16, x9, [x12, #-16]
+    0xa940'2590U; // ldp x16, x9, [x12]: guest PC and instruction count.
+constexpr std::uint32_t internal_entry_load =
+    0xf940'098dU; // ldr x13, [x12, #16]
 
 [[nodiscard]] constexpr bool
 is_immediate_link_entry_load(std::uint32_t word) noexcept {
@@ -70,36 +73,41 @@ is_immediate_link_entry_load(std::uint32_t word) noexcept {
              (0xf940'0000U | (1U << 10U) | (12U << 5U));
 }
 
-void require_indexed_capability_selection(
+void require_compact_capability_selection(
     std::span<const std::uint32_t> hot) {
-  constexpr std::size_t accepted_selector_words = 6;
-  constexpr std::size_t indexed_selector_words = 3;
-  static_assert(indexed_selector_words -
-                    persistent_capability_selection.size() ==
-                2);
-  static_assert(accepted_selector_words -
-                    persistent_capability_selection.size() ==
-                5);
-
   const auto selection =
       std::search(hot.begin(), hot.end(),
                   persistent_capability_selection.begin(),
                   persistent_capability_selection.end());
   require(selection != hot.end(),
-          "linked exit does not use the persistent indexed selector");
-  require(selection + 1 != hot.end() &&
-              selection[1] == paired_link_metadata,
-          "link metadata is not paired beside the selected target load");
+          "linked exit does not test the compact capability mask");
+  require(selection != hot.begin() && selection + 3 < hot.end(),
+          "compact capability selection is truncated");
+  require(selection[-1] == paired_link_metadata,
+          "link metadata is not loaded before capability fallback");
+  require((selection[2] & ~(0x3fffU << 5U)) == 0x3600'000dU,
+          "linked exit does not reject an unavailable capability bit");
+  require(selection[3] == internal_entry_load,
+          "internal entry is not loaded from the compact descriptor");
 
-  std::size_t indexed_entry_loads = 0;
+  std::size_t mask_loads = 0;
+  std::size_t variable_shifts = 0;
+  std::size_t capability_tests = 0;
   std::size_t paired_metadata_loads = 0;
+  std::size_t internal_entry_loads = 0;
   std::size_t outer_selector_loads = 0;
   for (const auto word : hot) {
-    indexed_entry_loads += word == persistent_capability_selection.back();
+    mask_loads += word == persistent_capability_selection.front();
+    variable_shifts += word == persistent_capability_selection.back();
+    capability_tests +=
+        (word & ~(0x3fffU << 5U)) == 0x3600'000dU;
     paired_metadata_loads += word == paired_link_metadata;
+    internal_entry_loads += word == internal_entry_load;
     outer_selector_loads += word == 0x3940'6275U;
     require(!is_immediate_link_entry_load(word),
             "linked exit still loads a link entry by immediate offset");
+    require(word != 0xf875'798dU,
+            "linked exit still indexes a capability pointer array");
     require(word != 0xf940'13ebU && word != 0x3940'6169U &&
                 word != 0xf869'798dU,
             "linked exit reloads memory-backed chain selection state");
@@ -110,10 +118,13 @@ void require_indexed_capability_selection(
     require(word != 0xf940'4189U && word != 0xf940'4589U,
             "linked exit separately loads displaced link metadata");
   }
-  require(indexed_entry_loads == 1,
-          "linked exit must load exactly one selected link entry");
+  require(mask_loads == 1 && variable_shifts == 1 &&
+              capability_tests == 1,
+          "linked exit must test one compact capability mask");
   require(paired_metadata_loads == 1,
           "linked exit must load link metadata with one paired load");
+  require(internal_entry_loads == 1,
+          "linked exit must load one internal entry from the descriptor");
   require(outer_selector_loads == 1,
           "outer generated invocation must load its selector exactly once");
 }
@@ -160,7 +171,7 @@ void two_way_shape_uses_only_host_owned_branch_target(
           "indirect PIC miss does not identify its stable site");
   require(records_miss_source,
           "indirect PIC miss does not record its translation-owned source");
-  require_indexed_capability_selection(hot);
+  require_compact_capability_selection(hot);
 }
 
 void br_blr_and_ret_are_translation_specialized() {
@@ -183,13 +194,13 @@ void unlinked_compilation_has_no_native_guest_target_branch() {
             "unlinked indirect exit branched to a guest register");
 }
 
-void direct_link_uses_indexed_capability_selection() {
+void direct_link_uses_compact_capability_selection() {
   constexpr std::uint64_t pc = 0x4f86'0000;
   const std::array guest{0x1400'0001U}; // b pc + 4
   const auto compiled = jit_test::compile_linked_block(pc, guest);
   const auto hot = hot_code(compiled);
 
-  require_indexed_capability_selection(hot);
+  require_compact_capability_selection(hot);
   std::size_t host_branches = 0;
   for (const auto word : hot) {
     if ((word & 0xffff'fc1fU) != 0xd61f'0000U)
@@ -220,7 +231,7 @@ void stable_site_storage_is_bounded() {
 int main() {
   br_blr_and_ret_are_translation_specialized();
   unlinked_compilation_has_no_native_guest_target_branch();
-  direct_link_uses_indexed_capability_selection();
+  direct_link_uses_compact_capability_selection();
   stable_site_storage_is_bounded();
   return 0;
 }

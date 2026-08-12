@@ -365,13 +365,16 @@ python3 tests/integration/gpu/run_gpu_guest.py \
 
 ### JIT translation cache budget
 
-The JIT sizes its per-executor block cache, link tables and code arena from a
-whole-process budget. A bounded process-global shared-translation share is
-reserved first, and the remainder is split across the guest's CPUs. By default
-the whole budget is half of guest memory, read from the `mem=` argument the host
-passes the guest, so an eight-gigabyte guest has a 4 GiB accounted ceiling for
-all retained JIT cache storage rather than a fixed amount that ignores the
-guest. This is an accounting bound, not a measured RSS claim.
+The JIT sizes all retained translation storage from a whole-process budget. A
+complete private working set is capped at 64 MiB per executor; once those fixed
+working sets are funded, the process-global shared tier receives the entire
+remainder and is the only tier that grows with guest memory. By default the
+whole budget is half of guest memory, read from the `mem=` argument the host
+passes the guest, so an eight-gigabyte, ten-vCPU guest has a 4 GiB accounted
+ceiling: at most ten private working sets plus roughly 3.4 GiB for shared
+translations. Shared shard/map backing is allocated on first insertion rather
+than at budget publication. This is an accounting bound, not a promise that
+the process immediately commits that much RSS.
 The host derives the divisor with the same policy as the maintained kernel:
 an explicit `ncpus=` value is clamped to 1 through `CONFIG_NR_CPUS` (64), while
 an omitted value selects the online host-processor count capped at 64. This
@@ -382,13 +385,15 @@ parsing, and the case-insensitive suffix grammar is `K`, `M`, `G`, `T`, `P`,
 or `E`. UML ignores text after the parsed suffix, so the budget calculation does
 too. This kernel compatibility does not loosen the host-only option below.
 
-`--jit-cache-budget=` overrides the total. It is a host-only option, consumed
-before the kernel command line is built, and accepts a byte count with an
-optional `K`, `M` or `G` suffix:
+`--jit-cache-budget=` overrides the total. The separate host-only
+`--jit-executor-cache-budget=` option may lower, but never raise, the 64 MiB
+private ceiling for diagnosis. Both are consumed before the kernel command line
+is built and accept a byte count with an optional `K`, `M` or `G` suffix:
 
 ```sh
 .build/presets/macos-integration/bin/uml-darwin \
-  --jit-cache-budget=1G ubd0c=rootfs.erofs root=/dev/ubda \
+  --jit-cache-budget=1G --jit-executor-cache-budget=32M \
+  ubd0c=rootfs.erofs root=/dev/ubda \
   rootfstype=erofs mem=8G ncpus=10
 ```
 
@@ -400,10 +405,11 @@ memory is allowed but the host must have the memory to back it.
 Geometry scales down to one cache set and 16 KiB code and tracked-store arenas,
 and launch fails with `UML_EMULATOR_RUNTIME_ERROR` if even that accounted
 per-executor minimum does not fit. The configuration is process-wide and
-first-valid-pair-wins: another run may repeat the exact budget and CPU count,
-but an incompatible later or concurrent run fails instead of silently using a
-geometry derived from the winning run. An executor constructed before an
-explicit publication claims the documented 512 MiB, one-executor fallback pair.
+first-valid-configuration-wins: another run may repeat the exact total, CPU
+count, and private ceiling, but an incompatible later or concurrent run fails
+instead of silently using geometry derived from the winning run. An executor
+constructed before explicit publication claims the documented bounded
+one-executor fallback configuration.
 Within an admitted emulator run, the configured CPU count is also the exact
 ceiling on retained JIT executors. Task-carrier host threads keep lightweight
 engine wrappers and borrow those executors exclusively for each guest entry;
@@ -557,16 +563,23 @@ emulator exit with every final-profile claim. The ordinary
 
 The compile profile distinguishes branch-operand `direct-link-refusals=` and
 `indirect-link-refusals=` from `target-link-refusals=`, where the latter means a
-compiled block could not obtain its own stable target record during
-installation. `direct-link-table-high-water=` and
-`indirect-link-table-high-water=` are the maximum occupied records observed;
+compiled block's arena-adjacent target record could not enter the fixed reverse
+index during installation. `direct-link-table-high-water=` is the maximum
+registered arena-footer population and `indirect-link-table-high-water=` is the
+maximum occupied PIC-record population;
 their matching `*-capacity=` fields are the configured per-executor bounds.
 Periodic lines are cumulative for their translating host task thread, while
 the final line sums refusal/reset counts and takes the process-wide maximum of
 each table occupancy and capacity. `arena-resets=` counts failed primary
 code-arena stores that immediately trigger a whole block/link-cache clear and
 primary arena reset; it does not count the separate tracked-store or
-floating-transaction arena resets.
+floating-transaction arena resets. `local-compile-calls/ns/avg-ns` measures the
+complete successful local compile, private publication, optional canonical
+publication, and install path. `shared-materialization-calls/ns/avg-ns`
+measures the complete successful shared lookup, metadata/relocation handling,
+private code/footer regeneration, and install path. These fields are compiled
+out of ordinary products and are intended for relative mechanism diagnosis,
+not benchmark scoring.
 
 Full LTP is independently selected, never a unit test. The unified image
 contains it at `/opt/ltp`; run it separately per engine. Cases whose required

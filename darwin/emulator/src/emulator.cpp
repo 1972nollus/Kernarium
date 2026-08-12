@@ -293,7 +293,8 @@ public:
 		 */
 		if (jit_run &&
 		    !::uml::runtime::set_translation_cache_budget(
-				prepared.jit_cache_budget, prepared.guest_cpus))
+				prepared.jit_cache_budget, prepared.guest_cpus,
+				prepared.jit_executor_cache_budget))
 			return -UML_EMULATOR_RUNTIME_ERROR;
 		if (!translation_cache_run.enter(managed_jit_run))
 			return -UML_EMULATOR_RUNTIME_ERROR;

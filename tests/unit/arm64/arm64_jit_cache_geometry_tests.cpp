@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
+#include "cpu/arm64/jit/jit_arena.hpp"
 #include "cpu/arm64/jit/jit_linking.hpp"
 
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -87,30 +90,49 @@ void geometry_respects_every_supported_executor_count()
 
 void representative_geometry_remains_stable_and_bounded()
 {
-	struct Expectation final {
-		std::size_t guest_bytes;
-		std::size_t cache_sets;
-	};
-	constexpr std::array expectations{
-		Expectation{4U * gib, 32768},
-		Expectation{8U * gib, 65536},
-		Expectation{16U * gib, 131072},
-	};
-	for (const auto &expectation : expectations) {
-		const auto total = expectation.guest_bytes / 2U;
+	constexpr std::array guest_sizes{4U * gib, 8U * gib, 16U * gib};
+	std::optional<arm64::JitCacheGeometry> expected_geometry;
+	std::size_t preceding_shared = 0;
+	for (const auto guest_bytes : guest_sizes) {
+		const auto total = guest_bytes / 2U;
 		const auto geometry =
 			arm64::derive_jit_cache_geometry(total, 10);
 		const auto shared =
 			arm64::derive_shared_translation_cache_budget(total, 10);
 		require(geometry.valid(), "representative geometry was rejected");
-		require(geometry.cache_sets == expectation.cache_sets,
-			"representative cache capacity changed");
-		require(shared >= arm64::minimum_shared_translation_cache_bytes &&
-			shared <= arm64::maximum_shared_translation_cache_bytes,
-			"representative shared-cache share was not bounded");
+		require(geometry.total_bytes() <=
+				arm64::default_jit_cache_budget_per_executor,
+			"private executor geometry exceeded its fixed cap");
+		if (expected_geometry)
+			require(geometry == *expected_geometry,
+				"private geometry grew with guest memory");
+		else
+			expected_geometry = geometry;
+		require(shared > preceding_shared,
+			"shared cache did not grow with guest memory");
 		require(geometry.total_bytes() * 10U + shared <= total,
 			"representative geometry exceeded its executor budget");
+		preceding_shared = shared;
 	}
+
+	std::optional<arm64::JitCacheGeometry> preceding_geometry;
+	for (const auto cap :
+	     std::array{16U * mib, 32U * mib, 48U * mib, 64U * mib}) {
+		const auto geometry = arm64::derive_jit_cache_geometry(
+			4U * gib, 10, cap);
+		require(geometry.valid() && geometry.total_bytes() <= cap,
+			"private tuning cap was not respected");
+		if (preceding_geometry) {
+			require(geometry.cache_sets >= preceding_geometry->cache_sets &&
+				geometry.arena_bytes >= preceding_geometry->arena_bytes,
+				"larger private cap reduced private geometry");
+		}
+		preceding_geometry = geometry;
+	}
+	require(!arm64::derive_jit_cache_geometry(
+		4U * gib, 10,
+		arm64::maximum_jit_cache_budget_per_executor + 1U).valid(),
+		"private cap above the production ceiling was accepted");
 }
 
 void publication_is_an_atomic_first_valid_pair()
@@ -160,6 +182,9 @@ void publication_is_an_atomic_first_valid_pair()
 		"an identical sequential publication was rejected");
 	require(!arm64::set_jit_cache_budget(loser.total, loser.executors),
 		"an incompatible sequential publication was silently accepted");
+	require(!arm64::set_jit_cache_budget(
+		winner.total, winner.executors, 32U * mib),
+		"an incompatible private cap was silently accepted");
 	require(arm64::jit_cache_geometry() == expected,
 		"a rejected pair changed the published geometry");
 
@@ -248,21 +273,30 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	arm64::JitBlockLink empty{.guest_pc = 1};
 	arm64::JitBlockLinkTable direct{3};
 	arm64::JitIndirectLinkTable indirect{3, &empty};
+	std::array<arm64::JitBlockLink, 4> direct_records{};
+	const auto insert_direct = [&](std::size_t index, std::uint64_t pc) {
+		auto &record = direct_records[index];
+		record.guest_pc = pc;
+		const auto insertion = direct.insert(record);
+		if (insertion.inserted)
+			record.next_target = insertion.previous;
+		return insertion.inserted;
+	};
 	require(direct.capacity() == 3 && indirect.capacity() == 3,
 		"fixed link-table capacity changed");
-	require(arm64::JitBlockLinkTable::allocation_bytes(3) >
+	require(arm64::JitBlockLinkTable::allocation_bytes(3) <
 			3 * sizeof(arm64::JitBlockLink),
-		"direct-link index/allocation bytes were not charged");
+		"direct-link records were not moved into the code arena");
 	require(arm64::JitIndirectLinkTable::allocation_bytes(3) >
 			3 * sizeof(arm64::JitIndirectLink),
 		"indirect-link index/allocation bytes were not charged");
-	auto *first = direct.find_or_create(0x1000);
-	require(first != nullptr && direct.find_or_create(0x1000) == first,
-		"direct-link address was not stable");
-	require(direct.find_or_create(0x2000) != nullptr &&
-		direct.find_or_create(0x3000) != nullptr &&
-		direct.find_or_create(0x4000) == nullptr && direct.size() == 3,
+	require(insert_direct(0, 0x1000) && insert_direct(1, 0x2000) &&
+		insert_direct(2, 0x3000) && !insert_direct(3, 0x4000) &&
+		direct.size() == 3,
 		"direct-link table did not stop at fixed capacity");
+	auto *first = direct.find(0x1000);
+	require(first == &direct_records[0],
+		"direct-link reverse index lost its arena-owned record");
 	auto *site = indirect.find_or_create(0x5000);
 	require(site != nullptr && indirect.find(0x5000) == site &&
 		indirect.find_or_create(0x5000) == site,
@@ -274,9 +308,62 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	direct.clear();
 	indirect.clear();
 	require(direct.size() == 0 && indirect.size() == 0 &&
-		direct.find_or_create(0x9000) != nullptr &&
+		insert_direct(3, 0x9000) &&
 		indirect.find_or_create(0xa000) != nullptr,
 		"fixed link tables could not reuse storage after clear");
+}
+
+void direct_link_records_follow_their_code_in_the_arena()
+{
+	constexpr std::uint64_t pc = 0x1000;
+	constexpr std::uint64_t target = 0x2000;
+	constexpr std::array<std::uint32_t, 2> words{};
+	constexpr std::array relocations{
+		arm64::JitRelocation{
+			.word = 0,
+			.key = target,
+			.kind = arm64::JitRelocationKind::direct_link,
+		},
+	};
+	arm64::JitBlockLinkTable links{4};
+	arm64::JitBlockLink empty{.guest_pc = 1};
+	arm64::jit::detail::ExecutableArena arena{16U * 1024U};
+	require(arena.valid(), "the JIT arena could not be allocated");
+	const auto stored =
+		arena.store_block(pc, words, relocations, {}, links, empty);
+	auto *direct_link = links.find(target);
+	require(static_cast<bool>(stored) && stored.target_link != nullptr &&
+		direct_link != nullptr,
+		"the arena did not publish a code/link-footer allocation");
+	require(reinterpret_cast<std::byte *>(stored.target_link) >
+			reinterpret_cast<std::byte *>(stored.code) &&
+		direct_link == stored.target_link + 1,
+		"direct-link records are not contiguous after their code block");
+	std::uint64_t patched{};
+	std::memcpy(&patched, stored.code, sizeof(patched));
+	require(patched == reinterpret_cast<std::uintptr_t>(direct_link),
+		"the direct-link literal does not point into its adjacent footer");
+	arm64::JitBlockLinkActivation activation{
+		.instruction_count = 3,
+		.internal_entry = 0x1234,
+		.allowed_selectors = 1,
+		.epoch = 9,
+	};
+	arena.activate_link(*direct_link, activation);
+	require(direct_link->instruction_count == 3 &&
+		direct_link->internal_entry == 0x1234 &&
+		direct_link->allowed_selectors == 1 &&
+		direct_link->activation_epoch == 9,
+		"the reverse index did not activate the adjacent target anchor");
+	const auto repeated =
+		arena.store_block(0x3000, words, relocations, {}, links, empty);
+	require(static_cast<bool>(repeated),
+		"the repeated-target code block was not stored");
+	std::uint64_t repeated_patch{};
+	std::memcpy(&repeated_patch, repeated.code, sizeof(repeated_patch));
+	require(repeated_patch == reinterpret_cast<std::uintptr_t>(direct_link) &&
+		links.find(target) == direct_link && links.size() == 3,
+		"a repeated target allocated duplicate mutable activation state");
 }
 
 } // namespace
@@ -290,6 +377,7 @@ int main()
 		one_jit_run_session_is_admitted_at_a_time();
 		a_standalone_executor_lease_is_excluded_by_a_managed_session();
 		fixed_link_tables_are_stable_bounded_and_reusable();
+		direct_link_records_follow_their_code_in_the_arena();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
 		return std::fprintf(stderr, "JIT cache geometry test failed: %s\n",

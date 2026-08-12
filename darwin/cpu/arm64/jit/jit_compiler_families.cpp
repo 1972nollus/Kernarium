@@ -1252,7 +1252,7 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
 
   const auto fallback = emitter.make_label();
   emitter.load_relocatable_pointer(
-      12, reinterpret_cast<std::uintptr_t>(link->entries.data()),
+      12, reinterpret_cast<std::uintptr_t>(link),
       JitRelocationKind::direct_link, target);
   if (emitter.persistent_linked_block_abi()) {
     /*
@@ -1263,15 +1263,16 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
      * data never contributes to the indexed native branch target.
      */
     emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
-    emitter.load_x_indexed_8(13, 12, 21);
   } else {
     emitter.load_x(11, 31, 32); // Saved JitChainState *.
-    emitter.load_b(9, 11, offsetof(JitChainState, link_selector));
-    emitter.load_x_indexed_8(13, 12, 9);
+    emitter.load_b(10, 11, offsetof(JitChainState, link_selector));
   }
-  emitter.load_pair_x(
-      16, 9, 12,
-      -static_cast<std::ptrdiff_t>(offsetof(JitBlockLink, entries)));
+  const auto selector = emitter.persistent_linked_block_abi() ? 21U : 10U;
+  emitter.load_pair_x(16, 9, 12, 0);
+  emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
+  emitter.logical_shift_right_variable(13, 13, selector);
+  emitter.test_zero(fallback, 13, 0, false);
+  emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
   emitter.compare_zero(fallback, 13, true, false);
 
   if (emitter.persistent_linked_block_abi()) {
@@ -1413,19 +1414,19 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
 #endif
 
   /*
-   * x12 is a stable host entry table selected by a guest-target equality
-   * test. Only its host-published internal entry can reach BR below.
+   * x12 is a stable host record selected by a guest-target equality test.
+   * Only its host-published internal entry can reach BR below.
    */
-  if (emitter.persistent_linked_block_abi()) {
-    emitter.load_x_indexed_8(13, 12, 21);
-  } else {
+  if (!emitter.persistent_linked_block_abi()) {
     emitter.load_x(11, 31, 32);
-    emitter.load_b(9, 11, offsetof(JitChainState, link_selector));
-    emitter.load_x_indexed_8(13, 12, 9);
+    emitter.load_b(10, 11, offsetof(JitChainState, link_selector));
   }
-  emitter.load_pair_x(
-      16, 9, 12,
-      -static_cast<std::ptrdiff_t>(offsetof(JitBlockLink, entries)));
+  const auto selector = emitter.persistent_linked_block_abi() ? 21U : 10U;
+  emitter.load_pair_x(16, 9, 12, 0);
+  emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
+  emitter.logical_shift_right_variable(13, 13, selector);
+  emitter.test_zero(fallback, 13, 0, false);
+  emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
   emitter.compare_zero(fallback, 13, true, false);
 
   if (emitter.persistent_linked_block_abi()) {

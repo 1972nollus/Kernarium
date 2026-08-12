@@ -50,19 +50,16 @@ JitExecutor::Implementation::resolve_indirect_link_profile(void *context, const 
 #endif
 
 [[nodiscard]] JitBlockLink *JitExecutor::Implementation::link_for(std::uint64_t pc) {
-  auto *link = links_.find_or_create(pc);
-#if UML_ENABLE_JIT_PROFILE
-  profile_jit_link_table_state(links_.size(), links_.capacity(),
-                               indirect_links_.size(),
-                               indirect_links_.capacity());
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  return profile_links_.find_or_create(pc);
+#else
+  (void)pc;
+  /* The literal is replaced with the arena's unique target-PC anchor before
+   * the code is published. A nonnull sentinel asks the compiler for the
+   * linked shape without allocating target-owned storage during lowering.
+   */
+  return &empty_link_;
 #endif
-#if UML_JIT_RUNTIME_DIAGNOSTICS
-  if (links_.size() >
-      cache_validation_diagnostics_.direct_link_table_high_water)
-    cache_validation_diagnostics_.direct_link_table_high_water =
-        links_.size();
-#endif
-  return link;
 }
 
 [[nodiscard]] JitIndirectLink *
@@ -103,7 +100,7 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
     auto &entry = site->entries[index];
     if (entry.guest_pc != target.pc)
       continue;
-    entry.link_entries = target.link->entries.data();
+    entry.link = target.link;
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
     site->profile_targets[index] = target.link;
 #endif
@@ -122,7 +119,7 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
    * is single-threaded per executor, but this order also prevents a matching
    * key from ever exposing an uninitialized pointer during diagnostics.
    */
-  entry.link_entries = target.link->entries.data();
+  entry.link = target.link;
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   site->profile_targets[replacement] = target.link;
 #endif
@@ -133,19 +130,25 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
 #endif
 }
 
-void JitExecutor::Implementation::deactivate_links() noexcept {
+void JitExecutor::Implementation::discard_links() noexcept {
+  active_links_.clear();
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   gpr_link_profile_.drain_direct();
-#endif
-  for (auto *link : active_links_) {
-    link->entries.fill(0);
+  for (auto *link : active_profile_links_) {
+    link->internal_entry = 0;
+    link->allowed_selectors = 0;
     link->instruction_count = 0;
     link->activation_epoch = 0;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
     link->profile_mask_valid = false;
-#endif
   }
-  active_links_.clear();
+  active_profile_links_.clear();
+#endif
+}
+
+void JitExecutor::Implementation::deactivate_links() noexcept {
+  arena_.deactivate_links(
+      {active_links_.begin(), active_links_.size()});
+  discard_links();
 }
 
 void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
@@ -167,36 +170,67 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
     block.link_epoch = link_epoch_;
     return;
   }
-  auto &link = *block.link;
-  link.instruction_count = block.instruction_count;
-  link.entries.fill(0);
+  JitBlockLinkActivation activation{
+      .instruction_count = block.instruction_count,
+      .epoch = link_epoch_,
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  link.profile_mask_valid = false;
+      .profile_read_before_write = block.profile_read_before_write,
+      .profile_mask_valid = block.link_target_safe,
 #endif
+  };
+  const auto first_activation =
+      block.link != nullptr && block.link->activation_epoch != link_epoch_;
   if (block.link_target_safe) {
     const auto requirements =
         link_state_requirements(block.accesses_fp_state, block.native_fp,
                                 block.native_fpmr);
     const auto publication =
         link_capability(JitLinkCapability::store_publication);
-    for (std::size_t index = 0; index < link.entries.size(); ++index) {
+    for (std::size_t index = 0;
+         index < jit_link_selector_capabilities.size(); ++index) {
       const auto capabilities = jit_link_selector_capabilities[index];
       if ((capabilities & requirements) != requirements ||
           (block.direct_memory_write_mask != 0 &&
            (capabilities & publication) == 0U))
         continue;
-      link.entries[index] = block.internal_entry;
+      activation.allowed_selectors |= std::uint32_t{1} << index;
     }
+    activation.internal_entry = block.internal_entry;
+  }
+  arena_.activate_link(*block.link, activation);
+  if (activation.allowed_selectors != 0 && first_activation)
+    active_links_.push_back(block.link);
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    link.profile_read_before_write = block.profile_read_before_write;
-    link.profile_mask_valid = true;
-#endif
-    if (link.activation_epoch != link_epoch_) {
-      link.activation_epoch = link_epoch_;
-      active_links_.push_back(&link);
+  if (block.profile_link != nullptr) {
+    auto &profile_link = *block.profile_link;
+    profile_link.instruction_count = activation.instruction_count;
+    profile_link.internal_entry = activation.internal_entry;
+    profile_link.allowed_selectors = activation.allowed_selectors;
+    profile_link.profile_read_before_write =
+        activation.profile_read_before_write;
+    profile_link.profile_mask_valid = activation.profile_mask_valid;
+    if (profile_link.activation_epoch != link_epoch_) {
+      profile_link.activation_epoch = link_epoch_;
+      active_profile_links_.push_back(&profile_link);
     }
   }
+#endif
   block.link_epoch = link_epoch_;
+}
+
+void JitExecutor::Implementation::refresh_cached_link_target(
+    std::uint64_t pc) {
+  if (link_generation_ == 0)
+    return;
+  auto &set = (*block_cache_)[cache_index(
+      link_generation_, pc, geometry_.cache_sets)];
+  for (auto &block : set.ways) {
+    if (block.function == nullptr || block.generation != link_generation_ ||
+        block.code_changes != link_code_changes_ || block.pc != pc)
+      continue;
+    refresh_link(block);
+    return;
+  }
 }
 
 } // namespace uml::cpu::arm64

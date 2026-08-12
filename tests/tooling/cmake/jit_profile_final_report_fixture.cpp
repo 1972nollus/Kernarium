@@ -339,6 +339,8 @@ int main() {
   std::thread retired{[&] {
     uml::cpu::arm64::profile_jit_compilation(
         0x1000, guest_words, host_words, host_words.size(), false, 0, 0);
+    uml::cpu::arm64::profile_jit_local_compile_latency(1000);
+    uml::cpu::arm64::profile_jit_shared_materialization_latency(100);
   }};
   retired.join();
 
@@ -369,6 +371,8 @@ int main() {
   expansion_worker_b.join();
   uml::cpu::arm64::profile_jit_compilation(
       0x2000, guest_words, host_words, host_words.size(), false, 0, 0);
+  uml::cpu::arm64::profile_jit_local_compile_latency(2000);
+  uml::cpu::arm64::profile_jit_shared_materialization_latency(200);
 
   std::mutex stdio_mutex;
   std::condition_variable stdio_changed;
@@ -421,6 +425,8 @@ int main() {
   uml::emulator::report_jit_profiles();
   uml::cpu::arm64::profile_jit_compilation(
       0x5000, guest_words, host_words, host_words.size(), false, 0, 0);
+  uml::cpu::arm64::profile_jit_local_compile_latency(500);
+  uml::cpu::arm64::profile_jit_shared_materialization_latency(50);
   auto &shared = uml::cpu::arm64::SharedTranslationCache::instance();
   (void)shared.find({}, 0x5000, guest_words);
   uml::emulator::report_jit_profiles();

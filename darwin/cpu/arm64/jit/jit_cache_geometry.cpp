@@ -46,6 +46,13 @@ constexpr std::size_t minimum_arena_bytes = 16U * 1024U;
 constexpr std::size_t maximum_arena_bytes = 512U * 1024U * 1024U;
 constexpr std::size_t minimum_tracked_store_bytes = 16U * 1024U;
 constexpr std::size_t maximum_tracked_store_bytes = 32U * 1024U * 1024U;
+/* Each registered record is 64 bytes, while a useful linked source also
+ * consumes code and alignment. This practical two-cacheline stride keeps the
+ * reverse index from consuming an excessive fraction of a small private
+ * budget. If an unusually footer-dense workload reaches it first, bounded
+ * refusal retains the semantic unlinked path.
+ */
+constexpr std::size_t direct_link_record_budget_stride = 128U;
 
 /* Darwin supports 4 KiB and 16 KiB host pages. Charging every mapping at the
  * larger granule plus one granule of VM/allocation metadata keeps the policy
@@ -65,6 +72,7 @@ constexpr std::size_t maximum_relocated_link_pointers =
 struct JitCacheBudget final {
 	std::size_t total_bytes{};
 	unsigned executors{};
+	std::size_t per_executor_bytes{};
 
 	[[nodiscard]] bool operator==(const JitCacheBudget &) const noexcept =
 		default;
@@ -140,14 +148,16 @@ bool checked_add_product(
 {
 	if (!registry.published)
 		registry.published = JitCacheBudget{
-			default_total_bytes, default_executors};
+			default_total_bytes, default_executors,
+			default_jit_cache_budget_per_executor};
 	return *registry.published;
 }
 
 [[nodiscard]] JitCacheGeometry minimum_geometry() noexcept
 {
 	return {.cache_sets = minimum_cache_sets,
-		.block_links = minimum_cache_sets * cache_ways,
+		.block_links =
+			minimum_arena_bytes / direct_link_record_budget_stride,
 		.indirect_links = minimum_cache_sets * cache_ways,
 		.arena_bytes = minimum_arena_bytes,
 		.tracked_store_arena_bytes = minimum_tracked_store_bytes};
@@ -178,12 +188,24 @@ std::size_t JitCacheGeometry::total_bytes() const noexcept
 	/* The saved-word slab has one combined array/control allocation. */
 	checked_add_product(total, cache_sets, sizeof(SavedGuestWordSet));
 	checked_add(total, saved_guest_word_slab_allocation_allowance);
+	/* Unique direct-target anchors occupy the executable arena immediately after
+	 * the first code block that names them; reverse-index bucket heads and the
+	 * bounded active-target list are the only separate eager storage.
+	 */
 	checked_add(total, JitBlockLinkTable::allocation_bytes(block_links));
-	checked_add(total,
-		JitIndirectLinkTable::allocation_bytes(indirect_links));
-	/* Active-record lists reserve their maximum stable-record population. */
 	checked_add_product(total, block_links, sizeof(JitBlockLink *));
 	checked_add(total, allocation_allowance);
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+	checked_add(total, JitProfileBlockLinkTable::allocation_bytes(
+		cache_sets * cache_ways));
+#endif
+	checked_add(total,
+		JitIndirectLinkTable::allocation_bytes(indirect_links));
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+	checked_add_product(total, cache_sets * cache_ways,
+		sizeof(JitBlockLink *));
+	checked_add(total, allocation_allowance);
+#endif
 	checked_add_product(total, indirect_links,
 		sizeof(JitIndirectLink *));
 	checked_add(total, allocation_allowance);
@@ -199,13 +221,15 @@ std::size_t JitCacheGeometry::total_bytes() const noexcept
 }
 
 bool set_jit_cache_budget(std::size_t total_bytes,
-	unsigned executors) noexcept
+	unsigned executors, std::size_t per_executor_bytes) noexcept
 {
-	if (!derive_jit_cache_geometry(total_bytes, executors).valid())
+	if (!derive_jit_cache_geometry(
+			total_bytes, executors, per_executor_bytes).valid())
 		return false;
 	auto &registry = budget_registry();
 	std::lock_guard lock{registry.mutex};
-	const JitCacheBudget requested{total_bytes, executors};
+	const JitCacheBudget requested{
+		total_bytes, executors, per_executor_bytes};
 	if (!registry.published) {
 		registry.published = requested;
 		return true;
@@ -214,18 +238,21 @@ bool set_jit_cache_budget(std::size_t total_bytes,
 }
 
 JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
-	unsigned executors) noexcept
+	unsigned executors, std::size_t per_executor_bytes) noexcept
 {
 	if (total_bytes == 0 || executors == 0 ||
-	    executors > maximum_jit_cache_executors)
+	    executors > maximum_jit_cache_executors || per_executor_bytes == 0 ||
+	    per_executor_bytes > maximum_jit_cache_budget_per_executor)
 		return {};
-	const auto shared = derive_shared_translation_cache_budget(
-		total_bytes, executors);
-	if (shared == 0 || shared > total_bytes)
+	const auto minimum = minimum_jit_cache_budget_per_executor();
+	if (minimum > per_executor_bytes ||
+	    minimum > (total_bytes - std::min(
+			total_bytes, minimum_shared_translation_cache_bytes)) /
+			executors)
 		return {};
-	const auto budget = (total_bytes - shared) / executors;
-	if (budget < minimum_jit_cache_budget_per_executor())
-		return {};
+	const auto available =
+		(total_bytes - minimum_shared_translation_cache_bytes) / executors;
+	const auto budget = std::min(per_executor_bytes, available);
 
 	const auto per_set = sizeof(CacheSet) + sizeof(SavedGuestWordSet);
 	const auto lookup_bytes = share_of(budget, lookup_share);
@@ -233,11 +260,6 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 		round_down_to_power_of_two(lookup_bytes / per_set),
 		minimum_cache_sets, maximum_cache_sets);
 
-	/* Keep the accepted one-record-per-cache-block budget ratio. This is a
-	 * capacity choice, not a correctness invariant: some translations request
-	 * multiple stable successors and the compiler must refuse a link when the
-	 * table cannot provide its record.
-	 */
 	auto arena = std::clamp(share_of(budget, arena_share),
 		minimum_arena_bytes, maximum_arena_bytes);
 	auto tracked_store = std::clamp(
@@ -246,19 +268,22 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 
 	auto geometry = JitCacheGeometry{
 		.cache_sets = sets,
-		.block_links = sets * cache_ways,
+		/* Size the reverse index for the measured code/footer mix rather than
+		 * the theoretical footer-only arena. Capacity refusal remains a
+		 * supported semantic fallback.
+		 */
+		.block_links = arena / direct_link_record_budget_stride,
 		.indirect_links = sets * cache_ways,
 		.arena_bytes = arena,
 		.tracked_store_arena_bytes = tracked_store};
-	/* Link records, their fixed indexes, active-pointer storage and mappings
-	 * are deliberately outside lookup_share. Should they make a rounded
+	/* Link indexes and mappings are deliberately outside lookup_share. Should
+	 * they make a rounded
 	 * set-count step exceed the budget, retain a usable smaller cache rather
 	 * than publishing an over-budget geometry.
 	 */
 	while (geometry.total_bytes() > budget && sets > minimum_cache_sets) {
 		sets /= 2U;
 		geometry.cache_sets = sets;
-		geometry.block_links = sets * cache_ways;
 		geometry.indirect_links = sets * cache_ways;
 	}
 	if (geometry.total_bytes() > budget && arena > minimum_arena_bytes) {
@@ -277,6 +302,8 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 		arena -= std::min(
 			rounded_excess, arena - minimum_arena_bytes);
 		geometry.arena_bytes = arena;
+		geometry.block_links =
+			arena / direct_link_record_budget_stride;
 	}
 	if (geometry.total_bytes() > budget &&
 	    tracked_store > minimum_tracked_store_bytes) {
@@ -290,29 +317,42 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 			tracked_store - minimum_tracked_store_bytes);
 		geometry.tracked_store_arena_bytes = tracked_store;
 	}
-	return geometry.total_bytes() <= budget ? geometry : JitCacheGeometry{};
+	if (geometry.total_bytes() > budget)
+		return {};
+
+	/* The fixed shares choose the relative lookup and tracked-store sizes.
+	 * Give every remaining byte in the selected private cap to the ordinary
+	 * code/link-footer arena: unused budget cannot help either tier, while an
+	 * early arena reset discards the complete private block cache.
+	 */
+	auto low = geometry.arena_bytes;
+	auto high = maximum_arena_bytes;
+	while (low < high) {
+		const auto candidate = low + (high - low + 1U) / 2U;
+		auto expanded = geometry;
+		expanded.arena_bytes = candidate;
+		expanded.block_links =
+			candidate / direct_link_record_budget_stride;
+		if (expanded.total_bytes() <= budget)
+			low = candidate;
+		else
+			high = candidate - 1U;
+	}
+	geometry.arena_bytes = low;
+	geometry.block_links = low / direct_link_record_budget_stride;
+	return geometry;
 }
 
 std::size_t derive_shared_translation_cache_budget(
-	std::size_t total_bytes, unsigned executors) noexcept
+	std::size_t total_bytes, unsigned executors,
+	std::size_t per_executor_bytes) noexcept
 {
-	if (total_bytes == 0 || executors == 0 ||
-	    executors > maximum_jit_cache_executors)
+	const auto geometry = derive_jit_cache_geometry(
+		total_bytes, executors, per_executor_bytes);
+	if (!geometry.valid() ||
+	    geometry.total_bytes() > total_bytes / executors)
 		return 0;
-	const auto per_executor_minimum =
-		minimum_jit_cache_budget_per_executor();
-	if (per_executor_minimum > total_bytes / executors)
-		return 0;
-	const auto after_minimum =
-		total_bytes - per_executor_minimum * executors;
-	if (after_minimum < minimum_shared_translation_cache_bytes)
-		return 0;
-	const auto desired = executors == 1
-		? minimum_shared_translation_cache_bytes
-		: std::clamp(total_bytes / 16U,
-			minimum_shared_translation_cache_bytes,
-			maximum_shared_translation_cache_bytes);
-	return std::min(desired, after_minimum);
+	return total_bytes - geometry.total_bytes() * executors;
 }
 
 std::size_t minimum_jit_cache_budget_per_executor() noexcept
@@ -338,7 +378,8 @@ JitCacheGeometry jit_cache_geometry() noexcept
 	auto &registry = budget_registry();
 	std::lock_guard lock{registry.mutex};
 	const auto budget = published_budget_locked(registry);
-	return derive_jit_cache_geometry(budget.total_bytes, budget.executors);
+	return derive_jit_cache_geometry(
+		budget.total_bytes, budget.executors, budget.per_executor_bytes);
 }
 
 std::size_t jit_shared_translation_cache_budget() noexcept
@@ -347,7 +388,7 @@ std::size_t jit_shared_translation_cache_budget() noexcept
 	std::lock_guard lock{registry.mutex};
 	const auto budget = published_budget_locked(registry);
 	return derive_shared_translation_cache_budget(
-		budget.total_bytes, budget.executors);
+		budget.total_bytes, budget.executors, budget.per_executor_bytes);
 }
 
 JitCacheExecutorLease::JitCacheExecutorLease() noexcept
@@ -372,7 +413,8 @@ JitCacheExecutorLease::JitCacheExecutorLease(Admission admission) noexcept
 		if (registry.live_executors >= budget.executors)
 			return;
 		geometry_ = derive_jit_cache_geometry(
-			budget.total_bytes, budget.executors);
+			budget.total_bytes, budget.executors,
+			budget.per_executor_bytes);
 		if (!geometry_.valid())
 			return;
 		++registry.live_executors;

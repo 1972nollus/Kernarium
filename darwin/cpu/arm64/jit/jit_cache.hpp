@@ -24,6 +24,9 @@ struct CompiledBlock final {
   JitFunction tracked_function{};
   std::uintptr_t internal_entry{};
   JitBlockLink *link{};
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  JitBlockLink *profile_link{};
+#endif
   std::uint64_t stamp{};
   std::uint64_t link_epoch{};
   std::uint64_t memory_write_mask{};

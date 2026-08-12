@@ -742,10 +742,11 @@ CompiledCode compile_linked_block(
 CompiledCode compile_linked_block_with_capacity(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
     std::size_t capacity) {
-  JitBlockLinkTable links{capacity};
+  JitProfileBlockLinkTable links{capacity};
   const auto resolver = +[](void *context,
                             std::uint64_t target) -> const void * {
-    return static_cast<JitBlockLinkTable *>(context)->find_or_create(target);
+    return static_cast<JitProfileBlockLinkTable *>(context)
+        ->find_or_create(target);
   };
   JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
                        resolver};
@@ -833,7 +834,7 @@ bool gpr_profile_disabled_resolver_preserves_indirect_code(
   context.site.source_pc = pc;
   for (auto &entry : context.site.entries) {
     entry.guest_pc = 1;
-    entry.link_entries = context.empty.entries.data();
+    entry.link = &context.empty;
   }
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   context.site.profile_targets.fill(&context.empty);
@@ -927,7 +928,7 @@ CompiledCode compile_indirect_linked_block(
   context.site.source_pc = pc;
   for (auto &entry : context.site.entries) {
     entry.guest_pc = 1;
-    entry.link_entries = context.empty.entries.data();
+    entry.link = &context.empty;
   }
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   context.site.profile_targets.fill(&context.empty);
@@ -967,7 +968,7 @@ CompiledCode compile_indirect_linked_block_memory_abi(
   context.site.source_pc = pc;
   for (auto &entry : context.site.entries) {
     entry.guest_pc = 1;
-    entry.link_entries = context.empty.entries.data();
+    entry.link = &context.empty;
   }
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   context.site.profile_targets.fill(&context.empty);
@@ -1063,8 +1064,8 @@ std::size_t block_link_record_alignment() noexcept {
   return alignof(JitBlockLink);
 }
 
-std::size_t block_link_entries_offset() noexcept {
-  return offsetof(JitBlockLink, entries);
+std::size_t block_link_internal_entry_offset() noexcept {
+  return offsetof(JitBlockLink, internal_entry);
 }
 
 std::size_t indirect_link_entry_size() noexcept {
@@ -1112,22 +1113,28 @@ bool invalid_emitter_metadata_is_rejected_for_testing() {
 
 bool block_link_table_is_bounded(std::size_t capacity) {
   JitBlockLinkTable table{capacity};
+  std::vector<JitBlockLink> records(capacity + 1U);
+  const auto insert = [&](std::size_t index, std::uint64_t pc) {
+    records[index].guest_pc = pc;
+    const auto result = table.insert(records[index]);
+    if (result.inserted)
+      records[index].next_target = result.previous;
+    return result.inserted;
+  };
   if (capacity == 0)
-    return table.find_or_create(1) == nullptr && table.size() == 0;
-  auto *first = table.find_or_create(0x1000);
-  if (first == nullptr)
+    return !insert(0, 1) && table.size() == 0;
+  if (!insert(0, 0x1000))
     return false;
-  first->entries[link_capability(JitLinkCapability::store_publication)] =
-      0x1234;
+  records[0].internal_entry = 0x1234;
+  records[0].allowed_selectors = 1U << 1U;
   for (std::size_t index = 1; index < capacity; ++index)
-    if (table.find_or_create(0x1000 + index * 4U) == nullptr)
+    if (!insert(index, 0x1000 + index * 4U))
       return false;
-  return table.size() == capacity &&
-         table.find_or_create(0x1000) == first &&
-         table.find_or_create(0x1000)
-                 ->entries[link_capability(
-                     JitLinkCapability::store_publication)] == 0x1234 &&
-         table.find_or_create(0x8000'0000) == nullptr &&
+  auto *first = table.find(0x1000);
+  return table.size() == capacity && first == &records[0] &&
+         first->internal_entry == 0x1234 &&
+         first->allowed_selectors == (1U << 1U) &&
+         !insert(capacity, 0x8000'0000) &&
          table.size() == capacity;
 }
 
@@ -1140,14 +1147,14 @@ bool indirect_link_table_is_bounded(std::size_t capacity) {
   if (first == nullptr || first->source_pc != 0x1000)
     return false;
   first->entries[0].guest_pc = 0x2000;
-  first->entries[0].link_entries = empty.entries.data();
+  first->entries[0].link = &empty;
   for (std::size_t index = 1; index < capacity; ++index)
     if (table.find_or_create(0x1000 + index * 4U) == nullptr)
       return false;
   return table.size() == capacity &&
          table.find_or_create(0x1000) == first &&
          first->entries[0].guest_pc == 0x2000 &&
-         first->entries[0].link_entries == empty.entries.data() &&
+         first->entries[0].link == &empty &&
          table.find_or_create(0x8000'0000) == nullptr &&
          table.size() == capacity;
 }

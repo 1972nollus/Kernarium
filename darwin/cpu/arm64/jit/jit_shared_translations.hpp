@@ -8,7 +8,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <span>
 #include <unordered_map>
@@ -37,11 +39,13 @@ inline constexpr std::size_t maximum_shared_translation_relocations = 2;
  * bytes at a PC are what they were, the translation of them is still correct,
  * and if they are not, the key does not match.
  *
- * The host code still belongs to the executor that runs it. A reusing
- * executor copies the words into its own arena and rewrites the recorded
- * relocations to its own link tables, so no executable memory, link record or
- * arena is shared and the compile path gains no lock that execution can see.
- * What is shared is the decode and emit work.
+ * The host code still belongs to the executor that runs it. Canonical words
+ * retain zero in every executor-owned pointer cell, and relocations contain
+ * only neutral guest keys. A reusing executor copies that template into its
+ * own arena, regenerates the small mutable link footer, and resolves indirect
+ * sites against its own tables. No executable memory, activation state, link
+ * record or arena is shared, and the compile path gains no lock that execution
+ * can see. What is shared is the decode and emit work.
  */
 struct SharedTranslation final {
   std::vector<std::uint32_t> words;
@@ -149,9 +153,13 @@ public:
    * A caller's not-yet-admitted candidate remains transient caller storage.
    */
   explicit SharedTranslationCache(
-      std::size_t shard_capacity = default_shard_maximum_entries,
+      std::size_t shard_capacity = unlimited_shard_entries,
       std::size_t maximum_accounted_bytes =
-          maximum_shared_translation_cache_bytes) noexcept;
+          default_jit_cache_budget_per_executor * 4U) noexcept;
+  ~SharedTranslationCache();
+
+  SharedTranslationCache(const SharedTranslationCache &) = delete;
+  SharedTranslationCache &operator=(const SharedTranslationCache &) = delete;
 
   /* Codegen options that change emitted code. Two executors may only share a
    * translation when these agree, so they are part of the identity of the
@@ -229,6 +237,7 @@ public:
   void remove_executor() noexcept;
 
   [[nodiscard]] SharedTranslationStatistics statistics() const noexcept;
+  [[nodiscard]] std::size_t allocated_shards() const noexcept;
 
   [[nodiscard]] static SharedTranslationCache &instance() noexcept;
 
@@ -238,25 +247,23 @@ private:
     std::shared_ptr<const SharedTranslation> translation;
   };
 
-  /* Bounded near the largest working set measured so far, 283,353 distinct
-   * blocks, so a pathological guest cannot grow the entry metadata without
-   * limit. Retained host words, relocations and guest validation words have a
-   * separate byte cap. Once either limit is full, executors compile for
-   * themselves and retain validation bytes in their bounded private slab.
-   */
-  static constexpr std::size_t maximum_entries = 1U << 18U;
+  static constexpr std::size_t unlimited_shard_entries =
+      std::numeric_limits<std::size_t>::max();
   /* One mutex for every executor's misses and insertions serialised them into
    * a convoy that cost more than the compilation it saved. Shard by guest PC
    * so ten executors rarely contend, and pad each shard so their locks do not
    * share a cache line.
    */
   static constexpr std::size_t shard_count = 64;
-  static constexpr std::size_t default_shard_maximum_entries =
-      maximum_entries / shard_count;
   struct alignas(64) Shard final {
     mutable std::shared_mutex mutex;
     std::unordered_map<std::uint64_t, std::vector<Entry>> entries;
     std::size_t count{};
+  };
+
+  struct alignas(64) ShardSlot final {
+    std::atomic<Shard *> shard{};
+    mutable std::mutex creation_mutex;
   };
 
   [[nodiscard]] static std::size_t shard_of(std::uint64_t guest_pc) noexcept {
@@ -264,6 +271,9 @@ private:
     hash ^= hash >> 29U;
     return static_cast<std::size_t>(hash) & (shard_count - 1U);
   }
+
+  [[nodiscard]] Shard *allocated_shard(std::uint64_t guest_pc) const noexcept;
+  [[nodiscard]] Shard &ensure_shard(std::uint64_t guest_pc);
 
   [[nodiscard]] std::size_t entry_budget_charge(
       const SharedTranslation &translation) const noexcept;
@@ -276,7 +286,11 @@ private:
   [[nodiscard]] bool reserve_budget(std::size_t bytes) noexcept;
   void release_budget(std::size_t bytes) noexcept;
 
-  std::array<Shard, shard_count> shards_{};
+  /* The directory is fixed and tiny, but each mutex/map/vector backing is
+   * created only when a publication actually lands in that shard. Empty and
+   * lookup-only runs therefore never allocate shared-cache backing.
+   */
+  std::array<ShardSlot, shard_count> shards_{};
   /* Counted outside the lock, so readers holding only a shared lock do not
    * race on them.
    */

@@ -7508,3 +7508,77 @@ executor pool, scheduler, whole-emulator CPU accounting, or ambient host work;
 that is why both x8/x9 sensitive and symmetric x0/x1 control cells are required
 in every arm. The production default remains **OFF**. Enabling it still needs a
 representative real-workload or Geekbench disposition beyond this microprobe.
+
+## G138: fixed 64 MiB private caches, lazy sharing, and compact link footers
+
+Recorded 2026-08-12 against the current working tree. This investigation used
+the known cache-sensitive Geekbench 6.7.1 Clang (201) and Object Detection
+(301) workloads at 8 GiB, ten vCPUs, JIT, and P QoS. Each score below is one
+complete observation under the user's accepted background-load boundary; it is
+mechanism evidence rather than a multi-run benchmark campaign.
+
+The production geometry now caps the complete retained private working set at
+64 MiB per executor. `--jit-executor-cache-budget=` may lower but not raise
+that cap. Once private caches are funded, only the global shared-cache budget
+grows with guest memory. Shared shard/map backing is created on first insertion
+and remains process-byte-bounded. Canonical entries contain zero in every
+executor-pointer relocation cell and retain only neutral guest keys, emitted
+code, metadata, and immutable validation words. Mutable activation state is
+regenerated per executor and is not cached globally.
+
+The initial 64 MiB observation scored 460 Clang, 856 Object Detection, and 628
+combined. A 128 MiB diagnostic arm scored 532/669/597, so simply enlarging the
+private tier was not a consistent answer; the requested 48 MiB arm was stopped
+as a decision route. A one-executor diagnostic still exhibited cache/arena
+churn, while the accepted executor-pool trace returned the remembered slot on
+99.997117% of P attempts. The regression therefore did not require executor
+migration or failed cross-executor reuse.
+
+The more important fault was direct-link storage. The predecessor fixed table
+filled and produced 63,941,694 direct-capacity materialization failures. A
+first attempt moved link state beside code but retained ten activation pointers
+in each 128-byte footer; it scored 332/975/569 and, in the profiling run,
+caused 16,938 arena resets and 489,657,430 shared materializations. The retained
+layout stores one 64-byte activation anchor after the first code block that
+names each target PC, replaces ten pointers with one internal entry and a
+ten-bit capability mask, and makes every later source reuse that anchor through
+a fixed reverse index. Code and anchors are allocated and reset as one arena
+resource.
+
+The compact 64 MiB ordinary observation scored **542/1139/786**, improvements
+of **17.83%/33.06%/25.16%** over the initial 64 MiB observation. Its profiling
+run recorded 3,869 arena resets and 183,428,416 shared materializations, down
+77.16% and 62.54% from the first footer, with zero direct-capacity failures.
+The complete successful local compile/publication/install path averaged
+16,322.84 ns; the complete shared lookup/materialization/private-footer/install
+path averaged 2,424.81 ns. Shared reuse is therefore **6.73x faster** and uses
+85.14% less time than recompilation, rejecting the hypothesis that relocation
+and footer regeneration are slower than compiling again.
+
+That compact observation still created one mutable record per source rather
+than per target. Removing the reset-time scan reduced the representative
+`arm64-base-control-compare-test` runtime from 688 to 171 seconds; making every
+source for the same target reuse one arena-owned anchor reduced it again to
+6.66 seconds. The final ordinary observation scored **613/1238/871**, another
+**+13.10%/+8.69%/+10.81%** over 542/1139/786 and
+**+33.26%/+44.63%/+38.69%** over the initial 64 MiB result.
+
+A final live emulator sample was taken before shutdown. Resident memory peaked
+at 6.932 GiB. Activation/deactivation was absent from its collapsed top-stack
+list and only 48 recursive samples entered constant-time `activate_link`;
+lookup, shared validation, generated execution, and code publication remained
+visible. The earlier instrumented sample reported 2.8 GiB physical footprint.
+Its final shared report contained 2,047,701 entries and 3,285,847,540 accounted
+bytes against a
+3,624,031,696-byte shared budget. Thus the large footprint was not caused by an
+eager allocation of the nominal global limit: the workload populated most of
+the lazy shared tier. Executor-local activation bytes are absent from the
+canonical shared representation and are now cheap enough that the sample does
+not support adding shared mutable state or an extra hot-path indirection.
+
+Disposition: retain the 64 MiB production ceiling, growing shared remainder,
+lazy shards, neutral shared relocation cells, and unique arena-adjacent direct
+target anchors. Do not restore the 128 MiB private diagnostic arm, per-source
+mutable copies, or the 128-byte footer. Moving the remaining unique activation
+fields out of executable pages is closed unless a new profile identifies them
+as material; the current sample does not justify the added indirection.

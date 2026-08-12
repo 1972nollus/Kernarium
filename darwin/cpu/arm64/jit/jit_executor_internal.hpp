@@ -148,9 +148,11 @@ private:
                            std::uint64_t target_pc) noexcept;
   void train_indirect(std::uint64_t source_pc,
                       const CompiledBlock &target);
+  void discard_links() noexcept;
   void deactivate_links() noexcept;
   void deactivate_indirect_links() noexcept;
   void prepare_links(unsigned long generation, std::uint64_t changes);
+  void refresh_cached_link_target(std::uint64_t pc);
   [[gnu::noinline]] void refresh_link(CompiledBlock &block);
   [[gnu::always_inline]] void activate_link(CompiledBlock &block) {
     if (block.link_epoch != link_epoch_)
@@ -186,6 +188,9 @@ private:
   CompiledBlock &store_native(unsigned long generation, std::uint64_t changes,
                               std::uint64_t pc, JitFunction function,
                               std::uintptr_t internal_entry,
+                              JitBlockLink *target_link,
+                              std::span<const JitRelocation> relocations,
+                              std::size_t direct_link_refusals,
                               std::span<const std::uint32_t> guest_words,
                               std::shared_ptr<const std::uint32_t[]>
                                   saved_guest_words,
@@ -211,8 +216,14 @@ private:
   std::shared_ptr<SavedGuestWordSet[]> fallback_saved_guest_words_;
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  JitProfileBlockLinkTable profile_links_;
+#endif
   JitIndirectLinkTable indirect_links_;
   FixedPointerList<JitBlockLink *> active_links_;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  FixedPointerList<JitBlockLink *> active_profile_links_;
+#endif
   FixedPointerList<JitIndirectLink *> active_indirect_links_;
   jit::detail::ExecutableArena arena_;
   jit::detail::ExecutableArena tracked_store_arena_;

@@ -24,6 +24,15 @@ constexpr std::size_t allocation_allowance = 64U;
   return std::bit_ceil(capacity * 2U);
 }
 
+[[nodiscard]] std::size_t bucket_capacity_for(
+    std::size_t capacity) noexcept {
+  if (capacity == 0)
+    return 0;
+  if (capacity > std::numeric_limits<std::size_t>::max() / 2U)
+    return 0;
+  return std::bit_ceil(capacity);
+}
+
 [[nodiscard]] std::size_t hash_link_key(std::uint64_t key,
                                         std::size_t mask) noexcept {
   key *= 0x9e37'79b9'7f4a'7c15ULL;
@@ -83,9 +92,69 @@ std::uint8_t checked_link_selector(std::uint8_t capabilities) noexcept {
 }
 
 JitBlockLinkTable::JitBlockLinkTable(std::size_t capacity)
-    : capacity_{capacity}, index_capacity_{index_capacity_for(capacity)} {
+    : capacity_{capacity}, index_capacity_{bucket_capacity_for(capacity)} {
   if (capacity_ != 0 && allocation_bytes(capacity_) == 0)
     throw std::length_error{"JIT block-link table is too large"};
+  if (index_capacity_ != 0) {
+    index_ =
+        std::make_unique_for_overwrite<JitBlockLink *[]>(index_capacity_);
+    std::fill_n(index_.get(), index_capacity_, nullptr);
+  }
+}
+
+JitBlockLinkTable::Insertion
+JitBlockLinkTable::insert(JitBlockLink &record) noexcept {
+  if (index_capacity_ == 0)
+    return {};
+  const auto mask = index_capacity_ - 1U;
+  const auto slot = hash_link_key(record.guest_pc, mask);
+  auto *previous = index_[slot];
+  for (auto *link = previous; link != nullptr;
+       link = link->next_target)
+    if (link->guest_pc == record.guest_pc)
+      return {.previous = link, .inserted = false};
+  if (size_ >= capacity_)
+    return {};
+  index_[slot] = &record;
+  ++size_;
+  return {.previous = previous, .inserted = true};
+}
+
+JitBlockLink *JitBlockLinkTable::find(std::uint64_t pc) const noexcept {
+  if (index_capacity_ == 0)
+    return nullptr;
+  for (auto *link = index_[hash_link_key(pc, index_capacity_ - 1U)];
+       link != nullptr; link = link->next_target)
+    if (link->guest_pc == pc)
+      return link;
+  return nullptr;
+}
+
+void JitBlockLinkTable::clear() noexcept {
+  size_ = 0;
+  if (index_ != nullptr)
+    std::fill_n(index_.get(), index_capacity_, nullptr);
+}
+
+std::size_t JitBlockLinkTable::size() const noexcept {
+  return size_;
+}
+
+std::size_t JitBlockLinkTable::allocation_bytes(
+    std::size_t capacity) noexcept {
+  const auto buckets = bucket_capacity_for(capacity);
+  if (capacity == 0 || buckets == 0 ||
+      buckets > (std::numeric_limits<std::size_t>::max() -
+                 allocation_allowance) /
+                    sizeof(JitBlockLink *))
+    return 0;
+  return buckets * sizeof(JitBlockLink *) + allocation_allowance;
+}
+
+JitProfileBlockLinkTable::JitProfileBlockLinkTable(std::size_t capacity)
+    : capacity_{capacity}, index_capacity_{index_capacity_for(capacity)} {
+  if (capacity_ != 0 && allocation_bytes(capacity_) == 0)
+    throw std::length_error{"JIT profile block-link table is too large"};
   if (index_capacity_ != 0) {
     index_ = std::make_unique_for_overwrite<std::uint32_t[]>(index_capacity_);
     std::fill_n(index_.get(), index_capacity_, std::uint32_t{0});
@@ -93,12 +162,13 @@ JitBlockLinkTable::JitBlockLinkTable(std::size_t capacity)
   }
 }
 
-JitBlockLinkTable::~JitBlockLinkTable() {
+JitProfileBlockLinkTable::~JitProfileBlockLinkTable() {
   destroy_records(records_, size_);
   deallocate_records(records_);
 }
 
-JitBlockLink *JitBlockLinkTable::find_or_create(std::uint64_t pc) {
+JitBlockLink *
+JitProfileBlockLinkTable::find_or_create(std::uint64_t pc) {
   if (index_capacity_ == 0)
     return nullptr;
   const auto mask = index_capacity_ - 1U;
@@ -117,18 +187,18 @@ JitBlockLink *JitBlockLinkTable::find_or_create(std::uint64_t pc) {
   return result;
 }
 
-void JitBlockLinkTable::clear() noexcept {
+void JitProfileBlockLinkTable::clear() noexcept {
   destroy_records(records_, size_);
   size_ = 0;
   if (index_ != nullptr)
     std::fill_n(index_.get(), index_capacity_, std::uint32_t{0});
 }
 
-std::size_t JitBlockLinkTable::size() const noexcept {
+std::size_t JitProfileBlockLinkTable::size() const noexcept {
   return size_;
 }
 
-std::size_t JitBlockLinkTable::allocation_bytes(
+std::size_t JitProfileBlockLinkTable::allocation_bytes(
     std::size_t capacity) noexcept {
   return fixed_table_allocation_bytes<JitBlockLink>(capacity);
 }
@@ -190,7 +260,7 @@ JitIndirectLinkTable::find(std::uint64_t source_pc) const noexcept {
 void JitIndirectLinkTable::reset(JitIndirectLink &site) const noexcept {
   for (auto &entry : site.entries) {
     entry.guest_pc = 1;
-    entry.link_entries = empty_link_->entries.data();
+    entry.link = empty_link_;
   }
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   site.profile_targets.fill(empty_link_);

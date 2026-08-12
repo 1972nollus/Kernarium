@@ -342,36 +342,39 @@ Do not casually remove or reshape these accepted mechanisms:
   `tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py`. Do not restore the
   diagnostic pre-refactor rollback.
 - **G133/G135:** the JIT cache geometry in
-  `darwin/cpu/arm64/jit/jit_cache_geometry.cpp`, derived per executor from a
-  whole-process budget that defaults to half of guest memory, and pinned by
-  `the_cache_holds_more_than_twice_the_former_capacity` in
-  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`. The block cache and
-  the arena are one resource, because arena exhaustion clears the block cache,
-  so shrinking either share alone collapses the other into retranslation.
-  Publish the budget and expected executor count as one first-valid pair,
-  reserve the bounded shared-cache share first, and keep the complete eager and
-  retained per-executor allocation inside the remainder: implementation/TLB,
-  block cache, fallback saved-word slab, fixed link tables and indexes, active
-  pointer lists, relocation scratch, and rounded arenas. These structures
-  multiply by the guest's CPU count; predecessor fixed sizes reached 9 GiB at
-  ten vCPUs. Direct and indirect link tables must remain fixed-capacity stable
-  storage. Capacity refusal uses the semantic unlinked path and is reported; it
-  must not trigger unbudgeted growth.
+  `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` derives a fixed private working
+  set per executor from a whole-process budget that defaults to half of guest
+  memory. The complete private charge is capped at 64 MiB per executor; once
+  that ceiling is funded, only the process-global shared tier grows with guest
+  memory. The block cache and ordinary code arena remain one resource because
+  arena exhaustion clears the block cache. Publish total budget, executor
+  count, and private ceiling as one first-valid configuration, and keep all
+  eager and retained executor state within that ceiling: implementation/TLB,
+  block cache, fallback validation words, reverse direct-link index, fixed
+  indirect links, relocation scratch, and rounded arenas. The first arena block
+  that names a direct target allocates one compact activation anchor immediately
+  after its code; later sources reuse that target-PC anchor through the fixed
+  reverse index instead of duplicating mutable state. Arena reset therefore
+  retires code and anchors together. Indirect records remain fixed-capacity
+  stable storage. Any index/table refusal uses the semantic unlinked path and
+  is reported; it must not trigger unbudgeted growth.
 - **G134:** the relocation contract that lets one executor reuse another's
-  translation. `JitRelocation` records the literal pool slots holding
-  executor-owned link pointers, and only
-  `ExecutableArena::store_relocated` rewrites them. Every pointer a
-  translation embeds into its compiler's link tables must be recorded, or a
-  reusing executor branches through another executor's freed records; the
-  pinning test in `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp`
-  destroys the compiling executor first so a miss is a sanitizer failure
-  rather than silent corruption. The shared key includes the exact consumed
-  guest words and complete code-generation profile. Validate all retained
-  metadata and resolve every private link before materialization; distinguish a
-  lookup match from a successfully installed reuse. Publication stays gated on
-  two or more live executors, the shared cache stays entry- and byte-bounded,
-  and a degraded compilation with a requested-link refusal must not occupy a
-  new canonical key. Shared translations own immutable saved validation words;
+  translation. `JitRelocation` records every literal cell that names
+  executor-owned link state. A canonical shared entry retains zero in those
+  cells plus neutral guest keys; `ExecutableArena::store_block` regenerates the
+  consumer's compact direct anchors and resolves indirect sites while copying
+  code into its private arena. Mutable activation state and executor addresses
+  never enter the shared cache. The pinning test in
+  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp` destroys the
+  compiling executor first so a missed relocation becomes a sanitizer failure
+  rather than a branch through freed state. The shared key includes the exact
+  consumed guest words and complete code-generation profile. Validate all
+  retained metadata before materialization and distinguish an exact lookup from
+  a successfully installed reuse. Publication stays gated on two or more live
+  executors; shard backing is allocated on first insertion and the production
+  cache is bounded by its process byte budget. A compilation whose emitted
+  shape was degraded by a requested-link refusal must not occupy a new
+  canonical key. Shared translations own immutable saved validation words;
   every noncanonical block aliases its executor's already-budgeted fallback
   slab.
 - **JIT executor pool:** one managed run owns at most the configured guest CPU

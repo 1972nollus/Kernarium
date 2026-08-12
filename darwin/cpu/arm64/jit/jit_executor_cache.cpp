@@ -177,6 +177,9 @@ JitExecutor::Implementation::validate_stale_block(
 CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generation, std::uint64_t changes,
                             std::uint64_t pc, JitFunction function,
                             std::uintptr_t internal_entry,
+                            JitBlockLink *target_link,
+                            std::span<const JitRelocation> relocations,
+                            std::size_t direct_link_refusals,
                             std::span<const std::uint32_t> guest_words,
                             std::shared_ptr<const std::uint32_t[]>
                                 saved_guest_words,
@@ -190,6 +193,9 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             std::uint32_t profile_read_before_write
 #endif
 ) {
+#if !UML_JIT_RUNTIME_DIAGNOSTICS
+  (void)direct_link_refusals;
+#endif
   /* Native FP/FPMR state always implies materialization. The executor already
    * validates compiler metadata before installation; keep this boundary safe
    * as well if a future caller omits that validation. */
@@ -207,13 +213,25 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   }
   block.function = function;
   block.internal_entry = internal_entry;
-  block.link = link_for(pc);
+  block.link = target_link;
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  block.profile_link = profile_links_.find_or_create(pc);
+#endif
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_target_link_refusal(block.link == nullptr);
+  profile_jit_link_table_state(links_.size(), links_.capacity(),
+                               indirect_links_.size(),
+                               indirect_links_.capacity());
 #endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   cache_validation_diagnostics_.target_link_refusals +=
       block.link == nullptr;
+  cache_validation_diagnostics_.direct_link_refusals +=
+      direct_link_refusals;
+  if (links_.size() >
+      cache_validation_diagnostics_.direct_link_table_high_water)
+    cache_validation_diagnostics_.direct_link_table_high_water =
+        links_.size();
 #endif
   block.instruction_count = guest_words.size();
   block.saved_guest_words = std::move(saved_guest_words);
@@ -235,6 +253,9 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
     ++cache_validation_diagnostics_.private_validation_word_installs;
 #endif
   ++compiled_in_link_sequence_;
+  for (const auto &relocation : relocations)
+    if (relocation.kind == JitRelocationKind::direct_link)
+      refresh_cached_link_target(relocation.key);
   activate_link(block);
   return block;
 }
@@ -243,11 +264,14 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   for (auto &set : *block_cache_)
     set = {};
   deactivate_indirect_links();
-  deactivate_links();
+  discard_links();
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   gpr_link_profile_.clear_code();
 #endif
   links_.clear();
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  profile_links_.clear();
+#endif
   indirect_links_.clear();
   pending_indirect_ = {};
   tracked_store_arena_.reset();
@@ -279,10 +303,10 @@ JitExecutor::Implementation::materialize_shared_translation(
     const void *pointer = nullptr;
     switch (relocation.kind) {
     case JitRelocationKind::direct_link: {
-      const auto *link = link_for(relocation.key);
-      pointer = link == nullptr ? nullptr : link->entries.data();
-      if (pointer == nullptr)
-        return SharedTranslationMaterializationFailure::direct_link_capacity;
+      /* The arena allocates this source's descriptor immediately after its
+       * code and patches the literal to that private footer record.
+       */
+      pointer = nullptr;
       break;
     }
     case JitRelocationKind::indirect_link:
@@ -293,9 +317,9 @@ JitExecutor::Implementation::materialize_shared_translation(
     default:
       return SharedTranslationMaterializationFailure::invalid_metadata;
     }
-    /* A full link table changes the shape the compiler would have emitted,
-     * so the recorded translation does not describe what this executor can
-     * run. The caller compiles for itself instead.
+    /* Only indirect sites require preallocated executor state here. Direct
+     * state is regenerated in the arena footer even when its reverse-index
+     * registration later degrades to the semantic fallback.
      */
     relocated_link_pointers_.push_back(
         reinterpret_cast<std::uintptr_t>(pointer));
@@ -309,6 +333,9 @@ JitExecutor::Implementation::install_shared_translation(
     std::span<const std::uint32_t> guest_words) {
   if constexpr (!share_translations_between_executors)
     return nullptr;
+#if UML_ENABLE_JIT_PROFILE
+  const auto materialization_started = jit_profile_timestamp_ns();
+#endif
   auto &cache = SharedTranslationCache::instance();
   const auto translation =
       cache.find(shared_codegen_profile(), pc, guest_words);
@@ -323,20 +350,23 @@ JitExecutor::Implementation::install_shared_translation(
     cache.record_materialization_failure(*failure);
     return nullptr;
   }
-  auto *code = arena_.store_relocated(translation->words,
-                                      translation->relocations,
-                                      relocated_link_pointers_);
-  if (code == nullptr) {
+  const auto stored = arena_.store_block(
+      pc, translation->words, translation->relocations,
+      relocated_link_pointers_, links_, empty_link_);
+  if (!stored) {
     cache.record_materialization_failure(
         SharedTranslationMaterializationFailure::arena_exhaustion);
     return nullptr;
   }
   const auto internal_entry =
-      reinterpret_cast<std::uintptr_t>(code) +
+      reinterpret_cast<std::uintptr_t>(stored.code) +
       translation->internal_entry_word * sizeof(std::uint32_t);
   auto *block = &store_native(
-      generation, changes, pc, sign_jit_function<JitFunction>(code),
-      internal_entry, guest_words.first(translation->guest_instructions),
+      generation, changes, pc,
+      sign_jit_function<JitFunction>(stored.code), internal_entry,
+      stored.target_link, translation->relocations,
+      stored.direct_link_refusals,
+      guest_words.first(translation->guest_instructions),
       translation->guest_words,
       translation->memory_write_mask, translation->direct_memory_write_mask,
       translation->accesses_fp_state, translation->link_target_safe,
@@ -348,6 +378,10 @@ JitExecutor::Implementation::install_shared_translation(
 #endif
   );
   cache.record_reuse();
+#if UML_ENABLE_JIT_PROFILE
+  profile_jit_shared_materialization_latency(
+      jit_profile_timestamp_ns() - materialization_started);
+#endif
   return block;
 }
 
@@ -387,6 +421,19 @@ JitExecutor::Implementation::publish_shared_translation(
     translation->words.assign(compiled.words.begin(), compiled.words.end());
     translation->relocations.assign(compiled.relocations.begin(),
                                     compiled.relocations.end());
+    /* The compiler's literal cells name its executor-local link records.
+     * They are never canonical state: every installer resolves the neutral
+     * relocation key and regenerates its own small mutable link footer. Keep
+     * the shared template free of publisher addresses so identical source and
+     * codegen inputs retain identical canonical bytes.
+     */
+    for (const auto &relocation : translation->relocations) {
+      if (relocation.word >= translation->words.size() ||
+          translation->words.size() - relocation.word < 2U)
+        return nullptr;
+      translation->words[relocation.word] = 0;
+      translation->words[relocation.word + 1U] = 0;
+    }
     translation->direct_link_refusals = compiled.direct_link_refusals;
     translation->indirect_link_refusals = compiled.indirect_link_refusals;
     translation->guest_words = std::move(saved_guest_words);

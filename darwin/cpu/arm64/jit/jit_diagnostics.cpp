@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <vector>
@@ -391,6 +392,10 @@ struct JitCompileProfile final {
   std::uint64_t validation_mismatches{};
   std::uint64_t validation_faults{};
   std::uint64_t validation_sequence_races{};
+  std::uint64_t local_compile_calls{};
+  std::uint64_t local_compile_nanoseconds{};
+  std::uint64_t shared_materialization_calls{};
+  std::uint64_t shared_materialization_nanoseconds{};
   std::array<std::uint64_t, 7> block_lengths{};
   std::uint64_t largest_ratio_pc{};
   std::size_t largest_ratio_guest{};
@@ -467,6 +472,12 @@ void merge_jit_compile_profile(JitCompileProfile &destination,
   destination.validation_mismatches += source.validation_mismatches;
   destination.validation_faults += source.validation_faults;
   destination.validation_sequence_races += source.validation_sequence_races;
+  destination.local_compile_calls += source.local_compile_calls;
+  destination.local_compile_nanoseconds += source.local_compile_nanoseconds;
+  destination.shared_materialization_calls +=
+      source.shared_materialization_calls;
+  destination.shared_materialization_nanoseconds +=
+      source.shared_materialization_nanoseconds;
   for (std::size_t index = 0; index < destination.block_lengths.size(); ++index)
     destination.block_lengths[index] += source.block_lengths[index];
   const auto destination_guest =
@@ -645,6 +656,11 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
   const auto blocks =
       static_cast<double>(std::max<std::uint64_t>(profile.blocks,
                                                  std::uint64_t{1}));
+  const auto compile_calls = static_cast<double>(std::max<std::uint64_t>(
+      profile.local_compile_calls, std::uint64_t{1}));
+  const auto materialization_calls =
+      static_cast<double>(std::max<std::uint64_t>(
+          profile.shared_materialization_calls, std::uint64_t{1}));
   write_jit_profile_record(
       "Darwin JIT compile profile %s=%p blocks=%llu guest=%llu "
       "guest-per-block=%.2f hot-words=%llu total-words=%llu "
@@ -660,6 +676,10 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       "validation-attempts=%llu validation-hits=%llu "
       "validation-mismatches=%llu validation-faults=%llu "
       "validation-sequence-races=%llu "
+      "local-compile-calls=%llu local-compile-ns=%llu "
+      "local-compile-avg-ns=%.2f "
+      "shared-materialization-calls=%llu shared-materialization-ns=%llu "
+      "shared-materialization-avg-ns=%.2f "
       "lengths=%llu/%llu/%llu/%llu/%llu/%llu/%llu "
       "largest-pc=%#llx largest-guest=%zu largest-hot=%zu largest-total=%zu\n",
       final ? "final" : "thread", static_cast<const void *>(&profile),
@@ -687,6 +707,13 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       static_cast<unsigned long long>(profile.validation_mismatches),
       static_cast<unsigned long long>(profile.validation_faults),
       static_cast<unsigned long long>(profile.validation_sequence_races),
+      static_cast<unsigned long long>(profile.local_compile_calls),
+      static_cast<unsigned long long>(profile.local_compile_nanoseconds),
+      profile.local_compile_nanoseconds / compile_calls,
+      static_cast<unsigned long long>(profile.shared_materialization_calls),
+      static_cast<unsigned long long>(
+          profile.shared_materialization_nanoseconds),
+      profile.shared_materialization_nanoseconds / materialization_calls,
       static_cast<unsigned long long>(profile.block_lengths[0]),
       static_cast<unsigned long long>(profile.block_lengths[1]),
       static_cast<unsigned long long>(profile.block_lengths[2]),
@@ -907,6 +934,32 @@ void profile_jit_cache_validation(
     ++profile.validation_sequence_races;
     break;
   }
+}
+
+std::uint64_t jit_profile_timestamp_ns() noexcept {
+  if (!jit_compile_profile_enabled())
+    return 0;
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+}
+
+void profile_jit_local_compile_latency(std::uint64_t nanoseconds) noexcept {
+  if (!jit_compile_profile_enabled() || nanoseconds == 0)
+    return;
+  auto &profile = jit_compile_profile();
+  ++profile.local_compile_calls;
+  profile.local_compile_nanoseconds += nanoseconds;
+}
+
+void profile_jit_shared_materialization_latency(
+    std::uint64_t nanoseconds) noexcept {
+  if (!jit_compile_profile_enabled() || nanoseconds == 0)
+    return;
+  auto &profile = jit_compile_profile();
+  ++profile.shared_materialization_calls;
+  profile.shared_materialization_nanoseconds += nanoseconds;
 }
 #endif
 

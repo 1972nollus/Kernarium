@@ -235,10 +235,16 @@ void Arm64Emitter::subtract_immediate(unsigned destination, unsigned source,
   }
 
 void Arm64Emitter::add_shifted(unsigned destination, unsigned left, unsigned right,
-                   unsigned shift) {
-    emit(0x8b00'0000U | ((right & 31U) << 16) | ((shift & 63U) << 10) |
-         ((left & 31U) << 5) | (destination & 31U));
-  }
+                               unsigned shift) {
+  emit(0x8b00'0000U | ((right & 31U) << 16) | ((shift & 63U) << 10) |
+       ((left & 31U) << 5) | (destination & 31U));
+}
+
+void Arm64Emitter::logical_shift_right_variable(
+    unsigned destination, unsigned source, unsigned shift_register) {
+  emit(0x9ac0'2400U | ((shift_register & 31U) << 16U) |
+       ((source & 31U) << 5U) | (destination & 31U));
+}
 
 void Arm64Emitter::ubfm(unsigned destination, unsigned source, unsigned rotate,
             unsigned mask) {

@@ -10,6 +10,8 @@
 namespace uml::emulator {
 
 constexpr std::string_view jit_cache_budget_prefix{"--jit-cache-budget="};
+constexpr std::string_view jit_executor_cache_budget_prefix{
+	"--jit-executor-cache-budget="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -229,6 +231,20 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.jit_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(jit_executor_cache_budget_prefix)) {
+			const std::string quantity{argument.substr(
+				jit_executor_cache_budget_prefix.size())};
+			prepared.jit_executor_cache_budget =
+				::uml::runtime::parse_translation_cache_quantity(
+					quantity.c_str());
+			if (prepared.jit_executor_cache_budget == 0 ||
+			    prepared.jit_executor_cache_budget >
+				    maximum_jit_executor_cache_budget) {
 				prepared.valid = false;
 				return prepared;
 			}

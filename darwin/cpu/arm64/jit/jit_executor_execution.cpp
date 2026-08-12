@@ -115,6 +115,9 @@ namespace uml::cpu::arm64 {
       };
       compiler.set_pointer_authentication_enabled(
           enable_pointer_authentication_);
+#if UML_ENABLE_JIT_PROFILE
+      const auto local_compile_path_started = jit_profile_timestamp_ns();
+#endif
       const auto compiled = compiler.compile(cpu.pc, fetched);
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       cache_validation_diagnostics_.direct_link_refusals +=
@@ -131,10 +134,11 @@ namespace uml::cpu::arm64 {
                                            candidate.native_fpmr);
         };
         const auto install_compilation =
-            [&](const auto &candidate, void *code,
+            [&](const auto &candidate,
+                const jit::detail::ExecutableArena::StoredBlock &stored,
                 const std::shared_ptr<const SharedTranslation> &translation) {
           const auto internal_entry =
-              reinterpret_cast<std::uintptr_t>(code) +
+              reinterpret_cast<std::uintptr_t>(stored.code) +
               candidate.internal_entry_word * sizeof(std::uint32_t);
           auto saved_guest_words =
               translation == nullptr
@@ -142,7 +146,9 @@ namespace uml::cpu::arm64 {
                   : translation->guest_words;
           return &store_native(
               generation, sequences.code_changes, cpu.pc,
-              sign_jit_function<JitFunction>(code), internal_entry,
+              sign_jit_function<JitFunction>(stored.code), internal_entry,
+              stored.target_link, candidate.relocations,
+              stored.direct_link_refusals,
               std::span{instructions}.first(candidate.guest_instructions),
               std::move(saved_guest_words),
               candidate.memory_write_mask, candidate.direct_memory_write_mask,
@@ -157,9 +163,12 @@ namespace uml::cpu::arm64 {
         };
         if (!valid_compilation(compiled))
           return run_semantic_instruction(cpu, memory, executed);
-        if (auto *code = arena_.store(compiled.words); code != nullptr) {
+        auto stored = arena_.store_block(
+            cpu.pc, compiled.words, compiled.relocations, {}, links_,
+            empty_link_);
+        if (stored) {
           auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
-          block = install_compilation(compiled, code, shared);
+          block = install_compilation(compiled, stored, shared);
         } else {
           profile_jit_arena_reset();
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -169,10 +178,10 @@ namespace uml::cpu::arm64 {
           arena_.reset();
 
           /*
-           * Link and PIC operands are absolute pointers into the descriptor
-           * tables. clear_cache() invalidates those tables, so the retry must
-           * be freshly lowered against their new storage rather than copying
-           * the now-stale first compilation into the reset arena.
+           * Indirect PIC operands are absolute pointers into the descriptor
+           * table. clear_cache() invalidates that storage, so the retry must
+           * be freshly lowered rather than copying its stale site pointer.
+           * Direct descriptors are regenerated beside the retried code.
            */
           JitCompiler retry_compiler{
               enable_guarded_control_flow_, this,
@@ -198,14 +207,24 @@ namespace uml::cpu::arm64 {
 #endif
           if (!valid_compilation(retry_compiled))
             return run_semantic_instruction(cpu, memory, executed);
-          code = arena_.store(retry_compiled.words);
-          if (code == nullptr)
+          stored = arena_.store_block(
+              cpu.pc, retry_compiled.words, retry_compiled.relocations, {},
+              links_, empty_link_);
+          if (!stored)
             return run_semantic_instruction(cpu, memory, executed);
           auto shared =
               publish_shared_translation(cpu.pc, fetched, retry_compiled);
-          block = install_compilation(retry_compiled, code, shared);
+          block = install_compilation(retry_compiled, stored, shared);
         }
       }
+#if UML_ENABLE_JIT_PROFILE
+      /* Compare complete successful miss paths: compiler lowering, private
+       * arena publication, optional canonical publication, and block install
+       * versus shared lookup, relocation, private publication, and install.
+       */
+      profile_jit_local_compile_latency(
+          jit_profile_timestamp_ns() - local_compile_path_started);
+#endif
     }
   }
   if (pending_source)

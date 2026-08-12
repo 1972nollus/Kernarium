@@ -379,11 +379,11 @@ void link_selector_layout_is_dense_and_compact()
 	require(uml::cpu::arm64::jit::testing::
 			link_capability_mask_for_selector(
 				capability_masks.size()) == 0xffU);
-	require(uml::cpu::arm64::jit::testing::block_link_record_size() == 128);
+	require(uml::cpu::arm64::jit::testing::block_link_record_size() == 64);
 	require(uml::cpu::arm64::jit::testing::
-			block_link_record_alignment() == 128);
+			block_link_record_alignment() == 64);
 	require(uml::cpu::arm64::jit::testing::
-			block_link_entries_offset() == 16);
+			block_link_internal_entry_offset() == 16);
 	require(uml::cpu::arm64::jit::testing::
 			indirect_link_entry_size() == 16);
 }

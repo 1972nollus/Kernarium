@@ -136,7 +136,7 @@ persistent_link_successful_path_word_savings() noexcept;
 [[nodiscard]] std::size_t link_capability_selector_count() noexcept;
 [[nodiscard]] std::size_t block_link_record_size() noexcept;
 [[nodiscard]] std::size_t block_link_record_alignment() noexcept;
-[[nodiscard]] std::size_t block_link_entries_offset() noexcept;
+[[nodiscard]] std::size_t block_link_internal_entry_offset() noexcept;
 [[nodiscard]] std::size_t indirect_link_entry_size() noexcept;
 [[nodiscard]] std::uint8_t
 link_selector_for_capability_mask(std::uint8_t capabilities) noexcept;

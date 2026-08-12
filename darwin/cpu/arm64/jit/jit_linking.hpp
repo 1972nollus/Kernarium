@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 namespace uml::cpu::arm64 {
 
@@ -93,7 +94,7 @@ valid_link_state_metadata(bool accesses_fp_state, bool native_fp,
   return accesses_fp_state || (!native_fp && !native_fpmr);
 }
 
-struct alignas(128) JitBlockLink final {
+struct alignas(64) JitBlockLink final {
   /*
    * Generated code uses raw internal-entry branch targets.  The initial C++
    * call owns the one native stack frame for the complete chain; linked
@@ -104,14 +105,27 @@ struct alignas(128) JitBlockLink final {
    * entry. A zero cell returns to C++ before a successor whose store or
    * architectural-state requirements have not been established.
    *
-   * The ten reachable setup combinations and their metadata fit in one
-   * 128-byte record. Generated code points at entries and reads the preceding
-   * metadata with one aligned pair load.
+   * All accepted setup combinations enter the same native address. A compact
+   * bit mask says which of the ten host-owned selectors may use it, avoiding
+   * ten duplicate pointers in every arena-adjacent target anchor.
    */
   std::uint64_t guest_pc{};
   std::uint64_t instruction_count{};
-  std::array<std::uintptr_t, jit_link_selector_count> entries{};
+  std::uintptr_t internal_entry{};
   std::uint64_t activation_epoch{};
+  JitBlockLink *next_target{};
+  std::uint32_t allowed_selectors{};
+#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
+  std::uint32_t profile_read_before_write{};
+  bool profile_mask_valid{};
+#endif
+};
+
+struct JitBlockLinkActivation final {
+  std::size_t instruction_count{};
+  std::uintptr_t internal_entry{};
+  std::uint32_t allowed_selectors{};
+  std::uint64_t epoch{};
 #if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
   std::uint32_t profile_read_before_write{};
   bool profile_mask_valid{};
@@ -120,7 +134,7 @@ struct alignas(128) JitBlockLink final {
 
 struct JitIndirectLinkEntry final {
   std::uint64_t guest_pc{};
-  const std::uintptr_t *link_entries{};
+  const JitBlockLink *link{};
 };
 
 struct JitIndirectLink final {
@@ -137,29 +151,66 @@ struct JitIndirectLink final {
 #endif
 };
 
-/*
- * Generated code embeds pointers to JitBlockLink entry arrays, so records must
- * not move or be reclaimed while the code arena is live. Bound the stable
- * storage instead: once full, newly compiled branches use the existing
- * unlinked exit path.
+/* Generated code embeds pointers to records stored immediately after the first
+ * arena block that names a target PC. This table is only a fixed reverse
+ * index: target PC -> its one arena-owned activation anchor. Later blocks use
+ * that same anchor instead of duplicating mutable state per source. It never
+ * owns or moves a record.
  */
 class JitBlockLinkTable final {
 public:
+  struct Insertion final {
+    JitBlockLink *previous{};
+    bool inserted{};
+  };
+
   explicit JitBlockLinkTable(std::size_t capacity);
-  ~JitBlockLinkTable();
 
   JitBlockLinkTable(const JitBlockLinkTable &) = delete;
   JitBlockLinkTable &operator=(const JitBlockLinkTable &) = delete;
+
+  /* The caller owns record and writes previous into record.next_target while
+   * the arena is writable. A duplicate PC returns the existing anchor without
+   * inserting record. Publishing the bucket first is safe because one
+   * executor is used by only one host thread at a time.
+   */
+  [[nodiscard]] Insertion insert(JitBlockLink &record) noexcept;
+  [[nodiscard]] JitBlockLink *find(std::uint64_t pc) const noexcept;
+  void clear() noexcept;
+  [[nodiscard]] std::size_t size() const noexcept;
+  [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
+
+  /* Only fixed bucket heads are allocated here. Record bytes are charged as
+   * part of the arena that stores code and its link footer together.
+   */
+  [[nodiscard]] static std::size_t
+  allocation_bytes(std::size_t capacity) noexcept;
+
+private:
+  std::size_t capacity_{};
+  std::size_t size_{};
+  std::size_t index_capacity_{};
+  std::unique_ptr<JitBlockLink *[]> index_;
+};
+
+/* GPR-link profiling resolves targets before arena publication so it can
+ * attach stable counter ownership to the compilation. Keep that opt-in
+ * diagnostic storage separate from the production arena-adjacent records.
+ */
+class JitProfileBlockLinkTable final {
+public:
+  explicit JitProfileBlockLinkTable(std::size_t capacity);
+  ~JitProfileBlockLinkTable();
+
+  JitProfileBlockLinkTable(const JitProfileBlockLinkTable &) = delete;
+  JitProfileBlockLinkTable &operator=(const JitProfileBlockLinkTable &) =
+      delete;
 
   [[nodiscard]] JitBlockLink *find_or_create(std::uint64_t pc);
   void clear() noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
   [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
 
-  /* Exact requested backing storage plus conservative allocator metadata.
-   * The table uses a fixed record array and a 50%-load open-address index, so
-   * this value cannot grow as records are populated.
-   */
   [[nodiscard]] static std::size_t
   allocation_bytes(std::size_t capacity) noexcept;
 
@@ -175,7 +226,8 @@ private:
  * Generated indirect exits embed pointers to these cells. Keep every cell
  * stable for the code arena's lifetime and bound their total number. Guest
  * targets are comparison data only; entries point exclusively to host-owned
- * JitBlockLink entry arrays, never to native code supplied by the guest.
+ * arena-adjacent JitBlockLink records, never to native code supplied by the
+ * guest.
  */
 class JitIndirectLinkTable final {
 public:
@@ -223,17 +275,17 @@ static_assert(link_selector_for_capabilities(0) == 0);
 static_assert(link_selector_for_capabilities(15) == 9);
 static_assert(link_selector_for_capabilities(4) ==
               invalid_link_selector);
-static_assert(alignof(JitBlockLink) == 128);
-static_assert(sizeof(JitBlockLink) == 128);
+static_assert(alignof(JitBlockLink) == 64);
+static_assert(sizeof(JitBlockLink) == 64);
 static_assert(offsetof(JitBlockLink, guest_pc) == 0);
 static_assert(offsetof(JitBlockLink, instruction_count) == 8);
-static_assert(offsetof(JitBlockLink, entries) == 16);
-static_assert(sizeof(JitBlockLink::entries) ==
-              jit_link_selector_count * sizeof(std::uintptr_t));
+static_assert(offsetof(JitBlockLink, internal_entry) == 16);
 static_assert(sizeof(std::uintptr_t) == 8);
-static_assert(offsetof(JitBlockLink, activation_epoch) == 96);
+static_assert(offsetof(JitBlockLink, activation_epoch) == 24);
+static_assert(offsetof(JitBlockLink, next_target) == 32);
+static_assert(offsetof(JitBlockLink, allowed_selectors) == 40);
 static_assert(offsetof(JitIndirectLinkEntry, guest_pc) == 0);
-static_assert(offsetof(JitIndirectLinkEntry, link_entries) == 8);
+static_assert(offsetof(JitIndirectLinkEntry, link) == 8);
 static_assert(sizeof(JitIndirectLinkEntry) == 16);
 static_assert(offsetof(JitIndirectLink, entries) == 0);
 static_assert(offsetof(JitIndirectLink, source_pc) == 32);

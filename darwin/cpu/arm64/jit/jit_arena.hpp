@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "jit_linking.hpp"
 #include "jit_runtime_contract.hpp"
 
 #include <cstddef>
@@ -14,6 +15,17 @@ namespace uml::cpu::arm64::jit::detail {
  */
 class ExecutableArena final {
 public:
+	struct StoredBlock final {
+		void *code{};
+		JitBlockLink *target_link{};
+		std::size_t direct_link_refusals{};
+
+		[[nodiscard]] explicit operator bool() const noexcept
+		{
+			return code != nullptr;
+		}
+	};
+
 	explicit ExecutableArena(std::size_t size) noexcept;
 	~ExecutableArena();
 
@@ -23,16 +35,24 @@ public:
 	[[nodiscard]] bool valid() const noexcept;
 	[[nodiscard]] void *store(
 		std::span<const std::uint32_t> words) noexcept;
-	/* Stores a translation compiled by another executor, rewriting the
-	 * recorded literal slots to this executor's link pointers before the
-	 * instruction cache is published. Patching here rather than in a caller
-	 * owned buffer keeps every write to executable memory in this file and
-	 * saves copying the translation twice.
+	/* Stores an ordinary cached translation followed by cacheline-sized anchors
+	 * for target PCs not already represented in this arena. Direct literals
+	 * point at the unique anchor for their guest target; indirect literals
+	 * retain their compiler value for a local translation or use the supplied
+	 * executor-private value for a shared translation. Patching and anchor
+	 * insertion happen in the same JIT write window as publication.
 	 */
-	[[nodiscard]] void *store_relocated(
+	[[nodiscard]] StoredBlock store_block(
+		std::uint64_t pc,
 		std::span<const std::uint32_t> words,
 		std::span<const JitRelocation> relocations,
-		std::span<const std::uintptr_t> values) noexcept;
+		std::span<const std::uintptr_t> values,
+		JitBlockLinkTable &links,
+		JitBlockLink &empty_link) noexcept;
+	void activate_link(JitBlockLink &link,
+		const JitBlockLinkActivation &activation) noexcept;
+	void deactivate_links(
+		std::span<JitBlockLink *const> active_targets) noexcept;
 	void reset() noexcept;
 
 	[[nodiscard]] static bool available() noexcept;

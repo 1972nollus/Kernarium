@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -702,27 +703,28 @@ void stale_sequence_control_reports_avoided_translation_work()
 		static_cast<unsigned long long>(control.diagnostics.translations));
 }
 
-/* G133: the block cache has to hold a real guest working set, not a fraction
- * of one. A multi-core Clang and Object Detection campaign translates 283,353
- * distinct blocks; against the former 8192-set, 32,768-entry cache that
- * collapsed into roughly 385 retranslations per distinct block. Fill twice the
- * former capacity and require nearly all of it to survive a second pass, so
- * shrinking the cache back fails here rather than only in a benchmark.
+/* The private cache is a bounded L1 in front of the much larger canonical
+ * translation cache. Fill half of its configured entry population and require
+ * it to remain useful on a second pass; the global cache tests separately pin
+ * cross-executor canonical ownership and reuse.
  */
-void the_cache_holds_more_than_twice_the_former_capacity()
+void private_cache_retains_its_bounded_working_set()
 {
 	constexpr unsigned long generation = 8111;
 	constexpr std::uint64_t base = 0x100'0000;
-	constexpr std::size_t former_capacity = 8192U * arm64::cache_ways;
-	constexpr std::size_t blocks = former_capacity * 2U;
-	constexpr std::size_t pages =
-		blocks * 8U / DARWIN_UML_GUEST_PAGE_SIZE;
-	static_assert(blocks * 8U % DARWIN_UML_GUEST_PAGE_SIZE == 0);
-	/* The budget-derived cache must still hold well over the capacity the
-	 * fixed 8192-set geometry gave, or G133's finding has been undone.
+	const auto geometry = arm64::jit_cache_geometry();
+	require(geometry.total_bytes() <=
+		arm64::default_jit_cache_budget_per_executor);
+	/* Consecutive two-instruction blocks vary PC in eight-byte steps, so this
+	 * pattern exercises one eighth of the low-bit-indexed sets before the
+	 * higher-bit mix changes. Fill all four ways of that effective set range.
 	 */
-	require(blocks <=
-		arm64::jit_cache_geometry().cache_sets * arm64::cache_ways);
+	const auto blocks = std::min<std::size_t>(
+		geometry.cache_sets * arm64::cache_ways / 8U, 16384U);
+	const auto pages =
+		blocks * 8U / DARWIN_UML_GUEST_PAGE_SIZE;
+	require(blocks != 0 &&
+		blocks * 8U % DARWIN_UML_GUEST_PAGE_SIZE == 0);
 
 	JitBacking backing{pages};
 	for (std::size_t block = 0; block < blocks; ++block) {
@@ -750,38 +752,39 @@ void the_cache_holds_more_than_twice_the_former_capacity()
 	}
 	const auto retranslated =
 		executor.cache_validation_diagnostics().translations - filled;
+	std::fprintf(stderr,
+		"JIT private cache capacity: %zu blocks filled, %llu retranslated "
+		"on the second pass\n",
+		blocks, static_cast<unsigned long long>(retranslated));
 	/* Set-associative collisions evict a small tail. The former capacity
 	 * would have evicted essentially all of it, and an arena reset would
 	 * too, so this bound covers both regressions.
 	 */
 	require(retranslated * 50U < blocks);
-	std::fprintf(stderr,
-		"JIT cache capacity: %zu blocks filled, %llu retranslated on the "
-		"second pass\n",
-		blocks, static_cast<unsigned long long>(retranslated));
 }
 
 void saved_word_owners_remain_inside_representative_budgets()
 {
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
-	struct Expectation final {
-		std::size_t guest_bytes;
-		std::size_t cache_sets;
-	};
-	constexpr std::array expectations{
-		Expectation{4U * gib, 32768},
-		Expectation{8U * gib, 65536},
-		Expectation{16U * gib, 131072},
-	};
-	for (const auto &expectation : expectations) {
-		const auto whole_process_budget = expectation.guest_bytes / 2U;
+	constexpr std::array guest_sizes{4U * gib, 8U * gib, 16U * gib};
+	std::optional<arm64::JitCacheGeometry> expected_geometry;
+	std::size_t preceding_shared = 0;
+	for (const auto guest_bytes : guest_sizes) {
+		const auto whole_process_budget = guest_bytes / 2U;
 		const auto geometry =
 			arm64::derive_jit_cache_geometry(whole_process_budget, 10);
 		const auto shared = arm64::derive_shared_translation_cache_budget(
 			whole_process_budget, 10);
-		require(geometry.cache_sets == expectation.cache_sets);
+		require(geometry.total_bytes() <=
+			arm64::default_jit_cache_budget_per_executor);
+		if (expected_geometry)
+			require(geometry == *expected_geometry);
+		else
+			expected_geometry = geometry;
+		require(shared > preceding_shared);
 		require(geometry.total_bytes() * 10U + shared <=
 			whole_process_budget);
+		preceding_shared = shared;
 	}
 }
 
@@ -1161,7 +1164,7 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 		static_cast<unsigned long long>(links.trains));
 }
 
-void a_direct_link_capacity_match_is_not_counted_as_reuse()
+void arena_adjacent_direct_links_degrade_without_blocking_reuse()
 {
 	constexpr unsigned long generation = 8114;
 	constexpr std::uint64_t base = 0x148'0000;
@@ -1214,11 +1217,11 @@ void a_direct_link_capacity_match_is_not_counted_as_reuse()
 	if constexpr (arm64::share_translations_between_executors) {
 		require(after.matches > published.matches);
 		require(after.materialization_direct_link_failures ==
-			published.materialization_direct_link_failures + 1U);
+			published.materialization_direct_link_failures);
 		require(after.materialization_indirect_link_failures ==
 			published.materialization_indirect_link_failures);
 		require(after.degraded_rejected == published.degraded_rejected);
-		require(after.reuses < after.matches);
+		require(after.reuses == published.reuses + 2U);
 	} else {
 		require(after.matches == published.matches);
 		require(after.reuses == published.reuses);
@@ -1229,9 +1232,10 @@ void a_direct_link_capacity_match_is_not_counted_as_reuse()
 	require(diagnostics.target_link_refusals > 0);
 	require(diagnostics.direct_link_refusals > 0);
 	if constexpr (arm64::share_translations_between_executors) {
-		/* The locally compiled source is degraded, but its exact canonical
-		 * owner remains usable for immutable validation words. Preflight must
-		 * find that owner before considering the refusal counts.
+		/* A refused reverse-index registration leaves the adjacent descriptor
+		 * cold, so its generated exit takes the semantic fallback. Code shape
+		 * and relocation metadata remain valid and both canonical blocks can
+		 * still be materialized without recompilation.
 		 */
 		require(diagnostics.private_validation_word_installs == 0);
 		require(diagnostics.shared_validation_word_installs > 0);
@@ -1405,13 +1409,13 @@ int main()
 	defensive_install_rejects_mutated_canonical_metadata();
 	an_arena_capacity_match_is_not_counted_as_reuse();
 	an_indirect_link_capacity_match_is_not_counted_as_reuse();
-	a_direct_link_capacity_match_is_not_counted_as_reuse();
+	arena_adjacent_direct_links_degrade_without_blocking_reuse();
 	a_second_executor_reuses_the_first_translation_safely();
 	a_second_executor_reuses_an_indirect_translation_safely();
 	shared_translation_payload_bytes_are_bounded();
 	a_full_shared_translation_shard_requires_private_fallback();
 	saved_word_owners_remain_inside_representative_budgets();
-	the_cache_holds_more_than_twice_the_former_capacity();
+	private_cache_retains_its_bounded_working_set();
 	unrelated_page_change_reuses_exact_block();
 	in_block_change_rejects_saved_words();
 	executable_permission_change_rejects_saved_block();

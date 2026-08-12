@@ -38,6 +38,10 @@ void profile_jit_target_link_refusal(bool refused) noexcept;
 void profile_jit_sequence_transition(bool generation_changed,
                                      std::uint64_t discarded_blocks) noexcept;
 void profile_jit_cache_validation(JitCacheValidationResult result) noexcept;
+[[nodiscard]] std::uint64_t jit_profile_timestamp_ns() noexcept;
+void profile_jit_local_compile_latency(std::uint64_t nanoseconds) noexcept;
+void profile_jit_shared_materialization_latency(
+    std::uint64_t nanoseconds) noexcept;
 /* Called only after translation is quiescent and task carriers have retired.
  * It drains live thread-local recorders and emits each enabled cumulative
  * report whose state changed since the preceding call.
@@ -62,6 +66,12 @@ inline constexpr void profile_jit_sequence_transition(
     bool, std::uint64_t) noexcept {}
 inline constexpr void profile_jit_cache_validation(
     JitCacheValidationResult) noexcept {}
+[[nodiscard]] inline constexpr std::uint64_t
+jit_profile_timestamp_ns() noexcept { return 0; }
+inline constexpr void profile_jit_local_compile_latency(
+    std::uint64_t) noexcept {}
+inline constexpr void profile_jit_shared_materialization_latency(
+    std::uint64_t) noexcept {}
 #endif
 
 } // namespace uml::cpu::arm64

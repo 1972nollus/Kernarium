@@ -108,13 +108,18 @@ saturating_add_array(std::size_t total, std::size_t count,
       return false;
     }
     /* Relocations address aligned 64-bit literal-pool cells after executable
-     * hot code. Never permit one to rewrite an instruction, straddle the end
-     * of the retained words, or alias another executor-owned pointer.
+     * hot code. The shared template deliberately retains zero rather than a
+     * publisher-local pointer; each executor regenerates its mutable link
+     * footer and resolves these neutral keys during installation. Never
+     * permit a relocation to rewrite an instruction, straddle the end of the
+     * retained words, or alias another relocation.
      */
     if ((relocation.word & 1U) != 0 ||
         relocation.word < translation.hot_words ||
         relocation.word >= translation.words.size() ||
-        translation.words.size() - relocation.word < 2U)
+        translation.words.size() - relocation.word < 2U ||
+        translation.words[relocation.word] != 0 ||
+        translation.words[relocation.word + 1U] != 0)
       return false;
     for (std::size_t earlier = 0; earlier < index; ++earlier) {
       const auto previous = translation.relocations[earlier].word;
@@ -254,6 +259,11 @@ SharedTranslationCache::SharedTranslationCache(
           maximum_accounted_bytes,
           minimum_shared_translation_cache_bytes)} {}
 
+SharedTranslationCache::~SharedTranslationCache() {
+  for (auto &slot : shards_)
+    delete slot.shard.load(std::memory_order_relaxed);
+}
+
 static_assert(sizeof(SharedTranslationCache) + allocation_allowance <=
               minimum_shared_translation_cache_bytes);
 
@@ -281,14 +291,34 @@ bool SharedTranslationCache::CodegenProfile::operator==(
              other.capabilities.jscvt_subnormal_flags_correct;
 }
 
+SharedTranslationCache::Shard *SharedTranslationCache::allocated_shard(
+    std::uint64_t guest_pc) const noexcept {
+  return shards_[shard_of(guest_pc)].shard.load(std::memory_order_acquire);
+}
+
+SharedTranslationCache::Shard &SharedTranslationCache::ensure_shard(
+    std::uint64_t guest_pc) {
+  auto &slot = shards_[shard_of(guest_pc)];
+  if (auto *shard = slot.shard.load(std::memory_order_acquire);
+      shard != nullptr)
+    return *shard;
+  const std::lock_guard creation_lock{slot.creation_mutex};
+  if (auto *shard = slot.shard.load(std::memory_order_relaxed);
+      shard != nullptr)
+    return *shard;
+  auto shard = std::make_unique<Shard>();
+  auto *result = shard.release();
+  slot.shard.store(result, std::memory_order_release);
+  return *result;
+}
+
 std::shared_ptr<const SharedTranslation> SharedTranslationCache::find(
     const CodegenProfile &profile, std::uint64_t guest_pc,
     std::span<const std::uint32_t> guest_words) const {
-  {
-    const auto &shard = shards_[shard_of(guest_pc)];
-    const std::shared_lock cache_lock{shard.mutex};
-    const auto bucket = shard.entries.find(guest_pc);
-    if (bucket != shard.entries.end())
+  if (const auto *shard = allocated_shard(guest_pc); shard != nullptr) {
+    const std::shared_lock cache_lock{shard->mutex};
+    const auto bucket = shard->entries.find(guest_pc);
+    if (bucket != shard->entries.end())
       for (const auto &entry : bucket->second)
         if (entry.profile == profile &&
             matches_guest_prefix(*entry.translation, guest_words)) {
@@ -307,14 +337,17 @@ SharedTranslationCache::preflight_publication(
     SharedTranslationPublicationSizes sizes,
     std::size_t direct_link_refusals,
     std::size_t indirect_link_refusals) {
-  auto &shard = shards_[shard_of(guest_pc)];
-  const std::shared_lock cache_lock{shard.mutex};
-  const auto found = shard.entries.find(guest_pc);
-  if (found != shard.entries.end())
-    for (const auto &entry : found->second)
-      if (entry.profile == profile &&
-          same_guest_words(*entry.translation, guest_words))
-        return {.canonical = entry.translation, .may_construct = false};
+  const auto *shard = allocated_shard(guest_pc);
+  std::shared_lock<std::shared_mutex> cache_lock;
+  if (shard != nullptr) {
+    cache_lock = std::shared_lock{shard->mutex};
+    const auto found = shard->entries.find(guest_pc);
+    if (found != shard->entries.end())
+      for (const auto &entry : found->second)
+        if (entry.profile == profile &&
+            same_guest_words(*entry.translation, guest_words))
+          return {.canonical = entry.translation, .may_construct = false};
+  }
 
   /* Existing ownership remains useful to the final executor. Only admission
    * of a new owner is conditional on concurrent executors.
@@ -337,7 +370,8 @@ SharedTranslationCache::preflight_publication(
    */
   sizes.guest_words = std::max(sizes.guest_words, guest_words.size());
   const auto lower_bound = lower_bound_entry_budget_charge(sizes);
-  if (shard.count >= shard_capacity_ || !budget_can_fit(lower_bound)) {
+  if ((shard != nullptr && shard->count >= shard_capacity_) ||
+      !budget_can_fit(lower_bound)) {
     rejected_.fetch_add(1, std::memory_order_relaxed);
     return {};
   }
@@ -354,7 +388,7 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
     malformed_rejected_.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
   }
-  auto &shard = shards_[shard_of(guest_pc)];
+  auto &shard = ensure_shard(guest_pc);
   std::unique_lock cache_lock{shard.mutex};
   const auto found = shard.entries.find(guest_pc);
   if (found != shard.entries.end())
@@ -589,9 +623,12 @@ void SharedTranslationCache::remove_executor() noexcept {
 SharedTranslationStatistics
 SharedTranslationCache::statistics() const noexcept {
   std::size_t entries = 0;
-  for (const auto &shard : shards_) {
-    const std::shared_lock cache_lock{shard.mutex};
-    entries += shard.count;
+  for (const auto &slot : shards_) {
+    const auto *shard = slot.shard.load(std::memory_order_acquire);
+    if (shard == nullptr)
+      continue;
+    const std::shared_lock cache_lock{shard->mutex};
+    entries += shard->count;
   }
   return {.matches = matches_.load(std::memory_order_relaxed),
           .reuses = reuses_.load(std::memory_order_relaxed),
@@ -626,12 +663,18 @@ SharedTranslationCache::statistics() const noexcept {
           .maximum_accounted_bytes = maximum_accounted_bytes_};
 }
 
+std::size_t SharedTranslationCache::allocated_shards() const noexcept {
+  return std::ranges::count_if(shards_, [](const auto &slot) {
+    return slot.shard.load(std::memory_order_acquire) != nullptr;
+  });
+}
+
 SharedTranslationCache &SharedTranslationCache::instance() noexcept {
   /* Intentionally leaked. Executors flush into it from their destructors,
    * which can run after a function-local static would have been destroyed.
    */
   static auto *cache = new SharedTranslationCache{
-      default_shard_maximum_entries,
+      unlimited_shard_entries,
       jit_shared_translation_cache_budget()};
 #if UML_ENABLE_JIT_PROFILE
   static const bool report_registered = [] {

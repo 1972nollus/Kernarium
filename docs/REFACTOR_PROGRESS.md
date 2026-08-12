@@ -21,16 +21,32 @@ scheme restores Xcode's platform-aware target/run configuration.
 
 ## Post-baseline JIT checkpoint (2026-08-12)
 
-This checkpoint completes the foundational JIT-cache boundary: one authoritative parsed
-`ncpus=`/`mem=` budget pair, a bounded shared-cache carve, complete eager and
-retained per-executor accounting, fixed-capacity address-stable link storage,
-immutable shared validation words with a fully charged fallback slab, and
-separate exact-match versus successful-materialization counters. A managed run
+This checkpoint completes the foundational JIT-cache boundary: one authoritative
+parsed `ncpus=`/`mem=` budget configuration, a complete 64 MiB private ceiling
+per executor, a shared tier that alone receives additional guest-memory budget,
+lazy shard backing, complete retained accounting, one compact arena-adjacent
+activation anchor per direct target PC, and immutable shared validation words
+with neutral relocation cells. Each installer regenerates its mutable
+activation state; the canonical cache contains no executor address. Exact-match
+and successful-materialization counters remain separate. A managed run
 now owns at most its configured guest CPU count of session/profile-bound
 executors and drains them before the runtime memory domain retires. The pool's
 same-sequence migration regression is fixed by preparing each distinct
 task-carrier `StaticGuestMemory` while keeping executor-TLB preparation
 conditional on mapping changes.
+
+The focused G138 diagnosis first observed Clang/Object Detection/summary
+542/1139/786 at the compact 64 MiB geometry versus 460/856/628 before the
+footer change. Deduplicating mutable anchors by target then produced
+613/1238/871, +33.26%/+44.63%/+38.69% over the initial result. Profiling of the
+compact precursor recorded 3,869 arena resets and 183,428,416 shared
+materializations, 77.16%/62.54% below the first oversized-footer attempt.
+Complete shared installation averaged 2,424.81 ns versus 16,322.84 ns for the
+local compile path (6.73x faster). The final pre-shutdown sample peaked at
+6.932 GiB RSS and no longer placed activation/deactivation in its collapsed
+top-stack list, while precursor counters showed 3,285,847,540 accounted shared
+bytes: the workload populated the lazy tier rather than merely reserving its
+limit. These scores are focused observations, not broad acceptance.
 
 Final JIT profiles are change-detected at the post-carrier explicit boundary,
 which emits compile/overlap, pool, then shared before pool drain, and at the

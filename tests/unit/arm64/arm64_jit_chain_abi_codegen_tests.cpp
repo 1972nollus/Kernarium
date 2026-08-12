@@ -528,15 +528,19 @@ void direct_success_path_has_scheduled_remaining_budget() {
       successful_path_words(resident, resident_literal.source);
   const auto memory_words =
       successful_path_words(memory, memory_literal.source);
-  require(memory_words == 12 && resident_words == 8,
+  require(memory_words == 15 && resident_words == 11,
           "direct successful path word count changed");
   require(memory_words - resident_words ==
               jit_test::persistent_link_successful_path_word_savings(),
           "direct persistent-path saving is not exactly four words");
   require(resident_literal.source + 2U < resident.size() &&
               resident[resident_literal.source + 1U] == 0xd100'0694U &&
-              resident[resident_literal.source + 2U] == 0xf875'798dU,
-          "direct path does not schedule SUB behind its literal load");
+              resident[resident_literal.source + 2U] == 0xa940'2590U,
+          "direct path does not schedule SUB before its paired metadata load");
+  require(count_word(resident, 0xb940'298dU) == 1 &&
+              count_word(resident, 0x9ad5'25adU) == 1 &&
+              count_word(resident, 0xf940'098dU) == 1,
+          "direct path does not validate and load the compact link record");
   require(count_word(resident, 0xeb09'029fU) == 1,
           "direct path does not compare remaining budget with target count");
   const auto selector_fallback = require_unique_instruction(
@@ -579,8 +583,11 @@ void conditional_arms_each_use_the_persistent_path() {
   constexpr std::array guest{0x5400'0040U}; // b.eq pc + 8
   const auto compiled = jit_test::compile_linked_block(pc, guest);
   const auto hot = hot_code(compiled);
-  require(count_word(hot, 0xf875'798dU) == 2,
-          "conditional branch does not select both successors through x21");
+  require(count_word(hot, 0xa940'2590U) == 2 &&
+              count_word(hot, 0xb940'298dU) == 2 &&
+              count_word(hot, 0x9ad5'25adU) == 2 &&
+              count_word(hot, 0xf940'098dU) == 2,
+          "conditional branch does not validate both compact link records");
   require(count_word(hot, 0xd100'0694U) == 2 &&
               count_word(hot, 0x9100'0694U) == 2,
           "conditional arms do not subtract and cold-restore their instruction");
@@ -649,7 +656,7 @@ void pic_success_path_has_scheduled_remaining_budget() {
       successful_path_words(resident, resident_literal.source);
   const auto memory_words =
       successful_path_words(memory, memory_literal.source);
-  require(memory_words == 18 && resident_words == 14,
+  require(memory_words == 21 && resident_words == 17,
           "PIC successful path word count changed");
   require(memory_words - resident_words == 4,
           "PIC persistent-path saving is not exactly four words");

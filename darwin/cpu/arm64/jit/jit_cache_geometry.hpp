@@ -24,10 +24,12 @@ class JitExecutor;
  * counting guest RAM. Sizing from a budget makes the total the thing that is
  * chosen and the per-executor geometry the thing that is derived.
  *
- * The budget is a whole-process figure split evenly across the expected
- * executors, one per guest CPU. It defaults to half of guest memory, which the
- * emulator reads from the guest's own `mem=` argument, and
- * `--jit-cache-budget=` overrides it.
+ * The budget is a whole-process figure. Each expected executor, one per guest
+ * CPU, receives a bounded private working-set cache and the process-global
+ * shared translation cache receives the remainder. The whole budget defaults
+ * to half of guest memory, which the emulator reads from the guest's own
+ * `mem=` argument. `--jit-cache-budget=` overrides the whole budget and
+ * `--jit-executor-cache-budget=` may lower the private per-executor cap.
  */
 struct JitCacheGeometry final {
 	std::size_t cache_sets{};
@@ -44,14 +46,26 @@ struct JitCacheGeometry final {
 
 inline constexpr unsigned maximum_jit_cache_executors = 64;
 
-/* A small fixed reservation covers the sharded cache object even when one
- * executor cannot publish. Multi-executor configurations devote one sixteenth
- * of the whole budget, capped at the largest measured useful cache.
+/* Private caches are L1 working sets in front of the process-global canonical
+ * translation cache. Their complete retained geometry, not merely the block
+ * lookup array, is capped at 64 MiB per executor. The shared tier receives all
+ * remaining budget and grows with guest memory.
+ */
+inline constexpr std::size_t default_jit_cache_budget_per_executor =
+	64U * 1024U * 1024U;
+
+/* The host-only override may lower the private working set for diagnosis. It
+ * cannot grow one executor beyond the production 64 MiB ceiling; after that
+ * ceiling is funded, only the shared tier grows with guest memory.
+ */
+inline constexpr std::size_t maximum_jit_cache_budget_per_executor =
+	64U * 1024U * 1024U;
+
+/* A small fixed accounting reservation covers the lazy shard directory even
+ * before the first shard receives an entry.
  */
 inline constexpr std::size_t minimum_shared_translation_cache_bytes =
 	64U * 1024U;
-inline constexpr std::size_t maximum_shared_translation_cache_bytes =
-	256U * 1024U * 1024U;
 
 /* Publishes one indivisible whole-process budget and executor-count pair.
  * Called during startup, before any executor exists. The first valid pair wins,
@@ -61,19 +75,25 @@ inline constexpr std::size_t maximum_shared_translation_cache_bytes =
  * explicit publication claims the documented fallback pair.
  */
 [[nodiscard]] bool set_jit_cache_budget(std::size_t total_bytes,
-	unsigned executors) noexcept;
+	unsigned executors,
+	std::size_t per_executor_bytes =
+		default_jit_cache_budget_per_executor) noexcept;
 
 /* Pure geometry derivation used by the published process configuration and by
  * budget-accounting tests. total_bytes is the whole-process JIT budget.
  */
 [[nodiscard]] JitCacheGeometry derive_jit_cache_geometry(
-	std::size_t total_bytes, unsigned executors) noexcept;
+	std::size_t total_bytes, unsigned executors,
+	std::size_t per_executor_bytes =
+		default_jit_cache_budget_per_executor) noexcept;
 
 /* Process-global share retained after all per-executor minimums have been
  * funded. Zero means the whole-process pair is invalid.
  */
 [[nodiscard]] std::size_t derive_shared_translation_cache_budget(
-	std::size_t total_bytes, unsigned executors) noexcept;
+	std::size_t total_bytes, unsigned executors,
+	std::size_t per_executor_bytes =
+		default_jit_cache_budget_per_executor) noexcept;
 
 /* Smallest accounted per-executor payload that can construct usable cache and
  * arena resources. A whole-process budget must provide at least this much to

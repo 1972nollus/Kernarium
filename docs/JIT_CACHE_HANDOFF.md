@@ -5,7 +5,7 @@ translation sharing: what is accepted, what was measured and rejected, and what
 is open. Read it before changing anything under
 `darwin/cpu/arm64/jit/jit_cache*`, `jit_arena*` or `jit_shared_translations*`.
 
-This is a forward-looking summary. Entries G127 to G135 in
+This is a forward-looking summary. Entries G127 to G138 in
 `docs/HOT_PATH_EXPERIMENTS.md` own the dated predecessor measurements;
 `AGENTS.md` owns the invariants that must survive. Do not use a dated score to
 override the current contracts below.
@@ -44,37 +44,34 @@ As of 2026-08-12, the source after that sequence is the current post-baseline
 checkpoint. This section claims only gates that completed; the mechanisms below
 are the contracts of that checkpoint.
 
-### Complete retained-memory accounting
+### Fixed private working sets and a growing shared tier
 
 `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` publishes the whole-process
-budget and expected executor count as one indivisible, first-valid pair. The
-default budget is half the guest's parsed `mem=` value, and
-`--jit-cache-budget=` overrides it. The host derives the executor count with
-the maintained kernel's `ncpus=` defaulting and clamping rules, so omitting
-`ncpus=` cannot select a smaller divisor than the guest uses. An identical
-repeat of the published pair succeeds, an incompatible later pair fails, and
-an executor constructed before explicit startup publication claims the
-documented bounded fallback instead of an unbounded legacy geometry.
+budget, expected executor count, and private per-executor ceiling as one
+indivisible first-valid configuration. The total defaults to half the guest's
+parsed `mem=` value and `--jit-cache-budget=` overrides it. Each executor gets
+at most 64 MiB of complete private retained state; the host-only
+`--jit-executor-cache-budget=` option may lower but not raise that ceiling.
+After all private working sets are funded, every additional budget byte goes to
+the process-global shared tier, so only that tier grows with guest memory.
 
-The bounded process-global shared cache is reserved first; the remainder is
-split across the expected executors. `JitCacheGeometry::total_bytes()` charges
-the eager executor state and TLB, block-cache backing, complete fallback
-validation-word slab, fixed direct and indirect link tables and their indexes,
-fixed active-record lists, retained relocation scratch, and page-rounded code,
-tracked-store, and floating-transaction arenas. The exact current geometry is
-derived and tested rather than copied here as a point-in-time byte count. If
-the minimum shared reservation and every executor's accounted minimum do not
-fit, startup rejects the pair before a backing allocation can escape the cap.
+`JitCacheGeometry::total_bytes()` charges eager executor/TLB state,
+block-cache backing, the complete fallback validation-word slab, the direct
+reverse index, fixed indirect-link storage, retained relocation scratch, and
+page-rounded ordinary-code, tracked-store, and floating-transaction arenas.
+If the minimum shared reservation and every executor's accounted minimum do
+not fit, startup rejects the configuration. For a small total budget, private
+geometry may fall below 64 MiB so the minimum shared tier remains available.
 
-Direct and indirect link records use fixed arrays with fixed open-addressed
-indexes; population cannot grow their allocation, and every embedded record
-address remains stable for the lifetime of its code arena. One stable record
-per cache block is a capacity ratio, not a promise that every compiled branch
-obtains a record. A full table makes that branch use its semantic unlinked path.
-Branch-operand refusals and a compiled block's own target-record refusal are
-reported separately. A compilation missing a requested direct or indirect
-record is executor-correct but degraded and must not become the canonical
-shared translation for an unoccupied key.
+The first arena block that names a direct target owns one compact 64-byte
+activation anchor aligned immediately after its code. A fixed reverse index
+maps target PC to that arena-owned anchor; every later source reuses it instead
+of creating another mutable copy. Code and anchors therefore retire together
+on an arena reset, and the remaining private budget is assigned to that
+combined arena because an arena reset also clears the block cache. Indirect PIC
+records remain fixed-capacity stable storage. An index or table refusal retains
+the semantic unlinked path and is reported; it does not allocate outside the
+private ceiling.
 
 ### Shared translations and validation words
 
@@ -82,15 +79,17 @@ Ordinary builds enable sharing with the CMake option
 `UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS`; the internal constexpr
 `share_translations_between_executors` reflects that option. A cache key binds
 the guest PC, exact consumed guest-word prefix, and the complete code-generation
-profile. The cache is bounded independently by entry capacity and by its
-whole-process accounted-byte share. That byte charge covers the fixed sharded
-cache, conservative map/index ownership, translation metadata, emitted words,
-relocations, and immutable guest validation words. A candidate not yet admitted
-is transient compiler scratch, not retained cache state. After local compilation
-and before constructing that candidate, a nonallocating preflight first returns
-an exact canonical owner that raced the compile, then rejects a full shard or an
-overflow-safe lower-bound charge that cannot fit the remaining byte budget.
-`insert()` still owns the authoritative race and actual-capacity checks. A
+profile. The production cache is bounded by its whole-process accounted-byte
+share; that byte bound also limits entry population. The fixed directory is
+small, while each shard's mutex/map backing is allocated only on its first
+insertion. The byte charge covers conservative map/index ownership,
+translation metadata, emitted words, relocations, and immutable guest
+validation words. A candidate not yet admitted is transient compiler scratch,
+not retained cache state. After local compilation and before constructing that
+candidate, a nonallocating preflight first returns an exact canonical owner
+that raced the compile, then rejects an overflow-safe lower-bound charge that
+cannot fit the remaining byte budget. `insert()` still owns the authoritative
+race and actual-capacity checks. A
 `std::bad_alloc` anywhere in opportunistic candidate construction or insertion
 returns to the existing private validation-word installation; unexpected
 exceptions retain their fail-closed behavior. Failed cache insertion is counted
@@ -102,15 +101,20 @@ Admission of a new canonical owner remains gated on two or more live executors.
 Preflight and final insertion resolve an exact owner before applying that gate,
 so a compilation that overlapped a peer may retain canonical immutable
 validation ownership after the peer retires; an unoccupied identity remains
-gated. A lookup `match` means only that the exact canonical entry was found. A
-`reuse` is counted later, after the consumer has validated every metadata field,
-resolved all executor-private link pointers, copied the code through
-`ExecutableArena::store_relocated()` into its private arena, and installed the
-block. Invalid metadata, direct- or indirect-link capacity, and private-arena
-exhaustion are distinct materialization failures; each falls back to local
-compilation and cannot masquerade as saved work. The GPR-link profiling build
-remains executor-private because its emitted counter pointers are deliberately
-outside the production relocation ABI.
+gated. A lookup `match` means only that the exact canonical entry was found.
+Canonical words contain zero in every executor-pointer relocation cell, and
+relocations carry only neutral guest keys. A `reuse` is counted later, after
+the consumer validates every metadata field, copies the code through
+`ExecutableArena::store_block()`, reuses or creates its small arena-adjacent
+direct target anchors, resolves indirect sites, and installs the block. Mutable
+activation state is cheap installation state and is never retained in the
+shared cache.
+Invalid metadata, indirect-link capacity, and private-arena exhaustion remain
+materialization failures; each falls back to local compilation and cannot
+masquerade as saved work. A local direct reverse-index refusal merely leaves
+that source cold and does not change the canonical code shape. The GPR-link
+profiling build remains executor-private because its emitted counter pointers
+are deliberately outside the production relocation ABI.
 
 `CompiledBlock` no longer owns an inline copy of every saved guest-word slot.
 An admitted shared translation owns one immutable exact prefix and each
@@ -127,6 +131,60 @@ the collapsed second candidate run was retained rather than discarded, and the
 RSS moved in the wrong direction for a memory-win claim. The ownership change
 is accepted for the single immutable source, bounded fallback, and accounting
 contract; this campaign does **not** establish a throughput or RSS improvement.
+
+### 64 MiB diagnosis and compact direct footer
+
+The 2026-08-12 Clang/Object Detection investigation separates the four proposed
+causes of the small-cache regression:
+
+- executor migration is not the cause: the accepted pool trace returned the
+  remembered executor on 99.997117% of P attempts, and its same-sequence slot
+  changes were only 0.002883% of all borrows;
+- a one-executor diagnostic still churned its private cache and arena, so the
+  regression did not require migration or cross-executor sharing;
+- shared installation is not slower than compilation: the compact precursor's
+  profiling run measured 2,424.81 ns per complete shared
+  lookup/materialization/install path versus 16,322.84 ns per complete local
+  compile/publication/install path, making reuse 6.73 times faster (85.14% less
+  time);
+- 64 MiB was not intrinsically too small. The failure was the amount and
+  placement of per-block direct-link state, which forced whole-arena resets and
+  repeated materialization.
+
+The first footer prototype put ten activation pointers in every 128-byte
+record. Its ordinary Clang/Object Detection/summary scores were 332/975/569,
+with 16,938 arena resets and 489,657,430 shared materializations in the
+instrumented run. The retained compact anchor uses one internal entry plus a
+ten-bit selector mask in 64 bytes. It is created after the first code block
+that names a target PC and reused by every later source. At the same 64 MiB
+private ceiling, the ordinary one-observation scores were 542/1139/786 versus
+460/856/628 before the footer work (+17.83%/+33.06%/+25.16%). The instrumented
+run recorded 3,869 resets and 183,428,416 materializations, reductions of
+77.16% and 62.54%, with zero direct-capacity materialization failures. These
+scores exposed a remaining activation problem: every source still received a
+mutable record even when many sources named the same target. The arena now
+creates one anchor for each distinct target PC and patches all source literals
+to that anchor. A representative native regression fell from 688 seconds to
+171 seconds after removing reset-time scans and then to 6.66 seconds after
+deduplicating the anchors. The final ordinary observation scored 613/1238/871,
+another +13.10%/+8.69%/+10.81% over 542/1139/786 and
++33.26%/+44.63%/+38.69% over the initial 64 MiB result. These remain focused
+same-host observations, not a multi-run general benchmark.
+
+The requested final live sample was taken before shutdown. Resident memory
+peaked at 6.932 GiB during the final ordinary observation. Its collapsed
+top-of-stack report contains no activation or deactivation routine; only 48
+recursive samples reached the now-constant-time `activate_link`, while lookup,
+generated execution, shared validation, and code publication remained visible.
+The earlier instrumented sample reported 2.8 GiB physical footprint. At that
+profiling shutdown, the lazy shared cache held 2,047,701 canonical entries and
+accounted
+3,285,847,540 of its 3,624,031,696-byte budget. Thus the high footprint was not
+an eager allocation of the fixed limit: this workload actually populated most
+of the large shared tier, in addition to ten bounded private working sets.
+Mutable activation state is cheap, regenerated privately, and absent from the
+canonical cache; the final sample does not justify another shared
+representation or hot-path indirection for it.
 
 ### Bounded executor pool and memory preparation
 
@@ -643,20 +701,21 @@ the run is alive; the emulator does not report it.
 From `AGENTS.md`, and each of these has already caught a mistake in this work:
 
 - **G133/G135**: the cache geometry is budget-derived and pinned by
-  `the_cache_holds_more_than_twice_the_former_capacity`. Every per-executor
-  eager or retained structure must stay inside the remainder after the bounded
-  shared-cache reservation, because it multiplies by vCPU count. Link tables,
-  indexes, active lists, relocation scratch, fallback saved words, and rounded
-  arenas are part of that proof, not incidental allocator use.
-- **G134**: every pointer a translation embeds into its compiler's link tables
-  must be recorded as a `JitRelocation`, and only
-  `ExecutableArena::store_relocated` may rewrite them. Miss one and a reusing
-  executor branches through another executor's freed records. The pinning test
-  destroys the compiling executor first, so a miss is a sanitizer failure
-  rather than silent corruption — which is why **ASan is the gate that matters
-  most here**, not the unit pass count. The key's code-generation profile and
-  exact consumed bytes, metadata validation, degraded-publication rejection,
-  and match-versus-reuse distinction are part of the same lifetime contract.
+  `private_cache_retains_its_bounded_working_set`. Every per-executor
+  eager or retained structure must stay within the 64 MiB private ceiling,
+  because it multiplies by vCPU count; only the shared remainder may grow with
+  guest memory. The block cache, reverse direct index, fixed indirect table,
+  relocation scratch, fallback saved words, and rounded arenas are part of
+  that proof, not incidental allocator use.
+- **G134**: every executor-pointer literal is a `JitRelocation`. Canonical
+  shared words keep those cells zero and `ExecutableArena::store_block`
+  reuses or creates the consumer's adjacent direct target anchors and resolves
+  indirect sites. Miss one and a reusing executor can branch through another
+  executor's freed state. The pinning test destroys the compiler first, so
+  **ASan remains the gate that matters most here**, not the unit pass count. The key's
+  code-generation profile and exact consumed bytes, metadata validation,
+  degraded-publication rejection, lazy byte-bounded backing, and
+  match-versus-reuse distinction are part of the same lifetime contract.
 - The executor-pool cap is the guest CPU count, not the number of task wrappers.
   Keep its session/profile binding, FIFO waiter priority, pre-domain drain, and
   prepared-memory identity separate from mapping-sequence TLB preparation.

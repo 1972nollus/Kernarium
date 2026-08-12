@@ -367,7 +367,8 @@
     target_link_libraries(uml_arm64_jit_cache_geometry_tests PRIVATE
         uml_cpu_jit_component)
     target_include_directories(uml_arm64_jit_cache_geometry_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_features(uml_arm64_jit_cache_geometry_tests PRIVATE
         cxx_std_20)
     target_compile_options(uml_arm64_jit_cache_geometry_tests PRIVATE

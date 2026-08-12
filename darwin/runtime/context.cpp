@@ -441,9 +441,10 @@ bool provide_memory_domain(std::uint64_t &domain) noexcept
 
 
 bool set_translation_cache_budget(std::size_t total_bytes,
-	unsigned executors) noexcept
+	unsigned executors, std::size_t per_executor_bytes) noexcept
 {
-	return ::uml::cpu::set_translation_cache_budget(total_bytes, executors);
+	return ::uml::cpu::set_translation_cache_budget(
+		total_bytes, executors, per_executor_bytes);
 }
 
 bool acquire_translation_cache_run_session() noexcept

@@ -131,13 +131,11 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
 }
 
 /*
- * A translation embeds two kinds of pointer that belong to the executor that
- * compiled it: the successor's JitBlockLink entry array and the indirect link
- * site. Everything else it embeds is either translation-owned or a static host
- * function address, which are identical in every executor. Recording where
- * those two land lets one executor reuse another's translation by rewriting
- * the pointers for its own link tables, so the expensive decode and emit
- * happens once per distinct block instead of once per executor.
+ * A translation has two executor-owned link operands: a direct successor key
+ * whose mutable descriptor is regenerated beside the installed code, and an
+ * indirect-link site. Canonical shared words zero both pointer cells and retain
+ * only their neutral guest keys. Recording the cells lets every executor
+ * recreate its private link state while reusing decode and emission work.
  */
 /* The guest-GPR link profiler also embeds executor-owned counter pointers.
  * Those diagnostic pointers are intentionally not part of the production

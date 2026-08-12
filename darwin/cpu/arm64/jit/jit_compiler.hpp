@@ -56,9 +56,10 @@ public:
 
   struct Result final {
     std::span<const std::uint32_t> words;
-    /* Where this translation embedded pointers into the compiling executor's
-     * link tables, and whether every one of them was recorded. Only a fully
-     * recorded translation may be reused by another executor.
+    /* Where this translation emitted executor-owned link operands. Shared
+     * publication zeros those cells and retains these neutral guest keys so
+     * another executor can regenerate its own adjacent footer and PIC sites.
+     * Only a fully recorded translation may be reused.
      */
     std::span<const JitRelocation> relocations;
     bool relocatable{};

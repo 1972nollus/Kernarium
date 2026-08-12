@@ -113,6 +113,8 @@ public:
                           unsigned immediate, bool shift_12 = false);
   void add_shifted(unsigned destination, unsigned left, unsigned right,
                    unsigned shift);
+  void logical_shift_right_variable(unsigned destination, unsigned source,
+                                    unsigned shift_register);
   void ubfm(unsigned destination, unsigned source, unsigned rotate,
             unsigned mask);
   void compare_register(unsigned left, unsigned right);

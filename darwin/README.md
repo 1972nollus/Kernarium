@@ -54,6 +54,18 @@ non-throwing-by-contract guest timeslice boundary: implementations return
 interpreter step or translated block loop. Gadgets and JIT retain independent
 caches and do not fall back to one another.
 
+The JIT process budget defaults to half of guest memory. Each pooled executor
+has a complete private working-set ceiling of 64 MiB; after those working sets
+are funded, only the process-global shared translation cache grows with guest
+memory. Its shard backing is created on first insertion. Shared entries retain
+canonical code with zeroed executor-pointer cells, neutral relocation keys,
+and immutable validation words. Materialization copies code into the consumer's
+private executable arena and regenerates only its executor-local link state.
+The first block that names a direct target places one compact cacheline anchor
+after its code; later sources reuse that target-PC anchor through the separately
+budgeted fixed reverse index. Code and anchors retire together. Mutable
+activation state and executor addresses never enter the shared cache.
+
 The opt-in macOS JIT-profiling product uses a private emulator facade, not the
 installed emulator ABI. That facade routes through a runtime-owned bridge to
 the CPU reporters; the app does not include a CPU-private diagnostics header.

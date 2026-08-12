@@ -77,11 +77,23 @@ def main() -> int:
         f"{output}",
     )
     require(
-        " blocks=4 " in compile_lines[0] and " guest=4 " in compile_lines[0],
+        " blocks=4 " in compile_lines[0]
+        and " guest=4 " in compile_lines[0]
+        and " local-compile-calls=2 local-compile-ns=3000 "
+        in compile_lines[0]
+        and " local-compile-avg-ns=1500.00 " in compile_lines[0]
+        and " shared-materialization-calls=2 shared-materialization-ns=300 "
+        in compile_lines[0]
+        and " shared-materialization-avg-ns=150.00 " in compile_lines[0],
         f"compile final line did not combine retired and live TLS tails:\n{output}",
     )
     require(
-        " blocks=5 " in compile_lines[1] and " guest=5 " in compile_lines[1],
+        " blocks=5 " in compile_lines[1]
+        and " guest=5 " in compile_lines[1]
+        and " local-compile-calls=3 local-compile-ns=3500 "
+        in compile_lines[1]
+        and " shared-materialization-calls=3 shared-materialization-ns=350 "
+        in compile_lines[1],
         f"compile final line did not report later cumulative activity:\n{output}",
     )
     require(

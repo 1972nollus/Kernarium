@@ -313,6 +313,27 @@ void fallback_budget_limits_live_executor_leases()
 	require(!arm64::set_jit_cache_budget(fallback_total, 2));
 }
 
+void shared_shards_are_backed_only_by_publication()
+{
+	arm64::SharedTranslationCache cache;
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	constexpr std::uint64_t guest_pc = 0x179'0000;
+	const std::array guest_words{0xd400'0001U};
+	require(cache.allocated_shards() == 0);
+	require(cache.find(profile, guest_pc, guest_words) == nullptr);
+	cache.add_executor();
+	cache.add_executor();
+	const auto preflight = cache.preflight_publication(
+		profile, guest_pc, guest_words,
+		{.host_words = 2, .relocations = 0, .guest_words = 1}, 0, 0);
+	require(preflight.may_construct && cache.allocated_shards() == 0);
+	require(cache.insert(profile, guest_pc, guest_words,
+		make_translation(guest_words, 1)) != nullptr);
+	require(cache.allocated_shards() == 1);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
 void concurrent_publication_keeps_one_canonical_owner()
 {
 	constexpr std::size_t publisher_count = 6;
@@ -648,6 +669,8 @@ void malformed_translation_metadata_is_rejected_before_admission()
 	const std::array guest_words{0x5400'0040U}; // b.eq pc + 8
 	std::uint64_t rejected = 0;
 	auto conditional_shape = make_translation(guest_words, 1, 8);
+	std::fill(conditional_shape->words.begin() + 4,
+		conditional_shape->words.end(), 0);
 	conditional_shape->relocations = {
 		{.word = 4,
 		 .key = guest_pc + 4,
@@ -707,6 +730,15 @@ void malformed_translation_metadata_is_rejected_before_admission()
 			.word = 4,
 			.key = 0,
 			.kind = static_cast<arm64::JitRelocationKind>(0xff),
+		});
+	});
+	reject([](auto &translation) {
+		translation.words.resize(6);
+		translation.hot_words = 2;
+		translation.relocations.push_back({
+			.word = 4,
+			.key = 0,
+			.kind = arm64::JitRelocationKind::direct_link,
 		});
 	});
 	reject([](auto &translation) {
@@ -800,6 +832,7 @@ void cumulative_byte_budget_spans_all_shards()
 int main()
 {
 	fallback_budget_limits_live_executor_leases();
+	shared_shards_are_backed_only_by_publication();
 	publication_preflight_avoids_definitely_full_candidates();
 	retired_peer_preserves_exact_owners_without_new_admission();
 	failed_new_entry_growth_reports_retained_accounting();
