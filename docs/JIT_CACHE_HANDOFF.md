@@ -186,6 +186,24 @@ Mutable activation state is cheap, regenerated privately, and absent from the
 canonical cache; the final sample does not justify another shared
 representation or hot-path indirection for it.
 
+### Private-cache floor sweep
+
+A 2026-08-13 adaptive follow-up used the same ordinary product, 8 GiB guest,
+ten-vCPU P-core topology, and Geekbench 6.7.1 Clang/Object Detection pair. Two
+64 MiB observations produced median scores of 613/1242.5/872.5. Two 62 MiB
+observations produced 620.5/1255.5/883, changes of
++1.22%/+1.05%/+1.20%. Both individual 62 MiB observations stayed within the
+2.8% focused noise band of their corresponding 64 MiB observations.
+
+The lower bracket did not pass: 60 MiB scored 598/1126/821, regressing Object
+Detection 9.70% and the combined score 6.06% against the fresh 64 MiB
+reference. The exploratory 56 MiB arm scored 581/1293/867; its combined score
+was close, but Clang regressed 5.22%. Therefore 62 MiB is the smallest measured
+no-sacrifice point in this short sweep. The user directed that production stay
+at 64 MiB: the candidate saves only 2 MiB per executor, leaves the
+whole-process budget and total RSS ceiling unchanged, and has only two noisy
+observations under disclosed host load. The lower brackets remain rejected.
+
 ### Bounded executor pool and memory preparation
 
 A managed emulator run owns one pool whose capacity is the configured guest CPU

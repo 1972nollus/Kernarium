@@ -46,7 +46,12 @@ local compile path (6.73x faster). The final pre-shutdown sample peaked at
 6.932 GiB RSS and no longer placed activation/deactivation in its collapsed
 top-stack list, while precursor counters showed 3,285,847,540 accounted shared
 bytes: the workload populated the lazy tier rather than merely reserving its
-limit. These scores are focused observations, not broad acceptance.
+limit. A follow-up two-observation floor sweep selected 62 MiB: median
+Clang/Object Detection/summary scores were 620.5/1255.5/883 versus
+613/1242.5/872.5 at 64 MiB. A 60 MiB arm failed the Object Detection and
+combined-score bands. The user retained the 64 MiB production ceiling because
+62 MiB saves only 2 MiB per executor and leaves the whole-process budget
+unchanged. These scores are focused observations, not broad acceptance.
 
 Final JIT profiles are change-detected at the post-carrier explicit boundary,
 which emits compile/overlap, pool, then shared before pool drain, and at the

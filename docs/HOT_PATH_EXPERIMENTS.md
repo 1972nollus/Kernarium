@@ -7576,9 +7576,42 @@ the lazy shared tier. Executor-local activation bytes are absent from the
 canonical shared representation and are now cheap enough that the sample does
 not support adding shared mutable state or an extra hot-path indirection.
 
-Disposition: retain the 64 MiB production ceiling, growing shared remainder,
-lazy shards, neutral shared relocation cells, and unique arena-adjacent direct
-target anchors. Do not restore the 128 MiB private diagnostic arm, per-source
-mutable copies, or the 128-byte footer. Moving the remaining unique activation
-fields out of executable pages is closed unless a new profile identifies them
-as material; the current sample does not justify the added indirection.
+Disposition at this checkpoint: retain the compact link representation,
+growing shared remainder, lazy shards, neutral shared relocation cells, and
+unique arena-adjacent direct target anchors. The 2026-08-13 G139 sweep below
+confirms that production remains at the 64 MiB ceiling. Do not restore the 128 MiB
+private diagnostic arm, per-source mutable copies, or the 128-byte footer.
+Moving the remaining unique activation fields out of executable pages is
+closed unless a new profile identifies them as material; the current sample
+does not justify the added indirection.
+
+## G139: private-cache floor sweep
+
+Recorded 2026-08-13 with the same ordinary JIT product and the G138 workload:
+Geekbench 6.7.1 Clang (201) plus Object Detection (301), 8 GiB guest, ten
+vCPUs, and P QoS. Runs were sequential, unprofiled, and completed with orderly
+guest and emulator shutdown. Time Machine, ReportCrash, and other unrelated
+host load remained a disclosed limitation under the user's accepted
+under-ten-core background-load boundary.
+
+| private ceiling | Clang | Object Detection | combined | disposition |
+| ---: | ---: | ---: | ---: | --- |
+| 64 MiB | 613, 613 | 1238, 1247 | 871, 874 | reference |
+| 62 MiB | 626, 615 | 1267, 1244 | 891, 875 | accepted |
+| 60 MiB | 598 | 1126 | 821 | rejected |
+| 56 MiB | 581 | 1293 | 867 | rejected |
+
+The two-observation medians are 613/1242.5/872.5 at 64 MiB and
+620.5/1255.5/883 at 62 MiB. The smaller tier changes those medians by
+**+1.22%/+1.05%/+1.20%** and neither individual observation sacrifices a score
+beyond the established 2.8% focused band. By contrast, 60 MiB regresses Object
+Detection 9.70% and combined 6.06% against the fresh reference; 56 MiB
+regresses Clang 5.22%. The non-monotonic constituent scores also show why a
+single aggregate cannot establish the floor.
+
+Disposition: keep the production private ceiling at **64 MiB per executor** as
+directed by the user. Although 62 MiB is the smallest measured no-sacrifice
+point, it moves only up to 20 MiB across ten executors, preserves the same
+whole-process budget, and has only two observations under disclosed host load.
+Do not lower the default to 60 MiB or infer a total-RSS reduction from this
+capacity shift.
