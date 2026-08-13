@@ -92,7 +92,9 @@ def main() -> int:
     workflow = indexed_presets(document, "workflowPresets")
 
     checked_product_selectors = {
-        "UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST": False,
+        "UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST": True,
+        "UML_GADGET_EXACT_CACHE_VALIDATION": True,
+        "UML_GADGET_SIMD_DESTINATION_RESIDENCY": True,
         "UML_JIT_CARRY_X8_X9_ACROSS_LINKS": False,
         "UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS": True,
     }

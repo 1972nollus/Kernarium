@@ -54,6 +54,16 @@ non-throwing-by-contract guest timeslice boundary: implementations return
 interpreter step or translated block loop. Gadgets and JIT retain independent
 caches and do not fall back to one another.
 
+The gadget executor keeps decoded programs across a same-generation guest
+code-change notification only when exact validation is enabled. It first resets
+all executor-local direct and indirect link activations, then compares every
+guest instruction word consumed by a stale program at the normal page-bounded
+fetch boundary. An exact match reactivates that retained program; a mismatch or
+fetch fault discards it and takes the ordinary decode path. A changed guest
+generation still invalidates the whole cache. Saved-word buffers are allocated
+only for populated slots and grow on demand rather than reserving a full block
+in every cache slot.
+
 The JIT process budget defaults to half of guest memory. Each pooled executor
 has a complete private working-set ceiling of 64 MiB; after those working sets
 are funded, only the process-global shared translation cache grows with guest

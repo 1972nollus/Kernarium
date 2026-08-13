@@ -335,6 +335,13 @@ Do not casually remove or reshape these accepted mechanisms:
 - **G99:** ThinLTO/IPO on `uml_arm64_gadgets`.
 - **G100:** exactly five audited decode-family `.ipp` files included only by
   `darwin/cpu/arm64/gadgets/program_builder.cpp`.
+- **G140/G141 gadget locality:** destination residency is limited to
+  nonfaulting integer MLA runs with one nonaliasing v0-v7 destination and must
+  flush before every unaware instruction or translated boundary. A
+  same-generation code change resets every local direct and indirect link
+  activation; a stale decoded program may be reactivated only after exact,
+  page-bounded comparison of every consumed guest word. Generation changes,
+  mismatches, and fetch faults retain the ordinary invalidate/redecode path.
 - **G121:** the `seq_cst` published per-thread `ActiveAccessSlot` lifecycle
   protocol in `darwin/memory/mmu/address_space.cpp`.
 - **G123:** serialized Darwin `init_mm` synchronization and whole-16-KiB host

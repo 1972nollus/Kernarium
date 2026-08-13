@@ -165,6 +165,22 @@ using SimdThreeSameGadgets = std::array<Gadget, 11>;
 #undef UML_SIMD_THREE_SAME_V7
 #undef UML_SIMD_THREE_SAME_V6
 
+[[nodiscard]] Gadget simd_destination_resident_mla_gadget(
+	bool q, unsigned size) noexcept
+{
+	if (size > 2U)
+		return nullptr;
+	static constexpr std::array<Gadget, 6> gadgets{
+		uml_arm64_gadget_simd_destination_resident_mla_8b,
+		uml_arm64_gadget_simd_destination_resident_mla_4h,
+		uml_arm64_gadget_simd_destination_resident_mla_2s,
+		uml_arm64_gadget_simd_destination_resident_mla_16b,
+		uml_arm64_gadget_simd_destination_resident_mla_8h,
+		uml_arm64_gadget_simd_destination_resident_mla_4s,
+	};
+	return gadgets[(q ? 3U : 0U) + size];
+}
+
 [[nodiscard]] Gadget simd_rdm_three_same_gadget(bool subtract, bool scalar,
 	bool q, unsigned size) noexcept
 {

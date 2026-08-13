@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <memory>
 #include <memory_resource>
 #include <optional>
@@ -171,16 +172,56 @@ public:
 		epoch_ = 1;
 	}
 
-	[[nodiscard]] const BuildResult *find(std::uint64_t pc) const noexcept
+	void invalidate_links() noexcept
+	{
+		for (auto &[pc, record] : links_) {
+			(void)pc;
+			record.reset();
+		}
+		if (indirect_links_.empty())
+			return;
+		constexpr auto empty_pc = ~std::uint64_t{};
+		const auto *empty_link = &link_record(empty_pc).link;
+		for (auto &[source_pc, site] : indirect_links_) {
+			(void)source_pc;
+			for (auto &entry : site.entries) {
+				entry.guest_pc = empty_pc;
+				entry.link = empty_link;
+			}
+			site.next_replacement = 0;
+		}
+	}
+
+	[[nodiscard]] const BuildResult *find(
+		std::uint64_t pc, std::uint64_t changes,
+		std::uint64_t mapping_changes, StaticGuestMemory &memory,
+		void *execution_context, GadgetCacheDiagnostics &diagnostics)
 	{
 		const auto location = locate(pc);
-		const auto &slab = slabs_[location.slab];
+		auto &slab = slabs_[location.slab];
 		if (!slab)
 			return nullptr;
 		for (std::size_t way = 0; way < ways; ++way) {
-			const auto &slot = slab->slots[location.offset + way];
-			if (slot.epoch == epoch_ && slot.pc == pc)
+			auto &slot = slab->slots[location.offset + way];
+			if (slot.epoch != epoch_ || slot.pc != pc || !slot.result)
+				continue;
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+			if (slot.validated_changes == changes)
 				return &*slot.result;
+			++diagnostics.validation_attempts;
+			if (!validate(slot, changes, mapping_changes, memory,
+				    execution_context, diagnostics))
+				return nullptr;
+			activate(pc, slot);
+			return &*slot.result;
+#else
+			(void)changes;
+			(void)mapping_changes;
+			(void)memory;
+			(void)execution_context;
+			(void)diagnostics;
+			return &*slot.result;
+#endif
 		}
 		return nullptr;
 	}
@@ -258,7 +299,9 @@ public:
 	}
 
 	[[nodiscard]] const BuildResult &store(
-		std::uint64_t pc, BuildResult result)
+		std::uint64_t pc, BuildResult result,
+		std::span<const std::uint32_t> guest_words,
+		std::uint64_t changes)
 	{
 		const auto location = locate(pc);
 		auto &slab = slabs_[location.slab];
@@ -282,6 +325,30 @@ public:
 		slot.result.emplace(std::move(result));
 		slot.pc = pc;
 		slot.epoch = epoch_;
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		slot.validated_changes = changes;
+		const auto validation_words =
+			slot.result->program.instruction_count() +
+			static_cast<std::size_t>(!slot.result->complete);
+		if (validation_words != 0 &&
+		    validation_words <= block_instruction_count &&
+		    validation_words <= guest_words.size()) {
+			if (slot.source_word_capacity < validation_words) {
+				slot.source_words =
+					std::make_unique_for_overwrite<std::uint32_t[]>(
+						validation_words);
+				slot.source_word_capacity = validation_words;
+			}
+			std::copy_n(guest_words.begin(), validation_words,
+				slot.source_words.get());
+			slot.source_word_count = validation_words;
+		} else {
+			slot.source_word_count = 0;
+		}
+#else
+		(void)guest_words;
+		(void)changes;
+#endif
 		++slot.activation;
 		if (slot.activation == 0)
 			slot.activation = 1;
@@ -306,9 +373,17 @@ private:
 
 	struct Slot final {
 		std::optional<BuildResult> result;
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		std::unique_ptr<std::uint32_t[]> source_words;
+#endif
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
 		std::uint64_t activation{};
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		std::uint64_t validated_changes{};
+		std::size_t source_word_count{};
+		std::size_t source_word_capacity{};
+#endif
 	};
 
 	struct Slab final {
@@ -441,6 +516,71 @@ private:
 		return links_.try_emplace(pc, pc).first->second;
 	}
 
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+	void discard(Slot &slot) noexcept
+	{
+		if (slot.result)
+			deactivate(slot.pc, slot.result->program);
+		slot.result.reset();
+		slot.epoch = 0;
+		slot.source_word_count = 0;
+		slot.validated_changes = 0;
+	}
+
+	[[nodiscard]] bool validate(
+		Slot &slot, std::uint64_t changes, std::uint64_t mapping_changes,
+		StaticGuestMemory &memory, void *execution_context,
+		GadgetCacheDiagnostics &diagnostics)
+	{
+		if (slot.source_words == nullptr || slot.source_word_count == 0 ||
+		    slot.source_word_count > slot.source_word_capacity ||
+		    slot.source_word_count > block_instruction_count) {
+			++diagnostics.validation_mismatches;
+			discard(slot);
+			return false;
+		}
+
+		std::array<std::uint32_t, block_instruction_count> fetched{};
+		std::size_t index = 0;
+		while (index < slot.source_word_count) {
+			const auto address = slot.pc + index * sizeof(std::uint32_t);
+			const auto page_remaining =
+				guest_page_size - (address & (guest_page_size - 1));
+			auto run = std::min<std::size_t>(
+				slot.source_word_count - index,
+				page_remaining / sizeof(std::uint32_t));
+			if (run == 0)
+				run = 1;
+			auto words = std::span{fetched}.subspan(index, run);
+			if (!memory.fetch(address, std::as_writable_bytes(words))) {
+				++diagnostics.validation_faults;
+				discard(slot);
+				return false;
+			}
+			if (std::memcmp(words.data(), slot.source_words.get() + index,
+					run * sizeof(std::uint32_t)) != 0) {
+				++diagnostics.validation_mismatches;
+				discard(slot);
+				return false;
+			}
+			index += run;
+		}
+
+		const auto current =
+			darwin_uml_static_vm_execution_context_sequences(
+				execution_context);
+		if (current.execution_interrupt != 0 ||
+		    current.mapping_changes != mapping_changes ||
+		    current.code_changes != changes) {
+			++diagnostics.validation_sequence_races;
+			return false;
+		}
+		slot.validated_changes = changes;
+		++diagnostics.validation_hits;
+		return true;
+	}
+#endif
+
 	void activate(std::uint64_t pc, const Slot &slot)
 	{
 		const auto &result = *slot.result;
@@ -553,24 +693,37 @@ void GadgetExecutor::prepare_cache(
 {
 	if (cache_generation_ == generation && cache_changes_ == changes)
 		return;
-	programs_->invalidate();
+	if (cache_generation_ != generation) {
+		programs_->invalidate();
+	} else {
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+		programs_->invalidate_links();
+#else
+		programs_->invalidate();
+#endif
+	}
 	cache_generation_ = generation;
 	cache_changes_ = changes;
 }
 
 std::optional<GadgetExecutor::CachedResult> GadgetExecutor::find(
-	std::uint64_t pc) const
+	std::uint64_t pc, std::uint64_t changes, StaticGuestMemory &memory)
 {
-	const auto *found = programs_->find(pc);
+	const auto *found = programs_->find(
+		pc, changes, mapping_changes_, memory, execution_context_,
+		cache_diagnostics_);
 	if (found == nullptr)
 		return std::nullopt;
 	return std::cref(*found);
 }
 
 const BuildResult &GadgetExecutor::store(
-	std::uint64_t pc, BuildResult result)
+	std::uint64_t pc, BuildResult result,
+	std::span<const std::uint32_t> guest_words)
 {
-	return programs_->store(pc, std::move(result));
+	++cache_diagnostics_.translations;
+	return programs_->store(
+		pc, std::move(result), guest_words, cache_changes_);
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_block(
@@ -601,7 +754,7 @@ const BuildResult &GadgetExecutor::store(
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
 	prepare_cache(generation, sequences.code_changes);
-	auto selected = find(cpu.pc);
+	auto selected = find(cpu.pc, sequences.code_changes, memory);
 	if (!selected) {
 		const auto count = fetch_instruction_window(
 			memory, cpu.pc, instructions);
@@ -623,7 +776,8 @@ const BuildResult &GadgetExecutor::store(
 				return programs_->indirect_link(source_pc);
 			},
 			build_options_);
-		selected = std::cref(store(cpu.pc, std::move(decoded)));
+		selected = std::cref(store(
+			cpu.pc, std::move(decoded), window));
 	}
 	const auto &built = selected->get();
 	if (built.program.instruction_count() == 0) {

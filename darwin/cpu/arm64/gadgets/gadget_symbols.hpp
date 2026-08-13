@@ -1518,6 +1518,17 @@ void uml_arm64_gadget_simd_three_same_cmeq_d();
 UML_DECLARE_SIMD_THREE_SAME_V6(mla)
 UML_DECLARE_SIMD_THREE_SAME_V6(mls)
 UML_DECLARE_SIMD_THREE_SAME_V6(mul)
+void uml_arm64_gadget_simd_destination_resident_load();
+#define UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(shape) \
+	void uml_arm64_gadget_simd_destination_resident_mla_##shape();
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(8b)
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(4h)
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(2s)
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(16b)
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(8h)
+UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA(4s)
+#undef UML_DECLARE_SIMD_DESTINATION_RESIDENT_MLA
+void uml_arm64_gadget_simd_destination_resident_flush();
 void uml_arm64_gadget_simd_three_same_pmul_8b();
 void uml_arm64_gadget_simd_three_same_pmul_16b();
 UML_DECLARE_SIMD_THREE_SAME_V6(smaxp)

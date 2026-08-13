@@ -6,6 +6,81 @@ namespace uml::cpu::arm64::gadgets::builder_detail {
 
 using namespace selection;
 
+#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
+namespace {
+
+struct ResidentMla final {
+	Gadget gadget;
+	unsigned destination;
+	unsigned left;
+	unsigned right;
+};
+
+[[nodiscard]] bool decode_resident_mla(
+	std::uint32_t instruction, ResidentMla &decoded) noexcept
+{
+	if ((instruction & 0x9f20'0400U) != 0x0e20'0400U ||
+	    (instruction & 0x1000'0000U) != 0U ||
+	    ((instruction >> 11) & 0x1fU) != 18U ||
+	    (instruction & 0x2000'0000U) != 0U)
+		return false;
+
+	const auto destination = instruction & 31U;
+	const auto left = (instruction >> 5) & 31U;
+	const auto right = (instruction >> 16) & 31U;
+	if (destination >= 8U || left == destination || right == destination)
+		return false;
+
+	const auto gadget = simd_destination_resident_mla_gadget(
+		(instruction & 0x4000'0000U) != 0U,
+		(instruction >> 22) & 3U);
+	if (gadget == nullptr)
+		return false;
+
+	decoded = {gadget, destination, left, right};
+	return true;
+}
+
+[[nodiscard]] bool emit_resident_mla_run(DecodeContext &context)
+{
+	ResidentMla first{};
+	if (!decode_resident_mla(context.instruction, first))
+		return false;
+
+	std::size_t run_length = 1;
+	ResidentMla decoded{};
+	while (run_length <= context.following.size() &&
+	       decode_resident_mla(context.following[run_length - 1], decoded) &&
+	       decoded.destination == first.destination)
+		++run_length;
+	if (run_length < 4U)
+		return false;
+
+	const auto destination = vector_operand_offset(first.destination);
+	emit(context.words, uml_arm64_gadget_simd_destination_resident_load);
+	emit(context.words, destination);
+	for (std::size_t index = 0; index < run_length; ++index) {
+		const auto instruction = index == 0 ? context.instruction :
+			context.following[index - 1];
+		const bool valid = decode_resident_mla(instruction, decoded);
+		(void)valid;
+		if (index != 0)
+			(void)vector_operand_offset(decoded.destination);
+		emit(context.words, decoded.gadget);
+		emit(context.words,
+			vector_operand_offset(decoded.left) |
+			(static_cast<std::uintptr_t>(
+				vector_operand_offset(decoded.right)) << 16U));
+	}
+	emit(context.words, uml_arm64_gadget_simd_destination_resident_flush);
+	emit(context.words, destination);
+	context.compiled += run_length - 1;
+	return true;
+}
+
+} // namespace
+#endif
+
 DecodeResult decode_floating_simd(DecodeContext &context)
 {
 	const auto address = context.address;
@@ -717,14 +792,20 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     ++compiled;
                     return DecodeResult::terminal;
                   }
-                  emit(words, gadget);
-                  emit(words, vector_operand_offset(instruction & 31U) |
-                                  (static_cast<std::uintptr_t>(
-                                       vector_operand_offset((instruction >> 5) & 31U))
-                                   << 16) |
-                                  (static_cast<std::uintptr_t>(
-                                       vector_operand_offset((instruction >> 16) & 31U))
-                                   << 32));
+#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
+                  if (!emit_resident_mla_run(context)) {
+#endif
+                    emit(words, gadget);
+                    emit(words, vector_operand_offset(instruction & 31U) |
+                                    (static_cast<std::uintptr_t>(
+                                         vector_operand_offset((instruction >> 5) & 31U))
+                                     << 16) |
+                                    (static_cast<std::uintptr_t>(
+                                         vector_operand_offset((instruction >> 16) & 31U))
+                                     << 32));
+#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
+                  }
+#endif
                 } else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
                             (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
                             (instruction & 0xbf20'fc00U) == 0x0e00'3800U ||

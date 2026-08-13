@@ -11,8 +11,18 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 
 namespace uml::cpu::arm64::gadgets {
+
+struct GadgetCacheDiagnostics final {
+	std::uint64_t translations{};
+	std::uint64_t validation_attempts{};
+	std::uint64_t validation_hits{};
+	std::uint64_t validation_mismatches{};
+	std::uint64_t validation_faults{};
+	std::uint64_t validation_sequence_races{};
+};
 
 class GadgetExecutor final {
 public:
@@ -31,15 +41,22 @@ public:
 	[[nodiscard]] std::uint64_t fault_address() const noexcept;
 	[[nodiscard]] ::uml::memory::Access fault_access() const noexcept;
 	[[nodiscard]] std::uint32_t floating_point_syndrome() const noexcept;
+	[[nodiscard]] const GadgetCacheDiagnostics &cache_diagnostics() const noexcept
+	{
+		return cache_diagnostics_;
+	}
 
 private:
 	using CachedResult = std::reference_wrapper<const BuildResult>;
 
 	void prepare_cache(unsigned long generation, std::uint64_t changes);
 	void select_cpu(CpuState &cpu) noexcept;
-	[[nodiscard]] std::optional<CachedResult> find(std::uint64_t pc) const;
+	[[nodiscard]] std::optional<CachedResult> find(
+		std::uint64_t pc, std::uint64_t changes,
+		::uml::memory::StaticGuestMemory &memory);
 	[[nodiscard]] const BuildResult &store(
-		std::uint64_t pc, BuildResult result);
+		std::uint64_t pc, BuildResult result,
+		std::span<const std::uint32_t> guest_words);
 	[[nodiscard]] void *execution_context(unsigned long generation);
 	[[nodiscard]] ::uml::cpu::EngineEvent run_trap_enabled_instruction(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
@@ -59,6 +76,7 @@ private:
 	bool preempted_{};
 	std::uint32_t floating_point_syndrome_{};
 	BuildOptions build_options_;
+	GadgetCacheDiagnostics cache_diagnostics_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets

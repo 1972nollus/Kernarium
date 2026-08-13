@@ -1069,6 +1069,27 @@
     uml_add_unit_test(NAME arm64-gadget-runtime
         COMMAND uml_arm64_gadget_runtime_tests)
 
+    add_executable(uml_arm64_gadget_cache_validation_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp
+        $<TARGET_OBJECTS:uml_arm64_dispatch>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    target_include_directories(
+        uml_arm64_gadget_cache_validation_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_definitions(
+        uml_arm64_gadget_cache_validation_tests PRIVATE
+        UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
+    target_compile_options(
+        uml_arm64_gadget_cache_validation_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-gadget-cache-validation
+        COMMAND uml_arm64_gadget_cache_validation_tests)
+
     add_executable(uml_arm64_gadget_hot_path_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_hot_path_tests.cpp
 		$<TARGET_OBJECTS:uml_arm64_dispatch>

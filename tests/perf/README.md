@@ -98,11 +98,26 @@ image and should record the same host/build/engine context as every other
 campaign.
 
 `guest_gadget_polymorphic_successor_loop.S` is the focused control for the
-default-off `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` experiment. Its
+default-on `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` optimization. Its
 eight identical ADD-immediate predecessors all select one gadget entry, while
 their successors select eight distinct gadget families. Compare separate OFF
-and ON build trees on both host core classes; the ordinary production build
-must leave the option OFF.
+and ON build trees on both host core classes when changing this mechanism.
+
+`guest_simd_destination_residency_loop.S` is the sensitive probe for the
+default-on `UML_GADGET_SIMD_DESTINATION_RESIDENCY` optimization. It repeats 32
+integer MLA instructions with v0 as the destination and v8/v9 as nonaliasing
+sources. `guest_simd_destination_residency_control_loop.S` keeps the same timed
+instruction topology but places the destination at v8, outside the candidate
+bank, with v16/v17 as sources. Compare sensitive and control probes in separate
+OFF and ON build trees when changing this mechanism.
+
+`guest_gadget_code_invalidation_loop.S` is the sensitive probe for
+the default-on `UML_GADGET_EXACT_CACHE_VALIDATION` optimization. Each iteration
+executes IC IVAU against unchanged code, advancing the code-change sequence and
+forcing the gadget executor to validate or rebuild its cached programs. The matched
+`guest_gadget_code_invalidation_control_loop.S` substitutes DC CVAU, retaining
+the same cache-maintenance execution boundary without advancing that sequence.
+Compare both probes in separate OFF and ON build trees.
 
 `guest_fixed_x8_x9_link_loop.S` is the sensitive probe for the default-off
 JIT x8/x9 cross-block carry experiment: its linked loop keeps exactly guest

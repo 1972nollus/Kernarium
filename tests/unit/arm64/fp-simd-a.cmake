@@ -95,6 +95,28 @@
 			COMMAND uml_arm64_simd_three_same_${simd_three_same_suite}_tests)
 	endforeach()
 
+	add_executable(uml_arm64_gadget_simd_destination_residency_tests
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_simd_destination_residency_tests.cpp
+		$<TARGET_OBJECTS:uml_arm64_dispatch>
+		$<TARGET_OBJECTS:uml_static_mmu>
+		$<TARGET_OBJECTS:uml_arm64_gadgets>
+		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+	target_include_directories(
+		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
+		${PROJECT_SOURCE_DIR}/darwin
+		${PROJECT_SOURCE_DIR}/darwin/include)
+	target_compile_definitions(
+		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
+		UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>)
+	target_compile_options(
+		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
+		-Wall -Wextra -Werror)
+	target_link_libraries(
+		uml_arm64_gadget_simd_destination_residency_tests PRIVATE
+		uml_arm64_engine_test_support)
+	uml_add_unit_test(NAME arm64-gadget-simd-destination-residency
+		COMMAND uml_arm64_gadget_simd_destination_residency_tests)
+
 	foreach(simd_widening_suite IN ITEMS allocation long wide absolute gadget)
 		add_executable(uml_arm64_simd_widening_${simd_widening_suite}_tests
 			${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_simd_widening_${simd_widening_suite}_tests.cpp

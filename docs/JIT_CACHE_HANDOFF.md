@@ -553,19 +553,22 @@ regression that needs diagnosis.
   or Geekbench evidence supports changing the default. Its value is part of
   the shared cache's code-generation profile, so different arms cannot reuse
   one another's translations.
-- **Gadget successor fetch.** The 32-entry add/sub-immediate prototype behind
-  default-off `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` is now
-  focused-accepted. Its matched polymorphic/control wall improvements are
+- **Gadget successor fetch.** The 32-entry add/sub-immediate optimization behind
+  default-on `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` is accepted. Its
+  matched polymorphic/control wall improvements are
   P 13.723512%/0.516300% (13.207211-point difference-in-differences) and
   E 7.258795%/5.481481% (1.777314 points); polymorphic host CPU improves
   13.888889%/9.683605% on P/E. The prospective dynamic cross-core policy and
   the original stricter screen both pass, although the stronger 2-point
-  difference-in-differences preference fails on E and its halves. The option
-  remains OFF pending representative-workload or Geekbench confirmation.
+  difference-in-differences preference fails on E and its halves. The later
+  full Geekbench confirmation improved Single-Core 94 to 97 and Multi-Core 564
+  to 567; targeted Clang/Object Detection improved 438 to 441, and a compact
+  rerun put the apparent File Compression/HTML5 outliers within 1.3% of OFF.
   Results are recorded under
   `.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`;
-  This is gadget work, not a JIT-cache or arena dependency, and the G107 arm
-  does not alter JIT translation-sharing identity.
+  and `.build/results/gadgets-optimization-20260813/`. This is gadget work, not
+  a JIT-cache or arena dependency, and the G107 arm does not alter JIT
+  translation-sharing identity.
 - **Rejected gadget micro-optimization class: closed without an E-only
   rerun.** G8, G17, and G36 improved the P-core primary by no more than noise
   and therefore none clears the prospective `P > 2%` gate that makes an E arm
@@ -578,21 +581,29 @@ regression that needs diagnosis.
   dated G96 checklist remains history. Reopen a specific transform only by
   reconstructing a current layout-pinned arm and screening P first; reject it
   without an E campaign unless its experiment primary is strictly above 2%.
-- **Gadget engine: vector residency is optional future work, not a handoff
-  blocker.** G130's reverted JIT diagnostic found 52% of operand accesses in
-  v0-v7 and measured a fixed eight-register bank at 6-26% over no residency.
-  It is a bound on the prize, not gadget-engine evidence: the gadget engine has
-  no resident/dirty vector state or flush protocol. A reopen needs a default-off
-  bounded gadget prototype, starting with one nonfaulting accumulate family and
-  destination-only v0-v7 variants rather than the 729-form cross-product. It
-  must materialize dirty state before every unaware access, helper, terminal,
-  fault, interrupt, link, or block boundary; preserve retirement and all
-  unrelated gadget positions/phases; and pass focused 16/4 KiB plus sanitizer
-  correctness before a matched P-first/E-conditional sensitive/control
-  campaign. Apply the prospective policy to control-normalized wall: P must be
-  strictly above 2%, and any E regression must be strictly below twice the
-  measured P gain. A focused pass still leaves the option OFF pending a
-  representative gadget workload.
+- **Gadget SIMD destination residency.** G140 implements the bounded route
+  identified by G130: runs of at least four nonfaulting integer MLA operations
+  with one v0-v7 destination and nonaliasing sources keep only that destination
+  in q24, then flush it inside the same translated block. No dirty state crosses
+  a helper, terminal, fault, interrupt, or link. The sensitive loop improved
+  69.6% on P and 43.5% on E while its out-of-bank control moved -1.1%/-5.7%.
+  Targeted SIMD Geekbench changed 91 to 92, and the clean full run changed
+  Single-Core 97 to 96 and Multi-Core 567 to 575 against the already-accepted
+  successor build. One earlier full attempt was stopped after an RCU stall in
+  Multi-Core Text Processing; an isolated rerun scored 62 and the clean full
+  rerun scored 63 there, matching the predecessor. The bounded selector is now
+  ON by default; this does not authorize a whole-bank or cross-block protocol.
+- **Exact gadget-cache validation.** G141 resets executor-local link
+  activations on a same-generation code change, then retains a decoded program
+  only after every consumed guest word compares exactly. Its P/E invalidation
+  probe improves 62.4%/50.6%; targeted multi-core Clang/Object Detection moves
+  394/461 to 383/464, and the final full result is 96/567 versus G140's 96/575.
+  Lazy grow-on-demand saved-word storage replaced a fixed 64-word-per-slot prototype,
+  and the bounded selector is ON by default. A follow-up live sample places
+  decoding at 2.36% of configured ten-vCPU capacity (not a precise consumed-CPU
+  share); because decoded streams still require
+  executor-local link relocation and copying, global gadget templates are
+  closed without a code arm.
 
 The historical Object Remover discrepancy is no longer an open defect. A
 focused current binary comparison did not reproduce the earlier large loss; it

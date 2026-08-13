@@ -130,8 +130,8 @@ QoS-not-affinity topology, waived host load, and lack of a representative
 workload remain visible. Results are recorded at
 `.build/results/jit-cache-handoff/carry-x8-x9-matched-perf-final-20260812/README.md`.
 
-G107's default-off 32-entry add/sub-immediate successor-hoist prototype is now
-focused-accepted. Fresh 16 KiB and 4 KiB Release OFF/ON trees passed its focused
+G107's bounded 32-entry add/sub-immediate successor-hoist optimization is now
+enabled by default. Fresh 16 KiB and 4 KiB Release OFF/ON trees passed its focused
 structure/terminal checks plus architecture, and a fresh 16 KiB ON ASan/UBSan
 tree passed the same focused tests. The P10/E4 campaign
 retained all 96 scored samples. P polymorphic/control wall improved
@@ -140,33 +140,51 @@ retained all 96 scored samples. P polymorphic/control wall improved
 13.888889%/9.683605%, all OFF/ON wall ranges are disjoint, and all halves are
 beneficial. The prospective dynamic cross-core policy and the independently
 preserved strict screen pass, while the stronger preference for at least two
-difference-in-differences points fails on E overall and by half. The option
-stays OFF pending representative-workload confirmation because the campaign
-used a user-waived loaded host, E-core selection is QoS rather than affinity,
-E spread is material, and the E control itself improved 5.481481%. The
-result directory is
-`.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`.
+difference-in-differences points fails on E overall and by half. A current
+representative check improved full Geekbench Single-Core 94 to 97 and
+Multi-Core 564 to 567; targeted Clang/Object Detection improved 438 to 441,
+and rerun File Compression/HTML5 outliers stayed within 1.3% of OFF. Results
+are under `.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`
+and `.build/results/gadgets-optimization-20260813/`.
 
-The two residual gadget bullets do not block this handoff. The historical
+G140 closes the bounded G130 gadget-residency route. Four-or-longer nonfaulting
+integer MLA runs with one v0-v7 destination and nonaliasing sources keep only
+that destination in q24 and flush it before the translated boundary. The
+sensitive probe improved 69.6% P and 43.5% E; its out-of-bank control moved
+-1.1%/-5.7%. Targeted SIMD Geekbench changed 91 to 92. A clean full run changed
+the G107 predecessor's Single-Core/Multi-Core 97/567 to 96/575. One earlier
+full attempt was stopped after an RCU stall in Multi-Core Text Processing;
+isolated and clean-full reruns completed that workload at 62/63. The bounded
+selector is now ON by default; no cross-block or whole-bank state is implied.
+
+The residual gadget bullets do not block this handoff. The historical
 G8/G17/G36 E-core rerun is closed without a new measurement because none clears
 the prospective `P > 2%` eligibility gate and G106 later measured the same
 noncritical instruction-count class flat on P and E.
-G130 vector residency remains optional default-off work: its reverted JIT
-diagnostic measured a 6-26% fixed-v0-v7 bound, but the gadget engine has no
-resident/dirty state or flush protocol. Reopening requires a bounded
-destination-only nonfaulting accumulate prototype, complete boundary flushing,
-focused 16/4 KiB plus sanitizer correctness, and then a matched P-first,
-E-conditional control-normalized campaign under the dynamic policy. A focused
-pass still needs representative gadget-workload evidence before enabling it.
+The broader whole-bank/cross-block vector-residency idea remains closed: G140
+implements only the evidence-backed bounded destination-only family.
+
+G141 now keeps decoded gadget programs across a same-generation code-change
+notification only after exact page-bounded comparison of all consumed guest
+words, with every direct and indirect activation reset before reuse. Its P/E
+invalidation probe improved 62.4%/50.6%; targeted multi-core Clang/Object
+Detection changed 394/461 to 383/464, and full Geekbench changed from G140's
+96/575 to 96/567 (original baseline 94/564). Lazy grow-on-demand saved-word
+storage replaced the first fixed-array prototype, and the selector is ON by default.
+A live follow-up put decode at 2.36% of configured ten-vCPU capacity, so global
+decoded templates are closed without code: their private stream copy and executor-link
+relocation would consume the available gain.
 
 The shortened sharing ON/OFF/OFF/ON full-Geekbench sequence found median peak
 tree RSS 2.87% higher with sharing and noisy two-run score samples; it rejects
 the requested memory exception without establishing a causal score delta. The
-current broad host workflows pass 573/573 ordinary 16 KiB units and 47/47
-tooling tests, plus 574/574 ordinary 4 KiB units and 47/47 tooling tests. The
-Apple package workflow passes all three slices and its installed, raw, and
-Xcode consumers. Full sanitizer and complete integration matrices remain
-uncredited. The accepted
+current 16 KiB host workflow passes 575/575 units and 47/47 tooling tests. The
+4 KiB unit run passed 575/576 tests; its sole failure was the unrelated,
+timing-sensitive `arm64-jit-executor-pool-multislot`, which passed immediately
+when rerun alone, and the 4 KiB tooling suite passes 47/47. Every gadget test
+passed in both page profiles. The Apple package workflow passes all three
+slices and its installed, raw, and Xcode consumers. Full sanitizer and
+complete integration matrices remain uncredited. The accepted
 2026-08-10 baseline below is not relabeled as current-tree evidence.
 
 ## Current campaign result (2026-08-10)

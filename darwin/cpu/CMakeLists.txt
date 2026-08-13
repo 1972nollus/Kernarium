@@ -78,12 +78,27 @@ option(UML_GADGET_SIMD_OPERAND_HISTOGRAM
     "Count guest SIMD operand registers during translation (diagnostic only)"
     OFF)
 
-# G107's bounded A/B candidate.  Keep it disabled in ordinary products: only
-# the 32 non-faulting ADD/SUB-immediate entries have the register and stream
-# contract needed to fetch their successor together with their operand.
+# G107's bounded successor fetch applies only to the 32 non-faulting
+# ADD/SUB-immediate entries whose register and stream contract can safely load
+# the next gadget together with their operand. Focused and full Geekbench
+# measurements support enabling that bounded family in ordinary products.
 option(UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
-    "Hoist successor fetch in ADD/SUB-immediate gadgets (experiment only)"
-    OFF)
+    "Hoist successor fetch in ADD/SUB-immediate gadgets"
+    ON)
+
+# Keep the accepted destination-residency family separately selectable for
+# focused regression tests. The implementation never carries mutable vector
+# state across a translated block.
+option(UML_GADGET_SIMD_DESTINATION_RESIDENCY
+    "Keep one bounded SIMD MLA destination resident within a block"
+    ON)
+
+# Retain decoded programs across a code-change sequence only after validating
+# every guest word the program consumed. Direct and indirect activations are
+# reset before any retained program can be reached again.
+option(UML_GADGET_EXACT_CACHE_VALIDATION
+    "Reuse exactly validated gadget programs after guest code changes"
+    ON)
 
 add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
@@ -113,7 +128,9 @@ set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_PAIR_HISTOGRAM=$<BOOL:${UML_GADGET_PAIR_HISTOGRAM}>
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
-    UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>)
+    UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
+    UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
+    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -298,6 +315,8 @@ target_include_directories(uml_arm64_gadget_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(uml_arm64_gadget_executor PRIVATE
+    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
 set_target_properties(uml_arm64_gadget_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 

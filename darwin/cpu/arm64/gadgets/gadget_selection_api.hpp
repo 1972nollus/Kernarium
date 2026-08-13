@@ -366,6 +366,7 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] Gadget cpa_multiply_gadget(bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget simd_extract_gadget(bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_three_same_gadget(unsigned int, bool, bool, bool, unsigned int) noexcept;
+[[nodiscard]] Gadget simd_destination_resident_mla_gadget(bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_rdm_three_same_gadget(bool, bool, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_dot_vector_gadget(SimdDotSignedness, bool, bool) noexcept;
 [[nodiscard]] Gadget simd_dot_indexed_gadget(SimdDotSignedness, bool, unsigned int, bool) noexcept;

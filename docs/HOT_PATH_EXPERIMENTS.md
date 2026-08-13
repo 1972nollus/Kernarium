@@ -4748,9 +4748,38 @@ additional polymorphism-specific effect even though the focused gate passes.
 The commands and raw measurements are recorded at
 `.build/results/jit-cache-handoff/g107-successor-hoist-matched-perf-setup-20260812/`.
 All runs shut down cleanly and the chronology shows no overlap. G107 is
-therefore **focused-accepted**, but the selector remains OFF. Enabling it by default
-still requires a matched representative real-workload or Geekbench result;
-this microprobe is not that authorization.
+therefore **focused-accepted**. At that checkpoint the selector remained OFF
+pending a representative workload; the following current-tree confirmation
+supplies that missing boundary.
+
+### Representative Geekbench confirmation and default enablement (2026-08-13)
+
+A current production baseline completed the full Geekbench 6.7.1 CPU suite on
+the gadgets engine at 10 vCPUs and 8 GiB. Repeating the focused comparison on
+the current OFF and ON products retained the mechanism result: the polymorphic
+probe improved from 2.010 to 1.745 seconds on P and from 7.094 to 6.743 seconds
+on E; the matched low-polymorphism control moved from 3.381 to 3.430 seconds on
+P and from 9.312 to 9.881 seconds on E. The resulting control-normalized wall
+gains are about 14.4% P and 10.4% E. A targeted multi-core Clang/Object
+Detection check improved 421/455 to 423/459, with its combined score moving
+438 to 441.
+
+The full candidate run improved Single-Core 94 to 97 and its Integer component
+83 to 87; Floating Point moved 119 to 118. Multi-Core improved 564 to 567,
+with Integer 483 to 487 and Floating Point unchanged at 753. The full run's
+early File Compression and HTML5 values initially looked low, so those two
+workloads were rerun immediately as a compact matched check: baseline 607/605
+versus candidate 605/597, only -0.3%/-1.3% rather than the full run's isolated
+HTML5 outlier. Every command and emulator shutdown completed successfully.
+Raw console logs are under
+`.build/results/gadgets-optimization-20260813/`.
+
+This representative boundary closes G107: the focused effect is large on both
+core classes, targeted real workloads do not show a material regression, and
+both full aggregate scores improve. The bounded successor fetch is now ON by
+default. The option remains available for diagnosis; it does not authorize a
+bank-wide successor register, a sentinel rewrite, or prefetch across a
+fault-capable gadget.
 
 ## G108: the JIT multi-core noise band, and a retraction of G102
 
@@ -7402,11 +7431,14 @@ of 11,385,044,992 bytes ON versus 11,067,219,968 OFF: a 317,825,024-byte
 (2.87%) increase, not a reduction. Its two-run-per-arm scores were visibly
 unstable, so they are descriptive only; the user's significant-memory
 exception does not apply and no longer-running sharing score campaign is
-pending. Current broad host acceptance passed 573/573 ordinary 16 KiB units
-and 47/47 tooling tests, plus 574/574 ordinary 4 KiB units and 47/47 tooling
-tests. The Apple package workflow passes all three slices and installed, raw,
-and Xcode consumer builds. Full sanitizer and complete integration workflows
-remain outside this checkpoint's credited evidence.
+pending. The current 16 KiB host workflow passed 575/575 units and 47/47
+tooling tests. The 4 KiB unit run passed 575/576; its sole failure was the
+unrelated timing-sensitive executor-pool multislot test, which passed
+immediately in an exact isolated rerun, and 4 KiB tooling passed 47/47. Every
+gadget test passed in both page profiles. The Apple package workflow passes all
+three slices and installed, raw, and Xcode consumer builds. Full sanitizer and
+complete integration workflows remain outside this checkpoint's credited
+evidence.
 
 ## G137: fixed x8/x9 cross-link carry closure
 
@@ -7615,3 +7647,93 @@ point, it moves only up to 20 MiB across ten executors, preserves the same
 whole-process budget, and has only two observations under disclosed host load.
 Do not lower the default to 60 MiB or infer a total-RSS reduction from this
 capacity shift.
+
+## G140: bounded gadget SIMD destination residency
+
+Recorded 2026-08-13 after the G107 successor-fetch default was accepted. This
+implements the smallest G130 route rather than a fixed whole register bank:
+four or more consecutive nonfaulting integer vector MLA instructions with one
+v0-v7 destination and sources that do not alias it load that destination into
+q24, operate there, and flush it before the next unaware instruction or the
+translated-block boundary. The run cannot cross a helper, terminal, fault,
+interrupt, or link. Established gadget entries keep their positions because
+the new load/MLA/flush entries are appended to the bank.
+
+The focused 32-MLA sensitive loop and symmetric out-of-bank control used three
+repetitions per arm:
+
+| class | OFF control | OFF sensitive | ON sensitive | ON control | sensitive change | control change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| P10 | 2.292 s | 2.291 s | 0.696 s | 2.317 s | **+69.6%** | -1.1% |
+| E4 | 5.129 s | 5.495 s | 3.103 s | 5.421 s | **+43.5%** | -5.7% |
+
+The targeted single-core SIMD set (Object Detection, Blur, Horizon, HDR,
+Photo Filter, Ray Tracer, and Structure from Motion) changed aggregate score
+91 to 92. Against the already-accepted G107 predecessor, the clean full
+Geekbench run changed Single-Core **97 to 96** and Multi-Core **567 to 575**;
+against the original pre-G107 baseline it is 94/564 to 96/575. No aggregate
+regression is obvious.
+
+One first full attempt was stopped rather than scored after Multi-Core Text
+Processing emitted repeated RCU-stall reports. That attempt had already
+completed six other multi-core workloads. The isolated Text Processing rerun
+completed at 62 and the sole clean full rerun completed it at 63, exactly the
+predecessor score, so the stall did not reproduce as a candidate semantic
+failure. Both the stopped log and clean result remain under
+`.build/results/gadgets-optimization-20260813/`.
+
+Disposition: enable only this bounded family by default. The result does not
+justify dirty vector state across a block/link/helper boundary or a 729-form
+whole-bank cross-product. Exact stream-shape, threshold, alias/out-of-bank
+fallback, pre-link flush, retirement, and next-instruction visibility remain
+focused correctness contracts.
+
+## G141: exact stale gadget-program validation
+
+Recorded 2026-08-13 after G140. A same-generation code-change notification
+formerly discarded every decoded gadget program even when the affected guest
+code was unrelated or an instruction-cache maintenance operation left the
+words unchanged. G141 first resets all direct and indirect link activations,
+retains the program slots, and validates every guest word consumed by a stale
+program at page-bounded fetch boundaries. An exact match reactivates the local
+program. A mismatch or fetch fault discards it and decodes normally; a changed
+guest generation still invalidates the entire cache. Validation storage is lazy
+and grows only when a populated slot needs a longer buffer. This replaced the
+first prototype's fixed 64-word slot member, which could add 4 MiB per fully
+populated executor.
+
+The focused unchanged-code IC-IVAU sensitive probe and DC-CVAU boundary control
+used three repetitions per arm:
+
+| class | OFF control | OFF sensitive | ON sensitive | ON control | sensitive change | control change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| P10 | 0.047 s | 1.928 s | 0.724 s | 0.046 s | **+62.4%** | +2.1% |
+| E4 | 0.147 s | 7.522 s | 3.715 s | 0.153 s | **+50.6%** | -4.1% |
+
+The compact candidate changed targeted multi-core Clang/Object Detection from
+394/461 to 383/464, or combined 426 to 422 (-0.9%). The superseded fixed-array
+prototype scored full Single-Core/Multi-Core 95/564. After lazy validation storage,
+the final full run scored **96/567**, versus 96/575 for the G140 predecessor and
+94/564 for the original pre-G107 baseline. The final step is therefore flat on
+Single-Core, -1.4% on Multi-Core relative to its immediate predecessor, and
++2.1%/+0.5% across the three accepted gadget changes. No aggregate regression
+is obvious, and the exact-validation selector is enabled by default.
+
+## G142: shared decoded gadget templates closed before a code arm
+
+A live Clang/Object Detection sample of the final G141 product covered 5,607
+time points with ten configured vCPUs. `Builder::build` was the collapsed top
+frame 1,324 times, or **2.36% of the ten-vCPU capacity over that interval**.
+Because unused vCPU capacity and sleeping task carriers are included, this is a
+capacity observation rather than a precise share of consumed CPU. Executable
+gadget bodies are already shared process text. The remaining per-block stream
+embeds executor-local direct and indirect
+link-cell pointers, so an immutable global template would still need a private
+copy, relocation pass, link-cell regeneration, lookup synchronization, and
+lifetime/session policy. Those costs cannot be removed by sharing the decoded
+words and would consume most or all of the measured upper bound. G141 already
+removes repeated decode after unchanged code invalidation without adding global
+hot-path state. The template arm is therefore closed without implementation;
+reopen only if a representative profile places materially more than 2% of
+consumed carrier CPU in decode after G141 or a design can avoid the private copy and
+relocation while preserving executor-local link ownership.

@@ -97,6 +97,7 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-jit-control-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-jit-control-remap-behavior	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-runtime	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-gadget-cache-validation	tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp	unit	retained	exact stale-program validation reuses unchanged decoded programs, rejects changed words, and resets direct-link activations before retained programs can be reached
 -	arm64-gadget-hot-path	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-nzcv-residency	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-fp-environment	tests/unit/arm64	unit	retained	existing registered test
@@ -357,6 +358,7 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-simd-three-same-allocation	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-simd-three-same-arithmetic	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-simd-three-same-saturation	tests/unit/arm64	unit	retained	existing registered test
+-	arm64-gadget-simd-destination-residency	tests/unit/arm64/arm64_gadget_simd_destination_residency_tests.cpp	unit	retained	default-on destination-resident MLA runs preserve exact shape thresholds, alias and register-bank fallbacks, pre-link flushing, retirement, and visibility to the next ordinary SIMD instruction
 -	arm64-simd-widening-allocation	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-simd-widening-long	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-simd-widening-wide	tests/unit/arm64	unit	retained	existing registered test

@@ -8,3 +8,6 @@
 #include "engine/system_atomic.inc"
 #include "engine/load_store.inc"
 #include "engine/control.inc"
+/* Experimental entries are appended so adding a candidate cannot move or
+ * rephase any established gadget. */
+#include "engine/experimental.inc"

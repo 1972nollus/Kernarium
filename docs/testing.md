@@ -654,9 +654,9 @@ The runner's default guest command is
 See [`../tests/perf/README.md`](../tests/perf/README.md) for profiling and probe
 commands. Full Geekbench scoring remains a separate manual campaign.
 
-G107's bounded successor-fetch comparison is available only through the
-default-off `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. Use
-separate OFF and ON build directories. Explicitly keep translation sharing ON, x8/x9 carry
+G107's bounded successor fetch is selected by the default-on
+`UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. When changing the
+mechanism, use separate explicit OFF and ON build directories. Keep translation sharing ON, x8/x9 carry
 OFF, and every profiling selector OFF. The exact focused host gates are
 `arm64-gadget-successor-hoist-structure` and `arm64-gadget-terminal-count`;
 run them with `architecture-audit` in 16 KiB and 4 KiB Release OFF/ON trees and
@@ -681,9 +681,38 @@ original stricter screen both pass; the stronger 2-point
 difference-in-differences preference fails on E overall and by half. The host
 load gate was user-waived and E selection is QoS rather than hardware affinity,
 so retain every sample and the recorded load/spread limitations. The focused
-result does not authorize a production default or a bank-wide successor
-register rewrite. Keep the option OFF until a matched representative workload
-or Geekbench disposition supports enabling it.
+result does not authorize a bank-wide successor-register rewrite. A subsequent
+current-tree representative check improved full Single-Core 94 to 97 and
+Multi-Core 564 to 567; a compact rerun of the full run's File Compression and
+HTML5 outliers was within 1.3% of OFF. That closes the representative boundary
+and enables only the bounded 32-entry family by default. Raw logs are under
+`.build/results/gadgets-optimization-20260813/`.
+
+The default-on `UML_GADGET_SIMD_DESTINATION_RESIDENCY` option is intentionally
+bounded to runs of at least four nonfaulting integer MLA instructions with one
+v0-v7 destination and nonaliasing sources. Its exact focused test is
+`arm64-gadget-simd-destination-residency`; pair it with
+`arm64-simd-three-same-arithmetic` in both page profiles when changing the
+mechanism. The sensitive/control probes are
+`guest_simd_destination_residency_loop` and
+`guest_simd_destination_residency_control_loop`. Current evidence records
+69.6%/43.5% sensitive gains on P/E, targeted SIMD Geekbench 91→92, and a clean
+full-gadget Geekbench result of 96/575 versus the G107 predecessor's 97/567.
+One earlier full attempt was stopped after an RCU stall; do not treat that
+partial run as a score.
+
+The default-on `UML_GADGET_EXACT_CACHE_VALIDATION` option preserves decoded
+programs across same-generation code-change notifications only after comparing
+all consumed guest words. Its exact host gate is
+`arm64-gadget-cache-validation`; run it in both page profiles and also run an
+explicit OFF tree when changing the compile-time boundary. The sensitive and
+control probes are `guest_gadget_code_invalidation_loop` and
+`guest_gadget_code_invalidation_control_loop`. Current P/E sensitive gains are
+62.4%/50.6%; targeted multi-core Clang/Object Detection changed 394/461 to
+383/464 (combined 426 to 422). The final full-gadget result is 96/567 versus
+96/575 for the preceding G140 build and 94/564 for the original baseline, so
+there is no obvious aggregate regression. Raw logs are under
+`.build/results/gadgets-optimization-20260813/`.
 
 Sanitizer, iOS, XCFramework, benchmark, and guest-workload runs are separate
 acceptance campaigns.  Typical host-product commands are:
