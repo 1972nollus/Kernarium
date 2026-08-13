@@ -16,18 +16,12 @@ separate diagnostic run; matched gadget/JIT score campaigns must omit it.
 The runner invokes the image-local payload at
 `/opt/geekbench/release/geekbench6 --no-upload`, so it
 does not prompt to upload results and has no network permission flag or
-host/guest connectivity preflight. The shared
-`systemd_overlay` boot mode uses the EROFS image as the lower filesystem,
-constructs a tmpfs-backed OverlayFS from a temporary PID-1 shell, and makes
-systemd the real PID 1 before measurement. The image owns the tty0 getty and
-login policy; the runner does not replace it in the overlay. Do not replace
-this with `overlay_shell`; historical comparison points used systemd. After
-login and before starting either the optional profiler or Geekbench, the
-runner stops Docker, its socket, containerd, and the `apt-daily` and
-`apt-daily-upgrade` service/timer pairs. It verifies that none remains active,
-then syncs the guest. This preparation is bounded by `--quiesce-timeout`
-(120 seconds by default), and a failure or timeout aborts the run before any
-measurement begins. All service-state changes live in the disposable overlay.
+host/guest connectivity preflight. The runner constructs a tmpfs-backed
+OverlayFS over the EROFS image and benchmarks from its direct PID-1 shell.
+It deliberately does not start systemd, Docker, containerd, getty, or periodic
+maintenance services; stopping them after boot is both slower and noisier than
+never starting them. Correctness coverage for the production systemd path
+remains owned by the separate integration tests.
 
 ```sh
 python3 tests/perf/run_guest_geekbench.py \

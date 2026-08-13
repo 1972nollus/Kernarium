@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the image-local Geekbench payload in a systemd EROFS guest."""
+"""Run the image-local Geekbench payload in a direct OverlayFS shell."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -16,17 +16,6 @@ import time
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
 from guest import CORE_CLASSES, Guest  # noqa: E402
-
-
-QUIESCENCE_UNITS = (
-    "docker.service",
-    "docker.socket",
-    "containerd.service",
-    "apt-daily.timer",
-    "apt-daily-upgrade.timer",
-    "apt-daily.service",
-    "apt-daily-upgrade.service",
-)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -79,41 +68,12 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--timeout", type=int, default=7200)
-    parser.add_argument(
-        "--quiesce-timeout",
-        type=int,
-        default=120,
-        help="seconds allowed for systemd background work to stop",
-    )
     parser.add_argument("--sample-seconds", type=int, default=5)
     parser.add_argument(
         "--sample-command",
         default="/usr/bin/sample",
     )
     return parser.parse_args()
-
-
-def quiesce_guest(guest: Guest, timeout_seconds: int) -> None:
-    """Stop system services that would perturb a benchmark measurement."""
-    units = " ".join(QUIESCENCE_UNITS)
-    command = (
-        f"systemctl stop {units} && "
-        f"for unit in {units}; do "
-        "if systemctl is-active --quiet \"$unit\"; then "
-        "printf 'benchmark quiescence failed: %s is still active\\n' "
-        '"$unit" >&2; exit 1; fi; done && sync'
-    )
-    try:
-        result = guest.run_command(command, timeout_seconds)
-    except TimeoutError as error:
-        raise RuntimeError(
-            "guest benchmark quiescence timed out after "
-            f"{timeout_seconds} seconds"
-        ) from error
-    if result.return_code != 0:
-        raise RuntimeError(
-            "guest benchmark quiescence failed: " + result.output
-        )
 
 
 def mirror_transcript(
@@ -143,7 +103,6 @@ def main() -> int:
         raise ValueError("--cpus must be between 1 and 64")
     if (
         arguments.timeout < 1
-        or arguments.quiesce_timeout < 1
         or arguments.sample_seconds < 1
     ):
         raise ValueError("timeouts must be positive")
@@ -161,7 +120,7 @@ def main() -> int:
             f"root={arguments.root_device}",
             *arguments.kernel_argument,
         ),
-        systemd_overlay=True,
+        overlay_shell=True,
         engine=arguments.engine,
         core_class=arguments.core_class,
     )
@@ -183,7 +142,6 @@ def main() -> int:
         mirror.start()
         mirror_ready.wait()
         guest.boot_and_login(180)
-        quiesce_guest(guest, arguments.quiesce_timeout)
         if arguments.profile_dir is not None:
             profiler = subprocess.Popen(
                 (

@@ -71,26 +71,24 @@ def verify_engine_forwarding(runner: str) -> None:
             f"{runner}: engine selection must not be passed as a kernel argument"
         )
     if runner == "run_guest_geekbench.py":
-        shell_keywords = {
-            keyword.arg for keyword in guest_calls[0].keywords
-        } & {"init_shell", "overlay_shell"}
-        if shell_keywords:
-            raise RuntimeError(
-                f"{runner}: Geekbench must use the normal systemd overlay path"
-            )
-        systemd_keywords = [
+        overlay_keywords = [
             keyword
             for keyword in guest_calls[0].keywords
-            if keyword.arg == "systemd_overlay"
+            if keyword.arg == "overlay_shell"
         ]
         if (
-            len(systemd_keywords) != 1
-            or not isinstance(systemd_keywords[0].value, ast.Constant)
-            or systemd_keywords[0].value.value is not True
+            len(overlay_keywords) != 1
+            or not isinstance(overlay_keywords[0].value, ast.Constant)
+            or overlay_keywords[0].value.value is not True
         ):
             raise RuntimeError(
-                f"{runner}: Geekbench must enable systemd_overlay=True"
+                f"{runner}: Geekbench must enable overlay_shell=True"
             )
+        if any(
+            keyword.arg == "systemd_overlay"
+            for keyword in guest_calls[0].keywords
+        ):
+            raise RuntimeError(f"{runner}: Geekbench must not boot systemd")
 
 
 def load_runner_module(runner: str):
@@ -163,91 +161,32 @@ def verify_offline_geekbench_contract() -> None:
             )
 
 
-def verify_geekbench_quiescence_contract() -> None:
-    module = load_runner_module("run_guest_geekbench.py")
-    expected_units = (
-        "docker.service",
-        "docker.socket",
-        "containerd.service",
-        "apt-daily.timer",
-        "apt-daily-upgrade.timer",
-        "apt-daily.service",
-        "apt-daily-upgrade.service",
-    )
-    if module.QUIESCENCE_UNITS != expected_units:
-        raise RuntimeError(
-            "Geekbench quiescence must cover Docker, containerd, and both "
-            f"apt maintenance pairs: {module.QUIESCENCE_UNITS}"
-        )
-
-    successful_guest = mock.Mock()
-    successful_guest.run_command.return_value = mock.Mock(
-        return_code=0,
-        output="",
-    )
-    module.quiesce_guest(successful_guest, 37)
-    successful_guest.run_command.assert_called_once()
-    command, timeout = successful_guest.run_command.call_args.args
-    if timeout != 37:
-        raise RuntimeError(
-            f"Geekbench quiescence ignored its timeout: {timeout}"
-        )
-    if "systemctl stop" not in command:
-        raise RuntimeError("Geekbench quiescence does not stop systemd units")
-    if "systemctl is-active --quiet" not in command:
-        raise RuntimeError("Geekbench quiescence does not verify inactive units")
-    if not command.endswith("done && sync"):
-        raise RuntimeError("Geekbench quiescence must sync after verification")
-    for unit in expected_units:
-        if command.count(unit) != 2:
-            raise RuntimeError(
-                f"Geekbench must stop and verify {unit}: {command}"
-            )
-
-    failed_guest = mock.Mock()
-    failed_guest.run_command.return_value = mock.Mock(
-        return_code=1,
-        output="docker.service is still active",
-    )
-    try:
-        module.quiesce_guest(failed_guest, 37)
-    except RuntimeError as error:
-        if "docker.service is still active" not in str(error):
-            raise
-    else:
-        raise RuntimeError("Geekbench accepted failed guest quiescence")
-
-    timed_out_guest = mock.Mock()
-    timed_out_guest.run_command.side_effect = TimeoutError("guest timeout")
-    try:
-        module.quiesce_guest(timed_out_guest, 37)
-    except RuntimeError as error:
-        if "timed out after 37 seconds" not in str(error):
-            raise
-    else:
-        raise RuntimeError("Geekbench accepted timed-out guest quiescence")
-
+def verify_geekbench_direct_shell_contract() -> None:
     options = parse_runner_arguments(
         "run_guest_geekbench.py",
         ["--console-log", "console.log"],
     )
-    if options.quiesce_timeout != 120:
+    if hasattr(options, "quiesce_timeout"):
         raise RuntimeError(
-            "Geekbench quiescence timeout must default to 120 seconds"
+            "Geekbench retained the obsolete systemd quiescence option"
         )
 
     source = (ROOT / "run_guest_geekbench.py").read_text(encoding="utf-8")
+    for token in ("systemd_overlay", "systemctl", "QUIESCENCE_UNITS"):
+        if token in source:
+            raise RuntimeError(
+                f"Geekbench retained systemd benchmark machinery: {token}"
+            )
     main_source = source[source.index("def main()") :]
     ordered_tokens = (
         "guest.boot_and_login(180)",
-        "quiesce_guest(guest, arguments.quiesce_timeout)",
         "profiler = subprocess.Popen",
         "result = guest.run_command(command, arguments.timeout)",
     )
     positions = [main_source.index(token) for token in ordered_tokens]
     if positions != sorted(positions):
         raise RuntimeError(
-            "Geekbench must quiesce after login and before profiler/benchmark"
+            "Geekbench must boot the direct shell before profiler/benchmark"
         )
 
 
@@ -270,14 +209,12 @@ def run_geekbench_shutdown_case(
         engine="jit",
         core_class="performance",
         timeout=30,
-        quiesce_timeout=30,
         sample_seconds=1,
         sample_command="/usr/bin/sample",
     )
     guest = mock.Mock()
-    guest.run_command.side_effect = (
-        types.SimpleNamespace(return_code=0, output=""),
-        types.SimpleNamespace(return_code=command_status, output="benchmark"),
+    guest.run_command.return_value = types.SimpleNamespace(
+        return_code=command_status, output="benchmark"
     )
     guest.shutdown.return_value = shutdown_ok
     guest.return_code = emulator_status
@@ -499,7 +436,7 @@ def verify_core_class_launcher() -> None:
 
 def main() -> int:
     verify_offline_geekbench_contract()
-    verify_geekbench_quiescence_contract()
+    verify_geekbench_direct_shell_contract()
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
     verify_performance_runner_shutdown_contract()

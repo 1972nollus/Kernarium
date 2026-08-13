@@ -759,6 +759,9 @@ python3 tests/perf/run_guest_geekbench.py \
 
 The runner's default guest command is
 `/opt/geekbench/release/geekbench6 --no-upload`.
+It runs from a direct tmpfs-backed OverlayFS shell and does not start systemd
+or its background services. Production systemd boot remains covered by the
+separate integration workflows and is not part of performance measurement.
 See [`../tests/perf/README.md`](../tests/perf/README.md) for profiling and probe
 commands. Full Geekbench scoring remains a separate manual campaign.
 
