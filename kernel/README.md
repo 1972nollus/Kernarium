@@ -18,11 +18,12 @@ tree is the build input and the omitted file is not reconstructed from Git.
 ## Latest verified replay (2026-08-13)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`350bde4a71373eca3f9b7895590ea779dc88000d`. A fresh authenticated replay,
+`f4ea0e833d4f07e53346188f5186ac2ab71fb8c2`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, and delta audit passed. The exact delta policy is 157 changed files
 with 6 outside the Darwin port. Topic 0015 adds the shared scalable iOS address
-profile. Topic 0016 replaces per-task Darwin pthreads with one persistent
+profile, including the page-rounded one-eighth auxiliary allowance and 32 MiB
+floor. Topic 0016 replaces per-task Darwin pthreads with one persistent
 carrier per configured vCPU on macOS, iOS Simulator, and physical iOS. Topic
 0017 lets the host-stop descriptor wake those carriers for cooperative
 shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
@@ -46,9 +47,9 @@ their exact ordered owners and rationale in
 [`patches/topic-path-overlaps.tsv`](patches/topic-path-overlaps.tsv). Darwin
 vhost-user transport changes remain in topic 0010 while the generic 64-bit
 DMA-mask correction remains independently reviewable and droppable as topic
-0014. Topic 0015 changes three shared/Darwin layout consumers owned by earlier
-topics; the arm64 profile constants remain with the arm64 port topic that owns
-`arch/arm64/Makefile.um`.
+0014. Topic 0015 changes shared layout consumers owned by earlier topics; its
+exact overlaps are declared, including its update to the arm64 profile
+constants in `arch/arm64/Makefile.um`.
 The manifest verifier rejects undeclared, stale, or mismatched overlaps.
 
 The signed archive, packaged/final trees, ordered stable patch IDs, and patch
@@ -110,8 +111,10 @@ the macOS kernel at the established 96 TiB boundary. Both iOS products use
 of 128 TiB and treats the native kernel mapping as a hole inside that range.
 The signed ET_DYN kernel is linked at 48 GiB and biased so the active native
 window ends at the 62 GiB iOS ceiling. Its start scales with guest memory; the
-window contains exactly the RAM-sized direct map plus at most 4 GiB of other
-kernel mappings. With Kernarium's 1 GiB guest, the active window is 57--62 GiB:
+window contains exactly the RAM-sized direct map plus a page-rounded one eighth
+for auxiliary kernel mappings, with a 32 MiB floor. Kernarium's 1 GiB guest
+therefore receives exactly 128 MiB of auxiliary address capacity and uses the
+60.875--62 GiB active window:
 
 ```sh
 kernel/build-kernel.sh \

@@ -170,7 +170,8 @@ def verify_topic_path_overlaps(root: Path, rows: list[ManifestRow]) -> None:
             if (path.startswith("/") or "\\" in path or
                     ".." in path.split("/")):
                 fail(f"unsafe topic-overlap path: {path}")
-            if not path.startswith(("arch/arm64/um/", "arch/um/")):
+            if (path != "arch/arm64/Makefile.um" and
+                    not path.startswith(("arch/arm64/um/", "arch/um/"))):
                 fail(f"topic overlap is outside the port-owned paths: {path}")
             if path in declared:
                 fail(f"duplicate topic-overlap policy path: {path}")

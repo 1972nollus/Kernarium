@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 path	topic_orders	rationale
-arch/arm64/um/asm/processor.h	0009,0018	The arm64 port owns its relax primitive while topic 0018 turns an interruptible Darwin spin wait into a safe cooperative IPI boundary.
+arch/arm64/Makefile.um	0009,0015	The arm64 port establishes its address-profile build constants while topic 0015 selects the scalable iOS profile and its guest-memory-scaled auxiliary allowance.
 arch/arm64/um/asm/mman.h	0009,0015	The arm64 port owns mmap policy while topic 0015 rejects guest mappings that cross the sparse iOS native hole.
+arch/arm64/um/asm/processor.h	0009,0018	The arm64 port owns its relax primitive while topic 0018 turns an interruptible Darwin spin wait into a safe cooperative IPI boundary.
 arch/arm64/um/signal.c	0009,0015	The arm64 signal port owns its restorer while topic 0015 moves the trampoline with the selected guest task ceiling.
 arch/um/include/asm/processor-generic.h	0001,0015	The shared task-layout contract remains in topic 0001 while topic 0015 selects the scalable iOS guest unmapped base.
 arch/um/kernel/process.c	0004,0016	The execution core owns Linux task entry while topic 0016 adapts its first activation to fixed Darwin vCPU carriers.
 arch/um/kernel/skas/process.c	0002,0016	The shared SKAS bootstrap owns CPU0 setup while topic 0016 installs Darwin's signal stack on the new CPU0 carrier.
 arch/um/kernel/trap.c	0002,0015	The MMU core owns guest fault dispatch while topic 0015 rejects faults that intersect the sparse iOS native hole.
-arch/um/kernel/um_arch.c	0004,0015	The execution core owns Darwin task-size setup while topic 0015 selects the shared device/Simulator task ceiling and scalable native hole.
+arch/um/kernel/um_arch.c	0004,0015	The execution core owns Darwin task-size setup while topic 0015 selects the shared device/Simulator task ceiling, scalable native hole, and guest-memory-scaled auxiliary vmalloc capacity.
 arch/um/os-Darwin/internal.h	0007,0016,0017	The Darwin host implementation owns private service declarations, topic 0016 replaces per-task scheduler hooks with fixed-carrier lifetime hooks, and topic 0017 adds the host-stop boundary.
 arch/um/os-Darwin/main.c	0007,0017	The Darwin host implementation owns the entrypoint while topic 0017 keeps last-ditch signals from running Linux cleanup on an arbitrary carrier task.
 arch/um/os-Darwin/signal.c	0007,0016	The Darwin host implementation owns logical IRQ state while topic 0016 documents and pins its fixed-vCPU carrier ownership.

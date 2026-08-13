@@ -12,7 +12,8 @@ NativeKernelLayout prepare_native_kernel_layout(
 	using Geometry = NativeKernelLayoutGeometry<
 		DARWIN_UML_NATIVE_LINK_ADDRESS,
 		DARWIN_UML_NATIVE_ADDRESS_CEILING,
-		DARWIN_UML_NATIVE_AUXILIARY_SIZE,
+		DARWIN_UML_NATIVE_AUXILIARY_DIVISOR,
+		DARWIN_UML_NATIVE_AUXILIARY_MINIMUM,
 		DARWIN_UML_GUEST_PAGE_SIZE>;
 	return Geometry::derive(guest_memory);
 #else

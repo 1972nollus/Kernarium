@@ -21,10 +21,12 @@ remain project-owned metadata.
 
 Both iOS targets embed the same scalable-layout ET_DYN kernel ELF in an aligned
 `KernariumRuntime.framework` `__TEXT` section covered by Xcode's standard code
-signature. The loader exposes a 128 TiB sparse software-MMU task range, derives
-a native window ending at 62 GiB from guest RAM plus at most 4 GiB of auxiliary
-kernel mappings, aliases immutable executable pages from signed storage, and
-copies only data/BSS. With 1 GiB of guest RAM the active window is 57--62 GiB.
+signature. The loader exposes a 128 TiB sparse software-MMU task range and
+derives a native window ending at 62 GiB from guest RAM plus a page-rounded one
+eighth for auxiliary kernel mappings, with a 32 MiB floor. It aliases immutable
+executable pages from signed storage and copies only data/BSS. With 1 GiB of
+guest RAM the auxiliary allowance is exactly 128 MiB and the active window is
+60.875--62 GiB.
 It uses no anonymous executable publication, RW-to-RX transition, LLDB, or JIT
 entitlement. macOS retains its standard 96 TiB layout and loader behavior.
 

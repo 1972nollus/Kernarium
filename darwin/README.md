@@ -46,8 +46,9 @@ count.
 Both iOS products carry the same complete ET_DYN kernel ELF in a 16 KiB-aligned
 `__TEXT,__uml_elf` section of `KernariumRuntime.framework`. The standard Xcode
 framework signature covers that storage. The embedded ELF loader verifies the
-carrier byte-for-byte, derives the native window from guest RAM plus a 4 GiB
-auxiliary allowance below the 62 GiB ceiling, biases the image as one unit, and
+carrier byte-for-byte, derives the native window from guest RAM plus a
+page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) below the
+62 GiB ceiling, biases the image as one unit, and
 aliases immutable executable pages from the already signed Mach-O mapping with
 `vm_remap`; it never copies code into anonymous memory or publishes RW pages as
 executable. ELF data and BSS retain the ordinary copy path, and relocations into

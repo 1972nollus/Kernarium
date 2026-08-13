@@ -155,23 +155,44 @@ void test_guest_memory_budget_matches_kernel_memparse()
 
 void test_scalable_native_kernel_layout_geometry()
 {
+	constexpr std::uint64_t kib = 1024ULL;
+	constexpr std::uint64_t mib = kib * 1024ULL;
+	constexpr std::uint64_t gib = mib * 1024ULL;
 	using Geometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL << 30, 62ULL << 30, 4ULL << 30, 16ULL << 10>;
-	const auto two_gib = Geometry::derive(2ULL << 30);
-	require(two_gib.valid && two_gib.window_start == (56ULL << 30) &&
-		two_gib.window_end == (62ULL << 30) &&
-		two_gib.load_bias == (8ULL << 30),
-		"2 GiB RAM did not produce the 56--62 GiB native window");
-	const auto ten_gib = Geometry::derive(10ULL << 30);
-	require(ten_gib.valid && ten_gib.window_start == (48ULL << 30) &&
-		ten_gib.load_bias == 0,
-		"maximum RAM did not consume the complete signed-kernel envelope");
-	require(!Geometry::derive((10ULL << 30) + 1).valid,
-		"RAM larger than the signed-kernel envelope was accepted");
+		48ULL * gib, 62ULL * gib, 8, 32ULL * mib, 16ULL * kib>;
+	const auto one_gib = Geometry::derive(gib);
+	require(one_gib.valid &&
+		one_gib.window_start == 62ULL * gib - gib - 128ULL * mib &&
+		one_gib.window_end == 62ULL * gib &&
+		one_gib.load_bias == 12ULL * gib + 896ULL * mib,
+		"1 GiB RAM did not produce an exact 128 MiB auxiliary window");
+	const auto two_gib = Geometry::derive(2ULL * gib);
+	require(two_gib.valid &&
+		two_gib.window_end - two_gib.window_start ==
+			2ULL * gib + 256ULL * mib,
+		"2 GiB RAM did not scale the auxiliary window to 256 MiB");
+	const auto small = Geometry::derive(128ULL * mib);
+	require(small.valid && small.window_end - small.window_start ==
+		128ULL * mib + 32ULL * mib,
+		"small guest did not retain Linux UML's 32 MiB minimum");
+	const auto twelve_gib = Geometry::derive(12ULL * gib);
+	require(twelve_gib.valid &&
+		twelve_gib.window_end - twelve_gib.window_start ==
+			13ULL * gib + 512ULL * mib,
+		"large guest did not retain the one-eighth auxiliary ratio");
+	require(!Geometry::derive(13ULL * gib).valid,
+		"RAM and its scaled auxiliary window exceeded the signed envelope");
 	const auto rounded = Geometry::derive(1);
 	require(rounded.valid && rounded.window_end - rounded.window_start ==
-		(4ULL << 30) + (16ULL << 10),
-		"native window did not round RAM to a guest page");
+		32ULL * mib + 16ULL * kib,
+		"native window did not page-round RAM or retain its minimum");
+	using FourKGeometry = uml::runtime::NativeKernelLayoutGeometry<
+		48ULL * gib, 62ULL * gib, 8, 32ULL * mib, 4ULL * kib>;
+	const auto four_kib_rounded = FourKGeometry::derive(gib + 1U);
+	require(four_kib_rounded.valid &&
+		four_kib_rounded.window_end - four_kib_rounded.window_start ==
+			gib + 128ULL * mib + 8ULL * kib,
+		"4 KiB geometry did not independently round RAM and auxiliary space");
 }
 
 void test_guest_cpu_count_matches_kernel_policy()

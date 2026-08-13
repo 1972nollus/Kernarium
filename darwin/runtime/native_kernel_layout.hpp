@@ -15,11 +15,14 @@ struct NativeKernelLayout final {
 };
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
-	std::uint64_t AuxiliarySize, std::uint64_t PageSize>
+	std::uint64_t AuxiliaryDivisor, std::uint64_t MinimumAuxiliarySize,
+	std::uint64_t PageSize>
 class NativeKernelLayoutGeometry final {
 	static_assert(PageSize != 0 && (PageSize & (PageSize - 1U)) == 0);
+	static_assert(AuxiliaryDivisor != 0);
 	static_assert(LinkAddress <= AddressCeiling);
-	static_assert(AuxiliarySize <= AddressCeiling - LinkAddress);
+	static_assert(MinimumAuxiliarySize <= AddressCeiling - LinkAddress);
+	static_assert((MinimumAuxiliarySize & (PageSize - 1U)) == 0);
 
 public:
 	[[nodiscard]] static constexpr NativeKernelLayout derive(
@@ -31,11 +34,20 @@ public:
 			return {};
 		const auto rounded = (guest_memory + PageSize - 1U) &
 			~(PageSize - 1U);
-		constexpr auto maximum_memory =
-			AddressCeiling - LinkAddress - AuxiliarySize;
-		if (rounded == 0 || rounded > maximum_memory)
+		const auto proportional = rounded / AuxiliaryDivisor +
+			(rounded % AuxiliaryDivisor != 0 ? 1U : 0U);
+		if (proportional > std::numeric_limits<std::uint64_t>::max() -
+			(PageSize - 1U))
 			return {};
-		const auto start = AddressCeiling - AuxiliarySize - rounded;
+		const auto scaled_auxiliary =
+			(proportional + PageSize - 1U) & ~(PageSize - 1U);
+		const auto auxiliary = scaled_auxiliary < MinimumAuxiliarySize ?
+			MinimumAuxiliarySize : scaled_auxiliary;
+		constexpr auto envelope = AddressCeiling - LinkAddress;
+		if (rounded == 0 || rounded > envelope ||
+		    auxiliary > envelope - rounded)
+			return {};
+		const auto start = AddressCeiling - auxiliary - rounded;
 		return {
 			.load_bias = static_cast<std::uintptr_t>(start - LinkAddress),
 			.window_start = static_cast<std::uintptr_t>(start),

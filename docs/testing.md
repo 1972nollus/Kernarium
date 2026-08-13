@@ -231,8 +231,9 @@ non-debugger signature. For both device and Simulator, `KernariumRuntime`
 embeds the complete shared kernel ELF in a 16 KiB-aligned Mach-O
 `__TEXT,__uml_elf` section. Xcode's normal framework code signature covers
 those bytes. The loader gives the software-MMU guest a 128 TiB sparse task
-range, derives a native hole ending at 62 GiB from guest RAM plus a 4 GiB
-auxiliary allowance, biases the ET_DYN image into that window, aliases each
+range, derives a native hole ending at 62 GiB from guest RAM plus a page-rounded
+one-eighth auxiliary allowance with a 32 MiB floor, biases the ET_DYN image
+into that window, aliases each
 immutable executable ELF page from the signed framework mapping with
 `vm_remap`, and copies only non-executable data/BSS into anonymous pages. It
 rejects writable executable segments, carrier mismatches, and relocations that

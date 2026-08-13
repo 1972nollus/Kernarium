@@ -59,7 +59,8 @@ historical sections as history.
   Build the shared iOS device/Simulator kernel with
   `kernel/build-kernel.sh --address-space ios-device`; it owns a 128 TiB sparse
   software-MMU task range and a native hole ending at 62 GiB, sized to guest
-  RAM plus at most 4 GiB of auxiliary kernel mappings.
+  RAM plus a page-rounded one eighth for auxiliary kernel mappings, with a
+  32 MiB floor.
 - There is no repository-wide formatter. Follow adjacent formatting, retain
   SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
   and avoid unrelated formatting churn.

@@ -23,9 +23,10 @@ git -C "$SOURCE" add base
 git -C "$SOURCE" commit -q -m base
 BASE=$(git -C "$SOURCE" rev-parse HEAD)
 
-mkdir -p "$SOURCE/arch/um"
+mkdir -p "$SOURCE/arch/arm64" "$SOURCE/arch/um"
+printf '%s\n' profile > "$SOURCE/arch/arm64/Makefile.um"
 printf '%s\n' one > "$SOURCE/arch/um/one"
-git -C "$SOURCE" add arch/um/one
+git -C "$SOURCE" add arch/arm64/Makefile.um arch/um/one
 git -C "$SOURCE" commit -q -m 'topic one'
 COMMIT_ONE=$(git -C "$SOURCE" rev-parse HEAD)
 printf '%s\n' two > "$SOURCE/two"
@@ -197,6 +198,39 @@ printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/um/one	0001,0002	intentional fixture overlap' \
 	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
 verify_manifest
+cp "$WORK_DIRECTORY/canonical-0002.patch" \
+	"$FIXTURE/kernel/patches/series/0002.patch"
+printf '%s\n' 'path	topic_orders	rationale' \
+	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+write_manifest
+verify "$CANONICAL_TIP"
+
+git -C "$SOURCE" switch -q -c makefile-overlap-case "$CANONICAL_TIP"
+printf '%s\n' scaled-profile > "$SOURCE/arch/arm64/Makefile.um"
+git -C "$SOURCE" add arch/arm64/Makefile.um
+git -C "$SOURCE" commit -q -m 'address profile topic'
+git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 --stdout HEAD \
+	> "$FIXTURE/kernel/patches/series/0002.patch"
+write_manifest
+printf '%s\n' 'path	topic_orders	rationale' \
+	'arch/arm64/Makefile.um	0001,0002	intentional profile overlap' \
+	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+verify_manifest
+printf '%s\n' 'path	topic_orders	rationale' \
+	'arch/arm64/Makefile	0001,0002	invalid broad build overlap' \
+	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+OUTSIDE_PORT="$WORK_DIRECTORY/outside-port-overlap.err"
+if verify_manifest 2>"$OUTSIDE_PORT"; then
+	printf '%s\n' 'manifest verifier accepted a build path outside the port' >&2
+	exit 1
+fi
+if ! grep -F -q 'topic overlap is outside the port-owned paths' \
+	"$OUTSIDE_PORT"; then
+	printf '%s\n' \
+		'manifest verifier rejected the outside-port path for the wrong reason' >&2
+	sed -n '1,20p' "$OUTSIDE_PORT" >&2
+	exit 1
+fi
 cp "$WORK_DIRECTORY/canonical-0002.patch" \
 	"$FIXTURE/kernel/patches/series/0002.patch"
 printf '%s\n' 'path	topic_orders	rationale' \

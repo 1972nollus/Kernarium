@@ -16,8 +16,10 @@ Kernarium recreates a sparse 8 GiB temporary image on launch. The guest formats
 it as ext4 and uses separate OverlayFS, Docker, and containerd directories on
 the same free-space pool; the app does not create or activate disk-backed swap.
 Both iOS targets run the same framework-signed ET_DYN kernel, scalable
-57--62 GiB native window for the 1 GiB guest, and 128 TiB sparse software-MMU
-task range. macOS retains its previous loader and 96 TiB layout.
+60.875--62 GiB native window for the 1 GiB guest, and 128 TiB sparse
+software-MMU task range. The native window is guest RAM plus a page-rounded
+one-eighth auxiliary allowance with a 32 MiB floor; 1 GiB therefore receives
+exactly 128 MiB. macOS retains its previous loader and 96 TiB layout.
 
 Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep

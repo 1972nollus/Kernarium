@@ -1,27 +1,62 @@
-From 06b3a555a247b37b0eae5b3c439cd0b1305b6e7d Mon Sep 17 00:00:00 2001
+From 1dff3bb17d830929f0c25d9558b9bc603cb7b22a Mon Sep 17 00:00:00 2001
 From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
 Date: Thu, 13 Aug 2026 16:07:55 +0900
 Subject: [PATCH 15/18] uml: add scalable iOS native address profile
 
 iOS device and Simulator builds must execute the same signed embedded kernel, but their Extended Virtual Addressing process still has a much smaller native mapping ceiling than macOS. A fixed low task ceiling also needlessly starves 64-bit guest applications once the native kernel moves into that space.
 
-Add one shared iOS profile with a 128 TiB software guest task range and a scalable native hole. The direct-map boundary follows configured guest memory, while the signed kernel envelope and at most 4 GiB of auxiliary native state remain below the 62 GiB host ceiling. Reject mmap, uaccess, and fault ranges which intersect that hole instead of shrinking all guest userspace around it.
+Add one shared iOS profile with a 128 TiB software guest task range and a scalable native hole. The direct map follows configured guest memory, while auxiliary kernel capacity is a page-rounded one eighth of guest RAM with a 32 MiB floor. Apply that same limit to UML vmalloc and keep the complete native window below the 62 GiB host ceiling. Reject mmap, uaccess, and fault ranges which intersect that hole instead of shrinking all guest userspace around it.
 
 Keep the established high macOS profile unchanged. Make the signal-return trampoline follow the selected task ceiling and carry that profile-dependent constant through the versioned Darwin ABI.
 ---
+ arch/arm64/Makefile.um                        |  9 +++--
  arch/arm64/um/asm/mman.h                      | 23 ++++++++++++
  arch/arm64/um/signal.c                        |  3 +-
  arch/um/include/asm/processor-generic.h       |  2 +-
  arch/um/include/asm/uaccess.h                 | 10 +++++
  arch/um/include/shared/darwin-address-space.h | 37 +++++++++++++++++++
  arch/um/kernel/trap.c                         |  7 +++-
- arch/um/kernel/um_arch.c                      | 19 +++++++---
+ arch/um/kernel/um_arch.c                      | 26 ++++++++++---
  arch/um/os-Darwin/skas/process.c              |  9 +++--
  arch/um/os-Darwin/uml_darwin_abi.h            |  6 ++-
  arch/um/os-Darwin/uml_darwin_abi_identity.h   |  4 +-
- 10 files changed, 103 insertions(+), 17 deletions(-)
+ 11 files changed, 116 insertions(+), 20 deletions(-)
  create mode 100644 arch/um/include/shared/darwin-address-space.h
 
+diff --git a/arch/arm64/Makefile.um b/arch/arm64/Makefile.um
+index ecf8bbeb9..7301d5256 100644
+--- a/arch/arm64/Makefile.um
++++ b/arch/arm64/Makefile.um
+@@ -13,7 +13,8 @@ UML_DARWIN_HOST_TASK_SIZE := 0x700000000000UL
+ UML_DARWIN_TASK_UNMAPPED_BASE := 0x100000000000UL
+ UML_DARWIN_NATIVE_ADDRESS_START := 0x600000000000UL
+ UML_DARWIN_NATIVE_ADDRESS_END := 0x600000000000UL
+-UML_DARWIN_NATIVE_AUXILIARY_SIZE := 0x0UL
++UML_DARWIN_NATIVE_AUXILIARY_DIVISOR := 1
++UML_DARWIN_NATIVE_AUXILIARY_MINIMUM := 0x0UL
+ UML_DARWIN_DYNAMIC_NATIVE_LAYOUT := 0
+ UML_DARWIN_SIGRETURN_TRAMPOLINE := 0x3fffffffff00ULL
+ UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR := 1
+@@ -25,7 +26,8 @@ UML_DARWIN_HOST_TASK_SIZE := 0xf80000000UL
+ UML_DARWIN_TASK_UNMAPPED_BASE := 0x1000000000UL
+ UML_DARWIN_NATIVE_ADDRESS_START := 0xc00000000UL
+ UML_DARWIN_NATIVE_ADDRESS_END := 0xf80000000UL
+-UML_DARWIN_NATIVE_AUXILIARY_SIZE := 0x100000000UL
++UML_DARWIN_NATIVE_AUXILIARY_DIVISOR := 8
++UML_DARWIN_NATIVE_AUXILIARY_MINIMUM := 0x2000000UL
+ UML_DARWIN_DYNAMIC_NATIVE_LAYOUT := 1
+ UML_DARWIN_SIGRETURN_TRAMPOLINE := 0x7fffffffff00ULL
+ UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR := 1
+@@ -40,7 +42,8 @@ KBUILD_CFLAGS += \
+ 	-DUML_DARWIN_TASK_UNMAPPED_BASE=$(UML_DARWIN_TASK_UNMAPPED_BASE) \
+ 	-DUML_DARWIN_NATIVE_ADDRESS_START=$(UML_DARWIN_NATIVE_ADDRESS_START) \
+ 	-DUML_DARWIN_NATIVE_ADDRESS_END=$(UML_DARWIN_NATIVE_ADDRESS_END) \
+-	-DUML_DARWIN_NATIVE_AUXILIARY_SIZE=$(UML_DARWIN_NATIVE_AUXILIARY_SIZE) \
++	-DUML_DARWIN_NATIVE_AUXILIARY_DIVISOR=$(UML_DARWIN_NATIVE_AUXILIARY_DIVISOR) \
++	-DUML_DARWIN_NATIVE_AUXILIARY_MINIMUM=$(UML_DARWIN_NATIVE_AUXILIARY_MINIMUM) \
+ 	-DUML_DARWIN_DYNAMIC_NATIVE_LAYOUT=$(UML_DARWIN_DYNAMIC_NATIVE_LAYOUT) \
+ 	-DDARWIN_UML_SIGRETURN_TRAMPOLINE=$(UML_DARWIN_SIGRETURN_TRAMPOLINE) \
+ 	-DUML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR=$(UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR)
 diff --git a/arch/arm64/um/asm/mman.h b/arch/arm64/um/asm/mman.h
 index 56ab3b424..2a075458f 100644
 --- a/arch/arm64/um/asm/mman.h
@@ -175,7 +210,7 @@ index 1c8cd2c41..8b6366d7a 100644
  		panic("Kernel tried to access user memory at addr 0x%lx, ip 0x%lx",
  		       address, ip);
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4e2a98df7..865f7b400 100644
+index 4e2a98df7..9e1b22e9b 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -307,7 +307,7 @@ static unsigned long __init get_top_address(char **envp)
@@ -187,7 +222,17 @@ index 4e2a98df7..865f7b400 100644
  #else
  	unsigned long top_addr = (unsigned long) &top_addr;
  	int i;
-@@ -355,17 +355,20 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -329,6 +329,9 @@ int __init linux_main(int argc, char **argv, char **envp)
+ {
+ 	unsigned long avail, diff;
+ 	unsigned long virtmem_size, max_physmem;
++#if defined(UML_HOST_DARWIN) && UML_DARWIN_DYNAMIC_NATIVE_LAYOUT
++	unsigned long auxiliary_size;
++#endif
+ 	unsigned long stack;
+ 	unsigned int i;
+ 	int add;
+@@ -355,17 +358,20 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* Limit TASK_SIZE to what is addressable by the page table */
  	task_size = host_task_size;
  #ifdef UML_HOST_DARWIN
@@ -213,13 +258,17 @@ index 4e2a98df7..865f7b400 100644
  
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
-@@ -422,6 +425,10 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -422,6 +428,14 @@ int __init linux_main(int argc, char **argv, char **envp)
  	avail = stack - start_vm;
  #ifdef UML_HOST_DARWIN
  	avail = host_task_size - start_vm;
 +#if UML_DARWIN_DYNAMIC_NATIVE_LAYOUT
-+	if (avail > UML_DARWIN_NATIVE_AUXILIARY_SIZE)
-+		avail = UML_DARWIN_NATIVE_AUXILIARY_SIZE;
++	auxiliary_size = PAGE_ALIGN(
++		physmem_size / UML_DARWIN_NATIVE_AUXILIARY_DIVISOR);
++	if (auxiliary_size < UML_DARWIN_NATIVE_AUXILIARY_MINIMUM)
++		auxiliary_size = UML_DARWIN_NATIVE_AUXILIARY_MINIMUM;
++	if (avail > auxiliary_size)
++		avail = auxiliary_size;
 +#endif
  #endif
  	if (physmem_size > avail)
@@ -304,6 +353,3 @@ index cd75a3d19..5cbdcbc4a 100644
 +#define DARWIN_UML_ABI_FINGERPRINT 0xefcbbdbbf473686eULL
  
  #endif
--- 
-2.50.1 (Apple Git-155)
-
