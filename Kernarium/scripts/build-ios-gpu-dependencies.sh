@@ -1,19 +1,23 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Build the exact UTM ANGLE/libepoxy/virglrenderer graphics stack used by the
-# Kernarium iOS Simulator prototype. This script never clones or downloads;
+# Build the exact UTM ANGLE/libepoxy/virglrenderer graphics stack used by
+# Kernarium on iOS. This script never clones or downloads;
 # callers provide clean local checkouts at the revisions in the manifest.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 MANIFEST="$ROOT_DIR/Kernarium/dependencies/utm-gpu-sources.tsv"
-PLATFORM_RECEIPT="$ROOT_DIR/Kernarium/dependencies/ios-simulator-arm64.tsv"
 VERIFY_SCRIPT="$ROOT_DIR/Kernarium/Runtime/cmake/VerifyIosGpuPrefix.cmake"
-PREFIX=${KERNARIUM_IOS_GPU_PREFIX:-"$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-simulator-arm64"}
+ANGLE_PATCH_RELATIVE=Kernarium/dependencies/patches/angle/0001-fix-ios-simulator-varying-caps.patch
+ANGLE_PATCH="$ROOT_DIR/$ANGLE_PATCH_RELATIVE"
+VIRGL_PATCH_RELATIVE=Kernarium/dependencies/patches/virglrenderer/0001-ios-gles3-multisample-renderbuffers.patch
+VIRGL_PATCH="$ROOT_DIR/$VIRGL_PATCH_RELATIVE"
+PREFIX=${KERNARIUM_IOS_GPU_PREFIX:-}
 WORK_ROOT=${KERNARIUM_IOS_GPU_BUILD_ROOT:-"$ROOT_DIR/.build/kernarium-gpu-dependencies/build-from-source"}
 JOBS=${KERNARIUM_IOS_GPU_JOBS:-8}
 DEPLOYMENT_TARGET=16.0
+PLATFORM=ios-simulator
 WEBKIT_SOURCE=
 EPOXY_SOURCE=
 VIRGL_SOURCE=
@@ -32,6 +36,7 @@ usage()
 		"Usage: Kernarium/scripts/build-ios-gpu-dependencies.sh [options]" \
 		"" \
 		"Options:" \
+		"  --platform NAME      ios-simulator (default) or ios" \
 		"  --webkit PATH        Clean UTM WebKit checkout" \
 		"  --libepoxy PATH       Clean UTM libepoxy checkout" \
 		"  --virglrenderer PATH  Clean UTM virglrenderer checkout" \
@@ -48,6 +53,11 @@ usage()
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
+	--platform)
+		[ "$#" -ge 2 ] || fail "--platform requires ios or ios-simulator"
+		PLATFORM=$2
+		shift 2
+		;;
 	--webkit)
 		[ "$#" -ge 2 ] || fail "--webkit requires a path"
 		WEBKIT_SOURCE=$2
@@ -101,10 +111,33 @@ esac
 [ "$(uname -s)" = Darwin ] || fail "the graphics build requires macOS"
 case "$(uname -m)" in
 arm64|aarch64) ;;
-*) fail "the iOS Simulator graphics build requires an arm64 host" ;;
+*) fail "the iOS graphics build requires an arm64 host" ;;
 esac
+case "$PLATFORM" in
+ios-simulator)
+	SDK_NAME=iphonesimulator
+	TARGET=arm64-apple-ios${DEPLOYMENT_TARGET}-simulator
+	SUBSYSTEM=ios-simulator
+	RECEIPT_NAME=ios-simulator-arm64.tsv
+	DEFAULT_PREFIX="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-simulator-arm64"
+	;;
+ios)
+	SDK_NAME=iphoneos
+	TARGET=arm64-apple-ios${DEPLOYMENT_TARGET}
+	SUBSYSTEM=ios
+	RECEIPT_NAME=ios-device-arm64.tsv
+	DEFAULT_PREFIX="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-device-arm64"
+	;;
+*) fail "platform must be ios or ios-simulator" ;;
+esac
+PLATFORM_RECEIPT="$ROOT_DIR/Kernarium/dependencies/$RECEIPT_NAME"
+if [ -z "$PREFIX" ]; then
+	PREFIX=$DEFAULT_PREFIX
+fi
 [ -r "$MANIFEST" ] || fail "source manifest is unavailable: $MANIFEST"
 [ -r "$PLATFORM_RECEIPT" ] || fail "platform receipt is unavailable: $PLATFORM_RECEIPT"
+[ -r "$ANGLE_PATCH" ] || fail "ANGLE patch is unavailable: $ANGLE_PATCH"
+[ -r "$VIRGL_PATCH" ] || fail "virglrenderer patch is unavailable: $VIRGL_PATCH"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
 mkdir -p -- "$PREFIX_PARENT"
@@ -113,7 +146,8 @@ PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 
 verify_prefix()
 {
-	cmake -DPREFIX="$1" -DSOURCE_ROOT="$ROOT_DIR" -P "$VERIFY_SCRIPT"
+	cmake -DPREFIX="$1" -DSOURCE_ROOT="$ROOT_DIR" \
+		-DPLATFORM="$PLATFORM" -P "$VERIFY_SCRIPT"
 }
 
 if [ "$VERIFY_ONLY" -eq 1 ]; then
@@ -141,6 +175,15 @@ manifest_value()
 		$1 == dependency { print $column; found++; }
 		END { if (found != 1) exit 2 }
 	' "$MANIFEST"
+}
+
+platform_value()
+{
+	awk -F '\t' -v field="$1" '
+		/^#/ || /^[[:space:]]*$/ || $1 == "field" { next }
+		$1 == field { print $2; found++; }
+		END { if (found != 1) exit 2 }
+	' "$PLATFORM_RECEIPT"
 }
 
 verify_source()
@@ -193,6 +236,8 @@ find_tool()
 }
 
 if [ -x "$ROOT_DIR/.build/gpu-tools-venv/bin/meson" ]; then
+	PATH="$ROOT_DIR/.build/gpu-tools-venv/bin:$PATH"
+	export PATH
 	MESON="$ROOT_DIR/.build/gpu-tools-venv/bin/meson"
 else
 	find_tool MESON meson
@@ -204,15 +249,37 @@ find_tool XCRUN xcrun
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
 find_tool PYTHON python3
+find_tool PATCH patch
+find_tool SHASUM shasum
 
-SDK_ROOT=$($XCRUN --sdk iphonesimulator --show-sdk-path)
-[ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid Simulator SDK"
-CC=$($XCRUN --sdk iphonesimulator --find clang)
-CXX=$($XCRUN --sdk iphonesimulator --find clang++)
-AR=$($XCRUN --sdk iphonesimulator --find ar)
-NM=$($XCRUN --sdk iphonesimulator --find nm)
-RANLIB=$($XCRUN --sdk iphonesimulator --find ranlib)
-STRIP=$($XCRUN --sdk iphonesimulator --find strip)
+expected_angle_patch=$(platform_value angle_patch) ||
+	fail "cannot read the ANGLE patch identity"
+[ "$expected_angle_patch" = "$ANGLE_PATCH_RELATIVE" ] ||
+	fail "the ANGLE patch path differs from the platform receipt"
+expected_angle_patch_sha256=$(platform_value angle_patch_sha256) ||
+	fail "cannot read the ANGLE patch digest"
+actual_angle_patch_sha256=$($SHASUM -a 256 "$ANGLE_PATCH" | awk '{ print $1 }')
+[ "$actual_angle_patch_sha256" = "$expected_angle_patch_sha256" ] ||
+	fail "the ANGLE patch digest differs from the platform receipt"
+
+expected_patch=$(platform_value virglrenderer_patch) ||
+	fail "cannot read the virglrenderer patch identity"
+[ "$expected_patch" = "$VIRGL_PATCH_RELATIVE" ] ||
+	fail "the virglrenderer patch path differs from the platform receipt"
+expected_patch_sha256=$(platform_value virglrenderer_patch_sha256) ||
+	fail "cannot read the virglrenderer patch digest"
+actual_patch_sha256=$($SHASUM -a 256 "$VIRGL_PATCH" | awk '{ print $1 }')
+[ "$actual_patch_sha256" = "$expected_patch_sha256" ] ||
+	fail "the virglrenderer patch digest differs from the platform receipt"
+
+SDK_ROOT=$($XCRUN --sdk "$SDK_NAME" --show-sdk-path)
+[ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid $PLATFORM SDK"
+CC=$($XCRUN --sdk "$SDK_NAME" --find clang)
+CXX=$($XCRUN --sdk "$SDK_NAME" --find clang++)
+AR=$($XCRUN --sdk "$SDK_NAME" --find ar)
+NM=$($XCRUN --sdk "$SDK_NAME" --find nm)
+RANLIB=$($XCRUN --sdk "$SDK_NAME" --find ranlib)
+STRIP=$($XCRUN --sdk "$SDK_NAME" --find strip)
 
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
@@ -233,8 +300,8 @@ SOURCES="$TEMP_ROOT/sources"
 BUILDS="$TEMP_ROOT/builds"
 ANGLE_ROOT="$SOURCES/WebKit/Source/ThirdParty/ANGLE"
 ANGLE_ARCHIVE="$BUILDS/ANGLE"
-IOS_CROSS="$BUILDS/meson-ios-simulator.cross"
-DARWIN_CROSS="$BUILDS/meson-darwin-ios-simulator.cross"
+IOS_CROSS="$BUILDS/meson-$PLATFORM.cross"
+DARWIN_CROSS="$BUILDS/meson-darwin-$PLATFORM.cross"
 mkdir -p -- "$ANGLE_ROOT" "$SOURCES/WebKit/Configurations" \
 	"$SOURCES/WebKit/Tools/ccache" "$SOURCES/libepoxy" \
 	"$SOURCES/virglrenderer" "$BUILDS" "$STAGE/include" \
@@ -250,15 +317,18 @@ $RSYNC -a --exclude .git --exclude utm_build \
 	"$EPOXY_SOURCE/" "$SOURCES/libepoxy/"
 $RSYNC -a --exclude .git --exclude utm_build \
 	"$VIRGL_SOURCE/" "$SOURCES/virglrenderer/"
+"$PATCH" --batch --forward -p1 -d "$ANGLE_ROOT" < "$ANGLE_PATCH"
+"$PATCH" --batch --forward -p1 -d "$SOURCES/virglrenderer" < "$VIRGL_PATCH"
 
 KERNARIUM_TEMP_DIR=${TMPDIR:-/tmp}
 (
 	cd "$ANGLE_ROOT"
 	env -i PATH="$PATH" TMPDIR="$KERNARIUM_TEMP_DIR" \
 		"$XCODEBUILD" archive \
+		-quiet \
 		-archivePath "$ANGLE_ARCHIVE" \
 		-scheme ANGLE \
-		-sdk iphonesimulator \
+		-sdk "$SDK_NAME" \
 		-arch arm64 \
 		-configuration Release \
 		WEBCORE_LIBRARY_DIR=/usr/local/lib \
@@ -279,14 +349,14 @@ cat > "$IOS_CROSS" <<EOF
 needs_exe_wrapper = true
 
 [built-in options]
-c_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-cpp_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-objc_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-objcpp_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
-c_link_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-cpp_link_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-objc_link_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
-objcpp_link_args = ['-arch', 'arm64', '-target', 'arm64-apple-ios${DEPLOYMENT_TARGET}-simulator', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
+c_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+cpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+objc_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+objcpp_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-I$STAGE/include']
+c_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
+cpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
+objc_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
+objcpp_link_args = ['-arch', 'arm64', '-target', '$TARGET', '-isysroot', '$SDK_ROOT', '-L$STAGE/lib']
 
 [binaries]
 c = ['$CC']
@@ -307,7 +377,7 @@ cpu = 'arm64'
 endian = 'little'
 EOF
 
-sed "s/system = 'ios'/system = 'darwin'\nkernel = 'xnu'\nsubsystem = 'ios-simulator'/" \
+sed "s/system = 'ios'/system = 'darwin'\nkernel = 'xnu'\nsubsystem = '$SUBSYSTEM'/" \
 	"$IOS_CROSS" > "$DARWIN_CROSS"
 
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
@@ -327,6 +397,8 @@ PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
 	-Dplatforms=egl -Drender-server-mode=thread
 "$MESON" compile -C "$BUILDS/virglrenderer" -j "$JOBS"
 "$MESON" install -C "$BUILDS/virglrenderer"
+install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
+	"$STAGE/include/virgl/virgl_hw.h"
 
 install_framework()
 {
@@ -366,9 +438,15 @@ install_framework GLESv2 \
 	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" \
 	com.kernarium.GLESv2
 
+mkdir -p "$STAGE/share/kernarium/patches/angle" \
+	"$STAGE/share/kernarium/patches/virglrenderer"
+cp "$ANGLE_PATCH" \
+	"$STAGE/share/kernarium/patches/angle/$(basename -- "$ANGLE_PATCH")"
+cp "$VIRGL_PATCH" \
+	"$STAGE/share/kernarium/patches/virglrenderer/$(basename -- "$VIRGL_PATCH")"
 cp "$MANIFEST" "$STAGE/share/kernarium/utm-gpu-sources.tsv"
 cp "$PLATFORM_RECEIPT" \
-	"$STAGE/share/kernarium/ios-simulator-arm64.tsv"
+	"$STAGE/share/kernarium/$RECEIPT_NAME"
 verify_prefix "$STAGE"
 mv "$STAGE" "$PREFIX"
 STAGE=

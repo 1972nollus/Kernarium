@@ -1,0 +1,27 @@
+From d44204893a1725a74cd20b332fbb6f595b0975c3 Mon Sep 17 00:00:00 2001
+From: Lichen Liu <lichenliu@microsoft.com>
+Date: Tue, 5 Nov 2024 21:06:42 +0000
+Subject: [PATCH] Add check for iOS simulator when initializing caps in metal
+
+On the iOS Simulator, supportsFamily:MTLGPUFamilyApple3 can return false even
+though the host Metal device supports the larger varying limits.  Reporting
+only 60 vertex output components is below the OpenGL ES 3.0 minimum of 64 and
+prevents Chromium from creating a WebGL 2 context.
+
+This is a source-compatible backport of upstream ANGLE commit
+d44204893a1725a74cd20b332fbb6f595b0975c3.
+---
+diff --git a/src/libANGLE/renderer/metal/DisplayMtl.mm b/src/libANGLE/renderer/metal/DisplayMtl.mm
+index 0e26f46..0000000 100644
+--- a/src/libANGLE/renderer/metal/DisplayMtl.mm
++++ b/src/libANGLE/renderer/metal/DisplayMtl.mm
+@@ -751,6 +751,6 @@ void DisplayMtl::ensureCapsInitialized() const
+     mNativeCaps.maxVertexOutputComponents = mNativeCaps.maxFragmentInputComponents = 124 - 4;
+ #else
+-    if (supportsAppleGPUFamily(3))
++    if (supportsAppleGPUFamily(3) || TARGET_OS_SIMULATOR)
+     {
+         mNativeCaps.max2DTextureSize          = 16384;
+         mNativeCaps.maxVertexOutputComponents = mNativeCaps.maxFragmentInputComponents = 124;
+-- 
+2.50.1

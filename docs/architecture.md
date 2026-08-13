@@ -63,12 +63,17 @@ interpreter or precompiled gadget engine without entering that path.
 The direct native-VM branch and ELF loader are compiled out of ordinary iOS
 device and Simulator libraries; the shared bridge retains only software-MMU
 entry points there. The opt-in `KernariumRuntime` composition enables the
-existing native bridge and embedded loader only for an arm64 iOS Simulator
-kernel run. It selects the precompiled gadget engine and does not alter the
-supported iOS package graph or authorize executable JIT publication.
-Executable-memory ownership is enforced in source architecture and functional
-JIT publication tests, not by comparing or attributing individual archive
-members.
+existing native bridge and embedded loader for arm64 iOS device and Simulator
+kernel runs. It selects the precompiled gadget engine and does not alter the
+supported iOS package graph or authorize executable JIT publication. On a
+physical device the kernel ELF is a 16 KiB-aligned section of the framework's
+code-signed Mach-O `__TEXT`. The loader reserves the compact fixed kernel
+window and uses `vm_remap` to alias only immutable, relocation-free executable
+ELF pages from that signed mapping; non-executable data and BSS remain ordinary
+anonymous mappings. Simulator and macOS retain their established loader and
+96 TiB kernel boundary. Executable-memory ownership is enforced in source
+architecture and functional JIT publication tests, not by comparing or
+attributing individual archive members.
 
 ## iOS display composition
 
@@ -88,6 +93,14 @@ conversion as a compatibility fallback. The iOS target contains no AppKit,
 CGL, or LibVNCServer dependency. Conversely, the macOS graph continues to
 compile its existing AppKit/CGL/IOSurface native display and VNC providers; it
 does not compile or link the UIKit implementation.
+
+The vhost-user transport owns only connection and queue framing. The GPU and
+Virtio-input devices independently implement their protocol operations over
+that transport. Kernarium registers one absolute touchscreen and one keyboard,
+while UIKit converts safe-area point coordinates and text input to Linux evdev
+events. Networking remains the emulator's existing callback boundary backed
+by the iOS static GLib/libslirp prefix. These iOS owners do not enter the
+macOS application graph.
 
 `architecture-audit` combines four checks. Documentation paths in this file
 are validated by the same target, so a moved contract cannot leave a stale

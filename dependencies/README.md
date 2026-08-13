@@ -33,20 +33,23 @@ pristine 0.9.15 release archive and its canonical unmodified tree hash. There
 is no project-maintained post-release patch layer and no moving branch
 snapshot.
 
-The Kernarium iOS Simulator prototype has a separate graphics prefix at
-`.build/kernarium-gpu-dependencies/ios-simulator-arm64`. It follows UTM's iOS
-graphics composition because upstream desktop libepoxy/virglrenderer releases
-do not provide that Apple mobile loader path. The exact UTM Git commits and
-repositories are recorded in
+The Kernarium iOS prototype has separate graphics prefixes at
+`.build/kernarium-gpu-dependencies/ios-simulator-arm64` and
+`.build/kernarium-gpu-dependencies/ios-device-arm64`. It follows UTM's iOS
+graphics composition because upstream desktop libepoxy/virglrenderer branches
+do not provide the complete Apple mobile loader and native Metal export path.
+The exact UTM Git commits and repositories are recorded in
 [`../Kernarium/dependencies/utm-gpu-sources.tsv`](../Kernarium/dependencies/utm-gpu-sources.tsv),
-and the platform contract is recorded in
-[`../Kernarium/dependencies/ios-simulator-arm64.tsv`](../Kernarium/dependencies/ios-simulator-arm64.tsv).
+and the platform contracts are recorded in
+[`../Kernarium/dependencies/ios-simulator-arm64.tsv`](../Kernarium/dependencies/ios-simulator-arm64.tsv)
+and
+[`../Kernarium/dependencies/ios-device-arm64.tsv`](../Kernarium/dependencies/ios-device-arm64.tsv).
 `Kernarium/scripts/build-ios-gpu-dependencies.sh` performs no network access;
 it accepts clean caller-provided checkouts only when origin and HEAD match,
 copies them to a temporary build root, and publishes the prefix transactionally
 after verifying its receipts and Apple binary shape.
 
-That prefix contains static UTM libepoxy and virglrenderer archives plus the
+Each prefix contains static UTM libepoxy and virglrenderer archives plus the
 two ANGLE dynamic payloads repackaged as `EGL.framework` and
 `GLESv2.framework`. The app embeds both frameworks, while only libepoxy loads
 their APIs; the WebKit-derived GLES image retains its `LC_SUB_CLIENT` contract
@@ -54,6 +57,30 @@ and is not linked directly by the application. CMake never searches ambient
 package prefixes for these libraries. This mobile prefix is not an input to
 the macOS GPU graph, whose authenticated release-source prefix and link policy
 remain unchanged.
+
+The graphics receipts also authenticate two source patches. The ANGLE patch
+backports upstream commit `d44204893a1725a74cd20b332fbb6f595b0975c3`, whose
+Simulator capability correction raises the reported vertex-output limit to the
+OpenGL ES 3 minimum required by Chromium WebGL 2. The virglrenderer patch adds
+the ES 3 renderbuffer multisample path and preserves the existing desktop GL
+behavior. Reviewing the latest upstream lines did not justify wholesale
+updates: current UTM libepoxy remains the maintained iOS loader fork, UTM's
+newer virglrenderer line contains additional iOS/Metal work, and upstream
+virglrenderer still lacks UTM's `vrend_metal` composition. Compatibility is
+therefore advanced through reviewable backports without changing Chromium's
+library lookup or advertising a false GLES version.
+
+Kernarium also has static network prefixes at
+`.build/kernarium-network-dependencies/ios-simulator-arm64` and
+`.build/kernarium-network-dependencies/ios-device-arm64`. Their receipts are
+[`../Kernarium/dependencies/ios-simulator-network-arm64.tsv`](../Kernarium/dependencies/ios-simulator-network-arm64.tsv)
+and
+[`../Kernarium/dependencies/ios-device-network-arm64.tsv`](../Kernarium/dependencies/ios-device-network-arm64.tsv).
+`Kernarium/scripts/build-ios-network-dependencies.sh` verifies and reuses the
+authenticated PCRE2, libffi, proxy-libintl, GLib, and libslirp source trees,
+applies the receipt-pinned iOS GLib availability patch, and publishes a static
+platform prefix transactionally. Neither iOS prefix family is an input to the
+macOS dependency graph.
 
 `build.sh` copies those verified trees into a temporary build area and creates
 only static arm64 libraries under `.build/dependencies/macos-arm64`. Its

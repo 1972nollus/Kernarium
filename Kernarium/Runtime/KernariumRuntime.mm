@@ -2,18 +2,25 @@
 
 #include "KernariumRuntime.h"
 
-#include "in_process_service.hpp"
-#include "protocol.hpp"
+#include "gpu/in_process_service.hpp"
+#include "gpu/protocol.hpp"
+#include "input/virtio/in_process_service.hpp"
 #include "uml/emulator.h"
 
+#import <Foundation/Foundation.h>
+
+#include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,10 +30,24 @@
 #include <vector>
 
 extern "C" {
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+extern const unsigned char uml_elf_start[]
+    __asm("section$start$__TEXT$__uml_elf");
+extern const unsigned char uml_elf_end[]
+    __asm("section$end$__TEXT$__uml_elf");
+#else
 extern const unsigned char uml_elf_start[]
     __asm("section$start$__DATA$__uml_elf");
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
+#endif
+int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
+int uml_slirp_net_irq_fd(void*);
+int uml_slirp_net_read(void*, void*, std::size_t);
+int uml_slirp_net_write(void*, const void*, std::size_t);
+void uml_slirp_net_stop(void*);
+void* uml_slirp_net_create(void) noexcept;
+void uml_slirp_net_destroy(void*) noexcept;
 }
 
 namespace {
@@ -34,6 +55,44 @@ namespace {
 std::atomic_bool runtimeActive;
 std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
+uml::input::virtio::InProcessInputService* activeTouchscreen;
+uml::input::virtio::InProcessInputService* activeKeyboard;
+
+class AppNetwork final {
+public:
+    AppNetwork()
+        : context_(uml_slirp_net_create())
+    {
+        if (context_ == nullptr)
+            throw std::bad_alloc {};
+    }
+
+    ~AppNetwork()
+    {
+        if (context_ != nullptr) {
+            uml_slirp_net_stop(context_);
+            uml_slirp_net_destroy(context_);
+        }
+    }
+
+    AppNetwork(const AppNetwork&) = delete;
+    AppNetwork& operator=(const AppNetwork&) = delete;
+
+    [[nodiscard]] uml_emulator_network_callbacks callbacks() noexcept
+    {
+        return {
+            .struct_size = sizeof(uml_emulator_network_callbacks),
+            .context = context_,
+            .open = uml_slirp_net_open,
+            .irq_fd = uml_slirp_net_irq_fd,
+            .read = uml_slirp_net_read,
+            .write = uml_slirp_net_write,
+        };
+    }
+
+private:
+    void* context_ {};
+};
 
 constexpr std::string_view kdeSystemdBootstrap = R"krn(set -eu
 fail()
@@ -121,6 +180,149 @@ WantedBy=multi-user.target
 KDE_SERVICE
 ln -sf ../kernarium-kde-setup.service \
     /etc/systemd/system/multi-user.target.wants/kernarium-kde-setup.service
+if [ "${KERNARIUM_AQUARIUM:-0}" = 1 ]; then
+    for unit in docker.service docker.socket containerd.service \
+        packagekit.service apt-daily.service apt-daily.timer \
+        apt-daily-upgrade.service apt-daily-upgrade.timer; do
+        ln -sf /dev/null "/etc/systemd/system/$unit"
+    done
+    install -d -m 0755 /var/tmp/kernarium-aquarium-extension
+    cat > /var/tmp/kernarium-aquarium-extension/manifest.json <<'AQUARIUM_MANIFEST'
+{
+  "manifest_version": 3,
+  "name": "Kernarium Aquarium verifier",
+  "version": "1.0",
+  "content_scripts": [{
+    "matches": ["https://webglsamples.org/aquarium/*"],
+    "js": ["verify.js"],
+    "run_at": "document_start"
+  }]
+}
+AQUARIUM_MANIFEST
+    cat > /var/tmp/kernarium-aquarium-extension/verify.js <<'AQUARIUM_SCRIPT'
+(() => {
+  const delay = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const fail = (error) => console.error("UML_AQUARIUM_ERROR|" +
+    String(error && error.stack || error).replace(/\s+/g, " ").trim());
+  const run = async () => {
+    if (document.readyState !== "complete") {
+      await new Promise((resolve) =>
+        addEventListener("load", resolve, {once: true}));
+    }
+    const marker = document.createElement("div");
+    marker.textContent = "KERNARIUM WEBGL WARMUP";
+    marker.style.cssText = [
+      "position:fixed", "right:8px", "top:8px", "z-index:2147483647",
+      "padding:12px", "background:#ff00ff", "color:#00ff00",
+      "font:20px monospace"
+    ].join(";");
+    document.documentElement.appendChild(marker);
+
+    let positiveReadings = 0;
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline && positiveReadings < 5) {
+      const message = document.getElementById("msgContainer")?.textContent || "";
+      if (message.includes("does not appear your computer supports WebGL")) {
+        throw new Error(message);
+      }
+      const fps = Number.parseFloat(
+        document.getElementById("fps")?.textContent || "");
+      positiveReadings = Number.isFinite(fps) && fps > 0
+        ? positiveReadings + 1 : 0;
+      await delay(1000);
+    }
+    if (positiveReadings < 5)
+      throw new Error("Aquarium did not produce positive FPS readings");
+
+    const canvas = document.getElementById("canvas");
+    const gl = canvas?.getContext("webgl2");
+    if (!gl || gl.isContextLost())
+      throw new Error("WebGL 2 context unavailable or lost");
+
+    const samples = [];
+    marker.textContent = "KERNARIUM WEBGL MEASURING";
+    for (let index = 0; index < 10; ++index) {
+      await delay(1000);
+      const fps = Number.parseFloat(
+        document.getElementById("fps")?.textContent || "");
+      if (!Number.isFinite(fps) || fps <= 0 || gl.isContextLost())
+        throw new Error("invalid live WebGL FPS sample");
+      samples.push(fps);
+    }
+    const average = samples.reduce((sum, value) => sum + value, 0) /
+      samples.length;
+    const extension = gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = extension
+      ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL)
+      : gl.getParameter(gl.RENDERER);
+    marker.textContent = average.toFixed(2) + " AVG FPS";
+    console.log("UML_AQUARIUM_OK|AVG_FPS=" + average.toFixed(3) +
+      "|MIN_FPS=" + Math.min(...samples).toFixed(3) +
+      "|MAX_FPS=" + Math.max(...samples).toFixed(3) +
+      "|SAMPLES=" + samples.length + "|FISH=500" +
+      "|CANVAS=" + canvas.width + "x" + canvas.height +
+      "|VERSION=" + gl.getParameter(gl.VERSION) +
+      "|RENDERER=" + renderer);
+  };
+  run().catch(fail);
+})();
+AQUARIUM_SCRIPT
+    cat > /usr/local/libexec/kernarium-chromium-aquarium <<'AQUARIUM_LAUNCHER'
+#!/bin/sh
+set -eu
+runtime="/run/user/$(id -u uml)"
+remaining=600
+while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
+    if [ "$remaining" -le 0 ]; then
+        echo "UML_CHROMIUM_ERROR: KDE display did not become ready"
+        exit 1
+    fi
+    remaining=$((remaining - 1))
+    sleep 1
+done
+xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
+    head -n 1)"
+if [ -z "$xauthority" ]; then
+    echo "UML_CHROMIUM_ERROR: Xauthority cookie was not found"
+    exit 1
+fi
+chromium --version || true
+exec runuser -u uml -- env \
+    HOME=/home/uml DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 \
+    XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+    chromium --no-first-run --disable-crash-reporter \
+    --enable-logging=stderr --start-maximized --use-gl=angle \
+    --use-angle=gles-egl --ignore-gpu-blocklist \
+    --user-data-dir=/tmp/chromium-aquarium \
+    --disable-extensions-except=/var/tmp/kernarium-aquarium-extension \
+    --load-extension=/var/tmp/kernarium-aquarium-extension \
+    'https://webglsamples.org/aquarium/aquarium.html?numFish=500'
+AQUARIUM_LAUNCHER
+    chmod 0755 /usr/local/libexec/kernarium-chromium-aquarium
+    cat > /etc/systemd/system/kernarium-chromium-aquarium.service <<'AQUARIUM_SERVICE'
+[Unit]
+Description=Kernarium Chromium WebGL Aquarium verification
+After=display-manager.service network-online.target
+Wants=display-manager.service network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/kernarium-chromium-aquarium
+TasksMax=infinity
+StandardInput=null
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=graphical.target
+AQUARIUM_SERVICE
+    install -d -m 0755 /etc/systemd/system/graphical.target.wants
+    ln -sf ../kernarium-chromium-aquarium.service \
+        /etc/systemd/system/graphical.target.wants/kernarium-chromium-aquarium.service
+    echo "Kernarium Aquarium verification enabled"
+fi
 echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
 if [ -x /lib/systemd/systemd ]; then
     exec /lib/systemd/systemd
@@ -167,9 +369,31 @@ public:
         const ActiveEmulatorRegistration&) = delete;
 };
 
+class ActiveInputRegistration final {
+public:
+    ActiveInputRegistration(
+        uml::input::virtio::InProcessInputService& touchscreen,
+        uml::input::virtio::InProcessInputService& keyboard)
+    {
+        std::lock_guard lock(activeEmulatorMutex);
+        activeTouchscreen = &touchscreen;
+        activeKeyboard = &keyboard;
+    }
+
+    ~ActiveInputRegistration()
+    {
+        std::lock_guard lock(activeEmulatorMutex);
+        activeTouchscreen = nullptr;
+        activeKeyboard = nullptr;
+    }
+
+    ActiveInputRegistration(const ActiveInputRegistration&) = delete;
+    ActiveInputRegistration& operator=(const ActiveInputRegistration&) = delete;
+};
+
 class ConsoleBridge final {
 public:
-    ConsoleBridge()
+    explicit ConsoleBridge(bool aquarium)
     {
         int descriptors[2] {-1, -1};
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
@@ -195,7 +419,7 @@ public:
                 std::string(std::strerror(error)));
         }
         try {
-            relay_ = std::thread([host] {
+            relay_ = std::thread([host, aquarium] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
                 bool bootstrapDelivered = false;
@@ -228,7 +452,10 @@ public:
                             if (observed.size() > 1024U)
                                 observed.erase(0, observed.size() - 1024U);
                             if (observed.find(shellReady) != std::string::npos) {
-                                std::string bootstrap {kdeSystemdBootstrap};
+                                std::string bootstrap;
+                                if (aquarium)
+                                    bootstrap = "KERNARIUM_AQUARIUM=1\n";
+                                bootstrap.append(kdeSystemdBootstrap);
                                 bootstrap.push_back('\n');
                                 std::string_view remaining {bootstrap};
                                 while (!remaining.empty()) {
@@ -330,10 +557,19 @@ extern "C" int kernarium_runtime_run(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+        const NSUInteger hostProcessorCount =
+            [NSProcessInfo processInfo].processorCount;
+        const uint32_t guestProcessorCount = hostProcessorCount == 0
+            ? 1U : static_cast<uint32_t>(hostProcessorCount);
+#else
+        constexpr uint32_t guestProcessorCount = 4;
+#endif
         std::printf(
-            "Kernarium: booting %ux%u guest with mem=2G ncpus=4\n",
+            "Kernarium: booting %ux%u guest with mem=2G ncpus=%u\n",
             width,
-            height);
+            height,
+            guestProcessorCount);
 
         uml::gpu::InProcessGpuService gpuService(
             uml::gpu::InProcessGpuOptions {
@@ -342,19 +578,35 @@ extern "C" int kernarium_runtime_run(
                 .height = height,
                 .nativeView = (__bridge void*)view,
             });
-        ConsoleBridge consoleBridge;
+        uml::input::virtio::InProcessInputService touchscreen(
+            uml::input::virtio::DeviceKind::touchscreen, width, height);
+        uml::input::virtio::InProcessInputService keyboard(
+            uml::input::virtio::DeviceKind::keyboard, width, height);
+        AppNetwork network;
+        auto networkCallbacks = network.callbacks();
+        const char* aquariumEnvironment =
+            std::getenv("KERNARIUM_WEBGL_AQUARIUM");
+        const bool aquarium = aquariumEnvironment != nullptr &&
+            aquariumEnvironment[0] != '\0' &&
+            aquariumEnvironment[0] != '0';
+        ConsoleBridge consoleBridge {aquarium};
+        if (aquarium)
+            std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);
         std::vector<std::string> arguments {
             "uml-kernarium",
             "--execution-engine=gadgets",
             "mem=2G",
-            "ncpus=4",
+            "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",
             "console=tty0",
             "systemd.unit=graphical.target",
             consoleBridge.kernelArgument(),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
                 std::to_string(uml::gpu::protocol::virtioGpuDeviceId),
-            "uml_vnc_input." + gpuService.takeInputConnectionName(),
+            "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +
+                std::to_string(uml::input::virtio::protocol::deviceId),
+            "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
+                std::to_string(uml::input::virtio::protocol::deviceId),
         };
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
@@ -364,7 +616,7 @@ extern "C" int kernarium_runtime_run(
             .kernel_image_size = static_cast<std::size_t>(
                 uml_elf_end - uml_elf_start),
             .native_kernel_entry = nullptr,
-            .network = nullptr,
+            .network = &networkCallbacks,
         };
         uml_emulator* created = nullptr;
         const int createResult = uml_emulator_create(&config, &created);
@@ -382,6 +634,8 @@ extern "C" int kernarium_runtime_run(
             pointers.push_back(argument.c_str());
         int result = 0;
         {
+            ActiveInputRegistration inputRegistration {
+                touchscreen, keyboard};
             ActiveEmulatorRegistration registration {emulator.get()};
             result = uml_emulator_run(
                 emulator.get(),
@@ -405,4 +659,57 @@ extern "C" void kernarium_runtime_request_stop(void)
     std::lock_guard lock(activeEmulatorMutex);
     if (activeEmulator != nullptr)
         uml_emulator_request_stop(activeEmulator);
+}
+
+extern "C" void kernarium_runtime_send_touch(
+    uint32_t x,
+    uint32_t y,
+    int pressed)
+{
+    namespace input = uml::input::virtio::protocol;
+    const std::array events {
+        input::InputEvent {
+            .type = input::eventAbsolute,
+            .code = input::absoluteX,
+            .value = static_cast<std::int32_t>(x),
+        },
+        input::InputEvent {
+            .type = input::eventAbsolute,
+            .code = input::absoluteY,
+            .value = static_cast<std::int32_t>(y),
+        },
+        input::InputEvent {
+            .type = input::eventKey,
+            .code = input::buttonTouch,
+            .value = pressed != 0 ? 1 : 0,
+        },
+        input::InputEvent {
+            .type = input::eventSynchronize,
+            .code = input::synchronizeReport,
+            .value = 0,
+        },
+    };
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeTouchscreen != nullptr)
+        activeTouchscreen->send(events);
+}
+
+extern "C" void kernarium_runtime_send_key(uint16_t code, int pressed)
+{
+    namespace input = uml::input::virtio::protocol;
+    const std::array events {
+        input::InputEvent {
+            .type = input::eventKey,
+            .code = code,
+            .value = pressed != 0 ? 1 : 0,
+        },
+        input::InputEvent {
+            .type = input::eventSynchronize,
+            .code = input::synchronizeReport,
+            .value = 0,
+        },
+    };
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeKeyboard != nullptr)
+        activeKeyboard->send(events);
 }

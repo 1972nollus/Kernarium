@@ -24,14 +24,35 @@ to the shared CPU scanout conversion used by VNC. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 
-The opt-in Kernarium iOS Simulator runtime uses the same Virtio-GPU device and
-virglrenderer command path. Its platform display is UIKit/MetalKit: the pinned
+The opt-in Kernarium iOS device and Simulator runtime uses the same Virtio-GPU
+device and virglrenderer command path. Its platform display is UIKit/MetalKit: the pinned
 UTM libepoxy build loads EGL and GLES from ANGLE frameworks, ANGLE renders
 through Metal, and the native resource texture is sampled directly into the
 application-provided `MTKView`. VNC is deliberately not built for iOS.
 Unsupported resource layouts use the shared CPU scanout fallback. Platform
 source selection is exclusive, so the existing macOS AppKit, CGL, IOSurface,
 and LibVNCServer implementation is unchanged.
+
+Kernarium also composes two in-process Virtio-input services over the generic
+vhost-user transport: an absolute touchscreen whose coordinate maxima match
+the safe-area Metal view and an evdev keyboard fed by UIKit text input. Its
+network callback is the ordinary SLiRP provider compiled against the private
+iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
+the managed guest run is active and restores it when that run finishes.
+Simulator runs retain four guest CPUs. Physical-device runs derive `ncpus=`
+from `NSProcessInfo.processorCount`, matching the device's physical CPU-core
+count.
+
+Physical-device Kernarium builds carry the complete compact-layout kernel ELF
+in a 16 KiB-aligned `__TEXT,__uml_elf` section of `KernariumRuntime.framework`.
+The standard Xcode framework signature covers that storage. The embedded ELF
+loader verifies the carrier byte-for-byte, reserves the fixed 48--56 GiB
+kernel window, and aliases immutable executable pages from the already signed
+Mach-O mapping with `vm_remap`; it never copies code into anonymous memory or
+publishes RW pages as executable. ELF data and BSS retain the ordinary copy
+path, and relocations into signed executable pages are rejected. Simulator
+keeps the established `__DATA` carrier and 96 TiB layout, while the macOS
+AppKit/CGL/IOSurface/Metal, VNC, loader, and address-space paths are unchanged.
 
 Each guest task-carrier runtime owns its engine adapters for the life of its
 host thread. JIT adapters are lightweight: a JIT-capable emulator run retains

@@ -173,6 +173,22 @@
       }
     },
     {
+      "name": "kernarium-ios-device",
+      "displayName": "Kernarium iOS device prototype",
+      "inherits": "ios-device",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_KERNARIUM_RUNTIME": true,
+        "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-device-arm64",
+        "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-device-arm64",
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-ios-device-16k/linux"
+      }
+    },
+    {
       "name": "kernarium-ios-simulator",
       "displayName": "Kernarium iOS Simulator prototype",
       "inherits": "ios-simulator",
@@ -180,10 +196,11 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "UML_BUILD_KERNEL_RUNNER": true,
-        "UML_BUILD_NETWORK_PROVIDER": false,
+        "UML_BUILD_NETWORK_PROVIDER": true,
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-simulator-arm64",
+        "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-simulator-arm64",
         "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/linux"
       }
     }
@@ -207,12 +224,12 @@
     {
       "name": "gpu-unit-test-binaries",
       "configurePreset": "macos-unit-gpu",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "architecture-audit"]
     },
     {
       "name": "gpu-unit-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-asan-ubsan",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "architecture-audit"]
     },
     {
       "name": "macos-integration",
@@ -258,6 +275,11 @@
       "name": "ios-simulator",
       "configurePreset": "ios-simulator",
       "targets": ["uml_emulator", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-device",
+      "configurePreset": "kernarium-ios-device",
+      "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {
       "name": "kernarium-ios-simulator",

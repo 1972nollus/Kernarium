@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-if(NOT UML_APPLE_PLATFORM STREQUAL "ios-simulator" OR
-   NOT UML_BUILD_KERNEL_RUNNER OR NOT UML_BUILD_GPU)
+if(NOT UML_APPLE_PLATFORM MATCHES "^ios" OR
+   NOT UML_BUILD_KERNEL_RUNNER OR NOT UML_BUILD_GPU OR
+   NOT UML_BUILD_NETWORK_PROVIDER)
     message(FATAL_ERROR
-        "KernariumRuntime requires the iOS Simulator kernel runner and GPU")
+        "KernariumRuntime requires the iOS runner, GPU, and network")
 endif()
 
 set(UML_KERNARIUM_KERNEL_IMAGE
@@ -22,10 +23,16 @@ target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/api/include
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        ${PROJECT_SOURCE_DIR}/darwin/device
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/input/virtio
+        ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
 target_link_libraries(KernariumRuntime PRIVATE
     UML::Emulator
+    UML::GuestPageConfiguration
     UML::GpuDevice
+    UML::VirtioInput
+    UML::NetworkProvider
     UML::JitProfileConfiguration
     "-framework Foundation"
     "-framework Metal"
@@ -36,9 +43,20 @@ target_compile_options(KernariumRuntime PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     -Wall -Wextra -Werror)
 target_link_options(KernariumRuntime PRIVATE
-    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
-    "LINKER:-sectcreate,__DATA,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}")
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+if(UML_APPLE_PLATFORM STREQUAL "ios")
+    # The framework code signature covers __TEXT pages. The loader aliases
+    # the ELF's immutable executable pages from this aligned carrier into the
+    # kernel's fixed linked window instead of creating anonymous code.
+    target_link_options(KernariumRuntime PRIVATE
+        "LINKER:-sectcreate,__TEXT,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}"
+        "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
+else()
+    target_link_options(KernariumRuntime PRIVATE
+        "LINKER:-sectcreate,__DATA,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}")
+endif()
 add_dependencies(KernariumRuntime uml_dependency_prefix_verify)
+add_dependencies(KernariumRuntime uml_ios_network_prefix_verify)
 set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
     "${UML_KERNARIUM_KERNEL_IMAGE}")
 set_target_properties(KernariumRuntime PROPERTIES

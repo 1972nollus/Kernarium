@@ -26,7 +26,7 @@
 
 namespace {
 
-constexpr std::uintptr_t guest_address_limit = 0x6000'0000'0000ULL;
+constexpr std::uintptr_t guest_address_limit = DARWIN_UML_GUEST_ADDRESS_LIMIT;
 
 enum class AddressRange : std::uint8_t {
 	guest,

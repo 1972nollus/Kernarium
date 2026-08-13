@@ -2,8 +2,15 @@
 
 include_guard(GLOBAL)
 
+if(UML_APPLE_PLATFORM STREQUAL "ios")
+    set(_uml_ios_gpu_default_prefix
+        "${PROJECT_SOURCE_DIR}/.build/kernarium-gpu-dependencies/ios-device-arm64")
+else()
+    set(_uml_ios_gpu_default_prefix
+        "${PROJECT_SOURCE_DIR}/.build/kernarium-gpu-dependencies/ios-simulator-arm64")
+endif()
 set(UML_IOS_GPU_DEPENDENCY_PREFIX
-    "${PROJECT_SOURCE_DIR}/.build/kernarium-gpu-dependencies/ios-simulator-arm64"
+    "${_uml_ios_gpu_default_prefix}"
     CACHE PATH
     "Verified UTM ANGLE/libepoxy/virglrenderer prefix for Kernarium")
 
@@ -52,6 +59,7 @@ add_custom_target(uml_dependency_prefix_verify
     COMMAND "${CMAKE_COMMAND}"
         -DPREFIX=${UML_IOS_GPU_DEPENDENCY_PREFIX}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DPLATFORM=${UML_APPLE_PLATFORM}
         -P ${CMAKE_CURRENT_LIST_DIR}/VerifyIosGpuPrefix.cmake
     DEPENDS ${_uml_ios_gpu_inputs}
     COMMENT "Checking the pinned Kernarium iOS GPU dependency prefix"

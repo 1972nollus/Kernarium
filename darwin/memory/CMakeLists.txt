@@ -47,10 +47,10 @@ target_include_directories(uml_memory_vm_bridge PRIVATE
 target_compile_features(uml_memory_vm_bridge PUBLIC cxx_std_20)
 target_compile_options(uml_memory_vm_bridge PRIVATE -Wall -Wextra -Werror)
 set(_uml_memory_has_native_vm ${UML_TARGET_MACOS})
-if(UML_APPLE_PLATFORM STREQUAL "ios-simulator" AND
+if(UML_APPLE_PLATFORM MATCHES "^ios" AND
    UML_BUILD_KERNEL_RUNNER)
     # The opt-in Kernarium prototype runs the same native UML kernel mapping
-    # contract as macOS. Ordinary iOS packages keep the software-MMU-only
+    # contract as macOS. Ordinary iOS libraries keep the software-MMU-only
     # boundary because they do not enable the embedded ELF runner.
     set(_uml_memory_has_native_vm ON)
 endif()

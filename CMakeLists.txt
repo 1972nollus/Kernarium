@@ -35,16 +35,11 @@ if(UML_APPLE_PLATFORM STREQUAL "macos")
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
     option(UML_BUILD_KERNEL_RUNNER
            "Build the embedded ELF kernel runner for the macOS CLI" ON)
-elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+elseif(UML_APPLE_PLATFORM MATCHES "^ios")
     set(UML_TARGET_MACOS OFF)
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
     option(UML_BUILD_KERNEL_RUNNER
-        "Build the prototype embedded ELF runner for iOS Simulator" OFF)
-else()
-    set(UML_TARGET_MACOS OFF)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
-    set(UML_BUILD_KERNEL_RUNNER OFF CACHE BOOL
-        "The transitional ELF runner is available only on macOS" FORCE)
+        "Build the prototype embedded ELF runner for Kernarium on iOS" OFF)
 endif()
 
 option(UML_BUILD_UNIT_TESTS
@@ -80,7 +75,7 @@ set(UML_DEPENDENCY_PREFIX
     CACHE PATH "Private prefix containing source-built host dependencies")
 option(UML_BUILD_GPU "Build the host GPU/display provider" ${UML_TARGET_MACOS})
 option(UML_BUILD_KERNARIUM_RUNTIME
-    "Build the iOS Simulator Kernarium application framework" OFF)
+    "Build the Kernarium application framework for iOS" OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
@@ -136,12 +131,26 @@ else()
     set(UML_GUEST_PAGE_SIZE 4096)
     set(UML_GUEST_PAGE_SHIFT 12)
 endif()
+if(UML_APPLE_PLATFORM STREQUAL "ios")
+    # Physical iOS processes have a 64 GiB native VM ceiling even with the
+    # extended-virtual-addressing entitlement.  The device kernel profile
+    # places its native kernel window at 48--56 GiB; guest userspace remains
+    # below this boundary in the software MMU.  macOS and Simulator retain
+    # their established 96 TiB boundary.
+    set(UML_GUEST_ADDRESS_LIMIT 0x0000000c00000000ULL)
+    set(UML_SIGNED_KERNEL_CARRIER 1)
+else()
+    set(UML_GUEST_ADDRESS_LIMIT 0x0000600000000000ULL)
+    set(UML_SIGNED_KERNEL_CARRIER 0)
+endif()
 add_library(uml_guest_page_configuration INTERFACE)
 add_library(UML::GuestPageConfiguration ALIAS
     uml_guest_page_configuration)
 target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
-    DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT})
+    DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT}
+    DARWIN_UML_GUEST_ADDRESS_LIMIT=${UML_GUEST_ADDRESS_LIMIT}
+    DARWIN_UML_SIGNED_KERNEL_CARRIER=${UML_SIGNED_KERNEL_CARRIER})
 
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR
    UML_BUILD_TOOLING_TESTS)
@@ -152,12 +161,17 @@ if(UML_TARGET_MACOS AND (UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER))
     add_subdirectory(dependencies)
 endif()
 
-if(UML_BUILD_GPU AND NOT UML_TARGET_MACOS)
-    if(NOT UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+if((UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER) AND NOT UML_TARGET_MACOS)
+    if(NOT UML_APPLE_PLATFORM MATCHES "^ios")
         message(FATAL_ERROR
-            "The UIKit/ANGLE GPU prototype currently supports iOS Simulator only")
+            "The Kernarium GPU and network providers require an iOS target")
     endif()
-    include(Kernarium/Runtime/cmake/IosGpuDependencies.cmake)
+    if(UML_BUILD_GPU)
+        include(Kernarium/Runtime/cmake/IosGpuDependencies.cmake)
+    endif()
+    if(UML_BUILD_NETWORK_PROVIDER)
+        include(Kernarium/Runtime/cmake/IosNetworkDependencies.cmake)
+    endif()
 endif()
 
 if(UML_BUILD_CLI)

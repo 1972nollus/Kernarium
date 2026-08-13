@@ -1,0 +1,89 @@
+From 6370a15621b336c0b029215ed493e3d742fc7e01 Mon Sep 17 00:00:00 2001
+From: linux-um-darwin patch replay <noreply@linux-um-darwin.invalid>
+Date: Thu, 13 Aug 2026 11:00:58 +0900
+Subject: [PATCH 15/15] uml: add compact iOS device address profile
+
+Physical iOS processes cannot place the native UML kernel at the standard
+96 TiB boundary. Add an explicit compact layout with a 32 GiB guest task
+range and an 8 GiB native kernel window from 48 to 56 GiB, while retaining
+the standard macOS and Simulator layout as the default.
+---
+ arch/um/include/asm/processor-generic.h |  2 +-
+ arch/um/kernel/um_arch.c                | 12 ++++++-----
+ arch/um/os-Darwin/skas/process.c        |  6 ++++--
+ 3 files changed, 12 insertions(+), 8 deletions(-)
+diff --git a/arch/um/include/asm/processor-generic.h b/arch/um/include/asm/processor-generic.h
+index dfcbfa025..9e9f2c7f1 100644
+--- a/arch/um/include/asm/processor-generic.h
++++ b/arch/um/include/asm/processor-generic.h
+@@ -71,7 +71,7 @@ extern unsigned long stacksizelim;
+  * above that host reservation.  Linux still owns the guest virtual address
+  * space; the Darwin shadow-MMU maps these addresses into this process.
+  */
+-#define TASK_UNMAPPED_BASE	(0x100000000000UL)
++#define TASK_UNMAPPED_BASE	(UML_DARWIN_TASK_UNMAPPED_BASE)
+ #else
+ #define TASK_UNMAPPED_BASE	(0x40000000)
+ #endif
+diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
+index 4e2a98df7..9bf203871 100644
+--- a/arch/um/kernel/um_arch.c
++++ b/arch/um/kernel/um_arch.c
+@@ -307,7 +307,7 @@ static unsigned long __init get_top_address(char **envp)
+ 	 * mappings are capped below the kernel separately.
+ 	 */
+ 	(void)envp;
+-	return 0x700000000000UL;
++	return UML_DARWIN_HOST_TASK_SIZE;
+ #else
+ 	unsigned long top_addr = (unsigned long) &top_addr;
+ 	int i;
+@@ -356,16 +356,18 @@ int __init linux_main(int argc, char **argv, char **envp)
+ 	task_size = host_task_size;
+ #ifdef UML_HOST_DARWIN
+ 	/* Keep every same-process guest mapping below the kernel ELF window. */
+-	task_size = 0x400000000000UL;
++	task_size = UML_DARWIN_TASK_SIZE;
+ #endif
+ 	if (task_size > (unsigned long long) PTRS_PER_PGD * PGDIR_SIZE)
+ 		task_size = PTRS_PER_PGD * PGDIR_SIZE;
+ 
+-	/*
+-	 * TASK_SIZE needs to be PGDIR_SIZE aligned or else exit_mmap craps
+-	 * out
++	/* Keep the legacy whole-PGD boundary where the host has room for it. The
++	 * compact iOS profile deliberately uses one partially populated top-level
++	 * entry; USER_PTRS_PER_PGD rounds that entry count up.
+ 	 */
++#if !defined(UML_HOST_DARWIN) || UML_DARWIN_ALIGN_TASK_SIZE_TO_PGDIR
+ 	task_size = task_size & PGDIR_MASK;
++#endif
+ 
+ 	/* OS sanity checks that need to happen before the kernel runs */
+ 	os_early_checks();
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index 8591d5a58..b7d6e18e8 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -1060,7 +1060,8 @@ void userspace(struct uml_pt_regs *registers)
+ 			 * into the shadow MMU before asking Linux to resolve a real
+ 			 * guest page fault.
+ 			 */
+-			if (fault >= 4096 && fault < 0x600000000000UL) {
++			if (fault >= 4096 &&
++			    fault < UML_DARWIN_GUEST_ADDRESS_LIMIT) {
+ 				if (static_dispatch_trace_enabled())
+ 					os_warn("Darwin static fault sync begin address=%#lx execute=%d write=%d\n",
+ 						fault, FAULT_EXECUTE(registers->faultinfo),
+@@ -1105,7 +1106,8 @@ void userspace(struct uml_pt_regs *registers)
+ 			}
+ 			segv(registers->faultinfo, UPT_IP(registers), 1,
+ 			     registers, NULL);
+-			if (fault >= 4096 && fault < 0x600000000000UL) {
++			if (fault >= 4096 &&
++			    fault < UML_DARWIN_GUEST_ADDRESS_LIMIT) {
+ 				int write = FAULT_WRITE(registers->faultinfo);
+ 
+ 				if (current_mm_prefault_host_slot(fault, write) < 0)
+-- 
+2.50.1 (Apple Git-155)

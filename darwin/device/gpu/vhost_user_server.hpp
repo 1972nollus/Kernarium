@@ -3,8 +3,8 @@
 
 #include "protocol.hpp"
 #include "unique_descriptor.hpp"
+#include "vhost_user_device.hpp"
 #include "vhost_user_message.hpp"
-#include "virtio_gpu_device.hpp"
 #include "display.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
@@ -32,6 +32,8 @@ public:
         uml::input::vnc::VncInputSink inputSink = {},
         DisplayMode displayMode = DisplayMode::vnc,
         void* nativeView = nullptr);
+    explicit VhostUserServer(
+        std::unique_ptr<uml::virtio::VhostUserDevice> device);
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
@@ -113,7 +115,7 @@ private:
     std::filesystem::path socketPath_;
     std::string vncBindAddress_;
     std::unique_ptr<Display> display_;
-    VirtioGpuDevice gpu_;
+    std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::vector<Mapping> mappings_;
     std::array<Queue, protocol::gpuQueueCount> queues_ {};

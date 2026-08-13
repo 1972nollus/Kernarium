@@ -1,3 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 path	topic_orders	rationale
+arch/um/include/asm/processor-generic.h	0001,0015	The shared task-layout contract remains in topic 0001 while topic 0015 makes its Darwin unmapped base selectable with the compact physical-iOS profile.
+arch/um/kernel/um_arch.c	0004,0015	The execution core owns Darwin task-size setup while topic 0015 selects the compact physical-iOS task and host ceilings as one independently droppable profile.
+arch/um/os-Darwin/skas/process.c	0007,0015	The Darwin host implementation owns fault dispatch while topic 0015 keeps its guest-address test synchronized with the compact physical-iOS kernel boundary.
 arch/um/drivers/virtio_uml.c	0010,0014	Darwin vhost-user transport support remains in topic 0010 while the generic 64-bit DMA-mask correction stays independently reviewable and droppable as topic 0014.

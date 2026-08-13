@@ -40,6 +40,10 @@ historical sections as history.
   READMEs.
 - Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
   targets are owned by `cmake/toolchains/Apple.cmake`.
+- Darwin UML kernels default to the `standard` 96 TiB macOS/Simulator address
+  layout. Build the physical-iOS kernel with
+  `kernel/build-kernel.sh --address-space ios-device`; its compact layout owns
+  32 GiB of guest userspace and an 8 GiB native kernel window at 48--56 GiB.
 - There is no repository-wide formatter. Follow adjacent formatting, retain
   SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
   and avoid unrelated formatting churn.
@@ -324,9 +328,16 @@ Executable-memory policy:
 - Only `darwin/cpu/arm64/jit/jit_arena.cpp` owns executable allocation,
   RW-to-RX publication, JIT write protection, and instruction-cache
   publication.
-- Direct native VM and ELF-loader paths are macOS-only. Keep the source
-  architecture audit that rejects executable-memory primitives outside the
-  JIT arena, and keep the supported iOS package/consumer builds green.
+- Direct native VM and ELF-loader paths are macOS-only in the general library
+  graph. The opt-in Kernarium composition also enables them for its embedded
+  iOS kernel. On physical iOS, the kernel ELF must remain in the aligned,
+  normally code-signed framework `__TEXT` carrier; the loader may alias only
+  immutable executable pages from that mapping and must reject relocations
+  into them. Do not replace this with anonymous executable pages, RW-to-RX
+  publication, debugger-only behavior, or a JIT entitlement. Simulator and
+  macOS retain their standard address layout and established loader behavior.
+  Keep the source architecture audit and supported iOS package/consumer builds
+  green.
 
 ## Protected correctness and performance structures
 

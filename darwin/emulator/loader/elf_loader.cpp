@@ -20,6 +20,15 @@
 
 namespace {
 
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+extern "C" {
+extern const unsigned char uml_signed_elf_start[]
+	__asm("section$start$__TEXT$__uml_elf");
+extern const unsigned char uml_signed_elf_end[]
+	__asm("section$end$__TEXT$__uml_elf");
+}
+#endif
+
 struct LoadedSegment final {
 	uintptr_t begin{};
 	uintptr_t end{};
@@ -104,6 +113,31 @@ private:
 {
 	return offset <= image_size && length <= image_size - offset;
 }
+
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+[[nodiscard]] int remap_signed_executable(uintptr_t destination,
+	size_t length, const unsigned char *source)
+{
+	vm_address_t target = destination;
+	vm_prot_t current_protection = VM_PROT_NONE;
+	vm_prot_t maximum_protection = VM_PROT_NONE;
+	const kern_return_t result = vm_remap(mach_task_self(), &target,
+		length, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
+		reinterpret_cast<vm_address_t>(source), FALSE,
+		&current_protection, &maximum_protection, VM_INHERIT_NONE);
+	if (result != KERN_SUCCESS || target != destination ||
+	    (current_protection & (VM_PROT_READ | VM_PROT_EXECUTE)) !=
+		(VM_PROT_READ | VM_PROT_EXECUTE) ||
+	    (maximum_protection & VM_PROT_EXECUTE) == 0) {
+		fprintf(stderr,
+			"UML ELF: cannot alias signed kernel text at %#lx: %s\n",
+			static_cast<unsigned long>(destination),
+			mach_error_string(result));
+		return -1;
+	}
+	return 0;
+}
+#endif
 
 [[nodiscard]] bool loaded_range_inside(
 	const std::vector<LoadedSegment> &segments, uintptr_t address,
@@ -401,6 +435,28 @@ private:
 	return 0;
 }
 
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+[[nodiscard]] int reject_signed_text_relocations(
+	const uml_elf64_rela *relocations, size_t count, uintptr_t minimum,
+	size_t page_size, const std::vector<unsigned char> &page_protections)
+{
+	for (size_t index = 0; index < count; ++index) {
+		uintptr_t destination;
+		if (!runtime_address(0, relocations[index].offset, destination) ||
+		    destination < minimum)
+			continue;
+		const auto page = (destination - minimum) / page_size;
+		if (page < page_protections.size() &&
+		    (page_protections[page] & PROT_EXEC) != 0) {
+			fprintf(stderr,
+				"UML ELF: relocation targets immutable signed text\n");
+			return -1;
+		}
+	}
+	return 0;
+}
+#endif
+
 [[nodiscard]] int run_elf(const void *image, size_t image_size, int argc,
 	char **argv, char **envp)
 {
@@ -429,6 +485,17 @@ private:
 	const auto *programs = reinterpret_cast<const uml_elf64_phdr *>(
 		bytes + header->phoff);
 	const size_t page_size = static_cast<size_t>(getpagesize());
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+	const auto signed_image_size = static_cast<size_t>(
+		uml_signed_elf_end - uml_signed_elf_start);
+	if (reinterpret_cast<uintptr_t>(uml_signed_elf_start) % page_size != 0 ||
+	    signed_image_size != image_size ||
+	    memcmp(uml_signed_elf_start, image, image_size) != 0) {
+		fprintf(stderr,
+			"UML ELF: image does not match the signed kernel carrier\n");
+		return 126;
+	}
+#endif
 	uintptr_t minimum = UINTPTR_MAX;
 	uintptr_t maximum = 0;
 	std::vector<LoadedSegment> segments;
@@ -470,7 +537,10 @@ private:
 
 	/* A non-fixed hint never replaces an existing host mapping. If Darwin
 	 * chooses another address, release it and fail because the UML kernel's
-	 * linked physical/virtual layout cannot be biased safely. */
+	 * linked physical/virtual layout cannot be biased safely. On physical iOS,
+	 * executable pages are later replaced with aliases of the framework's
+	 * immutable, code-signed __TEXT carrier; no anonymous page is made code.
+	 */
 	const size_t reservation_length = maximum - minimum;
 	void *mapped = mmap(reinterpret_cast<void *>(minimum), reservation_length,
 		PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -497,15 +567,42 @@ private:
 		(void)checked_add(start, program.memsz, data_end);
 		(void)align_up(data_end, page_size, end);
 		start = align_down(start, page_size);
-		if (mprotect(reinterpret_cast<void *>(start), end - start,
-			PROT_READ | PROT_WRITE) != 0) {
-			perror("UML ELF mprotect load");
-			return 126;
+
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+		if ((program.flags & UML_PF_X) != 0U) {
+			uintptr_t file_end;
+			uintptr_t source_end;
+			if ((program.flags & UML_PF_W) != 0U ||
+			    program.filesz != program.memsz ||
+			    (program.offset & (page_size - 1U)) !=
+				(program.vaddr & (page_size - 1U)) ||
+			    !checked_add(static_cast<uintptr_t>(program.offset),
+				program.filesz, file_end) ||
+			    !align_up(file_end, page_size, source_end)) {
+				fprintf(stderr,
+					"UML ELF: signed text segment is not immutable\n");
+				return 126;
+			}
+			const auto source_begin = align_down(
+				static_cast<uintptr_t>(program.offset), page_size);
+			if (source_end > image_size || source_end - source_begin !=
+				end - start ||
+			    remap_signed_executable(start, end - start,
+				uml_signed_elf_start + source_begin) != 0)
+				return 126;
+		} else
+#endif
+		{
+			if (mprotect(reinterpret_cast<void *>(start), end - start,
+				PROT_READ | PROT_WRITE) != 0) {
+				perror("UML ELF mprotect load");
+				return 126;
+			}
+			void *destination = reinterpret_cast<void *>(program.vaddr);
+			memcpy(destination, bytes + program.offset, program.filesz);
+			memset(static_cast<unsigned char *>(destination) +
+				program.filesz, 0, program.memsz - program.filesz);
 		}
-		void *destination = reinterpret_cast<void *>(program.vaddr);
-		memcpy(destination, bytes + program.offset, program.filesz);
-		memset(static_cast<unsigned char *>(destination) + program.filesz, 0,
-			program.memsz - program.filesz);
 
 		const auto first_page = (start - minimum) / page_size;
 		const auto last_page = (end - minimum) / page_size;
@@ -542,8 +639,15 @@ private:
 	}
 	if (dynamic != nullptr) {
 		DynamicInfo info;
-		if (load_dynamic_info(0, dynamic, dynamic_count, segments, info) != 0 ||
-		    apply_relocations(0, info, info.rela, info.rela_count,
+		if (load_dynamic_info(0, dynamic, dynamic_count, segments, info) != 0
+#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+		    || reject_signed_text_relocations(info.rela, info.rela_count,
+			minimum, page_size, page_protections) != 0
+		    || reject_signed_text_relocations(info.jmprel,
+			info.jmprel_count, minimum, page_size,
+			page_protections) != 0
+#endif
+		    || apply_relocations(0, info, info.rela, info.rela_count,
 			segments) != 0 ||
 		    apply_relocations(0, info, info.jmprel, info.jmprel_count,
 			segments) != 0)

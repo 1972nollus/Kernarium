@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "vhost_user_server.hpp"
+#include "virtio_gpu_device.hpp"
 
 #include <algorithm>
 #include <array>
@@ -37,11 +38,9 @@ constexpr std::uint32_t maximumGuestMemoryRegions =
 constexpr int socketPollTimeoutMilliseconds =
     UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS;
 static_assert(socketPollTimeoutMilliseconds > 0);
-constexpr std::uint64_t offeredFeatures =
+constexpr std::uint64_t transportFeatures =
     protocol::vhostFeatureProtocol |
-    protocol::virtioFeatureVersion1 |
-    protocol::virtioGpuFeatureVirgl |
-    protocol::virtioGpuFeatureContextInit;
+    protocol::virtioFeatureVersion1;
 constexpr std::uint64_t offeredProtocolFeatures =
     protocol::protocolFeatureMultipleQueues |
     protocol::protocolFeatureReplyAck |
@@ -343,6 +342,121 @@ void requireNoDescriptors(
     requireDescriptorCount(message, 0, request);
 }
 
+class GpuVhostUserDevice final : public uml::virtio::VhostUserDevice {
+public:
+    GpuVhostUserDevice(
+        Display& display,
+        VirtioGpuDevice::GuestReader reader,
+        VirtioGpuDevice::GuestMapper mapper)
+        : gpu_(display, std::move(reader), std::move(mapper))
+    {
+    }
+
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "Virtio-GPU";
+    }
+
+    [[nodiscard]] std::uint64_t features() const noexcept override
+    {
+        return protocol::virtioGpuFeatureVirgl |
+            protocol::virtioGpuFeatureContextInit;
+    }
+
+    [[nodiscard]] std::size_t queueCount() const noexcept override
+    {
+        return protocol::gpuQueueCount;
+    }
+
+    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
+    {
+        const auto config = gpu_.config();
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(&config);
+        return {bytes, bytes + sizeof(config)};
+    }
+
+    void writeConfiguration(
+        std::uint32_t offset,
+        std::uint32_t flags,
+        std::span<const std::uint8_t> bytes) override
+    {
+        constexpr std::uint32_t configSize = sizeof(protocol::GpuConfig);
+        constexpr std::uint32_t eventsClearOffset =
+            offsetof(protocol::GpuConfig, eventsClear);
+        constexpr std::uint32_t eventsClearEnd =
+            eventsClearOffset + sizeof(protocol::GpuConfig::eventsClear);
+        const bool validFlag =
+            flags == protocol::configFlagWritable ||
+            flags == protocol::configFlagMigration;
+        const bool validRange =
+            !bytes.empty() && offset <= configSize &&
+            bytes.size() <= configSize - offset;
+        const bool writableRange =
+            offset >= eventsClearOffset && offset <= eventsClearEnd &&
+            bytes.size() <= eventsClearEnd - offset;
+        if (!validFlag || !validRange ||
+            (flags == protocol::configFlagWritable && !writableRange)) {
+            throw std::runtime_error("invalid Virtio-GPU config write");
+        }
+        // events_clear is write-only. No asynchronous display events exist.
+    }
+
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        const bool cursorQueue = index == protocol::gpuCursorQueue;
+        if (!cursorQueue &&
+            responseCapacity < sizeof(protocol::GpuControlHeader)) {
+            throw std::runtime_error("short Virtio-GPU response buffer");
+        }
+        auto response = gpu_.process(request, cursorQueue);
+        if (response.size() > responseCapacity)
+            throw std::runtime_error("short Virtio-GPU response buffer");
+        return {.consumed = true, .response = std::move(response)};
+    }
+
+    void reset() noexcept override { gpu_.reset(); }
+
+    void setStopRequest(
+        const std::atomic_bool* stopRequested) noexcept override
+    {
+        gpu_.setStopRequest(stopRequested);
+    }
+
+    void traceQueue(
+        std::uint32_t index,
+        std::span<const std::uint8_t> request,
+        std::span<const std::uint8_t> response) const noexcept override
+    {
+#if UML_RUNTIME_PROFILING
+        if (traceGpuCommandsEnabled() &&
+            request.size() >= sizeof(protocol::GpuControlHeader) &&
+            response.size() >= sizeof(protocol::GpuControlHeader)) {
+            const auto requestHeader =
+                loadUnaligned<protocol::GpuControlHeader>(request.data());
+            const auto responseHeader =
+                loadUnaligned<protocol::GpuControlHeader>(response.data());
+            std::fprintf(
+                stderr,
+                "Virtio-GPU queue %u command=0x%x response=0x%x bytes=%zu\n",
+                index,
+                requestHeader.type,
+                responseHeader.type,
+                response.size());
+        }
+#else
+        (void)index;
+        (void)request;
+        (void)response;
+#endif
+    }
+
+private:
+    VirtioGpuDevice gpu_;
+};
+
 } // namespace
 
 VhostUserServer::VhostUserServer(
@@ -367,20 +481,30 @@ VhostUserServer::VhostUserServer(
           height,
           std::move(inputSink),
           nativeView))
-    , gpu_(
-          *display_,
-          [this](std::uint64_t address, std::span<std::uint8_t> destination) {
-              return readGuest(address, destination);
-          },
-          [this](std::uint64_t address, std::size_t length) {
-              auto* pointer = translate(address, length, false);
-              return pointer == nullptr ?
-                  std::span<std::uint8_t> {} :
-                  std::span(pointer, length);
-          })
 {
+    device_ = std::make_unique<GpuVhostUserDevice>(
+        *display_,
+        [this](std::uint64_t address, std::span<std::uint8_t> destination) {
+            return readGuest(address, destination);
+        },
+        [this](std::uint64_t address, std::size_t length) {
+            auto* pointer = translate(address, length, false);
+            return pointer == nullptr ?
+                std::span<std::uint8_t> {} :
+                std::span(pointer, length);
+        });
     if (selfTestPattern)
         display_->fillSelfTestPattern();
+}
+
+VhostUserServer::VhostUserServer(
+    std::unique_ptr<uml::virtio::VhostUserDevice> device)
+    : device_(std::move(device))
+{
+    if (!device_ || device_->queueCount() != queues_.size()) {
+        throw std::invalid_argument(
+            "vhost-user device must provide exactly two queues");
+    }
 }
 
 VhostUserServer::~VhostUserServer()
@@ -390,7 +514,7 @@ VhostUserServer::~VhostUserServer()
 
 void VhostUserServer::resetConnection() noexcept
 {
-    gpu_.reset();
+    device_->reset();
     slaveRequestDescriptor_.reset();
     clearMappings();
     queues_ = {};
@@ -552,7 +676,7 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
     // Renderer backing can retain pointers into the old mappings. Retire that
     // device state before unmapping, then commit the replacement without any
     // operation that can throw or lose a descriptor.
-    gpu_.reset();
+    device_->reset();
     clearMappings();
     queues_ = {};
     if (featuresConfigured_ &&
@@ -593,7 +717,7 @@ void VhostUserServer::configureKick(VhostUserMessage& message)
 void VhostUserServer::drainKick(std::uint32_t index)
 {
     if (index >= queues_.size())
-        throw std::runtime_error("invalid Virtio-GPU kick queue");
+        throw std::runtime_error("invalid vhost-user kick queue");
     auto& queue = queues_[index];
     std::array<std::uint8_t, 64> values {};
     bool consumed = false;
@@ -707,7 +831,7 @@ VhostUserServer::descriptorChain(const Queue& queue, std::uint16_t head)
 void VhostUserServer::signalQueue(std::uint32_t index)
 {
     if (index >= queues_.size())
-        throw std::runtime_error("invalid Virtio-GPU completion queue");
+        throw std::runtime_error("invalid vhost-user completion queue");
     if (queues_[index].callDescriptor.get() >= 0) {
         constexpr std::uint64_t completionCount = 1;
         writeExact(
@@ -832,12 +956,7 @@ void VhostUserServer::processQueue(std::uint32_t index)
                 requestSize += segment.length;
         }
         if (requestSize > maximumVhostUserMessagePayload)
-            throw std::runtime_error("oversized Virtio-GPU request");
-        const bool cursorQueue = index == protocol::gpuCursorQueue;
-        if (queue.enabled && !cursorQueue &&
-            responseCapacity < sizeof(protocol::GpuControlHeader)) {
-            throw std::runtime_error("short Virtio-GPU response buffer");
-        }
+            throw std::runtime_error("oversized virtio request");
 
         std::vector<std::uint8_t> request;
         std::vector<std::uint8_t> response;
@@ -854,31 +973,15 @@ void VhostUserServer::processQueue(std::uint32_t index)
                 requestOffset += segment.length;
             }
 
-            response = gpu_.process(request, cursorQueue);
-            // Validate the complete response before touching guest-writable
-            // buffers. This prevents a query from leaving a partial response,
-            // and the fixed-header preflight above prevents state-changing
-            // control commands from running without room for their reply.
+            auto result = device_->processQueue(
+                index, request, responseCapacity);
+            if (!result.consumed)
+                break;
+            response = std::move(result.response);
             if (response.size() > responseCapacity)
-                throw std::runtime_error("short Virtio-GPU response buffer");
+                throw std::runtime_error("short virtio response buffer");
+            device_->traceQueue(index, request, response);
         }
-#if UML_RUNTIME_PROFILING
-        if (traceGpuCommandsEnabled() &&
-            request.size() >= sizeof(protocol::GpuControlHeader) &&
-            response.size() >= sizeof(protocol::GpuControlHeader)) {
-            const auto requestHeader =
-                loadUnaligned<protocol::GpuControlHeader>(request.data());
-            const auto responseHeader =
-                loadUnaligned<protocol::GpuControlHeader>(response.data());
-            std::fprintf(
-                stderr,
-                "Virtio-GPU queue %u command=0x%x response=0x%x bytes=%zu\n",
-                index,
-                requestHeader.type,
-                responseHeader.type,
-                response.size());
-        }
-#endif
         std::size_t responseOffset = 0;
         for (const auto& segment : segments) {
             if (!segment.writable || responseOffset == response.size())
@@ -893,7 +996,7 @@ void VhostUserServer::processQueue(std::uint32_t index)
             responseOffset += count;
         }
         if (responseOffset != response.size())
-            throw std::runtime_error("incomplete Virtio-GPU response write");
+            throw std::runtime_error("incomplete virtio response write");
 
         const auto usedIndex =
             loadSharedRingValue(
@@ -940,6 +1043,8 @@ void VhostUserServer::handleMessage(
         throw std::runtime_error("invalid vhost-user request flags");
     const auto request =
         static_cast<protocol::VhostRequest>(message.header.request);
+    const std::uint64_t offeredFeatures =
+        transportFeatures | device_->features();
     bool sentReply = false;
     switch (request) {
     case protocol::VhostRequest::getFeatures:
@@ -1014,7 +1119,7 @@ void VhostUserServer::handleMessage(
          * transport mappings and descriptors, while retiring every renderer
          * object that may refer to guest memory before disabling the rings.
          */
-        gpu_.reset();
+        device_->reset();
         for (auto& queue : queues_) {
             queue.started = false;
             queue.enabled = false;
@@ -1172,14 +1277,14 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("short GET_CONFIG payload");
         const auto configRequest =
             payloadAs<protocol::ConfigHeader>(message.payload);
-        const auto configuration = gpu_.config();
+        const auto configuration = device_->configuration();
         if (message.payload.size() !=
             sizeof(protocol::ConfigHeader) + configRequest.size) {
             throw std::runtime_error("invalid Virtio-GPU config request size");
         }
         if (configRequest.flags != protocol::configFlagWritable ||
-            configRequest.offset > sizeof(configuration) ||
-            configRequest.size > sizeof(configuration) - configRequest.offset) {
+            configRequest.offset > configuration.size() ||
+            configRequest.size > configuration.size() - configRequest.offset) {
             sendReply(socket, message.header, {});
             sentReply = true;
             break;
@@ -1191,8 +1296,7 @@ void VhostUserServer::handleMessage(
         std::memcpy(payload.data(), &responseHeader, sizeof(responseHeader));
         std::memcpy(
             payload.data() + sizeof(responseHeader),
-            reinterpret_cast<const std::uint8_t*>(&configuration) +
-                configRequest.offset,
+            configuration.data() + configRequest.offset,
             configRequest.size);
         sendReply(socket, message.header, payload);
         sentReply = true;
@@ -1208,30 +1312,16 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("short SET_CONFIG payload");
         const auto configRequest =
             payloadAs<protocol::ConfigHeader>(message.payload);
-        constexpr std::uint32_t configSize = sizeof(protocol::GpuConfig);
-        constexpr std::uint32_t eventsClearOffset =
-            offsetof(protocol::GpuConfig, eventsClear);
-        constexpr std::uint32_t eventsClearEnd =
-            eventsClearOffset + sizeof(protocol::GpuConfig::eventsClear);
-        const bool validFlag =
-            configRequest.flags == protocol::configFlagWritable ||
-            configRequest.flags == protocol::configFlagMigration;
-        const bool validRange =
-            configRequest.size != 0 &&
-            configRequest.offset <= configSize &&
-            configRequest.size <= configSize - configRequest.offset;
-        const bool writableRange =
-            configRequest.offset >= eventsClearOffset &&
-            configRequest.offset <= eventsClearEnd &&
-            configRequest.size <= eventsClearEnd - configRequest.offset;
-        if (!validFlag || !validRange ||
-            message.payload.size() !=
-                sizeof(protocol::ConfigHeader) + configRequest.size ||
-            (configRequest.flags == protocol::configFlagWritable &&
-             !writableRange)) {
-            throw std::runtime_error("invalid Virtio-GPU config write");
+        if (message.payload.size() !=
+            sizeof(protocol::ConfigHeader) + configRequest.size) {
+            throw std::runtime_error("invalid virtio config write size");
         }
-        // events_clear is write-only. No asynchronous display events exist yet.
+        device_->writeConfiguration(
+            configRequest.offset,
+            configRequest.flags,
+            std::span(
+                message.payload.data() + sizeof(protocol::ConfigHeader),
+                configRequest.size));
         break;
     }
     default:
@@ -1253,23 +1343,23 @@ void VhostUserServer::serveConnection(
     UniqueDescriptor ownedConnection {connection};
     struct StopRegistration final {
         const std::atomic_bool*& slot;
-        VirtioGpuDevice& gpu;
+        uml::virtio::VhostUserDevice& device;
         StopRegistration(
             const std::atomic_bool*& target,
-            VirtioGpuDevice& device,
+            uml::virtio::VhostUserDevice& registeredDevice,
             const std::atomic_bool& stop)
             : slot(target)
-            , gpu(device)
+            , device(registeredDevice)
         {
             slot = &stop;
-            gpu.setStopRequest(&stop);
+            device.setStopRequest(&stop);
         }
         ~StopRegistration()
         {
-            gpu.setStopRequest(nullptr);
+            device.setStopRequest(nullptr);
             slot = nullptr;
         }
-    } stopRegistration {connectionStopRequested_, gpu_, stopRequested};
+    } stopRegistration {connectionStopRequested_, *device_, stopRequested};
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
             bool activePolling = false;
@@ -1281,7 +1371,7 @@ void VhostUserServer::serveConnection(
                 }
             }
 
-            std::array<pollfd, protocol::gpuQueueCount + 1U> descriptors {};
+            std::array<pollfd, protocol::gpuQueueCount + 2U> descriptors {};
             descriptors[0] = {
                 .fd = ownedConnection.get(),
                 .events = POLLIN,
@@ -1295,6 +1385,13 @@ void VhostUserServer::serveConnection(
                     .revents = 0,
                 };
             }
+            constexpr std::size_t deviceEventIndex =
+                protocol::gpuQueueCount + 1U;
+            descriptors[deviceEventIndex] = {
+                .fd = device_->eventDescriptor(),
+                .events = POLLIN,
+                .revents = 0,
+            };
             const int peerPoll = ::poll(
                 descriptors.data(),
                 static_cast<nfds_t>(descriptors.size()),
@@ -1325,6 +1422,14 @@ void VhostUserServer::serveConnection(
                 if (events != 0)
                     drainKick(index);
             }
+            const auto deviceEvents = descriptors[deviceEventIndex].revents;
+            if ((deviceEvents & POLLNVAL) != 0)
+                throw std::runtime_error("invalid virtio device event descriptor");
+            if (deviceEvents != 0) {
+                device_->drainEventSource();
+                for (std::uint32_t index = 0; index < queues_.size(); ++index)
+                    processQueue(index);
+            }
         }
     } catch (const ConnectionStopped&) {
         // Normal cooperative shutdown while a peer is not draining output.
@@ -1348,15 +1453,19 @@ void VhostUserServer::runConnected(
     UniqueDescriptor guard {connection};
     setCloseOnExec(connection);
     configureOutputDescriptor(connection);
-    std::fprintf(stdout,
-        "Virtio-GPU vhost-user transport: in-process socketpair\n");
-    if (const auto port = display_->vncPort()) {
-        std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
-            vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
-            display_->width(), display_->height());
-    } else {
-        std::fprintf(stdout, "Native Metal display: %ux%u\n",
-            display_->width(), display_->height());
+    std::fprintf(
+        stdout,
+        "%s vhost-user transport: in-process socketpair\n",
+        device_->name());
+    if (display_) {
+        if (const auto port = display_->vncPort()) {
+            std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
+                vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
+                display_->width(), display_->height());
+        } else {
+            std::fprintf(stdout, "Native Metal display: %ux%u\n",
+                display_->width(), display_->height());
+        }
     }
     flushReadinessOutput();
     if (ready)
@@ -1416,15 +1525,17 @@ void VhostUserServer::run(
             "vhost-user socket permission update failed: " +
             std::string(std::strerror(errno)));
     }
-    std::fprintf(stdout, "Virtio-GPU vhost-user socket: %s\n",
-        socketPath_.c_str());
-    if (const auto port = display_->vncPort()) {
-        std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
-            vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
-            display_->width(), display_->height());
-    } else {
-        std::fprintf(stdout, "Native Metal display: %ux%u\n",
-            display_->width(), display_->height());
+    std::fprintf(stdout, "%s vhost-user socket: %s\n",
+        device_->name(), socketPath_.c_str());
+    if (display_) {
+        if (const auto port = display_->vncPort()) {
+            std::fprintf(stdout, "VNC display: %s:%u (%ux%u)\n",
+                vncBindAddress_.c_str(), static_cast<unsigned int>(*port),
+                display_->width(), display_->height());
+        } else {
+            std::fprintf(stdout, "Native Metal display: %ux%u\n",
+                display_->width(), display_->height());
+        }
     }
     flushReadinessOutput();
     if (ready)

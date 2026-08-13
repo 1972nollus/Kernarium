@@ -9,6 +9,7 @@ KERNEL_IMAGE=${UML_KERNARIUM_KERNEL_IMAGE:-/Volumes/Kernel/build-16k/linux}
 DEVICE=${KERNARIUM_SIMULATOR_UDID:-booted}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
+AQUARIUM=0
 
 fail()
 {
@@ -25,6 +26,7 @@ usage()
 		"  --rootfs PATH  EROFS image to copy into app Documents" \
 		"  --kernel PATH  Maintained 16 KiB UML kernel image" \
 		"  --device UDID  Booted Simulator UDID (default: booted)" \
+		"  --aquarium     Launch Chromium WebGL Aquarium verification" \
 		"  -h, --help      Show this help"
 }
 
@@ -45,6 +47,10 @@ while [ "$#" -gt 0 ]; do
 		DEVICE=$2
 		shift 2
 		;;
+	--aquarium)
+		AQUARIUM=1
+		shift
+		;;
 	-h|--help)
 		usage
 		exit 0
@@ -64,6 +70,7 @@ cd "$ROOT_DIR"
 cmake --preset kernarium-ios-simulator \
 	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE"
 cmake --build --preset kernarium-ios-simulator
+"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh"
 xcodebuild \
 	-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \
 	-scheme Kernarium \
@@ -84,4 +91,7 @@ cp "$ROOTFS" "$DATA_CONTAINER/Documents/rootfs.erofs"
 printf '%s\n' \
 	"copied rootfs to $DATA_CONTAINER/Documents/rootfs.erofs" \
 	"launching Kernarium; guest console follows on stdout"
+if [ "$AQUARIUM" -eq 1 ]; then
+	export SIMCTL_CHILD_KERNARIUM_WEBGL_AQUARIUM=1
+fi
 exec xcrun simctl launch --console-pty "$DEVICE" "$BUNDLE_ID"

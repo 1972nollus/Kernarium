@@ -15,15 +15,15 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
-## Latest accepted replay (2026-08-09)
+## Latest verified replay (2026-08-13)
 
-At outer implementation baseline
-`783bfcf7e2447f8f981830a158bec3f402b08d97`, the manifest contains 14 ordered
-topics and replays to canonical tree
-`5b7b50cd573b7a1077586955cad9cf13770df35d`. The exact delta policy is 155
-changed files with 6 outside the Darwin port. Both 16 KiB and 4 KiB kernels
-built from that replay, and their embedded payloads exactly matched their
-corresponding `vmlinux` artifacts during final local guest acceptance.
+The manifest contains 15 ordered topics and replays to canonical tree
+`ac91de43ee9c8eedd208103791dec4ed76810716`. A fresh authenticated replay,
+stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
+checks, and delta audit passed. The exact delta policy remains 155 changed
+files with 6 outside the Darwin port. Topic 0015 adds an independently selected
+compact address layout for physical iOS; its default `standard` selection
+preserves the established macOS and Simulator layout.
 
 The host/kernel bridge is ABI v6 with fingerprint `0x6524b65f20239ea1`; the
 separate installed emulator API remains v4 with fingerprint
@@ -37,12 +37,14 @@ their SHA-256/stable patch IDs are in
 final tree is checked after every replay. The shared core delta is separated
 into MMU/large-page, SMP/timer/interrupt, execution/capability, and build-rule
 topics so each can be reviewed and rebased independently. Final-state paths
-normally belong to one topic. The sole intentional multi-topic path is declared
-with its exact ordered owners and rationale in
-[`patches/topic-path-overlaps.tsv`](patches/topic-path-overlaps.tsv): Darwin
+normally belong to one topic. Intentional multi-topic paths are declared with
+their exact ordered owners and rationale in
+[`patches/topic-path-overlaps.tsv`](patches/topic-path-overlaps.tsv). Darwin
 vhost-user transport changes remain in topic 0010 while the generic 64-bit
 DMA-mask correction remains independently reviewable and droppable as topic
-0014.
+0014. Topic 0015 changes three shared/Darwin layout consumers owned by earlier
+topics; the arm64 profile constants remain with the arm64 port topic that owns
+`arch/arm64/Makefile.um`.
 The manifest verifier rejects undeclared, stale, or mismatched overlaps.
 
 The signed archive, packaged/final trees, ordered stable patch IDs, and patch
@@ -58,8 +60,9 @@ Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
 represent several upstream paths that differ only by case. The canonical
 checkout is the dedicated APFS case-sensitive volume mounted at
 `/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
-`build-16k` and `build-4k` on that volume. Transient case-sensitive mounts under
-`/tmp` are not used for the canonical source or build trees:
+`build-16k` and `build-4k` on that volume. The compact physical-device build is
+`build-ios-device-16k`. Transient case-sensitive mounts under `/tmp` are not
+used for the canonical source or build trees:
 
 ```sh
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
@@ -93,10 +96,23 @@ kernel/config/page-16k.fragment  guest page size, default
 kernel/config/page-4k.fragment   guest page size, compatibility profile
 ```
 
-Guest page size is the only axis that varies, because a single `.config`
-cannot hold both values. There is no `--profile` selector and no optional
-policy layer: a symbol absent from `common.fragment` is absent from the
-product. Because UML deliberately ships without loadable-module support, every
+Guest page size is the only `.config` axis that varies, because a single
+`.config` cannot hold both values. There is no optional Kconfig policy layer: a
+symbol absent from `common.fragment` is absent from the product. The separate
+`--address-space standard|ios-device` build selector changes link and task
+layout constants, not Kconfig policy. It defaults to `standard`, which keeps
+the macOS and Simulator kernel at the established 96 TiB boundary. The
+`ios-device` selection gives guest userspace 32 GiB and places an 8 GiB native
+kernel window at 48--56 GiB for Extended Virtual Addressing device processes:
+
+```sh
+kernel/build-kernel.sh \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
+  --page-size 16k --address-space ios-device
+```
+
+Because UML deliberately ships without loadable-module support, every
 capability a guest distribution can use has to be built in there, including
 the control groups systemd requires to start at all. Per-file filesystem
 encryption is likewise built in through `CONFIG_FS_ENCRYPTION=y`; the LTP

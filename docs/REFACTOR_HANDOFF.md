@@ -1,32 +1,61 @@
 # Refactor handoff
 
-## Kernarium iOS Simulator prototype checkpoint (2026-08-12)
+## Kernarium iOS application prototype checkpoint (2026-08-13)
 
 `Kernarium/Kernarium.xcodeproj` now boots the maintained UML kernel from a
 SwiftUI `ContentView` into the same Virtio-GPU/virglrenderer command path used
-on macOS. The iOS display implementation replaces AppKit/CGL only in the
-Simulator graph: UTM's pinned libepoxy and virglrenderer drive its pinned ANGLE
-Metal backend, and the resulting native `MTLTexture` is sampled by the app's
+on macOS. The iOS display implementation replaces AppKit/CGL only in the iOS
+graphs: UTM's pinned libepoxy and virglrenderer drive its pinned ANGLE Metal
+backend, and the resulting native `MTLTexture` is sampled by the app's
 `MTKView`. The macOS AppKit/CGL/IOSurface/Metal and VNC graph is unchanged.
 
-The app starts one four-vCPU, 2 GiB guest after its safe-area view has a real
-size, uses one guest pixel per host point, and relays the kernel console to app
-stdout. It boots `Documents/rootfs.erofs` read-only, constructs the same tmpfs
-OverlayFS root as `scripts/boot_kde_vnc.py`, mounts separate Docker and
-containerd tmpfs filesystems, and execs the image's normal systemd toward
-`graphical.target`. Documents file sharing and the Extended Virtual Addressing
-capability are recorded in project-owned plist, entitlement, target, and
-shared-scheme metadata.
+The app starts one 2 GiB guest after its safe-area view has a real size, uses
+one guest pixel per host point, and relays the kernel console to app stdout.
+Simulator uses four vCPUs; physical iOS uses the device's
+`NSProcessInfo.processorCount`. It boots `Documents/rootfs.erofs` read-only,
+constructs the same tmpfs OverlayFS root as `scripts/boot_kde_vnc.py`, mounts
+separate Docker and containerd tmpfs filesystems, and execs the image's normal
+systemd toward `graphical.target`. Documents file sharing and the Extended
+Virtual Addressing capability are recorded in project-owned plist,
+entitlement, target, and shared-scheme metadata.
+
+The physical slice embeds the compact-layout kernel ELF in an aligned
+`KernariumRuntime.framework` `__TEXT` section covered by Xcode's standard code
+signature. Its loader aliases the immutable executable pages from that signed
+mapping into the fixed 48--56 GiB kernel window and copies only data/BSS; it
+does not use anonymous executable memory, an RW-to-RX transition, LLDB, or a
+JIT entitlement. The default kernel layout and loader behavior remain selected
+for macOS and Simulator.
+
+Two real Virtio-input devices now carry UIKit touch coordinates and software-
+keyboard text to the guest. The trailing-center keyboard control is a circular
+bordered button on older systems and uses the native circular Liquid Glass
+button style on iOS 26. It requests first-responder status only while the user
+has the software keyboard open. A private iOS GLib/libslirp prefix supplies the
+normal emulator network callback, and the UIKit idle timer is disabled only
+for the managed guest lifetime.
 
 The final iPhone 17 Pro Max Simulator run copied the 3,802,316,800-byte EROFS
 image into a fresh app container before launch. App stdout reported a 440x860
 guest, four online CPUs, 2 GiB memory, both Virgl capsets, the EROFS/tmpfs
-overlay pivot, systemd, KDE setup, SDDM, and automatic `uml` login; the captured
-frame showed the complete Plasma desktop in the Metal view. The final
-`kernarium-ios-simulator` and stock `ios-simulator` builds passed, as did the
-canonical macOS `check-gpu` workflow (5/5 units and 1/1 VNC tooling). This is an
-arm64 Simulator prototype; a physical-device app, UIKit input translation, and
-a host network backend are not claimed.
+overlay pivot, systemd, KDE setup, SDDM, and automatic `uml` login. The strict
+Aquarium run then reported
+`UML_AQUARIUM_OK|AVG_FPS=5.000|MIN_FPS=4.000|MAX_FPS=6.000|SAMPLES=10|FISH=500|CANVAS=1024x1024|VERSION=WebGL 2.0 (OpenGL ES 3.0 Chromium)|RENDERER=ANGLE (Mesa, virgl, OpenGL ES 3.0)`.
+This uses an exact upstream ANGLE Simulator-capability backport plus a focused
+virglrenderer ES 3 multisample-renderbuffer patch; it does not alter Chromium's
+library loading or advertise a false guest GL version.
+
+Both iOS dependency slices and both Kernarium runtime presets passed, and the
+runtime, EGL, and GLESv2 device/Simulator slices were packaged as XCFrameworks.
+The unsigned generic Simulator Xcode build selected and embedded the Simulator
+slices. A Release app with the standard Xcode development signature was then
+installed and launched on the connected physical iPhone without a debugger.
+It reported a 430x839, 2 GiB guest with `ncpus=6`, brought all six CPUs online,
+acquired DHCP, mounted the existing Documents EROFS image, pivoted to the
+tmpfs overlay, and reached systemd, SDDM, and automatic `uml` login. The
+existing device rootfs was preserved rather than copied or replaced. The
+canonical macOS `check-gpu` workflow passed 5/5 units and 1/1 VNC tooling, and
+the focused Virtio-input protocol test passed.
 
 ## Post-baseline JIT checkpoint (2026-08-12)
 
@@ -66,7 +95,7 @@ current blockers or current rootfs instructions.
 
 | Boundary | Accepted state |
 | --- | --- |
-| Linux source | The signed Linux 6.18.41 package replays 14 ordered topics to canonical tree `5b7b50cd573b7a1077586955cad9cf13770df35d`. Policy is bounded at 155 changed files and 6 files outside the Darwin port. Both supported page-profile kernel builds completed for the accepted campaign. |
+| Linux source | The signed Linux 6.18.41 package now replays 15 ordered topics to canonical tree `ac91de43ee9c8eedd208103791dec4ed76810716`. Fresh replay, topic, overlap, ABI, and delta policy checks passed at 155 changed files and 6 files outside the Darwin port. Topic 0015 adds the compact physical-iOS address profile while leaving `standard` as the macOS/Simulator default; the earlier accepted campaign's two standard page-profile builds remain dated evidence. |
 | Interfaces | The independent host/kernel bridge is ABI v6, fingerprint `0x6524b65f20239ea1`. The installed public API remains v4, fingerprint `0xd9a69804d3303044`. |
 | Preserved repairs | G99 gadget ThinLTO, G100's exactly five audited decode-family `.ipp` fragments, G121's published per-thread address-space lifecycle slots, and G123's serialized Darwin `init_mm`/4 KiB host-slot repair are retained. The pre-refactor rollback used to diagnose G123 is not retained. |
 | Refactor host acceptance | At baseline `783bfcf7`, ordinary unit suites passed 572/572 at 16 KiB and 573/573 at 4 KiB; tooling passed 51/51 in each profile. ASan+UBSan passed 572/572 in 710.45 seconds, TSan passed 8/8 in 5.14 seconds, and the malformed-loader ASan gate passed 1/1. Normal and ASan GPU graphs each passed 5/5 unit tests plus the 1/1 VNC tooling test. Architecture/source graphs covered 575 targets and 623 registrations at 16 KiB, 576/624 at 4 KiB, and 595/628 in the GPU graph. Input materialization was off and produced zero sidecars. |

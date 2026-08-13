@@ -119,36 +119,85 @@ ctest --preset instruction-evidence
 ctest --preset instruction-evidence-4k
 ```
 
-## Kernarium iOS Simulator prototype
+## Kernarium iOS application prototype
 
-`Kernarium/Kernarium.xcodeproj` is an arm64 iOS Simulator application that
-embeds the maintained 16 KiB UML kernel and boots `Documents/rootfs.erofs` with
-2 GiB of guest memory and four vCPUs. `ContentView` contains only an `MTKView`.
-SwiftUI lays it out inside the safe area, and the app deliberately uses the
-view's point dimensions as its drawable and guest pixel dimensions without
-applying the display scale.
+`Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
+application that embeds the maintained 16 KiB UML kernel and boots
+`Documents/rootfs.erofs` with 2 GiB of guest memory. Simulator runs use four
+vCPUs; physical-device runs use `NSProcessInfo.processorCount`, so the guest
+receives the host device's physical CPU-core count. SwiftUI lays the
+`ContentView` Metal view out inside the safe area, and the app uses the view's
+point dimensions as its drawable and guest pixel dimensions without applying
+the display scale. A trailing-center keyboard button is the only overlay.
+Touch and text events enter the guest through separate real Virtio-input
+devices, and the app disables the idle timer only while the guest is running.
 
-The graphics dependency prefix is separate from the macOS dependency prefix.
-It uses the exact UTM WebKit/ANGLE, libepoxy, and virglrenderer commits in
+The graphics and network dependency prefixes are separate from the macOS
+dependency prefix. Graphics uses the exact UTM WebKit/ANGLE, libepoxy, and
+virglrenderer commits in
 [`../Kernarium/dependencies/utm-gpu-sources.tsv`](../Kernarium/dependencies/utm-gpu-sources.tsv).
-The build is offline and accepts only clean local checkouts at those commits:
+The source build is offline and accepts only clean local checkouts at those
+commits. Build both Apple-mobile slices before packaging the Xcode app:
 
 ```sh
 Kernarium/scripts/build-ios-gpu-dependencies.sh \
   --webkit /path/to/utm-WebKit \
   --libepoxy /path/to/utm-libepoxy \
   --virglrenderer /path/to/utm-virglrenderer
+Kernarium/scripts/build-ios-gpu-dependencies.sh --platform ios \
+  --webkit /path/to/utm-WebKit \
+  --libepoxy /path/to/utm-libepoxy \
+  --virglrenderer /path/to/utm-virglrenderer
+
+Kernarium/scripts/build-ios-network-dependencies.sh
+Kernarium/scripts/build-ios-network-dependencies.sh --platform ios
 
 # Read-only checks once the prefix exists.
 Kernarium/scripts/build-ios-gpu-dependencies.sh --verify-only
+Kernarium/scripts/build-ios-gpu-dependencies.sh \
+  --platform ios --verify-only
+Kernarium/scripts/build-ios-network-dependencies.sh --verify-only
+Kernarium/scripts/build-ios-network-dependencies.sh \
+  --platform ios --verify-only
+
 cmake --preset kernarium-ios-simulator
 cmake --build --preset kernarium-ios-simulator
+
+# Physical iOS uses the compact address-space kernel profile.
+kernel/build-kernel.sh \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
+  --page-size 16k --address-space ios-device
+cmake --preset kernarium-ios-device
+cmake --build --preset kernarium-ios-device
+Kernarium/scripts/package-ios-frameworks.sh
 ```
 
-The canonical kernel image is `/Volumes/<case-sensitive-volume>/build-16k/linux`.
-Override `UML_KERNARIUM_KERNEL_IMAGE` explicitly when using another maintained
-16 KiB build. With one Simulator already booted, the following command builds
-the runtime and Xcode app, installs it, copies the EROFS image into the app's
+The graphics receipts authenticate two focused compatibility patches. The
+ANGLE patch is a source-compatible backport of upstream commit
+`d44204893a1725a74cd20b332fbb6f595b0975c3`, which reports the ES 3 minimum
+varying limit on Simulator Metal. The virglrenderer patch probes ES 3
+multisampled renderbuffers and uses them when multisampled textures are not
+available. Wholesale replacement with the latest desktop branches is not an
+equivalent upgrade: UTM's forks carry the iOS EGL loader and native Metal
+resource-export path that upstream desktop virglrenderer does not. Chromium is
+launched through its ordinary ANGLE/GLES selection; the app does not preload,
+replace, or otherwise interfere with Chromium libraries.
+
+The network prefixes reuse the authenticated PCRE2, libffi, proxy-libintl,
+GLib, and libslirp sources prepared by `dependencies/prepare.sh`. The
+iOS-specific GLib patch removes unavailable process-management probes; the
+guest still receives the normal SLiRP callback provider used by the emulator.
+`package-ios-frameworks.sh` combines the runtime, EGL, and GLESv2 device and
+Simulator slices below `.build/kernarium-xcframeworks`, which is the only
+framework location referenced by the Xcode project.
+
+The canonical Simulator kernel image is
+`/Volumes/<case-sensitive-volume>/build-16k/linux`; the physical-device preset uses
+`/Volumes/<case-sensitive-volume>/build-ios-device-16k/linux`. Override
+`UML_KERNARIUM_KERNEL_IMAGE` explicitly when using another maintained 16 KiB
+build. With one Simulator already booted, the following command builds the
+runtime and Xcode app, installs it, copies the EROFS image into the app's
 Documents directory, and only then launches the app with the guest console on
 the invoking terminal's stdout:
 
@@ -168,6 +217,19 @@ a device signing contract; Xcode carries it in the Simulator's simulated
 entitlement input even though the local Simulator code-signature entitlement
 dictionary is empty.
 
+Physical iOS cannot execute an anonymously copied ELF text segment under an
+ordinary non-debugger signature. For that slice only, `KernariumRuntime`
+embeds the complete kernel ELF in a 16 KiB-aligned Mach-O `__TEXT,__uml_elf`
+section. Xcode's normal framework code signature therefore covers those
+bytes. The loader reserves the compact kernel's fixed 48--56 GiB window,
+aliases each immutable executable ELF page from the signed framework mapping
+with `vm_remap`, and copies only non-executable data/BSS into anonymous pages.
+It rejects writable executable segments, carrier mismatches, and relocations
+that target signed text. This path performs no RW-to-RX transition, uses no
+JIT entitlement, and does not depend on LLDB. Simulator retains its existing
+embedded `__DATA` ELF and standard 96 TiB kernel layout; macOS retains its
+existing loader and address layout.
+
 The guest follows the same userspace path as `scripts/boot_kde_vnc.py`: an
 init shell binds the EROFS root as the OverlayFS lower layer, creates upper and
 work directories on tmpfs, mounts devtmpfs in the new root, pivots, mounts
@@ -175,12 +237,20 @@ separate tmpfs filesystems at `/var/lib/docker` and `/var/lib/containerd`,
 installs the disposable KDE setup unit, and execs the rootfs systemd as PID 1.
 The requested `graphical.target` therefore uses the image's ordinary units,
 SDDM, and non-root `uml` account. The prototype does not synthesize a desktop
-user, modify the EROFS image, start VNC, or provide a host network backend.
+user, modify the EROFS image, or start VNC.
 
-The current application runtime and ANGLE frameworks are Simulator arm64
-slices. The ordinary `ios-device` and `ios-simulator` library presets remain
-the supported core packaging paths; this prototype does not claim a physical
-device application build yet.
+Pass `--aquarium` to the Simulator launcher for the strict Chromium WebGL 2
+check. It requires a live WebGL 2 context, samples the rendered Aquarium FPS,
+and emits one `UML_AQUARIUM_OK` record with the GL version and renderer. The
+current Simulator evidence reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
+`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Both dependency slices, both runtime
+presets, the three XCFrameworks, and the unsigned generic Simulator Xcode build
+have passed. A Release app using the standard Xcode development signature was
+also installed and launched on the connected iPhone without a debugger. App
+stdout reported a 430x839 guest with `mem=2G ncpus=6`, brought all six CPUs
+online, mounted the existing Documents EROFS image, acquired DHCP, pivoted to
+the tmpfs overlay, and reached systemd, SDDM, and automatic `uml` login. The
+device rootfs was already present and was not replaced by that validation.
 
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build

@@ -5,3 +5,7 @@ architecture	arm64
 deployment_target	16.0
 graphics_api	ANGLE-EGL-GLES
 presentation_api	Metal
+angle_patch	Kernarium/dependencies/patches/angle/0001-fix-ios-simulator-varying-caps.patch
+angle_patch_sha256	96b7d6662f9f32cde622c964a44f76c397f5ae4540a8df674b39bdcadeb8b9d4
+virglrenderer_patch	Kernarium/dependencies/patches/virglrenderer/0001-ios-gles3-multisample-renderbuffers.patch
+virglrenderer_patch_sha256	37260abefee4bc75fb5cb1a09cecf7743e6f08844e3e37bcc088b97c6cbdbdb9

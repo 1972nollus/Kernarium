@@ -12,6 +12,7 @@ add_subdirectory(device/input/vnc)
 
 if(UML_BUILD_GPU)
     add_subdirectory(device/gpu)
+    add_subdirectory(device/input/virtio)
 endif()
 
 add_subdirectory(runtime)

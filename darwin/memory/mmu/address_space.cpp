@@ -38,7 +38,7 @@ namespace uml::memory {
 namespace {
 
 constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-constexpr std::uint64_t address_limit = 0x6000'0000'0000ULL;
+constexpr std::uint64_t address_limit = DARWIN_UML_GUEST_ADDRESS_LIMIT;
 
 struct BackingKey final {
 	std::uint64_t device;

@@ -1,23 +1,42 @@
 # Refactor progress
 
-## Kernarium iOS Simulator prototype (2026-08-12)
+## Kernarium iOS application prototype (2026-08-13)
 
-The new `Kernarium` Xcode project embeds an opt-in iOS Simulator runtime and
-boots a four-vCPU, 2 GiB UML guest from `Documents/rootfs.erofs`. Its basic
-SwiftUI `ContentView` owns a safe-area `MTKView` whose point dimensions are the
-guest resolution. The real Virtio-GPU device and virglrenderer use pinned UTM
-libepoxy plus ANGLE/Metal and present the native Metal texture directly; the
-iOS target builds neither AppKit nor VNC, while the macOS graph remains on its
-existing AppKit/CGL/IOSurface/Metal and VNC paths.
+The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
+slices and boots a 2 GiB UML guest from `Documents/rootfs.erofs`. Simulator
+uses four vCPUs, while physical iOS matches the device's reported physical
+processor count. Its basic SwiftUI `ContentView` owns a safe-area
+`MTKView` whose point dimensions are the guest resolution. The real Virtio-GPU
+device and virglrenderer use pinned UTM libepoxy plus ANGLE/Metal and present
+the native Metal texture directly; the iOS target builds neither AppKit nor
+VNC, while the macOS graph remains on its existing
+AppKit/CGL/IOSurface/Metal and VNC paths.
 
 A fresh iPhone 17 Pro Max Simulator install was provisioned before launch with
 the 3,802,316,800-byte EROFS image. Console output proved four CPUs, 2 GiB
 memory, Virgl capsets, the EROFS-to-tmpfs OverlayFS pivot, normal systemd
-`graphical.target`, KDE setup, SDDM, and automatic `uml` login; a Simulator
-capture showed the complete Plasma desktop. The stock iOS package, Kernarium
-runtime/app, source audit, and canonical macOS GPU workflow passed. Extended
-Virtual Addressing and file sharing are project-owned metadata, and a shared
-scheme restores Xcode's platform-aware target/run configuration.
+`graphical.target`, KDE setup, SDDM, and automatic `uml` login. The strict
+Chromium Aquarium probe created a live WebGL 2 context over OpenGL ES 3.0 and
+ANGLE/virgl, rendered 500 fish for ten valid samples, and reported 4.8 average
+FPS in the initial run. The post-XCFramework regression reported 5.0 average
+FPS. The fix is host-side: an exact upstream ANGLE Simulator-capability
+backport and a focused virglrenderer ES 3 multisample-renderbuffer path replace
+neither Chromium libraries nor the guest-advertised GL version.
+
+Separate Virtio-input touchscreen and keyboard devices now receive UIKit
+events, SLiRP supplies guest networking, and the app prevents automatic sleep
+only while the guest is active. The keyboard overlay is a round bordered icon
+button and uses native circular Liquid Glass on iOS 26. Both iOS dependency
+and runtime slices, three combined XCFrameworks, the unsigned Simulator Xcode
+app, the focused input unit, and the canonical macOS GPU workflow pass.
+Extended Virtual Addressing and file sharing remain project-owned metadata.
+The physical runtime embeds the compact-layout ELF in an aligned, normally
+signed framework `__TEXT` section and aliases its immutable executable pages
+into the fixed kernel window, avoiding anonymous executable memory and any
+debugger dependency. A Release app was installed and launched on the connected
+iPhone without LLDB; it booted a 430x839, 2 GiB, six-vCPU guest through DHCP,
+EROFS, the tmpfs overlay, systemd, SDDM, and automatic `uml` login. The rootfs
+already in device Documents was preserved.
 
 ## Post-baseline JIT checkpoint (2026-08-12)
 

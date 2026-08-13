@@ -1,7 +1,7 @@
 From b6c97dd068375527a366aacb288bf78319d20ed0 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 07/14] uml: add Darwin host service implementation
+Subject: [PATCH 07/15] uml: add Darwin host service implementation
 
 Apply the reviewed final-state topic without intermediate churn.
 ---

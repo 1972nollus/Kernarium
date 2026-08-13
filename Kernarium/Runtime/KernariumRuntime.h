@@ -24,6 +24,8 @@ int kernarium_runtime_run(
     uint32_t height);
 
 void kernarium_runtime_request_stop(void);
+void kernarium_runtime_send_touch(uint32_t x, uint32_t y, int pressed);
+void kernarium_runtime_send_key(uint16_t code, int pressed);
 
 #ifdef __cplusplus
 }

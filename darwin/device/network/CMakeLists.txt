@@ -35,6 +35,12 @@ if(UML_BUILD_NETWORK_PROVIDER)
 
     target_link_libraries(uml_network_provider PRIVATE
         UML::ThirdPartySlirp)
-    add_dependencies(uml_network_provider uml_dependency_prefix_verify)
+    if(TARGET uml_dependency_prefix_verify)
+        add_dependencies(uml_network_provider uml_dependency_prefix_verify)
+    endif()
+    if(TARGET uml_ios_network_prefix_verify)
+        add_dependencies(uml_network_provider
+            uml_ios_network_prefix_verify)
+    endif()
 
 endif()
