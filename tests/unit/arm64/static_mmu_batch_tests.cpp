@@ -263,7 +263,7 @@ void test_unaligned_unmap_covers_the_complete_range()
 void test_ranges_cannot_cross_generation_boundary_or_wrap()
 {
 	constexpr unsigned long generation = 205;
-	constexpr unsigned long address_limit = 0x6000'0000'0000ULL;
+	constexpr unsigned long address_limit = DARWIN_UML_GUEST_ADDRESS_LIMIT;
 	constexpr unsigned long low_page =
 		address_limit - DARWIN_UML_GUEST_PAGE_SIZE;
 	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
@@ -593,7 +593,8 @@ void test_batch_index_allocation_failure_is_atomic_and_retryable()
 void test_large_sparse_unmap_visits_only_mapped_pages()
 {
 	constexpr unsigned long generation = 312;
-	constexpr unsigned long base = 0x40'0000;
+	constexpr unsigned long base =
+		DARWIN_UML_NATIVE_ADDRESS_END + 0x40'0000;
 	constexpr unsigned long length = 1ULL << 40;
 	constexpr std::array<unsigned long, 3> addresses{
 		base, base + length / 2,

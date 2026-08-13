@@ -131,16 +131,23 @@ point dimensions as its drawable and guest pixel dimensions without applying
 the display scale. A trailing-center keyboard button is the only overlay.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
-The Darwin kernel scheduler uses one persistent host carrier per vCPU on both
-iOS targets, names them `uml-vcpu-N-carrier`, and moves Linux task contexts
-between those carriers without creating a host thread per guest task. The
-shipped 100 Hz plus `NO_HZ_IDLE` policy suppresses ticks on idle carriers.
+The Darwin kernel scheduler uses one persistent host carrier per vCPU on
+macOS and both iOS targets, names them `uml-vcpu-N-carrier`, and moves Linux
+task contexts between those carriers without creating a host thread per guest
+task. The shipped 100 Hz plus `NO_HZ_IDLE` policy suppresses ticks on idle
+carriers.
 IRQ-enabled arm64 spin checkpoints service pending Darwin IPIs, so synchronous
 cross-CPU calls progress even when two fixed carriers are waiting on each
 other; IRQ-disabled regions continue to defer the work.
 Both page profiles provide a 128 KiB Linux task stack (order 3 at 16 KiB and
 order 5 at 4 KiB), so high-task-count guests retain sleeping contexts
 without consuming a contiguous 512 KiB allocation apiece.
+
+The standalone macOS app has a separate larger default: when the command line
+omits either setting, it supplies `mem=8G` and `ncpus=10` independently. Its
+shared scalable layout places an 8 GiB direct map plus 1 GiB auxiliary window
+at 96 TiB. Explicit kernel command-line values continue to override these
+defaults.
 
 The graphics and network dependency prefixes are separate from the macOS
 dependency prefix. Graphics uses the exact UTM WebKit/ANGLE, libepoxy, and
@@ -170,14 +177,15 @@ Kernarium/scripts/build-ios-network-dependencies.sh --verify-only
 Kernarium/scripts/build-ios-network-dependencies.sh \
   --platform ios --verify-only
 
+# Build the one 16 KiB kernel input used by macOS and both iOS products.
+kernel/build-kernel.sh \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-16k \
+  --page-size 16k
+
 cmake --preset kernarium-ios-simulator
 cmake --build --preset kernarium-ios-simulator
 
-# Device and Simulator use the same signed-kernel/address-space profile.
-kernel/build-kernel.sh \
-  --source /Volumes/<case-sensitive-volume>/linux \
-  --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
-  --page-size 16k --address-space ios-device
 cmake --preset kernarium-ios-device
 cmake --build --preset kernarium-ios-device
 Kernarium/scripts/package-ios-frameworks.sh
@@ -202,18 +210,20 @@ guest still receives the normal SLiRP callback provider used by the emulator.
 Simulator slices below `.build/kernarium-xcframeworks`, which is the only
 framework location referenced by the Xcode project.
 
-The canonical kernel image for both iOS targets is
-`/Volumes/<case-sensitive-volume>/build-ios-device-16k/linux`. Override
-`UML_KERNARIUM_KERNEL_IMAGE` explicitly when using another maintained 16 KiB
-build. With one Simulator already booted, the following command builds the
-runtime and Xcode app, installs it, copies the EROFS image into the app's
-Documents directory, and only then launches the app with the guest console on
-the invoking terminal's stdout:
+The canonical kernel image for the default macOS integration target and both
+iOS targets is the one file `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`. The
+macOS CLI embeds it directly; the iOS runtime places the same bytes in its
+signed framework `__TEXT` carrier. Override `UML_KERNARIUM_KERNEL_IMAGE` only
+when deliberately testing another maintained 16 KiB artifact. With one
+Simulator already booted, the following command builds the runtime and Xcode
+app, installs it, copies the EROFS image into the app's Documents directory,
+and only then launches the app with the guest console on the invoking
+terminal's stdout:
 
 ```sh
 Kernarium/scripts/run-ios-simulator.sh \
   --rootfs "$PWD/rootfs.erofs" \
-  --kernel /Volumes/<case-sensitive-volume>/build-ios-device-16k/linux
+  --kernel /Volumes/<case-sensitive-volume>/build-16k/vmlinux
 ```
 
 The app exposes Documents through both `UIFileSharingEnabled` and
@@ -238,8 +248,10 @@ immutable executable ELF page from the signed framework mapping with
 `vm_remap`, and copies only non-executable data/BSS into anonymous pages. It
 rejects writable executable segments, carrier mismatches, and relocations that
 target signed text. This path performs no RW-to-RX transition, uses no JIT
-entitlement, and does not depend on LLDB. macOS retains its existing loader and
-96 TiB address layout.
+entitlement, and does not depend on LLDB. macOS retains its existing unsigned
+loader and uses the same 128 TiB guest range, RAM-scaled window derivation,
+relocation, and exclusion-hole handling, while locating its active native
+window at 96 TiB to avoid low-host-VA collisions.
 
 The guest follows the same mount-and-systemd flow as
 `scripts/boot_kde_vnc.py`, but the iOS writable state is one disposable disk.
@@ -250,8 +262,10 @@ mounts devtmpfs in the new root, and pivots. Separate Docker and containerd
 directories are then bind-mounted from the same ext4 filesystem, keeping their
 contents separate while sharing its free space. The shell installs the
 disposable KDE setup unit and execs the rootfs systemd as PID 1.
-Kernarium does not create or activate disk-backed swap on this image; the
-1 GiB guest remains the constrained-device memory contract.
+The kernel builds zswap in, enables it by default, and selects zstd. Because
+zswap is only a compressed cache in front of a backing swap device or file,
+Kernarium's no-swap launch allocates no zswap pool; the 1 GiB guest remains the
+constrained-device memory contract.
 The requested `graphical.target` therefore uses the image's ordinary units,
 SDDM, and non-root `uml` account. The prototype does not synthesize a desktop
 user, modify the EROFS image, or start VNC.
@@ -306,6 +320,9 @@ cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
 ```
+
+Kernel compilation uses every online host processor by default. Set
+`UML_KERNEL_JOBS` or pass `--jobs N` only to impose an explicit lower limit.
 
 The checked integration presets pin `/Volumes/<case-sensitive-volume>/linux`,
 `/Volumes/<case-sensitive-volume>/build-16k`, and

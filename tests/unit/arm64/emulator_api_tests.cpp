@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "allocation_failure.hpp"
 #include "device/network/device.hpp"
+#include "native_window_test_support.hpp"
 #include "platform/run_routing.hpp"
 #include "runtime/context.hpp"
 #include "uml_darwin_cpu.h"
@@ -132,7 +133,8 @@ void test_c_api_rejects_inconsistent_creation_inputs()
 
 void test_memory_bridge_rejects_split_address_space_ranges()
 {
-	constexpr std::uintptr_t address_limit = 0x6000'0000'0000ULL;
+	constexpr std::uintptr_t address_limit =
+		DARWIN_UML_NATIVE_ADDRESS_START;
 	constexpr std::uintptr_t low_page =
 		address_limit - DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr unsigned long split_length = 2 * DARWIN_UML_GUEST_PAGE_SIZE;
@@ -227,20 +229,18 @@ public:
 	ReservedNativeSlot()
 		: size_{static_cast<std::size_t>(getpagesize())}
 	{
-		void *reservation = mmap(
-			reinterpret_cast<void *>(0x7f00'0000'0000ULL), size_,
-			PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-		require(reservation != MAP_FAILED,
+		address_ = uml::testing::reserve_native_test_window(size_);
+		require(address_ != 0,
 			"could not reserve native-shadow host slot");
-		address_ = reinterpret_cast<std::uintptr_t>(reservation);
-		require(address_ >= 0x6000'0000'0000ULL,
-			"native-shadow slot remained in guest address space");
+		require(address_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
+			address_ <= DARWIN_UML_NATIVE_ADDRESS_END - size_,
+			"native-shadow slot escaped the shared native window");
 	}
 
 	~ReservedNativeSlot()
 	{
 		if (!released_)
-			(void)munmap(reinterpret_cast<void *>(address_), size_);
+			(void)uml::testing::release_native_test_window(address_, size_);
 	}
 
 	ReservedNativeSlot(const ReservedNativeSlot &) = delete;
@@ -249,7 +249,7 @@ public:
 	void release()
 	{
 		require(!released_ &&
-			munmap(reinterpret_cast<void *>(address_), size_) == 0,
+			uml::testing::release_native_test_window(address_, size_),
 			"could not release native-shadow slot reservation");
 		released_ = true;
 	}
@@ -831,11 +831,11 @@ void test_concurrent_handles_have_distinct_software_mmu_domains()
 #endif
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-void test_native_shadow_domains_retire_on_every_handle_exit()
+void test_native_shadow_domains_retire_on_every_handle_exit(
+	ReservedNativeSlot &slot)
 {
 	TemporaryBacking backing_a{0x31};
 	TemporaryBacking backing_b{0xa7};
-	ReservedNativeSlot slot;
 	slot.release();
 	native_shadow_a = {
 		.address = slot.page(),
@@ -1038,6 +1038,13 @@ void test_injected_user_network_requests_dhcp()
 int main()
 {
 	try {
+	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+		/* Preserve one compatibility-window slot before the JIT allocator can
+		 * retain broad low-address reservation bands. Embedded macOS kernels
+		 * use the separate high native window.
+		 */
+		ReservedNativeSlot native_shadow_slot;
+	#endif
 		test_c_api_rejects_inconsistent_creation_inputs();
 		test_memory_bridge_rejects_split_address_space_ranges();
 		test_native_entry();
@@ -1046,7 +1053,8 @@ int main()
 		test_concurrent_handles_have_distinct_software_mmu_domains();
 	#endif
 	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-		test_native_shadow_domains_retire_on_every_handle_exit();
+		test_native_shadow_domains_retire_on_every_handle_exit(
+			native_shadow_slot);
 	#endif
 		test_active_registries_are_allocation_free_and_transactional();
 #if UML_EMULATOR_TEST_HAS_SLIRP

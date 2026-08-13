@@ -158,6 +158,15 @@ void test_scalable_native_kernel_layout_geometry()
 	constexpr std::uint64_t kib = 1024ULL;
 	constexpr std::uint64_t mib = kib * 1024ULL;
 	constexpr std::uint64_t gib = mib * 1024ULL;
+	static_assert(DARWIN_UML_GUEST_ADDRESS_LIMIT == 128ULL * 1024ULL * gib);
+	static_assert(DARWIN_UML_NATIVE_ADDRESS_START == 48ULL * gib);
+	static_assert(DARWIN_UML_NATIVE_ADDRESS_END == 62ULL * gib);
+	static_assert(DARWIN_UML_NATIVE_LINK_ADDRESS == 48ULL * gib);
+	static_assert(DARWIN_UML_NATIVE_ADDRESS_CEILING == 62ULL * gib);
+	static_assert(DARWIN_UML_MACOS_NATIVE_ADDRESS == 96ULL * 1024ULL * gib);
+	static_assert(DARWIN_UML_NATIVE_AUXILIARY_DIVISOR == 8);
+	static_assert(DARWIN_UML_NATIVE_AUXILIARY_MINIMUM == 32ULL * mib);
+	static_assert(DARWIN_UML_DYNAMIC_NATIVE_LAYOUT == 1);
 	using Geometry = uml::runtime::NativeKernelLayoutGeometry<
 		48ULL * gib, 62ULL * gib, 8, 32ULL * mib, 16ULL * kib>;
 	const auto one_gib = Geometry::derive(gib);
@@ -171,6 +180,11 @@ void test_scalable_native_kernel_layout_geometry()
 		two_gib.window_end - two_gib.window_start ==
 			2ULL * gib + 256ULL * mib,
 		"2 GiB RAM did not scale the auxiliary window to 256 MiB");
+	const auto eight_gib = Geometry::derive(8ULL * gib);
+	require(eight_gib.valid &&
+		eight_gib.window_end - eight_gib.window_start == 9ULL * gib &&
+		eight_gib.window_start == 53ULL * gib,
+		"the iOS geometry did not produce an 8 GiB 53--62 GiB window");
 	const auto small = Geometry::derive(128ULL * mib);
 	require(small.valid && small.window_end - small.window_start ==
 		128ULL * mib + 32ULL * mib,
@@ -193,6 +207,30 @@ void test_scalable_native_kernel_layout_geometry()
 		four_kib_rounded.window_end - four_kib_rounded.window_start ==
 			gib + 128ULL * mib + 8ULL * kib,
 		"4 KiB geometry did not independently round RAM and auxiliary space");
+	using HighGeometry = uml::runtime::NativeKernelLayoutGeometry<
+		48ULL * gib, 128ULL * 1024ULL * gib, 8, 32ULL * mib,
+		16ULL * kib>;
+	const auto high = HighGeometry::derive_at(
+		8ULL * gib, 96ULL * 1024ULL * gib);
+	require(high.valid &&
+		high.window_start == 96ULL * 1024ULL * gib &&
+		high.window_end - high.window_start == 9ULL * gib &&
+		high.load_bias == high.window_start - 48ULL * gib,
+		"high native placement did not retain the scalable window");
+	const auto product = uml::runtime::prepare_native_kernel_layout(gib);
+#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+	require(product.valid &&
+		product.window_start == 96ULL * 1024ULL * gib &&
+		product.window_end - product.window_start == gib + 128ULL * mib &&
+		product.load_bias == product.window_start - 48ULL * gib,
+		"macOS did not select its high dynamic native window");
+#else
+	require(product.valid &&
+		product.window_start == one_gib.window_start &&
+		product.window_end == one_gib.window_end &&
+		product.load_bias == one_gib.load_bias,
+		"iOS did not select its low dynamic native window");
+#endif
 }
 
 void test_guest_cpu_count_matches_kernel_policy()

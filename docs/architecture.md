@@ -70,9 +70,19 @@ iOS targets the kernel ELF is a 16 KiB-aligned section of the framework's
 code-signed Mach-O `__TEXT`. The loader derives a RAM-scaled native window
 below the iOS ceiling and uses `vm_remap` to alias only immutable, relocation-
 free executable ELF pages from that signed mapping; non-executable data and
-BSS remain ordinary anonymous mappings. Simulator and physical device
-therefore use the same kernel image, signing strategy, load bias, and software-
-MMU layout. macOS retains its established loader and 96 TiB kernel boundary.
+BSS remain ordinary anonymous mappings. Simulator, physical device, and
+default 16 KiB macOS integration consume the exact same canonical
+`/Volumes/<case-sensitive-volume>/build-16k/vmlinux` bytes. Simulator and physical device
+carry them through the same signed framework strategy. macOS retains its
+established unsigned CLI embedding and uses the same guest range, RAM-scaled
+window derivation, relocation, and exclusion-hole handling, but places that
+window at 96 TiB rather than inside iOS's constrained sub-62 GiB host range.
+Product policy still lets
+macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1 GiB and its
+iOS CPU selection; the common layout derives the appropriate native window
+from each guest's RAM. The supported macOS 4 KiB compatibility profile remains
+a distinct kernel artifact because guest page size is a compile-time kernel
+choice.
 Executable-memory ownership is enforced in source
 architecture and functional JIT publication tests, not by comparing or
 attributing individual archive members.

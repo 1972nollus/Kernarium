@@ -42,7 +42,7 @@ constexpr std::uint64_t linked_address = 0x0001'4000'0000ULL;
 /* Match the real Darwin UML kernel link window. A lower arbitrary MAP_FIXED
  * address can collide with unrelated host allocations and does not exercise
  * the production loader contract safely. */
-constexpr std::uint64_t linked_address = 0x6000'0000'0000ULL;
+constexpr std::uint64_t linked_address = DARWIN_UML_NATIVE_LINK_ADDRESS;
 #endif
 
 struct Interleave final {

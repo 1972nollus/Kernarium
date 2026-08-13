@@ -28,9 +28,15 @@ CONFIG_BLK_DEV_LOOP=y
 CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
 CONFIG_BLK_DEV_NBD=y
 CONFIG_BLK_DEV_RAM=y
-# Compressed RAM swap is the only swap backing that makes sense on a host
-# whose guest memory is already a host allocation. zstd is the default
-# compressor; a disk-backed zswap tier would add nothing in front of it.
+# Keep the compressed swap cache built in and active whenever the guest enables
+# a backing swap device or file. The current desktop launchers deliberately do
+# not create backing swap, so merely enabling zswap does not consume a pool.
+# Reuse zstd for zswap and zram rather than carrying two compression policies.
+CONFIG_SWAP=y
+CONFIG_ZSWAP=y
+CONFIG_ZSWAP_DEFAULT_ON=y
+# CONFIG_ZSWAP_SHRINKER_DEFAULT_ON is not set
+CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD=y
 CONFIG_ZRAM=y
 CONFIG_ZRAM_BACKEND_ZSTD=y
 CONFIG_ZRAM_DEF_COMP_ZSTD=y

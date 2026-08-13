@@ -3,6 +3,7 @@
 #include "native_retry_validation_test_support.hpp"
 #include "mach_vm_protection_test_support.hpp"
 #include "allocation_fault.hpp"
+#include "native_window_test_support.hpp"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
 
@@ -14,6 +15,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -80,17 +83,23 @@ public:
 		std::size_t host_pages = 1)
 		: size_{host_pages * static_cast<std::size_t>(getpagesize())}
 	{
-		void *hint = native_bridge_address ?
-			reinterpret_cast<void *>(0x7f00'0000'0000ULL) : nullptr;
-		void *reservation = mmap(hint, size_, PROT_NONE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
-		require(reservation != MAP_FAILED, "slot reservation failed");
-		address_ = reinterpret_cast<std::uintptr_t>(reservation);
-		if (native_bridge_address)
-			require(address_ >= 0x6000'0000'0000ULL,
-				"native bridge reservation stayed in guest space");
-		require(munmap(reservation, size_) == 0,
-			"slot reservation release failed");
+		if (native_bridge_address) {
+			address_ = uml::testing::reserve_native_test_window(size_);
+			require(address_ != 0,
+				"native bridge reservation failed");
+			require(address_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
+				address_ <= DARWIN_UML_NATIVE_ADDRESS_END - size_,
+				"native bridge reservation escaped its window");
+			require(uml::testing::release_native_test_window(address_, size_),
+				"slot reservation release failed");
+		} else {
+			void *reservation = mmap(nullptr, size_, PROT_NONE,
+				MAP_PRIVATE | MAP_ANON, -1, 0);
+			require(reservation != MAP_FAILED, "slot reservation failed");
+			address_ = reinterpret_cast<std::uintptr_t>(reservation);
+			require(munmap(reservation, size_) == 0,
+				"slot reservation release failed");
+		}
 	}
 
 	~ReservedSlot()

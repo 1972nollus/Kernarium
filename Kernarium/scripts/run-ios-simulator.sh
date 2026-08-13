@@ -5,7 +5,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS="$ROOT_DIR/rootfs.erofs"
-KERNEL_IMAGE=${UML_KERNARIUM_KERNEL_IMAGE:-/Volumes/Kernel/build-ios-device-16k/linux}
+KERNEL_IMAGE=${UML_KERNARIUM_KERNEL_IMAGE:-/Volumes/Kernel/build-16k/vmlinux}
 DEVICE=${KERNARIUM_SIMULATOR_UDID:-booted}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"

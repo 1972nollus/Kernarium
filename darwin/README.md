@@ -41,21 +41,27 @@ iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes.
 Simulator runs retain four guest CPUs. Physical-device runs derive `ncpus=`
 from `NSProcessInfo.processorCount`, matching the device's physical CPU-core
-count.
+count. The standalone macOS app retains its larger default of 8 GiB and ten
+vCPUs whenever the caller supplies neither `mem=` nor `ncpus=`; explicit values
+continue to override those defaults independently.
 
-Both iOS products carry the same complete ET_DYN kernel ELF in a 16 KiB-aligned
-`__TEXT,__uml_elf` section of `KernariumRuntime.framework`. The standard Xcode
-framework signature covers that storage. The embedded ELF loader verifies the
-carrier byte-for-byte, derives the native window from guest RAM plus a
-page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) below the
-62 GiB ceiling, biases the image as one unit, and
+Every Apple product derives the native window from guest RAM plus a
+page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) and biases
+its ET_DYN image as one unit. Both iOS products top-pack that window below the
+62 GiB ceiling and carry
+the same complete kernel ELF in a 16 KiB-aligned `__TEXT,__uml_elf` section of
+`KernariumRuntime.framework`; the standard Xcode framework signature covers
+that storage. Their embedded loader verifies the carrier byte-for-byte and
 aliases immutable executable pages from the already signed Mach-O mapping with
 `vm_remap`; it never copies code into anonymous memory or publishes RW pages as
 executable. ELF data and BSS retain the ordinary copy path, and relocations into
-signed executable pages are rejected. Simulator and device therefore use the
-same signed-kernel and address-layout behavior. The macOS
-AppKit/CGL/IOSurface/Metal, VNC, loader, and 96 TiB address-space paths are
-unchanged.
+signed executable pages are rejected. macOS retains its established unsigned
+loader, AppKit/CGL/IOSurface/Metal display, and VNC paths, while using the same
+128 TiB sparse guest range, scalable-window derivation, relocation, and
+exclusion-hole handling as device and Simulator. It places the same kernel
+bytes at 96 TiB to avoid collisions in Darwin's crowded low host range. Its
+8 GiB default derives a 1 GiB auxiliary allowance and a 9 GiB active native
+window.
 
 Darwin schedules stackful Linux task contexts on exactly one persistent host
 carrier per configured guest CPU, including vCPU0. Task creation initializes a
@@ -139,9 +145,13 @@ deliberately make those timings unfit for score comparisons. Ordinary products
 compile out the source, environment control, wrapper storage and every call
 site.
 
-The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`.
-`UML_GUEST_16K_PAGES=ON` is the default; set it to `OFF` for the independently
-tested 4 KiB compatibility build.
+The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`. The
+default 16 KiB CLI and both Kernarium iOS products consume the exact same
+canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input; only its host
+delivery changes from the macOS CLI section to the iOS framework's signed
+`__TEXT` carrier. `UML_GUEST_16K_PAGES=ON` is the default; set it to `OFF` for
+the independently tested 4 KiB compatibility build, which necessarily uses
+its own page-profile kernel artifact.
 
 Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 `/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with
@@ -163,10 +173,12 @@ Kernarium recreates one sparse 8 GiB image in the app temporary directory on
 each launch, formats it as ext4 in the guest, and uses directories on that one
 filesystem for the OverlayFS upper/work state plus Docker and containerd.
 Bind mounts keep those three contents separate while sharing one free-space
-pool. The image is writable guest state, not host-memory relief: Kernarium does
-not create or activate a disk-backed swap file. The init shell mounts devtmpfs,
-pivots into the writable root, installs
-only the disposable KDE setup unit, and execs the image's systemd for
-`graphical.target`. Kernel console bytes are relayed to application stdout.
+pool. The kernel has zswap enabled by default with zstd, but that cache requires
+a backing swap device or file. The image is writable guest state, not
+host-memory relief: Kernarium does not create or activate backing swap, so
+zswap allocates no pool during the normal desktop flow. The init shell mounts
+devtmpfs, pivots into the writable root, installs only the disposable KDE setup
+unit, and execs the image's systemd for `graphical.target`. Kernel console bytes
+are relayed to application stdout.
 The EROFS base remains read-only and the image's `uml` account and normal
 display-manager units own the desktop session.

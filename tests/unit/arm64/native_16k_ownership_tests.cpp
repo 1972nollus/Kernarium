@@ -3,6 +3,7 @@
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
 #include "native_retry_validation_test_support.hpp"
+#include "native_window_test_support.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -36,7 +37,6 @@ namespace {
 using namespace std::chrono_literals;
 
 constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-constexpr std::uintptr_t high_address_hint = 0x7f20'0000'0000ULL;
 
 void require(bool condition, const char *message)
 {
@@ -94,25 +94,24 @@ private:
 	std::size_t pages_{};
 };
 
-class HighAddressArena final {
+class NativeWindowArena final {
 public:
-	explicit HighAddressArena(std::size_t pages)
+	explicit NativeWindowArena(std::size_t pages)
 		: length_{pages * page_size}
 	{
-		void *reservation = mmap(reinterpret_cast<void *>(high_address_hint),
-			length_, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-		require(reservation != MAP_FAILED,
-			"could not reserve high native ownership arena");
-		base_ = reinterpret_cast<std::uintptr_t>(reservation);
-		require(base_ >= 0x6000'0000'0000ULL &&
+		base_ = uml::testing::reserve_native_test_window(length_);
+		require(base_ != 0,
+			"could not reserve native-window ownership arena");
+		require(base_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
+			base_ <= DARWIN_UML_NATIVE_ADDRESS_END - length_ &&
 			(base_ & (page_size - 1)) == 0,
-			"native ownership arena was not high and aligned");
-		require(munmap(reservation, length_) == 0,
-			"could not release high native ownership arena");
+			"native ownership arena escaped the shared native window");
+		require(uml::testing::release_native_test_window(base_, length_),
+			"could not release native-window ownership arena");
 	}
 
-	HighAddressArena(const HighAddressArena &) = delete;
-	HighAddressArena &operator=(const HighAddressArena &) = delete;
+	NativeWindowArena(const NativeWindowArena &) = delete;
+	NativeWindowArena &operator=(const NativeWindowArena &) = delete;
 
 	[[nodiscard]] std::uintptr_t page(std::size_t index) const noexcept
 	{
@@ -245,7 +244,7 @@ int concurrent_map(void *opaque)
 }
 
 void test_nonoverlap_concurrency_and_leaked_cleanup(
-	const HighAddressArena &arena)
+	const NativeWindowArena &arena)
 {
 	TemporaryBacking backing_a{0x11};
 	TemporaryBacking backing_b{0x22};
@@ -421,7 +420,7 @@ int simple_map(void *opaque)
 	return state.valid ? 0 : 73;
 }
 
-void test_same_address_collision_and_retry(const HighAddressArena &arena)
+void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing_a{0x15};
 	TemporaryBacking backing_b{0x26};
@@ -543,7 +542,7 @@ int acquire_after_retirement(void *opaque)
 	return valid ? 0 : 74;
 }
 
-void test_retire_acquire_handoff(const HighAddressArena &arena)
+void test_retire_acquire_handoff(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing_a{0x18};
 	TemporaryBacking backing_b{0x29};
@@ -621,7 +620,7 @@ int replace_same_owner(void *opaque)
 	return valid ? 0 : 75;
 }
 
-void test_same_owner_replacement(const HighAddressArena &arena)
+void test_same_owner_replacement(const NativeWindowArena &arena)
 {
 	TemporaryBacking first{0x51};
 	TemporaryBacking second{0x62};
@@ -697,7 +696,7 @@ int map_two_pages(void *opaque)
 	return state.valid ? 0 : 77;
 }
 
-void test_mixed_foreign_range_is_atomic(const HighAddressArena &arena)
+void test_mixed_foreign_range_is_atomic(const NativeWindowArena &arena)
 {
 	TemporaryBacking holder_backing{0x47};
 	TemporaryBacking mixed_backing{0x83, 0x94};
@@ -798,7 +797,7 @@ int test_unowned_operations(void *opaque)
 	return valid ? 0 : 78;
 }
 
-void test_unowned_host_mapping_is_replaced(const HighAddressArena &arena)
+void test_unowned_host_mapping_is_replaced(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0xc5};
 	UnownedState state{
@@ -848,7 +847,7 @@ int fail_then_retry_map(void *opaque)
 	return valid ? 0 : 79;
 }
 
-void run_failure_retry(const HighAddressArena &arena, std::size_t page,
+void run_failure_retry(const NativeWindowArena &arena, std::size_t page,
 	uml::memory::testing::AllocationSite site, bool inject)
 {
 	TemporaryBacking backing{0xd6};
@@ -914,7 +913,7 @@ int direct_software_publication(void *opaque)
 }
 
 void test_direct_software_publication_is_identity(
-	const HighAddressArena &arena)
+	const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0x12};
 	DirectSoftwarePublicationState state{
@@ -1010,7 +1009,7 @@ int owned_bridge_lifecycle(void *opaque)
 	return state.valid ? 0 : 81;
 }
 
-void test_owned_bridge_lifecycle(const HighAddressArena &arena)
+void test_owned_bridge_lifecycle(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0x31, 0x42};
 	OwnedLifecycleState state{
@@ -1026,7 +1025,7 @@ void test_owned_bridge_lifecycle(const HighAddressArena &arena)
 }
 
 void test_direct_retry_validates_ownership_mapping_and_permissions(
-	const HighAddressArena &arena)
+	const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0x93};
 	uml::testing::exercise_native_retry_direct(arena.page(24),
@@ -1116,7 +1115,7 @@ int two_page_rollback(void *opaque)
 	return state.valid ? 0 : 82;
 }
 
-void test_two_page_rollback(const HighAddressArena &arena)
+void test_two_page_rollback(const NativeWindowArena &arena)
 {
 	TemporaryBacking backing{0x73, 0x84};
 	TwoPageRollbackState state{
@@ -1161,7 +1160,7 @@ int registry_oom(void *opaque)
 
 int run_registry_oom_child(std::string_view mode)
 {
-	HighAddressArena arena{2};
+	NativeWindowArena arena{2};
 	TemporaryBacking backing{0xf7};
 	const auto site = mode == "--native-domain-registry-oom-child" ?
 		uml::memory::testing::AllocationSite::native_domain_registry :
@@ -1214,7 +1213,7 @@ int main(int argc, char **argv)
 
 		require(counts_are_zero(),
 			"native ownership test started with retained state");
-		HighAddressArena arena{28};
+		NativeWindowArena arena{28};
 		test_nonoverlap_concurrency_and_leaked_cleanup(arena);
 		test_same_address_collision_and_retry(arena);
 		test_retire_acquire_handoff(arena);

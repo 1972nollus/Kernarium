@@ -78,11 +78,10 @@ public:
 		std::uint64_t address, std::uint64_t length) noexcept;
 };
 
-/* Embedded-kernel admission serializes process-wide native mappings. The
- * runtime narrows the maximum iOS envelope to the exact RAM-plus-auxiliary
- * window before entering the relocated kernel, then restores the envelope
- * after the run. Static macOS products compile these operations to an
- * exact-value check and retain the previous constant classifier.
+/* Kernel admission serializes process-wide native mappings. Every Apple
+ * product selects its exact RAM-plus-auxiliary window before entering the
+ * relocated kernel, then restores the low signed-envelope default after the
+ * run. iOS top-packs below 62 GiB; macOS uses its high native window.
  */
 [[nodiscard]] bool configure_native_address_window(
 	std::uint64_t start, std::uint64_t end) noexcept;

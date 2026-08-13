@@ -9,6 +9,16 @@ NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept
 {
 #if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
+#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+	using Geometry = NativeKernelLayoutGeometry<
+		DARWIN_UML_NATIVE_LINK_ADDRESS,
+		DARWIN_UML_GUEST_ADDRESS_LIMIT,
+		DARWIN_UML_NATIVE_AUXILIARY_DIVISOR,
+		DARWIN_UML_NATIVE_AUXILIARY_MINIMUM,
+		DARWIN_UML_GUEST_PAGE_SIZE>;
+	return Geometry::derive_at(
+		guest_memory, DARWIN_UML_MACOS_NATIVE_ADDRESS);
+#else
 	using Geometry = NativeKernelLayoutGeometry<
 		DARWIN_UML_NATIVE_LINK_ADDRESS,
 		DARWIN_UML_NATIVE_ADDRESS_CEILING,
@@ -16,6 +26,7 @@ NativeKernelLayout prepare_native_kernel_layout(
 		DARWIN_UML_NATIVE_AUXILIARY_MINIMUM,
 		DARWIN_UML_GUEST_PAGE_SIZE>;
 	return Geometry::derive(guest_memory);
+#endif
 #else
 	(void)guest_memory;
 	return {

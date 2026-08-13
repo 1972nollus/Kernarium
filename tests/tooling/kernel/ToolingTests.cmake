@@ -39,6 +39,28 @@ uml_add_tooling_test(
     LABELS kernel;audit
     TIMEOUT 30)
 
+uml_add_tooling_test(
+    NAME kernel-compressed-memory-policy
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_compressed_memory_policy.py
+        --kernel-config ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME apple-shared-kernel-image-policy
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py
+        --presets ${PROJECT_SOURCE_DIR}/CMakePresets.json
+        --kernel-cmake ${PROJECT_SOURCE_DIR}/kernel/CMakeLists.txt
+        --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
+        --simulator-script
+            ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
+        --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp
+        --toolchain-env ${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin.env
+    LABELS kernel;audit
+    TIMEOUT 30)
+
 # A CLI configuration always supplies the prepared replay. A tooling-only
 # configuration may opt in by naming one explicitly; the fixture itself is
 # host-only and rootfs-free.
@@ -61,6 +83,7 @@ if(DEFINED UML_KERNEL_SOURCE_DIR AND
             --page-16k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment
             --page-4k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment
             --kernel-build-script ${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh
+            --project-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
         LABELS kernel;audit
         TIMEOUT 30)
 endif()

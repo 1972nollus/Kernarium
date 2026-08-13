@@ -7,15 +7,15 @@ iOS limits an application to a small fixed host-thread population. The Darwin sc
 
 Give each UML vCPU, including vCPU0, one persistent host carrier instead. Save and restore stackful Linux task contexts on their guest-kernel stacks, allowing the ordinary Linux scheduler to migrate tasks across all vCPUs without allocating a host thread per task.
 
-Keep a native return context on every carrier so shutdown returns to its Darwin-managed stack before libpthread teardown. Install CPU0 signal stack on its carrier, retain carriers across secondary CPU hotplug, and name each thread uml-vcpu-N-carrier for profiling. Apply the mechanism to every Darwin build so macOS, iOS Simulator, and iOS devices share the same scheduler.
+Keep a native return context on every carrier so shutdown returns to its Darwin-managed stack before libpthread teardown. Install CPU0 signal stack on its carrier, retain carriers across secondary CPU hotplug, and name each thread uml-vcpu-N-carrier for profiling. Construct that name without a variadic host-libc call because Linux AAPCS64 and Apple arm64 use different variadic conventions. Apply the mechanism to every Darwin build so macOS, iOS Simulator, and iOS devices share the same scheduler.
 ---
  arch/um/kernel/process.c         |  14 +-
  arch/um/kernel/skas/process.c    |   2 +
  arch/um/os-Darwin/internal.h     |  18 +-
  arch/um/os-Darwin/signal.c       |  11 +-
  arch/um/os-Darwin/skas/process.c | 561 ++-----------------------------
- arch/um/os-Darwin/smp.c          | 151 +++++++--
- 6 files changed, 168 insertions(+), 589 deletions(-)
+ arch/um/os-Darwin/smp.c          | 180 ++++++++++---
+ 6 files changed, 194 insertions(+), 592 deletions(-)
 
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
 index 9dcd8758f..838272e9b 100644
@@ -800,10 +800,14 @@ index 670642c88..93d674346 100644
  	if (!darwin_timers_cooperative())
  		change_sig(SIGALRM, 0);
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index e05157ba5..81f1847a0 100644
+index e05157ba5..53b74bb06 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -10,13 +10,20 @@
+@@ -6,17 +6,23 @@
+ #include <pthread.h>
+ #include <sched.h>
+ #include <signal.h>
+-#include <stdio.h>
  #include <stdint.h>
  #include <stdlib.h>
  #include <unistd.h>
@@ -824,7 +828,7 @@ index e05157ba5..81f1847a0 100644
  };
  
  static pthread_key_t current_cpu_key;
-@@ -33,20 +40,35 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
+@@ -33,20 +39,35 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
  static pthread_mutex_t futex_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t futex_condition = PTHREAD_COND_INITIALIZER;
  
@@ -864,7 +868,7 @@ index e05157ba5..81f1847a0 100644
  }
  
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
-@@ -63,9 +85,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -63,9 +84,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
  	int cpu;
  
  	/* Stop new IPI senders from acquiring this pthread before waiting for a
@@ -877,25 +881,53 @@ index e05157ba5..81f1847a0 100644
  	 */
  	for (cpu = 0; cpu < uml_ncpus; cpu++) {
  		expected = retiring;
-@@ -86,17 +108,34 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -84,19 +105,60 @@ void darwin_retire_cpu_thread(pthread_t thread)
+ 	}
+ }
  
- void darwin_set_current_cpu(int cpu)
+-void darwin_set_current_cpu(int cpu)
++static void name_cpu_carrier(int cpu)
  {
-+	struct cpu_thread_data *carrier;
- 	char name[32];
+-	char name[32];
++	char digits[10];
++	char name[32] = "uml-vcpu-";
++	unsigned int value = (unsigned int)cpu;
++	size_t digit_count = 0;
++	size_t length = sizeof("uml-vcpu-") - 1;
  
 -	if (pthread_once(&current_cpu_once, create_current_cpu_key) != 0 ||
 -	    pthread_setspecific(current_cpu_key,
 -		(void *)(uintptr_t)(cpu + 1)) != 0)
 -		panic("Darwin: unable to set current virtual CPU");
 -	snprintf(name, sizeof(name), "uml-vcpu%d", cpu);
++	do {
++		digits[digit_count++] = '0' + value % 10;
++		value /= 10;
++	} while (value != 0);
++	while (digit_count != 0)
++		name[length++] = digits[--digit_count];
++	name[length++] = '-';
++	name[length++] = 'c';
++	name[length++] = 'a';
++	name[length++] = 'r';
++	name[length++] = 'r';
++	name[length++] = 'i';
++	name[length++] = 'e';
++	name[length++] = 'r';
++	name[length] = '\0';
+ 	(void)pthread_setname_np(name);
++}
++
++void darwin_set_current_cpu(int cpu)
++{
++	struct cpu_thread_data *carrier;
++
 +	if (pthread_once(&current_cpu_once, create_current_cpu_key) != 0)
 +		panic("Darwin: unable to initialize current CPU key");
 +	carrier = pthread_getspecific(current_cpu_key);
 +	if (carrier == NULL || carrier->cpu != cpu)
 +		panic("Darwin: CPU%d is not running on its fixed carrier", cpu);
-+	snprintf(name, sizeof(name), "uml-vcpu-%d-carrier", cpu);
- 	(void)pthread_setname_np(name);
++	name_cpu_carrier(cpu);
  	darwin_publish_cpu_thread(cpu, pthread_self());
  }
  
@@ -917,7 +949,7 @@ index e05157ba5..81f1847a0 100644
  static void drain_ipis(void)
  {
  	int cpu = uml_curr_cpu();
-@@ -129,7 +168,7 @@ void darwin_ipi_poll(void)
+@@ -129,7 +191,7 @@ void darwin_ipi_poll(void)
  	int cpu;
  
  	if (darwin_task_shutdown_requested())
@@ -926,7 +958,7 @@ index e05157ba5..81f1847a0 100644
  	/* Finishing a reschedule batch may resume this task on another virtual
  	 * CPU.  Recheck there before returning so callers never continue from an
  	 * IPI boundary with a stale CPU identity or an already-pending local
-@@ -141,7 +180,7 @@ void darwin_ipi_poll(void)
+@@ -141,7 +203,7 @@ void darwin_ipi_poll(void)
  			drain_ipis();
  	} while (cpu != uml_curr_cpu());
  	if (darwin_task_shutdown_requested())
@@ -935,7 +967,7 @@ index e05157ba5..81f1847a0 100644
  }
  
  int darwin_ipi_idle_fd(void)
-@@ -320,36 +359,65 @@ int os_send_ipi(int cpu, int vector)
+@@ -320,36 +382,65 @@ int os_send_ipi(int cpu, int vector)
  	return pipe_error != 0 ? pipe_error : -error;
  }
  
@@ -1011,7 +1043,7 @@ index e05157ba5..81f1847a0 100644
  	if (!darwin_reserve_embedded_thread()) {
  		free(data);
  		return -ESHUTDOWN;
-@@ -366,9 +434,11 @@ int os_start_cpu_thread(int cpu)
+@@ -366,9 +457,11 @@ int os_start_cpu_thread(int cpu)
  	sigemptyset(&block);
  	sigaddset(&block, SIGALRM);
  	error = pthread_sigmask(SIG_BLOCK, &block, &previous);
@@ -1026,7 +1058,7 @@ index e05157ba5..81f1847a0 100644
  		panic("Darwin: unable to restore CPU creator signal mask");
  	pthread_attr_destroy(&attributes);
  	if (error != 0) {
-@@ -379,21 +449,32 @@ int os_start_cpu_thread(int cpu)
+@@ -379,21 +472,32 @@ int os_start_cpu_thread(int cpu)
  	return 0;
  }
  
@@ -1069,4 +1101,3 @@ index e05157ba5..81f1847a0 100644
  void os_init_smp(void)
 -- 
 2.50.1 (Apple Git-155)
-

@@ -19,16 +19,23 @@ image's normal systemd toward `graphical.target`. No disk-backed swap is
 created or activated. Documents file sharing and Extended Virtual Addressing
 remain project-owned metadata.
 
-Both iOS targets embed the same scalable-layout ET_DYN kernel ELF in an aligned
-`KernariumRuntime.framework` `__TEXT` section covered by Xcode's standard code
-signature. The loader exposes a 128 TiB sparse software-MMU task range and
-derives a native window ending at 62 GiB from guest RAM plus a page-rounded one
-eighth for auxiliary kernel mappings, with a 32 MiB floor. It aliases immutable
-executable pages from signed storage and copies only data/BSS. With 1 GiB of
-guest RAM the auxiliary allowance is exactly 128 MiB and the active window is
-60.875--62 GiB.
-It uses no anonymous executable publication, RW-to-RX transition, LLDB, or JIT
-entitlement. macOS retains its standard 96 TiB layout and loader behavior.
+The default macOS integration target and both iOS targets consume the exact
+same canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. The iOS
+targets place them in an aligned `KernariumRuntime.framework` `__TEXT` section
+covered by Xcode's standard code signature, while macOS retains its established
+unsigned CLI embedding. Every Apple product exposes the same 128 TiB sparse
+software-MMU task range and derives a native window from guest RAM plus a
+page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
+Device and Simulator top-pack that window below 62 GiB.
+The iOS loader aliases immutable executable pages from signed storage and
+copies only data/BSS. With 1 GiB of guest RAM the auxiliary allowance is
+exactly 128 MiB and the active window is 60.875--62 GiB. It uses no anonymous
+executable publication, RW-to-RX transition, LLDB, or JIT entitlement. macOS
+exercises the same range, window derivation, relocation, and exclusion-hole
+handling while retaining its 8 GiB and ten-vCPU defaults; its 1 GiB auxiliary
+allowance produces a 9 GiB active window starting at 96 TiB. The separately
+tested macOS 4 KiB compatibility profile retains its necessarily distinct compile-time
+page-profile artifact.
 
 The Darwin port now owns exactly one persistent host carrier for each
 configured vCPU, including vCPU0. Linux tasks keep stackful context on 128 KiB
@@ -37,6 +44,11 @@ Carriers are named `uml-vcpu-N-carrier`; host-stop wakes them cooperatively,
 and IRQ-enabled spin checkpoints service pending IPIs so synchronous
 cross-calls cannot deadlock. Shipped kernels use a 100 Hz tick and
 `NO_HZ_IDLE`.
+
+The common kernel also builds zswap in, enables it by default, and selects zstd
+while retaining zram with zstd. Zswap requires backing swap and allocates no
+pool in the normal macOS or Kernarium desktop flows, which deliberately do not
+activate a swap device or file.
 
 Two real Virtio-input devices carry UIKit touch coordinates and keyboard text
 to the guest. The trailing-center keyboard control is circular and bordered on

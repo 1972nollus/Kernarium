@@ -15,16 +15,19 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
-## Latest verified replay (2026-08-13)
+## Latest verified replay (2026-08-14)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`f4ea0e833d4f07e53346188f5186ac2ab71fb8c2`. A fresh authenticated replay,
+`39cf75ce83c5396d9f1540bf37c6a16a6c78d1cd`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, and delta audit passed. The exact delta policy is 157 changed files
-with 6 outside the Darwin port. Topic 0015 adds the shared scalable iOS address
-profile, including the page-rounded one-eighth auxiliary allowance and 32 MiB
-floor. Topic 0016 replaces per-task Darwin pthreads with one persistent
-carrier per configured vCPU on macOS, iOS Simulator, and physical iOS. Topic
+with 6 outside the Darwin port. Topic 0015 replaces the former macOS/iOS split
+with one scalable Darwin address mechanism, including the page-rounded
+one-eighth auxiliary allowance, 32 MiB floor, iOS low placement, and macOS high
+placement. Topic 0016 replaces per-task Darwin
+pthreads with one persistent carrier per configured vCPU on macOS, iOS
+Simulator, and physical iOS. Carrier names use a non-variadic decimal formatter
+because Linux AAPCS64 and Apple arm64 variadic call conventions differ. Topic
 0017 lets the host-stop descriptor wake those carriers for cooperative
 shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
 checkpoints, preventing two fixed carriers from deadlocking in synchronous
@@ -49,7 +52,7 @@ vhost-user transport changes remain in topic 0010 while the generic 64-bit
 DMA-mask correction remains independently reviewable and droppable as topic
 0014. Topic 0015 changes shared layout consumers owned by earlier topics; its
 exact overlaps are declared, including its update to the arm64 profile
-constants in `arch/arm64/Makefile.um`.
+constants in `arch/arm64/Makefile.um` and removes the retired platform selector.
 The manifest verifier rejects undeclared, stale, or mismatched overlaps.
 
 The signed archive, packaged/final trees, ordered stable patch IDs, and patch
@@ -65,26 +68,26 @@ Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
 represent several upstream paths that differ only by case. The canonical
 checkout is the dedicated APFS case-sensitive volume mounted at
 `/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
-`build-16k` and `build-4k` on that volume. The shared Simulator/device build is
-`build-ios-device-16k`. Transient case-sensitive mounts under `/tmp` are not
-used for the canonical source or build trees:
+`build-16k` and `build-4k` on that volume. The default macOS integration
+product and both iOS products consume the same `build-16k/vmlinux`; there is no
+platform-specific kernel build. Transient case-sensitive mounts under `/tmp`
+are not used for the canonical source or build trees:
 
 ```sh
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux \
   --cache /path/to/kernel-cache --no-fetch
-kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --jobs 2
+kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
 ```
 
 The first preparation populates `.build/kernel-cache` unless another cache is
 selected. `--no-fetch` requires both authenticated release files to be present
 there; ordinary `--verify` never reads the cache or network. The last command
 starts from a fresh signed release package and builds both 16 KiB and 4 KiB
-configurations out of tree. Two kernel jobs is the conservative checked-in
-default because parallel LLVM links can otherwise exceed the acceptance
-host's memory; hosts with more headroom may override `UML_KERNEL_JOBS` or
-`--jobs`. `--recreate` is the only mode allowed to replace a
+configurations out of tree. Kernel builds default to every online host
+processor. Resource-constrained hosts may override `UML_KERNEL_JOBS` or pass
+`--jobs N` to set a smaller explicit limit. `--recreate` is the only mode allowed to replace a
 clean stale managed replay branch, and it never replaces the source directory
 itself.
 
@@ -101,27 +104,35 @@ kernel/config/page-16k.fragment  guest page size, default
 kernel/config/page-4k.fragment   guest page size, compatibility profile
 ```
 
-Guest page size is the only `.config` axis that varies, because a single
-`.config` cannot hold both values. There is no optional Kconfig policy layer: a
-symbol absent from `common.fragment` is absent from the product. The separate
-`--address-space standard|ios-device` build selector changes link and task
-layout constants, not Kconfig policy. It defaults to `standard`, which keeps
-the macOS kernel at the established 96 TiB boundary. Both iOS products use
-`ios-device`: it exposes the maximum three-level 16 KiB software-MMU task range
-of 128 TiB and treats the native kernel mapping as a hole inside that range.
-The signed ET_DYN kernel is linked at 48 GiB and biased so the active native
-window ends at the 62 GiB iOS ceiling. Its start scales with guest memory; the
-window contains exactly the RAM-sized direct map plus a page-rounded one eighth
-for auxiliary kernel mappings, with a 32 MiB floor. Kernarium's 1 GiB guest
-therefore receives exactly 128 MiB of auxiliary address capacity and uses the
-60.875--62 GiB active window:
+Guest page size is the only kernel policy axis that varies, because a single
+`.config` cannot hold both values. There is no optional Kconfig policy layer
+or address-space selector: a symbol absent from `common.fragment` is absent
+from the product. Every Darwin kernel exposes the maximum three-level 16 KiB
+software-MMU task range of 128 TiB and treats the native kernel mapping as a
+hole inside that range. The ET_DYN kernel is linked at 48 GiB. Device and
+Simulator bias it so the active native window ends at the physical-iOS 62 GiB
+ceiling; macOS biases the same image to a 96 TiB base. The window contains
+exactly the RAM-sized direct map plus a
+page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
+Kernarium's 1 GiB guest therefore receives exactly 128 MiB of auxiliary address
+capacity and uses the 60.875--62 GiB active window. The standalone macOS app
+defaults to 8 GiB and 10 vCPUs; its 1 GiB auxiliary allowance gives it a 9 GiB
+active window beginning at 96 TiB. The kernel derives the hole endpoint from
+its relocated image, so macOS uses this same exact 16 KiB kernel artifact while
+retaining its established unsigned loader rather than the iOS signed carrier:
 
 ```sh
 kernel/build-kernel.sh \
   --source /Volumes/<case-sensitive-volume>/linux \
-  --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
-  --page-size 16k --address-space ios-device
+  --build /Volumes/<case-sensitive-volume>/build-16k \
+  --page-size 16k
 ```
+
+The common policy builds zswap in, enables it by default, and selects zstd. It
+retains zram with zstd as a separately activatable compressed swap device.
+Zswap is a cache in front of backing swap rather than backing by itself; it
+allocates no pool when the guest has no active swap device or file. Normal KDE
+launchers, including Kernarium, deliberately activate none.
 
 Every shipped profile selects a 100 Hz timer tick and `NO_HZ_IDLE`. This keeps
 the fixed vCPU carriers responsive while avoiding a 1 kHz compulsory wakeup on
@@ -184,6 +195,8 @@ standalone build script repeats the target compiler check before Kbuild. Set
 `UML_KERNEL_TOOLCHAIN_ROOT` or
 `UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,OBJDUMP,READELF,
 STRIP,LLVM,JOBS}` for a non-default host setup.
+When `JOBS` is omitted, the build helper uses the online processor count
+reported by `getconf`, with Darwin `sysctl` as a fallback.
 When LLVM binutils live beside the selected `clang`, the build helper and the
 macOS CMake target select that matching family automatically; explicit values
 remain authoritative.

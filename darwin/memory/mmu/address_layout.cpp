@@ -120,7 +120,6 @@ bool configure_native_address_window(
 	std::uint64_t start, std::uint64_t end) noexcept
 {
 	if (start > end || start < DARWIN_UML_NATIVE_ADDRESS_START ||
-	    end > DARWIN_UML_NATIVE_ADDRESS_END ||
 	    end > DARWIN_UML_GUEST_ADDRESS_LIMIT)
 		return false;
 #if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT

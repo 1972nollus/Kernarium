@@ -55,6 +55,24 @@ public:
 			.valid = true,
 		};
 	}
+
+	[[nodiscard]] static constexpr NativeKernelLayout derive_at(
+		std::uint64_t guest_memory, std::uint64_t start) noexcept
+	{
+		const auto packed = derive(guest_memory);
+		if (!packed.valid || start < LinkAddress ||
+		    start > AddressCeiling)
+			return {};
+		const auto length = packed.window_end - packed.window_start;
+		if (length > AddressCeiling - start)
+			return {};
+		return {
+			.load_bias = static_cast<std::uintptr_t>(start - LinkAddress),
+			.window_start = static_cast<std::uintptr_t>(start),
+			.window_end = static_cast<std::uintptr_t>(start + length),
+			.valid = true,
+		};
+	}
 };
 
 [[nodiscard]] NativeKernelLayout prepare_native_kernel_layout(

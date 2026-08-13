@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
+#include "native_window_test_support.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
@@ -74,15 +75,13 @@ class NativeSlot final {
 public:
 	NativeSlot() : size_{static_cast<std::size_t>(getpagesize())}
 	{
-		void *reservation = mmap(
-			reinterpret_cast<void *>(0x7f00'0000'0000ULL), size_,
-			PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-		require(reservation != MAP_FAILED,
+		base_ = uml::testing::reserve_native_test_window(size_);
+		require(base_ != 0,
 			"could not reserve native admission slot");
-		base_ = reinterpret_cast<std::uintptr_t>(reservation);
-		require(base_ >= 0x6000'0000'0000ULL,
-			"native admission slot remained in guest address space");
-		require(munmap(reservation, size_) == 0,
+		require(base_ >= DARWIN_UML_NATIVE_ADDRESS_START &&
+			base_ <= DARWIN_UML_NATIVE_ADDRESS_END - size_,
+			"native admission slot escaped the shared native window");
+		require(uml::testing::release_native_test_window(base_, size_),
 			"could not release native admission reservation");
 	}
 

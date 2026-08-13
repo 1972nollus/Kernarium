@@ -15,11 +15,18 @@ AppKit/CGL/IOSurface/Metal and VNC paths.
 Kernarium recreates a sparse 8 GiB temporary image on launch. The guest formats
 it as ext4 and uses separate OverlayFS, Docker, and containerd directories on
 the same free-space pool; the app does not create or activate disk-backed swap.
-Both iOS targets run the same framework-signed ET_DYN kernel, scalable
-60.875--62 GiB native window for the 1 GiB guest, and 128 TiB sparse
+Both iOS targets and default 16 KiB macOS integration consume the exact same
+canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. iOS carries
+them in the framework's signed `__TEXT`; macOS embeds them through its existing
+unsigned CLI path. Both iOS targets use the same scalable 60.875--62 GiB native
+window for the 1 GiB guest and every product uses the 128 TiB sparse
 software-MMU task range. The native window is guest RAM plus a page-rounded
 one-eighth auxiliary allowance with a 32 MiB floor; 1 GiB therefore receives
-exactly 128 MiB. macOS retains its previous loader and 96 TiB layout.
+exactly 128 MiB. macOS exercises the same scalable-window derivation,
+relocation, and native-hole handling at a 96 TiB base. It retains the
+standalone app's 8 GiB and ten-vCPU defaults, which derive a 9 GiB active
+window. The common kernel enables zswap by default with zstd; normal desktop
+launchers provide no backing swap, so no zswap pool is created.
 
 Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep

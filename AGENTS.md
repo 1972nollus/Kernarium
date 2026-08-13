@@ -47,7 +47,7 @@ historical sections as history.
   env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
     UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
     UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
-    kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --jobs 2
+    kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
   ```
 
   Use `UML_KERNEL_TOOLCHAIN_ROOT=/opt/homebrew/opt/llvm` for CMake configure
@@ -55,12 +55,20 @@ historical sections as history.
   rejects it.
 - Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
   targets are owned by `cmake/toolchains/Apple.cmake`.
-- Darwin UML kernels default to the `standard` 96 TiB macOS address layout.
-  Build the shared iOS device/Simulator kernel with
-  `kernel/build-kernel.sh --address-space ios-device`; it owns a 128 TiB sparse
-  software-MMU task range and a native hole ending at 62 GiB, sized to guest
-  RAM plus a page-rounded one eighth for auxiliary kernel mappings, with a
-  32 MiB floor.
+- All Darwin UML products use one relocatable kernel image and 128 TiB sparse
+  software-MMU task range. The native hole is guest RAM plus a page-rounded
+  one eighth for auxiliary kernel mappings, with a 32 MiB floor. Device and
+  Simulator top-pack it below the physical-iOS 62 GiB ceiling; macOS places
+  the same scalable window at 96 TiB to avoid the crowded low host VA range.
+  The kernel derives its endpoint from the relocated image; there is no
+  platform-specific Kbuild image or address-space selector.
+- The shipped kernel builds zswap in, enables it by default, and selects zstd,
+  while retaining zram with the same compressor. Zswap allocates no pool until
+  the guest activates backing swap; normal desktop launchers do not create
+  such backing and must not claim zswap as additional guest memory.
+- When `mem=` or `ncpus=` is absent, the standalone macOS app defaults to
+  8 GiB and 10 vCPUs. Kernarium retains its separate iOS application policy:
+  1 GiB, four Simulator vCPUs, and the physical device's processor count.
 - There is no repository-wide formatter. Follow adjacent formatting, retain
   SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
   and avoid unrelated formatting churn.
@@ -277,6 +285,9 @@ the final change.
   ```
 
   Omit `--skip-build` for a fresh replay plus both production page-size builds.
+  Kernel compilation uses every online host processor by default; set
+  `UML_KERNEL_JOBS` or pass `--jobs N` only when an explicit resource limit is
+  required.
 - Update patch bytes, `kernel/patches/series/manifest.tsv`, stable patch IDs and
   hashes, expected final tree, delta ceilings, ownership/overlap/extraction
   metadata, and `kernel/README.md` together.
@@ -356,11 +367,17 @@ Executable-memory policy:
   iOS kernel. On both iOS device and Simulator, the kernel ELF must remain in the aligned,
   normally code-signed framework `__TEXT` carrier; the loader may alias only
   immutable executable pages from that mapping and must reject relocations
-  into them. The targets must share the same signed image, dynamic load bias,
-  and software-MMU layout. Do not replace this with anonymous executable pages, RW-to-RX
+  into them. Device and Simulator must share the same signed image, dynamic
+  load bias, and software-MMU layout. Do not replace this with anonymous executable pages, RW-to-RX
   publication, debugger-only behavior, or a JIT entitlement. Simulator and
-  device use the iOS profile; macOS retains its standard address layout and
-  established loader behavior.
+  device use the signed carrier while macOS retains its established unsigned
+  loader behavior and high native-window placement. All three products use
+  the same scalable address mechanism and sparse guest profile.
+  The default macOS integration product, iOS device, and iOS Simulator consume
+  the exact same canonical 16 KiB kernel input at
+  `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`; do not create a platform-specific
+  Kbuild tree or kernel image. The supported macOS 4 KiB compatibility profile
+  necessarily retains its distinct page-profile artifact.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 

@@ -84,8 +84,7 @@
         "UML_BUILD_INTEGRATION_TESTS": true,
         "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.erofs",
         "UML_KERNEL_SOURCE_DIR": "/Volumes/Kernel/linux",
-        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-16k",
-        "UML_KERNEL_JOBS": "2"
+        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-16k"
       }
     },
     {
@@ -185,7 +184,7 @@
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-device-arm64",
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-ios-device-16k/linux"
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
       }
     },
     {
@@ -201,7 +200,7 @@
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-simulator-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-simulator-arm64",
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-ios-device-16k/linux"
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
       }
     }
   ],

@@ -8,8 +8,9 @@ if(NOT UML_APPLE_PLATFORM MATCHES "^ios" OR
 endif()
 
 set(UML_KERNARIUM_KERNEL_IMAGE
-    "${PROJECT_SOURCE_DIR}/.build/kernel/linux"
-    CACHE FILEPATH "AArch64 UML ET_DYN image embedded in KernariumRuntime")
+    "/Volumes/Kernel/build-16k/vmlinux"
+    CACHE FILEPATH
+        "Canonical 16 KiB AArch64 UML ET_DYN image embedded in every Apple product")
 if(NOT EXISTS "${UML_KERNARIUM_KERNEL_IMAGE}")
     message(FATAL_ERROR
         "Kernarium kernel image does not exist: ${UML_KERNARIUM_KERNEL_IMAGE}")

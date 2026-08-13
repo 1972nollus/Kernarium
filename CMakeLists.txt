@@ -131,36 +131,29 @@ else()
     set(UML_GUEST_PAGE_SIZE 4096)
     set(UML_GUEST_PAGE_SHIFT 12)
 endif()
+# Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
+# one sparse software guest-address contract. Device and Simulator top-pack the
+# scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
+# the same relocation, exclusion-hole, and RAM-scaled auxiliary mechanisms at
+# its established 96 TiB native base, outside Darwin's crowded low host range.
+# The window is exactly guest RAM plus a page-rounded one-eighth kernel-
+# auxiliary allowance, with Linux UML's 32 MiB minimum retained for small
+# guests.
+# The existing three-level 16 KiB guest page tables expose their maximum 47-bit
+# range; a true 48-bit range would add a page-table level to every kernel.
+set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)
+set(UML_NATIVE_ADDRESS_START 0x0000000c00000000ULL)
+set(UML_NATIVE_ADDRESS_END 0x0000000f80000000ULL)
+set(UML_NATIVE_LINK_ADDRESS 0x0000000c00000000ULL)
+set(UML_NATIVE_ADDRESS_CEILING 0x0000000f80000000ULL)
+set(UML_MACOS_NATIVE_ADDRESS 0x0000600000000000ULL)
+set(UML_NATIVE_AUXILIARY_DIVISOR 8)
+set(UML_NATIVE_AUXILIARY_MINIMUM 0x0000000002000000ULL)
+set(UML_SIGRETURN_TRAMPOLINE 0x00007fffffffff00ULL)
+set(UML_DYNAMIC_NATIVE_LAYOUT 1)
 if(UML_APPLE_PLATFORM MATCHES "^ios")
-    # Both iOS products deliberately use the physical-device contract. The
-    # signed ET_DYN kernel is linked at 48 GiB and biased at launch so its
-    # native window ends at the measured 62 GiB device ceiling. The window is
-    # exactly guest RAM plus a page-rounded one-eighth kernel-auxiliary
-    # allowance, with Linux UML's 32 MiB minimum retained for small guests;
-    # guest userspace is a sparse software-MMU range. Keep the existing
-    # three-level 16 KiB guest page tables and use their maximum 47-bit
-    # range; a true 48-bit range would add a page-table level to every iOS
-    # kernel.
-    set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)
-    set(UML_NATIVE_ADDRESS_START 0x0000000c00000000ULL)
-    set(UML_NATIVE_ADDRESS_END 0x0000000f80000000ULL)
-    set(UML_NATIVE_LINK_ADDRESS 0x0000000c00000000ULL)
-    set(UML_NATIVE_ADDRESS_CEILING 0x0000000f80000000ULL)
-    set(UML_NATIVE_AUXILIARY_DIVISOR 8)
-    set(UML_NATIVE_AUXILIARY_MINIMUM 0x0000000002000000ULL)
-    set(UML_SIGRETURN_TRAMPOLINE 0x00007fffffffff00ULL)
-    set(UML_DYNAMIC_NATIVE_LAYOUT 1)
     set(UML_SIGNED_KERNEL_CARRIER 1)
 else()
-    set(UML_GUEST_ADDRESS_LIMIT 0x0000600000000000ULL)
-    set(UML_NATIVE_ADDRESS_START 0x0000600000000000ULL)
-    set(UML_NATIVE_ADDRESS_END 0x0000600000000000ULL)
-    set(UML_NATIVE_LINK_ADDRESS 0x0000600000000000ULL)
-    set(UML_NATIVE_ADDRESS_CEILING 0x0000600000000000ULL)
-    set(UML_NATIVE_AUXILIARY_DIVISOR 1)
-    set(UML_NATIVE_AUXILIARY_MINIMUM 0ULL)
-    set(UML_SIGRETURN_TRAMPOLINE 0x00003fffffffff00ULL)
-    set(UML_DYNAMIC_NATIVE_LAYOUT 0)
     set(UML_SIGNED_KERNEL_CARRIER 0)
 endif()
 add_library(uml_guest_page_configuration INTERFACE)
@@ -174,6 +167,8 @@ target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_NATIVE_ADDRESS_END=${UML_NATIVE_ADDRESS_END}
     DARWIN_UML_NATIVE_LINK_ADDRESS=${UML_NATIVE_LINK_ADDRESS}
     DARWIN_UML_NATIVE_ADDRESS_CEILING=${UML_NATIVE_ADDRESS_CEILING}
+    DARWIN_UML_MACOS_NATIVE_ADDRESS=${UML_MACOS_NATIVE_ADDRESS}
+    DARWIN_UML_NATIVE_HIGH_PLACEMENT=$<BOOL:${UML_TARGET_MACOS}>
     DARWIN_UML_NATIVE_AUXILIARY_DIVISOR=${UML_NATIVE_AUXILIARY_DIVISOR}
     DARWIN_UML_NATIVE_AUXILIARY_MINIMUM=${UML_NATIVE_AUXILIARY_MINIMUM}
     DARWIN_UML_SIGRETURN_TRAMPOLINE=${UML_SIGRETURN_TRAMPOLINE}

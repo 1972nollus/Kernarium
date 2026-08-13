@@ -19,7 +19,7 @@ usage()
 {
 	cat <<'EOF'
 Usage: kernel/build-kernel.sh --source PATH --build PATH --page-size 16k|4k
-                              [--address-space standard|ios-device] [--jobs N]
+                              [--jobs N]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
@@ -27,16 +27,15 @@ OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
 kernel policy ships: kernel/config/common.fragment is the whole configuration
 and only the page-size fragment varies. The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
-kernel/toolchain/darwin-host. The standard address space is used by macOS;
-ios-device selects the shared signed-kernel layout used by both iOS Simulator
-and physical-device builds.
+kernel/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
+the same constrained native address-space profile. An omitted jobs value uses
+all online host processors.
 EOF
 }
 
 SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
-ADDRESS_SPACE=standard
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--source)
@@ -52,11 +51,6 @@ while [ "$#" -gt 0 ]; do
 	--page-size)
 		[ "$#" -ge 2 ] || fail "--page-size requires 16k or 4k"
 		PAGE_SIZE=$2
-		shift 2
-		;;
-	--address-space)
-		[ "$#" -ge 2 ] || fail "--address-space requires standard or ios-device"
-		ADDRESS_SPACE=$2
 		shift 2
 		;;
 	--jobs)
@@ -81,10 +75,6 @@ done
 case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
-esac
-case "$ADDRESS_SPACE" in
-standard|ios-device) ;;
-*) fail "--address-space must be standard or ios-device" ;;
 esac
 case "$UML_KERNEL_JOBS" in
 *[!0-9]*|'') fail "UML_KERNEL_JOBS must be a positive integer" ;;
@@ -170,7 +160,6 @@ run_make()
 		PATH="$host_tool_bin:$PATH" "$UML_KERNEL_MAKE" \
 			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
 			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
-			"UML_DARWIN_ADDRESS_SPACE=$ADDRESS_SPACE" \
 			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
 			"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" \
 			"LLVM=$UML_KERNEL_LLVM" "$@"
@@ -178,7 +167,6 @@ run_make()
 		PATH="$host_tool_bin:$PATH" "$UML_KERNEL_MAKE" \
 			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
 			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
-			"UML_DARWIN_ADDRESS_SPACE=$ADDRESS_SPACE" \
 			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
 			"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
 	fi

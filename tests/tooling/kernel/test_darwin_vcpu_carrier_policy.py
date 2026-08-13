@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Pin Darwin's fixed-vCPU carrier scheduler and host-thread ceiling policy."""
+"""Pin Darwin's fixed-vCPU carrier scheduler and native-window policy."""
 
 from __future__ import annotations
 
@@ -91,6 +91,7 @@ def validate(
     page_16k_config: Path,
     page_4k_config: Path,
     kernel_build_script: Path,
+    project_cmake: Path,
 ) -> None:
     process = (linux_source / "arch/um/os-Darwin/skas/process.c").read_text()
     smp = (linux_source / "arch/um/os-Darwin/smp.c").read_text()
@@ -103,6 +104,12 @@ def validate(
     config_16k = page_16k_config.read_text()
     config_4k = page_4k_config.read_text()
     build_script = kernel_build_script.read_text()
+    project = project_cmake.read_text()
+    makefile = (linux_source / "arch/arm64/Makefile.um").read_text()
+    um_arch = (linux_source / "arch/um/kernel/um_arch.c").read_text()
+    address_space = (
+        linux_source / "arch/um/include/shared/darwin-address-space.h"
+    ).read_text()
 
     for setting in (
         "CONFIG_HZ_100=y",
@@ -142,12 +149,72 @@ def validate(
         "kernel build helper cannot safely apply page-derived stack orders",
     )
 
+    require(
+        "UML_DARWIN_ADDRESS_SPACE" not in makefile + build_script,
+        "Darwin kernel builds still expose divergent macOS/iOS address profiles",
+    )
+    for setting in (
+        "START := 0xc00000000",
+        "UML_DARWIN_TASK_SIZE := 0x800000000000UL",
+        "UML_DARWIN_GUEST_ADDRESS_LIMIT := 0x800000000000UL",
+        "UML_DARWIN_NATIVE_ADDRESS_START := 0xc00000000UL",
+        "UML_DARWIN_NATIVE_ADDRESS_END := 0xf80000000UL",
+        "UML_DARWIN_NATIVE_AUXILIARY_DIVISOR := 8",
+        "UML_DARWIN_NATIVE_AUXILIARY_MINIMUM := 0x2000000UL",
+        "UML_DARWIN_DYNAMIC_NATIVE_LAYOUT := 1",
+    ):
+        require(
+            len(re.findall(rf"(?m)^{re.escape(setting)}$", makefile)) == 1,
+            f"shared Darwin kernel address profile lacks exact setting: {setting}",
+        )
+    for setting in (
+        "set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)",
+        "set(UML_NATIVE_ADDRESS_START 0x0000000c00000000ULL)",
+        "set(UML_NATIVE_ADDRESS_END 0x0000000f80000000ULL)",
+        "set(UML_NATIVE_LINK_ADDRESS 0x0000000c00000000ULL)",
+        "set(UML_NATIVE_ADDRESS_CEILING 0x0000000f80000000ULL)",
+        "set(UML_MACOS_NATIVE_ADDRESS 0x0000600000000000ULL)",
+        "set(UML_NATIVE_AUXILIARY_DIVISOR 8)",
+        "set(UML_NATIVE_AUXILIARY_MINIMUM 0x0000000002000000ULL)",
+        "set(UML_DYNAMIC_NATIVE_LAYOUT 1)",
+    ):
+        require(
+            len(re.findall(rf"(?m)^\s*{re.escape(setting)}$", project)) == 1,
+            f"Apple host products lack exact shared address setting: {setting}",
+        )
+    require(
+        "set(UML_GUEST_ADDRESS_LIMIT 0x0000600000000000ULL)" not in project and
+        "set(UML_DYNAMIC_NATIVE_LAYOUT 0)" not in project and
+        "UML_DARWIN_HOST_TASK_SIZE" not in makefile,
+        "the shared kernel still has a platform-specific static address profile",
+    )
+    require(
+        "DARWIN_UML_NATIVE_HIGH_PLACEMENT=$<BOOL:${UML_TARGET_MACOS}>" in project,
+        "macOS does not select its high runtime native placement",
+    )
+    require(
+        "uml_darwin_native_end = UML_DARWIN_NATIVE_ADDRESS_END" in um_arch and
+        "return uml_darwin_native_end" in address_space and
+        "uml_darwin_native_end = native_start + memory + auxiliary" in um_arch,
+        "the shared kernel does not derive its native-hole end from relocation",
+    )
+
     masked_process = mask_comments_and_literals(process)
     masked_smp = mask_comments_and_literals(smp)
     require("darwin_task_thread" not in masked_process, "per-task pthread registry returned")
     require("pthread_create" not in masked_process, "guest-task creation must not create pthreads")
     require("pthread_exit" not in masked_process, "task context must not terminate its carrier")
-    require("TARGET_OS_SIMULATOR" not in process + smp, "Simulator must not select another scheduler")
+    require(
+        not any(
+            selector in process + smp
+            for selector in (
+                "TARGET_OS_SIMULATOR",
+                "TARGET_OS_IPHONE",
+                "UML_DARWIN_ADDRESS_SPACE",
+            )
+        ),
+        "an Apple platform or address profile still selects another scheduler",
+    )
 
     create_task = function(process, "new_thread")
     require_pattern(create_task, r"JB_IP\s*=\s*\(unsigned long\)\s*handler", "new task lacks saved PC")
@@ -207,6 +274,12 @@ def validate(
     )
 
     carrier = function(smp, "cpu_carrier")
+    require_pattern(
+        carrier,
+        r"pthread_setspecific\s*\(\s*current_cpu_key\s*,\s*data\s*\).*"
+        r"darwin_set_current_cpu\s*\(\s*data->cpu\s*\).*setjmp",
+        "carrier identity and name are not established on its native stack",
+    )
     require_pattern(carrier, r"setjmp\s*\(\s*data->native_context\s*\)", "carrier lacks native return context")
     require_pattern(carrier, r"UML_LONGJMP\s*\(\s*switch_buffer\s*,\s*1\s*\)", "carrier never enters a Linux task")
 
@@ -219,7 +292,24 @@ def validate(
     require("pthread_" not in mask_comments_and_literals(secondary), "secondary bootstrap replaces its carrier")
     require_pattern(restart, r"new_thread\s*\(.*new_thread_handler.*UML_LONGJMP", "hotplug does not reuse its carrier")
 
-    require('"uml-vcpu-%d-carrier"' in smp, "carrier thread names are not meaningful")
+    name_carrier = function(smp, "name_cpu_carrier")
+    require(
+        '"uml-vcpu-"' in name_carrier,
+        "carrier thread names lack their meaningful prefix",
+    )
+    require_pattern(
+        name_carrier,
+        r"char\s+name\s*\[\s*32\s*\].*value\s*%\s*10.*"
+        r"pthread_setname_np\s*\(\s*name\s*\)",
+        "carrier thread names are not meaningful",
+    )
+    require(
+        not any(
+            variadic in mask_comments_and_literals(name_carrier)
+            for variadic in ("snprintf", "sprintf", "printf")
+        ),
+        "carrier naming crosses the incompatible Linux/Apple variadic ABI",
+    )
     relax = function(smp, "darwin_cpu_relax")
     require_pattern(
         relax,
@@ -247,6 +337,7 @@ def main() -> int:
     parser.add_argument("--page-16k-config", type=Path, required=True)
     parser.add_argument("--page-4k-config", type=Path, required=True)
     parser.add_argument("--kernel-build-script", type=Path, required=True)
+    parser.add_argument("--project-cmake", type=Path, required=True)
     arguments = parser.parse_args()
     validate(
         arguments.linux_source.resolve(),
@@ -254,6 +345,7 @@ def main() -> int:
         arguments.page_16k_config.resolve(),
         arguments.page_4k_config.resolve(),
         arguments.kernel_build_script.resolve(),
+        arguments.project_cmake.resolve(),
     )
     print("Darwin fixed-vCPU carrier policy verified")
     return 0

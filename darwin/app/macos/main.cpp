@@ -54,6 +54,8 @@ constexpr char host_fault_pc_prefix[] = " at pc=0x";
 constexpr char host_fault_address_prefix[] = " address=0x";
 constexpr std::size_t host_fault_hex_digits = sizeof(std::uintptr_t) * 2U;
 constexpr std::size_t host_fault_message_capacity = 128;
+constexpr std::string_view macos_default_guest_memory{"mem=8G"};
+constexpr std::string_view macos_default_guest_cpus{"ncpus=10"};
 
 class AppNetwork final {
 public:
@@ -231,6 +233,16 @@ struct PreparedArguments {
 	std::vector<std::string> kernel;
 };
 
+void append_default_kernel_argument(std::vector<std::string> &arguments,
+				    std::string_view prefix,
+				    std::string_view value)
+{
+	for (const auto &argument : arguments)
+		if (argument.starts_with(prefix))
+			return;
+	arguments.emplace_back(value);
+}
+
 template<typename Integer>
 bool parse_host_integer(std::string_view argument, std::string_view prefix,
 			Integer &destination, bool allow_zero = false)
@@ -252,7 +264,7 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 {
 	PreparedArguments prepared;
-	prepared.kernel.reserve(static_cast<std::size_t>(argc) + 1U);
+	prepared.kernel.reserve(static_cast<std::size_t>(argc) + 3U);
 	for (int index = 0; index < argc; ++index) {
 		const std::string_view argument =
 			argv[index] == nullptr ? std::string_view {} : argv[index];
@@ -312,6 +324,10 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 	    prepared.gpu.vnc_option_specified)
 		throw std::invalid_argument(
 			"--gpu-vnc-* options require --gpu-display=vnc");
+	append_default_kernel_argument(
+		prepared.kernel, "mem=", macos_default_guest_memory);
+	append_default_kernel_argument(
+		prepared.kernel, "ncpus=", macos_default_guest_cpus);
 	return prepared;
 }
 

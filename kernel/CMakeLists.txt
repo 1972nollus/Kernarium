@@ -104,10 +104,11 @@ if(NOT UML_KERNEL_REVISION_FILE_RESULT EQUAL 0 OR
         "Cannot resolve the Git revision file for UML_KERNEL_SOURCE_DIR: "
         "${UML_KERNEL_SOURCE_DIR}")
 endif()
-set(UML_KERNEL_JOBS 2 CACHE STRING
-    "Parallel GNU Make jobs for the out-of-tree UML kernel build")
-if(NOT UML_KERNEL_JOBS MATCHES "^[1-9][0-9]*$")
-    message(FATAL_ERROR "UML_KERNEL_JOBS must be a positive integer")
+set(UML_KERNEL_JOBS "" CACHE STRING
+    "Parallel GNU Make jobs; empty uses all online host processors")
+if(NOT UML_KERNEL_JOBS STREQUAL "" AND
+   NOT UML_KERNEL_JOBS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "UML_KERNEL_JOBS must be empty or a positive integer")
 endif()
 find_program(UML_KERNEL_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 
