@@ -7737,3 +7737,47 @@ hot-path state. The template arm is therefore closed without implementation;
 reopen only if a representative profile places materially more than 2% of
 consumed carrier CPU in decode after G141 or a design can avoid the private copy and
 relocation while preserving executor-local link ownership.
+
+## G143: focused gadget-engine time breakdown
+
+Recorded 2026-08-13 on the final G107/G140/G141 product with ten guest vCPUs,
+8 GiB, performance QoS, and the gadgets engine. macOS `sample` covered the
+active portions of Geekbench 6.7.1 Clang (201) and Object Detection
+(301) in both core modes. The raw reports, exact commands, classifier, and
+complete symbol table are retained under
+`.build/results/gadgets-time-profile-20260813/`.
+
+The table reports mutually exclusive top-of-stack leaves inside `uml-darwin`.
+Gadget execution is the sum of memory, control, integer, FP/SIMD, and other
+decoded assembly gadgets. Cache activation/link work includes cache
+store/activate/deactivate, link-map creation, and cache preparation; it is not
+a hot cache lookup.
+
+| mode / workload | new decode | hot cache lookup | activation + links | gadget execution | memory gadgets | control | integer | FP/SIMD | MMU + engine |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| single Clang | 8.73% | 1.22% | 16.13% | **71.52%** | 28.51% | 15.17% | 24.23% | 3.29% | 2.34% |
+| multi Clang | 7.01% | 1.74% | 16.15% | **72.48%** | 29.61% | 16.80% | 25.56% | 0.08% | 2.62% |
+| single Object Detection | 0.00% | 0.00% | 0.00% | **99.71%** | 36.05% | 11.60% | 14.24% | 37.83% | 0.29% |
+| multi Object Detection | 0.00% | 0.51% | 0.00% | **99.07%** | 40.47% | 20.66% | 23.44% | 14.50% | 0.42% |
+
+Clang gives the stable mechanism result: single and multi agree that loading a
+hot cached program costs only 1--2%, while new decode costs 7--9% and cache
+admission/eviction/link maintenance costs about 16%. Direct `LinkRecord` map
+insertion alone is 6.23% single and 5.36% multi; activation plus deactivation
+adds 7.11% and 7.19%. The next cache-side candidate should therefore target
+link-record/cache churn, not introduce a global decoded-template lookup.
+
+The sampled Object Detection windows are already hot and spend more than 99%
+of active in-product leaves inside gadget assembly. Its likely opportunities
+are the actual load/store and SIMD/dot-product gadget bodies. Host C++ MMU and
+engine scaffolding remain below 0.7%; guest memory work is not absent, but is
+already represented by the 28.5--40.5% assembly load/store share.
+
+This is diagnostic profiling, not score evidence. `sample` suspends threads
+and visibly reduced multi-core utilization while collecting stacks. Filtering
+to active in-product leaves omits sleeping carriers, and inlined work is
+charged to its visible caller. A zero means below the window's resolution, not
+that startup translation never happened. The two five-second Object Detection
+windows also cover different internal model phases, so their FP/SIMD mix is
+not a core-scaling conclusion; the repeated Clang distribution is the stronger
+signal.
