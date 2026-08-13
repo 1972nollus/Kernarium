@@ -123,7 +123,7 @@ ctest --preset instruction-evidence-4k
 
 `Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
 application that embeds the maintained 16 KiB UML kernel and boots
-`Documents/rootfs.erofs` with 2 GiB of guest memory. Simulator runs use four
+`Documents/rootfs.erofs` with 1 GiB of guest memory. Simulator runs use four
 vCPUs; physical-device runs use `NSProcessInfo.processorCount`, so the guest
 receives the host device's physical CPU-core count. SwiftUI lays the
 `ContentView` Metal view out inside the safe area, and the app uses the view's
@@ -131,6 +131,16 @@ point dimensions as its drawable and guest pixel dimensions without applying
 the display scale. A trailing-center keyboard button is the only overlay.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
+The Darwin kernel scheduler uses one persistent host carrier per vCPU on both
+iOS targets, names them `uml-vcpu-N-carrier`, and moves Linux task contexts
+between those carriers without creating a host thread per guest task. The
+shipped 100 Hz plus `NO_HZ_IDLE` policy suppresses ticks on idle carriers.
+IRQ-enabled arm64 spin checkpoints service pending Darwin IPIs, so synchronous
+cross-CPU calls progress even when two fixed carriers are waiting on each
+other; IRQ-disabled regions continue to defer the work.
+Both page profiles provide a 128 KiB Linux task stack (order 3 at 16 KiB and
+order 5 at 4 KiB), so high-task-count guests retain sleeping contexts
+without consuming a contiguous 512 KiB allocation apiece.
 
 The graphics and network dependency prefixes are separate from the macOS
 dependency prefix. Graphics uses the exact UTM WebKit/ANGLE, libepoxy, and
@@ -163,7 +173,7 @@ Kernarium/scripts/build-ios-network-dependencies.sh \
 cmake --preset kernarium-ios-simulator
 cmake --build --preset kernarium-ios-simulator
 
-# Physical iOS uses the compact address-space kernel profile.
+# Device and Simulator use the same signed-kernel/address-space profile.
 kernel/build-kernel.sh \
   --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
@@ -192,8 +202,7 @@ guest still receives the normal SLiRP callback provider used by the emulator.
 Simulator slices below `.build/kernarium-xcframeworks`, which is the only
 framework location referenced by the Xcode project.
 
-The canonical Simulator kernel image is
-`/Volumes/<case-sensitive-volume>/build-16k/linux`; the physical-device preset uses
+The canonical kernel image for both iOS targets is
 `/Volumes/<case-sensitive-volume>/build-ios-device-16k/linux`. Override
 `UML_KERNARIUM_KERNEL_IMAGE` explicitly when using another maintained 16 KiB
 build. With one Simulator already booted, the following command builds the
@@ -204,7 +213,7 @@ the invoking terminal's stdout:
 ```sh
 Kernarium/scripts/run-ios-simulator.sh \
   --rootfs "$PWD/rootfs.erofs" \
-  --kernel /Volumes/<case-sensitive-volume>/build-16k/linux
+  --kernel /Volumes/<case-sensitive-volume>/build-ios-device-16k/linux
 ```
 
 The app exposes Documents through both `UIFileSharingEnabled` and
@@ -217,40 +226,51 @@ a device signing contract; Xcode carries it in the Simulator's simulated
 entitlement input even though the local Simulator code-signature entitlement
 dictionary is empty.
 
-Physical iOS cannot execute an anonymously copied ELF text segment under an
-ordinary non-debugger signature. For that slice only, `KernariumRuntime`
-embeds the complete kernel ELF in a 16 KiB-aligned Mach-O `__TEXT,__uml_elf`
-section. Xcode's normal framework code signature therefore covers those
-bytes. The loader reserves the compact kernel's fixed 48--56 GiB window,
-aliases each immutable executable ELF page from the signed framework mapping
-with `vm_remap`, and copies only non-executable data/BSS into anonymous pages.
-It rejects writable executable segments, carrier mismatches, and relocations
-that target signed text. This path performs no RW-to-RX transition, uses no
-JIT entitlement, and does not depend on LLDB. Simulator retains its existing
-embedded `__DATA` ELF and standard 96 TiB kernel layout; macOS retains its
-existing loader and address layout.
+iOS cannot execute an anonymously copied ELF text segment under an ordinary
+non-debugger signature. For both device and Simulator, `KernariumRuntime`
+embeds the complete shared kernel ELF in a 16 KiB-aligned Mach-O
+`__TEXT,__uml_elf` section. Xcode's normal framework code signature covers
+those bytes. The loader gives the software-MMU guest a 128 TiB sparse task
+range, derives a native hole ending at 62 GiB from guest RAM plus a 4 GiB
+auxiliary allowance, biases the ET_DYN image into that window, aliases each
+immutable executable ELF page from the signed framework mapping with
+`vm_remap`, and copies only non-executable data/BSS into anonymous pages. It
+rejects writable executable segments, carrier mismatches, and relocations that
+target signed text. This path performs no RW-to-RX transition, uses no JIT
+entitlement, and does not depend on LLDB. macOS retains its existing loader and
+96 TiB address layout.
 
-The guest follows the same userspace path as `scripts/boot_kde_vnc.py`: an
-init shell binds the EROFS root as the OverlayFS lower layer, creates upper and
-work directories on tmpfs, mounts devtmpfs in the new root, pivots, mounts
-separate tmpfs filesystems at `/var/lib/docker` and `/var/lib/containerd`,
-installs the disposable KDE setup unit, and execs the rootfs systemd as PID 1.
+The guest follows the same mount-and-systemd flow as
+`scripts/boot_kde_vnc.py`, but the iOS writable state is one disposable disk.
+The app deletes any previous temporary image, creates a sparse 8 GiB image,
+and passes it as `/dev/ubdb`. The init shell formats it as ext4, binds the EROFS
+root as the OverlayFS lower layer, uses directories on ext4 for upper/work,
+mounts devtmpfs in the new root, and pivots. Separate Docker and containerd
+directories are then bind-mounted from the same ext4 filesystem, keeping their
+contents separate while sharing its free space. The shell installs the
+disposable KDE setup unit and execs the rootfs systemd as PID 1.
+Kernarium does not create or activate disk-backed swap on this image; the
+1 GiB guest remains the constrained-device memory contract.
 The requested `graphical.target` therefore uses the image's ordinary units,
 SDDM, and non-root `uml` account. The prototype does not synthesize a desktop
 user, modify the EROFS image, or start VNC.
 
-Pass `--aquarium` to the Simulator launcher for the strict Chromium WebGL 2
-check. It requires a live WebGL 2 context, samples the rendered Aquarium FPS,
-and emits one `UML_AQUARIUM_OK` record with the GL version and renderer. The
-current Simulator evidence reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
-`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Both dependency slices, both runtime
-presets, the three XCFrameworks, and the unsigned generic Simulator Xcode build
-have passed. A Release app using the standard Xcode development signature was
-also installed and launched on the connected iPhone without a debugger. App
-stdout reported a 430x839 guest with `mem=2G ncpus=6`, brought all six CPUs
-online, mounted the existing Documents EROFS image, acquired DHCP, pivoted to
-the tmpfs overlay, and reached systemd, SDDM, and automatic `uml` login. The
-device rootfs was already present and was not replaced by that validation.
+`--aquarium` remains an opt-in Simulator-only launcher check. It requires a
+live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
+record with the GL version and renderer. The dated 2 GiB Simulator evidence
+reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
+`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Aquarium is too memory-heavy for the
+current 1 GiB physical-device guest and is not a physical acceptance workload;
+do not add swap or another memory workaround to make that campaign run.
+
+Current 1 GiB normal-boot validation passed on both iOS targets. Simulator
+stdout showed four online CPUs, DHCP, the EROFS/ext4 pivot, SDDM, automatic
+`uml` login, and direct virgl/ANGLE/Metal presentation. A Release app with the
+standard Xcode development signature installed and launched without a debugger
+on the connected iPad; stdout showed `ncpus=6`, all six CPUs online, DHCP, the
+same EROFS/ext4 state flow, SDDM, and automatic login without an RCU stall or
+disk-backed swap. The physical rootfs already in Documents was preserved.
+Both runtime presets and the three combined XCFrameworks passed their builds.
 
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build

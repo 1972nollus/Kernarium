@@ -456,6 +456,11 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_FAULT;
 		break;
 	case uml::cpu::ExitReason::interrupt:
+		if (context->stop_requested()) {
+			event = DARWIN_UML_EVENT_STOP;
+			break;
+		}
+		[[fallthrough]];
 	case uml::cpu::ExitReason::instruction_budget:
 		event = DARWIN_UML_EVENT_INTERRUPT;
 		break;

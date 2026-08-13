@@ -51,4 +51,16 @@ if(DEFINED UML_KERNEL_SOURCE_DIR AND
             --linux-source ${UML_KERNEL_SOURCE_DIR}
         LABELS kernel;audit
         TIMEOUT 30)
+
+    uml_add_tooling_test(
+        NAME darwin-vcpu-carrier-policy
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py
+            --linux-source ${UML_KERNEL_SOURCE_DIR}
+            --kernel-config ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
+            --page-16k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment
+            --page-4k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment
+            --kernel-build-script ${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh
+        LABELS kernel;audit
+        TIMEOUT 30)
 endif()

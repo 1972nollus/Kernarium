@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include "uml_darwin_host.h"
 
+#include "context.hpp"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -22,6 +24,18 @@ int darwin_uml_fcntl(int fd, int command, long argument)
 int darwin_uml_ioctl(int fd, unsigned long command, void *argument)
 {
 	return ioctl(fd, command, argument);
+}
+
+int darwin_uml_stop_fd(void)
+{
+	auto *context = uml::runtime::current_context();
+	return context == nullptr ? -1 : context->stop_notification_fd();
+}
+
+int darwin_uml_stop_requested(void)
+{
+	auto *context = uml::runtime::current_context();
+	return context != nullptr && context->stop_requested();
 }
 
 void darwin_uml_abort(void)

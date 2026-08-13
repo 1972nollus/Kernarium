@@ -437,12 +437,13 @@ private:
 
 #if DARWIN_UML_SIGNED_KERNEL_CARRIER
 [[nodiscard]] int reject_signed_text_relocations(
-	const uml_elf64_rela *relocations, size_t count, uintptr_t minimum,
-	size_t page_size, const std::vector<unsigned char> &page_protections)
+	uintptr_t bias, const uml_elf64_rela *relocations, size_t count,
+	uintptr_t minimum, size_t page_size,
+	const std::vector<unsigned char> &page_protections)
 {
 	for (size_t index = 0; index < count; ++index) {
 		uintptr_t destination;
-		if (!runtime_address(0, relocations[index].offset, destination) ||
+		if (!runtime_address(bias, relocations[index].offset, destination) ||
 		    destination < minimum)
 			continue;
 		const auto page = (destination - minimum) / page_size;
@@ -457,8 +458,8 @@ private:
 }
 #endif
 
-[[nodiscard]] int run_elf(const void *image, size_t image_size, int argc,
-	char **argv, char **envp)
+[[nodiscard]] int run_elf(const void *image, size_t image_size,
+	uintptr_t load_bias, int argc, char **argv, char **envp)
 {
 	if (image == nullptr || image_size < sizeof(uml_elf64_ehdr) ||
 	    reinterpret_cast<uintptr_t>(image) % alignof(uml_elf64_ehdr) != 0) {
@@ -485,6 +486,10 @@ private:
 	const auto *programs = reinterpret_cast<const uml_elf64_phdr *>(
 		bytes + header->phoff);
 	const size_t page_size = static_cast<size_t>(getpagesize());
+	if ((load_bias & (page_size - 1U)) != 0U) {
+		fprintf(stderr, "UML ELF: load bias is not host-page aligned\n");
+		return 126;
+	}
 #if DARWIN_UML_SIGNED_KERNEL_CARRIER
 	const auto signed_image_size = static_cast<size_t>(
 		uml_signed_elf_end - uml_signed_elf_start);
@@ -510,7 +515,7 @@ private:
 		uintptr_t page_end;
 		if (program.filesz > program.memsz || program.memsz == 0 ||
 		    !range_inside(image_size, program.offset, program.filesz) ||
-		    !runtime_address(0, program.vaddr, segment_begin) ||
+		    !runtime_address(load_bias, program.vaddr, segment_begin) ||
 		    !checked_add(segment_begin, program.memsz, segment_end) ||
 		    !align_up(segment_end, page_size, page_end)) {
 			fprintf(stderr, "UML ELF: invalid load segment\n");
@@ -527,7 +532,7 @@ private:
 		return 126;
 	}
 	uintptr_t entry_address;
-	if (!runtime_address(0, header->entry, entry_address) ||
+	if (!runtime_address(load_bias, header->entry, entry_address) ||
 	    entry_address % alignof(uint32_t) != 0 ||
 	    !loaded_range_inside(segments, entry_address,
 		sizeof(uint32_t), UML_PF_X)) {
@@ -536,9 +541,9 @@ private:
 	}
 
 	/* A non-fixed hint never replaces an existing host mapping. If Darwin
-	 * chooses another address, release it and fail because the UML kernel's
-	 * linked physical/virtual layout cannot be biased safely. On physical iOS,
-	 * executable pages are later replaced with aliases of the framework's
+	 * chooses another address, release it and fail. The whole ET_DYN image is
+	 * biased as one unit, preserving the UML physical/virtual relationships.
+	 * On iOS, executable pages are replaced with aliases of the framework's
 	 * immutable, code-signed __TEXT carrier; no anonymous page is made code.
 	 */
 	const size_t reservation_length = maximum - minimum;
@@ -563,7 +568,7 @@ private:
 		uintptr_t start;
 		uintptr_t data_end;
 		uintptr_t end;
-		(void)runtime_address(0, program.vaddr, start);
+		(void)runtime_address(load_bias, program.vaddr, start);
 		(void)checked_add(start, program.memsz, data_end);
 		(void)align_up(data_end, page_size, end);
 		start = align_down(start, page_size);
@@ -598,7 +603,8 @@ private:
 				perror("UML ELF mprotect load");
 				return 126;
 			}
-			void *destination = reinterpret_cast<void *>(program.vaddr);
+			void *destination = reinterpret_cast<void *>(start +
+				(program.vaddr & (page_size - 1U)));
 			memcpy(destination, bytes + program.offset, program.filesz);
 			memset(static_cast<unsigned char *>(destination) +
 				program.filesz, 0, program.memsz - program.filesz);
@@ -628,7 +634,7 @@ private:
 			return 126;
 		}
 		uintptr_t address;
-		if (!runtime_address(0, program.vaddr, address) ||
+		if (!runtime_address(load_bias, program.vaddr, address) ||
 		    !loaded_range_inside(segments, address,
 			static_cast<size_t>(program.filesz))) {
 			fprintf(stderr, "UML ELF: dynamic segment is outside loaded data\n");
@@ -639,17 +645,19 @@ private:
 	}
 	if (dynamic != nullptr) {
 		DynamicInfo info;
-		if (load_dynamic_info(0, dynamic, dynamic_count, segments, info) != 0
+		if (load_dynamic_info(load_bias, dynamic, dynamic_count, segments,
+			info) != 0
 #if DARWIN_UML_SIGNED_KERNEL_CARRIER
-		    || reject_signed_text_relocations(info.rela, info.rela_count,
-			minimum, page_size, page_protections) != 0
-		    || reject_signed_text_relocations(info.jmprel,
+		    || reject_signed_text_relocations(load_bias, info.rela,
+			info.rela_count, minimum, page_size, page_protections) != 0
+		    || reject_signed_text_relocations(load_bias, info.jmprel,
 			info.jmprel_count, minimum, page_size,
 			page_protections) != 0
 #endif
-		    || apply_relocations(0, info, info.rela, info.rela_count,
+		    || apply_relocations(load_bias, info, info.rela, info.rela_count,
 			segments) != 0 ||
-		    apply_relocations(0, info, info.jmprel, info.jmprel_count,
+		    apply_relocations(load_bias, info, info.jmprel,
+			info.jmprel_count,
 			segments) != 0)
 			return 126;
 	}
@@ -685,11 +693,11 @@ private:
 
 } // namespace
 
-extern "C" int uml_elf_run(const void *image, size_t image_size, int argc,
-	char **argv, char **envp)
+extern "C" int uml_elf_run(const void *image, size_t image_size,
+	uintptr_t load_bias, int argc, char **argv, char **envp)
 {
 	try {
-		return run_elf(image, image_size, argc, argv, envp);
+		return run_elf(image, image_size, load_bias, argc, argv, envp);
 	} catch (...) {
 		fprintf(stderr, "UML ELF: loader allocation or host failure\n");
 		return 126;

@@ -231,6 +231,33 @@ private enum LinuxKeyboard {
     }
 }
 
+enum OverlayDisk {
+    static let byteCount: UInt64 = 8 * 1024 * 1024 * 1024
+    static let filename = "kernarium-overlay.ext4"
+
+    static func recreate(
+        in directory: URL = FileManager.default.temporaryDirectory
+    ) throws -> URL {
+        let manager = FileManager.default
+        let disk = directory.appendingPathComponent(filename)
+        if manager.fileExists(atPath: disk.path) {
+            try manager.removeItem(at: disk)
+        }
+        guard manager.createFile(atPath: disk.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        do {
+            let handle = try FileHandle(forWritingTo: disk)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: byteCount)
+        } catch {
+            try? manager.removeItem(at: disk)
+            throw error
+        }
+        return disk
+    }
+}
+
 @MainActor
 private final class EmulatorLauncher {
     static let shared = EmulatorLauncher()
@@ -248,14 +275,29 @@ private final class EmulatorLauncher {
             print("Kernarium: Documents/rootfs.erofs is missing")
             return
         }
+        let overlay: URL
+        do {
+            overlay = try OverlayDisk.recreate()
+        } catch {
+            print("Kernarium: cannot create 8 GiB overlay disk: \(error)")
+            return
+        }
         started = true
         view.guestPixelSize = size
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
         Task.detached {
-            let result = rootfs.path.withCString { path in
-                kernarium_runtime_run(view, path, width, height)
+            let result = rootfs.path.withCString { rootfsPath in
+                overlay.path.withCString { overlayPath in
+                    kernarium_runtime_run(
+                        view,
+                        rootfsPath,
+                        overlayPath,
+                        width,
+                        height
+                    )
+                }
             }
             await EmulatorLauncher.shared.finished(result: result)
         }

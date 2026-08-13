@@ -4,6 +4,7 @@
 #include "options.hpp"
 #include "profile_reporter.hpp"
 #include "context.hpp"
+#include "native_kernel_layout.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 
@@ -14,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -317,6 +319,17 @@ public:
 		environment_pointers.push_back(nullptr);
 		if (!process_admission.enter(runtime_))
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		::uml::runtime::NativeKernelLayout native_layout;
+		std::optional<::uml::runtime::NativeKernelLayoutScope> layout_scope;
+		if (native_kernel_entry_ == nullptr) {
+			native_layout = ::uml::runtime::prepare_native_kernel_layout(
+				prepared.guest_memory_bytes);
+			if (!native_layout.valid)
+				return -UML_EMULATOR_INVALID_ARGUMENT;
+			layout_scope.emplace(native_layout);
+			if (!layout_scope->entered())
+				return -UML_EMULATOR_RUNTIME_ERROR;
+		}
 		/* One opaque route publishes CPU and network endpoints under one lock.
 		 * Its intrusive storage and commit are allocation-free. */
 		::uml::runtime::ActiveRunRouteScope route_scope{
@@ -330,6 +343,7 @@ public:
 				argument_pointers.data(), environment_pointers.data());
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
 		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
+			native_layout.load_bias,
 			static_cast<int>(arguments.size()), argument_pointers.data(),
 			environment_pointers.data());
 #if UML_ENABLE_JIT_PROFILE

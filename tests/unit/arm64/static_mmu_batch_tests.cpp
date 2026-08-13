@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
+#include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
 
@@ -306,6 +307,29 @@ void test_ranges_cannot_cross_generation_boundary_or_wrap()
 		reinterpret_cast<void *>(address_limit),
 		DARWIN_UML_GUEST_PAGE_SIZE) == 0);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+void test_split_ios_address_layout_keeps_native_kernel_hole_disjoint()
+{
+	using Layout = uml::memory::AddressLayout<
+		128ULL << 40, 56ULL << 30, 62ULL << 30>;
+	using uml::memory::AddressDomain;
+	constexpr std::uint64_t page = 16ULL << 10;
+
+	require(Layout::classify((56ULL << 30) - page, page) ==
+		AddressDomain::guest);
+	require(Layout::classify(56ULL << 30, 6ULL << 30) ==
+		AddressDomain::native);
+	require(Layout::classify(62ULL << 30, page) == AddressDomain::guest);
+	require(Layout::classify(256ULL << 30, 32ULL << 30) ==
+		AddressDomain::guest);
+	require(Layout::classify((56ULL << 30) - page, 2 * page) ==
+		AddressDomain::invalid);
+	require(Layout::classify((62ULL << 30) - page, 2 * page) ==
+		AddressDomain::invalid);
+	require(Layout::classify((128ULL << 40) - page, 2 * page) ==
+		AddressDomain::invalid);
+	require(Layout::is_native_window(56ULL << 30, 6ULL << 30));
 }
 
 void test_allocation_failures_are_balanced_and_retryable()
@@ -708,6 +732,7 @@ int main()
 	test_cross_thread_destroy_recreate_replaces_stale_activation();
 	test_unaligned_unmap_covers_the_complete_range();
 	test_ranges_cannot_cross_generation_boundary_or_wrap();
+	test_split_ios_address_layout_keeps_native_kernel_hole_disjoint();
 	test_allocation_failures_are_balanced_and_retryable();
 	test_multi_page_and_history_failures_are_atomic();
 	test_nth_batch_operation_failure_rolls_back_every_operation();

@@ -16,10 +16,12 @@ extern "C" {
 #endif
 
 /* Runs one embedded UML guest synchronously on the calling worker thread.
- * The MTKView remains owned by SwiftUI and must outlive this call. */
+ * The MTKView remains owned by SwiftUI and must outlive this call. The caller
+ * owns both the read-only rootfs and writable overlay image paths. */
 int kernarium_runtime_run(
     KernariumMetalView view,
     const char* rootfs_path,
+    const char* overlay_path,
     uint32_t width,
     uint32_t height);
 

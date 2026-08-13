@@ -1,18 +1,18 @@
-From ca217ca6636ad078a9d2f017791d45c5f41752f5 Mon Sep 17 00:00:00 2001
+From c3298a047f48896380d1c9dcb2ef809fb9fc3a03 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 08/15] uml: define the Darwin fixed-arity host bridge ABI
+Subject: [PATCH 08/18] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/um/os-Darwin/uml_darwin_abi.h          | 144 ++++++++++++++++++++
+ arch/um/os-Darwin/uml_darwin_abi.h          | 146 ++++++++++++++++++++
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   9 ++
  arch/um/os-Darwin/uml_darwin_bridge.h       |  11 ++
- arch/um/os-Darwin/uml_darwin_cpu.h          |  23 ++++
+ arch/um/os-Darwin/uml_darwin_cpu.h          |  23 +++
  arch/um/os-Darwin/uml_darwin_host.h         |  20 +++
  arch/um/os-Darwin/uml_darwin_memory.h       |  48 +++++++
  arch/um/os-Darwin/uml_darwin_network.h      |  18 +++
- 7 files changed, 273 insertions(+)
+ 7 files changed, 275 insertions(+)
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi_identity.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_bridge.h
@@ -23,7 +23,7 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
 new file mode 100644
-index 000000000..bce84b831
+index 000000000..0e219caee
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
 @@ -0,0 +1,146 @@
@@ -175,7 +175,7 @@ index 000000000..bce84b831
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 new file mode 100644
-index 000000000..9497b54fe
+index 000000000..cd75a3d19
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -0,0 +1,9 @@
@@ -207,7 +207,7 @@ index 000000000..a28088cbb
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_cpu.h b/arch/um/os-Darwin/uml_darwin_cpu.h
 new file mode 100644
-index 000000000..ca91b862b
+index 000000000..8f0fc63b8
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_cpu.h
 @@ -0,0 +1,23 @@
@@ -338,3 +338,6 @@ index 000000000..e14c9c92c
 +#endif
 +
 +#endif
+-- 
+2.50.1 (Apple Git-155)
+

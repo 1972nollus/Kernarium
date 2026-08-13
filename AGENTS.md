@@ -38,12 +38,28 @@ historical sections as history.
   CMake, Ninja, Python 3, GNU Make, Meson, `pkg-config`, `curl`, and `patch`.
   Dependency and kernel preparation have additional tools documented in their
   READMEs.
+- On the current Apple acceptance host, never run a standalone kernel build or
+  `kernel/verify-replay.sh` with the default `/usr/bin/clang`. Apple Clang 21
+  fails Linux 6.18's `__counted_by` type-expression probe. Select the known-good
+  LLVM 22 toolchain explicitly:
+
+  ```sh
+  env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
+    UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
+    UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
+    kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --jobs 2
+  ```
+
+  Use `UML_KERNEL_TOOLCHAIN_ROOT=/opt/homebrew/opt/llvm` for CMake configure
+  workflows. Do not repeat a bare-Clang replay after the capability preflight
+  rejects it.
 - Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
   targets are owned by `cmake/toolchains/Apple.cmake`.
-- Darwin UML kernels default to the `standard` 96 TiB macOS/Simulator address
-  layout. Build the physical-iOS kernel with
-  `kernel/build-kernel.sh --address-space ios-device`; its compact layout owns
-  32 GiB of guest userspace and an 8 GiB native kernel window at 48--56 GiB.
+- Darwin UML kernels default to the `standard` 96 TiB macOS address layout.
+  Build the shared iOS device/Simulator kernel with
+  `kernel/build-kernel.sh --address-space ios-device`; it owns a 128 TiB sparse
+  software-MMU task range and a native hole ending at 62 GiB, sized to guest
+  RAM plus at most 4 GiB of auxiliary kernel mappings.
 - There is no repository-wide formatter. Follow adjacent formatting, retain
   SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
   and avoid unrelated formatting churn.
@@ -182,6 +198,12 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 - External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
+- Kernarium's current physical-iOS acceptance guest has 1 GiB of RAM. Do not
+  run WebGL Aquarium on the physical device or add disk-backed swap, Chromium
+  storage redirection, or another memory workaround to force that workload.
+  Use the documented normal desktop boot on the connected iPad; the historical
+  2 GiB Simulator Aquarium result remains graphics evidence, and the Simulator
+  launcher keeps its explicit opt-in check.
 - Heavy guest campaigns run on the gadget and JIT engines only, whether
   registered or run by hand. The interpreter is the reference oracle, not a
   campaign engine: it is far slower than the translating engines, and the unit
@@ -330,12 +352,14 @@ Executable-memory policy:
   publication.
 - Direct native VM and ELF-loader paths are macOS-only in the general library
   graph. The opt-in Kernarium composition also enables them for its embedded
-  iOS kernel. On physical iOS, the kernel ELF must remain in the aligned,
+  iOS kernel. On both iOS device and Simulator, the kernel ELF must remain in the aligned,
   normally code-signed framework `__TEXT` carrier; the loader may alias only
   immutable executable pages from that mapping and must reject relocations
-  into them. Do not replace this with anonymous executable pages, RW-to-RX
+  into them. The targets must share the same signed image, dynamic load bias,
+  and software-MMU layout. Do not replace this with anonymous executable pages, RW-to-RX
   publication, debugger-only behavior, or a JIT entitlement. Simulator and
-  macOS retain their standard address layout and established loader behavior.
+  device use the iOS profile; macOS retains its standard address layout and
+  established loader behavior.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 
@@ -359,6 +383,18 @@ Do not casually remove or reshape these accepted mechanisms:
   slot repair in the maintained Linux series, mutation-pinned by
   `tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py`. Do not restore the
   diagnostic pre-refactor rollback.
+- **Darwin vCPU carriers:** macOS, iOS Simulator, and iOS device use exactly one
+  persistent host carrier per configured vCPU, including vCPU0. Guest task
+  creation must not create pthreads; task contexts migrate on their Linux
+  kernel stacks, secondary hotplug reuses carriers, and shutdown returns to a
+  native carrier stack. Keep the `uml-vcpu-N-carrier` names, 100 Hz tick, and
+  `NO_HZ_IDLE` policy mechanically pinned. Pending Darwin IPIs must be serviced
+  from the IRQ-enabled arm64 spin checkpoint so synchronous cross-calls cannot
+  deadlock; do not execute them through an IRQ-disabled checkpoint or restore
+  asynchronous Linux IPI execution in the Darwin signal handler. Page-size
+  fragments must keep the
+  task-stack byte size equal at 128 KiB (order 3 for 16 KiB, order 5 for 4 KiB)
+  rather than restoring the 16 KiB profile's former 512 KiB allocation.
 - **G133/G135:** the JIT cache geometry in
   `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` derives a fixed private working
   set per executor from a whole-process budget that defaults to half of guest

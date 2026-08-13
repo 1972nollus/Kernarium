@@ -32,6 +32,7 @@ struct EmulatorOptions final {
 	std::size_t jit_cache_budget{};
 	std::size_t jit_executor_cache_budget{
 		default_jit_executor_cache_budget};
+	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
 	bool informational{};
 	bool valid{true};

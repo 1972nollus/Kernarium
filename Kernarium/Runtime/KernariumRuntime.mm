@@ -8,7 +8,7 @@
 #include "uml/emulator.h"
 
 #import <Foundation/Foundation.h>
-
+#import <TargetConditionals.h>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -97,11 +97,18 @@ private:
 constexpr std::string_view kdeSystemdBootstrap = R"krn(set -eu
 fail()
 {
-    echo "Unable to construct the Kernarium tmpfs overlay root: $*" >&2
+    echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
     exec /bin/sh
 }
-mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt || fail "tmpfs mount"
-mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || fail "overlay workspace"
+[ -b /dev/ubdb ] || fail "overlay block device"
+/usr/sbin/mkfs.ext4 -F -q -m 0 \
+    -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
+    fail "ext4 format"
+mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || fail "ext4 mount"
+mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root \
+    /mnt/state/docker /mnt/state/containerd || fail "overlay workspace"
+chmod 0711 /mnt/state/docker /mnt/state/containerd || \
+    fail "container state directory modes"
 mount -o bind / /mnt/lower || fail "EROFS lower bind"
 mount -t overlay overlay \
     -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
@@ -118,11 +125,18 @@ printf '%s\n' \
     'nameserver 10.0.2.3' \
     'options timeout:1 attempts:3 rotate' > /etc/resolv.conf
 mkdir -p /var/lib/docker
-mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker || \
-    fail "Docker state tmpfs"
+mount -o bind /.uml-lower/mnt/state/docker /var/lib/docker || \
+    fail "Docker state bind"
 mkdir -p /var/lib/containerd
-mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd || \
-    fail "containerd state tmpfs"
+mount -o bind /.uml-lower/mnt/state/containerd /var/lib/containerd || \
+    fail "containerd state bind"
+state_device=$(stat -c %d /.uml-lower/mnt)
+[ -n "$state_device" ] || fail "state block-device discovery"
+[ "$(stat -c %d /var/lib/docker)" = "$state_device" ] || \
+    fail "Docker state is outside the shared ext4 filesystem"
+[ "$(stat -c %d /var/lib/containerd)" = "$state_device" ] || \
+    fail "containerd state is outside the shared ext4 filesystem"
+echo "Kernarium shared ext4 state: device=$state_device"
 install -d -m 0755 /usr/local/libexec \
     /etc/systemd/system/multi-user.target.wants
 cat > /usr/local/libexec/kernarium-kde-setup <<'KDE_SETUP'
@@ -323,7 +337,7 @@ AQUARIUM_SERVICE
         /etc/systemd/system/graphical.target.wants/kernarium-chromium-aquarium.service
     echo "Kernarium Aquarium verification enabled"
 fi
-echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
+echo "Darwin UML root overlay: lower=erofs, upper=ext4"
 if [ -x /lib/systemd/systemd ]; then
     exec /lib/systemd/systemd
 fi
@@ -546,27 +560,31 @@ bool usableFile(const char* path)
 extern "C" int kernarium_runtime_run(
     KernariumMetalView view,
     const char* rootfsPath,
+    const char* overlayPath,
     uint32_t width,
     uint32_t height)
 {
     try {
         ActiveRuntime active;
         if (view == nullptr || !usableFile(rootfsPath) ||
+            !usableFile(overlayPath) ||
             width == 0 || height == 0) {
-            std::fputs("Kernarium: invalid display or rootfs path\n", stderr);
+            std::fputs(
+                "Kernarium: invalid display, rootfs, or overlay path\n",
+                stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
-#if DARWIN_UML_SIGNED_KERNEL_CARRIER
+#if TARGET_OS_SIMULATOR
+        constexpr uint32_t guestProcessorCount = 4;
+#else
         const NSUInteger hostProcessorCount =
             [NSProcessInfo processInfo].processorCount;
         const uint32_t guestProcessorCount = hostProcessorCount == 0
             ? 1U : static_cast<uint32_t>(hostProcessorCount);
-#else
-        constexpr uint32_t guestProcessorCount = 4;
 #endif
         std::printf(
-            "Kernarium: booting %ux%u guest with mem=2G ncpus=%u\n",
+            "Kernarium: booting %ux%u guest with mem=1G ncpus=%u\n",
             width,
             height,
             guestProcessorCount);
@@ -595,12 +613,13 @@ extern "C" int kernarium_runtime_run(
         std::vector<std::string> arguments {
             "uml-kernarium",
             "--execution-engine=gadgets",
-            "mem=2G",
+            "mem=1G",
             "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",
             "console=tty0",
             "systemd.unit=graphical.target",
             consoleBridge.kernelArgument(),
+            "ubd1=" + std::string(overlayPath),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
                 std::to_string(uml::gpu::protocol::virtioGpuDeviceId),
             "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +

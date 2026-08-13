@@ -2,6 +2,7 @@
 #include "uml_darwin_static_mmu.h"
 #include "uml_darwin_guest.h"
 #include "../domain_contract.hpp"
+#include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
@@ -38,7 +39,7 @@ namespace uml::memory {
 namespace {
 
 constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
-constexpr std::uint64_t address_limit = DARWIN_UML_GUEST_ADDRESS_LIMIT;
+using AddressLayout = ConfiguredAddressLayout;
 
 struct BackingKey final {
 	std::uint64_t device;
@@ -433,7 +434,8 @@ public:
 			return -1;
 		const auto first = address & ~(page_size - 1);
 		const auto rounded_end = (end + page_size - 1) & ~(page_size - 1);
-		if (first < address_limit && rounded_end > address_limit)
+		if (AddressLayout::classify(first, rounded_end - first) ==
+		    AddressDomain::invalid)
 			return -1;
 		address = first;
 		length = rounded_end - first;
@@ -989,7 +991,8 @@ private:
 	{
 		if (length > std::numeric_limits<std::uint64_t>::max() - address)
 			return false;
-		return address >= address_limit || address + length <= address_limit;
+		return AddressLayout::classify(address, length) !=
+			AddressDomain::invalid;
 	}
 
 	int access_allocation_tag(std::uint64_t generation,
@@ -1024,7 +1027,7 @@ private:
 	static std::uint64_t generation_for(std::uint64_t address,
 					    std::uint64_t generation) noexcept
 	{
-		return address < address_limit ? generation : 0;
+		return AddressLayout::is_guest(address) ? generation : 0;
 	}
 
 	GenerationReference reference_for(std::uint64_t generation)

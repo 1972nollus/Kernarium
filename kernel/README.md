@@ -17,15 +17,19 @@ tree is the build input and the omitted file is not reconstructed from Git.
 
 ## Latest verified replay (2026-08-13)
 
-The manifest contains 15 ordered topics and replays to canonical tree
-`ac91de43ee9c8eedd208103791dec4ed76810716`. A fresh authenticated replay,
+The manifest contains 18 ordered topics and replays to canonical tree
+`350bde4a71373eca3f9b7895590ea779dc88000d`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, and delta audit passed. The exact delta policy remains 155 changed
-files with 6 outside the Darwin port. Topic 0015 adds an independently selected
-compact address layout for physical iOS; its default `standard` selection
-preserves the established macOS and Simulator layout.
+checks, and delta audit passed. The exact delta policy is 157 changed files
+with 6 outside the Darwin port. Topic 0015 adds the shared scalable iOS address
+profile. Topic 0016 replaces per-task Darwin pthreads with one persistent
+carrier per configured vCPU on macOS, iOS Simulator, and physical iOS. Topic
+0017 lets the host-stop descriptor wake those carriers for cooperative
+shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
+checkpoints, preventing two fixed carriers from deadlocking in synchronous
+cross-calls while preserving Linux interrupt masking.
 
-The host/kernel bridge is ABI v6 with fingerprint `0x6524b65f20239ea1`; the
+The host/kernel bridge is ABI v8 with fingerprint `0x3871ad612337ea76`; the
 separate installed emulator API remains v4 with fingerprint
 `0xd9a69804d3303044`. These are dated accepted identities, while the manifest,
 metadata, ABI checks, and replay commands below remain the durable enforcement
@@ -60,7 +64,7 @@ Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
 represent several upstream paths that differ only by case. The canonical
 checkout is the dedicated APFS case-sensitive volume mounted at
 `/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
-`build-16k` and `build-4k` on that volume. The compact physical-device build is
+`build-16k` and `build-4k` on that volume. The shared Simulator/device build is
 `build-ios-device-16k`. Transient case-sensitive mounts under `/tmp` are not
 used for the canonical source or build trees:
 
@@ -101,9 +105,13 @@ Guest page size is the only `.config` axis that varies, because a single
 symbol absent from `common.fragment` is absent from the product. The separate
 `--address-space standard|ios-device` build selector changes link and task
 layout constants, not Kconfig policy. It defaults to `standard`, which keeps
-the macOS and Simulator kernel at the established 96 TiB boundary. The
-`ios-device` selection gives guest userspace 32 GiB and places an 8 GiB native
-kernel window at 48--56 GiB for Extended Virtual Addressing device processes:
+the macOS kernel at the established 96 TiB boundary. Both iOS products use
+`ios-device`: it exposes the maximum three-level 16 KiB software-MMU task range
+of 128 TiB and treats the native kernel mapping as a hole inside that range.
+The signed ET_DYN kernel is linked at 48 GiB and biased so the active native
+window ends at the 62 GiB iOS ceiling. Its start scales with guest memory; the
+window contains exactly the RAM-sized direct map plus at most 4 GiB of other
+kernel mappings. With Kernarium's 1 GiB guest, the active window is 57--62 GiB:
 
 ```sh
 kernel/build-kernel.sh \
@@ -111,6 +119,19 @@ kernel/build-kernel.sh \
   --build /Volumes/<case-sensitive-volume>/build-ios-device-16k \
   --page-size 16k --address-space ios-device
 ```
+
+Every shipped profile selects a 100 Hz timer tick and `NO_HZ_IDLE`. This keeps
+the fixed vCPU carriers responsive while avoiding a 1 kHz compulsory wakeup on
+every CPU and suppressing the periodic tick entirely while a guest CPU is
+idle. Periodic ticks, `NO_HZ_FULL`, and the 250/300/1000 Hz choices are
+explicitly disabled in the canonical fragment.
+
+The page fragments also derive one 128 KiB Linux task-stack byte size: order 3
+for 16 KiB pages and order 5 for 4 KiB pages. Fixed carriers execute stackful
+task contexts there, but sleeping tasks must not each pin the former 512 KiB
+16 KiB-profile allocation. The build helper accepts only unsigned numeric
+values for this page-derived setting; arbitrary string policy remains outside
+the page fragments.
 
 Because UML deliberately ships without loadable-module support, every
 capability a guest distribution can use has to be built in there, including

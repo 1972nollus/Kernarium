@@ -1,7 +1,7 @@
-From b6cc173ebbede9c1e70501b03513df1be3c352fb Mon Sep 17 00:00:00 2001
+From 53ebdd45e260d5ce88acc11d93d9e6e4df4fd166 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:02 +0900
-Subject: [PATCH 01/15] uml: establish shared architecture contracts and build
+Subject: [PATCH 01/18] uml: establish shared architecture contracts and build
  wiring
 
 Apply the reviewed final-state topic without intermediate churn.
@@ -9,7 +9,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/Kbuild                          |   2 +-
  arch/um/Kconfig                         |  61 +++++-
  arch/um/Makefile                        |  14 +-
- arch/um/Makefile-os-Darwin              |  28 +++
+ arch/um/Makefile-os-Darwin              |  24 +++
  arch/um/include/asm/Kbuild              |   2 -
  arch/um/include/asm/common.lds.S        |  16 +-
  arch/um/include/asm/cpufeature.h        |  21 ++
@@ -39,7 +39,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/skas/mm_id.h     |  11 +
  arch/um/include/shared/skas/skas.h      |   8 +
  arch/um/include/shared/smp.h            |  21 ++
- 33 files changed, 889 insertions(+), 38 deletions(-)
+ 33 files changed, 885 insertions(+), 38 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/hugetlb.h
  create mode 100644 arch/um/include/asm/mm_hooks.h
@@ -226,7 +226,7 @@ index 721b652ff..5066ec876 100644
  # ignorning warnings for the kallsyms sections.
 diff --git a/arch/um/Makefile-os-Darwin b/arch/um/Makefile-os-Darwin
 new file mode 100644
-index 000000000..8bcd5c3bc
+index 000000000..2f16d6620
 --- /dev/null
 +++ b/arch/um/Makefile-os-Darwin
 @@ -0,0 +1,24 @@
@@ -1645,3 +1645,6 @@ index 000000000..7e55aa69f
 +#endif /* CONFIG_SMP */
 +
 +#endif /* __UM_SHARED_SMP_H */
+-- 
+2.50.1 (Apple Git-155)
+

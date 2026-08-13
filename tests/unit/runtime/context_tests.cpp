@@ -20,6 +20,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <poll.h>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -821,6 +822,11 @@ void test_stop_for_admitted_run_is_observed()
 		bool entered = false;
 		bool release = false;
 		bool observed_stop = false;
+		const int stop_fd = context.stop_notification_fd();
+		require(stop_fd >= 0, "Context lacks a stop notification descriptor");
+		struct pollfd ready = {.fd = stop_fd, .events = POLLIN};
+		require(poll(&ready, 1, 0) == 0,
+			"new Context exposed a stale stop notification");
 		std::thread runner{[&] {
 			uml::runtime::RunScope run{context};
 			{
@@ -838,6 +844,9 @@ void test_stop_for_admitted_run_is_observed()
 				"run admission timed out");
 		}
 		context.request_stop();
+		ready.revents = 0;
+		require(poll(&ready, 1, 0) == 1 && (ready.revents & POLLIN),
+			"stop request did not wake a host idle wait");
 		{
 			std::lock_guard lock{mutex};
 			release = true;
@@ -851,6 +860,11 @@ void test_stop_for_admitted_run_is_observed()
 		context.request_stop();
 		require(!context.stop_requested(),
 			"idle stop request leaked into a later run");
+		require(context.begin_run(), "stop notification retry was not admitted");
+		ready.revents = 0;
+		require(poll(&ready, 1, 0) == 0,
+			"next run retained a stale stop notification");
+		context.end_run();
 	}
 }
 

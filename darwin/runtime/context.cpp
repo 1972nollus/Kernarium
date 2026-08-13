@@ -8,12 +8,15 @@
 #include "uml_darwin_guest.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
+#include <fcntl.h>
 #include <memory>
 #include <new>
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -243,6 +246,23 @@ Context::Context() noexcept
 	: selected_engine_{platform_default}, selected_entry_{entry_for(platform_default)},
 	  memory_domain_{fresh_memory_domain()}
 {
+	int descriptors[2];
+
+	if (pipe(descriptors) != 0)
+		return;
+	const auto configure = [](int descriptor) {
+		const int status = fcntl(descriptor, F_GETFL);
+		return status >= 0 &&
+			fcntl(descriptor, F_SETFL, status | O_NONBLOCK) == 0 &&
+			fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
+	};
+	if (!configure(descriptors[0]) || !configure(descriptors[1])) {
+		close(descriptors[0]);
+		close(descriptors[1]);
+		return;
+	}
+	stop_notification_read_ = descriptors[0];
+	stop_notification_write_ = descriptors[1];
 }
 
 Context::~Context()
@@ -251,14 +271,22 @@ Context::~Context()
 	retire_thread_execution_states();
 	::uml::memory::retire_domain(
 		memory_domain_.exchange(0, std::memory_order_acq_rel));
+	if (stop_notification_read_ >= 0)
+		close(stop_notification_read_);
+	if (stop_notification_write_ >= 0)
+		close(stop_notification_write_);
 }
 
 bool Context::begin_run() noexcept
 {
 	std::lock_guard lock{run_mutex_};
-	if (running_)
+	if (running_ || stop_notification_read_ < 0 ||
+	    stop_notification_write_ < 0)
 		return false;
 	std::unique_lock lifecycle_lock{execution_lifecycle_mutex_};
+	char pending[64];
+	while (read(stop_notification_read_, pending, sizeof(pending)) > 0)
+		;
 	stop_requested_.store(false, std::memory_order_release);
 	/* A context can be routed through the compatibility-facing internal scope
 	 * before its first run. Retire every execution object while its old memory
@@ -289,8 +317,15 @@ void Context::end_run() noexcept
 void Context::request_stop() noexcept
 {
 	std::lock_guard lock{run_mutex_};
-	if (running_)
-		stop_requested_.store(true, std::memory_order_release);
+	if (!running_ ||
+	    stop_requested_.exchange(true, std::memory_order_acq_rel))
+		return;
+	const char wake = 1;
+	ssize_t written;
+	do {
+		written = write(stop_notification_write_, &wake, sizeof(wake));
+	} while (written < 0 && errno == EINTR);
+	/* EAGAIN means an earlier byte already makes the descriptor readable. */
 }
 
 bool Context::stop_requested() const noexcept
@@ -301,6 +336,11 @@ bool Context::stop_requested() const noexcept
 const std::atomic_bool *Context::stop_token() const noexcept
 {
 	return &stop_requested_;
+}
+
+int Context::stop_notification_fd() const noexcept
+{
+	return stop_notification_read_;
 }
 
 bool execution_engine_available(ExecutionEngine engine) noexcept

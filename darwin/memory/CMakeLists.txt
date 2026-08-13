@@ -8,6 +8,7 @@ target_link_libraries(uml_memory_contract INTERFACE
 target_compile_features(uml_memory_contract INTERFACE cxx_std_20)
 
 set(_uml_static_mmu_sources
+    mmu/address_layout.cpp
     mmu/address_space.cpp
     mmu/execution_gate.cpp
     mmu/mapped_backing.cpp)

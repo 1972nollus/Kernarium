@@ -2,3 +2,6 @@
 # Darwin UML policy: Apple hosts use 16 KiB guest pages by default.
 CONFIG_PAGE_SIZE_16KB=y
 # CONFIG_PAGE_SIZE_4KB is not set
+# Eight 16 KiB pages keep stackful Darwin task contexts within 128 KiB without
+# requiring a contiguous 512 KiB allocation for every sleeping Linux task.
+CONFIG_KERNEL_STACK_ORDER=3

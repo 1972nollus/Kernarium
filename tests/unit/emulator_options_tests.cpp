@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
+#include "runtime/native_kernel_layout.hpp"
 
 #include <algorithm>
 #include <array>
@@ -49,6 +50,8 @@ void test_defaults_and_engine_selection()
 	require(contains(options, "mem=256M"), "memory default was not added");
 	require(options.jit_cache_budget == 128U * 1024U * 1024U,
 		"default memory did not produce the default half-memory JIT budget");
+	require(options.guest_memory_bytes == 256U * 1024U * 1024U,
+		"default guest memory was not retained for kernel placement");
 	require(options.jit_executor_cache_budget == 64U * 1024U * 1024U,
 		"default private JIT cache cap is not 64 MiB");
 	require(contains(options, "ip=dhcp"), "network default was not added");
@@ -103,6 +106,8 @@ void test_guest_memory_budget_matches_kernel_memparse()
 		require(options.valid, "kernel-compatible mem= value was rejected");
 		require(options.jit_cache_budget == example.expected_budget,
 			"mem= value did not match kernel memparse semantics");
+		require(options.guest_memory_bytes == example.expected_budget * 2U,
+			"kernel placement memory did not match memparse semantics");
 	}
 
 	const char *repeated[]{"uml-test", "mem=1G", "mem=512M"};
@@ -146,6 +151,27 @@ void test_guest_memory_budget_matches_kernel_memparse()
 	require(!uml::emulator::prepare_emulator_options(
 		2, oversized_private_cap, "/tmp/rootfs.erofs", false).valid,
 		"private JIT cache cap above 64 MiB was accepted");
+}
+
+void test_scalable_native_kernel_layout_geometry()
+{
+	using Geometry = uml::runtime::NativeKernelLayoutGeometry<
+		48ULL << 30, 62ULL << 30, 4ULL << 30, 16ULL << 10>;
+	const auto two_gib = Geometry::derive(2ULL << 30);
+	require(two_gib.valid && two_gib.window_start == (56ULL << 30) &&
+		two_gib.window_end == (62ULL << 30) &&
+		two_gib.load_bias == (8ULL << 30),
+		"2 GiB RAM did not produce the 56--62 GiB native window");
+	const auto ten_gib = Geometry::derive(10ULL << 30);
+	require(ten_gib.valid && ten_gib.window_start == (48ULL << 30) &&
+		ten_gib.load_bias == 0,
+		"maximum RAM did not consume the complete signed-kernel envelope");
+	require(!Geometry::derive((10ULL << 30) + 1).valid,
+		"RAM larger than the signed-kernel envelope was accepted");
+	const auto rounded = Geometry::derive(1);
+	require(rounded.valid && rounded.window_end - rounded.window_start ==
+		(4ULL << 30) + (16ULL << 10),
+		"native window did not round RAM to a guest page");
 }
 
 void test_guest_cpu_count_matches_kernel_policy()
@@ -231,7 +257,8 @@ void test_invalid_and_informational_inputs()
 	const auto informational = uml::emulator::prepare_emulator_options(
 		1, help, {}, false);
 	require(informational.valid && informational.informational &&
-		informational.arguments.size() == 1,
+		informational.arguments.size() == 1 &&
+		informational.guest_memory_bytes == 64U * 1024U * 1024U,
 		"informational invocation incorrectly required a rootfs");
 	require(!uml::emulator::prepare_emulator_options(
 			1, static_cast<const char *const *>(nullptr), {}, false)
@@ -252,6 +279,7 @@ int main()
 		test_defaults_and_engine_selection();
 		test_explicit_defaults_are_preserved();
 		test_guest_memory_budget_matches_kernel_memparse();
+		test_scalable_native_kernel_layout_geometry();
 		test_guest_cpu_count_matches_kernel_policy();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;

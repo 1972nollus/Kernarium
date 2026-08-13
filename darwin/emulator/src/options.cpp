@@ -91,7 +91,7 @@ namespace {
 	return static_cast<std::size_t>(value);
 }
 
-[[nodiscard]] std::size_t guest_memory_bytes(
+[[nodiscard]] std::size_t configured_guest_memory_bytes(
 	const std::vector<std::string> &arguments)
 {
 	std::size_t bytes = 0;
@@ -255,6 +255,9 @@ EmulatorOptions prepare_emulator_options(
 	if (prepared.arguments.empty())
 		prepared.arguments.emplace_back("uml-darwin");
 	if (informational(prepared.arguments)) {
+		prepared.guest_memory_bytes = has_prefix(prepared.arguments, "mem=") ?
+			configured_guest_memory_bytes(prepared.arguments) :
+			64U * 1024U * 1024U;
 		prepared.informational = true;
 		return prepared;
 	}
@@ -279,9 +282,10 @@ EmulatorOptions prepare_emulator_options(
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
 	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
+	prepared.guest_memory_bytes =
+		configured_guest_memory_bytes(prepared.arguments);
 	if (prepared.jit_cache_budget == 0)
-		prepared.jit_cache_budget =
-			guest_memory_bytes(prepared.arguments) / 2U;
+		prepared.jit_cache_budget = prepared.guest_memory_bytes / 2U;
 	return prepared;
 }
 

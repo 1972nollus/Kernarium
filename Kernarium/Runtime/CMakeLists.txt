@@ -44,16 +44,16 @@ target_compile_options(KernariumRuntime PRIVATE
     -Wall -Wextra -Werror)
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
-if(UML_APPLE_PLATFORM STREQUAL "ios")
+if(UML_APPLE_PLATFORM MATCHES "^ios")
     # The framework code signature covers __TEXT pages. The loader aliases
     # the ELF's immutable executable pages from this aligned carrier into the
-    # kernel's fixed linked window instead of creating anonymous code.
+    # kernel's runtime-selected native window instead of creating anonymous
+    # code.
     target_link_options(KernariumRuntime PRIVATE
         "LINKER:-sectcreate,__TEXT,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}"
         "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
-else()
-    target_link_options(KernariumRuntime PRIVATE
-        "LINKER:-sectcreate,__DATA,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}")
+    set_property(TARGET KernariumRuntime APPEND PROPERTY
+        LINK_DEPENDS "${UML_KERNARIUM_KERNEL_IMAGE}")
 endif()
 add_dependencies(KernariumRuntime uml_dependency_prefix_verify)
 add_dependencies(KernariumRuntime uml_ios_network_prefix_verify)

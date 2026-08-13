@@ -65,15 +65,33 @@ device and Simulator libraries; the shared bridge retains only software-MMU
 entry points there. The opt-in `KernariumRuntime` composition enables the
 existing native bridge and embedded loader for arm64 iOS device and Simulator
 kernel runs. It selects the precompiled gadget engine and does not alter the
-supported iOS package graph or authorize executable JIT publication. On a
-physical device the kernel ELF is a 16 KiB-aligned section of the framework's
-code-signed Mach-O `__TEXT`. The loader reserves the compact fixed kernel
-window and uses `vm_remap` to alias only immutable, relocation-free executable
-ELF pages from that signed mapping; non-executable data and BSS remain ordinary
-anonymous mappings. Simulator and macOS retain their established loader and
-96 TiB kernel boundary. Executable-memory ownership is enforced in source
+supported iOS package graph or authorize executable JIT publication. On both
+iOS targets the kernel ELF is a 16 KiB-aligned section of the framework's
+code-signed Mach-O `__TEXT`. The loader derives a RAM-scaled native window
+below the iOS ceiling and uses `vm_remap` to alias only immutable, relocation-
+free executable ELF pages from that signed mapping; non-executable data and
+BSS remain ordinary anonymous mappings. Simulator and physical device
+therefore use the same kernel image, signing strategy, load bias, and software-
+MMU layout. macOS retains its established loader and 96 TiB kernel boundary.
+Executable-memory ownership is enforced in source
 architecture and functional JIT publication tests, not by comparing or
 attributing individual archive members.
+
+## Darwin scheduling boundary
+
+The maintained Darwin Linux port owns one persistent pthread per configured
+vCPU, including vCPU0. Linux tasks retain their stackful runtime context on
+guest kernel stacks and the ordinary scheduler resumes that context on the
+selected carrier; task creation, exit, and migration do not create or retire
+host threads. Secondary CPU hotplug reuses its existing carrier, while guest
+shutdown transfers back to the carrier's native stack before pthread teardown.
+This is one common macOS/iOS Simulator/iOS device mechanism, and the carrier
+names are `uml-vcpu-N-carrier`. The kernel's 100 Hz plus `NO_HZ_IDLE` policy
+reduces host wakeups without changing this ownership boundary.
+Darwin host signals wake carriers but do not execute Linux IPIs asynchronously.
+The arm64 spin-loop relaxation checkpoint services pending IPIs only while
+Linux interrupts are enabled, which breaks synchronous cross-call wait cycles
+without violating an IRQ-disabled critical section.
 
 ## iOS display composition
 

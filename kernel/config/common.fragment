@@ -159,7 +159,17 @@ CONFIG_PSI=y
 CONFIG_SMP=y
 CONFIG_HOTPLUG_CPU=y
 CONFIG_NR_CPUS=64
-CONFIG_HZ=1000
+# A 1 kHz periodic tick wakes every fixed vCPU carrier even when its guest CPU
+# is idle.  Keep interactive latency timer-driven while limiting compulsory
+# host wakeups to 100 Hz, and suppress those ticks entirely on idle vCPUs.
+CONFIG_HZ_100=y
+# CONFIG_HZ_250 is not set
+# CONFIG_HZ_300 is not set
+# CONFIG_HZ_1000 is not set
+CONFIG_HZ=100
+# CONFIG_HZ_PERIODIC is not set
+CONFIG_NO_HZ_IDLE=y
+# CONFIG_NO_HZ_FULL is not set
 CONFIG_CHECKPOINT_RESTORE=y
 CONFIG_USER_NS=y
 CONFIG_SYSVIPC=y
@@ -369,10 +379,10 @@ CONFIG_ARM_PMU=n
 CONFIG_DEBUG_FS=y
 
 # --- Kernel build policy ----------------------------------------------------
-CONFIG_KERNEL_STACK_ORDER=5
-# Darwin executes every UML task on its own native pthread stack.  Keeping a
-# second vmalloc-backed task stack only exercises host page-table mappings that
-# are never used for execution and makes task creation needlessly fragile.
+# Darwin resumes each stackful UML task on one of the fixed vCPU carriers.
+# The page profiles select orders that both produce a 128 KiB task stack. Keep
+# those stacks contiguous in the direct map: vmalloc-backed stacks add a second
+# host mapping layer without reducing the number of carrier pthreads.
 # CONFIG_VMAP_STACK is not set
 CONFIG_NULL_CHAN=y
 CONFIG_CON_CHAN="null"

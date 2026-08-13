@@ -1,7 +1,7 @@
-From d71cc592da497f9d3223e0386e2d29b493263c4d Mon Sep 17 00:00:00 2001
+From 48efdcc5a7382475ea088774ccdc62e2462f4806 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 13/15] smack: use the connected socket for stream sendmsg
+Subject: [PATCH 13/18] smack: use the connected socket for stream sendmsg
  checks
 
 Apply the reviewed final-state topic without intermediate churn.
@@ -28,3 +28,6 @@ index 7fd8a60b8..b99be69f7 100644
  	switch (sock->sk->sk_family) {
  	case AF_INET:
  		if (msg->msg_namelen < sizeof(struct sockaddr_in) ||
+-- 
+2.50.1 (Apple Git-155)
+

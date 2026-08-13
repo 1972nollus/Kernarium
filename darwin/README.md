@@ -43,19 +43,35 @@ Simulator runs retain four guest CPUs. Physical-device runs derive `ncpus=`
 from `NSProcessInfo.processorCount`, matching the device's physical CPU-core
 count.
 
-Physical-device Kernarium builds carry the complete compact-layout kernel ELF
-in a 16 KiB-aligned `__TEXT,__uml_elf` section of `KernariumRuntime.framework`.
-The standard Xcode framework signature covers that storage. The embedded ELF
-loader verifies the carrier byte-for-byte, reserves the fixed 48--56 GiB
-kernel window, and aliases immutable executable pages from the already signed
-Mach-O mapping with `vm_remap`; it never copies code into anonymous memory or
-publishes RW pages as executable. ELF data and BSS retain the ordinary copy
-path, and relocations into signed executable pages are rejected. Simulator
-keeps the established `__DATA` carrier and 96 TiB layout, while the macOS
-AppKit/CGL/IOSurface/Metal, VNC, loader, and address-space paths are unchanged.
+Both iOS products carry the same complete ET_DYN kernel ELF in a 16 KiB-aligned
+`__TEXT,__uml_elf` section of `KernariumRuntime.framework`. The standard Xcode
+framework signature covers that storage. The embedded ELF loader verifies the
+carrier byte-for-byte, derives the native window from guest RAM plus a 4 GiB
+auxiliary allowance below the 62 GiB ceiling, biases the image as one unit, and
+aliases immutable executable pages from the already signed Mach-O mapping with
+`vm_remap`; it never copies code into anonymous memory or publishes RW pages as
+executable. ELF data and BSS retain the ordinary copy path, and relocations into
+signed executable pages are rejected. Simulator and device therefore use the
+same signed-kernel and address-layout behavior. The macOS
+AppKit/CGL/IOSurface/Metal, VNC, loader, and 96 TiB address-space paths are
+unchanged.
 
-Each guest task-carrier runtime owns its engine adapters for the life of its
-host thread. JIT adapters are lightweight: a JIT-capable emulator run retains
+Darwin schedules stackful Linux task contexts on exactly one persistent host
+carrier per configured guest CPU, including vCPU0. Task creation initializes a
+saved PC and aligned stack pointer but never creates a pthread; normal Linux
+scheduling and migration can therefore use every vCPU without approaching
+iOS's process thread ceiling. CPU hotplug reuses the existing carrier, and
+shutdown first returns to its native pthread stack. The common mechanism is
+used on macOS, Simulator, and device, with carriers named
+`uml-vcpu-N-carrier` for profiles. Shipped kernels use a 100 Hz tick and
+`NO_HZ_IDLE`, suppressing periodic carrier wakeups while a guest CPU is idle.
+Darwin host signals remain wake edges rather than asynchronous Linux interrupt
+execution. An IRQ-enabled `cpu_relax()` checkpoint polls pending IPIs so two
+carriers waiting on synchronous cross-CPU calls cannot strand each other; an
+IRQ-disabled section continues to defer the work until interrupts are enabled.
+
+Each fixed-vCPU carrier owns its engine adapters for the life of its host
+thread. JIT adapters are lightweight: a JIT-capable emulator run retains
 at most one persistent executor per configured guest CPU in a process-global,
 session-owned pool, and each adapter borrows one exclusively for its guest
 timeslice. This lets cache and code state follow scheduled guest work across
@@ -142,10 +158,14 @@ both reuse the image's non-root `uml` user and never synthesize `plasma`. No
 Unix-mode or read-only block-argument policy is needed. See
 [`../docs/testing.md`](../docs/testing.md) for preparation and run commands.
 
-Kernarium uses the same EROFS-to-tmpfs-OverlayFS pivot as the macOS KDE
-launcher. The init shell mounts the overlay and devtmpfs, pivots into the
-writable view, creates separate Docker and containerd tmpfs mounts, installs
+Kernarium recreates one sparse 8 GiB image in the app temporary directory on
+each launch, formats it as ext4 in the guest, and uses directories on that one
+filesystem for the OverlayFS upper/work state plus Docker and containerd.
+Bind mounts keep those three contents separate while sharing one free-space
+pool. The image is writable guest state, not host-memory relief: Kernarium does
+not create or activate a disk-backed swap file. The init shell mounts devtmpfs,
+pivots into the writable root, installs
 only the disposable KDE setup unit, and execs the image's systemd for
 `graphical.target`. Kernel console bytes are relayed to application stdout.
-The base image remains read-only and the image's `uml` account and normal
+The EROFS base remains read-only and the image's `uml` account and normal
 display-manager units own the desktop session.

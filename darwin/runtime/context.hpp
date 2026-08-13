@@ -73,6 +73,7 @@ public:
 	void request_stop() noexcept;
 	[[nodiscard]] bool stop_requested() const noexcept;
 	[[nodiscard]] const std::atomic_bool *stop_token() const noexcept;
+	[[nodiscard]] int stop_notification_fd() const noexcept;
 
 	[[nodiscard]] int set_execution_engine(ExecutionEngine engine) noexcept;
 	[[nodiscard]] ExecutionEngine execution_engine() const noexcept;
@@ -88,6 +89,8 @@ private:
 	std::atomic<GuestEntry> selected_entry_;
 	std::atomic_uint64_t memory_domain_;
 	std::atomic_bool stop_requested_{false};
+	int stop_notification_read_{-1};
+	int stop_notification_write_{-1};
 	mutable std::mutex run_mutex_;
 	bool running_{};
 	mutable std::shared_mutex execution_lifecycle_mutex_;

@@ -1,7 +1,7 @@
-From b6c97dd068375527a366aacb288bf78319d20ed0 Mon Sep 17 00:00:00 2001
+From b5f3e538139d6f89902c3e2875fd95608317495f Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:06 +0900
-Subject: [PATCH 07/15] uml: add Darwin host service implementation
+Subject: [PATCH 07/18] uml: add Darwin host service implementation
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
@@ -20,14 +20,14 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/os-Darwin/signal.c       |  315 ++++++++
  arch/um/os-Darwin/skas/Makefile  |    7 +
  arch/um/os-Darwin/skas/mem.c     |   33 +
- arch/um/os-Darwin/skas/process.c | 1241 ++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 1264 ++++++++++++++++++++++++++++++
  arch/um/os-Darwin/smp.c          |  461 +++++++++++
  arch/um/os-Darwin/start_up.c     |   72 ++
  arch/um/os-Darwin/time.c         |  280 +++++++
  arch/um/os-Darwin/tty.c          |   22 +
  arch/um/os-Darwin/umid.c         |   40 +
  arch/um/os-Darwin/util.c         |  133 ++++
- 22 files changed, 4174 insertions(+)
+ 22 files changed, 4197 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -2068,7 +2068,7 @@ index 000000000..66322482a
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 new file mode 100644
-index 000000000..7980c72f4
+index 000000000..8591d5a58
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -0,0 +1,1264 @@
@@ -4382,3 +4382,4 @@ index 000000000..3bdb99632
 +}
 -- 
 2.50.1 (Apple Git-155)
+

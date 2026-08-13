@@ -27,8 +27,9 @@ OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
 kernel policy ships: kernel/config/common.fragment is the whole configuration
 and only the page-size fragment varies. The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
-kernel/toolchain/darwin-host. The standard address space is used by macOS and
-iOS Simulator; ios-device selects the compact physical-device layout.
+kernel/toolchain/darwin-host. The standard address space is used by macOS;
+ios-device selects the shared signed-kernel layout used by both iOS Simulator
+and physical-device builds.
 EOF
 }
 
@@ -192,6 +193,17 @@ apply_config_fragment()
 			symbol=${line%%=*}
 			"$SOURCE_DIR/scripts/config" --file "$BUILD_DIR/.config" \
 				-e "${symbol#CONFIG_}"
+			;;
+		CONFIG_*=*)
+			symbol=${line%%=*}
+			value=${line#*=}
+			case "$value" in
+			''|*[!0-9]*)
+				fail "unsupported numeric kernel config value: $line"
+				;;
+			esac
+			"$SOURCE_DIR/scripts/config" --file "$BUILD_DIR/.config" \
+				--set-val "${symbol#CONFIG_}" "$value"
 			;;
 		'# CONFIG_'*' is not set')
 			symbol=${line#\# CONFIG_}

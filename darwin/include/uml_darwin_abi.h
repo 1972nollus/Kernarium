@@ -45,6 +45,7 @@ enum darwin_uml_guest_event {
 	DARWIN_UML_EVENT_GCS_FAULT = 6,
 	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
 	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
+	DARWIN_UML_EVENT_STOP = 9,
 	DARWIN_UML_EVENT_FATAL = -1,
 };
 
@@ -68,7 +69,9 @@ enum {
 	(DARWIN_UML_FLOATING_POINT_EC | DARWIN_UML_FLOATING_POINT_IL | \
 	 DARWIN_UML_FLOATING_POINT_TFV)
 
+#ifndef DARWIN_UML_SIGRETURN_TRAMPOLINE
 #define DARWIN_UML_SIGRETURN_TRAMPOLINE 0x3fffffffff00ULL
+#endif
 #define DARWIN_UML_NR_RT_SIGRETURN 139ULL
 
 struct darwin_uml_faultinfo {
@@ -117,10 +120,11 @@ struct darwin_uml_guest_fp_registers {
 
 #if defined(__cplusplus)
 #include <stddef.h>
-static_assert(DARWIN_UML_ABI_VERSION == 6U);
-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL);
+static_assert(DARWIN_UML_ABI_VERSION == 8U);
+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x3871ad612337ea76ULL);
 static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
 static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
+static_assert(DARWIN_UML_EVENT_STOP == 9);
 static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));

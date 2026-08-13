@@ -1,7 +1,7 @@
-From 8e1a998cb05f94a451b2b6900ca5e5916dcb286b Mon Sep 17 00:00:00 2001
+From 718547c3fb92b18a87e25bb0ce377331a06fe715 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 11/15] kbuild: make host ELF tools portable to Darwin
+Subject: [PATCH 11/18] kbuild: make host ELF tools portable to Darwin
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
@@ -70,3 +70,6 @@ index 4e99393a3..5820eb1b8 100644
  
  struct devtable {
  	const char *device_id;
+-- 
+2.50.1 (Apple Git-155)
+
