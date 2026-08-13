@@ -7781,3 +7781,74 @@ that startup translation never happened. The two five-second Object Detection
 windows also cover different internal model phases, so their FP/SIMD mix is
 not a core-scaling conclusion; the repeated Clang distribution is the stronger
 signal.
+
+## G144: first post-profile gadget candidates rejected
+
+Recorded 2026-08-13. Ten default-off candidates were implemented and removed
+after the focused-to-representative screen; none reached an E-core or full-suite
+run. Raw focused and Geekbench logs remain under `.build/results/`.
+
+- An entry-local last-page translation cache moved the GPR, SP, and SIMD
+  focused probes by -0.38%, +0.60%, and +0.91%. The six worst-gap single-core
+  Geekbench workloads changed aggregate score 74 to 75, with mixed constituent
+  movement. This did not clear the greater-than-2% P threshold.
+- Bounded integer SDOT destination residency first kept one accumulator, then
+  up to eight independent accumulators in q24--q31. The final sensitive probe
+  improved 1.009 s to 0.749 s (**25.8%**) while its symmetric control moved
+  about 1%. Real Object Detection stayed 80 to 80 single-core and changed 469
+  to 463 multi-core. The benchmark-only topology was rejected.
+- Two-to-four monotonically increasing 64-bit scalar loads or stores shared one
+  proven same-page translation and skipped intermediate gadget dispatch. GPR
+  and SP probes both improved **34.9%** (2.317 to 1.508 s and 2.347 to
+  1.529 s). The profiled Geekbench subset instead changed HTML5 Browser 75 to
+  72, PDF Renderer 88 to 88, Text Processing 50 to 50, and aggregate 69 to 68.
+  The candidate was rejected before a full run.
+- Prepacking the complete `CpuState` vector-lane byte offset for single-register
+  structure transfers reduced the dedicated lane load/store probe from 0.559
+  to 0.551 s, only **1.43%**. It stopped before Geekbench because even the
+  all-lane-transfer loop did not clear the P threshold.
+- Replacing direct-link `unordered_map` allocation with lazy four-way stable
+  slabs kept the direct-link control within the noise band (2.204 to 2.231 s)
+  and improved the code-invalidation control by 1.6% (0.740 to 0.728 s).
+  Targeted Clang nevertheless fell from 52 to 49 single-core (**-5.8%**;
+  255.2 to 243.0 lines/s). The arm stopped before multi-core, E-core, or the
+  full suite. Sparse-slab hashing and probing did not repay the measured cold
+  insertion cost in the representative workload.
+- Full-width vector FADD/FMUL/FDIV/FSUB gadgets briefly skipped the redundant
+  `movi` that precedes an operation overwriting all 128 destination bits. The
+  all-FADD probe changed only 2.564 to 2.562 s (**+0.08%**), so this hot-body
+  reduction stopped before Geekbench and was removed.
+- A bounded four-or-more-instruction vector FADD/FMUL/FSUB run retained one
+  v0--v7 destination in q24 and activated the FP environment once. The
+  repeated-FADD probe improved 2.315 to 0.702 s (**69.7%**) while its
+  out-of-bank control changed 2.308 to 2.320 s. Targeted real workloads did
+  not transfer the gain: Asset Compression changed 87 to 86, Ray Tracer 95 to
+  96, and their single-core aggregate 90 to 89. The candidate was removed
+  before a full-suite or E-core run.
+- A profiling-only two-cell PIC audit counted 898,479,113 RET events across
+  HTML5, PDF, and Clang: 46.80% first-cell hits, 30.93% second-cell hits, and
+  22.27% misses. A return-only four-way arm therefore preserved the first two
+  probes and checked cells three/four only after a former miss. Its four-target
+  loop improved 2.435 to 2.059 s (**15.4%**) while the two-target control
+  changed 1.313 to 1.333 s, about **16.7% normalized**. Real work stayed below
+  the gate: HTML5 73 to 74, PDF 87 to 88, Clang 45 to 45, and aggregate 66 to
+  66. The extra cells and comparisons were removed before a full or E run.
+- The 64-bit logical-MOV alias then used the accepted successor-fetch shape
+  without changing its 48-byte entry or later gadget phases. Its eight-target
+  probe improved 1.882 to 1.608 s while the low-polymorphism control improved
+  1.799 to 1.720 s (**10.64% normalized**). The representative path did not
+  transfer: HTML5 stayed 72, PDF stayed 87, Text Processing fell 49 to 47, and
+  their aggregate stayed 67. The arm was removed before full-suite or E-core
+  measurement.
+- The vector `FMLA .4S by element` stream then stored its three already-known
+  `CpuState` offsets directly, removing `AND + UBFX + LSR` from the hot gadget
+  at the cost of 16 more stream bytes. The sensitive probe regressed 2.571 to
+  2.662 s (**-3.54%**) while its `.2S` control moved 2.570 to 2.567 s; the
+  normalized result was **-3.66%**. The larger threaded stream was rejected at
+  the probe gate, before Geekbench or E-core measurement.
+
+These failures sharpen the profiling rule: a large loop-shaped probe gain is
+not enough when real instruction adjacency, register aliases, and page
+boundaries rarely admit the fast path. Subsequent arms need either a measured
+coverage counter or a target whose optimization applies to the already-hot
+individual gadget body, followed by the same targeted Geekbench gate.
