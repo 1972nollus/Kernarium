@@ -45,6 +45,16 @@ and IRQ-enabled spin checkpoints service pending IPIs so synchronous
 cross-calls cannot deadlock. Shipped kernels use a 100 Hz tick and
 `NO_HZ_IDLE`.
 
+The common architecture was requalified with a complete no-systemd gadgets
+Geekbench 6 run: the direct OverlayFS shell scored **96/565** single/multi,
+versus the final pre-change result at **96/567**. Diagnostic single/multi Clang
+and Object Detection captures put carrier activation plus synchronization
+below 1.2% of accumulated guest+syscall time and found no material spin/IPI
+leaf. The remaining Clang link churn and Object Detection SDOT/vector-load
+hotspots match the pre-change gadget profile. Two new SDOT stream-load arms
+were removed after only 0.00% and 0.39% focused-probe gains. The result does not
+justify a macOS-only memory, address-space, or thread-model shortcut.
+
 The common kernel also builds zswap in, enables it by default, and selects zstd
 while retaining zram with zstd. Zswap requires backing swap and allocates no
 pool in the normal macOS or Kernarium desktop flows, which deliberately do not

@@ -7852,3 +7852,55 @@ not enough when real instruction adjacency, register aliases, and page
 boundaries rarely admit the fast path. Subsequent arms need either a measured
 coverage counter or a target whose optimization applies to the already-hot
 individual gadget body, followed by the same targeted Geekbench gate.
+
+## G145: common iOS-style memory and vCPU architecture requalification
+
+Recorded 2026-08-14 after macOS adopted the same constrained address-space
+shape and one-persistent-carrier-per-vCPU model used by the iOS products. The
+current Release 16 KiB gadgets product ran Geekbench 6.7.1 directly
+from the tmpfs OverlayFS shell: PID 1 was `/bin/sh`, systemd and its services
+were never started, the guest had ten vCPUs and 8 GiB, and Geekbench used
+`--no-upload`. The complete run shut down cleanly and scored **96 single-core /
+565 multi-core**, versus the final pre-change G141 run at **96 / 567**. The
+single-core result is identical and the multi-core difference is **-0.35%**.
+The largest constituent movements have mixed signs—single-core Background
+Blur -5.08%, multi-core File Compression -4.53%, and multi-core Photo Filter
++7.16%—rather than the uniform loss expected from a new carrier or memory
+boundary. The former run booted systemd and stopped services before the
+workload, so this is a requalification comparison rather than a strict binary
+A/B; the direct-shell run is the current low-noise benchmark authority.
+
+Separate intrusive, unscored `sample` captures covered single- and multi-core
+Clang and Object Detection under the same direct-shell boot. The per-entry
+carrier boundary reported zero stack-switch time. Activation plus synchronization
+accounted for less than 1.2% of the corresponding accumulated guest plus
+syscall time in all four captures, and neither `darwin_cpu_relax` nor
+`darwin_ipi_poll` appeared as a material collapsed leaf. Clang retained the
+pre-change shape: direct `LinkRecord` insertion was about 6% of active
+single-core product samples and 5.76% multi-core, while activate/deactivate was
+6.71%/7.07%. Object Detection remained assembly-bound: indexed SDOT occupied
+32.32% single-core and 28.68% multi-core, and the leading 128-bit vector load
+occupied 15.94%/14.68%. These are the same existing gadget costs identified by
+G143, not overhead introduced by fixed carriers or the shared Apple memory
+architecture.
+
+Two new individual SDOT hot-body arms stopped at the focused probe gate. First,
+pair-loading the first two operand-stream words removed one host instruction
+from every native and portable dot-product gadget, but the self-checking
+indexed-SDOT median remained exactly **2.298 seconds** with unchanged host CPU.
+Second, packing all three `CpuState` offsets into one stream word reduced each
+translation by two words and two stream loads; it moved **2.298 to 2.289
+seconds (+0.39%)**, again without CPU improvement. Both were removed before
+targeted Geekbench. G144's independently rejected SDOT residency arm is not
+reopened: its 25.8% synthetic gain already failed to move real single-core
+Object Detection and regressed its multi-core score.
+
+Disposition: retain the common macOS/iOS address and persistent-carrier
+architecture unchanged. The aggregate result is already at the former gadgets
+level, measured carrier overhead is below the optimization threshold, and the
+remaining large leaves are pre-existing gadget bodies whose first bounded
+candidates have failed the focused-to-representative rule. No macOS-only
+threading, address-space, or memory shortcut is justified. Raw console and
+sample reports are under
+`.build/results/gadgets-ios-architecture-20260814/`; the production emulator
+was rebuilt from the accepted source after both rejected arms.

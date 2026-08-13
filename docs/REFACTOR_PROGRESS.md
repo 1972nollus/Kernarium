@@ -41,6 +41,13 @@ migrate on 128 KiB kernel stacks, host-stop wakes carriers cooperatively, and
 IRQ-enabled spin checkpoints service pending IPIs. The shipped scheduler policy
 is 100 Hz with `NO_HZ_IDLE`.
 
+A full no-systemd gadgets requalification on the common architecture scored
+96/565 single/multi, versus the final pre-change 96/567. Focused Clang/Object
+Detection profiles found no material fixed-carrier spin/IPI cost and kept
+activation+synchronization below 1.2% of accumulated guest+syscall time. Two
+individual SDOT stream-load reductions stopped at 0.00% and 0.39% probe gains
+and were removed; no macOS-only recovery path is retained.
+
 Current 1 GiB normal boots pass on Simulator and the connected physical iPad.
 The Simulator reached four CPUs, DHCP, EROFS/ext4 state, SDDM, automatic login,
 and direct virgl/ANGLE/Metal presentation. The standard-signed Release app ran
