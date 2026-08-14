@@ -3,26 +3,28 @@
 ## Kernarium iOS application prototype (2026-08-14)
 
 The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
-slices and boots a 1 GiB UML guest from `Documents/rootfs.erofs`. Simulator
-uses four vCPUs, while physical iOS matches the device's reported physical
-processor count. Its basic SwiftUI `ContentView` owns a safe-area
+slices and boots a 2 GiB UML guest by default from a selected Documents EROFS
+image. Device and Simulator both default to all processors reported by iOS; a
+settings sheet persists bounded vCPU, RAM, overlay-size, and rootfs choices for
+the next launch. Its basic SwiftUI `ContentView` owns a safe-area
 `MTKView` whose point dimensions are the guest resolution. The real Virtio-GPU
 device and virglrenderer use pinned UTM libepoxy plus ANGLE/Metal and present
 the native Metal texture directly; the iOS target builds neither AppKit nor
 VNC, while the macOS graph remains on its existing
 AppKit/CGL/IOSurface/Metal and VNC paths.
 
-Kernarium recreates a sparse 8 GiB temporary image on launch. The guest formats
-it as ext4 and uses separate OverlayFS, Docker, and containerd directories on
-the same free-space pool; the app does not create or activate disk-backed swap.
+Kernarium recreates a sparse temporary image on launch at the configured size
+(8 GiB by default). The guest formats it as ext4 and uses separate OverlayFS,
+Docker, and containerd directories on the same free-space pool; the app does
+not create or activate disk-backed swap.
 Both iOS targets and default 16 KiB macOS integration consume the exact same
 canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. iOS carries
 them in the framework's signed `__TEXT`; macOS embeds them through its existing
-unsigned CLI path. Both iOS targets use the same scalable 60.875--62 GiB native
-window for the 1 GiB guest and every product uses the 128 TiB sparse
+unsigned CLI path. Both iOS targets use the same scalable 59.75--62 GiB native
+window for the 2 GiB default guest and every product uses the 128 TiB sparse
 software-MMU task range. The native window is guest RAM plus a page-rounded
-one-eighth auxiliary allowance with a 32 MiB floor; 1 GiB therefore receives
-exactly 128 MiB. macOS exercises the same scalable-window derivation,
+one-eighth auxiliary allowance with a 32 MiB floor; 2 GiB therefore receives
+exactly 256 MiB. macOS exercises the same scalable-window derivation,
 relocation, and native-hole handling at a 96 TiB base. It retains the
 standalone app's 8 GiB and ten-vCPU defaults, which derive a 9 GiB active
 window. The common kernel enables zswap by default with zstd; normal desktop
@@ -30,10 +32,14 @@ launchers provide no backing swap, so no zswap pool is created.
 
 Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep
-only while the guest is active. The keyboard overlay is a round bordered icon
-button and uses native circular Liquid Glass on iOS 26. Both iOS dependency
-and runtime slices, three combined XCFrameworks, the unsigned Simulator Xcode
-app, the focused input unit, and the canonical macOS GPU workflow pass.
+only while the guest is active. Settings and keyboard overlays are round
+bordered icon buttons and use native circular Liquid Glass on iOS 26. Phosh
+images start their ordinary UID-1000 session through logind/libseat without a
+VT dependency. On macOS, the full Phosh service set now completes the GStreamer
+VA probe, renders a VNC-captured lock screen, and enters direct
+CGL/IOSurface/Metal presentation without claiming a host codec backend.
+Earlier iOS dependency/runtime/package and 1 GiB normal-boot evidence remains
+dated until the configurable 2 GiB app is rerun there.
 Extended Virtual Addressing and file sharing remain project-owned metadata.
 Exactly one persistent host thread named `uml-vcpu-N-carrier` owns each vCPU,
 including vCPU0; task creation no longer creates pthreads. Linux task contexts
@@ -65,15 +71,17 @@ delta ranged from -1.23% to -35.36%; 4 KiB took 17.53% longer with only +0.35%
 peak-resident-size movement. Both guests shut down cleanly. G148 records the
 exact hashes and the ordered, active-host, single-observation limitation.
 
-Current 1 GiB normal boots pass on Simulator and the connected physical iPad.
-The Simulator reached four CPUs, DHCP, EROFS/ext4 state, SDDM, automatic login,
-and direct virgl/ANGLE/Metal presentation. The standard-signed Release app ran
-without LLDB on the iPad, brought all six reported CPUs online, and followed
-the same startup path for more than 90 seconds without the former RCU stall.
-The existing device rootfs was preserved. Physical Aquarium is intentionally
-not run because the workload is too heavy for the 1 GiB guest; the removed
-disk-swap workaround is not part of the product. The earlier 2 GiB Simulator
-WebGL 2 Aquarium result remains dated graphics compatibility evidence.
+The earlier 1 GiB normal boots passed on Simulator and the connected physical
+iPad. Simulator reached four CPUs; the standard-signed Release app ran without
+LLDB on the iPad and brought all six reported CPUs online. Both reached DHCP,
+EROFS/ext4 state, SDDM, automatic login, and direct virgl/ANGLE/Metal
+presentation without the former RCU stall. That is dated evidence rather than
+a claim for the new 2 GiB default. Current macOS qualification instead proves
+the full Phosh service set and its sparse rendered lock screen after the virgl
+VA-probe fix. Physical Aquarium remains intentionally outside acceptance; the
+removed disk-swap workaround is not part of the product. The earlier 2 GiB
+Simulator WebGL 2 Aquarium result remains dated graphics compatibility
+evidence.
 
 An opt-in physical no-systemd Geekbench launch also reached and completed 13
 single-core workloads before the user stopped it during Photo Filter; that

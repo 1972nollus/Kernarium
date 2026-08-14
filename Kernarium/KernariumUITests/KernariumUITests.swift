@@ -23,21 +23,38 @@ final class KernariumUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+    func testSettingsSheetShowsLaunchConfigurationControls() throws {
+        let app = testApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        let settingsButton = app.buttons["settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 10))
+        settingsButton.tap()
+
+        XCTAssertTrue(
+            app.steppers["vCPUCountStepper"].waitForExistence(timeout: 5)
+        )
+        XCTAssertTrue(app.steppers["guestMemoryStepper"].exists)
+        XCTAssertTrue(app.steppers["overlaySizeStepper"].exists)
+        XCTAssertTrue(
+            app.descendants(matching: .any)["rootfsPicker"].exists
+        )
+        XCTAssertTrue(app.buttons["settingsSaveButton"].exists)
     }
 
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            testApplication().launch()
         }
+    }
+
+    private func testApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        // UI tests exercise the app shell, not a multi-gigabyte guest boot.
+        app.launchEnvironment["KERNARIUM_ROOTFS"] =
+            "kernarium-ui-tests-missing.erofs"
+        return app
     }
 }

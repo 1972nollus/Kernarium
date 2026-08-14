@@ -123,12 +123,15 @@ ctest --preset instruction-evidence-4k
 
 `Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
 application that embeds the maintained 16 KiB UML kernel and boots
-`Documents/rootfs.erofs` with 1 GiB of guest memory. Simulator runs use four
-vCPUs; physical-device runs use `NSProcessInfo.processorCount`, so the guest
-receives the host device's physical CPU-core count. SwiftUI lays the
-`ContentView` Metal view out inside the safe area, and the app uses the view's
-point dimensions as its drawable and guest pixel dimensions without applying
-the display scale. A trailing-center keyboard button is the only overlay.
+the selected `.erofs` image from Documents with 2 GiB of guest memory by
+default. Device and Simulator both default to all processors reported by
+`NSProcessInfo`. The settings sheet persists 1 through that processor count,
+512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay size, and a
+Documents rootfs filename; changes are snapshotted on the next app launch.
+SwiftUI lays the `ContentView` Metal view out inside the safe area, and the app
+uses the view's point dimensions as its drawable and guest pixel dimensions
+without applying the display scale. Trailing-center settings and keyboard
+buttons are the only overlays.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
@@ -255,37 +258,40 @@ window at 96 TiB to avoid low-host-VA collisions.
 
 The guest follows the same mount-and-systemd flow as
 `scripts/boot_kde_vnc.py`, but the iOS writable state is one disposable disk.
-The app deletes any previous temporary image, creates a sparse 8 GiB image,
-and passes it as `/dev/ubdb`. The init shell formats it as ext4, binds the EROFS
-root as the OverlayFS lower layer, uses directories on ext4 for upper/work,
-mounts devtmpfs in the new root, and pivots. Separate Docker and containerd
-directories are then bind-mounted from the same ext4 filesystem, keeping their
-contents separate while sharing its free space. The shell installs the
-disposable KDE setup unit and execs the rootfs systemd as PID 1.
+The app deletes any previous temporary image, creates a sparse image at the
+configured size (8 GiB by default), and passes it as `/dev/ubdb`. The init
+shell formats it as ext4, binds the EROFS root as the OverlayFS lower layer,
+uses directories on ext4 for upper/work, mounts devtmpfs in the new root, and
+pivots. Separate Docker and containerd directories are then bind-mounted from
+the same ext4 filesystem, keeping their contents separate while sharing its
+free space. The shell applies the image-appropriate disposable desktop setup
+and execs the rootfs systemd as PID 1. KDE uses the image's display manager and
+`uml` account. Phosh uses the image's UID-1000 account and starts through
+logind/libseat without binding to UML's unsupported VT ioctl path.
 The kernel builds zswap in, enables it by default, and selects zstd. Because
 zswap is only a compressed cache in front of a backing swap device or file,
-Kernarium's no-swap launch allocates no zswap pool; the 1 GiB guest remains the
-constrained-device memory contract.
-The requested `graphical.target` therefore uses the image's ordinary units,
-SDDM, and non-root `uml` account. The prototype does not synthesize a desktop
-user, modify the EROFS image, or start VNC.
+Kernarium's no-swap launch allocates no zswap pool. The prototype does not
+synthesize a desktop user, modify the EROFS image, or start VNC. The modern DRM
+log client provides an early KMS console until userspace takes display
+ownership; the independent UML console relay continues to app stdout.
 
 `--aquarium` remains an opt-in Simulator-only launcher check. It requires a
 live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
 record with the GL version and renderer. The dated 2 GiB Simulator evidence
 reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
-`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Aquarium is too memory-heavy for the
-current 1 GiB physical-device guest and is not a physical acceptance workload;
-do not add swap or another memory workaround to make that campaign run.
+`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Aquarium is not a current physical-device
+acceptance workload; do not add swap or another memory workaround solely for
+that campaign.
 
-Current 1 GiB normal-boot validation passed on both iOS targets. Simulator
-stdout showed four online CPUs, DHCP, the EROFS/ext4 pivot, SDDM, automatic
-`uml` login, and direct virgl/ANGLE/Metal presentation. A Release app with the
-standard Xcode development signature installed and launched without a debugger
-on the connected iPad; stdout showed `ncpus=6`, all six CPUs online, DHCP, the
-same EROFS/ext4 state flow, SDDM, and automatic login without an RCU stall or
-disk-backed swap. The physical rootfs already in Documents was preserved.
-Both runtime presets and the three combined XCFrameworks passed their builds.
+The earlier 1 GiB normal-boot checkpoint passed on both iOS targets: Simulator
+used four CPUs, while the standard-signed iPad run used all six reported CPUs;
+both reached DHCP, the EROFS/ext4 pivot, SDDM, automatic `uml` login, and direct
+virgl/ANGLE/Metal presentation. That is dated evidence, not a claim that the
+new 2 GiB default or Phosh image has been rerun on either iOS target. Current
+macOS qualification boots the unmodified Phosh service set, completes its
+GStreamer plugin scan without poisoning the virgl context, captures the sparse
+Phosh lock screen through VNC, and enters the direct
+CGL/IOSurface/Metal presentation path in native mode.
 
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build

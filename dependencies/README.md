@@ -102,6 +102,18 @@ metadata. They are not used by this project.
 Production consumers use the exact imported static archives declared in
 [`cmake/UmlThirdPartyTargets.cmake`](cmake/UmlThirdPartyTargets.cmake).
 
+The desktop virglrenderer patch adapts generated shaders to Apple’s core-only
+OpenGL 4.1 implementation. Features that are already core in the selected GLSL
+version, including uniform buffer objects in GLSL 1.40, use the core spelling
+instead of requiring legacy extension names that Apple is not required to
+advertise. Compatibility and GLES hosts retain the upstream extension path.
+The same patch keeps hardware-video capabilities empty on Apple hosts, but
+accepts the validated video-buffer create/destroy lifecycle that Mesa emits for
+its guest-side, shader-based `VAProfileNone` post-processing path. No host codec
+backend is claimed: codec and frame commands remain unsupported. This prevents
+a harmless GStreamer capability probe from poisoning its virgl context while
+preserving fail-closed behavior for actual encode and decode requests.
+
 The prefix also retains the following archives installed by the verified GLib,
 PCRE2, and libffi recipes. They are authenticated payload, but are deliberately
 not imported into the production link graph:

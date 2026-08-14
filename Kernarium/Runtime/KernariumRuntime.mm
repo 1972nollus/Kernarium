@@ -8,7 +8,6 @@
 #include "uml/emulator.h"
 
 #import <Foundation/Foundation.h>
-#import <TargetConditionals.h>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -95,7 +94,7 @@ private:
     void* context_ {};
 };
 
-constexpr std::string_view kdeSystemdBootstrap = R"krn(set -eu
+constexpr std::string_view systemdBootstrap = R"krn(set -eu
 fail()
 {
     echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
@@ -138,6 +137,8 @@ state_device=$(stat -c %d /.uml-lower/mnt)
 [ "$(stat -c %d /var/lib/containerd)" = "$state_device" ] || \
     fail "containerd state is outside the shared ext4 filesystem"
 echo "Kernarium shared ext4 state: device=$state_device"
+if getent passwd uml >/dev/null 2>&1 && \
+    [ -f /usr/share/plasma/plasmoids/org.kde.desktopcontainment/contents/config/main.xml ]; then
 install -d -m 0755 /usr/local/libexec \
     /etc/systemd/system/multi-user.target.wants
 cat > /usr/local/libexec/kernarium-kde-setup <<'KDE_SETUP'
@@ -195,6 +196,66 @@ WantedBy=multi-user.target
 KDE_SERVICE
 ln -sf ../kernarium-kde-setup.service \
     /etc/systemd/system/multi-user.target.wants/kernarium-kde-setup.service
+elif [ -x /usr/bin/phosh-session ] && \
+    getent passwd 1000 >/dev/null 2>&1; then
+phosh_user=$(getent passwd 1000 | cut -d: -f1)
+phosh_home=$(getent passwd 1000 | cut -d: -f6)
+phosh_group=$(id -gn "$phosh_user")
+usermod -a -G video,render,input "$phosh_user"
+
+# The image's development unit and greetd both require Linux VT ioctls, which
+# UML tty0 intentionally does not implement.  Let libseat own the real virtio
+# DRM and input devices without binding the session to a VT instead.
+rm -f \
+    /etc/systemd/system/display-manager.service \
+    /etc/systemd/system/greetd.service \
+    /etc/systemd/system/graphical.target.wants/phosh.service
+ln -s /dev/null /etc/systemd/system/display-manager.service
+ln -s /dev/null /etc/systemd/system/greetd.service
+
+# Discard the image's fixed 720x1440 Virtual-1 override.  Phoc will select the
+# preferred mode advertised by Virtio-GPU, preserving one guest pixel per host
+# safe-area point.
+install -d -m 0755 /etc/phosh \
+    /etc/systemd/system/graphical.target.wants
+install -m 0644 /dev/null /etc/phosh/phoc.ini
+cat > /etc/systemd/system/kernarium-phosh.service <<PHOSH_SERVICE
+[Unit]
+Description=Kernarium VT-independent Phosh session
+After=systemd-user-sessions.service systemd-logind.service dbus.socket
+Wants=systemd-logind.service dbus.socket
+Before=graphical.target
+
+[Service]
+Type=simple
+User=$phosh_user
+Group=$phosh_group
+SupplementaryGroups=video render input
+PAMName=login
+WorkingDirectory=$phosh_home
+Environment=HOME=$phosh_home
+Environment=LANG=C.UTF-8
+Environment=XDG_CURRENT_DESKTOP=Phosh:GNOME
+Environment=XDG_SESSION_DESKTOP=phosh
+Environment=XDG_SESSION_TYPE=wayland
+Environment=WLR_BACKENDS=drm,libinput
+Environment=SEATD_VTBOUND=0
+ExecStart=/usr/bin/phosh-session
+Restart=on-failure
+RestartSec=5s
+StandardInput=null
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=graphical.target
+PHOSH_SERVICE
+ln -s ../kernarium-phosh.service \
+    /etc/systemd/system/graphical.target.wants/kernarium-phosh.service
+echo "Kernarium Phosh overlay setup complete for $phosh_user"
+else
+    echo "Kernarium desktop setup is owned by the rootfs image"
+fi
 if [ "${KERNARIUM_AQUARIUM:-0}" = 1 ]; then
     for unit in docker.service docker.socket containerd.service \
         packagekit.service apt-daily.service apt-daily.timer \
@@ -540,7 +601,7 @@ public:
                                     }
                                     bootstrap.append(geekbenchBootstrap);
                                 } else {
-                                    bootstrap.append(kdeSystemdBootstrap);
+                                    bootstrap.append(systemdBootstrap);
                                 }
                                 bootstrap.push_back('\n');
                                 std::string_view remaining {bootstrap};
@@ -658,7 +719,9 @@ extern "C" int kernarium_runtime_run(
     const char* rootfsPath,
     const char* overlayPath,
     uint32_t width,
-    uint32_t height)
+    uint32_t height,
+    uint32_t guestMemoryMiB,
+    uint32_t guestProcessorCount)
 {
     try {
         ActiveRuntime active;
@@ -670,19 +733,25 @@ extern "C" int kernarium_runtime_run(
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
-        (void)setvbuf(stdout, nullptr, _IONBF, 0);
-#if TARGET_OS_SIMULATOR
-        constexpr uint32_t guestProcessorCount = 4;
-#else
         const NSUInteger hostProcessorCount =
             [NSProcessInfo processInfo].processorCount;
-        const uint32_t guestProcessorCount = hostProcessorCount == 0
+        const uint32_t maximumGuestProcessorCount = hostProcessorCount == 0
             ? 1U : static_cast<uint32_t>(hostProcessorCount);
-#endif
+        if (guestProcessorCount == 0 ||
+            guestProcessorCount > maximumGuestProcessorCount ||
+            guestMemoryMiB < 512U || guestMemoryMiB > 4096U ||
+            guestMemoryMiB % 128U != 0) {
+            std::fputs(
+                "Kernarium: invalid guest CPU or memory configuration\n",
+                stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        (void)setvbuf(stdout, nullptr, _IONBF, 0);
         std::printf(
-            "Kernarium: booting %ux%u guest with mem=1G ncpus=%u\n",
+            "Kernarium: booting %ux%u guest with mem=%uM ncpus=%u\n",
             width,
             height,
+            guestMemoryMiB,
             guestProcessorCount);
 
         uml::gpu::InProcessGpuService gpuService(
@@ -732,10 +801,11 @@ extern "C" int kernarium_runtime_run(
         std::vector<std::string> arguments {
             "uml-kernarium",
             "--execution-engine=gadgets",
-            "mem=1G",
+            "mem=" + std::to_string(guestMemoryMiB) + "M",
             "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",
             "console=tty0",
+            "console=drm_log",
             consoleBridge.kernelArgument(),
             "ubd1=" + std::string(overlayPath),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +

@@ -368,9 +368,14 @@ CONFIG_VIRTIO_INPUT=y
 CONFIG_DRM=y
 CONFIG_DRM_VIRTIO_GPU=y
 CONFIG_DRM_VIRTIO_GPU_KMS=y
+# The modern DRM log client renders the kernel ring directly through KMS until
+# userspace takes ownership.  It needs neither legacy fbdev emulation nor VT.
+CONFIG_DRM_CLIENT_LOG=y
+CONFIG_DRM_CLIENT_DEFAULT_LOG=y
+# CONFIG_DRM_FBDEV_EMULATION is not set
 CONFIG_TTY=y
-# UML uses its host-backed serial console; physical display/keyboard virtual
-# terminals are deliberately outside the emulator's device model.
+# The host kernel console is the UML serial device.  Desktop sessions use
+# logind/libseat directly rather than the legacy Linux VT/fbcon stack.
 # CONFIG_VT is not set
 
 # --- Tracing and diagnostics ------------------------------------------------

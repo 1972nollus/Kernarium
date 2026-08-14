@@ -6,16 +6,21 @@
 SwiftUI `ContentView` into the production Virtio-GPU/virglrenderer command path.
 UTM's pinned libepoxy and virglrenderer drive its ANGLE Metal backend, and the
 resulting native `MTLTexture` is sampled by the app's `MTKView`. The macOS
-AppKit/CGL/IOSurface/Metal and VNC graph remains unchanged.
+AppKit/CGL/IOSurface/Metal and VNC providers remain platform-exclusive. The
+desktop virgl path now restores context-zero bookkeeping after creating a
+guest context and tolerates only the no-codec video-buffer lifecycle emitted by
+Mesa's shader-only `VAProfileNone` probe; actual codec capabilities and frame
+commands remain disabled.
 
-The app starts one 1 GiB guest after its safe-area view has a real size, uses
-one guest pixel per host point, and relays the kernel console to app stdout.
-Simulator uses four vCPUs; physical iOS uses
-`NSProcessInfo.processorCount`. The app boots `Documents/rootfs.erofs`
-read-only and recreates one sparse 8 GiB temporary disk on every launch. The
-guest formats that disk as ext4 and uses separate directories from its shared
-free-space pool for OverlayFS, Docker, and containerd before executing the
-image's normal systemd toward `graphical.target`. No disk-backed swap is
+The app starts one 2 GiB guest by default after its safe-area view has a real
+size, uses one guest pixel per host point, and relays the kernel console to app
+stdout. Device and Simulator both default to all processors reported by iOS.
+A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
+RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
+filename for the next launch. The app recreates the sparse overlay disk on
+every run; the guest formats it as ext4 and uses separate directories from its
+shared free-space pool for OverlayFS, Docker, and containerd before executing
+the image's normal systemd toward `graphical.target`. No disk-backed swap is
 created or activated. Documents file sharing and Extended Virtual Addressing
 remain project-owned metadata.
 
@@ -28,8 +33,8 @@ software-MMU task range and derives a native window from guest RAM plus a
 page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
 Device and Simulator top-pack that window below 62 GiB.
 The iOS loader aliases immutable executable pages from signed storage and
-copies only data/BSS. With 1 GiB of guest RAM the auxiliary allowance is
-exactly 128 MiB and the active window is 60.875--62 GiB. It uses no anonymous
+copies only data/BSS. With the 2 GiB default, the auxiliary allowance is
+exactly 256 MiB and the active window is 59.75--62 GiB. It uses no anonymous
 executable publication, RW-to-RX transition, LLDB, or JIT entitlement. macOS
 exercises the same range, window derivation, relocation, and exclusion-hole
 handling while retaining its 8 GiB and ten-vCPU defaults; its 1 GiB auxiliary
@@ -87,20 +92,21 @@ pool in the normal macOS or Kernarium desktop flows, which deliberately do not
 activate a swap device or file.
 
 Two real Virtio-input devices carry UIKit touch coordinates and keyboard text
-to the guest. The trailing-center keyboard control is circular and bordered on
-older systems and uses native circular Liquid Glass on iOS 26. A private iOS
-GLib/libslirp prefix supplies normal SLiRP networking, and the UIKit idle timer
-is disabled only for the managed guest lifetime.
+to the guest. Trailing-center settings and keyboard controls are circular and
+bordered on older systems and use native circular Liquid Glass on iOS 26. A
+private iOS GLib/libslirp prefix supplies normal SLiRP networking, and the
+UIKit idle timer is disabled only for the managed guest lifetime.
 
-Current normal-boot validation uses 1 GiB and deliberately omits Aquarium. On
-Simulator, four CPUs reached DHCP, the EROFS/ext4 pivot, SDDM, automatic `uml`
-login, and direct virgl/ANGLE/Metal presentation. A standard-signed Release app
-installed and launched without a debugger on the connected iPad; all six
-reported CPUs came online and the same DHCP, EROFS/ext4, SDDM, and automatic
-login path passed for more than 90 seconds without the former RCU stall. The
-existing device rootfs was preserved. Aquarium is too heavy for this 1 GiB
-physical guest, so no physical Aquarium result or swap-based workaround is
-part of the current checkpoint.
+The earlier normal-boot validation used 1 GiB and deliberately omitted
+Aquarium. Simulator used four CPUs; a standard-signed Release app on the iPad
+used all six reported CPUs. Both reached DHCP, the EROFS/ext4 pivot, SDDM,
+automatic `uml` login, and direct virgl/ANGLE/Metal presentation. That remains
+dated evidence and is not relabeled as a 2 GiB or Phosh device run. Current
+macOS Phosh validation runs the full service set, completes the GStreamer VA
+plugin scan without the former virgl context error, captures the rendered
+Phosh lock screen through VNC, and reaches direct CGL/IOSurface/Metal native
+presentation. No physical Aquarium result or swap-based workaround is part of
+the current checkpoint.
 
 The same physical app also ran the image-local Geekbench 6.7.1 payload
 from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows

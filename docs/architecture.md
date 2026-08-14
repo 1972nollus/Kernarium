@@ -78,11 +78,12 @@ established unsigned CLI embedding and uses the same guest range, RAM-scaled
 window derivation, relocation, and exclusion-hole handling, but places that
 window at 96 TiB rather than inside iOS's constrained sub-62 GiB host range.
 Product policy still lets
-macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1 GiB and its
-iOS CPU selection; the common layout derives the appropriate native window
-from each guest's RAM. The supported macOS 4 KiB compatibility profile remains
-a distinct kernel artifact because guest page size is a compile-time kernel
-choice.
+macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 2 GiB and all
+processors reported by iOS; the app can persist a smaller launch configuration
+within its supported settings ranges. The common layout derives the appropriate
+native window from each guest's RAM. The supported macOS 4 KiB compatibility
+profile remains a distinct kernel artifact because guest page size is a
+compile-time kernel choice.
 Executable-memory ownership is enforced in source
 architecture and functional JIT publication tests, not by comparing or
 attributing individual archive members.

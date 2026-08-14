@@ -43,12 +43,13 @@ bool isRenderedFrame(const rfbClient& client)
     if (client.frameBuffer == nullptr)
         return false;
 
-    // Sample the image on a 64x64 grid. A compositor plus a rendered cube has
+    // Sample the image on a 64x64 grid. A desktop or lock screen has
     // substantially more than these conservative diversity/nonblack bounds,
-    // while an untouched zero-filled VNC scanout does not.
+    // while an untouched zero-filled VNC scanout does not. Keep the area
+    // bound low enough for Phosh's intentionally sparse black lock screen.
     constexpr std::size_t sampleGrid = 64;
     constexpr std::size_t minimumDistinctColors = 16;
-    constexpr std::size_t minimumNonblackSamples = 64;
+    constexpr std::size_t minimumNonblackSamples = 32;
     std::set<std::uint32_t> colors;
     std::size_t nonblackSamples = 0;
     for (std::size_t sampleY = 0; sampleY < sampleGrid; ++sampleY) {

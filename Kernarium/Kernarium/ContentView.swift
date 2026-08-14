@@ -4,56 +4,101 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var keyboardVisible = false
+    @State private var presentedSheet: PresentedSheet?
 
     var body: some View {
         ZStack(alignment: .trailing) {
             GuestDisplayView(keyboardVisible: $keyboardVisible) { view, size in
                 EmulatorLauncher.shared.start(view: view, size: size)
             }
-            keyboardButton
+            floatingButtons
         }
         .ignoresSafeArea(.keyboard)
+        .sheet(item: $presentedSheet) { destination in
+            switch destination {
+            case .settings:
+                EmulatorSettingsView()
+            }
+        }
         .onDisappear {
             EmulatorLauncher.shared.stop()
         }
     }
 
-    @ViewBuilder
+    private var floatingButtons: some View {
+        VStack {
+            settingsButton
+            keyboardButton
+        }
+    }
+
+    private var settingsButton: some View {
+        floatingIconButton(
+            systemName: "gearshape",
+            accessibilityLabel: "Emulator Settings",
+            identifier: "settingsButton"
+        ) {
+            presentedSheet = .settings
+        }
+    }
+
     private var keyboardButton: some View {
+        floatingIconButton(
+            systemName: keyboardVisible
+                ? "keyboard.chevron.compact.down"
+                : "keyboard",
+            accessibilityLabel: keyboardVisible
+                ? "Hide Keyboard"
+                : "Show Keyboard",
+            identifier: "keyboardButton",
+            action: toggleKeyboard
+        )
+    }
+
+    @ViewBuilder
+    private func floatingIconButton(
+        systemName: String,
+        accessibilityLabel: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
         if #available(iOS 26.0, *) {
-            Button(action: toggleKeyboard) {
-                keyboardIcon
+            Button(action: action) {
+                floatingIcon(systemName: systemName)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
-            .accessibilityIdentifier("keyboardButton")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityIdentifier(identifier)
         } else {
-            Button(action: toggleKeyboard) {
-                keyboardIcon
+            Button(action: action) {
+                floatingIcon(systemName: systemName)
                     .background(.regularMaterial, in: Circle())
                     .overlay {
                         Circle().strokeBorder(.primary, lineWidth: 1)
                     }
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("keyboardButton")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityIdentifier(identifier)
         }
     }
 
-    private var keyboardIcon: some View {
-        Image(systemName: keyboardVisible
-              ? "keyboard.chevron.compact.down"
-              : "keyboard")
+    private func floatingIcon(systemName: String) -> some View {
+        Image(systemName: systemName)
             .frame(width: 44, height: 44)
             .contentShape(Circle())
-            .accessibilityLabel(keyboardVisible
-                                ? "Hide Keyboard"
-                                : "Show Keyboard")
     }
 
     private func toggleKeyboard() {
         keyboardVisible.toggle()
     }
+}
+
+private enum PresentedSheet: String, Identifiable {
+    case settings
+
+    var id: String { rawValue }
 }
 
 private struct GuestDisplayView: UIViewRepresentable {
@@ -232,14 +277,22 @@ private enum LinuxKeyboard {
 }
 
 enum OverlayDisk {
-    static let byteCount: UInt64 = 8 * 1024 * 1024 * 1024
     static let filename = "kernarium-overlay.ext4"
 
+    static func byteCount(forSizeGiB sizeGiB: Int) throws -> UInt64 {
+        guard EmulatorConfiguration.overlaySizeRangeGiB.contains(sizeGiB) else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return UInt64(sizeGiB) * 1024 * 1024 * 1024
+    }
+
     static func recreate(
+        sizeGiB: Int,
         in directory: URL = FileManager.default.temporaryDirectory
     ) throws -> URL {
         let manager = FileManager.default
         let disk = directory.appendingPathComponent(filename)
+        let requestedByteCount = try byteCount(forSizeGiB: sizeGiB)
         if manager.fileExists(atPath: disk.path) {
             try manager.removeItem(at: disk)
         }
@@ -249,7 +302,7 @@ enum OverlayDisk {
         do {
             let handle = try FileHandle(forWritingTo: disk)
             defer { try? handle.close() }
-            try handle.truncate(atOffset: byteCount)
+            try handle.truncate(atOffset: requestedByteCount)
         } catch {
             try? manager.removeItem(at: disk)
             throw error
@@ -260,26 +313,40 @@ enum OverlayDisk {
 
 @MainActor
 private final class EmulatorLauncher {
-    static let shared = EmulatorLauncher()
+    static let shared = EmulatorLauncher(configuration: .load())
 
+    private let configuration: EmulatorConfiguration
     private var started = false
+
+    private init(configuration: EmulatorConfiguration) {
+        self.configuration = configuration
+    }
 
     func start(view: GuestMetalView, size: CGSize) {
         guard !started else { return }
-        let documents = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        )[0]
-        let rootfs = documents.appendingPathComponent("rootfs.erofs")
+        guard let rootfsFilename = RootfsImage.selectedFilename(
+            configuredFilename: configuration.rootfsFilename
+        ) else {
+            print("Kernarium: invalid rootfs filename")
+            return
+        }
+        let rootfs = RootfsImage.documentsDirectory.appendingPathComponent(
+            rootfsFilename
+        )
         guard FileManager.default.fileExists(atPath: rootfs.path) else {
-            print("Kernarium: Documents/rootfs.erofs is missing")
+            print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
         let overlay: URL
         do {
-            overlay = try OverlayDisk.recreate()
+            overlay = try OverlayDisk.recreate(
+                sizeGiB: configuration.overlaySizeGiB
+            )
         } catch {
-            print("Kernarium: cannot create 8 GiB overlay disk: \(error)")
+            print(
+                "Kernarium: cannot create " +
+                "\(configuration.overlaySizeGiB) GiB overlay disk: \(error)"
+            )
             return
         }
         started = true
@@ -287,6 +354,8 @@ private final class EmulatorLauncher {
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
         let height = UInt32(size.height.rounded(.down))
+        let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
+        let vCPUCount = UInt32(configuration.vCPUCount)
         Task.detached {
             let result = rootfs.path.withCString { rootfsPath in
                 overlay.path.withCString { overlayPath in
@@ -295,7 +364,9 @@ private final class EmulatorLauncher {
                         rootfsPath,
                         overlayPath,
                         width,
-                        height
+                        height,
+                        guestMemoryMiB,
+                        vCPUCount
                     )
                 }
             }

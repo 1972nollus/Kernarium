@@ -222,6 +222,19 @@ int VirglRenderer::createContext(
         virgl_renderer_context_destroy(contextId);
         return EIO;
     }
+
+    /*
+     * Context creation leaves the new GL context current without updating
+     * virglrenderer's current-context bookkeeping. If another guest context
+     * was current, its next submission can consequently execute in the new
+     * context and cache GL state there. Return to context zero so the next
+     * guest submission performs an explicit, correctly tracked switch.
+     */
+    virgl_renderer_force_ctx_0();
+    if (checkGlDispatchResult(0) != 0) {
+        virgl_renderer_context_destroy(contextId);
+        return EIO;
+    }
     return 0;
 }
 

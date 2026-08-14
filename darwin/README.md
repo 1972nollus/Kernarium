@@ -38,12 +38,14 @@ vhost-user transport: an absolute touchscreen whose coordinate maxima match
 the safe-area Metal view and an evdev keyboard fed by UIKit text input. Its
 network callback is the ordinary SLiRP provider compiled against the private
 iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
-the managed guest run is active and restores it when that run finishes.
-Simulator runs retain four guest CPUs. Physical-device runs derive `ncpus=`
-from `NSProcessInfo.processorCount`, matching the device's physical CPU-core
-count. The standalone macOS app retains its larger default of 8 GiB and ten
-vCPUs whenever the caller supplies neither `mem=` nor `ncpus=`; explicit values
-continue to override those defaults independently.
+the managed guest run is active and restores it when that run finishes. Both
+iOS products default to all processors reported by `NSProcessInfo` and 2 GiB of
+guest RAM. The settings sheet can persist one through that processor count,
+512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, and
+the selected `.erofs` filename from Documents; a saved configuration is
+snapshotted on the next app launch. The standalone macOS app retains its larger
+default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
+`ncpus=`; explicit values continue to override those defaults independently.
 
 Every Apple product derives the native window from guest RAM plus a
 page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) and biases
@@ -169,16 +171,19 @@ both reuse the image's non-root `uml` user and never synthesize `plasma`. No
 Unix-mode or read-only block-argument policy is needed. See
 [`../docs/testing.md`](../docs/testing.md) for preparation and run commands.
 
-Kernarium recreates one sparse 8 GiB image in the app temporary directory on
-each launch, formats it as ext4 in the guest, and uses directories on that one
-filesystem for the OverlayFS upper/work state plus Docker and containerd.
-Bind mounts keep those three contents separate while sharing one free-space
-pool. The kernel has zswap enabled by default with zstd, but that cache requires
-a backing swap device or file. The image is writable guest state, not
-host-memory relief: Kernarium does not create or activate backing swap, so
-zswap allocates no pool during the normal desktop flow. The init shell mounts
-devtmpfs, pivots into the writable root, installs only the disposable KDE setup
-unit, and execs the image's systemd for `graphical.target`. Kernel console bytes
-are relayed to application stdout.
-The EROFS base remains read-only and the image's `uml` account and normal
-display-manager units own the desktop session.
+Kernarium recreates one sparse image in the app temporary directory on each
+launch (8 GiB by default, configurable from 1--32 GiB), formats it as ext4 in
+the guest, and uses directories on that one filesystem for the OverlayFS
+upper/work state plus Docker and containerd. Bind mounts keep those three
+contents separate while sharing one free-space pool. The kernel has zswap
+enabled by default with zstd, but that cache requires a backing swap device or
+file. The image is writable guest state, not host-memory relief: Kernarium does
+not create or activate backing swap, so zswap allocates no pool during the
+normal desktop flow. The init shell mounts devtmpfs, pivots into the writable
+root, applies the image-appropriate disposable desktop setup, and execs the
+image's systemd for `graphical.target`. KDE retains the image's `uml` account
+and display manager. A Phosh image instead starts its existing UID-1000 session
+through logind/libseat without the unsupported VT ioctl path, while preserving
+the Virtio-GPU preferred mode. The DRM log console can render early boot before
+userspace takes KMS ownership, and all kernel console bytes are also relayed to
+application stdout. The selected EROFS base remains read-only.
