@@ -36,18 +36,23 @@ Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep
 only while the guest is active. Settings and keyboard overlays are round
 bordered icon buttons and use native circular Liquid Glass on iOS 26. Phosh
-images use their stock Phrog/greetd VT session. Their disposable overlay
-whiteouts the image-owned tty0-getty enablement before systemd starts, so its
-`vhangup` cannot send `SIGHUP` to greetd's first GNOME session; the former wait
-helper and greetd ordering drop-in are gone. It also removes the image's
+images use their stock Phrog/greetd VT session and preserve the image-owned VT
+and serial getties plus login policy. Their disposable overlay removes only the
 mutually exclusive development `phosh.service` enablement, letting the stock
-display-manager alias select greetd/Phrog. `plymouth.enable=0` prevents the
-splash from waiting for the removed tty0-getty handoff without masking an
-installed service. On macOS, the full Phosh service set now completes the GStreamer VA probe, renders
-a VNC-captured lock screen, and enters direct CGL/IOSurface/Metal presentation
-without claiming a host codec backend. A cold 1290x2796, 288-DPI run also
+display-manager alias select greetd/Phrog; the former wait helper and greetd
+ordering drop-in remain gone and Plymouth uses its normal handoff. Both the
+Phrog and logged-in Phosh Phoc configs are replaced by empty disposable files,
+so neither stage overrides the Virtio-GPU EDID with the image's fixed
+720x1440 mode. On macOS, the full Phosh service set now completes the GStreamer
+VA probe, renders a VNC-captured lock screen, and enters direct
+CGL/IOSurface/Metal presentation without claiming a host codec backend. A cold
+1290x2796, 288-DPI run also
 proved stock greetd starts once, Phoc accepts the EDID, fbcon owns Virtio-GPU,
 and the guest exposes 64 standard VTs, four serial lines, and no legacy PTYs.
+A matched native-Metal post-login control at 1320x2580 and 288 DPI recorded a
+720x1440 Phoc framebuffer/plane/CRTC with the image session config and the full
+1320x2580 geometry with both disposable EDID overrides, directly confirming
+the quarter-screen cause and fix.
 A 2 GiB configured run also cold-booted Phosh at 1320x2580 and 288 DPI on
 the iPhone 17 Pro Max Simulator, reached graphical target, started stock greetd
 and its Phrog session, and presented through the native Metal path.

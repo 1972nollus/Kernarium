@@ -129,15 +129,19 @@ plugin scan without the former virgl context error, captures the rendered
 Phosh lock screen through VNC, and reaches direct CGL/IOSurface/Metal native
 presentation. A separate 1290x2796, 288-DPI cold boot proved fbcon, EDID, four
 serial devices, no legacy PTYs, and stock Phrog on greetd's first invocation.
-That investigation found the former first-start failure was a `SIGHUP` from
-the image-owned `tty0` autologin's `vhangup`, not a Phosh or virgl crash.
-Kernarium now whiteouts that getty's image-owned enablement in its disposable
-Phosh overlay before systemd starts and removes the mutually exclusive
-development `phosh.service` enablement so the stock display-manager alias
-selects greetd/Phrog. The units and EROFS remain unchanged, and no wait helper
-or greetd ordering drop-in remains. Kernarium passes `plymouth.enable=0` so
-Plymouth cannot wait for the removed tty0-getty handoff while VT/fbcon boot
-output and the installed service set remain intact. A 1320x2580, 288-DPI cold
+That earlier-image investigation found the former first-start failure was a
+`SIGHUP` from its tty0 autologin's `vhangup`, not a Phosh or virgl crash. The
+updated image replaces that getty with its own `serial-getty@ttyS0` login, and
+Kernarium now preserves every image-owned getty, credential, and login policy.
+It removes only the mutually exclusive development `phosh.service` enablement
+so the stock display-manager alias selects greetd/Phrog. The units and EROFS
+remain unchanged, no wait helper or greetd ordering drop-in remains, and
+Plymouth follows the image's normal handoff. A matched macOS native-Metal
+post-login control at 1320x2580 and 288 DPI proved that the image's
+`/etc/phosh/phoc.ini` selects a 720x1440 framebuffer, plane, and CRTC at origin;
+empty disposable overrides for both `/etc/phrog/phoc.ini` and
+`/etc/phosh/phoc.ini` retain 1320x2580 throughout the greeter-to-session
+handoff. A 1320x2580, 288-DPI cold
 boot on the iPhone 17 Pro Max Simulator reached graphical target, started
 stock greetd and its Phrog session, and presented Phrog through the native
 Metal display path. No physical Aquarium result or swap-based workaround is

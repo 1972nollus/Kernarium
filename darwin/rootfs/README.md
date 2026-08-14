@@ -16,11 +16,12 @@ take a sidecar lock before and after execution; EROFS itself supplies the
 read-only filesystem contract.
 
 EROFS images are rebuilt as complete artifacts; there is no in-place writable
-maintenance path. The artifact also owns tty0 getty enablement and login
-policy; launchers must not inject a replacement getty unit into their tmpfs
-overlay. Systemd OverlayFS launchers mount separate tmpfs filesystems at
-`/var/lib/docker` and `/var/lib/containerd` before systemd starts so Docker and
-containerd state are not nested on the root overlay. The systemd integration
+maintenance path. The artifact also owns its VT and serial getty enablement,
+account credentials, and login policy; launchers must preserve those units and
+must not inject a replacement, override, or credential change into their
+disposable overlay. Systemd OverlayFS launchers mount separate tmpfs filesystems
+at `/var/lib/docker` and `/var/lib/containerd` before systemd starts so Docker
+and containerd state are not nested on the root overlay. The systemd integration
 smoke imports a local rootfs archive containing its source-built,
 freestanding arm64/Linux hello-world payload into that disposable state and
 runs it with `--pull=never --network none`; it never needs a registry. Desktop

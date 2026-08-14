@@ -171,11 +171,11 @@ Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 `/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with
 `ubd0c=` to avoid a conflicting host-file lock. EROFS supplies the read-only
 lower filesystem; workloads that need writable state use a tmpfs OverlayFS.
-The image owns tty0 getty enablement and login policy; generic host-fed
-OverlayFS launchers preserve it rather than installing a transient getty
-override, and mount separate tmpfs filesystems at `/var/lib/docker` and
-`/var/lib/containerd` before systemd to keep Docker and containerd state off the
-root overlay. The systemd integration smoke imports a local rootfs
+The image owns its VT and serial getty enablement, account credentials, and
+login policy; host-fed OverlayFS launchers preserve them rather than installing
+a transient getty or credential override, and mount separate tmpfs filesystems
+at `/var/lib/docker` and `/var/lib/containerd` before systemd to keep Docker and
+containerd state off the root overlay. The systemd integration smoke imports a local rootfs
 archive containing a source-built freestanding arm64/Linux hello-world payload
 into that disposable state and runs it with `--pull=never --network none`, with
 no registry dependency. No KDE/VNC or WebGL launcher creates a desktop account:
@@ -195,17 +195,16 @@ normal desktop flow. The init shell mounts devtmpfs, pivots into the writable
 root, applies the image-appropriate disposable desktop setup, and execs the
 image's systemd for `graphical.target`. KDE retains the image's `uml` account
 and display manager. A Phosh image instead keeps its stock Phrog/greetd VT
-session and Virtio-GPU preferred mode. Its disposable ext4 overlay whiteouts
-the image-owned `getty.target.wants/getty@tty0.service` symlink before systemd
-starts. It also whiteouts the image's mutually exclusive development
-`graphical.target.wants/phosh.service` enablement, leaving graphical target's
-normal display-manager alias to select stock greetd/Phrog. The immutable units
-remain untouched, while removing the tty0 autologin prevents its `vhangup`
-from terminating greetd's first session and eliminates the former wait helper
-and greetd ordering drop-in. Kernarium also passes `plymouth.enable=0` for this
-normal graphical boot so Plymouth cannot wait indefinitely for the removed
-tty0-getty handoff; VT/fbcon boot output and the installed service set remain
-available.
+session, image-owned VT and serial getties, and login credentials. Its
+disposable ext4 overlay whiteouts only the image's mutually exclusive
+development `graphical.target.wants/phosh.service` enablement, leaving
+graphical target's normal display-manager alias to select stock greetd/Phrog.
+Empty overlay copies of both `/etc/phrog/phoc.ini` and
+`/etc/phosh/phoc.ini` make the greeter and authenticated user session retain
+the Virtio-GPU preferred EDID mode instead of switching to the image's fixed
+720x1440 mode. The immutable units remain untouched, the former wait helper and
+greetd ordering drop-in remain absent, and Plymouth performs its normal image
+handoff.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.

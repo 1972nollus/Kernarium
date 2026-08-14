@@ -254,20 +254,19 @@ if getent passwd 1000 >/dev/null 2>&1; then
     usermod -a -G video,render,input "$phosh_user"
 fi
 
-# Discard the image's fixed 720x1440 Virtual-1 override. Phoc uses the
-# preferred physical-pixel mode and effective density from Virtio-GPU EDID.
-install -d -m 0755 /etc/phrog
+# Discard the image's fixed 720x1440 Virtual-1 override for both the Phrog
+# greeter and the logged-in Phosh session. Phoc then uses the preferred
+# physical-pixel mode and effective density from Virtio-GPU EDID throughout.
+install -d -m 0755 /etc/phrog /etc/phosh
 install -m 0644 /dev/null /etc/phrog/phoc.ini
+install -m 0644 /dev/null /etc/phosh/phoc.ini
 
-# The image enables an autologin getty on tty0. That aliases the active VT and
-# calls vhangup while greetd owns it, terminating greetd's first session. A
-# removal on OverlayFS creates a whiteout for the immutable image symlink. The
-# image also enables the mutually exclusive development phosh.service beside
-# its display-manager alias; remove only that stale enablement so graphical.target
-# follows the stock display-manager -> greetd -> Phrog path.
-rm -f /etc/systemd/system/getty.target.wants/getty@tty0.service \
-    /etc/systemd/system/graphical.target.wants/phosh.service
-echo "Kernarium Phrog overlay setup complete; tty0 getty disabled, greetd selected"
+# The image owns its VT and serial getties plus their login policy. Keep those
+# intact. It also enables the mutually exclusive development phosh.service
+# beside its display-manager alias; remove only that stale enablement so
+# graphical.target follows the stock display-manager -> greetd -> Phrog path.
+rm -f /etc/systemd/system/graphical.target.wants/phosh.service
+echo "Kernarium Phrog overlay setup complete; image getties preserved, greetd selected"
 else
     echo "Kernarium desktop setup is owned by the rootfs image"
 fi
@@ -843,10 +842,8 @@ extern "C" int kernarium_runtime_run(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
                 std::to_string(uml::input::virtio::protocol::deviceId),
         };
-        if (!geekbench) {
+        if (!geekbench)
             arguments.emplace_back("systemd.unit=graphical.target");
-            arguments.emplace_back("plymouth.enable=0");
-        }
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
             .struct_size = sizeof(uml_emulator_config),

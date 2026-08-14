@@ -199,18 +199,17 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   `tools/rootfs/provision.py --replace`. Provisioning authenticates the input;
   it is not part of ordinary guest execution. There is no in-place writable
   maintenance workflow.
-- The image owns the tty0 getty definition and login policy. Generic systemd
-  launchers preserve its enablement and must not synthesize or override the
-  getty unit in the overlay. Kernarium's Phosh bootstrap is the narrow
-  exception: it must whiteout only the image-owned
-  `getty.target.wants/getty@tty0.service` enablement in its disposable ext4
-  overlay so `vhangup` cannot race greetd. It also whiteouts the image's stale,
-  mutually exclusive development `graphical.target.wants/phosh.service`
-  enablement so the stock display-manager alias selects greetd/Phrog; it must
-  not replace either unit or add a greetd/getty ordering workaround. Its boot
-  arguments disable Plymouth so the splash cannot retain the active VT after
-  the tty0 getty handoff is removed; the installed service set is unchanged.
-  The shipped kernel assigns tty0 to
+- The image owns its VT and serial getty definitions, account credentials, and
+  login policy. Systemd launchers, including Kernarium, preserve them and must
+  not synthesize, disable, or override a getty in the overlay. Kernarium's
+  Phosh bootstrap whiteouts only the image's stale, mutually exclusive
+  development `graphical.target.wants/phosh.service` enablement so the stock
+  display-manager alias selects greetd/Phrog; it must not replace either unit
+  or add a greetd/getty ordering workaround. It also installs empty overlay
+  copies of both `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini`, preventing the
+  image's fixed 720x1440 mode from replacing the Virtio-GPU EDID mode when the
+  greeter hands off to the logged-in session. Plymouth follows the image's
+  normal handoff. The shipped kernel assigns tty0 to
   standard VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
   the conflicting UML stdio console, DRM log client, and legacy BSD PTYs, and
   registers four serial lines. Before starting systemd, the generic bootstrap

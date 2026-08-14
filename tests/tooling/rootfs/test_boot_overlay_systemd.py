@@ -55,7 +55,7 @@ def main() -> int:
         and "agetty --autologin" not in launcher_source
         and "useradd" not in launcher_source
         and "groupadd" not in launcher_source,
-        "launcher must preserve the image-owned account and tty0 getty setup",
+        "launcher must preserve the image-owned account and getty setup",
     )
     require(
         "mkdir -p /var/lib/docker" in launcher_source
@@ -84,23 +84,51 @@ def main() -> int:
 
     runtime_source = arguments.kernarium_runtime.read_text(encoding="utf-8")
     require(
-        'arguments.emplace_back("plymouth.enable=0")' in runtime_source,
-        "Kernarium systemd boots must keep the nonfunctional Plymouth splash "
-        "out of the VT/fbcon startup graph",
+        "plymouth.enable=0" not in runtime_source,
+        "Kernarium must let the updated image's VT and serial getties own "
+        "the normal Plymouth handoff",
     )
     declaration = 'constexpr std::string_view systemdBootstrap = R"krn('
     bootstrap_start = runtime_source.index(declaration)
     bootstrap_end = runtime_source.index(')krn";', bootstrap_start)
     kernarium_bootstrap = runtime_source[bootstrap_start:bootstrap_end]
-    tty0_enablement = (
-        "/etc/systemd/system/getty.target.wants/getty@tty0.service"
+    require(
+        "/etc/systemd/system/getty.target.wants/" not in kernarium_bootstrap
+        and "serial-getty@" not in kernarium_bootstrap
+        and "agetty" not in kernarium_bootstrap
+        and "chpasswd" not in kernarium_bootstrap,
+        "Kernarium Phosh setup must preserve the image-owned VT and serial "
+        "getties plus their login policy",
     )
     require(
-        kernarium_bootstrap.count(tty0_enablement) == 1
-        and f"rm -f {tty0_enablement}" in kernarium_bootstrap,
-        "Kernarium Phosh setup must whiteout the image-owned tty0 getty "
-        "enablement exactly once",
+        runtime_source.index('"console=tty0"')
+        < runtime_source.index('"console=ttyS0"'),
+        "Kernarium must retain fbcon output before the host-facing serial "
+        "console",
     )
+    phoc_overrides = (
+        "/etc/phrog/phoc.ini",
+        "/etc/phosh/phoc.ini",
+    )
+    require(
+        all(
+            kernarium_bootstrap.count(path) == 1
+            and f"install -m 0644 /dev/null {path}" in kernarium_bootstrap
+            for path in phoc_overrides
+        ),
+        "Kernarium must discard the image's fixed Virtual-1 mode for both "
+        "the Phrog greeter and the logged-in Phosh session",
+    )
+    for path in phoc_overrides:
+        override = kernarium_bootstrap.index(
+            f"install -m 0644 /dev/null {path}"
+        )
+        require(
+            kernarium_bootstrap.index("pivot_root . .uml-lower") < override
+            < kernarium_bootstrap.rindex("exec /lib/systemd/systemd"),
+            "Kernarium must install each Phoc override in the mounted "
+            "overlay before starting systemd",
+        )
     development_phosh_enablement = (
         "/etc/systemd/system/graphical.target.wants/phosh.service"
     )
@@ -116,12 +144,14 @@ def main() -> int:
         and "After=getty@tty0.service" not in kernarium_bootstrap,
         "Kernarium retained the obsolete tty0/greetd ordering workaround",
     )
-    tty0_removal = kernarium_bootstrap.index(f"rm -f {tty0_enablement}")
+    phosh_removal = kernarium_bootstrap.index(
+        f"rm -f {development_phosh_enablement}"
+    )
     require(
-        kernarium_bootstrap.index("pivot_root . .uml-lower") < tty0_removal
+        kernarium_bootstrap.index("pivot_root . .uml-lower") < phosh_removal
         < kernarium_bootstrap.rindex("exec /lib/systemd/systemd"),
-        "Kernarium must remove tty0 getty enablement from the mounted overlay "
-        "before starting systemd",
+        "Kernarium must remove only the stale development Phosh enablement "
+        "from the mounted overlay before starting systemd",
     )
     with tempfile.TemporaryDirectory(prefix="uml-overlay-launcher-") as name:
         rootfs = Path(name) / "rootfs image.erofs"

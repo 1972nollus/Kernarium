@@ -273,17 +273,18 @@ pivots. Separate Docker and containerd directories are then bind-mounted from
 the same ext4 filesystem, keeping their contents separate while sharing its
 free space. The shell applies the image-appropriate disposable desktop setup
 and execs the rootfs systemd as PID 1. KDE uses the image's display manager and
-`uml` account. Phosh keeps the image's stock Phrog/greetd graph and normal VT
-session, but whiteouts the image-owned
-`getty.target.wants/getty@tty0.service` enablement in the disposable overlay
-before systemd starts. It also whiteouts the image's mutually exclusive
-development `graphical.target.wants/phosh.service` enablement so graphical
-target uses the stock `display-manager.service` alias, greetd, and Phrog. The
-underlying units and immutable EROFS image are unchanged. Removing that tty0
-autologin prevents its `vhangup` from sending `SIGHUP` to greetd's first
-session, with no wait helper or greetd ordering drop-in. Kernarium passes
-`plymouth.enable=0` for this flow so the splash cannot retain the VT after the
-getty handoff is removed; it does not mask or replace any installed service.
+`uml` account. Phosh keeps the image's stock Phrog/greetd graph, normal VT
+session, and image-owned getty and login policy. The current test image exposes
+the `debian` account with password `1234` through `serial-getty@ttyS0`; the
+launcher neither rewrites those credentials nor changes any getty. It
+whiteouts only the image's mutually exclusive development
+`graphical.target.wants/phosh.service` enablement so graphical target uses the
+stock `display-manager.service` alias, greetd, and Phrog. Empty disposable
+copies of `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini` make both the greeter
+and logged-in Phosh session select the Virtio-GPU EDID mode instead of the
+image's fixed 720x1440 mode. The underlying units and immutable EROFS image are
+unchanged, no wait helper or greetd ordering drop-in is present, and Plymouth
+performs its normal handoff.
 The kernel builds zswap in, enables it by default, and selects zstd. Because
 zswap is only a compressed cache in front of a backing swap device or file,
 Kernarium's no-swap launch allocates no zswap pool. The prototype does not
@@ -323,7 +324,14 @@ Phosh lock screen through VNC, and enters the direct
 CGL/IOSurface/Metal presentation path in native mode. A separate stock-Phrog
 1290x2796/288-DPI validation completed two cold boots with no greetd restart,
 accepted EDID density, switched fbcon to Virtio-GPU, and observed exactly 64
-VTs, four serial lines, and zero legacy PTYs.
+VTs, four serial lines, and zero legacy PTYs. A matched 1320x2580/288-DPI
+native-Metal control then isolated the authenticated-session sizing bug. With
+the image's `/etc/phosh/phoc.ini`, DRM reported a Phoc-owned 720x1440
+framebuffer, plane, and CRTC at origin. Replacing both the greeter and session
+configs with empty overlay files produced a Phoc-owned 1320x2580 framebuffer,
+plane, and CRTC at origin under otherwise identical conditions. The validation
+started the image's development Phosh unit directly to isolate the post-login
+path; it did not replace the production greetd login flow.
 
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build
@@ -437,10 +445,9 @@ The bare CLI defaults to `init=/bin/sh`. Systemd-oriented launchers host-feed
 their OverlayFS bootstrap to that temporary PID 1 shell, mount the EROFS lower
 and tmpfs upper/work directories, then enter the overlay and start systemd.
 They do not depend on a custom bootstrap executable inside the image. The
-image owns the enabled tty0 getty and its login policy; these generic launchers
-must preserve that unit instead of creating a replacement symlink, drop-in, or
-autologin override in the overlay. Kernarium's documented Phosh-only whiteout
-of the image's tty0 enablement is not part of this generic launcher contract.
+image owns its enabled VT and serial getties, account credentials, and login
+policy; launchers must preserve them instead of creating a replacement symlink,
+drop-in, autologin override, or credential rewrite in the overlay.
 Before starting systemd, the bootstrap mounts tmpfs at
 `/var/lib/docker` and `/var/lib/containerd` so Docker storage and containerd
 state are not nested on the writable root OverlayFS. The
