@@ -33,17 +33,39 @@ using namespace std::chrono_literals;
 #endif
 
 #if defined(UML_LOADER_TEST_WITH_SANITIZER)
-/* Darwin sanitizers reserve shadow ranges that include the production kernel
- * link window. Use an application-memory address so they can exercise the
- * loader's bounds and cleanup paths; the ordinary fixture below still covers
- * the exact production address. */
+/* Darwin sanitizers reserve shadow ranges that include the kernel's ELF link
+ * address. Bias this synthetic image from application memory; the ordinary
+ * fixture below still covers the exact production link address. */
 constexpr std::uint64_t linked_address = 0x0001'4000'0000ULL;
 #else
-/* Match the real Darwin UML kernel link window. A lower arbitrary MAP_FIXED
- * address can collide with unrelated host allocations and does not exercise
- * the production loader contract safely. */
+/* Match the real Darwin UML kernel link address. */
 constexpr std::uint64_t linked_address = DARWIN_UML_NATIVE_LINK_ADDRESS;
 #endif
+
+/* These fixtures exercise process admission, so keep the managed-JIT run gate
+ * from becoming an earlier independent serialization boundary. */
+constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
+
+#if DARWIN_UML_NATIVE_HIGH_PLACEMENT
+constexpr std::uint64_t native_window_start =
+	DARWIN_UML_MACOS_NATIVE_ADDRESS;
+#else
+constexpr std::uint64_t default_guest_memory = 256ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t proportional_auxiliary_memory =
+	(default_guest_memory / DARWIN_UML_NATIVE_AUXILIARY_DIVISOR) +
+	(default_guest_memory % DARWIN_UML_NATIVE_AUXILIARY_DIVISOR != 0 ? 1U : 0U);
+constexpr std::uint64_t scaled_auxiliary_memory =
+	(proportional_auxiliary_memory + DARWIN_UML_GUEST_PAGE_SIZE - 1U) &
+	~(DARWIN_UML_GUEST_PAGE_SIZE - 1U);
+constexpr std::uint64_t default_auxiliary_memory = std::max(
+	scaled_auxiliary_memory,
+	static_cast<std::uint64_t>(DARWIN_UML_NATIVE_AUXILIARY_MINIMUM));
+constexpr std::uint64_t native_window_start =
+	DARWIN_UML_NATIVE_ADDRESS_CEILING - default_guest_memory -
+	default_auxiliary_memory;
+#endif
+constexpr std::uint64_t loader_runtime_address = linked_address +
+	native_window_start - DARWIN_UML_NATIVE_LINK_ADDRESS;
 
 struct Interleave final {
 	std::mutex mutex;
@@ -93,7 +115,7 @@ int mapping_kernel(int, char *const[], char *const[])
 		generation, reinterpret_cast<void *>(user_address), mmu_backing_fd,
 		0, DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0;
 	const bool generation_zero_mapped = darwin_uml_static_vm_map_generation(
-		generation, reinterpret_cast<void *>(linked_address), mmu_backing_fd,
+		generation, reinterpret_cast<void *>(native_window_start), mmu_backing_fd,
 		0, DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0;
 	return user_mapped && generation_zero_mapped ? 31 : 94;
 }
@@ -108,7 +130,7 @@ int verify_fresh_mmu_kernel(int, char *const[], char *const[])
 		generation, user_address, DARWIN_UML_STATIC_READ, &user) ==
 		DARWIN_UML_STATIC_UNMAPPED;
 	const bool generation_zero_fresh = darwin_uml_static_vm_translate(
-		generation, linked_address, DARWIN_UML_STATIC_READ,
+		generation, native_window_start, DARWIN_UML_STATIC_READ,
 		&generation_zero) == DARWIN_UML_STATIC_UNMAPPED;
 	return user_fresh && generation_zero_fresh ? 32 : 95;
 }
@@ -269,6 +291,7 @@ Emulator make_emulator(const std::vector<std::byte> &image)
 	return {created, uml_emulator_destroy};
 }
 
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 Emulator make_native_emulator(uml_emulator_kernel_entry entry)
 {
 	const uml_emulator_config config{
@@ -282,6 +305,7 @@ Emulator make_native_emulator(uml_emulator_kernel_entry entry)
 		"native admission-retry emulator creation failed");
 	return {created, uml_emulator_destroy};
 }
+#endif
 
 class TemporaryBacking final {
 public:
@@ -319,27 +343,27 @@ void release_blocked_kernel()
 	interleave.changed.notify_all();
 }
 
-void require_link_window_available()
+void require_runtime_window_available()
 {
 	const auto page_size = static_cast<std::size_t>(getpagesize());
-	void *mapping = mmap(reinterpret_cast<void *>(linked_address), page_size,
-		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	require(mapping != MAP_FAILED, "could not probe the linked window");
+	void *mapping = mmap(reinterpret_cast<void *>(loader_runtime_address),
+		page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	require(mapping != MAP_FAILED, "could not probe the runtime window");
 	const bool exact = reinterpret_cast<std::uintptr_t>(mapping) ==
-		linked_address;
+		loader_runtime_address;
 	(void)munmap(mapping, page_size);
-	require(exact, "successful loader call retained the linked window");
+	require(exact, "successful loader call retained the runtime window");
 }
 
-void test_occupied_link_window_is_not_replaced()
+void test_occupied_runtime_window_is_not_replaced()
 {
 	const auto page_size = static_cast<std::size_t>(getpagesize());
-	void *mapping = mmap(reinterpret_cast<void *>(linked_address), page_size,
-		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	void *mapping = mmap(reinterpret_cast<void *>(loader_runtime_address),
+		page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	require(mapping != MAP_FAILED, "could not reserve loader sentinel");
-	if (reinterpret_cast<std::uintptr_t>(mapping) != linked_address) {
+	if (reinterpret_cast<std::uintptr_t>(mapping) != loader_runtime_address) {
 		(void)munmap(mapping, page_size);
-		throw std::runtime_error{"linked window was already occupied"};
+		throw std::runtime_error{"runtime window was already occupied"};
 	}
 	std::memset(mapping, 0xa5, page_size);
 	const auto image = embedded_image(second_kernel);
@@ -353,8 +377,8 @@ void test_occupied_link_window_is_not_replaced()
 		unchanged = unchanged && bytes[index] == 0xa5;
 	(void)munmap(mapping, page_size);
 	require(status == 126,
-		"loader accepted an occupied fixed linked window");
-	require(unchanged, "loader modified the occupied linked window");
+		"loader accepted an occupied fixed runtime window");
+	require(unchanged, "loader modified the occupied runtime window");
 }
 
 void test_malformed_dynamic_metadata_is_guest_failure()
@@ -365,7 +389,7 @@ void test_malformed_dynamic_metadata_is_guest_failure()
 		auto emulator = make_emulator(image);
 		require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 126,
 			"malformed dynamic metadata did not return status 126");
-		require_link_window_available();
+		require_runtime_window_available();
 	}
 }
 
@@ -376,7 +400,7 @@ void test_non_executable_final_entry_page_is_guest_failure()
 	const char *arguments[]{"embedded-loader-writable-entry"};
 	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 126,
 		"unsafe embedded entry page reached host execution");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_unaligned_loader_metadata_is_guest_failure()
@@ -386,7 +410,7 @@ void test_unaligned_loader_metadata_is_guest_failure()
 	const char *arguments[]{"embedded-loader-unaligned-metadata"};
 	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 126,
 		"unaligned embedded metadata reached typed loader access");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_embedded_image_is_copied_at_creation()
@@ -397,7 +421,7 @@ void test_embedded_image_is_copied_at_creation()
 	const char *arguments[]{"embedded-loader-owned-image"};
 	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 23,
 		"embedded run retained the caller-owned kernel-image buffer");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_embedded_runs_start_with_fresh_mmu_domain()
@@ -414,7 +438,7 @@ void test_embedded_runs_start_with_fresh_mmu_domain()
 	require(uml_emulator_run(second.get(), 1, arguments, nullptr) == 32,
 		"later embedded run inherited user or generation-zero mappings");
 	mmu_backing_fd = -1;
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_same_handle_run_fails_before_global_admission()
@@ -464,7 +488,7 @@ void test_same_handle_run_fails_before_global_admission()
 		duplicate_status == -UML_EMULATOR_RUNTIME_ERROR,
 		"same-handle second run did not fail before global admission");
 	require(first_status == 17, "same-handle first run did not complete");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_queued_handle_stop_cancels_admission()
@@ -474,11 +498,12 @@ void test_queued_handle_stop_cancels_admission()
 	const auto image_b = embedded_image(second_kernel);
 	auto emulator_a = make_emulator(image_a);
 	auto emulator_b = make_emulator(image_b);
-	const char *arguments[]{"embedded-queued-stop"};
+	const char *arguments[]{
+		"embedded-queued-stop", admission_engine_argument};
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] {
-		status_a = uml_emulator_run(emulator_a.get(), 1, arguments, nullptr);
+		status_a = uml_emulator_run(emulator_a.get(), 2, arguments, nullptr);
 	}};
 	bool first_entered = false;
 	{
@@ -499,7 +524,7 @@ void test_queued_handle_stop_cancels_admission()
 			}
 			interleave.changed.notify_all();
 			status_b = uml_emulator_run(
-				emulator_b.get(), 1, arguments, nullptr);
+				emulator_b.get(), 2, arguments, nullptr);
 			{
 				std::lock_guard lock{interleave.mutex};
 				interleave.second_finished = true;
@@ -535,9 +560,9 @@ void test_queued_handle_stop_cancels_admission()
 		status_b == -UML_EMULATOR_RUNTIME_ERROR,
 		"stop did not cancel queued embedded-kernel admission");
 	require(!interleave.second_entered,
-		"cancelled queued kernel entered the linked window");
+		"cancelled queued kernel entered the runtime window");
 	require(status_a == 17, "admitted kernel failed during queued stop");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 void test_failed_exclusive_wait_does_not_poison_shared_admission()
@@ -548,11 +573,12 @@ void test_failed_exclusive_wait_does_not_poison_shared_admission()
 	const auto waiting_image = embedded_image(second_kernel);
 	auto blocking = make_emulator(blocking_image);
 	auto waiting = make_emulator(waiting_image);
-	const char *arguments[]{"embedded-admission-wait-failure"};
+	const char *arguments[]{
+		"embedded-admission-wait-failure", admission_engine_argument};
 	int blocking_status = -1;
 	std::thread first{[&] {
 		blocking_status = uml_emulator_run(
-			blocking.get(), 1, arguments, nullptr);
+			blocking.get(), 2, arguments, nullptr);
 	}};
 	{
 		std::unique_lock lock{interleave.mutex};
@@ -566,7 +592,7 @@ void test_failed_exclusive_wait_does_not_poison_shared_admission()
 		AdmissionHooks hooks;
 		uml::emulator::testing::fail_next_address_space_admission_wait();
 		failed_status = uml_emulator_run(
-			waiting.get(), 1, arguments, nullptr);
+			waiting.get(), 2, arguments, nullptr);
 	}
 	require(failed_status == -UML_EMULATOR_RUNTIME_ERROR &&
 		!interleave.second_entered,
@@ -584,7 +610,7 @@ void test_failed_exclusive_wait_does_not_poison_shared_admission()
 	int shared_status = -1;
 	std::thread retry{[&] {
 		shared_status = uml_emulator_run(
-			shared.get(), 1, arguments, nullptr);
+			shared.get(), 2, arguments, nullptr);
 	}};
 	bool shared_entered = false;
 	{
@@ -598,7 +624,7 @@ void test_failed_exclusive_wait_does_not_poison_shared_admission()
 	retry.join();
 	require(shared_entered && shared_status == 23,
 		"failed exclusive wait poisoned later shared admission");
-	require_link_window_available();
+	require_runtime_window_available();
 #endif
 }
 
@@ -609,12 +635,13 @@ void test_embedded_handles_are_process_serialized()
 	const auto image_b = embedded_image(second_kernel);
 	auto emulator_a = make_emulator(image_a);
 	auto emulator_b = make_emulator(image_b);
-	const char *arguments[]{"embedded-kernel-serialization"};
+	const char *arguments[]{
+		"embedded-kernel-serialization", admission_engine_argument};
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] {
 		status_a = uml_emulator_run(
-			emulator_a.get(), 1, arguments, nullptr);
+			emulator_a.get(), 2, arguments, nullptr);
 	}};
 	bool first_entered = false;
 	{
@@ -632,7 +659,7 @@ void test_embedded_handles_are_process_serialized()
 			}
 			interleave.changed.notify_all();
 			status_b = uml_emulator_run(
-				emulator_b.get(), 1, arguments, nullptr);
+				emulator_b.get(), 2, arguments, nullptr);
 		}};
 	}
 	bool overlapped = false;
@@ -659,10 +686,10 @@ void test_embedded_handles_are_process_serialized()
 			interleave.second_entered, overlapped, status_a, status_b);
 	require(first_entered, "first embedded kernel did not enter");
 	require(!overlapped,
-		"two embedded kernels occupied the linked window concurrently");
+		"two embedded kernels occupied the runtime window concurrently");
 	require(status_a == 17 && status_b == 23 && interleave.second_entered,
 		"serialized embedded kernels did not both complete");
-	require_link_window_available();
+	require_runtime_window_available();
 }
 
 } // namespace
@@ -670,7 +697,7 @@ void test_embedded_handles_are_process_serialized()
 int main()
 {
 	try {
-		test_occupied_link_window_is_not_replaced();
+		test_occupied_runtime_window_is_not_replaced();
 		test_malformed_dynamic_metadata_is_guest_failure();
 		test_non_executable_final_entry_page_is_guest_failure();
 		test_unaligned_loader_metadata_is_guest_failure();

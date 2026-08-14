@@ -85,8 +85,8 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * compatibility build serializes native callbacks
  * process-wide because identical guest addresses materialize in one host
  * address space. Embedded ELF kernel runs are also serialized process-wide
- * because they occupy a fixed linked-address window and use process-global
- * Linux state. */
+ * because they occupy one relocated native-runtime window at a time and use
+ * process-global Linux state. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* This is the sole operation intended to overlap uml_emulator_run on the same
