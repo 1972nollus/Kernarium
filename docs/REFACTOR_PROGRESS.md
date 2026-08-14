@@ -57,6 +57,14 @@ unscored live mapping check placed the executable kernel at 96 TiB and its
 Final 4 KiB acceptance passed 53/53 tooling checks and 5/5 fast guest cases;
 the focused loader sanitizer gate and the 16 KiB 5/5 guest set also passed.
 
+A four-vCPU, multi-core-only follow-up completed all 16 Geekbench workloads
+without executing the single-core suite. The current 16 KiB product scored
+309 (263 integer / 415 floating point), versus 269 (226 / 373) at 4 KiB:
+-12.94% aggregate, -14.07% integer, and -10.12% floating point. The workload
+delta ranged from -1.23% to -35.36%; 4 KiB took 17.53% longer with only +0.35%
+peak-resident-size movement. Both guests shut down cleanly. G148 records the
+exact hashes and the ordered, active-host, single-observation limitation.
+
 Current 1 GiB normal boots pass on Simulator and the connected physical iPad.
 The Simulator reached four CPUs, DHCP, EROFS/ext4 state, SDDM, automatic login,
 and direct virgl/ANGLE/Metal presentation. The standard-signed Release app ran

@@ -730,6 +730,11 @@ Geekbench's `--multi-core` and `--single-core` switches were not usable in this 
 to jump directly to its multi-core phase; a later real Geekbench confirmation
 must run the complete CPU suite.
 
+That availability statement records the dated campaign behavior. A
+2026-08-14 recheck of the current local Geekbench 6.7.1 payload found
+that `--multi-core` enters the multi-core phase directly; G148 uses that accepted path and emits no
+single-core section.
+
 ### Accepted trial G2: FP/SIMD successor linking
 
 The existing cache deliberately left every FP/SIMD target unresolved. A vector
@@ -1743,7 +1748,9 @@ control.
   303/303 tests in each execution mode, and a 9.97-core SMP control.
 - [x] Complete one full 10-core Geekbench confirmation on the accepted
   shared-mm plus G1/G2 build and retain its result URL plus every sub-test
-  score. The `--multi-core` shortcut cannot be used.
+  score. The `--multi-core` shortcut could not be used in that
+  dated campaign; the later current-payload recheck in G148 supersedes that
+  availability assumption for new runs.
 - [x] Profile the remaining mapping-batch serialization, implement G3's
   additive publication fast path, pass 304/304 tests in production and
   interpreter modes, and retain its 5.9% multi-core aggregate improvement.
@@ -8085,3 +8092,92 @@ under the existing greater-than-2% prospective gate. Raw traces, XML exports,
 device and launch records, exact commands, score boundary, and the complete
 analysis are retained under
 `.build/results/kernarium-ipad-geekbench-20260814/`.
+
+## G148: four-vCPU multi-core-only page-profile comparison
+
+Recorded 2026-08-14 with the already-qualified Release gadgets products from
+G145 and G146. The 16 KiB emulator SHA-256 was
+`770e2f023c16c70be4ca023eb50cce129702c5f54a5ffb79282bbdff5e9801dd`
+and its `vmlinux` SHA-256 was
+`aa2fa9d0d9fcfdb3f9816d41e80fd047725ea16c391cfa3a315d3a838c466aae`.
+The 4 KiB emulator SHA-256 was
+`0fe958889342e1c2ce71b103d6d4ab14a17dcec7d2e467d8244eaf2a1fd45361`
+and its `vmlinux` SHA-256 was
+`483acc8d2fad30728fd0e283e5cbbce91f5e8c3cb675dea4e026a8b3fed7eb40`.
+Their kernel configurations reported `CONFIG_PAGE_SHIFT=14` and 12,
+respectively, and both guests reported Linux 6.18.41-gd1d324b1c263.
+
+Both runs used four guest vCPUs, 8 GiB, the gadgets engine, the unified EROFS
+image, and the direct tmpfs OverlayFS PID-1 shell. Systemd and the desktop were
+not started. The exact guest command was:
+
+```sh
+/opt/geekbench/release/geekbench6 \
+  --multi-core --no-upload
+```
+
+A separate
+unscored five-second probe entered `Multi-Core` directly and ended only when
+the outer timeout returned 124. Both scored runs then reported `1 Processor,
+4 Cores`, emitted a `Multi-Core` section with all 16 workloads, emitted no
+`Single-Core` section, returned benchmark status zero, and powered the
+emulator off with result and exit code zero. This supersedes only the current
+availability assumption; the older campaigns' recorded behavior
+remains historical.
+
+| Result | 16 KiB | 4 KiB | 4 KiB delta |
+| --- | ---: | ---: | ---: |
+| Multi-core | 309 | 269 | -12.94% |
+| Integer | 263 | 226 | -14.07% |
+| Floating point | 415 | 373 | -10.12% |
+| Elapsed wall time | 25m42.47s | 30m12.94s | +17.53% |
+| Maximum resident set | 5,682,151,424 B | 5,702,057,984 B | +0.35% |
+
+| Multi-core workload | 16 KiB | 4 KiB | 4 KiB delta |
+| --- | ---: | ---: | ---: |
+| File Compression | 342 | 271 | -20.76% |
+| Navigation | 639 | 492 | -23.00% |
+| HTML5 Browser | 274 | 257 | -6.20% |
+| PDF Renderer | 263 | 170 | -35.36% |
+| Photo Library | 434 | 390 | -10.14% |
+| Clang | 167 | 156 | -6.59% |
+| Text Processing | 61 | 57 | -6.56% |
+| Asset Compression | 329 | 313 | -4.86% |
+| Object Detection | 261 | 239 | -8.43% |
+| Background Blur | 406 | 401 | -1.23% |
+| Horizon Detection | 437 | 395 | -9.61% |
+| Object Remover | 406 | 369 | -9.11% |
+| HDR | 373 | 346 | -7.24% |
+| Photo Filter | 550 | 376 | -31.64% |
+| Ray Tracer | 391 | 385 | -1.53% |
+| Structure from Motion | 366 | 346 | -5.46% |
+
+The 4 KiB loss is workload-dependent rather than uniform. Background Blur and
+Ray Tracer remain within 1.6%, while PDF Renderer and Photo Filter lose more
+than 31%. The 4 KiB process also used 88.84 host-system CPU seconds versus
+30.49 seconds at 16 KiB and reported 969,789 versus 143,455 voluntary and
+11,196,831 versus 2,717,230 involuntary context switches. Those counters are
+consistent with materially more host boundary activity, but they include
+scheduling effects and do not identify its cause. Peak resident size was
+effectively unchanged, and neither guest swapped.
+
+This four-vCPU aggregate gap is narrower than G146's 26.19% multi-core gap at
+ten vCPUs. That is consistent with the 4 KiB compatibility cost becoming more
+visible with concurrency, but it is not a topology-scaling proof: G146 ran the
+complete suite, these runs began directly at multi-core, and each point has
+only one observation. The order was 16 KiB then 4 KiB, not randomized. The
+host remained on AC power, neither scored process was sampled or suspended,
+and read-only process checks showed about 398% and 396% emulator CPU. The host
+was also in active interactive use; a 4 KiB snapshot included transient
+CMake/Ninja work and other desktop CPU load. Treat score percentages as the
+requested current directional comparison, not a low-noise causal A/B.
+
+The 16 KiB console is
+`.build/results/gadgets-ios-architecture-20260814/multicore-4vcpu-16k.log`,
+SHA-256
+`81b26fb4defc82b2cdf83b20781857f08bb113ba114763500aac1bcc79f9622c`.
+The 4 KiB console is
+`.build/results/gadgets-ios-architecture-20260814/multicore-4vcpu-4k.log`,
+SHA-256
+`9191b32bd875382f04d4fe464a2eae86f88494d3f45efdbe1f93d33e7cf90cd2`.
+No product change is accepted or proposed from this measurement alone.

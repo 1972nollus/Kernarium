@@ -69,6 +69,18 @@ performance boundary, not a causal attribution. The final canonical 4 KiB
 workflow passed 53/53 tooling checks and 5/5 fast guest integrations; the
 focused loader ASan/UBSan gate and the 16 KiB five-guest set also passed.
 
+A requested four-vCPU comparison then used Geekbench's working
+`--multi-core --no-upload` path, so neither profile executed the single-core
+suite. The current 16 KiB product scored **309** multi-core (263 integer / 415
+floating point), while the current 4 KiB product scored **269** (226 / 373):
+**-12.94%** aggregate, **-14.07%** integer, and **-10.12%** floating point.
+Both completed all 16 workloads and powered off cleanly. The gap ranged from
+-1.23% in Background Blur to -35.36% in PDF Renderer; 4 KiB elapsed time was
+17.53% longer while peak resident size changed only +0.35%. This ordered
+single observation per profile ran on an actively used host, so it is a
+directional current comparison rather than a low-noise causal A/B. G148 owns
+the complete table, exact product and console hashes, and measurement limits.
+
 The common kernel also builds zswap in, enables it by default, and selects zstd
 while retaining zram with zstd. Zswap requires backing swap and allocates no
 pool in the normal macOS or Kernarium desktop flows, which deliberately do not
