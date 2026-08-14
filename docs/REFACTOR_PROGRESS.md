@@ -86,6 +86,17 @@ Object Detection separately exposes cold EROFS zstd decompression in the
 native guest kernel. Candidate hot-path changes remain unimplemented pending
 focused probes and matched representative A/Bs.
 
+Targeted clean physical reruns narrowed G147's greater-than-10% workload gaps.
+Asset Compression no longer reproduced the threshold at 84/83 versus macOS
+89. Background Blur remained 96/93 versus 112 and HDR 79/75 versus 106.
+Horizon Detection was bimodal at 51/143/51 versus 120, consistent with its
+historical adaptive-duration behavior. Separate focused traces were thermally
+Nominal, scheduled at least 99.398% of carrier samples on performance cores,
+and kept non-carrier work below 0.03%. The strongest next measured candidate
+is a profile-keyed MTE-disabled vector-memory path; HDR boundary/link counters
+and Horizon byte-store locality counters precede any further code. No
+hot-path optimization was accepted from the intrusive traces.
+
 ## Post-baseline JIT checkpoint (2026-08-12)
 
 This checkpoint completes the foundational JIT-cache boundary: one authoritative

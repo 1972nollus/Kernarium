@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -383,7 +384,13 @@ benchmark=/opt/geekbench/release/geekbench6
 export HOME=/root
 echo "KERNARIUM_GEEKBENCH_READY"
 set +e
-"$benchmark" --no-upload
+if [ -n "${KERNARIUM_GEEKBENCH_WORKLOADS:-}" ]; then
+    echo "KERNARIUM_GEEKBENCH_TARGETS:$KERNARIUM_GEEKBENCH_WORKLOADS"
+    "$benchmark" --no-upload --single-core --section 1 \
+        --workload "$KERNARIUM_GEEKBENCH_WORKLOADS"
+else
+    "$benchmark" --no-upload
+fi
 benchmark_rc=$?
 printf '\nKERNARIUM_GEEKBENCH_END:%s\n' "$benchmark_rc"
 sync
@@ -457,7 +464,9 @@ public:
 
 class ConsoleBridge final {
 public:
-    explicit ConsoleBridge(ConsoleBootMode bootMode)
+    explicit ConsoleBridge(
+        ConsoleBootMode bootMode,
+        std::string geekbenchWorkloads)
     {
         int descriptors[2] {-1, -1};
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
@@ -483,7 +492,10 @@ public:
                 std::string(std::strerror(error)));
         }
         try {
-            relay_ = std::thread([host, bootMode] {
+            relay_ = std::thread([
+                host,
+                bootMode,
+                geekbenchWorkloads = std::move(geekbenchWorkloads)] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
                 bool bootstrapDelivered = false;
@@ -520,6 +532,12 @@ public:
                                 if (bootMode == ConsoleBootMode::aquarium)
                                     bootstrap = "KERNARIUM_AQUARIUM=1\n";
                                 if (bootMode == ConsoleBootMode::geekbench) {
+                                    if (!geekbenchWorkloads.empty()) {
+                                        bootstrap =
+                                            "KERNARIUM_GEEKBENCH_WORKLOADS=";
+                                        bootstrap.append(geekbenchWorkloads);
+                                        bootstrap.push_back('\n');
+                                    }
                                     bootstrap.append(geekbenchBootstrap);
                                 } else {
                                     bootstrap.append(kdeSystemdBootstrap);
@@ -616,6 +634,23 @@ bool environmentEnabled(const char* name)
     return value != nullptr && value[0] != '\0' && value[0] != '0';
 }
 
+bool validGeekbenchWorkloads(std::string_view workloads)
+{
+    if (workloads.empty() || workloads.size() > 256U)
+        return false;
+    bool needsDigit = true;
+    for (const char character : workloads) {
+        if (character >= '0' && character <= '9') {
+            needsDigit = false;
+        } else if (character == ',' && !needsDigit) {
+            needsDigit = true;
+        } else {
+            return false;
+        }
+    }
+    return !needsDigit;
+}
+
 } // namespace
 
 extern "C" int kernarium_runtime_run(
@@ -665,6 +700,12 @@ extern "C" int kernarium_runtime_run(
         auto networkCallbacks = network.callbacks();
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
+        const char* geekbenchWorkloadsEnvironment =
+            std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS");
+        const std::string geekbenchWorkloads =
+            geekbenchWorkloadsEnvironment == nullptr
+            ? std::string {}
+            : std::string {geekbenchWorkloadsEnvironment};
         if (aquarium && geekbench) {
             std::fputs(
                 "Kernarium: Aquarium and Geekbench modes are mutually "
@@ -672,10 +713,18 @@ extern "C" int kernarium_runtime_run(
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
+        if (!geekbenchWorkloads.empty() &&
+            (!geekbench || !validGeekbenchWorkloads(geekbenchWorkloads))) {
+            std::fputs(
+                "Kernarium: targeted workloads require Geekbench mode and a "
+                "comma-separated numeric list\n",
+                stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
         const ConsoleBootMode bootMode = geekbench
             ? ConsoleBootMode::geekbench
             : aquarium ? ConsoleBootMode::aquarium : ConsoleBootMode::systemd;
-        ConsoleBridge consoleBridge {bootMode};
+        ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads};
         if (aquarium)
             std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);
         if (geekbench)

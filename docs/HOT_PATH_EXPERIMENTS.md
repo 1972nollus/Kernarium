@@ -8181,3 +8181,101 @@ The 4 KiB console is
 SHA-256
 `9191b32bd875382f04d4fe464a2eae86f88494d3f45efdbe1f93d33e7cf90cd2`.
 No product change is accepted or proposed from this measurement alone.
+
+## G149: physical-iPad slow-workload confirmation
+
+Recorded 2026-08-14 on the same iPad mini (6th generation), iPadOS 18.5, as
+G147. The standard-signed Release app used the canonical 16 KiB kernel,
+gadgets engine, 1 GiB, six vCPUs, the preserved EROFS image, and a fresh 8 GiB
+ext4 OverlayFS disk. Systemd and the desktop were not started. The product was
+built from base `ece2bd839694e5bf337297131aa75049df17c2a7` plus a validated
+`KERNARIUM_GEEKBENCH_WORKLOADS` selector. The app executable SHA-256 was
+`d7b4c92da30a4a20838ac4290c71fd1a111f193d00976bf8f449367da0c18ece`;
+the canonical kernel remained
+`aa2fa9d0d9fcfdb3f9816d41e80fd047725ea16c391cfa3a315d3a838c466aae`.
+
+G147's Asset Compression 80, Background Blur 90, Horizon Detection 55, and
+HDR 79 were respectively 10.11%, 19.64%, 54.17%, and 25.47% below the current
+clean macOS references at 89, 112, 120, and 106. Two unprofiled physical runs
+selected exactly those four single-core workloads. A third run selected only
+Horizon Detection to resolve the split in the first two. Every attempt emitted
+`KERNARIUM_GEEKBENCH_END:0`, powered the guest off cleanly, and returned zero
+from the managed emulator.
+
+| Workload | macOS | clean iPad run 1 | delta | clean iPad run 2 | delta | tie-break | delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Asset Compression | 89 | 84 | -5.62% | 83 | -6.74% | -- | -- |
+| Background Blur | 112 | 96 | -14.29% | 93 | -16.96% | -- | -- |
+| Horizon Detection | 120 | 51 | -57.50% | 143 | +19.17% | 51 | -57.50% |
+| HDR | 106 | 79 | -25.47% | 75 | -29.25% | -- | -- |
+
+Asset Compression therefore does **not** reproduce a greater-than-10% gap.
+Background Blur and HDR do. Horizon has three slow observations and one fast
+observation when G147 is included. G42 previously recorded the same workload
+alternating between Geekbench adaptive-duration steps under an otherwise
+unchanged build. The slow mode is repeatable, but the 51/143 split is not a
+stable emulator-throughput delta by itself.
+
+Separate one-workload launches then attached Time Profiler only after the
+single-core phase began, for 15 seconds each. The contextual profiled scores
+were 99 Background Blur, 52 Horizon Detection, and 76 HDR; profiler-attached
+scores are intrusive and are not clean confirmation evidence. All three
+thermal tracks remained Nominal throughout. Percentages are mutually exclusive
+top-of-stack weights over active application samples.
+
+| Workload | Gadget assembly | Emulator C++ | Native guest kernel | Host/system | Non-carrier | P / E carrier samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Background Blur | 98.828% | 0.410% | 0.013% | 0.722% | 0.026% | 99.987% / 0.013% |
+| Horizon Detection | 88.962% | 0.265% | 8.775% | 1.980% | 0.018% | 99.398% / 0.602% |
+| HDR | 88.789% | 9.718% | 0.060% | 1.406% | 0.027% | 99.980% / 0.020% |
+
+These captures exclude thermal throttling, efficiency-core placement,
+UIKit/Metal, input, networking, and host carrier scheduling as material causes.
+They rank the next focused work as follows:
+
+1. **Profile-keyed MTE-disabled vector memory.** No-SP vector-memory symbols
+   account for 34.905% of Background Blur and 17.751% of HDR. The eligible
+   pair, other, and unsigned gadget families load and branch on
+   `CpuState::mte_enabled` on every ordinary access even though the production
+   guest neither advertises nor enables MTE. G147's pair-only proposal should
+   be broadened to a code-generation-profile-keyed untagged variant of all
+   eligible families. Keep the checked symbols and MTE unit semantics. The
+   maximum local saving is one load and one branch per hit, so a focused probe
+   and matched Blur/HDR physical A/B must establish an end-to-end gain.
+2. **Checked indexed floating point in Background Blur.** Checked indexed
+   operations total 34.243%, with `simd_indexed_fmla_checked_8h_0` alone at
+   19.386%. A15 lacks AFP, so dynamic FPCR.AH/FIZ semantics prohibit replacing
+   these with unchecked operations. Measure checked-operation density per
+   decoded block and software-fallback incidence; only then test one
+   block-level ordinary-FPCR guard or multiversion. Do not repeat G144's larger
+   indexed-FMLA stream, which regressed its focused control.
+3. **HDR block boundaries and links.** HDR's 9.718% C++ share includes
+   `ProgramCache::find` at 3.191%, block entry at 2.136%, `LinkRecord` hash
+   insertion at 1.221%, translated-loop overhead at 0.915%, FP-environment
+   setup at 0.663%, `prepare_cache` at 0.398%, indirect-link learning at
+   0.391%, and signal return at 0.199%. Instrument block-exit causes,
+   cache hit/miss/eviction, record creation, and direct/indirect link hits
+   before changing one leaf. G144's four-way stable slab regressed Clang and
+   remains rejected.
+4. **Horizon byte-store locality.** Byte-memory gadgets total 55.260%; the
+   `store8_unsigned_fast_z` and `scalar_other_store8_sxtw_0_r` bodies alone
+   total 49.182%. First count adjacent-store run length and same-page locality.
+   Only a concentrated result would justify a bounded run that preserves exact
+   fault priority and retirement. G144's synthetic 64-bit memory fusion gained
+   34.9% in its probe yet regressed real workloads, so blind fusion is not a
+   candidate.
+
+Horizon's 8.775% native-kernel region resolves to compaction, folio migration,
+LRU accounting, and locks: `isolate_migratepages_block` is 1.408%,
+`mem_cgroup_update_lru_size` 1.137%, and `__buffer_migrate_folio` 1.101%.
+That is the 1 GiB guest-memory-pressure class the user explicitly excluded;
+no swap, reclaim, or storage-redirection workaround is proposed.
+
+Disposition: accept the targeted selector and confirmation/profile evidence,
+but no product hot-path change. The MTE-disabled vector-memory arm is the
+strongest cross-workload candidate. Every candidate still requires focused
+correctness and performance probes, then a matched representative physical
+A/B under the existing greater-than-2% prospective gate. Raw traces, XML
+exports, launch records, exact commands, hashes, and the live-console boundary
+are documented under
+`.build/results/kernarium-ipad-targeted-20260814/`.

@@ -212,7 +212,10 @@ def verify_kernarium_geekbench_contract() -> None:
         "mount -t sysfs sysfs /sys",
         "/opt/geekbench/release/geekbench6",
         '\"$benchmark\" --no-upload',
+        "--single-core --section 1",
+        '--workload \"$KERNARIUM_GEEKBENCH_WORKLOADS\"',
         "KERNARIUM_GEEKBENCH_READY",
+        "KERNARIUM_GEEKBENCH_TARGETS:",
         "KERNARIUM_GEEKBENCH_END:%s",
         "poweroff -f",
     )
@@ -227,8 +230,10 @@ def verify_kernarium_geekbench_contract() -> None:
     run_source = source[source.index('extern "C" int kernarium_runtime_run') :]
     required_run_contract = (
         'environmentEnabled("KERNARIUM_GEEKBENCH")',
+        'std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS")',
+        "validGeekbenchWorkloads(geekbenchWorkloads)",
         "ConsoleBootMode::geekbench",
-        "ConsoleBridge consoleBridge {bootMode}",
+        "ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads}",
         "if (!geekbench)",
         'arguments.emplace_back("systemd.unit=graphical.target")',
     )

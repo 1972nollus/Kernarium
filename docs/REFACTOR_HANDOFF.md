@@ -118,6 +118,20 @@ folded scalar register-offset address generation, and a profile-keyed
 MTE-disabled vector-pair gadget; none is accepted from unmatched diagnostic
 sampling alone.
 
+Targeted clean reruns then rechecked every G147 workload more than 10% below
+its current macOS reference. Asset Compression improved to 84 and 83 versus
+macOS 89, so its gap did not reproduce. Background Blur remained 96/93 versus
+112 and HDR 79/75 versus 106. Horizon Detection produced 51, 143, then 51
+versus 120; its repeated slow mode and one fast mode agree with G42's recorded
+Geekbench adaptive-duration split rather than defining one stable throughput
+delta. Separate 15-second physical profiles remained thermally Nominal, put at
+least 99.398% of carrier samples on performance cores, and held non-carrier
+CPU below 0.03%. They rank a profile-keyed MTE-disabled vector-memory path,
+HDR boundary/link instrumentation, and a Horizon byte-store locality probe.
+Horizon's 8.775% guest-kernel compaction/migration share remains explicitly
+outside the optimization target. G149 records the complete scores and stacks;
+no speculative hot-path change is accepted.
+
 The earlier 2 GiB Simulator run remains dated graphics evidence: it emitted
 `UML_AQUARIUM_OK` with WebGL 2 over OpenGL ES 3.0 and ANGLE/virgl. That result
 uses an exact upstream ANGLE Simulator-capability backport and a focused

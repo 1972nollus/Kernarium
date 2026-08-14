@@ -46,6 +46,20 @@ xcrun devicectl device process launch \
   --console --timeout 7200 com.imxieyi.Kernarium
 ```
 
+For a focused single-core confirmation, add
+`KERNARIUM_GEEKBENCH_WORKLOADS` as a comma-separated numeric Geekbench
+workload list. The runtime validates the value before passing it to the guest;
+for example, Asset Compression, Background Blur, Horizon Detection, and HDR
+are `203,302,401,403`:
+
+```sh
+xcrun devicectl device process launch \
+  --device DEVICE-UDID \
+  --environment-variables \
+  '{"KERNARIUM_GEEKBENCH":"1","KERNARIUM_GEEKBENCH_WORKLOADS":"203,302,401,403"}' \
+  --console --timeout 7200 com.imxieyi.Kernarium
+```
+
 The app recreates its normal 8 GiB temporary ext4 disk, uses it as the upper
 and work storage for an OverlayFS over the EROFS image, mounts only the kernel
 filesystems needed by the payload, and runs Geekbench from the PID-1 shell.
@@ -53,7 +67,8 @@ It does not start systemd. The physical-device application policy still owns
 guest RAM and vCPU count; on the current 4 GiB acceptance iPad those are 1 GiB
 and the device's physical processor count. A successful console contains both
 `KERNARIUM_GEEKBENCH_READY` and `KERNARIUM_GEEKBENCH_END:0`, followed by a
-clean guest poweroff and app exit.
+clean guest poweroff and status-zero managed-emulator completion. The SwiftUI
+application itself remains open after the managed guest ends.
 
 Use a separate, explicitly diagnostic launch for Instruments sampling. For
 example, attach short Time Profiler windows to named workload phases while the

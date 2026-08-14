@@ -774,8 +774,12 @@ the installed app with `KERNARIUM_GEEKBENCH=1`. It runs the same image-local
 payload without systemd, using the app's recreated 8 GiB ext4 disk as the
 OverlayFS upper storage. Its console completion contract is
 `KERNARIUM_GEEKBENCH_READY`, `KERNARIUM_GEEKBENCH_END:0`, clean guest poweroff,
-and status-zero app exit. The exact `devicectl` and physical Time Profiler
-commands are documented in [`../tests/perf/README.md`](../tests/perf/README.md).
+and status-zero managed-emulator completion. The exact physical `devicectl`
+and Time Profiler commands are documented in
+[`../tests/perf/README.md`](../tests/perf/README.md).
+An optional validated `KERNARIUM_GEEKBENCH_WORKLOADS` comma-separated numeric
+list selects focused single-core workloads without changing the normal full
+campaign.
 
 G107's bounded successor fetch is selected by the default-on
 `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. When changing the
