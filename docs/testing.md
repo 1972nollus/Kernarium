@@ -363,7 +363,11 @@ for a restricted builder.
 `integration-fast` runs host fixtures plus short real guest boots: the
 production overlay/systemd path, interpreter, gadgets, JIT, and deterministic
 SLiRP. The interpreter smoke intentionally stops after shell arithmetic and
-CPU/HWCAP checks.
+CPU/HWCAP checks. All three engine smokes compare `AT_HWCAP` and `AT_HWCAP2`
+with the complete host-gated virtual-CPU contract; JSCVT remains optional after
+its additional runtime flag-behavior probe. `/proc/cpuinfo` is checked
+separately against the feature subset currently published by the Darwin kernel
+port rather than being treated as the auxiliary-vector authority.
 
 Keep the interpreter out of every heavy guest campaign, whether registered or
 run by hand. It is far slower than the translating engines — enough that a

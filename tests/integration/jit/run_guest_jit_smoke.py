@@ -27,22 +27,72 @@ HWCAP_SHA1 = 1 << 5
 HWCAP_SHA2 = 1 << 6
 HWCAP_CRC32 = 1 << 7
 HWCAP_ATOMICS = 1 << 8
+HWCAP_FPHP = 1 << 9
+HWCAP_ASIMDHP = 1 << 10
+HWCAP_ASIMDRDM = 1 << 12
+HWCAP_JSCVT = 1 << 13
+HWCAP_FCMA = 1 << 14
+HWCAP_LRCPC = 1 << 15
 HWCAP_SHA3 = 1 << 17
+HWCAP_ASIMDDP = 1 << 20
 HWCAP_SHA512 = 1 << 21
+HWCAP_ASIMDFHM = 1 << 23
+HWCAP_DIT = 1 << 24
+HWCAP_USCAT = 1 << 25
+HWCAP_ILRCPC = 1 << 26
+HWCAP_FLAGM = 1 << 27
+HWCAP_SB = 1 << 29
+HWCAP2_FLAGM2 = 1 << 7
+HWCAP2_FRINT = 1 << 8
+HWCAP2_I8MM = 1 << 13
+HWCAP2_BF16 = 1 << 14
 OPTIONAL_HWCAPS = (
-    ("hw.optional.arm.FEAT_AES", HWCAP_AES),
-    ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL),
-    ("hw.optional.arm.FEAT_SHA1", HWCAP_SHA1),
-    ("hw.optional.arm.FEAT_SHA256", HWCAP_SHA2),
-    ("hw.optional.arm.FEAT_CRC32", HWCAP_CRC32),
-    ("hw.optional.arm.FEAT_LSE", HWCAP_ATOMICS),
-    ("hw.optional.arm.FEAT_SHA3", HWCAP_SHA3),
-    ("hw.optional.arm.FEAT_SHA512", HWCAP_SHA512),
+    ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
+    ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
+    ("hw.optional.arm.FEAT_SHA1", HWCAP_SHA1, "sha1"),
+    ("hw.optional.arm.FEAT_SHA256", HWCAP_SHA2, "sha2"),
+    ("hw.optional.arm.FEAT_CRC32", HWCAP_CRC32, "crc32"),
+    ("hw.optional.arm.FEAT_LSE", HWCAP_ATOMICS, "atomics"),
+    ("hw.optional.arm.FEAT_FP16", HWCAP_FPHP, "fphp"),
+    ("hw.optional.arm.FEAT_FP16", HWCAP_ASIMDHP, "asimdhp"),
+    ("hw.optional.arm.FEAT_RDM", HWCAP_ASIMDRDM, "asimdrdm"),
+    ("hw.optional.arm.FEAT_FCMA", HWCAP_FCMA, "fcma"),
+    ("hw.optional.arm.FEAT_LRCPC", HWCAP_LRCPC, "lrcpc"),
+    ("hw.optional.arm.FEAT_SHA3", HWCAP_SHA3, "sha3"),
+    ("hw.optional.arm.FEAT_DotProd", HWCAP_ASIMDDP, "asimddp"),
+    ("hw.optional.arm.FEAT_SHA512", HWCAP_SHA512, "sha512"),
+    ("hw.optional.arm.FEAT_FHM", HWCAP_ASIMDFHM, "asimdfhm"),
+    ("hw.optional.arm.FEAT_DIT", HWCAP_DIT, "dit"),
+    ("hw.optional.arm.FEAT_LSE2", HWCAP_USCAT, "uscat"),
+    ("hw.optional.arm.FEAT_LRCPC2", HWCAP_ILRCPC, "ilrcpc"),
+    ("hw.optional.arm.FEAT_FlagM", HWCAP_FLAGM, "flagm"),
+    ("hw.optional.arm.FEAT_SB", HWCAP_SB, "sb"),
+)
+PROBE_DEPENDENT_HWCAPS = (
+    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
+)
+OPTIONAL_HWCAPS2 = (
+    ("hw.optional.arm.FEAT_FlagM2", HWCAP2_FLAGM2, "flagm2"),
+    ("hw.optional.arm.FEAT_FRINTTS", HWCAP2_FRINT, "frint"),
+    ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
+    ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
+)
+# The Darwin kernel's /proc/cpuinfo table is a separate diagnostic contract
+# from auxv. Pin its currently published subset without hiding any extra or
+# missing AT_HWCAP bit from the exact checks above.
+CPUINFO_HWCAPS = (
+    (HWCAP_AES, "aes"),
+    (HWCAP_PMULL, "pmull"),
+    (HWCAP_SHA1, "sha1"),
+    (HWCAP_SHA2, "sha2"),
+    (HWCAP_CRC32, "crc32"),
+    (HWCAP_ATOMICS, "atomics"),
+    (HWCAP_SHA3, "sha3"),
+    (HWCAP_SHA512, "sha512"),
 )
 
 
-def expected_hwcap() -> int:
-    result = HWCAP_FP | HWCAP_ASIMD
+def host_feature(name: str) -> bool:
     sysctlbyname = ctypes.CDLL(None, use_errno=True).sysctlbyname
     sysctlbyname.argtypes = (
         ctypes.c_char_p,
@@ -52,17 +102,24 @@ def expected_hwcap() -> int:
         ctypes.c_size_t,
     )
     sysctlbyname.restype = ctypes.c_int
-    for name, bit in OPTIONAL_HWCAPS:
-        enabled = ctypes.c_int()
-        size = ctypes.c_size_t(ctypes.sizeof(enabled))
-        status = sysctlbyname(
-            name.encode(),
-            ctypes.byref(enabled),
-            ctypes.byref(size),
-            None,
-            0,
-        )
-        if status == 0 and enabled.value != 0:
+    enabled = ctypes.c_int()
+    size = ctypes.c_size_t(ctypes.sizeof(enabled))
+    status = sysctlbyname(
+        name.encode(), ctypes.byref(enabled), ctypes.byref(size), None, 0
+    )
+    return (
+        status == 0
+        and size.value == ctypes.sizeof(enabled)
+        and enabled.value != 0
+    )
+
+
+def expected_hwcap(
+    features: tuple[tuple[str, int, str], ...], initial: int = 0
+) -> int:
+    result = initial
+    for name, bit, _ in features:
+        if host_feature(name):
             result |= bit
     return result
 
@@ -127,26 +184,28 @@ def main() -> int:
         auxv = auxiliary_vector(guest)
         actual_hwcap = auxv.get(16)
         actual_hwcap2 = auxv.get(26, 0)
-        expected = expected_hwcap()
-        if actual_hwcap != expected:
+        expected = expected_hwcap(OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD)
+        probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
+        if (
+            actual_hwcap is None
+            or (actual_hwcap & ~HWCAP_JSCVT) != expected
+            or (actual_hwcap & HWCAP_JSCVT & ~probe_permitted) != 0
+        ):
             raise RuntimeError(
                 "AT_HWCAP mismatch: "
-                f"expected 0x{expected:x}, got {actual_hwcap!r}"
+                f"expected 0x{expected:x} with probe-dependent mask "
+                f"0x{probe_permitted:x}, got {actual_hwcap!r}"
             )
-        if actual_hwcap2 != 0:
+        expected2 = expected_hwcap(OPTIONAL_HWCAPS2)
+        if actual_hwcap2 != expected2:
             raise RuntimeError(
-                f"AT_HWCAP2 exposes unsupported features: 0x{actual_hwcap2:x}"
+                "AT_HWCAP2 mismatch: "
+                f"expected 0x{expected2:x}, got 0x{actual_hwcap2:x}"
             )
         expected_cpuinfo = {
-            (
-                "sha2"
-                if name == "hw.optional.arm.FEAT_SHA256"
-                else "atomics"
-                if name == "hw.optional.arm.FEAT_LSE"
-                else name.rsplit("FEAT_", 1)[-1].lower()
-            )
-            for name, bit in OPTIONAL_HWCAPS
-            if expected & bit
+            flag
+            for bit, flag in CPUINFO_HWCAPS
+            if actual_hwcap & bit
         }
         expected_cpuinfo.update(("fp", "asimd"))
         actual_cpuinfo = cpuinfo_features(guest)
