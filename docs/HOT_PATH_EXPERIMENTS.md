@@ -8393,3 +8393,92 @@ Raw traces, exact commands, XML hashes, the reference-resolving classifier,
 phase matrices, PC-offset tables, product UUIDs, and instruction-byte checks
 are under
 `.build/results/macos-ios-regression-traces-20260814/`.
+
+## G152: physical-iPad versus macOS instruction throughput
+
+Recorded 2026-08-14 at base `42d781210a8265955f9f23edb9b0ec70b69f3180`
+without modifying or attributing the worktree's in-progress Kernarium settings,
+runtime, tests, and kernel configuration. The physical iPad mini (6th
+generation) and M1 Ultra Mac Studio both ran the canonical 16 KiB kernel and
+EROFS root, gadgets engine, no-systemd launcher, 1 GiB guest, and six vCPUs.
+CPU Profiler sampled `CORE_ACTIVE_CYCLE` at a 1,000,000-event threshold. A
+separate CPU Counters pass supplied 1 ms timer samples and scheduler state.
+[Apple's Processor Trace support](https://developer.apple.com/documentation/xcode/analyzing-cpu-usage-with-processor-trace)
+does not include the A15 or M1, so exact retired-instruction streams were not
+available.
+
+Background Blur scored 113 on macOS and 99 on iPad in the active-cycle
+captures. Its stable 15-second windows execute the same machine-code and
+symbol mix established by G151.
+
+| Blur metric | macOS | iPad | iPad residual |
+| --- | ---: | ---: | ---: |
+| carrier active-cycle rate | 2.906492 Gcycle/s | 2.638408 Gcycle/s | mac/iPad 1.101608 |
+| cycles per equal image | 1.000000 | 1.036134 | +3.613% |
+| `vector_pair_load128_0` cycle share | 14.883782% | 16.281608% | +1.986151 equal-work points |
+| four checked indexed `FMLA.4S` gadgets | 13.410106% | 14.776012% | +1.899828 equal-work points |
+| all CpuState loads | 45.417900% | 46.243959% | +2.497054 equal-work points |
+
+The 1.101608 active-cycle-rate ratio alone predicts an iPad score of 102.58.
+The remaining 3.613% cycles per image closes the observed 113/99 ratio. The
+whole-gadget excess is concentrated in serial CpuState load-use chains: the
+checked FMLA path loads FP state and three vectors, executes native `fmla`,
+stores the result to CpuState, and dispatches; the pair-load path loads the
+guest address, checks MTE/page crossing, probes the software TLB, executes
+`ldp q0, q1`, stores both registers to CpuState, and dispatches. Threaded-stream
+loads add only 0.467432 equal-work point, while host-memory/software-TLB loads
+are slightly lower on iPad. Precise-PMU skid differs across M1 and A15, so this
+finding belongs to the complete sequences and grouped loads, not the one
+successor PC on which a sample lands.
+
+Complete CPU Counter runs then scored HDR 104 on macOS and 79 on iPad. Their
+timer profiles expose a wall-time phase that active-cycle weighting nearly
+hides:
+
+| HDR timer metric | macOS | iPad |
+| --- | ---: | ---: |
+| sample span | 102.532999 s | 147.596001 s |
+| carrier CPU time | 96.001 s | 135.113 s |
+| `vector_store32_unsigned_fast` | 1.991 s | 11.636 s |
+| `vector_other_store32_x_0` | 0.645 s | 10.116 s |
+| two-store total | 2.636 s / 2.745805% | 21.752 s / 16.099117% |
+| `ProgramCache::find` | 2.904 s / 3.024968% | 3.880 s / 2.871670% |
+
+The two 32-bit store gadgets account for 19.116 of 39.112 extra iPad
+carrier-seconds, or 48.875% of the observed difference. Only the iPad has a
+continuous 16.0-second interval in which those two leaves exceed 80% of timer
+samples. Across its 2.5-second bins, the carrier remains Running
+95.220--96.902%, Interrupted 2.827--4.763%, Blocked at most 0.250%, and
+Runnable at most 0.008%; samples remain on A15 performance cores. The phase is
+therefore repeated guest-store execution, not iOS leaving a runnable carrier
+unscheduled, efficiency-core placement, UIKit/Metal work, or enforcement of
+Instruments' CPU-budget diagnostic.
+
+Both paths perform full translated-store work around the native `str s0`:
+decode the stream operand, load guest address inputs from CpuState, test MTE
+and page crossing, probe the write software TLB, load `q0` from CpuState,
+store four bytes to guest host memory, and dispatch. This is the largest HDR
+instruction-phase difference observed, but it is not yet a per-instruction
+latency result. Geekbench's adaptive internal phases do not expose a retired
+guest count; the iPad may execute an additional initialization or calibration
+run. First count exact guest PCs, retired occurrences, consecutive store-run
+length, and same-page locality, then use an identical-work M1/A15 gadget probe.
+Do not infer an eightfold `str` latency or restore G144's rejected blind memory
+fusion from timer duration alone.
+
+The active-cycle profiles also confirm G151's later-way iPad
+`ProgramCache::find` behavior, but the complete timer pass gives it only 0.976
+extra second and a lower iPad percentage. It is a secondary localized target;
+per-way hit counters remain required before changing cache placement or
+replacement policy.
+
+Disposition: no product change. G152 supersedes G151's statement that the
+dominant gap is wholly below percentage-profiler resolution. Blur divides into
+a 10.2% active-cycle-rate difference and a 3.613% serial-chain cycle residual.
+HDR's largest observed wall-time outlier is the two translated 32-bit vector
+store paths, subject to the adaptive-work-count caveat; the sequential
+ProgramCache probe is secondary. Exact commands, exported profiles, hashes,
+the compressed scheduler-state evidence, and reference-resolving analysis are
+under `.build/results/macos-ios-instruction-counters-20260814/`. The transient
+3.2 GiB CPU Counters bundles and unused context-switch export were removed
+after retaining the compact evidence.
