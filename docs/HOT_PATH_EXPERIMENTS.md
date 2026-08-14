@@ -8323,3 +8323,73 @@ additional guest memory improves emulator throughput or that a 1.5 GiB full
 desktop/Aquarium campaign fits. Exact launch arguments, installation and
 rootfs-preservation records, hashes, and the live-console boundary are under
 `.build/results/kernarium-ipad-1_5g-20260814/`.
+
+## G151: matched macOS and physical-iPad regression traces
+
+Recorded 2026-08-14 for the two G149 workloads with a confirmed regression of
+more than 10% on the physical iPad: Background Blur and HDR. Asset Compression
+did not reproduce that threshold, and Horizon Detection remained bimodal, so
+they were not promoted into this comparison. Fresh macOS controls used the same
+canonical 16 KiB kernel and EROFS rootfs, gadgets engine, no-systemd launcher,
+1 GiB guest, and six vCPUs as the iPad. Background Blur scored 113 and HDR 105,
+matching the existing 112/106 macOS references despite replacing macOS's
+ordinary 8 GiB/ten-vCPU defaults. Both guests powered down normally. Time
+Profiler attached after `Single-Core` appeared for the same 15-second duration
+as the G149 captures.
+
+| Workload / platform | Gadget assembly | Emulator C++ | Native guest kernel | Host/system | Non-carrier |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Blur / macOS | 98.849% | 0.515% | 0.032% | 0.605% | 0.000% |
+| Blur / iPad | 98.828% | 0.410% | 0.013% | 0.722% | 0.026% |
+| HDR / macOS | 87.476% | 11.753% | 0.019% | 0.739% | 0.013% |
+| HDR / iPad | 88.789% | 9.718% | 0.060% | 1.406% | 0.027% |
+
+Blur has an exact-symbol total-variation distance of 0.063993. Its checked
+indexed-FP share is 32.787% macOS versus 34.252% iPad, no-SP vector memory is
+34.536% versus 34.861%, and the same checked half-precision FMLA is the largest
+leaf at 19.098% versus 19.391%. The iPad therefore does not add C++, kernel,
+system, or scheduling work to the confirmed Blur regression.
+
+The whole-window HDR distance of 0.351159 is not a platform comparison: the
+windows cover different internal phases. Five equal-time slices show three
+macOS slices of one stable kernel followed by two of another. The iPad starts
+with the second kernel, covers two additional kernels, and ends with the first.
+Comparing only observed matching phases reduces the distances to 0.125608 and
+0.148472.
+
+| Matched HDR phase | Platform | Gadget assembly | Emulator C++ | Guest kernel | Host/system |
+| --- | --- | ---: | ---: | ---: | ---: |
+| A | macOS | 88.298% | 11.139% | 0.000% | 0.563% |
+| A | iPad | 88.495% | 11.107% | 0.000% | 0.398% |
+| B | macOS | 86.279% | 12.672% | 0.048% | 1.001% |
+| B | iPad | 82.477% | 17.024% | 0.000% | 0.499% |
+
+Phase A has no material category difference. Phase B's +4.353 percentage
+points of iPad C++ time is almost entirely `ProgramCache::find`, at 5.968%
+versus 1.598% (+4.370 points). Within that function, 51.811% of iPad exclusive
+samples land at offset `+0xbc`, the result check reached in cache way 2;
+macOS instead concentrates in the initial/way-0 probe. This shows a deeper
+lookup on iPad in that phase. It does not yet distinguish stable platform
+behavior from different pre-capture replacement history, so require per-way
+hit counters before changing the cache. Even removing the complete observed
+excess bounds this phase's speedup near 4.6%, far short of the clean 25--29%
+HDR score deficit.
+
+The trace UUID products contain identical raw instructions for the dominant
+checked FMLA, vector-pair load, vector 32-bit load, scalar FMADD, and
+`ProgramCache::find`. `GadgetExecutor::run_block` has 388 instructions in both;
+its only mnemonic-order difference is one independent `lsr`/`sub` scheduling
+swap. Both captures run essentially entirely on performance cores. There is no
+visible iOS-specific engine, feature-selection, UIKit/Metal, kernel, system,
+or carrier-scheduling tax.
+
+Disposition: no product change. The one emulator-local difference worth a
+counter experiment is HDR's later-way lookup. The dominant cross-device gap
+is below a percentage Time Profiler's resolution: the same machine-code paths
+consume more wall time on the A15 performance core than on M1 Ultra. Separate
+frequency, IPC, cache, and instruction-latency effects with matched hardware
+counters or focused native gadget probes rather than adding an iOS-only path.
+Raw traces, exact commands, XML hashes, the reference-resolving classifier,
+phase matrices, PC-offset tables, product UUIDs, and instruction-byte checks
+are under
+`.build/results/macos-ios-regression-traces-20260814/`.
