@@ -92,10 +92,12 @@ def validate(
     page_4k_config: Path,
     kernel_build_script: Path,
     project_cmake: Path,
+    kernarium_runtime: Path,
 ) -> None:
     process = (linux_source / "arch/um/os-Darwin/skas/process.c").read_text()
     smp = (linux_source / "arch/um/os-Darwin/smp.c").read_text()
     processor = (linux_source / "arch/arm64/um/asm/processor.h").read_text()
+    signal_source = (linux_source / "arch/um/os-Darwin/signal.c").read_text()
     time = (linux_source / "arch/um/os-Darwin/time.c").read_text()
     main_source = (linux_source / "arch/um/os-Darwin/main.c").read_text()
     host_abi = (linux_source / "arch/um/os-Darwin/uml_darwin_host.h").read_text()
@@ -105,6 +107,7 @@ def validate(
     config_4k = page_4k_config.read_text()
     build_script = kernel_build_script.read_text()
     project = project_cmake.read_text()
+    runtime = kernarium_runtime.read_text()
     makefile = (linux_source / "arch/arm64/Makefile.um").read_text()
     um_arch = (linux_source / "arch/um/kernel/um_arch.c").read_text()
     address_space = (
@@ -112,6 +115,7 @@ def validate(
     ).read_text()
 
     for setting in (
+        "CONFIG_PRINTK_TIME=y",
         "CONFIG_HZ_100=y",
         "CONFIG_HZ=100",
         "CONFIG_NO_HZ_IDLE=y",
@@ -328,6 +332,40 @@ def validate(
         "the Darwin launcher still owns CPU0's signal stack",
     )
     require_pattern(carrier, r"set_sigstack\s*\(\s*NULL\s*,\s*0\s*\)", "CPU0 carrier lacks a signal stack")
+    require_pattern(
+        carrier,
+        r"sigaddset\s*\(\s*&timer\s*,\s*SIGALRM\s*\).*"
+        r"pthread_sigmask\s*\(\s*SIG_UNBLOCK\s*,\s*&timer",
+        "vCPU0 does not exclusively accept the early calibration timer",
+    )
+    set_handler = function(signal_source, "set_handler")
+    require_pattern(
+        set_handler,
+        r"if\s*\(\s*signal\s*==\s*SIGALRM\s*\)\s*return\s*;.*"
+        r"pthread_sigmask\s*\(\s*SIG_UNBLOCK",
+        "handler installation can reassign the process timer to the launcher",
+    )
+    runtime_mask = function(runtime, "isolateGuestTimerFromApplicationThreads")
+    require(
+        "__attribute__((constructor))" in runtime,
+        "Kernarium does not isolate the process timer before application main",
+    )
+    require_pattern(
+        runtime_mask,
+        r"blockGuestTimer\s*\(\s*nullptr\s*\)",
+        "Kernarium application threads do not inherit SIGALRM blocked",
+    )
+    runtime_run_start = runtime.index('extern "C" int kernarium_runtime_run(')
+    runtime_run_end = runtime.index(
+        'extern "C" void kernarium_runtime_request_stop', runtime_run_start
+    )
+    runtime_run = runtime[runtime_run_start:runtime_run_end]
+    require_pattern(
+        runtime_run,
+        r"ScopedGuestTimerBlock\s+guestTimerBlock\s*;.*"
+        r"uml_emulator_run\s*\(",
+        "Kernarium launcher can accept ITIMER_REAL during a managed run",
+    )
 
 
 def main() -> int:
@@ -338,6 +376,7 @@ def main() -> int:
     parser.add_argument("--page-4k-config", type=Path, required=True)
     parser.add_argument("--kernel-build-script", type=Path, required=True)
     parser.add_argument("--project-cmake", type=Path, required=True)
+    parser.add_argument("--kernarium-runtime", type=Path, required=True)
     arguments = parser.parse_args()
     validate(
         arguments.linux_source.resolve(),
@@ -346,6 +385,7 @@ def main() -> int:
         arguments.page_4k_config.resolve(),
         arguments.kernel_build_script.resolve(),
         arguments.project_cmake.resolve(),
+        arguments.kernarium_runtime.resolve(),
     )
     print("Darwin fixed-vCPU carrier policy verified")
     return 0

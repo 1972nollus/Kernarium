@@ -78,7 +78,7 @@ established unsigned CLI embedding and uses the same guest range, RAM-scaled
 window derivation, relocation, and exclusion-hole handling, but places that
 window at 96 TiB rather than inside iOS's constrained sub-62 GiB host range.
 Product policy still lets
-macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 2 GiB and all
+macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1.5 GiB and all
 processors reported by iOS; the app can persist a smaller launch configuration
 within its supported settings ranges. The common layout derives the appropriate
 native window from each guest's RAM. The supported macOS 4 KiB compatibility
@@ -99,6 +99,10 @@ shutdown transfers back to the carrier's native stack before pthread teardown.
 This is one common macOS/iOS Simulator/iOS device mechanism, and the carrier
 names are `uml-vcpu-N-carrier`. The kernel's 100 Hz plus `NO_HZ_IDLE` policy
 reduces host wakeups without changing this ownership boundary.
+The early Darwin `ITIMER_REAL` calibration signal is process-directed, so
+Kernarium blocks `SIGALRM` on application and launcher workers and only the
+vCPU0 carrier temporarily unmasks it. This signal ownership does not add or
+move an application launcher thread.
 Darwin host signals wake carriers but do not execute Linux IPIs asynchronously.
 The arm64 spin-loop relaxation checkpoint services pending IPIs only while
 Linux interrupts are enabled, which breaks synchronous cross-call wait cycles

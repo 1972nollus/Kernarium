@@ -42,8 +42,8 @@ Virtio-GPU EDID so guest UI remains logically point-sized. Its
 network callback is the ordinary SLiRP provider compiled against the private
 iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes. Both
-iOS products default to all processors reported by `NSProcessInfo` and 2 GiB of
-guest RAM. The settings sheet can persist one through that processor count,
+iOS products default to all processors reported by `NSProcessInfo` and 1.5 GiB
+of guest RAM. The settings sheet can persist one through that processor count,
 512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, and
 the selected `.erofs` filename from Documents; a saved configuration is
 snapshotted on the next app launch. The standalone macOS app retains its larger
@@ -68,6 +68,10 @@ bytes at 96 TiB to avoid collisions in Darwin's crowded low host range. Its
 8 GiB default derives a 1 GiB auxiliary allowance and a 9 GiB active native
 window.
 
+At the 1.5 GiB Kernarium default, the direct map is 1.5 GiB and its
+one-eighth auxiliary allowance is 192 MiB, so the active iOS native window is
+60.3125--62 GiB.
+
 Darwin schedules stackful Linux task contexts on exactly one persistent host
 carrier per configured guest CPU, including vCPU0. Task creation initializes a
 saved PC and aligned stack pointer but never creates a pthread; normal Linux
@@ -77,6 +81,11 @@ shutdown first returns to its native pthread stack. The common mechanism is
 used on macOS, Simulator, and device, with carriers named
 `uml-vcpu-N-carrier` for profiles. Shipped kernels use a 100 Hz tick and
 `NO_HZ_IDLE`, suppressing periodic carrier wakeups while a guest CPU is idle.
+Darwin's early `ITIMER_REAL` calibration signal is process-directed. The
+Kernarium framework blocks `SIGALRM` before application main and around the
+managed run, while the existing launcher remains on its Swift worker; only
+the vCPU0 carrier explicitly unmasks the signal until cooperative timer
+deadlines take over.
 Darwin host signals remain wake edges rather than asynchronous Linux interrupt
 execution. An IRQ-enabled `cpu_relax()` checkpoint polls pending IPIs so two
 carriers waiting on synchronous cross-CPU calls cannot strand each other; an
@@ -200,4 +209,6 @@ available.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.
+`CONFIG_PRINTK_TIME` prefixes kernel records on both tty0 and ttyS0 with the
+guest monotonic timestamp.
 The selected EROFS base remains read-only.

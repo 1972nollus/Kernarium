@@ -4,7 +4,7 @@ struct EmulatorConfiguration: Equatable {
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 128
     static let overlaySizeRangeGiB = 1...32
-    static let defaultGuestMemoryMiB = 2048
+    static let defaultGuestMemoryMiB = 1536
     static let defaultOverlaySizeGiB = 8
 
     let vCPUCount: Int

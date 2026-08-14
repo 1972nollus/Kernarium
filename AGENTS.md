@@ -68,7 +68,14 @@ historical sections as history.
   such backing and must not claim zswap as additional guest memory.
 - When `mem=` or `ncpus=` is absent, the standalone macOS app defaults to
   8 GiB and 10 vCPUs. Kernarium retains its separate iOS application policy:
-  1 GiB, four Simulator vCPUs, and the physical device's processor count.
+  1.5 GiB and every processor reported by `NSProcessInfo` on both Simulator
+  and physical devices.
+- Darwin's early UML calibration uses the process-directed `ITIMER_REAL`.
+  Kernarium must keep `SIGALRM` blocked on its application and launcher
+  workers without moving the launcher to another thread; only
+  `uml-vcpu-0-carrier` may unblock it before the kernel switches to
+  cooperative deadlines. Keep this ownership pinned by
+  `darwin-vcpu-carrier-policy`.
 - There is no repository-wide formatter. Follow adjacent formatting, retain
   SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
   and avoid unrelated formatting churn.
@@ -219,7 +226,7 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 - External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
-- Kernarium's current physical-iOS acceptance guest has 2 GiB of RAM. Do not
+- Kernarium's current physical-iOS acceptance guest has 1.5 GiB of RAM. Do not
   run WebGL Aquarium on the physical device or add disk-backed swap, Chromium
   storage redirection, or another memory workaround to force that workload.
   Use the documented normal desktop boot on the connected iPad; the historical

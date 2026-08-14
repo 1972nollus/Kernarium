@@ -1,6 +1,6 @@
 # Refactor handoff
 
-## Kernarium iOS application prototype checkpoint (2026-08-14)
+## Kernarium iOS application prototype checkpoint (2026-08-15)
 
 `Kernarium/Kernarium.xcodeproj` boots the maintained UML kernel from a basic
 SwiftUI `ContentView` into the production Virtio-GPU/virglrenderer command path.
@@ -12,7 +12,7 @@ guest context and tolerates only the no-codec video-buffer lifecycle emitted by
 Mesa's shader-only `VAProfileNone` probe; actual codec capabilities and frame
 commands remain disabled.
 
-The app starts one 2 GiB guest by default after its safe-area view has a real
+The app starts one 1.5 GiB guest by default after its safe-area view has a real
 size. It multiplies that point geometry by `UIScreen.nativeScale`, uses the
 resulting physical pixels for both the Metal drawable and Virtio-GPU preferred
 mode, and advertises an effective `96 * nativeScale` density through EDID so
@@ -37,8 +37,8 @@ software-MMU task range and derives a native window from guest RAM plus a
 page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
 Device and Simulator top-pack that window below 62 GiB.
 The iOS loader aliases immutable executable pages from signed storage and
-copies only data/BSS. With the 2 GiB default, the auxiliary allowance is
-exactly 256 MiB and the active window is 59.75--62 GiB. It uses no anonymous
+copies only data/BSS. With the 1.5 GiB default, the auxiliary allowance is
+exactly 192 MiB and the active window is 60.3125--62 GiB. It uses no anonymous
 executable publication, RW-to-RX transition, LLDB, or JIT entitlement. macOS
 exercises the same range, window derivation, relocation, and exclusion-hole
 handling while retaining its 8 GiB and ten-vCPU defaults; its 1 GiB auxiliary
@@ -52,7 +52,11 @@ kernel stacks and migrate between carriers without creating host pthreads.
 Carriers are named `uml-vcpu-N-carrier`; host-stop wakes them cooperatively,
 and IRQ-enabled spin checkpoints service pending IPIs so synchronous
 cross-calls cannot deadlock. Shipped kernels use a 100 Hz tick and
-`NO_HZ_IDLE`.
+`NO_HZ_IDLE`. Kernarium leaves the launcher on its existing Swift worker and
+blocks the process-directed early `ITIMER_REAL` signal on application and
+launcher workers; only vCPU0's carrier unmasks `SIGALRM` during calibration.
+The common kernel also enables `CONFIG_PRINTK_TIME` for timestamped VT and
+host-serial printk records.
 
 The common architecture was requalified with a complete no-systemd gadgets
 Geekbench 6 run: the direct OverlayFS shell scored **96/565** single/multi,
@@ -108,12 +112,19 @@ PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
 Kernarium binds that serial endpoint to its stdout relay while `tty0` remains
 visible on the framebuffer.
 
-The earlier normal-boot validation used 1 GiB and deliberately omitted
-Aquarium. Simulator used four CPUs; a standard-signed Release app on the iPad
-used all six reported CPUs. Both reached DHCP, the EROFS/ext4 pivot, SDDM,
-automatic `uml` login, and direct virgl/ANGLE/Metal presentation. That remains
-dated evidence and is not relabeled as a 2 GiB or Phosh device run. Current
-macOS Phosh validation runs the full service set, completes the GStreamer VA
+The current physical validation used the standard-signed Release app and
+`phosh.erofs` on an iPad mini 6. Five consecutive cold launches at 1.5 GiB and
+six vCPUs brought every CPU online, emitted timestamped printk records,
+reported 1,520,944 KiB available from 1,572,864 KiB during kernel startup,
+completed DHCP and the EROFS/ext4 pivot, started stock greetd, reached
+`graphical.target`, opened its `_greetd` session, and entered direct
+virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The captured consoles
+contain no Darwin panic, POSIX-signal failure, allocator corruption, or OOM
+marker, and no new device crash report appeared. The host stopped each run
+after stable presentation, so clean guest shutdown is not claimed; no memory
+reduction was needed. The earlier 1 GiB KDE device/Simulator boots remain
+dated predecessor evidence. Current macOS Phosh validation runs the full
+service set, completes the GStreamer VA
 plugin scan without the former virgl context error, captures the rendered
 Phosh lock screen through VNC, and reaches direct CGL/IOSurface/Metal native
 presentation. A separate 1290x2796, 288-DPI cold boot proved fbcon, EDID, four

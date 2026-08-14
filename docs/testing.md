@@ -123,7 +123,7 @@ ctest --preset instruction-evidence-4k
 
 `Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
 application that embeds the maintained 16 KiB UML kernel and boots
-the selected `.erofs` image from Documents with 2 GiB of guest memory by
+the selected `.erofs` image from Documents with 1.5 GiB of guest memory by
 default. Device and Simulator both default to all processors reported by
 `NSProcessInfo`. The settings sheet persists 1 through that processor count,
 512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay size, and a
@@ -142,6 +142,10 @@ macOS and both iOS targets, names them `uml-vcpu-N-carrier`, and moves Linux
 task contexts between those carriers without creating a host thread per guest
 task. The shipped 100 Hz plus `NO_HZ_IDLE` policy suppresses ticks on idle
 carriers.
+The early Darwin calibration timer uses process-directed `ITIMER_REAL`.
+Kernarium blocks `SIGALRM` before application main and again around the
+managed run, leaving the launcher on its existing Swift worker. Only the vCPU0
+carrier explicitly unmasks the signal before cooperative deadlines take over.
 IRQ-enabled arm64 spin checkpoints service pending Darwin IPIs, so synchronous
 cross-CPU calls progress even when two fixed carriers are waiting on each
 other; IRQ-disabled regions continue to defer the work.
@@ -289,6 +293,8 @@ client and conflicting UML stdio console are disabled. The guest exposes the
 normal 64 VT nodes, four UML serial lines, dynamic Unix98 PTYs, and no legacy
 BSD PTY bank. This host has no Virtio-console backend, so `ttyS0` is the serial
 fallback connected to the app's stdout relay while `tty0` remains on fbcon.
+`CONFIG_PRINTK_TIME` gives the kernel records on both consoles guest-monotonic
+prefixes such as `[    0.120000]`.
 
 `--aquarium` remains an opt-in Simulator-only launcher check. It requires a
 live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
@@ -298,11 +304,19 @@ reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
 acceptance workload; do not add swap or another memory workaround solely for
 that campaign.
 
-The earlier 1 GiB normal-boot checkpoint passed on both iOS targets: Simulator
-used four CPUs, while the standard-signed iPad run used all six reported CPUs;
-both reached DHCP, the EROFS/ext4 pivot, SDDM, automatic `uml` login, and direct
-virgl/ANGLE/Metal presentation. That is dated evidence, not a claim that the
-new 2 GiB default or Phosh image has been rerun on either iOS target. Current
+The current physical checkpoint used a standard-signed Release build on an
+iPad mini 6 with `phosh.erofs`, `mem=1536M`, and all six reported CPUs. Five
+consecutive cold launches reached DHCP, mounted the read-only EROFS root and
+fresh ext4 overlay, started stock greetd, reached `graphical.target`, opened
+the `_greetd` session, and reported direct virgl/ANGLE/Metal presentation at
+2266x1390 and 192 DPI. Every boot brought all CPUs online and reported
+1,520,944 KiB available from 1,572,864 KiB during kernel initialization. The
+captured runs contain timestamped printk records and no Darwin panic, POSIX
+signal failure, allocator-corruption, or guest OOM marker; the device produced
+no new Kernarium crash report. Runs were stopped by the host after stable
+presentation, so orderly guest shutdown is not claimed. RAM was not reduced
+below 1.5 GiB because no OOM occurred. The older 1 GiB KDE device and Simulator
+boots remain dated predecessor evidence. Current
 macOS qualification boots the unmodified Phosh service set, completes its
 GStreamer plugin scan without poisoning the virgl context, captures the sparse
 Phosh lock screen through VNC, and enters the direct

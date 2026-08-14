@@ -84,6 +84,8 @@ if(DEFINED UML_KERNEL_SOURCE_DIR AND
             --page-4k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment
             --kernel-build-script ${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh
             --project-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
+            --kernarium-runtime
+                ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
         LABELS kernel;audit
         TIMEOUT 30)
 endif()

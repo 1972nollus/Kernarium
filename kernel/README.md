@@ -15,12 +15,13 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
-## Latest verified replay (2026-08-14)
+## Latest verified replay (2026-08-15)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`2a353b36ac87801a020529f9348f6e5f6a05ebdf`. A fresh authenticated replay,
+`1cb0f7edb42b0c2f748377c1d703439f45252de2`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, and delta audit passed. The exact delta policy is 159 changed files
+checks, delta audit, and both LLVM 22 production page-profile builds passed.
+The exact delta policy is 159 changed files
 with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
 UML serial-line count configurable. Topic 0015 replaces the former macOS/iOS split
@@ -30,7 +31,9 @@ placement. Topic 0016 replaces per-task Darwin
 pthreads with one persistent carrier per configured vCPU on macOS, iOS
 Simulator, and physical iOS. Carrier names use a non-variadic decimal formatter
 because Linux AAPCS64 and Apple arm64 variadic call conventions differ. Topic
-0017 lets the host-stop descriptor wake those carriers for cooperative
+0016 also keeps the process-directed early `ITIMER_REAL` signal blocked on the
+launcher and assigns it exclusively to vCPU0's carrier. Topic 0017 lets the
+host-stop descriptor wake those carriers for cooperative
 shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
 checkpoints, preventing two fixed carriers from deadlocking in synchronous
 cross-calls while preserving Linux interrupt masking.
@@ -116,8 +119,8 @@ Simulator bias it so the active native window ends at the physical-iOS 62 GiB
 ceiling; macOS biases the same image to a 96 TiB base. The window contains
 exactly the RAM-sized direct map plus a
 page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
-Kernarium's 2 GiB default therefore receives exactly 256 MiB of auxiliary
-address capacity and uses the 59.75--62 GiB active window. The standalone
+Kernarium's 1.5 GiB default therefore receives exactly 192 MiB of auxiliary
+address capacity and uses the 60.3125--62 GiB active window. The standalone
 macOS app defaults to 8 GiB and 10 vCPUs; its 1 GiB auxiliary allowance gives
 it a 9 GiB active window beginning at 96 TiB. The kernel derives the hole
 endpoint from its relocated image, so macOS uses this same exact 16 KiB kernel
@@ -142,6 +145,10 @@ the fixed vCPU carriers responsive while avoiding a 1 kHz compulsory wakeup on
 every CPU and suppressing the periodic tick entirely while a guest CPU is
 idle. Periodic ticks, `NO_HZ_FULL`, and the 250/300/1000 Hz choices are
 explicitly disabled in the canonical fragment.
+
+The common profile also enables `CONFIG_PRINTK_TIME`, so every kernel printk
+record carries its guest monotonic timestamp on both the Virtio-GPU VT/fbcon
+console and the host-facing serial console.
 
 Every profile also uses the standard VT/fbcon stack with Virtio-GPU fbdev
 emulation and leaves the DRM log client off. The legacy UML stdio-console

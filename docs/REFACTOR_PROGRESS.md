@@ -1,9 +1,9 @@
 # Refactor progress
 
-## Kernarium iOS application prototype (2026-08-14)
+## Kernarium iOS application prototype (2026-08-15)
 
 The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
-slices and boots a 2 GiB UML guest by default from a selected Documents EROFS
+slices and boots a 1.5 GiB UML guest by default from a selected Documents EROFS
 image. Device and Simulator both default to all processors reported by iOS; a
 settings sheet persists bounded vCPU, RAM, overlay-size, and rootfs choices for
 the next launch. Its basic SwiftUI `ContentView` owns a safe-area
@@ -22,11 +22,11 @@ not create or activate disk-backed swap.
 Both iOS targets and default 16 KiB macOS integration consume the exact same
 canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. iOS carries
 them in the framework's signed `__TEXT`; macOS embeds them through its existing
-unsigned CLI path. Both iOS targets use the same scalable 59.75--62 GiB native
-window for the 2 GiB default guest and every product uses the 128 TiB sparse
+unsigned CLI path. Both iOS targets use the same scalable 60.3125--62 GiB native
+window for the 1.5 GiB default guest and every product uses the 128 TiB sparse
 software-MMU task range. The native window is guest RAM plus a page-rounded
-one-eighth auxiliary allowance with a 32 MiB floor; 2 GiB therefore receives
-exactly 256 MiB. macOS exercises the same scalable-window derivation,
+one-eighth auxiliary allowance with a 32 MiB floor; 1.5 GiB therefore receives
+exactly 192 MiB. macOS exercises the same scalable-window derivation,
 relocation, and native-hole handling at a 96 TiB base. It retains the
 standalone app's 8 GiB and ten-vCPU defaults, which derive a 9 GiB active
 window. The common kernel enables zswap by default with zstd; normal desktop
@@ -48,7 +48,7 @@ a VNC-captured lock screen, and enters direct CGL/IOSurface/Metal presentation
 without claiming a host codec backend. A cold 1290x2796, 288-DPI run also
 proved stock greetd starts once, Phoc accepts the EDID, fbcon owns Virtio-GPU,
 and the guest exposes 64 standard VTs, four serial lines, and no legacy PTYs.
-The configurable 2 GiB app also cold-booted Phosh at 1320x2580 and 288 DPI on
+A 2 GiB configured run also cold-booted Phosh at 1320x2580 and 288 DPI on
 the iPhone 17 Pro Max Simulator, reached graphical target, started stock greetd
 and its Phrog session, and presented through the native Metal path.
 Extended Virtual Addressing and file sharing remain project-owned metadata.
@@ -59,7 +59,11 @@ Exactly one persistent host thread named `uml-vcpu-N-carrier` owns each vCPU,
 including vCPU0; task creation no longer creates pthreads. Linux task contexts
 migrate on 128 KiB kernel stacks, host-stop wakes carriers cooperatively, and
 IRQ-enabled spin checkpoints service pending IPIs. The shipped scheduler policy
-is 100 Hz with `NO_HZ_IDLE`.
+is 100 Hz with `NO_HZ_IDLE`. Kernarium keeps its launcher on the existing Swift
+worker, masks the process-directed early `ITIMER_REAL` signal on application
+workers, and lets only vCPU0's carrier unmask `SIGALRM` during calibration.
+`CONFIG_PRINTK_TIME` supplies timestamps to both VT and host-serial kernel
+output.
 
 A full no-systemd gadgets requalification on the common architecture scored
 96/565 single/multi, versus the final pre-change 96/567. Focused Clang/Object
@@ -85,15 +89,19 @@ delta ranged from -1.23% to -35.36%; 4 KiB took 17.53% longer with only +0.35%
 peak-resident-size movement. Both guests shut down cleanly. G148 records the
 exact hashes and the ordered, active-host, single-observation limitation.
 
-The earlier 1 GiB normal boots passed on Simulator and the connected physical
-iPad. Simulator reached four CPUs; the standard-signed Release app ran without
-LLDB on the iPad and brought all six reported CPUs online. Both reached DHCP,
-EROFS/ext4 state, SDDM, automatic login, and direct virgl/ANGLE/Metal
-presentation without the former RCU stall. The current 2 GiB iPhone 17 Pro Max
-Simulator boot additionally proves the EROFS/ext4 pivot, standard VT/fbcon,
-stock greetd, graphical target, Phrog session, and native Metal presentation.
-Current macOS qualification proves the full Phosh service set and its sparse
-rendered lock screen after the virgl VA-probe fix. Physical Aquarium remains intentionally outside acceptance; the
+Five consecutive standard-signed Release launches of `phosh.erofs` on the
+physical iPad mini 6 passed at 1.5 GiB and six vCPUs. Each emitted timestamped
+printk records, brought every CPU online, completed DHCP and the EROFS/ext4
+pivot, started stock greetd, reached graphical target, opened its session, and
+reported direct virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The
+captured consoles have no panic, POSIX-signal failure, allocator-corruption,
+or OOM marker, and the device produced no new crash report. The host stopped
+the runs after stable presentation, so orderly guest shutdown is not claimed;
+RAM stayed at 1.5 GiB because no OOM occurred. The current 2 GiB iPhone 17 Pro
+Max Simulator boot remains additional EROFS/ext4, VT/fbcon, stock-greetd,
+Phrog, and native Metal evidence. Current macOS qualification proves the full
+Phosh service set and its sparse rendered lock screen after the virgl VA-probe
+fix. Physical Aquarium remains intentionally outside acceptance; the
 removed disk-swap workaround is not part of the product. The earlier 2 GiB
 Simulator WebGL 2 Aquarium result remains dated graphics compatibility
 evidence.

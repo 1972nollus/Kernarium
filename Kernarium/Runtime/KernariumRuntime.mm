@@ -20,6 +20,8 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <pthread.h>
+#include <signal.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -51,6 +53,55 @@ void uml_slirp_net_destroy(void*) noexcept;
 }
 
 namespace {
+
+[[noreturn]] void guestTimerMaskFailure() noexcept
+{
+    static constexpr char message[] =
+        "Kernarium: unable to isolate the UML timer signal\n";
+    (void)::write(STDERR_FILENO, message, sizeof(message) - 1U);
+    _exit(127);
+}
+
+void blockGuestTimer(sigset_t* previous) noexcept
+{
+    sigset_t blocked;
+    if (sigemptyset(&blocked) != 0 ||
+        sigaddset(&blocked, SIGALRM) != 0 ||
+        ::pthread_sigmask(SIG_BLOCK, &blocked, previous) != 0)
+        guestTimerMaskFailure();
+}
+
+class ScopedGuestTimerBlock final {
+public:
+    ScopedGuestTimerBlock() noexcept
+    {
+        blockGuestTimer(&previous_);
+    }
+
+    ~ScopedGuestTimerBlock()
+    {
+        if (::pthread_sigmask(SIG_SETMASK, &previous_, nullptr) != 0)
+            guestTimerMaskFailure();
+    }
+
+    ScopedGuestTimerBlock(const ScopedGuestTimerBlock&) = delete;
+    ScopedGuestTimerBlock& operator=(const ScopedGuestTimerBlock&) = delete;
+
+private:
+    sigset_t previous_ {};
+};
+
+/*
+ * The early UML calibration timer uses Darwin's process-directed ITIMER_REAL.
+ * Initialize the framework before the application main so UIKit, Swift
+ * concurrency, and their descendants inherit SIGALRM blocked. The dedicated
+ * vCPU0 carrier is created with that mask and explicitly unblocks SIGALRM for
+ * the short interval before the kernel switches to cooperative timers.
+ */
+__attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
+{
+    blockGuestTimer(nullptr);
+}
 
 std::atomic_bool runtimeActive;
 std::mutex activeEmulatorMutex;
@@ -690,6 +741,11 @@ extern "C" int kernarium_runtime_run(
     uint32_t guestProcessorCount)
 {
     try {
+        /* A pre-existing Swift worker need not inherit the initial main-thread
+         * mask. Keep the launcher itself ineligible for ITIMER_REAL throughout
+         * the managed run; every runtime worker it creates inherits this mask.
+         */
+        ScopedGuestTimerBlock guestTimerBlock;
         ActiveRuntime active;
         if (view == nullptr || !usableFile(rootfsPath) ||
             !usableFile(overlayPath) ||

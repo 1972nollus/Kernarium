@@ -18,6 +18,6 @@ order	filename	stable_patch_id	sha256	subject
 13	0010-smack-use-the-connected-socket-for-stream-sendmsg-ch.patch	1112b0d3c164b1a4d13af588b3ff640f7698c234	7040c53ff4fb2c61552d74475d5047adba0715bf15a544e42e129429425260de	smack: use the connected socket for stream sendmsg checks
 14	0011-virtio-uml-use-a-64-bit-DMA-mask-for-vhost-user-tran.patch	4293e280ee408165ae454f97819e652e00906581	82f973bb4990edc77c504a84e33b7e71a63df5ef1b19fa7583d556c9c0591b3f	virtio: uml: use a 64-bit DMA mask for vhost-user transports
 15	0012-uml-use-one-scalable-Darwin-native-address-profile.patch	8ee25be2662de308f20fb83536fcea368f7a2fe3	38b0e2a71453bf18c007753ce6dfe6e031e4758f1e5c5626531cb22b56c71769	uml: use one scalable Darwin native address profile
-16	0013-uml-run-Darwin-guests-on-fixed-vCPU-carriers.patch	5b269b71cb39dde4633c1f54a623deaef28d2aa1	c338e8e419e964410afffcaf4db65977a7b26c87d21c724d70f52998e56134a7	uml: run Darwin guests on fixed vCPU carriers
+16	0013-uml-run-Darwin-guests-on-fixed-vCPU-carriers.patch	12c17640c56e86bebe4ba5aec3db6e088458074a	fabac713838e1fef29f9e0e188864d71fb63aa03d9bd29c5c950f030bd4a0107	uml: run Darwin guests on fixed vCPU carriers
 17	0014-uml-wake-fixed-vCPU-carriers-for-host-stop.patch	f470dc1a66b29b282c4107c7f718bb1a04f38ed3	6c4cb2b2e8630ff52b18d5f2861f98ddb2ae34b2aa7335f781317929a077eddf	uml: wake fixed vCPU carriers for host stop
 18	0015-uml-service-cross-CPU-work-on-fixed-carriers.patch	0b3f2d0e9d422d1d75df86b4fc832e07b1832a7c	33a19377458d0e21593d733d15aaa8f563f0703dad131b92098633c2ad7f3dd3	uml: service cross-CPU work on fixed carriers
