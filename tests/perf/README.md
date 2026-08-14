@@ -35,6 +35,39 @@ The payload is already present in `rootfs.erofs`; the runner neither downloads
 it nor opts into an upload. No host-network grant is part of this local
 campaign.
 
+Kernarium exposes the same direct-shell policy as an opt-in physical-device
+campaign. Install the Release app and place the authenticated `rootfs.erofs`
+in its Documents directory before launching it with the environment flag:
+
+```sh
+xcrun devicectl device process launch \
+  --device DEVICE-UDID \
+  --environment-variables '{"KERNARIUM_GEEKBENCH":"1"}' \
+  --console --timeout 7200 com.imxieyi.Kernarium
+```
+
+The app recreates its normal 8 GiB temporary ext4 disk, uses it as the upper
+and work storage for an OverlayFS over the EROFS image, mounts only the kernel
+filesystems needed by the payload, and runs Geekbench from the PID-1 shell.
+It does not start systemd. The physical-device application policy still owns
+guest RAM and vCPU count; on the current 4 GiB acceptance iPad those are 1 GiB
+and the device's physical processor count. A successful console contains both
+`KERNARIUM_GEEKBENCH_READY` and `KERNARIUM_GEEKBENCH_END:0`, followed by a
+clean guest poweroff and app exit.
+
+Use a separate, explicitly diagnostic launch for Instruments sampling. For
+example, attach short Time Profiler windows to named workload phases while the
+console remains visible:
+
+```sh
+xcrun xctrace record --template 'Time Profiler' \
+  --device DEVICE-UDID --attach Kernarium --time-limit 15s \
+  --output .build/results/kernarium-geekbench-clang.trace
+```
+
+Attaching Instruments perturbs the measured process, so scores from that run
+are workload context rather than acceptance evidence.
+
 For a diagnostic run created with `--profile-dir`, keep analysis outside the
 scored comparison and use the checked-in readers directly:
 

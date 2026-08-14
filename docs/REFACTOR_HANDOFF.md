@@ -1,6 +1,6 @@
 # Refactor handoff
 
-## Kernarium iOS application prototype checkpoint (2026-08-13)
+## Kernarium iOS application prototype checkpoint (2026-08-14)
 
 `Kernarium/Kernarium.xcodeproj` boots the maintained UML kernel from a basic
 SwiftUI `ContentView` into the production Virtio-GPU/virglrenderer command path.
@@ -89,6 +89,22 @@ login path passed for more than 90 seconds without the former RCU stall. The
 existing device rootfs was preserved. Aquarium is too heavy for this 1 GiB
 physical guest, so no physical Aquarium result or swap-based workaround is
 part of the current checkpoint.
+
+The same physical app also ran the image-local Geekbench 6.7.1 payload
+from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows
+covered eight completed single-core workloads. The user stopped the run during
+the unfinished memory-pressure-heavy Photo Filter phase, so no aggregate score
+or multi-core result is claimed and its three traces are excluded. Retained
+captures put non-carrier CPU at or below 0.040%, scheduled more than 99.6% of
+active work on A15 performance cores, and reported Nominal thermal state at the
+first and last retained windows. File Compression, Asset Compression, Text
+Processing, and Object Remover were predominantly gadget assembly; HTML5 and
+Clang instead expose the existing code-change link reset and cache/link churn.
+Object Detection's only large non-gadget pocket was native EROFS zstd demand
+decompression. The next experiments are bounded active-link invalidation,
+folded scalar register-offset address generation, and a profile-keyed
+MTE-disabled vector-pair gadget; none is accepted from unmatched diagnostic
+sampling alone.
 
 The earlier 2 GiB Simulator run remains dated graphics evidence: it emitted
 `UML_AQUARIUM_OK` with WebGL 2 over OpenGL ES 3.0 and ANGLE/virgl. That result

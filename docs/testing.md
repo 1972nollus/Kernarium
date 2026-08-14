@@ -769,6 +769,14 @@ separate integration workflows and is not part of performance measurement.
 See [`../tests/perf/README.md`](../tests/perf/README.md) for profiling and probe
 commands. Full Geekbench scoring remains a separate manual campaign.
 
+The opt-in Kernarium physical-device equivalent is selected only by launching
+the installed app with `KERNARIUM_GEEKBENCH=1`. It runs the same image-local
+payload without systemd, using the app's recreated 8 GiB ext4 disk as the
+OverlayFS upper storage. Its console completion contract is
+`KERNARIUM_GEEKBENCH_READY`, `KERNARIUM_GEEKBENCH_END:0`, clean guest poweroff,
+and status-zero app exit. The exact `devicectl` and physical Time Profiler
+commands are documented in [`../tests/perf/README.md`](../tests/perf/README.md).
+
 G107's bounded successor fetch is selected by the default-on
 `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. When changing the
 mechanism, use separate explicit OFF and ON build directories. Keep translation sharing ON, x8/x9 carry

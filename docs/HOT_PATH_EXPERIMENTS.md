@@ -7982,3 +7982,106 @@ the intrusive address record is `current-full-4k-high-va.vmmap.txt`, SHA-256
 `7608fcc8cc484f49c8fbf9737c7a121ec3c8c959abf9386a8f73dbb57d8888ac`.
 The benchmarked implementation predates the later test and documentation-only
 commit that records this evidence.
+
+## G147: physical-iPad completed-workload profile
+
+Recorded 2026-08-14 on the connected iPad mini (6th generation), iPadOS 18.5,
+from the Release Kernarium app with a standard development signature and no
+debugger. The app used the canonical 16 KiB kernel, gadgets engine, 1 GiB of
+guest memory, all six physical CPU cores as vCPUs, the existing EROFS image,
+and its recreated 8 GiB ext4 OverlayFS disk. The opt-in
+`KERNARIUM_GEEKBENCH=1` bootstrap kept PID 1 as `/bin/sh`, mounted only the
+filesystems required by the local Geekbench 6.7.1 payload, and invoked
+it with `--no-upload`; systemd and the desktop were never started.
+
+The run was stopped during Photo Filter at the user's direction because that
+unfinished phase was dominated by 1 GiB guest-memory pressure, which is not an
+optimization target. The forwarded interrupt ended the app with status 130
+and no core dump. Thirteen preceding single-core workloads had completed, but
+Photo Filter produced no score and the multi-core phase never began, so this
+campaign has **no aggregate Geekbench score**. The three Photo Filter captures
+(`009`, `010`, and `011`) are excluded from every result below. The completed
+workload scores were File Compression 108, Navigation 181, HTML5 Browser 75,
+PDF Renderer 95, Photo Library 110, Clang 55, Text Processing 49, Asset
+Compression 80, Object Detection 99, Background Blur 90, Horizon Detection
+55, Object Remover 125, and HDR 79.
+
+Eight physical-device Time Profiler windows cover only workloads that finished.
+Percentages are mutually exclusive top-of-stack weights over active app
+samples; the small unlisted remainder is system-library or unclassified work.
+
+| Trace / completed workload | Active carrier CPU | gadget assembly | emulator C++ | native guest kernel | non-carrier CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 001 File Compression | 10.109 s | 98.89% | 0.39% | 0.03% | 0.030% |
+| 002 HTML5 Browser | 10.093 s | 91.42% | 7.00% | 0.14% | 0.010% |
+| 003 Clang | 15.102 s | 78.69% | 19.61% | 0.04% | 0.026% |
+| 004 Clang, later window | 15.102 s | 77.70% | 20.49% | <0.01% | 0.026% |
+| 005 Text Processing | 15.108 s | 95.54% | 3.47% | 0.04% | 0.033% |
+| 006 Asset Compression | 10.108 s | 98.60% | 0.32% | <0.01% | 0.010% |
+| 007 Object Detection | 10.397 s | 73.93% | 0.55% | 23.03% | 0.019% |
+| 008 Object Remover | 10.094 s | 98.58% | 0.39% | 0.01% | 0.040% |
+
+More than 99.6% of active samples in each retained window were scheduled on
+the A15 performance cores. The first and last retained traces both report a
+Nominal thermal state. Non-carrier CPU never exceeded 0.040%, so UIKit, Metal,
+input, networking, app lifecycle, and host carrier scheduling are excluded as
+material explanations for the measured execution rate. This agrees with
+G145's macOS proof that the common persistent-carrier architecture is not the
+performance problem.
+
+The finished captures rank the next investigations as follows:
+
+1. **Code-change link reset.** HTML5 charges 4.94% directly to
+   `GadgetExecutor::prepare_cache`. On every same-generation code change,
+   `ProgramCache::invalidate_links()` currently scans and resets all direct
+   and indirect records accumulated by that executor. V8 makes this visible.
+   First instrument change frequency and active-versus-allocated populations;
+   then test a bounded active-record index that resets every live activation
+   without scanning historical inactive records. G141's exact requirement to
+   clear all active direct and indirect links before validation remains
+   non-negotiable, and no branch-gadget hot-path check should be added.
+2. **Clang cache/link churn.** The independent Clang windows repeat the same
+   19.61%/20.49% C++ share. Direct `LinkRecord` unordered-map insertion alone
+   is 4.05%/3.96%; `Builder::build`, activate/deactivate, decode, cache lookup,
+   and block entry form the remainder. This reproduces G143 on physical iOS
+   and is not a new platform cost. Instrument record creation, activation, and
+   reuse before choosing another stable-address container; G144's four-way
+   slab replacement already regressed representative Clang 52 to 49 and stays
+   rejected.
+3. **Scalar register-offset address formation.** File Compression is 98.89%
+   gadget assembly, and `scalar_other_load32u_x_1_r` alone is 12.47%. The
+   current gadget performs extension and optional scaling separately before
+   ADD. A low-risk focused arm can fold those operations into AArch64's
+   extended/shifted-register ADD forms, but it must first clear a dedicated
+   shifted-register-offset probe and then a matched File Compression A/B.
+4. **Profile-keyed untagged vector-pair gadgets.** `vector_pair_load128_0`
+   contributes 10.5% of Object Detection and 7.3% of Object Remover. Its
+   ordinary path loads and branches on `CpuState::mte_enabled` for every pair.
+   Production neither advertises nor enables MTE, while unit coverage does
+   exercise it. A code-generation-profile-keyed MTE-disabled symbol can avoid
+   that per-pair check without deleting the checked MTE path or weakening the
+   shared-cache profile key. The likely two-instruction saving still needs a
+   focused probe because its end-to-end upper bound may be below 2%.
+5. **Cold EROFS decompression is a separate artifact question.** Object
+   Detection's 23.03% native guest-kernel share resolves principally to
+   `HUF_decompress4X1_usingDTable_internal` (14.45%) and
+   `FSE_decompress_wksp_bmi2` (4.39%). About 19.3% of that window is therefore
+   zstd demand decompression rather than emulator translation. A warm repeat
+   or matched LZ4/uncompressed-image experiment can quantify the storage/start
+   tradeoff; it is not evidence for changing the emulator CPU, MMU, carrier,
+   or iOS application layers.
+
+Text Processing, Asset Compression, and Object Remover are broad
+assembly-bound mixes rather than single host bottlenecks. Indexed half-precision
+FMLA is visible in Object Detection, but A15 lacks AFP and an unchecked arm
+must preserve dynamic FPCR.AH semantics; G144 also showed that a large generic
+FP run-fusion probe did not transfer to Asset Compression. It ranks below the
+four measured candidates above.
+
+Disposition: accept the profile as a diagnosis only. No product hot-path
+change is authorized by an intrusive, unmatched trace. Each candidate must
+pass a focused correctness/performance probe and matched representative A/B
+under the existing greater-than-2% prospective gate. Raw traces, XML exports,
+device and launch records, exact commands, score boundary, and the complete
+analysis are retained under
+`.build/results/kernarium-ipad-geekbench-20260814/`.

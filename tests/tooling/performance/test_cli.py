@@ -18,6 +18,12 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "perf"
 TOOLS = pathlib.Path(__file__).resolve().parents[3] / "tools"
+KERNARIUM_RUNTIME = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "Kernarium"
+    / "Runtime"
+    / "KernariumRuntime.mm"
+)
 RUNNERS = (
     "run_guest_geekbench.py",
     "run_guest_command_bench.py",
@@ -188,6 +194,49 @@ def verify_geekbench_direct_shell_contract() -> None:
         raise RuntimeError(
             "Geekbench must boot the direct shell before profiler/benchmark"
         )
+
+
+def verify_kernarium_geekbench_contract() -> None:
+    source = KERNARIUM_RUNTIME.read_text(encoding="utf-8")
+    declaration = "constexpr std::string_view geekbenchBootstrap"
+    start = source.index(declaration)
+    end = source.index(")krn\";", start)
+    bootstrap = source[start:end]
+
+    required_bootstrap = (
+        "/usr/sbin/mkfs.ext4 -F -q -m 0",
+        "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt",
+        "mount -t overlay overlay",
+        "pivot_root . .uml-lower",
+        "mount -t proc proc /proc",
+        "mount -t sysfs sysfs /sys",
+        "/opt/geekbench/release/geekbench6",
+        '\"$benchmark\" --no-upload',
+        "KERNARIUM_GEEKBENCH_READY",
+        "KERNARIUM_GEEKBENCH_END:%s",
+        "poweroff -f",
+    )
+    for token in required_bootstrap:
+        if token not in bootstrap:
+            raise RuntimeError(
+                f"Kernarium Geekbench bootstrap is missing {token!r}"
+            )
+    if "systemd" in bootstrap:
+        raise RuntimeError("Kernarium Geekbench bootstrap must not start systemd")
+
+    run_source = source[source.index('extern "C" int kernarium_runtime_run') :]
+    required_run_contract = (
+        'environmentEnabled("KERNARIUM_GEEKBENCH")',
+        "ConsoleBootMode::geekbench",
+        "ConsoleBridge consoleBridge {bootMode}",
+        "if (!geekbench)",
+        'arguments.emplace_back("systemd.unit=graphical.target")',
+    )
+    for token in required_run_contract:
+        if token not in run_source:
+            raise RuntimeError(
+                f"Kernarium Geekbench launch contract is missing {token!r}"
+            )
 
 
 def run_geekbench_shutdown_case(
@@ -437,6 +486,7 @@ def verify_core_class_launcher() -> None:
 def main() -> int:
     verify_offline_geekbench_contract()
     verify_geekbench_direct_shell_contract()
+    verify_kernarium_geekbench_contract()
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
     verify_performance_runner_shutdown_contract()

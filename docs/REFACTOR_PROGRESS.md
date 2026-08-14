@@ -1,6 +1,6 @@
 # Refactor progress
 
-## Kernarium iOS application prototype (2026-08-13)
+## Kernarium iOS application prototype (2026-08-14)
 
 The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
 slices and boots a 1 GiB UML guest from `Documents/rootfs.erofs`. Simulator
@@ -66,6 +66,17 @@ The existing device rootfs was preserved. Physical Aquarium is intentionally
 not run because the workload is too heavy for the 1 GiB guest; the removed
 disk-swap workaround is not part of the product. The earlier 2 GiB Simulator
 WebGL 2 Aquarium result remains dated graphics compatibility evidence.
+
+An opt-in physical no-systemd Geekbench launch also reached and completed 13
+single-core workloads before the user stopped it during Photo Filter; that
+unfinished memory-pressure phase is excluded and no aggregate or multi-core
+score is claimed. Eight retained Time Profiler windows put non-carrier work at
+no more than 0.040%, with more than 99.6% of active samples on A15 performance
+cores and Nominal thermal state in the first and last retained traces. The
+dominant costs are existing gadget assembly plus HTML5/Clang cache-link churn;
+Object Detection separately exposes cold EROFS zstd decompression in the
+native guest kernel. Candidate hot-path changes remain unimplemented pending
+focused probes and matched representative A/Bs.
 
 ## Post-baseline JIT checkpoint (2026-08-12)
 

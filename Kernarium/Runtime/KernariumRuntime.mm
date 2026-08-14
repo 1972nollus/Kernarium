@@ -347,6 +347,56 @@ fi
 fail "systemd executable not found"
 )krn";
 
+constexpr std::string_view geekbenchBootstrap = R"krn(set -eu
+benchmark_fail()
+{
+    echo "KERNARIUM_GEEKBENCH_ERROR: $*" >&2
+    sync
+    poweroff -f
+}
+[ -b /dev/ubdb ] || benchmark_fail "overlay block device is unavailable"
+/usr/sbin/mkfs.ext4 -F -q -m 0 \
+    -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
+    benchmark_fail "ext4 format failed"
+mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || \
+    benchmark_fail "ext4 mount failed"
+mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || \
+    benchmark_fail "overlay workspace failed"
+mount -o bind / /mnt/lower || benchmark_fail "EROFS lower bind failed"
+mount -t overlay overlay \
+    -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
+    /mnt/root || benchmark_fail "overlay mount failed"
+mount -t devtmpfs devtmpfs /mnt/root/dev || \
+    benchmark_fail "devtmpfs mount failed"
+mkdir -p /mnt/root/.uml-lower || benchmark_fail "old-root directory failed"
+cd /mnt/root || benchmark_fail "new-root chdir failed"
+pivot_root . .uml-lower || benchmark_fail "pivot_root failed"
+mount -t proc proc /proc || benchmark_fail "proc mount failed"
+mount -t sysfs sysfs /sys || benchmark_fail "sysfs mount failed"
+mkdir -p /run /tmp
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || \
+    benchmark_fail "run tmpfs mount failed"
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || \
+    benchmark_fail "temporary tmpfs mount failed"
+benchmark=/opt/geekbench/release/geekbench6
+[ -x "$benchmark" ] || benchmark_fail "Geekbench payload is unavailable"
+export HOME=/root
+echo "KERNARIUM_GEEKBENCH_READY"
+set +e
+"$benchmark" --no-upload
+benchmark_rc=$?
+printf '\nKERNARIUM_GEEKBENCH_END:%s\n' "$benchmark_rc"
+sync
+poweroff -f
+exit "$benchmark_rc"
+)krn";
+
+enum class ConsoleBootMode {
+    systemd,
+    aquarium,
+    geekbench,
+};
+
 class ActiveRuntime final {
 public:
     ActiveRuntime()
@@ -407,7 +457,7 @@ public:
 
 class ConsoleBridge final {
 public:
-    explicit ConsoleBridge(bool aquarium)
+    explicit ConsoleBridge(ConsoleBootMode bootMode)
     {
         int descriptors[2] {-1, -1};
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
@@ -433,7 +483,7 @@ public:
                 std::string(std::strerror(error)));
         }
         try {
-            relay_ = std::thread([host, aquarium] {
+            relay_ = std::thread([host, bootMode] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
                 bool bootstrapDelivered = false;
@@ -467,9 +517,13 @@ public:
                                 observed.erase(0, observed.size() - 1024U);
                             if (observed.find(shellReady) != std::string::npos) {
                                 std::string bootstrap;
-                                if (aquarium)
+                                if (bootMode == ConsoleBootMode::aquarium)
                                     bootstrap = "KERNARIUM_AQUARIUM=1\n";
-                                bootstrap.append(kdeSystemdBootstrap);
+                                if (bootMode == ConsoleBootMode::geekbench) {
+                                    bootstrap.append(geekbenchBootstrap);
+                                } else {
+                                    bootstrap.append(kdeSystemdBootstrap);
+                                }
                                 bootstrap.push_back('\n');
                                 std::string_view remaining {bootstrap};
                                 while (!remaining.empty()) {
@@ -493,12 +547,13 @@ public:
                                     }
                                 }
                                 bootstrapDelivered = remaining.empty();
-                                if (bootstrapDelivered) {
-                                    std::fputs(
-                                        "Kernarium: systemd bootstrap "
-                                        "delivered\n",
-                                        stderr);
-                                }
+                                if (bootstrapDelivered)
+                                    std::fprintf(
+                                        stderr,
+                                        "Kernarium: %s bootstrap delivered\n",
+                                        bootMode == ConsoleBootMode::geekbench
+                                            ? "Geekbench"
+                                            : "systemd");
                                 observed.clear();
                             }
                         }
@@ -555,6 +610,12 @@ bool usableFile(const char* path)
     return std::filesystem::is_regular_file(path, error) && !error;
 }
 
+bool environmentEnabled(const char* name)
+{
+    const char* value = std::getenv(name);
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
 } // namespace
 
 extern "C" int kernarium_runtime_run(
@@ -602,14 +663,23 @@ extern "C" int kernarium_runtime_run(
             uml::input::virtio::DeviceKind::keyboard, width, height);
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
-        const char* aquariumEnvironment =
-            std::getenv("KERNARIUM_WEBGL_AQUARIUM");
-        const bool aquarium = aquariumEnvironment != nullptr &&
-            aquariumEnvironment[0] != '\0' &&
-            aquariumEnvironment[0] != '0';
-        ConsoleBridge consoleBridge {aquarium};
+        const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
+        const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
+        if (aquarium && geekbench) {
+            std::fputs(
+                "Kernarium: Aquarium and Geekbench modes are mutually "
+                "exclusive\n",
+                stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        const ConsoleBootMode bootMode = geekbench
+            ? ConsoleBootMode::geekbench
+            : aquarium ? ConsoleBootMode::aquarium : ConsoleBootMode::systemd;
+        ConsoleBridge consoleBridge {bootMode};
         if (aquarium)
             std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);
+        if (geekbench)
+            std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
         std::vector<std::string> arguments {
             "uml-kernarium",
             "--execution-engine=gadgets",
@@ -617,7 +687,6 @@ extern "C" int kernarium_runtime_run(
             "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",
             "console=tty0",
-            "systemd.unit=graphical.target",
             consoleBridge.kernelArgument(),
             "ubd1=" + std::string(overlayPath),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
@@ -627,6 +696,8 @@ extern "C" int kernarium_runtime_run(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
                 std::to_string(uml::input::virtio::protocol::deviceId),
         };
+        if (!geekbench)
+            arguments.emplace_back("systemd.unit=graphical.target");
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
             .struct_size = sizeof(uml_emulator_config),
