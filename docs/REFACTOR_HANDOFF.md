@@ -34,8 +34,8 @@ executable publication, RW-to-RX transition, LLDB, or JIT entitlement. macOS
 exercises the same range, window derivation, relocation, and exclusion-hole
 handling while retaining its 8 GiB and ten-vCPU defaults; its 1 GiB auxiliary
 allowance produces a 9 GiB active window starting at 96 TiB. The separately
-tested macOS 4 KiB compatibility profile retains its necessarily distinct compile-time
-page-profile artifact.
+tested macOS 4 KiB compatibility profile retains its necessarily distinct
+compile-time page-profile artifact.
 
 The Darwin port now owns exactly one persistent host carrier for each
 configured vCPU, including vCPU0. Linux tasks keep stackful context on 128 KiB
@@ -54,6 +54,20 @@ leaf. The remaining Clang link churn and Object Detection SDOT/vector-load
 hotspots match the pre-change gadget profile. Two new SDOT stream-load arms
 were removed after only 0.00% and 0.39% focused-probe gains. The result does not
 justify a macOS-only memory, address-space, or thread-model shortcut.
+
+A separate clean full run of the current 4 KiB compatibility product scored
+**92/417** single/multi. Against the current 16 KiB result above, that is
+**-4.17%/-26.19%**; against the older G35 4 KiB result at 79/416, it is
+**+16.46%/+0.24%**, though the historical comparison crosses substantial
+source and harness changes. A separate unscored `vmmap` pass proved that this
+4 KiB product relocated its executable kernel to `0x600000000000` (96 TiB)
+and mapped the 8 GiB physical backing in the same high native window rather
+than directly above 64 GiB. The scored run was untouched by inspection and
+powered off cleanly. The current page-profile comparison has one observation
+per profile; its wider multi-core gap is therefore evidence for the current
+performance boundary, not a causal attribution. The final canonical 4 KiB
+workflow passed 53/53 tooling checks and 5/5 fast guest integrations; the
+focused loader ASan/UBSan gate and the 16 KiB five-guest set also passed.
 
 The common kernel also builds zswap in, enables it by default, and selects zstd
 while retaining zram with zstd. Zswap requires backing swap and allocates no

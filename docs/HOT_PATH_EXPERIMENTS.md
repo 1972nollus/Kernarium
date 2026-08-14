@@ -7904,3 +7904,81 @@ threading, address-space, or memory shortcut is justified. Raw console and
 sample reports are under
 `.build/results/gadgets-ios-architecture-20260814/`; the production emulator
 was rebuilt from the accepted source after both rejected arms.
+
+## G146: 4 KiB high-address Geekbench requalification
+
+Recorded 2026-08-14 from source revision
+`7a1640e07f497e8e0181dc163d251f011f5c4404`. The canonical
+`macos-integration-4k` configuration rebuilt Linux 6.18.41 with
+`CONFIG_PAGE_SHIFT=12` and rebuilt the gadgets product with a 4 KiB guest-page
+contract. The emulator SHA-256 was
+`0fe958889342e1c2ce71b103d6d4ab14a17dcec7d2e467d8244eaf2a1fd45361` and
+the embedded 4 KiB `vmlinux` SHA-256 was
+`483acc8d2fad30728fd0e283e5cbbce91f5e8c3cb675dea4e026a8b3fed7eb40`.
+Production inputs matched the named revision; evolving test-only fixture edits
+in the worktree were not linked into that product. The run used ten guest
+vCPUs, 8 GiB, the local Geekbench 6.7.1 payload with `--no-upload`, and
+the direct tmpfs OverlayFS PID-1 shell; systemd and desktop services were never
+started. The host was on AC power and the clean scored process was not sampled,
+profiled, or inspected.
+
+The complete run finished in **53m21s**, emitted zero for the benchmark command
+and emulator exit statuses, powered off cleanly, and scored **92 single-core /
+417 multi-core**. G145's current 16 KiB run used the same guest size, vCPU
+count, engine, benchmark payload, and no-systemd flow. Its 96/565 result is the
+current page-profile comparison:
+
+| Result | Current 4 KiB | Current 16 KiB | 4 KiB delta |
+| --- | ---: | ---: | ---: |
+| Single-core | 92 | 96 | -4.17% |
+| Single-core integer | 82 | 85 | -3.53% |
+| Single-core floating point | 114 | 119 | -4.20% |
+| Multi-core | 417 | 565 | -26.19% |
+| Multi-core integer | 350 | 487 | -28.13% |
+| Multi-core floating point | 579 | 744 | -22.18% |
+| Elapsed wall time | 53m21s | 48m48s | +9.32% |
+
+The multi-core movement is not uniform host throttling: Ray Tracer is 937
+versus 948 (-1.16%), while File Compression is 362 versus 590 (-38.64%),
+Navigation is 379 versus 1198 (-68.36%), and Photo Filter is 277 versus 509
+(-45.58%). This shape is consistent with the 4 KiB compatibility build's
+required private 4 KiB shadows on a 16 KiB Darwin host, quarter-page stack
+reconciliation, and shadow copy/flush boundaries, but one observation per
+current profile does not prove that mechanism caused every score difference.
+
+Against the historical G35 4 KiB result at 79/416, the current result is
+**+16.46% single-core and +0.24% multi-core**, and elapsed time improved from
+3,302 to 3,201 seconds (-3.06%). That comparison is historical rather than a
+strict A/B because it crosses later source, rootfs, and launcher changes and
+replaces the old upload flow with `--no-upload`.
+
+Address placement was checked in a separate deliberately unscored run because
+`vmmap` suspends the target. Its live ranges began executable kernel mappings
+at `0x600000000000` (96 TiB) and mapped the 8 GiB physical backing at
+`0x600001e08000-0x600200000000`. Thus both the kernel and guest backing used
+the current high native window rather than the obsolete placement directly
+above 64 GiB. The untouched scored log independently reports a Normal-zone
+ceiling of `0x00006001ffffffff`.
+
+The rebuild also exposed two stale validation assumptions rather than product
+failures. The embedded-loader fixture still reserved the 48 GiB ELF link
+address instead of the relocated runtime address, and the guest smoke oracle
+knew only the original crypto/atomics HWCAP subset even though later accepted
+runtime changes advertise additional host-gated features. The loader fixture
+now derives and reserves the active native window, while the guest smokes check
+the complete current `AT_HWCAP`/`AT_HWCAP2` contract and keep the kernel's
+separate `/proc/cpuinfo` subset explicit. The first canonical workflow attempt
+is rejected because all three engine smokes stopped at that stale oracle before
+their workloads. After correction, `check-integration-4k` passed all 53 tooling
+checks and all five fast guest integrations in one uninterrupted workflow.
+The same five fast guest cases passed at 16 KiB, and
+`check-loader-asan-ubsan` passed its focused 1/1 loader gate.
+
+Raw evidence is retained under
+`.build/results/gadgets-ios-architecture-20260814/`. The scored console is
+`current-full-4k-nosystemd-clean.log`, SHA-256
+`78bc6888aa30524eef064d800d7bbba8037fde31cadb1adee5f858af18182598`;
+the intrusive address record is `current-full-4k-high-va.vmmap.txt`, SHA-256
+`7608fcc8cc484f49c8fbf9737c7a121ec3c8c959abf9386a8f73dbb57d8888ac`.
+The benchmarked implementation predates the later test and documentation-only
+commit that records this evidence.

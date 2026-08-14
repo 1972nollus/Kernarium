@@ -48,6 +48,15 @@ activation+synchronization below 1.2% of accumulated guest+syscall time. Two
 individual SDOT stream-load reductions stopped at 0.00% and 0.39% probe gains
 and were removed; no macOS-only recovery path is retained.
 
+The corresponding clean full 4 KiB compatibility run scored 92/417. That is
+-4.17%/-26.19% against the current 16 KiB 96/565 and +16.46%/+0.24% against
+the historical G35 4 KiB 79/416; the latter is not a strict A/B. A separate
+unscored live mapping check placed the executable kernel at 96 TiB and its
+8 GiB physical backing in the same high native window, not directly above
+64 GiB. The scored process was not profiled or suspended and shut down cleanly.
+Final 4 KiB acceptance passed 53/53 tooling checks and 5/5 fast guest cases;
+the focused loader sanitizer gate and the 16 KiB 5/5 guest set also passed.
+
 Current 1 GiB normal boots pass on Simulator and the connected physical iPad.
 The Simulator reached four CPUs, DHCP, EROFS/ext4 state, SDDM, automatic login,
 and direct virgl/ANGLE/Metal presentation. The standard-signed Release app ran
