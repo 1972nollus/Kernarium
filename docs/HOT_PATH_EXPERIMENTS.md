@@ -8279,3 +8279,47 @@ A/B under the existing greater-than-2% prospective gate. Raw traces, XML
 exports, launch records, exact commands, hashes, and the live-console boundary
 are documented under
 `.build/results/kernarium-ipad-targeted-20260814/`.
+
+## G150: physical-iPad 1.5 GiB fit check
+
+Recorded 2026-08-14 on the G147/G149 iPad mini (6th generation), iPadOS 18.5.
+The standard-signed Release app was built from base
+`89e3bf411a4352e09b53dbee6957cb8a215127bb` plus the worktree's in-progress
+configurable launch/settings changes; this measurement does not commit or
+attribute those source changes. Its executable SHA-256 was
+`a75a7e0f1b9ff71b71d021bb461e0a79d46c86e2049e72ccd33bc2cd2d15ee04`
+and embedded runtime SHA-256 was
+`589e7b4bca2568a765e4542eba276cfceb1665625e8e485924e8bc77ed4ce3df`.
+
+One unprofiled run selected Asset Compression, Background Blur, Horizon
+Detection, and HDR under the same no-systemd gadgets shell, six vCPUs, existing
+EROFS root, and recreated 8 GiB ext4 OverlayFS disk as G149. A command-line
+UserDefaults override supplied 1536 MiB without changing the persisted app
+setting. The guest confirmed `mem=1536M ncpus=6`, brought all CPUs online,
+reported 1,521,152 KiB available from 1,572,864 KiB during initialization, and
+Geekbench reported 1.46 GB.
+
+| Workload | 1.5 GiB score | Rate | G149 clean 1 GiB observations |
+| --- | ---: | ---: | ---: |
+| Asset Compression | 82 | 2.54 MB/s | 84 / 83 |
+| Background Blur | 96 | 0.40 images/s | 96 / 93 |
+| Horizon Detection | 115 | 3.57 Mpixels/s | 51 / 143 / 51 |
+| HDR | 76 | 2.22 Mpixels/s | 79 / 75 |
+
+The selected-workload summary was 86 single-core, 82 integer, and 94 floating
+point. Geekbench emitted `KERNARIUM_GEEKBENCH_END:0`; the guest powered down;
+Darwin UML reported `result=0 exitcode=0`; and the managed runtime returned
+zero. No guest OOM, iOS memory termination, or benchmark error occurred, so
+the requested fallback to a smaller guest was not taken. After every success
+marker, the operator closed the intentionally persistent idle SwiftUI process;
+the launch JSON's later signal 9 with no core dump is therefore not jetsam.
+
+The three stable-shaped workloads remain inside or immediately adjacent to
+G149's 1 GiB observations. Horizon 115 is between its earlier 51/143 modes and
+only 4.17% below the macOS reference at 120, reinforcing the existing
+adaptive-duration diagnosis. This single run establishes that the four
+requested workloads fit at 1.5 GiB on this device. It does not prove that
+additional guest memory improves emulator throughput or that a 1.5 GiB full
+desktop/Aquarium campaign fits. Exact launch arguments, installation and
+rootfs-preservation records, hashes, and the live-console boundary are under
+`.build/results/kernarium-ipad-1_5g-20260814/`.
