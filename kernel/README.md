@@ -18,10 +18,12 @@ tree is the build input and the omitted file is not reconstructed from Git.
 ## Latest verified replay (2026-08-14)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`39cf75ce83c5396d9f1540bf37c6a16a6c78d1cd`. A fresh authenticated replay,
+`2a353b36ac87801a020529f9348f6e5f6a05ebdf`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, and delta audit passed. The exact delta policy is 157 changed files
-with 6 outside the Darwin port. Topic 0015 replaces the former macOS/iOS split
+checks, and delta audit passed. The exact delta policy is 159 changed files
+with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
+available when the conflicting UML stdio console is disabled and makes the
+UML serial-line count configurable. Topic 0015 replaces the former macOS/iOS split
 with one scalable Darwin address mechanism, including the page-rounded
 one-eighth auxiliary allowance, 32 MiB floor, iOS low placement, and macOS high
 placement. Topic 0016 replaces per-task Darwin
@@ -140,6 +142,15 @@ the fixed vCPU carriers responsive while avoiding a 1 kHz compulsory wakeup on
 every CPU and suppressing the periodic tick entirely while a guest CPU is
 idle. Periodic ticks, `NO_HZ_FULL`, and the 250/300/1000 Hz choices are
 explicitly disabled in the canonical fragment.
+
+Every profile also uses the standard VT/fbcon stack with Virtio-GPU fbdev
+emulation and leaves the DRM log client off. The legacy UML stdio-console
+driver is omitted so it cannot collide with the VT tty major. Unix98 PTYs are
+allocated dynamically from devpts, the legacy BSD PTY bank is disabled, and
+only four UML serial lines are registered. `ttyS0` is the host-facing console;
+the current outer runtime has no Virtio-console device backend. Launchers keep
+`console=tty0` as the framebuffer console and add `console=ttyS0` for host
+logging.
 
 The page fragments also derive one 128 KiB Linux task-stack byte size: order 3
 for 16 KiB pages and order 5 for 4 KiB pages. Fixed carriers execute stackful

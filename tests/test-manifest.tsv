@@ -32,7 +32,7 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional	fragmented wire input, connection retry, notification, device rollback, and service startup preserve GPU ownership
 -	gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional	fragmented and malformed frames adopt ancillary descriptors once, close them on every failure path, and preserve retryability without a listener
 -	gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional	partial header and payload shutdown require the in-process service's separately owned endpoint wake rather than timeout polling
--	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove mutating command atomicity, retry, and direct GPU presentation without CPU readback
+-	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove mutating command atomicity, retry, checked EDID mode and density, and direct GPU presentation without CPU readback
 -	gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional	post-listen event-thread construction failure releases the VNC server and permits immediate retry
 -	vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
 -	native-4k-shadow-mmu	tests/unit/arm64	unit	conditional	4 KiB-only native shadow-MMU coverage
@@ -602,9 +602,9 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
 -	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
 -	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	provision-time local artifact validation, authenticated release installation, tamper rejection, and atomic no-replace publication
--	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	pins the raw EROFS device, filesystem type, and launcher-owned kernel arguments
+-	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	pins the raw EROFS device, filesystem type, launcher-owned kernel arguments, and Kernarium Phosh overlay selection of stock greetd/Phrog by whiteouting image-owned tty0 getty and mutually exclusive development phosh-service enablement without an ordering workaround
 -	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only raw EROFS mapping, protected kernel arguments, and overlay runner self-test
--	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher proves native display default and explicit VNC compatibility mode
+-	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher proves native display default, explicit VNC compatibility mode, and optional Virtio-GPU density forwarding
 -	chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained	host-only metrics parser self-test
 -	network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained	keeps host-network probes out of the deterministic SLiRP smoke
 -	jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test

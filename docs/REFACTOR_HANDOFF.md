@@ -13,8 +13,12 @@ Mesa's shader-only `VAProfileNone` probe; actual codec capabilities and frame
 commands remain disabled.
 
 The app starts one 2 GiB guest by default after its safe-area view has a real
-size, uses one guest pixel per host point, and relays the kernel console to app
-stdout. Device and Simulator both default to all processors reported by iOS.
+size. It multiplies that point geometry by `UIScreen.nativeScale`, uses the
+resulting physical pixels for both the Metal drawable and Virtio-GPU preferred
+mode, and advertises an effective `96 * nativeScale` density through EDID so
+guest UI retains the host's logical point size. Touch coordinates are scaled
+into the same pixel space. Device and Simulator both default to all processors
+reported by iOS.
 A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
 RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
 filename for the next launch. The app recreates the sparse overlay disk on
@@ -97,6 +101,13 @@ bordered on older systems and use native circular Liquid Glass on iOS 26. A
 private iOS GLib/libslirp prefix supplies normal SLiRP networking, and the
 UIKit idle timer is disabled only for the managed guest lifetime.
 
+The common kernel now gives Virtio-GPU to standard VT/fbcon instead of the DRM
+log client. It omits the conflicting UML stdio-console driver and legacy BSD
+PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
+`ttyS0` is the host console because this emulator has no Virtio-console backend;
+Kernarium binds that serial endpoint to its stdout relay while `tty0` remains
+visible on the framebuffer.
+
 The earlier normal-boot validation used 1 GiB and deliberately omitted
 Aquarium. Simulator used four CPUs; a standard-signed Release app on the iPad
 used all six reported CPUs. Both reached DHCP, the EROFS/ext4 pivot, SDDM,
@@ -105,8 +116,21 @@ dated evidence and is not relabeled as a 2 GiB or Phosh device run. Current
 macOS Phosh validation runs the full service set, completes the GStreamer VA
 plugin scan without the former virgl context error, captures the rendered
 Phosh lock screen through VNC, and reaches direct CGL/IOSurface/Metal native
-presentation. No physical Aquarium result or swap-based workaround is part of
-the current checkpoint.
+presentation. A separate 1290x2796, 288-DPI cold boot proved fbcon, EDID, four
+serial devices, no legacy PTYs, and stock Phrog on greetd's first invocation.
+That investigation found the former first-start failure was a `SIGHUP` from
+the image-owned `tty0` autologin's `vhangup`, not a Phosh or virgl crash.
+Kernarium now whiteouts that getty's image-owned enablement in its disposable
+Phosh overlay before systemd starts and removes the mutually exclusive
+development `phosh.service` enablement so the stock display-manager alias
+selects greetd/Phrog. The units and EROFS remain unchanged, and no wait helper
+or greetd ordering drop-in remains. Kernarium passes `plymouth.enable=0` so
+Plymouth cannot wait for the removed tty0-getty handoff while VT/fbcon boot
+output and the installed service set remain intact. A 1320x2580, 288-DPI cold
+boot on the iPhone 17 Pro Max Simulator reached graphical target, started
+stock greetd and its Phrog session, and presented Phrog through the native
+Metal display path. No physical Aquarium result or swap-based workaround is
+part of the current checkpoint.
 
 The same physical app also ran the image-local Geekbench 6.7.1 payload
 from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows

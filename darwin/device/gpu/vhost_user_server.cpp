@@ -347,8 +347,14 @@ public:
     GpuVhostUserDevice(
         Display& display,
         VirtioGpuDevice::GuestReader reader,
-        VirtioGpuDevice::GuestMapper mapper)
-        : gpu_(display, std::move(reader), std::move(mapper))
+        VirtioGpuDevice::GuestMapper mapper,
+        std::uint32_t dotsPerInch)
+        : gpu_(
+              display,
+              std::move(reader),
+              std::move(mapper),
+              dotsPerInch)
+        , hasEdid_(dotsPerInch != 0)
     {
     }
 
@@ -360,6 +366,7 @@ public:
     [[nodiscard]] std::uint64_t features() const noexcept override
     {
         return protocol::virtioGpuFeatureVirgl |
+            (hasEdid_ ? protocol::virtioGpuFeatureEdid : 0U) |
             protocol::virtioGpuFeatureContextInit;
     }
 
@@ -455,6 +462,7 @@ public:
 
 private:
     VirtioGpuDevice gpu_;
+    bool hasEdid_;
 };
 
 } // namespace
@@ -469,7 +477,8 @@ VhostUserServer::VhostUserServer(
     bool selfTestPattern,
     uml::input::vnc::VncInputSink inputSink,
     DisplayMode displayMode,
-    void* nativeView)
+    void* nativeView,
+    std::uint32_t dotsPerInch)
     : socketPath_(std::move(socketPath))
     , vncBindAddress_(std::move(vncBindAddress))
     , display_(makeDisplay(
@@ -492,7 +501,8 @@ VhostUserServer::VhostUserServer(
             return pointer == nullptr ?
                 std::span<std::uint8_t> {} :
                 std::span(pointer, length);
-        });
+        },
+        dotsPerInch);
     if (selfTestPattern)
         display_->fillSelfTestPattern();
 }

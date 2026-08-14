@@ -16,6 +16,7 @@ struct InProcessGpuOptions {
     std::string vncPassword;
     std::uint32_t width {1280};
     std::uint32_t height {720};
+    std::uint32_t dotsPerInch {};
     void* nativeView {};
 };
 

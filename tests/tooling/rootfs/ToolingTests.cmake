@@ -12,5 +12,7 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_boot_overlay_systemd.py
         --launcher ${PROJECT_SOURCE_DIR}/scripts/boot-overlay-systemd.sh
+        --kernarium-runtime
+        ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
     LABELS rootfs;audit
     TIMEOUT 30)

@@ -31,7 +31,8 @@ public:
         bool selfTestPattern,
         uml::input::vnc::VncInputSink inputSink = {},
         DisplayMode displayMode = DisplayMode::vnc,
-        void* nativeView = nullptr);
+        void* nativeView = nullptr,
+        std::uint32_t dotsPerInch = 0);
     explicit VhostUserServer(
         std::unique_ptr<uml::virtio::VhostUserDevice> device);
     ~VhostUserServer();

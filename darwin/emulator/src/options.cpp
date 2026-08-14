@@ -183,17 +183,17 @@ EmulatorOptions prepare_emulator_options(
 	bool default_user_network)
 {
 	EmulatorOptions prepared;
-	/* Policy can append at most six kernel arguments. Keep the final argc
+	/* Policy can append at most eight kernel arguments. Keep the final argc
 	 * representable by the fixed-width kernel entry ABI before allocating or
 	 * inspecting a caller-supplied vector. */
-	constexpr int maximum_appended_arguments = 6;
+	constexpr int maximum_appended_arguments = 8;
 	if (argc < 0 ||
 	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
 	    (argc != 0 && argv == nullptr)) {
 		prepared.valid = false;
 		return prepared;
 	}
-	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 6U);
+	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 8U);
 	for (int index = 0; index < argc; ++index) {
 		if (argv[index] == nullptr) {
 			prepared.valid = false;
@@ -277,6 +277,10 @@ EmulatorOptions prepare_emulator_options(
 		prepared.arguments.emplace_back("rootfstype=erofs");
 	if (!has_prefix(prepared.arguments, "init="))
 		prepared.arguments.emplace_back("init=/bin/sh");
+	if (!has_prefix(prepared.arguments, "console=")) {
+		prepared.arguments.emplace_back("console=tty0");
+		prepared.arguments.emplace_back("console=ttyS0");
+	}
 	if (!has_prefix(prepared.arguments, "mem="))
 		prepared.arguments.emplace_back("mem=256M");
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))

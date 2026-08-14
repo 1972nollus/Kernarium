@@ -19,7 +19,6 @@ mm	thp03	Requires MADV_MERGEABLE while KSM is intentionally disabled for Darwin 
 pty	pty03	Hardware-facing network TTY line disciplines are outside the serial-only emulator device model
 pty	pty04	Requires SLIP and SLCAN hardware-facing network TTY line disciplines intentionally disabled for Darwin UML
 pty	pty05	Requires the N_HDLC synchronous-serial hardware interface intentionally absent from Darwin UML
-pty	pty07	Requires the physical display and keyboard virtual-terminal switcher intentionally disabled for Darwin UML
 cve	cve-2011-2183	Duplicates ksm05 while KSM is intentionally disabled for Darwin UML
 cve	cve-2017-2636	Duplicates pty05 and requires the intentionally absent N_HDLC synchronous-serial hardware interface
 cve	cve-2020-11494	Duplicates pty04 and requires intentionally disabled hardware-facing network TTY line disciplines

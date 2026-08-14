@@ -32,6 +32,8 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertIn(f"ubd0c={resolved_image}", command)
         self.assertIn("root=/dev/ubda", command)
         self.assertIn("rootfstype=erofs", command)
+        self.assertIn("console=tty0", command)
+        self.assertIn("console=ttyS0", command)
         self.assertNotIn(f"ubd0r={resolved_image}", command)
 
     def test_conflicting_arguments_are_rejected(self) -> None:

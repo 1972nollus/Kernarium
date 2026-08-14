@@ -36,12 +36,14 @@ public:
     VirtioGpuDevice(
         testing::VirtioGpuDeviceDependencies& dependencies,
         GuestReader guestReader,
-        GuestMapper guestMapper);
+        GuestMapper guestMapper,
+        std::uint32_t dotsPerInch = 0);
 #else
     VirtioGpuDevice(
         Display& display,
         GuestReader guestReader,
-        GuestMapper guestMapper);
+        GuestMapper guestMapper,
+        std::uint32_t dotsPerInch = 0);
 #endif
     ~VirtioGpuDevice();
 
@@ -83,6 +85,8 @@ private:
         protocol::GpuResponse type) const;
     [[nodiscard]] std::vector<std::uint8_t> displayInfo(
         const protocol::GpuControlHeader& request) const;
+    [[nodiscard]] std::vector<std::uint8_t> edid(
+        const protocol::GpuGetEdid& request) const;
     [[nodiscard]] bool readBacking(
         const Resource& resource,
         std::uint64_t offset,
@@ -105,6 +109,7 @@ private:
 #endif
     GuestReader guestReader_;
     GuestMapper guestMapper_;
+    std::uint32_t dotsPerInch_;
 #if !UML_GPU_DEVICE_TESTING
     VirglRenderer renderer_;
 #endif

@@ -5,13 +5,13 @@
 > unified `rootfs.erofs` workflow documented in `docs/testing.md` for current
 > work.
 
-Last updated: 2026-08-10 (Asia/Tokyo)
+Last updated: 2026-08-14 (Asia/Tokyo)
 
 ## Scope and rules
 
 - Current unified-image LTP root: `/opt/ltp` in `rootfs.erofs`. The version and
   historical results below describe the dated campaigns that produced them.
-- Current production-kernel scheduling has 2,428 verified entries and 135
+- Current production-kernel scheduling has 2,429 verified entries and 134
   disabled entries. The disabled set includes 79 `CONFIG_HUGETLBFS`-dependent,
   five `CONFIG_TRANSPARENT_HUGEPAGE`-dependent, and four `CONFIG_CAN`-dependent
   cases because those options are deliberately absent; these current counts
@@ -27,7 +27,12 @@ Last updated: 2026-08-10 (Asia/Tokyo)
   HugeTLBFS, transparent-huge-page, and CAN options follow this rule; loadable-
   module cases retain their separately documented static-kernel expectations.
 - KSM is intentionally disabled because host-backed guest RAM does not benefit from an in-guest duplicate-page scanner; 17 KSM-specific or KSM-dependent scenario entries are listed in `tests/integration/ltp/disabled-tests.tsv` and are never scheduled.
-- Hardware-facing VT and network/synchronous-serial TTY drivers are intentionally disabled because the emulator exposes a host-backed serial console rather than physical display, keyboard, or serial-network devices; the four direct PTY cases and their three CVE-scenario duplicates are listed in the disabled manifest.
+- Hardware-facing network and synchronous-serial TTY drivers remain disabled;
+  the three direct PTY cases and their three CVE-scenario duplicates stay in
+  the disabled manifest. The production kernel now has standard VT/fbcon on
+  Virtio-GPU. A focused 16 KiB gadgets run therefore moved `pty07` into the
+  verified host-pressure schedule after its unchanged VT-resize race passed
+  and restored the active console.
 - Twenty-two controller cases that require globally expensive kernel diagnostics are disabled. Those diagnostics are absent from the production configuration, and the earlier configuration-only accommodations for those cases were removed.
 - Every credited result is also present in `tests/integration/ltp/verified-tests.tsv` and rerunnable by the host suite.
 - Ordinary cases always run with one guest CPU. Tests which intentionally exercise multiple CPUs are tagged `host-pressure`, retain the full host-backed SMP topology, and are excluded by default; `--run-host-pressure` explicitly includes that serialized tail after the ordinary parallel phase.
@@ -41,15 +46,15 @@ suite result.
 
 | Manifest disposition | Cases | Current reason |
 |---|---:|---|
-| Verified/scheduled | 2,428 | Scheduled under carried-forward expectations; the full suite was not rerun for this image migration |
-| Disabled | 135 | 47 prior policy exclusions plus 88 cases that require deliberately absent kernel configuration |
+| Verified/scheduled | 2,429 | Scheduled under carried-forward expectations plus the focused post-VT `pty07` pass; the full suite was not rerun for this image migration |
+| Disabled | 134 | 46 prior policy exclusions plus 88 cases that require deliberately absent kernel configuration |
 | Total | 2,563 | Exact default-scenario inventory; the manifests are disjoint |
 
 The 88 newly disabled cases are 79 requiring `CONFIG_HUGETLBFS`, five
 requiring `CONFIG_TRANSPARENT_HUGEPAGE`, and four requiring `CONFIG_CAN`.
 Their explicit scenario/test identities and reasons live in
 `tests/integration/ltp/disabled-tests.tsv`. The tooling contract verifies the
-2,428/135 split and zero overlap.
+2,429/134 split and zero overlap.
 
 ## Focused unified-image qualification (2026-08-10)
 

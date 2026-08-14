@@ -126,10 +126,12 @@ does not compile or link the UIKit implementation.
 The vhost-user transport owns only connection and queue framing. The GPU and
 Virtio-input devices independently implement their protocol operations over
 that transport. Kernarium registers one absolute touchscreen and one keyboard,
-while UIKit converts safe-area point coordinates and text input to Linux evdev
-events. Networking remains the emulator's existing callback boundary backed
-by the iOS static GLib/libslirp prefix. These iOS owners do not enter the
-macOS application graph.
+while UIKit scales safe-area point coordinates into the native-pixel guest
+range and converts them with text input to Linux evdev events. The GPU device
+independently advertises the matching effective density through EDID.
+Networking remains the emulator's existing callback boundary backed by the
+iOS static GLib/libslirp prefix. These iOS owners do not enter the macOS
+application graph.
 
 `architecture-audit` combines four checks. Documentation paths in this file
 are validated by the same target, so a moved contract cannot leave a stale

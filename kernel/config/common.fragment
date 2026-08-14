@@ -365,18 +365,41 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
+# The outer emulator has no VIRTIO_ID_CONSOLE backend; ttyS0 is the supported
+# host-console transport until such a device exists end to end.
+# CONFIG_VIRTIO_CONSOLE is not set
 CONFIG_DRM=y
 CONFIG_DRM_VIRTIO_GPU=y
 CONFIG_DRM_VIRTIO_GPU_KMS=y
-# The modern DRM log client renders the kernel ring directly through KMS until
-# userspace takes ownership.  It needs neither legacy fbdev emulation nor VT.
-CONFIG_DRM_CLIENT_LOG=y
-CONFIG_DRM_CLIENT_DEFAULT_LOG=y
-# CONFIG_DRM_FBDEV_EMULATION is not set
+# Virtio-GPU's fbdev client backs the standard virtual-terminal console, so
+# both normal kernel boot output and distro gettys use the same DRM scanout.
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_DRM_CLIENT_DEFAULT_FBDEV=y
+# CONFIG_DRM_CLIENT_LOG is not set
 CONFIG_TTY=y
-# The host kernel console is the UML serial device.  Desktop sessions use
-# logind/libseat directly rather than the legacy Linux VT/fbcon stack.
-# CONFIG_VT is not set
+CONFIG_EXPERT=y
+CONFIG_VT=y
+CONFIG_CONSOLE_TRANSLATIONS=y
+CONFIG_VT_CONSOLE=y
+CONFIG_VT_HW_CONSOLE_BINDING=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+# CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION is not set
+# CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is not set
+# CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER is not set
+# Modern distributions allocate PTYs dynamically from devpts. The legacy BSD
+# bank creates hundreds of unused pty/tty nodes and has no supported consumer.
+CONFIG_UNIX98_PTYS=y
+# CONFIG_LEGACY_PTYS is not set
+# Keep the host-facing console on four UML serial lines. The standard VT stack
+# owns tty0-tty63, so the legacy UML stdio tty driver must not claim that major.
+CONFIG_SSL=y
+CONFIG_SSL_PORTS=4
+CONFIG_SSL_CHAN="fd:0,fd:1"
+# CONFIG_UML_STDIO_CONSOLE is not set
+# CONFIG_STDERR_CONSOLE is not set
+# logind grants session access to DRM and input devices through tmpfs ACLs.
+CONFIG_TMPFS_POSIX_ACL=y
 
 # --- Tracing and diagnostics ------------------------------------------------
 CONFIG_MAGIC_SYSRQ=y
@@ -396,8 +419,6 @@ CONFIG_DEBUG_FS=y
 # host mapping layer without reducing the number of carrier pthreads.
 # CONFIG_VMAP_STACK is not set
 CONFIG_NULL_CHAN=y
-CONFIG_CON_CHAN="null"
-CONFIG_SSL_CHAN="null"
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # Module text would be dynamically published executable memory inside the host
 # process, which requires the same Apple dynamic-code entitlement as the JIT

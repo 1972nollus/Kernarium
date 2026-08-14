@@ -37,6 +37,18 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("ncpus=6", command[separator + 1 :])
         self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
 
+    def test_optional_display_density_is_forwarded_to_the_host_gpu(self) -> None:
+        default_command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        self.assertFalse(
+            any(item.startswith("--gpu-dpi=") for item in default_command)
+        )
+        density_command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments(["--dpi", "288"])
+        )
+        self.assertIn("--gpu-dpi=288", density_command)
+
     def test_webgl_commands_extend_the_gpu_harness(self) -> None:
         options = boot_kde_vnc.parse_arguments([])
         command = boot_kde_vnc.build_harness_command(options)

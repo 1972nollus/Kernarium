@@ -192,10 +192,22 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   `tools/rootfs/provision.py --replace`. Provisioning authenticates the input;
   it is not part of ordinary guest execution. There is no in-place writable
   maintenance workflow.
-- The image owns the enabled tty0 getty and its login policy. Systemd launchers
-  may host-feed the tmpfs OverlayFS bootstrap, but must not synthesize or
-  override the getty unit in the overlay. Before starting systemd, that
-  bootstrap mounts separate tmpfs filesystems at `/var/lib/docker` and
+- The image owns the tty0 getty definition and login policy. Generic systemd
+  launchers preserve its enablement and must not synthesize or override the
+  getty unit in the overlay. Kernarium's Phosh bootstrap is the narrow
+  exception: it must whiteout only the image-owned
+  `getty.target.wants/getty@tty0.service` enablement in its disposable ext4
+  overlay so `vhangup` cannot race greetd. It also whiteouts the image's stale,
+  mutually exclusive development `graphical.target.wants/phosh.service`
+  enablement so the stock display-manager alias selects greetd/Phrog; it must
+  not replace either unit or add a greetd/getty ordering workaround. Its boot
+  arguments disable Plymouth so the splash cannot retain the active VT after
+  the tty0 getty handoff is removed; the installed service set is unchanged.
+  The shipped kernel assigns tty0 to
+  standard VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
+  the conflicting UML stdio console, DRM log client, and legacy BSD PTYs, and
+  registers four serial lines. Before starting systemd, the generic bootstrap
+  mounts separate tmpfs filesystems at `/var/lib/docker` and
   `/var/lib/containerd` so Docker storage and containerd state are not nested
   on the writable root overlay. `guest-overlay-systemd-smoke` builds its
   freestanding arm64/Linux hello-world payload from repository source, wraps it
@@ -207,7 +219,7 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
 - External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
-- Kernarium's current physical-iOS acceptance guest has 1 GiB of RAM. Do not
+- Kernarium's current physical-iOS acceptance guest has 2 GiB of RAM. Do not
   run WebGL Aquarium on the physical device or add disk-backed swap, Chromium
   storage redirection, or another memory workaround to force that workload.
   Use the documented normal desktop boot on the connected iPad; the historical

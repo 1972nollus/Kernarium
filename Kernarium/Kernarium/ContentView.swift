@@ -8,8 +8,8 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            GuestDisplayView(keyboardVisible: $keyboardVisible) { view, size in
-                EmulatorLauncher.shared.start(view: view, size: size)
+            GuestDisplayView(keyboardVisible: $keyboardVisible) { view, geometry in
+                EmulatorLauncher.shared.start(view: view, geometry: geometry)
             }
             floatingButtons
         }
@@ -101,9 +101,17 @@ private enum PresentedSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
+private struct GuestDisplayGeometry {
+    let pixelSize: CGSize
+    let dotsPerInch: UInt32
+}
+
 private struct GuestDisplayView: UIViewRepresentable {
     @Binding var keyboardVisible: Bool
-    let viewDidLayout: @MainActor (GuestMetalView, CGSize) -> Void
+    let viewDidLayout: @MainActor (
+        GuestMetalView,
+        GuestDisplayGeometry
+    ) -> Void
 
     func makeUIView(context: Context) -> GuestMetalView {
         let view = GuestMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
@@ -126,7 +134,10 @@ private struct GuestDisplayView: UIViewRepresentable {
 }
 
 private final class GuestMetalView: MTKView, UIKeyInput {
-    var viewDidLayout: (@MainActor (GuestMetalView, CGSize) -> Void)?
+    var viewDidLayout: (@MainActor (
+        GuestMetalView,
+        GuestDisplayGeometry
+    ) -> Void)?
     var guestPixelSize: CGSize?
     private var trackedTouch: UITouch?
 
@@ -145,12 +156,29 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     }
 
     func reportLayout() {
-        let size = bounds.size
-        guard size.width > 0, size.height > 0 else { return }
-        // SwiftUI lays this view out inside the safe area. Deliberately do not
-        // apply the screen scale: one host point is one guest pixel.
-        drawableSize = size
-        viewDidLayout?(self, size)
+        guard let screen = window?.screen else { return }
+        let scale = screen.nativeScale
+        guard bounds.width > 0, bounds.height > 0,
+              scale.isFinite, scale > 0 else { return }
+        // SwiftUI supplies safe-area-excluded point bounds. Convert those
+        // bounds to the screen's physical backing pixels, including scaled
+        // iPhone modes where nativeScale is not an integer.
+        let pixelSize = CGSize(
+            width: (bounds.width * scale).rounded(.down),
+            height: (bounds.height * scale).rounded(.down)
+        )
+        guard pixelSize.width >= 1, pixelSize.height >= 1 else { return }
+        drawableSize = pixelSize
+        let dotsPerInch = UInt32(
+            (CGFloat(96) * scale).rounded()
+        )
+        viewDidLayout?(
+            self,
+            GuestDisplayGeometry(
+                pixelSize: pixelSize,
+                dotsPerInch: dotsPerInch
+            )
+        )
     }
 
     func setKeyboardVisible(_ visible: Bool) {
@@ -218,9 +246,16 @@ private final class GuestMetalView: MTKView, UIKeyInput {
     private func sendTouch(_ touch: UITouch, pressed: Bool) {
         let point = touch.location(in: self)
         let size = guestPixelSize ?? bounds.size
-        guard size.width >= 1, size.height >= 1 else { return }
-        let x = min(max(point.x.rounded(.down), 0), size.width - 1)
-        let y = min(max(point.y.rounded(.down), 0), size.height - 1)
+        guard size.width >= 1, size.height >= 1,
+              bounds.width > 0, bounds.height > 0 else { return }
+        let x = min(
+            max((point.x * size.width / bounds.width).rounded(.down), 0),
+            size.width - 1
+        )
+        let y = min(
+            max((point.y * size.height / bounds.height).rounded(.down), 0),
+            size.height - 1
+        )
         kernarium_runtime_send_touch(UInt32(x), UInt32(y), pressed ? 1 : 0)
     }
 
@@ -322,7 +357,7 @@ private final class EmulatorLauncher {
         self.configuration = configuration
     }
 
-    func start(view: GuestMetalView, size: CGSize) {
+    func start(view: GuestMetalView, geometry: GuestDisplayGeometry) {
         guard !started else { return }
         guard let rootfsFilename = RootfsImage.selectedFilename(
             configuredFilename: configuration.rootfsFilename
@@ -350,6 +385,7 @@ private final class EmulatorLauncher {
             return
         }
         started = true
+        let size = geometry.pixelSize
         view.guestPixelSize = size
         UIApplication.shared.isIdleTimerDisabled = true
         let width = UInt32(size.width.rounded(.down))
@@ -365,6 +401,7 @@ private final class EmulatorLauncher {
                         overlayPath,
                         width,
                         height,
+                        geometry.dotsPerInch,
                         guestMemoryMiB,
                         vCPUCount
                     )

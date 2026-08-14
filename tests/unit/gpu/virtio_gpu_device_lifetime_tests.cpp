@@ -32,8 +32,14 @@ public:
         display_update,
     };
 
-    [[nodiscard]] std::uint32_t width() const noexcept override { return 64; }
-    [[nodiscard]] std::uint32_t height() const noexcept override { return 64; }
+    [[nodiscard]] std::uint32_t width() const noexcept override
+    {
+        return displayWidth;
+    }
+    [[nodiscard]] std::uint32_t height() const noexcept override
+    {
+        return displayHeight;
+    }
 
     void clear() noexcept override
     {
@@ -278,6 +284,8 @@ public:
     unsigned resourceTextureCount {};
     unsigned directPresentationCount {};
     bool directPresentationEnabled {};
+    std::uint32_t displayWidth {64};
+    std::uint32_t displayHeight {64};
     std::uint32_t lastTextureResource {};
     OpenGlScanout lastOpenGlScanout {};
     unsigned fenceCount {};
@@ -554,6 +562,67 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     requireFirstAllocationFailsBeforeCommit(device, reference);
     require(responseType(device.process(requestBytes(reference), false)) ==
         protocol::GpuResponse::okNoData);
+}
+
+void edidReportsDisplayPixelsAndEffectiveDensity()
+{
+    FakeGpuDependencies dependencies;
+    dependencies.displayWidth = 1290;
+    dependencies.displayHeight = 2796;
+    constexpr std::uint32_t dotsPerInch = 288;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        },
+        dotsPerInch};
+
+    protocol::GpuGetEdid request {};
+    request.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    request.header.flags = protocol::gpuFlagFence;
+    request.header.fenceId = 0x1234;
+    request.scanoutId = protocol::primaryScanoutId;
+    const auto bytes = device.process(requestBytes(request), false);
+    require(bytes.size() == sizeof(protocol::GpuEdid));
+    protocol::GpuEdid response {};
+    std::memcpy(&response, bytes.data(), sizeof(response));
+    require(responseType(bytes) == protocol::GpuResponse::okEdid);
+    require(response.header.flags == protocol::gpuFlagFence);
+    require(response.header.fenceId == request.header.fenceId);
+    require(response.size == protocol::baseEdidSize);
+
+    unsigned checksum = 0;
+    for (std::size_t index = 0; index < response.size; ++index)
+        checksum += response.edid[index];
+    require((checksum & 0xffU) == 0);
+    require(std::equal(
+        response.edid.begin(), response.edid.begin() + 8U,
+        std::array<std::uint8_t, 8> {
+            0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}.begin()));
+
+    const auto horizontalPixels = static_cast<std::uint32_t>(
+        response.edid[56] | ((response.edid[58] & 0xf0U) << 4U));
+    const auto verticalPixels = static_cast<std::uint32_t>(
+        response.edid[59] | ((response.edid[61] & 0xf0U) << 4U));
+    const auto horizontalMillimeters = static_cast<std::uint32_t>(
+        response.edid[66] | ((response.edid[68] & 0xf0U) << 4U));
+    const auto verticalMillimeters = static_cast<std::uint32_t>(
+        response.edid[67] | ((response.edid[68] & 0x0fU) << 8U));
+    require(horizontalPixels == dependencies.displayWidth);
+    require(verticalPixels == dependencies.displayHeight);
+    require(horizontalMillimeters == 114);
+    require(verticalMillimeters == 247);
+
+    request.scanoutId = 1;
+    require(responseType(device.process(requestBytes(request), false)) ==
+        protocol::GpuResponse::errorInvalidScanout);
+    protocol::GpuControlHeader truncated {};
+    truncated.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    require(responseType(device.process(requestBytes(truncated), false)) ==
+        protocol::GpuResponse::errorInvalidParameter);
 }
 
 void rendererExecutionFailuresPreserveDeviceState()
@@ -1165,6 +1234,7 @@ void malformed3dCommandsUseSpecificErrors()
 
 void runVirtioGpuDeviceTests()
 {
+    edidReportsDisplayPixelsAndEffectiveDensity();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
     resetRetiresEachExternalOwnerExactlyOnce();

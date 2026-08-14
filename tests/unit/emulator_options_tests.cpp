@@ -57,6 +57,13 @@ void test_defaults_and_engine_selection()
 	require(contains(options, "ip=dhcp"), "network default was not added");
 	require(!contains(options, "--execution-engine=interpreter"),
 		"host execution option leaked into the kernel command line");
+
+	const char *default_arguments[]{"uml-test"};
+	const auto defaults = uml::emulator::prepare_emulator_options(
+		1, default_arguments, "/tmp/rootfs.erofs", false);
+	require(contains(defaults, "console=tty0") &&
+		contains(defaults, "console=ttyS0"),
+		"framebuffer and host serial console defaults were not added");
 }
 
 void test_explicit_defaults_are_preserved()

@@ -44,6 +44,7 @@ constexpr std::uint64_t vhostFeatureProtocol = 1ULL << 30U;
 constexpr std::uint64_t virtioFeatureVersion1 = 1ULL << 32U;
 // Virtio-GPU device feature bits from include/uapi/linux/virtio_gpu.h.
 constexpr std::uint64_t virtioGpuFeatureVirgl = 1ULL << 0U;
+constexpr std::uint64_t virtioGpuFeatureEdid = 1ULL << 1U;
 constexpr std::uint64_t virtioGpuFeatureContextInit = 1ULL << 4U;
 constexpr std::uint64_t protocolFeatureMultipleQueues = 1ULL << 0U;
 constexpr std::uint64_t protocolFeatureReplyAck = 1ULL << 3U;
@@ -132,6 +133,7 @@ enum class GpuCommand : std::uint32_t {
     resourceDetachBacking = 0x0107,
     getCapsetInfo = 0x0108,
     getCapset = 0x0109,
+    getEdid = 0x010a,
     contextCreate = 0x0200,
     contextDestroy = 0x0201,
     contextAttachResource = 0x0202,
@@ -149,6 +151,7 @@ enum class GpuResponse : std::uint32_t {
     okDisplayInfo = 0x1101,
     okCapsetInfo = 0x1102,
     okCapset = 0x1103,
+    okEdid = 0x1104,
     errorUnspecified = 0x1200,
     errorOutOfMemory = 0x1201,
     errorInvalidScanout = 0x1202,
@@ -186,6 +189,10 @@ constexpr std::uint32_t contextInitCapsetMask = 0xffU;
 constexpr std::size_t maximumContextDebugNameLength = 64;
 constexpr std::size_t gpuCommandWordSize = sizeof(std::uint32_t);
 constexpr std::size_t maximumGpuSubmitSize = 16U * 1024U * 1024U;
+constexpr std::size_t maximumEdidSize = 1024;
+constexpr std::size_t baseEdidSize = 128;
+constexpr std::uint32_t maximumEdidDimension = 4095;
+constexpr std::uint32_t referenceDotsPerInch = 96;
 // Defensive bound for the variable-size RESOURCE_ATTACH_BACKING request.
 constexpr std::uint32_t maximumResourceBackingEntries = 16'384;
 
@@ -291,6 +298,19 @@ struct [[gnu::packed]] GpuGetCapset {
     std::uint32_t version;
 };
 
+struct [[gnu::packed]] GpuGetEdid {
+    GpuControlHeader header;
+    std::uint32_t scanoutId;
+    std::uint32_t padding;
+};
+
+struct [[gnu::packed]] GpuEdid {
+    GpuControlHeader header;
+    std::uint32_t size;
+    std::uint32_t padding;
+    std::array<std::uint8_t, maximumEdidSize> edid;
+};
+
 struct [[gnu::packed]] GpuContextCreate {
     GpuControlHeader header;
     std::uint32_t nameLength;
@@ -369,6 +389,8 @@ static_assert(sizeof(VirtqueueDescriptor) == 16);
 static_assert(sizeof(GpuControlHeader) == 24);
 static_assert(sizeof(GpuDisplayInfo) == 408);
 static_assert(sizeof(GpuCapsetInfo) == 40);
+static_assert(sizeof(GpuGetEdid) == 32);
+static_assert(sizeof(GpuEdid) == 1056);
 static_assert(sizeof(GpuContextCreate) == 96);
 static_assert(sizeof(GpuConfig) == 16);
 

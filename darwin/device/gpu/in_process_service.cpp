@@ -226,7 +226,8 @@ private:
                     sendInput(events);
                 },
                 options_.displayMode,
-                options_.nativeView);
+                options_.nativeView,
+                options_.dotsPerInch);
             server.runConnected(descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);

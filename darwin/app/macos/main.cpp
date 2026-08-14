@@ -226,6 +226,7 @@ struct HostGpuOptions {
 	std::string vnc_password;
 	std::uint32_t width {1280};
 	std::uint32_t height {720};
+	std::uint32_t dots_per_inch {};
 };
 
 struct PreparedArguments {
@@ -314,7 +315,10 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
 			   parse_host_integer(
-				   argument, "--gpu-height=", prepared.gpu.height)) {
+				   argument, "--gpu-height=", prepared.gpu.height) ||
+			   parse_host_integer(
+				   argument, "--gpu-dpi=",
+				   prepared.gpu.dots_per_inch)) {
 			prepared.gpu.enabled = true;
 		} else {
 			prepared.kernel.emplace_back(argument);
@@ -324,6 +328,11 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 	    prepared.gpu.vnc_option_specified)
 		throw std::invalid_argument(
 			"--gpu-vnc-* options require --gpu-display=vnc");
+	if (prepared.gpu.dots_per_inch != 0 &&
+	    (prepared.gpu.width > uml::gpu::protocol::maximumEdidDimension ||
+	     prepared.gpu.height > uml::gpu::protocol::maximumEdidDimension))
+		throw std::invalid_argument(
+			"--gpu-dpi requires display dimensions no larger than 4095");
 	append_default_kernel_argument(
 		prepared.kernel, "mem=", macos_default_guest_memory);
 	append_default_kernel_argument(
@@ -475,6 +484,8 @@ int main(int argc, char *argv[], char *envp[])
 							prepared.gpu.vnc_password,
 						.width = prepared.gpu.width,
 						.height = prepared.gpu.height,
+						.dotsPerInch =
+							prepared.gpu.dots_per_inch,
 					});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +

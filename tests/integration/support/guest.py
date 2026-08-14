@@ -246,7 +246,12 @@ class Guest:
         self._overlay_shell = overlay_shell
         self._systemd_overlay = systemd_overlay
         if init_shell or overlay_shell or systemd_overlay:
-            kernel_arguments = (*kernel_arguments, "console=tty0", "ip=dhcp")
+            kernel_arguments = (
+                *kernel_arguments,
+                "console=tty0",
+                "console=ttyS0",
+                "ip=dhcp",
+            )
         if systemd_overlay:
             kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
         master, slave = pty.openpty()

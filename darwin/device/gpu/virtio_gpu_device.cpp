@@ -7,6 +7,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -111,26 +112,152 @@ std::optional<protocol::GpuRectangle> intersectRectangles(
     };
 }
 
+std::uint16_t physicalMillimeters(
+    std::uint32_t pixels,
+    std::uint32_t dotsPerInch)
+{
+    const auto numerator =
+        static_cast<std::uint64_t>(pixels) * 254U +
+        static_cast<std::uint64_t>(dotsPerInch) * 5U;
+    const auto millimeters = numerator /
+        (static_cast<std::uint64_t>(dotsPerInch) * 10U);
+    return static_cast<std::uint16_t>(std::clamp<std::uint64_t>(
+        millimeters, 1U, protocol::maximumEdidDimension));
+}
+
+void writeMonitorDescriptor(
+    std::array<std::uint8_t, protocol::baseEdidSize>& edid,
+    std::size_t offset,
+    std::uint8_t tag,
+    std::string_view text = {})
+{
+    std::fill_n(edid.begin() + offset, 18, 0);
+    edid[offset + 3U] = tag;
+    if (text.empty())
+        return;
+    std::fill_n(edid.begin() + offset + 5U, 13, ' ');
+    const auto length = std::min<std::size_t>(text.size(), 12U);
+    std::copy_n(text.begin(), length, edid.begin() + offset + 5U);
+    edid[offset + 5U + length] = '\n';
+}
+
+std::array<std::uint8_t, protocol::baseEdidSize> makeEdid(
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t dotsPerInch)
+{
+    std::array<std::uint8_t, protocol::baseEdidSize> edid {};
+    constexpr std::array<std::uint8_t, 8> header {
+        0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00};
+    std::copy(header.begin(), header.end(), edid.begin());
+    // Big-endian EISA manufacturer ID "UML" and a little-endian product ID.
+    edid[8] = 0x55;
+    edid[9] = 0xac;
+    edid[10] = 0x01;
+    edid[16] = 1;
+    edid[17] = 36; // 2026, relative to EDID's 1990 epoch.
+    edid[18] = 1;
+    edid[19] = 4;
+    edid[20] = 0x80; // Digital display input.
+
+    const auto widthMillimeters =
+        physicalMillimeters(width, dotsPerInch);
+    const auto heightMillimeters =
+        physicalMillimeters(height, dotsPerInch);
+    edid[21] = static_cast<std::uint8_t>(std::clamp<unsigned>(
+        (widthMillimeters + 5U) / 10U, 1U, 255U));
+    edid[22] = static_cast<std::uint8_t>(std::clamp<unsigned>(
+        (heightMillimeters + 5U) / 10U, 1U, 255U));
+    edid[23] = 120; // Gamma 2.2.
+    edid[24] = 0x06; // sRGB and the first detailed timing is preferred.
+    constexpr std::array<std::uint8_t, 10> srgbChromaticity {
+        0xee, 0x91, 0xa3, 0x54, 0x4c,
+        0x99, 0x26, 0x0f, 0x50, 0x54};
+    std::copy(
+        srgbChromaticity.begin(), srgbChromaticity.end(),
+        edid.begin() + 25U);
+    std::fill(edid.begin() + 38U, edid.begin() + 54U, 0x01);
+
+    const auto horizontalBlank = std::min<std::uint32_t>(
+        protocol::maximumEdidDimension,
+        std::max<std::uint32_t>(160U, width / 5U));
+    const auto verticalBlank = std::min<std::uint32_t>(
+        protocol::maximumEdidDimension,
+        std::max<std::uint32_t>(30U, height / 20U));
+    const auto horizontalSyncOffset = std::min<std::uint32_t>(
+        1023U, std::max<std::uint32_t>(8U, horizontalBlank / 3U));
+    const auto horizontalSyncPulse = std::min<std::uint32_t>(
+        1023U, std::max<std::uint32_t>(8U, horizontalBlank / 3U));
+    constexpr std::uint32_t verticalSyncOffset = 3;
+    constexpr std::uint32_t verticalSyncPulse = 5;
+    const auto clock = std::clamp<std::uint64_t>(
+        ((static_cast<std::uint64_t>(width) + horizontalBlank) *
+             (static_cast<std::uint64_t>(height) + verticalBlank) * 60U +
+            5000U) /
+            10000U,
+        1U,
+        65535U);
+
+    constexpr std::size_t timing = 54;
+    edid[timing] = static_cast<std::uint8_t>(clock);
+    edid[timing + 1U] = static_cast<std::uint8_t>(clock >> 8U);
+    edid[timing + 2U] = static_cast<std::uint8_t>(width);
+    edid[timing + 3U] = static_cast<std::uint8_t>(horizontalBlank);
+    edid[timing + 4U] = static_cast<std::uint8_t>(
+        ((width >> 8U) << 4U) | (horizontalBlank >> 8U));
+    edid[timing + 5U] = static_cast<std::uint8_t>(height);
+    edid[timing + 6U] = static_cast<std::uint8_t>(verticalBlank);
+    edid[timing + 7U] = static_cast<std::uint8_t>(
+        ((height >> 8U) << 4U) | (verticalBlank >> 8U));
+    edid[timing + 8U] = static_cast<std::uint8_t>(horizontalSyncOffset);
+    edid[timing + 9U] = static_cast<std::uint8_t>(horizontalSyncPulse);
+    edid[timing + 10U] = static_cast<std::uint8_t>(
+        (verticalSyncOffset << 4U) | verticalSyncPulse);
+    edid[timing + 11U] = static_cast<std::uint8_t>(
+        ((horizontalSyncOffset >> 8U) << 6U) |
+        ((horizontalSyncPulse >> 8U) << 4U));
+    edid[timing + 12U] = static_cast<std::uint8_t>(widthMillimeters);
+    edid[timing + 13U] = static_cast<std::uint8_t>(heightMillimeters);
+    edid[timing + 14U] = static_cast<std::uint8_t>(
+        ((widthMillimeters >> 8U) << 4U) |
+        (heightMillimeters >> 8U));
+    edid[timing + 17U] = 0x1e; // Non-interlaced separate positive sync.
+
+    writeMonitorDescriptor(edid, 72, 0xfc, "Kernarium");
+    writeMonitorDescriptor(edid, 90, 0x10);
+    writeMonitorDescriptor(edid, 108, 0x10);
+    edid[126] = 0;
+    unsigned checksum = 0;
+    for (std::size_t index = 0; index < 127U; ++index)
+        checksum += edid[index];
+    edid[127] = static_cast<std::uint8_t>(0U - checksum);
+    return edid;
+}
+
 } // namespace
 
 #if UML_GPU_DEVICE_TESTING
 VirtioGpuDevice::VirtioGpuDevice(
     testing::VirtioGpuDeviceDependencies& dependencies,
     GuestReader guestReader,
-    GuestMapper guestMapper)
+    GuestMapper guestMapper,
+    std::uint32_t dotsPerInch)
     : dependencies_(dependencies)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
+    , dotsPerInch_(dotsPerInch)
 {
 }
 #else
 VirtioGpuDevice::VirtioGpuDevice(
     Display& display,
     GuestReader guestReader,
-    GuestMapper guestMapper)
+    GuestMapper guestMapper,
+    std::uint32_t dotsPerInch)
     : display_(display)
     , guestReader_(std::move(guestReader))
     , guestMapper_(std::move(guestMapper))
+    , dotsPerInch_(dotsPerInch)
 {
 }
 #endif
@@ -223,6 +350,35 @@ std::vector<std::uint8_t> VirtioGpuDevice::displayInfo(
     };
     information.modes[protocol::primaryScanoutId].enabled =
         protocol::enabledDisplayMode;
+    std::vector<std::uint8_t> bytes(sizeof(information));
+    std::memcpy(bytes.data(), &information, sizeof(information));
+    return bytes;
+}
+
+std::vector<std::uint8_t> VirtioGpuDevice::edid(
+    const protocol::GpuGetEdid& request) const
+{
+    const auto width = UML_GPU_DISPLAY.width();
+    const auto height = UML_GPU_DISPLAY.height();
+    if (request.scanoutId != protocol::primaryScanoutId) {
+        return response(
+            request.header, protocol::GpuResponse::errorInvalidScanout);
+    }
+    if (dotsPerInch_ == 0 || width == 0 || height == 0 ||
+        width > protocol::maximumEdidDimension ||
+        height > protocol::maximumEdidDimension) {
+        return response(
+            request.header, protocol::GpuResponse::errorInvalidParameter);
+    }
+    protocol::GpuEdid information {};
+    information.header = request.header;
+    information.header.type =
+        static_cast<std::uint32_t>(protocol::GpuResponse::okEdid);
+    information.header.flags &=
+        protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+    information.size = protocol::baseEdidSize;
+    const auto base = makeEdid(width, height, dotsPerInch_);
+    std::copy(base.begin(), base.end(), information.edid.begin());
     std::vector<std::uint8_t> bytes(sizeof(information));
     std::memcpy(bytes.data(), &information, sizeof(information));
     return bytes;
@@ -394,6 +550,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     switch (command) {
     case protocol::GpuCommand::getDisplayInfo:
         return displayInfo(*header);
+
+    case protocol::GpuCommand::getEdid: {
+        const auto* edidRequest =
+            readStructure<protocol::GpuGetEdid>(request);
+        if (edidRequest == nullptr)
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        return edid(*edidRequest);
+    }
 
     case protocol::GpuCommand::getCapsetInfo: {
         const auto* capsetInfoRequest =

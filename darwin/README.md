@@ -35,7 +35,10 @@ and LibVNCServer implementation is unchanged.
 
 Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
-the safe-area Metal view and an evdev keyboard fed by UIKit text input. Its
+the safe-area Metal view in native pixels and an evdev keyboard fed by UIKit
+text input. The view multiplies its point bounds by `nativeScale`, scales touch
+points into that range, and supplies `96 * nativeScale` effective DPI through
+Virtio-GPU EDID so guest UI remains logically point-sized. Its
 network callback is the ordinary SLiRP provider compiled against the private
 iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes. Both
@@ -159,9 +162,9 @@ Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 `/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with
 `ubd0c=` to avoid a conflicting host-file lock. EROFS supplies the read-only
 lower filesystem; workloads that need writable state use a tmpfs OverlayFS.
-The image owns tty0 getty enablement and login policy; host-fed OverlayFS
-launchers preserve it rather than installing a transient getty override, and
-mount separate tmpfs filesystems at `/var/lib/docker` and
+The image owns tty0 getty enablement and login policy; generic host-fed
+OverlayFS launchers preserve it rather than installing a transient getty
+override, and mount separate tmpfs filesystems at `/var/lib/docker` and
 `/var/lib/containerd` before systemd to keep Docker and containerd state off the
 root overlay. The systemd integration smoke imports a local rootfs
 archive containing a source-built freestanding arm64/Linux hello-world payload
@@ -182,8 +185,19 @@ not create or activate backing swap, so zswap allocates no pool during the
 normal desktop flow. The init shell mounts devtmpfs, pivots into the writable
 root, applies the image-appropriate disposable desktop setup, and execs the
 image's systemd for `graphical.target`. KDE retains the image's `uml` account
-and display manager. A Phosh image instead starts its existing UID-1000 session
-through logind/libseat without the unsupported VT ioctl path, while preserving
-the Virtio-GPU preferred mode. The DRM log console can render early boot before
-userspace takes KMS ownership, and all kernel console bytes are also relayed to
-application stdout. The selected EROFS base remains read-only.
+and display manager. A Phosh image instead keeps its stock Phrog/greetd VT
+session and Virtio-GPU preferred mode. Its disposable ext4 overlay whiteouts
+the image-owned `getty.target.wants/getty@tty0.service` symlink before systemd
+starts. It also whiteouts the image's mutually exclusive development
+`graphical.target.wants/phosh.service` enablement, leaving graphical target's
+normal display-manager alias to select stock greetd/Phrog. The immutable units
+remain untouched, while removing the tty0 autologin prevents its `vhangup`
+from terminating greetd's first session and eliminates the former wait helper
+and greetd ordering drop-in. Kernarium also passes `plymouth.enable=0` for this
+normal graphical boot so Plymouth cannot wait indefinitely for the removed
+tty0-getty handoff; VT/fbcon boot output and the installed service set remain
+available.
+Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
+console and DRM log client are disabled; the host has no Virtio-console
+backend, so `ttyS0` carries all kernel console bytes to application stdout.
+The selected EROFS base remains read-only.

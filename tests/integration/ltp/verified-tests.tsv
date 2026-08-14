@@ -1748,6 +1748,7 @@ nptl	nptl01	nptl01	pass	600	All 100000 pthread iterations complete successfully 
 pty	pty01	pty01	pass	120	Bidirectional PTY master and slave message transfer passes both assertions
 pty	pty02	pty02	pass	120	The FIONREAD line-discipline regression completes without hanging
 pty	pty06	pty06	pass	300	The full VT_DISALLOCATE fuzzy race interval completes without a crash	host-pressure
+pty	pty07	pty07	pass	300	The VT_RESIZE fuzzy race completes without a crash and restores the active framebuffer console	host-pressure
 pty	pty08	pty08	pass	120	Closing the PTY master returns EOF for slave reads and EIO for slave writes
 pty	pty09	pty09	pass	120	Opens the PTY slave once for every one of the 1017 available guest PIDs
 pty	ptem01	ptem01	pass	120	All nine modern and legacy termios get and set ioctl variants pass on the PTY slave

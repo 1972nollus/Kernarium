@@ -46,6 +46,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launcher", required=True, type=Path)
+    parser.add_argument("--kernarium-runtime", required=True, type=Path)
     arguments = parser.parse_args()
 
     launcher_source = arguments.launcher.read_text(encoding="utf-8")
@@ -79,6 +80,48 @@ def main() -> int:
         < containerd_mount < launcher_source.index("exec /lib/systemd/systemd"),
         "launcher must mount Docker and containerd state after the pivot and "
         "before systemd",
+    )
+
+    runtime_source = arguments.kernarium_runtime.read_text(encoding="utf-8")
+    require(
+        'arguments.emplace_back("plymouth.enable=0")' in runtime_source,
+        "Kernarium systemd boots must keep the nonfunctional Plymouth splash "
+        "out of the VT/fbcon startup graph",
+    )
+    declaration = 'constexpr std::string_view systemdBootstrap = R"krn('
+    bootstrap_start = runtime_source.index(declaration)
+    bootstrap_end = runtime_source.index(')krn";', bootstrap_start)
+    kernarium_bootstrap = runtime_source[bootstrap_start:bootstrap_end]
+    tty0_enablement = (
+        "/etc/systemd/system/getty.target.wants/getty@tty0.service"
+    )
+    require(
+        kernarium_bootstrap.count(tty0_enablement) == 1
+        and f"rm -f {tty0_enablement}" in kernarium_bootstrap,
+        "Kernarium Phosh setup must whiteout the image-owned tty0 getty "
+        "enablement exactly once",
+    )
+    development_phosh_enablement = (
+        "/etc/systemd/system/graphical.target.wants/phosh.service"
+    )
+    require(
+        kernarium_bootstrap.count(development_phosh_enablement) == 1
+        and development_phosh_enablement in kernarium_bootstrap,
+        "Kernarium must select the stock Phrog/greetd display-manager path "
+        "over the image's mutually exclusive development phosh.service",
+    )
+    require(
+        "kernarium-wait-tty0-autologin" not in kernarium_bootstrap
+        and "Wants=getty@tty0.service" not in kernarium_bootstrap
+        and "After=getty@tty0.service" not in kernarium_bootstrap,
+        "Kernarium retained the obsolete tty0/greetd ordering workaround",
+    )
+    tty0_removal = kernarium_bootstrap.index(f"rm -f {tty0_enablement}")
+    require(
+        kernarium_bootstrap.index("pivot_root . .uml-lower") < tty0_removal
+        < kernarium_bootstrap.rindex("exec /lib/systemd/systemd"),
+        "Kernarium must remove tty0 getty enablement from the mounted overlay "
+        "before starting systemd",
     )
     with tempfile.TemporaryDirectory(prefix="uml-overlay-launcher-") as name:
         rootfs = Path(name) / "rootfs image.erofs"

@@ -97,7 +97,6 @@ class ResultParsingTests(unittest.TestCase):
             "pty/pty03",
             "pty/pty04",
             "pty/pty05",
-            "pty/pty07",
             "controllers/cgroup_fj_function_debug",
             "controllers/cgroup_fj_stress_debug_2_2_none",
             "controllers/cgroup_fj_stress_debug_3_3_none",
@@ -215,8 +214,8 @@ class ResultParsingTests(unittest.TestCase):
             "controllers/cgroup_fj_stress_hugetlb_200_1_each",
             "hugetlb/hugemmap32",
         })
-        self.assertEqual(len(verified), 2_428)
-        self.assertEqual(len(disabled), 135)
+        self.assertEqual(len(verified), 2_429)
+        self.assertEqual(len(disabled), 134)
         self.assertEqual(len(verified) + len(disabled), 2_563)
         self.assertEqual(set(disabled), expected)
         self.assertTrue(expected.isdisjoint(verified))

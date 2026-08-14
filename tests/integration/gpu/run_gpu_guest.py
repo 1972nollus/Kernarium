@@ -144,6 +144,7 @@ def build_command(
         "init=/bin/sh",
         f"mem={memory}",
         "console=tty0",
+        "console=ttyS0",
         "ip=dhcp",
         f"systemd.unit={systemd_unit}",
         *extra_arguments,

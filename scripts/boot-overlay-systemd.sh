@@ -144,6 +144,7 @@ command=(
 	"init=/bin/sh"
 	"mem=$memory"
 	"console=tty0"
+	"console=ttyS0"
 	"ip=dhcp"
 	"systemd.unit=$systemd_unit"
 )

@@ -7,7 +7,9 @@ slices and boots a 2 GiB UML guest by default from a selected Documents EROFS
 image. Device and Simulator both default to all processors reported by iOS; a
 settings sheet persists bounded vCPU, RAM, overlay-size, and rootfs choices for
 the next launch. Its basic SwiftUI `ContentView` owns a safe-area
-`MTKView` whose point dimensions are the guest resolution. The real Virtio-GPU
+`MTKView` whose native-pixel dimensions are the guest resolution. Virtio-GPU
+EDID advertises the corresponding effective `96 * nativeScale` density, and
+UIKit scales touch coordinates into that pixel space. The real Virtio-GPU
 device and virglrenderer use pinned UTM libepoxy plus ANGLE/Metal and present
 the native Metal texture directly; the iOS target builds neither AppKit nor
 VNC, while the macOS graph remains on its existing
@@ -34,13 +36,25 @@ Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep
 only while the guest is active. Settings and keyboard overlays are round
 bordered icon buttons and use native circular Liquid Glass on iOS 26. Phosh
-images start their ordinary UID-1000 session through logind/libseat without a
-VT dependency. On macOS, the full Phosh service set now completes the GStreamer
-VA probe, renders a VNC-captured lock screen, and enters direct
-CGL/IOSurface/Metal presentation without claiming a host codec backend.
-Earlier iOS dependency/runtime/package and 1 GiB normal-boot evidence remains
-dated until the configurable 2 GiB app is rerun there.
+images use their stock Phrog/greetd VT session. Their disposable overlay
+whiteouts the image-owned tty0-getty enablement before systemd starts, so its
+`vhangup` cannot send `SIGHUP` to greetd's first GNOME session; the former wait
+helper and greetd ordering drop-in are gone. It also removes the image's
+mutually exclusive development `phosh.service` enablement, letting the stock
+display-manager alias select greetd/Phrog. `plymouth.enable=0` prevents the
+splash from waiting for the removed tty0-getty handoff without masking an
+installed service. On macOS, the full Phosh service set now completes the GStreamer VA probe, renders
+a VNC-captured lock screen, and enters direct CGL/IOSurface/Metal presentation
+without claiming a host codec backend. A cold 1290x2796, 288-DPI run also
+proved stock greetd starts once, Phoc accepts the EDID, fbcon owns Virtio-GPU,
+and the guest exposes 64 standard VTs, four serial lines, and no legacy PTYs.
+The configurable 2 GiB app also cold-booted Phosh at 1320x2580 and 288 DPI on
+the iPhone 17 Pro Max Simulator, reached graphical target, started stock greetd
+and its Phrog session, and presented through the native Metal path.
 Extended Virtual Addressing and file sharing remain project-owned metadata.
+The DRM log client and UML stdio console are disabled; `tty0` renders through
+fbcon and the host stdout bridge uses `ttyS0`, the available serial fallback in
+the absence of a Virtio-console host backend.
 Exactly one persistent host thread named `uml-vcpu-N-carrier` owns each vCPU,
 including vCPU0; task creation no longer creates pthreads. Linux task contexts
 migrate on 128 KiB kernel stacks, host-stop wakes carriers cooperatively, and
@@ -75,10 +89,11 @@ The earlier 1 GiB normal boots passed on Simulator and the connected physical
 iPad. Simulator reached four CPUs; the standard-signed Release app ran without
 LLDB on the iPad and brought all six reported CPUs online. Both reached DHCP,
 EROFS/ext4 state, SDDM, automatic login, and direct virgl/ANGLE/Metal
-presentation without the former RCU stall. That is dated evidence rather than
-a claim for the new 2 GiB default. Current macOS qualification instead proves
-the full Phosh service set and its sparse rendered lock screen after the virgl
-VA-probe fix. Physical Aquarium remains intentionally outside acceptance; the
+presentation without the former RCU stall. The current 2 GiB iPhone 17 Pro Max
+Simulator boot additionally proves the EROFS/ext4 pivot, standard VT/fbcon,
+stock greetd, graphical target, Phrog session, and native Metal presentation.
+Current macOS qualification proves the full Phosh service set and its sparse
+rendered lock screen after the virgl VA-probe fix. Physical Aquarium remains intentionally outside acceptance; the
 removed disk-swap workaround is not part of the product. The earlier 2 GiB
 Simulator WebGL 2 Aquarium result remains dated graphics compatibility
 evidence.

@@ -135,6 +135,11 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
+    parser.add_argument(
+        "--dpi",
+        type=positive_integer,
+        help="advertise an effective display density through Virtio-GPU EDID",
+    )
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument(
         "--engine",
@@ -204,6 +209,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
             f"--gpu-height={options.height}",
         )
     )
+    if options.dpi is not None:
+        command.append(f"--gpu-dpi={options.dpi}")
     return command
 
 

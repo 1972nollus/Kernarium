@@ -197,62 +197,26 @@ KDE_SERVICE
 ln -sf ../kernarium-kde-setup.service \
     /etc/systemd/system/multi-user.target.wants/kernarium-kde-setup.service
 elif [ -x /usr/bin/phosh-session ] && \
-    getent passwd 1000 >/dev/null 2>&1; then
-phosh_user=$(getent passwd 1000 | cut -d: -f1)
-phosh_home=$(getent passwd 1000 | cut -d: -f6)
-phosh_group=$(id -gn "$phosh_user")
-usermod -a -G video,render,input "$phosh_user"
+    getent passwd _greetd >/dev/null 2>&1; then
+if getent passwd 1000 >/dev/null 2>&1; then
+    phosh_user=$(getent passwd 1000 | cut -d: -f1)
+    usermod -a -G video,render,input "$phosh_user"
+fi
 
-# The image's development unit and greetd both require Linux VT ioctls, which
-# UML tty0 intentionally does not implement.  Let libseat own the real virtio
-# DRM and input devices without binding the session to a VT instead.
-rm -f \
-    /etc/systemd/system/display-manager.service \
-    /etc/systemd/system/greetd.service \
+# Discard the image's fixed 720x1440 Virtual-1 override. Phoc uses the
+# preferred physical-pixel mode and effective density from Virtio-GPU EDID.
+install -d -m 0755 /etc/phrog
+install -m 0644 /dev/null /etc/phrog/phoc.ini
+
+# The image enables an autologin getty on tty0. That aliases the active VT and
+# calls vhangup while greetd owns it, terminating greetd's first session. A
+# removal on OverlayFS creates a whiteout for the immutable image symlink. The
+# image also enables the mutually exclusive development phosh.service beside
+# its display-manager alias; remove only that stale enablement so graphical.target
+# follows the stock display-manager -> greetd -> Phrog path.
+rm -f /etc/systemd/system/getty.target.wants/getty@tty0.service \
     /etc/systemd/system/graphical.target.wants/phosh.service
-ln -s /dev/null /etc/systemd/system/display-manager.service
-ln -s /dev/null /etc/systemd/system/greetd.service
-
-# Discard the image's fixed 720x1440 Virtual-1 override.  Phoc will select the
-# preferred mode advertised by Virtio-GPU, preserving one guest pixel per host
-# safe-area point.
-install -d -m 0755 /etc/phosh \
-    /etc/systemd/system/graphical.target.wants
-install -m 0644 /dev/null /etc/phosh/phoc.ini
-cat > /etc/systemd/system/kernarium-phosh.service <<PHOSH_SERVICE
-[Unit]
-Description=Kernarium VT-independent Phosh session
-After=systemd-user-sessions.service systemd-logind.service dbus.socket
-Wants=systemd-logind.service dbus.socket
-Before=graphical.target
-
-[Service]
-Type=simple
-User=$phosh_user
-Group=$phosh_group
-SupplementaryGroups=video render input
-PAMName=login
-WorkingDirectory=$phosh_home
-Environment=HOME=$phosh_home
-Environment=LANG=C.UTF-8
-Environment=XDG_CURRENT_DESKTOP=Phosh:GNOME
-Environment=XDG_SESSION_DESKTOP=phosh
-Environment=XDG_SESSION_TYPE=wayland
-Environment=WLR_BACKENDS=drm,libinput
-Environment=SEATD_VTBOUND=0
-ExecStart=/usr/bin/phosh-session
-Restart=on-failure
-RestartSec=5s
-StandardInput=null
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=graphical.target
-PHOSH_SERVICE
-ln -s ../kernarium-phosh.service \
-    /etc/systemd/system/graphical.target.wants/kernarium-phosh.service
-echo "Kernarium Phosh overlay setup complete for $phosh_user"
+echo "Kernarium Phrog overlay setup complete; tty0 getty disabled, greetd selected"
 else
     echo "Kernarium desktop setup is owned by the rootfs image"
 fi
@@ -673,7 +637,8 @@ public:
 
     [[nodiscard]] std::string kernelArgument() const
     {
-        return "con0=fd:" + std::to_string(guest_);
+        return "ssl0=fd:" + std::to_string(guest_) + ",fd:" +
+            std::to_string(guest_);
     }
 
 private:
@@ -720,6 +685,7 @@ extern "C" int kernarium_runtime_run(
     const char* overlayPath,
     uint32_t width,
     uint32_t height,
+    uint32_t dotsPerInch,
     uint32_t guestMemoryMiB,
     uint32_t guestProcessorCount)
 {
@@ -727,7 +693,10 @@ extern "C" int kernarium_runtime_run(
         ActiveRuntime active;
         if (view == nullptr || !usableFile(rootfsPath) ||
             !usableFile(overlayPath) ||
-            width == 0 || height == 0) {
+            width == 0 || height == 0 ||
+            width > uml::gpu::protocol::maximumEdidDimension ||
+            height > uml::gpu::protocol::maximumEdidDimension ||
+            dotsPerInch == 0) {
             std::fputs(
                 "Kernarium: invalid display, rootfs, or overlay path\n",
                 stderr);
@@ -748,9 +717,11 @@ extern "C" int kernarium_runtime_run(
         }
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
         std::printf(
-            "Kernarium: booting %ux%u guest with mem=%uM ncpus=%u\n",
+            "Kernarium: booting %ux%u guest at %u DPI with mem=%uM "
+            "ncpus=%u\n",
             width,
             height,
+            dotsPerInch,
             guestMemoryMiB,
             guestProcessorCount);
 
@@ -759,6 +730,7 @@ extern "C" int kernarium_runtime_run(
                 .displayMode = uml::gpu::DisplayMode::native,
                 .width = width,
                 .height = height,
+                .dotsPerInch = dotsPerInch,
                 .nativeView = (__bridge void*)view,
             });
         uml::input::virtio::InProcessInputService touchscreen(
@@ -805,7 +777,7 @@ extern "C" int kernarium_runtime_run(
             "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",
             "console=tty0",
-            "console=drm_log",
+            "console=ttyS0",
             consoleBridge.kernelArgument(),
             "ubd1=" + std::string(overlayPath),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
@@ -815,8 +787,10 @@ extern "C" int kernarium_runtime_run(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
                 std::to_string(uml::input::virtio::protocol::deviceId),
         };
-        if (!geekbench)
+        if (!geekbench) {
             arguments.emplace_back("systemd.unit=graphical.target");
+            arguments.emplace_back("plymouth.enable=0");
+        }
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
             .struct_size = sizeof(uml_emulator_config),

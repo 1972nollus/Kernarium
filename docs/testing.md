@@ -129,9 +129,12 @@ default. Device and Simulator both default to all processors reported by
 512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay size, and a
 Documents rootfs filename; changes are snapshotted on the next app launch.
 SwiftUI lays the `ContentView` Metal view out inside the safe area, and the app
-uses the view's point dimensions as its drawable and guest pixel dimensions
-without applying the display scale. Trailing-center settings and keyboard
-buttons are the only overlays.
+multiplies its point dimensions by `UIScreen.nativeScale` for both the Metal
+drawable and guest preferred mode. Virtio-GPU EDID advertises an effective
+`96 * nativeScale` density so the guest keeps one logical UI unit per host
+point while rendering at native pixels. UIKit scales touch points into that
+same pixel range. Trailing-center settings and keyboard buttons are the only
+overlays.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
@@ -266,14 +269,26 @@ pivots. Separate Docker and containerd directories are then bind-mounted from
 the same ext4 filesystem, keeping their contents separate while sharing its
 free space. The shell applies the image-appropriate disposable desktop setup
 and execs the rootfs systemd as PID 1. KDE uses the image's display manager and
-`uml` account. Phosh uses the image's UID-1000 account and starts through
-logind/libseat without binding to UML's unsupported VT ioctl path.
+`uml` account. Phosh keeps the image's stock Phrog/greetd graph and normal VT
+session, but whiteouts the image-owned
+`getty.target.wants/getty@tty0.service` enablement in the disposable overlay
+before systemd starts. It also whiteouts the image's mutually exclusive
+development `graphical.target.wants/phosh.service` enablement so graphical
+target uses the stock `display-manager.service` alias, greetd, and Phrog. The
+underlying units and immutable EROFS image are unchanged. Removing that tty0
+autologin prevents its `vhangup` from sending `SIGHUP` to greetd's first
+session, with no wait helper or greetd ordering drop-in. Kernarium passes
+`plymouth.enable=0` for this flow so the splash cannot retain the VT after the
+getty handoff is removed; it does not mask or replace any installed service.
 The kernel builds zswap in, enables it by default, and selects zstd. Because
 zswap is only a compressed cache in front of a backing swap device or file,
 Kernarium's no-swap launch allocates no zswap pool. The prototype does not
-synthesize a desktop user, modify the EROFS image, or start VNC. The modern DRM
-log client provides an early KMS console until userspace takes display
-ownership; the independent UML console relay continues to app stdout.
+synthesize a desktop user, modify the EROFS image, or start VNC. Standard
+VT/fbcon renders early boot through Virtio-GPU fbdev emulation; the DRM log
+client and conflicting UML stdio console are disabled. The guest exposes the
+normal 64 VT nodes, four UML serial lines, dynamic Unix98 PTYs, and no legacy
+BSD PTY bank. This host has no Virtio-console backend, so `ttyS0` is the serial
+fallback connected to the app's stdout relay while `tty0` remains on fbcon.
 
 `--aquarium` remains an opt-in Simulator-only launcher check. It requires a
 live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
@@ -291,7 +306,10 @@ new 2 GiB default or Phosh image has been rerun on either iOS target. Current
 macOS qualification boots the unmodified Phosh service set, completes its
 GStreamer plugin scan without poisoning the virgl context, captures the sparse
 Phosh lock screen through VNC, and enters the direct
-CGL/IOSurface/Metal presentation path in native mode.
+CGL/IOSurface/Metal presentation path in native mode. A separate stock-Phrog
+1290x2796/288-DPI validation completed two cold boots with no greetd restart,
+accepted EDID density, switched fbcon to Virtio-GPU, and observed exactly 64
+VTs, four serial lines, and zero legacy PTYs.
 
 Prepare full integration explicitly. Linux must be replayed on a
 case-sensitive filesystem. The canonical source and page-specific kernel build
@@ -405,9 +423,11 @@ The bare CLI defaults to `init=/bin/sh`. Systemd-oriented launchers host-feed
 their OverlayFS bootstrap to that temporary PID 1 shell, mount the EROFS lower
 and tmpfs upper/work directories, then enter the overlay and start systemd.
 They do not depend on a custom bootstrap executable inside the image. The
-image owns the enabled tty0 getty and its login policy; launchers must preserve
-that unit instead of creating a replacement symlink, drop-in, or autologin
-override in the overlay. Before starting systemd, the bootstrap mounts tmpfs at
+image owns the enabled tty0 getty and its login policy; these generic launchers
+must preserve that unit instead of creating a replacement symlink, drop-in, or
+autologin override in the overlay. Kernarium's documented Phosh-only whiteout
+of the image's tty0 enablement is not part of this generic launcher contract.
+Before starting systemd, the bootstrap mounts tmpfs at
 `/var/lib/docker` and `/var/lib/containerd` so Docker storage and containerd
 state are not nested on the writable root OverlayFS. The
 `guest-overlay-systemd-smoke` target builds a freestanding arm64/Linux

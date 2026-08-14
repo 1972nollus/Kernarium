@@ -1,4 +1,4 @@
-From 7efde71ff312d87e68a3e3ffce682d1b3b1e4e14 Mon Sep 17 00:00:00 2001
+From 99a391e74bd1ec4e8f10d4d2289a8eb508659f1b Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:11 +0900
 Subject: [PATCH 10/18] uml: adapt standard virtual devices to Darwin host
@@ -6,27 +6,78 @@ Subject: [PATCH 10/18] uml: adapt standard virtual devices to Darwin host
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/um/drivers/Kconfig           |  20 +++-
- arch/um/drivers/Makefile          |   5 +
+ arch/um/drivers/Kconfig           |  41 ++++++-
+ arch/um/drivers/Makefile          |   8 +-
  arch/um/drivers/chan_user.c       |  10 +-
  arch/um/drivers/chan_user.h       |   6 +
  arch/um/drivers/cow_user.c        |   4 +
  arch/um/drivers/darwin_net_kern.c | 166 +++++++++++++++++++++++++++
  arch/um/drivers/rtc_kern.c        |  30 ++++-
  arch/um/drivers/rtc_user.c        | 104 ++++++++++++++++-
+ arch/um/drivers/ssl.c             |   2 +-
  arch/um/drivers/ubd_kern.c        | 129 ++++++++++++++++++---
  arch/um/drivers/ubd_user.c        |   4 -
  arch/um/drivers/virtio_uml.c      |  39 ++++---
  arch/um/drivers/vnc_input.c       | 185 ++++++++++++++++++++++++++++++
- 12 files changed, 660 insertions(+), 42 deletions(-)
+ drivers/video/console/Kconfig     |   3 +-
+ 14 files changed, 685 insertions(+), 46 deletions(-)
  create mode 100644 arch/um/drivers/darwin_net_kern.c
  create mode 100644 arch/um/drivers/vnc_input.c
 
 diff --git a/arch/um/drivers/Kconfig b/arch/um/drivers/Kconfig
-index 6a0354ca0..531adea05 100644
+index 6a0354ca0..32721e1b1 100644
 --- a/arch/um/drivers/Kconfig
 +++ b/arch/um/drivers/Kconfig
-@@ -142,20 +142,28 @@ endmenu
+@@ -2,6 +2,15 @@
+ 
+ menu "UML Character Devices"
+ 
++config UML_STDIO_CONSOLE
++	bool "UML stdio console"
++	default y
++	help
++	  Build the traditional UML console driver which exposes tty0 through
++	  tty15 as host stdio, terminal, or pseudo-terminal channels. Disable
++	  this when the standard Linux virtual-terminal and framebuffer-console
++	  stack owns the tty major instead.
++
+ config STDERR_CONSOLE
+ 	bool "stderr console"
+ 	default y
+@@ -20,6 +29,16 @@ config SSL
+ 
+ 	  Unless you have a specific reason for disabling this, say Y.
+ 
++config SSL_PORTS
++	int "Number of virtual serial lines"
++	depends on SSL
++	range 1 64
++	default 64
++	help
++	  Set the number of UML serial devices exposed as /dev/ttyS*. Most
++	  desktop guests need only a few serial ports; retain 64 for the
++	  historical UML default.
++
+ config NULL_CHAN
+ 	bool "null channel support"
+ 	help
+@@ -77,6 +96,7 @@ config NOCONFIG_CHAN
+ 
+ config CON_ZERO_CHAN
+ 	string "Default main console channel initialization"
++	depends on UML_STDIO_CONSOLE
+ 	default "fd:0,fd:1"
+ 	help
+ 	  This is the string describing the channel to which the main console
+@@ -87,6 +107,7 @@ config CON_ZERO_CHAN
+ 
+ config CON_CHAN
+ 	string "Default console channel initialization"
++	depends on UML_STDIO_CONSOLE
+ 	default "xterm"
+ 	help
+ 	  This is the string describing the channel to which all consoles
+@@ -142,20 +163,28 @@ endmenu
  config VIRTIO_UML
  	bool "UML driver for virtio devices"
  	select VIRTIO
@@ -62,10 +113,17 @@ index 6a0354ca0..531adea05 100644
  config UML_PCI
  	bool
 diff --git a/arch/um/drivers/Makefile b/arch/um/drivers/Makefile
-index 6bf8cbf71..84e4ab62d 100644
+index 6bf8cbf71..91ce72a00 100644
 --- a/arch/um/drivers/Makefile
 +++ b/arch/um/drivers/Makefile
-@@ -28,6 +28,10 @@ obj-$(CONFIG_SSL) += ssl.o
+@@ -23,11 +23,16 @@ vfio_uml-objs := vfio_kern.o vfio_user.o
+ # When the above is fixed, don't forget to add this too!
+ #targets += $(obj)/pcap.o
+ 
+-obj-y := stdio_console.o fd.o chan_kern.o chan_user.o line.o
++obj-y := fd.o chan_kern.o chan_user.o line.o
++obj-$(CONFIG_UML_STDIO_CONSOLE) += stdio_console.o
+ obj-$(CONFIG_SSL) += ssl.o
  obj-$(CONFIG_STDERR_CONSOLE) += stderr_console.o
  
  obj-$(CONFIG_UML_NET_VECTOR) += vector.o
@@ -76,7 +134,7 @@ index 6bf8cbf71..84e4ab62d 100644
  obj-$(CONFIG_MCONSOLE) += mconsole.o
  obj-$(CONFIG_MMAPPER) += mmapper_kern.o 
  obj-$(CONFIG_BLK_DEV_UBD) += ubd.o 
-@@ -42,6 +46,7 @@ obj-y += $(harddog-builtin-y) $(harddog-builtin-m)
+@@ -42,6 +47,7 @@ obj-y += $(harddog-builtin-y) $(harddog-builtin-m)
  obj-$(CONFIG_BLK_DEV_COW_COMMON) += cow_user.o
  obj-$(CONFIG_UML_RANDOM) += random.o
  obj-$(CONFIG_VIRTIO_UML) += virtio_uml.o
@@ -560,6 +618,19 @@ index 67912fcf7..e934f7f94 100644
  	os_close_file(uml_rtc_irq_fds[0]);
 +#endif
  }
+diff --git a/arch/um/drivers/ssl.c b/arch/um/drivers/ssl.c
+index 8006a5bd5..3818fce20 100644
+--- a/arch/um/drivers/ssl.c
++++ b/arch/um/drivers/ssl.c
+@@ -19,7 +19,7 @@
+ 
+ static const int ssl_version = 1;
+ 
+-#define NR_PORTS 64
++#define NR_PORTS CONFIG_SSL_PORTS
+ 
+ static void ssl_announce(char *dev_name, int dev)
+ {
 diff --git a/arch/um/drivers/ubd_kern.c b/arch/um/drivers/ubd_kern.c
 index 37455e74d..6d235135a 100644
 --- a/arch/um/drivers/ubd_kern.c
@@ -1110,6 +1181,23 @@ index 000000000..6fafe8c1c
 +	}
 +}
 +__uml_exitcall(vnc_input_cleanup);
+diff --git a/drivers/video/console/Kconfig b/drivers/video/console/Kconfig
+index 12f54480f..ee238467e 100644
+--- a/drivers/video/console/Kconfig
++++ b/drivers/video/console/Kconfig
+@@ -72,7 +72,7 @@ config DUMMY_CONSOLE_ROWS
+ 
+ config FRAMEBUFFER_CONSOLE
+ 	bool "Framebuffer Console support"
+-	depends on FB_CORE && !UML
++	depends on FB_CORE && (!UML || !UML_STDIO_CONSOLE)
+ 	default DRM_FBDEV_EMULATION
+ 	select VT_HW_CONSOLE_BINDING
+ 	select CRC32
+@@ -150,4 +150,3 @@ config STI_CONSOLE
+ 	  The alternative is to use your primary serial port as a console.
+ 
+ endmenu
+-
 -- 
 2.50.1 (Apple Git-155)
-
