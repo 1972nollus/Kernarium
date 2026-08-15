@@ -83,6 +83,16 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("Autolock=false", commands)
         self.assertIn("LockOnResume=false", commands)
 
+    def test_vt_getty_is_relocated_off_the_active_vt_alias(self) -> None:
+        commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
+        self.assertIn("systemctl mask --now getty@tty0.service", commands)
+        self.assertIn("systemctl start getty@tty1.service", commands)
+        # The exception is bounded to the VT getty that collides with SDDM's
+        # VT. Serial getties, credentials, and autologin stay image-owned.
+        self.assertNotIn("serial-getty@", commands)
+        self.assertNotIn("agetty", commands)
+        self.assertNotIn("chpasswd", commands)
+
     def test_existing_uml_desktop_user_is_reused(self) -> None:
         commands = "\n".join(boot_kde_vnc.KDE_OVERLAY_COMMANDS)
         self.assertIn("getent passwd uml", commands)

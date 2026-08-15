@@ -108,13 +108,34 @@ def main() -> int:
         "Kernarium must locate the image-provided ext4 formatter instead of "
         "assuming a Debian-only path",
     )
+    kde_branch_start = kernarium_bootstrap.index(
+        "if getent passwd uml >/dev/null 2>&1 && \\"
+    )
+    kde_branch_end = kernarium_bootstrap.index(
+        "elif [ -x /usr/bin/phosh-session ]", kde_branch_start
+    )
+    kde_branch = kernarium_bootstrap[kde_branch_start:kde_branch_end]
     require(
-        "/etc/systemd/system/getty.target.wants/" not in kernarium_bootstrap
-        and "serial-getty@" not in kernarium_bootstrap
+        "serial-getty@" not in kernarium_bootstrap
         and "agetty" not in kernarium_bootstrap
-        and "chpasswd" not in kernarium_bootstrap,
-        "Kernarium Phosh setup must preserve the image-owned VT and serial "
-        "getties plus their login policy",
+        and "chpasswd" not in kernarium_bootstrap
+        and "getty"
+        not in kernarium_bootstrap[:kde_branch_start]
+        + kernarium_bootstrap[kde_branch_end:],
+        "Kernarium Phosh and postmarketOS setup must preserve the "
+        "image-owned VT and serial getties plus their login policy",
+    )
+    require(
+        kde_branch.count(
+            "ln -sf /dev/null /etc/systemd/system/getty@tty0.service"
+        )
+        == 1
+        and kde_branch.count(
+            "/etc/systemd/system/getty.target.wants/getty@tty1.service"
+        )
+        == 1,
+        "the KDE overlay's bounded getty relocation must mask the active-VT "
+        "alias and enable exactly one fixed-VT replacement",
     )
     require(
         runtime_source.index('"console=tty0"')
