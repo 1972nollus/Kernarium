@@ -20,6 +20,8 @@ CANONICAL_BUILD_4K = "/Volumes/Kernel/build-4k"
 CANONICAL_IMAGE_16K = f"{CANONICAL_BUILD_16K}/vmlinux"
 CANONICAL_IMAGE_4K = f"{CANONICAL_BUILD_4K}/vmlinux"
 OBSOLETE_BUILD = "build-ios-device-16k"
+SWIFTTERM_REVISION = "7691f85b222a67a66b58499e1b2647443cf0dda7"
+SWIFTTERM_VERSION = "1.18.0"
 ELF_HEADER = struct.Struct("<16sHHIQQQIHHHHHH")
 PROGRAM_HEADER = struct.Struct("<IIQQQQQQ")
 
@@ -165,12 +167,17 @@ def main() -> int:
     parser.add_argument("--kernel-cmake", type=Path, required=True)
     parser.add_argument("--runtime-cmake", type=Path, required=True)
     parser.add_argument("--runtime-source", type=Path, required=True)
+    parser.add_argument("--runtime-header", type=Path, required=True)
     parser.add_argument("--runtime-loader", type=Path, required=True)
+    parser.add_argument("--runtime-loader-header", type=Path, required=True)
+    parser.add_argument("--content-view", type=Path, required=True)
+    parser.add_argument("--serial-console-view", type=Path, required=True)
     parser.add_argument("--carrier-verifier", type=Path, required=True)
     parser.add_argument("--linker-patch", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--package-script", type=Path, required=True)
     parser.add_argument("--xcode-project", type=Path, required=True)
+    parser.add_argument("--package-resolved", type=Path, required=True)
     parser.add_argument("--simulator-script", type=Path, required=True)
     parser.add_argument("--macos-app", type=Path, required=True)
     parser.add_argument("--toolchain-env", type=Path, required=True)
@@ -259,7 +266,9 @@ def main() -> int:
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
 
     runtime_source = read(arguments.runtime_source)
+    runtime_header = read(arguments.runtime_header)
     loader_source = read(arguments.runtime_loader)
+    loader_header = read(arguments.runtime_loader_header)
     require(
         "kernarium_runtime_get_api_v1" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
@@ -270,13 +279,30 @@ def main() -> int:
         "deferred runtime still owns the pre-main timer constructor",
     )
     for contract in (
+        "set_console_output_callback",
+        "send_console_input",
+    ):
+        require(contract in runtime_header, f"runtime API lacks {contract}")
+    for contract in (
+        "publishConsoleOutput",
+        "runtimeSetConsoleOutputCallback",
+        "runtimeSendConsoleInput",
+    ):
+        require(contract in runtime_source, f"runtime console bridge lacks {contract}")
+    for contract in (
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
         'dlsym(handle, "kernarium_runtime_get_api_v1")',
         "selectedPageSize == guestPageSize",
+        "forwardConsoleOutput",
+        "kernarium_runtime_loader_send_console_input",
     ):
         require(contract in loader_source, f"application runtime loader lacks {contract}")
+    require(
+        "KernariumConsoleOutputHandler" in loader_header,
+        "application runtime loader does not expose serial output",
+    )
 
     linker_patch = read(arguments.linker_patch)
     require(
@@ -313,6 +339,47 @@ def main() -> int:
         "KernariumRuntime.xcframework" not in xcode_project,
         "Xcode retains the directly linked unversioned runtime",
     )
+    for contract in (
+        'repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";',
+        f"version = {SWIFTTERM_VERSION};",
+        "SwiftTerm in Frameworks",
+    ):
+        require(contract in xcode_project, f"Xcode SwiftTerm dependency lacks {contract}")
+    package_resolved = json.loads(read(arguments.package_resolved))
+    swiftterm_pins = [
+        pin for pin in package_resolved["pins"] if pin["identity"] == "swiftterm"
+    ]
+    require(len(swiftterm_pins) == 1, "Package.resolved lacks one SwiftTerm pin")
+    swiftterm_state = swiftterm_pins[0]["state"]
+    require(
+        swiftterm_state.get("version") == SWIFTTERM_VERSION
+        and swiftterm_state.get("revision") == SWIFTTERM_REVISION,
+        "Package.resolved does not authenticate the selected SwiftTerm release",
+    )
+
+    content_view = read(arguments.content_view)
+    controls = content_view.split(
+        "private var floatingButtonsContent", 1
+    )[1].split("private var settingsButton", 1)[0]
+    require(
+        controls.index("settingsButton")
+        < controls.index("displayModeButton")
+        < controls.index("keyboardButton"),
+        "display-mode control is not between settings and keyboard",
+    )
+    require(
+        "static let defaultMode: Self = .framebuffer" in content_view,
+        "Kernarium does not default to the framebuffer surface",
+    )
+    serial_console = read(arguments.serial_console_view)
+    for contract in (
+        "import SwiftTerm",
+        "TerminalViewDelegate",
+        "TerminalView(frame: .zero)",
+        "view.feed(byteArray:",
+        "kernarium_runtime_loader_send_console_input",
+    ):
+        require(contract in serial_console, f"SwiftTerm console lacks {contract}")
     frameworks_phase = xcode_project.split(
         "/* Begin PBXFrameworksBuildPhase section */", 1
     )[1].split("/* End PBXFrameworksBuildPhase section */", 1)[0]

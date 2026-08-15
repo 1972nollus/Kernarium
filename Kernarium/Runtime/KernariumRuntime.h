@@ -2,6 +2,7 @@
 #ifndef KERNARIUM_RUNTIME_H
 #define KERNARIUM_RUNTIME_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define KERNARIUM_RUNTIME_API_VERSION 1U
@@ -35,6 +36,16 @@ typedef void (*kernarium_runtime_send_touch_function)(
 typedef void (*kernarium_runtime_send_key_function)(
     uint16_t code,
     int pressed);
+typedef void (*kernarium_runtime_console_output_callback)(
+    void* context,
+    const void* buffer,
+    size_t length);
+typedef void (*kernarium_runtime_set_console_output_callback_function)(
+    kernarium_runtime_console_output_callback callback,
+    void* context);
+typedef int (*kernarium_runtime_send_console_input_function)(
+    const void* buffer,
+    size_t length);
 
 /* The application resolves only this versioned getter after loading exactly
  * one runtime framework. The table is immutable and remains valid until
@@ -51,6 +62,9 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_request_stop_function request_stop;
     kernarium_runtime_send_touch_function send_touch;
     kernarium_runtime_send_key_function send_key;
+    kernarium_runtime_set_console_output_callback_function
+        set_console_output_callback;
+    kernarium_runtime_send_console_input_function send_console_input;
 } kernarium_runtime_api;
 
 #if defined(__GNUC__)

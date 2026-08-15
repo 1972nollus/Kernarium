@@ -25,6 +25,36 @@ std::atomic<const kernarium_runtime_api*> selectedApi;
 void* selectedHandle;
 uint32_t selectedPageSize;
 bool selectionAttempted;
+std::mutex consoleOutputHandlerMutex;
+KernariumConsoleOutputHandler consoleOutputHandler;
+
+void forwardConsoleOutput(
+    void*,
+    const void* buffer,
+    std::size_t length)
+{
+    if (buffer == nullptr || length == 0U)
+        return;
+    NSData* data = [NSData dataWithBytes:buffer length:length];
+    KernariumConsoleOutputHandler handler;
+    {
+        std::lock_guard lock(consoleOutputHandlerMutex);
+        handler = consoleOutputHandler;
+    }
+    if (handler == nil)
+        return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        handler(data);
+    });
+}
+
+void updateConsoleOutputForwarder(const kernarium_runtime_api* runtime)
+{
+    std::lock_guard lock(consoleOutputHandlerMutex);
+    runtime->set_console_output_callback(
+        consoleOutputHandler == nil ? nullptr : forwardConsoleOutput,
+        nullptr);
+}
 
 [[noreturn]] void guestTimerMaskFailure() noexcept
 {
@@ -124,7 +154,9 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->run == nullptr ||
         api->request_stop == nullptr ||
         api->send_touch == nullptr ||
-        api->send_key == nullptr) {
+        api->send_key == nullptr ||
+        api->set_console_output_callback == nullptr ||
+        api->send_console_input == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -193,6 +225,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         return -1;
     }
 
+    updateConsoleOutputForwarder(api);
     selectedHandle = handle;
     selectedPageSize = guestPageSize;
     selectedApi.store(api, std::memory_order_release);
@@ -278,4 +311,26 @@ extern "C" void kernarium_runtime_loader_send_key(uint16_t code, int pressed)
     const kernarium_runtime_api* runtime = api();
     if (runtime != nullptr)
         runtime->send_key(code, pressed);
+}
+
+extern "C" void kernarium_runtime_loader_set_console_output_handler(
+    KernariumConsoleOutputHandler handler)
+{
+    {
+        std::lock_guard lock(consoleOutputHandlerMutex);
+        consoleOutputHandler = [handler copy];
+    }
+    const kernarium_runtime_api* runtime = api();
+    if (runtime != nullptr)
+        updateConsoleOutputForwarder(runtime);
+}
+
+extern "C" int kernarium_runtime_loader_send_console_input(
+    const void* buffer,
+    std::size_t length)
+{
+    const kernarium_runtime_api* runtime = api();
+    if (runtime == nullptr)
+        return -1;
+    return runtime->send_console_input(buffer, length);
 }

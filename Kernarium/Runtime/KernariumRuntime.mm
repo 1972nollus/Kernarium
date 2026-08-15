@@ -96,6 +96,24 @@ std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
 uml::input::virtio::InProcessInputService* activeKeyboard;
+class ConsoleBridge;
+ConsoleBridge* activeConsoleBridge;
+std::mutex consoleOutputCallbackMutex;
+kernarium_runtime_console_output_callback consoleOutputCallback;
+void* consoleOutputContext;
+
+void publishConsoleOutput(const void* buffer, std::size_t length)
+{
+    kernarium_runtime_console_output_callback callback;
+    void* context;
+    {
+        std::lock_guard lock(consoleOutputCallbackMutex);
+        callback = consoleOutputCallback;
+        context = consoleOutputContext;
+    }
+    if (callback != nullptr)
+        callback(context, buffer, length);
+}
 
 class AppNetwork final {
 public:
@@ -618,25 +636,26 @@ public:
                 std::string(std::strerror(errno)));
         }
         guest_ = descriptors[0];
-        const int host = descriptors[1];
+        host_ = descriptors[1];
         const int enabled = 1;
         if (setsockopt(
-                host,
+                host_,
                 SOL_SOCKET,
                 SO_NOSIGPIPE,
                 &enabled,
                 sizeof(enabled)) != 0) {
             const int error = errno;
             close(guest_);
-            close(host);
+            close(host_);
             guest_ = -1;
+            host_ = -1;
             throw std::runtime_error(
                 "console socket setup failed: " +
                 std::string(std::strerror(error)));
         }
         try {
             relay_ = std::thread([
-                host,
+                this,
                 bootMode,
                 geekbenchWorkloads = std::move(geekbenchWorkloads)] {
                 constexpr std::string_view shellReady =
@@ -646,8 +665,10 @@ public:
                 char buffer[4096];
                 for (;;) {
                     const ssize_t received = recv(
-                        host, buffer, sizeof(buffer), 0);
+                        host_, buffer, sizeof(buffer), 0);
                     if (received > 0) {
+                        publishConsoleOutput(
+                            buffer, static_cast<std::size_t>(received));
                         std::string_view output(
                             buffer, static_cast<std::size_t>(received));
                         while (!output.empty()) {
@@ -686,28 +707,15 @@ public:
                                     bootstrap.append(desktopBootstrap);
                                 }
                                 bootstrap.push_back('\n');
-                                std::string_view remaining {bootstrap};
-                                while (!remaining.empty()) {
-                                    const ssize_t sent = send(
-                                        host,
-                                        remaining.data(),
-                                        remaining.size(),
-                                        0);
-                                    if (sent > 0) {
-                                        remaining.remove_prefix(
-                                            static_cast<std::size_t>(sent));
-                                    } else if (sent < 0 && errno == EINTR) {
-                                        continue;
-                                    } else {
-                                        std::fprintf(
-                                            stderr,
-                                            "Kernarium: console bootstrap "
-                                            "write failed: %s\n",
-                                            std::strerror(errno));
-                                        break;
-                                    }
-                                }
-                                bootstrapDelivered = remaining.empty();
+                                const int error = sendInput(
+                                    bootstrap.data(), bootstrap.size());
+                                bootstrapDelivered = error == 0;
+                                if (!bootstrapDelivered)
+                                    std::fprintf(
+                                        stderr,
+                                        "Kernarium: console bootstrap write "
+                                        "failed: %s\n",
+                                        std::strerror(error));
                                 if (bootstrapDelivered)
                                     std::fprintf(
                                         stderr,
@@ -730,11 +738,11 @@ public:
                     }
                     break;
                 }
-                close(host);
+                closeHost();
             });
         } catch (...) {
             close(guest_);
-            close(host);
+            closeHost();
             guest_ = -1;
             throw;
         }
@@ -753,6 +761,33 @@ public:
     ConsoleBridge(const ConsoleBridge&) = delete;
     ConsoleBridge& operator=(const ConsoleBridge&) = delete;
 
+    [[nodiscard]] int sendInput(
+        const void* buffer,
+        std::size_t length) noexcept
+    {
+        if (length == 0U)
+            return 0;
+        if (buffer == nullptr)
+            return EINVAL;
+        std::lock_guard lock(hostWriteMutex_);
+        if (host_ < 0)
+            return ENOTCONN;
+        std::string_view remaining {
+            static_cast<const char*>(buffer), length};
+        while (!remaining.empty()) {
+            const ssize_t sent = send(
+                host_, remaining.data(), remaining.size(), 0);
+            if (sent > 0) {
+                remaining.remove_prefix(static_cast<std::size_t>(sent));
+            } else if (sent < 0 && errno == EINTR) {
+                continue;
+            } else {
+                return sent == 0 ? EIO : errno;
+            }
+        }
+        return 0;
+    }
+
     [[nodiscard]] std::string kernelArgument() const
     {
         return "ssl0=fd:" + std::to_string(guest_) + ",fd:" +
@@ -760,8 +795,38 @@ public:
     }
 
 private:
+    void closeHost() noexcept
+    {
+        std::lock_guard lock(hostWriteMutex_);
+        if (host_ >= 0) {
+            close(host_);
+            host_ = -1;
+        }
+    }
+
     int guest_ {-1};
+    int host_ {-1};
+    std::mutex hostWriteMutex_;
     std::thread relay_;
+};
+
+class ActiveConsoleRegistration final {
+public:
+    explicit ActiveConsoleRegistration(ConsoleBridge& console)
+    {
+        std::lock_guard lock(activeEmulatorMutex);
+        activeConsoleBridge = &console;
+    }
+
+    ~ActiveConsoleRegistration()
+    {
+        std::lock_guard lock(activeEmulatorMutex);
+        activeConsoleBridge = nullptr;
+    }
+
+    ActiveConsoleRegistration(const ActiveConsoleRegistration&) = delete;
+    ActiveConsoleRegistration& operator=(
+        const ActiveConsoleRegistration&) = delete;
 };
 
 bool usableFile(const char* path)
@@ -951,6 +1016,7 @@ int runtimeRun(
             pointers.push_back(argument.c_str());
         int result = 0;
         {
+            ActiveConsoleRegistration consoleRegistration {consoleBridge};
             ActiveInputRegistration inputRegistration {
                 touchscreen, keyboard};
             ActiveEmulatorRegistration registration {emulator.get()};
@@ -1031,6 +1097,24 @@ void runtimeSendKey(uint16_t code, int pressed)
         activeKeyboard->send(events);
 }
 
+void runtimeSetConsoleOutputCallback(
+    kernarium_runtime_console_output_callback callback,
+    void* context)
+{
+    std::lock_guard lock(consoleOutputCallbackMutex);
+    consoleOutputCallback = callback;
+    consoleOutputContext = context;
+}
+
+int runtimeSendConsoleInput(const void* buffer, std::size_t length)
+{
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeConsoleBridge == nullptr)
+        return -ENOTCONN;
+    const int error = activeConsoleBridge->sendInput(buffer, length);
+    return error == 0 ? 0 : -error;
+}
+
 const kernarium_runtime_api runtimeApi {
     .abi_version = KERNARIUM_RUNTIME_API_VERSION,
     .struct_size = sizeof(kernarium_runtime_api),
@@ -1042,6 +1126,8 @@ const kernarium_runtime_api runtimeApi {
     .request_stop = runtimeRequestStop,
     .send_touch = runtimeSendTouch,
     .send_key = runtimeSendKey,
+    .set_console_output_callback = runtimeSetConsoleOutputCallback,
+    .send_console_input = runtimeSendConsoleInput,
 };
 
 } // namespace

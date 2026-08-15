@@ -82,6 +82,16 @@ applies the receipt-pinned iOS GLib availability patch, and publishes a static
 platform prefix transactionally. Neither iOS prefix family is an input to the
 macOS dependency graph.
 
+Kernarium's app-only terminal UI uses SwiftTerm 1.18.0 through Xcode Swift
+Package Manager. The project requirement is exact, and the checked-in
+`Package.resolved` authenticates revision
+`7691f85b222a67a66b58499e1b2647443cf0dda7`; do not replace it with an
+unversioned branch or an ambient checkout. SwiftTerm is built only into the
+iOS application target and does not enter the emulator libraries, runtime
+frameworks, or macOS graph. Resolve the package once with Xcode, then pass
+`-disableAutomaticPackageResolution` in unattended builds so the lock cannot
+move during compilation.
+
 `build.sh` copies those verified trees into a temporary build area and creates
 only static arm64 libraries under `.build/dependencies/macos-arm64`. Its
 ordered build recipes must exactly match every manifest name and release

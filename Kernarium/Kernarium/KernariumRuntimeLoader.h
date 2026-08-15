@@ -2,8 +2,14 @@
 #ifndef KERNARIUM_RUNTIME_LOADER_H
 #define KERNARIUM_RUNTIME_LOADER_H
 
+#import <Foundation/Foundation.h>
 #import <MetalKit/MetalKit.h>
+#include <stddef.h>
 #include <stdint.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+typedef void (^KernariumConsoleOutputHandler)(NSData* data);
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,9 +34,16 @@ void kernarium_runtime_loader_send_touch(
     uint32_t y,
     int pressed);
 void kernarium_runtime_loader_send_key(uint16_t code, int pressed);
+void kernarium_runtime_loader_set_console_output_handler(
+    KernariumConsoleOutputHandler _Nullable handler);
+int kernarium_runtime_loader_send_console_input(
+    const void* buffer,
+    size_t length);
 
 #ifdef __cplusplus
 }
 #endif
+
+NS_ASSUME_NONNULL_END
 
 #endif

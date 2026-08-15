@@ -145,6 +145,14 @@ range—point-for-pixel by default or `nativeScale` Retina pixels—and converts
 them with text input to Linux evdev events. The GPU device independently
 advertises the matching 160 or `160 * nativeScale` effective density through
 EDID.
+`ContentView` keeps both that framebuffer surface and a SwiftTerm
+`TerminalView` mounted, shows the framebuffer by default, and changes only
+their visibility and input ownership when the user toggles surfaces. The
+existing `ttyS0` relay publishes each ordered output chunk to both application
+stdout and SwiftTerm; SwiftTerm delegate input returns through the same serial
+socket. This is a view over the existing UML serial endpoint, not a synthetic
+Virtio-console device, and hiding the framebuffer does not stop or recreate
+the Virtio-GPU presentation path.
 Networking remains the emulator's existing callback boundary backed by the
 iOS static GLib/libslirp prefix. These iOS owners do not enter the macOS
 application graph.

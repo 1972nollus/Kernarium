@@ -45,7 +45,9 @@ corrupted the host heap on the first SET_SCANOUT.
 Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
 the safe-area Metal view in its selected pixel mode and an evdev keyboard fed
-by UIKit text input. By default the view maps safe-area points directly to
+by UIKit text input plus the app's Power, Volume Up, Volume Down, Escape, Tab,
+and Home tray. Every tray action emits an ordinary press/release pair. By
+default the view maps safe-area points directly to
 guest pixels and supplies 160 DPI through Virtio-GPU EDID. Optional Retina mode
 multiplies the bounds by `nativeScale` and supplies `160 * nativeScale`; touch
 points are scaled into the same selected range. Point density selects VGA8x16
@@ -239,6 +241,11 @@ is replaced.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.
+Kernarium also publishes the same ordered chunks to its SwiftTerm terminal and
+writes SwiftTerm delegate input back to the existing serial socket. The
+framebuffer remains the default app surface, and switching views leaves both
+SwiftTerm scrollback and Virtio-GPU presentation alive. This does not introduce
+a Virtio-console backend.
 `CONFIG_PRINTK_TIME` prefixes kernel records on both tty0 and ttyS0 with the
 guest monotonic timestamp. Normal UML execution supplies that prefix from a
 boot-relative host-monotonic nanosecond `sched_clock()` instead of 100 Hz

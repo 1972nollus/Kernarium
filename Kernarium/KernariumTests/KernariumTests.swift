@@ -1,8 +1,27 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Kernarium
 
 struct KernariumTests {
+    @Test
+    @MainActor
+    func floatingControlsAndSpecialKeysHaveExpectedGeometryAndCodes() {
+        #expect(FloatingControlMetrics.buttonSide == 32)
+        #expect(GuestViewMode.defaultMode == .framebuffer)
+        #expect(UIImage(systemName: "terminal") != nil)
+        #expect(UIImage(systemName: "display") != nil)
+        #expect(GuestSpecialKey.power.code == 116)
+        #expect(GuestSpecialKey.volumeUp.code == 115)
+        #expect(GuestSpecialKey.volumeDown.code == 114)
+        #expect(GuestSpecialKey.escape.code == 1)
+        #expect(GuestSpecialKey.tab.code == 15)
+        #expect(GuestSpecialKey.home.code == 102)
+        for key in GuestSpecialKey.allCases {
+            #expect(UIImage(systemName: key.systemName) != nil)
+        }
+    }
+
     @Test
     @MainActor
     func overlayDiskIsRecreatedAtRequestedSize() throws {

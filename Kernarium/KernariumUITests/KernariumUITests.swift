@@ -47,6 +47,51 @@ final class KernariumUITests: XCTestCase {
     }
 
     @MainActor
+    func testSpecialKeyTrayExpandsAndCollapses() throws {
+        let app = testApplication()
+        app.launch()
+
+        let trayButton = app.buttons["specialKeysButton"]
+        XCTAssertTrue(trayButton.waitForExistence(timeout: 10))
+        XCTAssertEqual(trayButton.frame.width, 32, accuracy: 1)
+        XCTAssertEqual(trayButton.frame.height, 32, accuracy: 1)
+        XCTAssertFalse(app.buttons["guestPowerButton"].exists)
+
+        trayButton.tap()
+        for identifier in [
+            "guestPowerButton",
+            "guestVolumeUpButton",
+            "guestVolumeDownButton",
+            "guestEscapeButton",
+            "guestTabButton",
+            "guestHomeButton",
+        ] {
+            XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 2))
+        }
+
+        trayButton.tap()
+        XCTAssertTrue(
+            app.buttons["guestPowerButton"].waitForNonExistence(timeout: 2)
+        )
+    }
+
+    @MainActor
+    func testDisplayModeDefaultsToFramebufferAndToggles() throws {
+        let app = testApplication()
+        app.launch()
+
+        let displayModeButton = app.buttons["displayModeButton"]
+        XCTAssertTrue(displayModeButton.waitForExistence(timeout: 10))
+        XCTAssertEqual(displayModeButton.label, "Show Serial Console")
+
+        displayModeButton.tap()
+        XCTAssertEqual(displayModeButton.label, "Show Framebuffer")
+
+        displayModeButton.tap()
+        XCTAssertEqual(displayModeButton.label, "Show Serial Console")
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

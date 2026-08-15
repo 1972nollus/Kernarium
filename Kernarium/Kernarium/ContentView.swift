@@ -2,16 +2,32 @@ import MetalKit
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var serialConsole = SerialConsoleController()
+    @State private var guestViewMode = GuestViewMode.defaultMode
     @State private var keyboardVisible = false
+    @State private var specialKeysExpanded = false
     @State private var presentedSheet: PresentedSheet?
+    @Namespace private var floatingButtonNamespace
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            GuestDisplayView(
-                keyboardVisible: $keyboardVisible,
-                retinaMode: EmulatorLauncher.shared.retinaMode
-            ) { view, geometry in
-                EmulatorLauncher.shared.start(view: view, geometry: geometry)
+            ZStack {
+                GuestDisplayView(
+                    keyboardVisible: $keyboardVisible,
+                    retinaMode: EmulatorLauncher.shared.retinaMode
+                ) { view, geometry in
+                    EmulatorLauncher.shared.start(view: view, geometry: geometry)
+                }
+                .opacity(guestViewMode == .framebuffer ? 1 : 0)
+                .allowsHitTesting(guestViewMode == .framebuffer)
+                .accessibilityHidden(guestViewMode != .framebuffer)
+                .accessibilityIdentifier("framebufferView")
+
+                SerialConsoleView(controller: serialConsole)
+                    .opacity(guestViewMode == .serialConsole ? 1 : 0)
+                    .allowsHitTesting(guestViewMode == .serialConsole)
+                    .accessibilityHidden(guestViewMode != .serialConsole)
+                    .accessibilityIdentifier("serialConsoleView")
             }
             floatingButtons
         }
@@ -22,16 +38,44 @@ struct ContentView: View {
                 EmulatorSettingsView()
             }
         }
+        .onAppear {
+            serialConsole.startObserving()
+        }
         .onDisappear {
+            serialConsole.stopObserving()
             EmulatorLauncher.shared.stop()
         }
     }
 
+    @ViewBuilder
     private var floatingButtons: some View {
-        VStack {
-            settingsButton
-            keyboardButton
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: FloatingControlMetrics.spacing) {
+                floatingButtonsContent
+            }
+        } else {
+            floatingButtonsContent
         }
+    }
+
+    private var floatingButtonsContent: some View {
+        VStack(alignment: .trailing, spacing: FloatingControlMetrics.spacing) {
+            settingsButton
+            displayModeButton
+            keyboardButton
+            specialKeysRow
+        }
+    }
+
+    private var displayModeButton: some View {
+        floatingIconButton(
+            systemName: guestViewMode == .framebuffer ? "terminal" : "display",
+            accessibilityLabel: guestViewMode == .framebuffer
+                ? "Show Serial Console"
+                : "Show Framebuffer",
+            identifier: "displayModeButton",
+            action: toggleGuestViewMode
+        )
     }
 
     private var settingsButton: some View {
@@ -57,6 +101,40 @@ struct ContentView: View {
         )
     }
 
+    private var specialKeysRow: some View {
+        HStack(spacing: FloatingControlMetrics.spacing) {
+            if specialKeysExpanded {
+                ForEach(GuestSpecialKey.allCases) { key in
+                    specialKeyButton(key)
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+            floatingIconButton(
+                systemName: specialKeysExpanded
+                    ? "chevron.right"
+                    : "chevron.left",
+                accessibilityLabel: specialKeysExpanded
+                    ? "Hide Special Keys"
+                    : "Show Special Keys",
+                identifier: "specialKeysButton"
+            ) {
+                withAnimation {
+                    specialKeysExpanded.toggle()
+                }
+            }
+        }
+    }
+
+    private func specialKeyButton(_ key: GuestSpecialKey) -> some View {
+        floatingIconButton(
+            systemName: key.systemName,
+            accessibilityLabel: key.accessibilityLabel,
+            identifier: key.accessibilityIdentifier
+        ) {
+            sendGuestKey(key.code)
+        }
+    }
+
     @ViewBuilder
     private func floatingIconButton(
         systemName: String,
@@ -68,8 +146,9 @@ struct ContentView: View {
             Button(action: action) {
                 floatingIcon(systemName: systemName)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffectID(identifier, in: floatingButtonNamespace)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier(identifier)
         } else {
@@ -88,12 +167,88 @@ struct ContentView: View {
 
     private func floatingIcon(systemName: String) -> some View {
         Image(systemName: systemName)
-            .frame(width: 44, height: 44)
+            .frame(
+                width: FloatingControlMetrics.buttonSide,
+                height: FloatingControlMetrics.buttonSide
+            )
             .contentShape(Circle())
     }
 
     private func toggleKeyboard() {
         keyboardVisible.toggle()
+    }
+
+    private func toggleGuestViewMode() {
+        switch guestViewMode {
+        case .framebuffer:
+            keyboardVisible = false
+            guestViewMode = .serialConsole
+        case .serialConsole:
+            serialConsole.resignFirstResponder()
+            guestViewMode = .framebuffer
+        }
+    }
+
+    private func sendGuestKey(_ code: UInt16) {
+        kernarium_runtime_loader_send_key(code, 1)
+        kernarium_runtime_loader_send_key(code, 0)
+    }
+}
+
+enum GuestViewMode {
+    case framebuffer
+    case serialConsole
+
+    static let defaultMode: Self = .framebuffer
+}
+
+enum FloatingControlMetrics {
+    static let buttonSide: CGFloat = 32
+    static let spacing: CGFloat = 8
+}
+
+enum GuestSpecialKey: UInt16, CaseIterable, Identifiable {
+    case power = 116
+    case volumeUp = 115
+    case volumeDown = 114
+    case escape = 1
+    case tab = 15
+    case home = 102
+
+    var id: Self { self }
+    var code: UInt16 { rawValue }
+
+    var systemName: String {
+        switch self {
+        case .power: "power"
+        case .volumeUp: "speaker.wave.3"
+        case .volumeDown: "speaker.wave.1"
+        case .escape: "escape"
+        case .tab: "arrow.right.to.line"
+        case .home: "house"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .power: "Power"
+        case .volumeUp: "Volume Up"
+        case .volumeDown: "Volume Down"
+        case .escape: "Escape"
+        case .tab: "Tab"
+        case .home: "Home"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .power: "guestPowerButton"
+        case .volumeUp: "guestVolumeUpButton"
+        case .volumeDown: "guestVolumeDownButton"
+        case .escape: "guestEscapeButton"
+        case .tab: "guestTabButton"
+        case .home: "guestHomeButton"
+        }
     }
 }
 

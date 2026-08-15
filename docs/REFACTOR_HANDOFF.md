@@ -25,7 +25,12 @@ A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
 RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
 filename for the next launch. It also persists Retina mode and a 4 KiB or
 16 KiB kernel page profile; Retina defaults off and the kernel defaults to
-16 KiB. The app recreates the sparse overlay disk on
+16 KiB. A 32-point display button between settings and keyboard switches
+between the framebuffer and a SwiftTerm serial terminal; framebuffer is the
+initial surface. Both views remain mounted so the terminal retains all boot
+output and the Metal/Virtio-GPU path continues presenting while hidden. The
+same ordered `ttyS0` stream still reaches app stdout, while input typed into
+SwiftTerm is returned to that serial endpoint. The app recreates the sparse overlay disk on
 every run; the guest formats it as ext4 and uses separate directories from its
 shared free-space pool for OverlayFS, Docker, and containerd before executing
 the image's normal systemd or OpenRC init. No disk-backed swap is
@@ -154,17 +159,21 @@ pool in the normal macOS or Kernarium desktop flows, which deliberately do not
 activate a swap device or file.
 
 Two real Virtio-input devices carry UIKit touch coordinates and keyboard text
-to the guest. Trailing-center settings and keyboard controls are circular and
-bordered on older systems and use native circular Liquid Glass on iOS 26. A
-private iOS GLib/libslirp prefix supplies normal SLiRP networking, and the
+to the guest. The 32-by-32-point trailing-center settings, keyboard, and
+special-key tray controls are circular and bordered on older systems and share a native
+Liquid Glass container on iOS 26. The tray expands left and emits
+Virtio-keyboard press/release pairs for Power, Volume Up, Volume Down, Escape,
+Tab, and Home. A private iOS GLib/libslirp prefix supplies normal SLiRP
+networking, and the
 UIKit idle timer is disabled only for the managed guest lifetime.
 
 The common kernel now gives Virtio-GPU to standard VT/fbcon instead of the DRM
 log client. It omits the conflicting UML stdio-console driver and legacy BSD
 PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
 `ttyS0` is the host console because this emulator has no Virtio-console backend;
-Kernarium binds that serial endpoint to its stdout relay while `tty0` remains
-visible on the framebuffer. Both page profiles build the selectable VGA8x16
+Kernarium fans that serial endpoint out to both its stdout relay and the
+SwiftTerm view while `tty0` remains visible on the framebuffer. SwiftTerm input
+uses the same bidirectional serial socket. Both page profiles build the selectable VGA8x16
 and TER16x32 fonts used by the two iOS density modes.
 
 The repeated physical reliability campaign preceded the selectable display

@@ -56,8 +56,16 @@ uml_add_tooling_test(
         --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
         --runtime-source
             ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
+        --runtime-header
+            ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.h
         --runtime-loader
             ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/KernariumRuntimeLoader.mm
+        --runtime-loader-header
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/KernariumRuntimeLoader.h
+        --content-view
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/ContentView.swift
+        --serial-console-view
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/SerialConsoleView.swift
         --carrier-verifier
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
         --linker-patch
@@ -67,6 +75,8 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
         --xcode-project
             ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.pbxproj
+        --package-resolved
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
         --simulator-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp

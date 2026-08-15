@@ -136,8 +136,15 @@ maps one host point to one Metal/guest pixel and advertises 160 DPI through
 Virtio-GPU EDID. Retina mode multiplies the same dimensions by
 `UIScreen.nativeScale` and advertises `160 * nativeScale`. UIKit scales touch
 points into the selected pixel range. Point mode requests VGA8x16 fbcon text;
-Retina densities request TER16x32. Trailing-center settings and keyboard
-buttons are the only overlays.
+Retina densities request TER16x32. Trailing-center 32-by-32-point settings,
+display-mode, and keyboard buttons remain directly available. The display
+button sits between settings and keyboard and switches from the default
+framebuffer surface to a SwiftTerm serial terminal and back. Both surfaces stay
+mounted, so the terminal accumulates boot output while hidden and switching
+does not reset Virtio-GPU. A fourth button below them expands
+a row of Power, Volume Up, Volume Down, Escape, Tab, and Home actions to the
+left; each action sends a press/release pair through the existing Virtio
+keyboard device.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
@@ -250,6 +257,10 @@ Kernarium/scripts/run-ios-simulator.sh \
   --kernel-4k /Volumes/<case-sensitive-volume>/build-4k/vmlinux
 ```
 
+The serial console remains on that stdout relay and is also copied, in order,
+to the app's SwiftTerm surface. Typing in SwiftTerm writes to the same `ttyS0`
+socket; this does not add a Virtio-console backend or replace `tty0` fbcon.
+
 The app exposes Documents through both `UIFileSharingEnabled` and
 `LSSupportsOpeningDocumentsInPlace`. Its target records the Extended Virtual
 Addressing capability in the Xcode project and the
@@ -332,7 +343,9 @@ VT/fbcon renders early boot through Virtio-GPU fbdev emulation; the DRM log
 client and conflicting UML stdio console are disabled. The guest exposes the
 normal 64 VT nodes, four UML serial lines, dynamic Unix98 PTYs, and no legacy
 BSD PTY bank. This host has no Virtio-console backend, so `ttyS0` is the serial
-fallback connected to the app's stdout relay while `tty0` remains on fbcon.
+fallback connected to both the app's stdout relay and SwiftTerm terminal while
+`tty0` remains on fbcon. SwiftTerm delegate input is written back through the
+same serial socket.
 `CONFIG_PRINTK_TIME` gives the kernel records on both consoles guest-monotonic
 prefixes. In ordinary UML execution, `sched_clock()` derives them from a
 boot-relative host `CLOCK_MONOTONIC` nanosecond counter rather than jiffies, so
