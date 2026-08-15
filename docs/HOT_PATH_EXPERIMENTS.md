@@ -8702,3 +8702,85 @@ reliability and first-frame latency only, not steady-state desktop or WebGL
 frame rate. Raw logs are under the session scratchpad; the macOS host carried
 background `screensharingd`/`fseventsd` load throughout at load average 7--10
 of 20 cores.
+
+## G156: WebGL Aquarium is about half rate on the iOS Simulator at matched resolution
+
+Dated 2026-08-16. The first Aquarium measurement taken on any product. Both
+arms ran the *same* guest workload: `webglsamples.org/aquarium` with
+`numFish=500`, a 440x860 guest desktop at 160 DPI, `mem=1536M`, `ncpus=4`, and
+the gadgets engine. 440x860 is what an iPhone 17 Pro Max Simulator produces in
+Kernarium's default point-resolution mode, and the macOS arm was pinned to the
+same geometry with `--gpu-width=440 --gpu-height=860 --gpu-dpi=160`. Both used
+the native Metal display, not VNC.
+
+Everything inside the guest was byte-identical. The macOS runner lifted the
+extension manifest, verifier, Chromium launcher flags, and systemd unit
+verbatim out of the heredocs in `KernariumRuntime.mm`, so the only difference
+between the arms is the host product. The verifier was temporarily instrumented
+to log one `UML_AQUARIUM_FPS|T=<ms>|FPS=<v>` record per sample for 150 samples;
+that instrumentation was reverted afterwards and the shipped verifier still
+reports its ten-sample average.
+
+Both arms were reduced by one rule, so no per-platform judgement enters the
+comparison. Plateau is the mean of the final twenty readings inside a common
+140 s post-load window; stable is the earliest reading after which a trailing
+ten-sample mean never again leaves +/-10% of that plateau. Smoothing is
+required because the page reports whole-number FPS: at four frames per second a
+raw reading alternates between 4 and 5, which straddle the plateau and can
+never sit inside a +/-10% band.
+
+Runs were interleaved ABBA (Simulator, macOS, macOS, Simulator) so host drift
+could not be read as a platform effect.
+
+| Arm | Plateau fps | Stable after first frame |
+| --- | ---: | ---: |
+| Simulator 1 | 3.95 | 60.0 s |
+| Simulator 2 | 3.95 | 52.8 s |
+| macOS 1 | 7.65 | 38.3 s |
+| macOS 2 | 7.45 | 35.3 s |
+
+macOS sustains 7.55 fps against the Simulator's 3.95, a factor of 1.91, and
+settles in 36.8 s against 56.4 s, a factor of 1.53. The two platforms' arms do
+not overlap on either metric, and the ordering survives every combination of
++/-10%/+/-15% tolerance and a 120 s/140 s window. The verifier's own average
+over all 150 samples gives the same picture: 4.30 fps Simulator against 7.53
+macOS.
+
+The gap is confined to sustained WebGL throughput. Every other stage matched:
+guest boot to first accelerated desktop frame was 30.6 s Simulator against
+28.5 s macOS, Chromium start was 19.6 s against 20.8 s, and page load, which is
+network-dominated, overlapped at 103.9 s against 96.7 s.
+
+Both arms rendered through hardware Virgl rather than a software fallback,
+which is what makes the comparison meaningful:
+
+```
+Simulator  RENDERER=ANGLE (Mesa, virgl, OpenGL ES 3.0)
+macOS      RENDERER=ANGLE (Mesa, virgl (Apple M1 Ultra), OpenGL ES 3.0)
+```
+
+Both reported `CANVAS=1024x1024` and `WebGL 2.0 (OpenGL ES 3.0 Chromium)`. The
+Aquarium canvas is fixed at 1024x1024 independently of the desktop geometry, so
+the two arms submitted identical GPU work; the matched 440x860 desktop affects
+compositing and presentation only.
+
+The Simulator runs native arm64 on the same M1 Ultra as the macOS arm, at the
+same vCPU count, memory, engine, resolution, and canvas. Translation is
+therefore not a candidate explanation, and neither is the vCPU policy of G154,
+which is held equal here. What differs is the host graphics stack:
+virglrenderer on CGL desktop GL for macOS against virglrenderer on
+ANGLE-over-Metal GLES for iOS. The Simulator's Chromium GPU process logged
+`No suitable EGL configs found` twice before recovering, and its guest renderer
+string lacks the device name that the macOS string carries, both consistent
+with a more constrained host GL configuration set reached through ANGLE.
+
+Disposition: no change is made on this evidence. The measurement localises the
+iOS WebGL deficit to the host GL backend and rules out translation, vCPU count,
+resolution, canvas size, guest configuration, boot, and browser startup, but it
+does not identify which ANGLE or virglrenderer path costs the frames. A
+follow-up should profile the host GPU thread on the Simulator during the
+plateau, since that is where the missing time must be. Limitations: two runs
+per arm, Simulator only, no physical-device arm, and the macOS host carried
+background `screensharingd`/`fseventsd`/`ReportCrash` load throughout at load
+average 6--7 of 20 cores, affecting both arms equally by construction. The
+physical-device arm is excluded by policy on the 1.5 GiB acceptance device.
