@@ -102,7 +102,7 @@ and host-core use between two diagnostic captures.
 assembly payloads in this directory. Each row records the mechanism measured,
 minimum guest instruction feature, common runner, and why the probe remains a
 useful control. The inventory is intentionally conservative: history and
-source inspection found a distinct purpose for all 39 payloads, so none was
+source inspection found a distinct purpose for all 45 payloads, so none was
 removed merely because its filename was not referenced by another source
 file. The source-tree audit requires a one-to-one match between the inventory
 and `guest_*.S`, validates the self-checking entry-point contract, and requires
@@ -138,6 +138,17 @@ LSE assembler support. `guest_tlb_128m_alias_loop.S` is meaningful only for a
 guest page profile. Benchmark execution still requires the integration EROFS
 image and should record the same host/build/engine context as every other
 campaign.
+
+`guest_vector_store32_unsigned_offset_loop.S` and
+`guest_vector_store32_register_offset_loop.S` are an instruction-for-instruction
+matched cross-host pair for the gadget entries
+`vector_store32_unsigned_fast` and `vector_other_store32_x_0`. Each binary
+reports five in-guest `CLOCK_MONOTONIC_RAW` samples. Every sample retires
+160,000,000 target `STR S` instructions in a 170,000,000-instruction timed
+loop, so app boot, rootfs setup, and adaptive benchmark work counts do not
+enter the measured interval. Run with one guest worker when comparing host
+architectures; the generic runner prints each `UML_PERF_PROBE` record before
+its ordinary host-side timing summary.
 
 `guest_gadget_polymorphic_successor_loop.S` is the focused control for the
 default-on `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` optimization. Its

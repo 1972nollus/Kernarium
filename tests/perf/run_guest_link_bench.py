@@ -174,6 +174,13 @@ def main() -> int:
                     f"({result.return_code})\n{result.output}"
                 )
             output_lines = result.output.splitlines()
+            probe_lines = [
+                line
+                for line in output_lines
+                if line.startswith("UML_PERF_PROBE ")
+            ]
+            for line in probe_lines:
+                print(f"guest run {repetition + 1}: {line}", flush=True)
             success_lines = [line for line in output_lines if line == "OK"]
             if success_lines != ["OK"] * arguments.workers:
                 raise RuntimeError(

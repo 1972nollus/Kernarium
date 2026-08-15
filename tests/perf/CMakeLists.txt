@@ -4,6 +4,8 @@
 # tests. Keep them buildable from the canonical graph without adding them to a
 # CTest suite or an ordinary suite-binary aggregate.
 set(_uml_performance_probe_manifest "${CMAKE_CURRENT_SOURCE_DIR}/probes.tsv")
+set(_uml_performance_probe_common
+    "${CMAKE_CURRENT_SOURCE_DIR}/vector_store32_probe.inc")
 file(STRINGS "${_uml_performance_probe_manifest}" _uml_performance_probe_rows)
 list(POP_FRONT _uml_performance_probe_rows _uml_performance_probe_header)
 if(NOT _uml_performance_probe_header STREQUAL
@@ -39,6 +41,13 @@ foreach(_uml_performance_probe_row IN LISTS _uml_performance_probe_rows)
         message(FATAL_ERROR
             "Unknown performance probe feature: ${_uml_performance_probe_feature}")
     endif()
+    set(_uml_performance_probe_dependencies
+        "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_performance_probe_source}"
+        "${_uml_performance_probe_manifest}")
+    if(_uml_performance_probe_source MATCHES "^guest_vector_store32_")
+        list(APPEND _uml_performance_probe_dependencies
+            "${_uml_performance_probe_common}")
+    endif()
     add_custom_command(
         OUTPUT "${_uml_performance_probe_output}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -55,9 +64,7 @@ foreach(_uml_performance_probe_row IN LISTS _uml_performance_probe_rows)
         COMMAND "${CMAKE_COMMAND}"
             -DOUTPUT=${_uml_performance_probe_output}
             -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-        DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_performance_probe_source}"
-            "${_uml_performance_probe_manifest}"
+        DEPENDS ${_uml_performance_probe_dependencies}
         COMMENT "Building performance probe ${_uml_performance_probe_source}"
         VERBATIM)
     list(APPEND _uml_performance_probe_outputs

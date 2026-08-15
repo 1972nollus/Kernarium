@@ -8482,3 +8482,48 @@ the compressed scheduler-state evidence, and reference-resolving analysis are
 under `.build/results/macos-ios-instruction-counters-20260814/`. The transient
 3.2 GiB CPU Counters bundles and unused context-switch export were removed
 after retaining the compact evidence.
+
+## G153: equal-work 32-bit vector-store probes reject the HDR latency hypothesis
+
+Recorded 2026-08-15 at base `24a9c8ae` while preserving unrelated in-progress
+Kernarium, kernel-configuration, and rootfs-test changes. The M1 Ultra Mac and
+physical A15 iPad mini both ran the gadgets engine, canonical 16 KiB kernel
+`Linux 6.18.41-g2df7a2f2d5ec`, 1.5 GiB guest memory, six vCPUs, and one guest
+worker. The iPad used a Release app and its signed 16 KiB runtime carrier. A
+minimal EROFS image made the probe PID 1 there; macOS used the ordinary guest
+shell runner. Boot and shutdown are outside every in-guest timing interval.
+
+Two new freestanding probes differ only in the encoding of their 32 target
+stores. One uses `STR S0,[Xn]`, selecting `vector_store32_unsigned_fast`; the
+other uses `STR S0,[Xn,X28]` with a zero index, selecting
+`vector_other_store32_x_0`. Both repeat the same 16 cache-line address sequence
+twice. Each of five `CLOCK_MONOTONIC_RAW` samples executes a fixed five million
+iterations: 160,000,000 target stores and 170,000,000 guest instructions in
+the measured loop. The exact probe binaries used on both hosts have SHA-256
+`ac0124cf080d659928dab5f02f01afe4da2cb1595fbf408c028d0845848d6cf9`
+and `d6242b9b472c4bc79bddc0829f3792db6f33c41d6251d257e5d29cf83c212508`
+respectively. Disassembly confirmed 32 intended store encodings followed by
+the same `SUBS`/`B.NE` loop tail in each payload.
+
+| Store form | macOS median | iPad median | macOS ns/store | iPad ns/store | iPad/macOS time |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| unsigned offset | 284.711 ms | 264.669 ms | 1.779 | 1.654 | 0.929607 (-7.039%) |
+| zero register offset | 286.117 ms | 264.511 ms | 1.788 | 1.653 | 0.924485 (-7.552%) |
+
+The unsigned-offset medians correspond to 597.097 and 642.311 million guest
+loop instructions per second on macOS and iPad. The register-offset medians
+correspond to 594.162 and 642.695 million. The result therefore rejects a
+physical-iOS per-occurrence throughput regression for these hot, same-page
+32-bit vector-store gadget paths. In this controlled workload the iPad is
+about 7% faster, not multiple times slower.
+
+Disposition: accept the probes and negative result; make no emulator hot-path
+change from G152's timer-symbol durations. G152's long iPad HDR store phase
+must reflect a different number or pattern of guest-store occurrences, such as
+adaptive calibration or phase behavior, rather than an eightfold latency for
+the two store gadgets. This probe does not model HDR's complete cache/locality
+mix. The five samples were consecutive within one launch per platform rather
+than randomized across launches, but their tight spread is ample to reject
+the reported order-of-magnitude hypothesis. Exact commands, raw samples,
+product hashes, and disposable EROFS hashes are under
+`.build/results/vector-store32-cross-host-20260815/`.
