@@ -28,7 +28,11 @@ KDE_OVERLAY_COMMANDS = (
     "/home/uml/Templates /home/uml/Videos /home/uml/.config "
     "/home/uml/.local/share/pki "
     "/home/uml/.local/share/Trash/files "
-    "/home/uml/.local/share/Trash/info",
+    "/home/uml/.local/share/Trash/info "
+    # SDDM redirects the Wayland session's stderr into this directory. When it
+    # is absent the redirect fails, the session runs with a broken stderr, and
+    # every reason a failed bring-up would have reported is discarded.
+    "/home/uml/.local/share/sddm",
     "printf '%s\\n' "
     "'XDG_DESKTOP_DIR=\"$HOME/Desktop\"' "
     "'XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"' "

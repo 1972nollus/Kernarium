@@ -193,7 +193,8 @@ install -d -m 0755 -o uml -g uml \
     /home/uml/Templates /home/uml/Videos /home/uml/.config \
     /home/uml/.local/share/pki \
     /home/uml/.local/share/Trash/files \
-    /home/uml/.local/share/Trash/info
+    /home/uml/.local/share/Trash/info \
+    /home/uml/.local/share/sddm
 printf '%s\n' \
     'XDG_DESKTOP_DIR="$HOME/Desktop"' \
     'XDG_DOWNLOAD_DIR="$HOME/Downloads"' \
