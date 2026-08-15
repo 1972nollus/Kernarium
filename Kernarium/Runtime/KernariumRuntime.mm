@@ -860,6 +860,30 @@ bool validGeekbenchWorkloads(std::string_view workloads)
     return !needsDigit;
 }
 
+/* The translating engine to run guest userspace under.
+ *
+ * "auto" defers to the build's platform default and its availability check
+ * rather than deciding here, which keeps executable-memory policy with its
+ * single owner in the CPU layer. Both Apple products resolve that to the
+ * data-only gadget engine: a device cannot publish into a MAP_JIT mapping at
+ * all, and while the Simulator can, measurement rejects the JIT for the
+ * browser workloads that matter (G157). The override exists so that choice
+ * stays re-testable without a rebuild.
+ */
+const char* selectedExecutionEngine()
+{
+    const char* requested = std::getenv("KERNARIUM_EXECUTION_ENGINE");
+    if (requested == nullptr)
+        return "auto";
+    for (const char* allowed : {"auto", "jit", "gadgets", "interpreter"}) {
+        if (std::strcmp(requested, allowed) == 0)
+            return allowed;
+    }
+    std::fputs(
+        "Kernarium: ignoring unknown KERNARIUM_EXECUTION_ENGINE\n", stderr);
+    return "auto";
+}
+
 std::string fbconFontArgument(uint32_t dotsPerInch)
 {
     static constexpr uint32_t largeConsoleFontDpi = 240U;
@@ -970,7 +994,7 @@ int runtimeRun(
             std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
         std::vector<std::string> arguments {
             "uml-kernarium",
-            "--execution-engine=gadgets",
+            std::string {"--execution-engine="} + selectedExecutionEngine(),
             "mem=" + std::to_string(guestMemoryMiB) + "M",
             "ncpus=" + std::to_string(guestProcessorCount),
             "init=/bin/sh",

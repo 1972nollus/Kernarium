@@ -894,6 +894,15 @@ An optional validated `KERNARIUM_GEEKBENCH_WORKLOADS` comma-separated numeric
 list selects focused single-core workloads without changing the normal full
 campaign.
 
+Kernarium passes `--execution-engine=auto`, which both Apple products resolve
+to the gadget executor. `KERNARIUM_EXECUTION_ENGINE` overrides that with
+`auto`, `jit`, `gadgets`, or `interpreter`; an unrecognised value is reported
+and ignored. The override exists so an engine A/B needs no rebuild. The
+Simulator can run `jit`, but G157 measured it far worse than the gadget
+executor for the browser workloads and it is not a supported default; a
+physical device cannot publish into a `MAP_JIT` mapping at all and reports the
+JIT engine unavailable.
+
 G107's bounded successor fetch is selected by the default-on
 `UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST` CMake option. When changing the
 mechanism, use separate explicit OFF and ON build directories. Keep translation sharing ON, x8/x9 carry
