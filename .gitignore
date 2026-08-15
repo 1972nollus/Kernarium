@@ -2,8 +2,7 @@
 /.build/
 
 # Local root filesystem image
-/rootfs.ext2
-/rootfs.erofs
+*.erofs
 *.img
 .rootfs-provision-*/
 
