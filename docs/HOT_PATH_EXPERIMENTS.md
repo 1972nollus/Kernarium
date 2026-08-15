@@ -8767,20 +8767,106 @@ compositing and presentation only.
 The Simulator runs native arm64 on the same M1 Ultra as the macOS arm, at the
 same vCPU count, memory, engine, resolution, and canvas. Translation is
 therefore not a candidate explanation, and neither is the vCPU policy of G154,
-which is held equal here. What differs is the host graphics stack:
-virglrenderer on CGL desktop GL for macOS against virglrenderer on
-ANGLE-over-Metal GLES for iOS. The Simulator's Chromium GPU process logged
-`No suitable EGL configs found` twice before recovering, and its guest renderer
-string lacks the device name that the macOS string carries, both consistent
-with a more constrained host GL configuration set reached through ANGLE.
+which is held equal here.
 
-Disposition: no change is made on this evidence. The measurement localises the
-iOS WebGL deficit to the host GL backend and rules out translation, vCPU count,
-resolution, canvas size, guest configuration, boot, and browser startup, but it
-does not identify which ANGLE or virglrenderer path costs the frames. A
-follow-up should profile the host GPU thread on the Simulator during the
-plateau, since that is where the missing time must be. Limitations: two runs
-per arm, Simulator only, no physical-device arm, and the macOS host carried
-background `screensharingd`/`fseventsd`/`ReportCrash` load throughout at load
-average 6--7 of 20 cores, affecting both arms equally by construction. The
+**Correction.** This entry originally attributed the gap to the host graphics
+stack -- virglrenderer on CGL desktop GL against virglrenderer on
+ANGLE-over-Metal GLES -- reasoning from the Simulator's
+`No suitable EGL configs found` log line and its shorter renderer string. G157
+profiled both arms and refuted that: host GL and Metal account for under half a
+percent of self time on either side. The attribution below is superseded; the
+measurements above stand.
+
+Disposition: no change is made on this evidence. The measurement establishes
+the ratio and rules out vCPU count, resolution, canvas size, guest
+configuration, boot, and browser startup. Localising the cost required the
+profiles in G157. Limitations: two runs per arm, Simulator only, no
+physical-device arm, and the macOS host carried background
+`screensharingd`/`fseventsd`/`ReportCrash` load throughout at load average
+6--7 of 20 cores, affecting both arms equally by construction. The
 physical-device arm is excluded by policy on the 1.5 GiB acceptance device.
+
+## G157: the Simulator Aquarium gap is guest-CPU throughput, and the JIT is not the fix
+
+Dated 2026-08-16. Follow-up to G156, which measured a 1.91x Aquarium deficit on
+the iOS Simulator against macOS at matched geometry but misattributed it to the
+host graphics stack. Both arms were profiled with `sample(1)` for 40 s, attached
+once the verifier had produced 45 readings so the window sits inside the
+plateau rather than averaging over the ramp.
+
+`sample` reports the same tick count for every thread, so the useful quantity is
+the share of ticks whose deepest frame is real work rather than a blocking
+syscall. Per-thread, over 40 s:
+
+| Thread | Simulator busy | macOS busy |
+| --- | ---: | ---: |
+| four vCPU carriers, combined | 39482 (41.7%) | 55947 (55.3%) |
+| `uml-gpu` | 1950 (8%) | 893 (4%) |
+
+The host graphics stack is idle on both. Self time attributes 31408 samples to
+the Kernarium runtime against 64 for ANGLE's `GLESv2` on the Simulator, and
+48819 to `uml-darwin` against 162 for `AGXMetalG13X` plus 84 for
+`AppleMetalOpenGLRenderer` on macOS. Under half a percent of self time is
+host GL or Metal on either arm, which refutes G156's host-GL attribution
+outright. `uml-gpu` is 92% blocked on the Simulator and 96% on macOS: it is
+waiting for guest work, not producing frames slowly.
+
+The hot frames are the same on both arms and are dominated by translation and
+cache machinery rather than gadget execution -- `ProgramCache::activate` is the
+single largest self-time frame on each (2682 Simulator, 4383 macOS), ahead of
+`Builder::build`, `decode_load_store`, `ProgramCache::find`, and the link-record
+hash table. The distribution is not merely similar; the profile shape is the
+same and macOS simply runs about 1.4x more of everything. Aquarium in this
+configuration is bound by guest-CPU emulation throughput, and the Simulator
+gets less of it.
+
+One platform-specific difference did show up: the Simulator's vCPU carriers
+spend 12393 samples blocked in `read` against 3446 on macOS, 13% of their wall
+time against 3.4%. That is guest block-device traffic against the same 3.8 GB
+EROFS image, and it accounts for roughly half the busy-time gap. It is not
+explained here.
+
+Because translation overhead led the profile on both arms, the obvious
+candidate was to run the Simulator on the JIT rather than the data-only gadget
+engine. That required two fixes. `ExecutableArena::available()` probed only
+that the `MAP_JIT` mapping succeeded, so it could promise an engine whose first
+store would fault; it now also requires a publication route. And the W^X toggle
+was compiled out for every target with `__IPHONE_OS_VERSION_MAX_ALLOWED`
+defined, which silently included the Simulator -- yet the Simulator runs on
+macOS and does enforce MAP_JIT W^X. A standalone probe confirmed the symbol is
+present there and reachable through `dlsym`:
+
+```
+dlsym_pthread_jit_write_protect_np=PRESENT
+routeA_dlsym_toggle=OK result=42
+routeB_rw_then_rx=OK result=42
+routeC_jit_mprotect=RW_FAILED
+```
+
+With those in place the Simulator runs the JIT, and it boots faster: first
+accelerated desktop frame at 23.7 s against 29.2--32.0 s on gadgets. It is
+nonetheless far worse at the workload. Against a gadget arm that loaded assets
+and held a 3.95 fps plateau, the JIT arm loaded **zero** Aquarium assets and
+produced **zero** FPS readings in 900 s, never reaching page load. Chromium
+stayed alive and logging throughout, so this is pathological slowness rather
+than a crash. The plausible mechanism is that V8 writes guest code continuously
+and each write invalidates translations, but that is a hypothesis this
+experiment did not test.
+
+Disposition: reject the JIT as the Simulator default; both Apple products keep
+the gadget engine, and `UML_DEFAULT_EXECUTION_ENGINE_JIT` stays macOS-only.
+Keep the two arena fixes, which are correctness repairs independent of the
+decision: an engine is now only advertised when it can actually publish, and
+`--execution-engine=jit` on the Simulator runs instead of faulting, so the
+choice stays re-testable. `ExecutionEngine::automatic` now falls back to the
+gadget engine when the platform default is unavailable rather than failing
+outright, and Kernarium passes `auto` with a `KERNARIUM_EXECUTION_ENGINE`
+override so an engine A/B needs no rebuild.
+
+The Simulator deficit is therefore localised but not closed: it lives in guest
+CPU throughput, with the excess `read` blocking as the one concrete lead. Two
+untested candidates remain -- the guest idle and timer-wakeup path, since both
+arms idle heavily in `__pselect` and the Simulator idles more, and the block
+I/O difference itself. Limitations: one profile per arm, Simulator only, and
+the JIT arm is a single run, which is enough for a result this large but not for
+a ratio.
