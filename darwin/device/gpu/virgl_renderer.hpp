@@ -10,6 +10,17 @@
 #include <unordered_map>
 #include <vector>
 
+/*
+ * UML_GPU_ANGLE_METAL selects the ANGLE EGL members below, so it changes this
+ * class's size and every enclosing object's member offsets. Refuse to compile
+ * rather than let an undefined macro silently pick the macOS layout: a
+ * consumer that allocates VirtioGpuDevice with the smaller layout overflows
+ * the allocation as soon as the device records a scanout.
+ */
+#ifndef UML_GPU_ANGLE_METAL
+#error "UML_GPU_ANGLE_METAL must be defined for every consumer of this header"
+#endif
+
 struct iovec;
 struct virgl_renderer_gl_ctx_param;
 

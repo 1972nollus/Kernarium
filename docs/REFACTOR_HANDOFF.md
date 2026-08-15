@@ -147,6 +147,21 @@ stock greetd and its Phrog session, and presented Phrog through the native
 Metal display path. No physical Aquarium result or swap-based workaround is
 part of the current checkpoint.
 
+That Simulator path also carried an iOS-only host heap defect until
+2026-08-15. `UML_GPU_ANGLE_METAL` declares `VirglRenderer`'s two ANGLE EGL
+members, but it was a PRIVATE compile definition, so `vhost_user_server.cpp`
+saw the macOS layout while `virtio_gpu_device.cpp` saw the mobile one. On both
+iOS products `make_unique<GpuVhostUserDevice>` therefore allocated 512 bytes
+for a 528-byte object, and the first SET_SCANOUT wrote `scanoutResource_` and
+`scanoutRectangle_` sixteen bytes past the end. A checked-allocation LLDB stop
+had captured the resulting tiny-zone freelist corruption: resource id 7 then
+`{0, 0, 1320, 2580}` straddling the allocation boundary, with the guest height
+overwriting the next block's token. macOS was never affected because the macro
+is 0 in every macOS translation unit. `uml_configure_gpu_component` now
+publishes one value to the whole GPU component set, and `virgl_renderer.hpp`
+fails to compile when the macro is undefined, so the mismatch cannot recur
+silently.
+
 The same physical app also ran the image-local Geekbench 6.7.1 payload
 from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows
 covered eight completed single-core workloads. The user stopped the run during

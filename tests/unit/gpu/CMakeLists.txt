@@ -117,7 +117,11 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_protocol_device_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
+    # This variant compiles the device source without linking the renderer
+    # component, so it must publish the same header ABI selectors the
+    # production GPU targets do.
     target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
+        UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>
         UML_GPU_DEVICE_TESTING=1)
     target_compile_features(uml_gpu_protocol_device_test_variant PUBLIC
         cxx_std_20)

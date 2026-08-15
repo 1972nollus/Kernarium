@@ -33,6 +33,15 @@ Unsupported resource layouts use the shared CPU scanout fallback. Platform
 source selection is exclusive, so the existing macOS AppKit, CGL, IOSurface,
 and LibVNCServer implementation is unchanged.
 
+`UML_GPU_ANGLE_METAL` selects that ANGLE path and declares `VirglRenderer`'s
+EGL display and config members, so it changes the size of every object that
+embeds the renderer. It is therefore part of the GPU headers' ABI, not an
+implementation detail: `uml_configure_gpu_component` publishes one value to
+the whole component set, and `virgl_renderer.hpp` refuses to compile when the
+macro is undefined. A target that saw the macOS layout while another
+constructed the mobile one allocated `VirtioGpuDevice` sixteen bytes short and
+corrupted the host heap on the first SET_SCANOUT.
+
 Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
 the safe-area Metal view in native pixels and an evdev keyboard fed by UIKit

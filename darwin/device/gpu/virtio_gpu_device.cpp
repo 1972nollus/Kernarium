@@ -13,10 +13,6 @@
 #include <optional>
 #include <string_view>
 
-#ifndef UML_GPU_ANGLE_METAL
-#define UML_GPU_ANGLE_METAL 0
-#endif
-
 namespace uml::gpu {
 namespace {
 

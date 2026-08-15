@@ -1,8 +1,71 @@
-# Kernarium iOS Phosh SIGTRAP Handover
+# Kernarium iOS Phosh SIGTRAP handover
 
-This document captures the unfinished debugging state for the Kernarium iOS
-Phosh boot/display issue as of 2026-08-15. It is meant for a new chat to resume
-without replaying the entire investigation.
+This document recorded the unfinished debugging state for the Kernarium iOS
+Phosh boot/display issue on 2026-08-15. The `SIGTRAP` itself is now understood
+and fixed; the sections below keep the original evidence as history and record
+what the fix was.
+
+## Resolution (2026-08-15)
+
+The trap was host heap corruption caused by a preprocessor ABI mismatch, not by
+SwiftUI, Plymouth, guest services, or thread count.
+
+`UML_GPU_ANGLE_METAL` declares `VirglRenderer`'s `eglDisplay_` and `eglConfig_`
+members, so it changes `sizeof(VirglRenderer)` by sixteen bytes and shifts every
+member of every object that embeds it. It was a **PRIVATE** compile definition
+on `uml_gpu_renderer`, `uml_gpu_display`, and `uml_gpu_protocol_device`, and
+`uml_gpu_transport` never received it at all. On iOS device and Simulator that
+produced two incompatible views of the same class:
+
+- `virtio_gpu_device.cpp` (macro 1) — `sizeof(VirtioGpuDevice)` 512,
+  `scanoutResource_` at offset 488, `scanoutRectangle_` at 492.
+- `vhost_user_server.cpp` (macro undefined, so 0) — `sizeof(VirtioGpuDevice)`
+  496, and therefore `sizeof(GpuVhostUserDevice)` 512 instead of 528.
+
+`VhostUserServer`'s `std::make_unique<GpuVhostUserDevice>` runs in the second
+translation unit, so every iOS run allocated 512 bytes for a 528-byte object.
+The constructor and every later `SET_SCANOUT` then wrote sixteen bytes past the
+allocation. macOS was never affected: the macro is 0 in all of its translation
+units, so both views agree.
+
+This exactly reproduces the captured LLDB evidence below. With the device at
+base `0x104156a00`:
+
+```text
+0x104156bf0  scanoutResource_        = 7
+0x104156bf4  scanoutRectangle_.x     = 0
+0x104156bf8  scanoutRectangle_.y     = 0
+0x104156bfc  scanoutRectangle_.width = 1320   <- last four in-bounds bytes
+0x104156c00  scanoutRectangle_.height= 2580   <- next block's freelist token
+```
+
+The neighbouring words in that dump are the same object's earlier members: the
+`contexts_` hash table's live count `2` and its `1.0f` max load factor, and
+`transferStaging_`'s vector pointers spanning `0x11a0fdc80 - 0x119400000` =
+13,622,400 bytes = 1320 x 2580 x 4.
+
+The fix has two parts:
+
+- `uml_configure_gpu_component` publishes `UML_GPU_ANGLE_METAL` as a PUBLIC
+  definition for the whole GPU component set, so every consumer of the headers
+  observes one value. `tests/unit/gpu/CMakeLists.txt` publishes the same value
+  for `uml_gpu_protocol_device_test_variant`, which compiles the device source
+  without linking the renderer.
+- `virgl_renderer.hpp` now fails to compile when the macro is undefined, and
+  `virtio_gpu_device.cpp`'s silent `#define UML_GPU_ANGLE_METAL 0` fallback is
+  gone. A future PRIVATE definition breaks the build instead of the heap.
+
+Verified: `uml_gpu_transport`'s object now emits `mov w0, #0x210` (528) before
+`operator new` in `VhostUserServer::VhostUserServer`, `cmake --workflow
+--preset check-gpu` passes on macOS, and both Kernarium iOS presets build
+clean. A `--checked-allocations` Simulator launch runs the SET_SCANOUT path
+continuously without an allocator trap.
+
+The temporary debugging changes listed in the original cleanup checklist have
+been reverted: `ContentView.swift`, `KernariumUITests.swift`,
+`KernariumRuntime.mm` (`plymouth.enable=0`), and
+`tests/tooling/rootfs/test_boot_overlay_systemd.py`. The user-owned
+`.gitignore` change was left untouched.
 
 ## User goal still in flight
 
@@ -22,63 +85,13 @@ The newest user instructions to preserve are:
 - Avoid adding more one-off kernel or service workarounds. Keep changes
   organized and reversible.
 
-## Current repository state
+## Historical investigation record (2026-08-15)
 
-The tree was dirty before this handover was written. Treat these existing
-changes as active debugging state, not accepted implementation:
+The remainder of this document is the state as captured before the root cause
+was found. It is kept for provenance; where it speculates about likely code
+areas, the answer turned out to be the build-graph ABI mismatch above.
 
-```text
- M .gitignore
- M Kernarium/Kernarium/ContentView.swift
- M Kernarium/KernariumUITests/KernariumUITests.swift
- M Kernarium/Runtime/KernariumRuntime.mm
- M tests/tooling/rootfs/test_boot_overlay_systemd.py
-```
-
-Important details:
-
-- `.gitignore` was changed from explicit rootfs filenames to `*.erofs`. This
-  appears user-owned or at least unrelated to the SIGTRAP debugging. Do not
-  stage or revert it unless the user asks.
-- `ContentView.swift` currently contains an experimental UIKit
-  `LiquidGlassControls` implementation for iOS 26. This was added while trying
-  to understand the crash trigger. It should be reverted back to the simpler
-  SwiftUI circular button implementation once the real memory issue is fixed.
-- `KernariumUITests.swift` contains a temporary
-  `testAttachAndLoginToRunningGuest` test that attaches to an already-running
-  app, opens the keyboard, types `1234\n`, and hides the keyboard. Remove this
-  before committing production changes.
-- `KernariumRuntime.mm` currently adds `plymouth.enable=0` for non-Geekbench
-  systemd boots. This conflicts with the accepted contract that Plymouth
-  follows the image's normal handoff. It was an experiment and should be
-  removed unless a fresh, narrow proof shows it is actually required.
-- `tests/tooling/rootfs/test_boot_overlay_systemd.py` was inverted to require
-  `plymouth.enable=0`; restore the previous assertion that forbids this
-  workaround.
-
-## Accepted baseline to protect
-
-The authoritative docs currently say the accepted Kernarium checkpoint has
-these properties:
-
-- Device and Simulator use the production Virtio-GPU, virglrenderer, ANGLE, and
-  Metal presentation path. No fake GPU path exists.
-- iOS uses native pixels from the safe-area `MTKView` dimensions and passes
-  effective DPI through EDID.
-- The Phosh rootfs uses stock `display-manager -> greetd -> Phrog`, with the
-  image-owned getties and credentials preserved.
-- Kernarium removes only the stale development
-  `graphical.target.wants/phosh.service` enablement from the disposable
-  overlay.
-- Empty disposable `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini` files force
-  both the greeter and logged-in session to use the Virtio-GPU EDID mode,
-  avoiding the rootfs's 720x1440 Phoc config.
-- macOS native Metal, VNC, and CLI behavior must remain fully functional.
-- The accepted iPad validation previously booted Phosh repeatedly at 1.5 GiB
-  without OOM or crash, but the latest investigation found a new crash path
-  while driving the iPhone 17 Pro Max Simulator and UI automation.
-
-## Most important finding
+### Most important finding
 
 The current `SIGTRAP` is not primarily a SwiftUI state bug, a Phosh service
 timeout, or guest kernel execution failure. The best evidence points to host
@@ -131,7 +144,7 @@ Native Liquid Glass and XCTest accessibility activity make the allocator check
 easy to trip, but they are probably crash amplifiers rather than the underlying
 writer.
 
-## Reproduction environment and commands
+### Reproduction environment and commands
 
 Simulator used during the detailed diagnosis:
 
@@ -163,56 +176,7 @@ process handle SIGIO -s false -n false -p true
 continue
 ```
 
-The temporary UI-test trigger that was used:
-
-```sh
-xcodebuild test-without-building \
-  -project Kernarium/Kernarium.xcodeproj \
-  -scheme Kernarium \
-  -derivedDataPath .build/kernarium-xcode-derived \
-  -destination 'platform=iOS Simulator,id=4E6609BA-F458-4741-84EE-FEC9C5C1B230' \
-  -only-testing:KernariumUITests/KernariumUITests/testAttachAndLoginToRunningGuest
-```
-
-This test should not be kept. It exists only to drive the running app through
-the keyboard/login path while LLDB is attached.
-
-For allocation provenance, rerun with stack logging from process launch. The
-previous checked-allocation run that captured the corrupted block did not have
-enough stack history to identify the allocating call site:
-
-```sh
-SIMCTL_CHILD_MallocStackLogging=1 \
-SIMCTL_CHILD_MallocStackLoggingNoCompact=1 \
-xcrun simctl launch --checked-allocations --wait-for-debugger \
-  4E6609BA-F458-4741-84EE-FEC9C5C1B230 \
-  com.imxieyi.Kernarium
-
-/usr/bin/malloc_history <pid> <corrupted-address>
-/usr/bin/malloc_history <pid> <previous-512-byte-slot-address>
-```
-
-## Visual evidence
-
-These local screenshots were produced during the diagnosis and may still exist:
-
-```text
-/private/tmp/kernarium-current-diagnostic.png
-/private/tmp/kernarium-phosh-after-login.png
-```
-
-Observed states:
-
-- `kernarium-current-diagnostic.png` showed the Phrog greeter rendered at the
-  correct full guest size through native Metal.
-- `kernarium-phosh-after-login.png` previously showed the logged-in Phosh home
-  path at full geometry after waiting long enough.
-- The absence of a quick home-screen transition on iOS should be treated as
-  "still loading" for a few minutes, not an immediate failure.
-
-## Strong false leads already ruled down
-
-Do not spend first-pass time on these unless new evidence appears:
+### Strong false leads already ruled down
 
 - "SwiftUI glass caused the bug." Native glass increases allocator churn and
   makes the overwrite trip visibly, but the overwritten data are display
@@ -229,40 +193,11 @@ Do not spend first-pass time on these unless new evidence appears:
 - "Need to enforce thread count again." The user explicitly said not to worry
   about thread count and to revert deliberate checks around it.
 
-## Likely code areas to inspect next
+### Kernel SIGTRAP handling cleanup to consider
 
-Start with display paths that allocate or pass width/height pairs around 512
-byte host objects:
-
-- `darwin/device/gpu/native_display_ios.mm`
-- `darwin/device/gpu/virtio_gpu_device.cpp`
-- `darwin/device/gpu/virgl_renderer.cpp`
-- `darwin/device/gpu/in_process_service.cpp`
-- `Kernarium/Kernarium/ContentView.swift`
-- `Kernarium/Runtime/KernariumRuntime.mm`
-
-The most suspicious boundary is not the SwiftUI overlay itself, but some
-host-side structure or ABI path where the guest display dimensions are written
-into a too-small allocation. Pay special attention to:
-
-- ANGLE/Metal objects created after `MTKView.drawableSize` changes.
-- virglrenderer or ANGLE structure layout mismatches between headers and
-  prebuilt libraries.
-- iOS-specific native resource export/import structures.
-- Any Objective-C/C++ bridge object that copies `{width, height}` into a
-  fixed-size buffer or descriptor.
-- Any code that assumes point dimensions but receives native pixel dimensions.
-
-The corruption pattern looked like a 512-byte object with width at offset 508
-and height at offset 512. If stack logging identifies the allocation as an
-ANGLE/Metal/private framework object, prefer fixing the host-side advertised
-capabilities or descriptor construction over guest workarounds.
-
-## Kernel SIGTRAP handling cleanup to consider
-
-There is a separate cleanup worth doing once the heap overwrite is understood:
-host Darwin `SIGTRAP` handling can misclassify allocator breakpoints as UML
-kernel-mode traps.
+There is a separate cleanup worth doing: host Darwin `SIGTRAP` handling can
+misclassify allocator breakpoints as UML kernel-mode traps. This did not cause
+the corruption, but it made the allocator stop harder to read.
 
 The guest breakpoint path already exists through the Darwin UML execution
 result path, so host process `SIGTRAP` probably should not be installed as an
@@ -283,64 +218,7 @@ edits:
   expected final tree metadata, and relevant kernel docs/tests.
 - Verify replay with the repository's kernel tooling.
 
-This cleanup makes host allocator traps report honestly, but it does not fix
-the underlying width/height overwrite.
-
-## Immediate cleanup checklist
-
-Before committing a final fix, remove or revert temporary debugging changes:
-
-- Remove `LiquidGlassControls` UIKit bridge and restore the simpler SwiftUI
-  implementation. Keep the iOS 26 circular Liquid Glass button only if it is
-  stable after the allocator overwrite is fixed.
-- Delete `testAttachAndLoginToRunningGuest`.
-- Remove `plymouth.enable=0` from `KernariumRuntime.mm`.
-- Restore `tests/tooling/rootfs/test_boot_overlay_systemd.py` to forbid
-  `plymouth.enable=0`.
-- Do not stage unrelated `.gitignore` changes unless the user confirms them.
-- Remove any deliberate thread-count assertions or diagnostics added only for
-  the iOS thread-limit concern.
-
-## Validation plan for the next chat
-
-Use the narrowest checks first, then the owning workflow:
-
-1. Reproduce the allocator trap with checked allocations and stack logging.
-2. Identify the allocation provenance with `malloc_history` or an LLDB
-   watchpoint, then fix the writer or ABI mismatch.
-3. Rebuild the iOS Simulator app.
-4. Boot `phosh.erofs` on the iPhone 17 Pro Max Simulator and log in as:
-
-   ```text
-   user: debian
-   password: 1234
-   ```
-
-5. Wait several minutes after login before deciding the home screen failed.
-6. Confirm the greeter and logged-in Phosh session both use the full native
-   guest resolution, not the old 720x1440 quarter-screen mode.
-7. Rebuild/run the relevant macOS path to ensure the shared display/runtime
-   change did not regress macOS native Metal or VNC.
-8. Run focused tests for any changed tooling contracts.
-9. Run the single canonical workflow that owns the touched subsystem before
-   committing.
-
-For repository validation, the likely relevant commands are:
-
-```sh
-cmake --preset kernarium-ios-simulator
-cmake --build --preset kernarium-ios-simulator
-
-cmake --preset kernarium-ios-device
-cmake --build --preset kernarium-ios-device
-
-cmake --workflow --preset check-gpu
-```
-
-If kernel patch-series changes are made, also run the kernel replay/audit
-commands documented in `kernel/README.md` and `AGENTS.md`.
-
-## Notes for physical-device testing
+### Notes for physical-device testing
 
 The user asked to use the connected iPad as the physical device for iOS
 testing. Do not run WebGL Aquarium on physical iOS right now; the user
@@ -356,10 +234,11 @@ If physical boot is rechecked:
   ready.
 - Do not reintroduce remote-install workarounds.
 
-## Handoff summary
+### Local dependency-prefix note
 
-The next useful move is to catch the writer of the `1320`/`2580` overwrite.
-The emulator can reach a correct full-size Phrog greeter, and prior evidence
-shows a full-size logged-in Phosh screen after enough wait time. The blocking
-remaining problem is host heap corruption in the iOS/Simulator display stack,
-not a need for more guest service surgery.
+`.build/kernarium-network-dependencies/ios-simulator-arm64` and
+`ios-device-arm64` are older than the current `dependencies/manifest.tsv`, so
+the checked presets fail their pinned-prefix verification. The matching
+prefixes on this host are the `-20260815` directories; pass
+`-DUML_IOS_NETWORK_DEPENDENCY_PREFIX=...` at configure time rather than
+overwriting the user's prefix directories.

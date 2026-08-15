@@ -1,10 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# The ANGLE/Metal selector is not an implementation detail: virgl_renderer.hpp
+# declares its EGL display and config members only for the Apple mobile
+# products, so the macro is part of every GPU header's ABI. Publish one value
+# for the whole component set. A per-target PRIVATE definition previously let
+# vhost_user_server.cpp allocate a VirtioGpuDevice sixteen bytes smaller than
+# the object virtio_gpu_device.cpp constructs into it.
 function(uml_configure_gpu_component target)
     uml_declare_architecture_target(${target} device)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(${target} PUBLIC cxx_std_20)
+    target_compile_definitions(${target} PUBLIC
+        UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>)
     target_compile_options(${target} PRIVATE
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 endfunction()
@@ -14,8 +22,6 @@ endfunction()
 # the data path and contains no reverse service callbacks.
 add_library(uml_gpu_renderer STATIC virgl_renderer.cpp)
 uml_configure_gpu_component(uml_gpu_renderer)
-target_compile_definitions(uml_gpu_renderer PRIVATE
-    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>)
 target_link_libraries(uml_gpu_renderer PRIVATE UML::ThirdPartyVirglrenderer)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_renderer PRIVATE
@@ -52,7 +58,6 @@ set_target_properties(uml_gpu_display PROPERTIES OBJCXX_STANDARD 20)
 target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(uml_gpu_display PRIVATE
-    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
@@ -79,8 +84,6 @@ add_dependencies(uml_gpu_display uml_dependency_prefix_verify)
 
 add_library(uml_gpu_protocol_device STATIC virtio_gpu_device.cpp)
 uml_configure_gpu_component(uml_gpu_protocol_device)
-target_compile_definitions(uml_gpu_protocol_device PRIVATE
-    UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>)
 target_link_libraries(uml_gpu_protocol_device PUBLIC
     uml_gpu_renderer
     uml_gpu_display)
