@@ -162,6 +162,16 @@ publishes one value to the whole GPU component set, and `virgl_renderer.hpp`
 fails to compile when the macro is undefined, so the mismatch cannot recur
 silently.
 
+That fix did not make the accepted Plymouth handoff boot. A same-build
+Simulator A/B on 2026-08-15 left the guest idle with no overlay writes for
+eleven minutes and no greeter at 16.5 minutes with Plymouth enabled, while one
+temporary, uncommitted `plymouth.enable=0` argument reached
+`graphical.target`, `greetd.service`, the image's `ttyS0` login prompt, and a
+full-geometry Phrog keypad on the direct virgl/ANGLE/Metal path within about
+two minutes. The workaround is not committed and the blocking mechanism is not
+yet identified; `docs/KERNARIUM_IOS_PHOSH_SIGTRAP_HANDOVER.md` owns that open
+item.
+
 The same physical app also ran the image-local Geekbench 6.7.1 payload
 from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows
 covered eight completed single-core workloads. The user stopped the run during

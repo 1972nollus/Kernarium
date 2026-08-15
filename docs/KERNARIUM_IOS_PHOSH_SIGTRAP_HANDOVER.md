@@ -67,6 +67,48 @@ been reverted: `ContentView.swift`, `KernariumUITests.swift`,
 `tests/tooling/rootfs/test_boot_overlay_systemd.py`. The user-owned
 `.gitignore` change was left untouched.
 
+## Still open: the Phosh boot stalls under Plymouth (2026-08-15)
+
+Fixing the heap corruption did not by itself produce a Phosh home screen. A
+matched A/B on the iPhone 17 Pro Max Simulator (iOS 26.5, 1320x2580 at 288 DPI,
+`mem=1536M`, `ncpus=4`, `phosh.erofs`) separates the two problems. Both samples
+ran the same committed build under `simctl launch --checked-allocations`; the
+only difference was one temporary, uncommitted `plymouth.enable=0` kernel
+argument that was reverted afterwards.
+
+- **A, accepted contract with Plymouth enabled.** The guest booted, ran the
+  overlay bootstrap, started systemd, and reached
+  `Starting plymouth-start.service`. Plymouth then took the console and replayed
+  the kernel ring buffer in details mode. The guest stopped writing its ext4
+  overlay 5.5 minutes into the run and wrote nothing for the next 11 minutes.
+  A `sample` of the process showed all four `uml-vcpu-N-carrier` threads idle in
+  `pselect`, the console relay idle in `recvfrom`, and the GPU worker still
+  servicing SET_SCANOUT into a black framebuffer. Terminated at 16.5 minutes
+  with no greeter.
+- **B, same build plus `plymouth.enable=0`.** Within about two minutes the
+  console reported `Started greetd.service`,
+  `Reached target graphical.target`, `Session c1 of User _greetd`, the image's
+  `debian-rootfs login:` prompt on `ttyS0`, and
+  `Native display: direct virgl/ANGLE/Metal presentation`. The Phrog password
+  keypad rendered at the full native guest geometry
+  (`/private/tmp/kernarium-phrog-greeter-after-abi-fix.png`).
+
+That is the narrow proof the earlier investigation was missing: Plymouth, not
+the heap corruption, is what prevents this image from reaching the greeter on
+Kernarium's console arrangement. The mechanism is still unknown, and the
+earlier assumption is **not** supported: sample A's console contains no
+`ESC[6n` at all, so Plymouth is not blocking on a cursor-position report from
+the stdout-only bridge. The four `ESC[6n` queries in sample B come from
+`agetty` at the login prompt, which sample A never reached.
+
+`plymouth.enable=0` is deliberately not committed. It contradicts the accepted
+rootfs contract in `AGENTS.md` and the user's instruction to avoid one-off
+kernel or service workarounds, and a workaround chosen without a mechanism is
+not a fix. The next step is to determine what `plymouthd` actually blocks on
+here -- most cheaply by adding `systemd.log_level=debug systemd.log_target=kmsg`
+to a diagnostic run so the blocking job is named on the console, since Plymouth
+otherwise silences systemd's status output.
+
 ## User goal still in flight
 
 The emulator should stably boot `phosh.erofs` into the Phosh home screen with
