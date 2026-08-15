@@ -8527,3 +8527,99 @@ than randomized across launches, but their tight spread is ample to reject
 the reported order-of-magnitude hypothesis. Exact commands, raw samples,
 product hashes, and disposable EROFS hashes are under
 `.build/results/vector-store32-cross-host-20260815/`.
+
+## G154: iOS KDE-desktop bring-up is limited by the vCPU count, not translation
+
+Recorded 2026-08-15 at base `943f9dcc` while preserving unrelated in-progress
+Kernarium UI, test, and documentation changes in the working tree; those files
+are not attributed to this experiment. Every arm ran the **gadgets** engine, as
+instructed, because that is the only engine a physical iOS device can use. All
+arms booted the same `rootfs.erofs` KDE image on the canonical 16 KiB kernel
+`Linux 6.18.41-g2df7a2f2d5ec` with `mem=1536M`.
+
+Hosts: an Apple M1 Ultra Mac Studio (16 performance, 4 efficiency cores,
+macOS 26.3) and a physical iPad mini 6 (A15, **2 performance, 4 efficiency
+cores**, iPadOS 18.5). The Mac carried background `screensharingd`,
+`fseventsd`, and `mds_stores` activity throughout, with load average 7--10 of
+20 cores; runs were interleaved rather than blocked on a quiet host.
+
+Two console markers bound the phases. `Started sddm.service` ends the
+CPU/IO-bound service boot. The once-only `Native display: direct ...` record
+from `native_display.mm` and `native_display_ios.mm` marks the **first
+accelerated frame**, that is, the first scanout presented from a GPU texture
+rather than the CPU fallback. Both are reported relative to the kernel banner,
+so host launch and app startup are excluded.
+
+| Arm | vCPUs | to sddm | to first frame |
+| --- | ---: | ---: | ---: |
+| macOS native | 6 | 6.953 s | 22.555 s |
+| macOS native | 2 | 9.987 s | 30.089 s |
+| iPad | 6 | 7.135 s | 63.505 s |
+| iPad (repeat) | 6 | 7.132 s | 65.401 s |
+| iPad | 2 | 8.682 s | 44.559 s |
+| iPad | 2 | 9.319 s | 55.558 s |
+| iPad, 90 s cooldown | 2 | 8.661 s | 39.624 s |
+
+At the shipped six-vCPU policy the iPad reaches sddm in 7.135 s against
+macOS's 6.953 s, a 1.03 ratio, so the service boot is at parity. The same run
+needs 63.505 s to present its first accelerated frame against macOS's
+22.555 s, a 2.82 ratio. The regression is therefore confined to the phase
+after the display manager starts rendering.
+
+A 100-second device Time Profiler capture of the six-vCPU boot
+(`xctrace`, Time Profiler, iPad mini 6) explains why. The process consumed
+211.335 s of CPU over 100.383 s of wall time, or **2.11 cores**, spread over
+exactly six carrier threads at 13.00--23.28% each. Samples landed **73.52% on
+performance cores and 26.48% on efficiency cores**: the two A15 P-cores are
+close to saturated while the four E-cores stay largely idle. Under 5% of
+sample weight resolved to a named symbol because the gadget bank and the
+embedded guest kernel are not images Instruments can symbolize, so this
+capture is evidence about thread count, core class, and utilization, not about
+a hot function.
+
+Cutting the guest to two vCPUs, matching the A15's performance-core count,
+moved first frame from 63.505/65.401 s to 39.624--55.558 s. Every two-vCPU run
+beat every six-vCPU run despite the six-vCPU runs being earlier in the session
+on a cooler device, which makes the comparison conservative. The service boot
+moves the other way, 7.13 s to 8.66--9.32 s, because early boot does benefit
+from more runnable CPUs; the desktop phase dominates the total.
+
+The matched two-vCPU pair is the decisive number: macOS 30.089 s against the
+iPad's best 39.624 s is a **1.32** ratio. Most of the apparent 2.82x is
+therefore the vCPU policy interacting with a heterogeneous core layout, not a
+per-instruction translation deficit and not the ANGLE/Metal presentation path.
+This is consistent with G153, where the same device was about 7% *faster* than
+this Mac on an equal-work gadget store probe.
+
+Two further observations, neither of them a performance result:
+
+- The iPhone 17 Pro Max Simulator could not be used as a KDE arm at all. It
+  reaches `graphical.target` (sddm 7.505 s, session 10.955 s) but never leaves
+  fbcon and never prints a presentation record, in both the 440x860/160 DPI
+  point mode and the 1320x2580/480 DPI Retina mode. The same guest geometry
+  reaches autologin normally under the macOS launcher, so this is specific to
+  the Simulator graphics stack rather than to the image or the density.
+- `ExecutableArena::available()` in `darwin/cpu/arm64/jit/jit_arena.cpp`
+  reports JIT support on the iOS Simulator because its probe only checks that
+  the `MAP_JIT` `mmap` succeeds, which it does there. The subsequent `store()`
+  faults, because the W^X toggle is compiled out for every iOS target under
+  `#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)`. A direct probe on the
+  booted Simulator showed `mmap` succeeding, an unguarded write raising
+  SIGBUS, and both a `dlsym`-resolved `pthread_jit_write_protect_np` and a
+  plain RW-then-RX `mprotect` succeeding. Selecting the JIT engine on the
+  Simulator today would crash rather than refuse.
+
+Limitations. The iPad preference could be written only once: `cfprefsd`
+caches the value after first use and ignored every later file write, so a
+four-vCPU arm was not measured and the six-vCPU state was not restored. Two of
+the three two-vCPU runs had no enforced cooldown and their 16 s spread is
+consistent with thermal drift, so the two-vCPU figure is a range, not a point.
+One device, one image, and one page profile were used, and the Mac carried
+background load. Nothing here measures steady-state desktop or WebGL frame
+rate, which remains the open question for the ANGLE/Metal path.
+
+Disposition: no product change in this commit. The evidence supports changing
+Kernarium's guest CPU default from every processor `NSProcessInfo` reports to
+the performance-core count, but that default should not be changed until it is
+validated on more than one device family and against the Simulator and macOS
+products.
