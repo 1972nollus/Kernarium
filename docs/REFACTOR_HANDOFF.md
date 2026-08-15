@@ -13,15 +13,19 @@ Mesa's shader-only `VAProfileNone` probe; actual codec capabilities and frame
 commands remain disabled.
 
 The app starts one 1.5 GiB guest by default after its safe-area view has a real
-size. It multiplies that point geometry by `UIScreen.nativeScale`, uses the
-resulting physical pixels for both the Metal drawable and Virtio-GPU preferred
-mode, and advertises an effective `160 * nativeScale` density through EDID.
-Touch coordinates are scaled into the same pixel space. Device and Simulator
-both default to all processors reported by iOS.
+size. Retina mode is off by default: safe-area points map directly to Metal and
+guest pixels, and Virtio-GPU EDID advertises 160 DPI. The optional Retina mode
+multiplies the same point geometry by `UIScreen.nativeScale` and advertises an
+effective `160 * nativeScale` density. Touch coordinates are scaled into the
+selected pixel space. Device and Simulator share both policies and default to
+all processors reported by iOS. Kernarium selects the built-in VGA8x16 fbcon
+font at point density and TER16x32 at Retina density so early-console glyphs
+retain approximately the same physical size.
 A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
 RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
-filename for the next launch. It also persists a 4 KiB or 16 KiB kernel page
-profile, defaulting to 16 KiB. The app recreates the sparse overlay disk on
+filename for the next launch. It also persists Retina mode and a 4 KiB or
+16 KiB kernel page profile; Retina defaults off and the kernel defaults to
+16 KiB. The app recreates the sparse overlay disk on
 every run; the guest formats it as ext4 and uses separate directories from its
 shared free-space pool for OverlayFS, Docker, and containerd before executing
 the image's normal systemd toward `graphical.target`. No disk-backed swap is
@@ -61,7 +65,12 @@ slices and packaged both versioned XCFrameworks. The iOS 26.5 iPhone 17 Pro Max
 Simulator Xcode campaign passed five app tests and six UI tests; separate app
 launches selected each saved profile, logged the matching 4 KiB or 16 KiB
 runtime, completed DHCP and the EROFS/ext4 pivot, and reached
-`graphical.target` plus greetd. A generic physical-iOS Release build succeeded
+`graphical.target` plus greetd. A later 16 KiB focused display-mode check on
+that Simulator booted point mode at 440x860/160 DPI with VGA8x16 fbcon
+(55x53 cells), then Retina mode at 1320x2580/480 DPI with TER16x32 fbcon
+(82x80 cells); both reached the full-geometry Phrog keypad. Console samples
+such as `[    0.004448]` also proved that printk timestamps are no longer
+quantized to the 10 ms tick. A generic physical-iOS Release build succeeded
 with standard Xcode signing and embedded both runtimes without linking either
 into the app executable. Both current macOS page profiles pass 53/53 tooling
 checks and the interpreter, gadgets, JIT, and SLiRP guest cases. Their common
@@ -69,6 +78,10 @@ external `rootfs.erofs` currently stalls only the Docker overlay smoke after
 containerd starts, so that matched 4/5 result is recorded as a rootfs campaign
 limitation rather than attributed to kernel selection. Exact current evidence
 is indexed in [refactor-evidence.md](refactor-evidence.md).
+Fresh post-clock-change gadgets shell boots also passed on both rebuilt macOS
+profiles against `phosh.erofs`: 16 KiB emitted `[    0.004062]`, 4 KiB emitted
+`[    0.005343]`, both completed DHCP and the disposable overlay, and both
+returned their profile marker before clean poweroff.
 
 The Darwin port now owns exactly one persistent host carrier for each
 configured vCPU, including vCPU0. Linux tasks keep stackful context on 128 KiB
@@ -80,7 +93,10 @@ cross-calls cannot deadlock. Shipped kernels use a 100 Hz tick and
 blocks the process-directed early `ITIMER_REAL` signal on application and
 launcher workers; only vCPU0's carrier unmasks `SIGALRM` during calibration.
 The common kernel also enables `CONFIG_PRINTK_TIME` for timestamped VT and
-host-serial printk records.
+host-serial printk records. Normal UML mode now supplies those prefixes from a
+boot-relative `CLOCK_MONOTONIC` nanosecond scheduler clock instead of 100 Hz
+jiffies; the 100 Hz event/tick policy remains unchanged, and deterministic
+time-travel modes retain their simulated-jiffies clock.
 
 The common architecture was requalified with a complete no-systemd gadgets
 Geekbench 6 run: the direct OverlayFS shell scored **96/565** single/multi,
@@ -134,10 +150,11 @@ log client. It omits the conflicting UML stdio-console driver and legacy BSD
 PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
 `ttyS0` is the host console because this emulator has no Virtio-console backend;
 Kernarium binds that serial endpoint to its stdout relay while `tty0` remains
-visible on the framebuffer.
+visible on the framebuffer. Both page profiles build the selectable VGA8x16
+and TER16x32 fonts used by the two iOS density modes.
 
-The repeated physical reliability campaign preceded the current density-only
-change. Its standard-signed Release app and `phosh.erofs` on an iPad mini 6
+The repeated physical reliability campaign preceded the selectable display
+mode change. Its standard-signed Release app and `phosh.erofs` on an iPad mini 6
 completed five cold launches at 1.5 GiB and six vCPUs under the former
 `96 * nativeScale` rule, rendering at 2266x1390 and 192 DPI. Every run brought
 all CPUs online, emitted timestamped printk records, reported 1,520,944 KiB
@@ -149,8 +166,9 @@ and no new device crash report appeared. The host stopped each run after
 stable presentation, so clean guest shutdown is not claimed; no memory
 reduction was needed.
 
-A focused standard-signed Debug check of the current `160 * nativeScale` rule
-booted the selected `rootfs.erofs` on the same iPad at 2266x1390 and 320 DPI.
+A focused standard-signed Debug check of the now-optional
+`160 * nativeScale` Retina rule booted the selected `rootfs.erofs` on the same
+iPad at 2266x1390 and 320 DPI.
 Virtio-GPU accepted EDID, fbcon switched to its framebuffer, DHCP and the fresh
 ext4 pivot completed, and SDDM entered direct virgl/ANGLE/Metal presentation.
 The matching iPhone 17 Pro Max Simulator run booted at 1320x2580 and 480 DPI,

@@ -23,12 +23,14 @@ struct EmulatorConfiguration: Equatable {
     static let defaultGuestMemoryMiB = 1536
     static let defaultOverlaySizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB
+    static let defaultRetinaMode = false
 
     let vCPUCount: Int
     let guestMemoryMiB: Int
     let overlaySizeGiB: Int
     let rootfsFilename: String
     let kernelPageSize: KernelPageSize
+    let retinaMode: Bool
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
@@ -67,6 +69,9 @@ struct EmulatorConfiguration: Equatable {
         ) == nil
             ? defaultKernelPageSize.rawValue
             : defaults.integer(forKey: Key.kernelPageSize)
+        let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
+            ? defaultRetinaMode
+            : defaults.bool(forKey: Key.retinaMode)
 
         return Self(
             vCPUCount: min(max(storedVCPUCount, 1), maximumVCPUCount),
@@ -81,7 +86,8 @@ struct EmulatorConfiguration: Equatable {
                 storedRootfsFilename
             ) ?? RootfsImage.defaultFilename,
             kernelPageSize: KernelPageSize(rawValue: storedKernelPageSize) ??
-                defaultKernelPageSize
+                defaultKernelPageSize,
+            retinaMode: storedRetinaMode
         )
     }
 
@@ -95,6 +101,7 @@ struct EmulatorConfiguration: Equatable {
             forKey: Key.rootfsFilename
         )
         defaults.set(kernelPageSize.rawValue, forKey: Key.kernelPageSize)
+        defaults.set(retinaMode, forKey: Key.retinaMode)
     }
 
     private static func normalizedGuestMemoryMiB(_ value: Int) -> Int {
@@ -115,6 +122,7 @@ struct EmulatorConfiguration: Equatable {
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
         static let kernelPageSize = "emulator.kernelPageSize"
+        static let retinaMode = "emulator.retinaMode"
     }
 }
 

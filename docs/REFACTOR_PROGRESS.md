@@ -6,11 +6,13 @@ The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
 slices and boots a 1.5 GiB UML guest by default from a selected Documents EROFS
 image. Device and Simulator both default to all processors reported by iOS; a
 settings sheet persists bounded vCPU, RAM, overlay-size, rootfs, and 4 KiB or
-16 KiB kernel-page choices for the next launch, defaulting to 16 KiB. Its basic
-SwiftUI `ContentView` owns a safe-area
-`MTKView` whose native-pixel dimensions are the guest resolution. Virtio-GPU
-EDID advertises the corresponding effective `160 * nativeScale` density, and
-UIKit scales touch coordinates into that pixel space. The real Virtio-GPU
+16 KiB kernel-page choices for the next launch, defaulting to 16 KiB. It also
+persists Retina mode, which is off by default. Its basic SwiftUI `ContentView`
+owns a safe-area `MTKView`; point mode maps one host point to one guest pixel
+at 160 DPI, while Retina mode uses native-pixel dimensions and advertises
+`160 * nativeScale` through Virtio-GPU EDID. UIKit scales touch coordinates
+into the selected pixel space. The runtime selects VGA8x16 fbcon text in point
+mode and the doubled TER16x32 font at Retina density. The real Virtio-GPU
 device and virglrenderer use pinned UTM libepoxy plus ANGLE/Metal and present
 the native Metal texture directly; the iOS target builds neither AppKit nor
 VNC, while the macOS graph remains on its existing
@@ -84,7 +86,9 @@ is 100 Hz with `NO_HZ_IDLE`. Kernarium keeps its launcher on the existing Swift
 worker, masks the process-directed early `ITIMER_REAL` signal on application
 workers, and lets only vCPU0's carrier unmask `SIGALRM` during calibration.
 `CONFIG_PRINTK_TIME` supplies timestamps to both VT and host-serial kernel
-output.
+output. In normal UML mode those prefixes now use a boot-relative host
+monotonic nanosecond clock rather than 100 Hz jiffies; time-travel modes retain
+their simulated clock and the tick/event policy is unchanged.
 
 A full no-systemd gadgets requalification on the common architecture scored
 96/565 single/multi, versus the final pre-change 96/567. Focused Clang/Object
@@ -120,11 +124,16 @@ virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The captured consoles
 have no panic, POSIX-signal failure, allocator-corruption, or OOM marker, and
 the device produced no new crash report. The host stopped the runs after stable
 presentation, so orderly guest shutdown is not claimed; RAM stayed at 1.5 GiB
-because no OOM occurred. A focused current Debug check then proved the new
-`160 * nativeScale` EDID value at 2266x1390/320 DPI on the iPad and
+because no OOM occurred. A focused Debug check then proved the now-optional
+`160 * nativeScale` Retina EDID value at 2266x1390/320 DPI on the iPad and
 1320x2580/480 DPI on the iPhone 17 Pro Max Simulator. Both initialized
-Virtio-GPU/fbcon and reached their direct Metal desktop paths. The current
-2 GiB iPhone 17 Pro Max Simulator boot remains additional EROFS/ext4,
+Virtio-GPU/fbcon and reached their direct Metal desktop paths. The latest
+iPhone 17 Pro Max Simulator check additionally booted the new default point
+mode at 440x860/160 DPI with a 55x53 VGA8x16 console and Retina mode at
+1320x2580/480 DPI with an 82x80 TER16x32 console; both reached stock Phrog.
+Its early records included non-tick-aligned timestamps such as
+`[    0.004448]`. The current 2 GiB iPhone 17 Pro Max Simulator boot remains
+additional EROFS/ext4,
 VT/fbcon, stock-greetd, Phrog, and native Metal evidence. Current macOS
 qualification proves the full
 Phosh service set and its sparse rendered lock screen after the virgl VA-probe
@@ -132,6 +141,12 @@ fix. Physical Aquarium remains intentionally outside acceptance; the
 removed disk-swap workaround is not part of the product. The earlier 2 GiB
 Simulator WebGL 2 Aquarium result remains dated graphics compatibility
 evidence.
+
+Both rebuilt macOS page profiles then passed a focused gadgets shell boot on
+`phosh.erofs`. The 16 KiB and 4 KiB guests completed DHCP and their disposable
+overlays, emitted sub-10-ms timestamp digits (`[    0.004062]` and
+`[    0.005343]` respectively), returned their command marker, and powered off
+cleanly.
 
 An opt-in physical no-systemd Geekbench launch also reached and completed 13
 single-core workloads before the user stopped it during Photo Filter; that

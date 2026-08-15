@@ -7,7 +7,10 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            GuestDisplayView(keyboardVisible: $keyboardVisible) { view, geometry in
+            GuestDisplayView(
+                keyboardVisible: $keyboardVisible,
+                retinaMode: EmulatorLauncher.shared.retinaMode
+            ) { view, geometry in
                 EmulatorLauncher.shared.start(view: view, geometry: geometry)
             }
             floatingButtons
@@ -107,6 +110,7 @@ private struct GuestDisplayGeometry {
 
 private struct GuestDisplayView: UIViewRepresentable {
     @Binding var keyboardVisible: Bool
+    let retinaMode: Bool
     let viewDidLayout: @MainActor (
         GuestMetalView,
         GuestDisplayGeometry
@@ -115,6 +119,7 @@ private struct GuestDisplayView: UIViewRepresentable {
     func makeUIView(context: Context) -> GuestMetalView {
         let view = GuestMetalView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.viewDidLayout = viewDidLayout
+        view.retinaMode = retinaMode
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         view.autoResizeDrawable = false
@@ -123,6 +128,7 @@ private struct GuestDisplayView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: GuestMetalView, context: Context) {
+        view.retinaMode = retinaMode
         view.setKeyboardVisible(keyboardVisible)
         view.reportLayout()
     }
@@ -138,6 +144,7 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         GuestDisplayGeometry
     ) -> Void)?
     var guestPixelSize: CGSize?
+    var retinaMode = false
     private var trackedTouch: UITouch?
 
     override var canBecomeFirstResponder: Bool { true }
@@ -156,12 +163,12 @@ private final class GuestMetalView: MTKView, UIKeyInput {
 
     func reportLayout() {
         guard let screen = window?.screen else { return }
-        let scale = screen.nativeScale
+        let scale = retinaMode ? screen.nativeScale : 1
         guard bounds.width > 0, bounds.height > 0,
               scale.isFinite, scale > 0 else { return }
-        // SwiftUI supplies safe-area-excluded point bounds. Convert those
-        // bounds to the screen's physical backing pixels, including scaled
-        // iPhone modes where nativeScale is not an integer.
+        // SwiftUI supplies safe-area-excluded point bounds. Point-resolution
+        // mode maps them directly to guest pixels; Retina mode converts them
+        // to physical backing pixels, including fractional native scales.
         let pixelSize = CGSize(
             width: (bounds.width * scale).rounded(.down),
             height: (bounds.height * scale).rounded(.down)
@@ -355,6 +362,8 @@ private final class EmulatorLauncher {
 
     private let configuration: EmulatorConfiguration
     private var started = false
+
+    var retinaMode: Bool { configuration.retinaMode }
 
     private init(configuration: EmulatorConfiguration) {
         self.configuration = configuration

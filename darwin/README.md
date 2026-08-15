@@ -44,10 +44,12 @@ corrupted the host heap on the first SET_SCANOUT.
 
 Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
-the safe-area Metal view in native pixels and an evdev keyboard fed by UIKit
-text input. The view multiplies its point bounds by `nativeScale`, scales touch
-points into that range, and supplies `160 * nativeScale` effective DPI through
-Virtio-GPU EDID. Its
+the safe-area Metal view in its selected pixel mode and an evdev keyboard fed
+by UIKit text input. By default the view maps safe-area points directly to
+guest pixels and supplies 160 DPI through Virtio-GPU EDID. Optional Retina mode
+multiplies the bounds by `nativeScale` and supplies `160 * nativeScale`; touch
+points are scaled into the same selected range. Point density selects VGA8x16
+fbcon text, while Retina density selects TER16x32. Its
 network callback is the ordinary SLiRP provider compiled against the private
 iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes. Both
@@ -55,8 +57,9 @@ iOS products default to all processors reported by `NSProcessInfo` and 1.5 GiB
 of guest RAM. The settings sheet can persist one through that processor count,
 512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, the
 selected `.erofs` filename from Documents, and either a 4 KiB or 16 KiB kernel
-page profile; a saved configuration is snapshotted on the next app launch and
-16 KiB is the default. The standalone macOS app retains its larger
+page profile, plus Retina mode; a saved configuration is snapshotted on the
+next app launch. 16 KiB is the default kernel profile and Retina is off by
+default. The standalone macOS app retains its larger
 default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
 `ncpus=`; explicit values continue to override those defaults independently.
 
@@ -230,5 +233,9 @@ Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.
 `CONFIG_PRINTK_TIME` prefixes kernel records on both tty0 and ttyS0 with the
-guest monotonic timestamp.
+guest monotonic timestamp. Normal UML execution supplies that prefix from a
+boot-relative host-monotonic nanosecond `sched_clock()` instead of 100 Hz
+jiffies; time-travel modes retain their simulated clock, and the carrier tick
+policy is unchanged. Both page profiles build VGA8x16 and TER16x32 so
+Kernarium can select readable fbcon text for point and Retina densities.
 The selected EROFS base remains read-only.

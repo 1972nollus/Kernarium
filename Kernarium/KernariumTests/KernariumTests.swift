@@ -46,6 +46,7 @@ struct KernariumTests {
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.rootfsFilename == "rootfs.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
+        #expect(configuration.retinaMode == false)
     }
 
     @Test
@@ -58,7 +59,8 @@ struct KernariumTests {
             guestMemoryMiB: 2048,
             overlaySizeGiB: 16,
             rootfsFilename: "phosh.erofs",
-            kernelPageSize: .fourKiB
+            kernelPageSize: .fourKiB,
+            retinaMode: true
         ).save(defaults: defaults)
         #expect(
             EmulatorConfiguration.load(
@@ -69,7 +71,8 @@ struct KernariumTests {
                 guestMemoryMiB: 2048,
                 overlaySizeGiB: 16,
                 rootfsFilename: "phosh.erofs",
-                kernelPageSize: .fourKiB
+                kernelPageSize: .fourKiB,
+                retinaMode: true
             )
         )
 
@@ -87,6 +90,7 @@ struct KernariumTests {
         #expect(normalized.overlaySizeGiB == 1)
         #expect(normalized.rootfsFilename == "rootfs.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
+        #expect(normalized.retinaMode == true)
     }
 
     @Test

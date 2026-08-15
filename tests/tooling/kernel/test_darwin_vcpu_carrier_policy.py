@@ -103,6 +103,7 @@ def validate(
     main_source = (linux_source / "arch/um/os-Darwin/main.c").read_text()
     host_abi = (linux_source / "arch/um/os-Darwin/uml_darwin_host.h").read_text()
     kernel_start = (linux_source / "arch/um/kernel/skas/process.c").read_text()
+    kernel_time = (linux_source / "arch/um/kernel/time.c").read_text()
     config = kernel_config.read_text()
     config_16k = page_16k_config.read_text()
     config_4k = page_4k_config.read_text()
@@ -121,6 +122,9 @@ def validate(
         "CONFIG_HZ_100=y",
         "CONFIG_HZ=100",
         "CONFIG_NO_HZ_IDLE=y",
+        "CONFIG_FONTS=y",
+        "CONFIG_FONT_8x16=y",
+        "CONFIG_FONT_TER16x32=y",
     ):
         require(
             re.search(rf"(?m)^{re.escape(setting)}$", config) is not None,
@@ -153,6 +157,20 @@ def validate(
         "--set-val" in build_script and
         "unsupported numeric kernel config value" in build_script,
         "kernel build helper cannot safely apply page-derived stack orders",
+    )
+    sched_clock = function(kernel_time, "sched_clock")
+    require_pattern(
+        sched_clock,
+        r"now\s*=\s*os_nsecs\s*\(\s*\).*"
+        r"cmpxchg\s*\(\s*&sched_clock_start\s*,\s*0ULL\s*,\s*now\s*\).*"
+        r"return\s+now\s*-\s*start",
+        "normal UML scheduler and printk timestamps are not host-clock precise",
+    )
+    require(
+        "fbcon=font:VGA8x16" in runtime and
+        "fbcon=font:TER16x32" in runtime and
+        "fbconFontArgument(dotsPerInch)" in runtime,
+        "Kernarium does not select its fbcon font from the advertised DPI",
     )
 
     require(

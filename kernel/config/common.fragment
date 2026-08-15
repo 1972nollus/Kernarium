@@ -388,6 +388,11 @@ CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
 # CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION is not set
 # CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is not set
 # CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER is not set
+# Point-resolution guests use the ordinary 8x16 console font. Retina EDID
+# densities select the doubled Terminus font with fbcon=font:TER16x32.
+CONFIG_FONTS=y
+CONFIG_FONT_8x16=y
+CONFIG_FONT_TER16x32=y
 # Modern distributions allocate PTYs dynamically from devpts. The legacy BSD
 # bank creates hundreds of unused pty/tty nodes and has no supported consumer.
 CONFIG_UNIX98_PTYS=y

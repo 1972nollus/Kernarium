@@ -715,6 +715,14 @@ bool validGeekbenchWorkloads(std::string_view workloads)
     return !needsDigit;
 }
 
+std::string fbconFontArgument(uint32_t dotsPerInch)
+{
+    static constexpr uint32_t largeConsoleFontDpi = 240U;
+    return dotsPerInch >= largeConsoleFontDpi
+        ? "fbcon=font:TER16x32"
+        : "fbcon=font:VGA8x16";
+}
+
 } // namespace
 
 namespace {
@@ -823,6 +831,7 @@ int runtimeRun(
             "init=/bin/sh",
             "console=tty0",
             "console=ttyS0",
+            fbconFontArgument(dotsPerInch),
             consoleBridge.kernelArgument(),
             "ubd1=" + std::string(overlayPath),
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +

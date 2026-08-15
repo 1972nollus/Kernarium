@@ -140,9 +140,11 @@ does not compile or link the UIKit implementation.
 The vhost-user transport owns only connection and queue framing. The GPU and
 Virtio-input devices independently implement their protocol operations over
 that transport. Kernarium registers one absolute touchscreen and one keyboard,
-while UIKit scales safe-area point coordinates into the native-pixel guest
-range and converts them with text input to Linux evdev events. The GPU device
-independently advertises the matching effective density through EDID.
+while UIKit scales safe-area point coordinates into the configured guest
+range—point-for-pixel by default or `nativeScale` Retina pixels—and converts
+them with text input to Linux evdev events. The GPU device independently
+advertises the matching 160 or `160 * nativeScale` effective density through
+EDID.
 Networking remains the emulator's existing callback boundary backed by the
 iOS static GLib/libslirp prefix. These iOS owners do not enter the macOS
 application graph.

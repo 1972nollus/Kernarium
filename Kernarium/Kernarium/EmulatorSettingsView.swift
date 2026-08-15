@@ -9,6 +9,7 @@ struct EmulatorSettingsView: View {
     @State private var overlaySizeGiB: Int
     @State private var rootfsFilename: String
     @State private var kernelPageSize: KernelPageSize
+    @State private var retinaMode: Bool
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
@@ -38,12 +39,16 @@ struct EmulatorSettingsView: View {
         _overlaySizeGiB = State(initialValue: configuration.overlaySizeGiB)
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
         _kernelPageSize = State(initialValue: configuration.kernelPageSize)
+        _retinaMode = State(initialValue: configuration.retinaMode)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Hardware") {
+                    Toggle("Retina mode", isOn: $retinaMode)
+                        .accessibilityIdentifier("retinaModeToggle")
+
                     Picker("Kernel page size", selection: $kernelPageSize) {
                         ForEach(KernelPageSize.allCases) { pageSize in
                             Text(pageSize.title).tag(pageSize)
@@ -113,7 +118,8 @@ struct EmulatorSettingsView: View {
             guestMemoryMiB: guestMemoryMiB,
             overlaySizeGiB: overlaySizeGiB,
             rootfsFilename: rootfsFilename,
-            kernelPageSize: kernelPageSize
+            kernelPageSize: kernelPageSize,
+            retinaMode: retinaMode
         ).save(defaults: defaults)
         dismiss()
     }

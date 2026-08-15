@@ -36,6 +36,7 @@ final class KernariumUITests: XCTestCase {
         )
         XCTAssertTrue(app.steppers["guestMemoryStepper"].exists)
         XCTAssertTrue(app.steppers["overlaySizeStepper"].exists)
+        XCTAssertTrue(app.switches["retinaModeToggle"].exists)
         XCTAssertTrue(
             app.descendants(matching: .any)["kernelPageSizePicker"].exists
         )

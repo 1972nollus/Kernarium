@@ -129,13 +129,15 @@ one saved page profile for the process lifetime, and boots the selected
 and Simulator both default to all processors reported by `NSProcessInfo`. The
 settings sheet persists 1 through that processor count, 512 MiB through 4 GiB
 of RAM in 128 MiB steps, a 1--32 GiB overlay size, a Documents rootfs filename,
-and the 4 KiB or 16 KiB kernel page profile; changes are snapshotted on the
-next app launch.
-SwiftUI lays the `ContentView` Metal view out inside the safe area, and the app
-multiplies its point dimensions by `UIScreen.nativeScale` for both the Metal
-drawable and guest preferred mode. Virtio-GPU EDID advertises an effective
-`160 * nativeScale` density. UIKit scales touch points into that same pixel
-range. Trailing-center settings and keyboard buttons are the only overlays.
+the 4 KiB or 16 KiB kernel page profile, and Retina mode; changes are
+snapshotted on the next app launch. Retina mode is off by default.
+SwiftUI lays the `ContentView` Metal view out inside the safe area. Point mode
+maps one host point to one Metal/guest pixel and advertises 160 DPI through
+Virtio-GPU EDID. Retina mode multiplies the same dimensions by
+`UIScreen.nativeScale` and advertises `160 * nativeScale`. UIKit scales touch
+points into the selected pixel range. Point mode requests VGA8x16 fbcon text;
+Retina densities request TER16x32. Trailing-center settings and keyboard
+buttons are the only overlays.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
@@ -319,7 +321,11 @@ normal 64 VT nodes, four UML serial lines, dynamic Unix98 PTYs, and no legacy
 BSD PTY bank. This host has no Virtio-console backend, so `ttyS0` is the serial
 fallback connected to the app's stdout relay while `tty0` remains on fbcon.
 `CONFIG_PRINTK_TIME` gives the kernel records on both consoles guest-monotonic
-prefixes such as `[    0.120000]`.
+prefixes. In ordinary UML execution, `sched_clock()` derives them from a
+boot-relative host `CLOCK_MONOTONIC` nanosecond counter rather than jiffies, so
+records such as `[    0.004448]` retain sub-10-ms precision even though the
+kernel tick remains 100 Hz. Time-travel modes retain their deterministic
+simulated-jiffies clock.
 
 `--aquarium` remains an opt-in Simulator-only launcher check. It requires a
 live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
@@ -343,10 +349,14 @@ no new Kernarium crash report. Runs were stopped by the host after stable
 presentation, so orderly guest shutdown is not claimed. RAM was not reduced
 below 1.5 GiB because no OOM occurred. The older 1 GiB KDE device and Simulator
 boots remain dated predecessor evidence. A focused standard-signed Debug check
-of the current `160 * nativeScale` rule booted at 2266x1390/320 DPI on that
-iPad and at 1320x2580/480 DPI on the iPhone 17 Pro Max Simulator. Both runs
+of the now-optional `160 * nativeScale` Retina rule booted at 2266x1390/320 DPI
+on that iPad and at 1320x2580/480 DPI on the iPhone 17 Pro Max Simulator. Both runs
 initialized Virtio-GPU EDID/fbcon and reached direct Metal desktop
-presentation; this focused check does not replace the five-run physical
+presentation. A later iPhone 17 Pro Max Simulator check booted the new default
+point mode at 440x860/160 DPI with a 55x53 VGA8x16 console, then Retina mode at
+1320x2580/480 DPI with an 82x80 TER16x32 console; both reached stock Phrog and
+the host serial log contained non-tick-aligned timestamps. These focused
+checks do not replace the five-run physical
 reliability evidence. Current
 macOS qualification boots the unmodified Phosh service set, completes its
 GStreamer plugin scan without poisoning the virgl context, captures the sparse
