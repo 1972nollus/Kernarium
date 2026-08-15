@@ -3,7 +3,7 @@
 # patch-id, SHA-256 of the patch file, and subject. prepare-source.sh validates
 # every field before it creates or accepts the managed replay branch.
 order	filename	stable_patch_id	sha256	subject
-1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	7518c29b7382e322437e7c2fffafca3826828aa0	ea0bfa6f8fc6be182fc1fc39f56d14c39b695a7a4928e05a72e69a8c94081299	uml: establish shared architecture contracts and build wiring
+1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	b2e03fc2455fdaf964cb601bc431bd1bbbe7c091	0e25b47267100ce50f9b5c9e59940a5e679d99707809ba843f0b4637305d655d	uml: establish shared architecture contracts and build wiring
 2	0002a-uml-add-MMU-synchronization-and-large-page-support.patch	23a086791bc7b1e7caa2a542049ed3b09f05fb46	46f582f7c64dd7e99b753791807c8fc190598074e55ee9da79ed1b450e4f36a1	uml: add MMU synchronization and large-page support
 3	0002b-uml-add-SMP-timer-and-interrupt-core-support.patch	1098f72dc4193ba3fb4a72cce2d01a5d9987b5fe	b11aa36894ac5ff34df4e01902fd9566aaec2c22ac40d3f1f0d9d3228bc0c943	uml: add SMP timer and interrupt core support
 4	0002c-uml-add-execution-and-capability-core-support.patch	0ff6f82a1fa86ed639a76c7e6cf70760efc62f32	638493203602bb508672a8d0fb390bb46745a9a5c04849ade1d7d994b33378d0	uml: add execution and capability core support

@@ -24,8 +24,8 @@ to the shared CPU scanout conversion used by VNC. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 
-The opt-in Kernarium iOS device and Simulator runtime uses the same Virtio-GPU
-device and virglrenderer command path. Its platform display is UIKit/MetalKit: the pinned
+The opt-in Kernarium iOS device and Simulator runtimes use the same Virtio-GPU
+device and virglrenderer command path. Their platform display is UIKit/MetalKit: the pinned
 UTM libepoxy build loads EGL and GLES from ANGLE frameworks, ANGLE renders
 through Metal, and the native resource texture is sampled directly into the
 application-provided `MTKView`. VNC is deliberately not built for iOS.
@@ -53,27 +53,34 @@ iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes. Both
 iOS products default to all processors reported by `NSProcessInfo` and 1.5 GiB
 of guest RAM. The settings sheet can persist one through that processor count,
-512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, and
-the selected `.erofs` filename from Documents; a saved configuration is
-snapshotted on the next app launch. The standalone macOS app retains its larger
+512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, the
+selected `.erofs` filename from Documents, and either a 4 KiB or 16 KiB kernel
+page profile; a saved configuration is snapshotted on the next app launch and
+16 KiB is the default. The standalone macOS app retains its larger
 default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
 `ncpus=`; explicit values continue to override those defaults independently.
 
 Every Apple product derives the native window from guest RAM plus a
 page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) and biases
 its ET_DYN image as one unit. Both iOS products top-pack that window below the
-62 GiB ceiling and carry
-the same complete kernel ELF in a 16 KiB-aligned `__TEXT,__uml_elf` section of
-`KernariumRuntime.framework`; the standard Xcode framework signature covers
-that storage. Their embedded loader verifies the carrier byte-for-byte and
+62 GiB ceiling. Kernarium embeds one versioned runtime framework for each
+canonical 4 KiB and 16 KiB kernel. The app links neither at process launch;
+its always-linked loader blocks the early UML timer signal before main, loads
+exactly the saved profile, and validates the framework's release, page size,
+and immutable C function table. Each complete kernel ELF occupies a
+16 KiB-aligned `__TEXT,__uml_elf` section whose standard Xcode framework
+signature covers that storage. The Darwin linker keeps executable boundaries
+on 16 KiB host pages for both guest profiles. The embedded loader verifies the
+selected carrier byte-for-byte and
 aliases immutable executable pages from the already signed Mach-O mapping with
 `vm_remap`; it never copies code into anonymous memory or publishes RW pages as
 executable. ELF data and BSS retain the ordinary copy path, and relocations into
 signed executable pages are rejected. macOS retains its established unsigned
 loader, AppKit/CGL/IOSurface/Metal display, and VNC paths, while using the same
 128 TiB sparse guest range, scalable-window derivation, relocation, and
-exclusion-hole handling as device and Simulator. It places the same kernel
-bytes at 96 TiB to avoid collisions in Darwin's crowded low host range. Its
+exclusion-hole handling as device and Simulator. It places the matching
+page-profile kernel bytes at 96 TiB to avoid collisions in Darwin's crowded
+low host range. Its
 8 GiB default derives a 1 GiB auxiliary allowance and a 9 GiB active native
 window.
 
@@ -91,8 +98,9 @@ used on macOS, Simulator, and device, with carriers named
 `uml-vcpu-N-carrier` for profiles. Shipped kernels use a 100 Hz tick and
 `NO_HZ_IDLE`, suppressing periodic carrier wakeups while a guest CPU is idle.
 Darwin's early `ITIMER_REAL` calibration signal is process-directed. The
-Kernarium framework blocks `SIGALRM` before application main and around the
-managed run, while the existing launcher remains on its Swift worker; only
+always-linked Kernarium loader blocks `SIGALRM` before application main and
+the selected runtime blocks it again around the managed run, while the
+existing launcher remains on its Swift worker; only
 the vCPU0 carrier explicitly unmasks the signal until cooperative timer
 deadlines take over.
 Darwin host signals remain wake edges rather than asynchronous Linux interrupt
@@ -169,12 +177,12 @@ compile out the source, environment control, wrapper storage and every call
 site.
 
 The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`. The
-default 16 KiB CLI and both Kernarium iOS products consume the exact same
-canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input; only its host
-delivery changes from the macOS CLI section to the iOS framework's signed
-`__TEXT` carrier. `UML_GUEST_16K_PAGES=ON` is the default; set it to `OFF` for
-the independently tested 4 KiB compatibility build, which necessarily uses
-its own page-profile kernel artifact.
+default 16 KiB CLI and both 16 KiB Kernarium slices consume the exact same
+canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input. The 4 KiB macOS
+compatibility product and both 4 KiB Kernarium slices similarly consume
+`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`; only host delivery changes from the
+macOS CLI section to the iOS framework's signed `__TEXT` carrier.
+`UML_GUEST_16K_PAGES=ON` remains the default.
 
 Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 `/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with

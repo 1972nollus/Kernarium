@@ -62,28 +62,38 @@ interpreter or precompiled gadget engine without entering that path.
 
 The direct native-VM branch and ELF loader are compiled out of ordinary iOS
 device and Simulator libraries; the shared bridge retains only software-MMU
-entry points there. The opt-in `KernariumRuntime` composition enables the
-existing native bridge and embedded loader for arm64 iOS device and Simulator
-kernel runs. It selects the precompiled gadget engine and does not alter the
-supported iOS package graph or authorize executable JIT publication. On both
-iOS targets the kernel ELF is a 16 KiB-aligned section of the framework's
-code-signed Mach-O `__TEXT`. The loader derives a RAM-scaled native window
-below the iOS ceiling and uses `vm_remap` to alias only immutable, relocation-
-free executable ELF pages from that signed mapping; non-executable data and
-BSS remain ordinary anonymous mappings. Simulator, physical device, and
-default 16 KiB macOS integration consume the exact same canonical
-`/Volumes/<case-sensitive-volume>/build-16k/vmlinux` bytes. Simulator and physical device
-carry them through the same signed framework strategy. macOS retains its
-established unsigned CLI embedding and uses the same guest range, RAM-scaled
-window derivation, relocation, and exclusion-hole handling, but places that
-window at 96 TiB rather than inside iOS's constrained sub-62 GiB host range.
+entry points there. The opt-in Kernarium composition builds one versioned
+runtime framework for each maintained 4 KiB and 16 KiB page profile, enabling
+the existing native bridge and embedded loader for arm64 iOS device and
+Simulator kernel runs. It selects the precompiled gadget engine and does not
+alter the supported iOS package graph or authorize executable JIT publication.
+The application links neither runtime at launch. Its always-linked C loader
+masks the early process-directed timer before main, dynamically loads exactly
+the saved framework, validates a versioned immutable function table, and
+rejects a second page profile for that process lifetime.
+
+On both iOS targets each kernel ELF is a 16 KiB-aligned section of its
+framework's code-signed Mach-O `__TEXT`. The loader derives a RAM-scaled native
+window below the iOS ceiling and uses `vm_remap` to alias only immutable,
+relocation-free executable ELF pages from that signed mapping; non-executable
+data and BSS remain ordinary anonymous mappings. The Darwin kernel link keeps
+signed executable boundaries on 16 KiB host pages even for a 4 KiB guest.
+Simulator, physical device, and macOS consume the exact same canonical bytes
+within each profile: `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` or
+`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Simulator and physical device carry
+them through the same signed framework strategy. macOS retains its established
+unsigned CLI embedding and uses the same guest range, RAM-scaled window
+derivation, relocation, and exclusion-hole handling, but places that window at
+96 TiB rather than inside iOS's constrained sub-62 GiB host range.
 Product policy still lets
 macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1.5 GiB and all
 processors reported by iOS; the app can persist a smaller launch configuration
 within its supported settings ranges. The common layout derives the appropriate
-native window from each guest's RAM. The supported macOS 4 KiB compatibility
-profile remains a distinct kernel artifact because guest page size is a
-compile-time kernel choice.
+native window from each guest's RAM. Guest page size remains a compile-time
+kernel and host-runtime choice, so the two profiles share architecture and
+source but not a binary framework or kernel artifact. Kernarium defaults to
+16 KiB and persists a 4 KiB compatibility selection for the next process
+launch.
 Executable-memory ownership is enforced in source
 architecture and functional JIT publication tests, not by comparing or
 attributing individual archive members.

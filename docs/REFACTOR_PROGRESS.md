@@ -5,8 +5,9 @@
 The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime
 slices and boots a 1.5 GiB UML guest by default from a selected Documents EROFS
 image. Device and Simulator both default to all processors reported by iOS; a
-settings sheet persists bounded vCPU, RAM, overlay-size, and rootfs choices for
-the next launch. Its basic SwiftUI `ContentView` owns a safe-area
+settings sheet persists bounded vCPU, RAM, overlay-size, rootfs, and 4 KiB or
+16 KiB kernel-page choices for the next launch, defaulting to 16 KiB. Its basic
+SwiftUI `ContentView` owns a safe-area
 `MTKView` whose native-pixel dimensions are the guest resolution. Virtio-GPU
 EDID advertises the corresponding effective `160 * nativeScale` density, and
 UIKit scales touch coordinates into that pixel space. The real Virtio-GPU
@@ -19,12 +20,21 @@ Kernarium recreates a sparse temporary image on launch at the configured size
 (8 GiB by default). The guest formats it as ext4 and uses separate OverlayFS,
 Docker, and containerd directories on the same free-space pool; the app does
 not create or activate disk-backed swap.
-Both iOS targets and default 16 KiB macOS integration consume the exact same
-canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. iOS carries
-them in the framework's signed `__TEXT`; macOS embeds them through its existing
-unsigned CLI path. Both iOS targets use the same scalable 60.3125--62 GiB native
-window for the 1.5 GiB default guest and every product uses the 128 TiB sparse
-software-MMU task range. The native window is guest RAM plus a page-rounded
+Both 16 KiB iOS slices and default macOS integration consume the exact same
+canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes; the 4 KiB
+iOS slices and macOS compatibility product likewise share
+`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Kernarium names the two signed
+carriers `KernariumRuntime_6_18_41_16K` and
+`KernariumRuntime_6_18_41_4K`, embeds both without linking either at launch,
+and dynamically loads exactly the saved profile for the process lifetime. The
+always-linked loader owns the pre-main `SIGALRM` mask and validates the
+selected framework's release, page size, and immutable C API before the
+runtime starts. Darwin links both profiles with 16 KiB signed-text boundaries;
+packaging rejects unsafe executable/data host-page overlap. macOS embeds the
+matching bytes through its existing unsigned CLI path. Both iOS targets use
+the same scalable 60.3125--62 GiB native window for the 1.5 GiB default guest
+and every product uses the 128 TiB sparse software-MMU task range. The native
+window is guest RAM plus a page-rounded
 one-eighth auxiliary allowance with a 32 MiB floor; 1.5 GiB therefore receives
 exactly 192 MiB. macOS exercises the same scalable-window derivation,
 relocation, and native-hole handling at a 96 TiB base. It retains the
@@ -89,8 +99,9 @@ the historical G35 4 KiB 79/416; the latter is not a strict A/B. A separate
 unscored live mapping check placed the executable kernel at 96 TiB and its
 8 GiB physical backing in the same high native window, not directly above
 64 GiB. The scored process was not profiled or suspended and shut down cleanly.
-Final 4 KiB acceptance passed 53/53 tooling checks and 5/5 fast guest cases;
-the focused loader sanitizer gate and the 16 KiB 5/5 guest set also passed.
+The pre-dual-runtime 4 KiB acceptance passed 53/53 tooling checks and 5/5 fast
+guest cases; the focused loader sanitizer gate and the 16 KiB 5/5 guest set
+also passed.
 
 A four-vCPU, multi-core-only follow-up completed all 16 Geekbench workloads
 without executing the single-core suite. The current 16 KiB product scored

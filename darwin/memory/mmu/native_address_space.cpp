@@ -13,9 +13,6 @@
 #include <functional>
 #include <limits>
 #include <mach/mach.h>
-#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-#include <mach/mach_vm.h>
-#endif
 #include <mutex>
 #include <memory>
 #include <new>
@@ -300,13 +297,13 @@ public:
 			errno = found == owners_.end() ? ENOMEM : EBUSY;
 			return -1;
 		}
-		mach_vm_address_t target = static_cast<mach_vm_address_t>(slot);
+		vm_address_t target = static_cast<vm_address_t>(slot);
 		vm_prot_t current = VM_PROT_NONE;
 		vm_prot_t maximum = VM_PROT_NONE;
-		const auto result = mach_vm_remap(
+		const auto result = vm_remap(
 			mach_task_self(), &target, host_page_size(), 0,
 			VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
-			static_cast<mach_vm_address_t>(prepared), TRUE,
+			reinterpret_cast<vm_address_t>(prepared), TRUE,
 			&current, &maximum, VM_INHERIT_NONE);
 		if (result != KERN_SUCCESS || target != slot) {
 			errno = result == KERN_NO_SPACE ? ENOMEM : EFAULT;
@@ -989,7 +986,7 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 		return -1;
 	}
 
-	/* A temporary, fully populated host page lets mach_vm_remap replace the
+	/* A temporary, fully populated host page lets vm_remap replace the
 	 * direct slot atomically.  No CPU can observe the zero-filled interval
 	 * produced by replacing a mapping with MAP_FIXED anonymous memory first. */
 	std::array<std::byte, 16 * 1024> snapshot{};

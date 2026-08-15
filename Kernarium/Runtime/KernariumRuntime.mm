@@ -91,18 +91,6 @@ private:
     sigset_t previous_ {};
 };
 
-/*
- * The early UML calibration timer uses Darwin's process-directed ITIMER_REAL.
- * Initialize the framework before the application main so UIKit, Swift
- * concurrency, and their descendants inherit SIGALRM blocked. The dedicated
- * vCPU0 carrier is created with that mask and explicitly unblocks SIGALRM for
- * the short interval before the kernel switches to cooperative timers.
- */
-__attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
-{
-    blockGuestTimer(nullptr);
-}
-
 std::atomic_bool runtimeActive;
 std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
@@ -729,7 +717,9 @@ bool validGeekbenchWorkloads(std::string_view workloads)
 
 } // namespace
 
-extern "C" int kernarium_runtime_run(
+namespace {
+
+int runtimeRun(
     KernariumMetalView view,
     const char* rootfsPath,
     const char* overlayPath,
@@ -892,14 +882,14 @@ extern "C" int kernarium_runtime_run(
     }
 }
 
-extern "C" void kernarium_runtime_request_stop(void)
+void runtimeRequestStop(void)
 {
     std::lock_guard lock(activeEmulatorMutex);
     if (activeEmulator != nullptr)
         uml_emulator_request_stop(activeEmulator);
 }
 
-extern "C" void kernarium_runtime_send_touch(
+void runtimeSendTouch(
     uint32_t x,
     uint32_t y,
     int pressed)
@@ -932,7 +922,7 @@ extern "C" void kernarium_runtime_send_touch(
         activeTouchscreen->send(events);
 }
 
-extern "C" void kernarium_runtime_send_key(uint16_t code, int pressed)
+void runtimeSendKey(uint16_t code, int pressed)
 {
     namespace input = uml::input::virtio::protocol;
     const std::array events {
@@ -950,4 +940,24 @@ extern "C" void kernarium_runtime_send_key(uint16_t code, int pressed)
     std::lock_guard lock(activeEmulatorMutex);
     if (activeKeyboard != nullptr)
         activeKeyboard->send(events);
+}
+
+const kernarium_runtime_api runtimeApi {
+    .abi_version = KERNARIUM_RUNTIME_API_VERSION,
+    .struct_size = sizeof(kernarium_runtime_api),
+    .guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE,
+    .reserved = 0,
+    .kernel_release = KERNARIUM_KERNEL_RELEASE,
+    .framework_name = KERNARIUM_RUNTIME_FRAMEWORK_NAME,
+    .run = runtimeRun,
+    .request_stop = runtimeRequestStop,
+    .send_touch = runtimeSendTouch,
+    .send_key = runtimeSendKey,
+};
+
+} // namespace
+
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v1(void)
+{
+    return &runtimeApi;
 }

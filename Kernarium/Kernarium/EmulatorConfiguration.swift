@@ -1,16 +1,34 @@
 import Foundation
 
+enum KernelPageSize: Int, CaseIterable, Identifiable {
+    case fourKiB = 4096
+    case sixteenKiB = 16384
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .fourKiB:
+            "4 KB"
+        case .sixteenKiB:
+            "16 KB"
+        }
+    }
+}
+
 struct EmulatorConfiguration: Equatable {
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 128
     static let overlaySizeRangeGiB = 1...32
     static let defaultGuestMemoryMiB = 1536
     static let defaultOverlaySizeGiB = 8
+    static let defaultKernelPageSize = KernelPageSize.sixteenKiB
 
     let vCPUCount: Int
     let guestMemoryMiB: Int
     let overlaySizeGiB: Int
     let rootfsFilename: String
+    let kernelPageSize: KernelPageSize
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
@@ -44,6 +62,11 @@ struct EmulatorConfiguration: Equatable {
         let storedRootfsFilename = defaults.string(
             forKey: Key.rootfsFilename
         ) ?? RootfsImage.defaultFilename
+        let storedKernelPageSize = defaults.object(
+            forKey: Key.kernelPageSize
+        ) == nil
+            ? defaultKernelPageSize.rawValue
+            : defaults.integer(forKey: Key.kernelPageSize)
 
         return Self(
             vCPUCount: min(max(storedVCPUCount, 1), maximumVCPUCount),
@@ -56,7 +79,9 @@ struct EmulatorConfiguration: Equatable {
             ),
             rootfsFilename: RootfsImage.validatedFilename(
                 storedRootfsFilename
-            ) ?? RootfsImage.defaultFilename
+            ) ?? RootfsImage.defaultFilename,
+            kernelPageSize: KernelPageSize(rawValue: storedKernelPageSize) ??
+                defaultKernelPageSize
         )
     }
 
@@ -69,6 +94,7 @@ struct EmulatorConfiguration: Equatable {
                 RootfsImage.defaultFilename,
             forKey: Key.rootfsFilename
         )
+        defaults.set(kernelPageSize.rawValue, forKey: Key.kernelPageSize)
     }
 
     private static func normalizedGuestMemoryMiB(_ value: Int) -> Int {
@@ -88,6 +114,7 @@ struct EmulatorConfiguration: Equatable {
         static let guestMemoryMiB = "emulator.guestMemoryMiB"
         static let overlaySizeGiB = "emulator.overlaySizeGiB"
         static let rootfsFilename = "emulator.rootfsFilename"
+        static let kernelPageSize = "emulator.kernelPageSize"
     }
 }
 

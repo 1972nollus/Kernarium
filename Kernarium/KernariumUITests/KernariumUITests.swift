@@ -37,6 +37,9 @@ final class KernariumUITests: XCTestCase {
         XCTAssertTrue(app.steppers["guestMemoryStepper"].exists)
         XCTAssertTrue(app.steppers["overlaySizeStepper"].exists)
         XCTAssertTrue(
+            app.descendants(matching: .any)["kernelPageSizePicker"].exists
+        )
+        XCTAssertTrue(
             app.descendants(matching: .any)["rootfsPicker"].exists
         )
         XCTAssertTrue(app.buttons["settingsSaveButton"].exists)

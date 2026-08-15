@@ -18,10 +18,10 @@ tree is the build input and the omitted file is not reconstructed from Git.
 ## Latest verified replay (2026-08-15)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`1cb0f7edb42b0c2f748377c1d703439f45252de2`. A fresh authenticated replay,
+`c8d8b896b46d41bbcbccde409bbccbdc44dfd919`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, delta audit, and both LLVM 22 production page-profile builds passed.
-The exact delta policy is 159 changed files
+The exact delta policy is 160 changed files
 with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
 UML serial-line count configurable. Topic 0015 replaces the former macOS/iOS split
@@ -37,6 +37,10 @@ host-stop descriptor wake those carriers for cooperative
 shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
 checkpoints, preventing two fixed carriers from deadlocking in synchronous
 cross-calls while preserving Linux interrupt masking.
+Topic 0001 also aligns the Darwin ET_DYN image's early executable boundaries
+to the 16 KiB host-page granularity. That keeps a 4 KiB guest kernel's signed
+text carrier from sharing an iOS host page with the following dynamic loader
+data without creating another page-profile or platform patch.
 
 The host/kernel bridge is ABI v8 with fingerprint `0x3871ad612337ea76`; the
 separate installed emulator API remains v4 with fingerprint
@@ -74,9 +78,11 @@ represent several upstream paths that differ only by case. The canonical
 checkout is the dedicated APFS case-sensitive volume mounted at
 `/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
 `build-16k` and `build-4k` on that volume. The default macOS integration
-product and both iOS products consume the same `build-16k/vmlinux`; there is no
-platform-specific kernel build. Transient case-sensitive mounts under `/tmp`
-are not used for the canonical source or build trees:
+product and both 16 KiB iOS runtime slices consume the same
+`build-16k/vmlinux`; the macOS compatibility product and both 4 KiB iOS
+runtime slices consume `build-4k/vmlinux`. There is no platform-specific kernel
+build. Transient case-sensitive mounts under `/tmp` are not used for the
+canonical source or build trees:
 
 ```sh
 kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
@@ -123,15 +129,19 @@ Kernarium's 1.5 GiB default therefore receives exactly 192 MiB of auxiliary
 address capacity and uses the 60.3125--62 GiB active window. The standalone
 macOS app defaults to 8 GiB and 10 vCPUs; its 1 GiB auxiliary allowance gives
 it a 9 GiB active window beginning at 96 TiB. The kernel derives the hole
-endpoint from its relocated image, so macOS uses this same exact 16 KiB kernel
-artifact while retaining its established unsigned loader rather than the iOS
-signed carrier:
+endpoint from its relocated image. macOS and iOS therefore use the same exact
+artifact for each selected page profile while retaining their unsigned CLI and
+signed-framework delivery mechanisms, respectively:
 
 ```sh
 kernel/build-kernel.sh \
   --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-16k \
   --page-size 16k
+kernel/build-kernel.sh \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-4k \
+  --page-size 4k
 ```
 
 The common policy builds zswap in, enables it by default, and selects zstd. It

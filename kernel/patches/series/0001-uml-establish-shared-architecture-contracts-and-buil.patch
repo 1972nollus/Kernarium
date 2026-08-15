@@ -39,7 +39,8 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/skas/mm_id.h     |  11 +
  arch/um/include/shared/skas/skas.h      |   8 +
  arch/um/include/shared/smp.h            |  21 ++
- 33 files changed, 885 insertions(+), 38 deletions(-)
+ arch/um/kernel/dyn.lds.S                 |  13 ++
+ 34 files changed, 898 insertions(+), 38 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/hugetlb.h
  create mode 100644 arch/um/include/asm/mm_hooks.h
@@ -1645,6 +1646,34 @@ index 000000000..7e55aa69f
 +#endif /* CONFIG_SMP */
 +
 +#endif /* __UM_SHARED_SMP_H */
+diff --git a/arch/um/kernel/dyn.lds.S b/arch/um/kernel/dyn.lds.S
+index ad3cefeff..21cb40a67 100644
+--- a/arch/um/kernel/dyn.lds.S
++++ b/arch/um/kernel/dyn.lds.S
+@@ -18,11 +18,24 @@ SECTIONS
+   . = START + SIZEOF_HEADERS;
+   .interp         : { *(.interp) }
+   __binary_start = .;
++  /* The iOS signed carrier aliases executable bytes at the Darwin host-page
++   * granularity even when the guest uses 4 KiB pages. Keep both sides of the
++   * early executable segment on 16 KiB boundaries so the following dynamic
++   * tables never share a signed executable host page.
++   */
++#ifdef UML_HOST_DARWIN
++  . = ALIGN(0x4000);		/* Init code and data */
++#else
+   . = ALIGN(4096);		/* Init code and data */
++#endif
+   _text = .;
+   INIT_TEXT_SECTION(PAGE_SIZE)
+ 
++#ifdef UML_HOST_DARWIN
++  . = ALIGN(0x4000);
++#else
+   . = ALIGN(PAGE_SIZE);
++#endif
+ 
+   /* Read-only sections, merged into text segment: */
+   .hash           : { *(.hash) }
 -- 
 2.50.1 (Apple Git-155)
-

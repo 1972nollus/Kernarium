@@ -122,12 +122,15 @@ ctest --preset instruction-evidence-4k
 ## Kernarium iOS application prototype
 
 `Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
-application that embeds the maintained 16 KiB UML kernel and boots
-the selected `.erofs` image from Documents with 1.5 GiB of guest memory by
-default. Device and Simulator both default to all processors reported by
-`NSProcessInfo`. The settings sheet persists 1 through that processor count,
-512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay size, and a
-Documents rootfs filename; changes are snapshotted on the next app launch.
+application that embeds separate versioned runtime frameworks for the
+maintained 4 KiB and 16 KiB UML kernels. It defaults to 16 KiB, loads exactly
+one saved page profile for the process lifetime, and boots the selected
+`.erofs` image from Documents with 1.5 GiB of guest memory by default. Device
+and Simulator both default to all processors reported by `NSProcessInfo`. The
+settings sheet persists 1 through that processor count, 512 MiB through 4 GiB
+of RAM in 128 MiB steps, a 1--32 GiB overlay size, a Documents rootfs filename,
+and the 4 KiB or 16 KiB kernel page profile; changes are snapshotted on the
+next app launch.
 SwiftUI lays the `ContentView` Metal view out inside the safe area, and the app
 multiplies its point dimensions by `UIScreen.nativeScale` for both the Metal
 drawable and guest preferred mode. Virtio-GPU EDID advertises an effective
@@ -185,17 +188,25 @@ Kernarium/scripts/build-ios-network-dependencies.sh --verify-only
 Kernarium/scripts/build-ios-network-dependencies.sh \
   --platform ios --verify-only
 
-# Build the one 16 KiB kernel input used by macOS and both iOS products.
+# Build the two canonical page-profile inputs shared by macOS and iOS.
 kernel/build-kernel.sh \
   --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-16k \
   --page-size 16k
+kernel/build-kernel.sh \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-4k \
+  --page-size 4k
 
 cmake --preset kernarium-ios-simulator
 cmake --build --preset kernarium-ios-simulator
+cmake --preset kernarium-ios-simulator-4k
+cmake --build --preset kernarium-ios-simulator-4k
 
 cmake --preset kernarium-ios-device
 cmake --build --preset kernarium-ios-device
+cmake --preset kernarium-ios-device-4k
+cmake --build --preset kernarium-ios-device-4k
 Kernarium/scripts/package-ios-frameworks.sh
 ```
 
@@ -214,24 +225,27 @@ The network prefixes reuse the authenticated PCRE2, libffi, proxy-libintl,
 GLib, and libslirp sources prepared by `dependencies/prepare.sh`. The
 iOS-specific GLib patch removes unavailable process-management probes; the
 guest still receives the normal SLiRP callback provider used by the emulator.
-`package-ios-frameworks.sh` combines the runtime, EGL, and GLESv2 device and
-Simulator slices below `.build/kernarium-xcframeworks`, which is the only
-framework location referenced by the Xcode project.
+`package-ios-frameworks.sh` combines both versioned runtimes plus EGL and
+GLESv2 device and Simulator slices below `.build/kernarium-xcframeworks`, which
+is the only framework location referenced by the Xcode project.
 
-The canonical kernel image for the default macOS integration target and both
-iOS targets is the one file `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`. The
-macOS CLI embeds it directly; the iOS runtime places the same bytes in its
-signed framework `__TEXT` carrier. Override `UML_KERNARIUM_KERNEL_IMAGE` only
-when deliberately testing another maintained 16 KiB artifact. With one
-Simulator already booted, the following command builds the runtime and Xcode
-app, installs it, copies the EROFS image into the app's Documents directory,
-and only then launches the app with the guest console on the invoking
-terminal's stdout:
+The canonical 16 KiB image for the default macOS integration target and iOS
+runtime is `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`; the corresponding 4 KiB
+compatibility products use `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. macOS
+embeds the selected profile directly. Kernarium packages the same bytes into
+`KernariumRuntime_<release>_16K` and `KernariumRuntime_<release>_4K`, embeds
+both without a launch-time dependency, and loads only the saved profile.
+Override a kernel input only when deliberately testing another maintained
+artifact of the matching page profile. With one Simulator already booted, the
+following command builds both runtimes and the Xcode app, installs it, copies
+the EROFS image into the app's Documents directory, and only then launches the
+app with the guest console on the invoking terminal's stdout:
 
 ```sh
 Kernarium/scripts/run-ios-simulator.sh \
   --rootfs "$PWD/rootfs.erofs" \
-  --kernel /Volumes/<case-sensitive-volume>/build-16k/vmlinux
+  --kernel-16k /Volumes/<case-sensitive-volume>/build-16k/vmlinux \
+  --kernel-4k /Volumes/<case-sensitive-volume>/build-4k/vmlinux
 ```
 
 The app exposes Documents through both `UIFileSharingEnabled` and
@@ -245,21 +259,27 @@ entitlement input even though the local Simulator code-signature entitlement
 dictionary is empty.
 
 iOS cannot execute an anonymously copied ELF text segment under an ordinary
-non-debugger signature. For both device and Simulator, `KernariumRuntime`
-embeds the complete shared kernel ELF in a 16 KiB-aligned Mach-O
+non-debugger signature. For both device and Simulator, each versioned runtime
+embeds its complete page-profile kernel ELF in a 16 KiB-aligned Mach-O
 `__TEXT,__uml_elf` section. Xcode's normal framework code signature covers
-those bytes. The loader gives the software-MMU guest a 128 TiB sparse task
+those bytes. The app's small C loader validates the framework name, Linux
+release, API version, and guest page size before publishing its immutable
+function table; a second profile cannot be loaded into the same process. The
+loader gives the software-MMU guest a 128 TiB sparse task
 range, derives a native hole ending at 62 GiB from guest RAM plus a page-rounded
 one-eighth auxiliary allowance with a 32 MiB floor, biases the ET_DYN image
 into that window, aliases each
 immutable executable ELF page from the signed framework mapping with
 `vm_remap`, and copies only non-executable data/BSS into anonymous pages. It
 rejects writable executable segments, carrier mismatches, and relocations that
-target signed text. This path performs no RW-to-RX transition, uses no JIT
-entitlement, and does not depend on LLDB. macOS retains its existing unsigned
-loader and uses the same 128 TiB guest range, RAM-scaled window derivation,
-relocation, and exclusion-hole handling, while locating its active native
-window at 96 TiB to avoid low-host-VA collisions.
+target signed text. The Darwin linker aligns executable boundaries to the
+16 KiB host-page granularity even for the 4 KiB guest profile, and packaging
+rejects an image whose signed executable host pages overlap later loader data.
+This path performs no RW-to-RX transition, uses no JIT entitlement, and does
+not depend on LLDB. macOS retains its existing unsigned loader and uses the
+same 128 TiB guest range, RAM-scaled window derivation, relocation, and
+exclusion-hole handling, while locating its active native window at 96 TiB to
+avoid low-host-VA collisions.
 
 The guest follows the same mount-and-systemd flow as
 `scripts/boot_kde_vnc.py`, but the iOS writable state is one disposable disk.

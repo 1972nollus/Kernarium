@@ -35,14 +35,26 @@ find_tool()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 
-SIMULATOR_RUNTIME="$ROOT_DIR/.build/kernarium-runtime-ios-simulator/Kernarium/Runtime/KernariumRuntime.framework"
-DEVICE_RUNTIME="$ROOT_DIR/.build/kernarium-runtime-ios-device/Kernarium/Runtime/KernariumRuntime.framework"
+. "$ROOT_DIR/kernel/patches/metadata.env"
+case "$UML_KERNEL_RELEASE_VERSION" in
+''|*[!0-9.]*|.*|*..*|*.) fail "invalid kernel release identity" ;;
+esac
+RUNTIME_RELEASE=$(printf '%s\n' "$UML_KERNEL_RELEASE_VERSION" | tr . _)
+RUNTIME_4K="KernariumRuntime_${RUNTIME_RELEASE}_4K"
+RUNTIME_16K="KernariumRuntime_${RUNTIME_RELEASE}_16K"
+
+SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
+SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
+DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
+DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 SIMULATOR_GPU="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-simulator-arm64/Frameworks"
 DEVICE_GPU="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-device-arm64/Frameworks"
 
 for framework in \
-	"$SIMULATOR_RUNTIME" \
-	"$DEVICE_RUNTIME" \
+	"$SIMULATOR_RUNTIME_4K" \
+	"$SIMULATOR_RUNTIME_16K" \
+	"$DEVICE_RUNTIME_4K" \
+	"$DEVICE_RUNTIME_16K" \
 	"$SIMULATOR_GPU/EGL.framework" \
 	"$DEVICE_GPU/EGL.framework" \
 	"$SIMULATOR_GPU/GLESv2.framework" \
@@ -76,14 +88,17 @@ create_xcframework()
 		fail "$name XCFramework was not created"
 }
 
-create_xcframework KernariumRuntime "$SIMULATOR_RUNTIME" "$DEVICE_RUNTIME"
+create_xcframework "$RUNTIME_4K" \
+	"$SIMULATOR_RUNTIME_4K" "$DEVICE_RUNTIME_4K"
+create_xcframework "$RUNTIME_16K" \
+	"$SIMULATOR_RUNTIME_16K" "$DEVICE_RUNTIME_16K"
 create_xcframework EGL \
 	"$SIMULATOR_GPU/EGL.framework" "$DEVICE_GPU/EGL.framework"
 create_xcframework GLESv2 \
 	"$SIMULATOR_GPU/GLESv2.framework" "$DEVICE_GPU/GLESv2.framework"
 
 for platform in ios-arm64 ios-arm64-simulator; do
-	for framework in KernariumRuntime EGL GLESv2; do
+	for framework in "$RUNTIME_4K" "$RUNTIME_16K" EGL GLESv2; do
 		binary="$STAGE/$framework.xcframework/$platform/$framework.framework/$framework"
 		[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
 	done

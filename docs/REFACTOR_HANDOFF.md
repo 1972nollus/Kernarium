@@ -20,30 +20,55 @@ Touch coordinates are scaled into the same pixel space. Device and Simulator
 both default to all processors reported by iOS.
 A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
 RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
-filename for the next launch. The app recreates the sparse overlay disk on
+filename for the next launch. It also persists a 4 KiB or 16 KiB kernel page
+profile, defaulting to 16 KiB. The app recreates the sparse overlay disk on
 every run; the guest formats it as ext4 and uses separate directories from its
 shared free-space pool for OverlayFS, Docker, and containerd before executing
 the image's normal systemd toward `graphical.target`. No disk-backed swap is
 created or activated. Documents file sharing and Extended Virtual Addressing
 remain project-owned metadata.
 
-The default macOS integration target and both iOS targets consume the exact
-same canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes. The iOS
-targets place them in an aligned `KernariumRuntime.framework` `__TEXT` section
-covered by Xcode's standard code signature, while macOS retains its established
-unsigned CLI embedding. Every Apple product exposes the same 128 TiB sparse
-software-MMU task range and derives a native window from guest RAM plus a
-page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
+The default macOS integration target and both 16 KiB iOS runtime slices consume
+the exact same canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN
+bytes. The macOS 4 KiB compatibility target and both 4 KiB iOS slices likewise
+consume `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Kernarium packages them as
+`KernariumRuntime_6_18_41_16K` and `KernariumRuntime_6_18_41_4K`, embeds both
+without linking either at process launch, and dynamically loads exactly the
+saved profile for the process lifetime. The selected framework places its ELF
+in an aligned `__TEXT` section covered by Xcode's standard code signature,
+while macOS retains its established unsigned CLI embedding. Every Apple
+product exposes the same 128 TiB sparse software-MMU task range and derives a
+native window from guest RAM plus a page-rounded one eighth for auxiliary
+kernel mappings, with a 32 MiB floor.
 Device and Simulator top-pack that window below 62 GiB.
-The iOS loader aliases immutable executable pages from signed storage and
-copies only data/BSS. With the 1.5 GiB default, the auxiliary allowance is
+The always-linked application loader keeps `SIGALRM` blocked before main,
+validates the selected framework's release, page size, and immutable C API,
+then delegates to that isolated runtime. The iOS ELF loader aliases immutable
+executable pages from signed storage and copies only data/BSS. Darwin's linker
+keeps executable boundaries aligned to 16 KiB host pages for both guest
+profiles, and packaging rejects an unsafe carrier layout. With the 1.5 GiB
+default, the auxiliary allowance is
 exactly 192 MiB and the active window is 60.3125--62 GiB. It uses no anonymous
 executable publication, RW-to-RX transition, LLDB, or JIT entitlement. macOS
 exercises the same range, window derivation, relocation, and exclusion-hole
 handling while retaining its 8 GiB and ten-vCPU defaults; its 1 GiB auxiliary
 allowance produces a 9 GiB active window starting at 96 TiB. The separately
-tested macOS 4 KiB compatibility profile retains its necessarily distinct
-compile-time page-profile artifact.
+tested 4 KiB compatibility profile retains its necessarily distinct
+compile-time page-profile artifact on macOS and iOS.
+
+Current dual-runtime acceptance built all four Device/Simulator framework
+slices and packaged both versioned XCFrameworks. The iOS 26.5 iPhone 17 Pro Max
+Simulator Xcode campaign passed five app tests and six UI tests; separate app
+launches selected each saved profile, logged the matching 4 KiB or 16 KiB
+runtime, completed DHCP and the EROFS/ext4 pivot, and reached
+`graphical.target` plus greetd. A generic physical-iOS Release build succeeded
+with standard Xcode signing and embedded both runtimes without linking either
+into the app executable. Both current macOS page profiles pass 53/53 tooling
+checks and the interpreter, gadgets, JIT, and SLiRP guest cases. Their common
+external `rootfs.erofs` currently stalls only the Docker overlay smoke after
+containerd starts, so that matched 4/5 result is recorded as a rootfs campaign
+limitation rather than attributed to kernel selection. Exact current evidence
+is indexed in [refactor-evidence.md](refactor-evidence.md).
 
 The Darwin port now owns exactly one persistent host carrier for each
 configured vCPU, including vCPU0. Linux tasks keep stackful context on 128 KiB
@@ -77,9 +102,9 @@ and mapped the 8 GiB physical backing in the same high native window rather
 than directly above 64 GiB. The scored run was untouched by inspection and
 powered off cleanly. The current page-profile comparison has one observation
 per profile; its wider multi-core gap is therefore evidence for the current
-performance boundary, not a causal attribution. The final canonical 4 KiB
-workflow passed 53/53 tooling checks and 5/5 fast guest integrations; the
-focused loader ASan/UBSan gate and the 16 KiB five-guest set also passed.
+performance boundary, not a causal attribution. The pre-dual-runtime canonical
+4 KiB workflow passed 53/53 tooling checks and 5/5 fast guest integrations;
+the focused loader ASan/UBSan gate and the 16 KiB five-guest set also passed.
 
 A requested four-vCPU comparison then used Geekbench's working
 `--multi-core --no-upload` path, so neither profile executed the single-core

@@ -55,13 +55,16 @@ historical sections as history.
   rejects it.
 - Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
   targets are owned by `cmake/toolchains/Apple.cmake`.
-- All Darwin UML products use one relocatable kernel image and 128 TiB sparse
-  software-MMU task range. The native hole is guest RAM plus a page-rounded
-  one eighth for auxiliary kernel mappings, with a 32 MiB floor. Device and
-  Simulator top-pack it below the physical-iOS 62 GiB ceiling; macOS places
-  the same scalable window at 96 TiB to avoid the crowded low host VA range.
-  The kernel derives its endpoint from the relocated image; there is no
-  platform-specific Kbuild image or address-space selector.
+- Each Darwin guest page profile uses one relocatable kernel image and the same
+  128 TiB sparse software-MMU task range on every Apple product. The native
+  hole is guest RAM plus a page-rounded one eighth for auxiliary kernel
+  mappings, with a 32 MiB floor. Device and Simulator top-pack it below the
+  physical-iOS 62 GiB ceiling; macOS places the same scalable window at 96 TiB
+  to avoid the crowded low host VA range. The kernel derives its endpoint from
+  the relocated image; there is no platform-specific Kbuild image or
+  address-space selector. Kernarium embeds separate versioned signed runtime
+  frameworks for the canonical 4 KiB and 16 KiB artifacts, defaults to 16 KiB,
+  and loads exactly one framework for the process lifetime after launch.
 - The shipped kernel builds zswap in, enables it by default, and selects zstd,
   while retaining zram with the same compressor. Zswap allocates no pool until
   the guest activates backing swap; normal desktop launchers do not create
@@ -390,20 +393,23 @@ Executable-memory policy:
   publication.
 - Direct native VM and ELF-loader paths are macOS-only in the general library
   graph. The opt-in Kernarium composition also enables them for its embedded
-  iOS kernel. On both iOS device and Simulator, the kernel ELF must remain in the aligned,
-  normally code-signed framework `__TEXT` carrier; the loader may alias only
-  immutable executable pages from that mapping and must reject relocations
-  into them. Device and Simulator must share the same signed image, dynamic
-  load bias, and software-MMU layout. Do not replace this with anonymous executable pages, RW-to-RX
+  iOS kernel. On both iOS device and Simulator, each selectable kernel ELF must
+  remain in its aligned, normally code-signed versioned framework `__TEXT`
+  carrier; the loader may alias only immutable executable pages from that
+  mapping and must reject relocations into them. Device and Simulator must
+  share the same signed image, dynamic load bias, and software-MMU layout for
+  each page profile. The app must embed both runtime frameworks without linking
+  either at process launch, then load exactly the saved profile. Do not replace
+  this with anonymous executable pages, RW-to-RX
   publication, debugger-only behavior, or a JIT entitlement. Simulator and
   device use the signed carrier while macOS retains its established unsigned
   loader behavior and high native-window placement. All three products use
   the same scalable address mechanism and sparse guest profile.
-  The default macOS integration product, iOS device, and iOS Simulator consume
-  the exact same canonical 16 KiB kernel input at
-  `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`; do not create a platform-specific
-  Kbuild tree or kernel image. The supported macOS 4 KiB compatibility profile
-  necessarily retains its distinct page-profile artifact.
+  The default macOS integration product and both 16 KiB iOS runtime slices
+  consume the exact canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input.
+  The macOS compatibility product and both 4 KiB iOS runtime slices likewise
+  consume `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`; do not create a
+  platform-specific Kbuild tree or kernel image.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 

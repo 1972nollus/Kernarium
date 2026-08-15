@@ -5,7 +5,8 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS="$ROOT_DIR/rootfs.erofs"
-KERNEL_IMAGE=${UML_KERNARIUM_KERNEL_IMAGE:-/Volumes/Kernel/build-16k/vmlinux}
+KERNEL_IMAGE_16K=${UML_KERNARIUM_KERNEL_IMAGE_16K:-/Volumes/Kernel/build-16k/vmlinux}
+KERNEL_IMAGE_4K=${UML_KERNARIUM_KERNEL_IMAGE_4K:-/Volumes/Kernel/build-4k/vmlinux}
 DEVICE=${KERNARIUM_SIMULATOR_UDID:-booted}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
@@ -24,7 +25,9 @@ usage()
 		"" \
 		"Options:" \
 		"  --rootfs PATH  EROFS image to copy into app Documents" \
-		"  --kernel PATH  Maintained 16 KiB UML kernel image" \
+		"  --kernel-16k PATH  Maintained 16 KiB UML kernel image" \
+		"  --kernel-4k PATH   Maintained 4 KiB UML kernel image" \
+		"  --kernel PATH      Alias for --kernel-16k" \
 		"  --device UDID  Booted Simulator UDID (default: booted)" \
 		"  --aquarium     Launch Chromium WebGL Aquarium verification" \
 		"  -h, --help      Show this help"
@@ -37,9 +40,14 @@ while [ "$#" -gt 0 ]; do
 		ROOTFS=$2
 		shift 2
 		;;
-	--kernel)
-		[ "$#" -ge 2 ] || fail "--kernel requires a path"
-		KERNEL_IMAGE=$2
+	--kernel|--kernel-16k)
+		[ "$#" -ge 2 ] || fail "$1 requires a path"
+		KERNEL_IMAGE_16K=$2
+		shift 2
+		;;
+	--kernel-4k)
+		[ "$#" -ge 2 ] || fail "--kernel-4k requires a path"
+		KERNEL_IMAGE_4K=$2
 		shift 2
 		;;
 	--device)
@@ -60,7 +68,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$ROOTFS" ] || fail "rootfs image is unavailable: $ROOTFS"
-[ -f "$KERNEL_IMAGE" ] || fail "kernel image is unavailable: $KERNEL_IMAGE"
+[ -f "$KERNEL_IMAGE_16K" ] ||
+	fail "16 KiB kernel image is unavailable: $KERNEL_IMAGE_16K"
+[ -f "$KERNEL_IMAGE_4K" ] ||
+	fail "4 KiB kernel image is unavailable: $KERNEL_IMAGE_4K"
 if [ "$DEVICE" = booted ]; then
 	DEVICE=$(xcrun simctl getenv booted SIMULATOR_UDID)
 fi
@@ -68,8 +79,11 @@ fi
 
 cd "$ROOT_DIR"
 cmake --preset kernarium-ios-simulator \
-	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE"
+	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE_16K"
 cmake --build --preset kernarium-ios-simulator
+cmake --preset kernarium-ios-simulator-4k \
+	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE_4K"
+cmake --build --preset kernarium-ios-simulator-4k
 "$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh"
 xcodebuild \
 	-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \

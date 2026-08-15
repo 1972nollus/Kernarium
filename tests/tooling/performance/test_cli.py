@@ -227,7 +227,7 @@ def verify_kernarium_geekbench_contract() -> None:
     if "systemd" in bootstrap:
         raise RuntimeError("Kernarium Geekbench bootstrap must not start systemd")
 
-    run_source = source[source.index('extern "C" int kernarium_runtime_run') :]
+    run_source = source[source.index("int runtimeRun(") :]
     required_run_contract = (
         'environmentEnabled("KERNARIUM_GEEKBENCH")',
         'std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS")',
@@ -236,6 +236,7 @@ def verify_kernarium_geekbench_contract() -> None:
         "ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads}",
         "if (!geekbench)",
         'arguments.emplace_back("systemd.unit=graphical.target")',
+        ".run = runtimeRun",
     )
     for token in required_run_contract:
         if token not in run_source:

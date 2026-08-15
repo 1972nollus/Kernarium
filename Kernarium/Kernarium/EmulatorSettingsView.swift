@@ -8,6 +8,7 @@ struct EmulatorSettingsView: View {
     @State private var guestMemoryMiB: Int
     @State private var overlaySizeGiB: Int
     @State private var rootfsFilename: String
+    @State private var kernelPageSize: KernelPageSize
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
@@ -36,12 +37,20 @@ struct EmulatorSettingsView: View {
         _guestMemoryMiB = State(initialValue: configuration.guestMemoryMiB)
         _overlaySizeGiB = State(initialValue: configuration.overlaySizeGiB)
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
+        _kernelPageSize = State(initialValue: configuration.kernelPageSize)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Hardware") {
+                    Picker("Kernel page size", selection: $kernelPageSize) {
+                        ForEach(KernelPageSize.allCases) { pageSize in
+                            Text(pageSize.title).tag(pageSize)
+                        }
+                    }
+                    .accessibilityIdentifier("kernelPageSizePicker")
+
                     Stepper(
                         "vCPUs: \(vCPUCount)",
                         value: $vCPUCount,
@@ -103,7 +112,8 @@ struct EmulatorSettingsView: View {
             vCPUCount: vCPUCount,
             guestMemoryMiB: guestMemoryMiB,
             overlaySizeGiB: overlaySizeGiB,
-            rootfsFilename: rootfsFilename
+            rootfsFilename: rootfsFilename,
+            kernelPageSize: kernelPageSize
         ).save(defaults: defaults)
         dismiss()
     }

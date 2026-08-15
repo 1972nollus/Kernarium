@@ -54,6 +54,19 @@ uml_add_tooling_test(
         --presets ${PROJECT_SOURCE_DIR}/CMakePresets.json
         --kernel-cmake ${PROJECT_SOURCE_DIR}/kernel/CMakeLists.txt
         --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
+        --runtime-source
+            ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
+        --runtime-loader
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/KernariumRuntimeLoader.mm
+        --carrier-verifier
+            ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
+        --linker-patch
+            ${PROJECT_SOURCE_DIR}/kernel/patches/series/0001-uml-establish-shared-architecture-contracts-and-buil.patch
+        --metadata ${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env
+        --package-script
+            ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
+        --xcode-project
+            ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.pbxproj
         --simulator-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp
@@ -86,6 +99,8 @@ if(DEFINED UML_KERNEL_SOURCE_DIR AND
             --project-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
             --kernarium-runtime
                 ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
+            --kernarium-runtime-loader
+                ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/KernariumRuntimeLoader.mm
         LABELS kernel;audit
         TIMEOUT 30)
 endif()

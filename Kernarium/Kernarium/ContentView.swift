@@ -1,4 +1,3 @@
-import KernariumRuntime
 import MetalKit
 import SwiftUI
 
@@ -256,11 +255,15 @@ private final class GuestMetalView: MTKView, UIKeyInput {
             max((point.y * size.height / bounds.height).rounded(.down), 0),
             size.height - 1
         )
-        kernarium_runtime_send_touch(UInt32(x), UInt32(y), pressed ? 1 : 0)
+        kernarium_runtime_loader_send_touch(
+            UInt32(x),
+            UInt32(y),
+            pressed ? 1 : 0
+        )
     }
 
     private func sendKey(code: UInt16, pressed: Bool) {
-        kernarium_runtime_send_key(code, pressed ? 1 : 0)
+        kernarium_runtime_loader_send_key(code, pressed ? 1 : 0)
     }
 }
 
@@ -372,6 +375,15 @@ private final class EmulatorLauncher {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        guard kernarium_runtime_loader_select(
+            UInt32(configuration.kernelPageSize.rawValue)
+        ) == 0 else {
+            print(
+                "Kernarium: cannot load the " +
+                "\(configuration.kernelPageSize.title) runtime"
+            )
+            return
+        }
         let overlay: URL
         do {
             overlay = try OverlayDisk.recreate(
@@ -395,7 +407,7 @@ private final class EmulatorLauncher {
         Task.detached {
             let result = rootfs.path.withCString { rootfsPath in
                 overlay.path.withCString { overlayPath in
-                    kernarium_runtime_run(
+                    kernarium_runtime_loader_run(
                         view,
                         rootfsPath,
                         overlayPath,
@@ -418,6 +430,6 @@ private final class EmulatorLauncher {
     }
 
     func stop() {
-        kernarium_runtime_request_stop()
+        kernarium_runtime_loader_request_stop()
     }
 }

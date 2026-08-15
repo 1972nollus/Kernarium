@@ -93,6 +93,7 @@ def validate(
     kernel_build_script: Path,
     project_cmake: Path,
     kernarium_runtime: Path,
+    kernarium_runtime_loader: Path,
 ) -> None:
     process = (linux_source / "arch/um/os-Darwin/skas/process.c").read_text()
     smp = (linux_source / "arch/um/os-Darwin/smp.c").read_text()
@@ -108,6 +109,7 @@ def validate(
     build_script = kernel_build_script.read_text()
     project = project_cmake.read_text()
     runtime = kernarium_runtime.read_text()
+    runtime_loader = kernarium_runtime_loader.read_text()
     makefile = (linux_source / "arch/arm64/Makefile.um").read_text()
     um_arch = (linux_source / "arch/um/kernel/um_arch.c").read_text()
     address_space = (
@@ -345,20 +347,21 @@ def validate(
         r"pthread_sigmask\s*\(\s*SIG_UNBLOCK",
         "handler installation can reassign the process timer to the launcher",
     )
-    runtime_mask = function(runtime, "isolateGuestTimerFromApplicationThreads")
+    runtime_mask = function(
+        runtime_loader, "isolateGuestTimerFromApplicationThreads"
+    )
     require(
-        "__attribute__((constructor))" in runtime,
+        "__attribute__((constructor))" in runtime_loader
+        and "__attribute__((constructor))" not in runtime,
         "Kernarium does not isolate the process timer before application main",
     )
     require_pattern(
         runtime_mask,
-        r"blockGuestTimer\s*\(\s*nullptr\s*\)",
+        r"blockGuestTimer\s*\(\s*\)",
         "Kernarium application threads do not inherit SIGALRM blocked",
     )
-    runtime_run_start = runtime.index('extern "C" int kernarium_runtime_run(')
-    runtime_run_end = runtime.index(
-        'extern "C" void kernarium_runtime_request_stop', runtime_run_start
-    )
+    runtime_run_start = runtime.index("int runtimeRun(")
+    runtime_run_end = runtime.index("void runtimeRequestStop", runtime_run_start)
     runtime_run = runtime[runtime_run_start:runtime_run_end]
     require_pattern(
         runtime_run,
@@ -377,6 +380,7 @@ def main() -> int:
     parser.add_argument("--kernel-build-script", type=Path, required=True)
     parser.add_argument("--project-cmake", type=Path, required=True)
     parser.add_argument("--kernarium-runtime", type=Path, required=True)
+    parser.add_argument("--kernarium-runtime-loader", type=Path, required=True)
     arguments = parser.parse_args()
     validate(
         arguments.linux_source.resolve(),
@@ -386,6 +390,7 @@ def main() -> int:
         arguments.kernel_build_script.resolve(),
         arguments.project_cmake.resolve(),
         arguments.kernarium_runtime.resolve(),
+        arguments.kernarium_runtime_loader.resolve(),
     )
     print("Darwin fixed-vCPU carrier policy verified")
     return 0

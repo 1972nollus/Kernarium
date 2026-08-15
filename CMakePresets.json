@@ -173,34 +173,56 @@
     },
     {
       "name": "kernarium-ios-device",
-      "displayName": "Kernarium iOS device prototype",
+      "displayName": "Kernarium iOS device runtime (16 KiB)",
       "inherits": "ios-device",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-16k",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "UML_BUILD_KERNEL_RUNNER": true,
         "UML_BUILD_NETWORK_PROVIDER": true,
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
+        "UML_GUEST_16K_PAGES": true,
         "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-device-arm64",
         "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
       }
     },
     {
+      "name": "kernarium-ios-device-4k",
+      "displayName": "Kernarium iOS device runtime (4 KiB)",
+      "inherits": "kernarium-ios-device",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-4k",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false,
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-4k/vmlinux"
+      }
+    },
+    {
       "name": "kernarium-ios-simulator",
-      "displayName": "Kernarium iOS Simulator prototype",
+      "displayName": "Kernarium iOS Simulator runtime (16 KiB)",
       "inherits": "ios-simulator",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-16k",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "UML_BUILD_KERNEL_RUNNER": true,
         "UML_BUILD_NETWORK_PROVIDER": true,
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
+        "UML_GUEST_16K_PAGES": true,
         "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-gpu-dependencies/ios-simulator-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/kernarium-network-dependencies/ios-simulator-arm64",
         "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
+      }
+    },
+    {
+      "name": "kernarium-ios-simulator-4k",
+      "displayName": "Kernarium iOS Simulator runtime (4 KiB)",
+      "inherits": "kernarium-ios-simulator",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-4k",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false,
+        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-4k/vmlinux"
       }
     }
   ],
@@ -281,8 +303,18 @@
       "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {
+      "name": "kernarium-ios-device-4k",
+      "configurePreset": "kernarium-ios-device-4k",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
       "name": "kernarium-ios-simulator",
       "configurePreset": "kernarium-ios-simulator",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-simulator-4k",
+      "configurePreset": "kernarium-ios-simulator-4k",
       "targets": ["KernariumRuntime", "architecture-audit"]
     }
   ],
