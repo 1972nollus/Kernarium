@@ -133,14 +133,16 @@ private:
     void* context_ {};
 };
 
-constexpr std::string_view systemdBootstrap = R"krn(set -eu
+constexpr std::string_view desktopBootstrap = R"krn(set -eu
 fail()
 {
     echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
     exec /bin/sh
 }
 [ -b /dev/ubdb ] || fail "overlay block device"
-/usr/sbin/mkfs.ext4 -F -q -m 0 \
+mkfs_ext4=$(command -v mkfs.ext4 || true)
+[ -n "$mkfs_ext4" ] || fail "ext4 formatter"
+"$mkfs_ext4" -F -q -m 0 \
     -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
     fail "ext4 format"
 mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || fail "ext4 mount"
@@ -255,6 +257,66 @@ install -m 0644 /dev/null /etc/phosh/phoc.ini
 # graphical.target follows the stock display-manager -> greetd -> Phrog path.
 rm -f /etc/systemd/system/graphical.target.wants/phosh.service
 echo "Kernarium Phrog overlay setup complete; image getties preserved, greetd selected"
+elif [ -x /sbin/openrc ] && [ -x /usr/bin/sxmo_swayinit.sh ] && \
+    [ -x /usr/bin/tinydm-run-session ]; then
+    pmos_user=$(getent passwd 10000 | cut -d: -f1)
+    [ -n "$pmos_user" ] || fail "postmarketOS user"
+    [ -e /var/lib/tinydm/default-session.desktop ] || \
+        fail "postmarketOS tinydm session"
+    # OpenRC groups UML with containers and consequently suppresses udev's
+    # coldplug services. This UML owns its devtmpfs and virtual hardware, so
+    # let the image's ordinary udev service classify the pre-existing devices.
+    for service in udev udev-trigger udev-settle; do
+        sed -i '/^[[:space:]]*keyword -containers[[:space:]]*$/d' \
+            "/etc/init.d/$service" || fail "postmarketOS $service policy"
+    done
+    cat >> /etc/deviceinfo <<'PMOS_DEVICEINFO'
+deviceinfo_arch="aarch64"
+deviceinfo_name="Kernarium"
+deviceinfo_codename="uml"
+deviceinfo_manufacturer="Darwin UML"
+deviceinfo_tmp_as_tmpfs_size="0"
+deviceinfo_swap_size_recommended="0"
+deviceinfo_zram_swap_pct="0"
+PMOS_DEVICEINFO
+    install -d -m 0755 /etc/udev/rules.d
+    cat > /etc/udev/rules.d/59-kernarium-input.rules <<'PMOS_INPUT_RULES'
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Kernarium Touchscreen", ENV{ID_INPUT}="1", ENV{ID_INPUT_TOUCHSCREEN}="1"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Kernarium Keyboard", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Darwin UML VNC Keyboard", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEYBOARD}="1"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Darwin UML VNC Tablet", ENV{ID_INPUT}="1", ENV{ID_INPUT_MOUSE}="1"
+PMOS_INPUT_RULES
+    cat > /etc/init.d/kernarium-device-access <<'PMOS_DEVICE_ACCESS'
+#!/sbin/openrc-run
+description="Grant the postmarketOS desktop access to Kernarium devices"
+
+depend() {
+    need udev-settle
+    before display-manager
+}
+
+start() {
+    ebegin "Configuring Kernarium display and input access"
+    found_drm=0
+    for node in /dev/dri/card* /dev/dri/renderD*; do
+        [ -e "$node" ] || continue
+        chgrp video "$node" || return 1
+        chmod 0660 "$node" || return 1
+        found_drm=1
+    done
+    [ "$found_drm" = 1 ] || return 1
+    for node in /dev/input/event*; do
+        [ -e "$node" ] || continue
+        chgrp input "$node" || return 1
+        chmod 0660 "$node" || return 1
+    done
+    eend 0
+}
+PMOS_DEVICE_ACCESS
+    chmod 0755 /etc/init.d/kernarium-device-access
+    ln -sf /etc/init.d/kernarium-device-access \
+        /etc/runlevels/default/kernarium-device-access
+    echo "Kernarium postmarketOS overlay setup complete; image Sxmo/Sway session preserved"
 else
     echo "Kernarium desktop setup is owned by the rootfs image"
 fi
@@ -408,7 +470,14 @@ fi
 if [ -x /usr/lib/systemd/systemd ]; then
     exec /usr/lib/systemd/systemd
 fi
-fail "systemd executable not found"
+if [ -x /sbin/openrc ] && [ -x /sbin/init ]; then
+    mount -t proc proc /proc || fail "OpenRC proc mount"
+    mount -t sysfs sysfs /sys || fail "OpenRC sysfs mount"
+    mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || \
+        fail "OpenRC run mount"
+    exec /sbin/init
+fi
+fail "supported init executable not found"
 )krn";
 
 constexpr std::string_view geekbenchBootstrap = R"krn(set -eu
@@ -462,7 +531,7 @@ exit "$benchmark_rc"
 )krn";
 
 enum class ConsoleBootMode {
-    systemd,
+    desktop,
     aquarium,
     geekbench,
 };
@@ -603,7 +672,7 @@ public:
                                     }
                                     bootstrap.append(geekbenchBootstrap);
                                 } else {
-                                    bootstrap.append(systemdBootstrap);
+                                    bootstrap.append(desktopBootstrap);
                                 }
                                 bootstrap.push_back('\n');
                                 std::string_view remaining {bootstrap};
@@ -634,7 +703,7 @@ public:
                                         "Kernarium: %s bootstrap delivered\n",
                                         bootMode == ConsoleBootMode::geekbench
                                             ? "Geekbench"
-                                            : "systemd");
+                                            : "desktop");
                                 observed.clear();
                             }
                         }
@@ -817,7 +886,7 @@ int runtimeRun(
         }
         const ConsoleBootMode bootMode = geekbench
             ? ConsoleBootMode::geekbench
-            : aquarium ? ConsoleBootMode::aquarium : ConsoleBootMode::systemd;
+            : aquarium ? ConsoleBootMode::aquarium : ConsoleBootMode::desktop;
         ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads};
         if (aquarium)
             std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);

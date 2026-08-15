@@ -47,6 +47,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launcher", required=True, type=Path)
     parser.add_argument("--kernarium-runtime", required=True, type=Path)
+    parser.add_argument("--kernel-config", required=True, type=Path)
     arguments = parser.parse_args()
 
     launcher_source = arguments.launcher.read_text(encoding="utf-8")
@@ -97,10 +98,16 @@ def main() -> int:
         "Kernarium must apply the Plymouth policy with its systemd boot "
         "arguments, leaving the direct Geekbench shell unchanged",
     )
-    declaration = 'constexpr std::string_view systemdBootstrap = R"krn('
+    declaration = 'constexpr std::string_view desktopBootstrap = R"krn('
     bootstrap_start = runtime_source.index(declaration)
     bootstrap_end = runtime_source.index(')krn";', bootstrap_start)
     kernarium_bootstrap = runtime_source[bootstrap_start:bootstrap_end]
+    require(
+        "mkfs_ext4=$(command -v mkfs.ext4 || true)" in kernarium_bootstrap
+        and '"$mkfs_ext4" -F -q -m 0' in kernarium_bootstrap,
+        "Kernarium must locate the image-provided ext4 formatter instead of "
+        "assuming a Debian-only path",
+    )
     require(
         "/etc/systemd/system/getty.target.wants/" not in kernarium_bootstrap
         and "serial-getty@" not in kernarium_bootstrap
@@ -162,6 +169,66 @@ def main() -> int:
         "Kernarium must remove only the stale development Phosh enablement "
         "from the mounted overlay before starting systemd",
     )
+    openrc_policy = (
+        "if [ -x /sbin/openrc ] && [ -x /sbin/init ]; then",
+        "mount -t proc proc /proc || fail \"OpenRC proc mount\"",
+        "mount -t sysfs sysfs /sys || fail \"OpenRC sysfs mount\"",
+        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run",
+        "exec /sbin/init",
+    )
+    require(
+        all(token in kernarium_bootstrap for token in openrc_policy),
+        "Kernarium must mount OpenRC's early API filesystems and start the "
+        "image-provided init",
+    )
+    sxmo_policy = (
+        "/usr/bin/sxmo_swayinit.sh",
+        "/usr/bin/tinydm-run-session",
+        "getent passwd 10000",
+        "/var/lib/tinydm/default-session.desktop",
+        "for service in udev udev-trigger udev-settle",
+        "keyword -containers",
+        'deviceinfo_arch="aarch64"',
+        'deviceinfo_swap_size_recommended="0"',
+        'deviceinfo_zram_swap_pct="0"',
+        "/etc/udev/rules.d/59-kernarium-input.rules",
+        'ATTRS{name}=="Kernarium Touchscreen"',
+        'ENV{ID_INPUT_TOUCHSCREEN}="1"',
+        'ATTRS{name}=="Kernarium Keyboard"',
+        'ENV{ID_INPUT_KEYBOARD}="1"',
+        "/etc/init.d/kernarium-device-access",
+        "need udev-settle",
+        "before display-manager",
+        'chgrp video "$node"',
+        'chgrp input "$node"',
+        "image Sxmo/Sway session preserved",
+    )
+    require(
+        all(token in kernarium_bootstrap for token in sxmo_policy),
+        "Kernarium must recognize the postmarketOS Sxmo/Sway image while "
+        "preserving its account and tinydm session",
+    )
+    openrc_mounts = kernarium_bootstrap.index(
+        "mount -t proc proc /proc || fail \"OpenRC proc mount\""
+    )
+    openrc_exec = kernarium_bootstrap.index("exec /sbin/init")
+    require(
+        kernarium_bootstrap.index("pivot_root . .uml-lower") < openrc_mounts
+        < openrc_exec,
+        "Kernarium must prepare OpenRC only after entering the writable root",
+    )
+    kernel_config = arguments.kernel_config.read_text(encoding="utf-8")
+    for setting in (
+        "CONFIG_SYN_COOKIES=y",
+        "CONFIG_NF_TABLES_INET=y",
+        "CONFIG_NFT_CT=y",
+        "CONFIG_NFT_REJECT=y",
+        "CONFIG_NFT_REJECT_INET=y",
+    ):
+        require(
+            f"\n{setting}\n" in f"\n{kernel_config}\n",
+            f"postmarketOS networking requires {setting}",
+        )
     with tempfile.TemporaryDirectory(prefix="uml-overlay-launcher-") as name:
         rootfs = Path(name) / "rootfs image.erofs"
         rootfs.touch()

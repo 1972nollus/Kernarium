@@ -103,6 +103,12 @@ struct KernariumTests {
         )
         #expect(
             RootfsImage.selectedFilename(
+                configuredFilename: "pmos-sxmo.erofs",
+                environment: [:]
+            ) == "pmos-sxmo.erofs"
+        )
+        #expect(
+            RootfsImage.selectedFilename(
                 configuredFilename: "rootfs.erofs",
                 environment: [RootfsImage.environmentKey: "phosh.erofs"]
             ) == "phosh.erofs"
@@ -148,6 +154,13 @@ struct KernariumTests {
         )
         #expect(
             manager.createFile(
+                atPath: directory
+                    .appendingPathComponent("pmos-sxmo.erofs").path,
+                contents: Data()
+            )
+        )
+        #expect(
+            manager.createFile(
                 atPath: directory.appendingPathComponent("ignored.img").path,
                 contents: Data()
             )
@@ -160,6 +173,7 @@ struct KernariumTests {
         #expect(
             RootfsImage.availableFilenames(in: directory) == [
                 "phosh.erofs",
+                "pmos-sxmo.erofs",
                 "rootfs.erofs",
             ]
         )

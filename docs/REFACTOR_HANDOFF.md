@@ -28,9 +28,19 @@ filename for the next launch. It also persists Retina mode and a 4 KiB or
 16 KiB. The app recreates the sparse overlay disk on
 every run; the guest formats it as ext4 and uses separate directories from its
 shared free-space pool for OverlayFS, Docker, and containerd before executing
-the image's normal systemd toward `graphical.target`. No disk-backed swap is
+the image's normal systemd or OpenRC init. No disk-backed swap is
 created or activated. Documents file sharing and Extended Virtual Addressing
 remain project-owned metadata.
+
+`pmos-sxmo.erofs` is now a supported Documents selection. Its disposable
+overlay preserves the image's UID-10000 account, tinydm default session, and
+Sxmo/Sway entry point, while enabling the image's udev coldplug under UML,
+supplying minimal no-swap deviceinfo, classifying Virtio input, and granting
+the `video` and `input` groups device access after udev settles. The rebuilt
+common kernel includes postmarketOS's mixed-family nftables firewall path. An
+exact production-bootstrap macOS run completed DHCP, OpenRC udev/coldplug and
+firewall startup, started tinydm, and produced a 440x860 Sxmo/Sway frame over
+VNC; the image's account, runlevel, and session were not replaced.
 
 The default macOS integration target and both 16 KiB iOS runtime slices consume
 the exact same canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN
@@ -82,6 +92,10 @@ Fresh post-clock-change gadgets shell boots also passed on both rebuilt macOS
 profiles against `phosh.erofs`: 16 KiB emitted `[    0.004062]`, 4 KiB emitted
 `[    0.005343]`, both completed DHCP and the disposable overlay, and both
 returned their profile marker before clean poweroff.
+For the postmarketOS addition, both page-profile kernels and all four iOS
+runtime slices rebuilt, the four XCFrameworks repackaged, and generic iOS
+Simulator and physical-iOS Debug app builds succeeded. No Simulator was booted
+for this check; the rendered guest qualification used the macOS host.
 
 The Darwin port now owns exactly one persistent host carrier for each
 configured vCPU, including vCPU0. Linux tasks keep stackful context on 128 KiB

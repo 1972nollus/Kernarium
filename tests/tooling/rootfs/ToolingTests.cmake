@@ -14,5 +14,7 @@ uml_add_tooling_test(
         --launcher ${PROJECT_SOURCE_DIR}/scripts/boot-overlay-systemd.sh
         --kernarium-runtime
         ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
+        --kernel-config
+        ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
     LABELS rootfs;audit
     TIMEOUT 30)

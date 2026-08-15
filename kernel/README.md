@@ -189,6 +189,10 @@ capability a guest distribution can use has to be built in there, including
 the control groups systemd requires to start at all. Per-file filesystem
 encryption is likewise built in through `CONFIG_FS_ENCRYPTION=y`; the LTP
 `statx05` boundary validates encrypted and plain ext4 attribute reporting.
+The same static policy includes TCP SYN cookies and the nftables inet-family
+table, conntrack, and reject expressions required by postmarketOS's default
+mixed IPv4/IPv6 firewall; OpenRC does not depend on unavailable modules to
+load that ruleset.
 
 Three constraints bound what may be added. Loadable modules stay off because
 module text would be dynamically published executable memory inside the host

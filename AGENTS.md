@@ -210,7 +210,7 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   it is not part of ordinary guest execution. There is no in-place writable
   maintenance workflow.
 - The image owns its VT and serial getty definitions, account credentials, and
-  login policy. Systemd launchers, including Kernarium, preserve them and must
+  login policy. Desktop launchers, including Kernarium, preserve them and must
   not synthesize, disable, or override a getty in the overlay. Kernarium's
   Phosh bootstrap whiteouts only the image's stale, mutually exclusive
   development `graphical.target.wants/phosh.service` enablement so the stock
@@ -226,8 +226,15 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   retain their existing behavior. The shipped kernel assigns tty0 to standard
   VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
   the conflicting UML stdio console, DRM log client, and legacy BSD PTYs, and
-  registers four serial lines. Before starting systemd, the generic bootstrap
-  mounts separate tmpfs filesystems at `/var/lib/docker` and
+  registers four serial lines. The `pmos-sxmo.erofs` image instead keeps its
+  OpenRC init, UID-10000 account, tinydm default session, and Sxmo/Sway startup.
+  UML satisfies OpenRC's container test even though this guest owns devtmpfs
+  and virtual hardware, so Kernarium removes only `keyword -containers` from
+  disposable copies of the image's udev services, supplies minimal no-swap
+  deviceinfo, classifies the Virtio-input devices, and grants the desktop's
+  `video` and `input` groups device access after udev settles. It must not
+  replace the image's user or session. Before starting systemd, the generic
+  bootstrap mounts separate tmpfs filesystems at `/var/lib/docker` and
   `/var/lib/containerd` so Docker storage and containerd state are not nested
   on the writable root overlay. `guest-overlay-systemd-smoke` builds its
   freestanding arm64/Linux hello-world payload from repository source, wraps it

@@ -44,6 +44,16 @@ standalone app's 8 GiB and ten-vCPU defaults, which derive a 9 GiB active
 window. The common kernel enables zswap by default with zstd; normal desktop
 launchers provide no backing swap, so no zswap pool is created.
 
+The selected Documents image may now be `pmos-sxmo.erofs`. Its desktop
+bootstrap recognizes OpenRC, preserves the image's UID-10000 account, tinydm
+default session, and Sxmo/Sway entry point, and starts `/sbin/init`. Disposable
+overlay policy enables the image's udev coldplug under UML, supplies minimal
+no-swap deviceinfo, classifies Virtio input, and grants `video`/`input` device
+access after udev settles. The common static kernel includes the inet-family
+nftables expressions used by the image's default firewall. A 440x860 macOS
+qualification completed DHCP, udev/coldplug, firewall startup, tinydm, and a
+captured Sxmo/Sway frame using the production bootstrap.
+
 Separate Virtio-input touchscreen and keyboard devices now receive UIKit
 events, SLiRP supplies guest networking, and the app prevents automatic sleep
 only while the guest is active. Settings and keyboard overlays are round

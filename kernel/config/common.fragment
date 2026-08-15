@@ -228,6 +228,7 @@ CONFIG_PACKET=y
 CONFIG_UNIX=y
 CONFIG_INET=y
 CONFIG_IPV6=y
+CONFIG_SYN_COOKIES=y
 CONFIG_NETDEVICES=y
 CONFIG_TUN=y
 # The built-in Darwin SLiRP transport supplies DHCP before guest userspace is
@@ -281,8 +282,15 @@ CONFIG_NF_CONNTRACK=y
 # UML does not support loadable modules, so keep the complete path built in.
 CONFIG_NF_NAT=y
 CONFIG_NF_TABLES=y
+# postmarketOS uses one mixed-family stateful nftables ruleset for its default
+# firewall. Keep the inet table plus its conntrack and reject expressions
+# built in, matching this static kernel's existing IPv4/IPv6 nftables policy.
+CONFIG_NF_TABLES_INET=y
 CONFIG_NF_TABLES_IPV4=y
 CONFIG_NF_TABLES_IPV6=y
+CONFIG_NFT_CT=y
+CONFIG_NFT_REJECT=y
+CONFIG_NFT_REJECT_INET=y
 CONFIG_NFT_NAT=y
 CONFIG_NFT_MASQ=y
 CONFIG_NFT_COMPAT=y

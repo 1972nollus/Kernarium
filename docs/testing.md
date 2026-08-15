@@ -283,7 +283,7 @@ same 128 TiB guest range, RAM-scaled window derivation, relocation, and
 exclusion-hole handling, while locating its active native window at 96 TiB to
 avoid low-host-VA collisions.
 
-The guest follows the same mount-and-systemd flow as
+The guest follows the same mount-and-desktop-init flow as
 `scripts/boot_kde_vnc.py`, but the iOS writable state is one disposable disk.
 The app deletes any previous temporary image, creates a sparse image at the
 configured size (8 GiB by default), and passes it as `/dev/ubdb`. The init
@@ -292,8 +292,9 @@ uses directories on ext4 for upper/work, mounts devtmpfs in the new root, and
 pivots. Separate Docker and containerd directories are then bind-mounted from
 the same ext4 filesystem, keeping their contents separate while sharing its
 free space. The shell applies the image-appropriate disposable desktop setup
-and execs the rootfs systemd as PID 1. KDE uses the image's display manager and
-`uml` account. Phosh keeps the image's stock Phrog/greetd graph, normal VT
+and execs the rootfs systemd or OpenRC init as PID 1. KDE uses the image's
+display manager and `uml` account. Phosh keeps the image's stock Phrog/greetd
+graph, normal VT
 session, and image-owned getty and login policy. The current test image exposes
 the `debian` account with password `1234` through `serial-getty@ttyS0`; the
 launcher neither rewrites those credentials nor changes any getty. It
@@ -311,6 +312,18 @@ greetd/Phrog. In that disabled, checked-allocation run, the app's Virtio
 keyboard delivered the image-owned password and the logged-in Phosh app screen
 filled the 1320x2580 guest surface about 45 seconds after authentication. The
 direct Geekbench shell and macOS launchers are unchanged.
+
+Selecting `pmos-sxmo.erofs` from Documents instead preserves postmarketOS's
+UID-10000 account, tinydm default session, and `sxmo_swayinit.sh` entry point.
+OpenRC classifies UML as a container and normally suppresses its udev coldplug
+services, so Kernarium removes that keyword only from disposable overlay
+copies, supplies minimal no-swap deviceinfo, adds Virtio-input classification,
+and grants the image's `video` and `input` groups device-node access after udev
+settles. It then starts the image's `/sbin/init`; it does not synthesize a user,
+session, or runlevel. The common static kernel includes the mixed-family
+nftables table, conntrack, and reject expressions used by postmarketOS's
+default firewall.
+
 The kernel builds zswap in, enables it by default, and selects zstd. Because
 zswap is only a compressed cache in front of a backing swap device or file,
 Kernarium's no-swap launch allocates no zswap pool. The prototype does not

@@ -213,8 +213,8 @@ file. The image is writable guest state, not host-memory relief: Kernarium does
 not create or activate backing swap, so zswap allocates no pool during the
 normal desktop flow. The init shell mounts devtmpfs, pivots into the writable
 root, applies the image-appropriate disposable desktop setup, and execs the
-image's systemd for `graphical.target`. KDE retains the image's `uml` account
-and display manager. A Phosh image instead keeps its stock Phrog/greetd VT
+image's systemd or OpenRC init. KDE retains the image's `uml` account and
+display manager. A Phosh image instead keeps its stock Phrog/greetd VT
 session, image-owned VT and serial getties, and login credentials. Its
 disposable ext4 overlay whiteouts only the image's mutually exclusive
 development `graphical.target.wants/phosh.service` enablement, leaving
@@ -229,6 +229,13 @@ this image blocking in `plymouth-start.service` before greetd. This launcher
 policy skips only the boot splash; the disabled arm completed authentication
 and retained the full EDID mode in the logged-in Phosh session. It does not
 replace an image unit or affect the macOS launchers and direct Geekbench shell.
+The `pmos-sxmo.erofs` image keeps its UID-10000 user, tinydm default session,
+and Sxmo/Sway entry point. In its disposable overlay, Kernarium lets the
+image's udev services run under UML, supplies the minimal postmarketOS
+deviceinfo with swap disabled, classifies the Virtio touchscreen and keyboard,
+and grants the `video` and `input` groups access after udev settles before
+executing `/sbin/init`. No image account, OpenRC runlevel, or desktop session
+is replaced.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.
