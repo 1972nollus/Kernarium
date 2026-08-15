@@ -211,7 +211,18 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   maintenance workflow.
 - The image owns its VT and serial getty definitions, account credentials, and
   login policy. Desktop launchers, including Kernarium, preserve them and must
-  not synthesize, disable, or override a getty in the overlay. Kernarium's
+  not synthesize, disable, or override a getty in the overlay. There is exactly
+  one accepted exception, and it is bounded to the KDE overlay: the image
+  enables `getty@tty0.service`, but `/dev/tty0` is the active-VT alias rather
+  than a fixed console, so once SDDM jumps to VT 2 that getty follows the
+  compositor onto the same VT and the Wayland session dies immediately with no
+  output. Both KDE launchers therefore mask `getty@tty0.service` and start
+  `getty@tty1.service`, which preserves the image's text login prompt on the VT
+  boot already leaves it on. An interleaved macOS A/B measured 12/12 successful
+  desktop bring-ups with the relocation against 3/10 without it; see G155. This
+  exception does not extend to serial getties, credentials, autologin, the
+  Phosh/greetd graph, or the postmarketOS OpenRC image, and the defect should
+  still be repaired in the image so the exception can be retired. Kernarium's
   Phosh bootstrap whiteouts only the image's stale, mutually exclusive
   development `graphical.target.wants/phosh.service` enablement so the stock
   display-manager alias selects greetd/Phrog; it must not replace either unit

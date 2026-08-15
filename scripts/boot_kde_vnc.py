@@ -22,6 +22,14 @@ DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
     "usermod -a -G video,render,input uml",
+    # The image enables getty@tty0. /dev/tty0 is the *active* VT alias rather
+    # than a fixed console, so once SDDM logs "Jumping to VT 2" that getty
+    # follows the compositor onto VT 2 and both claim the same VT. The Wayland
+    # session then dies immediately with no output. Move the prompt to a fixed
+    # VT instead: tty1 keeps the pre-desktop text console that boot leaves on
+    # VT 1 without ever colliding with SDDM's VT.
+    "systemctl mask --now getty@tty0.service",
+    "systemctl start getty@tty1.service || true",
     "install -d -m 0755 -o uml -g uml "
     "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
     "/home/uml/Music /home/uml/Pictures /home/uml/Public "

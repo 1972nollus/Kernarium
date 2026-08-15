@@ -8623,3 +8623,69 @@ Kernarium's guest CPU default from every processor `NSProcessInfo` reports to
 the performance-core count, but that default should not be changed until it is
 validated on more than one device family and against the Simulator and macOS
 products.
+
+## G155: the image's tty0 getty collides with SDDM's VT and stalls KDE bring-up
+
+Recorded 2026-08-15/16 at base `46f757cf` while preserving unrelated in-progress
+Kernarium UI, test, and documentation changes. All arms ran the gadgets engine,
+the canonical 16 KiB kernel, `rootfs.erofs`, and `mem=1536M`.
+
+KDE desktop bring-up failed intermittently: the guest reached
+`graphical.target`, SDDM authenticated `uml`, and then nothing rendered, leaving
+the VT text console on screen. The failure is **not** iOS-specific. It
+reproduces on macOS, most readily at four vCPUs, which is how it was diagnosed
+at all; the iOS Simulator merely showed it first.
+
+The image enables `getty@tty0.service`. `systemctl show` reports
+`UnitFileState=enabled` with an empty `SourcePath`, and
+`/run/systemd/generator/getty.target.wants/` contains only
+`serial-getty@ttyS0.service`, so this is a real enablement symlink in the image
+rather than generator output. `/sys/class/tty/console/active` is `tty0 ttyS0`.
+
+`/dev/tty0` is the *active VT alias*, not a fixed console. SDDM logs
+`Using VT 2` and `Jumping to VT 2`; the tty0 getty follows the compositor onto
+VT 2, both claim the same VT, and the Wayland session dies at once:
+
+```
+sddm-helper[518]: Jumping to VT 2
+sddm-helper[518]: VT mode didn't need to be fixed
+sddm[320]: Session started true
+sddm-helper[336]: [PAM] Closing session
+sddm[320]: Auth: sddm-helper exited with 1
+```
+
+Both KDE launchers now mask `getty@tty0.service` and start
+`getty@tty1.service`, keeping the image's text login prompt on the VT that boot
+already leaves it on while removing the collision. Interleaved macOS A/B at
+four vCPUs, alternating arms to remove the host-load confound:
+
+| Arm | Desktop reached |
+| --- | ---: |
+| `getty@tty0` relocated to tty1 | 12/12 |
+| unchanged | 3/10 |
+
+Fisher's exact p = 0.0031. Four Simulator runs with the fix reached first
+accelerated frame in 23.559--24.883 s, against two of seven before it. Four
+macOS runs through the unmodified launcher reached it in 23.531--25.472 s.
+
+A separate defect was found and fixed while diagnosing this: neither KDE
+overlay created `~/.local/share/sddm`, so SDDM's redirect of the Wayland
+session's stderr failed and every reason a failed bring-up would have reported
+was discarded. That is a diagnostics fix only; with the directory present the
+collision still reproduced, and the captured session log was empty because the
+session dies before writing anything.
+
+Two claims made earlier in this investigation were wrong and are corrected
+here. The failure is not Simulator-specific, and the missing session-log
+directory is not its cause: a control rerun of the arm that had scored 5/6
+failed 2/2, so that apparent improvement was host-condition variance rather
+than the change.
+
+Disposition: accept the launcher relocation and the `AGENTS.md` carve-out that
+authorises it. The underlying defect belongs to the image, which should enable
+`getty@tty1.service` rather than `getty@tty0.service`; the launcher exception
+should be retired when a rebuilt image ships. This experiment measures bring-up
+reliability and first-frame latency only, not steady-state desktop or WebGL
+frame rate. Raw logs are under the session scratchpad; the macOS host carried
+background `screensharingd`/`fseventsd` load throughout at load average 7--10
+of 20 cores.

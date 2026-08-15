@@ -181,7 +181,17 @@ echo "Kernarium shared ext4 state: device=$state_device"
 if getent passwd uml >/dev/null 2>&1 && \
     [ -f /usr/share/plasma/plasmoids/org.kde.desktopcontainment/contents/config/main.xml ]; then
 install -d -m 0755 /usr/local/libexec \
-    /etc/systemd/system/multi-user.target.wants
+    /etc/systemd/system/multi-user.target.wants \
+    /etc/systemd/system/getty.target.wants
+# The image enables getty@tty0. /dev/tty0 is the *active* VT alias rather than
+# a fixed console, so once SDDM logs "Jumping to VT 2" that getty follows the
+# compositor onto VT 2 and both claim the same VT; the Wayland session then
+# dies immediately with no output. Relocate the prompt to a fixed VT: tty1
+# keeps the pre-desktop text console boot leaves on VT 1 and never collides
+# with SDDM's VT. This runs before systemd starts, so plain symlinks suffice.
+ln -sf /dev/null /etc/systemd/system/getty@tty0.service
+ln -sf /usr/lib/systemd/system/getty@.service \
+    /etc/systemd/system/getty.target.wants/getty@tty1.service
 cat > /usr/local/libexec/kernarium-kde-setup <<'KDE_SETUP'
 #!/bin/sh
 set -eu
