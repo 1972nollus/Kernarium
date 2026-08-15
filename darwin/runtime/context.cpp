@@ -343,10 +343,29 @@ int Context::stop_notification_fd() const noexcept
 	return stop_notification_read_;
 }
 
+namespace {
+
+/* Resolve the automatic selection to a kind this build can actually run.
+ *
+ * The platform default states a preference, not a guarantee: a build that
+ * prefers the JIT still has to cope with a host that cannot publish into a
+ * MAP_JIT mapping. Falling back to the always-available gadget engine keeps
+ * "automatic" from being the one selection that can fail outright.
+ */
+[[nodiscard]] ExecutionEngine resolve_automatic() noexcept
+{
+	const auto kind = cpu_kind(platform_default);
+	if (kind.has_value() && ::uml::cpu::cpu_engine_available(*kind))
+		return platform_default;
+	return ExecutionEngine::gadgets;
+}
+
+} // namespace
+
 bool execution_engine_available(ExecutionEngine engine) noexcept
 {
 	if (engine == ExecutionEngine::automatic)
-		engine = platform_default;
+		engine = resolve_automatic();
 	const auto kind = cpu_kind(engine);
 	return kind.has_value() && ::uml::cpu::cpu_engine_available(*kind);
 }
@@ -354,7 +373,7 @@ bool execution_engine_available(ExecutionEngine engine) noexcept
 int Context::set_execution_engine(ExecutionEngine engine) noexcept
 {
 	if (engine == ExecutionEngine::automatic)
-		engine = platform_default;
+		engine = resolve_automatic();
 	if (engine != ExecutionEngine::gadgets &&
 	    engine != ExecutionEngine::jit &&
 	    engine != ExecutionEngine::interpreter)

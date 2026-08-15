@@ -4,14 +4,75 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <dlfcn.h>
 #include <limits>
 #include <memory>
 #include <sys/mman.h>
 
+#include <TargetConditionals.h>
 #include <libkern/OSCacheControl.h>
 #include <pthread.h>
 
 namespace uml::cpu::arm64::jit::detail {
+namespace {
+
+/* Publication route for the MAP_JIT arena.
+ *
+ * macOS declares pthread_jit_write_protect_np, so it calls the toggle
+ * directly. The iOS SDK marks the symbol unavailable for every iOS target,
+ * which previously compiled the toggle out of the Simulator too -- yet the
+ * Simulator runs on macOS and does enforce MAP_JIT W^X, so a store without the
+ * toggle faults. The symbol is present in the Simulator runtime and reachable
+ * dynamically, which is the only difference this needs. A physical device has
+ * no route at all without a JIT entitlement, so it keeps the no-op and reports
+ * the arena unavailable rather than mapping memory it can never publish into.
+ */
+#if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT)
+#if TARGET_OS_SIMULATOR
+using JitWriteProtect = void (*)(int);
+
+const JitWriteProtect simulator_write_protect =
+	reinterpret_cast<JitWriteProtect>(
+		dlsym(RTLD_DEFAULT, "pthread_jit_write_protect_np"));
+
+void jit_write_protect(int enable) noexcept
+{
+	if (simulator_write_protect != nullptr)
+		simulator_write_protect(enable);
+}
+
+bool jit_publication_supported() noexcept
+{
+	return simulator_write_protect != nullptr;
+}
+#elif !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+void jit_write_protect(int enable) noexcept
+{
+	pthread_jit_write_protect_np(enable);
+}
+
+constexpr bool jit_publication_supported() noexcept
+{
+	return true;
+}
+#else
+constexpr void jit_write_protect(int) noexcept {}
+
+constexpr bool jit_publication_supported() noexcept
+{
+	return false;
+}
+#endif
+#else
+constexpr void jit_write_protect(int) noexcept {}
+
+constexpr bool jit_publication_supported() noexcept
+{
+	return false;
+}
+#endif
+
+} // namespace
 
 ExecutableArena::ExecutableArena(std::size_t size) noexcept : size_{size}
 {
@@ -41,13 +102,9 @@ void *ExecutableArena::store(
 	    bytes > size_ - aligned)
 		return nullptr;
 	auto *destination = static_cast<std::byte *>(mapping_) + aligned;
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(0);
-#endif
+	jit_write_protect(0);
 	std::memcpy(destination, words.data(), bytes);
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(1);
-#endif
+	jit_write_protect(1);
 	sys_icache_invalidate(destination, bytes);
 	used_ = aligned + bytes;
 	return destination;
@@ -112,9 +169,7 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 	auto *destination = static_cast<std::byte *>(mapping_) + aligned;
 	auto *records = reinterpret_cast<JitBlockLink *>(
 		static_cast<std::byte *>(mapping_) + link_offset);
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(0);
-#endif
+	jit_write_protect(0);
 	std::memcpy(destination, words.data(), bytes);
 	auto *stored = reinterpret_cast<std::uint32_t *>(destination);
 	for (std::size_t index = 0; index < link_count; ++index) {
@@ -147,9 +202,7 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 		stored[relocation.word + 1U] =
 			static_cast<std::uint32_t>(value >> 32U);
 	}
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(1);
-#endif
+	jit_write_protect(1);
 	sys_icache_invalidate(destination, bytes);
 	used_ = allocation_end;
 	return {
@@ -163,9 +216,7 @@ void ExecutableArena::activate_link(
 	JitBlockLink &link,
 	const JitBlockLinkActivation &activation) noexcept
 {
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(0);
-#endif
+	jit_write_protect(0);
 	link.instruction_count = activation.instruction_count;
 	link.internal_entry = activation.internal_entry;
 	link.allowed_selectors = activation.allowed_selectors;
@@ -174,9 +225,7 @@ void ExecutableArena::activate_link(
 	link.profile_read_before_write = activation.profile_read_before_write;
 	link.profile_mask_valid = activation.profile_mask_valid;
 #endif
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(1);
-#endif
+	jit_write_protect(1);
 }
 
 void ExecutableArena::deactivate_links(
@@ -184,9 +233,7 @@ void ExecutableArena::deactivate_links(
 {
 	if (active_targets.empty())
 		return;
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(0);
-#endif
+	jit_write_protect(0);
 	for (auto *link : active_targets) {
 			link->instruction_count = 0;
 			link->internal_entry = 0;
@@ -197,9 +244,7 @@ void ExecutableArena::deactivate_links(
 			link->profile_mask_valid = false;
 #endif
 	}
-#if !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-	pthread_jit_write_protect_np(1);
-#endif
+	jit_write_protect(1);
 }
 
 void ExecutableArena::reset() noexcept
@@ -211,6 +256,13 @@ bool ExecutableArena::available() noexcept
 {
 	static const bool supported = [] {
 #if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT)
+		/* A successful MAP_JIT mapping is necessary but not sufficient:
+		 * without a W^X toggle the first store into it faults. Requiring
+		 * the publication route keeps this from promising an engine that
+		 * would abort on its first translated block.
+		 */
+		if (!jit_publication_supported())
+			return false;
 		void *mapping = mmap(nullptr, 16U * 1024U,
 			PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);

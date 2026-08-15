@@ -42,6 +42,8 @@ target_include_directories(uml_runtime_context PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_runtime_context PUBLIC cxx_std_20)
 target_compile_options(uml_runtime_context PRIVATE -Wall -Wextra -Werror)
+# The Simulator can publish into a MAP_JIT arena and so could default to the
+# JIT, but measurement rejects it for the workloads that matter: see G157.
 target_compile_definitions(uml_runtime_context PRIVATE
     UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${UML_TARGET_MACOS}>)
 set_target_properties(uml_runtime_context PROPERTIES
