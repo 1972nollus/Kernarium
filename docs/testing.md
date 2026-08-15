@@ -131,10 +131,8 @@ Documents rootfs filename; changes are snapshotted on the next app launch.
 SwiftUI lays the `ContentView` Metal view out inside the safe area, and the app
 multiplies its point dimensions by `UIScreen.nativeScale` for both the Metal
 drawable and guest preferred mode. Virtio-GPU EDID advertises an effective
-`96 * nativeScale` density so the guest keeps one logical UI unit per host
-point while rendering at native pixels. UIKit scales touch points into that
-same pixel range. Trailing-center settings and keyboard buttons are the only
-overlays.
+`160 * nativeScale` density. UIKit scales touch points into that same pixel
+range. Trailing-center settings and keyboard buttons are the only overlays.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
@@ -311,19 +309,25 @@ reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
 acceptance workload; do not add swap or another memory workaround solely for
 that campaign.
 
-The current physical checkpoint used a standard-signed Release build on an
-iPad mini 6 with `phosh.erofs`, `mem=1536M`, and all six reported CPUs. Five
-consecutive cold launches reached DHCP, mounted the read-only EROFS root and
-fresh ext4 overlay, started stock greetd, reached `graphical.target`, opened
-the `_greetd` session, and reported direct virgl/ANGLE/Metal presentation at
-2266x1390 and 192 DPI. Every boot brought all CPUs online and reported
+The repeated physical checkpoint used a standard-signed Release build on an
+iPad mini 6 with `phosh.erofs`, `mem=1536M`, and all six reported CPUs under
+the former `96 * nativeScale` density rule. Five consecutive cold launches
+reached DHCP, mounted the read-only EROFS root and fresh ext4 overlay, started
+stock greetd, reached `graphical.target`, opened the `_greetd` session, and
+reported direct virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. Every
+boot brought all CPUs online and reported
 1,520,944 KiB available from 1,572,864 KiB during kernel initialization. The
 captured runs contain timestamped printk records and no Darwin panic, POSIX
 signal failure, allocator-corruption, or guest OOM marker; the device produced
 no new Kernarium crash report. Runs were stopped by the host after stable
 presentation, so orderly guest shutdown is not claimed. RAM was not reduced
 below 1.5 GiB because no OOM occurred. The older 1 GiB KDE device and Simulator
-boots remain dated predecessor evidence. Current
+boots remain dated predecessor evidence. A focused standard-signed Debug check
+of the current `160 * nativeScale` rule booted at 2266x1390/320 DPI on that
+iPad and at 1320x2580/480 DPI on the iPhone 17 Pro Max Simulator. Both runs
+initialized Virtio-GPU EDID/fbcon and reached direct Metal desktop
+presentation; this focused check does not replace the five-run physical
+reliability evidence. Current
 macOS qualification boots the unmodified Phosh service set, completes its
 GStreamer plugin scan without poisoning the virgl context, captures the sparse
 Phosh lock screen through VNC, and enters the direct

@@ -46,8 +46,8 @@ Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
 the safe-area Metal view in native pixels and an evdev keyboard fed by UIKit
 text input. The view multiplies its point bounds by `nativeScale`, scales touch
-points into that range, and supplies `96 * nativeScale` effective DPI through
-Virtio-GPU EDID so guest UI remains logically point-sized. Its
+points into that range, and supplies `160 * nativeScale` effective DPI through
+Virtio-GPU EDID. Its
 network callback is the ordinary SLiRP provider compiled against the private
 iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
 the managed guest run is active and restores it when that run finishes. Both

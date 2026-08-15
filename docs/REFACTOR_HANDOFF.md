@@ -15,10 +15,9 @@ commands remain disabled.
 The app starts one 1.5 GiB guest by default after its safe-area view has a real
 size. It multiplies that point geometry by `UIScreen.nativeScale`, uses the
 resulting physical pixels for both the Metal drawable and Virtio-GPU preferred
-mode, and advertises an effective `96 * nativeScale` density through EDID so
-guest UI retains the host's logical point size. Touch coordinates are scaled
-into the same pixel space. Device and Simulator both default to all processors
-reported by iOS.
+mode, and advertises an effective `160 * nativeScale` density through EDID.
+Touch coordinates are scaled into the same pixel space. Device and Simulator
+both default to all processors reported by iOS.
 A settings sheet can persist 1 through that count, 512 MiB through 4 GiB of
 RAM in 128 MiB steps, a 1--32 GiB overlay, and the selected Documents `.erofs`
 filename for the next launch. The app recreates the sparse overlay disk on
@@ -112,18 +111,29 @@ PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
 Kernarium binds that serial endpoint to its stdout relay while `tty0` remains
 visible on the framebuffer.
 
-The current physical validation used the standard-signed Release app and
-`phosh.erofs` on an iPad mini 6. Five consecutive cold launches at 1.5 GiB and
-six vCPUs brought every CPU online, emitted timestamped printk records,
-reported 1,520,944 KiB available from 1,572,864 KiB during kernel startup,
-completed DHCP and the EROFS/ext4 pivot, started stock greetd, reached
-`graphical.target`, opened its `_greetd` session, and entered direct
-virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The captured consoles
-contain no Darwin panic, POSIX-signal failure, allocator corruption, or OOM
-marker, and no new device crash report appeared. The host stopped each run
-after stable presentation, so clean guest shutdown is not claimed; no memory
-reduction was needed. The earlier 1 GiB KDE device/Simulator boots remain
-dated predecessor evidence. Current macOS Phosh validation runs the full
+The repeated physical reliability campaign preceded the current density-only
+change. Its standard-signed Release app and `phosh.erofs` on an iPad mini 6
+completed five cold launches at 1.5 GiB and six vCPUs under the former
+`96 * nativeScale` rule, rendering at 2266x1390 and 192 DPI. Every run brought
+all CPUs online, emitted timestamped printk records, reported 1,520,944 KiB
+available from 1,572,864 KiB, completed DHCP and the EROFS/ext4 pivot, started
+stock greetd, reached `graphical.target`, opened its `_greetd` session, and
+entered direct virgl/ANGLE/Metal presentation. The captured consoles contain
+no Darwin panic, POSIX-signal failure, allocator corruption, or OOM marker,
+and no new device crash report appeared. The host stopped each run after
+stable presentation, so clean guest shutdown is not claimed; no memory
+reduction was needed.
+
+A focused standard-signed Debug check of the current `160 * nativeScale` rule
+booted the selected `rootfs.erofs` on the same iPad at 2266x1390 and 320 DPI.
+Virtio-GPU accepted EDID, fbcon switched to its framebuffer, DHCP and the fresh
+ext4 pivot completed, and SDDM entered direct virgl/ANGLE/Metal presentation.
+The matching iPhone 17 Pro Max Simulator run booted at 1320x2580 and 480 DPI,
+initialized EDID/fbcon, reached graphical target and greetd, and entered the
+same direct Metal path. These are focused density checks, not replacements for
+the five-run physical reliability campaign. The earlier 1 GiB KDE
+device/Simulator boots remain dated predecessor evidence. Current macOS Phosh
+validation runs the full
 service set, completes the GStreamer VA
 plugin scan without the former virgl context error, captures the rendered
 Phosh lock screen through VNC, and reaches direct CGL/IOSurface/Metal native

@@ -70,6 +70,10 @@ historical sections as history.
   8 GiB and 10 vCPUs. Kernarium retains its separate iOS application policy:
   1.5 GiB and every processor reported by `NSProcessInfo` on both Simulator
   and physical devices.
+- Kernarium derives guest pixels from safe-area points times `nativeScale` and
+  advertises `160 * nativeScale` effective DPI through Virtio-GPU EDID. Keep
+  this scale-only policy shared by Device and Simulator; do not add per-model
+  panel tables or private physical-PPI discovery.
 - Darwin's early UML calibration uses the process-directed `ITIMER_REAL`.
   Kernarium must keep `SIGALRM` blocked on its application and launcher
   workers without moving the launcher to another thread; only

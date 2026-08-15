@@ -170,7 +170,7 @@ private final class GuestMetalView: MTKView, UIKeyInput {
         guard pixelSize.width >= 1, pixelSize.height >= 1 else { return }
         drawableSize = pixelSize
         let dotsPerInch = UInt32(
-            (CGFloat(96) * scale).rounded()
+            (CGFloat(160) * scale).rounded()
         )
         viewDidLayout?(
             self,

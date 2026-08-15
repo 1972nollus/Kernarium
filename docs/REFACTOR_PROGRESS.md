@@ -8,7 +8,7 @@ image. Device and Simulator both default to all processors reported by iOS; a
 settings sheet persists bounded vCPU, RAM, overlay-size, and rootfs choices for
 the next launch. Its basic SwiftUI `ContentView` owns a safe-area
 `MTKView` whose native-pixel dimensions are the guest resolution. Virtio-GPU
-EDID advertises the corresponding effective `96 * nativeScale` density, and
+EDID advertises the corresponding effective `160 * nativeScale` density, and
 UIKit scales touch coordinates into that pixel space. The real Virtio-GPU
 device and virglrenderer use pinned UTM libepoxy plus ANGLE/Metal and present
 the native Metal texture directly; the iOS target builds neither AppKit nor
@@ -101,16 +101,21 @@ peak-resident-size movement. Both guests shut down cleanly. G148 records the
 exact hashes and the ordered, active-host, single-observation limitation.
 
 Five consecutive standard-signed Release launches of `phosh.erofs` on the
-physical iPad mini 6 passed at 1.5 GiB and six vCPUs. Each emitted timestamped
-printk records, brought every CPU online, completed DHCP and the EROFS/ext4
-pivot, started stock greetd, reached graphical target, opened its session, and
-reported direct virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The
-captured consoles have no panic, POSIX-signal failure, allocator-corruption,
-or OOM marker, and the device produced no new crash report. The host stopped
-the runs after stable presentation, so orderly guest shutdown is not claimed;
-RAM stayed at 1.5 GiB because no OOM occurred. The current 2 GiB iPhone 17 Pro
-Max Simulator boot remains additional EROFS/ext4, VT/fbcon, stock-greetd,
-Phrog, and native Metal evidence. Current macOS qualification proves the full
+physical iPad mini 6 passed at 1.5 GiB and six vCPUs under the former
+`96 * nativeScale` density rule. Each emitted timestamped printk records,
+brought every CPU online, completed DHCP and the EROFS/ext4 pivot, started
+stock greetd, reached graphical target, opened its session, and reported direct
+virgl/ANGLE/Metal presentation at 2266x1390 and 192 DPI. The captured consoles
+have no panic, POSIX-signal failure, allocator-corruption, or OOM marker, and
+the device produced no new crash report. The host stopped the runs after stable
+presentation, so orderly guest shutdown is not claimed; RAM stayed at 1.5 GiB
+because no OOM occurred. A focused current Debug check then proved the new
+`160 * nativeScale` EDID value at 2266x1390/320 DPI on the iPad and
+1320x2580/480 DPI on the iPhone 17 Pro Max Simulator. Both initialized
+Virtio-GPU/fbcon and reached their direct Metal desktop paths. The current
+2 GiB iPhone 17 Pro Max Simulator boot remains additional EROFS/ext4,
+VT/fbcon, stock-greetd, Phrog, and native Metal evidence. Current macOS
+qualification proves the full
 Phosh service set and its sparse rendered lock screen after the virgl VA-probe
 fix. Physical Aquarium remains intentionally outside acceptance; the
 removed disk-swap workaround is not part of the product. The earlier 2 GiB
