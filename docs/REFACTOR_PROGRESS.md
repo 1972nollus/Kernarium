@@ -40,7 +40,13 @@ images use their stock Phrog/greetd VT session and preserve the image-owned VT
 and serial getties plus login policy. Their disposable overlay removes only the
 mutually exclusive development `phosh.service` enablement, letting the stock
 display-manager alias select greetd/Phrog; the former wait helper and greetd
-ordering drop-in remain gone and Plymouth uses its normal handoff. Both the
+ordering drop-in remain gone. Kernarium systemd boots now append
+`plymouth.enable=0` after a same-build Simulator A/B showed the image otherwise
+blocking before greetd; macOS launchers and the direct Geekbench shell remain
+unchanged. The disabled arm then authenticated through Kernarium's virtual
+keyboard and rendered the logged-in Phosh app screen over the full 1320x2580
+guest surface about 45 seconds after login, without another checked-allocation
+trap. Both the
 Phrog and logged-in Phosh Phoc configs are replaced by empty disposable files,
 so neither stage overrides the Virtio-GPU EDID with the image's fixed
 720x1440 mode. On macOS, the full Phosh service set now completes the GStreamer

@@ -208,9 +208,13 @@ and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
   or add a greetd/getty ordering workaround. It also installs empty overlay
   copies of both `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini`, preventing the
   image's fixed 720x1440 mode from replacing the Virtio-GPU EDID mode when the
-  greeter hands off to the logged-in session. Plymouth follows the image's
-  normal handoff. The shipped kernel assigns tty0 to
-  standard VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
+  greeter hands off to the logged-in session. Kernarium systemd boots append
+  `plymouth.enable=0`: a same-build iOS Simulator A/B proved that this image's
+  Plymouth start blocks before greetd, while disabling it reaches the stock
+  display manager and authenticated full-geometry Phosh session without
+  changing any image unit. The direct Geekbench shell and macOS launchers
+  retain their existing behavior. The shipped kernel assigns tty0 to standard
+  VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
   the conflicting UML stdio console, DRM log client, and legacy BSD PTYs, and
   registers four serial lines. Before starting systemd, the generic bootstrap
   mounts separate tmpfs filesystems at `/var/lib/docker` and

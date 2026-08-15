@@ -212,8 +212,12 @@ Empty overlay copies of both `/etc/phrog/phoc.ini` and
 `/etc/phosh/phoc.ini` make the greeter and authenticated user session retain
 the Virtio-GPU preferred EDID mode instead of switching to the image's fixed
 720x1440 mode. The immutable units remain untouched, the former wait helper and
-greetd ordering drop-in remain absent, and Plymouth performs its normal image
-handoff.
+greetd ordering drop-in remain absent, and Kernarium appends
+`plymouth.enable=0` to systemd boots because a matched iOS Simulator A/B showed
+this image blocking in `plymouth-start.service` before greetd. This launcher
+policy skips only the boot splash; the disabled arm completed authentication
+and retained the full EDID mode in the logged-in Phosh session. It does not
+replace an image unit or affect the macOS launchers and direct Geekbench shell.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled; the host has no Virtio-console
 backend, so `ttyS0` carries all kernel console bytes to application stdout.

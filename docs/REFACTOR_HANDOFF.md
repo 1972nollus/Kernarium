@@ -135,8 +135,10 @@ updated image replaces that getty with its own `serial-getty@ttyS0` login, and
 Kernarium now preserves every image-owned getty, credential, and login policy.
 It removes only the mutually exclusive development `phosh.service` enablement
 so the stock display-manager alias selects greetd/Phrog. The units and EROFS
-remain unchanged, no wait helper or greetd ordering drop-in remains, and
-Plymouth follows the image's normal handoff. A matched macOS native-Metal
+remain unchanged, and no wait helper or greetd ordering drop-in remains.
+Kernarium systemd boots append `plymouth.enable=0`; this skips the iOS-blocking
+boot splash without changing the macOS launchers or direct Geekbench shell. A
+matched macOS native-Metal
 post-login control at 1320x2580 and 288 DPI proved that the image's
 `/etc/phosh/phoc.ini` selects a 720x1440 framebuffer, plane, and CRTC at origin;
 empty disposable overrides for both `/etc/phrog/phoc.ini` and
@@ -162,15 +164,22 @@ publishes one value to the whole GPU component set, and `virgl_renderer.hpp`
 fails to compile when the macro is undefined, so the mismatch cannot recur
 silently.
 
-That fix did not make the accepted Plymouth handoff boot. A same-build
+That fix did not make the Plymouth handoff boot. A same-build
 Simulator A/B on 2026-08-15 left the guest idle with no overlay writes for
 eleven minutes and no greeter at 16.5 minutes with Plymouth enabled, while one
-temporary, uncommitted `plymouth.enable=0` argument reached
+`plymouth.enable=0` argument reached
 `graphical.target`, `greetd.service`, the image's `ttyS0` login prompt, and a
 full-geometry Phrog keypad on the direct virgl/ANGLE/Metal path within about
-two minutes. The workaround is not committed and the blocking mechanism is not
-yet identified; `docs/KERNARIUM_IOS_PHOSH_SIGTRAP_HANDOVER.md` owns that open
-item.
+two minutes. The exact Plymouth-internal wait remains unidentified, but the
+user chose the proven disable arm as Kernarium's product policy. The argument
+now applies to Kernarium systemd boots only; it does not replace guest units or
+change macOS and direct-shell launches. In the resulting checked-allocation
+run, entering the image-owned `debian` password through Kernarium's virtual
+keyboard handed off to the logged-in session; the Phosh app screen filled the
+same 1320x2580 guest surface about 45 seconds later without another host
+allocator trap. The iOS GStreamer capability probe still logs rejected
+no-codec video-buffer commands, but it completes and does not prevent the
+responsive Phosh session; no iOS host codec backend is claimed.
 
 The same physical app also ran the image-local Geekbench 6.7.1 payload
 from an opt-in no-systemd ext4 OverlayFS shell while short Time Profiler windows

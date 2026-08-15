@@ -84,9 +84,18 @@ def main() -> int:
 
     runtime_source = arguments.kernarium_runtime.read_text(encoding="utf-8")
     require(
-        "plymouth.enable=0" not in runtime_source,
-        "Kernarium must let the updated image's VT and serial getties own "
-        "the normal Plymouth handoff",
+        runtime_source.count('arguments.emplace_back("plymouth.enable=0")') == 1,
+        "Kernarium systemd boots must disable the Plymouth handoff that "
+        "blocks before greetd on iOS",
+    )
+    systemd_policy = """if (!geekbench) {
+            arguments.emplace_back("systemd.unit=graphical.target");
+            arguments.emplace_back("plymouth.enable=0");
+        }"""
+    require(
+        systemd_policy in runtime_source,
+        "Kernarium must apply the Plymouth policy with its systemd boot "
+        "arguments, leaving the direct Geekbench shell unchanged",
     )
     declaration = 'constexpr std::string_view systemdBootstrap = R"krn('
     bootstrap_start = runtime_source.index(declaration)

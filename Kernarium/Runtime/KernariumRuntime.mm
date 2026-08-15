@@ -842,8 +842,10 @@ extern "C" int kernarium_runtime_run(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
                 std::to_string(uml::input::virtio::protocol::deviceId),
         };
-        if (!geekbench)
+        if (!geekbench) {
             arguments.emplace_back("systemd.unit=graphical.target");
+            arguments.emplace_back("plymouth.enable=0");
+        }
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
             .struct_size = sizeof(uml_emulator_config),

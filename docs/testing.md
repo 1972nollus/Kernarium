@@ -283,8 +283,14 @@ stock `display-manager.service` alias, greetd, and Phrog. Empty disposable
 copies of `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini` make both the greeter
 and logged-in Phosh session select the Virtio-GPU EDID mode instead of the
 image's fixed 720x1440 mode. The underlying units and immutable EROFS image are
-unchanged, no wait helper or greetd ordering drop-in is present, and Plymouth
-performs its normal handoff.
+unchanged, and no wait helper or greetd ordering drop-in is present. Kernarium
+adds `plymouth.enable=0` to its systemd kernel arguments: a same-build iOS
+Simulator A/B showed the image otherwise blocking in
+`plymouth-start.service` before greetd, while the disabled arm reached stock
+greetd/Phrog. In that disabled, checked-allocation run, the app's Virtio
+keyboard delivered the image-owned password and the logged-in Phosh app screen
+filled the 1320x2580 guest surface about 45 seconds after authentication. The
+direct Geekbench shell and macOS launchers are unchanged.
 The kernel builds zswap in, enables it by default, and selects zstd. Because
 zswap is only a compressed cache in front of a backing swap device or file,
 Kernarium's no-swap launch allocates no zswap pool. The prototype does not

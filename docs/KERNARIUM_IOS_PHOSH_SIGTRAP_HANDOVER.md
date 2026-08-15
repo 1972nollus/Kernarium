@@ -61,22 +61,23 @@ Verified: `uml_gpu_transport`'s object now emits `mov w0, #0x210` (528) before
 clean. A `--checked-allocations` Simulator launch runs the SET_SCANOUT path
 continuously without an allocator trap.
 
-The temporary debugging changes listed in the original cleanup checklist have
-been reverted: `ContentView.swift`, `KernariumUITests.swift`,
-`KernariumRuntime.mm` (`plymouth.enable=0`), and
-`tests/tooling/rootfs/test_boot_overlay_systemd.py`. The user-owned
-`.gitignore` change was left untouched.
+The temporary debugging changes listed in the original cleanup checklist were
+reverted at that checkpoint: `ContentView.swift`, `KernariumUITests.swift`,
+the first experimental `plymouth.enable=0`, and the corresponding inverted
+tooling assertion. After the matched A/B below, the user explicitly selected
+the proven Plymouth-disable arm as Kernarium's product policy; that later
+decision is recorded separately below. The user-owned `.gitignore` change was
+left untouched.
 
-## Still open: the Phosh boot stalls under Plymouth (2026-08-15)
+## Resolved follow-up: disable Plymouth in Kernarium (2026-08-15)
 
 Fixing the heap corruption did not by itself produce a Phosh home screen. A
 matched A/B on the iPhone 17 Pro Max Simulator (iOS 26.5, 1320x2580 at 288 DPI,
 `mem=1536M`, `ncpus=4`, `phosh.erofs`) separates the two problems. Both samples
-ran the same committed build under `simctl launch --checked-allocations`; the
-only difference was one temporary, uncommitted `plymouth.enable=0` kernel
-argument that was reverted afterwards.
+ran the same build under `simctl launch --checked-allocations`; the only
+difference was the `plymouth.enable=0` kernel argument.
 
-- **A, accepted contract with Plymouth enabled.** The guest booted, ran the
+- **A, Plymouth enabled.** The guest booted, ran the
   overlay bootstrap, started systemd, and reached
   `Starting plymouth-start.service`. Plymouth then took the console and replayed
   the kernel ring buffer in details mode. The guest stopped writing its ext4
@@ -90,8 +91,11 @@ argument that was reverted afterwards.
   `Reached target graphical.target`, `Session c1 of User _greetd`, the image's
   `debian-rootfs login:` prompt on `ttyS0`, and
   `Native display: direct virgl/ANGLE/Metal presentation`. The Phrog password
-  keypad rendered at the full native guest geometry
-  (`/private/tmp/kernarium-phrog-greeter-after-abi-fix.png`).
+  keypad rendered at the full native guest geometry. Entering the image-owned
+  `debian` password through Kernarium's virtual keyboard handed off to the
+  logged-in session, and the full Phosh app screen appeared about 45 seconds
+  later at the same 1320x2580 geometry
+  (`/private/tmp/kernarium-phosh-login-45s.png`).
 
 That is the narrow proof the earlier investigation was missing: Plymouth, not
 the heap corruption, is what prevents this image from reaching the greeter on
@@ -101,21 +105,41 @@ earlier assumption is **not** supported: sample A's console contains no
 the stdout-only bridge. The four `ESC[6n` queries in sample B come from
 `agetty` at the login prompt, which sample A never reached.
 
-`plymouth.enable=0` is deliberately not committed. It contradicts the accepted
-rootfs contract in `AGENTS.md` and the user's instruction to avoid one-off
-kernel or service workarounds, and a workaround chosen without a mechanism is
-not a fix. The next step is to determine what `plymouthd` actually blocks on
-here -- most cheaply by adding `systemd.log_level=debug systemd.log_target=kmsg`
-to a diagnostic run so the blocking job is named on the console, since Plymouth
-otherwise silences systemd's status output.
+The exact Plymouth-internal wait remains unidentified, but the A/B proves the
+product-level boundary and the user explicitly chose disabling it when that was
+the easier reliable route. Kernarium now appends `plymouth.enable=0` to its
+systemd launches. This skips only the splash path: the image's systemd,
+display-manager alias, greetd/Phrog units, getties, credentials, and Phosh
+session remain unchanged. The direct Geekbench shell and macOS launchers do
+not receive the argument. A checked-allocation run completed the full
+greeter-to-authenticated-Phosh path without another host allocator trap. This
+item and its post-login geometry validation are no longer open.
 
-## User goal still in flight
+## Completed user goal
 
-The emulator should stably boot `phosh.erofs` into the Phosh home screen with
-the correct full-screen dimensions on iOS, while macOS continues to work in the
-same architecture and launch flow.
+The iOS Simulator now boots `phosh.erofs` through the stock systemd and
+greetd/Phrog flow into the authenticated Phosh app screen at the correct full
+guest dimensions. The scoped Plymouth argument does not enter any macOS or
+direct-shell launch path, so their architecture and launch flow remain the
+same.
 
-The newest user instructions to preserve are:
+Validation for the completed policy change used the iPhone 17 Pro Max iOS 26.5
+Simulator. The Simulator CMake configure/build, XCFramework packaging, and
+Xcode Debug build passed. The registered `rootfs-overlay-launcher-options` test
+passed 1/1, and the macOS `check-gpu` workflow passed all five GPU units plus
+the Virtio-GPU/VNC smoke. The full guest run used checked allocations and the
+normal 1.5 GiB, four-vCPU configuration described above. A temporary UI-test
+method only entered the image-owned password; it was removed before the final
+checks. No new physical-device result is claimed by this follow-up.
+
+One separate non-blocking limitation remains visible in that run: the iOS
+ANGLE path logs rejected `CREATE_VIDEO_BUFFER` and `DESTROY_VIDEO_BUFFER`
+commands while `gst-plugin-scan` probes unsupported host codec capabilities.
+The probe completed, Phosh stayed responsive, and the first-run Phone Tour
+rendered afterward. This policy change neither adds a codec backend nor hides
+those messages.
+
+The user instructions preserved by the completed implementation are:
 
 - Do not worry about host thread count. Revert any deliberate checks or
   workarounds whose only purpose is enforcing/counting the iOS 64-thread
@@ -229,9 +253,6 @@ continue
   720x1440 post-login session.
 - "Phosh failed because it was too slow." iOS Phosh can take longer after login;
   wait longer before classifying it as failed.
-- "The solution is to disable Plymouth." The accepted rootfs contract says
-  Plymouth should follow the image's normal handoff, and the current
-  `plymouth.enable=0` change is only an experiment.
 - "Need to enforce thread count again." The user explicitly said not to worry
   about thread count and to revert deliberate checks around it.
 
