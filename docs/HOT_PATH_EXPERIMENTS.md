@@ -8681,6 +8681,19 @@ directory is not its cause: a control rerun of the arm that had scored 5/6
 failed 2/2, so that apparent improvement was host-condition variance rather
 than the change.
 
+The physical A15 iPad mini 6 was then re-measured with the same fix, using a
+Release build installed over USB. At the shipped six-vCPU policy, first
+accelerated frame moved from 63.505/65.401 s before the fix to 54.079 s after
+it, about 16% faster, because a collided session costs SDDM a failed attempt
+and a retry even when the next one succeeds. Device runs at four vCPUs with the
+fix reached 42.040 s and 51.325 s. The best observed device configuration is
+therefore four vCPUs with the relocation at 42.040 s, against 64.5 s mean for
+the shipped six-vCPU pre-fix default: a 35% reduction. The device vCPU count
+could only be changed by writing the preference plist and reinstalling the app,
+because `cfprefsd` caches the value and ignores later file writes, so pre- and
+post-fix device arms are not matched at every count and the two four-vCPU runs
+differ by 9 s, consistent with the thermal drift already noted in G154.
+
 Disposition: accept the launcher relocation and the `AGENTS.md` carve-out that
 authorises it. The underlying defect belongs to the image, which should enable
 `getty@tty1.service` rather than `getty@tty0.service`; the launcher exception
