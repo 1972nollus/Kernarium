@@ -371,6 +371,8 @@ private:
 	static constexpr std::size_t stream_index_ways = 4;
 	static constexpr std::size_t stream_index_set_count = 16 * 1024;
 
+	struct LinkRecord;
+
 	struct Slot final {
 		std::optional<BuildResult> result;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
@@ -379,6 +381,14 @@ private:
 		std::uint64_t pc{};
 		std::uint64_t epoch{};
 		std::uint64_t activation{};
+		/* Reactivation resolves the same link record every time, so the
+		 * node address is memoised here rather than hashed again on each
+		 * pass. links_ is node-based, so the address is stable until
+		 * invalidate() clears the map, and that also advances epoch_,
+		 * which is what link_epoch is compared against.
+		 */
+		LinkRecord *link{};
+		std::uint64_t link_epoch{};
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::uint64_t validated_changes{};
 		std::size_t source_word_count{};
@@ -581,13 +591,18 @@ private:
 	}
 #endif
 
-	void activate(std::uint64_t pc, const Slot &slot)
+	void activate(std::uint64_t pc, Slot &slot)
 	{
 		const auto &result = *slot.result;
 		if (!result.complete || result.program.instruction_count() == 0)
 			return;
 		index_stream(slot);
-		auto &record = link_record(pc);
+		if (slot.link == nullptr || slot.link_epoch != epoch_ ||
+		    slot.link->link.guest_pc != pc) {
+			slot.link = &link_record(pc);
+			slot.link_epoch = epoch_;
+		}
+		auto &record = *slot.link;
 		auto *target = &record.link;
 		if (result.program.accesses_fp_state()) {
 			record.fp_stream[1] = reinterpret_cast<std::uintptr_t>(

@@ -8882,3 +8882,64 @@ arms idle heavily in `__pselect` and the Simulator idles more, and the block
 I/O difference itself. Limitations: one profile per arm, Simulator only, and
 the JIT arm is a single run, which is enough for a result this large but not for
 a ratio.
+
+## G158: memoising the gadget link record removes a hash lookup from every reactivation
+
+Dated 2026-08-16. G157 found the Aquarium workload bound by guest-CPU
+emulation on both Apple products, with `ProgramCache::activate` the single
+largest self-time frame on each arm (2682 samples Simulator, 4383 macOS) and
+the `links_` link-record hash insert accounting for a further 865 and 1776.
+Together that is 9.4% of attributed self time on the Simulator and 10.8% on
+macOS. This entry acts on that.
+
+The cost is structural rather than incidental. `prepare_cache` calls
+`invalidate_links` whenever the guest code-change sequence advances at the same
+generation, which resets every link activation as G140/G141 requires. Every
+block executed afterwards therefore takes the slow path in
+`ProgramCache::find`: revalidate the cached program word by word, then
+`activate` it again. A workload whose guest writes code continuously -- V8 in
+Chromium is the case that matters -- never leaves that cycle, so reactivation is
+the steady state rather than a transient.
+
+`activate` resolved its link through `links_.try_emplace(pc, pc)` on every one
+of those passes, hashing a guest PC to reach the same node it reached last
+time. `links_` is node-based, so that address is stable until `invalidate()`
+clears the map, and `invalidate()` also advances `epoch_`. The slot now
+memoises the record pointer alongside the epoch it was resolved in and reuses
+it while that epoch holds, which removes the hash from the reactivation path
+without changing which record is used.
+
+Measured with the probe pair built for this mechanism.
+`guest_gadget_code_invalidation_loop` executes IC IVAU against unchanged code
+every iteration, advancing the code-change sequence and forcing exactly this
+revalidate-then-reactivate path. `guest_gadget_code_invalidation_control_loop`
+substitutes DC CVAU, keeping the same cache-maintenance execution boundary
+without advancing the sequence. Separate emulator binaries from the same
+configure, run ABBA at one vCPU and one worker, seven repetitions per run,
+medians reported:
+
+| Arm | Sensitive probe | Control probe |
+| --- | ---: | ---: |
+| without memoisation | 0.7208 s mean, 0.714--0.733 | 0.049 s |
+| with memoisation | 0.6977 s mean, 0.689--0.709 | 0.049 s |
+
+3.21% faster on the sensitive probe over six runs per arm with no overlap
+between the two arms' ranges, and the control does not move at all, which is
+what makes the improvement attributable to the reactivation path rather than to
+boot or probe overhead.
+
+Disposition: accept. Both page profiles pass, 575 + 49 and 576 + 49.
+
+Two larger candidates were examined and not taken. `activate` also calls
+`index_stream` unconditionally, and on a revalidation whose program and
+activation are unchanged that re-derives entries it already holds; skipping it
+under a per-slot indexed-activation guard would capture more of `activate`'s
+self time, but a stream index entry evicted by another program would then never
+be reinstated and `find_stream` would fall back to walking every slab, trading a
+bounded win for an unbounded loss. The larger prize is `invalidate_links`
+itself: because the code-change sequence is global, a write anywhere resets
+every link, including blocks on untouched pages. Scoping invalidation to the
+changed range, or replacing the eager reset with the activation-epoch scheme the
+JIT link table already uses, would attack the reactivation rate rather than the
+per-reactivation cost. Both are worth more than this change and both need
+range-carrying invalidation the guest ABI does not currently supply.
