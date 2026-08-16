@@ -158,17 +158,17 @@ activation state and executor addresses never enter the shared cache.
 
 `ExecutableArena::available()` reports the JIT engine only where the arena can
 actually publish into a `MAP_JIT` mapping, which needs both the mapping and a
-W^X toggle. macOS calls `pthread_jit_write_protect_np` directly. The iOS SDK
-marks that symbol unavailable, so the Simulator resolves it through `dlsym`;
-that is the only difference the Simulator needs, because it runs on macOS and
-does enforce MAP_JIT W^X. A physical device has no route without an entitlement
-it cannot obtain, so the toggle stays a no-op there and the arena reports the
-engine unavailable rather than promising one whose first store would fault.
+W^X toggle, not the mapping alone. macOS calls `pthread_jit_write_protect_np`
+directly and is the only product with a publication route. A physical iOS
+device cannot obtain the entitlement, so the toggle is a no-op and the arena
+reports the engine unavailable rather than promising one whose first store
+would fault.
 
-The default engine is still the data-only gadget executor on both Apple
-products; `UML_DEFAULT_EXECUTION_ENGINE_JIT` is macOS-only. The Simulator can
-run the JIT when it is asked for explicitly, but measurement rejects it as a
-default: see G157 in `docs/HOT_PATH_EXPERIMENTS.md`.
+The Simulator is held to the same answer on purpose. It runs on macOS and could
+reach the toggle dynamically, but a Simulator that translates through a path
+production devices cannot use would not represent the product it stands in for.
+Both iOS products therefore run the data-only gadget executor, and
+`UML_DEFAULT_EXECUTION_ENGINE_JIT` stays macOS-only.
 `ExecutionEngine::automatic` resolves to the platform default when that engine
 is available and falls back to the gadget executor when it is not, so the
 automatic selection cannot be the one selection that fails outright.

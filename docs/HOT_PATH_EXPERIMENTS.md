@@ -8853,15 +8853,27 @@ than a crash. The plausible mechanism is that V8 writes guest code continuously
 and each write invalidates translations, but that is a hypothesis this
 experiment did not test.
 
-Disposition: reject the JIT as the Simulator default; both Apple products keep
-the gadget engine, and `UML_DEFAULT_EXECUTION_ENGINE_JIT` stays macOS-only.
-Keep the two arena fixes, which are correctness repairs independent of the
-decision: an engine is now only advertised when it can actually publish, and
-`--execution-engine=jit` on the Simulator runs instead of faulting, so the
-choice stays re-testable. `ExecutionEngine::automatic` now falls back to the
-gadget engine when the platform default is unavailable rather than failing
-outright, and Kernarium passes `auto` with a `KERNARIUM_EXECUTION_ENGINE`
-override so an engine A/B needs no rebuild.
+Disposition: reject the JIT on the Simulator outright, not merely as its
+default. The measurement above is the performance reason, but the standing
+reason is stronger and independent of it: a physical device can never publish
+into a `MAP_JIT` mapping, so a Simulator that translates through the `dlsym`
+route would stop representing the product it exists to stand in for. The
+`dlsym` route is therefore removed rather than left available behind an
+explicit selector, and the measurement here is retained as the record of what
+it would have bought. Both Apple products keep the gadget engine and
+`UML_DEFAULT_EXECUTION_ENGINE_JIT` stays macOS-only.
+
+The arena fix is kept, and under this policy it is what enforces the decision:
+an engine is advertised only when it can actually publish, so both iOS products
+now report the JIT unavailable and an explicit request fails rather than
+faulting on its first translated block. `ExecutionEngine::automatic` falls back
+to the gadget engine when the platform default is unavailable rather than
+failing outright, and Kernarium passes `auto` with a
+`KERNARIUM_EXECUTION_ENGINE` override so a gadget/interpreter A/B needs no
+rebuild.
+
+Reproducing the JIT arm requires locally restoring the `dlsym` publication
+route in `jit_arena.cpp`; the probe output above is the evidence that it works.
 
 The Simulator deficit is therefore localised but not closed: it lives in guest
 CPU throughput, with the excess `read` blocking as the one concrete lead. Two

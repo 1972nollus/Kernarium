@@ -4,12 +4,10 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <dlfcn.h>
 #include <limits>
 #include <memory>
 #include <sys/mman.h>
 
-#include <TargetConditionals.h>
 #include <libkern/OSCacheControl.h>
 #include <pthread.h>
 
@@ -18,34 +16,18 @@ namespace {
 
 /* Publication route for the MAP_JIT arena.
  *
- * macOS declares pthread_jit_write_protect_np, so it calls the toggle
- * directly. The iOS SDK marks the symbol unavailable for every iOS target,
- * which previously compiled the toggle out of the Simulator too -- yet the
- * Simulator runs on macOS and does enforce MAP_JIT W^X, so a store without the
- * toggle faults. The symbol is present in the Simulator runtime and reachable
- * dynamically, which is the only difference this needs. A physical device has
- * no route at all without a JIT entitlement, so it keeps the no-op and reports
- * the arena unavailable rather than mapping memory it can never publish into.
+ * macOS declares pthread_jit_write_protect_np and calls it directly. No iOS
+ * product has a publication route: a physical device cannot obtain the
+ * entitlement, so the arena reports itself unavailable there rather than
+ * mapping memory it could never publish into.
+ *
+ * The Simulator is deliberately held to the same answer even though it runs on
+ * macOS and could reach the toggle dynamically. Letting it translate through a
+ * path production devices cannot use would make the Simulator unrepresentative
+ * of the product it exists to stand in for.
  */
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT)
-#if TARGET_OS_SIMULATOR
-using JitWriteProtect = void (*)(int);
-
-const JitWriteProtect simulator_write_protect =
-	reinterpret_cast<JitWriteProtect>(
-		dlsym(RTLD_DEFAULT, "pthread_jit_write_protect_np"));
-
-void jit_write_protect(int enable) noexcept
-{
-	if (simulator_write_protect != nullptr)
-		simulator_write_protect(enable);
-}
-
-bool jit_publication_supported() noexcept
-{
-	return simulator_write_protect != nullptr;
-}
-#elif !defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
+#if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT) && \
+	!defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
 void jit_write_protect(int enable) noexcept
 {
 	pthread_jit_write_protect_np(enable);
@@ -55,14 +37,6 @@ constexpr bool jit_publication_supported() noexcept
 {
 	return true;
 }
-#else
-constexpr void jit_write_protect(int) noexcept {}
-
-constexpr bool jit_publication_supported() noexcept
-{
-	return false;
-}
-#endif
 #else
 constexpr void jit_write_protect(int) noexcept {}
 
