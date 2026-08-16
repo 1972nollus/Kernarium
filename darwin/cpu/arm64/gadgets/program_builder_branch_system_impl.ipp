@@ -421,7 +421,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				emit(words, static_cast<std::uintptr_t>(
 					source * sizeof(std::uint64_t)));
 			emit(words, address);
-		} else if (operation == 0xd50b'7b20U) {
+		} else if (operation == 0xd50b'7b20U ||
+			   operation == 0xd50b'7e20U) {
 			/* Guest writes already update the coherent backing. */
 			emit(words, uml_arm64_gadget_nop);
 		} else if (operation == 0xd50b'7520U) {

@@ -322,6 +322,8 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::cache_maintenance}, // dc zva, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7b20U,
 			&Dispatcher::cache_maintenance}, // dc cvau, Xt
+		DecodeEntry{0xffff'ffe0U, 0xd50b'7e20U,
+			&Dispatcher::cache_maintenance}, // dc civac, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7520U,
 			&Dispatcher::cache_maintenance}, // ic ivau, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd508'77a0U,

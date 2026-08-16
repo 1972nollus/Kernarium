@@ -104,6 +104,27 @@ void guest_jit_code_invalidation()
 	require(registers.x[0] == 2);
 }
 
+void coherent_data_cache_maintenance_retires()
+{
+	constexpr unsigned long generation = 4052;
+	constexpr std::uint64_t base = 0x79'0000;
+	JitBacking backing{1};
+	backing.put32(0, 0xd50b'7e2cU); // dc civac, x12
+	backing.put32(4, 0x9100'0400U); // add x0, x0, #1
+	backing.put32(8, 0xd400'0001U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.pc = base;
+	registers.x[0] = 6;
+	registers.x[12] = 0x1234'5678;
+
+	require(enter_jit(registers, fp, generation) ==
+		DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 12);
+	require(registers.x[0] == 7);
+}
+
 void guest_code_synchronization_instruction_invalidates_jit()
 {
 	constexpr unsigned long generation = 4051;
@@ -565,6 +586,7 @@ int main()
 	inline_tlb_and_cross_page_fallback();
 	write_fault_is_precise();
 	guest_jit_code_invalidation();
+	coherent_data_cache_maintenance_retires();
 	guest_code_synchronization_instruction_invalidates_jit();
 	cross_vcpu_store_invalidates_jit_reservation();
 	reservation_contention_keeps_native_store_block();

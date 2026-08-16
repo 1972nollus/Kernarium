@@ -66,7 +66,7 @@ int main()
 	all_named_operations_and_sources(harness);
 	constexpr std::size_t cases =
 		(operations::dc_operations.size() - 1U) * 32U;
-	/* Seven non-ZVA baseline operations cannot be feature-skipped. */
-	operations::require_mandatory_jit(harness, cases, 7U * 32U);
+	/* Eight non-ZVA baseline operations cannot be feature-skipped. */
+	operations::require_mandatory_jit(harness, cases, 8U * 32U);
 	harness.print_summary("arm64-base-dc-operations");
 }

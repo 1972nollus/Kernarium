@@ -395,9 +395,10 @@ RunResult Dispatcher::cache_maintenance(CpuState &cpu, GuestMemory &memory,
 	}
 
 	/* Guest data writes already update the single coherent physical backing.
-	 * DC CVAU therefore needs only an ordering edge.  IC IVAU additionally
-	 * invalidates translated instruction blocks so self-modifying code becomes
-	 * visible at the same architectural synchronization point as on arm64.
+	 * DC CVAU and DC CIVAC therefore need only an ordering edge. IC IVAU
+	 * additionally invalidates translated instruction blocks so self-modifying
+	 * code becomes visible at the same architectural synchronization point as
+	 * on arm64.
 	 */
 	std::atomic_thread_fence(std::memory_order_seq_cst);
 	if (operation == 0xd50b'7520U)

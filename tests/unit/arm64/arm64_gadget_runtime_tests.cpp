@@ -71,6 +71,31 @@ void data_only_stream_and_execution_boundary()
 	require(!uml::testing::process_has_writable_executable_region());
 }
 
+void coherent_data_cache_maintenance_retires()
+{
+	constexpr std::uint64_t base = 0x6000;
+	constexpr std::array instructions{
+		0xd50b'7e2cU, // dc civac, x12
+		0x9100'0400U, // add x0, x0, #1
+		0xd400'0001U, // svc #0
+	};
+	const auto built = gadgets::Builder{}.build(base, instructions);
+	require(built.complete);
+	require(built.program.instruction_count() == instructions.size());
+	require_data_only(built.program);
+
+	uml::cpu::arm64::CpuState cpu{};
+	cpu.pc = base;
+	cpu.registers[0] = 6;
+	cpu.registers[12] = 0x1234'5678;
+	auto tlb = std::make_unique<::uml::memory::Tlb>();
+	tlb->prepare(0, darwin_uml_static_vm_changes(0));
+	require(gadgets::execute(built.program, cpu, *tlb) ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.pc == base + instructions.size() * sizeof(std::uint32_t));
+	require(cpu.registers[0] == 7);
+}
+
 void code_synchronization_is_a_precise_execution_boundary()
 {
 	char path[] = "/private/tmp/uml-gadget-code-sync-test.XXXXXX";
@@ -307,6 +332,7 @@ void mapped_memory_runtime_boundaries()
 int main()
 {
 	data_only_stream_and_execution_boundary();
+	coherent_data_cache_maintenance_retires();
 	code_synchronization_is_a_precise_execution_boundary();
 	mapped_memory_runtime_boundaries();
 	return 0;

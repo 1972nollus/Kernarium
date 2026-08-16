@@ -245,6 +245,31 @@ void code_invalidation_is_forwarded_to_memory_adapter()
 	require(memory.reads() == 0);
 }
 
+void coherent_data_cache_maintenance_retires()
+{
+	constexpr std::uint64_t base = 0x5800;
+	constexpr std::uint32_t clean_to_unification_x12 = 0xd50b'7b2cU;
+	constexpr std::uint32_t clean_invalidate_to_coherency_x12 =
+		0xd50b'7e2cU;
+	ProbeMemory memory{base, 4};
+	arm64::CpuState cpu{};
+	cpu.pc = base;
+	cpu.registers[12] = 0x1234'5678;
+
+	for (const auto instruction :
+	     {clean_to_unification_x12, clean_invalidate_to_coherency_x12}) {
+		const auto prior_pc = cpu.pc;
+		const auto result =
+			arm64::Dispatcher{}.execute(cpu, memory, instruction);
+		require(result.reason == arm64::StopReason::continued);
+		require(result.instructions == 1);
+		require(cpu.pc == prior_pc + sizeof(instruction));
+	}
+	require(memory.invalidations().empty());
+	require(memory.fetches() == 0);
+	require(memory.reads() == 0);
+}
+
 void deferred_simd_load_store_uses_coherent_state()
 {
 	constexpr std::uint64_t base = 0x6000;
@@ -371,6 +396,7 @@ int main()
 	instruction_failures_keep_distinct_internal_diagnostics();
 	fetch_fault_preserves_precise_diagnostic_state();
 	code_invalidation_is_forwarded_to_memory_adapter();
+	coherent_data_cache_maintenance_retires();
 	deferred_simd_load_store_uses_coherent_state();
 	deferred_fp_control_status_reads_and_writes_persist();
 	return 0;

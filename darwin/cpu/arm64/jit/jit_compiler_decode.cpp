@@ -261,7 +261,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emit_cache_zero(instruction, pc);
       return Action::keep_going;
     }
-    if ((instruction & 0xffff'ffe0U) == 0xd50b'7b20U)
+    if ((instruction & 0xffff'ffe0U) == 0xd50b'7b20U ||
+        (instruction & 0xffff'ffe0U) == 0xd50b'7e20U)
       return Action::keep_going;
     if ((instruction & 0xffff'ffe0U) == 0xd50b'7520U) {
       emit_code_synchronize(instruction, pc, resulting_count);

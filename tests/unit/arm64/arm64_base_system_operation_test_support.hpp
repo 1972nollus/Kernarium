@@ -162,7 +162,7 @@ inline constexpr std::array dc_operations{
 	DcOperation{"cgdvadp", 0b011, 0b1101, 0b101,
 		Requirement::mte, false},
 	DcOperation{"civac", 0b011, 0b1110, 0b001,
-		Requirement::baseline, false},
+		Requirement::baseline, true},
 	DcOperation{"cigvac", 0b011, 0b1110, 0b011,
 		Requirement::mte, false},
 	DcOperation{"cigdvac", 0b011, 0b1110, 0b101,
