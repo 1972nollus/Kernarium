@@ -432,6 +432,22 @@ struct NativeDisplayState final :
         state->sendModifier(event);
 }
 
+/* Whether an event landed on the guest surface.
+ *
+ * The window accepts moved events while it is key, so motion over the title bar
+ * -- or anywhere else in the window that is not this view -- is still delivered
+ * here. sendPointer clamps the position into the view, which turns such an event
+ * into a real guest movement pinned to the edge, so the guest pointer slides
+ * along the border while the cursor is outside. Positions that did not land on
+ * the surface therefore have to be dropped rather than clamped.
+ */
+- (BOOL)pointerLandedOnSurface:(NSEvent*)event
+{
+    const NSPoint location = [self convertPoint:event.locationInWindow
+                                       fromView:nil];
+    return NSMouseInRect(location, self.bounds, self.isFlipped);
+}
+
 - (void)sendPointerEvent:(NSEvent*)event
 {
     if (auto state = _state.lock()) {
@@ -452,13 +468,31 @@ struct NativeDisplayState final :
 - (void)rightMouseUp:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)otherMouseDown:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)otherMouseUp:(NSEvent*)event { [self sendPointerEvent:event]; }
-- (void)mouseMoved:(NSEvent*)event { [self sendPointerEvent:event]; }
+/* Hover motion is the only pointer input with no press behind it, so it is the
+ * one that must stop at the edge of the surface. A drag is exempt: it is
+ * anchored to a press that did land on the surface, and dropping its motion
+ * would also drop the release that ends it, leaving the guest with a button
+ * held down for good.
+ */
+- (void)mouseMoved:(NSEvent*)event
+{
+    if (![self pointerLandedOnSurface:event])
+        return;
+    [self sendPointerEvent:event];
+}
+
 - (void)mouseDragged:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)rightMouseDragged:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)otherMouseDragged:(NSEvent*)event { [self sendPointerEvent:event]; }
 
 - (void)scrollWheel:(NSEvent*)event
 {
+    /* A scroll carries the cursor position too, so one delivered from outside
+     * the surface would move the guest pointer to the clamped edge as well as
+     * scrolling.
+     */
+    if (![self pointerLandedOnSurface:event])
+        return;
     if (auto state = _state.lock()) {
         const NSPoint location = [self convertPoint:event.locationInWindow
                                            fromView:nil];
