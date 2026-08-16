@@ -487,6 +487,31 @@ void cross_page_fault_atomicity(engine_tests::EngineHarness &harness)
 	}
 }
 
+/* Every other fault case above addresses through a general register. A
+ * frame-saving prologue instead stores through SP itself, which is the shape a
+ * guest hits when its stack has grown into an unmapped guard page, so keep the
+ * SP-based encoding pinned to the same precise write fault. */
+void stack_pointer_base_fault_is_precise(engine_tests::EngineHarness &harness)
+{
+	constexpr auto instruction =
+		pair_test::pair(2, false, false, 2, 4, 31, 19, 20);
+	static_assert(instruction == 0xa902'53f3U); // stp x19, x20, [sp, #32]
+	const auto boundary = pair_test::data_base + pair_test::page_size;
+	auto memory = std::vector<std::byte>(pair_test::page_size);
+	pair_test::fill_memory(memory, 0xe7U);
+	auto initial = pair_test::seeded_state(0x6000'0000'0000'0000ULL);
+	initial.sp = boundary - 32U;
+	pair_test::check_memory(
+		harness, "stp sp-relative fault", instruction,
+		initial, initial, engine_tests::NativeRequirements::baseline(), memory,
+		{}, engine_tests::ExpectedEvent::memory_fault,
+		{
+			.address = boundary,
+			.access = arm64::MemoryAccess::write,
+		},
+		true);
+}
+
 void stack_alignment_faults(engine_tests::EngineHarness &harness)
 {
 	for (unsigned variant_index = 0; variant_index < variants.size();
@@ -537,6 +562,7 @@ int main()
 	base_transfer_overlap_choices(harness);
 	cross_page_success(harness);
 	cross_page_fault_atomicity(harness);
+	stack_pointer_base_fault_is_precise(harness);
 	stack_alignment_faults(harness);
 	harness.print_summary("arm64-base-load-store-pair");
 }
