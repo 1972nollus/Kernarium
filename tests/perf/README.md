@@ -102,7 +102,7 @@ and host-core use between two diagnostic captures.
 assembly payloads in this directory. Each row records the mechanism measured,
 minimum guest instruction feature, common runner, and why the probe remains a
 useful control. The inventory is intentionally conservative: history and
-source inspection found a distinct purpose for all 45 payloads, so none was
+source inspection found a distinct purpose for all 47 payloads, so none was
 removed merely because its filename was not referenced by another source
 file. The source-tree audit requires a one-to-one match between the inventory
 and `guest_*.S`, validates the self-checking entry-point contract, and requires
@@ -171,6 +171,20 @@ forcing the gadget executor to validate or rebuild its cached programs. The matc
 `guest_gadget_code_invalidation_control_loop.S` substitutes DC CVAU, retaining
 the same cache-maintenance execution boundary without advancing that sequence.
 Compare both probes in separate OFF and ON build trees.
+
+`guest_gadget_link_population_loop.S` measures how the link reset scales with
+the size of the translated code rather than with the timed loop. Its guest walks
+a chain of 4096 distinct single-branch blocks once, leaving that many named
+branch targets in the link table, and only then enters the same IC IVAU loop as
+`guest_gadget_code_invalidation_loop.S`. The two probes differ only in that
+standing population, which is what separates the cost of walking every record
+from the cost of walking the records that hold an activation.
+`guest_gadget_link_population_control_loop.S` builds the same population and
+substitutes DC CVAU, so it holds the chain walk fixed while removing the
+sequence advance that triggers a reset; a change to the reset scope must move
+the sensitive probe and leave the control still. Each block branches to the
+instruction before it so the target always falls behind the translator's forward
+fetch window and has to become a link instead of being folded into the block.
 
 `guest_fixed_x8_x9_link_loop.S` is the sensitive probe for the default-off
 JIT x8/x9 cross-block carry experiment: its linked loop keeps exactly guest

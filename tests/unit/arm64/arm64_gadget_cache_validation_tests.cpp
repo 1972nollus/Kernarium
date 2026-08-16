@@ -150,11 +150,79 @@ void changed_words_rebuild_and_republish_links()
 #endif
 }
 
+/* A code change resets every activation, not only the ones it touched.
+ *
+ * The guest code-change sequence carries no range, so a change anywhere has to
+ * be treated as a change everywhere. This invalidates a page that holds none of
+ * the executed code and leaves every word intact, then requires the successor
+ * link to have been dropped all the same: the linked run must fall back to
+ * exiting at its successor instead of continuing into it.
+ *
+ * The reset walks only the records that hold an activation rather than every
+ * record ever created, so this also pins that the narrower walk still reaches a
+ * record the change did not name.
+ */
+void an_unrelated_code_change_resets_an_untouched_link()
+{
+	constexpr unsigned long generation = 922;
+	constexpr auto target = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, branch(code_base, target));
+	backing.put32(target - code_base, move_immediate(0, 5));
+	backing.put32(target - code_base + 4, system_call);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+
+	arm64::CpuState cpu{};
+	cpu.pc = target;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	cpu = {};
+	cpu.pc = code_base;
+	const auto linked = run_once(executor, memory, generation, cpu);
+	require(linked.event == ::uml::cpu::EngineEvent::system_call);
+	require(linked.executed == 3);
+	require(cpu.registers[0] == 5);
+
+	darwin_uml_static_vm_invalidate_code(
+		code_base + DARWIN_UML_GUEST_PAGE_SIZE);
+	cpu = {};
+	cpu.pc = code_base;
+	const auto reset_link = run_once(executor, memory, generation, cpu);
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+	require(reset_link.event == ::uml::cpu::EngineEvent::continued);
+	require(reset_link.executed == 1);
+	require(cpu.pc == target);
+#endif
+
+	/* The words never changed, so both blocks revalidate and relink rather
+	 * than retranslating.
+	 */
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	cpu = {};
+	cpu.pc = code_base;
+	const auto relinked = run_once(executor, memory, generation, cpu);
+	require(relinked.event == ::uml::cpu::EngineEvent::system_call);
+	require(relinked.executed == 3);
+	require(cpu.registers[0] == 5);
+	const auto diagnostics = executor.cache_diagnostics();
+#if UML_GADGET_EXACT_CACHE_VALIDATION
+	require(diagnostics.translations == 2);
+	require(diagnostics.validation_hits == diagnostics.validation_attempts);
+	require(diagnostics.validation_mismatches == 0);
+#else
+	require(diagnostics.validation_attempts == 0);
+#endif
+}
+
 } // namespace
 
 int main()
 {
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
+	an_unrelated_code_change_resets_an_untouched_link();
 	return 0;
 }

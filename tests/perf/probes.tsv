@@ -13,6 +13,8 @@ guest_fp_polymorphic_indirect_loop.S	floating-state	base	run_guest_link_bench.py
 guest_gadget_polymorphic_successor_loop.S	control-flow	base	run_guest_link_bench.py	Cycles one ADD-immediate gadget's indirect dispatch through eight distinct successor gadget families to isolate G107's early-target-fetch hypothesis.
 guest_gadget_code_invalidation_control_loop.S	control-flow	base	run_guest_link_bench.py	Matched DC-CVAU execution-boundary control for exact gadget-cache validation without advancing the guest code-change sequence.
 guest_gadget_code_invalidation_loop.S	control-flow	base	run_guest_link_bench.py	Uses IC IVAU on unchanged code every iteration to measure exact reuse of stale gadget programs after the guest code-change sequence advances.
+guest_gadget_link_population_loop.S	control-flow	base	run_guest_link_bench.py	Walks a chain of thousands of distinct single-branch blocks once so the link table carries a standing population, then runs the IC IVAU loop. The other invalidation probe names only a handful of targets, so it cannot measure how the link reset scales with translated code.
+guest_gadget_link_population_control_loop.S	control-flow	base	run_guest_link_bench.py	Matched DC-CVAU control for the link-population probe: same chain walk and same execution boundary without advancing the guest code-change sequence.
 guest_gpr_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page scalar memory runs through an allocated base register.
 guest_indirect_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures monomorphic indirect-call and return successor linking.
 guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.

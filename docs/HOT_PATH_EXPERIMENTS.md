@@ -8943,3 +8943,86 @@ changed range, or replacing the eager reset with the activation-epoch scheme the
 JIT link table already uses, would attack the reactivation rate rather than the
 per-reactivation cost. Both are worth more than this change and both need
 range-carrying invalidation the guest ABI does not currently supply.
+
+Correction, same date. The last sentence is wrong on the mechanics. Range is
+not the only way to shrink that reset: scoping it by activation needs no ABI
+change at all. G159 built it, measured it, and rejected it for a different and
+better reason -- the cost it removes is too small a share of the workload to
+matter.
+
+## G159: scoping the gadget link reset by activation -- rejected
+
+Dated 2026-08-16. Measured and reverted. The mechanism improvement is real and
+the workload improvement does not exist; the gap between those two statements is
+the entry.
+
+G158 set `invalidate_links` aside on the reasoning that attacking it needed
+range-carrying invalidation the guest ABI does not supply. That reasoning was
+wrong. The reset can be scoped by *activation* instead of by range, with no ABI
+change, because only a record that was activated since the last reset can differ
+from the reset state. `links_` accumulates a record for every branch target the
+translator ever named, whether or not it was executed, while only a resident
+block holds an activation, so the two scopes are far apart.
+
+Temporary instrumentation on a disposable build counted both populations at
+every call, on macOS with the gadget engine:
+
+| Workload | Calls | `links_` mean | activated mean | peak `links_` | indirect mean | activated mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Aquarium, 1536 MiB, 4 vCPU, 175 s | 143360 | 3719 | 324 | 70958 | 372 | 47 |
+| Geekbench single-core preamble, 2 vCPU, ~7 min | 2048 | 12704 | 98 | 21431 | 1188 | 13 |
+
+Aquarium pays about 820 resets a second at a ratio near eleven; Geekbench's
+ratio is 130 but it advances the sequence about seventy times less often.
+
+`guest_gadget_code_invalidation_loop` cannot see this at all -- its guest names a
+handful of targets -- and an ABBA over four runs an arm confirmed that, at
+0.699/0.708/0.707/0.697 against 0.703/0.708/0.711/0.703, fully overlapping. The
+probe pair added here does see it. `guest_gadget_link_population_loop` walks a
+chain of 4096 distinct single-branch blocks once, leaving that many named
+targets behind, then runs the identical IC IVAU loop;
+`guest_gadget_link_population_control_loop` builds the same population and
+substitutes DC CVAU. ABBA, four runs an arm, seven repetitions a run, medians:
+
+| Arm | Sensitive probe | Control probe |
+| --- | ---: | ---: |
+| walk every record | 0.2355 s mean, 0.233--0.240 | 0.0190 s |
+| walk activated records | 0.0867 s mean, 0.086--0.087 | 0.0187 s |
+
+2.71x on the probe with no overlap, and 3.18x on the reset alone once the
+control is subtracted. Both unit profiles passed with the change applied,
+575 + 49 and 576.
+
+None of that reached the workload. WebGL Aquarium on the macOS native display at
+the matched 440x860 and 160 DPI geometry, ABBA, gadgets, 1536 MiB, four vCPUs:
+
+| Run | Arm | Plateau | Stable after page load |
+| --- | --- | ---: | ---: |
+| 1 | without | 8.10 fps | 90.2 s |
+| 2 | with | 8.35 fps | 130.5 s |
+| 3 | with | 8.10 fps | 75.1 s |
+| 4 | without | 8.20 fps | 40.5 s |
+
+8.15 against 8.225 on the plateau, a 0.9% difference smaller than the spread
+between the two runs of either arm, and time-to-stable varies by about 50 s
+within an arm, which is larger than any between-arm difference. The page reports
+whole-number FPS, so nothing below a few percent is resolvable here in any case.
+
+The arithmetic explains the null result and should have been done first.
+143360 resets removing roughly 3400 node visits each is about 487 million visits
+over the run; at a couple of nanoseconds apiece that is around one second of CPU
+against the roughly 700 core-seconds the measured window spends on four vCPUs.
+The change makes 0.14% of the workload three times cheaper. A probe that
+isolates a mechanism reports the mechanism's own cost as 100% of its runtime,
+which is exactly why an isolated probe result must be converted into a share of
+the target workload before it justifies anything.
+
+Disposition: reject, reverted. The probe pair and
+`an_unrelated_code_change_resets_an_untouched_link` are kept. The probes make
+the mechanism measurable for anyone who returns to it, and the test pins a
+G140/G141 property that had no coverage -- that a code change resets links on
+pages it never touched -- which passes on unmodified code and is independent of
+the rejected change. The standing lesson is that `invalidate_links` is cheap in
+absolute terms no matter how badly it scales, so link-table work is not where
+gadget-engine time goes; `activate` and its callees, which G157 ranked as the
+largest self-time frame on both products, remain the evidenced target.
