@@ -102,7 +102,7 @@ and host-core use between two diagnostic captures.
 assembly payloads in this directory. Each row records the mechanism measured,
 minimum guest instruction feature, common runner, and why the probe remains a
 useful control. The inventory is intentionally conservative: history and
-source inspection found a distinct purpose for all 47 payloads, so none was
+source inspection found a distinct purpose for all 49 payloads, so none was
 removed merely because its filename was not referenced by another source
 file. The source-tree audit requires a one-to-one match between the inventory
 and `guest_*.S`, validates the self-checking entry-point contract, and requires
@@ -185,6 +185,17 @@ sequence advance that triggers a reset; a change to the reset scope must move
 the sensitive probe and leave the control still. Each block branches to the
 instruction before it so the target always falls behind the translator's forward
 fetch window and has to become a link instead of being folded into the block.
+
+`guest_gadget_reindex_loop.S` measures the stream index walk a reactivation
+performs, which scales with the size of the translated program rather than with
+the work the guest asked for. Its timed body is a full translation block of
+register-only integer arithmetic, so one IC IVAU per iteration reactivates a
+program spanning many index granules; the other invalidation probes time a
+four-instruction block that spans one or two, where the walk rounds away.
+`guest_gadget_reindex_control_loop.S` is the same block with DC CVAU, which
+holds the instruction mix and execution boundary fixed while leaving the
+code-change sequence alone, so the block stays linked and is never reactivated.
+Compare both probes in separate OFF and ON build trees.
 
 `guest_fixed_x8_x9_link_loop.S` is the sensitive probe for the default-off
 JIT x8/x9 cross-block carry experiment: its linked loop keeps exactly guest

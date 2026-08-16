@@ -8944,11 +8944,33 @@ JIT link table already uses, would attack the reactivation rate rather than the
 per-reactivation cost. Both are worth more than this change and both need
 range-carrying invalidation the guest ABI does not currently supply.
 
-Correction, same date. The last sentence is wrong on the mechanics. Range is
-not the only way to shrink that reset: scoping it by activation needs no ABI
-change at all. G159 built it, measured it, and rejected it for a different and
-better reason -- the cost it removes is too small a share of the workload to
-matter.
+Correction, same date. Both candidates in this paragraph were wrong, for
+different reasons.
+
+The `invalidate_links` mechanics are wrong: range is not the only way to shrink
+that reset, and scoping it by activation needs no ABI change at all. G159 built
+that, measured it, and rejected it because the cost removed is too small a share
+of the workload to matter -- though G160 later made the same scoping worthwhile,
+because keeping several address spaces resident grows `links_` enough that the
+reset does become expensive.
+
+The `index_stream` rejection is wrong outright. An evicted stream index entry
+would not be stranded, because the eviction is observable where it happens: the
+evicting pass clears the victim's marker and the victim rebuilds its entries at
+its own next activation, which is exactly when an unconditional walk would have
+rebuilt them. Index coverage is identical, so nothing is traded. Measured on
+`guest_gadget_reindex_loop`, which reactivates a full-size translated block
+every iteration, ABBA over four runs an arm at seven repetitions:
+
+| Arm | Sensitive probe | Control probe |
+| --- | ---: | ---: |
+| unconditional re-index | 0.46025 s, 0.459--0.461 | 0.13725 s |
+| skip when unchanged | 0.40975 s, 0.408--0.411 | 0.13725 s |
+
+10.97% on the probe with no overlap between arms, 15.6% once the control is
+subtracted, and the control identical to the millisecond across all eight runs.
+Targeted single-core Geekbench was flat, as expected for a workload that
+reactivates little. The guard shipped with the cache work in G160.
 
 ## G159: scoping the gadget link reset by activation -- rejected
 
