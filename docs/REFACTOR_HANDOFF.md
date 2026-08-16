@@ -1,5 +1,29 @@
 # Refactor handoff
 
+## Guest namespaces restored, and a config guard (2026-08-17)
+
+The shipped kernel had no namespaces at all. `CONFIG_EXPERT=y` makes
+`NAMESPACES` a visible prompt whose default becomes `n` (`default !EXPERT` in
+`init/Kconfig`), and `common.fragment` never named it, so `olddefconfig`
+silently discarded the `CONFIG_USER_NS` and `CONFIG_TIME_NS` the fragment did
+ask for and took PID, network, UTS and IPC with them. The guest had only
+`/proc/<pid>/ns/{mnt,cgroup}`, no `uid_map`, and `unshare` returned `EINVAL`.
+
+`guest-overlay-systemd-smoke` failed on both page profiles because of it:
+dockerd stats `/proc/<pid>/ns/pid` while initializing buildkit, exits 1, and
+`docker.service` never reaches active. The fragment now names
+`CONFIG_NAMESPACES=y`, both profiles rebuilt, and that test passes in 33 s.
+
+`verify_config_fragment` in `kernel/build-kernel.sh` now compares both
+fragments against the resolved `.config` after `olddefconfig` and fails the
+build on any divergence, so this class cannot recur silently. Applying it
+found two more: `CONFIG_HZ_100` and its three companion choice symbols never
+existed for this port, because UML declares its own integer `CONFIG_HZ` and
+never sources `kernel/Kconfig.hz`; and `# CONFIG_DEBUG_KERNEL is not set` was
+unachievable because `EXPERT` selects it. Both are corrected in the fragment,
+and `darwin-vcpu-carrier-policy` now pins the real single `CONFIG_HZ=100`
+setting and rejects the choice symbols.
+
 ## EL0 identification-register emulation (2026-08-16)
 
 Guest `AT_HWCAP` now advertises `HWCAP_CPUID`, and all three engines emulate

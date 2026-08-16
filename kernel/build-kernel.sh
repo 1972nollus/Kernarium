@@ -205,6 +205,69 @@ apply_config_fragment()
 	done < "$fragment"
 }
 
+# `olddefconfig` resolves a requested symbol against its dependencies in
+# silence.  A symbol whose menu is closed is simply dropped, and one that
+# another symbol selects is force-enabled, so a fragment can disagree with
+# every kernel it produces without anything saying so.  CONFIG_NAMESPACES
+# defaulting off under EXPERT cost USER_NS and TIME_NS that way, and the guest
+# lost every namespace while the fragment still claimed two of them.  Compare
+# what was asked for against what the resolved configuration actually holds.
+verify_config_fragment()
+{
+	fragment=$1
+	mismatches=$(awk -v config="$BUILD_DIR/.config" '
+	function record(symbol, wanted, got) {
+		problems = problems sprintf("  %s: requested %s, resolved %s\n",
+			symbol, wanted, got)
+		count++
+	}
+	BEGIN {
+		while ((getline line < config) > 0) {
+			if (match(line, /^CONFIG_[A-Za-z0-9_]+=/)) {
+				split(line, parts, "=")
+				built[parts[1]] = substr(line, index(line, "=") + 1)
+			} else if (match(line,
+				/^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
+				split(line, parts, " ")
+				built[parts[2]] = "n"
+			}
+		}
+		close(config)
+	}
+	/^#/ && !/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { next }
+	/^$/ { next }
+	{
+		if (match($0, /^CONFIG_[A-Za-z0-9_]+=/)) {
+			symbol = substr($0, 1, index($0, "=") - 1)
+			wanted = substr($0, index($0, "=") + 1)
+		} else if (match($0, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
+			symbol = $2
+			wanted = "n"
+		} else {
+			next
+		}
+		# An absent symbol is one whose dependencies were never met.
+		got = (symbol in built) ? built[symbol] : "n"
+		if (got == wanted)
+			next
+		# A .config records a disabled symbol as a comment or omits it,
+		# so both spellings of "off" agree.
+		if (wanted == "n" && !(symbol in built))
+			next
+		record(symbol, wanted, (symbol in built) ? got : "absent")
+	}
+	END {
+		if (count > 0)
+			printf "%s", problems
+	}
+	' "$fragment")
+	[ -z "$mismatches" ] || {
+		printf '%s\n' "kernel/build-kernel.sh: $fragment did not survive olddefconfig:" >&2
+		printf '%s\n' "$mismatches" >&2
+		fail "kernel configuration does not match its fragment"
+	}
+}
+
 case "$PAGE_SIZE" in
 16k)
 	CONFIG_FRAGMENT="$CONFIG_DIR/page-16k.fragment"
@@ -218,6 +281,8 @@ esac
 cp "$CONFIG_DIR/common.fragment" "$BUILD_DIR/.config"
 apply_config_fragment "$CONFIG_FRAGMENT"
 run_make olddefconfig
+verify_config_fragment "$CONFIG_DIR/common.fragment"
+verify_config_fragment "$CONFIG_FRAGMENT"
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"

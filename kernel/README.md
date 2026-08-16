@@ -121,6 +121,25 @@ kernel/config/page-16k.fragment  guest page size, default
 kernel/config/page-4k.fragment   guest page size, compatibility profile
 ```
 
+`olddefconfig` resolves a requested symbol against its dependencies in
+silence. One whose menu is closed is dropped, and one that another symbol
+selects is force-enabled, so a fragment can disagree with every kernel it
+produces without anything reporting it. `verify_config_fragment` in
+`build-kernel.sh` therefore compares both fragments against the resolved
+`.config` after `olddefconfig` and fails the build on any divergence. Treat a
+failure as a fragment defect: either the request is unsatisfiable and should be
+removed, or its missing dependency should be named explicitly.
+
+`CONFIG_EXPERT=y` is the reason that check exists. It makes `NAMESPACES` a
+visible prompt whose default becomes `n` (`default !EXPERT` in `init/Kconfig`),
+which silently discarded `CONFIG_USER_NS` and `CONFIG_TIME_NS` and left the
+guest with no PID, network, UTS or IPC namespace either; the fragment now names
+`CONFIG_NAMESPACES=y` explicitly. `EXPERT` also carries `select DEBUG_KERNEL`,
+so that symbol cannot be requested off. It gates no code of its own here; its
+only live consequences are `BPF_WARN_ONCE` in the BPF verifier's internal-bug
+path, `DEBUG_MISC` (netfilter's registration-time `hooks_validate()`), and
+`RCU_TRACE`, which is the only one with a hot-path cost worth naming.
+
 Guest page size is the only kernel policy axis that varies, because a single
 `.config` cannot hold both values. There is no optional Kconfig policy layer
 or address-space selector: a symbol absent from `common.fragment` is absent

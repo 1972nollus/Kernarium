@@ -119,7 +119,6 @@ def validate(
 
     for setting in (
         "CONFIG_PRINTK_TIME=y",
-        "CONFIG_HZ_100=y",
         "CONFIG_HZ=100",
         "CONFIG_NO_HZ_IDLE=y",
         "CONFIG_FONTS=y",
@@ -131,15 +130,27 @@ def validate(
             f"fixed-carrier kernel policy lacks {setting}",
         )
     for disabled in (
-        "CONFIG_HZ_250",
-        "CONFIG_HZ_300",
-        "CONFIG_HZ_1000",
         "CONFIG_HZ_PERIODIC",
         "CONFIG_NO_HZ_FULL",
     ):
         require(
             re.search(rf"(?m)^# {re.escape(disabled)} is not set$", config) is not None,
             f"fixed-carrier kernel policy does not disable {disabled}",
+        )
+    # UML declares its own integer CONFIG_HZ in arch/um/Kconfig and never
+    # sources kernel/Kconfig.hz, so the frequency-choice symbols other
+    # architectures use do not exist for this port. Requesting them looked like
+    # the tick was pinned in two places while only CONFIG_HZ ever applied; keep
+    # them out so the single real setting stays the only one.
+    for absent in (
+        "CONFIG_HZ_100",
+        "CONFIG_HZ_250",
+        "CONFIG_HZ_300",
+        "CONFIG_HZ_1000",
+    ):
+        require(
+            re.search(rf"(?m)^(# )?{re.escape(absent)}\b", config) is None,
+            f"kernel policy names {absent}, which this architecture lacks",
         )
     require(
         re.search(r"(?m)^CONFIG_KERNEL_STACK_ORDER=", config) is None,
