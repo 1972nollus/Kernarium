@@ -136,9 +136,14 @@ which silently discarded `CONFIG_USER_NS` and `CONFIG_TIME_NS` and left the
 guest with no PID, network, UTS or IPC namespace either; the fragment now names
 `CONFIG_NAMESPACES=y` explicitly. `EXPERT` also carries `select DEBUG_KERNEL`,
 so that symbol cannot be requested off. It gates no code of its own here; its
-only live consequences are `BPF_WARN_ONCE` in the BPF verifier's internal-bug
-path, `DEBUG_MISC` (netfilter's registration-time `hooks_validate()`), and
-`RCU_TRACE`, which is the only one with a hot-path cost worth naming.
+one direct effect is `BPF_WARN_ONCE` in the BPF verifier's internal-bug path.
+What it does do is default `DEBUG_MISC` and `RCU_TRACE` on, and the fragment
+turns both back off: `RCU_TRACE` ungates 116 `trace_rcu_*` sites that this port
+cannot patch to NOPs because it has no `CONFIG_JUMP_LABEL`, and `DEBUG_MISC`
+adds netfilter's registration-time `hooks_validate()`. Those three are the
+whole of `DEBUG_KERNEL`'s reach in this configuration; no other symbol depends
+on or defaults from it. The shipped profile should carry no diagnostic the
+configuration never requested, so treat a new one appearing the same way.
 
 Guest page size is the only kernel policy axis that varies, because a single
 `.config` cannot hold both values. There is no optional Kconfig policy layer

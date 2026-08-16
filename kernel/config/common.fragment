@@ -451,9 +451,20 @@ CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # CONFIG_DEBUG_KERNEL cannot be requested off here: EXPERT selects it
 # unconditionally (init/Kconfig), so asking for it produced a fragment that
 # disagreed with every kernel actually built.  It is a Kconfig menu gate that
-# compiles no code of its own.  Its only live effects in this configuration are
-# BPF_WARN_ONCE in the verifier's internal-bug path (include/linux/bpf.h) and
-# the DEBUG_MISC it defaults on, whose single applicable site is netfilter's
-# registration-time hooks_validate().  Neither is on a per-packet, per-syscall,
-# or per-instruction path, and no other symbol defaults on because of it.
+# compiles no code of its own; its one direct effect is BPF_WARN_ONCE in the
+# verifier's internal-bug path (include/linux/bpf.h).  What it does do is
+# default two other symbols on that nothing here asked for, and both are turned
+# back off below.  Those three are the whole of its reach: no other symbol in
+# the tree depends on or defaults from DEBUG_KERNEL in this configuration.
+# Netfilter's hooks_validate() is the only applicable DEBUG_MISC site and runs
+# at hook registration, so this costs little; it is off because the shipped
+# profile should carry no diagnostic the configuration never requested.
+# CONFIG_DEBUG_MISC is not set
+# RCU_TRACE is the one with a hot path.  It ungates 116 trace_rcu_* sites in
+# kernel/rcu, and with CONFIG_JUMP_LABEL absent for this port each is a load
+# and a branch rather than a patched NOP, on grace-period and callback work the
+# emulator pays for at emulation rates.  No A/B measured that cost; the reason
+# to drop it is that `default y if TREE_RCU` under a selected DEBUG_KERNEL is
+# the only thing that ever turned it on.
+# CONFIG_RCU_TRACE is not set
 # CONFIG_DEBUG_INFO is not set

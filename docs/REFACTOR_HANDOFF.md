@@ -24,6 +24,16 @@ unachievable because `EXPERT` selects it. Both are corrected in the fragment,
 and `darwin-vcpu-carrier-policy` now pins the real single `CONFIG_HZ=100`
 setting and rejects the choice symbols.
 
+`DEBUG_KERNEL` itself stays on because `EXPERT` selects it, but the two symbols
+it defaulted on that nothing requested are now off: `CONFIG_DEBUG_MISC` and
+`CONFIG_RCU_TRACE`. The second is the one with a hot path — it ungated 116
+`trace_rcu_*` sites, and this port has no `CONFIG_JUMP_LABEL` to patch them to
+NOPs — so 19 of the 21 `TRACE_EVENT_RCU` tracepoints now compile out and
+`vmlinux` is 11,104 bytes smaller. `rcu_utilization` and `rcu_stall_warning`
+use plain `TRACE_EVENT` and survive by design. No A/B measured the cost, and
+none is claimed: these were removed because a selected menu gate turned them
+on, not because a measurement asked for it.
+
 ## EL0 identification-register emulation (2026-08-16)
 
 Guest `AT_HWCAP` now advertises `HWCAP_CPUID`, and all three engines emulate
