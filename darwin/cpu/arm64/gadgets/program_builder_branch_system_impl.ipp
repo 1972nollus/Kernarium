@@ -399,6 +399,20 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		    (instruction & 31U) != 31U) {
 			emit(words, address + sizeof(instruction));
 		}
+	} else if (arm64::detail::emulated_id_register(instruction)) {
+		/* The identification registers Linux emulates for EL0 hold one
+		 * value for the whole process, so the read folds to the constant
+		 * store the translator already has for MOVZ. */
+		const unsigned destination = instruction & 31U;
+		if (destination == 31U) {
+			emit(words, uml_arm64_gadget_nop);
+		} else {
+			emit(words, uml_arm64_gadget_move_wide_constant);
+			emit(words, destination * sizeof(std::uint64_t));
+			emit(words, static_cast<std::uintptr_t>(
+				arm64::detail::emulated_id_register_value(
+					instruction)));
+		}
 	} else if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
 		   (instruction & 0xffd0'0000U) == 0xd550'0000U ||
 		   (instruction & 0xfff8'0000U) == 0xd548'0000U) {

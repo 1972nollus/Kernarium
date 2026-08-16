@@ -29,6 +29,7 @@ HWCAP_CRC32 = 1 << 7
 HWCAP_ATOMICS = 1 << 8
 HWCAP_FPHP = 1 << 9
 HWCAP_ASIMDHP = 1 << 10
+HWCAP_CPUID = 1 << 11
 HWCAP_ASIMDRDM = 1 << 12
 HWCAP_JSCVT = 1 << 13
 HWCAP_FCMA = 1 << 14
@@ -184,7 +185,11 @@ def main() -> int:
         auxv = auxiliary_vector(guest)
         actual_hwcap = auxv.get(16)
         actual_hwcap2 = auxv.get(26, 0)
-        expected = expected_hwcap(OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD)
+        # HWCAP_CPUID is unconditional, exactly as arm64 Linux advertises it:
+        # every engine emulates the EL0 identification-register reads.
+        expected = expected_hwcap(
+            OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD | HWCAP_CPUID
+        )
         probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
         if (
             actual_hwcap is None

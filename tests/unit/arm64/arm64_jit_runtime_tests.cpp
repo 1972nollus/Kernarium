@@ -3,6 +3,7 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "cpu/arm64/id_registers.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -123,6 +124,56 @@ void coherent_data_cache_maintenance_retires()
 		DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 12);
 	require(registers.x[0] == 7);
+}
+
+void emulated_identification_registers_read_sanitized_values()
+{
+	namespace detail = uml::cpu::arm64::detail;
+	constexpr unsigned long generation = 4053;
+	constexpr std::uint64_t base = 0x7a'0000;
+	constexpr std::uint64_t untouched = 0x5555'5555'5555'5555;
+	/* Only the fields AT_HWCAP also advertises may be set in
+	 * ID_AA64PFR0_EL1: FP, AdvSIMD and DIT. */
+	constexpr std::uint64_t advertised_processor_feature_fields =
+		0x000f'0000'00ff'0000ULL;
+	JitBacking backing{1};
+	backing.put32(0, 0xd538'0001U);  // mrs x1, midr_el1
+	backing.put32(4, 0xd538'00a2U);  // mrs x2, mpidr_el1
+	backing.put32(8, 0xd538'0400U);  // mrs x0, id_aa64pfr0_el1
+	backing.put32(12, 0xd538'061fU); // mrs xzr, id_aa64isar0_el1
+	backing.put32(16, 0xd400'0001U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.pc = base;
+	registers.x[3] = untouched;
+
+	require(enter_jit(registers, fp, generation) ==
+		DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 20);
+	require(registers.x[1] == detail::emulated_midr_el1);
+	require(registers.x[2] == detail::emulated_mpidr_el1);
+	require((registers.x[0] &
+		~advertised_processor_feature_fields) == 0);
+	require(registers.x[3] == untouched);
+}
+
+void unemulated_identification_register_is_illegal()
+{
+	constexpr unsigned long generation = 4054;
+	constexpr std::uint64_t base = 0x7b'0000;
+	JitBacking backing{1};
+	backing.put32(0, 0xd538'0104U); // mrs x4, id_pfr0_el1
+	backing.put32(4, 0xd400'0001U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	darwin_uml_guest_registers registers{};
+	darwin_uml_guest_fp_registers fp{};
+	registers.pc = base;
+
+	require(enter_jit(registers, fp, generation) ==
+		DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+	require(registers.pc == base);
+	require(registers.x[4] == 0);
 }
 
 void guest_code_synchronization_instruction_invalidates_jit()
@@ -587,6 +638,8 @@ int main()
 	write_fault_is_precise();
 	guest_jit_code_invalidation();
 	coherent_data_cache_maintenance_retires();
+	emulated_identification_registers_read_sanitized_values();
+	unemulated_identification_register_is_illegal();
 	guest_code_synchronization_instruction_invalidates_jit();
 	cross_vcpu_store_invalidates_jit_reservation();
 	reservation_contention_keeps_native_store_block();

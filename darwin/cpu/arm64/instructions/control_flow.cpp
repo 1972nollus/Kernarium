@@ -4,6 +4,7 @@
 #include "../detail/host_counter.hpp"
 #include "../detail/instruction_helpers.hpp"
 #include "../detail/pointer_auth.hpp"
+#include "../id_registers.hpp"
 
 #include <array>
 #include <atomic>
@@ -309,6 +310,10 @@ RunResult Dispatcher::system_register(CpuState &cpu, GuestMemory &,
 	else if (system_register == 0xd51b'42a0U)
 		cpu.pstate_dit =
 			(cpu.read_register(transfer, false) & 0x0100'0000ULL) != 0;
+	else if (detail::emulated_id_register(instruction))
+		cpu.write_register(
+			transfer, detail::emulated_id_register_value(instruction),
+			false);
 	else
 		return {StopReason::illegal_instruction, address, instruction, 0,
 			false};

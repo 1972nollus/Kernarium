@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_system_test_support.hpp"
 
+#include "cpu/arm64/id_registers.hpp"
+
 #include <array>
 #include <cstdlib>
 #include <optional>
@@ -33,7 +35,9 @@ namespace {
 	})
 		if (system == value)
 			return true;
-	return false;
+	/* The identification registers arm64 Linux emulates for EL0 rather than
+	 * letting the undefined-instruction exception reach the guest. */
+	return uml::cpu::arm64::detail::emulated_id_register(instruction);
 }
 
 void complete_allocation(
@@ -64,7 +68,10 @@ void named_inaccessible_registers(test::Harness &harness)
 {
 	/* CurrentEL is privileged. CNTPCT_EL0 is gated off while CNTVCT_EL0 is the
 	 * profile's userspace counter. SME/RNG/context-number registers are absent,
-	 * and control/ID registers remain privileged. */
+	 * and control registers remain privileged. The identification registers are
+	 * the one group EL0 may read, and only because Linux emulates them: a write
+	 * to one, the AArch32 group Linux excludes, and the unallocated members of
+	 * the MIDR group all stay illegal. */
 	for (const auto instruction : {
 		0xd538'4240U, // CurrentEL
 		0xd53b'e020U, // CNTPCT_EL0
@@ -74,7 +81,9 @@ void named_inaccessible_registers(test::Harness &harness)
 		test::system_register(true, 1, 3, 2, 4, 1, 0), // RNDRRS
 		test::system_register(true, 1, 3, 13, 0, 7, 0), // SCXTNUM_EL0
 		0xd538'1000U, // SCTLR_EL1
-		test::system_register(true, 1, 0, 0, 6, 0, 0), // ID_AA64ISAR0_EL1
+		test::system_register(false, 1, 0, 0, 6, 0, 0), // ID_AA64ISAR0_EL1 write
+		test::system_register(true, 1, 0, 0, 1, 0, 0), // ID_PFR0_EL1
+		test::system_register(true, 1, 0, 0, 0, 1, 0), // unallocated MIDR group
 	})
 		harness.require_illegal(instruction);
 }

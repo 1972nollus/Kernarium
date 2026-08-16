@@ -21,6 +21,7 @@ constexpr unsigned long hwcap_crc32 = 1UL << 7;
 constexpr unsigned long hwcap_atomics = 1UL << 8;
 constexpr unsigned long hwcap_fphp = 1UL << 9;
 constexpr unsigned long hwcap_asimdhp = 1UL << 10;
+constexpr unsigned long hwcap_cpuid = 1UL << 11;
 constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
 constexpr unsigned long hwcap_jscvt = 1UL << 13;
 constexpr unsigned long hwcap_fcma = 1UL << 14;
@@ -59,6 +60,10 @@ void guest_capabilities_match_host()
 	const auto capabilities = darwin_uml_guest_hwcap();
 	require_propagated(capabilities, hwcap_fp, true);
 	require_propagated(capabilities, hwcap_asimd, true);
+	/* Every engine emulates the EL0 identification-register reads regardless
+	 * of what this host implements, so this bit is unconditional here exactly
+	 * as it is in arm64 Linux's `setup_elf_hwcaps()`. */
+	require_propagated(capabilities, hwcap_cpuid, true);
 	require_propagated(capabilities, hwcap_aes, host.aes);
 	require_propagated(capabilities, hwcap_pmull, host.pmull);
 	require_propagated(capabilities, hwcap_sha1, host.sha1);
@@ -98,7 +103,8 @@ void guest_capabilities_match_host()
 			   host.has(::uml::cpu::ArmFeature::dit));
 
 	constexpr auto advertised =
-		hwcap_fp | hwcap_asimd | hwcap_aes | hwcap_pmull | hwcap_sha1 |
+		hwcap_fp | hwcap_asimd | hwcap_cpuid |
+		hwcap_aes | hwcap_pmull | hwcap_sha1 |
 		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_fphp |
 		hwcap_asimdhp | hwcap_asimdrdm | hwcap_jscvt | hwcap_sha3 |
 		hwcap_asimddp | hwcap_sha512 | hwcap_asimdfhm | hwcap_fcma |

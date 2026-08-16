@@ -21,6 +21,7 @@ constexpr unsigned long hwcap_crc32 = 1UL << 7;
 constexpr unsigned long hwcap_atomics = 1UL << 8;
 constexpr unsigned long hwcap_fphp = 1UL << 9;
 constexpr unsigned long hwcap_asimdhp = 1UL << 10;
+constexpr unsigned long hwcap_cpuid = 1UL << 11;
 constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
 constexpr unsigned long hwcap_jscvt = 1UL << 13;
 constexpr unsigned long hwcap_fcma = 1UL << 14;
@@ -41,7 +42,13 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 [[nodiscard]] unsigned long virtual_hwcap() noexcept
 {
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	unsigned long result = hwcap_fp | hwcap_asimd;
+	/* EL0 reads of the AArch64 identification registers, which every engine
+	 * emulates from `cpu/arm64/id_registers.hpp` exactly as arm64 Linux does
+	 * from its undefined-instruction hook. Linux advertises this
+	 * unconditionally in `setup_elf_hwcaps()`, and the values those reads
+	 * return here are built from the same host predicates as the feature bits
+	 * below, so both ways of asking give a guest the same answer. */
+	unsigned long result = hwcap_fp | hwcap_asimd | hwcap_cpuid;
 	if (host.aes)
 		result |= hwcap_aes;
 	if (host.pmull)

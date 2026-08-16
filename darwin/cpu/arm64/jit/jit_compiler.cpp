@@ -6,6 +6,7 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_helpers.hpp"
+#include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
 #include <array>
@@ -656,8 +657,19 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       });
       return true;
     default:
-      return false;
+      break;
     }
+    /* Behind the named EL0 registers so ordinary translation still leaves this
+     * function through the same switch. An emulated identification register
+     * holds one value for the whole process, so the read compiles to the
+     * constant itself rather than a call back into the engine. */
+    if (!detail::emulated_id_register(instruction))
+      return false;
+    write_destination([&](unsigned destination) {
+      emitter_.load_constant(
+          destination, detail::emulated_id_register_value(instruction));
+    });
+    return true;
   }
 
 void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
+#include "cpu/arm64/id_registers.hpp"
 
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
@@ -94,6 +95,58 @@ void coherent_data_cache_maintenance_retires()
 		::uml::cpu::EngineEvent::system_call);
 	require(cpu.pc == base + instructions.size() * sizeof(std::uint32_t));
 	require(cpu.registers[0] == 7);
+}
+
+void emulated_identification_registers_read_sanitized_values()
+{
+	namespace detail = uml::cpu::arm64::detail;
+	constexpr std::uint64_t base = 0x6100;
+	constexpr std::uint64_t untouched = 0x5555'5555'5555'5555;
+	/* Only the fields AT_HWCAP also advertises may be set in
+	 * ID_AA64PFR0_EL1: FP, AdvSIMD and DIT. */
+	constexpr std::uint64_t advertised_processor_feature_fields =
+		0x000f'0000'00ff'0000ULL;
+	constexpr std::array instructions{
+		0xd538'0001U, // mrs x1, midr_el1
+		0xd538'00a2U, // mrs x2, mpidr_el1
+		0xd538'0400U, // mrs x0, id_aa64pfr0_el1
+		0xd538'061fU, // mrs xzr, id_aa64isar0_el1
+		0xd400'0001U, // svc #0
+	};
+	const auto built = gadgets::Builder{}.build(base, instructions);
+	require(built.complete);
+	require(built.program.instruction_count() == instructions.size());
+	require_data_only(built.program);
+
+	uml::cpu::arm64::CpuState cpu{};
+	cpu.pc = base;
+	cpu.registers[3] = untouched;
+	auto tlb = std::make_unique<::uml::memory::Tlb>();
+	tlb->prepare(0, darwin_uml_static_vm_changes(0));
+	require(gadgets::execute(built.program, cpu, *tlb) ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.pc == base + instructions.size() * sizeof(std::uint32_t));
+	require(cpu.registers[1] == detail::emulated_midr_el1);
+	require(cpu.registers[2] == detail::emulated_mpidr_el1);
+	require(cpu.registers[0] ==
+		detail::emulated_id_register_value(0xd538'0400U));
+	require((cpu.registers[0] &
+		~advertised_processor_feature_fields) == 0);
+	require(cpu.registers[3] == untouched);
+
+	/* The AArch32 identification group is in the same encoding space and is
+	 * one Linux does not emulate, so it stays illegal at the block start. */
+	constexpr std::array rejected{
+		0xd538'0104U, // mrs x4, id_pfr0_el1
+		0xd400'0001U, // svc #0
+	};
+	const auto refused = gadgets::Builder{}.build(base, rejected);
+	uml::cpu::arm64::CpuState refused_cpu{};
+	refused_cpu.pc = base;
+	require(gadgets::execute(refused.program, refused_cpu, *tlb) ==
+		::uml::cpu::EngineEvent::illegal_instruction);
+	require(refused_cpu.pc == base);
+	require(refused_cpu.registers[4] == 0);
 }
 
 void code_synchronization_is_a_precise_execution_boundary()
@@ -333,6 +386,7 @@ int main()
 {
 	data_only_stream_and_execution_boundary();
 	coherent_data_cache_maintenance_retires();
+	emulated_identification_registers_read_sanitized_values();
 	code_synchronization_is_a_precise_execution_boundary();
 	mapped_memory_runtime_boundaries();
 	return 0;

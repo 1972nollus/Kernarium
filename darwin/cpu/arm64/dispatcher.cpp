@@ -309,6 +309,10 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 		DecodeEntry{0xffff'ffe0U, 0xd53b'e040U, &Dispatcher::system_register},
 		DecodeEntry{0xffff'ffe0U, 0xd53b'42a0U, &Dispatcher::system_register},
 		DecodeEntry{0xffff'ffe0U, 0xd51b'42a0U, &Dispatcher::system_register},
+		/* The AArch64 identification registers Linux emulates for EL0. The
+		 * handler rejects the unallocated members of the same encoding
+		 * group. */
+		DecodeEntry{0xffff'f000U, 0xd538'0000U, &Dispatcher::system_register},
 		/* Decode the complete scalar and pair system-register allocations after
 		 * the implemented EL0 registers. The strict handlers diagnose every
 		 * inaccessible register instead of falling through as unsupported. */

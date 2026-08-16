@@ -5,6 +5,7 @@
 #include "simd_operand_histogram.hpp"
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/id_registers.hpp"
 
 #include <cstddef>
 #include <cstdint>

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/dispatcher.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
+#include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
 #include <array>
@@ -270,6 +271,57 @@ void coherent_data_cache_maintenance_retires()
 	require(memory.reads() == 0);
 }
 
+/* Only the fields AT_HWCAP also advertises may be set in ID_AA64PFR0_EL1:
+ * FP, AdvSIMD and DIT. */
+constexpr std::uint64_t advertised_processor_feature_fields =
+	0x000f'0000'00ff'0000ULL;
+
+void emulated_identification_registers_read_sanitized_values()
+{
+	constexpr std::uint64_t base = 0x5900;
+	ProbeMemory memory{base, 4};
+	arm64::CpuState cpu{};
+	constexpr std::uint64_t untouched = 0x5555'5555'5555'5555;
+	cpu.registers[30] = untouched;
+
+	const auto run = [&](std::uint32_t instruction) {
+		cpu.pc = base;
+		return arm64::Dispatcher{}.execute(cpu, memory, instruction);
+	};
+	const auto retires = [&](std::uint32_t instruction) {
+		const auto result = run(instruction);
+		require(result.reason == arm64::StopReason::continued);
+		require(result.instructions == 1);
+		require(cpu.pc == base + sizeof(instruction));
+	};
+
+	retires(0xd538'0001U); // mrs x1, midr_el1
+	require(cpu.registers[1] == arm64::detail::emulated_midr_el1);
+	retires(0xd538'00a2U); // mrs x2, mpidr_el1
+	require(cpu.registers[2] == arm64::detail::emulated_mpidr_el1);
+	retires(0xd538'00c3U); // mrs x3, revidr_el1
+	require(cpu.registers[3] == 0);
+	retires(0xd538'0400U); // mrs x0, id_aa64pfr0_el1
+	require(cpu.registers[0] ==
+		arm64::detail::emulated_id_register_value(0xd538'0400U));
+	require((cpu.registers[0] &
+		~advertised_processor_feature_fields) == 0);
+
+	/* An emulated read into XZR retires and discards its result. */
+	retires(0xd538'061fU); // mrs xzr, id_aa64isar0_el1
+	require(cpu.registers[30] == untouched);
+
+	/* Linux emulates neither the AArch32 identification group nor the
+	 * unallocated members of the MIDR group, so both stay illegal. */
+	for (const auto instruction : {0xd538'0104U, 0xd538'0025U}) {
+		const auto result = run(instruction);
+		require(result.reason ==
+			arm64::StopReason::illegal_instruction);
+	}
+	require(memory.fetches() == 0);
+	require(memory.reads() == 0);
+}
+
 void deferred_simd_load_store_uses_coherent_state()
 {
 	constexpr std::uint64_t base = 0x6000;
@@ -397,6 +449,7 @@ int main()
 	fetch_fault_preserves_precise_diagnostic_state();
 	code_invalidation_is_forwarded_to_memory_adapter();
 	coherent_data_cache_maintenance_retires();
+	emulated_identification_registers_read_sanitized_values();
 	deferred_simd_load_store_uses_coherent_state();
 	deferred_fp_control_status_reads_and_writes_persist();
 	return 0;

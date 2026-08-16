@@ -271,6 +271,24 @@ below. Five checked boxes on one representative case are not sufficient:
   runtime reads the register whenever that bit is advertised, so every Go
   binary in the guest — including `dockerd` and `docker` — took SIGILL at
   startup. Found by running Docker in a networked guest, not by a benchmark.
+- [x] `MRS <Xt>, <identification register>` is emulated in all three engines
+  over exactly the space arm64 Linux emulates from its undefined-instruction
+  hook: Op0 3, Op1 0, CRn 0, CRm 0 or 2 through 7. EL0 reads of these
+  registers are UNDEFINED in hardware, so this is a kernel-provided facility
+  rather than an instruction the CPU executes, and Linux advertises it
+  unconditionally as `HWCAP_CPUID`; `darwin_uml_guest_hwcap()` now does the
+  same. The returned values are built in `darwin/cpu/arm64/id_registers.hpp`
+  from the identical host predicates as the HWCAP bits, so a guest cannot
+  discover through an identification register a feature no engine has
+  committed to executing, and the fields Linux hides from EL0 read as zero.
+  MIDR_EL1 reports architecture `0b1111` with no implementer, part number or
+  revision, and MPIDR_EL1 reports Linux's reserved-bit-only safe value.
+  Unallocated members of the same encoding group stay illegal. Found by
+  running Wine in the 4 KiB guest, not by a benchmark: its unix-side
+  `ntdll.so` reads `ID_AA64PFR0_EL1` unconditionally during process start, and
+  the resulting SIGILL arrived on Wine's unix stack where its exception
+  dispatcher cannot run, so every Windows program failed with
+  `could not load kernel32.dll`.
 - [x] The shared harness supports single instructions, sparse multi-instruction
   programs, branches across translated blocks, mapped read/write/execute
   regions, allocation tags, and fault-atomic memory checks.

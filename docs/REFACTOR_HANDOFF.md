@@ -1,5 +1,30 @@
 # Refactor handoff
 
+## EL0 identification-register emulation (2026-08-16)
+
+Guest `AT_HWCAP` now advertises `HWCAP_CPUID`, and all three engines emulate
+EL0 `MRS` reads of the AArch64 identification registers over the same encoding
+space arm64 Linux emulates from its undefined-instruction hook (Op0 3, Op1 0,
+CRn 0, CRm 0 or 2 through 7). These reads are UNDEFINED in hardware and were
+previously reported to the guest as illegal instructions.
+
+`darwin/cpu/arm64/id_registers.hpp` is the single source of the returned
+values. It builds them from the same host predicates `virtual_hwcap()` uses,
+so both ways a guest can ask about a feature give the same answer and neither
+can name an extension no engine executes; fields Linux hides from EL0 read as
+zero. Unallocated members of the group remain illegal, as they are on arm64.
+
+Found by running Wine under the 4 KiB profile. Wine's unix-side `ntdll.so`
+reads `ID_AA64PFR0_EL1` unconditionally during process start; the SIGILL
+arrived on Wine's unix stack, where its exception dispatcher refuses to run, so
+every Windows program died with `could not load kernel32.dll`. The accepted
+proof is a `xfce-wine.erofs` guest under gadgets with `ncpus=4`, `mem=4G`, and
+a 1280x720 VNC display, running `winecfg` from a fresh prefix to a stable Wine
+configuration window captured through `uml-vnc-smoke-client`, followed by a
+clean `result=0 exitcode=0` shutdown. The missing `wine32:i386` package and the
+`syswow64\rundll32.exe` failure that follows from it are unrelated to the
+emulator and remain expected in this image.
+
 ## Kernarium iOS application prototype checkpoint (2026-08-15)
 
 `Kernarium/Kernarium.xcodeproj` boots the maintained UML kernel from a basic
