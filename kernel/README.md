@@ -15,16 +15,20 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
-## Latest verified replay (2026-08-15)
+## Latest verified replay (2026-08-16)
 
 The manifest contains 18 ordered topics and replays to canonical tree
-`2f006b51a9cff5a6ed74477628502a98c8938825`. A fresh authenticated replay,
+`cd2f90e9f0cd403104f928dd15d06ac6a0b8d76b`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, delta audit, and both LLVM 22 production page-profile builds passed.
 The exact delta policy is 160 changed files
 with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
-UML serial-line count configurable. Topic 0002b also gives ordinary UML a
+UML serial-line count configurable. Topic 0002a repairs the software-MMU mapping
+that uaccess verifies when the address carries none at all: `matches()`
+reports 1 for an equal mapping, 0 for one naming different backing, and -1
+for an absent one, and only the second was rebound, so a missing mapping was
+treated as checked and left missing. Topic 0002b also gives ordinary UML a
 host-monotonic nanosecond scheduler clock while keeping deterministic
 time-travel semantics. Topic 0015 replaces the former macOS/iOS split
 with one scalable Darwin address mechanism, including the page-rounded

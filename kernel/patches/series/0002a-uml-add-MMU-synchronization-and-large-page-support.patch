@@ -663,7 +663,7 @@ diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
 index 198269e38..85f0da3e6 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -8,72 +8,190 @@
+@@ -8,72 +8,197 @@
  #include <linux/mm.h>
  #include <linux/module.h>
  #include <linux/sched.h>
@@ -824,8 +824,15 @@ index 198269e38..85f0da3e6 100644
 +
 +		if (fd < 0 || darwin_uml_vm_activate(generation) < 0)
 +			goto fail;
++		/* matches() reports 1 for an equal mapping, 0 for one that
++		 * names different backing, and -1 when the address has no
++		 * mapping at all.  Repairing only the second reported a
++		 * missing mapping as if it had been checked, leaving the
++		 * software MMU without an entry the guest then faults on
++		 * repeatedly; rebind establishes it in either case.
++		 */
 +		else if ((mapping_state = darwin_uml_vm_mapping_matches(
-+				  virt, fd, offset)) == 0) {
++				  virt, fd, offset)) <= 0) {
 +			if (darwin_uml_vm_rebind(virt, fd, offset) < 0)
 +				goto fail;
 +		}
