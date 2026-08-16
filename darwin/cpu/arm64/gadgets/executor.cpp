@@ -13,6 +13,7 @@
 #include <span>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace uml::cpu::arm64::gadgets {
 using ::uml::memory::StaticGuestMemory;
@@ -145,18 +146,121 @@ void correct_fpcr_enable_instruction_count(
 
 } // namespace
 
+#ifndef UML_GADGET_CACHE_SLOTS
+#define UML_GADGET_CACHE_SLOTS 16384
+#endif
+#ifndef UML_GADGET_RESIDENT_GENERATIONS
+#define UML_GADGET_RESIDENT_GENERATIONS 8
+#endif
+constexpr std::size_t uml_gadget_cache_slots = UML_GADGET_CACHE_SLOTS;
+/* How many address spaces may hold translations at once.
+ *
+ * Sharing one pool without a bound is not a cache: a guest that starts and
+ * exits processes accumulates every address space it ever ran, and the handful
+ * that are actually live end up with a few dozen slots each. Reuse measured on
+ * a browser guest returns to one of the last eight distinct address spaces
+ * 94.5% of the time, so bounding residency there keeps capacity for the ones
+ * still running while costing almost no returns.
+ */
+constexpr std::size_t uml_gadget_resident_generations =
+	UML_GADGET_RESIDENT_GENERATIONS;
+
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
+
+class CountingResource final : public std::pmr::memory_resource {
+public:
+	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
+
+private:
+	void *do_allocate(std::size_t bytes, std::size_t alignment) override
+	{
+		bytes_ += bytes;
+		return std::pmr::new_delete_resource()->allocate(bytes, alignment);
+	}
+
+	void do_deallocate(void *pointer, std::size_t bytes,
+			   std::size_t alignment) override
+	{
+		bytes_ -= bytes;
+		std::pmr::new_delete_resource()->deallocate(
+			pointer, bytes, alignment);
+	}
+
+	[[nodiscard]] bool do_is_equal(
+		const std::pmr::memory_resource &other) const noexcept override
+	{
+		return this == &other;
+	}
+
+	std::size_t bytes_{};
+};
 
 class GadgetExecutor::ProgramCache final {
 public:
 	ProgramCache()
-		: stream_index_{std::make_unique<StreamIndexSet[]>(
+		: program_storage_{&counted_},
+		  stream_index_{std::make_unique<StreamIndexSet[]>(
 			  stream_index_set_count)}
 	{}
 
+	struct Footprint final {
+		std::size_t stream_index, slabs, streams, links, indirect;
+		[[nodiscard]] std::size_t total() const noexcept
+		{
+			return stream_index + slabs + streams + links + indirect;
+		}
+	};
+
+	[[nodiscard]] Footprint footprint() const noexcept
+	{
+		std::size_t slabs = 0;
+		for (const auto &slab : slabs_)
+			if (slab)
+				slabs += sizeof(Slab);
+		/* libc++ keeps one heap node per element plus a bucket pointer;
+		 * close enough to attribute the map, exact for the arrays. */
+		constexpr std::size_t node = 2 * sizeof(void *);
+		return {
+			.stream_index = stream_index_set_count *
+				sizeof(StreamIndexSet),
+			.slabs = slabs,
+			.streams = counted_.bytes(),
+			.links = links_.size() *
+				(sizeof(LinkRecord) + node) +
+				links_.bucket_count() * sizeof(void *),
+			.indirect = indirect_links_.size() *
+				(sizeof(arm64::gadgets::IndirectLink) + node) +
+				indirect_links_.bucket_count() * sizeof(void *),
+		};
+	}
+
+	/* How many address spaces currently hold translations here. With one
+	 * shared pool this is an outcome of the workload, not a build option. */
+	[[nodiscard]] std::size_t resident_generations() const noexcept
+	{
+		return generation_changes_.size();
+	}
+
+	[[nodiscard]] std::size_t occupancy() const noexcept
+	{
+		std::size_t occupied = 0;
+		for (const auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (const auto &slot : slab->slots)
+				if (slot.epoch == epoch_ && slot.result)
+					++occupied;
+		}
+		return occupied;
+	}
+
 	void invalidate() noexcept
 	{
+		live_links_.clear();
+		live_indirect_.clear();
+		resident_.clear();
+		generation_changes_.clear();
 		indirect_links_.clear();
 		links_.clear();
 		++epoch_;
@@ -172,24 +276,64 @@ public:
 		epoch_ = 1;
 	}
 
-	void invalidate_links() noexcept
+	/* Reset the activations of one address space, as its code change
+	 * requires.
+	 *
+	 * The code-change sequence is per address space, so a change in one says
+	 * nothing about the others and their links stay live. Within the changed
+	 * one, only a record that was activated can differ from the reset state,
+	 * so the walk is over those rather than over every record the translator
+	 * ever named -- with several address spaces resident, that difference is
+	 * the whole cost of the reset.
+	 */
+	void invalidate_links(unsigned long generation) noexcept
 	{
-		for (auto &[pc, record] : links_) {
-			(void)pc;
-			record.reset();
+		std::size_t kept = 0;
+		for (auto *record : live_links_) {
+			if (record->generation != generation) {
+				live_links_[kept++] = record;
+				continue;
+			}
+			record->reset();
+			record->listed = false;
 		}
-		if (indirect_links_.empty())
+		live_links_.resize(kept);
+		if (live_indirect_.empty())
 			return;
-		constexpr auto empty_pc = ~std::uint64_t{};
 		const auto *empty_link = &link_record(empty_pc).link;
-		for (auto &[source_pc, site] : indirect_links_) {
-			(void)source_pc;
-			for (auto &entry : site.entries) {
+		kept = 0;
+		for (const auto &enrolled : live_indirect_) {
+			if (enrolled.first != generation) {
+				live_indirect_[kept++] = enrolled;
+				continue;
+			}
+			for (auto &entry : enrolled.second->entries) {
 				entry.guest_pc = empty_pc;
 				entry.link = empty_link;
 			}
-			site.next_replacement = 0;
+			enrolled.second->next_replacement = 0;
 		}
+		live_indirect_.resize(kept);
+	}
+
+	/* Bind the cache to an address space and answer for whatever changed in
+	 * it while it was away. Each address space carries its own mark, so a
+	 * switch back to one whose code never changed costs nothing. */
+	void prepare(unsigned long generation, std::uint64_t changes)
+	{
+		current_generation_ = generation;
+		auto [entry, inserted] =
+			generation_changes_.try_emplace(generation, changes);
+		touch(generation);
+		if (inserted) {
+			while (resident_.size() > uml_gadget_resident_generations)
+				retire(resident_.front());
+			return;
+		}
+		if (entry->second == changes)
+			return;
+		invalidate_links(generation);
+		entry->second = changes;
 	}
 
 	[[nodiscard]] const BuildResult *find(
@@ -197,21 +341,25 @@ public:
 		std::uint64_t mapping_changes, StaticGuestMemory &memory,
 		void *execution_context, GadgetCacheDiagnostics &diagnostics)
 	{
-		const auto location = locate(pc);
+		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
-		if (!slab)
+		if (!slab) {
 			return nullptr;
+		}
 		for (std::size_t way = 0; way < ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
-			if (slot.epoch != epoch_ || slot.pc != pc || !slot.result)
+			if (slot.epoch != epoch_ || slot.pc != pc ||
+			    slot.generation != current_generation_ || !slot.result)
 				continue;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
-			if (slot.validated_changes == changes)
+			if (slot.validated_changes == changes) {
 				return &*slot.result;
+			}
 			++diagnostics.validation_attempts;
 			if (!validate(slot, changes, mapping_changes, memory,
-				    execution_context, diagnostics))
+				    execution_context, diagnostics)) {
 				return nullptr;
+			}
 			activate(pc, slot);
 			return &*slot.result;
 #else
@@ -270,9 +418,9 @@ public:
 		std::uint64_t source_pc)
 	{
 		const auto [created, inserted] =
-			indirect_links_.try_emplace(source_pc);
+			indirect_links_.try_emplace(
+				LinkKey{current_generation_, source_pc});
 		if (inserted) {
-			constexpr auto empty_pc = ~std::uint64_t{};
 			const auto *empty_link = link(empty_pc);
 			for (auto &entry : created->second.entries) {
 				entry.guest_pc = empty_pc;
@@ -286,6 +434,13 @@ public:
 			    std::uint64_t target_pc)
 	{
 		const auto *target = link(target_pc);
+		/* Training is the only thing that moves a site off its empty
+		 * cells, and empty_pc is unreachable as a guest target, so a
+		 * site still holding two empty cells is untrained since its last
+		 * reset -- which makes this the transition that enrols it. */
+		if (site.entries[0].guest_pc == empty_pc &&
+		    site.entries[1].guest_pc == empty_pc)
+			live_indirect_.emplace_back(current_generation_, &site);
 		for (auto &entry : site.entries) {
 			if (entry.guest_pc != target_pc)
 				continue;
@@ -303,7 +458,7 @@ public:
 		std::span<const std::uint32_t> guest_words,
 		std::uint64_t changes)
 	{
-		const auto location = locate(pc);
+		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab)
 			slab = std::make_unique<Slab>();
@@ -320,10 +475,13 @@ public:
 		replacement = static_cast<std::uint8_t>((selected + 1) & (ways - 1));
 
 		auto &slot = slab->slots[location.offset + selected];
-		if (slot.epoch == epoch_ && slot.result)
-			deactivate(slot.pc, slot.result->program);
+		if (slot.epoch == epoch_ && slot.result) {
+			deactivate(slot.generation, slot.pc,
+				slot.result->program);
+		}
 		slot.result.emplace(std::move(result));
 		slot.pc = pc;
+		slot.generation = current_generation_;
 		slot.epoch = epoch_;
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		slot.validated_changes = changes;
@@ -363,18 +521,33 @@ public:
 
 private:
 	static constexpr std::size_t ways = 4;
-	static constexpr std::size_t set_count = 4 * 1024;
-	static constexpr std::size_t slot_count = ways * set_count;
+	static constexpr std::size_t slot_count = uml_gadget_cache_slots;
+	static constexpr std::size_t set_count = slot_count / ways;
 	static constexpr std::size_t slab_slots = 256;
 	static constexpr std::size_t slab_count = slot_count / slab_slots;
 	static constexpr unsigned stream_index_granule_shift = 6;
 	static constexpr std::size_t stream_index_ways = 4;
-	static constexpr std::size_t stream_index_set_count = 16 * 1024;
+	/* The unreachable guest PC an untrained indirect cell names; guest
+	 * targets are admitted only word-aligned, so none can collide. */
+	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
+	/* One index set per slot, as when both were fixed at 16384. */
+	static constexpr std::size_t stream_index_set_count = slot_count;
+	static_assert((slot_count & (slot_count - 1)) == 0,
+		"cache slot count must be a power of two");
+	static_assert(slot_count >= slab_slots * 4,
+		"cache must hold at least four slabs");
 
 	struct LinkRecord;
 
 	struct Slot final {
 		std::optional<BuildResult> result;
+		/* The address space this translation belongs to. A guest virtual
+		 * address only means something inside one, so a slot is a match
+		 * only when the generation matches too; that is what lets
+		 * translations for several address spaces share one cache
+		 * instead of being wiped at every switch.
+		 */
+		unsigned long generation{};
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::unique_ptr<std::uint32_t[]> source_words;
 #endif
@@ -389,6 +562,12 @@ private:
 		 */
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
+		/* The activation whose stream index entries are already installed.
+		 * store() gives every activation a nonzero value, so the zero this
+		 * starts at, and the zero an eviction writes back, both read as
+		 * "not indexed".
+		 */
+		std::uint64_t indexed_activation{};
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::uint64_t validated_changes{};
 		std::size_t source_word_count{};
@@ -410,13 +589,35 @@ private:
 		/* A reused cache slot changes activation, invalidating every old
 		 * index entry without walking the former program's stream.
 		 */
-		const Slot *slot{};
+		Slot *slot{};
 		std::uint64_t activation{};
 	};
 
 	struct StreamIndexSet final {
 		std::array<StreamIndexEntry, stream_index_ways> entries;
 		std::uint8_t next_replacement{};
+	};
+
+	/* A link names a guest PC, which is only meaningful inside one address
+	 * space; keying by PC alone would let a block in one branch straight
+	 * into another's translation. */
+	struct LinkKey final {
+		unsigned long generation;
+		std::uint64_t pc;
+		[[nodiscard]] bool operator==(const LinkKey &) const noexcept =
+			default;
+	};
+
+	struct LinkKeyHash final {
+		[[nodiscard]] std::size_t operator()(
+			const LinkKey &key) const noexcept
+		{
+			const auto mixed = key.pc ^
+				(static_cast<std::uint64_t>(key.generation) *
+					0x9e3779b97f4a7c15ULL);
+			return static_cast<std::size_t>(
+				mixed ^ (mixed >> 29));
+		}
 	};
 
 	struct LinkRecord final {
@@ -447,11 +648,23 @@ private:
 		std::array<std::uintptr_t, 2> fallback_stream;
 		std::array<std::uintptr_t, 2> fp_stream;
 		arm64::gadgets::BlockLink link;
+		/* Set while this record sits in live_links_, so a code change
+		 * resets the records that hold an activation instead of every
+		 * record the translator ever named. */
+		unsigned long generation{};
+		bool listed{};
 	};
 
-	[[nodiscard]] static Location locate(std::uint64_t pc) noexcept
+	[[nodiscard]] static Location locate(
+		unsigned long generation, std::uint64_t pc) noexcept
 	{
-		const auto block = pc >> 2;
+		/* Fold the address space into the index so the same guest PC in
+		 * two address spaces lands in different sets rather than
+		 * competing for the four ways of one.
+		 */
+		const auto block = (pc >> 2) ^
+			(static_cast<std::uint64_t>(generation) *
+				0x9e3779b97f4a7c15ULL);
 		const auto mixed = block ^ (block >> 12) ^ (block >> 24);
 		const auto set = static_cast<std::size_t>(mixed) & (set_count - 1);
 		const auto first_slot = set * ways;
@@ -492,8 +705,22 @@ private:
 		}
 	}
 
-	void index_stream(const Slot &slot)
+	/* Install this slot's stream index entries.
+	 *
+	 * Only store() changes a slot's activation, so a reactivation would
+	 * write back exactly the entries the previous pass wrote: same slot
+	 * address, same activation, same program. Repeating that walk matters
+	 * only where another program has since taken one of the ways for
+	 * itself, and that is observable at the moment it happens, so the
+	 * evicting pass clears the victim's marker and the victim rebuilds at
+	 * its own next activation -- which is when an unconditional walk would
+	 * have rebuilt it too. Index coverage is therefore identical either
+	 * way, and only the passes that would have changed nothing disappear.
+	 */
+	void index_stream(Slot &slot)
 	{
+		if (slot.indexed_activation == slot.activation)
+			return;
 		const auto &result = *slot.result;
 		for_each_stream_index_set(result.program, [&](std::size_t location) {
 			auto &set = stream_index_[location];
@@ -512,25 +739,93 @@ private:
 					break;
 				}
 			}
-			set.entries[selected] = {
+			auto &chosen = set.entries[selected];
+			/* Taking a way from an entry that was still current is
+			 * what leaves its owner partially indexed. A way that had
+			 * already lapsed costs its owner nothing, and its owner
+			 * has moved on to an activation this cannot describe.
+			 */
+			if (chosen.slot != nullptr && chosen.slot != &slot &&
+			    chosen.slot->epoch == epoch_ &&
+			    chosen.slot->activation == chosen.activation)
+				chosen.slot->indexed_activation = 0;
+			chosen = {
 				.slot = &slot,
 				.activation = slot.activation,
 			};
 			set.next_replacement = static_cast<std::uint8_t>(
 				(selected + 1) & (stream_index_ways - 1));
 		});
+		slot.indexed_activation = slot.activation;
+	}
+
+	/* Least-recently-current first. */
+	void touch(unsigned long generation)
+	{
+		const auto found = std::find(
+			resident_.begin(), resident_.end(), generation);
+		if (found != resident_.end())
+			resident_.erase(found);
+		resident_.push_back(generation);
+	}
+
+	/* Drop everything describing one address space: its resident
+	 * translations, the links the generated code reaches them through, and
+	 * its indirect sites. Retirement is rare -- only a first sight of an
+	 * address space can force one -- so walking the slabs here costs far
+	 * less than leaving dead address spaces holding slots.
+	 */
+	void retire(unsigned long generation)
+	{
+		for (auto &slab : slabs_) {
+			if (!slab)
+				continue;
+			for (auto &slot : slab->slots) {
+				if (slot.epoch != epoch_ ||
+				    slot.generation != generation || !slot.result)
+					continue;
+				deactivate(slot.generation, slot.pc,
+					slot.result->program);
+				slot.result.reset();
+				slot.epoch = 0;
+				slot.link = nullptr;
+			}
+		}
+		std::erase_if(live_links_, [&](const LinkRecord *record) {
+			return record->generation == generation;
+		});
+		std::erase_if(live_indirect_,
+			[&](const auto &enrolled) {
+				return enrolled.first == generation;
+			});
+		std::erase_if(links_, [&](const auto &entry) {
+			return entry.first.generation == generation;
+		});
+		std::erase_if(indirect_links_, [&](const auto &entry) {
+			return entry.first.generation == generation;
+		});
+		generation_changes_.erase(generation);
+		const auto found = std::find(
+			resident_.begin(), resident_.end(), generation);
+		if (found != resident_.end())
+			resident_.erase(found);
 	}
 
 	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
 	{
-		return links_.try_emplace(pc, pc).first->second;
+		auto [entry, inserted] = links_.try_emplace(
+			LinkKey{current_generation_, pc}, pc);
+		if (inserted)
+			entry->second.generation = current_generation_;
+		return entry->second;
 	}
 
 #if UML_GADGET_EXACT_CACHE_VALIDATION
 	void discard(Slot &slot) noexcept
 	{
 		if (slot.result)
-			deactivate(slot.pc, slot.result->program);
+			deactivate(slot.generation, slot.pc,
+				slot.result->program);
 		slot.result.reset();
 		slot.epoch = 0;
 		slot.source_word_count = 0;
@@ -603,6 +898,10 @@ private:
 			slot.link_epoch = epoch_;
 		}
 		auto &record = *slot.link;
+		if (!record.listed) {
+			record.listed = true;
+			live_links_.push_back(&record);
+		}
 		auto *target = &record.link;
 		if (result.program.accesses_fp_state()) {
 			record.fp_stream[1] = reinterpret_cast<std::uintptr_t>(
@@ -614,10 +913,14 @@ private:
 		target->instruction_count = result.program.instruction_count();
 	}
 
-	void deactivate(std::uint64_t pc,
+	void deactivate(unsigned long generation, std::uint64_t pc,
 			const arm64::gadgets::Program &program) noexcept
 	{
-		const auto found = links_.find(pc);
+		/* Slots of several address spaces share this cache, so an
+		 * eviction is frequently not from the current one; the record to
+		 * retire belongs to the slot's address space, not to whichever
+		 * happens to be running. */
+		const auto found = links_.find(LinkKey{generation, pc});
 		if (found == links_.end())
 			return;
 		auto &record = found->second;
@@ -630,10 +933,19 @@ private:
 			record.reset();
 	}
 
+	CountingResource counted_;
 	std::pmr::unsynchronized_pool_resource program_storage_;
-	std::unordered_map<std::uint64_t, LinkRecord> links_;
-	std::unordered_map<std::uint64_t,
-		arm64::gadgets::IndirectLink> indirect_links_;
+	std::unordered_map<LinkKey, LinkRecord, LinkKeyHash> links_;
+	std::unordered_map<LinkKey, arm64::gadgets::IndirectLink, LinkKeyHash>
+		indirect_links_;
+	/* The records holding an activation, and the code-change mark each
+	 * address space was last reset for. */
+	std::vector<LinkRecord *> live_links_;
+	std::vector<std::pair<unsigned long, arm64::gadgets::IndirectLink *>>
+		live_indirect_;
+	std::unordered_map<unsigned long, std::uint64_t> generation_changes_;
+	std::vector<unsigned long> resident_;
+	unsigned long current_generation_{};
 	std::unique_ptr<StreamIndexSet[]> stream_index_;
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
@@ -708,15 +1020,16 @@ void GadgetExecutor::prepare_cache(
 {
 	if (cache_generation_ == generation && cache_changes_ == changes)
 		return;
-	if (cache_generation_ != generation) {
-		programs_->invalidate();
-	} else {
 #if UML_GADGET_EXACT_CACHE_VALIDATION
-		programs_->invalidate_links();
+	/* Switching address space no longer empties the cache: slots, links and
+	 * indirect sites all carry the address space they describe, so the
+	 * translations of the one being left stay resident for its return. */
+	programs_->prepare(generation, changes);
 #else
+	if (cache_generation_ != generation || cache_changes_ != changes)
 		programs_->invalidate();
+	programs_->prepare(generation, changes);
 #endif
-	}
 	cache_generation_ = generation;
 	cache_changes_ = changes;
 }

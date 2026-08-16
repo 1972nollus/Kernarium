@@ -9026,3 +9026,72 @@ the rejected change. The standing lesson is that `invalidate_links` is cheap in
 absolute terms no matter how badly it scales, so link-table work is not where
 gadget-engine time goes; `activate` and its callees, which G157 ranked as the
 largest self-time frame on both products, remain the evidenced target.
+
+## G160: keeping several address spaces resident in one tagged gadget cache
+
+Dated 2026-08-16. Accepted. The gadget program cache was keyed by guest PC
+alone, so a translation could not survive a switch to another address space and
+`prepare_cache` emptied the cache on every one. Counting that on a browser guest
+found 297--320 whole-cache flushes a second, each discarding about 3000
+translations that had just been built, and a plateau lookup hit rate near 30%
+with 900K--1.5M retranslations a second. Translation and cache work together
+were about 30% of plateau CPU, and `miss_invalid` stayed at zero throughout, so
+almost none of that retranslation followed an actual change to guest code.
+
+Slots, link records and indirect sites now carry the address space they
+describe, so one pool serves all of them and a switch retains rather than
+discards. Residency is bounded: measured reuse returns to one of the last eight
+distinct address spaces 94.5% of the time, and only 1.6% of switches are to an
+address space never seen before, so an LRU bound of eight keeps capacity for
+what is running at almost no cost in returns.
+
+Two intermediate designs were built and rejected against measurement.
+
+Partitioning the existing slot budget between N separate caches keeps memory
+flat and does not work: at eight caches of 2048 slots, 97.6% of insertions
+evicted a live entry, and at 4096 slots 92.9%, because one browser process needs
+about 3000 slots on its own. Startup then became slow enough that Chromium's
+child processes missed their fifteen-second IPC deadline and the page never
+loaded at all. The occupancy that suggested partitioning would fit -- 39--64%
+-- had been measured while the cache was flushed hundreds of times a second and
+never allowed to fill, so it understated the real working set.
+
+Tagging without a residency bound is worse still. Nothing retires a dead address
+space, so a guest that starts and exits processes accumulates all of them: 467
+address spaces held translations in a 16384-slot pool, about 35 slots each, and
+99.8% of insertions evicted a live entry. Flushing on every switch was wasteful
+but self-limiting; removing the limit without replacing it is not an
+improvement.
+
+Measured on WebGL Aquarium over VNC, macOS, gadgets, 4 vCPUs, 3 GiB of guest
+memory, differenced across the plateau:
+
+| design | hit | flush/s | retranslations/s | memory |
+| --- | ---: | ---: | ---: | ---: |
+| flush on switch | 29.7% | 479.8 | 1,463,895 | ~90 MB |
+| tagged, 16384 slots, 8 resident | 46.1% | 0 | 839,247 | 176 MB |
+| tagged, 32768 slots, 8 resident | 58.6% | 0 | 502,254 | 238 MB |
+| tagged, 16384 slots, 16 resident | 45.0% | 0 | 742,712 | 400 MB |
+| tagged, 65536 slots, 8 resident | 76.2% | 0 | 255,000 | 382 MB |
+
+65536 slots with eight resident is the shipped default. Sixteen resident is
+worse on every axis at fixed capacity, which is the same dilution partitioning
+produced. Eviction rate is not comparable across these rows: a full cache
+displaces something on essentially every insertion by definition, and the tagged
+pools run full while the flushing one never fills.
+
+Frame rate moved from 8.00 to 9.10 on single runs, which is not evidence of a
+frame-rate gain. G157 found this workload bound by round-trip latency with the
+vCPU carriers only 39--55% busy, so removing emulation work is not expected to
+convert proportionally into frames. The defensible claims are the cache ones.
+
+Memory is the cost and it is linear in vCPU count, because each vCPU carries its
+own executor and the gadget engine shares no translations between them. Measured
+at 16384 slots and eight resident: 185.3 MB over four executors and 385.0 MB
+over eight, 104% of linear, with per-executor cost flat at 46.3 and 48.1 MB.
+Both of the components that dominate the footprint scale per executor rather
+than being divided -- streams 71.6 to 143.9 MB and links 93.0 to 199.1 MB --
+which is duplication, not division. On Kernarium's policy of taking every
+processor the device reports, eight cores at the shipped default projects to
+roughly 800 MB against a 1.5 GiB guest, so cross-executor translation sharing,
+which the JIT already has as G134, is the next thing this design needs.
