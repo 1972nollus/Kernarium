@@ -1,5 +1,18 @@
 # Refactor progress
 
+## macOS WebGL instancing shader compatibility (2026-08-17)
+
+The pinned desktop virglrenderer patch now treats `gl_InstanceID` as core when
+it emits GLSL 1.40 or newer, instead of also requiring the legacy
+`GL_ARB_draw_instanced` extension that Apple's core-only OpenGL 4.1 driver does
+not advertise. A focused WebGL2 instancing A/B reproduced the illegal shader
+and subsequent Virtio-GPU `0x1204` invalid-context replies with the prior
+binary, then rendered 512 instances without either error on the rebuilt
+binary. The rebuilt guest also rendered the exact current three.js instancing
+performance page for 38 verified frames. Authenticated dependency preparation,
+the full private-prefix rebuild, dependency tooling, architecture, and normal
+plus ASan/UBSan GPU/VNC gates passed.
+
 ## Kernarium iOS application prototype (2026-08-15)
 
 The `Kernarium` Xcode project embeds opt-in iOS device and Simulator runtime

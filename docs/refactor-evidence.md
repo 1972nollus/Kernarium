@@ -1,5 +1,16 @@
 # Refactor evidence
 
+## macOS WebGL instancing evidence (2026-08-17)
+
+| Area | Current evidence and boundary |
+| --- | --- |
+| Negative control | `.build/repro-instancing-local-before-single-v2/20260817-163715/console.log` records the prior binary compiling a WebGL2 vertex shader that consumes `gl_InstanceID`. It reports `GL_ARB_draw_instanced is not supported` and then four Virtio-GPU `0x1204` replies. The page still produced its early JavaScript frame marker before the bounded runner stopped; that marker does not negate the host context error. |
+| Fixed workload | `.build/repro-instancing-local-after-single-v2/20260817-163842/console.log` records the identical 512-instance workload on the rebuilt binary. It emitted `UML_WEBGL_SAMPLE_OK` at 30 frames with renderer `ANGLE (Mesa, virgl (Apple M1 Ultra), OpenGL 4.1)` and contains no illegal-shader, `ARB_draw_instanced`, or `0x1204` entry. The accepted nonblank capture is `captures/01-webgl2-gl-instanceid-reproducer.png`. |
+| Reported page | `.build/repro-threejs-after-single/20260817-164538/console.log` records the exact public `webgl_instancing_performance.html` page building its 1,000-object `INSTANCED` scene, then emitting `UML_WEBGL_SAMPLE_OK` after 38 frames with the same virgl renderer. Its accepted capture is `captures/01-three-js-instancing-performance.png`; the log has no illegal shader or invalid-context reply. A matched prior-binary page run also passed and did not produce the negative signature, so this current page revision is positive coverage, not the negative control. |
+| Browser boundary | The browser A/Bs used diagnostic `--no-sandbox --single-process --in-process-gpu` flags after ordinary Chromium child processes timed out before navigation in this checkout. The workload still used guest Mesa, the production Virtio-GPU transport, and host virglrenderer. No Chromium flag or launcher change is proposed. |
+| Dependency provenance | The updated patch applied to the authenticated virglrenderer 1.3.0 archive and produced prepared-tree SHA-256 `af34da083f3461560b523097c66bb1f096a391215786f88532582a6c4d91a67c`. A full private static prefix rebuilt and passed its verifier. `dependency-source-archive-verifier`, `dependency-source-preparer`, `dependency-build-manifest`, `dependency-prefix-verifier`, and `dependency-runtime-closure` passed 5/5. |
+| Host gates | The normal and ASan/UBSan GPU graphs each passed the architecture audit, all five GPU ownership tests, and `virtio-gpu-vnc-smoke` 1/1. The tests used the newly built private prefix rather than the now-stale default-prefix receipt. |
+
 ## Kernarium iOS application evidence (2026-08-15)
 
 | Area | Current evidence and boundary |

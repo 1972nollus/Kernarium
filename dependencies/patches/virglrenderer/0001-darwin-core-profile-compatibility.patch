@@ -161,6 +161,13 @@ index 83f8bad9..dff7fb66 100644
 -      if (ctx->ubo_used_mask)
 +      if (ctx->ubo_used_mask && ctx->glsl_ver_required < 140)
           emit_ext(glsl_strbufs, "ARB_uniform_buffer_object", "require");
+@@ -6373,3 +6376,5 @@ static void emit_header(const struct dump_ctx *ctx, struct vrend_glsl_strbufs *g
+       for (uint32_t i = 0; i < ARRAY_SIZE(shader_req_table); i++) {
+-         if (shader_req_table[i].key == SHADER_REQ_SAMPLER_RECT && ctx->glsl_ver_required >= 140)
++         if ((shader_req_table[i].key == SHADER_REQ_SAMPLER_RECT ||
++              shader_req_table[i].key == SHADER_REQ_INSTANCE_ID) &&
++             ctx->glsl_ver_required >= 140)
+             continue;
 @@ -8196,7 +8199,9 @@ bool vrend_convert_shader(const struct vrend_context *rctx,
     if (!tgsi_scan_shader(tokens, &ctx.info))
        goto fail;
@@ -201,7 +208,10 @@ diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
 index 8849e67d..6a2bce0e 100644
 --- a/src/vrend/vrend_decode.c
 +++ b/src/vrend/vrend_decode.c
-@@ -1934,0 +1934,26 @@
+@@ -1932,5 +1932,31 @@
+ #else
+-
++
 +/*
 + * Mesa exposes VAProfileNone for its shader-based video post-processing even
 + * when the virgl capset advertises no hardware codecs.  Its virgl driver then
@@ -228,6 +238,9 @@ index 8849e67d..6a2bce0e 100644
 +   return length < VIRGL_DESTROY_VIDEO_BUFFER_MIN_SIZE ? EINVAL : 0;
 +}
 +
+ static int vrend_unsupported(struct vrend_context *ctx,
+                                     const uint32_t *buf,
+                                     uint32_t length)
 @@ -2023,8 +2049,8 @@ static const vrend_decode_callback decode_table[VIRGL_MAX_COMMANDS] = {
  #else
     [VIRGL_CCMD_CREATE_VIDEO_CODEC] = vrend_unsupported,

@@ -114,9 +114,10 @@ Production consumers use the exact imported static archives declared in
 
 The desktop virglrenderer patch adapts generated shaders to Apple’s core-only
 OpenGL 4.1 implementation. Features that are already core in the selected GLSL
-version, including uniform buffer objects in GLSL 1.40, use the core spelling
-instead of requiring legacy extension names that Apple is not required to
-advertise. Compatibility and GLES hosts retain the upstream extension path.
+version, including uniform buffer objects and `gl_InstanceID` in GLSL 1.40,
+use the core spelling instead of requiring legacy extension names that Apple
+is not required to advertise. Compatibility and GLES hosts retain the upstream
+extension path.
 The same patch keeps hardware-video capabilities empty on Apple hosts, but
 accepts the validated video-buffer create/destroy lifecycle that Mesa emits for
 its guest-side, shader-based `VAProfileNone` post-processing path. No host codec

@@ -1,5 +1,48 @@
 # Refactor handoff
 
+## macOS WebGL instancing shader fix (2026-08-17)
+
+The macOS virglrenderer no longer rejects an otherwise valid instanced vertex
+shader by requiring `GL_ARB_draw_instanced` from Apple's core-only OpenGL 4.1
+driver. The generated desktop shader already selects GLSL 1.40, where
+`gl_InstanceID` is core, but the generic requirement table still emitted the
+legacy extension directive. Its compile failure put virglrenderer into an
+illegal-shader context error; later Virtio-GPU 3D submissions then received
+`VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID` (`0x1204`), explaining both the error
+flood and the apparent Chromium wedge.
+
+The pinned virglrenderer patch now omits only that extension directive for
+desktop GLSL 1.40 or newer. Older desktop GLSL and GLES retain the upstream
+extension path. The patch's existing no-video helper insertion also gained
+real source context: the former zero-context hunk inserted the helpers inside
+the following function when applied to a fresh authenticated 1.3.0 archive,
+even though the previously prepared tree had the intended layout. The updated
+patch applies cleanly from the archive and the manifest records its new patch
+and prepared-tree hashes.
+
+A network-independent WebGL2 workload using `gl_InstanceID` reproduced the
+reported signature with the prior macOS binary: the illegal extension error
+was immediately followed by four `0x1204` replies before the bounded run
+stopped. The identical workload on the rebuilt binary rendered 512 colored
+instances for 30 verified frames with ANGLE/Mesa/virgl and emitted neither
+signature. The current public three.js instancing-performance page was also
+run in the rebuilt guest: it built 1,000 instanced meshes, rendered 38 verified
+frames, produced a nonblank VNC capture, and emitted no shader or invalid-
+context error. The current page did not trigger the negative signature on the
+prior binary in the matched run, so the smaller `gl_InstanceID` workload is the
+accepted negative control rather than a claim that every page load fails.
+Both browser A/Bs used diagnostic `--single-process --in-process-gpu` and
+`--no-sandbox` flags because this checkout's ordinary Chromium child processes
+timed out before navigation. They still traverse the production guest Mesa,
+Virtio-GPU, and host virglrenderer path; the flags are not a launcher change or
+product recommendation.
+
+The authenticated dependency source verification and full private-prefix
+rebuild passed. Both the normal and ASan/UBSan GPU gates passed five ownership
+tests plus the VNC smoke test; the five dependency tooling tests and the
+architecture audit also passed. Local logs and captures are indexed in
+[refactor-evidence.md](refactor-evidence.md).
+
 ## Guest namespaces restored, and a config guard (2026-08-17)
 
 The shipped kernel had no namespaces at all. `CONFIG_EXPERT=y` makes
