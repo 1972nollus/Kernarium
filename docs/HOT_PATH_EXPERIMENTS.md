@@ -9439,10 +9439,46 @@ whole block, a taken branch to retire only what ran before it -- two of six, so
 four given back -- and a fault past the branch to be counted from its own
 address.
 
-What remains uncovered is the 24.7% of blocks ending in a direct call, the 14.0%
-ending in an indirect branch, and the 8.1% ending in an unconditional `B` --
-the last of which is reachable but only by giving `Program` a list of
-contiguous runs and making both instruction-count corrections walk it.
+### What is left, and why the last of it was rejected
+
+Re-measuring the shape afterwards shows the change absorbed its whole category:
+conditional terminations fall to 0.00% and the mean block goes from 4.93 to
+10.61 instructions. What ends blocks now:
+
+| block ends at | share |
+| --- | ---: |
+| BL, a direct call | 48.93% |
+| BR/BLR/RET, indirect | 29.28% |
+| B backward | 11.77% |
+| B forward | 8.43% |
+| the fetch window | 0.89% |
+| exception | 0.67% |
+
+A call cannot be continued through -- control reaches the instruction after it
+only by returning through an indirect branch -- an indirect branch has no target
+at translation time, and a backward branch would translate its own loop forever.
+That leaves the forward `B`, of which 80.5% land inside the fetch window.
+
+It was implemented and rejected. Continuing at the target does not require a run
+list after all: the instructions jumped over can never execute, so they need
+only be *counted*, not translated, which keeps the block one contiguous run and
+leaves both instruction-count corrections and the validation contract working
+unchanged. One gadget hands back the precharge for the counted-but-skipped
+instructions and dispatches, with no branch at all -- cheaper than the
+`follow_block_link` it replaces.
+
+Measured against the same configuration with only the conditional inlining, four
+runs an arm: 14.29 to 13.89 frames a second, -2.8% at p = 0.31. No gain.
+
+The reason is in the same property that made it cheap. `validation_words` is
+`instruction_count`, so counting the skipped instructions also saves and
+re-compares them on every revalidation, and revalidation runs at a 91% hit rate.
+Trading one `follow_block_link`, paid once when the block is entered, against
+comparing the skipped words every time the block is revalidated does not come
+out ahead at the reaches forward branches actually have -- a median of about
+nine instructions. Bounding the reach would shrink the cost and the yield
+together: reaches of four or fewer are 25.7% of forward branches, which is 2.2%
+of blocks.
 
 It also changes the premise of G161 rather than vindicating it: sharing lost
 because a build was too cheap to be worth avoiding, and this makes builds both

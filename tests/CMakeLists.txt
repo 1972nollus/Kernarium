@@ -149,6 +149,12 @@ if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES)
     list(APPEND _uml_required_conditional_tests
         emulator-native-16k-ownership)
 endif()
+# The cross-executor translation store is an experimental arm, off by default,
+# and its gate only exists where it is enabled. See G161.
+if(UML_BUILD_UNIT_TESTS AND UML_GADGET_SHARED_BUDGET_MIB GREATER 0)
+    list(APPEND _uml_required_conditional_tests
+        arm64-gadget-shared-translation)
+endif()
 if(UML_BUILD_UNIT_TESTS AND UML_BUILD_TOOLING_TESTS)
     list(APPEND _uml_required_conditional_tests
         arm64-instruction-evidence-reset
