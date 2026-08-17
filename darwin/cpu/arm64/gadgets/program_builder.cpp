@@ -44,15 +44,36 @@ DecodeResult builder_detail::implementation_gap(DecodeContext &context)
 	return DecodeResult::implementation_gap;
 }
 
+namespace {
+
+/* Fill in the reserved suffix operand of each inlined conditional branch, now
+ * that the block's translated length is final. A taken branch subtracts this
+ * from the count its block was precharged, so it is the instructions after the
+ * branch itself. */
+void resolve_inline_suffixes(std::pmr::vector<std::uintptr_t> &words,
+			     const InlineSuffixes &suffixes,
+			     std::size_t compiled) noexcept
+{
+	for (std::uint32_t index = 0; index < suffixes.count; ++index) {
+		const auto translated = suffixes.compiled[index];
+		words[suffixes.word[index]] = translated >= compiled ?
+			0 : compiled - translated;
+	}
+}
+
+} // namespace
+
 BuildResult Builder::build(
 	std::uint64_t guest_address,
 	std::span<const std::uint32_t> instructions,
 	LinkResolver resolve_link, std::pmr::memory_resource *storage,
-	IndirectLinkResolver resolve_indirect_link, BuildOptions options) const
+	IndirectLinkResolver resolve_indirect_link, BuildOptions options,
+	LinkRelocations *relocations) const
 {
 	const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
 		options.host_capabilities};
 	std::pmr::vector<std::uintptr_t> words{storage};
+	InlineSuffixes suffixes{};
 	words.reserve(std::min<std::size_t>(
 		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
@@ -72,6 +93,7 @@ BuildResult Builder::build(
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);
 			++compiled;
+			resolve_inline_suffixes(words, suffixes, compiled);
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				true, address, instruction};
@@ -88,6 +110,8 @@ BuildResult Builder::build(
 			resolve_link,
 			resolve_indirect_link,
 			options,
+			relocations,
+			&suffixes,
 		};
 		const auto emitted_start = words.size();
 		DecodeResult decoded = DecodeResult::decoded;
@@ -125,6 +149,7 @@ BuildResult Builder::build(
 			previous_gadget = emitted;
 		}
 		if (decoded != DecodeResult::decoded) {
+			resolve_inline_suffixes(words, suffixes, compiled);
 			return {Program{guest_address, compiled, std::move(words),
 				program_accesses_fp_state},
 				decoded == DecodeResult::terminal,
@@ -135,12 +160,15 @@ BuildResult Builder::build(
 	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);
 	if (resolve_link) {
 		emit(words, uml_arm64_gadget_branch_linked);
+		if (relocations != nullptr)
+			relocations->add(words.size(), false, fallthrough);
 		emit(words, reinterpret_cast<std::uintptr_t>(
 			resolve_link(fallthrough)));
 	} else {
 		emit(words, uml_arm64_gadget_interrupt);
 		emit(words, fallthrough);
 	}
+	resolve_inline_suffixes(words, suffixes, compiled);
 	return {Program{guest_address, compiled, std::move(words),
 		program_accesses_fp_state}, true,
 		guest_address + compiled * sizeof(std::uint32_t), 0};

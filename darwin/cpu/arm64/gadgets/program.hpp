@@ -53,6 +53,72 @@ struct BuildResult final {
 	std::uint32_t stop_instruction{};
 };
 
+/* A conditional branch whose fall-through was translated inline behind it.
+ *
+ * Entering a block precharges its whole length, so a taken branch leaving from
+ * the middle has to give back the instructions after it. That count is not
+ * known until the block ends, so each site is recorded here with the number of
+ * instructions translated before it, and filled in once the length is final.
+ */
+struct InlineSuffixes final {
+	/* One per conditional branch in a block, which cannot exceed the number
+	 * of instructions the fetch window holds. */
+	static constexpr std::size_t capacity = 64;
+
+	std::array<std::uint32_t, capacity> word{};
+	std::array<std::uint32_t, capacity> compiled{};
+	std::uint32_t count{};
+
+	[[nodiscard]] bool full() const noexcept { return count == capacity; }
+
+	void add(std::size_t at, std::size_t translated) noexcept
+	{
+		word[count] = static_cast<std::uint32_t>(at);
+		compiled[count] = static_cast<std::uint32_t>(translated);
+		++count;
+	}
+};
+
+/* A stream cell holding a pointer to link state the executor owns.
+ *
+ * Two executors translating the same guest words emit identical streams except
+ * in these cells: BlockLink and IndirectLink records belong to one executor and
+ * one address space, so a translation can be handed to another executor only if
+ * every such cell is recorded by the guest PC it names rather than by the
+ * pointer it holds, and resolved again against the consumer's own records.
+ */
+struct LinkRelocation final {
+	/* Index into Program::words(). */
+	std::uint32_t word{};
+	/* False names a BlockLink for the branch target, true an IndirectLink
+	 * for the branch site. */
+	bool indirect{};
+	std::uint64_t guest_pc{};
+};
+
+/* A block ends at its first control-flow instruction and no terminal emits more
+ * than two link cells, so recording them needs no allocation. A build that
+ * somehow exceeds that says so instead of truncating, and an overflowed record
+ * is never published. */
+struct LinkRelocations final {
+	static constexpr std::size_t capacity = 2;
+
+	std::array<LinkRelocation, capacity> entries{};
+	std::uint8_t count{};
+	bool overflowed{};
+
+	void add(std::size_t word, bool indirect,
+		 std::uint64_t guest_pc) noexcept
+	{
+		if (count == capacity) {
+			overflowed = true;
+			return;
+		}
+		entries[count++] = {static_cast<std::uint32_t>(word), indirect,
+			guest_pc};
+	}
+};
+
 struct BuildOptions final {
 	/*
 	 * Resolve backward-compatible HINT encodings to NOP and reject the
@@ -150,7 +216,8 @@ public:
 		std::pmr::memory_resource *storage =
 			std::pmr::get_default_resource(),
 		IndirectLinkResolver resolve_indirect_link = {},
-		BuildOptions options = {}) const;
+		BuildOptions options = {},
+		LinkRelocations *relocations = nullptr) const;
 };
 
 [[nodiscard]] ::uml::cpu::EngineEvent execute(

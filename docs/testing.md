@@ -550,7 +550,17 @@ when a remote client or an automated capture runner is required:
 ```sh
 python3 scripts/boot_kde_vnc.py
 python3 scripts/boot_kde_vnc.py --display vnc --port 5900
+python3 scripts/boot_kde_vnc.py --display vnc \
+  --serial-socket .build/uml-desktop-serial.sock
 ```
+
+`--serial-socket PATH` keeps the normal console log/stdout copy and also
+publishes the bidirectional `ttyS0` stream through one reconnectable local
+Unix-domain client. The launcher refuses to replace an existing path and
+removes only the socket inode it created. Attach from another terminal with
+`nc -U .build/uml-desktop-serial.sock`; a new client receives the recent
+console tail, so a prompt printed before attachment remains visible. The same
+option is available directly on `run_gpu_guest.py` for focused diagnostics.
 
 The launcher always passes the host-only `--gpu-display=native|vnc` option.
 `--bind`, `--port`, and `--password` configure only VNC and therefore require
@@ -961,6 +971,38 @@ control probes are `guest_gadget_code_invalidation_loop` and
 96/575 for the preceding G140 build and 94/564 for the original baseline, so
 there is no obvious aggregate regression. Raw logs are under
 `.build/results/gadgets-optimization-20260813/`.
+
+`UML_GADGET_CACHE_SLOTS` (default 65536) sizes the gadget cache's shared slot
+pool and `UML_GADGET_RESIDENT_GENERATIONS` (default 8) bounds how many address
+spaces may hold translations in it at once. Both are per-executor. Their exact
+host gate is `arm64-gadget-cache-validation`; the design and the measured
+alternatives are recorded in G160.
+
+The default-on `UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH` option translates a
+conditional branch's fall-through inline behind it instead of ending the block
+there, which is worth 60.1% of frame rate on WebGL Aquarium and recorded in
+G162. Its exact host gate is `arm64-gadget-inline-fallthrough`; run it in both
+page profiles. It pins what no conformance test can see, because the guest
+registers are identical either way and only the retirement count differs: a
+taken branch now leaves from the middle of a block that was precharged its whole
+length, so it must give the suffix back. `UML_GADGET_BLOCK_INSTRUCTIONS`
+(default 64) is the fetch window rather than a limit on block length; only 0.07%
+of blocks run far enough to be cut off by it.
+
+`UML_GADGET_SHARED_BUDGET_MIB` (default 0, off) is an experimental arm: a
+process-wide budget for translations one executor built and another may adopt.
+It works -- it removes 90% of translation work -- and costs frame rate anyway,
+because an adoption is two to three times the cost of the gadget build it
+replaces. G161 records the measurements; do not enable it without re-measuring.
+Enabling it registers `arm64-gadget-shared-translation`, which pins that an
+adopted program outlives the executor that built it, that one address space may
+adopt another's, that a differing code-generation profile does not share, and
+that an adopted block still revalidates its guest words. Run that under the
+sanitizer preset too when changing the relocation contract: a canonical entry
+holds zero in every cell naming executor-owned link state, so a missed
+relocation faults on a null stream rather than branching into a destroyed
+executor's memory, and the test destroys the producer before the consumer
+executes.
 
 Sanitizer, iOS, XCFramework, benchmark, and guest-workload runs are separate
 acceptance campaigns.  Typical host-product commands are:

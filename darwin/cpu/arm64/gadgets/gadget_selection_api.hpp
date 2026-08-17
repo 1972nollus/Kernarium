@@ -321,6 +321,13 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 	bool wide, unsigned int condition, bool linked) noexcept;
 [[nodiscard]] Gadget conditional_branch_gadget(unsigned int) noexcept;
 [[nodiscard]] Gadget conditional_branch_linked_gadget(unsigned int) noexcept;
+[[nodiscard]] Gadget conditional_branch_inline_gadget(unsigned int) noexcept;
+[[nodiscard]] Gadget compare_branch_inline_gadget(bool, bool) noexcept;
+[[nodiscard]] Gadget test_branch_inline_gadget(bool) noexcept;
+[[nodiscard]] Gadget compare_immediate_branch_inline_gadget(
+	bool, unsigned int) noexcept;
+[[nodiscard]] Gadget compare_register_branch_inline_gadget(
+	bool, unsigned int) noexcept;
 [[nodiscard]] Gadget compare_branch_gadget(bool, bool, bool) noexcept;
 [[nodiscard]] Gadget test_branch_gadget(bool, bool) noexcept;
 [[nodiscard]] Gadget cmpbr_immediate_gadget(bool, unsigned int) noexcept;

@@ -340,6 +340,32 @@ gadget branch_\name\()_linked
 	follow_block_link x8
 .endm
 
+/* A conditional branch whose fall-through is translated inline behind it.
+ *
+ * A block otherwise ends at its first branch, which on a browser guest means a
+ * mean block of five instructions -- too short for the per-block costs to
+ * amortize against. Continuing through the fall-through keeps the guest
+ * addresses contiguous, so nothing about validation or fault accounting
+ * changes, and the not-taken case stops being an indirect jump through a link
+ * at all.
+ *
+ * The stream holds the taken link and, where the fall-through link used to sit,
+ * the number of instructions translated after this one. Entering a block
+ * precharges its whole length, so a taken branch leaving from the middle has to
+ * give that suffix back before following its link.
+ */
+.macro conditional_branch_inline name, condition
+gadget branch_\name\()_inline
+	ldr x19, [_stream], #8
+	ldr x20, [_stream], #8
+	msr nzcv, x27
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
+.endm
+
 /* G-2 superinstruction: guest CMP of two registers followed by B.cond.
  *
  * G116's histogram over a full Geekbench run ranks this pair fourth and ninth
@@ -393,11 +419,36 @@ gadget compare_register_branch_\width\()_\name\()_linked
 	follow_block_link x8
 .endm
 
+/* Fall-through translated inline; see conditional_branch_inline. */
+.macro compare_register_branch_inline bits64, width, name, condition
+gadget compare_register_branch_\width\()_\name\()_inline
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream], #8
+	ubfx x10, x8, #16, #16
+	ldr x15, [_cpu, x10]
+	ubfx x11, x8, #32, #16
+	ldr x16, [_cpu, x11]
+	.if \bits64
+	subs xzr, x15, x16
+	.else
+	subs wzr, w15, w16
+	.endif
+	mrs x27, nzcv
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
+.endm
+
 .macro compare_register_branch_pair name, condition
 compare_register_branch 1, x, \name, \condition
 compare_register_branch 0, w, \name, \condition
 compare_register_branch_linked 1, x, \name, \condition
 compare_register_branch_linked 0, w, \name, \condition
+compare_register_branch_inline 1, x, \name, \condition
+compare_register_branch_inline 0, w, \name, \condition
 .endm
 
 compare_register_branch_pair eq, eq
@@ -418,6 +469,7 @@ compare_register_branch_pair le, le
 .purgem compare_register_branch_pair
 .purgem compare_register_branch
 .purgem compare_register_branch_linked
+.purgem compare_register_branch_inline
 
 /* G-2 superinstruction: guest CMP-immediate immediately followed by B.cond.
  *
@@ -476,11 +528,35 @@ gadget compare_immediate_branch_\width\()_\name\()_linked
 	follow_block_link x8
 .endm
 
+/* Fall-through translated inline; see conditional_branch_inline. */
+.macro compare_immediate_branch_inline bits64, width, name, condition
+gadget compare_immediate_branch_\width\()_\name\()_inline
+	ldr x8, [_stream], #8
+	ldr x19, [_stream], #8
+	ldr x20, [_stream], #8
+	ubfx w10, w8, #8, #5
+	ldr x15, [_cpu, x10, lsl #3]
+	lsr x11, x8, #16
+	.if \bits64
+	subs xzr, x15, x11
+	.else
+	subs wzr, w15, w11
+	.endif
+	mrs x27, nzcv
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
+.endm
+
 .macro compare_immediate_branch_pair name, condition
 compare_immediate_branch 1, x, \name, \condition
 compare_immediate_branch 0, w, \name, \condition
 compare_immediate_branch_linked 1, x, \name, \condition
 compare_immediate_branch_linked 0, w, \name, \condition
+compare_immediate_branch_inline 1, x, \name, \condition
+compare_immediate_branch_inline 0, w, \name, \condition
 .endm
 
 compare_immediate_branch_pair eq, eq
@@ -501,6 +577,7 @@ compare_immediate_branch_pair le, le
 .purgem compare_immediate_branch_pair
 .purgem compare_immediate_branch
 .purgem compare_immediate_branch_linked
+.purgem compare_immediate_branch_inline
 
 conditional_branch eq, eq
 conditional_branch ne, ne
@@ -531,6 +608,20 @@ conditional_branch_linked ge, ge
 conditional_branch_linked lt, lt
 conditional_branch_linked gt, gt
 conditional_branch_linked le, le
+conditional_branch_inline eq, eq
+conditional_branch_inline ne, ne
+conditional_branch_inline hs, hs
+conditional_branch_inline lo, lo
+conditional_branch_inline mi, mi
+conditional_branch_inline pl, pl
+conditional_branch_inline vs, vs
+conditional_branch_inline vc, vc
+conditional_branch_inline hi, hi
+conditional_branch_inline ls, ls
+conditional_branch_inline ge, ge
+conditional_branch_inline lt, lt
+conditional_branch_inline gt, gt
+conditional_branch_inline le, le
 
 /* FEAT_CMPBR register/immediate branches. The builder fixes the comparison,
  * width, condition, and XZR roles. Equal-register and XZR/immediate constant
@@ -670,6 +761,19 @@ gadget compare_branch_\width_name\()_\polarity\()_linked
 	cmp \width\()9, #0
 	csel x8, x19, x20, \condition
 	follow_block_link x8
+
+/* Fall-through translated inline; see conditional_branch_inline. */
+gadget compare_branch_\width_name\()_\polarity\()_inline
+	ldr x8, [_stream], #8
+	ldp x19, x20, [_stream]
+	add _stream, _stream, #16
+	ldr \width\()9, [_cpu, x8]
+	cmp \width\()9, #0
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
 .endm
 
 compare_branch w, w, z, eq
@@ -697,6 +801,19 @@ gadget test_branch_\polarity\()_linked
 	tst x10, x9
 	csel x8, x19, x20, \condition
 	follow_block_link x8
+
+/* Fall-through translated inline; see conditional_branch_inline. */
+gadget test_branch_\polarity\()_inline
+	ldp x8, x9, [_stream], #16
+	ldp x19, x20, [_stream]
+	add _stream, _stream, #16
+	ldr x10, [_cpu, x8]
+	tst x10, x9
+	b.\condition 99f
+	next_gadget
+99:
+	sub x29, x29, x20
+	follow_block_link x19
 .endm
 
 test_branch z, eq

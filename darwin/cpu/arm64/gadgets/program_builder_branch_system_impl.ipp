@@ -42,8 +42,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		if (resolve_link) {
 			emit(words, link ? uml_arm64_gadget_branch_link_linked :
 				uml_arm64_gadget_branch_linked);
-			emit(words, reinterpret_cast<std::uintptr_t>(
-				resolve_link(target)));
+			emit_link(context, target);
 		} else {
 			emit(words, link ? uml_arm64_gadget_branch_link :
 				uml_arm64_gadget_branch);
@@ -61,12 +60,19 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			static_cast<std::int64_t>(address) + displacement);
 		const auto fallthrough = address + sizeof(instruction);
 		if (resolve_link) {
+			/* Translating the fall-through behind the branch keeps
+			 * the block growing past what is otherwise its first and
+			 * usually only branch. */
+			if (emit_inlined_conditional(
+				    context,
+				    conditional_branch_inline_gadget(
+					    instruction & 15U),
+				    target))
+				return DecodeResult::decoded;
 			emit(words, conditional_branch_linked_gadget(
 				instruction & 15U));
-			emit(words, reinterpret_cast<std::uintptr_t>(
-				resolve_link(target)));
-			emit(words, reinterpret_cast<std::uintptr_t>(
-				resolve_link(fallthrough)));
+			emit_link(context, target);
+			emit_link(context, fallthrough);
 		} else {
 			emit(words, conditional_branch_gadget(instruction & 15U));
 			emit(words, target);
@@ -110,8 +116,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		if (constant) {
 			if (resolve_link) {
 				emit(words, uml_arm64_gadget_branch_always_linked);
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(take ? target : fallthrough)));
+				emit_link(context, take ? target : fallthrough);
 			} else {
 				emit(words, uml_arm64_gadget_branch_always);
 				emit(words, take ? target : fallthrough);
@@ -150,22 +155,27 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			const auto selected = nonzero ? fallthrough : target;
 			if (resolve_link) {
 				emit(words, uml_arm64_gadget_branch_always_linked);
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(selected)));
+				emit_link(context, selected);
 			} else {
 				emit(words, uml_arm64_gadget_branch_always);
 				emit(words, selected);
 			}
+		} else if (resolve_link &&
+			   emit_inlined_compare_branch(
+				   context,
+				   compare_branch_inline_gadget(
+					   (instruction >> 31) != 0, nonzero),
+				   offsetof(CpuState, registers) + source * 8U,
+				   target)) {
+			return DecodeResult::decoded;
 		} else {
 			emit(words, compare_branch_gadget(
 				(instruction >> 31) != 0, nonzero,
 				static_cast<bool>(resolve_link)));
 			emit(words, offsetof(CpuState, registers) + source * 8U);
 			if (resolve_link) {
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(target)));
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(fallthrough)));
+				emit_link(context, target);
+				emit_link(context, fallthrough);
 			} else {
 				emit(words, target);
 				emit(words, fallthrough);
@@ -188,22 +198,25 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			const auto selected = nonzero ? fallthrough : target;
 			if (resolve_link) {
 				emit(words, uml_arm64_gadget_branch_always_linked);
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(selected)));
+				emit_link(context, selected);
 			} else {
 				emit(words, uml_arm64_gadget_branch_always);
 				emit(words, selected);
 			}
+		} else if (resolve_link &&
+			   emit_inlined_test_branch(
+				   context, test_branch_inline_gadget(nonzero),
+				   offsetof(CpuState, registers) + source * 8U,
+				   std::uintptr_t{1} << bit, target)) {
+			return DecodeResult::decoded;
 		} else {
 			emit(words, test_branch_gadget(nonzero,
 				static_cast<bool>(resolve_link)));
 			emit(words, offsetof(CpuState, registers) + source * 8U);
 			emit(words, std::uintptr_t{1} << bit);
 			if (resolve_link) {
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(target)));
-				emit(words, reinterpret_cast<std::uintptr_t>(
-					resolve_link(fallthrough)));
+				emit_link(context, target);
+				emit_link(context, fallthrough);
 			} else {
 				emit(words, target);
 				emit(words, fallthrough);
@@ -286,8 +299,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
 			static_cast<std::uintptr_t>(source * 8U));
 		if (cached)
-			emit(words, reinterpret_cast<std::uintptr_t>(
-				resolve_indirect_link(address)));
+			emit_indirect_link(context, address);
 		if (opcode == 0xd63f'0000U)
 			emit(words, address + sizeof(instruction));
 		++compiled;

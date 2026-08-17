@@ -48,8 +48,11 @@ optional organization rather than architecture or acceptance requirements.
 ## Executable-memory policy
 
 Interpreter state, gadget program buffers, software-MMU backing, and 4 KiB
-native shadow aliases are sandbox-safe data. The precompiled gadget
-implementation stays in ordinary signed RX text. Neither engine contains an
+native shadow aliases are sandbox-safe data. This includes the process-wide
+store of gadget translations executors adopt from one another: a gadget
+program is a data stream of pointers into ordinary signed RX text, so sharing
+one copies data between heap allocations and allocates nothing executable. The
+precompiled gadget implementation stays in ordinary signed RX text. Neither engine contains an
 executable-allocation or code-publication primitive or performs an RW-to-RX
 transition. Guest execute permission in the software MMU is metadata used by
 instruction fetch, not a Darwin VM permission.

@@ -113,6 +113,29 @@ set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
     "Slots in the gadget cache; power of two, at least 1024")
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations at once")
+# A block otherwise ends at its first branch, which on a browser guest is a mean
+# of 4.93 instructions -- too short for anything per-block to amortize against.
+# Conditional branches end 52.8% of blocks and are the only large category whose
+# fall-through is the next address, so continuing through them leaves fault
+# accounting and the G140/G141 validation contract untouched. Worth 60.1% of
+# frame rate on WebGL Aquarium; see G162.
+option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
+    "Translate a conditional branch's fall-through inline behind it" ON)
+# The fetch window, not a limit on block length: only 0.07% of blocks run far
+# enough to be cut off by it rather than ending at a branch.
+set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
+    "Guest instructions fetched per translation attempt")
+# Experimental A/B arm, off by default. Every vCPU carries its own executor and
+# its own cache, so a guest running on several of them translates the same code
+# once per vCPU -- 69% of translations at four vCPUs and 80% at eight were work
+# another executor had already done. Letting them adopt each other's
+# translations removes 90% of that work and still costs frame rate, because an
+# adoption is two to three times the cost of the build it replaces at the sizes
+# gadget blocks actually run to. See G161; do not enable without re-measuring.
+set(UML_GADGET_SHARED_BUDGET_MIB "0" CACHE STRING
+    "Process-wide budget for shared gadget translations, in MiB; 0 disables")
+math(EXPR _uml_gadget_shared_budget_bytes
+    "${UML_GADGET_SHARED_BUDGET_MIB} * 1024 * 1024")
 
 add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
@@ -125,6 +148,7 @@ add_library(uml_arm64_gadgets OBJECT
     # inlines as one unit; see the comment at the top of that file.
     arm64/gadgets/program_builder.cpp
     arm64/gadgets/program_execution.cpp
+    arm64/gadgets/shared_programs.cpp
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
     arm64/gadgets/complex_memory_helpers.cpp
@@ -144,7 +168,9 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_SIMD_OPERAND_HISTOGRAM=$<BOOL:${UML_GADGET_SIMD_OPERAND_HISTOGRAM}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
-    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
+    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
+    UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
+    UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -332,6 +358,7 @@ target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+    UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 set_target_properties(uml_arm64_gadget_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)

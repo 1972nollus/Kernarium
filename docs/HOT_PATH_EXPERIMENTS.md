@@ -9117,3 +9117,334 @@ which is duplication, not division. On Kernarium's policy of taking every
 processor the device reports, eight cores at the shipped default projects to
 roughly 800 MB against a 1.5 GiB guest, so cross-executor translation sharing,
 which the JIT already has as G134, is the next thing this design needs.
+
+## G161: sharing gadget translations between executors
+
+Dated 2026-08-17. Built, correct, and measured; it removes 90% of translation
+work and does not make WebGL Aquarium faster. Whether it earns its place is a
+memory question, measured separately below. G160 left the gadget cache costing
+memory linear in vCPU count, because every vCPU carries its own executor and its
+own cache and the engine shared nothing between them. Counting the duplication
+on the browser guest at the shipped default found that almost none of the
+translation work is new:
+
+| vCPUs | translations | first sight | another executor had built it | own repeat |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 179,306,496 | 5.1% | 69.1% | 25.8% |
+| 8 | 144,703,488 | 6.2% | 79.7% | 14.1% |
+
+Each distinct translation was built 16--20 times, and the cross-executor share
+rises with vCPU count, which is what it should do if the duplication is real:
+more executors means more chances somebody else got there first.
+
+### The relocation contract
+
+A gadget program cannot simply be copied between executors. Its stream embeds
+pointers to `BlockLink` and `IndirectLink` records, and those belong to one
+executor and one address space. Everything else in the stream is a gadget entry
+point, a process-global table, or a value derived from the words being
+translated, so two executors translating the same words at the same address emit
+identical streams apart from exactly those cells.
+
+`LinkRelocations` records each such cell by the guest PC it names rather than the
+pointer it holds, and every builder site that emits one goes through `emit_link`
+or `emit_indirect_link` so the record cannot drift from the stream. A block ends
+at its first control-flow instruction and no terminal emits more than two link
+cells, so the record is a fixed two-entry array with an overflow flag; an
+overflowed record is never published.
+
+A canonical entry retains zero in those cells, which is the fail-safe direction:
+a consumer that failed to resolve one faults on a null stream rather than
+branching into another executor's state. Identity is the guest address, every
+guest word the build could have consumed, and the complete code-generation
+profile, settled by comparing the words rather than by the hash that places the
+entry, so a collision costs a publication rather than a wrong translation.
+Publication is gated on two or more live executors. Nothing may retain a pointer
+into the store past its shard lock, because publication reclaims.
+
+`tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp` destroys the
+producing executor before the consumer executes a single instruction, so a missed
+relocation is a sanitizer failure rather than a silent wrong answer, and it
+requires the consumer's linked run to retire three instructions, which is only
+possible if the relocated cell reached the consumer's own activated record.
+
+Sharing is not confined to one address space. Two address spaces running the
+same bytes at the same address are the same translation, because only the link
+cells are per-address-space and the consumer resolves those against whichever
+address space it is bound to, so a guest running one program in several
+processes shares across all of them.
+
+### What it does, and does not do
+
+WebGL Aquarium over VNC, macOS, gadgets, 4 vCPUs, 3 GiB of guest memory, 65536
+slots and 8 resident, four runs per arm in a counterbalanced ABBA/BAAB order,
+differenced across the plateau. Both arms embed kernel build #78 and carry the
+same measurement instrumentation, so the comparison isolates the store.
+
+| | frame rate | builds/s | adoptions | shared hit | translation memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| no sharing | 9.04 | 303,290 | -- | -- | 368.7 MB |
+| shared store, 128 MiB | 8.76 | 30,826 | 89.1% | 88.9% | 488.1 MB |
+
+Builds fall 89.8% and the store answers 88.9% of the questions put to it. The
+frame rate does not follow: 9.04 to 8.76 is -3.0% at p = 0.114 over all 70
+splits, which does not reach the 0.029 floor this design can produce. The arms
+overlap -- 9.30/9.10/8.70/9.05 against 8.60/8.90/8.80/8.75 -- so the defensible
+reading is flat, possibly slightly negative, at 32.4% more translation memory.
+
+Two candidate explanations were tested and rejected. Adopted blocks are not
+failing to link: they enter the C++ boundary less often than built ones,
+1.19M against 1.31M lookups a second, and every other rate falls by the same
+9%, which is a guest making less progress rather than one crossing the boundary
+more. And the cost is not the eviction sweep, though that was a real defect:
+`reclaim()` originally granted reprieves bounded by the shard's entry count, and
+with an 89% hit rate most entries carry a recent adoption, so each publication
+rotated through thousands of deque nodes while holding the lock every adoption
+needs. Bounding it to eight reprieves is correct and is retained, but it moved
+the frame rate from -4.9% to -3.0%, which is within the noise of each other.
+
+The likely explanation is that the gadget builder is already fast. G99's ThinLTO
+and G100's textual composition of the decode families exist to make decode cheap,
+and a browser basic block is 6--7 instructions, about 16 stream words. Rebuilding
+that is not clearly dearer than hashing 256 bytes of window, taking a shard lock,
+comparing 256 bytes, and copying the result out of a randomly addressed 128 MB
+region. This is the opposite of the JIT's position in G134, where compilation is
+expensive enough that sharing plainly pays.
+
+### The store is additive, not a replacement
+
+| | index | slabs | streams | links | indirect | per-executor | shared | all |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| no sharing | 18.0 | 44.0 | 201.1 | 90.6 | 5.3 | 359.0 | 0 | 359.0 |
+| shared store | 18.0 | 44.0 | 194.3 | 99.3 | 5.8 | 361.4 | 128.0 | 489.4 |
+
+Sharing removes the work of rebuilding, not the space of holding: the
+per-executor caches are unchanged because they are what the hot lookup path
+hits. At a fixed per-executor size the store can therefore only cost memory,
+which is why the frame-rate result above settles nothing about the design's
+purpose.
+
+The store holds 267,132 entries in 128 MiB, which is 502 bytes each and is an
+exact figure: unlike the pool, it accounts what it actually allocated. Taking
+off the entry's own bookkeeping and its copy of the fetched guest window, which
+the executor caches do not keep, leaves roughly a hundred bytes of gadget
+stream, or about fourteen words -- consistent with the five or six instructions
+a browser basic block runs before it branches, though the subtraction is
+derived rather than separately measured. Against that the per-executor
+`streams` figure is 194 MB over 252,247 occupied slots, about 770 bytes a slot.
+`CountingResource` measures what the pool requested from upstream rather than
+what is live, so most of that gap is pool slack and retained free chunks. That is
+a finding about G160's memory rather than about this change, and it is a more
+promising target than the translations themselves.
+
+### Can sharing buy back the memory? No -- adoption costs more than building
+
+The frame-rate result above settles nothing on its own, because at a fixed
+per-executor size the store can only add memory. The design's purpose was to let
+the per-executor caches shrink, a miss costing a copy instead of a build. Three
+arms, four runs each, interleaved in a counterbalanced Latin arrangement, all
+three embedding kernel build #80; same guest, resolution and memory as above.
+
+| arm | frame rate | builds/s | adoptions | cache | shared | total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 65536 slots, no sharing | 9.31 | 298,358 | -- | 364.8 MB | 0 | 364.8 MB |
+| 16384 slots, no sharing | 7.96 | 888,580 | -- | 186.4 MB | 0 | 186.4 MB |
+| 16384 slots + 128 MiB shared | 6.28 | 24,257 | 96.5% | 193.0 MB | 128.0 MB | 321.0 MB |
+
+Both differences from the 65536 baseline reach p = 0.0286, the floor for four
+against four. Sharing made the small cache worse, not better: 6.28 against 7.96,
+21% slower while removing 97% of its build work. That is the result stated as
+plainly as it can be -- the store does its job almost perfectly and costs frame
+rate for it.
+
+It also prices the mechanism. Per frame, at the plateau:
+
+| arm | lookups | builds | adoptions |
+| --- | ---: | ---: | ---: |
+| 65536, no sharing | 135,756 | 32,038 | 0 |
+| 16384, no sharing | 209,685 | 111,596 | 0 |
+| 16384 + shared | 213,155 | 3,866 | 112,421 |
+
+The two 16384 arms are within 1.7% on lookups, so between them the only thing
+that changed is that 107,730 builds a frame became 112,421 adoptions -- and the
+frame got 27% dearer. Were adoptions free, that arm would have been the faster
+of the two. Reading frame rate as emulator throughput and using the 65536 arm to
+pin what a build costs, an adoption comes out at two to three times a build,
+the spread covering what one assumes a lookup costs, which the three arms cannot
+separate on their own. The reading depends on frame rate tracking throughput,
+which G157 qualifies, but the direction does not: an arm doing a thirtieth of
+the build work of its control cannot be a fifth slower unless what replaced that
+work costs more than it did.
+
+Nothing about the sizes involved makes this surprising. Adoption hashed 256
+bytes of fetch window, took a shard lock, compared 256 bytes, and copied about
+110 bytes, to avoid rebuilding a program roughly fourteen words long that the
+builder produces in five or six decode dispatches. G134 pays for the JIT because
+compilation there is expensive. Gadget translation is not.
+
+The two no-sharing arms are worth keeping separately from any of this, as a
+memory and performance curve for G160: 65536 to 16384 slots costs 14.5% frame
+rate and saves 48.9% of translation memory.
+
+### The cheaper key: better, and still not close
+
+The obvious answer to "an adoption costs more than a build" is to make adoption
+cheaper. The window key was the wasteful part: it hashed 256 bytes of fetch
+window and compared 256 bytes, to identify a program built from about fourteen
+words. Keying on the guest address and profile alone, and settling identity
+against the words the build actually consumed -- the rule the per-executor cache
+already revalidates retained programs by -- makes both proportional to the block
+rather than to the window. Entries then need only the consumed prefix, not the
+whole window. One consequence is required rather than optional: once the key no
+longer covers the window, a publication must displace a stale incumbent at the
+same address, or a guest regenerating code at one address would lock that
+address out of the store forever.
+
+Four runs an arm, counterbalanced, kernel build #80, against a fresh
+same-configuration control.
+
+| arm | frame rate | builds/frame | adoptions/frame | entries | bytes/entry |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 16384, no sharing (control) | 8.06 | 110,714 | 0 | -- | -- |
+| 16384 + shared, window key | 6.28 | 3,866 | 112,421 | 266,954 | 503 |
+| 16384 + shared, cheap key | 6.70 | 2,089 | 115,295 | 476,511 | 282 |
+
+Every intended effect appeared. Per-entry cost fell from 503 to 282 bytes, so
+the same 128 MiB holds 78% more translations, the store's hit rate rose from
+96.4% to 98.2%, and the frame rate improved 6.7% over the window key. The
+control at 8.06 against the previous campaign's 7.96 is 1.3% apart, so the two
+campaigns are comparable and that improvement is real.
+
+It is also nowhere near enough: 6.70 against 8.06 is -16.9% at p = 0.0286.
+Refitting as above puts an adoption at roughly two to two and a half times a
+build, down from two and a half to three. The hash and the compare were never
+the dominant term. What is left -- a shard lock, a pool allocation, a
+hundred-byte copy, and a cold touch into a 128 MiB region -- is irreducible for
+any design that keeps translations outside the executor that runs them.
+
+That makes this a property of the gadget engine rather than of the
+implementation. Its blocks are about fourteen words and the builder emits them
+in five or six decode dispatches, because G99's ThinLTO and G100's textual
+composition of the decode families were built to make exactly that cheap. There
+is no version of "fetch it from somewhere else instead" that beats it. G134 pays
+for the JIT because compilation there is expensive; the same reasoning does not
+transfer, and the 69--80% duplication the opening measurement found is real but
+not worth removing.
+
+### How long is a gadget block?
+
+The natural response to "an adoption costs more than a build" is to make the
+build bigger, so the adoption's fixed costs amortize. Measured over 4,417,749
+published blocks on the browser guest, the mean block is **4.93 instructions and
+13.03 stream words**:
+
+| length in instructions | share of blocks | cumulative |
+| --- | ---: | ---: |
+| 1--2 | 31.6% | 31.6% |
+| 3--4 | 30.4% | 62.0% |
+| 5--8 | 25.1% | 87.1% |
+| 9--16 | 10.3% | 97.4% |
+| 17--63 | 2.6% | 99.93% |
+| 64, the fetch-window limit | 0.07% | 100% |
+
+`block_instruction_count` is the fetch window, not a length limit: a block ends
+at its first control-flow instruction, and only 0.07% of blocks run far enough
+to be cut off by the window instead. Enlarging the window therefore cannot
+lengthen blocks. It only makes every cache miss fetch a larger span of guest
+memory -- 4 KiB rather than 256 bytes at 1024 -- and, until this was fixed, made
+`validate()` value-initialize a buffer of that size on every revalidation. The
+window is now `UML_GADGET_BLOCK_INSTRUCTIONS` and the validation buffer is left
+uninitialized, since it is written before it is read.
+
+Getting longer translation units out of this engine means not stopping at the
+branch: following a direct branch into its target rather than emitting a link.
+That is a real option and it would move the build/adopt ratio the right way, but
+it is not a parameter change. It would alter block boundaries, retirement
+accounting, link topology, and specifically the G140/G141 validation contract,
+which assumes a program's consumed words are a contiguous run from its start
+address. It should be evaluated on its own merits rather than as a way to
+rescue sharing.
+
+## G162: translating a conditional branch's fall-through inline behind it
+
+Dated 2026-08-17. Accepted, and the largest single gain measured in this
+sequence. G161 established that a gadget block is 4.93 instructions and that
+nothing which merely moves translations around can pay at that size. The
+distribution of *why* blocks end says what to do about it instead:
+
+| block ends at | share | can it be continued? |
+| --- | ---: | --- |
+| conditional (CBZ/CBNZ 22.4%, fused CMP+B.cond 16.0%, TBZ/TBNZ 7.4%, B.cond 7.0%) | 52.8% | yes, and the fall-through is the next address |
+| BL, a direct call | 24.7% | only by inlining the callee |
+| BR/BLR/RET, indirect | 14.0% | no, the target is not known at translation time |
+| B, unconditional direct | 8.1% | yes, but it leaves a hole in the address range |
+| exception, window limit | 0.4% | no |
+
+Conditional branches are both the largest category and the only large one whose
+continuation keeps the guest addresses contiguous. That matters more than the
+share does: `correct_terminal_instruction_count`, its FPCR counterpart, and the
+G140/G141 validation contract all convert a guest PC to a position with
+`(pc - base) / 4` and all assume a program's consumed words are a contiguous run
+from its start. Continuing through a fall-through preserves every one of those
+untouched. Continuing through an unconditional `B` would break all three, which
+is why it is not what this does.
+
+The taken edge keeps its link; the not-taken path falls into the next gadget and
+stops being an indirect jump through a link record at all. The stream is the
+same size, because the word that held the fall-through link now holds the number
+of instructions translated behind the branch.
+
+That count is the one thing the change had to add. Entering a block precharges
+its whole translated length into the accumulator the engine returns as the
+retired count, and until now every exit was a block's last instruction, so
+nothing ever had to give any of it back. A taken branch now leaves from the
+middle and subtracts its suffix before following its link. The length is not
+known while the branch is being emitted, so each site is recorded and `build`
+fills it in once the block ends.
+
+WebGL Aquarium over VNC, macOS, gadgets, 4 vCPUs, 3 GiB, 65536 slots and 8
+resident, sharing off, four runs an arm counterbalanced, kernel build #80:
+
+| | frame rate | translations/s | cache hit | translation memory |
+| --- | ---: | ---: | ---: | ---: |
+| block ends at the branch | 9.00 | 297,908 | 76.4% | 366.9 MB |
+| fall-through inlined | 11.31 | 168,819 | 85.9% | 347.0 MB |
+
++25.7% at p = 0.0286, the floor for four against four, with no overlap between
+the arms: 11.55/10.75/11.50/11.45 against 8.80/8.60/9.40/9.20. Translations fall
+43% because each block covers about 1.75 times as many instructions, the hit
+rate rises because there are fewer and better-amortized entries, and memory
+falls 5.4%.
+
+Extending the same shape to the fused CMP+B.cond pairs, which take two guest
+instructions rather than one and so record a retire count of two, brings
+coverage to 52.8% of terminations and more than doubles the gain. Same
+conditions, same control, four runs an arm:
+
+| | frame rate | translations/s | cache hit | translation memory |
+| --- | ---: | ---: | ---: | ---: |
+| block ends at the branch | 9.19 | 297,390 | 76.4% | 361.0 MB |
+| all conditional forms inlined | 14.71 | 101,010 | 91.9% | 388.1 MB |
+
++60.1% at p = 0.0286, again with no overlap: 14.05/14.70/15.05/15.05 against
+9.50/9.15/8.85/9.25. Translations fall 66% and the cache hit rate reaches 91.9%.
+Memory rises 7.5% here rather than falling, because the blocks are long enough
+that larger streams outweigh holding fewer of them; against 60% more frames that
+is not a difficult trade.
+
+`arm64-gadget-inline-fallthrough` pins the part no conformance test can see: the
+guest registers are identical whether or not the suffix arithmetic is right, and
+only the retirement count differs. It requires the not-taken path to retire the
+whole block, a taken branch to retire only what ran before it -- two of six, so
+four given back -- and a fault past the branch to be counted from its own
+address.
+
+What remains uncovered is the 24.7% of blocks ending in a direct call, the 14.0%
+ending in an indirect branch, and the 8.1% ending in an unconditional `B` --
+the last of which is reachable but only by giving `Program` a list of
+contiguous runs and making both instruction-count corrections walk it.
+
+It also changes the premise of G161 rather than vindicating it: sharing lost
+because a build was too cheap to be worth avoiding, and this makes builds both
+larger and rarer. Whether that moves the adopt/build ratio enough to matter is
+now a different measurement from the one G161 took.

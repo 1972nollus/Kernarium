@@ -403,6 +403,88 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	return wide ? wide_direct[condition] : narrow_direct[condition];
 }
 
+/* The fall-through translated inline behind the fused pair. */
+[[nodiscard]] Gadget compare_immediate_branch_inline_gadget(
+	bool wide, unsigned condition) noexcept
+{
+	static constexpr std::array wide_inline{
+		uml_arm64_gadget_compare_immediate_branch_x_eq_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_ne_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_hs_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_lo_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_mi_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_pl_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_vs_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_vc_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_hi_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_ls_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_ge_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_lt_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_gt_inline,
+		uml_arm64_gadget_compare_immediate_branch_x_le_inline,
+	};
+	static constexpr std::array narrow_inline{
+		uml_arm64_gadget_compare_immediate_branch_w_eq_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_ne_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_hs_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_lo_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_mi_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_pl_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_vs_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_vc_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_hi_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_ls_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_ge_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_lt_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_gt_inline,
+		uml_arm64_gadget_compare_immediate_branch_w_le_inline,
+	};
+	if (condition >= wide_inline.size())
+		return nullptr;
+	return wide ? wide_inline[condition] : narrow_inline[condition];
+}
+
+/* The fall-through translated inline behind the fused pair. */
+[[nodiscard]] Gadget compare_register_branch_inline_gadget(
+	bool wide, unsigned condition) noexcept
+{
+	static constexpr std::array wide_inline{
+		uml_arm64_gadget_compare_register_branch_x_eq_inline,
+		uml_arm64_gadget_compare_register_branch_x_ne_inline,
+		uml_arm64_gadget_compare_register_branch_x_hs_inline,
+		uml_arm64_gadget_compare_register_branch_x_lo_inline,
+		uml_arm64_gadget_compare_register_branch_x_mi_inline,
+		uml_arm64_gadget_compare_register_branch_x_pl_inline,
+		uml_arm64_gadget_compare_register_branch_x_vs_inline,
+		uml_arm64_gadget_compare_register_branch_x_vc_inline,
+		uml_arm64_gadget_compare_register_branch_x_hi_inline,
+		uml_arm64_gadget_compare_register_branch_x_ls_inline,
+		uml_arm64_gadget_compare_register_branch_x_ge_inline,
+		uml_arm64_gadget_compare_register_branch_x_lt_inline,
+		uml_arm64_gadget_compare_register_branch_x_gt_inline,
+		uml_arm64_gadget_compare_register_branch_x_le_inline,
+	};
+	static constexpr std::array narrow_inline{
+		uml_arm64_gadget_compare_register_branch_w_eq_inline,
+		uml_arm64_gadget_compare_register_branch_w_ne_inline,
+		uml_arm64_gadget_compare_register_branch_w_hs_inline,
+		uml_arm64_gadget_compare_register_branch_w_lo_inline,
+		uml_arm64_gadget_compare_register_branch_w_mi_inline,
+		uml_arm64_gadget_compare_register_branch_w_pl_inline,
+		uml_arm64_gadget_compare_register_branch_w_vs_inline,
+		uml_arm64_gadget_compare_register_branch_w_vc_inline,
+		uml_arm64_gadget_compare_register_branch_w_hi_inline,
+		uml_arm64_gadget_compare_register_branch_w_ls_inline,
+		uml_arm64_gadget_compare_register_branch_w_ge_inline,
+		uml_arm64_gadget_compare_register_branch_w_lt_inline,
+		uml_arm64_gadget_compare_register_branch_w_gt_inline,
+		uml_arm64_gadget_compare_register_branch_w_le_inline,
+	};
+	if (condition >= wide_inline.size())
+		return nullptr;
+	return wide ? wide_inline[condition] : narrow_inline[condition];
+}
+
 [[nodiscard]] Gadget conditional_branch_gadget(unsigned condition) noexcept
 {
 	switch (condition) {
@@ -444,6 +526,47 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	case 13: return uml_arm64_gadget_branch_le_linked;
 	default: return uml_arm64_gadget_branch_always_linked;
 	}
+}
+
+/* The fall-through translated inline behind the branch. The always forms have
+ * no fall-through to translate, so they keep ending the block. */
+[[nodiscard]] Gadget conditional_branch_inline_gadget(
+	unsigned condition) noexcept
+{
+	switch (condition) {
+	case 0: return uml_arm64_gadget_branch_eq_inline;
+	case 1: return uml_arm64_gadget_branch_ne_inline;
+	case 2: return uml_arm64_gadget_branch_hs_inline;
+	case 3: return uml_arm64_gadget_branch_lo_inline;
+	case 4: return uml_arm64_gadget_branch_mi_inline;
+	case 5: return uml_arm64_gadget_branch_pl_inline;
+	case 6: return uml_arm64_gadget_branch_vs_inline;
+	case 7: return uml_arm64_gadget_branch_vc_inline;
+	case 8: return uml_arm64_gadget_branch_hi_inline;
+	case 9: return uml_arm64_gadget_branch_ls_inline;
+	case 10: return uml_arm64_gadget_branch_ge_inline;
+	case 11: return uml_arm64_gadget_branch_lt_inline;
+	case 12: return uml_arm64_gadget_branch_gt_inline;
+	case 13: return uml_arm64_gadget_branch_le_inline;
+	default: return nullptr;
+	}
+}
+
+/* The fall-through translated inline behind the branch. */
+[[nodiscard]] Gadget compare_branch_inline_gadget(
+	bool wide, bool nonzero) noexcept
+{
+	if (wide)
+		return nonzero ? uml_arm64_gadget_compare_branch_x_nz_inline :
+			uml_arm64_gadget_compare_branch_x_z_inline;
+	return nonzero ? uml_arm64_gadget_compare_branch_w_nz_inline :
+		uml_arm64_gadget_compare_branch_w_z_inline;
+}
+
+[[nodiscard]] Gadget test_branch_inline_gadget(bool nonzero) noexcept
+{
+	return nonzero ? uml_arm64_gadget_test_branch_nz_inline :
+		uml_arm64_gadget_test_branch_z_inline;
 }
 
 [[nodiscard]] Gadget compare_branch_gadget(bool wide, bool nonzero,

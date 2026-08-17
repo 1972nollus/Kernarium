@@ -144,6 +144,42 @@ generation still invalidates the whole cache. Saved-word buffers are allocated
 only for populated slots and grow on demand rather than reserving a full block
 in every cache slot.
 
+Its cache holds several address spaces at once. Slots, direct links, and
+indirect sites all carry the address space they describe, so a switch does not
+empty the cache and a return to a recently-run address space finds its
+translations intact. `UML_GADGET_CACHE_SLOTS` sizes the shared pool and
+`UML_GADGET_RESIDENT_GENERATIONS` bounds how many address spaces may hold
+translations; the least recently current one is retired whole when a new one
+arrives.
+
+A block ends at its first control-flow instruction, which on a browser guest is
+a mean of 4.93 instructions. `UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH`, on by
+default, translates a conditional branch's fall-through inline behind it
+instead: the taken edge keeps its link, the not-taken path falls into the next
+gadget, and the word that held the fall-through link holds the number of
+instructions translated behind the branch. Entering a block precharges its whole
+length, so a taken branch leaving from the middle subtracts that suffix before
+following its link. Guest addresses stay contiguous either way, which is what
+keeps fault accounting and stale-program validation unchanged.
+
+Each vCPU carries its own executor and its own cache, so several vCPUs
+translate the same guest code once each. A process-wide store, bounded by
+`UML_GADGET_SHARED_BUDGET_MIB` and off by default, lets one executor adopt
+another's translation instead. It is retained as an experimental arm rather than
+a supported default: it removes 90% of translation work and still costs frame
+rate, because an adoption is dearer than the gadget build it replaces. What makes a gadget program
+transferable is that its stream is identical between executors apart from the
+cells naming `BlockLink` and `IndirectLink` records, which belong to one
+executor and one address space: the builder records every such cell by the
+guest PC it names, a canonical entry holds zero in them, and the consumer
+resolves them against its own records while copying the stream into its own
+storage. Executor addresses and mutable link state therefore never enter the
+store. Identity is the guest address, every guest word the build could have
+consumed, and the code-generation profile, compared exactly rather than by
+hash, so a collision costs a publication rather than the wrong translation.
+Publication is gated on two or more live executors, and entries are reclaimed
+by second-chance FIFO within the budget.
+
 The JIT process budget defaults to half of guest memory. Each pooled executor
 has a complete private working-set ceiling of 64 MiB; after those working sets
 are funded, only the process-global shared translation cache grows with guest

@@ -2,6 +2,7 @@
 #include "executor.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "shared_programs.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -19,7 +20,11 @@ namespace uml::cpu::arm64::gadgets {
 using ::uml::memory::StaticGuestMemory;
 namespace {
 
-constexpr std::size_t block_instruction_count = 64;
+
+#ifndef UML_GADGET_BLOCK_INSTRUCTIONS
+#define UML_GADGET_BLOCK_INSTRUCTIONS 64
+#endif
+constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
 [[nodiscard]] std::size_t fetch_instruction_window(
@@ -142,6 +147,55 @@ void correct_fpcr_enable_instruction_count(
 	 * condition because enabled entries use the one-instruction cold path.
 	 */
 	executed -= unretired;
+}
+
+/* Which translations this executor's builds are interchangeable with.
+ *
+ * Gadget selection reads every one of these, so two executors configured
+ * differently must not adopt each other's streams even for identical guest
+ * words. Production binds one profile to the whole pool, and only tests vary
+ * them, but a silent collision here would be a wrong translation rather than a
+ * lost opportunity.
+ */
+[[nodiscard]] std::uint64_t profile_digest(
+	const arm64::gadgets::BuildOptions &options) noexcept
+{
+	static_assert(sizeof(arm64::gadgets::BuildOptions) ==
+		sizeof(::uml::cpu::HostCapabilities) + 16,
+		"a new build option must be added to the profile digest below, "
+		"or executors with different profiles will share translations");
+	const auto &host = options.host_capabilities;
+	const bool selectors[] = {
+		options.enable_pointer_authentication,
+		options.enable_guarded_control_flow,
+		options.force_software_checksum,
+		options.force_software_flags,
+		options.force_software_sha3,
+		options.force_software_fixed_transforms,
+		options.force_software_aes,
+		options.force_software_pmull,
+		options.force_software_dotprod,
+		options.force_software_i8mm,
+		host.floating_point,
+		host.advanced_simd,
+		host.fp16,
+		host.cssc,
+		host.aes,
+		host.pmull,
+		host.sha1,
+		host.sha2,
+		host.crc32,
+		host.sha3,
+		host.sha512,
+		host.afp,
+		host.jscvt_subnormal_flags_correct,
+	};
+	auto digest = static_cast<std::uint64_t>(
+		std::hash<::uml::platform::ArmFeatureSet>{}(host.supported));
+	for (const bool selector : selectors)
+		digest = (digest ^ static_cast<std::uint64_t>(selector)) *
+			0x100000001b3ULL;
+	return digest;
 }
 
 } // namespace
@@ -451,6 +505,47 @@ public:
 		entry.guest_pc = target_pc;
 		entry.link = target;
 		site.next_replacement ^= 1U;
+	}
+
+	/* Take a translation another executor built, if one is on offer.
+	 *
+	 * The canonical stream holds zero wherever the producer held a pointer
+	 * to its own link state. Resolving those cells against this cache, while
+	 * copying the stream into this cache's storage, is the whole of what
+	 * makes the translation ours: after this the block is indistinguishable
+	 * from one built here, and the producer may be destroyed without
+	 * touching it.
+	 */
+	[[nodiscard]] const BuildResult *adopt(
+		const arm64::gadgets::SharedKey &key, std::uint64_t changes)
+	{
+		std::pmr::vector<std::uintptr_t> words{&program_storage_};
+		arm64::gadgets::SharedTranslation translation;
+		if (!arm64::gadgets::SharedProgramStore::instance().adopt(
+			    key, words, translation))
+			return nullptr;
+		const auto &relocations = translation.relocations;
+		for (std::size_t index = 0; index < relocations.count; ++index) {
+			const auto &relocation = relocations.entries[index];
+			if (relocation.word >= words.size())
+				return nullptr;
+			words[relocation.word] = relocation.indirect ?
+				reinterpret_cast<std::uintptr_t>(
+					indirect_link(relocation.guest_pc)) :
+				reinterpret_cast<std::uintptr_t>(
+					link(relocation.guest_pc));
+		}
+		return &store(key.guest_pc,
+			BuildResult{
+				arm64::gadgets::Program{
+					key.guest_pc,
+					translation.instruction_count,
+					std::move(words),
+					translation.accesses_fp_state},
+				translation.complete,
+				translation.stop_address,
+				translation.stop_instruction},
+			key.window, changes);
 	}
 
 	[[nodiscard]] const BuildResult &store(
@@ -845,7 +940,7 @@ private:
 			return false;
 		}
 
-		std::array<std::uint32_t, block_instruction_count> fetched{};
+		std::array<std::uint32_t, block_instruction_count> fetched;
 		std::size_t index = 0;
 		while (index < slot.source_word_count) {
 			const auto address = slot.pc + index * sizeof(std::uint32_t);
@@ -954,12 +1049,15 @@ private:
 
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 	: programs_{std::make_unique<ProgramCache>()},
-	  build_options_{build_options}
+	  build_options_{build_options},
+	  profile_{profile_digest(build_options)}
 {
+	arm64::gadgets::SharedProgramStore::executor_created();
 }
 
 GadgetExecutor::~GadgetExecutor()
 {
+	arm64::gadgets::SharedProgramStore::executor_destroyed();
 	if (current_cpu_ != nullptr) {
 		current_cpu_->gadget_indirect_miss = nullptr;
 		arm64::restore_native_fp_environment(*current_cpu_);
@@ -1045,11 +1143,55 @@ std::optional<GadgetExecutor::CachedResult> GadgetExecutor::find(
 	return std::cref(*found);
 }
 
+/* Produce a translation the cache did not hold.
+ *
+ * Asking the shared store first costs one hash of the fetched window and one
+ * uncontended shard lookup, against a full decode of up to sixty-four
+ * instructions when it fails -- and on this guest it succeeds far more often
+ * than it fails, because most of what an executor is about to translate some
+ * other executor has already translated. It is not worth asking when no other
+ * executor exists to have answered.
+ */
+const BuildResult &GadgetExecutor::translate(
+	std::uint64_t pc, std::span<const std::uint32_t> window)
+{
+	++cache_diagnostics_.translations;
+	if (!arm64::gadgets::SharedProgramStore::sharing_worthwhile())
+		return build(pc, window, nullptr);
+	const auto key = arm64::gadgets::SharedKey::of(pc, window, profile_);
+	if (const auto *adopted = programs_->adopt(key, cache_changes_);
+	    adopted != nullptr) {
+		++cache_diagnostics_.adoptions;
+		return *adopted;
+	}
+	return build(pc, window, &key);
+}
+
+const BuildResult &GadgetExecutor::build(
+	std::uint64_t pc, std::span<const std::uint32_t> window,
+	const arm64::gadgets::SharedKey *key)
+{
+	arm64::gadgets::LinkRelocations relocations;
+	auto decoded = arm64::gadgets::Builder{}.build(
+		pc, window,
+		[this](std::uint64_t target) {
+			return programs_->link(target);
+		},
+		programs_->program_storage(),
+		[this](std::uint64_t source_pc) {
+			return programs_->indirect_link(source_pc);
+		},
+		build_options_, &relocations);
+	if (key != nullptr)
+		arm64::gadgets::SharedProgramStore::instance().publish(
+			*key, decoded, relocations);
+	return store(pc, std::move(decoded), window);
+}
+
 const BuildResult &GadgetExecutor::store(
 	std::uint64_t pc, BuildResult result,
 	std::span<const std::uint32_t> guest_words)
 {
-	++cache_diagnostics_.translations;
 	return programs_->store(
 		pc, std::move(result), guest_words, cache_changes_);
 }
@@ -1094,18 +1236,7 @@ const BuildResult &GadgetExecutor::store(
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		const auto window = std::span{instructions}.first(count);
-		auto decoded = arm64::gadgets::Builder{}.build(
-			cpu.pc, window,
-			[this](std::uint64_t pc) {
-				return programs_->link(pc);
-			},
-			programs_->program_storage(),
-			[this](std::uint64_t source_pc) {
-				return programs_->indirect_link(source_pc);
-			},
-			build_options_);
-		selected = std::cref(store(
-			cpu.pc, std::move(decoded), window));
+		selected = std::cref(translate(cpu.pc, window));
 	}
 	const auto &built = selected->get();
 	if (built.program.instruction_count() == 0) {

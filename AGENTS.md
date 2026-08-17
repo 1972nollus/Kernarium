@@ -448,6 +448,31 @@ Do not casually remove or reshape these accepted mechanisms:
   activation; a stale decoded program may be reactivated only after exact,
   page-bounded comparison of every consumed guest word. Generation changes,
   mismatches, and fetch faults retain the ordinary invalidate/redecode path.
+- **G160 tagged gadget cache:** slots, direct links, and indirect sites all
+  carry the address space they describe, so switching address space does not
+  empty the cache. `UML_GADGET_RESIDENT_GENERATIONS` bounds residency and
+  retires the least recently current address space whole, including its slots,
+  links, and indirect sites; an unbounded pool is not a cache. An eviction
+  deactivates the link record of the slot's own address space, not of whichever
+  is running.
+- **G161 gadget translation sharing:** the contract that lets one gadget
+  executor adopt another's translation, bounded by
+  `UML_GADGET_SHARED_BUDGET_MIB`. `LinkRelocations` records every stream cell
+  holding a `BlockLink` or `IndirectLink` pointer, by the guest PC it names;
+  every builder site that emits one must go through `emit_link` or
+  `emit_indirect_link` so the record cannot drift from the stream. A canonical
+  entry retains zero in those cells, so a missed relocation faults rather than
+  branching into another executor's state, and a record that does not describe
+  its stream is refused at publication. Consumers resolve the cells against
+  their own records and current address space while copying the stream into
+  their own storage; executor addresses and mutable link state never enter the
+  store. Identity is the guest address, every guest word the build could have
+  consumed, and the complete code-generation profile, compared exactly rather
+  than by hash. Publication stays gated on two or more live executors. Nothing
+  may retain a pointer into the store past its shard lock, because publication
+  reclaims. `tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp`
+  destroys the producing executor before the consumer executes, so a
+  relocation defect is a sanitizer failure rather than a silent wrong answer.
 - **G121:** the `seq_cst` published per-thread `ActiveAccessSlot` lifecycle
   protocol in `darwin/memory/mmu/address_space.cpp`.
 - **G123:** serialized Darwin `init_mm` synchronization and whole-16-KiB host

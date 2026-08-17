@@ -145,13 +145,26 @@ DecodeResult decode_data_processing(DecodeContext &context)
 					displacement);
 				const auto fallthrough =
 					branch_address + sizeof(branch);
+				/* The fall-through of the fused pair is
+				 * translated inline behind it, exactly as for
+				 * the unfused branch. */
+				if (resolve_link &&
+				    emit_inlined_compare_branch(
+					    context,
+					    compare_immediate_branch_inline_gadget(
+						    wide, branch & 15U),
+					    operand, target, 2)) {
+					/* The loop advances past this
+					 * instruction itself; the pair's second
+					 * one is ours. */
+					++compiled;
+					return DecodeResult::decoded;
+				}
 				emit(words, fused);
 				emit(words, operand);
 				if (resolve_link) {
-					emit(words, reinterpret_cast<std::uintptr_t>(
-						resolve_link(target)));
-					emit(words, reinterpret_cast<std::uintptr_t>(
-						resolve_link(fallthrough)));
+					emit_link(context, target);
+					emit_link(context, fallthrough);
 				} else {
 					emit(words, target);
 					emit(words, fallthrough);
@@ -229,13 +242,26 @@ DecodeResult decode_data_processing(DecodeContext &context)
 					displacement);
 				const auto fallthrough =
 					branch_address + sizeof(branch);
+				/* The fall-through of the fused pair is
+				 * translated inline behind it, exactly as for
+				 * the unfused branch. */
+				if (resolve_link &&
+				    emit_inlined_compare_branch(
+					    context,
+					    compare_register_branch_inline_gadget(
+						    is_64_bit, branch & 15U),
+					    operand, target, 2)) {
+					/* The loop advances past this
+					 * instruction itself; the pair's second
+					 * one is ours. */
+					++compiled;
+					return DecodeResult::decoded;
+				}
 				emit(words, fused);
 				emit(words, operand);
 				if (resolve_link) {
-					emit(words, reinterpret_cast<std::uintptr_t>(
-						resolve_link(target)));
-					emit(words, reinterpret_cast<std::uintptr_t>(
-						resolve_link(fallthrough)));
+					emit_link(context, target);
+					emit_link(context, fallthrough);
 				} else {
 					emit(words, target);
 					emit(words, fallthrough);
