@@ -550,9 +550,16 @@ when a remote client or an automated capture runner is required:
 ```sh
 python3 scripts/boot_kde_vnc.py
 python3 scripts/boot_kde_vnc.py --display vnc --port 5900
+python3 scripts/boot_kde_vnc.py --iso ~/Downloads/installer.iso
 python3 scripts/boot_kde_vnc.py --display vnc \
   --serial-socket .build/uml-desktop-serial.sock
 ```
+
+`--iso PATH` attaches the image as the read-only secondary UML block device
+`/dev/ubdb` and mounts its ISO9660 filesystem read-only at `/mnt/cdrom` before
+the display manager starts. The boot log records the resulting source,
+filesystem type, and mount options. The path is expanded and resolved on the
+host; the base EROFS image and disposable root overlay are unchanged.
 
 `--serial-socket PATH` keeps the normal console log/stdout copy and also
 publishes the bidirectional `ttyS0` stream through one reconnectable local

@@ -18,6 +18,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
+CDROM_DEVICE = "/dev/ubdb"
+CDROM_MOUNT_POINT = "/mnt/cdrom"
+ISO_MOUNT_COMMAND = (
+    f"install -d -m 0755 {CDROM_MOUNT_POINT}; "
+    f"mount -t iso9660 -o ro {CDROM_DEVICE} {CDROM_MOUNT_POINT}; "
+    f"findmnt -n -o SOURCE,FSTYPE,OPTIONS -T {CDROM_MOUNT_POINT}"
+)
 
 KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
@@ -118,6 +125,21 @@ def vnc_password(value: str) -> str:
     return value
 
 
+def iso_image(value: str) -> Path:
+    candidate = Path(value).expanduser()
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise argparse.ArgumentTypeError(
+            f"cannot access ISO image {candidate}: {error}"
+        ) from error
+    if not resolved.is_file() or not os.access(resolved, os.R_OK):
+        raise argparse.ArgumentTypeError(
+            f"not a readable regular file: {resolved}"
+        )
+    return resolved
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -162,6 +184,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
     parser.add_argument(
+        "--iso",
+        type=iso_image,
+        help=(
+            "attach an ISO image read-only and mount it at /mnt/cdrom in "
+            "the guest"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the emulator command without booting",
@@ -197,17 +227,18 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     ]
     for overlay_command in KDE_OVERLAY_COMMANDS:
         command.extend(("--command", overlay_command))
+    if options.iso is not None:
+        command.extend(("--command", ISO_MOUNT_COMMAND))
     if options.dry_run:
         command.append("--dry-run")
-    command.extend(
-        (
-            "--",
-            f"ncpus={options.cpus}",
-            f"--execution-engine={options.engine}",
-            "--gpu",
-            f"--gpu-display={options.display}",
-        )
-    )
+    command.extend((
+        "--",
+        f"ncpus={options.cpus}",
+        f"--execution-engine={options.engine}",
+    ))
+    if options.iso is not None:
+        command.append(f"ubd1r={options.iso}")
+    command.extend(("--gpu", f"--gpu-display={options.display}"))
     if options.display == "vnc":
         command.extend((
             f"--gpu-vnc-bind={options.bind}",
@@ -253,6 +284,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(
             "The server is reachable on every IPv4 interface; use "
             "--bind 127.0.0.1 for local-only access.",
+            file=sys.stderr,
+        )
+    if options.iso is not None:
+        print(
+            f"ISO {options.iso} will be mounted read-only at "
+            f"{CDROM_MOUNT_POINT}.",
             file=sys.stderr,
         )
     print("Press Ctrl-C in this terminal to stop the guest.", file=sys.stderr)

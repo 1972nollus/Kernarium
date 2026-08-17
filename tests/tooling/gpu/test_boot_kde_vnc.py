@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -36,6 +37,29 @@ class KdeVncLauncherTests(unittest.TestCase):
         separator = boot_kde_vnc.guest_argument_separator(command)
         self.assertIn("ncpus=6", command[separator + 1 :])
         self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
+
+    def test_iso_is_attached_read_only_and_mounted_at_cdrom(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            iso = Path(directory) / "installer.iso"
+            iso.touch()
+            options = boot_kde_vnc.parse_arguments(["--iso", str(iso)])
+            command = boot_kde_vnc.build_harness_command(options)
+
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        self.assertIn(f"ubd1r={iso.resolve()}", command[separator + 1 :])
+        harness_arguments = command[:separator]
+        mount_index = harness_arguments.index(boot_kde_vnc.ISO_MOUNT_COMMAND)
+        self.assertEqual(harness_arguments[mount_index - 1], "--command")
+        self.assertIn("mount -t iso9660 -o ro", boot_kde_vnc.ISO_MOUNT_COMMAND)
+        self.assertIn("/dev/ubdb", boot_kde_vnc.ISO_MOUNT_COMMAND)
+        self.assertIn("/mnt/cdrom", boot_kde_vnc.ISO_MOUNT_COMMAND)
+
+    def test_no_iso_disk_or_mount_is_added_by_default(self) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        self.assertNotIn(boot_kde_vnc.ISO_MOUNT_COMMAND, command)
+        self.assertFalse(any(argument.startswith("ubd1") for argument in command))
 
     def test_optional_display_density_is_forwarded_to_the_host_gpu(self) -> None:
         default_command = boot_kde_vnc.build_harness_command(
