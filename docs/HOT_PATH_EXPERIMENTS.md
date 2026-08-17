@@ -9837,3 +9837,140 @@ one had exited is silently a second window on the previous run. That is how the
 first attempt at a boot profile was produced; it is reported above as the second
 plateau window, which is what it actually was. The driver now terminates and
 waits for any live instance before launching.
+
+
+## G166: a 512 MiB shared gadget tier, appended and paid for -- both rejected
+
+Dated 2026-08-18. G161 rejected cross-executor translation sharing at a 128 MiB
+budget because an adoption cost two to three times the build it replaced. Two
+things have changed since: G162 lengthened the mean built block from 4.93 to
+11.76 instructions, so a build is now roughly 2.4x the work it was, and G165
+found that gadget-cache churn -- not cold start -- is what produces the 10%
+miss rate, with four private caches holding four copies of the same code. Both
+argue for another look, so the store was remeasured at 512 MiB in the two shapes
+the question naturally takes.
+
+| arm | private slots | shared tier |
+| --- | ---: | ---: |
+| A | 65536 | none (shipping default) |
+| B | 65536 | 512 MiB appended |
+| C | 16384 | 512 MiB, paid for by the smaller private cache |
+
+macOS, `.build/sharecache` at one revision, three binaries differing only in
+those two cache variables. WebGL Aquarium through the Kernarium guest setup on
+the VNC display: 4 vCPUs, 3 GiB, a 440x860 guest at 160 DPI, gadgets, 16 KiB
+profile. Twelve runs in the counterbalanced order A B C C B A A B C C B A, four
+an arm, a fresh port each; none wedged. Plateau is the mean of the last ten
+readings.
+
+### Frame rate
+
+| arm | n | plateau | sd | time to first frame | sd |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A | 4 | 13.975 | 0.411 | 61.1 s | 4.1 |
+| B | 4 | 13.850 | 0.311 | 63.6 s | 1.5 |
+| C | 4 | 10.300 | 0.183 | 73.4 s | 2.8 |
+
+B is -0.89% on plateau, t = -0.49; not distinguishable from the control. C is
+-26.30%, t = -16.33, and 20.3% slower to the first frame.
+
+### Cache efficiency
+
+One instrumented run an arm, the same counter build as G165 plus the shared
+store's own counters, summed over the four executors.
+
+| | A | B | C |
+| --- | ---: | ---: | ---: |
+| lookups | 310.4 M | 304.1 M | 320.9 M |
+| private hit rate | 90.27% | 90.27% | 72.67% |
+| private misses | 9.71% | 9.72% | 27.32% |
+| evictions, share of stores | 61.5% | 60.1% | 96.8% |
+| shared lookups | -- | 29.6 M | 88.5 M |
+| shared adoptions | -- | 16.6 M (56.1%) | 54.5 M (61.6%) |
+| blocks actually built | 30.1 M | 13.0 M | 33.7 M |
+| instructions built | 354.6 M | 217.5 M | 659.4 M |
+| shared entries | -- | 1.62 M | 1.60 M |
+| private host bytes | 406.1 MiB | 366.5 MiB | 167.5 MiB |
+| shared host bytes | 0 | 512.0 MiB | 512.0 MiB |
+| guest instructions retired | 115.9 G | 115.2 G | 99.5 G |
+
+The mechanism works exactly as designed. Appending the tier leaves the private
+cache untouched -- 90.27% hit rate in both A and B, to two decimal places -- and
+converts 56% of what escapes it into adoptions, cutting blocks built by 57% and
+instructions decoded by 39%. The store fills its budget: 1.62 M entries at 332
+bytes each, having seen 3.77 M distinct blocks and evicted 2.15 M.
+
+### Why appending it buys nothing
+
+Sixty-second `sample(1)` windows inside each plateau, restricted to the vCPU
+carriers, self time charged to the nearest non-libsystem caller. Inclusive
+shares of carrier on-CPU time:
+
+| | A | B | C |
+| --- | ---: | ---: | ---: |
+| `gadgets::execute` | 57.92% | 58.84% | 43.48% |
+| `Builder::build` | 4.66% | 2.32% | 9.80% |
+| `SharedProgramStore` | 0.01% | 2.31% | 9.96% |
+| `ProgramCache::find` | 2.32% | 2.31% | 1.31% |
+| `ProgramCache::store` | 2.83% | 2.28% | 8.85% |
+| `ProgramCache::prepare` | 6.87% | 5.41% | 5.07% |
+
+B is an almost exact swap: `Builder::build` falls 2.34 points and
+`SharedProgramStore` rises 2.30, with `gadgets::execute` unmoved. So adoption is
+no longer two to three times a build, as G161 measured on shorter blocks -- on
+the current code it costs very nearly the same. That is the mechanism working
+and still not paying.
+
+The reason it cannot pay is the size of the prize rather than the price of
+adoption. Building is 4.66% of carrier on-CPU time in the control, and the
+carriers are 54% busy, so the entire translator is about 2.5% of a vCPU's wall
+time. A tier that adopted every single miss for free would return at most that,
+against a measurement resolution of roughly +/-1.5% on four-run means. Raising
+the budget above 512 MiB moves adoption toward its 75% ceiling -- one of four
+executors must always build first -- and cannot raise the ceiling on savings.
+512 MiB of host memory is not a reasonable price for under 2.5%, and on the
+1.5 GiB iOS guest it is not available at all.
+
+### Why paying for it is much worse
+
+Shrinking the private cache to a quarter does not trade capacity between tiers
+at par. Private misses go 9.71% to 27.32% and 96.8% of stores displace a live
+block, so the private cache is thrashing outright at 99.98% occupancy. The
+shared tier absorbs 61.6% of that, but the miss volume nearly triples, and 33.7 M
+blocks still have to be built -- more than the control's 30.1 M despite 54.5 M
+adoptions. Instructions decoded rise 86%.
+
+The profile shows where the frame rate went. Translation, the shared store, and
+private stores together take 28.6% of carrier on-CPU time against 7.5% in the
+control, squeezing `gadgets::execute` from 57.92% to 43.48%; allocator time
+roughly doubles as well, at 16.80% against 6.84%, from storing 87.7 M programs
+instead of 30.1 M. Guest instructions retired in the same wall window fall 14%.
+A shared tier cannot substitute for private capacity because a private hit is a
+tagged slot lookup while a shared hit is a hash, an exact word comparison, a
+stream copy and a relocation pass.
+
+### Disposition
+
+`UML_GADGET_SHARED_BUDGET_MIB` stays 0, and `UML_GADGET_CACHE_SLOTS` stays
+65536. The CMake rationale for the shared budget is updated, since G161's
+"two to three times the cost of a build" no longer describes the current code
+even though its conclusion still holds.
+
+The useful negative result is the bound: on this workload no translator or
+translation-cache change can be worth more than about 2.5% of a vCPU's wall
+time, because that is all the translator costs. G165 said the same thing from
+the other direction for the plateau. Cache work that is worth chasing is the
+maintenance side -- `ProgramCache::prepare` is 6.87% here, nearly half of it the
+retirement sweep, which is larger than the whole translator.
+
+### Limitations
+
+Cache efficiency is one run an arm rather than four; G165 established that these
+ratios reproduce within half a point across runs, and the three arms' lookup
+counts agree within 5%, but the frame-rate arms are the replicated ones. The
+counter build is not committed. Frame-rate and counter runs are separate builds,
+so the counter arms' plateaus (13.60, 14.30, 10.70) are consistency checks on
+the clean arms rather than additional samples. The profiles are one 60 s window
+an arm and cost about 1 fps while running, which is why they are used for shares
+between arms and not for absolute frame rate. Time to first frame is reported
+but has a 4.1 s spread in the control, so only C's 20% regression exceeds it.

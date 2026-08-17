@@ -137,9 +137,19 @@ set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
 # its own cache, so a guest running on several of them translates the same code
 # once per vCPU -- 69% of translations at four vCPUs and 80% at eight were work
 # another executor had already done. Letting them adopt each other's
-# translations removes 90% of that work and still costs frame rate, because an
-# adoption is two to three times the cost of the build it replaces at the sizes
-# gadget blocks actually run to. See G161; do not enable without re-measuring.
+# translations removes most of that work.
+#
+# At 128 MiB and the block sizes that predated G162 it cost frame rate, because
+# an adoption was two to three times the cost of the build it replaced (G161).
+# Remeasured at 512 MiB on the current, longer blocks it is instead an exact
+# swap: a shared tier serves 56% of private misses, Builder::build falls from
+# 4.66% of vCPU on-CPU time to 2.32% and the store itself takes 2.31%, leaving
+# frame rate at -0.89% (t = -0.49, n = 4 an arm) for 512 MiB of host memory.
+# Building is only a few percent of the time available to save, so the tier
+# cannot pay for itself however cheap adoption becomes. Paying for it by
+# shrinking the private cache to 16384 slots is far worse: the private hit rate
+# collapses to 72.7%, 96.8% of stores evict a live block, and frame rate falls
+# 26.3%. See G166; do not enable without re-measuring.
 set(UML_GADGET_SHARED_BUDGET_MIB "0" CACHE STRING
     "Process-wide budget for shared gadget translations, in MiB; 0 disables")
 math(EXPR _uml_gadget_shared_budget_bytes
