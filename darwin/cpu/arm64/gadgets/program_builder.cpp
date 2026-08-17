@@ -4,6 +4,7 @@
 #include "pair_histogram.hpp"
 
 #include <algorithm>
+#include <array>
 #include <span>
 #include <utility>
 
@@ -46,6 +47,20 @@ DecodeResult builder_detail::implementation_gap(DecodeContext &context)
 
 namespace {
 
+[[nodiscard]] Program finish(
+	const std::array<GuestRun, Program::maximum_runs> &runs,
+	std::size_t run_count, std::size_t retired,
+	std::pmr::vector<std::uintptr_t> words, bool accesses_fp_state)
+{
+	if (run_count <= 1)
+		return Program{runs[0].address, retired, std::move(words),
+			accesses_fp_state};
+	return Program{std::span<const GuestRun>{runs.data(), run_count},
+		retired, std::move(words), accesses_fp_state};
+}
+
+
+
 /* Fill in the reserved suffix operand of each inlined conditional branch, now
  * that the block's translated length is final. A taken branch subtracts this
  * from the count its block was precharged, so it is the instructions after the
@@ -68,7 +83,8 @@ BuildResult Builder::build(
 	std::span<const std::uint32_t> instructions,
 	LinkResolver resolve_link, std::pmr::memory_resource *storage,
 	IndirectLinkResolver resolve_indirect_link, BuildOptions options,
-	LinkRelocations *relocations) const
+	LinkRelocations *relocations, const InlineCalls *inline_calls,
+	std::span<std::uint32_t> consumed_out, std::size_t *consumed_count) const
 {
 	const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
 		options.host_capabilities};
@@ -77,25 +93,58 @@ BuildResult Builder::build(
 	words.reserve(std::min<std::size_t>(
 		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
+	/* The runs closed so far, and what the block has retired through them.
+	 * A block is one run unless a call was translated inline into it. */
+	std::array<GuestRun, Program::maximum_runs> runs{};
+	std::size_t run_count = 0;
+	std::size_t retired_before_run = 0;
+	auto run_base = guest_address;
+	auto window = instructions;
+	std::array<std::uint32_t, 64> callee_window{};
+	std::array<std::uint32_t, 64> return_window{};
+	std::uint64_t continue_at = 0;
+	std::uint64_t continue_return = 0;
+	std::uint64_t inlined_return = 0;
+	/* Every guest word the build read, in run order, which is what the
+	 * stale-program check compares against. */
+
+	if (consumed_count != nullptr)
+		*consumed_count = 0;
+	/* A run retires `through` instructions, but a build that stopped read one
+	 * more word than it retired, and the stale-program check compares every
+	 * word the build read. */
+	const auto close_run = [&](std::size_t through, std::size_t read) {
+		if (run_count < runs.size())
+			runs[run_count] = {run_base,
+				static_cast<std::uint32_t>(through)};
+		++run_count;
+		if (consumed_count != nullptr)
+			for (std::size_t index = 0; index < read &&
+			     index < window.size() &&
+			     *consumed_count < consumed_out.size(); ++index)
+				consumed_out[(*consumed_count)++] = window[index];
+		retired_before_run += through;
+	};
 	bool program_accesses_fp_state = false;
 	[[maybe_unused]] const void *previous_gadget = nullptr;
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
 	 * past both instructions itself. */
-	while (compiled < instructions.size()) {
-		const auto instruction = instructions[compiled];
+	while (compiled < window.size()) {
+		const auto instruction = window[compiled];
 		program_accesses_fp_state = program_accesses_fp_state ||
 			uml::cpu::arm64::detail::
 				instruction_accesses_fp_state(instruction);
-		const auto address = guest_address + compiled * sizeof(instruction);
+		const auto address = run_base + compiled * sizeof(instruction);
 		if ((instruction & 0xffff'0000U) == 0) {
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);
 			++compiled;
-			resolve_inline_suffixes(words, suffixes, compiled);
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state},
+			close_run(compiled, compiled);
+			resolve_inline_suffixes(words, suffixes, retired_before_run);
+			return {finish(runs, run_count, retired_before_run,
+				std::move(words), program_accesses_fp_state),
 				true, address, instruction};
 		}
 
@@ -103,7 +152,7 @@ BuildResult Builder::build(
 			guest_address,
 			address,
 			instruction,
-			instructions.subspan(compiled + 1),
+			window.subspan(compiled + 1),
 			compiled,
 			program_accesses_fp_state,
 			words,
@@ -112,6 +161,11 @@ BuildResult Builder::build(
 			options,
 			relocations,
 			&suffixes,
+			retired_before_run,
+			inline_calls != nullptr ? &continue_at : nullptr,
+			inline_calls != nullptr ? &continue_return : nullptr,
+			inlined_return,
+			inline_calls != nullptr ? &inline_calls->may_inline : nullptr,
 		};
 		const auto emitted_start = words.size();
 		DecodeResult decoded = DecodeResult::decoded;
@@ -148,16 +202,56 @@ BuildResult Builder::build(
 			diagnostics::record_gadget_pair(previous_gadget, emitted);
 			previous_gadget = emitted;
 		}
+		if (decoded == DecodeResult::continue_elsewhere) {
+			/* The run ends here and the next one starts wherever the
+			 * decoder pointed. A window it cannot read, or a fourth
+			 * run, simply leaves the block ending at what has been
+			 * translated so far -- the stream already exits through
+			 * the gadget the decoder emitted. */
+			const auto entering = continue_return != 0;
+			auto &buffer = entering ? callee_window : return_window;
+			const auto count = inline_calls->fetch(continue_at,
+				std::span{buffer});
+			if (count == 0 || run_count + 2 > runs.size()) {
+				/* The gadget already emitted assumes the next
+				 * run follows it in the stream. Without one the
+				 * block would simply run off the end, so it
+				 * exits through a link to where it would have
+				 * continued -- which is exactly the ordinary
+				 * unlinked call or return. */
+				emit(words, uml_arm64_gadget_branch_linked);
+				if (relocations != nullptr)
+					relocations->add(words.size(), false,
+						continue_at);
+				emit(words, reinterpret_cast<std::uintptr_t>(
+					resolve_link(continue_at)));
+				close_run(compiled, compiled);
+				resolve_inline_suffixes(words, suffixes,
+					retired_before_run);
+				return {finish(runs, run_count, retired_before_run,
+					std::move(words), program_accesses_fp_state),
+					true, address, instruction};
+			}
+			close_run(compiled, compiled);
+			run_base = continue_at;
+			inlined_return = continue_return;
+			window = std::span<const std::uint32_t>{buffer}.first(count);
+			compiled = 0;
+			continue;
+		}
 		if (decoded != DecodeResult::decoded) {
-			resolve_inline_suffixes(words, suffixes, compiled);
-			return {Program{guest_address, compiled, std::move(words),
-				program_accesses_fp_state},
+			close_run(compiled, compiled +
+				(decoded == DecodeResult::implementation_gap ?
+					1U : 0U));
+			resolve_inline_suffixes(words, suffixes, retired_before_run);
+			return {finish(runs, run_count, retired_before_run,
+				std::move(words), program_accesses_fp_state),
 				decoded == DecodeResult::terminal,
 				address, instruction};
 		}
 		++compiled;
 	}
-	const auto fallthrough = guest_address + compiled * sizeof(std::uint32_t);
+	const auto fallthrough = run_base + compiled * sizeof(std::uint32_t);
 	if (resolve_link) {
 		emit(words, uml_arm64_gadget_branch_linked);
 		if (relocations != nullptr)
@@ -168,10 +262,11 @@ BuildResult Builder::build(
 		emit(words, uml_arm64_gadget_interrupt);
 		emit(words, fallthrough);
 	}
-	resolve_inline_suffixes(words, suffixes, compiled);
-	return {Program{guest_address, compiled, std::move(words),
-		program_accesses_fp_state}, true,
-		guest_address + compiled * sizeof(std::uint32_t), 0};
+	close_run(compiled, compiled);
+	resolve_inline_suffixes(words, suffixes, retired_before_run);
+	return {finish(runs, run_count, retired_before_run, std::move(words),
+		program_accesses_fp_state), true,
+		run_base + compiled * sizeof(std::uint32_t), 0};
 }
 
 } // namespace uml::cpu::arm64::gadgets

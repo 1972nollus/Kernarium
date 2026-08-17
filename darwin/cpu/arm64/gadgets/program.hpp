@@ -11,20 +11,49 @@
 #include <cstdint>
 #include <functional>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace uml::cpu::arm64::gadgets {
 
+/* One contiguous stretch of guest instructions a program translated.
+ *
+ * A block is a single run unless a call was inlined into it, when it becomes
+ * the caller's run, the callee's, and the continuation after the return. The
+ * run list is what lets a guest PC still be converted to a position in the
+ * block once the addresses stop being contiguous, which both the retirement
+ * corrections and the stale-program check depend on.
+ */
+struct GuestRun final {
+	std::uint64_t address{};
+	std::uint32_t instructions{};
+};
+
 class Program final {
 public:
+	/* Caller, callee, and the continuation after the inlined return. */
+	static constexpr std::size_t maximum_runs = 3;
+
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		std::pmr::vector<std::uintptr_t> words,
 		bool accesses_fp_state) noexcept;
+	Program(std::span<const GuestRun> runs, std::size_t instruction_count,
+		std::pmr::vector<std::uintptr_t> words,
+		bool accesses_fp_state) noexcept;
 
+	/* Where the block starts, which is the first run's address. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
 	{
-		return guest_address_;
+		return runs_[0].address;
+	}
+	[[nodiscard]] std::span<const GuestRun> runs() const noexcept
+	{
+		return {runs_.data(), run_count_};
+	}
+	[[nodiscard]] bool contiguous() const noexcept
+	{
+		return run_count_ == 1;
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
@@ -40,11 +69,34 @@ public:
 	}
 
 private:
-	std::uint64_t guest_address_{};
+	std::array<GuestRun, maximum_runs> runs_{};
 	std::size_t instruction_count_{};
 	std::pmr::vector<std::uintptr_t> words_;
+	std::uint8_t run_count_{1};
 	bool accesses_fp_state_{};
 };
+
+/* Where a guest PC sits in a program, counted in retired instructions from its
+ * entry. Empty when the PC is not one this program translated, which is how a
+ * caller distinguishes "not ours" from position zero. */
+[[nodiscard]] inline std::optional<std::size_t> program_position(
+	const Program &program, std::uint64_t pc) noexcept
+{
+	std::size_t base = 0;
+	for (const auto &run : program.runs()) {
+		const auto span = std::uint64_t{run.instructions} *
+			sizeof(std::uint32_t);
+		if (pc >= run.address && pc - run.address < span) {
+			const auto offset = pc - run.address;
+			if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
+				return std::nullopt;
+			return base + static_cast<std::size_t>(
+				offset / sizeof(std::uint32_t));
+		}
+		base += run.instructions;
+	}
+	return std::nullopt;
+}
 
 struct BuildResult final {
 	Program program;
@@ -202,6 +254,14 @@ static_assert(offsetof(IndirectLink, entries) == 0);
 static_assert(offsetof(IndirectLink, next_replacement) == 32);
 static_assert(sizeof(IndirectLink) == 40);
 
+/* What a build needs in order to translate a callee inline: permission for this
+ * particular callee, and a way to read guest instructions at an address other
+ * than the one the build started from. Absent, calls end the block as before. */
+struct InlineCalls final {
+	std::function<bool(std::uint64_t)> may_inline;
+	std::function<std::size_t(std::uint64_t, std::span<std::uint32_t>)> fetch;
+};
+
 class Builder final {
 public:
 	using LinkResolver =
@@ -217,7 +277,10 @@ public:
 			std::pmr::get_default_resource(),
 		IndirectLinkResolver resolve_indirect_link = {},
 		BuildOptions options = {},
-		LinkRelocations *relocations = nullptr) const;
+		LinkRelocations *relocations = nullptr,
+		const InlineCalls *inline_calls = nullptr,
+		std::span<std::uint32_t> consumed = {},
+		std::size_t *consumed_count = nullptr) const;
 };
 
 [[nodiscard]] ::uml::cpu::EngineEvent execute(

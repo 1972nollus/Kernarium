@@ -2,6 +2,7 @@
 #include "gadget_entry.hpp"
 #include "program.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace uml::cpu::arm64::gadgets {
@@ -9,9 +10,23 @@ namespace uml::cpu::arm64::gadgets {
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 		 std::pmr::vector<std::uintptr_t> words,
 		 bool accesses_fp_state) noexcept
-	: guest_address_{guest_address}, instruction_count_{instruction_count},
+	: instruction_count_{instruction_count},
 	  words_{std::move(words)}, accesses_fp_state_{accesses_fp_state}
 {
+	runs_[0] = {guest_address,
+		static_cast<std::uint32_t>(instruction_count)};
+}
+
+Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
+		 std::pmr::vector<std::uintptr_t> words,
+		 bool accesses_fp_state) noexcept
+	: instruction_count_{instruction_count},
+	  words_{std::move(words)},
+	  run_count_{static_cast<std::uint8_t>(
+		  std::min(runs.size(), maximum_runs))},
+	  accesses_fp_state_{accesses_fp_state}
+{
+	std::copy_n(runs.begin(), run_count_, runs_.begin());
 }
 ::uml::cpu::EngineEvent execute(const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb) noexcept
 {

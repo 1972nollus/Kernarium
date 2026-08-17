@@ -92,6 +92,9 @@ private:
 	 * derived once from build_options_, since gadget selection is fixed for
 	 * the executor's lifetime. */
 	std::uint64_t profile_{};
+	/* The memory a build may read a callee's instructions through, set for
+	 * the duration of one run_block. */
+	::uml::memory::StaticGuestMemory *build_memory_{};
 	GadgetCacheDiagnostics cache_diagnostics_{};
 };
 

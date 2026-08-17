@@ -39,6 +39,22 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		const auto target = static_cast<std::uint64_t>(
 			static_cast<std::int64_t>(address) + displacement);
 		const bool link = (instruction >> 31) != 0;
+		/* A direct call whose callee is translated inline behind it
+		 * keeps only the link register the call sets; control continues
+		 * into the callee, and its return continues back here. */
+		if (link && resolve_link && context.continue_at != nullptr &&
+		    context.continue_return != nullptr &&
+		    context.inlined_return == 0 &&
+		    context.may_inline_call != nullptr &&
+		    *context.may_inline_call &&
+		    (*context.may_inline_call)(target)) {
+			emit(words, uml_arm64_gadget_call_inline);
+			emit(words, address + sizeof(instruction));
+			++compiled;
+			*context.continue_at = target;
+			*context.continue_return = address + sizeof(instruction);
+			return DecodeResult::continue_elsewhere;
+		}
 		if (resolve_link) {
 			emit(words, link ? uml_arm64_gadget_branch_link_linked :
 				uml_arm64_gadget_branch_linked);
@@ -288,6 +304,25 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		const auto opcode = instruction & 0xffff'fc1fU;
 		const unsigned source = (instruction >> 5) & 31U;
 		const bool cached = static_cast<bool>(resolve_indirect_link);
+		/* A plain RET inside an inlined callee falls through into the
+		 * continuation, but only when the link register still holds the
+		 * address the call pushed; the guard's operands are the ordinary
+		 * cached return's, which it falls into otherwise. */
+		if (opcode == 0xd65f'0000U && source == 30U && cached &&
+		    context.inlined_return != 0 && context.continue_at != nullptr &&
+		    context.suffixes != nullptr && !context.suffixes->full()) {
+			emit(words, uml_arm64_gadget_return_guarded);
+			emit(words, static_cast<std::uintptr_t>(context.inlined_return));
+			context.suffixes->add(words.size(),
+				context.retired_before_run + compiled + 1);
+			emit(words, std::uintptr_t{0});
+			emit(words, static_cast<std::uintptr_t>(source * 8U));
+			emit_indirect_link(context, address);
+			++compiled;
+			*context.continue_at = context.inlined_return;
+			*context.continue_return = 0;
+			return DecodeResult::continue_elsewhere;
+		}
 		emit(words, opcode == 0xd61f'0000U ?
 			(cached ? uml_arm64_gadget_branch_register_cached :
 				uml_arm64_gadget_branch_register) :

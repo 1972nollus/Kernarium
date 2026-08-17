@@ -99,7 +99,7 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	arm64-gadget-runtime	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-cache-validation	tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp	unit	retained	exact stale-program validation reuses unchanged decoded programs, rejects changed words, and resets direct-link activations before retained programs can be reached
 -	arm64-gadget-shared-translation	tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp	unit	conditional	cross-executor translation sharing: an adopted program outlives the executor that built it, one address space adopts another's, a differing code-generation profile does not share, and an adopted block still revalidates its guest words
--	arm64-gadget-inline-fallthrough	tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp	unit	retained	a conditional branch whose fall-through is translated inline retires the whole block when not taken, only what ran when taken, and counts a fault past the branch from its own address
+-	arm64-gadget-inline-fallthrough	tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp	unit	retained	a conditional branch whose fall-through is translated inline retires the whole block when not taken, only what ran when taken, and counts a fault past the branch from its own address; with callee inlining enabled, a direct call also translates its callee into the same block
 -	arm64-gadget-hot-path	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-nzcv-residency	tests/unit/arm64	unit	retained	existing registered test
 -	arm64-gadget-fp-environment	tests/unit/arm64	unit	retained	existing registered test

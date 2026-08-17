@@ -7,6 +7,10 @@
 #include <cstring>
 #include <memory>
 
+#ifndef UML_GADGET_INLINE_CALLS
+#define UML_GADGET_INLINE_CALLS 1
+#endif
+
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
 using uml::emulator::tests::JitBacking;
@@ -171,6 +175,49 @@ void a_fault_past_the_branch_counts_from_its_address()
 	require(outcome.executed == 4);
 }
 
+#if UML_GADGET_INLINE_CALLS
+/* A direct call whose callee is translated inline behind it.
+ *
+ * The block becomes three runs -- caller, callee, and the continuation after
+ * the return -- so this is also what proves the run list works: the guest
+ * addresses are no longer contiguous, and both the retirement count and the
+ * stale-program check have to cope.
+ */
+void a_call_translates_its_callee_inline()
+{
+	constexpr unsigned long generation = 944;
+	JitBacking backing{1};
+	/* 0x00: mov x1, #1
+	 * 0x04: bl +8 words      -- to 0x24
+	 * 0x08: mov x2, #2       -- the return continuation
+	 * 0x0c: svc
+	 * 0x24: mov x3, #3       -- the callee
+	 * 0x28: ret
+	 */
+	backing.put32(0x00, move_immediate(1, 1));
+	backing.put32(0x04, 0x9400'0000U | 8U);
+	backing.put32(0x08, move_immediate(2, 2));
+	backing.put32(0x0c, system_call);
+	backing.put32(0x24, move_immediate(3, 3));
+	backing.put32(0x28, 0xd65f'03c0U);
+	JitMapping mapping{generation, code_base, backing, 1};
+
+	Memory memory{std::make_unique<StaticGuestMemory>()};
+	auto executor = std::make_unique<gadgets::GadgetExecutor>();
+	arm64::CpuState cpu{};
+	cpu.pc = code_base;
+	const auto outcome = run_once(*executor, *memory, generation, cpu);
+	require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[1] == 1);
+	require(cpu.registers[3] == 3);
+	/* Reached only by returning through the guard into the continuation. */
+	require(cpu.registers[2] == 2);
+	require(cpu.registers[30] == code_base + 0x08);
+	/* mov, bl, mov, ret, mov, svc -- every instruction of all three runs. */
+	require(outcome.executed == 6);
+}
+#endif
+
 } // namespace
 
 int main()
@@ -178,5 +225,8 @@ int main()
 	the_fall_through_retires_the_whole_block();
 	taking_the_branch_retires_only_what_ran();
 	a_fault_past_the_branch_counts_from_its_address();
+#if UML_GADGET_INLINE_CALLS
+	a_call_translates_its_callee_inline();
+#endif
 	return 0;
 }

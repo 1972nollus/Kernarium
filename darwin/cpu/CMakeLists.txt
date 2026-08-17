@@ -121,6 +121,14 @@ set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
 # frame rate on WebGL Aquarium; see G162.
 option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
     "Translate a conditional branch's fall-through inline behind it" ON)
+# Experimental A/B arm, off by default. Once conditional fall-throughs are
+# inlined, 48.9% of blocks end at a direct call, and inlining the callee removes
+# both that boundary and the indirect return. Measured on the corrected code it
+# is +1.7% at p = 0.43 over eight runs an arm -- not demonstrated -- and
+# inlining at every site rather than once per callee is an exact wash, its
+# 3.43x duplication cancelling what the removed boundaries buy. See G163.
+option(UML_GADGET_INLINE_CALLS
+    "Translate a direct call's callee inline behind it" OFF)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -170,6 +178,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
+    UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
 
 # The gadget library is still many translation units, and the selection tables
@@ -359,6 +368,7 @@ target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
+    UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 set_target_properties(uml_arm64_gadget_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)

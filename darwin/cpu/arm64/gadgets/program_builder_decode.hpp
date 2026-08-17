@@ -71,6 +71,19 @@ struct DecodeContext final {
 	 * recorded, so `build` can fill them in once it knows how long the block
 	 * turned out to be. */
 	InlineSuffixes *suffixes;
+	/* Instructions retired by the runs already closed, so a decoder can name
+	 * a position in the whole block rather than in the run it is inside. */
+	std::size_t retired_before_run;
+	/* Where the build should pick up when a decoder asks to continue
+	 * somewhere else, and, while a callee is being translated inline, the
+	 * address its return continues at. Zero when not inside one. */
+	std::uint64_t *continue_at;
+	/* The address an inlined callee's return continues at, set together
+	 * with `continue_at` when a call is being entered. */
+	std::uint64_t *continue_return;
+	std::uint64_t inlined_return;
+	/* Whether this callee may be translated inline here at all. */
+	const std::function<bool(std::uint64_t)> *may_inline_call;
 };
 
 /* Emit the cell a direct control-flow gadget reads its successor through.
@@ -122,7 +135,8 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	else {
 	selection::emit(context.words, gadget);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(), context.compiled + retires);
+	context.suffixes->add(context.words.size(),
+		context.retired_before_run + context.compiled + retires);
 	context.words.push_back(0);
 	return true;
 	}
@@ -142,7 +156,8 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	selection::emit(context.words, gadget);
 	selection::emit(context.words, operand);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(), context.compiled + retires);
+	context.suffixes->add(context.words.size(),
+		context.retired_before_run + context.compiled + retires);
 	context.words.push_back(0);
 	return true;
 	}
@@ -163,7 +178,8 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	selection::emit(context.words, operand);
 	selection::emit(context.words, mask);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(), context.compiled + retires);
+	context.suffixes->add(context.words.size(),
+		context.retired_before_run + context.compiled + retires);
 	context.words.push_back(0);
 	return true;
 	}
@@ -174,6 +190,9 @@ enum class DecodeResult : std::uint8_t {
 	decoded,
 	terminal,
 	implementation_gap,
+	/* Translated so far, but the next guest instruction is at the address
+	 * left in `continue_at` rather than the one after this. */
+	continue_elsewhere,
 };
 
 [[nodiscard]] DecodeResult implementation_gap(DecodeContext &context);

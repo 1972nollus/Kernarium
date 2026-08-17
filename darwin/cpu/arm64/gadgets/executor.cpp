@@ -24,6 +24,15 @@ namespace {
 #ifndef UML_GADGET_BLOCK_INSTRUCTIONS
 #define UML_GADGET_BLOCK_INSTRUCTIONS 64
 #endif
+/* Translating a direct call's callee inline behind it, so the call and its
+ * return stop being block boundaries. Calls end 48.9% of blocks once
+ * conditional fall-throughs are inlined, and a return is an indirect branch
+ * through a two-entry link that any callee reached from more than two sites
+ * thrashes. See G163. */
+#ifndef UML_GADGET_INLINE_CALLS
+#define UML_GADGET_INLINE_CALLS 1
+#endif
+constexpr bool inline_calls_enabled = UML_GADGET_INLINE_CALLS != 0;
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
@@ -96,17 +105,10 @@ void correct_terminal_instruction_count(
 	if (!terminal_does_not_retire(event))
 		return;
 
-	const auto base = program.guest_address();
-	if (fault_pc < base)
+	const auto position = program_position(program, fault_pc);
+	if (!position || *position >= program.instruction_count())
 		return;
-	const auto offset = fault_pc - base;
-	if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
-		return;
-	const auto fault_index = offset / sizeof(std::uint32_t);
-	if (fault_index >= program.instruction_count())
-		return;
-	const auto unretired =
-		program.instruction_count() - static_cast<std::size_t>(fault_index);
+	const auto unretired = program.instruction_count() - *position;
 	if (executed < unretired)
 		return;
 
@@ -127,17 +129,24 @@ void correct_fpcr_enable_instruction_count(
 	     arm64::detail::fpcr_exception_enable_mask) == 0U)
 		return;
 
-	const auto base = program.guest_address();
-	if (cpu.pc <= base)
+	/* The exit is the fallthrough of the FPCR write, so it is either inside
+	 * the program or one past its end. Only the final run can end a program:
+	 * an earlier run ends at the call whose callee was inlined after it, and
+	 * a call is never an FPCR write.
+	 */
+	std::size_t retired = 0;
+	if (const auto position = program_position(program, cpu.pc); position) {
+		retired = *position;
+	} else {
+		const auto &last = program.runs().back();
+		if (cpu.pc != last.address + std::uint64_t{last.instructions} *
+				sizeof(std::uint32_t))
+			return;
+		retired = program.instruction_count();
+	}
+	if (retired == 0 || retired > program.instruction_count())
 		return;
-	const auto offset = cpu.pc - base;
-	if ((offset & (sizeof(std::uint32_t) - 1U)) != 0U)
-		return;
-	const auto retired = offset / sizeof(std::uint32_t);
-	if (retired > program.instruction_count())
-		return;
-	const auto unretired =
-		program.instruction_count() - static_cast<std::size_t>(retired);
+	const auto unretired = program.instruction_count() - retired;
 	if (executed < unretired)
 		return;
 
@@ -313,6 +322,7 @@ public:
 	{
 		live_links_.clear();
 		live_indirect_.clear();
+		inlined_callees_.clear();
 		resident_.clear();
 		generation_changes_.clear();
 		indirect_links_.clear();
@@ -607,6 +617,22 @@ public:
 			slot.activation = 1;
 		activate(pc, slot);
 		return *slot.result;
+	}
+
+	/* Whether a callee may be translated inline here.
+	 *
+	 * A callee reached from one site costs nothing to inline; one reached
+	 * from many would be translated once per site. Admitting each callee
+	 * once caps that at a single extra copy without needing to know how many
+	 * sites exist, which translation cannot see. */
+	[[nodiscard]] bool admit_inlined_call(std::uint64_t callee)
+	{
+		if (inlined_callees_.size() >= maximum_inlined_callees)
+			return false;
+		/* Only the first site to reach a callee inlines it. Admitting
+		 * it again on a later site is what "inline everywhere" means,
+		 * and duplicates the callee once per site. */
+		return inlined_callees_.emplace(callee, epoch_).second;
 	}
 
 	[[nodiscard]] std::pmr::memory_resource *program_storage() noexcept
@@ -940,30 +966,49 @@ private:
 			return false;
 		}
 
+		/* The saved words are the program's runs concatenated in order,
+		 * so each is compared against the addresses its own run covers.
+		 * The word a stopped build read without retiring belongs to the
+		 * last run, which is where the build stopped. */
 		std::array<std::uint32_t, block_instruction_count> fetched;
-		std::size_t index = 0;
-		while (index < slot.source_word_count) {
-			const auto address = slot.pc + index * sizeof(std::uint32_t);
-			const auto page_remaining =
-				guest_page_size - (address & (guest_page_size - 1));
-			auto run = std::min<std::size_t>(
-				slot.source_word_count - index,
-				page_remaining / sizeof(std::uint32_t));
-			if (run == 0)
-				run = 1;
-			auto words = std::span{fetched}.subspan(index, run);
-			if (!memory.fetch(address, std::as_writable_bytes(words))) {
-				++diagnostics.validation_faults;
-				discard(slot);
-				return false;
+		const auto &program = slot.result->program;
+		const auto runs = program.runs();
+		std::size_t saved = 0;
+		for (std::size_t index = 0; index < runs.size(); ++index) {
+			auto remaining = std::size_t{runs[index].instructions};
+			if (index + 1 == runs.size())
+				remaining += slot.source_word_count -
+					program.instruction_count();
+			std::size_t offset = 0;
+			while (offset < remaining) {
+				const auto address = runs[index].address +
+					offset * sizeof(std::uint32_t);
+				const auto page_remaining = guest_page_size -
+					(address & (guest_page_size - 1));
+				auto run = std::min<std::size_t>(
+					remaining - offset,
+					page_remaining / sizeof(std::uint32_t));
+				if (run == 0)
+					run = 1;
+				auto words = std::span{fetched}.subspan(
+					saved + offset, run);
+				if (!memory.fetch(address,
+						std::as_writable_bytes(words))) {
+					++diagnostics.validation_faults;
+					discard(slot);
+					return false;
+				}
+				if (std::memcmp(words.data(),
+						slot.source_words.get() + saved +
+							offset,
+						run * sizeof(std::uint32_t)) != 0) {
+					++diagnostics.validation_mismatches;
+					discard(slot);
+					return false;
+				}
+				offset += run;
 			}
-			if (std::memcmp(words.data(), slot.source_words.get() + index,
-					run * sizeof(std::uint32_t)) != 0) {
-				++diagnostics.validation_mismatches;
-				discard(slot);
-				return false;
-			}
-			index += run;
+			saved += remaining;
 		}
 
 		const auto current =
@@ -1038,6 +1083,10 @@ private:
 	std::vector<LinkRecord *> live_links_;
 	std::vector<std::pair<unsigned long, arm64::gadgets::IndirectLink *>>
 		live_indirect_;
+	/* Bounded: a guest that keeps generating code would otherwise accumulate
+	 * every callee it ever called. */
+	static constexpr std::size_t maximum_inlined_callees = 1U << 16;
+	std::unordered_map<std::uint64_t, std::uint64_t> inlined_callees_;
 	std::unordered_map<unsigned long, std::uint64_t> generation_changes_;
 	std::vector<unsigned long> resident_;
 	unsigned long current_generation_{};
@@ -1172,6 +1221,19 @@ const BuildResult &GadgetExecutor::build(
 	const arm64::gadgets::SharedKey *key)
 {
 	arm64::gadgets::LinkRelocations relocations;
+	/* Translating a callee inline needs to read guest instructions somewhere
+	 * other than where the build started, which only the executor can do. */
+	const arm64::gadgets::InlineCalls inline_calls{
+		[this](std::uint64_t callee) {
+			return programs_->admit_inlined_call(callee);
+		},
+		[this](std::uint64_t address, std::span<std::uint32_t> into) {
+			return fetch_instruction_window(*build_memory_, address,
+				into);
+		},
+	};
+	std::array<std::uint32_t, block_instruction_count> consumed;
+	std::size_t consumed_count = 0;
 	auto decoded = arm64::gadgets::Builder{}.build(
 		pc, window,
 		[this](std::uint64_t target) {
@@ -1181,11 +1243,18 @@ const BuildResult &GadgetExecutor::build(
 		[this](std::uint64_t source_pc) {
 			return programs_->indirect_link(source_pc);
 		},
-		build_options_, &relocations);
+		build_options_, &relocations,
+		inline_calls_enabled && build_memory_ != nullptr ?
+			&inline_calls : nullptr,
+		std::span{consumed}, &consumed_count);
 	if (key != nullptr)
 		arm64::gadgets::SharedProgramStore::instance().publish(
 			*key, decoded, relocations);
-	return store(pc, std::move(decoded), window);
+	/* With a callee inlined the words the build read are no longer a prefix
+	 * of the caller's window, so the stale-program check is given what the
+	 * build actually read, in run order. */
+	return store(pc, std::move(decoded),
+		std::span<const std::uint32_t>{consumed}.first(consumed_count));
 }
 
 const BuildResult &GadgetExecutor::store(
@@ -1236,7 +1305,9 @@ const BuildResult &GadgetExecutor::store(
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		const auto window = std::span{instructions}.first(count);
+		build_memory_ = &memory;
 		selected = std::cref(translate(cpu.pc, window));
+		build_memory_ = nullptr;
 	}
 	const auto &built = selected->get();
 	if (built.program.instruction_count() == 0) {

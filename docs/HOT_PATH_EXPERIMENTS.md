@@ -9484,3 +9484,356 @@ It also changes the premise of G161 rather than vindicating it: sharing lost
 because a build was too cheap to be worth avoiding, and this makes builds both
 larger and rarer. Whether that moves the adopt/build ratio enough to matter is
 now a different measurement from the one G161 took.
+
+## G163: translating a direct call's callee inline behind it
+
+Dated 2026-08-17. Accepted at one call site per callee. G162 left 48.9% of
+blocks ending at a direct call and 29.3% at an indirect branch, with 103M
+indirect-link retrainings measured over the run -- each an indirect branch that
+missed its two-entry `IndirectLink` and left translated code for the C++
+boundary, at roughly seven times the translation rate. A return is one of those,
+so inlining a callee removes both the call boundary and the return.
+
+### What it costs, measured before building it
+
+| | |
+| --- | ---: |
+| distinct call sites | 3,044,417 |
+| distinct callees | 888,455 |
+| duplication if every site inlines | 3.43x |
+| callees with exactly one call site | 386,151 (43.5%) |
+| callees with three or more sites | 347,006 (39.1%) |
+
+### The block stops being contiguous
+
+A callee is at an arbitrary address, so unlike G162's fall-through there is no
+counting trick: the block genuinely spans caller, callee, and the continuation
+after the return. `Program` therefore carries up to three `GuestRun` entries,
+and the three things that assumed contiguity walk them -- both instruction-count
+corrections, and the G140/G141 validator, which compares each run against the
+addresses that run covers. With one run this is behaviourally identical, which
+is what makes the change reviewable.
+
+Whether that walk is affordable was measured before any of the inlining was
+built, by splitting every block's single range into three adjacent runs:
+identical addresses, words and behaviour, only the validator's walk differing.
+That came out at +0.3% (p = 0.89). Range count is free. What sank the forward
+branch in G162 was volume -- dead words added to `validation_words` -- and an
+inlined callee adds words that are genuinely executed, exactly as the
+conditional fall-through did.
+
+A call emits `call_inline`, which keeps only the link register the call sets,
+and translation continues into the callee. The callee's `RET` emits
+`return_guarded`, which falls through into the continuation only while X30 still
+holds the address the call pushed, and otherwise gives back the precharge and
+falls into the ordinary cached return whose operands follow it. A build that
+cannot open the next run -- an unreadable window, or a call in the continuation
+that would need a fourth -- must still leave the stream with an exit, because
+both gadgets assume their run follows them; it emits a link to where the block
+would have continued, which is the ordinary un-inlined call or return.
+
+### One site per callee, not all of them
+
+| variant | frame rate | change | p |
+| --- | ---: | ---: | ---: |
+| calls end the block | 13.79 | -- | -- |
+| callee inlined at one site | 14.38 | +4.3% | 0.0023 |
+| callee inlined at every site | 13.75 | +0.0% | 1.00 |
+
+Eight runs an arm, two counterbalanced campaigns pooled, against a control
+carrying the same gadgets in the same file positions but never emitting them, so
+both arms share gadget phasing and the difference is the mechanism alone.
+
+Inlining at every site is a perfect wash: the call boundaries and indirect
+returns it removes buy exactly what its 3.43x duplication costs. Admitting each
+callee once -- the first site to reach it inlines it, the rest keep the ordinary
+link -- keeps a fraction of the coverage and none of the duplication, and is
+worth 4.3%. Duplication was the larger half of that cancellation.
+
+Two limits on the accepted arm. `maximum_inlined_callees` is 65536 against
+888,455 distinct callees, so admission stops once the set fills within an epoch;
+coverage is bounded by that as well as by one site per callee. And this is an
+increment on top of G162's 60.1%, against a control that already inlines
+conditional fall-throughs, not a second independent gain of that size.
+
+The 103M indirect retrainings remain the largest unaddressed cost signal.
+Widening the two-entry `IndirectLink` attacks the same return cost as a change
+to one data structure, with none of this machinery, and has not been tried.
+
+## G164: the gadget cache and block-length work on the iOS Simulator
+
+Dated 2026-08-17. G160 and G162 were both accepted on macOS. This checks them on
+the product they were meant for, against G156's Simulator Aquarium baseline,
+which was taken before either landed.
+
+Both sides are the same configuration, read out of the logs rather than assumed:
+iPhone 17 Pro Max Simulator, `numFish=500`, a 440x860 guest at 160 DPI,
+`mem=1536M`, `ncpus=4`, the gadgets engine, and the 16 KiB kernel profile. The
+baseline numbers below are recomputed from G156's own logs with the same script
+as the new runs, so the comparison does not depend on how that entry phrased its
+plateau: its table records 3.95 under a different definition, while the
+last-ten-reading figure used here reproduces the 4.30 verifier average it
+reports separately.
+
+| | plateau fps | first frame, guest | first frame, launch | verifier avg |
+| --- | ---: | ---: | ---: | ---: |
+| before, G156 run 1 | 4.40 | 51.9 s | 107.0 s | 4.50 |
+| before, G156 run 2 | 4.20 | 53.5 s | 103.6 s | 4.10 |
+| after, run 1 | 6.00 | 34.3 s | 68.2 s | 6.00 |
+| after, run 2 | 6.00 | 31.6 s | 64.7 s | 5.95 |
+
+Plateau 4.30 to 6.00, a factor of 1.40. Time to first frame 52.7 s to 32.9 s
+measured inside the guest, a factor of 1.60, and 105.3 s to 66.5 s measured from
+app launch, a factor of 1.58. Neither metric's arms overlap.
+
+Two cautions on reading this.
+
+The delta is not the gadget work alone. Eleven commits separate the two
+measurements, and while most are gadget-engine or unrelated, `37bca53c` changes
+GLSL instancing and the virglrenderer patch moved with it. That is a rendering
+path Aquarium exercises. The frame-rate share attributable to G160 and G162
+specifically is therefore not isolated here; what is established is that the
+shipping Simulator product is substantially faster than the recorded baseline,
+in the same direction as the macOS A/Bs that did isolate those changes.
+
+"Stable after first frame", the third metric G156 reports, is not usable. Its
+own two arms give 141.9 s and 50.0 s for the same quantity, and the new runs
+give 136.6 s and 27.8 s: the run-to-run spread is larger than any effect. The
+definition is also asymmetric under whole-number FPS readings -- at a 6 fps
+plateau a reading of 5 falls outside the +/-10% band, while at 4.3 a reading of
+4 sits inside it -- so a faster build is mechanically harder to call stable.
+
+
+## G165: where the Simulator Aquarium's time and gadget cache actually go
+
+Dated 2026-08-17. G164 established that the shipping Simulator product reaches a
+6.00 fps Aquarium plateau against G156's 4.30. This entry asks what the gadget
+cache is doing there and where the host's cycles go, using a measurement-only
+build plus `sample(1)`. The short answer is that boot and plateau are different
+machines: boot is guest-CPU-bound and pays a third of its vCPU time to the gadget
+cache, while the plateau leaves the guest's vCPUs idle two thirds of the time.
+
+Configuration, read out of the logs rather than assumed: iPhone 17 Pro Max
+Simulator on iOS 26.5, Kernarium, Linux 6.18.41, the 16 KiB profile, a 440x860
+guest at 160 DPI, `mem=1536M`, `ncpus=4`, the gadgets engine, SDDM autologin into
+Plasma with `chromium-aquarium.service`, `numFish=500` on a 1024x1024 canvas
+through ANGLE on Mesa virgl. Shipping gadget options: 65,536 cache slots four
+ways, eight resident address spaces, exact validation on, conditional
+fall-through inlining on (G162), callee inlining off (G163), cross-executor
+sharing off (G161). Host: 20-core arm64 macOS at load 7-9 with a macOS 4 KiB
+integration guest of another session running throughout; recorded rather than
+treated as grounds to discard.
+
+The measurement build adds counters to `GadgetExecutor` and its `ProgramCache`
+and writes one bounded record per executor to the stderr descriptor every 2^21
+lookups. It is not committed. Its cost is visible but small: time to first frame
+is unchanged at 33.7-34.7 s against G164's 34.3 s and 31.6 s, while the plateau
+reads 5.00 rather than 6.00. Because the page reports whole-number FPS, that gap
+bounds the instrumentation plus co-tenant cost at somewhere between about 1% and
+17%, and no conclusion below rests on it.
+
+### Cache efficiency
+
+Four runs, each the full boot-to-verifier-completion interval, summed over the
+four executors.
+
+| | run 1 | run 2 | run 3 | run 5 |
+| --- | ---: | ---: | ---: | ---: |
+| lookups | 245,366,784 | 211,812,352 | 262,144,000 | 264,241,152 |
+| hit rate | 89.09% | 89.58% | 89.67% | 89.43% |
+| fast hits | 74.36% | 76.83% | 75.49% | 75.79% |
+| revalidated hits | 14.72% | 12.75% | 14.18% | 13.64% |
+| misses | 10.89% | 10.40% | 10.31% | 10.55% |
+| evictions, share of stores | 62.68% | 63.75% | 64.80% | 64.39% |
+| slot occupancy at exit | 90.9% | 84.3% | 80.4% | 83.4% |
+| host bytes, all executors | 426.8 MiB | 426.5 MiB | 406.4 MiB | 411.2 MiB |
+
+Run 1 was unprofiled, run 2 profiled at a 1 ms interval, runs 3 and 5 at 10 ms.
+Run 2 fell to 2-3 fps under its sampler, so that its ratios still land within
+half a point of the other three is the strongest evidence here that these are
+workload properties rather than timing accidents.
+
+The decompositions matter more than the hit rate.
+
+**Misses are churn, not cold start.** Every miss reaches `translate()`, so the
+translation count is the exact miss count, while the separately counted `miss`
+covers only two identifiable sub-causes: an entirely unallocated slab, or a
+revalidation that failed. Those account for 12,138 of run 1's 26,725,251
+misses. The other 99.95% found an allocated set in which no way held the block
+-- meaning it had been evicted or retired, not that it had never been seen. Two
+mechanisms empty those ways.
+
+Eviction: the cache runs full. Occupancy peaks at 98.5% of slots in run 1, 99.7%
+in run 3 and 99.4% in run 5, and 63-65% of stores displace a live block. That is
+not a start-up transient; across a run's records the eviction rate climbs from
+6.75% to a steady 80-90% and stays there.
+
+Retirement: whenever an executor first binds a ninth address space it retires
+the least recently current one whole. Run 1's per-executor occupancy falls from
+its 64,968-slot peak to 18,699 late in the run -- a single cache losing over two
+thirds of its contents -- and every one of those blocks has to be rebuilt when
+its address space returns.
+
+**Revalidation almost never fails.** 36,139,584 attempts produced 3 mismatches
+and 791 fetch faults. Exact validation therefore runs on 14.7% of lookups as
+pure insurance: the guest essentially never rewrote code under a cached block.
+That is the G140/G141 contract behaving as intended, and it also means the
+revalidation path is overhead in the common case rather than work that saves a
+rebuild.
+
+**Space.** 426.8 MiB across four executors for a 1.5 GiB guest: streams 260.7,
+link records 86.4, slabs 54.0, the fixed stream index 18.0, indirect sites 7.7,
+and about 1,878 bytes per resident block. The four caches are private, so most
+of that is four copies of the same guest code -- which is what made G161's
+sharing attractive before it was rejected on frame rate.
+
+**Address-space residency is pinned at its cap.** Every executor reports eight
+resident address spaces, the configured `UML_GADGET_RESIDENT_GENERATIONS`, for
+the whole run. Run 1 saw 3,632 first-time binds against 251,973 binds total, so
+roughly 3,600 whole address spaces were retired. A desktop guest running
+systemd, Plasma and multi-process Chromium simply has more live address spaces
+than eight.
+
+### What the guest is executing
+
+| | run 1 |
+| --- | ---: |
+| guest instructions retired | 69,314,774,010 |
+| engine entries | 245,377,188 |
+| instructions per entry | 282.5 |
+| instructions translated | 310,766,985 (0.448% of retired) |
+| mean built block | 11.63 instructions |
+| retired per instruction built | 223x |
+
+Blocks end almost entirely on three things: `BL` 47.46%, an indirect branch
+27.92%, a plain `B` 22.92%. The fetch window ends only 0.91% of them and
+conditional branches have all but disappeared -- 238 `CBZ` and no `B.cond` in
+26.7 million blocks -- which is G162 confirmed on the product rather than on
+macOS. `BL` is now the single largest boundary, which is exactly the ground
+G163 tried and failed to make pay.
+
+### Where the host's cycles go
+
+Profiles are `sample(1)` at a 10 ms interval, restricted to the four
+`uml-vcpu-N-carrier` threads, with self time charged to the nearest caller that
+is not a libsystem shim so the categories name emulator components rather than
+`pthread_getspecific`. Two windows sit inside one run's frame-rate plateau, 60 s
+and 25 s; a third covers 30 s mid-boot, before the first frame.
+
+| carrier on-CPU self time | boot | plateau A | plateau B |
+| --- | ---: | ---: | ---: |
+| gadget bodies, guest userspace | 48.36% | 44.82% | 42.71% |
+| UML kernel executing natively | 9.22% | 33.12% | 37.37% |
+| cache maintenance | 22.41% | 9.77% | 7.88% |
+| other runtime: memory, device, emulator | 8.97% | 5.48% | 5.18% |
+| translation | 5.09% | 2.52% | 2.38% |
+| cache lookup and validation | 4.70% | 1.48% | 1.86% |
+| engine entry and exit | 1.03% | 0.45% | 0.26% |
+
+Inclusive figures for the paths of interest, as a share of carrier on-CPU time:
+
+| | boot | plateau A | plateau B |
+| --- | ---: | ---: | ---: |
+| `gadgets::execute` | 44.45% | 38.25% | 35.51% |
+| `ProgramCache::prepare` | 13.27% | 5.32% | 3.65% |
+| of which `retire` | 10.29% | 3.50% | 2.99% |
+| of which `invalidate_links` | 2.84% | 1.76% | 0.59% |
+| `Builder::build` | 7.60% | 3.76% | 3.06% |
+| `ProgramCache::find` | 7.01% | 2.11% | 2.21% |
+| `ProgramCache::store` | 5.12% | 2.00% | 2.31% |
+
+The two plateau windows come from the same run 40 s apart and agree within a few
+points on every row, which is the reproducibility check for this method.
+
+The `???` frames in the unsymbolicated carrier stacks are the Linux kernel
+executing natively out of the signed image carrier, which `sample` cannot
+attribute; they are counted as UML kernel time above, together with the TLS and
+mutex calls the kernel makes through libsystem.
+
+**Boot and plateau are two different regimes, and that is the finding.** During
+boot the four carriers run at 72-76% occupancy and spend only 25.9% of their
+wall time off-CPU: the guest is genuinely CPU-bound, and gadget-cache overhead --
+maintenance, lookup, translation together -- is 32.2% of carrier on-CPU time
+against 48.4% spent executing translated code. At the plateau the same carriers
+run at 32-42% and spend 63.4% of their wall time off-CPU, 71% of that wait in
+`__pselect`, UML's idle and event wait, and 26.6% in a blocking `read`. The
+`uml-gpu` thread is 87.5% off-CPU there, waiting in `mach_msg2_trap` (56%) and
+`poll` (37%), and the whole process draws about 1.6 CPU cores. Cache overhead
+falls to 13.7% of a much smaller busy share.
+
+So the plateau is not limited by the guest's CPUs: its own four vCPUs are idle
+roughly two thirds of the time, waiting on something other than themselves. Boot
+is limited by them, and boot is what time-to-first-frame measures.
+
+### Methodological caveat, and it is not small
+
+The sampling interval changes the plateau answer, though not the boot answer.
+At 1 ms, plateau `retire` reads 7.56% of carrier on-CPU time against 3.50% at
+10 ms, and `invalidate_links` 3.69% against 1.76%; the 1 ms plateau run itself
+fell to 2-3 fps. The boot profile is stable across intervals -- 21.24% cache
+maintenance and 10.58% `retire` at 1 ms, 22.41% and 10.29% at 10 ms -- which is
+what makes the boot figures the ones to trust.
+
+The mechanism fits: suspending the process to walk several dozen thread stacks
+adds wall time while the guest's timer deadlines keep accruing, so on resume the
+guest takes a burst of interrupts, scheduling and address-space switches. During
+boot the guest is already saturated and that injection is proportionally small.
+At the plateau the guest is mostly idle, so the same injection is a large
+relative addition, and the profile drifts toward looking like the boot profile.
+Profiling a time-virtualised emulator biases toward whatever the virtual clock
+drives, and the bias is largest exactly where the guest has slack. The 10 ms
+plateau numbers still cost 5 fps to 4, so treat them as upper bounds too.
+
+### What this changes
+
+**The plateau is not the place to optimise the engine.** G157 concluded that the
+Simulator Aquarium gap was guest-CPU throughput. That predates G160 and G162,
+and at the plateau it no longer holds: with the carriers idle 63% of the time in
+`__pselect` and `read`, the frame rate is set by the round-trip chain from guest
+Chromium through virtio-gpu, the `uml-gpu` thread, virglrenderer, ANGLE and
+Metal. Gadget bodies are 44.8% of carrier on-CPU time and the carriers are 36.6%
+busy, so executing translated code is about 16% of a carrier's wall time: making
+it infinitely fast returns at most that, and only to the extent the freed time
+becomes frames rather than more `__pselect`, which on a chain whose other links
+are already waiting it largely will not. G157's reasoning stands for the regime
+it measured; the balance moved, plausibly because G160 and G162 moved it.
+
+**Boot is the place, and retirement is the target there.**
+`ProgramCache::retire` walks every slab and all 65,536 slots, then `erase_if`s
+the whole link and indirect maps, to remove one address space. Its own comment
+justifies this on the grounds that retirement is rare. On this guest it happens
+roughly 3,600 times and costs 10.3% of carrier on-CPU time during boot -- the
+one phase that is CPU-bound, and the phase time-to-first-frame measures.
+Indexing slots and link records by generation would make the sweep proportional
+to what is retired rather than to the cache, needs no extra memory, and is worth
+its own A/B against time to first frame rather than against plateau fps.
+
+The miss decomposition says the lever on the 10.9% miss rate is churn, not
+warm-up or validation, and it has two independent halves. Four private caches at
+426.8 MiB for a 1.5 GiB guest hold four copies of the same code while evicting
+live blocks on 63% of stores -- the observation that motivated G161, whose
+rejection was about the price of adoption rather than about the diagnosis.
+Separately, an eight-address-space cap on a guest running systemd, Plasma and
+multi-process Chromium discards two thirds of a cache at a time; whether raising
+the cap pays depends on host memory the Simulator does not obviously have, so it
+wants measuring rather than assuming.
+
+### Limitations
+
+The instrumented build is not committed and was not run through the canonical
+workflows; it exists to produce these counters. A macOS integration guest from
+another session ran throughout, and the FPS figures here are consequently not
+comparable to G164's -- only the counter ratios and profile shares are being
+claimed. Whole-number FPS reporting means the instrumentation cost is bounded
+rather than measured. `sample` cannot symbolicate the natively executing Linux
+kernel, so its share is attributed as a block rather than broken down. The boot
+window is a single 30 s sample from one run; the two plateau windows come from
+one run 40 s apart, not from independent runs.
+
+One measurement was discarded rather than reported. `xcrun simctl launch` over a
+live instance attaches to the running one, prints nothing on the console, and
+returns the old pid, so a profile taken from a run started before the previous
+one had exited is silently a second window on the previous run. That is how the
+first attempt at a boot profile was produced; it is reported above as the second
+plateau window, which is what it actually was. The driver now terminates and
+waits for any live instance before launching.
