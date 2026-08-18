@@ -175,16 +175,26 @@ public:
         return 0;
     }
 
-    bool presentOpenGl(const OpenGlScanout& scanout) noexcept override
+    PresentOutcome presentOpenGl(
+        const OpenGlScanout& scanout) noexcept override
     {
         if (!directPresentationEnabled)
-            return false;
+            return PresentOutcome::unsupported;
         lastOpenGlScanout = scanout;
         ++directPresentationCount;
-        return true;
+        if (directPresentationDrops) {
+            ++directPresentationDropCount;
+            return PresentOutcome::dropped;
+        }
+        return PresentOutcome::presented;
     }
 
     bool needsFullCpuFallback() const noexcept override { return false; }
+
+    void recordCpuFallbackFrame() noexcept override
+    {
+        ++cpuFallbackFrameCount;
+    }
 
     [[nodiscard]] int createFenceAndWait(
         std::uint32_t,
@@ -283,7 +293,10 @@ public:
     unsigned readResourceCount {};
     unsigned resourceTextureCount {};
     unsigned directPresentationCount {};
+    unsigned directPresentationDropCount {};
+    unsigned cpuFallbackFrameCount {};
     bool directPresentationEnabled {};
+    bool directPresentationDrops {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
     std::uint32_t lastTextureResource {};
@@ -772,7 +785,29 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.lastOpenGlScanout.height == scanout.rectangle.height);
     require(dependencies.readResourceCount == readsBeforeDirect);
     require(dependencies.displayUpdateCount == updatesBeforeDirect);
+
+    /* A frame the display drops because host presentation is behind must cost
+     * the guest exactly what a presented frame costs: no GPU-to-CPU readback
+     * and no CPU display update. That is what decouples the two timelines. */
+    dependencies.directPresentationDrops = true;
+    const auto readsBeforeDrop = dependencies.readResourceCount;
+    const auto updatesBeforeDrop = dependencies.displayUpdateCount;
+    const auto fallbacksBeforeDrop = dependencies.cpuFallbackFrameCount;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.directPresentationDropCount == 1);
+    require(dependencies.readResourceCount == readsBeforeDrop);
+    require(dependencies.displayUpdateCount == updatesBeforeDrop);
+    require(dependencies.cpuFallbackFrameCount == fallbacksBeforeDrop);
+    dependencies.directPresentationDrops = false;
+
+    /* An unsupported scanout still takes the readback path, and the display is
+     * told so. */
     dependencies.directPresentationEnabled = false;
+    const auto fallbacksBeforeRefusal = dependencies.cpuFallbackFrameCount;
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.cpuFallbackFrameCount == fallbacksBeforeRefusal + 1);
 
     scanout.resourceId = protocol::invalidResourceId;
     requireFirstAllocationFailsBeforeCommit(device, scanout);

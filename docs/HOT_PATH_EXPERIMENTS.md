@@ -10367,3 +10367,90 @@ builds; `check-integration` and `check-integration-4k` both 53 tooling and 5
 guest tests green; `kernel-series-topology`,
 `kernel-release-source-preparer`, `kernel-darwin-host-compat`,
 `darwin-vcpu-carrier-policy` and `darwin-init-mm-tlb-policy` green.
+
+## G170: decoupling guest rendering from host presentation, and two corrections
+
+Dated 2026-08-18. This entry does three things: it records a display change
+that removes a real pathological path, it reports that the change is inert on
+both products, and it retracts the measurement that motivated it.
+
+### The retraction first
+
+G169's investigation compared macOS Aquarium at about 14 fps against the iOS
+Simulator at about 5.5, and along the way measured macOS on its own native
+Metal display at 2.48, 2.57 and 2.59 fps against 13.1-13.6 on VNC. Three
+consistent runs, and the conclusion drawn was a 5.2x native-display deficit.
+
+That number is wrong. Running the identical binary and configuration again in a
+six-run interleaved isolation produced 13.600 fps on one run and 2.900 on
+another, the same arm about thirty-five minutes apart. No code separates them.
+The native window's frame rate is bimodal on whether macOS considers it
+occluded, and the three original runs all landed in the occluded mode. The
+caveat was stated when the number was first reported and should have blocked
+the conclusion rather than accompanying it.
+
+With visibility controlled, native and VNC are the same: native 13.600, 14.100,
+14.350, 14.450, 14.450 against VNC 13.09-14.55. There is no native-display
+deficit, and any future macOS native measurement has to account for this
+bimodality or it will measure the window manager.
+
+### The change
+
+`presentOpenGl` and `presentMetal` returned a bool, and the device answered
+`false` with a full `readResourceRectangle` GPU-to-CPU readback, a whole
+pixel-buffer copy and a CPU blit -- on the guest's scanout-flush path. That
+conflated two unlike things: a display that cannot express this scanout at all,
+which genuinely needs the readback, and a display whose host presentation is
+simply behind, which needs nothing.
+
+`PresentOutcome` now separates them into `unsupported`, `presented` and
+`dropped`. Only `unsupported` reaches the readback. A dropped frame is success
+for the guest, which keeps its own pace; the next flush carries newer contents
+anyway. macOS drops when every IOSurface slot is in flight and when it
+overwrites a slot the host never drew; Kernarium already overwrote its pending
+texture but did so silently, and now reports it.
+
+`DisplayStatistics` counts `guestFrames`, `presentedFrames`, `droppedFrames`
+and `cpuFallbackFrames` as relaxed atomics. `UML_GPU_FRAME_STATS=<seconds>`
+prints one bounded line per interval to stderr, mirrored into the macOS window
+title; unset keeps it off. Presented frames are counted in the Metal completion
+handler rather than in `finishPresentation`, which the encoder-failure paths
+also reach.
+
+### What it measures
+
+macOS native, six runs, and the iOS Simulator, eight counterbalanced runs with
+statistics on the decoupled arm:
+
+| | macOS native | Simulator |
+| --- | ---: | ---: |
+| guest frames offered | 550-3341 a run | about 1780 a run |
+| dropped | 0 | 1, 0, 0, 0 |
+| cpu-fallback | 0 | 0 |
+| guest rate vs presented rate | equal | equal, about 6.0/s |
+
+The decoupling is therefore **inert on both products**: neither guest ever
+outruns host presentation, so the path this change fixes is never taken. Frame
+rate confirms it. macOS decoupled 14.450/14.450 against coupled 14.100/14.350;
+Simulator plateau 5.713 +/- 0.480 against 5.938 +/- 0.075, and time to first
+frame 60.06 s against 62.41 s, p = 0.35. Nothing here is significant in either
+direction.
+
+`presented` exceeds `guest` by roughly 90 frames a Simulator run because CPU
+framebuffer frames -- the boot console -- are presented but are not scanout
+flushes. That asymmetry is intended and documented rather than normalised away.
+
+### Disposition
+
+Kept, on three grounds that are not frame rate. The readback-on-backpressure
+path is real and pathological whether or not this workload triggers it, and a
+display that refuses a frame must not be able to force a GPU sync onto the
+guest. The counters are the instrument that disproved two hypotheses in one
+afternoon -- slot exhaustion, then the native-display deficit itself -- and a
+nonzero `dropped` or `cpu-fallback` rate is now a finding rather than an
+invisible event. And `check-gpu` covers the new contract with a mutation-checked
+test: making a dropped frame fall back to CPU readback fails
+`gpu-device-command-atomicity`.
+
+It must not be cited as a performance improvement. On this workload, on both
+products, it changes nothing measurable.

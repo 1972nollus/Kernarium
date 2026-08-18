@@ -68,9 +68,10 @@ public:
     [[nodiscard]] virtual int resourceTexture(
         std::uint32_t resourceId,
         std::uint32_t& textureId) noexcept = 0;
-    [[nodiscard]] virtual bool presentOpenGl(
+    [[nodiscard]] virtual PresentOutcome presentOpenGl(
         const OpenGlScanout& scanout) noexcept = 0;
     [[nodiscard]] virtual bool needsFullCpuFallback() const noexcept = 0;
+    virtual void recordCpuFallbackFrame() noexcept = 0;
     [[nodiscard]] virtual int createFenceAndWait(
         std::uint32_t contextId,
         std::uint32_t ringIndex,

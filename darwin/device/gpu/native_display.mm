@@ -17,7 +17,9 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -210,6 +212,28 @@ private:
 
 } // namespace
 
+namespace {
+
+/* Seconds between native-display frame-statistics reports. Unset, zero, or
+ * unparseable keeps them off, so ordinary runs pay nothing but one relaxed
+ * load per presented frame. */
+[[nodiscard]] double frameStatisticsInterval() noexcept
+{
+    static const double interval = [] {
+        const char* value = std::getenv("UML_GPU_FRAME_STATS");
+        if (value == nullptr)
+            return 0.0;
+        char* end = nullptr;
+        const double seconds = std::strtod(value, &end);
+        if (end == value || !(seconds > 0.0))
+            return 0.0;
+        return seconds;
+    }();
+    return interval;
+}
+
+} // namespace
+
 enum class SurfaceState {
     available,
     writing,
@@ -320,7 +344,8 @@ struct NativeDisplayState final :
     void scheduleWindow();
     void requestRedraw() noexcept;
     void publishCpuFrame() noexcept;
-    [[nodiscard]] bool presentOpenGl(const OpenGlScanout& scanout) noexcept;
+    [[nodiscard]] PresentOutcome presentOpenGl(
+        const OpenGlScanout& scanout) noexcept;
     [[nodiscard]] bool copyOpenGlToSurface(
         SurfaceSlot& slot, const OpenGlScanout& scanout) noexcept;
     void draw(MTKView* view) noexcept;
@@ -335,6 +360,8 @@ struct NativeDisplayState final :
         double verticalWheel) noexcept;
     void reportInputFailure() noexcept;
     void reportRenderFailure(const char* message) noexcept;
+    void maybeReport() noexcept;
+    [[nodiscard]] DisplayStatistics snapshot() const noexcept;
     void shutdown() noexcept;
 
     ScanoutFramebuffer framebuffer;
@@ -357,6 +384,19 @@ struct NativeDisplayState final :
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
     std::atomic_bool directPathReported {};
+    /* Guest and host timelines are independent, so their counters are plain
+     * relaxed atomics rather than anything the presentation path must lock
+     * for. */
+    std::atomic_uint64_t guestFrames {};
+    std::atomic_uint64_t presentedFrames {};
+    std::atomic_uint64_t droppedFrames {};
+    std::atomic_uint64_t cpuFallbackFrames {};
+    std::atomic_uint64_t reportedAt {};
+    /* Only the thread that wins the reportedAt exchange touches these. */
+    std::uint64_t reportedGuestFrames {};
+    std::uint64_t reportedPresentedFrames {};
+    std::uint64_t reportedDroppedFrames {};
+    std::uint64_t reportedCpuFallbackFrames {};
 };
 
 } // namespace uml::gpu
@@ -772,9 +812,10 @@ bool NativeDisplayState::copyOpenGlToSurface(
     return succeeded;
 }
 
-bool NativeDisplayState::presentOpenGl(
+PresentOutcome NativeDisplayState::presentOpenGl(
     const OpenGlScanout& scanout) noexcept
 {
+    guestFrames.fetch_add(1, std::memory_order_relaxed);
     try {
         std::size_t selected = surfaces.size();
         {
@@ -787,14 +828,24 @@ bool NativeDisplayState::presentOpenGl(
                 if (surfaces[index].state == SurfaceState::ready)
                     selected = index;
             }
-            if (selected == surfaces.size())
-                return false;
+            /* Every surface is in flight, so the host is behind the guest.
+             * Drop this frame instead of reporting a failure the device would
+             * answer with a full GPU-to-CPU readback; the guest keeps its own
+             * pace and the next flush presents newer contents anyway. */
+            if (selected == surfaces.size()) {
+                droppedFrames.fetch_add(1, std::memory_order_relaxed);
+                maybeReport();
+                return PresentOutcome::dropped;
+            }
+            /* Overwriting a frame the host never drew is the other drop. */
+            if (surfaces[selected].state == SurfaceState::ready)
+                droppedFrames.fetch_add(1, std::memory_order_relaxed);
             surfaces[selected].state = SurfaceState::writing;
         }
         if (!copyOpenGlToSurface(surfaces[selected], scanout)) {
             std::lock_guard lock(presentationMutex);
             surfaces[selected].state = SurfaceState::available;
-            return false;
+            return PresentOutcome::unsupported;
         }
         if (!directPathReported.exchange(true, std::memory_order_relaxed)) {
             std::fputs(
@@ -807,10 +858,11 @@ bool NativeDisplayState::presentOpenGl(
             surfaces[selected].state = SurfaceState::ready;
         }
         requestRedraw();
-        return true;
+        maybeReport();
+        return PresentOutcome::presented;
     } catch (...) {
         reportRenderFailure("OpenGL-to-IOSurface presentation failed");
-        return false;
+        return PresentOutcome::unsupported;
     }
 }
 
@@ -869,7 +921,10 @@ void NativeDisplayState::draw(MTKView* nativeView) noexcept
                     if ((!selectedSlot || index != *selectedSlot) &&
                         surfaces[index].state == SurfaceState::ready &&
                         surfaces[index].generation <= newest) {
+                        /* Superseded before the host ever drew it. */
                         surfaces[index].state = SurfaceState::available;
+                        droppedFrames.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
                 }
                 if (cpuFrameReady && cpuGeneration <= newest)
@@ -910,6 +965,10 @@ void NativeDisplayState::draw(MTKView* nativeView) noexcept
             [buffer presentDrawable:drawable];
             auto state = shared_from_this();
             [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+                /* Counted here rather than in finishPresentation, which the
+                 * encoder-failure paths also reach. */
+                state->presentedFrames.fetch_add(
+                    1, std::memory_order_relaxed);
                 state->finishPresentation(selectedSlot);
             }];
             [buffer commit];
@@ -1035,6 +1094,89 @@ void NativeDisplayState::reportRenderFailure(const char* message) noexcept
         std::fprintf(stderr, "Native GPU display failed: %s\n", message);
 }
 
+DisplayStatistics NativeDisplayState::snapshot() const noexcept
+{
+    return DisplayStatistics {
+        .guestFrames = guestFrames.load(std::memory_order_relaxed),
+        .presentedFrames = presentedFrames.load(std::memory_order_relaxed),
+        .droppedFrames = droppedFrames.load(std::memory_order_relaxed),
+        .cpuFallbackFrames =
+            cpuFallbackFrames.load(std::memory_order_relaxed),
+    };
+}
+
+void NativeDisplayState::maybeReport() noexcept
+{
+    const double interval = frameStatisticsInterval();
+    if (interval <= 0.0)
+        return;
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    auto previous = reportedAt.load(std::memory_order_relaxed);
+    if (previous == 0) {
+        /* Start the window at the first offered frame rather than at display
+         * construction, so the first line is not diluted by guest boot. */
+        reportedAt.compare_exchange_strong(
+            previous, now, std::memory_order_relaxed);
+        return;
+    }
+    const auto span = now - previous;
+    if (static_cast<double>(span) < interval * 1e9)
+        return;
+    /* Exactly one caller formats a given window. */
+    if (!reportedAt.compare_exchange_strong(
+            previous, now, std::memory_order_relaxed)) {
+        return;
+    }
+    const DisplayStatistics total = snapshot();
+    const double seconds = static_cast<double>(span) / 1e9;
+    const auto guest = total.guestFrames - reportedGuestFrames;
+    const auto presented = total.presentedFrames - reportedPresentedFrames;
+    const auto dropped = total.droppedFrames - reportedDroppedFrames;
+    const auto fallback =
+        total.cpuFallbackFrames - reportedCpuFallbackFrames;
+    reportedGuestFrames = total.guestFrames;
+    reportedPresentedFrames = total.presentedFrames;
+    reportedDroppedFrames = total.droppedFrames;
+    reportedCpuFallbackFrames = total.cpuFallbackFrames;
+    char line[224];
+    const int written = std::snprintf(
+        line, sizeof(line),
+        "Native display frames: guest %.1f/s presented %.1f/s dropped %.1f/s "
+        "(%.1f%%) cpu-fallback %.1f/s | totals guest %llu presented %llu "
+        "dropped %llu cpu-fallback %llu",
+        static_cast<double>(guest) / seconds,
+        static_cast<double>(presented) / seconds,
+        static_cast<double>(dropped) / seconds,
+        guest == 0 ? 0.0 : 100.0 * static_cast<double>(dropped) /
+            static_cast<double>(guest),
+        static_cast<double>(fallback) / seconds,
+        static_cast<unsigned long long>(total.guestFrames),
+        static_cast<unsigned long long>(total.presentedFrames),
+        static_cast<unsigned long long>(total.droppedFrames),
+        static_cast<unsigned long long>(total.cpuFallbackFrames));
+    if (written <= 0)
+        return;
+    std::fprintf(stderr, "%s\n", line);
+    /* The window title is this product's on-screen surface for the same
+     * numbers; it needs no renderer changes and stays legible while the guest
+     * owns every pixel of the view. */
+    if (!running.load(std::memory_order_acquire))
+        return;
+    NSString* title = [NSString
+        stringWithFormat:@"UML guest %.1f fps / host %.1f fps / dropped %.1f%%",
+        static_cast<double>(guest) / seconds,
+        static_cast<double>(presented) / seconds,
+        guest == 0 ? 0.0 : 100.0 * static_cast<double>(dropped) /
+            static_cast<double>(guest)];
+    auto state = shared_from_this();
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (state->running.load(std::memory_order_acquire))
+            state->window.title = title;
+    });
+}
+
 void NativeDisplayState::shutdown() noexcept
 {
     if (!running.exchange(false, std::memory_order_acq_rel))
@@ -1146,14 +1288,25 @@ void NativeDisplay::fillSelfTestPattern()
     state_->publishCpuFrame();
 }
 
-bool NativeDisplay::presentOpenGl(const OpenGlScanout& scanout) noexcept
+PresentOutcome NativeDisplay::presentOpenGl(
+    const OpenGlScanout& scanout) noexcept
 {
     return state_->presentOpenGl(scanout);
 }
 
-bool NativeDisplay::presentMetal(const MetalScanout&) noexcept
+PresentOutcome NativeDisplay::presentMetal(const MetalScanout&) noexcept
 {
-    return false;
+    return PresentOutcome::unsupported;
+}
+
+DisplayStatistics NativeDisplay::statistics() const noexcept
+{
+    return state_->snapshot();
+}
+
+void NativeDisplay::recordCpuFallbackFrame() noexcept
+{
+    state_->cpuFallbackFrames.fetch_add(1, std::memory_order_relaxed);
 }
 
 int runNativeDisplayApplication(

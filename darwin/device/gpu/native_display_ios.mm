@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -18,6 +20,27 @@
 #include <utility>
 
 namespace uml::gpu {
+
+namespace {
+
+/* Seconds between native-display frame-statistics reports. Unset, zero, or
+ * unparseable keeps them off. */
+[[nodiscard]] double frameStatisticsInterval() noexcept
+{
+    static const double interval = [] {
+        const char* value = std::getenv("UML_GPU_FRAME_STATS");
+        if (value == nullptr)
+            return 0.0;
+        char* end = nullptr;
+        const double seconds = std::strtod(value, &end);
+        if (end == value || !(seconds > 0.0))
+            return 0.0;
+        return seconds;
+    }();
+    return interval;
+}
+
+} // namespace
 namespace {
 
 NSString* const metalShaderSource = @R"metal(
@@ -128,9 +151,12 @@ struct NativeDisplayState final :
     void attachView(void* nativeView);
     void requestRedraw() noexcept;
     void publishCpuFrame() noexcept;
-    [[nodiscard]] bool presentMetal(const MetalScanout& scanout) noexcept;
+    [[nodiscard]] PresentOutcome presentMetal(
+        const MetalScanout& scanout) noexcept;
     void draw(MTKView* nativeView) noexcept;
     void finishPresentation(std::uint64_t generation) noexcept;
+    void maybeReport() noexcept;
+    [[nodiscard]] DisplayStatistics snapshot() const noexcept;
     void shutdown() noexcept;
 
     ScanoutFramebuffer framebuffer;
@@ -150,6 +176,15 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool directPathReported {};
     std::atomic_bool renderFailureReported {};
+    std::atomic_uint64_t guestFrames {};
+    std::atomic_uint64_t presentedFrames {};
+    std::atomic_uint64_t droppedFrames {};
+    std::atomic_uint64_t cpuFallbackFrames {};
+    std::atomic_uint64_t reportedAt {};
+    std::uint64_t reportedGuestFrames {};
+    std::uint64_t reportedPresentedFrames {};
+    std::uint64_t reportedDroppedFrames {};
+    std::uint64_t reportedCpuFallbackFrames {};
 };
 
 } // namespace uml::gpu
@@ -246,34 +281,45 @@ void NativeDisplayState::publishCpuFrame() noexcept
     requestRedraw();
 }
 
-bool NativeDisplayState::presentMetal(const MetalScanout& scanout) noexcept
+PresentOutcome NativeDisplayState::presentMetal(
+    const MetalScanout& scanout) noexcept
 {
+    guestFrames.fetch_add(1, std::memory_order_relaxed);
     try {
         if (scanout.texture == nullptr || scanout.sourceX != 0 ||
             scanout.sourceY != 0 || scanout.width != scanout.sourceWidth ||
             scanout.height != scanout.sourceHeight ||
             scanout.width != framebuffer.width() ||
             scanout.height != framebuffer.height()) {
-            return false;
+            return PresentOutcome::unsupported;
         }
         id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
         if (texture == nil || texture.device != device)
-            return false;
+            return PresentOutcome::unsupported;
+        bool superseded = false;
         {
             std::lock_guard lock(presentationMutex);
+            /* The guest's newest frame always wins. Anything published since
+             * the host last presented is retired unseen, which is the drop
+             * that keeps the two timelines independent. */
+            superseded = latestGeneration > presentedGeneration;
             latestTexture = texture;
             latestIsCpu = false;
             ++latestGeneration;
         }
+        if (superseded)
+            droppedFrames.fetch_add(1, std::memory_order_relaxed);
         if (!directPathReported.exchange(true, std::memory_order_relaxed)) {
             std::fputs(
                 "Native display: direct virgl/ANGLE/Metal presentation\n",
                 stderr);
         }
         requestRedraw();
-        return true;
+        maybeReport();
+        return superseded ? PresentOutcome::dropped
+                          : PresentOutcome::presented;
     } catch (...) {
-        return false;
+        return PresentOutcome::unsupported;
     }
 }
 
@@ -341,6 +387,10 @@ void NativeDisplayState::draw(MTKView* nativeView) noexcept
             [buffer presentDrawable:drawable];
             auto state = shared_from_this();
             [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+                /* Counted here rather than in finishPresentation, which the
+                 * encoder-failure paths also reach. */
+                state->presentedFrames.fetch_add(
+                    1, std::memory_order_relaxed);
                 state->finishPresentation(generation);
             }];
             [buffer commit];
@@ -353,6 +403,66 @@ void NativeDisplayState::draw(MTKView* nativeView) noexcept
                 finishPresentation(generation);
         }
     }
+}
+
+DisplayStatistics NativeDisplayState::snapshot() const noexcept
+{
+    return DisplayStatistics {
+        .guestFrames = guestFrames.load(std::memory_order_relaxed),
+        .presentedFrames = presentedFrames.load(std::memory_order_relaxed),
+        .droppedFrames = droppedFrames.load(std::memory_order_relaxed),
+        .cpuFallbackFrames =
+            cpuFallbackFrames.load(std::memory_order_relaxed),
+    };
+}
+
+void NativeDisplayState::maybeReport() noexcept
+{
+    const double interval = frameStatisticsInterval();
+    if (interval <= 0.0)
+        return;
+    const auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    auto previous = reportedAt.load(std::memory_order_relaxed);
+    if (previous == 0) {
+        reportedAt.compare_exchange_strong(
+            previous, now, std::memory_order_relaxed);
+        return;
+    }
+    const auto span = now - previous;
+    if (static_cast<double>(span) < interval * 1e9)
+        return;
+    if (!reportedAt.compare_exchange_strong(
+            previous, now, std::memory_order_relaxed)) {
+        return;
+    }
+    const DisplayStatistics total = snapshot();
+    const double seconds = static_cast<double>(span) / 1e9;
+    const auto guest = total.guestFrames - reportedGuestFrames;
+    const auto presented = total.presentedFrames - reportedPresentedFrames;
+    const auto dropped = total.droppedFrames - reportedDroppedFrames;
+    const auto fallback =
+        total.cpuFallbackFrames - reportedCpuFallbackFrames;
+    reportedGuestFrames = total.guestFrames;
+    reportedPresentedFrames = total.presentedFrames;
+    reportedDroppedFrames = total.droppedFrames;
+    reportedCpuFallbackFrames = total.cpuFallbackFrames;
+    std::fprintf(
+        stderr,
+        "Native display frames: guest %.1f/s presented %.1f/s dropped %.1f/s "
+        "(%.1f%%) cpu-fallback %.1f/s | totals guest %llu presented %llu "
+        "dropped %llu cpu-fallback %llu\n",
+        static_cast<double>(guest) / seconds,
+        static_cast<double>(presented) / seconds,
+        static_cast<double>(dropped) / seconds,
+        guest == 0 ? 0.0 : 100.0 * static_cast<double>(dropped) /
+            static_cast<double>(guest),
+        static_cast<double>(fallback) / seconds,
+        static_cast<unsigned long long>(total.guestFrames),
+        static_cast<unsigned long long>(total.presentedFrames),
+        static_cast<unsigned long long>(total.droppedFrames),
+        static_cast<unsigned long long>(total.cpuFallbackFrames));
 }
 
 void NativeDisplayState::shutdown() noexcept
@@ -460,14 +570,25 @@ void NativeDisplay::fillSelfTestPattern()
     state_->publishCpuFrame();
 }
 
-bool NativeDisplay::presentOpenGl(const OpenGlScanout&) noexcept
+PresentOutcome NativeDisplay::presentOpenGl(const OpenGlScanout&) noexcept
 {
-    return false;
+    return PresentOutcome::unsupported;
 }
 
-bool NativeDisplay::presentMetal(const MetalScanout& scanout) noexcept
+PresentOutcome NativeDisplay::presentMetal(
+    const MetalScanout& scanout) noexcept
 {
     return state_->presentMetal(scanout);
+}
+
+DisplayStatistics NativeDisplay::statistics() const noexcept
+{
+    return state_->snapshot();
+}
+
+void NativeDisplay::recordCpuFallbackFrame() noexcept
+{
+    state_->cpuFallbackFrames.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace uml::gpu

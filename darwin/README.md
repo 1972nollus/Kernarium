@@ -19,8 +19,13 @@ texture into one of two IOSurfaces and presents the same surface through
 MetalKit. The two slots protect OpenGL/Metal producer-consumer ownership; they
 are not a queued swapchain. Only the newest ready slot is retained and at most
 one Metal command buffer is in flight. The CAMetalLayer is limited to two
-drawables. Unsupported resource shapes fall back
-to the shared CPU scanout conversion used by VNC. AppKit remains on the process
+drawables. Presentation reports one of three outcomes rather than success or
+failure: an unsupported resource shape falls back to the shared CPU scanout
+conversion used by VNC, while a scanout that arrives faster than the host can
+present is dropped and reported to the guest as success. Only the unsupported
+outcome may reach CPU readback, so guest rendering never waits on the host
+presentation timeline. `UML_GPU_FRAME_STATS` reports the two timelines and the
+drop count; see `docs/testing.md`. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 

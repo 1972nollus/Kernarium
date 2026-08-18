@@ -49,14 +49,16 @@ public:
         std::uint32_t width,
         std::uint32_t height) override;
     void fillSelfTestPattern() override;
-    [[nodiscard]] bool presentOpenGl(
+    [[nodiscard]] PresentOutcome presentOpenGl(
         const OpenGlScanout& scanout) noexcept override;
-    [[nodiscard]] bool presentMetal(
+    [[nodiscard]] PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept override;
     [[nodiscard]] bool needsFullCpuFallback() const noexcept override
     {
         return true;
     }
+    [[nodiscard]] DisplayStatistics statistics() const noexcept override;
+    void recordCpuFallbackFrame() noexcept override;
 
 private:
     std::shared_ptr<NativeDisplayState> state_;

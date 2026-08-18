@@ -578,7 +578,29 @@ Virtio-input datagram boundary as VNC. The native Virgl path performs a GPU
 blit from the renderer's CGL texture into a two-slot IOSurface bridge and Metal
 presents that storage directly; there is no `glReadPixels`, CPU framebuffer
 copy, or extra FIFO frame queue on this path. CPU readback remains the fallback
-for unsupported scanout resources.
+for unsupported scanout resources, and only for those: a scanout the display
+accepts but cannot present yet is dropped, because answering host backpressure
+with a GPU-to-CPU readback on the guest's flush path would couple the two
+timelines exactly where they must stay independent.
+
+`UML_GPU_FRAME_STATS=<seconds>` turns on native-display frame accounting on
+macOS and in Kernarium; unset, zero, or unparseable keeps it off. Each interval
+writes one bounded line to stderr, and macOS also mirrors it into the window
+title:
+
+```text
+Native display frames: guest 6.0/s presented 6.0/s dropped 0.0/s (0.0%)
+cpu-fallback 0.0/s | totals guest 1782 presented 1875 dropped 1 cpu-fallback 0
+```
+
+`guest` counts scanout flushes offered to the display and `presented` counts
+frames the host finished drawing, so the two are separate timelines rather than
+one rate; `presented` also includes CPU-framebuffer frames such as the boot
+console, which is why it can exceed `guest`. `dropped` counts guest frames
+retired without ever being presented, and `cpu-fallback` counts flushes that
+took the readback path. Both were measured at zero on macOS and effectively
+zero on the Simulator, so a nonzero `dropped` or `cpu-fallback` rate is a
+finding, not routine.
 
 External network, KDE native/VNC, and rendered WebGL workflows are opt-in
 because they need network/GUI permission:
