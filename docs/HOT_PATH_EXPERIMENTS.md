@@ -9974,3 +9974,130 @@ the clean arms rather than additional samples. The profiles are one 60 s window
 an arm and cost about 1 fps while running, which is why they are used for shares
 between arms and not for absolute frame rate. Time to first frame is reported
 but has a 4.1 s spread in the control, so only C's 20% regression exceeds it.
+
+
+## G167: per-address-space cache state, so retiring one is dropping it
+
+Dated 2026-08-18. G165 and G166 both ended pointing at the same thing:
+`ProgramCache::prepare` was 6.87% of vCPU on-CPU time on macOS and 13.27% during
+the Simulator's boot phase, more than the whole translator, and nearly all of it
+was two walks that scale with the cache rather than with the work.
+
+`retire()` removed one address space by walking every slab and all 65536 slots,
+then `erase_if`-ing the complete link and indirect maps and both live lists.
+`invalidate_links()` walked the single shared `live_links_` vector filtering for
+one address space, so with eight resident it discarded seven eighths of the
+walk. The code's own comment justified the sweep on the grounds that retirement
+is rare; G165 measured roughly 3,600 of them in a run and 4,753 on macOS,
+because a desktop guest running systemd, Plasma and multi-process Chromium has
+far more than eight live address spaces.
+
+### The change
+
+Everything belonging to one address space now lives in one `Generation`: its
+code-change mark, its own link and indirect maps keyed by guest PC alone, its
+live-link and live-site lists, and the flat indices of the slots it has stored
+into. `generations_` holds at most nine of them.
+
+Retiring an address space is then dropping its `Generation` and clearing the
+slots on its own list, both proportional to what it owned. `invalidate_links`
+walks only the owner's live lists, with no filtering. Three incidental
+consequences: the link key is a single word rather than a (generation, PC) pair,
+which also makes `link_record` cheaper on the translation path; the reset cells
+of an indirect site now name the owner's own empty record rather than whichever
+address space happened to be current, which was the same thing in practice
+because `prepare` is the only caller; and retirement no longer calls
+`deactivate` per slot, because the records those calls would reset are about to
+be destroyed and the cleared epoch already retires the slot's stream-index
+entries.
+
+The slot list is a hint, not an authority. It may name a slot another address
+space has since taken, and may name one twice, so retirement re-checks every
+entry against the slot's own generation and epoch. It can only *miss* a slot by
+overflowing, which is capped at the cache's slot count and recorded in
+`slots_complete`; retirement answers that with the original whole-cache sweep.
+That keeps the fallback exact rather than relying on the list being perfect.
+
+`tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp` gains
+`retiring_an_address_space_keeps_the_others`, which fills residency exactly,
+confirms nothing has been retired, then runs one more address space and requires
+that every survivor still answers from the cache while the retired one has to
+translate again. Making `release()` a no-op fails it, so it has teeth.
+
+### What it costs and what it removes
+
+macOS, WebGL Aquarium through the Kernarium guest setup on the VNC display, 4
+vCPUs, 3 GiB, 440x860 at 160 DPI, gadgets, 16 KiB profile. P is HEAD, Q is the
+change; P's binary hashes identically to G166's control arm.
+
+Sixty-second `sample(1)` windows inside each plateau, restricted to the vCPU
+carriers, inclusive shares of carrier on-CPU time:
+
+| | P | Q |
+| --- | ---: | ---: |
+| `ProgramCache::prepare` | 5.35% | **0.40%** |
+| of which `retire` | 3.87% | 0.28% |
+| of which `invalidate_links` | 1.46% | 0.00% |
+| `ProgramCache::store` | 2.46% | 2.82% |
+| `ProgramCache::find` | 2.21% | 2.24% |
+| `Builder::build` | 4.63% | 5.26% |
+| `gadgets::execute` | 60.37% | 62.06% |
+
+`prepare` falls by a factor of thirteen and the cache-maintenance category with
+it, 10.09% to 6.61% of carrier on-CPU self time, while gadget bodies rise 69.60%
+to 72.42%. `store` rises 0.36 points, which is the one `push_back` per store the
+slot list adds.
+
+Cache behaviour is unchanged, which is the point: this makes retirement cheaper
+without making it select differently. One instrumented run an arm, against the
++/- 0.5 point run-to-run band G165 established:
+
+| | P | Q |
+| --- | ---: | ---: |
+| hit rate | 90.13% | 90.86% |
+| misses | 9.85% | 9.13% |
+| evictions, share of stores | 60.73% | 63.11% |
+| host bytes, all executors | 401.5 MiB | 419.4 MiB |
+| bytes per resident block | 2012 | 1966 |
+
+The memory line is the honest cost: the slot lists add about 4 MiB across four
+executors, bounded by construction at one 32-bit index per slot per resident
+address space, so 2 MiB per executor at 65536 slots and eight resident. Most of
+the 17.8 MiB difference above is Q simply holding 6.9% more blocks at the
+sampled instant; bytes per resident block went down, not up.
+
+### Frame rate
+
+Sixteen runs in the counterbalanced order P Q Q P Q P P Q P Q Q P Q P P Q, eight
+an arm, a fresh port each; none wedged.
+
+| metric | P | Q | change | Welch t |
+| --- | ---: | ---: | ---: | ---: |
+| plateau fps | 14.287 +/- 0.383 | 14.025 +/- 0.713 | -1.84% | -0.918, df 10.7 |
+| time to first frame | 59.71 s +/- 2.35 | 56.63 s +/- 2.52 | **-5.16%** | -2.529, df 13.9 |
+
+Time to first frame improves by 5.16%, p about 0.024. The plateau does not move,
+and its arms are not distinguishable.
+
+That split is the prediction G165 and G166 made, now tested. Boot is CPU-bound:
+the carriers run 72-76% busy and pay a third of their time to the gadget cache,
+so removing cache work shows up directly. At the plateau the carriers are idle
+around 47% of the time waiting on the virtio-gpu round trip, so time handed back
+to them becomes more `__pselect` rather than more frames. A cache change should
+therefore be judged on time to first frame, and this entry is the first in the
+series to do that as its primary metric.
+
+Q's plateau spread is nearly twice P's (0.713 against 0.383), driven by one 12.90
+reading against a 13.4-15.2 range elsewhere. With eight runs an arm that is not
+enough to call a variance change, and the mean difference is not significant
+either way; it is recorded rather than explained.
+
+### Limitations
+
+Cache counters are one run an arm, not eight; the frame-rate arms are the
+replicated ones, and the counter claim is only that behaviour did not change,
+against a band established in G165. Profiles are one 60 s window an arm and cost
+about 1 fps while running, so they are used for shares between arms rather than
+for absolute frame rate. The Simulator, where G165 measured `prepare` at 13.27%
+during boot and where time to first frame matters most to a user, has not been
+remeasured with this change.

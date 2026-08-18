@@ -1083,7 +1083,8 @@
         ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(
         uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
+        UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     target_compile_options(
         uml_arm64_gadget_cache_validation_tests PRIVATE
         -Wall -Wextra -Werror)

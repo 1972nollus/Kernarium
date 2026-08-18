@@ -260,6 +260,11 @@ private:
 };
 
 class GadgetExecutor::ProgramCache final {
+	/* Named by member declarations below and defined with the rest of the
+	 * private state. */
+	struct LinkRecord;
+	struct Generation;
+
 public:
 	ProgramCache()
 		: program_storage_{&counted_},
@@ -284,17 +289,28 @@ public:
 		/* libc++ keeps one heap node per element plus a bucket pointer;
 		 * close enough to attribute the map, exact for the arrays. */
 		constexpr std::size_t node = 2 * sizeof(void *);
+		std::size_t links = 0;
+		std::size_t indirect = 0;
+		for (const auto &[generation, state] : generations_) {
+			links += state.links.size() *
+					(sizeof(LinkRecord) + node) +
+				state.links.bucket_count() * sizeof(void *) +
+				state.live_links.capacity() *
+					sizeof(LinkRecord *) +
+				state.slots.capacity() * sizeof(std::uint32_t);
+			indirect += state.indirect.size() *
+					(sizeof(arm64::gadgets::IndirectLink) +
+						node) +
+				state.indirect.bucket_count() * sizeof(void *) +
+				state.live_indirect.capacity() * sizeof(void *);
+		}
 		return {
 			.stream_index = stream_index_set_count *
 				sizeof(StreamIndexSet),
 			.slabs = slabs,
 			.streams = counted_.bytes(),
-			.links = links_.size() *
-				(sizeof(LinkRecord) + node) +
-				links_.bucket_count() * sizeof(void *),
-			.indirect = indirect_links_.size() *
-				(sizeof(arm64::gadgets::IndirectLink) + node) +
-				indirect_links_.bucket_count() * sizeof(void *),
+			.links = links,
+			.indirect = indirect,
 		};
 	}
 
@@ -302,7 +318,7 @@ public:
 	 * shared pool this is an outcome of the workload, not a build option. */
 	[[nodiscard]] std::size_t resident_generations() const noexcept
 	{
-		return generation_changes_.size();
+		return generations_.size();
 	}
 
 	[[nodiscard]] std::size_t occupancy() const noexcept
@@ -320,13 +336,10 @@ public:
 
 	void invalidate() noexcept
 	{
-		live_links_.clear();
-		live_indirect_.clear();
 		inlined_callees_.clear();
 		resident_.clear();
-		generation_changes_.clear();
-		indirect_links_.clear();
-		links_.clear();
+		generations_.clear();
+		current_ = nullptr;
 		++epoch_;
 		if (epoch_ != 0)
 			return;
@@ -350,34 +363,26 @@ public:
 	 * ever named -- with several address spaces resident, that difference is
 	 * the whole cost of the reset.
 	 */
-	void invalidate_links(unsigned long generation) noexcept
+	void invalidate_links(Generation &state) noexcept
 	{
-		std::size_t kept = 0;
-		for (auto *record : live_links_) {
-			if (record->generation != generation) {
-				live_links_[kept++] = record;
-				continue;
-			}
+		for (auto *record : state.live_links) {
 			record->reset();
 			record->listed = false;
 		}
-		live_links_.resize(kept);
-		if (live_indirect_.empty())
+		state.live_links.clear();
+		if (state.live_indirect.empty())
 			return;
-		const auto *empty_link = &link_record(empty_pc).link;
-		kept = 0;
-		for (const auto &enrolled : live_indirect_) {
-			if (enrolled.first != generation) {
-				live_indirect_[kept++] = enrolled;
-				continue;
-			}
-			for (auto &entry : enrolled.second->entries) {
+		/* The reset cells name this address space's own empty record, so
+		 * a site never points at another's link state. */
+		const auto *empty_link = &link_record(state, empty_pc).link;
+		for (auto *site : state.live_indirect) {
+			for (auto &entry : site->entries) {
 				entry.guest_pc = empty_pc;
 				entry.link = empty_link;
 			}
-			enrolled.second->next_replacement = 0;
+			site->next_replacement = 0;
 		}
-		live_indirect_.resize(kept);
+		state.live_indirect.clear();
 	}
 
 	/* Bind the cache to an address space and answer for whatever changed in
@@ -386,18 +391,19 @@ public:
 	void prepare(unsigned long generation, std::uint64_t changes)
 	{
 		current_generation_ = generation;
-		auto [entry, inserted] =
-			generation_changes_.try_emplace(generation, changes);
+		auto [entry, inserted] = generations_.try_emplace(generation);
+		current_ = &entry->second;
 		touch(generation);
 		if (inserted) {
+			current_->changes = changes;
 			while (resident_.size() > uml_gadget_resident_generations)
 				retire(resident_.front());
 			return;
 		}
-		if (entry->second == changes)
+		if (current_->changes == changes)
 			return;
-		invalidate_links(generation);
-		entry->second = changes;
+		invalidate_links(*current_);
+		current_->changes = changes;
 	}
 
 	[[nodiscard]] const BuildResult *find(
@@ -482,8 +488,7 @@ public:
 		std::uint64_t source_pc)
 	{
 		const auto [created, inserted] =
-			indirect_links_.try_emplace(
-				LinkKey{current_generation_, source_pc});
+			current().indirect.try_emplace(source_pc);
 		if (inserted) {
 			const auto *empty_link = link(empty_pc);
 			for (auto &entry : created->second.entries) {
@@ -504,7 +509,7 @@ public:
 		 * reset -- which makes this the transition that enrols it. */
 		if (site.entries[0].guest_pc == empty_pc &&
 		    site.entries[1].guest_pc == empty_pc)
-			live_indirect_.emplace_back(current_generation_, &site);
+			current().live_indirect.push_back(&site);
 		for (auto &entry : site.entries) {
 			if (entry.guest_pc != target_pc)
 				continue;
@@ -580,6 +585,20 @@ public:
 		replacement = static_cast<std::uint8_t>((selected + 1) & (ways - 1));
 
 		auto &slot = slab->slots[location.offset + selected];
+		/* Record the slot against the address space taking it, so its
+		 * retirement walks what it owns instead of the whole cache. */
+		auto &state = current();
+		if (state.slots_complete) {
+			if (state.slots.size() < slot_count) {
+				state.slots.push_back(static_cast<std::uint32_t>(
+					location.slab * slab_slots +
+					location.offset + selected));
+			} else {
+				state.slots_complete = false;
+				state.slots.clear();
+				state.slots.shrink_to_fit();
+			}
+		}
 		if (slot.epoch == epoch_ && slot.result) {
 			deactivate(slot.generation, slot.pc,
 				slot.result->program);
@@ -658,8 +677,6 @@ private:
 	static_assert(slot_count >= slab_slots * 4,
 		"cache must hold at least four slabs");
 
-	struct LinkRecord;
-
 	struct Slot final {
 		std::optional<BuildResult> result;
 		/* The address space this translation belongs to. A guest virtual
@@ -677,9 +694,11 @@ private:
 		std::uint64_t activation{};
 		/* Reactivation resolves the same link record every time, so the
 		 * node address is memoised here rather than hashed again on each
-		 * pass. links_ is node-based, so the address is stable until
-		 * invalidate() clears the map, and that also advances epoch_,
-		 * which is what link_epoch is compared against.
+		 * pass. The owning address space's link map is node-based, so the
+		 * address is stable until invalidate() clears it, and that also
+		 * advances epoch_, which is what link_epoch is compared against.
+		 * Retiring the address space clears this slot's epoch in the same
+		 * pass that destroys the map.
 		 */
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
@@ -721,26 +740,8 @@ private:
 
 	/* A link names a guest PC, which is only meaningful inside one address
 	 * space; keying by PC alone would let a block in one branch straight
-	 * into another's translation. */
-	struct LinkKey final {
-		unsigned long generation;
-		std::uint64_t pc;
-		[[nodiscard]] bool operator==(const LinkKey &) const noexcept =
-			default;
-	};
-
-	struct LinkKeyHash final {
-		[[nodiscard]] std::size_t operator()(
-			const LinkKey &key) const noexcept
-		{
-			const auto mixed = key.pc ^
-				(static_cast<std::uint64_t>(key.generation) *
-					0x9e3779b97f4a7c15ULL);
-			return static_cast<std::size_t>(
-				mixed ^ (mixed >> 29));
-		}
-	};
-
+	 * into another's translation. Each address space therefore owns its own
+	 * map, which also keeps the key a single word. */
 	struct LinkRecord final {
 		explicit LinkRecord(std::uint64_t pc) noexcept
 			: fallback_stream{
@@ -769,11 +770,38 @@ private:
 		std::array<std::uintptr_t, 2> fallback_stream;
 		std::array<std::uintptr_t, 2> fp_stream;
 		arm64::gadgets::BlockLink link;
-		/* Set while this record sits in live_links_, so a code change
-		 * resets the records that hold an activation instead of every
-		 * record the translator ever named. */
-		unsigned long generation{};
+		/* Set while this record sits in its address space's live list, so
+		 * a code change resets the records that hold an activation
+		 * instead of every record the translator ever named. */
 		bool listed{};
+	};
+
+	/* Everything that belongs to one address space.
+	 *
+	 * Retiring an address space is then dropping this, rather than filtering
+	 * it out of structures the others share. That matters because retirement
+	 * is not rare on a desktop guest: it happens on every first sight of a
+	 * ninth address space, and the filtering version had to walk every slot
+	 * in the cache and every link record of every address space to find the
+	 * one being retired. See G167.
+	 */
+	struct Generation final {
+		std::uint64_t changes{};
+		std::unordered_map<std::uint64_t, LinkRecord> links;
+		std::unordered_map<std::uint64_t, arm64::gadgets::IndirectLink>
+			indirect;
+		/* The records and sites holding an activation. */
+		std::vector<LinkRecord *> live_links;
+		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
+		/* Slots this address space has stored into, as flat slot
+		 * indices. It may name a slot another address space has since
+		 * taken, and may name one twice, so retirement checks every
+		 * entry; it can only *miss* a slot by having overflowed, which
+		 * `slots_complete` records and retirement answers with the whole
+		 * sweep.
+		 */
+		std::vector<std::uint32_t> slots;
+		bool slots_complete{true};
 	};
 
 	[[nodiscard]] static Location locate(
@@ -892,53 +920,80 @@ private:
 
 	/* Drop everything describing one address space: its resident
 	 * translations, the links the generated code reaches them through, and
-	 * its indirect sites. Retirement is rare -- only a first sight of an
-	 * address space can force one -- so walking the slabs here costs far
-	 * less than leaving dead address spaces holding slots.
+	 * its indirect sites.
+	 *
+	 * The slots come from the list the address space kept while it was
+	 * storing, so this is proportional to what it owned rather than to the
+	 * size of the cache; the link records, indirect sites and live lists go
+	 * with the Generation itself. No deactivate() is needed on the way out,
+	 * because the records those calls would reset are about to be destroyed
+	 * and the cleared epoch already retires the slot's stream index entries.
 	 */
 	void retire(unsigned long generation)
 	{
-		for (auto &slab : slabs_) {
-			if (!slab)
-				continue;
-			for (auto &slot : slab->slots) {
-				if (slot.epoch != epoch_ ||
-				    slot.generation != generation || !slot.result)
+		const auto owner = generations_.find(generation);
+		if (owner != generations_.end() &&
+		    owner->second.slots_complete) {
+			for (const auto index : owner->second.slots)
+				release(slot_at(index), generation);
+		} else {
+			for (auto &slab : slabs_) {
+				if (!slab)
 					continue;
-				deactivate(slot.generation, slot.pc,
-					slot.result->program);
-				slot.result.reset();
-				slot.epoch = 0;
-				slot.link = nullptr;
+				for (auto &slot : slab->slots)
+					release(slot, generation);
 			}
 		}
-		std::erase_if(live_links_, [&](const LinkRecord *record) {
-			return record->generation == generation;
-		});
-		std::erase_if(live_indirect_,
-			[&](const auto &enrolled) {
-				return enrolled.first == generation;
-			});
-		std::erase_if(links_, [&](const auto &entry) {
-			return entry.first.generation == generation;
-		});
-		std::erase_if(indirect_links_, [&](const auto &entry) {
-			return entry.first.generation == generation;
-		});
-		generation_changes_.erase(generation);
+		if (owner != generations_.end()) {
+			if (current_ == &owner->second)
+				current_ = nullptr;
+			generations_.erase(owner);
+		}
 		const auto found = std::find(
 			resident_.begin(), resident_.end(), generation);
 		if (found != resident_.end())
 			resident_.erase(found);
 	}
 
+	void release(Slot &slot, unsigned long generation) noexcept
+	{
+		if (slot.epoch != epoch_ || slot.generation != generation ||
+		    !slot.result)
+			return;
+		slot.result.reset();
+		slot.epoch = 0;
+		slot.link = nullptr;
+	}
+
+	[[nodiscard]] Slot &slot_at(std::uint32_t index) noexcept
+	{
+		auto &slab = slabs_[index / slab_slots];
+		return slab->slots[index % slab_slots];
+	}
+
+	/* The address space translation is currently running in.
+	 *
+	 * prepare() sets this on every switch, but its caller may skip the call
+	 * when nothing changed, and on the very first entry there is nothing to
+	 * compare against -- so the binding is completed here rather than
+	 * assumed. */
+	[[nodiscard]] Generation &current()
+	{
+		if (current_ == nullptr)
+			current_ = &generations_
+					    .try_emplace(current_generation_)
+					    .first->second;
+		return *current_;
+	}
+
+	[[nodiscard]] LinkRecord &link_record(Generation &state, std::uint64_t pc)
+	{
+		return state.links.try_emplace(pc, pc).first->second;
+	}
+
 	[[nodiscard]] LinkRecord &link_record(std::uint64_t pc)
 	{
-		auto [entry, inserted] = links_.try_emplace(
-			LinkKey{current_generation_, pc}, pc);
-		if (inserted)
-			entry->second.generation = current_generation_;
-		return entry->second;
+		return link_record(current(), pc);
 	}
 
 #if UML_GADGET_EXACT_CACHE_VALIDATION
@@ -1040,7 +1095,7 @@ private:
 		auto &record = *slot.link;
 		if (!record.listed) {
 			record.listed = true;
-			live_links_.push_back(&record);
+			current().live_links.push_back(&record);
 		}
 		auto *target = &record.link;
 		if (result.program.accesses_fp_state()) {
@@ -1060,8 +1115,11 @@ private:
 		 * eviction is frequently not from the current one; the record to
 		 * retire belongs to the slot's address space, not to whichever
 		 * happens to be running. */
-		const auto found = links_.find(LinkKey{generation, pc});
-		if (found == links_.end())
+		const auto owner = generations_.find(generation);
+		if (owner == generations_.end())
+			return;
+		const auto found = owner->second.links.find(pc);
+		if (found == owner->second.links.end())
 			return;
 		auto &record = found->second;
 		const auto *words = program.words().data();
@@ -1075,19 +1133,17 @@ private:
 
 	CountingResource counted_;
 	std::pmr::unsynchronized_pool_resource program_storage_;
-	std::unordered_map<LinkKey, LinkRecord, LinkKeyHash> links_;
-	std::unordered_map<LinkKey, arm64::gadgets::IndirectLink, LinkKeyHash>
-		indirect_links_;
-	/* The records holding an activation, and the code-change mark each
-	 * address space was last reset for. */
-	std::vector<LinkRecord *> live_links_;
-	std::vector<std::pair<unsigned long, arm64::gadgets::IndirectLink *>>
-		live_indirect_;
 	/* Bounded: a guest that keeps generating code would otherwise accumulate
 	 * every callee it ever called. */
 	static constexpr std::size_t maximum_inlined_callees = 1U << 16;
 	std::unordered_map<std::uint64_t, std::uint64_t> inlined_callees_;
-	std::unordered_map<unsigned long, std::uint64_t> generation_changes_;
+	/* At most uml_gadget_resident_generations + 1 entries, so finding one is
+	 * cheap; the state each holds is what makes retiring it proportional. */
+	std::unordered_map<unsigned long, Generation> generations_;
+	/* generations_ is node-based, so this stays valid across insertion; only
+	 * retiring this very address space could invalidate it, and retirement
+	 * only ever takes the least recently current one. */
+	Generation *current_{};
 	std::vector<unsigned long> resident_;
 	unsigned long current_generation_{};
 	std::unique_ptr<StreamIndexSet[]> stream_index_;

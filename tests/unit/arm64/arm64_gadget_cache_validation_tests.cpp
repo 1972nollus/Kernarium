@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <vector>
 
 #ifndef UML_GADGET_EXACT_CACHE_VALIDATION
 #error "gadget cache validation test needs the configured selector"
@@ -217,6 +219,66 @@ void an_unrelated_code_change_resets_an_untouched_link()
 #endif
 }
 
+/* Retiring the least recently current address space drops its translations and
+ * keeps everybody else's.
+ *
+ * Retirement walks the slot list the retired address space kept while it was
+ * storing rather than the whole cache, so a slot it names but no longer owns
+ * must be left alone, and a slot it owns must not be missed. Running one more
+ * address space than the residency cap forces exactly one retirement, and the
+ * surviving spaces then have to answer from the cache while the retired one has
+ * to translate again.
+ */
+void retiring_an_address_space_keeps_the_others()
+{
+	constexpr unsigned long first = 940;
+	constexpr auto resident = UML_GADGET_RESIDENT_GENERATIONS;
+	JitBacking backing{1};
+	backing.put32(0, move_immediate(0, 7));
+	backing.put32(4, system_call);
+
+	auto executor = std::make_unique<gadgets::GadgetExecutor>();
+	auto memory = std::make_unique<StaticGuestMemory>();
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	const auto visit = [&](unsigned long generation) {
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		const auto outcome =
+			run_once(*executor, *memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(cpu.registers[0] == 7);
+	};
+
+	/* Fill residency exactly, then run them all again: everything is a hit,
+	 * so nothing has been retired yet. */
+	for (unsigned long index = 0; index < resident; ++index) {
+		mappings.push_back(std::make_unique<JitMapping>(
+			first + index, code_base, backing, 1));
+		visit(first + index);
+	}
+	const auto after_fill = executor->cache_diagnostics().translations;
+	require(after_fill == resident);
+	for (unsigned long index = 0; index < resident; ++index)
+		visit(first + index);
+	require(executor->cache_diagnostics().translations == after_fill);
+
+	/* One more address space retires the least recently current, which is
+	 * the one that has been idle longest -- `first`. */
+	mappings.push_back(std::make_unique<JitMapping>(
+		first + resident, code_base, backing, 1));
+	visit(first + resident);
+	require(executor->cache_diagnostics().translations == after_fill + 1);
+
+	/* Every space except the retired one still answers from the cache. */
+	for (unsigned long index = 1; index < resident; ++index)
+		visit(first + index);
+	require(executor->cache_diagnostics().translations == after_fill + 1);
+
+	/* The retired one has to be translated again, and retires another. */
+	visit(first);
+	require(executor->cache_diagnostics().translations == after_fill + 2);
+}
+
 } // namespace
 
 int main()
@@ -224,5 +286,6 @@ int main()
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
 	an_unrelated_code_change_resets_an_untouched_link();
+	retiring_an_address_space_keeps_the_others();
 	return 0;
 }
