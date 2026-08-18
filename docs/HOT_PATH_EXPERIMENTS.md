@@ -10099,5 +10099,132 @@ replicated ones, and the counter claim is only that behaviour did not change,
 against a band established in G165. Profiles are one 60 s window an arm and cost
 about 1 fps while running, so they are used for shares between arms rather than
 for absolute frame rate. The Simulator, where G165 measured `prepare` at 13.27%
-during boot and where time to first frame matters most to a user, has not been
-remeasured with this change.
+during boot and where time to first frame matters most to a user, is remeasured
+in G168.
+
+## G168: G167 on the iOS Simulator, where the cost it removes was largest
+
+Dated 2026-08-18. Measurement only; no code changed. G167 accepted
+per-address-space gadget cache state on macOS and left its own limitation open:
+the Simulator, where G165 measured `ProgramCache::prepare` at 13.27% of
+boot-phase carrier time and where time to first frame is what a user actually
+waits through, had not been remeasured. This entry closes that. P is
+`12eca831`, the whole-cache sweep; Q is `a50b8362`, G167. The two installed app
+bundles are byte-identical except the two runtime framework binaries -- the
+`Kernarium` executable itself hashes the same in both -- so the only difference
+is `darwin/cpu/arm64/gadgets/executor.{cpp,hpp}`. Each run reinstalls its arm.
+
+Configuration as G165: iPhone 17 Pro Max Simulator on iOS 26.5, Kernarium,
+Linux 6.18.41, the 16 KiB profile, a 440x860 guest at 160 DPI, `mem=1536M`,
+`ncpus=4`, the gadgets engine, SDDM autologin into Plasma with
+`chromium-aquarium.service`, `numFish=500` on a 1024x1024 canvas through ANGLE
+on Mesa virgl. Host: 20-core arm64 macOS at load 8-9 with a Chrome Remote
+Desktop host taking about 130% and `fseventsd` about 100% throughout. That
+co-tenancy is why absolute time to first frame here is around 63 s against
+G165's 34 s; it is recorded rather than treated as grounds to discard, and every
+comparison below is between interleaved arms measured under it.
+
+### Where the time went
+
+`sample(1)` at a 10 ms interval, restricted to the four `uml-vcpu-N-carrier`
+threads. One 20 s window from 12.4 s after launch, inside boot, and one 30 s
+window 40 s after the first frame. Inclusive shares of carrier on-CPU time.
+
+| boot | P | Q |
+| --- | ---: | ---: |
+| `ProgramCache::prepare` | 12.77% | **1.32%** |
+| of which `retire` | 9.89% | 0.93% |
+| of which `invalidate_links` | 2.81% | 0.00% |
+| `ProgramCache::store` | 3.54% | 4.78% |
+| `ProgramCache::find` | 5.62% | 7.49% |
+| `Builder::build` | 5.51% | 8.98% |
+| `gadgets::execute` | 46.01% | 52.78% |
+
+| plateau | P | Q |
+| --- | ---: | ---: |
+| `ProgramCache::prepare` | 6.79% | **0.11%** |
+| of which `retire` | 4.11% | 0.08% |
+| of which `invalidate_links` | 2.68% | 0.00% |
+| `ProgramCache::store` | 2.83% | 2.64% |
+| `ProgramCache::find` | 2.83% | 1.84% |
+| `Builder::build` | 4.48% | 4.23% |
+| `gadgets::execute` | 37.21% | 41.12% |
+
+P reproduces G165's independently taken 13.27% at 12.77%, which is the control
+this comparison needs. In self time by symbol, `ProgramCache::retire` is the
+single most expensive symbol in P's whole boot profile at 9.32% -- ahead of
+every gadget body and ahead of the unsymbolicated native kernel -- and does not
+appear in Q's top ten at all.
+
+By category, boot cache maintenance falls 19.37% to 11.44% of carrier on-CPU
+self time while gadget bodies rise 49.27% to 56.88%; at the plateau the same
+pair moves 12.52% to 5.70% and 43.39% to 48.36%. Carrier off-CPU wall time
+during boot falls 35.9% to 29.6%.
+
+Two figures in those tables are artefacts of a fixed wall-clock window rather
+than regressions. `store`, `find` and `build` rise during boot because Q reaches
+further into the boot sequence within the same 20 s and therefore translates
+more. And Q's residual 5.70% of plateau cache maintenance is `store` and the
+link hash table, not `prepare`.
+
+### Frame rate
+
+Sixteen runs in the counterbalanced order P Q Q P Q P P Q P Q Q P Q P P Q, eight
+an arm, each a fresh install and launch; none failed, and all sixteen produced
+the full 150 readings.
+
+Time to first frame splits cleanly at the point the verifier's own clock starts,
+and the split is the whole result. `launch -> script` covers guest boot,
+systemd, SDDM, Plasma and the Chromium launch, which is CPU-bound guest work;
+`script -> first frame` is Chromium and WebGL warm-up, which is not.
+
+| | P | Q | change | Welch |
+| --- | ---: | ---: | ---: | ---: |
+| launch -> verifier script start | 32.24 s +/- 0.96 | 29.92 s +/- 1.12 | **-7.19%** | t = -4.443, df 13.7, p = 0.0006 |
+| verifier script start -> first frame | 31.99 s +/- 1.13 | 32.38 s +/- 2.00 | +1.22% | t = +0.481, df 11.0, p = 0.64 |
+| launch -> first frame | 64.22 s +/- 1.74 | 62.30 s +/- 2.22 | -3.00% | t = -1.931, df 13.2, p = 0.075 |
+| plateau fps, verifier's last 20 | 5.800 +/- 0.089 | 5.644 +/- 0.390 | -2.69% | t = -1.104, df 7.7, p = 0.30 |
+| plateau fps, all readings 40 s after first frame | 5.552 +/- 0.121 | 5.496 +/- 0.306 | -1.00% | t = -0.479, df 9.1, p = 0.64 |
+
+The CPU-bound phase improves 7.19% at p = 0.0006, and the separation is nearly
+complete: seven of Q's eight runs are faster than seven of P's eight. The
+browser phase does not move, and the plateau does not move. The total is a
+weighted average of a phase that improved and a phase that could not, so its
+-3.00% at p = 0.075 understates the effect on the part of the run this change
+can reach; the total is reported because it is what a user waits through, not
+because it is the sharper measurement.
+
+That is the same shape as G167 found on macOS, and a sharper version of the same
+prediction G165 and G166 made: cache work is worth removing where the carriers
+are busy, and at the plateau they are idle around 60% of the time waiting on the
+virtio-gpu round trip, so time handed back there becomes `__pselect`.
+
+`launch -> script` is derived per run as the host timestamp of a console line
+minus the page timestamp inside it. Two independent markers give it -- the
+verifier's `EVENT=load` and its `EVENT=first-fps` -- and they agree within 47 ms
+on every one of the sixteen runs, so the derivation is not carrying the result.
+
+The plateau needs one methodological note. The page reports whole-number FPS and
+the verifier averages only its last twenty readings, which at five frames a
+second is too coarse to estimate from: run 16 and run 3 have nearly the same
+whole-run distribution, 86 fives and 58 sixes against 82 and 57, yet the
+verifier scores them 5.100 and 5.900. Averaging every positive reading in a
+common window instead -- 40 s after the first frame, about 118 readings a run --
+is the same reduction applied identically to both arms and cuts P's spread from
+0.089 to a comparable 0.121 while pulling Q's from 0.390 to 0.306. Both
+estimators agree that the plateau did not move. Q's remaining spread is one run
+that was genuinely slow throughout, run 8 at 4.856 with 120 fives and 31 fours;
+with eight runs an arm that is not enough to call a variance change.
+
+### Limitations
+
+Profiles are one 60 s window an arm a phase, not replicated, and they cost frame
+rate while running, so they are used for shares between arms rather than for
+absolute rate. No cache counters were collected on the Simulator for this entry;
+the claim that cache behaviour is unchanged rests on G167's macOS counters and
+G165's Simulator baseline, not on a Simulator A/B of the counters themselves.
+Only the 16 KiB profile was measured; the 4 KiB Aquarium campaign was not run on
+either product for G167 or G168, though both page profiles pass the unit suites.
+The `launch -> script` and `script -> first frame` split is a decomposition of
+one measurement, not two independent ones, so its two rows are not independent
+tests.
