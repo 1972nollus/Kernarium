@@ -10454,3 +10454,169 @@ test: making a dropped frame fall back to CPU readback fails
 
 It must not be cited as a performance improvement. On this workload, on both
 products, it changes nothing measurable.
+
+## G171: why the iOS Simulator renders Aquarium at 6 fps and macOS at 14.5
+
+Dated 2026-08-18. G168 through G170 kept measuring the Simulator against macOS
+without ever asking why the two differ by 2.4x on the same guest. This entry
+answers that, separates the part that is the Simulator's nature from the part
+that is a guest defect, and records one fix that works on macOS and provably
+cannot work on the Simulator.
+
+### The gap, with the guest held constant
+
+Both products boot the same 6.18.41 kernel, the same `rootfs.erofs`, the same
+gadget engine and the same geometry. The Simulator's own boot line reads
+`440x860 guest at 160 DPI with mem=1536M ncpus=4`, which is exactly what the
+macOS harness passes.
+
+| | macOS | Simulator |
+| --- | ---: | ---: |
+| guest clock, page load to first FPS reading | 26 581 ms | 27 629 ms |
+| Aquarium plateau | 14.45 fps | 6.00 fps |
+
+The guest reaches its first frame in the same time on both, so the emulated CPU
+is not the difference. Everything below is host-side.
+
+### Where the host time goes
+
+`sample` at 1 ms over about 20 s of plateau, `uml-gpu` thread, divided by the
+frames actually produced in the window:
+
+| per frame | macOS | Simulator | ratio |
+| --- | ---: | ---: | ---: |
+| frame time | 90.8 ms | 248.8 ms | 2.7x |
+| serving guest GPU commands | 17.9 ms | 164.5 ms | 9.2x |
+| - host-to-guest readback | 2.0 ms | 106.8 ms | 53x |
+| - `draw_vbo` | 2.0 ms | 43.0 ms | 21x |
+| fence wait, where GPU execution shows up | 12.5 ms | 12.7 ms | 1.0x |
+| synchronous XPC to `MTLSimDriver` | 0 ms | 131.8 ms | - |
+
+The fence wait is the same on both. It is the same M1 Ultra and it does the
+same work in the same time. What differs is the cost of asking it, and 132 of
+the Simulator's 165 ms a frame is `sendXPCMessageWithReplySync` blocked in
+`mach_msg2_trap`.
+
+The two products do not run the same host GL. macOS gives virglrenderer CGL
+contexts on Apple's OpenGL driver; iOS device and Simulator give it ANGLE GLES3
+contexts on Metal, and in the Simulator Metal is `MTLSimDriver`, a proxy that
+serialises calls over XPC to a host-side GPU process. The Simulator's readback
+tail is `rx::mtl::Texture::getBytes` -> `-[MTLSimTexture getBytes:]` ->
+`dispatchOperationWihReply` -> `sendXPCMessageWithReplySync` ->
+`mach_msg2_trap`.
+macOS has no equivalent tail; its leaf is `gldReadFramebufferData` in
+`AppleMetalOpenGLRenderer`, in process.
+
+### The guest asks both hosts for exactly the same thing
+
+A temporary counter over the virgl command stream in `VirglRenderer::submit`,
+counting `VIRGL_CCMD_COPY_TRANSFER3D` with `READ_FROM_HOST`. It was reverted
+after the measurement and is not in the tree.
+
+| interval | commands | reads | pixels per read |
+| --- | ---: | ---: | ---: |
+| macOS, 2000 batches | 174 796 | 82 | 1 048 576 |
+| Simulator, 2000 batches | 49 567 | 18 | 1 048 576 |
+| Simulator, next 2000 | 444 339 | 201 | 1 048 576 |
+
+1 048 576 is exactly 1024x1024: one full readback of the WebGL canvas per
+rendered frame, on both. Every bit of the difference is what the host charges
+to answer.
+
+### That the charge is the Simulator's, not ours
+
+An independent microbenchmark, no emulator involved: one BGRA8 shared
+`MTLTexture`, cleared on the GPU each iteration, then read to CPU memory.
+
+| region | Simulator `getBytes` | macOS `getBytes` | ratio |
+| --- | ---: | ---: | ---: |
+| 16x16 | 0.153 ms | 0.002 ms | 77x |
+| 256x256 | 0.117 ms | 0.014 ms | 8.4x |
+| 1024x1024 | 0.260 ms | 0.073 ms | 3.6x |
+
+The Simulator's floor is about 0.13 ms whatever the size and macOS's is about
+0.002 ms: the cost is per call, not per byte, because it is one synchronous XPC
+round trip. At 132 ms a frame of blocked XPC that is roughly a thousand
+reply-requiring Metal calls per Aquarium frame.
+
+### The obvious fix, measured and rejected
+
+ANGLE's Metal backend has a second readback path: with a `GL_PIXEL_PACK_BUFFER`
+destination it blits the texture into an `MTLBuffer` on the GPU rather than
+calling `getBytes`, and `MTLBuffer` contents are genuinely shared memory in the
+Simulator. Routing virglrenderer's readback through a PBO therefore looked like
+it would take the payload out of the round trip.
+
+| region | Simulator blit+map | macOS blit+map |
+| --- | ---: | ---: |
+| 16x16 | 0.439 ms | 0.279 ms |
+| 256x256 | 0.402 ms | 0.252 ms |
+| 1024x1024 | 0.476 ms | 0.288 ms |
+
+Worse than `getBytes` at every size on both products, because the blit needs its
+own command-buffer commit and `waitUntilCompleted` -- another round trip, and a
+dearer one. Rejected before any dependency patch was written. Do not retry it.
+
+### Why the guest reads back at all
+
+The readback is not intrinsic to Aquarium. Chromium's GPU process logs, on both
+products and on every run examined:
+
+```
+ERROR:ui/gl/gl_surface_egl.cc:277] No suitable EGL configs found.
+ERROR:ui/gl/gl_surface_egl.cc:380] No suitable EGL configs found for
+initialization.
+```
+
+The harness launches Chromium with `--use-gl=angle --use-angle=gles-egl`, and
+that backend finds no EGL config it can use for a window surface on the guest's
+Mesa virgl. Chromium loses accelerated presentation, composites the page in
+software, and therefore reads its accelerated 1024x1024 canvas back once a
+frame. `--ozone-platform=x11` does not change the error.
+
+`--use-angle=gl` does. On macOS the EGL errors disappear, Chromium reaches
+`gl_surface_presentation_helper`, the guest reports `RENDERER=ANGLE (Mesa,
+virgl (Apple M1 Ultra), OpenGL 4.1)` instead of `OpenGL ES 3.0`, and the
+readback counter stays at **0 reads over 14 000 batches and 2.88 million virgl
+commands**. Plateau median of samples 30-110 of each 150-sample run:
+
+| arm | median | mean |
+| --- | ---: | ---: |
+| `gles-egl`, four baseline runs | 14.0, 14.0, 14.0, 15.0 | 13.70-14.72 |
+| `gl` | **17.0** | 16.51 |
+
+The same flag on the Simulator removes the EGL errors and the readback as well
+-- `reads=0` -- and then renders nothing, 0 fps for every sample:
+
+```
+ANGLE Display::initialize error 12289: Could not create a backing OpenGL
+  context.
+Exiting GPU process due to errors during initialization
+"Uncaught TypeError: Cannot read properties of null (reading 'getExtension')"
+```
+
+The guest's GL API is inherited from the host's. macOS gives virglrenderer
+desktop CGL, so the guest advertises OpenGL 4.1 and ANGLE's desktop backend has
+something to sit on. The Simulator gives it ANGLE GLES3, so the guest can only
+offer GLES and the desktop backend has nothing to create. The Simulator is
+confined to exactly the `gles-egl` path that cannot find a window config.
+
+### Answer, in order of size
+
+1. **The Simulator's Metal is out of process.** Every reply-requiring Metal call
+   is a synchronous XPC round trip, about 0.13 ms against 0.002 ms in process,
+   independent of payload. This workload makes on the order of a thousand a
+   frame. Not ours to fix.
+2. **Chromium has no accelerated presentation surface in the guest**, on either
+   product, so it software-composites and reads the canvas back once a frame:
+   2 ms a frame on macOS, 107 ms on the Simulator, because it is the largest
+   single round trip in the frame. Worth about 19% on macOS; the only fix found
+   is unavailable on the Simulator.
+3. **The emulated CPU and the GPU itself are not involved.** Time to first frame
+   differs by 3.9%, and the fence wait is 12.5 ms a frame against 12.7 ms.
+
+The macOS win is not adopted here. The flag lives in the Aquarium launcher in
+`Kernarium/Runtime/KernariumRuntime.mm`, which carried an unrelated concurrent
+edit throughout this work, and it must become conditional rather than absolute
+because it breaks the Simulator outright. Repairing the `gles-egl` config
+failure would help both products and is the open item.
