@@ -73,6 +73,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--memory", default="4G")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="attach the macOS Virtio Sound playback provider",
+    )
+    parser.add_argument(
         "--engine", choices=("jit", "gadgets", "interpreter"), default="gadgets"
     )
     parser.add_argument("--core-class", choices=CORE_CLASSES, default="performance")
@@ -106,6 +111,7 @@ def main() -> int:
         (
             f"ncpus={arguments.cpus}",
             f"root={arguments.root_device}",
+            *(("--audio",) if arguments.audio else ()),
         ),
         overlay_shell=True,
         engine=arguments.engine,

@@ -8,7 +8,7 @@ platform/  Apple capability and platform primitives
 memory/    guest address-space, MMU, and TLB contracts
 cpu/       interpreter, gadgets, JIT, and the neutral engine factory
 runtime/   guest-entry adapter and runtime composition
-device/    network, VNC input, GPU, and provider implementations
+device/    network, input, GPU, audio, and provider implementations
 emulator/  options and product composition
 app/macos/ CLI and embedded-kernel process adapter
 ```
@@ -56,11 +56,21 @@ default the view maps safe-area points directly to
 guest pixels and supplies 160 DPI through Virtio-GPU EDID. Optional Retina mode
 multiplies the bounds by `nativeScale` and supplies `160 * nativeScale`; touch
 points are scaled into the same selected range. Point density selects VGA8x16
-fbcon text, while Retina density selects TER16x32. Its
-network callback is the ordinary SLiRP provider compiled against the private
-iOS GLib/libslirp prefix. The application disables the UIKit idle timer while
-the managed guest run is active and restores it when that run finishes. Both
-iOS products default to all processors reported by `NSProcessInfo` and 1.5 GiB
+fbcon text, while Retina density selects TER16x32. Its audio service exposes
+one standard Virtio Sound playback stream backed by AVAudioEngine. The guest
+sees signed 16-bit interleaved stereo at 48 kHz; capture, jacks, mixer controls,
+and the legacy UML hostaudio relay remain absent. PCM periods stay owned by the
+device until AVAudio reports them consumed. iOS uses the playback audio-session
+category and restarts the engine after route/configuration changes or
+interruptions. The macOS CLI attaches the same service only when passed the
+host-only `--audio` option, while Kernarium attaches it for every normal
+launch.
+
+Kernarium's network callback is the ordinary SLiRP provider compiled against
+the private iOS GLib/libslirp prefix. The application disables the UIKit idle
+timer while the managed guest run is active and restores it when that run
+finishes. Both iOS products default to all processors reported by
+`NSProcessInfo` and 1.5 GiB
 of guest RAM. The settings sheet can persist one through that processor count,
 512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, the
 selected `.erofs` filename from Documents, and either a 4 KiB or 16 KiB kernel

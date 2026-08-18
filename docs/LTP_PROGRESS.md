@@ -5,7 +5,7 @@
 > unified `rootfs.erofs` workflow documented in `docs/testing.md` for current
 > work.
 
-Last updated: 2026-08-14 (Asia/Tokyo)
+Last updated: 2026-08-18 (Asia/Tokyo)
 
 ## Scope and rules
 
@@ -36,6 +36,16 @@ Last updated: 2026-08-14 (Asia/Tokyo)
 - Twenty-two controller cases that require globally expensive kernel diagnostics are disabled. Those diagnostics are absent from the production configuration, and the earlier configuration-only accommodations for those cases were removed.
 - Every credited result is also present in `tests/integration/ltp/verified-tests.tsv` and rerunnable by the host suite.
 - Ordinary cases always run with one guest CPU. Tests which intentionally exercise multiple CPUs are tagged `host-pressure`, retain the full host-backed SMP topology, and are excluded by default; `--run-host-pressure` explicitly includes that serialized tail after the ordinary parallel phase.
+
+## Virtio Sound qualification (2026-08-18)
+
+The production kernel now builds in ALSA PCM/timer and `SND_VIRTIO`, while the
+legacy UML hostaudio relay remains disabled. Focused 16 KiB and 4 KiB gadgets
+guests each discovered the standard Virtio Sound card and passed
+`snd_timer01` with one TPASS, no failures, and return code zero. This promotes
+that exact CVE regression from its old hardware exemption without claiming a
+new full LTP campaign. `snd_seq01` remains hardware-exempt because the device
+intentionally exposes no ALSA sequencer.
 
 ## Current unified-image manifest boundary (2026-08-10)
 
@@ -2412,11 +2422,11 @@ from inferring behavior from package or metadata presence.
 | 2193 | cve | cve-2017-1000111 | `setsockopt07` | Pass | The IPv6 socket-option validation assertion passes | None |
 | 2194 | cve | cve-2017-1000112 | `setsockopt05` | Pass | The UDP fragmentation socket-option assertion passes | None |
 | 2195 | cve | cve-2017-1000364 | `stack_clash` | Pass | The guarded stack-growth assertion passes | None |
-| 2196 | cve | cve-2017-1000380 | `snd_timer01` | Exempt (hardware) | The case requires a physical ALSA timer device | Sound hardware remains intentionally absent |
+| 2196 | cve | cve-2017-1000380 | `snd_timer01` | Pass | The Virtio Sound ALSA timer race reports the kernel not vulnerable | Enabled built-in ALSA and `SND_VIRTIO` |
 | 2197 | cve | cve-2017-1000405 | `thp04` | Pass | The transparent huge-page concurrency loop completes cleanly | None |
 | 2198 | cve | cve-2018-5803 | `sctp_big_chunk` | Pass | The oversized SCTP chunk validation assertion passes | None |
 | 2199 | cve | cve-2018-6927 | `futex_cmp_requeue02` | Pass | All three futex comparison and requeue assertions pass | None |
-| 2200 | cve | cve-2018-7566 | `snd_seq01` | Exempt (hardware) | The case requires a physical ALSA sequencer device | Sound hardware remains intentionally absent |
+| 2200 | cve | cve-2018-7566 | `snd_seq01` | Exempt (hardware) | The case requires an ALSA sequencer device | Virtio Sound exposes PCM and timer only |
 | 2201 | cve | cve-2018-8897 | `ptrace09` | Exempt (architecture) | The installed case rejects native arm64 | No emulator defect |
 | 2202 | cve | cve-2018-9568 | `connect02` | Pass | The socket-connect lifetime assertion passes | None |
 | 2203 | cve | cve-2018-10124 | `kill13` | Exempt (userspace/kernel matrix) | The packaged test requires compiler instrumentation removed from current kernels | No emulator defect |

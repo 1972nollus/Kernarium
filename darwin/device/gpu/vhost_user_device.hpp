@@ -9,8 +9,19 @@
 
 namespace uml::virtio {
 
+enum class VhostUserQueueAction : std::uint8_t {
+    retry,
+    complete,
+    defer,
+};
+
 struct VhostUserQueueResult final {
-    bool consumed {};
+    VhostUserQueueAction action {VhostUserQueueAction::retry};
+    std::vector<std::uint8_t> response;
+};
+
+struct VhostUserQueueCompletion final {
+    std::uint64_t requestId {};
     std::vector<std::uint8_t> response;
 };
 
@@ -28,6 +39,7 @@ public:
         std::span<const std::uint8_t> bytes) = 0;
     [[nodiscard]] virtual VhostUserQueueResult processQueue(
         std::uint32_t index,
+        std::uint64_t requestId,
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) = 0;
     virtual void reset() noexcept = 0;
@@ -37,6 +49,11 @@ public:
     // retries queues which may previously have had no device data available.
     [[nodiscard]] virtual int eventDescriptor() const noexcept { return -1; }
     virtual void drainEventSource() {}
+    [[nodiscard]] virtual bool takeQueueCompletion(
+        VhostUserQueueCompletion&)
+    {
+        return false;
+    }
     virtual void setStopRequest(const std::atomic_bool*) noexcept {}
     virtual void traceQueue(
         std::uint32_t,

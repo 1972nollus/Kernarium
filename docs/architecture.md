@@ -140,14 +140,22 @@ CGL, or LibVNCServer dependency. Conversely, the macOS graph continues to
 compile its existing AppKit/CGL/IOSurface native display and VNC providers; it
 does not compile or link the UIKit implementation.
 
-The vhost-user transport owns only connection and queue framing. The GPU and
-Virtio-input devices independently implement their protocol operations over
-that transport. Kernarium registers one absolute touchscreen and one keyboard,
-while UIKit scales safe-area point coordinates into the configured guest
+The vhost-user transport owns connection, dynamic queue framing, and deferred
+used-ring publication. The GPU, Virtio-input, and Virtio Sound devices
+independently implement their protocol operations over that transport.
+Deferred publication lets a playback descriptor remain outstanding until the
+Apple audio engine consumes the corresponding PCM period. Kernarium registers
+one signed-16-bit, stereo, 48 kHz output stream, one absolute touchscreen, and
+one keyboard, while UIKit scales safe-area point coordinates into the guest
 range—point-for-pixel by default or `nativeScale` Retina pixels—and converts
 them with text input to Linux evdev events. The GPU device independently
 advertises the matching 160 or `160 * nativeScale` effective density through
 EDID.
+The audio sink is shared by macOS and both iOS products. It owns the AVAudio
+graph and a bounded period/completion ring; callback code performs no heap
+allocation or locking. iOS additionally owns AVAudioSession playback,
+interruption, and route/configuration recovery. This is a device-internal
+boundary and changes neither the public emulator API nor the host/kernel ABI.
 `ContentView` keeps both that framebuffer surface and a SwiftTerm
 `TerminalView` mounted, shows the framebuffer by default, and changes only
 their visibility and input ownership when the user toggles surfaces. The

@@ -1,5 +1,35 @@
 # Refactor handoff
 
+## Apple Virtio Sound playback (2026-08-18)
+
+Both Apple application compositions now include a standard Virtio Sound
+backend. Kernarium attaches it automatically on iOS Device and Simulator; the
+macOS CLI attaches it with the host-only `--audio` option. The card advertises
+one output-only S16_LE stereo stream at 48 kHz and one FL/FR channel map. It
+uses the upstream built-in `snd_virtio` ALSA driver rather than adding a public
+or host/kernel ABI. `CONFIG_SOUND`, `CONFIG_SND`, and `CONFIG_SND_VIRTIO` are
+built in, while `CONFIG_UML_SOUND` stays off.
+
+AVAudioPlayerNode owns a bounded set of preallocated period buffers. TX
+descriptors complete only from the data-consumed callback; STOP/RELEASE flush
+outstanding periods without leaving the Linux driver waiting. iOS selects the
+playback AVAudioSession category and observes interruptions plus route/engine
+configuration changes. The generalized vhost-user server now derives its
+queue count from the protocol device and retains deferred descriptor chains
+until an event-source completion publishes them to the used ring.
+
+The normal and ASan/UBSan GPU/audio workflows, four-queue deferred transport
+fixture, both macOS page-profile product links, both iOS Simulator runtime
+links, and macOS/iOS Device/iOS Simulator audio compiles passed for both page
+profiles. Real 16 KiB and 4 KiB guests both discovered the card; libasound
+writes played and drained a
+4,800-frame 440 Hz period with all four hardware periods completed in order.
+The focused `snd_timer01` race then passed 1/1 on both profiles. The
+physical-iOS full runtime link is currently blocked before linking by its
+pre-existing stale iOS network dependency-prefix
+manifest, although both the physical audio archive and modified runtime source
+compile for the iPhoneOS SDK.
+
 ## macOS WebGL instancing shader fix (2026-08-17)
 
 The macOS virglrenderer no longer rejects an otherwise valid instanced vertex

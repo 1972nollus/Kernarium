@@ -336,13 +336,16 @@ def run_guest_shell_case(
     command_status: int,
     shutdown_ok: bool,
     emulator_status: int | None,
-) -> tuple[int, str, mock.Mock]:
+    *,
+    audio: bool = False,
+) -> tuple[int, str, mock.Mock, mock.Mock]:
     module = load_guest_shell_module()
     arguments = types.SimpleNamespace(
         emulator=pathlib.Path("emulator"),
         rootfs=pathlib.Path("rootfs.erofs"),
         memory="4G",
         cpus=4,
+        audio=audio,
         root_device="/dev/ubda",
         engine="jit",
         core_class="performance",
@@ -362,17 +365,17 @@ def run_guest_shell_case(
     stdout = io.StringIO()
     with (
         mock.patch.object(module, "parse_arguments", return_value=arguments),
-        mock.patch.object(module, "Guest", return_value=guest),
+        mock.patch.object(module, "Guest", return_value=guest) as constructor,
         contextlib.redirect_stdout(stdout),
         contextlib.redirect_stderr(stderr),
     ):
         status = module.main()
     guest.close.assert_called_once_with()
-    return status, stderr.getvalue(), guest
+    return status, stderr.getvalue(), guest, constructor
 
 
 def verify_guest_shell_shutdown_contract() -> None:
-    status, stderr, guest = run_guest_shell_case(0, True, 0)
+    status, stderr, guest, _ = run_guest_shell_case(0, True, 0)
     if status != 0 or stderr:
         raise RuntimeError(
             "guest-shell rejected a successful command and clean emulator exit: "
@@ -380,25 +383,35 @@ def verify_guest_shell_shutdown_contract() -> None:
         )
     guest.shutdown.assert_called_once_with(60)
 
-    status, stderr, _ = run_guest_shell_case(0, False, None)
+    status, stderr, _, _ = run_guest_shell_case(0, False, None)
     if status == 0 or "did not halt cleanly within 60 seconds" not in stderr:
         raise RuntimeError(
             "guest-shell allowed a successful command to mask shutdown timeout: "
             f"status={status}, stderr={stderr!r}"
         )
 
-    status, stderr, _ = run_guest_shell_case(0, True, 23)
+    status, stderr, _, _ = run_guest_shell_case(0, True, 23)
     if status == 0 or "emulator exited with status 23" not in stderr:
         raise RuntimeError(
             "guest-shell allowed a successful command to mask emulator failure: "
             f"status={status}, stderr={stderr!r}"
         )
 
-    status, stderr, _ = run_guest_shell_case(7, False, None)
+    status, stderr, _, _ = run_guest_shell_case(7, False, None)
     if status != 7 or "did not halt cleanly within 60 seconds" not in stderr:
         raise RuntimeError(
             "guest-shell did not preserve command failure precedence across "
             f"shutdown timeout: status={status}, stderr={stderr!r}"
+        )
+
+    status, stderr, _, constructor = run_guest_shell_case(
+        0, True, 0, audio=True)
+    kernel_arguments = constructor.call_args.args[4]
+    if status != 0 or stderr or kernel_arguments.count("--audio") != 1:
+        raise RuntimeError(
+            "guest-shell did not forward --audio exactly once as a host "
+            f"option: status={status}, stderr={stderr!r}, "
+            f"arguments={kernel_arguments!r}"
         )
 
 

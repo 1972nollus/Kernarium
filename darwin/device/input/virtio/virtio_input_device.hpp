@@ -57,6 +57,7 @@ public:
         std::span<const std::uint8_t> bytes) override;
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
+        std::uint64_t requestId,
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) override;
     void reset() noexcept override;

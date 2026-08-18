@@ -147,6 +147,12 @@ left; each action sends a press/release pair through the existing Virtio
 keyboard device.
 Touch and text events enter the guest through separate real Virtio-input
 devices, and the app disables the idle timer only while the guest is running.
+One real Virtio Sound card is also attached on both Device and Simulator. It
+offers one 48 kHz, stereo, signed-16-bit playback stream through the upstream
+`snd_virtio` driver and sends consumed guest periods to `AVAudioEngine`.
+Kernarium configures the iOS playback audio session and recovers the engine
+after route changes, configuration changes, and interruptions. Capture, mixer
+controls, and synthesized legacy UML sound remain intentionally absent.
 The Darwin kernel scheduler uses one persistent host carrier per vCPU on
 macOS and both iOS targets, names them `uml-vcpu-N-carrier`, and moves Linux
 task contexts between those carriers without creating a host thread per guest
@@ -582,6 +588,17 @@ for unsupported scanout resources, and only for those: a scanout the display
 accepts but cannot present yet is dropped, because answering host backpressure
 with a GPU-to-CPU readback on the guest's flush path would couple the two
 timelines exactly where they must stay independent.
+
+The standalone macOS launcher attaches the same Virtio Sound device only when
+the host-only `--audio` option is present. `tools/guest-shell.py --audio`
+provides that attachment for focused guest commands; for example, use
+`aplay -l` or inspect `/dev/snd/pcmC0D0p` after boot. The
+`virtio-sound-protocol` unit test covers discovery, format negotiation, stream
+state, malformed requests, and deferred TX completion. The shared vhost-user
+transport test also exercises a four-queue device whose descriptor is not
+published to the used ring until an asynchronous completion arrives. A guest
+desktop still needs its normal PipeWire or ALSA session policy to route
+application audio; the host device does not replace guest userspace.
 
 `UML_GPU_FRAME_STATS=<seconds>` turns on native-display frame accounting on
 macOS and in Kernarium; unset, zero, or unparseable keeps it off. Each interval
@@ -1072,14 +1089,16 @@ scripts/build-xcframework.sh
 select the instruction-evidence reset. The full normal and ASan/UBSan suites
 retain the complete registered ordinary instruction-test selection.
 
-The two GPU workflows are host-only and rootfs-free. They configure the GPU
-graph, build both GPU unit fixtures and all registered tooling fixtures plus
-the architecture audit, run the GPU unit selection, and then run the
-independently labelled `virtio-gpu-vnc-smoke` tooling check. This covers
-service ownership, direct-presentation protocol bypass, VNC lifetime/port
-reuse, and the real LibVNCServer wiring normally or under ASan+UBSan. The
-interactive AppKit window remains an external GUI check; it is not opened by
-ordinary host acceptance. Loopback socket policy must permit the VNC
+The two GPU workflows are host-only and rootfs-free. They configure the shared
+GPU, input, and audio-device graph; build the GPU and Virtio Sound unit
+fixtures and all registered tooling fixtures plus the architecture audit; run
+the focused GPU and audio unit selection; and then run the independently
+labelled `virtio-gpu-vnc-smoke` tooling check. This covers service ownership,
+dynamic queue counts, deferred used-ring publication, sound protocol
+negotiation, direct-presentation protocol bypass, VNC lifetime/port reuse, and
+the real LibVNCServer wiring normally or under ASan+UBSan. The interactive
+AppKit window and audible Core Audio output remain external GUI checks; they
+are not opened by ordinary host acceptance. Loopback socket policy must permit the VNC
 port-reuse cases.
 
 The strict `unit` selection is Python-free. In configurations that enable both

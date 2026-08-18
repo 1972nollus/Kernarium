@@ -46,6 +46,9 @@ add_subdirectory(input/vnc)
 if(TARGET uml_virtio_input)
     add_subdirectory(input/virtio)
 endif()
+if(TARGET uml_audio_device)
+    add_subdirectory(audio)
+endif()
 add_subdirectory(gpu)
 
 get_property(_uml_registered_unit_binary_targets GLOBAL PROPERTY

@@ -74,16 +74,23 @@ set(UML_DEPENDENCY_PREFIX
     "${PROJECT_SOURCE_DIR}/.build/dependencies/macos-arm64"
     CACHE PATH "Private prefix containing source-built host dependencies")
 option(UML_BUILD_GPU "Build the host GPU/display provider" ${UML_TARGET_MACOS})
+option(UML_BUILD_AUDIO "Build the host Virtio Sound playback provider"
+    ${UML_BUILD_GPU})
 option(UML_BUILD_KERNARIUM_RUNTIME
     "Build the Kernarium application framework for iOS" OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
 
-if(UML_BUILD_GPU)
+if(UML_BUILD_GPU OR UML_BUILD_AUDIO)
     # Both native display implementations are Objective-C++. Keep that
     # language out of ordinary CPU/library-only configurations.
     enable_language(OBJCXX)
+endif()
+
+if(UML_BUILD_AUDIO AND NOT UML_BUILD_GPU)
+    message(FATAL_ERROR
+        "UML_BUILD_AUDIO currently requires the shared GPU vhost-user transport")
 endif()
 
 option(UML_GUEST_16K_PAGES

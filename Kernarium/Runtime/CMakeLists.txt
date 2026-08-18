@@ -2,9 +2,9 @@
 
 if(NOT UML_APPLE_PLATFORM MATCHES "^ios" OR
    NOT UML_BUILD_KERNEL_RUNNER OR NOT UML_BUILD_GPU OR
-   NOT UML_BUILD_NETWORK_PROVIDER)
+   NOT UML_BUILD_AUDIO OR NOT UML_BUILD_NETWORK_PROVIDER)
     message(FATAL_ERROR
-        "KernariumRuntime requires the iOS runner, GPU, and network")
+        "KernariumRuntime requires the iOS runner, GPU, audio, and network")
 endif()
 
 file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env"
@@ -65,12 +65,14 @@ target_include_directories(KernariumRuntime
     PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/api/include
         ${PROJECT_SOURCE_DIR}/darwin/device
+        ${PROJECT_SOURCE_DIR}/darwin/device/audio
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/input/virtio
         ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
 target_link_libraries(KernariumRuntime PRIVATE
     UML::Emulator
     UML::GuestPageConfiguration
+    UML::AudioDevice
     UML::GpuDevice
     UML::VirtioInput
     UML::NetworkProvider

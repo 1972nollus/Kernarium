@@ -231,9 +231,11 @@ void VirtioInputDevice::writeConfiguration(
 
 uml::virtio::VhostUserQueueResult VirtioInputDevice::processQueue(
     std::uint32_t index,
+    std::uint64_t requestId,
     std::span<const std::uint8_t> request,
     std::size_t responseCapacity)
 {
+    (void)requestId;
     if (index == protocol::eventQueue) {
         if (!request.empty())
             throw std::runtime_error("virtio-input event buffer is readable");
@@ -248,7 +250,7 @@ uml::virtio::VhostUserQueueResult VirtioInputDevice::processQueue(
             reportedDelivery_ = true;
         }
         return {
-            .consumed = true,
+            .action = uml::virtio::VhostUserQueueAction::complete,
             .response = {bytes, bytes + sizeof(event)},
         };
     }
@@ -258,7 +260,10 @@ uml::virtio::VhostUserQueueResult VirtioInputDevice::processQueue(
         responseCapacity != 0) {
         throw std::runtime_error("invalid virtio-input status buffer");
     }
-    return {.consumed = true, .response = {}};
+    return {
+        .action = uml::virtio::VhostUserQueueAction::complete,
+        .response = {},
+    };
 }
 
 void VirtioInputDevice::reset() noexcept

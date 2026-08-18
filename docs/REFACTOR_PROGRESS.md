@@ -1,5 +1,28 @@
 # Refactor progress
 
+## Apple Virtio Sound playback (2026-08-18)
+
+The macOS CLI and both Kernarium iOS products now share an in-process standard
+Virtio Sound device backed by AVAudioEngine. It exposes one ALSA playback
+stream—48 kHz, stereo, interleaved S16_LE—and keeps each TX descriptor pending
+until AVAudio reports that period consumed. The shared vhost-user transport now
+supports a device-selected queue count and asynchronous used-ring completion;
+a four-queue fixture pins that ordering. Kernarium attaches sound by default,
+while the macOS CLI and `tools/guest-shell.py` expose opt-in `--audio`.
+
+The common kernel enables built-in ALSA PCM/timer and `SND_VIRTIO`, while the
+obsolete UML hostaudio relay remains disabled. Both 16 KiB and 4 KiB kernel
+rebuilds and macOS product links passed, as did the normal and ASan/UBSan host
+workflows and compilation of the audio backend for macOS, iOS Simulator, and
+physical iOS. End-to-end guest libasound probes on both page profiles wrote and
+drained a 4,800-frame 440 Hz period successfully; the card appeared as
+`VirtIO SoundCard`, and the formerly hardware-exempt `snd_timer01` LTP
+regression passed on both. Both 16 KiB and 4 KiB Simulator runtime frameworks
+linked.
+The physical-iOS runtime source and audio archive compile, while its full local
+link remains independently blocked by a stale pre-existing iOS network-prefix
+source manifest.
+
 ## macOS WebGL instancing shader compatibility (2026-08-17)
 
 The pinned desktop virglrenderer patch now treats `gl_InstanceID` as core when

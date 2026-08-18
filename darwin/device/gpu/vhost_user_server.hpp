@@ -8,13 +8,13 @@
 #include "display.hpp"
 #include "../input/vnc/vnc_input.hpp"
 
-#include <array>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace uml::gpu {
@@ -78,7 +78,17 @@ private:
         bool writable {};
     };
 
+    struct PendingRequest {
+        std::uint64_t requestId {};
+        std::uint32_t queueIndex {};
+        std::uint16_t head {};
+        std::size_t responseCapacity {};
+        std::vector<DescriptorSegment> segments;
+    };
+
     void resetConnection() noexcept;
+    void resetDeviceState() noexcept;
+    void resetQueues() noexcept;
     void clearMappings() noexcept;
     void handleMessage(int socket, VhostUserMessage& message);
     void sendReply(
@@ -97,6 +107,11 @@ private:
     void configureKick(VhostUserMessage& message);
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
+    void drainQueueCompletions();
+    void completeRequest(
+        const PendingRequest& request,
+        std::span<const std::uint8_t> response);
+    void notifyQueue(std::uint32_t index);
     void signalQueue(std::uint32_t index);
     void serveConnection(
         int connection,
@@ -112,6 +127,7 @@ private:
     [[nodiscard]] std::vector<DescriptorSegment> descriptorChain(
         const Queue& queue,
         std::uint16_t head);
+    [[nodiscard]] std::uint64_t allocateRequestId();
 
     std::filesystem::path socketPath_;
     std::string vncBindAddress_;
@@ -119,7 +135,9 @@ private:
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::vector<Mapping> mappings_;
-    std::array<Queue, protocol::gpuQueueCount> queues_ {};
+    std::vector<Queue> queues_;
+    std::unordered_map<std::uint64_t, PendingRequest> pendingRequests_;
+    std::uint64_t nextRequestId_ {1};
     std::uint64_t negotiatedFeatures_ {};
     std::uint64_t negotiatedProtocolFeatures_ {};
     bool featuresConfigured_ {};

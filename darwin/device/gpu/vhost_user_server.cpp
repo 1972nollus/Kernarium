@@ -410,9 +410,11 @@ public:
 
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
+        std::uint64_t requestId,
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) override
     {
+        (void)requestId;
         const bool cursorQueue = index == protocol::gpuCursorQueue;
         if (!cursorQueue &&
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
@@ -421,7 +423,10 @@ public:
         auto response = gpu_.process(request, cursorQueue);
         if (response.size() > responseCapacity)
             throw std::runtime_error("short Virtio-GPU response buffer");
-        return {.consumed = true, .response = std::move(response)};
+        return {
+            .action = uml::virtio::VhostUserQueueAction::complete,
+            .response = std::move(response),
+        };
     }
 
     void reset() noexcept override { gpu_.reset(); }
@@ -503,6 +508,7 @@ VhostUserServer::VhostUserServer(
                 std::span(pointer, length);
         },
         dotsPerInch);
+    queues_.resize(device_->queueCount());
     if (selfTestPattern)
         display_->fillSelfTestPattern();
 }
@@ -511,10 +517,12 @@ VhostUserServer::VhostUserServer(
     std::unique_ptr<uml::virtio::VhostUserDevice> device)
     : device_(std::move(device))
 {
-    if (!device_ || device_->queueCount() != queues_.size()) {
-        throw std::invalid_argument(
-            "vhost-user device must provide exactly two queues");
-    }
+    constexpr std::size_t maximumQueueCount =
+        protocol::vhostVringIndexMask + 1U;
+    if (!device_ || device_->queueCount() == 0 ||
+        device_->queueCount() > maximumQueueCount)
+        throw std::invalid_argument("invalid vhost-user device queue count");
+    queues_.resize(device_->queueCount());
 }
 
 VhostUserServer::~VhostUserServer()
@@ -524,13 +532,25 @@ VhostUserServer::~VhostUserServer()
 
 void VhostUserServer::resetConnection() noexcept
 {
-    device_->reset();
+    resetDeviceState();
     slaveRequestDescriptor_.reset();
     clearMappings();
-    queues_ = {};
+    resetQueues();
     negotiatedFeatures_ = 0;
     negotiatedProtocolFeatures_ = 0;
     featuresConfigured_ = false;
+}
+
+void VhostUserServer::resetDeviceState() noexcept
+{
+    device_->reset();
+    pendingRequests_.clear();
+}
+
+void VhostUserServer::resetQueues() noexcept
+{
+    for (auto& queue : queues_)
+        queue = Queue {};
 }
 
 void VhostUserServer::clearMappings() noexcept
@@ -686,9 +706,9 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
     // Renderer backing can retain pointers into the old mappings. Retire that
     // device state before unmapping, then commit the replacement without any
     // operation that can throw or lose a descriptor.
-    device_->reset();
+    resetDeviceState();
     clearMappings();
-    queues_ = {};
+    resetQueues();
     if (featuresConfigured_ &&
         (negotiatedFeatures_ & protocol::vhostFeatureProtocol) == 0) {
         for (auto& queue : queues_)
@@ -903,6 +923,117 @@ void VhostUserServer::signalQueue(std::uint32_t index)
     }
 }
 
+std::uint64_t VhostUserServer::allocateRequestId()
+{
+    if (nextRequestId_ == 0)
+        throw std::runtime_error("vhost-user request identifier exhausted");
+    return nextRequestId_++;
+}
+
+void VhostUserServer::completeRequest(
+    const PendingRequest& request,
+    std::span<const std::uint8_t> response)
+{
+    if (request.queueIndex >= queues_.size() ||
+        response.size() > request.responseCapacity ||
+        response.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::runtime_error("invalid deferred virtio completion");
+    }
+    auto& queue = queues_[request.queueIndex];
+    if (queue.size == 0)
+        throw std::runtime_error("completion targets an unconfigured virtqueue");
+
+    std::size_t responseOffset = 0;
+    for (const auto& segment : request.segments) {
+        if (!segment.writable || responseOffset == response.size())
+            continue;
+        const auto count = std::min<std::size_t>(
+            segment.length, response.size() - responseOffset);
+        if (count == 0)
+            continue;
+        auto* destination = translate(segment.address, count, false);
+        if (destination == nullptr)
+            throw std::runtime_error("completion buffer is outside guest memory");
+        std::memcpy(
+            destination, response.data() + responseOffset, count);
+        responseOffset += count;
+    }
+    if (responseOffset != response.size())
+        throw std::runtime_error("incomplete virtio response write");
+
+    auto* used = translate(
+        queue.usedAddress,
+        protocol::splitRingHeaderSize +
+            static_cast<std::size_t>(queue.size) *
+                sizeof(protocol::VirtqueueUsedElement),
+        true);
+    if (used == nullptr ||
+        reinterpret_cast<std::uintptr_t>(used) % alignof(std::uint16_t) != 0) {
+        throw std::runtime_error("virtqueue used ring is unavailable");
+    }
+    const auto usedIndex = loadSharedRingValue(
+        used + sizeof(std::uint16_t), std::memory_order_relaxed);
+    const protocol::VirtqueueUsedElement element {
+        .id = request.head,
+        .length = static_cast<std::uint32_t>(responseOffset),
+    };
+    const auto usedOffset =
+        protocol::splitRingHeaderSize +
+        static_cast<std::size_t>(usedIndex % queue.size) * sizeof(element);
+    storeUnaligned(used + usedOffset, element);
+    storeSharedRingValue(
+        used + sizeof(std::uint16_t),
+        static_cast<std::uint16_t>(usedIndex + 1U),
+        std::memory_order_release);
+}
+
+void VhostUserServer::notifyQueue(std::uint32_t index)
+{
+    if (index >= queues_.size())
+        throw std::runtime_error("invalid virtqueue notification index");
+    const auto& queue = queues_[index];
+    auto* available = translate(
+        queue.availableAddress,
+        protocol::splitRingHeaderSize +
+            static_cast<std::size_t>(queue.size) * sizeof(std::uint16_t),
+        true);
+    if (available == nullptr ||
+        reinterpret_cast<std::uintptr_t>(available) %
+                alignof(std::uint16_t) !=
+            0) {
+        throw std::runtime_error("virtqueue available ring is unavailable");
+    }
+    // Notification suppression is sampled after publishing used entries.
+    const auto flags =
+        loadSharedRingValue(available, std::memory_order_acquire);
+    if ((flags & ~protocol::availableSuppressInterrupt) != 0)
+        throw std::runtime_error("virtqueue available ring has reserved flags");
+    if ((flags & protocol::availableSuppressInterrupt) == 0)
+        signalQueue(index);
+}
+
+void VhostUserServer::drainQueueCompletions()
+{
+    std::array<bool, protocol::vhostVringIndexMask + 1U> completedQueues {};
+    uml::virtio::VhostUserQueueCompletion completion;
+    while (device_->takeQueueCompletion(completion)) {
+        const auto found = pendingRequests_.find(completion.requestId);
+        if (found == pendingRequests_.end()) {
+            completion = {};
+            continue;
+        }
+        const auto queueIndex = found->second.queueIndex;
+        completeRequest(found->second, completion.response);
+        pendingRequests_.erase(found);
+        completedQueues[queueIndex] = true;
+        completion = {};
+    }
+    for (std::uint32_t index = 0; index < queues_.size(); ++index) {
+        if (completedQueues[index])
+            notifyQueue(index);
+    }
+}
+
 void VhostUserServer::processQueue(std::uint32_t index)
 {
     if (index >= queues_.size())
@@ -920,7 +1051,7 @@ void VhostUserServer::processQueue(std::uint32_t index)
         queue.usedAddress,
         protocol::splitRingHeaderSize +
             static_cast<std::size_t>(queue.size) *
-            sizeof(protocol::VirtqueueUsedElement),
+                sizeof(protocol::VirtqueueUsedElement),
         true);
     if (available == nullptr || used == nullptr)
         throw std::runtime_error("virtqueue rings are outside guest memory");
@@ -939,15 +1070,14 @@ void VhostUserServer::processQueue(std::uint32_t index)
         loadSharedRingValue(available, std::memory_order_relaxed);
     if ((initialAvailableFlags & ~protocol::availableSuppressInterrupt) != 0)
         throw std::runtime_error("virtqueue available ring has reserved flags");
-    const auto availableIndex =
-        loadSharedRingValue(
-            available + sizeof(std::uint16_t),
-            std::memory_order_acquire);
+    const auto availableIndex = loadSharedRingValue(
+        available + sizeof(std::uint16_t), std::memory_order_acquire);
     const auto pending = static_cast<std::uint16_t>(
         availableIndex - queue.lastAvailable);
     if (pending > queue.size)
         throw std::runtime_error("virtqueue producer advanced beyond ring size");
-    bool processed = false;
+
+    bool completed = false;
     while (queue.lastAvailable != availableIndex) {
         const auto ringOffset =
             protocol::splitRingHeaderSize +
@@ -955,7 +1085,7 @@ void VhostUserServer::processQueue(std::uint32_t index)
                 sizeof(std::uint16_t);
         const auto head =
             loadUnaligned<std::uint16_t>(available + ringOffset);
-        const auto segments = descriptorChain(queue, head);
+        auto segments = descriptorChain(queue, head);
 
         std::size_t requestSize = 0;
         std::size_t responseCapacity = 0;
@@ -968,79 +1098,74 @@ void VhostUserServer::processQueue(std::uint32_t index)
         if (requestSize > maximumVhostUserMessagePayload)
             throw std::runtime_error("oversized virtio request");
 
-        std::vector<std::uint8_t> request;
-        std::vector<std::uint8_t> response;
-        if (queue.enabled) {
-            request.resize(requestSize);
-            std::size_t requestOffset = 0;
-            for (const auto& segment : segments) {
-                if (segment.writable || segment.length == 0)
-                    continue;
-                auto* source = translate(
-                    segment.address, segment.length, false);
-                std::memcpy(
-                    request.data() + requestOffset, source, segment.length);
-                requestOffset += segment.length;
-            }
-
-            auto result = device_->processQueue(
-                index, request, responseCapacity);
-            if (!result.consumed)
-                break;
-            response = std::move(result.response);
-            if (response.size() > responseCapacity)
-                throw std::runtime_error("short virtio response buffer");
-            device_->traceQueue(index, request, response);
+        if (!queue.enabled) {
+            const PendingRequest disabled {
+                .requestId = 0,
+                .queueIndex = index,
+                .head = head,
+                .responseCapacity = responseCapacity,
+                .segments = std::move(segments),
+            };
+            completeRequest(disabled, {});
+            ++queue.lastAvailable;
+            completed = true;
+            continue;
         }
-        std::size_t responseOffset = 0;
+
+        std::vector<std::uint8_t> request(requestSize);
+        std::size_t requestOffset = 0;
         for (const auto& segment : segments) {
-            if (!segment.writable || responseOffset == response.size())
+            if (segment.writable || segment.length == 0)
                 continue;
-            const auto count = std::min<std::size_t>(
-                segment.length, response.size() - responseOffset);
-            if (count == 0)
-                continue;
-            auto* destination = translate(segment.address, count, false);
+            auto* source = translate(segment.address, segment.length, false);
             std::memcpy(
-                destination, response.data() + responseOffset, count);
-            responseOffset += count;
+                request.data() + requestOffset, source, segment.length);
+            requestOffset += segment.length;
         }
-        if (responseOffset != response.size())
-            throw std::runtime_error("incomplete virtio response write");
 
-        const auto usedIndex =
-            loadSharedRingValue(
-                used + sizeof(std::uint16_t),
-                std::memory_order_relaxed);
-        protocol::VirtqueueUsedElement element {
-            .id = head,
-            .length = static_cast<std::uint32_t>(responseOffset),
+        const auto requestId = allocateRequestId();
+        PendingRequest accepted {
+            .requestId = requestId,
+            .queueIndex = index,
+            .head = head,
+            .responseCapacity = responseCapacity,
+            .segments = std::move(segments),
         };
-        const auto usedOffset =
-            protocol::splitRingHeaderSize +
-            static_cast<std::size_t>(usedIndex % queue.size) *
-                sizeof(element);
-        storeUnaligned(used + usedOffset, element);
-        storeSharedRingValue(
-            used + sizeof(std::uint16_t),
-            static_cast<std::uint16_t>(usedIndex + 1U),
-            std::memory_order_release);
-        ++queue.lastAvailable;
-        processed = true;
-    }
-    if (processed) {
-        // Notification suppression is sampled after publishing used entries.
-        // Sampling it before command execution can miss a mandatory interrupt
-        // when the driver re-enables notifications while the queue is active.
-        const auto availableFlags =
-            loadSharedRingValue(available, std::memory_order_acquire);
-        if ((availableFlags & ~protocol::availableSuppressInterrupt) != 0) {
-            throw std::runtime_error(
-                "virtqueue available ring has reserved flags");
+        auto [position, inserted] = pendingRequests_.emplace(
+            requestId, std::move(accepted));
+        if (!inserted)
+            throw std::runtime_error("duplicate vhost-user request identifier");
+
+        uml::virtio::VhostUserQueueResult result;
+        try {
+            result = device_->processQueue(
+                index, requestId, request, responseCapacity);
+        } catch (...) {
+            pendingRequests_.erase(position);
+            throw;
         }
-        if ((availableFlags & protocol::availableSuppressInterrupt) == 0)
-            signalQueue(index);
+        switch (result.action) {
+        case uml::virtio::VhostUserQueueAction::retry:
+            pendingRequests_.erase(position);
+            return;
+        case uml::virtio::VhostUserQueueAction::defer:
+            if (!result.response.empty())
+                throw std::runtime_error("deferred request returned a response");
+            ++queue.lastAvailable;
+            break;
+        case uml::virtio::VhostUserQueueAction::complete:
+            if (result.response.size() > responseCapacity)
+                throw std::runtime_error("short virtio response buffer");
+            device_->traceQueue(index, request, result.response);
+            completeRequest(position->second, result.response);
+            pendingRequests_.erase(position);
+            ++queue.lastAvailable;
+            completed = true;
+            break;
+        }
     }
+    if (completed)
+        notifyQueue(index);
 }
 
 void VhostUserServer::handleMessage(
@@ -1129,7 +1254,7 @@ void VhostUserServer::handleMessage(
          * transport mappings and descriptors, while retiring every renderer
          * object that may refer to guest memory before disabling the rings.
          */
-        device_->reset();
+        resetDeviceState();
         for (auto& queue : queues_) {
             queue.started = false;
             queue.enabled = false;
@@ -1154,6 +1279,9 @@ void VhostUserServer::handleMessage(
         requireNoDescriptors(message, "SET_VRING_NUM");
         const auto state =
             payloadAs<protocol::VringState>(message.payload);
+        if (!pendingRequests_.empty())
+            throw std::runtime_error(
+                "SET_VRING_NUM while deferred requests are pending");
         if (state.index >= queues_.size() || state.value == 0 ||
             state.value > protocol::maximumVirtqueueSize ||
             (state.value & (state.value - 1U)) != 0)
@@ -1167,6 +1295,9 @@ void VhostUserServer::handleMessage(
         requireNoDescriptors(message, "SET_VRING_BASE");
         const auto state =
             payloadAs<protocol::VringState>(message.payload);
+        if (!pendingRequests_.empty())
+            throw std::runtime_error(
+                "SET_VRING_BASE while deferred requests are pending");
         if (state.index >= queues_.size() ||
             state.value > std::numeric_limits<std::uint16_t>::max())
             throw std::runtime_error("invalid SET_VRING_BASE");
@@ -1182,6 +1313,8 @@ void VhostUserServer::handleMessage(
             payloadAs<protocol::VringState>(message.payload);
         if (state.index >= queues_.size() || state.value != 0)
             throw std::runtime_error("invalid GET_VRING_BASE");
+        if (!pendingRequests_.empty())
+            resetDeviceState();
         const protocol::VringState reply {
             .index = state.index,
             .value = queues_[state.index].lastAvailable,
@@ -1202,6 +1335,9 @@ void VhostUserServer::handleMessage(
         requireNoDescriptors(message, "SET_VRING_ADDR");
         const auto address =
             payloadAs<protocol::VringAddress>(message.payload);
+        if (!pendingRequests_.empty())
+            throw std::runtime_error(
+                "SET_VRING_ADDR while deferred requests are pending");
         if (address.index >= queues_.size() || address.flags != 0 ||
             address.descriptor % 16U != 0 ||
             address.available % alignof(std::uint16_t) != 0 ||
@@ -1224,8 +1360,11 @@ void VhostUserServer::handleMessage(
             throw std::runtime_error("SET_VRING_ENABLE was not negotiated");
         if (state.index >= queues_.size() || state.value > 1)
             throw std::runtime_error("invalid SET_VRING_ENABLE");
+        if (state.value == 0 && !pendingRequests_.empty())
+            resetDeviceState();
         queues_[state.index].enabled = state.value != 0;
-        processQueue(state.index);
+        if (queues_[state.index].enabled)
+            processQueue(state.index);
         break;
     }
     case protocol::VhostRequest::setVringKick:
@@ -1370,6 +1509,8 @@ void VhostUserServer::serveConnection(
             slot = nullptr;
         }
     } stopRegistration {connectionStopRequested_, *device_, stopRequested};
+    std::vector<pollfd> descriptors(queues_.size() + 2U);
+    const std::size_t deviceEventIndex = queues_.size() + 1U;
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
             bool activePolling = false;
@@ -1381,7 +1522,6 @@ void VhostUserServer::serveConnection(
                 }
             }
 
-            std::array<pollfd, protocol::gpuQueueCount + 2U> descriptors {};
             descriptors[0] = {
                 .fd = ownedConnection.get(),
                 .events = POLLIN,
@@ -1395,8 +1535,6 @@ void VhostUserServer::serveConnection(
                     .revents = 0,
                 };
             }
-            constexpr std::size_t deviceEventIndex =
-                protocol::gpuQueueCount + 1U;
             descriptors[deviceEventIndex] = {
                 .fd = device_->eventDescriptor(),
                 .events = POLLIN,
@@ -1437,6 +1575,7 @@ void VhostUserServer::serveConnection(
                 throw std::runtime_error("invalid virtio device event descriptor");
             if (deviceEvents != 0) {
                 device_->drainEventSource();
+                drainQueueCompletions();
                 for (std::uint32_t index = 0; index < queues_.size(); ++index)
                     processQueue(index);
             }

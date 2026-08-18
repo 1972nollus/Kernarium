@@ -443,9 +443,13 @@ CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # process, which requires the same Apple dynamic-code entitlement as the JIT
 # engine. Every capability is therefore built in above rather than loadable.
 # CONFIG_MODULES is not set
-# No host audio backend exists yet, so a guest sound stack would have nowhere
-# to render. Enable this together with a host audio device, not before.
-# CONFIG_SOUND is not set
+# The Apple applications expose one standard Virtio Sound playback stream.
+# Keep the obsolete UML /dev/dsp relay disabled: audio crosses the same
+# vhost-user Virtio boundary as the GPU and input devices instead.
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_VIRTIO=y
+# CONFIG_UML_SOUND is not set
 # Keep the shipped emulator on the production kernel profile.  Optional
 # diagnostics substantially affect guest scheduling and synchronization costs.
 # CONFIG_DEBUG_KERNEL cannot be requested off here: EXPERT selects it

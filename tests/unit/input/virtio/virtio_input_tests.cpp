@@ -102,8 +102,8 @@ void eventQueueDefersAndThenReturnsOneWireEvent()
 {
     auto events = std::make_shared<EventQueue>();
     VirtioInputDevice device(DeviceKind::touchscreen, 440, 860, events);
-    const auto empty = device.processQueue(protocol::eventQueue, {}, 8);
-    require(!empty.consumed);
+    const auto empty = device.processQueue(protocol::eventQueue, 1, {}, 8);
+    require(empty.action == uml::virtio::VhostUserQueueAction::retry);
 
     const std::array input {
         protocol::InputEvent {
@@ -120,8 +120,8 @@ void eventQueueDefersAndThenReturnsOneWireEvent()
     };
     require(::poll(&readiness, 1, 1000) == 1);
     device.drainEventSource();
-    const auto result = device.processQueue(protocol::eventQueue, {}, 8);
-    require(result.consumed);
+    const auto result = device.processQueue(protocol::eventQueue, 2, {}, 8);
+    require(result.action == uml::virtio::VhostUserQueueAction::complete);
     require(result.response.size() == sizeof(protocol::InputEvent));
     protocol::InputEvent returned {};
     std::memcpy(&returned, result.response.data(), sizeof(returned));

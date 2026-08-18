@@ -2109,10 +2109,10 @@ cve	cve-2017-18344	timer_create03	pass	180	The timer signal-delivery lifetime ch
 cve	cve-2017-1000111	setsockopt07	pass	180	The IPv6 socket-option validation regression passes
 cve	cve-2017-1000112	setsockopt05	pass	180	The UDP fragmentation socket-option regression passes
 cve	cve-2017-1000364	stack_clash	pass	180	The guarded stack-growth check passes
-cve	cve-2017-1000380	snd_timer01	hardware-exempt	180	The case requires a physical ALSA timer device and the emulator intentionally exposes no sound hardware
+cve	cve-2017-1000380	snd_timer01	pass	180	The Virtio Sound ALSA timer race completes its fuzzy synchronization campaign and reports the kernel not vulnerable
 cve	cve-2018-5803	sctp_big_chunk	pass	180	The oversized SCTP chunk validation check passes
 cve	cve-2018-6927	futex_cmp_requeue02	pass	180	All three futex comparison and requeue checks pass
-cve	cve-2018-7566	snd_seq01	hardware-exempt	180	The case requires a physical ALSA sequencer device and the emulator intentionally exposes no sound hardware
+cve	cve-2018-7566	snd_seq01	hardware-exempt	180	The Virtio Sound card exposes PCM and timer devices but intentionally provides no ALSA sequencer device required by this case
 cve	cve-2018-8897	ptrace09	hardware-exempt	180	The installed ptrace case rejects native arm64 before its architecture-specific assertions
 cve	cve-2018-9568	connect02	pass	180	The socket connect lifetime check passes
 cve	cve-2018-10124	kill13	userspace-exempt	180	The packaged test requires a compiler instrumentation option removed from current kernels

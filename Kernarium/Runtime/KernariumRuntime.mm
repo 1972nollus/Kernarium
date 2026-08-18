@@ -2,6 +2,8 @@
 
 #include "KernariumRuntime.h"
 
+#include "audio/in_process_service.hpp"
+#include "audio/protocol.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
@@ -959,6 +961,7 @@ int runtimeRun(
             uml::input::virtio::DeviceKind::touchscreen, width, height);
         uml::input::virtio::InProcessInputService keyboard(
             uml::input::virtio::DeviceKind::keyboard, width, height);
+        uml::audio::InProcessAudioService audioService;
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
@@ -1009,6 +1012,8 @@ int runtimeRun(
                 std::to_string(uml::input::virtio::protocol::deviceId),
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
                 std::to_string(uml::input::virtio::protocol::deviceId),
+            "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
+                std::to_string(uml::audio::protocol::deviceId),
         };
         if (!geekbench) {
             arguments.emplace_back("systemd.unit=graphical.target");

@@ -6,6 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <mutex>
+#include <optional>
 #include <poll.h>
 #include <sys/mman.h>
 #include <thread>
@@ -72,6 +74,208 @@ void expectRejected(VhostUserServer& server, Operation operation)
         operation(socket);
         waitForConnectionClose(socket);
     });
+}
+
+class DeferredQueueDevice final : public uml::virtio::VhostUserDevice {
+public:
+    DeferredQueueDevice()
+    {
+        std::array<int, 2> descriptors {-1, -1};
+        require(::pipe(descriptors.data()) == 0);
+        readinessRead_ = UniqueDescriptor {descriptors[0]};
+        readinessWrite_ = UniqueDescriptor {descriptors[1]};
+    }
+
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "deferred queue fixture";
+    }
+    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
+    [[nodiscard]] std::size_t queueCount() const noexcept override { return 4; }
+    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
+    {
+        return {};
+    }
+    void writeConfiguration(
+        std::uint32_t,
+        std::uint32_t,
+        std::span<const std::uint8_t>) override
+    {
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::uint64_t requestId,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        require(index == 3);
+        require(std::ranges::equal(
+            request, std::array<std::uint8_t, 4> {1, 2, 3, 4}));
+        require(responseCapacity == 4);
+        requestId_.store(requestId, std::memory_order_release);
+        return {.action = uml::virtio::VhostUserQueueAction::defer};
+    }
+    void reset() noexcept override
+    {
+        requestId_.store(0, std::memory_order_release);
+        std::lock_guard lock(completionMutex_);
+        completion_.reset();
+    }
+    [[nodiscard]] int eventDescriptor() const noexcept override
+    {
+        return readinessRead_.get();
+    }
+    void drainEventSource() override
+    {
+        std::uint8_t ready {};
+        require(::read(readinessRead_.get(), &ready, sizeof(ready)) == 1);
+    }
+    [[nodiscard]] bool takeQueueCompletion(
+        uml::virtio::VhostUserQueueCompletion& completion) override
+    {
+        std::lock_guard lock(completionMutex_);
+        if (!completion_)
+            return false;
+        completion = std::move(*completion_);
+        completion_.reset();
+        return true;
+    }
+
+    void complete()
+    {
+        const auto requestId = requestId_.load(std::memory_order_acquire);
+        require(requestId != 0);
+        {
+            std::lock_guard lock(completionMutex_);
+            completion_ = uml::virtio::VhostUserQueueCompletion {
+                .requestId = requestId,
+                .response = {9, 8, 7, 6},
+            };
+        }
+        constexpr std::uint8_t ready = 1;
+        require(::write(readinessWrite_.get(), &ready, sizeof(ready)) == 1);
+    }
+
+private:
+    UniqueDescriptor readinessRead_;
+    UniqueDescriptor readinessWrite_;
+    std::atomic<std::uint64_t> requestId_ {};
+    std::mutex completionMutex_;
+    std::optional<uml::virtio::VhostUserQueueCompletion> completion_;
+};
+
+void deferredCompletionSupportsFourQueues()
+{
+    auto device = std::make_unique<DeferredQueueDevice>();
+    auto* completionSource = device.get();
+    VhostUserServer server {std::move(device)};
+    auto memoryDescriptor = openMemoryDescriptor();
+    void* mapped = ::mmap(
+        nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+        memoryDescriptor.get(), 0);
+    require(mapped != MAP_FAILED);
+    auto memory = std::span {
+        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+
+    constexpr std::uint32_t queueIndex = 3;
+    constexpr std::uint64_t guestBase = 0x1000;
+    constexpr std::uint64_t userBase = 0x1000'0000;
+    constexpr std::size_t descriptorOffset = 0x000;
+    constexpr std::size_t availableOffset = 0x100;
+    constexpr std::size_t usedOffset = 0x200;
+    constexpr std::size_t requestOffset = 0x300;
+    constexpr std::size_t responseOffset = 0x400;
+    const std::array descriptors {
+        protocol::VirtqueueDescriptor {
+            .address = guestBase + requestOffset,
+            .length = 4,
+            .flags = protocol::descriptorNext,
+            .next = 1,
+        },
+        protocol::VirtqueueDescriptor {
+            .address = guestBase + responseOffset,
+            .length = 4,
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+    std::memcpy(memory.data() + descriptorOffset,
+                descriptors.data(), sizeof(descriptors));
+    const std::array<std::uint8_t, 4> request {1, 2, 3, 4};
+    std::memcpy(memory.data() + requestOffset, request.data(), request.size());
+    std::memset(memory.data() + responseOffset, 0xa5, 4);
+    const std::uint16_t availableIndex = 1;
+    const std::uint16_t head = 0;
+    std::memcpy(memory.data() + availableOffset + sizeof(std::uint16_t),
+                &availableIndex, sizeof(availableIndex));
+    std::memcpy(memory.data() + availableOffset + protocol::splitRingHeaderSize,
+                &head, sizeof(head));
+
+    withServerConnection(server, [&](int socket) {
+        sendRequest(socket, protocol::VhostRequest::getQueueNum, {}, {}, false);
+        require(readValueReply<std::uint64_t>(
+                    socket, protocol::VhostRequest::getQueueNum) == 4);
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, memoryDescriptor.get());
+        const protocol::VringState queueSize {
+            .index = queueIndex,
+            .value = 8,
+        };
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
+        const protocol::VringAddress addresses {
+            .index = queueIndex,
+            .flags = 0,
+            .descriptor = userBase + descriptorOffset,
+            .used = userBase + usedOffset,
+            .available = userBase + availableOffset,
+            .log = 0,
+        };
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
+        const protocol::VringState enable {
+            .index = queueIndex,
+            .value = 1,
+        };
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
+
+        std::array<int, 2> callPipe {-1, -1};
+        require(::pipe(callPipe.data()) == 0);
+        UniqueDescriptor callRead {callPipe[0]};
+        UniqueDescriptor callWrite {callPipe[1]};
+        const std::uint64_t encodedQueue = queueIndex;
+        const std::array callDescriptors {callWrite.get()};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringCall,
+            bytesOf(encodedQueue), callDescriptors);
+
+        std::array<int, 2> kickPipe {-1, -1};
+        require(::pipe(kickPipe.data()) == 0);
+        UniqueDescriptor kickRead {kickPipe[0]};
+        UniqueDescriptor kickWrite {kickPipe[1]};
+        const std::array kickDescriptors {kickRead.get()};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringKick,
+            bytesOf(encodedQueue), kickDescriptors);
+
+        auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
+            memory.data() + usedOffset + sizeof(std::uint16_t));
+        require(std::atomic_ref<std::uint16_t>(usedIndex)
+                    .load(std::memory_order_acquire) == 0);
+        completionSource->complete();
+        pollfd completion {.fd = callRead.get(), .events = POLLIN};
+        require(::poll(&completion, 1, 2000) == 1);
+        std::uint64_t completionCount {};
+        readExact(callRead.get(), &completionCount, sizeof(completionCount));
+        require(completionCount == 1);
+        require(std::atomic_ref<std::uint16_t>(usedIndex)
+                    .load(std::memory_order_acquire) == 1);
+        require(std::ranges::equal(
+            memory.subspan(responseOffset, 4),
+            std::array<std::uint8_t, 4> {9, 8, 7, 6}));
+    });
+    require(::munmap(mapped, 4096) == 0);
 }
 
 void validConfigurationProtocol(VhostUserServer& server)
@@ -907,6 +1111,7 @@ void disconnectReconnectIsPristine(VhostUserServer& server)
 void runVhostUserProtocolTests()
 {
     const auto before = descriptorCount();
+    deferredCompletionSupportsFourQueues();
     {
         VhostUserServer server {
             {}, "127.0.0.1", 0, {}, 64, 64, false};

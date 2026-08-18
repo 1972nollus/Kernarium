@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "in_process_service.hpp"
-#include "native_display_application.hpp"
+#include "audio/in_process_service.hpp"
+#include "audio/protocol.hpp"
+#include "gpu/in_process_service.hpp"
+#include "gpu/native_display_application.hpp"
 #include "profile_reporter.hpp"
-#include "protocol.hpp"
+#include "gpu/protocol.hpp"
 #include "uml/emulator.h"
 
 #include <array>
@@ -231,6 +233,7 @@ struct HostGpuOptions {
 
 struct PreparedArguments {
 	HostGpuOptions gpu;
+	bool audio {};
 	std::vector<std::string> kernel;
 };
 
@@ -271,6 +274,8 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 			argv[index] == nullptr ? std::string_view {} : argv[index];
 		if (argument == "--gpu") {
 			prepared.gpu.enabled = true;
+		} else if (argument == "--audio") {
+			prepared.audio = true;
 		} else if (argument.starts_with("--gpu-display=")) {
 			const auto mode = argument.substr(
 				std::string_view{"--gpu-display="}.size());
@@ -340,10 +345,10 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 	return prepared;
 }
 
-bool has_gpu_device_argument(const std::vector<std::string> &arguments)
+bool has_virtio_device_argument(const std::vector<std::string> &arguments,
+				std::uint32_t device_id)
 {
-	const std::string suffix =
-		":" + std::to_string(uml::gpu::protocol::virtioGpuDeviceId);
+	const std::string suffix = ":" + std::to_string(device_id);
 	for (const auto &argument : arguments)
 		if (argument.starts_with("virtio_uml.device=") &&
 		    argument.ends_with(suffix))
@@ -415,7 +420,7 @@ int main(int argc, char *argv[], char *envp[])
 	try {
 		prepared = prepare_host_arguments(argc, argv);
 	} catch (const std::exception &error) {
-		std::fprintf(stderr, "Unable to configure in-process GPU: %s\n",
+		std::fprintf(stderr, "Unable to configure host devices: %s\n",
 			     error.what());
 		return 1;
 	}
@@ -466,7 +471,8 @@ int main(int argc, char *argv[], char *envp[])
 		created, uml_emulator_destroy};
 	std::unique_ptr<uml::gpu::InProcessGpuService> gpu_service;
 	if (prepared.gpu.enabled && !informational(argc, argv)) {
-		if (has_gpu_device_argument(prepared.kernel)) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
 			std::fputs("--gpu cannot be combined with an explicit "
 				   "Virtio-GPU transport argument\n",
 				   stderr);
@@ -502,6 +508,29 @@ int main(int argc, char *argv[], char *envp[])
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::audio::InProcessAudioService> audio_service;
+	if (prepared.audio && !informational(argc, argv)) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::audio::protocol::deviceId)) {
+			std::fputs("--audio cannot be combined with an explicit "
+				   "Virtio Sound transport argument\n",
+				   stderr);
+			return 1;
+		}
+		try {
+			audio_service =
+				std::make_unique<uml::audio::InProcessAudioService>();
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				audio_service->takeConnectionName() + ":" +
+				std::to_string(uml::audio::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio Sound: %s\n",
+				error.what());
+			return 1;
+		}
+	}
 	std::vector<const char *> arguments;
 	arguments.reserve(prepared.kernel.size());
 	for (const auto &argument : prepared.kernel)
@@ -525,6 +554,8 @@ int main(int argc, char *argv[], char *envp[])
 #if UML_ENABLE_JIT_PROFILE
 	uml::emulator::report_jit_profiles();
 #endif
+	if (audio_service)
+		audio_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
 	/* The embedded ELF kernel installs process-wide Linux signal handlers.
