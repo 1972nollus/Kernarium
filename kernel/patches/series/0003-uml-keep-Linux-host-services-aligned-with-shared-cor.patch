@@ -1,7 +1,7 @@
 From 0ceb83fdcb03aacd070a2f0e051bd047a40a4d8c Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:05 +0900
-Subject: [PATCH 06/18] uml: keep Linux host services aligned with shared core
+Subject: [PATCH 06/19] uml: keep Linux host services aligned with shared core
  contracts
 
 Apply the reviewed final-state topic without intermediate churn.

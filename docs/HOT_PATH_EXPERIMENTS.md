@@ -10228,3 +10228,142 @@ either product for G167 or G168, though both page profiles pass the unit suites.
 The `launch -> script` and `script -> first frame` split is a decomposition of
 one measurement, not two independent ones, so its two rows are not independent
 tests.
+
+## G169: the Darwin current-vCPU read is on Linux's interrupt-masking path
+
+Dated 2026-08-18. This entry began as an investigation into why the iOS
+Simulator's Aquarium plateau is about 5.5 fps against macOS's 14, and it ends
+with two separate findings. The first is that the comparison was confounded and
+the deficit is not what it appeared; that is G170. The second, independent of
+it, is a real host-primitive cost that this entry fixes.
+
+### What the comparison eliminated
+
+macOS, everything matched except the named variable, gadgets, 16 KiB, 440x860
+at 160 DPI, `numFish=500`:
+
+| variable | control | arm | verdict |
+| --- | ---: | ---: | --- |
+| guest memory 3 GiB vs 1536M | 13.58 fps | 13.52 fps | no effect |
+| tmpfs upper vs Kernarium's ext4 on `ubd1` | 13.93 fps | 13.77 fps | 1.2%, noise |
+
+Three runs an arm each. Guest geometry was identical on both products, a
+1024x1024 canvas on a 440x860 guest at 160 DPI, and a microbenchmark built for
+both targets measured the shipping current-vCPU sequence at 4.32 ns on the
+Simulator against 4.56 ns on macOS -- the Simulator's `pthread_getspecific` is
+not slower per call. Decomposing carrier CPU per frame, guest *userspace*
+emulation costs 0.109 core-seconds on macOS against 0.130 on the Simulator, a
+factor of 1.2. Gadget execution was never the problem.
+
+Guest *kernel* CPU per frame was 0.011 core-seconds against 0.089, a factor of
+eight, and that is what this entry is about.
+
+### The mechanism
+
+`sample(1)` at 10 ms restricted to the four `uml-vcpu-N-carrier` threads, with
+the guest kernel's unsymbolicated frames resolved against `vmlinux` by load
+bias. Self time inside the guest kernel:
+
+| | macOS | Simulator |
+| --- | ---: | ---: |
+| `uml_curr_cpu` | 13.6% | 40.2% |
+| `pthread_once@plt` | 3.9% | 16.5% |
+| `pthread_getspecific@plt` | 3.0% | 10.5% |
+| `_raw_spin_lock_irqsave` | 1.8% | 9.0% |
+
+Two thirds of the Simulator's guest-kernel time was the current-vCPU read. The
+PLT rows are why: they sit in the symbol gap between `_einittext` and `_stext`
+and only resolve once you notice that `0xc00292ed0` and `0xc00292ee0` are the
+stubs themselves. Counting the libsystem bodies those stubs call,
+`uml_curr_cpu` is 22.3% of all carrier on-CPU time on the Simulator and 2.3% on
+macOS, and 89% of the carriers' `libsystem_pthread` samples are reached through
+it.
+
+`uml_curr_cpu()` is UML's `smp_processor_id()` on Darwin, and it is hotter than
+a per-thread lookup normally is because `local_signal_state()` resolves the
+per-CPU signal state through it. `block_signals()` and `unblock_signals()` are
+Linux's `local_irq_disable()` and `local_irq_enable()`, so every spinlock
+acquisition and every kernel entry reaches it. `cpu_relax()` pays it twice per
+spin iteration, once directly in `darwin_cpu_relax()` and once inside
+`um_get_signals()`. The Linux host port uses a plain `__thread int` for the same
+value; the Darwin port needs the pthread key because its destructor is the
+fixed carrier's one lifetime boundary.
+
+### The change
+
+Series topic 0019 publishes a release-ordered ready flag from the key
+constructor and takes an acquire load of it on the read path, instead of
+`pthread_once`. The setters keep the once-guard, so the key and its carrier
+destructor are still created exactly once. A reader that observes the flag clear
+has no carrier at all, and CPU0 is already what `pthread_getspecific` would have
+returned it.
+
+Disassembly is the direct check: `uml_curr_cpu` went from three calls --
+`pthread_once@plt`, `panic` on its error path, and `pthread_getspecific@plt` --
+to one. The microbenchmark puts that at 4.32 ns to 2.13 ns on the Simulator and
+4.56 ns to 2.18 ns on macOS.
+
+Adding a topic forced one piece of unrelated churn: `verify-series-policy.py`
+requires every patch's mail subject to agree with the series count, so all
+fifteen existing patches moved from `[PATCH nn/18]` to `[PATCH nn/19]`. No diff
+content changed and every stable patch-id is unchanged; only the file hashes in
+the manifest moved.
+
+### What it actually bought
+
+Both products rebuilt against the landed series, Q = topic 0018, S = topic 0019.
+Same 10 ms `sample(1)` windows as above, one run an arm a phase.
+
+Boot, where the guest kernel's work is bounded, is where the saving lands:
+
+| carrier on-CPU, Simulator boot | Q | S |
+| --- | ---: | ---: |
+| UML kernel (native), charged category | 12.12% | 9.02% |
+| guest kernel self time | 7.14% | 5.29% |
+| `libsystem_pthread` | 3.61% | 2.50% |
+| gadget bodies | 55.59% | 56.85% |
+
+A quarter of the guest kernel's boot cost is gone and the carriers spend it on
+guest instructions instead.
+
+The plateau is the interesting negative result. `pthread_once` disappears from
+the profile entirely, as intended -- and `pthread_getspecific` *rises*, from
+14.21% and 512 samples to 20.40% and 780. Total carrier on-CPU rises with it,
+4.20% of wall to 4.61%, and the frame rate does not move. The guest kernel at
+the plateau is not doing bounded work that got cheaper; it is spinning against
+the host GPU, and a cheaper `cpu_relax()` buys more spins rather than less time.
+That is worth stating plainly: on an unbounded wait, making the wait cheaper
+cannot save anything.
+
+Frame rate, eight counterbalanced Simulator runs and six macOS runs:
+
+| | Q | S | change |
+| --- | ---: | ---: | ---: |
+| Simulator plateau fps | 5.750 +/- 0.467 | 5.713 +/- 0.477 | -0.65%, p = 0.9 |
+| Simulator launch -> first frame | 62.58 s | 63.08 s | +0.81%, p = 0.83 |
+| macOS plateau fps | 13.775 (n=2) | 14.333 (n=3) | +4.05% |
+
+Nothing here is significant. The Simulator is bound by the virtio-GPU round
+trip at its plateau, so freed carrier CPU becomes `__pselect`; that is the same
+conversion failure G167 measured, and it was the prediction before these runs
+rather than after. The macOS arms point the right way and are consistent with
+the boot profile, but at two runs against three they are not evidence. One macOS
+control run stalled in its typed bootstrap and produced no readings; it is the
+*control* arm, so it cannot flatter the change, and it is recorded rather than
+replaced.
+
+Disposition: accepted on the profile, not on frame rate. The change removes a
+call from the hottest host primitive the guest kernel has, it is measurably
+cheaper wherever the kernel's work is bounded, and no supported default,
+guest-visible behaviour, or campaign result moves. It is not a frame-rate
+optimization and must not be cited as one.
+
+### Validation
+
+Fresh authenticated replay of all nineteen topics from the release package,
+canonical tree `930696044f4ca953f7ee63f1514585f9fd1e06b6`; delta audit unchanged
+at 160 changed files and 7 outside-port; both LLVM 22 production page-profile
+builds; `check-integration` and `check-integration-4k` both 53 tooling and 5
+guest tests green; `kernel-series-topology`,
+`kernel-release-source-preparer`, `kernel-darwin-host-compat`,
+`darwin-vcpu-carrier-policy` and `darwin-init-mm-tlb-policy` green.

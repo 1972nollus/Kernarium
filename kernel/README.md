@@ -15,10 +15,10 @@ upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
 commit and tree remain provenance observations; the authenticated packaged
 tree is the build input and the omitted file is not reconstructed from Git.
 
-## Latest verified replay (2026-08-16)
+## Latest verified replay (2026-08-18)
 
-The manifest contains 18 ordered topics and replays to canonical tree
-`cd2f90e9f0cd403104f928dd15d06ac6a0b8d76b`. A fresh authenticated replay,
+The manifest contains 19 ordered topics and replays to canonical tree
+`930696044f4ca953f7ee63f1514585f9fd1e06b6`. A fresh authenticated replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, delta audit, and both LLVM 22 production page-profile builds passed.
 The exact delta policy is 160 changed files
@@ -42,7 +42,11 @@ launcher and assigns it exclusively to vCPU0's carrier. Topic 0017 lets the
 host-stop descriptor wake those carriers for cooperative
 shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
 checkpoints, preventing two fixed carriers from deadlocking in synchronous
-cross-calls while preserving Linux interrupt masking.
+cross-calls while preserving Linux interrupt masking. Topic 0019 takes the
+`pthread_once` guard off `uml_curr_cpu()`, which Linux interrupt masking
+reaches through `local_signal_state()` on every `block_signals()` and
+`unblock_signals()`; the setters keep the once-guard, so the key and its
+carrier destructor are still created exactly once.
 Topic 0001 also aligns the Darwin ET_DYN image's early executable boundaries
 to the 16 KiB host-page granularity. That keeps a 4 KiB guest kernel's signed
 text carrier from sharing an iOS host page with the following dynamic loader
