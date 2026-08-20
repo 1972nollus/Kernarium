@@ -60,6 +60,7 @@ def main() -> None:
         DIRECTORY_PREFIX,
         PAYLOAD_SPECS,
         PRODUCT_FAMILY,
+        ACCEPTANCE_KEYS,
         parse_env,
         sha256_path,
         verify_release,
@@ -75,6 +76,26 @@ def main() -> None:
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
     abi = parse_env(root / "kernel/common/abi/identity.env")
+    tracked_acceptance = parse_env(android_root / "metadata/accepted-release.env")
+    if set(tracked_acceptance) != ACCEPTANCE_KEYS:
+        fail("tracked acceptance descriptor keys differ from the release contract")
+    tracked_expected = {
+        "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
+        "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
+        "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT": aosp["ANDROID17_MANIFEST_COMMIT"],
+        "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": aosp["ANDROID17_BASE_MANIFEST_SHA256"],
+        "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE": kernel["UML_KERNEL_FINAL_TREE"],
+        "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
+        "ANDROID17_ACCEPTED_ABI_VERSION": abi["DARWIN_UML_ABI_VERSION"],
+        "ANDROID17_ACCEPTED_ABI_FINGERPRINT": abi["DARWIN_UML_ABI_FINGERPRINT"],
+    }
+    for key, value in tracked_expected.items():
+        if tracked_acceptance.get(key) != value:
+            fail(f"tracked acceptance descriptor differs at {key}")
+    if tracked_acceptance["ANDROID17_ACCEPTED_DIRECTORY_NAME"] != (
+        DIRECTORY_PREFIX + tracked_acceptance["ANDROID17_ACCEPTED_RELEASE_ID"]
+    ):
+        fail("tracked acceptance directory does not match its release ID")
     release_id = "fixture-1"
     directory_name = DIRECTORY_PREFIX + release_id
 

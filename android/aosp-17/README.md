@@ -225,8 +225,12 @@ directory before writing, copies only declared regular files into a fresh
 staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
-when a clean builder-local publication has been reviewed; until then the
-default installer intentionally has no selectable release.
+when a clean builder-local publication has been reviewed. The current descriptor
+selects `android17-ack6.18-16k-20260821-15f81808-static1`, published from clean
+outer revision `15f818086cbaf737d7a1f82eed6e074c9f659201` after the static kernel,
+target-files, VINTF, SELinux, initramfs, and disk gates passed. This is artifact
+acceptance for Apple-product integration; Android boot and HAL acceptance remain
+separate later gates.
 
 Publish only from the clean copied Git checkout on the builder, after rebuilding
 the disk and initramfs from the current target-files staging directory:
