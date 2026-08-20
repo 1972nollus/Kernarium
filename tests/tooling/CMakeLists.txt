@@ -7,6 +7,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 # three modules own conditional fixtures that intentionally register last.
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/ToolingTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/kernel/ToolingTests.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/android/ToolingTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/abi/ToolingTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/dependencies/ToolingTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/ltp/ToolingTests.cmake")

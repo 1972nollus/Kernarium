@@ -1,21 +1,24 @@
 # Kernel families
 
-Kernel inputs are separated by source family and version. The repository
-currently supports only the existing mainline Linux 6.18 family, sourced from
-the pinned upstream-stable branch:
+Kernel inputs are separated by source family and version. The current Apple
+products use the mainline Linux 6.18 family, while the Android producer lane
+has begun with a separately pinned ACK baseline:
 
 - [`mainline-6.18/`](mainline-6.18/README.md) owns its source identity,
   generated patch series, complete configuration, build tools, and replay
   commands;
 - [`common/`](common/README.md) owns contracts that are deliberately shared
   across kernel families; and
+- [`android-6.18/`](android-6.18/README.md) owns the pinned ACK 6.18 identity
+  and will own its independently generated Darwin UML series and one 16 KiB
+  Android configuration; and
 - [`CMakeLists.txt`](CMakeLists.txt) preserves the current Apple product graph
   by composing the mainline family explicitly.
 
-No Android kernel line, AOSP source input, Android product, or Android build
-workflow is present yet. A future line must be added as a separate versioned
-owner and must not reuse the mainline family's generated patches, source
-configuration, cache, or complete product policy.
+The Android lane currently provides source preparation and preflight only. It
+does not yet provide a Darwin UML ACK patch series, Android product/image, or
+Apple runtime target. It must not reuse the mainline family's generated patch
+bytes, source configuration, cache, or complete product policy.
 
 The move from the former singleton layout does not change the current Linux
 source, patch bytes, final tree, page profiles, kernel target names, or Apple

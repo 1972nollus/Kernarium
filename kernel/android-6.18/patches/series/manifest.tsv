@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Ordered ACK-local Darwin UML topic identity. The initial pinned-source
+# checkpoint has no topics; generated rows are added when the ACK port lands.
+order	filename	stable_patch_id	sha256	subject

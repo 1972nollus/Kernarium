@@ -1,2 +1,3 @@
 # Mail patches contain required unified-diff markers which resemble whitespace errors.
 kernel/*/patches/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+android/*/patches/projects/*/series/*.patch whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

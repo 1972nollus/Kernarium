@@ -6,10 +6,11 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation has not started. The versioned current-kernel and shared-
-contract ownership established outside this plan is preparatory repository
-groundwork only: it adds no Android source lane, product, build, artifact, or
-Apple runtime target and does not complete any phase below.
+Implementation started on 2026-08-20 with the versioned AOSP 17/ACK 6.18
+source metadata and builder-local preparation/preflight lane. That checkpoint
+does not yet add a Darwin UML ACK patch series, Android product, build artifact,
+disk image, or Apple runtime target and does not by itself complete a phase
+below.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project
