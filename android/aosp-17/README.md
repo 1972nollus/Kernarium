@@ -232,6 +232,18 @@ target-files, VINTF, SELinux, initramfs, and disk gates passed. This is artifact
 acceptance for Apple-product integration; Android boot and HAL acceptance remain
 separate later gates.
 
+Apple consumers validate that installed directory without a builder or transfer
+tool. The installed mode requires and checks the expanded GPT disk and all other
+runtime payloads, while leaving the compressed transfer archive's integrity test
+at the installer boundary:
+
+```sh
+android/aosp-17/tools/verify-release.py \
+  --release /absolute/path/to/.build/android/releases/accepted-directory \
+  --acceptance android/aosp-17/metadata/accepted-release.env \
+  --installed
+```
+
 Publish only from the clean copied Git checkout on the builder, after rebuilding
 the disk and initramfs from the current target-files staging directory:
 

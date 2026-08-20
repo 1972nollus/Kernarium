@@ -510,6 +510,8 @@ def verify_semantics(
     android_root: Path,
     zstd: Path | None,
     expanded_disk: Path | None,
+    *,
+    verify_archive: bool,
 ) -> None:
     run_checked([
         str(android_root / "build/verify-kernel-elf.py"),
@@ -555,9 +557,10 @@ def verify_semantics(
         if forbidden in receipt.lower():
             fail("build receipt contains builder endpoint, credential, or local path state")
 
-    zstd_path = resolve_zstd(zstd)
-    archive = release_root / "guest/android-17-uml-arm64.img.zst"
-    run_checked([str(zstd_path), "-q", "-t", str(archive)])
+    if verify_archive:
+        zstd_path = resolve_zstd(zstd)
+        archive = release_root / "guest/android-17-uml-arm64.img.zst"
+        run_checked([str(zstd_path), "-q", "-t", str(archive)])
     if expanded_disk is not None:
         if not expanded_disk.is_file() or expanded_disk.is_symlink():
             fail("expanded guest disk is missing or unsafe")
@@ -586,6 +589,7 @@ def verify_release(
     expanded_disk: Path | None = None,
     allow_expanded_disk: bool = False,
     semantic: bool = True,
+    verify_archive: bool = True,
 ) -> dict:
     if not release_root.is_absolute():
         fail("release source must be an absolute local path")
@@ -599,5 +603,12 @@ def verify_release(
         verify_acceptance(manifest, acceptance_path)
     verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
     if semantic:
-        verify_semantics(release_root, manifest, android_root, zstd, expanded_disk)
+        verify_semantics(
+            release_root,
+            manifest,
+            android_root,
+            zstd,
+            expanded_disk,
+            verify_archive=verify_archive,
+        )
     return manifest
