@@ -121,6 +121,25 @@ lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIAN
 	fail "product does not check prebuilt ELF alignment"
 [[ "$(get_build_var TARGET_BOOTS_16K)" == true ]] ||
 	fail "product does not select the 16 KiB boot contract"
+for variable in \
+	PRODUCT_BUILD_SYSTEM_DLKM_IMAGE \
+	PRODUCT_BUILD_VENDOR_DLKM_IMAGE \
+	PRODUCT_BUILD_ODM_DLKM_IMAGE; do
+	[[ "$(get_build_var "$variable")" == false ]] ||
+		fail "$variable must be false for the built-in-only kernel"
+done
+for variable in \
+	BOARD_GENERIC_RAMDISK_KERNEL_MODULES \
+	BOARD_GENERIC_RAMDISK_KERNEL_MODULES_LOAD \
+	BOARD_RECOVERY_KERNEL_MODULES \
+	BOARD_VENDOR_RAMDISK_KERNEL_MODULES \
+	BOARD_VENDOR_KERNEL_MODULES \
+	BOARD_SYSTEM_KERNEL_MODULES \
+	BOARD_ODM_KERNEL_MODULES \
+	BOARD_KERNEL_MODULES_16K; do
+	[[ -z "$(get_build_var "$variable")" ]] ||
+		fail "$variable must be empty for the built-in-only kernel"
+done
 
 m -j"$JOBS" target-files-package
 "$VERIFIER" --android-root "$ANDROID_ROOT" \

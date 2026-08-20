@@ -184,6 +184,11 @@ def main() -> None:
         "SOONG_INCREMENTAL_ANALYSIS=false",
         "TARGET_2ND_ARCH",
         "TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE",
+        "PRODUCT_BUILD_SYSTEM_DLKM_IMAGE",
+        "PRODUCT_BUILD_VENDOR_DLKM_IMAGE",
+        "PRODUCT_BUILD_ODM_DLKM_IMAGE",
+        "BOARD_VENDOR_RAMDISK_KERNEL_MODULES",
+        "BOARD_SYSTEM_KERNEL_MODULES",
         "target-files-package",
     ):
         if token not in build_aosp:
