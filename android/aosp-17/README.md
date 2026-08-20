@@ -118,6 +118,12 @@ its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
 that inert format default is not an enablement signal when
 `PRODUCT_VIRTUAL_AB_OTA=false`.
 
+Route `p0002` carries one narrow `platform/build` correction for this explicit
+OTA-disabled composition: when `TARGET_SKIP_OTA_PACKAGE=true`, target-files no
+longer depends on or copies the legacy non-A/B `updater` binary. This keeps the
+useful target-files verification input without manufacturing an OTA path for a
+product that cannot consume one.
+
 Once the static AOSP product emits the declared image names, assemble and
 immediately verify a raw UBD disk locally on the builder with:
 

@@ -353,6 +353,8 @@ def main() -> None:
         android_root / "patches/projects.tsv",
         android_root / "patches/projects/p0001/metadata.env",
         android_root / "patches/projects/p0001/series/manifest.tsv",
+        android_root / "patches/projects/p0002/metadata.env",
+        android_root / "patches/projects/p0002/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
         android_root / "tools/verify-target-files.py",
@@ -474,12 +476,17 @@ def main() -> None:
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
+    build_make_patch = next(
+        (android_root / "patches/projects/p0002/series").glob("*.patch")
+    ).read_text()
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
         fail("AOSP materializer stages an overlay instead of applying project patches")
+    if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
+        fail("AOSP build route does not remove the skipped-OTA updater dependency")
     for token in (
         "command -v zip",
         "--kernel-elf",

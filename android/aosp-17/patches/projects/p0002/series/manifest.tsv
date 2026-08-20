@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ordered generated AOSP project topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-build-omit-updater-when-OTA-is-ski.patch	c79ab77827c566a348db372b923218315286ae11	3bcaab298a2fc4dd93abf501ac0d7f692746fcce4e5e0e5bf53a54234666eb97	UML-ANDROID-LOCAL: build: omit updater when OTA is skipped
