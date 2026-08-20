@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+field	value
+format	3
+platform	macos
+architecture	arm64
+deployment_target	14.0
+linkage	static-and-framework
+payload	static-libepoxy,static-libvirglrenderer,dynamic-EGL-framework,dynamic-GLESv2-framework
+gl_provider	angle-metal
+graphics_api	ANGLE-EGL-GLES
+presentation_api	Metal
+renderer_features	gles,native-share-texture,render-server-thread
+components	utm-webkit,utm-libepoxy,utm-virglrenderer
+source_manifest	dependencies/manifest.tsv

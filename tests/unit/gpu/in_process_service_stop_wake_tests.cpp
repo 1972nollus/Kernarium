@@ -15,6 +15,19 @@
 namespace uml::gpu::testing {
 namespace {
 
+[[nodiscard]] pid_t launchChild(const char* executable, bool partialPayload)
+{
+    const pid_t child = ::fork();
+    require(child >= 0);
+    if (child == 0) {
+        const char* mode = partialPayload ?
+            "--partial-payload-child" : "--partial-header-child";
+        ::execl(executable, executable, mode, nullptr);
+        std::_Exit(127);
+    }
+    return child;
+}
+
 [[noreturn]] void runPartialFrameChild(bool partialPayload)
 {
     resetStopWaitObserver();
@@ -52,13 +65,10 @@ namespace {
     std::_Exit(EXIT_SUCCESS);
 }
 
-void partialFrameUsesWake(bool partialPayload)
+void partialFrameUsesWake(const char* executable, bool partialPayload)
 {
     const auto before = descriptorCount();
-    const pid_t child = ::fork();
-    require(child >= 0);
-    if (child == 0)
-        runPartialFrameChild(partialPayload);
+    const pid_t child = launchChild(executable, partialPayload);
 
     // The linked test-only transport polls every five seconds. The child can
     // finish inside this two-second watchdog only if InProcessGpuService::stop
@@ -88,10 +98,20 @@ void partialFrameUsesWake(bool partialPayload)
 } // namespace
 } // namespace uml::gpu::testing
 
-int main()
+int main(int argc, char* argv[])
 {
-    uml::gpu::testing::partialFrameUsesWake(false);
-    uml::gpu::testing::partialFrameUsesWake(true);
+    using namespace uml::gpu::testing;
+    if (argc == 2) {
+        if (std::strcmp(argv[1], "--partial-header-child") == 0)
+            runPartialFrameChild(false);
+        if (std::strcmp(argv[1], "--partial-payload-child") == 0)
+            runPartialFrameChild(true);
+        return EXIT_FAILURE;
+    }
+    if (argc != 1)
+        return EXIT_FAILURE;
+    partialFrameUsesWake(argv[0], false);
+    partialFrameUsesWake(argv[0], true);
     std::puts("GPU in-process stop wake tests passed");
     return 0;
 }

@@ -1,5 +1,27 @@
 # Refactor progress
 
+## 2026-08-21: common Apple ANGLE/Metal graphics transition
+
+- Replaced the split desktop CGL and mobile ANGLE products atomically with one
+  centrally declared `apple-gpu` product, one offline builder, and verified
+  macOS, Simulator, and device platform prefixes.
+- Added a common fixed-layout `HostGlProvider` and shared Metal-texture
+  presentation owner. AppKit/UIKit remain platform shells, while macOS VNC is
+  available independently of the fixed ANGLE provider.
+- Removed the desktop graphics dependency family, CGL/OpenGL.framework path,
+  OpenGL texture/IOSurface bridge, layout-changing backend macro, and retired
+  iOS-only graphics builder/CMake authority.
+- Hardened installed-prefix and final-link verification for exact provenance,
+  payload, platform, deployment target, install names, dynamic closure, and
+  forbidden CGL/EAGL/Vulkan provider symbols, including static archives.
+- Passed the dependency tooling suite, normal and ASan/UBSan GPU workflows,
+  the rebuilt macOS integration product, all four Kernarium runtime builds,
+  and four-XCFramework packaging from the final provider source.
+- Made no kernel or rootfs change and promoted no guest API. Phase 2 guest
+  identity/capset, Simulator, connected-iPad, performance, and CTS work remains
+  open; CTS qualification is blocked by its missing authoritative build
+  receipt and incomplete display-backed caselist.
+
 ## 2026-08-20: versioned kernel ownership groundwork
 
 - Moved the current stable source, generated series, complete configuration,

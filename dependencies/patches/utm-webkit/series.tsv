@@ -1,3 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	1493b458066f785ee4ab308691edd69ecd433111c0d65e58c6b21d8fe8b80337	Add check for iOS simulator when initializing caps in metal
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	fa8327dfc077ff088585e39cc4c4871d2827084ba7a78a5bac28749f5f876f2c	Add check for iOS simulator when initializing caps in metal
+2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	07dd6b7a8c8a6300c232230328058798a26edca3f1a462aa775382f47ed8fcfe	Metal: disable native GL backends in Apple product
+3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	0015881689c2c3b3afc6e50ae2383c4be7aed2c92f3cd129716a7f823ea90df0	Apple: use flat authenticated ANGLE frameworks
+4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	cb0474bae78b519875099c1a77e4e5610ddd54e1dfdb8cd9cccee26d29c51807	Metal: accept the arm64 macOS product baseline

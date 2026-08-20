@@ -163,24 +163,27 @@ public:
         return 0;
     }
 
-    int resourceTexture(
+    int resourceMetalTexture(
         std::uint32_t resourceId,
-        std::uint32_t& textureId) noexcept override
+        void*& texture) noexcept override
     {
-        if (!directPresentationEnabled)
+        ++nativeResourceRequestCount;
+        if (!nativeResourceAvailable) {
+            texture = nullptr;
             return ENOTSUP;
-        textureId = 0x1234;
+        }
+        texture = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
         lastTextureResource = resourceId;
-        ++resourceTextureCount;
+        ++resourceMetalTextureCount;
         return 0;
     }
 
-    PresentOutcome presentOpenGl(
-        const OpenGlScanout& scanout) noexcept override
+    PresentOutcome presentMetal(
+        const MetalScanout& scanout) noexcept override
     {
         if (!directPresentationEnabled)
             return PresentOutcome::unsupported;
-        lastOpenGlScanout = scanout;
+        lastMetalScanout = scanout;
         ++directPresentationCount;
         if (directPresentationDrops) {
             ++directPresentationDropCount;
@@ -291,16 +294,18 @@ public:
     unsigned createResourceCount {};
     unsigned transferCount {};
     unsigned readResourceCount {};
-    unsigned resourceTextureCount {};
+    unsigned nativeResourceRequestCount {};
+    unsigned resourceMetalTextureCount {};
     unsigned directPresentationCount {};
     unsigned directPresentationDropCount {};
     unsigned cpuFallbackFrameCount {};
     bool directPresentationEnabled {};
     bool directPresentationDrops {};
+    bool nativeResourceAvailable {};
     std::uint32_t displayWidth {64};
     std::uint32_t displayHeight {64};
     std::uint32_t lastTextureResource {};
-    OpenGlScanout lastOpenGlScanout {};
+    MetalScanout lastMetalScanout {};
     unsigned fenceCount {};
     const std::atomic_bool* lastFenceStopRequest {};
     unsigned unrefResourceCount {};
@@ -771,18 +776,19 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
 
+    dependencies.nativeResourceAvailable = true;
     dependencies.directPresentationEnabled = true;
     const auto readsBeforeDirect = dependencies.readResourceCount;
     const auto updatesBeforeDirect = dependencies.displayUpdateCount;
     require(responseType(device.process(requestBytes(flush), false)) ==
         protocol::GpuResponse::okNoData);
-    require(dependencies.resourceTextureCount == 1);
+    require(dependencies.resourceMetalTextureCount == 1);
     require(dependencies.directPresentationCount == 1);
     require(dependencies.lastTextureResource == resource.resourceId);
-    require(dependencies.lastOpenGlScanout.textureId == 0x1234);
-    require(dependencies.lastOpenGlScanout.resourceTarget == resource.target);
-    require(dependencies.lastOpenGlScanout.width == scanout.rectangle.width);
-    require(dependencies.lastOpenGlScanout.height == scanout.rectangle.height);
+    require(dependencies.lastMetalScanout.texture ==
+        reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234)));
+    require(dependencies.lastMetalScanout.width == scanout.rectangle.width);
+    require(dependencies.lastMetalScanout.height == scanout.rectangle.height);
     require(dependencies.readResourceCount == readsBeforeDirect);
     require(dependencies.displayUpdateCount == updatesBeforeDirect);
 

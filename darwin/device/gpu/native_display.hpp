@@ -49,8 +49,6 @@ public:
         std::uint32_t width,
         std::uint32_t height) override;
     void fillSelfTestPattern() override;
-    [[nodiscard]] PresentOutcome presentOpenGl(
-        const OpenGlScanout& scanout) noexcept override;
     [[nodiscard]] PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept override;
     [[nodiscard]] bool needsFullCpuFallback() const noexcept override

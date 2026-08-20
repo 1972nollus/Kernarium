@@ -132,24 +132,31 @@ turning a singleton patch, config, cache, or checkout path into shared state.
 The current Apple targets and page-profile behavior are unchanged by this
 source-ownership split.
 
-## iOS display composition
+## Apple GPU display composition
 
-Kernarium preserves the real Virtio-GPU protocol and renderer rather than
-substituting an application-owned framebuffer:
+Every Apple GPU product preserves the real Virtio-GPU protocol and renderer
+rather than substituting an application-owned framebuffer:
 
 ```text
 Linux virtio-gpu -> vhost-user device -> virglrenderer -> libepoxy/EGL
-    -> UTM ANGLE Metal backend -> MTLTexture -> MTKView
+    -> UTM ANGLE Metal backend -> MTLTexture -> common Metal presentation
+       -> AppKit MTKView | UIKit MTKView
 ```
 
-The application passes an existing UIKit `MTKView` down through the GPU
-service. Virglrenderer exports the ANGLE-backed scanout as a native Metal
-texture, and the iOS display owner presents that texture with a small Metal
-draw pass. Unsupported resource shapes retain the existing CPU scanout
-conversion as a compatibility fallback. The iOS target contains no AppKit,
-CGL, or LibVNCServer dependency. Conversely, the macOS graph continues to
-compile its existing AppKit/CGL/IOSurface native display and VNC providers; it
-does not compile or link the UIKit implementation.
+`HostGlProvider` is the single fixed ANGLE/EGL facade on macOS, Simulator, and
+device. Its opaque ownership keeps EGL state out of public renderer layout,
+and the transport thread owns provider construction, context use, reset, and
+teardown. Virglrenderer exports the ANGLE-backed scanout as a native Metal
+texture. A common device-layer presentation owner validates same-device,
+full-frame textures and maintains newest-frame-wins publication with one Metal
+command buffer in flight; thin AppKit and UIKit shells retain only platform UI,
+input, sizing, and lifecycle. Unsupported resource shapes retain a counted CPU
+conversion for bounded diagnostics and macOS VNC, but that path cannot qualify
+native performance. VNC is a macOS presentation consumer and cannot create a
+context, select a provider, or change capsets. The iOS target contains no
+AppKit or LibVNCServer dependency, the macOS target contains no UIKit, and no
+Apple GPU target compiles or links CGL, OpenGL.framework, EAGL, ANGLE/Vulkan,
+MoltenVK, or Zink for the GL facade.
 
 The vhost-user transport owns connection, dynamic queue framing, and deferred
 used-ring publication. The GPU, Virtio-input, and Virtio Sound devices

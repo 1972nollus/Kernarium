@@ -3,7 +3,7 @@
 #include "display.hpp"
 
 #include "native_display.hpp"
-#if !UML_GPU_ANGLE_METAL
+#if UML_GPU_HAS_VNC
 #include "vnc_display.hpp"
 #endif
 
@@ -22,14 +22,14 @@ std::unique_ptr<Display> makeDisplay(
     uml::input::vnc::VncInputSink inputSink,
     void* nativeView)
 {
-#if UML_GPU_ANGLE_METAL
+#if !UML_GPU_HAS_VNC
     (void)vncBindAddress;
     (void)vncPort;
     (void)vncPassword;
 #endif
     switch (mode) {
     case DisplayMode::vnc:
-#if !UML_GPU_ANGLE_METAL
+#if UML_GPU_HAS_VNC
         return std::make_unique<VncDisplay>(
             vncBindAddress,
             vncPort,
@@ -39,7 +39,7 @@ std::unique_ptr<Display> makeDisplay(
             std::move(inputSink));
 #else
         throw std::invalid_argument(
-            "VNC display is not part of the iOS GPU prototype");
+            "VNC display is unavailable on this Apple platform");
 #endif
     case DisplayMode::native:
         return std::make_unique<NativeDisplay>(

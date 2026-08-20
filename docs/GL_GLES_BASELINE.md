@@ -5,6 +5,23 @@ This file freezes the pre-implementation inputs and performance policy for
 not a capability or conformance claim. The captured outer revision was clean
 at `5974c6f687a34900d2d969f2ee2b01afa32b77b1` before this evidence was added.
 
+## Shared-path implementation checkpoint (2026-08-21)
+
+The Phase 1 source transition is now implemented: one `apple-gpu` manifest
+product and offline builder produce verified macOS, Simulator, and device
+prefixes from the same UTM ANGLE/libepoxy/virglrenderer commits and ordered
+topics. All Apple GPU targets use the fixed ANGLE/Metal provider and native
+Metal-texture contract; CGL, OpenGL.framework, the desktop graphics family,
+and the layout-changing provider macro are absent from the current graph.
+macOS stages the same flat EGL/GLES framework shape that Kernarium packages.
+
+This checkpoint does not promote a guest profile. Host compilation, prefix
+identity, framework closure, and product packaging are implementation evidence;
+the display-backed guest sentinel, complete caselist export, frozen macOS and
+Simulator measurements, and connected-iPad campaign remain outstanding. The
+authoritative CTS build receipt is still missing, so qualification remains
+fail-closed and no rootfs or guest-userspace change is authorized.
+
 ## Host, dependency, and kernel input
 
 The capture host is an arm64 Apple M1 Ultra Mac Studio with 64 GiB of memory,
@@ -67,10 +84,10 @@ also has no Git metadata. Therefore:
 
 A complete text-caselist export also remains pending. `glcts` initializes its
 X11 platform before it can finish that export; the pre-migration CGL product
-is not rerun or preserved merely to obtain it. The display-backed export,
-registered-module list, digest, and count will be frozen from the common
-ANGLE/Metal path after Phase 1. Until then the corresponding JSON fields stay
-`null` and promotion remains disabled.
+is not rerun or preserved merely to obtain it. Although the common
+ANGLE/Metal path now builds, its display-backed guest export has not yet been
+run. Until the registered-module list, digest, and count are frozen, the
+corresponding JSON fields stay `null` and promotion remains disabled.
 
 ## Frozen campaign and performance policy
 

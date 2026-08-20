@@ -13,6 +13,17 @@
 namespace uml::gpu::testing {
 namespace {
 
+[[nodiscard]] pid_t launchChild(const char* executable, const char* mode)
+{
+    const pid_t child = ::fork();
+    require(child >= 0);
+    if (child == 0) {
+        ::execl(executable, executable, mode, nullptr);
+        std::_Exit(127);
+    }
+    return child;
+}
+
 void waitForConnectionClose(int socket)
 {
     pollfd descriptor {.fd = socket, .events = POLLIN | POLLHUP};
@@ -128,13 +139,18 @@ void verifyControlRetry(VhostUserServer& server)
     std::_Exit(exitStatus);
 }
 
-void partialFrameStopIsPrompt(bool partialPayload, bool carryDescriptor)
+void partialFrameStopIsPrompt(
+    const char* executable,
+    bool partialPayload,
+    bool carryDescriptor)
 {
     const auto before = descriptorCount();
-    const pid_t child = ::fork();
-    require(child >= 0);
-    if (child == 0)
-        runPartialFrameChild(partialPayload, carryDescriptor);
+    const char* mode = partialPayload ?
+        (carryDescriptor ? "--partial-payload-fd-child"
+                         : "--partial-payload-child") :
+        (carryDescriptor ? "--partial-header-fd-child"
+                         : "--partial-header-child");
+    const pid_t child = launchChild(executable, mode);
 
     const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::seconds {10};
@@ -439,60 +455,62 @@ void configureQueueForOneRequest(
     configureCallDescriptor(socket, callDescriptor);
 }
 
-void closedNotificationDescriptorDoesNotSignalProcess()
+[[noreturn]] void runClosedNotificationDescriptorChild()
 {
-    const pid_t child = ::fork();
-    require(child >= 0);
-    if (child == 0) {
-        (void)::signal(SIGPIPE, SIG_DFL);
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
-        auto memoryDescriptor = openMemoryDescriptor();
-        void* mapped = ::mmap(
-            nullptr,
-            4096,
-            PROT_READ | PROT_WRITE,
-            MAP_SHARED,
-            memoryDescriptor.get(),
-            0);
-        require(mapped != MAP_FAILED);
-        auto memory = std::span {
-            static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
-        withServerConnection(server, [&](int socket) {
-            constexpr std::uint64_t deviceFeatures =
-                protocol::vhostFeatureProtocol;
-            sendRequest(
-                socket,
-                protocol::VhostRequest::setFeatures,
-                bytesOf(deviceFeatures),
-                {},
-                false);
-            constexpr std::uint64_t protocolFeatures =
-                protocol::protocolFeatureInbandNotifications |
-                protocol::protocolFeatureSlaveRequest |
-                protocol::protocolFeatureReplyAck;
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setProtocolFeatures,
-                bytesOf(protocolFeatures));
-            configureMemory(socket, memoryDescriptor.get());
-            std::array<int, 2> pipeDescriptors {-1, -1};
-            require(::pipe(pipeDescriptors.data()) == 0);
-            UniqueDescriptor readEnd {pipeDescriptors[0]};
-            UniqueDescriptor writeEnd {pipeDescriptors[1]};
-            configureQueueForOneRequest(socket, memory, writeEnd.get());
-            readEnd.reset();
-            writeEnd.reset();
-            const protocol::VringState kick {.index = 0, .value = 0};
-            sendRequest(
-                socket,
-                protocol::VhostRequest::vringKick,
-                bytesOf(kick));
-            waitForConnectionClose(socket);
-        });
-        require(::munmap(mapped, 4096) == 0);
-        std::_Exit(EXIT_SUCCESS);
-    }
+    (void)::signal(SIGPIPE, SIG_DFL);
+    VhostUserServer server {
+        {}, "127.0.0.1", 0, {}, 64, 64, false};
+    auto memoryDescriptor = openMemoryDescriptor();
+    void* mapped = ::mmap(
+        nullptr,
+        4096,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        memoryDescriptor.get(),
+        0);
+    require(mapped != MAP_FAILED);
+    auto memory = std::span {
+        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+    withServerConnection(server, [&](int socket) {
+        constexpr std::uint64_t deviceFeatures =
+            protocol::vhostFeatureProtocol;
+        sendRequest(
+            socket,
+            protocol::VhostRequest::setFeatures,
+            bytesOf(deviceFeatures),
+            {},
+            false);
+        constexpr std::uint64_t protocolFeatures =
+            protocol::protocolFeatureInbandNotifications |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureReplyAck;
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setProtocolFeatures,
+            bytesOf(protocolFeatures));
+        configureMemory(socket, memoryDescriptor.get());
+        std::array<int, 2> pipeDescriptors {-1, -1};
+        require(::pipe(pipeDescriptors.data()) == 0);
+        UniqueDescriptor readEnd {pipeDescriptors[0]};
+        UniqueDescriptor writeEnd {pipeDescriptors[1]};
+        configureQueueForOneRequest(socket, memory, writeEnd.get());
+        readEnd.reset();
+        writeEnd.reset();
+        const protocol::VringState kick {.index = 0, .value = 0};
+        sendRequest(
+            socket,
+            protocol::VhostRequest::vringKick,
+            bytesOf(kick));
+        waitForConnectionClose(socket);
+    });
+    require(::munmap(mapped, 4096) == 0);
+    std::_Exit(EXIT_SUCCESS);
+}
+
+void closedNotificationDescriptorDoesNotSignalProcess(const char* executable)
+{
+    const pid_t child = launchChild(
+        executable, "--closed-notification-child");
 
     int status = 0;
     require(::waitpid(child, &status, 0) == child);
@@ -502,16 +520,32 @@ void closedNotificationDescriptorDoesNotSignalProcess()
 
 } // namespace
 
-void runVhostUserServerTests()
+[[noreturn]] void runVhostUserServerChild(std::string_view mode)
 {
-    // Fork the signal-isolation case before this process starts any framework
-    // worker threads. Framework initialization in the child does not affect
-    // the parent's later descriptor accounting.
-    closedNotificationDescriptorDoesNotSignalProcess();
-    partialFrameStopIsPrompt(false, false);
-    partialFrameStopIsPrompt(true, false);
-    partialFrameStopIsPrompt(false, true);
-    partialFrameStopIsPrompt(true, true);
+    if (mode == "--closed-notification-child")
+        runClosedNotificationDescriptorChild();
+    if (mode == "--partial-header-child")
+        runPartialFrameChild(false, false);
+    if (mode == "--partial-header-fd-child")
+        runPartialFrameChild(false, true);
+    if (mode == "--partial-payload-child")
+        runPartialFrameChild(true, false);
+    if (mode == "--partial-payload-fd-child")
+        runPartialFrameChild(true, true);
+    std::_Exit(126);
+}
+
+void runVhostUserServerTests(const char* executable)
+{
+    // Metal's compiler service is not a supported post-fork initialization
+    // path. Exec each isolated child before it constructs the production
+    // renderer, preserving process-signal/watchdog coverage without inheriting
+    // framework or dispatch state.
+    closedNotificationDescriptorDoesNotSignalProcess(executable);
+    partialFrameStopIsPrompt(executable, false, false);
+    partialFrameStopIsPrompt(executable, true, false);
+    partialFrameStopIsPrompt(executable, false, true);
+    partialFrameStopIsPrompt(executable, true, true);
     {
         VhostUserServer warmRuntime {
             {}, "127.0.0.1", 0, {}, 64, 64, false};

@@ -1,5 +1,48 @@
 # Refactor handoff
 
+## Common Apple ANGLE/Metal graphics transition (2026-08-21)
+
+The Phase 1 transition in `MAX_GL_GLES_SUPPORT_PLAN.md` is complete as one
+atomic product change. macOS, iOS Simulator, and iOS device now consume the
+same central `apple-gpu` source matrix and offline recipe: the pinned UTM
+WebKit/ANGLE, libepoxy, and virglrenderer commits plus their ordered generated
+topics. The ordinary macOS prefix contains only non-graphics dependencies;
+the three format-3 Apple-GPU prefixes contain static libepoxy/virglrenderer
+and flat EGL/GLESv2 frameworks for their exact Mach-O platform. The former
+`ios-gpu` entry point, desktop libepoxy/virglrenderer family, CGL provider,
+OpenGL texture/IOSurface bridge, and OpenGL.framework link are removed.
+
+`HostGlProvider` is now a common device-owned, fixed-layout ANGLE/Metal facade.
+It requests the hardware Metal display and one ES 3 shared-context topology;
+provider choice no longer changes public renderer/device layout or controls
+VNC availability. `MetalPresentation` owns the common newest-frame-wins
+`MTLTexture` timeline, while AppKit and UIKit retain their platform shells.
+Native scanout accepts only a same-device, full-frame Metal texture; bounded
+VNC/diagnostic readback remains separately counted and cannot qualify native
+performance. Lifetime tests pin provider context sharing, same-thread
+teardown, direct presentation, unsupported handles, readback fallback, and
+the existing renderer/transport reset ordering.
+
+The real prepared `apple-gpu` and `ios-network` repositories and all three
+installed Apple-GPU prefixes verify cleanly. Dependency preparation,
+regeneration, build-manifest, prefix, Apple-GPU negative-fixture, and runtime
+closure tooling passed. Both canonical GPU workflows passed seven GPU unit
+tests and the VNC smoke, including ASan/UBSan. The macOS integration executable
+rebuilt with an exact authenticated EGL/GLES runtime closure; all four current
+Kernarium runtime slices rebuilt, and packaging produced the two versioned
+runtime XCFrameworks plus EGL and GLESv2 after revalidating both mobile
+prefixes.
+
+This is an implementation and packaging checkpoint, not a GL/GLES capability
+promotion. No Linux, bridge ABI, kernel artifact, rootfs, Mesa, libdrm, or CTS
+payload changed. The common-path macOS guest identity/capset sentinel,
+display-backed CTS caselist, matched macOS/Simulator campaign, and connected-
+iPad correctness, performance, thermal, presentation, and lifecycle campaign
+remain open. Qualification is still fail-closed because no authoritative
+receipt ties the installed CTS binaries to the co-located source. Phase 3 and
+later profile work must not start until the lower shared baseline is measured
+and qualified or its exact blocker is accepted.
+
 ## Versioned kernel ownership preparation (2026-08-20)
 
 The former singleton kernel layout is split into

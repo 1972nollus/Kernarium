@@ -1,188 +1,141 @@
-# Virtio-GPU/Virgl OpenGL Plan for Darwin UML
+# Virtio-GPU/Virgl OpenGL on Apple hosts
 
-## Goal
+This document owns the implemented Virtio-GPU/Virgl architecture. The
+capability and performance ladder is in
+[`MAX_GL_GLES_SUPPORT_PLAN.md`](MAX_GL_GLES_SUPPORT_PLAN.md); test commands and
+current evidence are in [`testing.md`](testing.md) and
+[`refactor-evidence.md`](refactor-evidence.md).
 
-Provide accelerated guest OpenGL through Mesa Virgl:
+## Current architecture
 
-1. the guest uses Mesa's `virtio_gpu` DRM driver and Virgl Gallium driver;
-2. Virtio-GPU commands cross UML's in-process vhost-user transport;
-3. host virglrenderer executes them with caller-provided CGL contexts;
-4. CGL selects the Apple GPU;
-5. scanout contents are presented either in a native Metal window or through
-   the VNC framebuffer;
-6. KDE Plasma runs through the accelerated DRM device.
-
-Guest Zink/Venus, resource blobs, a host-visible shared-memory aperture,
-MoltenVK, and Vulkan protocol extensions are outside this design.
-
-## Architecture
+All three Apple products use one host GL path:
 
 ```text
-guest OpenGL application / KWin
-        |
-Mesa Virgl Gallium + GBM/EGL
-        |
-virtio_gpu DRM/KMS
-        |
-UML virtio/vhost-user transport
-        |
-VirtioGpuDevice
-        |
-VirglRenderer + virglrenderer
-        |
-CGL / Apple OpenGL / Apple GPU
+guest OpenGL/GLES application or compositor
+        -> released Mesa Virgl Gallium + GBM/EGL
+        -> Linux virtio_gpu DRM/KMS
+        -> UML Virtio/vhost-user transport
+        -> VirtioGpuDevice
+        -> virglrenderer + UTM libepoxy
+        -> product-fixed ANGLE EGL/GLES Metal backend
+        -> native MTLTexture
+        -> common newest-frame-wins Metal presentation
+           -> AppKit MTKView | UIKit MTKView
 
-Virtio-GPU scanout -> Display
-                     |-> CGL texture -> IOSurface -> MetalKit window
-                     `-> CPU readback -> VncDisplay -> VNC client
-
-VNC keyboard/pointer events
-        |
-VncInputEvent datagrams
-        |
-UML VNC input driver
-        |
-Linux evdev keyboard + absolute tablet
+unsupported/diagnostic scanout -> bounded CPU readback
+                                -> native diagnostic frame | macOS VNC
 ```
 
-The renderer and vhost-user server are created, used, and destroyed on the
-same GPU transport thread. CGL current-context state is pthread-local, so this
-thread-affinity rule is part of the implementation contract.
+`HostGlProvider` owns the external ANGLE display, ES 3 configuration, context
+sharing, make-current behavior, and EGL teardown. It requests only
+`EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE` with the hardware device type. The
+provider is opaque inside a fixed-layout `VirglRenderer`; macOS, Simulator,
+and device cannot select another GL provider. Construction, submissions,
+reset, and teardown remain on the GPU transport thread because EGL current
+context is thread-local.
 
-## Host implementation
+Virglrenderer exports a checked native Metal resource. A common device-owned
+presentation state accepts only a same-device, full-frame texture, retains the
+newest generation, and permits at most one Metal command buffer in flight.
+AppKit owns its main-thread window and keyboard/pointer/wheel translation;
+UIKit owns the application-provided `MTKView`, safe-area sizing, and touch/text
+lifecycle. VNC is a macOS-only CPU-readback consumer and cannot create a GL
+context, select a provider, or affect capsets.
 
-### Build
+CGL, EAGL, OpenGL.framework, the OpenGL-texture/IOSurface bridge, ANGLE's
+Vulkan backend, MoltenVK, Zink, and the former desktop libepoxy/virglrenderer
+family are absent from the GL product graph. The old macOS CGL result remains
+archival evidence only.
 
-- Build virglrenderer as a static library with OpenGL enabled and Venus
-  disabled.
-- Link the GPU emulator with OpenGL, Metal/MetalKit, IOSurface,
-  LibVNCServer, and libepoxy.
-- Keep rendering in the emulator process; no helper process or host display
-  server is required.
+## Dependency and runtime contract
 
-### Virtio-GPU device
+One central `apple-gpu` manifest product pins UTM WebKit/ANGLE, UTM libepoxy,
+and UTM virglrenderer plus their ordered generated mail-patch series.
+`dependencies/build-apple-gpu.sh` builds exactly these arm64 prefixes:
 
-Implement:
+```text
+.build/dependencies/apple-gpu/macos-arm64
+.build/dependencies/apple-gpu/ios-simulator-arm64
+.build/dependencies/apple-gpu/ios-device-arm64
+```
 
-- one control queue and one cursor queue;
-- one scanout;
-- `RESOURCE_CREATE_2D`, backing, transfer, scanout, flush, and unref;
-- Virgl capsets 1 and 2;
-- context create/destroy and resource attach/detach;
-- `RESOURCE_CREATE_3D`;
-- 3D transfers and command submission;
-- ordered fences;
-- direct native presentation of supported 2D Virgl scanouts, with readback of
-  the active scanout for VNC and native fallback.
+Each format-3 platform contract records the platform, deployment target,
+static libraries, flat EGL/GLES frameworks, fixed ANGLE/Metal provider, native
+texture export, and common recipe. Verification compares installed provenance
+byte-for-byte and rejects an unexpected payload or symlink, wrong architecture
+or Mach-O platform, wrong minimum OS, invalid install name/rpath/client rule,
+unexpected dynamic closure, missing platform-display export, or CGL/EAGL/
+Vulkan provider symbol in either framework or static archive.
 
-Virglrenderer owns a GL texture for each guest resource; it does not own the
-host window or a presentation swapchain. Guest DRM/KMS may rotate multiple
-resource IDs, but those CGL textures are not IOSurface-backed and therefore
-cannot be imported directly by Metal. Native mode uses two IOSurface bridge
-slots for cross-API lifetime safety. A CGL framebuffer blit is GPU-to-GPU,
-Metal consumes at most one slot at a time, the window layer is limited to two
-drawables, and a newer ready frame replaces an older one rather than waiting in
-a display FIFO. This avoids both CPU transfer and an additional queued frame
-of latency.
+The macOS executable stages exactly `EGL.framework` and `GLESv2.framework`
+under `@executable_path/Frameworks`; the runtime verifier requires one exact
+copy and compares both bundles to the authenticated prefix. Kernarium's
+packager independently revalidates the Simulator and device prefixes before
+creating the corresponding XCFrameworks. The ordinary macOS prefix contains
+only non-graphics dependencies.
 
-Advertise only the device features used by this path:
+## Host and guest ownership
 
-- `VIRTIO_GPU_F_VIRGL`;
-- `VIRTIO_GPU_F_CONTEXT_INIT`.
+The device implements its existing one-control/one-cursor queue contract,
+Virgl capsets 1 and 2, 2D/3D resource lifecycle, transfers, scanout, context
+commands, command submission, and ordered fences. A checked native-resource
+result decides direct presentation. Accepted or superseded direct frames skip
+CPU readback; unsupported resources take the counted compatibility path.
+Native performance evidence requires zero sustained fallback.
 
-### CGL contexts
+The maintained mainline kernel already builds standard Virtio-GPU DRM/KMS,
+UML DMA/IOMEM, Virtio UML, and Virtio input support for both page profiles.
+The host-provider transition changes no Linux topic, Kconfig value, bridge ABI,
+or kernel image. Host-visible blobs, a shared-memory aperture, and mapping/
+coherency work remain conditional optimization or Vulkan scope and are not
+advertised by this implementation.
 
-- Request accelerated core-profile CGL contexts.
-- Share renderer contexts with one process-global root context.
-- Clear OpenGL errors produced during host capset probing before accepting
-  guest commands; otherwise virglrenderer may attribute a stale Apple OpenGL
-  error to the first guest transfer.
+The authenticated `rootfs.erofs` and its Mesa/libdrm/CTS userspace remain
+immutable. Guest evidence must use `/dev/dri/card0` and
+`/dev/dri/renderD128`, natural capset discovery, the real Virgl renderer, and
+the image's graphical session. Version overrides, software renderers, guest
+Zink, Xvfb, library preloads, or overlay-substituted graphics components are
+not valid evidence.
 
-## UML changes
+## Verification order and current boundary
 
-- Enable built-in DRM, Virtio-GPU KMS, Virtio UML, and Virtio input.
-- Enable UML DMA/IOMEM emulation required by Virtio-GPU.
-- Accept the in-process `fd=<number>` transport on Darwin.
-- Normalize Darwin's host `EAGAIN`/`EWOULDBLOCK` values.
-- Register emulator-request readiness through Darwin's normal UML IRQ path.
-- Always retain per-queue call descriptors so completion delivery does not
-  depend on the time-travel emulator-request path.
-- Register virtual keyboard and absolute-tablet devices backed by an inherited
-  datagram descriptor so external VNC input reaches normal Linux evdev.
+Run the common macOS host/unit loop first, then compile and validate the same
+source and recipe for Simulator, then device:
 
-No reserved physical aperture, special PTEs, blob mappings, or vhost-user
-shared-memory requests are required.
+```sh
+dependencies/prepare.sh --product apple-gpu --verify
+dependencies/build-apple-gpu.sh --platform macos --verify-only
+cmake --workflow --preset check-gpu
+cmake --workflow --preset check-gpu-asan-ubsan
 
-## Verification gates
+dependencies/build-apple-gpu.sh --platform ios-simulator --verify-only
+cmake --preset kernarium-ios-simulator
+cmake --build --preset kernarium-ios-simulator
+cmake --preset kernarium-ios-simulator-4k
+cmake --build --preset kernarium-ios-simulator-4k
 
-### Gate 1: host build and tests
+dependencies/build-apple-gpu.sh --platform ios --verify-only
+cmake --preset kernarium-ios-device
+cmake --build --preset kernarium-ios-device
+cmake --preset kernarium-ios-device-4k
+cmake --build --preset kernarium-ios-device-4k
+Kernarium/scripts/package-ios-frameworks.sh
+```
 
-- Configure and build the macOS target.
-- Run unit tests and the host VNC smoke test.
-- Run a headless CGL/virglrenderer smoke test.
+The source transition and all three platform builds are implementation
+evidence, not guest capability qualification. The expected shared candidate
+remains desktop GL 2.1 and GLES 3.0 until macOS guest identity/function tests,
+the identical Simulator campaign, and the connected-iPad correctness,
+performance, thermal, direct-presentation, and lifecycle campaign complete.
+Official CTS promotion is additionally blocked by the missing authoritative
+receipt for the installed CTS binaries and the pending display-backed complete
+caselist. No rootfs change is authorized to remove that block.
 
-### Gate 2: EROFS guest OpenGL
+## Archived predecessor evidence
 
-Boot with a temporary overlay and verify:
-
-- `/dev/dri/card0` and `/dev/dri/renderD128` exist;
-- DRM reports Virgl capsets 1 and 2;
-- `eglinfo -B -p gbm` succeeds;
-- desktop OpenGL and OpenGL ES renderers identify
-  `virgl (Apple ...)`, not llvmpipe or Zink;
-- the raw `rootfs.erofs` image is mounted at `/dev/ubda` beneath the tmpfs
-  overlay. EROFS provides the read-only lower-filesystem contract; the run does
-  not hash the image before or after execution.
-
-This rendered gate passed in the dated partitioned-image campaign with Mesa
-26.1.2 and `virgl (Apple M1 Ultra)`. The current EROFS runner and bounded
-overlay/systemd guest path pass, but the full rendered EROFS GPU campaign was
-not rerun during the rootfs migration.
-
-### Gate 3: display scanout
-
-- Exercise a deterministic DRM/KMS or compositor frame.
-- Connect the VNC smoke client.
-- Verify the captured framebuffer is non-blank and changes after damage.
-- Open the native Metal window and verify scanout plus keyboard/pointer input.
-- Prove an accepted native 3D scanout skips renderer readback and CPU display
-  update; retain VNC and unsupported-resource fallback coverage.
-
-The VNC side of this gate passed with a 1280x720 Plasma framebuffer. The native
-window is a newer external GUI path and its interactive result must be recorded
-separately from that dated VNC evidence.
-
-### Gate 4: KDE Plasma
-
-- Start SDDM and a Plasma Wayland session.
-- Verify `kwin_wayland` and `plasmashell` remain running.
-- Confirm KWin uses the Virgl renderer.
-- Interact through VNC and verify mouse and keyboard input.
-- Confirm the Folder View desktop runs without the crashing `desktop:/` KIO
-  worker.
-- Shut down cleanly.
-
-This gate has passed. `kwin_wayland` and `plasmashell` remain running, GBM/EGL
-reports `virgl (Apple M1 Ultra)`, the VNC framebuffer contains the Plasma
-desktop, mouse and keyboard events reach Plasma, and the final audit boot
-reports no Virtio-GPU protocol errors or desktop-process crashes.
-
-## Current status
-
-All four implementation gates passed in the dated partitioned-image campaign.
-KDE Plasma Wayland was functional over VNC with accelerated Virgl OpenGL on the
-host, and the final guest audit reported `VIRGL_COMMAND_ERRORS=0`. The current
-launcher selects the native Metal window by default and preserves that dated
-VNC campaign through `--display vnc`. Apple core-
-profile compatibility fixes in virglrenderer translate its legacy GLSL 1.30
-shaders to GLSL 1.50 and avoid requiring promoted extensions that Apple OpenGL
-does not advertise. Current launchers use raw EROFS and no longer inspect Unix
-mode; a complete KDE/VNC/WebGL EROFS requalification remains an explicit
-external campaign rather than an inferred pass.
-
-A focused native-window launch at 800x500 with four guest vCPUs reached
-`graphical.target`, passed the overlay guard, and exercised the direct
-CGL/IOSurface/Metal message before manual Ctrl-C shutdown. That proves native
-window startup and the GPU-only scanout selection, not keyboard/pointer
-interaction or a complete timed KDE qualification. The EROFS digest was
-recorded by that dated run but is not a current acceptance mechanism.
+Before the common transition, macOS used CGL/OpenGL 4.1 and a two-slot
+CGL-to-IOSurface-to-Metal bridge. Dated KDE/VNC and focused native-window runs
+reported guest GL 4.1/GLES 3.0, a nonblank accelerated desktop, and clean
+Virgl protocol operation. Those results explain the earlier implementation but
+are no longer a runnable lane, A/B baseline, current provider claim, or
+qualification input.

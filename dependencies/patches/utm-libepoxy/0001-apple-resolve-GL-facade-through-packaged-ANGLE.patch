@@ -1,0 +1,41 @@
+From 7b09c5f85465636bf61137d24543b6ed3a5db9e4 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 23:01:37 +0900
+Subject: [PATCH] apple: resolve GL facade through packaged ANGLE
+
+---
+ src/dispatch_common.c | 21 +++++++++------------
+ 1 file changed, 9 insertions(+), 12 deletions(-)
+
+diff --git a/src/dispatch_common.c b/src/dispatch_common.c
+index 6fb7f02..5b7746e 100644
+--- a/src/dispatch_common.c
++++ b/src/dispatch_common.c
+@@ -175,18 +175,15 @@
+ 
+ #if defined(__APPLE__)
+ #include <TargetConditionals.h>
+-#if TARGET_OS_OSX
+-#define GLX_LIB "/opt/X11/lib/libGL.1.dylib"
+-#define EGL_LIB "EGL.framework/Versions/Current/EGL"
+-#define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
+-#define GLES1_LIB "GLESv1_CM.framework/Versions/Current/GLESv1_CM"
+-#define GLES2_LIB "GLESv2.framework/Versions/Current/GLESv2"
+-#elif TARGET_OS_IPHONE
+-#define GLX_LIB "/opt/X11/lib/libGL.1.dylib"
+-#define EGL_LIB "EGL.framework/EGL"
+-#define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
+-#define GLES1_LIB "GLESv1_CM.framework/GLESv1_CM"
+-#define GLES2_LIB "GLESv2.framework/GLESv2"
++#if TARGET_OS_OSX || TARGET_OS_IPHONE
++/* linux-um-darwin ships one authenticated flat ANGLE framework layout on
++ * every Apple platform. Resolve every GL API through that product's rpath;
++ * never retain CGL/OpenGL.framework as a hidden fallback. */
++#define EGL_LIB "@rpath/EGL.framework/EGL"
++#define GLX_LIB "@rpath/GLESv2.framework/GLESv2"
++#define OPENGL_LIB "@rpath/GLESv2.framework/GLESv2"
++#define GLES1_LIB "@rpath/GLESv2.framework/GLESv2"
++#define GLES2_LIB "@rpath/GLESv2.framework/GLESv2"
+ #else
+ #error "This Apple platform is not supported."
+ #endif

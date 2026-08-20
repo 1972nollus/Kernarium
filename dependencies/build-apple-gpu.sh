@@ -1,49 +1,48 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Build the exact UTM ANGLE/libepoxy/virglrenderer graphics stack used by
-# Kernarium on iOS from sources authenticated by dependencies/prepare.sh.
+# Build the one ANGLE/Metal, libepoxy, and virglrenderer product used by every
+# Apple platform from sources authenticated by dependencies/prepare.sh.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MANIFEST="$ROOT_DIR/dependencies/manifest.tsv"
 SOURCE_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
-VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyIosGpuPrefix.cmake"
-PREFIX=${UML_IOS_GPU_DEPENDENCY_PREFIX:-}
-WORK_ROOT=${UML_IOS_GPU_DEPENDENCY_BUILD_ROOT:-"$ROOT_DIR/.build/dependency-build/ios-gpu"}
-JOBS=${UML_IOS_GPU_DEPENDENCY_JOBS:-8}
-DEPLOYMENT_TARGET=16.0
-PLATFORM=ios-simulator
+VERIFY_SCRIPT="$ROOT_DIR/dependencies/cmake/VerifyAppleGpuPrefix.cmake"
+PREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX:-}
+WORK_ROOT=${UML_APPLE_GPU_DEPENDENCY_BUILD_ROOT:-}
+JOBS=${UML_APPLE_GPU_DEPENDENCY_JOBS:-8}
+PLATFORM=macos
 VERIFY_ONLY=0
 
 fail()
 {
-	printf '%s\n' "dependencies/build-ios-gpu.sh: $*" >&2
+	printf '%s\n' "dependencies/build-apple-gpu.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	printf '%s\n' \
-		"Usage: dependencies/build-ios-gpu.sh [options]" \
+		"Usage: dependencies/build-apple-gpu.sh [options]" \
 		"" \
 		"Options:" \
-		"  --platform NAME      ios-simulator (default) or ios" \
-		"  --source-root PATH    Verified dependency source trees" \
-		"  --prefix PATH         Output prefix" \
-		"  --work-root PATH      Temporary build parent" \
-		"  --jobs NUMBER         Parallel build jobs (default: 8)" \
-		"  --verify-only         Verify an existing prefix" \
-		"  -h, --help            Show this help" \
+		"  --platform NAME      macos (default), ios-simulator, or ios" \
+		"  --source-root PATH   Verified dependency source trees" \
+		"  --prefix PATH        Output prefix" \
+		"  --work-root PATH     Temporary build parent" \
+		"  --jobs NUMBER        Parallel build jobs (default: 8)" \
+		"  --verify-only        Verify an existing prefix" \
+		"  -h, --help           Show this help" \
 		"" \
 		"The build performs no network access. Run dependencies/prepare.sh" \
-		"--product ios-gpu first to materialize the pinned commits and patches."
+		"--product apple-gpu first to materialize the pinned source matrix."
 }
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--platform)
-		[ "$#" -ge 2 ] || fail "--platform requires ios or ios-simulator"
+		[ "$#" -ge 2 ] || fail "--platform requires a value"
 		PLATFORM=$2
 		shift 2
 		;;
@@ -83,34 +82,56 @@ case "$JOBS" in
 ''|*[!0-9]*) fail "jobs must be a positive integer" ;;
 esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
-[ "$(uname -s)" = Darwin ] || fail "the graphics build requires macOS"
+[ "$(uname -s)" = Darwin ] || fail "the Apple GPU build requires macOS"
 case "$(uname -m)" in
 arm64|aarch64) ;;
-*) fail "the iOS graphics build requires an arm64 host" ;;
+*) fail "the Apple GPU build requires an arm64 host" ;;
 esac
+
 case "$PLATFORM" in
+macos)
+	SDK_NAME=macosx
+	TARGET=arm64-apple-macos14.0
+	EPOXY_SYSTEM=darwin
+	SUBSYSTEM=macos
+	DEPLOYMENT_TARGET=14.0
+	DEPLOYMENT_SETTING=MACOSX_DEPLOYMENT_TARGET
+	CONTRACT_NAME=macos-gpu-arm64.tsv
+	MINIMUM_OS_KEY=LSMinimumSystemVersion
+	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/macos-arm64"
+	;;
 ios-simulator)
 	SDK_NAME=iphonesimulator
-	TARGET=arm64-apple-ios${DEPLOYMENT_TARGET}-simulator
+	TARGET=arm64-apple-ios16.0-simulator
+	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios-simulator
-		RECEIPT_NAME=ios-simulator-gpu-arm64.tsv
-		DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/ios-simulator-arm64/gpu"
+	DEPLOYMENT_TARGET=16.0
+	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
+	CONTRACT_NAME=ios-simulator-gpu-arm64.tsv
+	MINIMUM_OS_KEY=MinimumOSVersion
+	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64"
 	;;
 ios)
 	SDK_NAME=iphoneos
-	TARGET=arm64-apple-ios${DEPLOYMENT_TARGET}
+	TARGET=arm64-apple-ios16.0
+	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios
-		RECEIPT_NAME=ios-device-gpu-arm64.tsv
-		DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/ios-device-arm64/gpu"
+	DEPLOYMENT_TARGET=16.0
+	DEPLOYMENT_SETTING=IPHONEOS_DEPLOYMENT_TARGET
+	CONTRACT_NAME=ios-device-gpu-arm64.tsv
+	MINIMUM_OS_KEY=MinimumOSVersion
+	DEFAULT_PREFIX="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64"
 	;;
-*) fail "platform must be ios or ios-simulator" ;;
+*) fail "platform must be macos, ios-simulator, or ios" ;;
 esac
-PLATFORM_RECEIPT="$ROOT_DIR/dependencies/platforms/$RECEIPT_NAME"
-if [ -z "$PREFIX" ]; then
-	PREFIX=$DEFAULT_PREFIX
-fi
+
+PLATFORM_CONTRACT="$ROOT_DIR/dependencies/platforms/$CONTRACT_NAME"
 [ -r "$MANIFEST" ] || fail "source manifest is unavailable: $MANIFEST"
-[ -r "$PLATFORM_RECEIPT" ] || fail "platform receipt is unavailable: $PLATFORM_RECEIPT"
+[ -r "$PLATFORM_CONTRACT" ] ||
+	fail "platform contract is unavailable: $PLATFORM_CONTRACT"
+[ -n "$PREFIX" ] || PREFIX=$DEFAULT_PREFIX
+[ -n "$WORK_ROOT" ] ||
+	WORK_ROOT="$ROOT_DIR/.build/dependency-build/apple-gpu/$PLATFORM"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
 mkdir -p -- "$PREFIX_PARENT"
@@ -125,18 +146,18 @@ verify_prefix()
 
 if [ "$VERIFY_ONLY" -eq 1 ]; then
 	verify_prefix "$PREFIX"
-	printf '%s\n' "verified iOS GPU dependency prefix: $PREFIX"
+	printf '%s\n' "verified $PLATFORM Apple GPU dependency prefix: $PREFIX"
 	exit 0
 fi
 
 if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	verify_prefix "$PREFIX" ||
 		fail "existing prefix is invalid and was left untouched: $PREFIX"
-	printf '%s\n' "reusing verified iOS GPU dependency prefix: $PREFIX"
+	printf '%s\n' "reusing verified $PLATFORM Apple GPU prefix: $PREFIX"
 	exit 0
 fi
 
-"$ROOT_DIR/dependencies/prepare.sh" --product ios-gpu \
+"$ROOT_DIR/dependencies/prepare.sh" --product apple-gpu \
 	--root "$SOURCE_ROOT" --verify
 WEBKIT_SOURCE="$SOURCE_ROOT/utm-webkit"
 EPOXY_SOURCE="$SOURCE_ROOT/utm-libepoxy"
@@ -183,7 +204,7 @@ STRIP=$($XCRUN --sdk "$SDK_NAME" --find strip)
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
-STAGE=$(mktemp -d "$PREFIX_PARENT/.ios-gpu-prefix.XXXXXX")
+STAGE=$(mktemp -d "$PREFIX_PARENT/.apple-gpu-prefix.XXXXXX")
 cleanup()
 {
 	if [ -n "${TEMP_ROOT:-}" ] && [ -d "$TEMP_ROOT" ]; then
@@ -195,16 +216,34 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
+publish_exclusively()
+{
+	python3 - "$1" "$2" <<'PY'
+import ctypes
+import os
+import sys
+
+
+source = os.fsencode(sys.argv[1])
+destination = os.fsencode(sys.argv[2])
+libc = ctypes.CDLL(None, use_errno=True)
+rename_exclusive = libc.renamex_np
+rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+rename_exclusive.restype = ctypes.c_int
+raise SystemExit(rename_exclusive(source, destination, 0x00000004) != 0)
+PY
+}
+
 SOURCES="$TEMP_ROOT/sources"
 BUILDS="$TEMP_ROOT/builds"
 ANGLE_ROOT="$SOURCES/WebKit/Source/ThirdParty/ANGLE"
 ANGLE_ARCHIVE="$BUILDS/ANGLE"
-IOS_CROSS="$BUILDS/meson-$PLATFORM.cross"
-DARWIN_CROSS="$BUILDS/meson-darwin-$PLATFORM.cross"
+EPOXY_CROSS="$BUILDS/meson-epoxy-$PLATFORM.cross"
+VIRGL_CROSS="$BUILDS/meson-virgl-$PLATFORM.cross"
 mkdir -p -- "$ANGLE_ROOT" "$SOURCES/WebKit/Configurations" \
 	"$SOURCES/WebKit/Tools/ccache" "$SOURCES/libepoxy" \
 	"$SOURCES/virglrenderer" "$BUILDS" "$STAGE/include" \
-	"$STAGE/lib" "$STAGE/Frameworks" "$STAGE/share/kernarium"
+	"$STAGE/lib" "$STAGE/Frameworks"
 
 $RSYNC -a --exclude .git --exclude ANGLE.xcarchive \
 	"$WEBKIT_SOURCE/Source/ThirdParty/ANGLE/" "$ANGLE_ROOT/"
@@ -217,12 +256,11 @@ $RSYNC -a --exclude .git --exclude utm_build \
 $RSYNC -a --exclude .git --exclude utm_build \
 	"$VIRGL_SOURCE/" "$SOURCES/virglrenderer/"
 
-KERNARIUM_TEMP_DIR=${TMPDIR:-/tmp}
+APPLE_GPU_TEMP_DIR=${TMPDIR:-/tmp}
 (
 	cd "$ANGLE_ROOT"
-	env -i PATH="$PATH" TMPDIR="$KERNARIUM_TEMP_DIR" \
-		"$XCODEBUILD" archive \
-		-quiet \
+	env -i PATH="$PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
+		"$XCODEBUILD" archive -quiet \
 		-archivePath "$ANGLE_ARCHIVE" \
 		-scheme ANGLE \
 		-sdk "$SDK_NAME" \
@@ -231,7 +269,9 @@ KERNARIUM_TEMP_DIR=${TMPDIR:-/tmp}
 		WEBCORE_LIBRARY_DIR=/usr/local/lib \
 		NORMAL_UMBRELLA_FRAMEWORKS_DIR= \
 		CODE_SIGNING_ALLOWED=NO \
-		IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+		"$DEPLOYMENT_SETTING=$DEPLOYMENT_TARGET" \
+		WK_LIBCPP_ASSERTIONS_CFLAGS= \
+		ANGLE_ALLOWABLE_CLIENTS= \
 		GCC_TREAT_WARNINGS_AS_ERRORS=NO \
 		OTHER_CPLUSPLUSFLAGS='$(inherited) -Wno-error=unnecessary-virtual-specifier'
 )
@@ -239,9 +279,12 @@ KERNARIUM_TEMP_DIR=${TMPDIR:-/tmp}
 	fail "ANGLE archive did not produce libEGL.dylib"
 [ -f "$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" ] ||
 	fail "ANGLE archive did not produce libGLESv2.dylib"
-$RSYNC -a "$ANGLE_ROOT/include/" "$STAGE/include/"
+for headers in EGL GLES GLES2 GLES3 KHR; do
+	mkdir -p -- "$STAGE/include/$headers"
+	$RSYNC -a "$ANGLE_ROOT/include/$headers/" "$STAGE/include/$headers/"
+done
 
-cat > "$IOS_CROSS" <<EOF
+cat > "$EPOXY_CROSS" <<EOF
 [properties]
 needs_exe_wrapper = true
 
@@ -268,27 +311,40 @@ pkg-config = ['$PKG_CONFIG']
 python = ['$PYTHON']
 
 [host_machine]
-system = 'ios'
+system = '$EPOXY_SYSTEM'
 cpu_family = 'aarch64'
 cpu = 'arm64'
 endian = 'little'
 EOF
 
-sed "s/system = 'ios'/system = 'darwin'\nkernel = 'xnu'\nsubsystem = '$SUBSYSTEM'/" \
-	"$IOS_CROSS" > "$DARWIN_CROSS"
+awk -v source_system="$EPOXY_SYSTEM" -v subsystem="$SUBSYSTEM" '
+	BEGIN {
+		quote = sprintf("%c", 39)
+		expected = "system = " quote source_system quote
+	}
+	$0 == expected {
+		print "system = " quote "darwin" quote
+		print "kernel = " quote "xnu" quote
+		print "subsystem = " quote subsystem quote
+		next
+	}
+	{ print }
+' "$EPOXY_CROSS" > "$VIRGL_CROSS"
 
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
-	PKG_CONFIG_SYSROOT_DIR= \
+PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/libepoxy" "$SOURCES/libepoxy" \
-	--prefix "$STAGE" --buildtype release --cross-file "$IOS_CROSS" \
+	--prefix "$STAGE" --buildtype release --cross-file "$EPOXY_CROSS" \
+	--wrap-mode=nodownload \
 	-Ddefault_library=static -Dtests=false -Dglx=no -Degl=yes -Dx11=false
 "$MESON" compile -C "$BUILDS/libepoxy" -j "$JOBS"
 "$MESON" install -C "$BUILDS/libepoxy"
 
 PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
-	PKG_CONFIG_SYSROOT_DIR= \
+PKG_CONFIG_SYSROOT_DIR= \
 	"$MESON" setup "$BUILDS/virglrenderer" "$SOURCES/virglrenderer" \
-	--prefix "$STAGE" --buildtype release --cross-file "$DARWIN_CROSS" \
+	--prefix "$STAGE" --buildtype release --cross-file "$VIRGL_CROSS" \
+	--wrap-mode=nodownload \
 	-Ddefault_library=static -Dtests=false -Dvtest=false \
 	-Dcheck-gl-errors=false -Dvenus=false -Dneptune=false \
 	-Dplatforms=egl -Drender-server-mode=thread
@@ -296,6 +352,10 @@ PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$STAGE/lib/pkgconfig" \
 "$MESON" install -C "$BUILDS/virglrenderer"
 install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
 	"$STAGE/include/virgl/virgl_hw.h"
+
+# CMake imports exact archives and headers. Build-only pkg-config metadata
+# contains the exclusive staging path and must not enter the published prefix.
+rm -rf -- "$STAGE/lib/pkgconfig"
 
 install_framework()
 {
@@ -321,7 +381,7 @@ install_framework()
 	<key>CFBundlePackageType</key><string>FMWK</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>CFBundleVersion</key><string>1</string>
-	<key>MinimumOSVersion</key><string>$DEPLOYMENT_TARGET</string>
+	<key>$MINIMUM_OS_KEY</key><string>$DEPLOYMENT_TARGET</string>
 </dict>
 </plist>
 EOF
@@ -330,20 +390,30 @@ EOF
 
 install_framework EGL \
 	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libEGL.dylib" \
-	com.kernarium.EGL
+	org.linux-um-darwin.angle.EGL
 install_framework GLESv2 \
 	"$ANGLE_ARCHIVE.xcarchive/Products/usr/local/lib/libGLESv2.dylib" \
-	com.kernarium.GLESv2
+	org.linux-um-darwin.angle.GLESv2
 
 mkdir -p "$STAGE/share/uml-dependencies/patches"
 cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
 cp -R "$ROOT_DIR/dependencies/patches/utm-webkit" \
 	"$STAGE/share/uml-dependencies/patches/"
+cp -R "$ROOT_DIR/dependencies/patches/utm-libepoxy" \
+	"$STAGE/share/uml-dependencies/patches/"
 cp -R "$ROOT_DIR/dependencies/patches/utm-virglrenderer" \
 	"$STAGE/share/uml-dependencies/patches/"
-cp "$PLATFORM_RECEIPT" \
-	"$STAGE/share/uml-dependencies/$RECEIPT_NAME"
+cp "$PLATFORM_CONTRACT" \
+	"$STAGE/share/uml-dependencies/$CONTRACT_NAME"
 verify_prefix "$STAGE"
-mv "$STAGE" "$PREFIX"
-STAGE=
-printf '%s\n' "published iOS GPU dependency prefix: $PREFIX"
+if ! publish_exclusively "$STAGE" "$PREFIX"; then
+	if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
+		verify_prefix "$PREFIX" ||
+			fail "concurrent prefix winner is invalid: $PREFIX"
+	else
+		fail "Apple GPU prefix could not be published atomically: $PREFIX"
+	fi
+else
+	STAGE=
+fi
+printf '%s\n' "published $PLATFORM Apple GPU dependency prefix: $PREFIX"

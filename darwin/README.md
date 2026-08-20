@@ -14,38 +14,30 @@ app/macos/ CLI and embedded-kernel process adapter
 ```
 
 On macOS the Virtio-GPU display provider supports `vnc` and `native` modes.
-The native provider keeps Virgl scanout pixels on the GPU: it blits the CGL
-texture into one of two IOSurfaces and presents the same surface through
-MetalKit. The two slots protect OpenGL/Metal producer-consumer ownership; they
-are not a queued swapchain. Only the newest ready slot is retained and at most
-one Metal command buffer is in flight. The CAMetalLayer is limited to two
-drawables. Presentation reports one of three outcomes rather than success or
-failure: an unsupported resource shape falls back to the shared CPU scanout
-conversion used by VNC, while a scanout that arrives faster than the host can
-present is dropped and reported to the guest as success. Only the unsupported
-outcome may reach CPU readback, so guest rendering never waits on the host
-presentation timeline. `UML_GPU_FRAME_STATS` reports the two timelines and the
-drop count; see `docs/testing.md`. AppKit remains on the process
+The native provider samples the `MTLTexture` exported by the common
+virglrenderer/ANGLE Metal path directly in MetalKit. AppKit and UIKit share one
+device-owned newest-frame-wins presentation timeline with at most one Metal
+command buffer in flight; only their window, input, sizing, and lifecycle
+shells differ. Presentation reports accepted, dropped, or unsupported. A
+superseded frame is retired as guest success without coupling rendering to the
+host display timeline. Unsupported resources may take the counted CPU
+diagnostic/VNC readback path, but zero sustained fallback is required for
+native qualification. `UML_GPU_FRAME_STATS` reports both timelines, drops,
+and fallback; see `docs/testing.md`. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 
-The opt-in Kernarium iOS device and Simulator runtimes use the same Virtio-GPU
-device and virglrenderer command path. Their platform display is UIKit/MetalKit: the pinned
-UTM libepoxy build loads EGL and GLES from ANGLE frameworks, ANGLE renders
-through Metal, and the native resource texture is sampled directly into the
-application-provided `MTKView`. VNC is deliberately not built for iOS.
-Unsupported resource layouts use the shared CPU scanout fallback. Platform
-source selection is exclusive, so the existing macOS AppKit, CGL, IOSurface,
-and LibVNCServer implementation is unchanged.
-
-`UML_GPU_ANGLE_METAL` selects that ANGLE path and declares `VirglRenderer`'s
-EGL display and config members, so it changes the size of every object that
-embeds the renderer. It is therefore part of the GPU headers' ABI, not an
-implementation detail: `uml_configure_gpu_component` publishes one value to
-the whole component set, and `virgl_renderer.hpp` refuses to compile when the
-macro is undefined. A target that saw the macOS layout while another
-constructed the mobile one allocated `VirtioGpuDevice` sixteen bytes short and
-corrupted the host heap on the first SET_SCANOUT.
+macOS, iOS Simulator, and iOS device now use one product-fixed host GL facade:
+UTM libepoxy resolves EGL/GLES only from the authenticated flat ANGLE
+frameworks, `HostGlProvider` creates an ES 3 hardware display with
+`EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE`, and virglrenderer exports the native
+Metal texture. The provider is an opaque owner inside a fixed-layout
+`VirglRenderer`; no backend macro, CGL context, OpenGL texture resource,
+OpenGL.framework link, desktop libepoxy/virglrenderer family, or runtime GL
+selector remains. Provider construction, context topology, reset, and teardown
+stay on the GPU transport thread. VNC availability is independently fixed by
+the macOS product and cannot select another renderer; iOS deliberately omits
+VNC.
 
 Kernarium also composes two in-process Virtio-input services over the generic
 vhost-user transport: an absolute touchscreen whose coordinate maxima match
@@ -101,7 +93,8 @@ aliases immutable executable pages from the already signed Mach-O mapping with
 `vm_remap`; it never copies code into anonymous memory or publishes RW pages as
 executable. ELF data and BSS retain the ordinary copy path, and relocations into
 signed executable pages are rejected. macOS retains its established unsigned
-loader, AppKit/CGL/IOSurface/Metal display, and VNC paths, while using the same
+loader and its AppKit native/VNC presentation choices, while using the common
+ANGLE/Metal renderer and the same
 128 TiB sparse guest range, scalable-window derivation, relocation, and
 exclusion-hole handling as device and Simulator. It places the matching
 page-profile kernel bytes at 96 TiB to avoid collisions in Darwin's crowded

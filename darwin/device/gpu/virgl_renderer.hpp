@@ -4,31 +4,23 @@
 #include <atomic>
 #include <cstdint>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
-/*
- * UML_GPU_ANGLE_METAL selects the ANGLE EGL members below, so it changes this
- * class's size and every enclosing object's member offsets. Refuse to compile
- * rather than let an undefined macro silently pick the macOS layout: a
- * consumer that allocates VirtioGpuDevice with the smaller layout overflows
- * the allocation as soon as the device records a scanout.
- */
-#ifndef UML_GPU_ANGLE_METAL
-#error "UML_GPU_ANGLE_METAL must be defined for every consumer of this header"
-#endif
-
 struct iovec;
 struct virgl_renderer_gl_ctx_param;
 
 namespace uml::gpu {
 
-// Owns the process-global virglrenderer instance. Virgl OpenGL contexts are
-// supplied by the emulator through CGL, so rendering stays in-process and does
-// not depend on an EGL, GLX, or helper-process winsys.
+class HostGlProvider;
+
+// Owns the process-global virglrenderer instance. Every Apple product uses the
+// same opaque ANGLE/EGL provider backed by Metal; provider state never changes
+// this public class layout.
 class VirglRenderer {
 public:
     struct Capset {
@@ -94,9 +86,6 @@ public:
         std::uint32_t y,
         std::uint32_t width,
         std::uint32_t height) noexcept;
-    [[nodiscard]] int resourceTexture(
-        std::uint32_t resourceId,
-        std::uint32_t& textureId) noexcept;
     [[nodiscard]] int resourceMetalTexture(
         std::uint32_t resourceId,
         void*& texture) noexcept;
@@ -139,15 +128,10 @@ private:
         std::uint32_t ringIndex) noexcept;
 
     mutable std::mutex mutex_;
-    std::mutex glContextMutex_;
     std::condition_variable fenceCondition_;
     std::unordered_map<std::uint64_t, std::uint64_t> retiredContextFences_;
     std::atomic_bool fenceCallbackFailed_ {};
-    void* sharedGlContext_ {};
-#if UML_GPU_ANGLE_METAL
-    void* eglDisplay_ {};
-    void* eglConfig_ {};
-#endif
+    std::unique_ptr<HostGlProvider> provider_;
     std::uint32_t retiredFence_ {};
 };
 

@@ -2,6 +2,8 @@
 
 #include "virgl_renderer.hpp"
 
+#include "host_gl_provider.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -9,14 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
-#if UML_GPU_ANGLE_METAL
-#include <epoxy/egl.h>
 #include <epoxy/gl.h>
-#include <EGL/eglext_angle.h>
-#else
-#include <OpenGL/OpenGL.h>
-#include <OpenGL/gl3.h>
-#endif
 #include <stdexcept>
 #include <string>
 #include <sys/uio.h>
@@ -72,6 +67,7 @@ int checkGlDispatchResult(int result)
 } // namespace
 
 VirglRenderer::VirglRenderer()
+    : provider_(std::make_unique<HostGlProvider>())
 {
     if (rendererInstanceActive.exchange(true, std::memory_order_acq_rel)) {
         throw std::runtime_error(
@@ -90,25 +86,16 @@ VirglRenderer::VirglRenderer()
             result.destroy_gl_context = &VirglRenderer::destroyGlContext;
             result.make_current = &VirglRenderer::makeGlContextCurrent;
             result.write_context_fence = &VirglRenderer::writeContextFence;
-#if UML_GPU_ANGLE_METAL
             result.get_egl_display = &VirglRenderer::getEglDisplay;
-#endif
             return result;
         }();
 
-#if UML_GPU_ANGLE_METAL
-        // UTM's iOS path supplies an external ANGLE EGLDisplay backed by
-        // Metal. Native-share resources are allocated as MTLTexture objects,
-        // so presentation never needs a GLES readback or synthetic device.
+        // The common Apple path supplies an external ANGLE EGLDisplay backed
+        // by Metal. Native-share resources are MTLTexture objects on macOS,
+        // Simulator, and device alike.
         constexpr int rendererFlags =
             VIRGL_RENDERER_USE_GLES |
             VIRGL_RENDERER_NATIVE_SHARE_TEXTURE;
-#else
-        // With neither USE_EGL nor USE_GLX set, virglrenderer uses the CGL
-        // callbacks above. Fence retirement remains explicitly polled because
-        // its threaded path relies on Linux eventfd.
-        constexpr int rendererFlags = 0;
-#endif
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
         const int checkedResult = checkGlDispatchResult(result);
@@ -128,16 +115,6 @@ VirglRenderer::VirglRenderer()
 VirglRenderer::~VirglRenderer()
 {
     virgl_renderer_cleanup(this);
-#if UML_GPU_ANGLE_METAL
-    if (eglDisplay_ != nullptr) {
-        const auto display = static_cast<EGLDisplay>(eglDisplay_);
-        (void)eglMakeCurrent(
-            display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        (void)eglTerminate(display);
-        eglDisplay_ = nullptr;
-        eglConfig_ = nullptr;
-    }
-#endif
     rendererInstanceActive.store(false, std::memory_order_release);
 }
 
@@ -168,11 +145,7 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
          error = glGetError()) {
         std::fprintf(
             stderr,
-#if UML_GPU_ANGLE_METAL
             "Virgl ANGLE capset probe GL error (cleared): %u\n",
-#else
-            "Virgl CGL capset probe GL error (cleared): %u\n",
-#endif
             static_cast<unsigned int>(error));
     }
     return result;
@@ -198,9 +171,9 @@ int VirglRenderer::createContext(
     }
 
     /*
-     * virglrenderer creates a fresh shared CGL context here and assumes that
-     * it is returned with a clean GL error state. Apple's 4.1 core driver can
-     * leave GL_INVALID_ENUM behind while virglrenderer probes that context;
+     * virglrenderer creates a fresh shared EGL context here and assumes that
+     * it is returned with a clean GL error state. ANGLE may leave
+     * GL_INVALID_ENUM behind while virglrenderer probes that context;
      * CHECK_GL_ERRORS would otherwise attribute the probe error to the first
      * real guest command and permanently poison the context.
      */
@@ -210,11 +183,7 @@ int VirglRenderer::createContext(
          error = glGetError()) {
         std::fprintf(
             stderr,
-#if UML_GPU_ANGLE_METAL
             "Virgl ANGLE context initialization GL error: %u\n",
-#else
-            "Virgl CGL context initialization GL error: %u\n",
-#endif
             static_cast<unsigned int>(error));
         unexpectedError |= error != GL_INVALID_ENUM;
     }
@@ -367,28 +336,11 @@ int VirglRenderer::readResourceRectangle(
     return checkGlDispatchResult(0);
 }
 
-int VirglRenderer::resourceTexture(
-    std::uint32_t resourceId,
-    std::uint32_t& textureId) noexcept
-{
-    virgl_renderer_resource_info information {};
-    const int result = virgl_renderer_resource_get_info(
-        static_cast<int>(resourceId), &information);
-    const int checkedResult = checkGlDispatchResult(result);
-    if (checkedResult != 0)
-        return checkedResult;
-    if (information.tex_id == 0)
-        return EINVAL;
-    textureId = information.tex_id;
-    return 0;
-}
-
 int VirglRenderer::resourceMetalTexture(
     std::uint32_t resourceId,
     void*& texture) noexcept
 {
     texture = nullptr;
-#if UML_GPU_ANGLE_METAL
     virgl_renderer_resource_info_ext information {};
     information.version = VIRGL_RENDERER_RESOURCE_INFO_EXT_VERSION;
     const int result = virgl_renderer_resource_get_info_ext(
@@ -402,10 +354,6 @@ int VirglRenderer::resourceMetalTexture(
     }
     texture = information.native_handle;
     return 0;
-#else
-    (void)resourceId;
-    return ENOTSUP;
-#endif
 }
 
 int VirglRenderer::createFenceAndWait(
@@ -565,207 +513,35 @@ void* VirglRenderer::createGlContext(
     int,
     virgl_renderer_gl_ctx_param* parameters) noexcept
 {
-    try {
-#if UML_GPU_ANGLE_METAL
-        if (parameters == nullptr || parameters->compat_ctx ||
-            parameters->major_ver < 2 || parameters->major_ver > 3) {
-            return nullptr;
-        }
-        auto& renderer = *static_cast<VirglRenderer*>(cookie);
-        std::lock_guard lock(renderer.glContextMutex_);
-        if (renderer.eglDisplay_ == nullptr || renderer.eglConfig_ == nullptr)
-            return nullptr;
-        const auto display = static_cast<EGLDisplay>(renderer.eglDisplay_);
-        const auto config = static_cast<EGLConfig>(renderer.eglConfig_);
-        EGLContext shared = EGL_NO_CONTEXT;
-        if (parameters->shared) {
-            shared = static_cast<EGLContext>(renderer.sharedGlContext_);
-            if (shared == EGL_NO_CONTEXT)
-                return nullptr;
-        }
-        const EGLint attributes[] {
-            EGL_CONTEXT_CLIENT_VERSION, 3,
-            EGL_NONE,
-        };
-        const auto context = eglCreateContext(
-            display, config, shared, attributes);
-        if (context == EGL_NO_CONTEXT)
-            return nullptr;
-        if (!parameters->shared)
-            renderer.sharedGlContext_ = context;
-        return context;
-#else
-        if (parameters == nullptr || parameters->compat_ctx ||
-            parameters->major_ver > 4 ||
-            (parameters->major_ver == 4 && parameters->minor_ver > 1) ||
-            parameters->major_ver < 3) {
-            return nullptr;
-        }
-
-        const auto profile =
-            parameters->major_ver >= 4
-            ? kCGLOGLPVersion_GL4_Core
-            : kCGLOGLPVersion_3_2_Core;
-        const CGLPixelFormatAttribute attributes[] {
-            kCGLPFAOpenGLProfile,
-            static_cast<CGLPixelFormatAttribute>(profile),
-            kCGLPFAAccelerated,
-            kCGLPFANoRecovery,
-            static_cast<CGLPixelFormatAttribute>(0),
-        };
-
-        CGLPixelFormatObj pixelFormat = nullptr;
-        GLint pixelFormatCount = 0;
-        if (CGLChoosePixelFormat(
-                attributes, &pixelFormat, &pixelFormatCount) != kCGLNoError ||
-            pixelFormat == nullptr || pixelFormatCount == 0) {
-            return nullptr;
-        }
-
-        auto& renderer = *static_cast<VirglRenderer*>(cookie);
-        CGLContextObj sharedContext = nullptr;
-        {
-            std::lock_guard lock(renderer.glContextMutex_);
-            if (parameters->shared) {
-                sharedContext =
-                    static_cast<CGLContextObj>(renderer.sharedGlContext_);
-            }
-        }
-        if (parameters->shared && sharedContext == nullptr) {
-            CGLReleasePixelFormat(pixelFormat);
-            return nullptr;
-        }
-
-        CGLContextObj context = nullptr;
-        const auto result =
-            CGLCreateContext(pixelFormat, sharedContext, &context);
-        CGLReleasePixelFormat(pixelFormat);
-        if (result != kCGLNoError || context == nullptr)
-            return nullptr;
-
-        if (!parameters->shared) {
-            std::lock_guard lock(renderer.glContextMutex_);
-            renderer.sharedGlContext_ = context;
-        }
-        return context;
-#endif
-    } catch (...) {
+    if (cookie == nullptr || parameters == nullptr)
         return nullptr;
-    }
+    auto& renderer = *static_cast<VirglRenderer*>(cookie);
+    return renderer.provider_->createContext(*parameters);
 }
 
 void VirglRenderer::destroyGlContext(void* cookie, void* context) noexcept
 {
-    try {
-        if (context == nullptr)
-            return;
-        auto& renderer = *static_cast<VirglRenderer*>(cookie);
-#if UML_GPU_ANGLE_METAL
-        std::lock_guard lock(renderer.glContextMutex_);
-        if (renderer.sharedGlContext_ == context)
-            renderer.sharedGlContext_ = nullptr;
-        if (renderer.eglDisplay_ != nullptr) {
-            (void)eglDestroyContext(
-                static_cast<EGLDisplay>(renderer.eglDisplay_),
-                static_cast<EGLContext>(context));
-        }
-#else
-        {
-            std::lock_guard lock(renderer.glContextMutex_);
-            if (renderer.sharedGlContext_ == context)
-                renderer.sharedGlContext_ = nullptr;
-        }
-        CGLDestroyContext(static_cast<CGLContextObj>(context));
-#endif
-    } catch (...) {
-    }
+    if (cookie == nullptr)
+        return;
+    auto& renderer = *static_cast<VirglRenderer*>(cookie);
+    renderer.provider_->destroyContext(context);
 }
 
 int VirglRenderer::makeGlContextCurrent(
     void* cookie, int, void* context) noexcept
 {
-#if UML_GPU_ANGLE_METAL
-    auto& renderer = *static_cast<VirglRenderer*>(cookie);
-    if (renderer.eglDisplay_ == nullptr)
+    if (cookie == nullptr)
         return -EIO;
-    return eglMakeCurrent(
-               static_cast<EGLDisplay>(renderer.eglDisplay_),
-               EGL_NO_SURFACE,
-               EGL_NO_SURFACE,
-               static_cast<EGLContext>(context)) == EGL_TRUE
-        ? 0
-        : -EIO;
-#else
-    (void)cookie;
-    return CGLSetCurrentContext(static_cast<CGLContextObj>(context)) ==
-            kCGLNoError
-        ? 0
-        : -EIO;
-#endif
+    auto& renderer = *static_cast<VirglRenderer*>(cookie);
+    return renderer.provider_->makeCurrent(context);
 }
 
 void* VirglRenderer::getEglDisplay(void* cookie) noexcept
 {
-#if UML_GPU_ANGLE_METAL
-    try {
-        auto& renderer = *static_cast<VirglRenderer*>(cookie);
-        std::lock_guard lock(renderer.glContextMutex_);
-        if (renderer.eglDisplay_ != nullptr)
-            return renderer.eglDisplay_;
-        const EGLint displayAttributes[] {
-            EGL_PLATFORM_ANGLE_TYPE_ANGLE,
-            EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
-            EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
-            EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
-            EGL_NONE,
-        };
-        /*
-         * ANGLE exposes its platform selector through
-         * EGL_EXT_platform_base before a display exists. Libepoxy correctly
-         * treats the EGL 1.5 core spelling as unavailable until a display has
-         * been initialized, so bootstrap with the extension spelling just as
-         * ANGLE's own iOS helpers do.
-         */
-        const auto display = eglGetPlatformDisplayEXT(
-            EGL_PLATFORM_ANGLE_ANGLE,
-            nullptr,
-            displayAttributes);
-        if (display == EGL_NO_DISPLAY)
-            return nullptr;
-        EGLint major = 0;
-        EGLint minor = 0;
-        if (eglInitialize(display, &major, &minor) != EGL_TRUE ||
-            eglBindAPI(EGL_OPENGL_ES_API) != EGL_TRUE) {
-            (void)eglTerminate(display);
-            return nullptr;
-        }
-        const EGLint configAttributes[] {
-            EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-            EGL_RED_SIZE, 8,
-            EGL_GREEN_SIZE, 8,
-            EGL_BLUE_SIZE, 8,
-            EGL_ALPHA_SIZE, 8,
-            EGL_NONE,
-        };
-        EGLConfig config = nullptr;
-        EGLint count = 0;
-        if (eglChooseConfig(
-                display, configAttributes, &config, 1, &count) != EGL_TRUE ||
-            count != 1 || config == nullptr) {
-            (void)eglTerminate(display);
-            return nullptr;
-        }
-        renderer.eglDisplay_ = display;
-        renderer.eglConfig_ = config;
-        return display;
-    } catch (...) {
+    if (cookie == nullptr)
         return nullptr;
-    }
-#else
-    (void)cookie;
-    return nullptr;
-#endif
+    auto& renderer = *static_cast<VirglRenderer*>(cookie);
+    return renderer.provider_->display();
 }
 
 void VirglRenderer::writeFence(

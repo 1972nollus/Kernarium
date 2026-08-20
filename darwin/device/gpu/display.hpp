@@ -18,17 +18,6 @@ enum class DisplayMode {
     native,
 };
 
-struct OpenGlScanout {
-    std::uint32_t textureId {};
-    std::uint32_t resourceTarget {};
-    std::uint32_t sourceWidth {};
-    std::uint32_t sourceHeight {};
-    std::uint32_t sourceX {};
-    std::uint32_t sourceY {};
-    std::uint32_t width {};
-    std::uint32_t height {};
-};
-
 struct MetalScanout {
     void* texture {};
     std::uint32_t sourceWidth {};
@@ -108,17 +97,8 @@ public:
         std::uint32_t width,
         std::uint32_t height) = 0;
     virtual void fillSelfTestPattern() = 0;
-    /* Native displays may keep a Virgl scanout entirely on the GPU. VNC and
-     * unsupported OpenGL resource shapes return false so the device uses its
-     * existing CPU readback path. */
-    [[nodiscard]] virtual PresentOutcome presentOpenGl(
-        const OpenGlScanout& scanout) noexcept
-    {
-        (void)scanout;
-        return PresentOutcome::unsupported;
-    }
-    /* ANGLE's Metal backend can expose a virgl scanout as the native
-     * MTLTexture it already renders into. The opaque pointer keeps UIKit and
+    /* ANGLE's Metal backend exposes a virgl scanout as the native MTLTexture
+     * it already renders into. The opaque pointer keeps AppKit, UIKit, and
      * Objective-C types out of the platform-neutral device contract. */
     [[nodiscard]] virtual PresentOutcome presentMetal(
         const MetalScanout& scanout) noexcept

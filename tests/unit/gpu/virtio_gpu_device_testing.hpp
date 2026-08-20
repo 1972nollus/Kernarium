@@ -65,11 +65,11 @@ public:
         std::uint32_t y,
         std::uint32_t width,
         std::uint32_t height) = 0;
-    [[nodiscard]] virtual int resourceTexture(
+    [[nodiscard]] virtual int resourceMetalTexture(
         std::uint32_t resourceId,
-        std::uint32_t& textureId) noexcept = 0;
-    [[nodiscard]] virtual PresentOutcome presentOpenGl(
-        const OpenGlScanout& scanout) noexcept = 0;
+        void*& texture) noexcept = 0;
+    [[nodiscard]] virtual PresentOutcome presentMetal(
+        const MetalScanout& scanout) noexcept = 0;
     [[nodiscard]] virtual bool needsFullCpuFallback() const noexcept = 0;
     virtual void recordCpuFallbackFrame() noexcept = 0;
     [[nodiscard]] virtual int createFenceAndWait(

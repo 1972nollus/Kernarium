@@ -110,11 +110,8 @@ include/libintl.h
 include/glib-2.0/glib.h
 lib/glib-2.0/include/glibconfig.h
 include/slirp/libslirp.h
-include/epoxy/gl.h
 include/rfb/rfb.h
 include/rfb/rfbclient.h
-include/virgl/virglrenderer.h
-include/virgl/virgl_hw.h
 lib/libz.a
 lib/libpcre2-8.a
 lib/libffi.a
@@ -123,10 +120,8 @@ lib/libiconv.a
 lib/libintl.a
 lib/libglib-2.0.a
 lib/libslirp.a
-lib/libepoxy.a
 lib/libvncserver.a
-lib/libvncclient.a
-lib/libvirglrenderer.a'
+lib/libvncclient.a'
 printf '%s\n' "$required_files" | while IFS= read -r relative; do
 	[ -z "$relative" ] && continue
 	[ -f "$PREFIX/$relative" ] || fail "required prefix file is missing: $relative"
@@ -157,8 +152,8 @@ find "$PREFIX/lib" -type f -name '*.a' -print |
 while IFS= read -r archive; do
 	case "$(basename "$archive")" in
 	libz.a|libpcre2-8.a|libffi.a|libcharset.a|libiconv.a|libintl.a|\
-	libglib-2.0.a|libslirp.a|libepoxy.a|libvncserver.a|libvncclient.a|\
-	libvirglrenderer.a|libgio-2.0.a|libgirepository-2.0.a|\
+	libglib-2.0.a|libslirp.a|libvncserver.a|libvncclient.a|\
+	libgio-2.0.a|libgirepository-2.0.a|\
 	libgmodule-2.0.a|libgobject-2.0.a|libgthread-2.0.a|libpcre2-posix.a)
 		;;
 	*) fail "undocumented static archive in dependency prefix: $(basename "$archive")" ;;

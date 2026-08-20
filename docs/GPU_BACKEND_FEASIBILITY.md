@@ -14,14 +14,31 @@ performance-first plans supersede this report's recommendation to evaluate
 ANGLE/Vulkan as the shared GL/GLES provider; retain that recommendation here
 only as dated investigative history.
 
+## Current product boundary (2026-08-21)
+
+The product has since completed the provider transition selected by
+`MAX_GL_GLES_SUPPORT_PLAN.md`: macOS, iOS Simulator, and iOS device now build
+one UTM ANGLE/EGL/GLES Metal source matrix, fixed provider, and native
+`MTLTexture` contract. CGL/OpenGL.framework and the desktop graphics dependency
+family are removed rather than retained as an alternative lane. No Vulkan
+facade participates in GL context creation, capsets, symbol resolution, or
+resource presentation.
+
+That implementation result does not revise the measured ceilings below. The
+old Apple OpenGL 4.1 probe is archived input; the committed shared candidate
+remains desktop GL 2.1 expected/GLES 3.0 until macOS, Simulator, and connected
+iPad guest correctness and performance qualification complete. GLES 3.1 is
+still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
+scope.
+
 ## Method
 
 Every number below is a measurement taken on this host (Apple M1 Ultra,
 macOS 26.x, iOS 26.5 Simulator), not a citation. Three probes were written for
 this investigation and left in the session scratchpad:
 
-- `glprobe.c` creates the same accelerated `kCGLOGLPVersion_GL4_Core` CGL
-  context `darwin/device/gpu/virgl_renderer.cpp` creates, then tests exactly
+- `glprobe.c` created the accelerated `kCGLOGLPVersion_GL4_Core` CGL context
+  used by the former macOS product, then tested exactly
   the extension and version predicates in virglrenderer 1.3.0's
   `src/vrend/vrend_renderer.c` `feature_list[]`.
 - `angleprobe.c` does the same against the iOS Simulator ANGLE/Metal host,
@@ -52,7 +69,7 @@ There is therefore no "fix Virgl until it reaches GLES 3.2" project. Virgl
 reached it years ago. Every feature the guest does not get is a feature
 virglrenderer probed for on the host GL driver and did not find.
 
-## Finding 2: the macOS host GL driver is the ceiling
+## Finding 2: the former macOS host GL driver was the CGL ceiling
 
 `glprobe` output:
 
@@ -236,10 +253,10 @@ features are in a vendor driver we cannot patch. That said, the Vulkan path as
 literally specified is large, and its riskiest piece (the UML host-visible
 aperture) is a kernel change, not a host change.
 
-## Recommendation: measure the cheap middle path first
+## Historical recommendation (superseded): measure the cheap middle path first
 
-There is a third option that neither part of the question named, and it should
-be tested before committing to either:
+The investigation proposed a third option before the performance-first plan
+forbade a Vulkan translation layer in the GL facade:
 
 **keep the entire Virgl protocol, host device, kernel, and guest stack exactly
 as they are, and change only which GL implementation the host hands to
@@ -254,14 +271,13 @@ the vhost-user transport, or the rootfs would change; only
 `createGlContext`/`getEglDisplay` in `darwin/device/gpu/virgl_renderer.cpp`
 and the dependency prefix.
 
-This is explicitly **unmeasured**. It cannot be probed here because upstream
+This remained explicitly **unmeasured** and was not selected. It could not be probed here because upstream
 ANGLE with the Vulkan backend is not in the tree and building it needs network
 access outside `dependencies/prepare.sh`. The next step is to bring that
 build in under the normal dependency rules and re-run `angleprobe.c` against
-it; the probe already exists and will answer the question in one run. If it
-reports `gles_ver = 31`, the guest gets GLES 3.1 for the cost of a backend
-swap. If it refuses an ES 3.1 context the way the WebKit build does, then
-Venus is the only remaining route and the aperture work has to be scheduled.
+it was superseded by the direct ANGLE/Metal-only GL policy. Vulkan and Venus
+remain separate work under `MAX_VULKAN_SUPPORT_PLAN.md`; they cannot promote a
+GL/GLES claim under the current plan.
 
 ## What was not done
 

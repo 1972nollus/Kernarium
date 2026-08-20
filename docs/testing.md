@@ -180,24 +180,27 @@ shared scalable layout places an 8 GiB direct map plus 1 GiB auxiliary window
 at 96 TiB. Explicit kernel command-line values continue to override these
 defaults.
 
-The graphics and network dependency prefixes are separate from the macOS
-dependency prefix. Their repositories, full commits, ordered Git mail patches,
-platform receipts, preparation, builders, and verifiers are all owned by
-[`../dependencies/`](../dependencies/README.md). Prepare the sources once,
-then build both Apple-mobile slices before packaging the Xcode app:
+The common Apple-GPU and iOS network prefixes are separate from the macOS
+non-graphics dependency prefix. Their repositories, full commits, ordered Git
+mail patches, platform contracts, preparation, builders, and verifiers are all
+owned by [`../dependencies/`](../dependencies/README.md). Prepare the sources
+once, build the macOS graphics slice first, then both iOS slices before
+packaging the Xcode app:
 
 ```sh
-dependencies/prepare.sh --product ios-gpu
-dependencies/build-ios-gpu.sh
-dependencies/build-ios-gpu.sh --platform ios
+dependencies/prepare.sh --product apple-gpu
+dependencies/build-apple-gpu.sh --platform macos
+dependencies/build-apple-gpu.sh --platform ios-simulator
+dependencies/build-apple-gpu.sh --platform ios
 
 dependencies/prepare.sh --product ios-network
 dependencies/build-ios-network.sh
 dependencies/build-ios-network.sh --platform ios
 
 # Read-only checks once the prefix exists.
-dependencies/build-ios-gpu.sh --verify-only
-dependencies/build-ios-gpu.sh --platform ios --verify-only
+dependencies/build-apple-gpu.sh --platform macos --verify-only
+dependencies/build-apple-gpu.sh --platform ios-simulator --verify-only
+dependencies/build-apple-gpu.sh --platform ios --verify-only
 dependencies/build-ios-network.sh --verify-only
 dependencies/build-ios-network.sh --platform ios --verify-only
 
@@ -221,19 +224,21 @@ cmake --build --preset kernarium-ios-device-4k
 Kernarium/scripts/package-ios-frameworks.sh
 ```
 
-The graphics receipts authenticate two focused compatibility patches. The
-ANGLE patch is a source-compatible backport of upstream commit
-`d44204893a1725a74cd20b332fbb6f595b0975c3`, which reports the ES 3 minimum
-varying limit on Simulator Metal. The virglrenderer patch probes ES 3
-multisampled renderbuffers and uses them when multisampled textures are not
-available. Wholesale replacement with the latest desktop branches is not an
-equivalent upgrade: UTM's forks carry the iOS EGL loader and native Metal
-resource-export path that upstream desktop virglrenderer does not. Chromium is
-launched through its ordinary ANGLE/GLES selection; the app does not preload,
-replace, or otherwise interfere with Chromium libraries.
+The Apple-GPU contracts authenticate one source and topic matrix across all
+three platforms. Its UTM WebKit topics retain the Simulator ES 3 minimum
+varying correction, disable CGL/EAGL/native-GL backends, load only the flat
+authenticated EGL/GLES frameworks, export the platform-display bootstrap, and
+enable the arm64 macOS Metal baseline. The UTM libepoxy topic resolves GL/EGL
+only through those framework install names; UTM virglrenderer retains its ES 3
+multisampled-renderbuffer and native Metal resource path. Wholesale replacement
+with ambient or latest desktop branches is not equivalent: every consumer uses
+the central full commits, ordered generated patches, common builder, and
+verified format-3 contract. Chromium is launched through its ordinary
+ANGLE/GLES selection; the app does not preload, replace, or otherwise
+interfere with Chromium libraries.
 
 The network prefixes reuse the authenticated PCRE2, libffi, proxy-libintl,
-GLib, and libslirp sources prepared by `dependencies/prepare.sh`. The
+GLib, GVDB, and libslirp sources prepared by `dependencies/prepare.sh`. The
 iOS-specific GLib patch removes unavailable process-management probes; the
 guest still receives the normal SLiRP callback provider used by the emulator.
 `package-ios-frameworks.sh` combines both versioned runtimes plus EGL and
@@ -385,8 +390,8 @@ point mode at 440x860/160 DPI with a 55x53 VGA8x16 console, then Retina mode at
 1320x2580/480 DPI with an 82x80 TER16x32 console; both reached stock Phrog and
 the host serial log contained non-tick-aligned timestamps. These focused
 checks do not replace the five-run physical
-reliability evidence. Current
-macOS qualification boots the unmodified Phosh service set, completes its
+reliability evidence. Archived pre-migration macOS evidence boots the
+unmodified Phosh service set, completes its
 GStreamer plugin scan without poisoning the virgl context, captures the sparse
 Phosh lock screen through VNC, and enters the direct
 CGL/IOSurface/Metal presentation path in native mode. A separate stock-Phrog
@@ -588,14 +593,15 @@ not synthesize a PipeWire sink or routing policy.
 `--display vnc`. The bare `uml-darwin --gpu` host option retains VNC
 as its compatibility default, while the KDE launcher deliberately selects
 native mode. Native keyboard, pointer, and wheel events use the same inherited
-Virtio-input datagram boundary as VNC. The native Virgl path performs a GPU
-blit from the renderer's CGL texture into a two-slot IOSurface bridge and Metal
-presents that storage directly; there is no `glReadPixels`, CPU framebuffer
-copy, or extra FIFO frame queue on this path. CPU readback remains the fallback
-for unsupported scanout resources, and only for those: a scanout the display
-accepts but cannot present yet is dropped, because answering host backpressure
-with a GPU-to-CPU readback on the guest's flush path would couple the two
-timelines exactly where they must stay independent.
+Virtio-input datagram boundary as VNC. The native Virgl path receives the
+`MTLTexture` exported by the common ANGLE/Metal renderer and samples it through
+the shared Metal presentation owner; there is no CGL/IOSurface bridge,
+`glReadPixels`, CPU framebuffer copy, or extra FIFO frame queue on that path.
+CPU readback remains a counted diagnostic/VNC fallback only for unsupported
+scanout resources. A scanout the display accepts but cannot present yet is
+dropped, because answering host backpressure with readback on the guest flush
+path would couple the two timelines exactly where they must stay independent.
+Native qualification requires a zero fallback rate.
 
 The standalone macOS executable attaches the same Virtio Sound device only
 when the host-only `--audio` option is present; the standard KDE launcher
@@ -658,11 +664,11 @@ python3 tests/integration/gpu/run_vk_gl_cts.py \
   --api gles3 --leaf gles3 --fraction 0,16
 ```
 
-These commands remain intentionally dormant until the common macOS
-ANGLE/Metal provider lands: the host transcript must contain its exact backend
-marker and any CGL marker is fatal. `--qualification` additionally refuses to
-run while the frozen identity lacks an authoritative CTS build receipt and a
-complete display-backed caselist. See
+The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
+sentinels may run when the guest prerequisites are available. The host
+transcript must contain its exact backend marker and any CGL marker is fatal.
+`--qualification` still refuses to run while the frozen identity lacks an
+authoritative CTS build receipt and a complete display-backed caselist. See
 [`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md); do not work around the block by
 changing, rebuilding, overlaying, or preloading guest userspace.
 

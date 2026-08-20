@@ -4,6 +4,21 @@ cmake_path(GET CMAKE_CURRENT_BINARY_DIR PARENT_PATH
     _uml_unit_binary_directory)
 
 if(TARGET uml_gpu_service)
+    add_executable(uml_gpu_host_gl_provider_tests
+        host_gl_provider_lifetime_tests.cpp)
+    target_link_libraries(uml_gpu_host_gl_provider_tests PRIVATE
+        uml_gpu_renderer
+        UML::ThirdPartyVirglrenderer)
+    target_include_directories(uml_gpu_host_gl_provider_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_features(uml_gpu_host_gl_provider_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_host_gl_provider_tests PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    uml_add_unit_test(NAME gpu-host-gl-provider-lifetime
+        COMMAND uml_gpu_host_gl_provider_tests
+        WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+        LABELS gpu)
+
     add_executable(uml_gpu_transport_wire_tests
         gpu_allocation_failure.cpp
         vhost_user_message_test_main.cpp
@@ -117,11 +132,7 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_protocol_device_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
-    # This variant compiles the device source without linking the renderer
-    # component, so it must publish the same header ABI selectors the
-    # production GPU targets do.
     target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
-        UML_GPU_ANGLE_METAL=$<NOT:$<BOOL:${UML_TARGET_MACOS}>>
         UML_GPU_DEVICE_TESTING=1)
     target_compile_features(uml_gpu_protocol_device_test_variant PUBLIC
         cxx_std_20)

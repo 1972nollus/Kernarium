@@ -5,8 +5,7 @@
 The authenticated rootfs owns the CTS executable, resources, Mesa, libdrm,
 and WSI.  This runner injects only a first-party launcher and transient output
 into the disposable OverlayFS upper layer.  It deliberately refuses the old
-macOS CGL renderer and is therefore dormant until the common ANGLE/Metal
-product is available.
+macOS CGL renderer and requires the common ANGLE/Metal product.
 
 Official must-pass qualification remains fail-closed while the frozen identity
 records no authoritative CTS build receipt or complete display-backed caselist.

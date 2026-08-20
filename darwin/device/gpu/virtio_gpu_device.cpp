@@ -1182,7 +1182,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
             }
             auto success = response(
                 *header, protocol::GpuResponse::okNoData);
-#if UML_GPU_ANGLE_METAL
             void* metalTexture = nullptr;
             if (UML_GPU_RENDERER.resourceMetalTexture(
                     flush->resourceId, metalTexture) == 0 &&
@@ -1199,26 +1198,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
                  * own timeline and the host presents the newest frame it can. */
                 return success;
             }
-#else
-            std::uint32_t textureId = 0;
-            if (UML_GPU_RENDERER.resourceTexture(
-                    flush->resourceId, textureId) == 0 &&
-                presentAccepted(
-                    UML_GPU_DISPLAY.presentOpenGl(OpenGlScanout {
-                        .textureId = textureId,
-                        .resourceTarget = resource.target,
-                        .sourceWidth = resource.width,
-                        .sourceHeight = resource.height,
-                        .sourceX = scanoutRectangle_.x,
-                        .sourceY = scanoutRectangle_.y,
-                        .width = scanoutRectangle_.width,
-                        .height = scanoutRectangle_.height,
-                    }))) {
-                /* A dropped frame is success for the guest: it renders on its
-                 * own timeline and the host presents the newest frame it can. */
-                return success;
-            }
-#endif
             UML_GPU_DISPLAY.recordCpuFallbackFrame();
             const auto fallbackDamage =
                 UML_GPU_DISPLAY.needsFullCpuFallback() ?

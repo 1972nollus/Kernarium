@@ -195,11 +195,14 @@ GLIB_SOURCE="$TEMP_ROOT/glib"
 LIBFFI_SOURCE="$TEMP_ROOT/libffi"
 CROSS_FILE="$BUILDS/meson-$PLATFORM.cross"
 mkdir -p -- "$BUILDS" "$GLIB_SOURCE/subprojects/proxy-libintl-0.5" \
-	"$LIBFFI_SOURCE" "$STAGE/share/uml-dependencies/patches"
+	"$GLIB_SOURCE/subprojects/gvdb" "$LIBFFI_SOURCE" \
+	"$STAGE/share/uml-dependencies/patches"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/glib-ios/" "$GLIB_SOURCE/"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/libffi/" "$LIBFFI_SOURCE/"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/proxy-libintl/" \
 	"$GLIB_SOURCE/subprojects/proxy-libintl-0.5/"
+$RSYNC -a --exclude .git "$SOURCE_ROOT/gvdb/" \
+	"$GLIB_SOURCE/subprojects/gvdb/"
 
 printf '%s\n' "building PCRE2 10.47 for $PLATFORM"
 "$CMAKE" -S "$SOURCE_ROOT/pcre2" -B "$BUILDS/pcre2" -G Ninja \

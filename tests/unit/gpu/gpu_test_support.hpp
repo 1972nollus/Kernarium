@@ -16,6 +16,7 @@
 #include <source_location>
 #include <span>
 #include <string>
+#include <string_view>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -42,7 +43,8 @@ void failAfterAllocations(std::size_t count) noexcept;
 void clearAllocationFailure() noexcept;
 
 void runVhostUserMessageTests();
-void runVhostUserServerTests();
+void runVhostUserServerTests(const char* executable);
+[[noreturn]] void runVhostUserServerChild(std::string_view mode);
 void runVhostUserProtocolTests();
 void runInProcessServiceTests();
 void runVirtioGpuDeviceTests();

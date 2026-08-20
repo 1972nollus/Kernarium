@@ -47,8 +47,16 @@ SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernar
 SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
-SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/ios-simulator-arm64/gpu/Frameworks"
-DEVICE_GPU="$ROOT_DIR/.build/dependencies/ios-device-arm64/gpu/Frameworks"
+SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64/Frameworks"
+DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
+
+# Packaging is an independent trust boundary: revalidate the complete source,
+# contract, provenance, binary-platform, and provider-negative policy before
+# consuming either platform prefix.
+"$ROOT_DIR/dependencies/build-apple-gpu.sh" \
+	--platform ios-simulator --verify-only
+"$ROOT_DIR/dependencies/build-apple-gpu.sh" \
+	--platform ios --verify-only
 
 for framework in \
 	"$SIMULATOR_RUNTIME_4K" \

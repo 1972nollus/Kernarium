@@ -2,31 +2,24 @@
 
 #include "native_display.hpp"
 
+#include "metal_presentation.hpp"
 #include "native_display_application.hpp"
-#include "scanout_framebuffer.hpp"
 
 #import <AppKit/AppKit.h>
-#import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
-#import <OpenGL/CGLIOSurface.h>
-#import <OpenGL/OpenGL.h>
-#import <OpenGL/gl3.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
-#include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <exception>
-#include <mutex>
+#include <memory>
 #include <optional>
 #include <pthread.h>
 #include <signal.h>
 #include <stdexcept>
-#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -35,53 +28,10 @@ namespace uml::gpu {
 namespace {
 
 namespace native_input = uml::input::vnc;
-
-NSString* const metalShaderSource = @R"metal(
-#include <metal_stdlib>
-using namespace metal;
-
-struct RasterData {
-    float4 position [[position]];
-    float2 textureCoordinate;
-};
-
-vertex RasterData displayVertex(unsigned int vertexId [[vertex_id]])
-{
-    const float2 positions[] = {
-        float2(-1.0, -1.0),
-        float2( 3.0, -1.0),
-        float2(-1.0,  3.0),
-    };
-    const float2 coordinates[] = {
-        float2(0.0,  1.0),
-        float2(2.0,  1.0),
-        float2(0.0, -1.0),
-    };
-    RasterData output;
-    output.position = float4(positions[vertexId], 0.0, 1.0);
-    output.textureCoordinate = coordinates[vertexId];
-    return output;
-}
-
-fragment float4 displayFragment(
-    RasterData input [[stage_in]],
-    texture2d<float> scanout [[texture(0)]])
-{
-    constexpr sampler textureSampler(
-        mag_filter::linear,
-        min_filter::linear,
-        address::clamp_to_edge);
-    const float4 color = scanout.sample(
-        textureSampler, input.textureCoordinate);
-    return float4(color.rgb, 1.0);
-}
-)metal";
-
 using NativeKey = std::pair<unsigned short, std::uint16_t>;
 
-/* NSEvent keyCode is the physical ANSI keyboard position. Keep the mapping
- * independent of the active macOS layout, just as the VNC path maps keysyms
- * back to Linux physical input codes. */
+// NSEvent keyCode is the physical ANSI keyboard position. Keep the mapping
+// independent of the active macOS layout, as the VNC path does for keysyms.
 constexpr std::array nativeKeys {
     NativeKey {0, 30}, NativeKey {1, 31}, NativeKey {2, 32},
     NativeKey {3, 33}, NativeKey {4, 35}, NativeKey {5, 34},
@@ -149,14 +99,6 @@ NSEventModifierFlags modifierFlag(unsigned short keyCode) noexcept
     }
 }
 
-std::string description(NSError* error)
-{
-    if (error == nil || error.localizedDescription == nil)
-        return "unknown Metal error";
-    const char* text = error.localizedDescription.UTF8String;
-    return text == nullptr ? "unknown Metal error" : std::string(text);
-}
-
 void stopApplication() noexcept
 {
     NSApplication* application = NSApplication.sharedApplication;
@@ -212,144 +154,19 @@ private:
 
 } // namespace
 
-namespace {
-
-/* Seconds between native-display frame-statistics reports. Unset, zero, or
- * unparseable keeps them off, so ordinary runs pay nothing but one relaxed
- * load per presented frame. */
-[[nodiscard]] double frameStatisticsInterval() noexcept
-{
-    static const double interval = [] {
-        const char* value = std::getenv("UML_GPU_FRAME_STATS");
-        if (value == nullptr)
-            return 0.0;
-        char* end = nullptr;
-        const double seconds = std::strtod(value, &end);
-        if (end == value || !(seconds > 0.0))
-            return 0.0;
-        return seconds;
-    }();
-    return interval;
-}
-
-} // namespace
-
-enum class SurfaceState {
-    available,
-    writing,
-    ready,
-    inFlight,
-};
-
-struct SurfaceSlot {
-    IOSurfaceRef surface {};
-    id<MTLTexture> metalTexture;
-    GLuint openGlTexture {};
-    SurfaceState state {SurfaceState::available};
-    std::uint64_t generation {};
-
-    ~SurfaceSlot()
-    {
-        if (surface != nullptr)
-            CFRelease(surface);
-    }
-};
-
 struct NativeDisplayState final :
     public std::enable_shared_from_this<NativeDisplayState> {
     NativeDisplayState(
         std::uint32_t width,
         std::uint32_t height,
         native_input::VncInputSink sink)
-        : framebuffer(width, height)
+        : presentation(width, height)
         , inputSink(std::move(sink))
     {
-        device = MTLCreateSystemDefaultDevice();
-        if (device == nil)
-            throw std::runtime_error("Metal has no default GPU device");
-        commandQueue = [device newCommandQueue];
-        if (commandQueue == nil)
-            throw std::runtime_error("Metal command queue creation failed");
-
-        NSError* error = nil;
-        id<MTLLibrary> library = [device
-            newLibraryWithSource:metalShaderSource
-            options:nil
-            error:&error];
-        if (library == nil) {
-            throw std::runtime_error(
-                "Metal display shader compilation failed: " +
-                description(error));
-        }
-        id<MTLFunction> vertex = [library newFunctionWithName:@"displayVertex"];
-        id<MTLFunction> fragment =
-            [library newFunctionWithName:@"displayFragment"];
-        if (vertex == nil || fragment == nil)
-            throw std::runtime_error("Metal display shader entry is missing");
-        MTLRenderPipelineDescriptor* descriptor =
-            [[MTLRenderPipelineDescriptor alloc] init];
-        descriptor.vertexFunction = vertex;
-        descriptor.fragmentFunction = fragment;
-        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-        pipeline = [device
-            newRenderPipelineStateWithDescriptor:descriptor
-            error:&error];
-        if (pipeline == nil) {
-            throw std::runtime_error(
-                "Metal display pipeline creation failed: " +
-                description(error));
-        }
-
-        MTLTextureDescriptor* textureDescriptor =
-            [MTLTextureDescriptor
-                texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                width:width
-                height:height
-                mipmapped:NO];
-        textureDescriptor.storageMode = MTLStorageModeShared;
-        textureDescriptor.usage = MTLTextureUsageShaderRead;
-        fallbackTexture = [device newTextureWithDescriptor:textureDescriptor];
-        if (fallbackTexture == nil)
-            throw std::runtime_error("Metal scanout texture creation failed");
-
-        for (auto& slot : surfaces) {
-            const auto rowBytes = IOSurfaceAlignProperty(
-                kIOSurfaceBytesPerRow,
-                static_cast<std::size_t>(width) * 4U);
-            const auto allocationSize = IOSurfaceAlignProperty(
-                kIOSurfaceAllocSize,
-                rowBytes * static_cast<std::size_t>(height));
-            NSDictionary* properties = @{
-                (id)kIOSurfaceWidth: @(width),
-                (id)kIOSurfaceHeight: @(height),
-                (id)kIOSurfaceBytesPerElement: @4,
-                (id)kIOSurfaceBytesPerRow: @(rowBytes),
-                (id)kIOSurfaceAllocSize: @(allocationSize),
-                (id)kIOSurfacePixelFormat: @(0x42475241U),
-            };
-            slot.surface = IOSurfaceCreate(
-                (__bridge CFDictionaryRef)properties);
-            if (slot.surface == nullptr)
-                throw std::runtime_error("IOSurface scanout creation failed");
-            slot.metalTexture = [device
-                newTextureWithDescriptor:textureDescriptor
-                iosurface:slot.surface
-                plane:0];
-            if (slot.metalTexture == nil)
-                throw std::runtime_error(
-                    "Metal IOSurface texture creation failed");
-        }
     }
 
     void scheduleWindow();
     void requestRedraw() noexcept;
-    void publishCpuFrame() noexcept;
-    [[nodiscard]] PresentOutcome presentOpenGl(
-        const OpenGlScanout& scanout) noexcept;
-    [[nodiscard]] bool copyOpenGlToSurface(
-        SurfaceSlot& slot, const OpenGlScanout& scanout) noexcept;
-    void draw(MTKView* view) noexcept;
-    void finishPresentation(std::optional<std::size_t> slot) noexcept;
     void sendKey(unsigned short nativeCode, std::int32_t value) noexcept;
     void sendModifier(NSEvent* event) noexcept;
     void sendPointer(
@@ -360,22 +177,10 @@ struct NativeDisplayState final :
         double verticalWheel) noexcept;
     void reportInputFailure() noexcept;
     void reportRenderFailure(const char* message) noexcept;
-    void maybeReport() noexcept;
-    [[nodiscard]] DisplayStatistics snapshot() const noexcept;
     void shutdown() noexcept;
 
-    ScanoutFramebuffer framebuffer;
+    MetalPresentation presentation;
     native_input::VncInputSink inputSink;
-    id<MTLDevice> device;
-    id<MTLCommandQueue> commandQueue;
-    id<MTLRenderPipelineState> pipeline;
-    id<MTLTexture> fallbackTexture;
-    std::array<SurfaceSlot, 2> surfaces;
-    std::mutex presentationMutex;
-    std::uint64_t nextGeneration {1};
-    std::uint64_t cpuGeneration {1};
-    bool cpuFrameReady {true};
-    bool presentationInFlight {};
     __weak MTKView* view {};
     NSWindow* window {};
     id windowDelegate;
@@ -383,20 +188,6 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
-    std::atomic_bool directPathReported {};
-    /* Guest and host timelines are independent, so their counters are plain
-     * relaxed atomics rather than anything the presentation path must lock
-     * for. */
-    std::atomic_uint64_t guestFrames {};
-    std::atomic_uint64_t presentedFrames {};
-    std::atomic_uint64_t droppedFrames {};
-    std::atomic_uint64_t cpuFallbackFrames {};
-    std::atomic_uint64_t reportedAt {};
-    /* Only the thread that wins the reportedAt exchange touches these. */
-    std::uint64_t reportedGuestFrames {};
-    std::uint64_t reportedPresentedFrames {};
-    std::uint64_t reportedDroppedFrames {};
-    std::uint64_t reportedCpuFallbackFrames {};
 };
 
 } // namespace uml::gpu
@@ -445,7 +236,7 @@ struct NativeDisplayState final :
 - (void)drawInMTKView:(MTKView*)view
 {
     if (auto state = _state.lock())
-        state->draw(view);
+        state->presentation.draw((__bridge void*)view);
 }
 
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size
@@ -472,15 +263,6 @@ struct NativeDisplayState final :
         state->sendModifier(event);
 }
 
-/* Whether an event landed on the guest surface.
- *
- * The window accepts moved events while it is key, so motion over the title bar
- * -- or anywhere else in the window that is not this view -- is still delivered
- * here. sendPointer clamps the position into the view, which turns such an event
- * into a real guest movement pinned to the edge, so the guest pointer slides
- * along the border while the cursor is outside. Positions that did not land on
- * the surface therefore have to be dropped rather than clamped.
- */
 - (BOOL)pointerLandedOnSurface:(NSEvent*)event
 {
     const NSPoint location = [self convertPoint:event.locationInWindow
@@ -508,17 +290,11 @@ struct NativeDisplayState final :
 - (void)rightMouseUp:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)otherMouseDown:(NSEvent*)event { [self sendPointerEvent:event]; }
 - (void)otherMouseUp:(NSEvent*)event { [self sendPointerEvent:event]; }
-/* Hover motion is the only pointer input with no press behind it, so it is the
- * one that must stop at the edge of the surface. A drag is exempt: it is
- * anchored to a press that did land on the surface, and dropping its motion
- * would also drop the release that ends it, leaving the guest with a button
- * held down for good.
- */
+
 - (void)mouseMoved:(NSEvent*)event
 {
-    if (![self pointerLandedOnSurface:event])
-        return;
-    [self sendPointerEvent:event];
+    if ([self pointerLandedOnSurface:event])
+        [self sendPointerEvent:event];
 }
 
 - (void)mouseDragged:(NSEvent*)event { [self sendPointerEvent:event]; }
@@ -527,10 +303,6 @@ struct NativeDisplayState final :
 
 - (void)scrollWheel:(NSEvent*)event
 {
-    /* A scroll carries the cursor position too, so one delivered from outside
-     * the surface would move the guest pointer to the clamped edge as well as
-     * scrolling.
-     */
     if (![self pointerLandedOnSurface:event])
         return;
     if (auto state = _state.lock()) {
@@ -579,19 +351,24 @@ namespace uml::gpu {
 
 void NativeDisplayState::scheduleWindow()
 {
+    presentation.setRedrawCallback([weak = weak_from_this()] {
+        if (auto state = weak.lock())
+            state->requestRedraw();
+    });
     auto state = shared_from_this();
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!state->running.load(std::memory_order_acquire))
             return;
         NSApplication* application = NSApplication.sharedApplication;
+        const auto& framebuffer = state->presentation.framebuffer();
         const NSRect frame = NSMakeRect(
             0.0,
             0.0,
-            static_cast<CGFloat>(state->framebuffer.width()),
-            static_cast<CGFloat>(state->framebuffer.height()));
+            static_cast<CGFloat>(framebuffer.width()),
+            static_cast<CGFloat>(framebuffer.height()));
         UmlNativeMetalView* nativeView = [[UmlNativeMetalView alloc]
             initWithFrame:frame
-            device:state->device
+            device:(__bridge id<MTLDevice>)state->presentation.device()
             state:state];
         if (nativeView == nil) {
             state->reportRenderFailure("AppKit Metal view creation failed");
@@ -649,338 +426,6 @@ void NativeDisplayState::requestRedraw() noexcept
     });
 }
 
-void NativeDisplayState::publishCpuFrame() noexcept
-{
-    {
-        std::lock_guard lock(presentationMutex);
-        cpuGeneration = ++nextGeneration;
-        cpuFrameReady = true;
-    }
-    requestRedraw();
-}
-
-bool NativeDisplayState::copyOpenGlToSurface(
-    SurfaceSlot& slot,
-    const OpenGlScanout& scanout) noexcept
-{
-    constexpr std::uint32_t pipeTexture2d = 2;
-    if (scanout.resourceTarget != pipeTexture2d ||
-        scanout.textureId == 0 || scanout.width == 0 ||
-        scanout.height == 0 || scanout.width > framebuffer.width() ||
-        scanout.height > framebuffer.height() ||
-        scanout.sourceX > scanout.sourceWidth ||
-        scanout.sourceY > scanout.sourceHeight ||
-        scanout.width > scanout.sourceWidth - scanout.sourceX ||
-        scanout.height > scanout.sourceHeight - scanout.sourceY) {
-        return false;
-    }
-    CGLContextObj context = CGLGetCurrentContext();
-    if (context == nullptr)
-        return false;
-
-    GLint previousReadFramebuffer = 0;
-    GLint previousDrawFramebuffer = 0;
-    GLint previousActiveTexture = 0;
-    GLint previousTexture2d = 0;
-    GLint previousRectangleTexture = 0;
-    GLint previousReadBuffer = 0;
-    GLint previousDrawBuffer = 0;
-    GLboolean previousScissor = glIsEnabled(GL_SCISSOR_TEST);
-    GLboolean previousFramebufferSrgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
-    GLboolean previousDither = glIsEnabled(GL_DITHER);
-    GLboolean previousColorMask[4] {};
-    GLfloat previousClearColor[4] {};
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer);
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
-    glActiveTexture(GL_TEXTURE0);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture2d);
-    glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &previousRectangleTexture);
-    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
-    glGetIntegerv(GL_DRAW_BUFFER, &previousDrawBuffer);
-    glGetBooleanv(GL_COLOR_WRITEMASK, previousColorMask);
-    glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
-
-    GLuint framebuffers[2] {};
-    glGenFramebuffers(2, framebuffers);
-    bool succeeded = framebuffers[0] != 0 && framebuffers[1] != 0;
-    if (succeeded && slot.openGlTexture == 0) {
-        glGenTextures(1, &slot.openGlTexture);
-        succeeded = slot.openGlTexture != 0;
-        if (succeeded) {
-            glBindTexture(GL_TEXTURE_RECTANGLE, slot.openGlTexture);
-            glTexParameteri(
-                GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(
-                GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(
-                GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(
-                GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            succeeded = CGLTexImageIOSurface2D(
-                context,
-                GL_TEXTURE_RECTANGLE,
-                GL_RGBA8,
-                static_cast<GLsizei>(framebuffer.width()),
-                static_cast<GLsizei>(framebuffer.height()),
-                GL_BGRA,
-                GL_UNSIGNED_INT_8_8_8_8_REV,
-                slot.surface,
-                0) == kCGLNoError;
-        }
-        if (!succeeded && slot.openGlTexture != 0) {
-            glDeleteTextures(1, &slot.openGlTexture);
-            slot.openGlTexture = 0;
-        }
-    }
-    if (succeeded) {
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffers[0]);
-        glFramebufferTexture2D(
-            GL_READ_FRAMEBUFFER,
-            GL_COLOR_ATTACHMENT0,
-            GL_TEXTURE_2D,
-            scanout.textureId,
-            0);
-        glReadBuffer(GL_COLOR_ATTACHMENT0);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffers[1]);
-        glFramebufferTexture2D(
-            GL_DRAW_FRAMEBUFFER,
-            GL_COLOR_ATTACHMENT0,
-            GL_TEXTURE_RECTANGLE,
-            slot.openGlTexture,
-            0);
-        glDrawBuffer(GL_COLOR_ATTACHMENT0);
-        succeeded =
-            glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) ==
-                GL_FRAMEBUFFER_COMPLETE &&
-            glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) ==
-                GL_FRAMEBUFFER_COMPLETE;
-    }
-    if (succeeded) {
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_FRAMEBUFFER_SRGB);
-        glDisable(GL_DITHER);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-        glClear(GL_COLOR_BUFFER_BIT);
-        const GLint sourceBottom = static_cast<GLint>(
-            scanout.sourceHeight - scanout.sourceY - scanout.height);
-        const GLint sourceTop = static_cast<GLint>(
-            scanout.sourceHeight - scanout.sourceY);
-        const GLint destinationBottom = static_cast<GLint>(
-            framebuffer.height() - scanout.height);
-        glBlitFramebuffer(
-            static_cast<GLint>(scanout.sourceX),
-            sourceBottom,
-            static_cast<GLint>(scanout.sourceX + scanout.width),
-            sourceTop,
-            0,
-            destinationBottom,
-            static_cast<GLint>(scanout.width),
-            static_cast<GLint>(framebuffer.height()),
-            GL_COLOR_BUFFER_BIT,
-            GL_NEAREST);
-        glFlush();
-    }
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousDrawFramebuffer);
-    glReadBuffer(previousReadBuffer);
-    glDrawBuffer(previousDrawBuffer);
-    glBindTexture(GL_TEXTURE_2D, previousTexture2d);
-    glBindTexture(GL_TEXTURE_RECTANGLE, previousRectangleTexture);
-    glActiveTexture(previousActiveTexture);
-    if (previousScissor)
-        glEnable(GL_SCISSOR_TEST);
-    else
-        glDisable(GL_SCISSOR_TEST);
-    if (previousFramebufferSrgb)
-        glEnable(GL_FRAMEBUFFER_SRGB);
-    else
-        glDisable(GL_FRAMEBUFFER_SRGB);
-    if (previousDither)
-        glEnable(GL_DITHER);
-    else
-        glDisable(GL_DITHER);
-    glColorMask(
-        previousColorMask[0], previousColorMask[1],
-        previousColorMask[2], previousColorMask[3]);
-    glClearColor(
-        previousClearColor[0], previousClearColor[1],
-        previousClearColor[2], previousClearColor[3]);
-    glDeleteFramebuffers(2, framebuffers);
-    return succeeded;
-}
-
-PresentOutcome NativeDisplayState::presentOpenGl(
-    const OpenGlScanout& scanout) noexcept
-{
-    guestFrames.fetch_add(1, std::memory_order_relaxed);
-    try {
-        std::size_t selected = surfaces.size();
-        {
-            std::lock_guard lock(presentationMutex);
-            for (std::size_t index = 0; index < surfaces.size(); ++index) {
-                if (surfaces[index].state == SurfaceState::available) {
-                    selected = index;
-                    break;
-                }
-                if (surfaces[index].state == SurfaceState::ready)
-                    selected = index;
-            }
-            /* Every surface is in flight, so the host is behind the guest.
-             * Drop this frame instead of reporting a failure the device would
-             * answer with a full GPU-to-CPU readback; the guest keeps its own
-             * pace and the next flush presents newer contents anyway. */
-            if (selected == surfaces.size()) {
-                droppedFrames.fetch_add(1, std::memory_order_relaxed);
-                maybeReport();
-                return PresentOutcome::dropped;
-            }
-            /* Overwriting a frame the host never drew is the other drop. */
-            if (surfaces[selected].state == SurfaceState::ready)
-                droppedFrames.fetch_add(1, std::memory_order_relaxed);
-            surfaces[selected].state = SurfaceState::writing;
-        }
-        if (!copyOpenGlToSurface(surfaces[selected], scanout)) {
-            std::lock_guard lock(presentationMutex);
-            surfaces[selected].state = SurfaceState::available;
-            return PresentOutcome::unsupported;
-        }
-        if (!directPathReported.exchange(true, std::memory_order_relaxed)) {
-            std::fputs(
-                "Native display: direct CGL/IOSurface/Metal presentation\n",
-                stderr);
-        }
-        {
-            std::lock_guard lock(presentationMutex);
-            surfaces[selected].generation = ++nextGeneration;
-            surfaces[selected].state = SurfaceState::ready;
-        }
-        requestRedraw();
-        maybeReport();
-        return PresentOutcome::presented;
-    } catch (...) {
-        reportRenderFailure("OpenGL-to-IOSurface presentation failed");
-        return PresentOutcome::unsupported;
-    }
-}
-
-void NativeDisplayState::finishPresentation(
-    std::optional<std::size_t> slot) noexcept
-{
-    bool pending = false;
-    {
-        std::lock_guard lock(presentationMutex);
-        if (slot)
-            surfaces[*slot].state = SurfaceState::available;
-        presentationInFlight = false;
-        pending = cpuFrameReady;
-        for (const auto& surface : surfaces)
-            pending = pending || surface.state == SurfaceState::ready;
-    }
-    if (pending)
-        requestRedraw();
-}
-
-void NativeDisplayState::draw(MTKView* nativeView) noexcept
-{
-    std::optional<std::size_t> selectedSlot;
-    bool presentationClaimed = false;
-    @autoreleasepool {
-        try {
-            MTLRenderPassDescriptor* pass =
-                nativeView.currentRenderPassDescriptor;
-            id<CAMetalDrawable> drawable = nativeView.currentDrawable;
-            if (pass == nil || drawable == nil)
-                return;
-            id<MTLTexture> sourceTexture = nil;
-            {
-                std::lock_guard lock(presentationMutex);
-                if (presentationInFlight)
-                    return;
-                std::uint64_t newest = cpuFrameReady ? cpuGeneration : 0;
-                for (std::size_t index = 0; index < surfaces.size(); ++index) {
-                    if (surfaces[index].state == SurfaceState::ready &&
-                        surfaces[index].generation > newest) {
-                        newest = surfaces[index].generation;
-                        selectedSlot = index;
-                    }
-                }
-                if (newest == 0)
-                    return;
-                if (selectedSlot) {
-                    auto& selected = surfaces[*selectedSlot];
-                    selected.state = SurfaceState::inFlight;
-                    sourceTexture = selected.metalTexture;
-                } else {
-                    sourceTexture = fallbackTexture;
-                    cpuFrameReady = false;
-                }
-                for (std::size_t index = 0; index < surfaces.size(); ++index) {
-                    if ((!selectedSlot || index != *selectedSlot) &&
-                        surfaces[index].state == SurfaceState::ready &&
-                        surfaces[index].generation <= newest) {
-                        /* Superseded before the host ever drew it. */
-                        surfaces[index].state = SurfaceState::available;
-                        droppedFrames.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-                if (cpuFrameReady && cpuGeneration <= newest)
-                    cpuFrameReady = false;
-                presentationInFlight = true;
-                presentationClaimed = true;
-            }
-            if (!selectedSlot) {
-                std::lock_guard lock(framebuffer);
-                const MTLRegion region = MTLRegionMake2D(
-                    0, 0, framebuffer.width(), framebuffer.height());
-                [fallbackTexture
-                    replaceRegion:region mipmapLevel:0
-                    withBytes:framebuffer.pixels().data()
-                    bytesPerRow:framebuffer.rowBytes()];
-            }
-            id<MTLCommandBuffer> buffer = [commandQueue commandBuffer];
-            if (buffer == nil) {
-                reportRenderFailure("Metal command buffer creation failed");
-                finishPresentation(selectedSlot);
-                presentationClaimed = false;
-                return;
-            }
-            id<MTLRenderCommandEncoder> encoder =
-                [buffer renderCommandEncoderWithDescriptor:pass];
-            if (encoder == nil) {
-                reportRenderFailure("Metal render encoder creation failed");
-                finishPresentation(selectedSlot);
-                presentationClaimed = false;
-                return;
-            }
-            [encoder setRenderPipelineState:pipeline];
-            [encoder setFragmentTexture:sourceTexture atIndex:0];
-            [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                        vertexStart:0
-                        vertexCount:3];
-            [encoder endEncoding];
-            [buffer presentDrawable:drawable];
-            auto state = shared_from_this();
-            [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
-                /* Counted here rather than in finishPresentation, which the
-                 * encoder-failure paths also reach. */
-                state->presentedFrames.fetch_add(
-                    1, std::memory_order_relaxed);
-                state->finishPresentation(selectedSlot);
-            }];
-            [buffer commit];
-            presentationClaimed = false;
-        } catch (...) {
-            if (presentationClaimed)
-                finishPresentation(selectedSlot);
-            reportRenderFailure("unexpected native display rendering failure");
-        }
-    }
-}
-
 void NativeDisplayState::sendKey(
     unsigned short nativeCode,
     std::int32_t value) noexcept
@@ -1016,9 +461,7 @@ void NativeDisplayState::sendModifier(NSEvent* event) noexcept
         sendKey(event.keyCode, 0);
         return;
     }
-    sendKey(
-        event.keyCode,
-        (event.modifierFlags & flag) != 0 ? 1 : 0);
+    sendKey(event.keyCode, (event.modifierFlags & flag) != 0 ? 1 : 0);
 }
 
 void NativeDisplayState::sendPointer(
@@ -1094,93 +537,11 @@ void NativeDisplayState::reportRenderFailure(const char* message) noexcept
         std::fprintf(stderr, "Native GPU display failed: %s\n", message);
 }
 
-DisplayStatistics NativeDisplayState::snapshot() const noexcept
-{
-    return DisplayStatistics {
-        .guestFrames = guestFrames.load(std::memory_order_relaxed),
-        .presentedFrames = presentedFrames.load(std::memory_order_relaxed),
-        .droppedFrames = droppedFrames.load(std::memory_order_relaxed),
-        .cpuFallbackFrames =
-            cpuFallbackFrames.load(std::memory_order_relaxed),
-    };
-}
-
-void NativeDisplayState::maybeReport() noexcept
-{
-    const double interval = frameStatisticsInterval();
-    if (interval <= 0.0)
-        return;
-    const auto now = static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    auto previous = reportedAt.load(std::memory_order_relaxed);
-    if (previous == 0) {
-        /* Start the window at the first offered frame rather than at display
-         * construction, so the first line is not diluted by guest boot. */
-        reportedAt.compare_exchange_strong(
-            previous, now, std::memory_order_relaxed);
-        return;
-    }
-    const auto span = now - previous;
-    if (static_cast<double>(span) < interval * 1e9)
-        return;
-    /* Exactly one caller formats a given window. */
-    if (!reportedAt.compare_exchange_strong(
-            previous, now, std::memory_order_relaxed)) {
-        return;
-    }
-    const DisplayStatistics total = snapshot();
-    const double seconds = static_cast<double>(span) / 1e9;
-    const auto guest = total.guestFrames - reportedGuestFrames;
-    const auto presented = total.presentedFrames - reportedPresentedFrames;
-    const auto dropped = total.droppedFrames - reportedDroppedFrames;
-    const auto fallback =
-        total.cpuFallbackFrames - reportedCpuFallbackFrames;
-    reportedGuestFrames = total.guestFrames;
-    reportedPresentedFrames = total.presentedFrames;
-    reportedDroppedFrames = total.droppedFrames;
-    reportedCpuFallbackFrames = total.cpuFallbackFrames;
-    char line[224];
-    const int written = std::snprintf(
-        line, sizeof(line),
-        "Native display frames: guest %.1f/s presented %.1f/s dropped %.1f/s "
-        "(%.1f%%) cpu-fallback %.1f/s | totals guest %llu presented %llu "
-        "dropped %llu cpu-fallback %llu",
-        static_cast<double>(guest) / seconds,
-        static_cast<double>(presented) / seconds,
-        static_cast<double>(dropped) / seconds,
-        guest == 0 ? 0.0 : 100.0 * static_cast<double>(dropped) /
-            static_cast<double>(guest),
-        static_cast<double>(fallback) / seconds,
-        static_cast<unsigned long long>(total.guestFrames),
-        static_cast<unsigned long long>(total.presentedFrames),
-        static_cast<unsigned long long>(total.droppedFrames),
-        static_cast<unsigned long long>(total.cpuFallbackFrames));
-    if (written <= 0)
-        return;
-    std::fprintf(stderr, "%s\n", line);
-    /* The window title is this product's on-screen surface for the same
-     * numbers; it needs no renderer changes and stays legible while the guest
-     * owns every pixel of the view. */
-    if (!running.load(std::memory_order_acquire))
-        return;
-    NSString* title = [NSString
-        stringWithFormat:@"UML guest %.1f fps / host %.1f fps / dropped %.1f%%",
-        static_cast<double>(guest) / seconds,
-        static_cast<double>(presented) / seconds,
-        guest == 0 ? 0.0 : 100.0 * static_cast<double>(dropped) /
-            static_cast<double>(guest)];
-    auto state = shared_from_this();
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (state->running.load(std::memory_order_acquire))
-            state->window.title = title;
-    });
-}
-
 void NativeDisplayState::shutdown() noexcept
 {
     if (!running.exchange(false, std::memory_order_acq_rel))
         return;
+    presentation.shutdown();
     auto state = shared_from_this();
     dispatch_async(dispatch_get_main_queue(), ^{
         NSApplication* application = NSApplication.sharedApplication;
@@ -1214,18 +575,18 @@ NativeDisplay::~NativeDisplay()
 
 std::uint32_t NativeDisplay::width() const noexcept
 {
-    return state_->framebuffer.width();
+    return state_->presentation.framebuffer().width();
 }
 
 std::uint32_t NativeDisplay::height() const noexcept
 {
-    return state_->framebuffer.height();
+    return state_->presentation.framebuffer().height();
 }
 
 void NativeDisplay::clear() noexcept
 {
-    state_->framebuffer.clear();
-    state_->publishCpuFrame();
+    state_->presentation.framebuffer().clear();
+    state_->presentation.publishCpuFrame();
 }
 
 void NativeDisplay::update(
@@ -1242,8 +603,7 @@ void NativeDisplay::update(
         std::span<const std::uint8_t>(source),
         sourceWidth,
         sourceHeight,
-        static_cast<std::size_t>(sourceWidth) *
-            protocol::gpuBytesPerPixel,
+        static_cast<std::size_t>(sourceWidth) * protocol::gpuBytesPerPixel,
         sourceFormat,
         x,
         y,
@@ -1266,7 +626,7 @@ void NativeDisplay::update(
     std::uint32_t width,
     std::uint32_t height)
 {
-    const auto rectangle = state_->framebuffer.update(
+    const auto rectangle = state_->presentation.framebuffer().update(
         source,
         sourceWidth,
         sourceHeight,
@@ -1279,34 +639,29 @@ void NativeDisplay::update(
         width,
         height);
     if (rectangle.width != 0 && rectangle.height != 0)
-        state_->publishCpuFrame();
+        state_->presentation.publishCpuFrame();
 }
 
 void NativeDisplay::fillSelfTestPattern()
 {
-    state_->framebuffer.fillSelfTestPattern();
-    state_->publishCpuFrame();
+    state_->presentation.framebuffer().fillSelfTestPattern();
+    state_->presentation.publishCpuFrame();
 }
 
-PresentOutcome NativeDisplay::presentOpenGl(
-    const OpenGlScanout& scanout) noexcept
+PresentOutcome NativeDisplay::presentMetal(
+    const MetalScanout& scanout) noexcept
 {
-    return state_->presentOpenGl(scanout);
-}
-
-PresentOutcome NativeDisplay::presentMetal(const MetalScanout&) noexcept
-{
-    return PresentOutcome::unsupported;
+    return state_->presentation.present(scanout);
 }
 
 DisplayStatistics NativeDisplay::statistics() const noexcept
 {
-    return state_->snapshot();
+    return state_->presentation.statistics();
 }
 
 void NativeDisplay::recordCpuFallbackFrame() noexcept
 {
-    state_->cpuFallbackFrames.fetch_add(1, std::memory_order_relaxed);
+    state_->presentation.recordCpuFallbackFrame();
 }
 
 int runNativeDisplayApplication(

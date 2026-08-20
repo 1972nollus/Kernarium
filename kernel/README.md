@@ -29,3 +29,19 @@ developer-owned data. Copy its value manually into the new ignored
 All maintained changes remain local to this project. Source repositories and
 branch names are provenance only; the kernel tooling has no submission or
 push workflow.
+
+## Apple graphics ownership
+
+The shared Apple ANGLE/Metal transition changes only the host renderer,
+dependency, presentation, and packaging layers. The mainline 6.18 family
+already builds the standard Virtio-GPU DRM/KMS and UML transport support used
+by the immutable guest Mesa/libdrm stack, so this transition adds no Linux
+topic, Kconfig change, host/kernel bridge declaration, or platform-specific
+kernel image. macOS, iOS Simulator, and iOS device continue to consume the
+same canonical 16 KiB or 4 KiB `vmlinux` for their selected page profile.
+
+Host-visible blobs, a shared-memory aperture, and related mapping/coherency
+work remain conditional optimization or Vulkan work. They must not be inferred
+from the ANGLE/Metal provider switch or advertised before the standard guest
+getparams, UML transport, host commands, reset lifetime, both page profiles,
+and maintained generated kernel series have been implemented and verified.

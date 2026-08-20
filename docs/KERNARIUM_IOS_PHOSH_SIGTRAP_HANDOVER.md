@@ -5,6 +5,17 @@ Phosh boot/display issue on 2026-08-15. The `SIGTRAP` itself is now understood
 and fixed; the sections below keep the original evidence as history and record
 what the fix was.
 
+## Current provider layout (2026-08-21)
+
+The defensive public `UML_GPU_ANGLE_METAL` layout selector described below has
+now been retired by the common Apple GPU transition. `VirglRenderer` owns one
+opaque `HostGlProvider` in an unconditional fixed layout on macOS, Simulator,
+and device, so no consumer can compile a smaller backend-specific enclosing
+object. The ANGLE/Metal provider is fixed by the verified product rather than
+a macro or runtime selector. The 2026-08-15 diagnosis and allocator evidence
+remain valid history for the original corruption, but its macro-based repair
+is no longer the current architecture.
+
 ## Resolution (2026-08-15)
 
 The trap was host heap corruption caused by a preprocessor ABI mismatch, not by

@@ -22,10 +22,9 @@ gnulib|2024-12-12
 libiconv|1.18
 proxy-libintl|0.5
 glib|2.88.3
+gvdb|2b42fc7
 libslirp|4.9.3
-libepoxy|1.5.10
-libvncserver|0.9.15
-virglrenderer|1.3.0'
+libvncserver|0.9.15'
 
 fail()
 {
@@ -403,9 +402,19 @@ mkdir -p -- "$BUILDS/libffi"
 )
 
 printf '%s\n' "building GNU libiconv 1.18"
+# The pinned developer Makefile names automake-1.17/aclocal-1.17 explicitly.
+# Current Homebrew exposes its backward-compatible Automake only through the
+# unversioned commands. Supply those names inside this disposable build tree;
+# they are build tools and never enter the published prefix.
+AUTOMAKE_COMPAT="$BUILDS/automake-compat"
+mkdir -p -- "$AUTOMAKE_COMPAT"
+ln -s "$AUTOMAKE" "$AUTOMAKE_COMPAT/automake-1.17"
+ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.17"
+ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.16"
 (
 	cd "$SOURCES/libiconv"
-	private_env env MAKE="$MAKE" GNULIB_SRCDIR="$SOURCES/gnulib" \
+	private_env env PATH="$AUTOMAKE_COMPAT:$PATH" \
+		MAKE="$MAKE" GNULIB_SRCDIR="$SOURCES/gnulib" \
 		./autogen.sh
 )
 mkdir -p -- "$BUILDS/libiconv"
@@ -424,6 +433,8 @@ require_private_pkg_config libffi
 mkdir -p -- "$SOURCES/glib/subprojects/proxy-libintl-0.5"
 cp -R "$SOURCES/proxy-libintl/." \
 	"$SOURCES/glib/subprojects/proxy-libintl-0.5"
+mkdir -p -- "$SOURCES/glib/subprojects/gvdb"
+cp -R "$SOURCES/gvdb/." "$SOURCES/glib/subprojects/gvdb"
 meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
 	--prefix="$PREFIX" --libdir=lib --buildtype=release \
 	--default-library=static --wrap-mode=nodownload \
@@ -447,14 +458,6 @@ meson_env setup "$BUILDS/libslirp" "$SOURCES/libslirp" \
 meson_env compile -C "$BUILDS/libslirp"
 meson_install_env install -C "$BUILDS/libslirp"
 
-printf '%s\n' "building libepoxy 1.5.10"
-meson_env setup "$BUILDS/libepoxy" "$SOURCES/libepoxy" \
-	--prefix="$PREFIX" --libdir=lib --buildtype=release \
-	--default-library=static --wrap-mode=nofallback \
-	-Dx11=false -Dglx=no -Degl=no -Dtests=false -Ddocs=false
-meson_env compile -C "$BUILDS/libepoxy"
-meson_install_env install -C "$BUILDS/libepoxy"
-
 printf '%s\n' "building pristine LibVNCServer 0.9.15"
 cmake_setup "$SOURCES/libvncserver" "$BUILDS/libvncserver" \
 	-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -471,24 +474,6 @@ cmake_setup "$SOURCES/libvncserver" "$BUILDS/libvncserver" \
 	-DWITH_TIGHTVNC_FILETRANSFER=OFF -DWITH_WEBSOCKETS=OFF \
 	-DWITH_SASL=OFF -DWITH_XCB=OFF -DWITH_QT=OFF
 cmake_build_install "$BUILDS/libvncserver"
-
-printf '%s\n' "building virglrenderer 1.3.0"
-require_private_pkg_config epoxy
-meson_env setup "$BUILDS/virglrenderer" "$SOURCES/virglrenderer" \
-	--prefix="$PREFIX" --libdir=lib --buildtype=release \
-	--default-library=static --wrap-mode=nofallback \
-	-Dvenus=false '-Dplatforms=[]' '-Ddrm-renderers=[]' \
-	-Dtests=false -Dfuzzer=false -Dvideo=false -Dtracing=none
-meson_env compile -C "$BUILDS/virglrenderer" virglrenderer
-mkdir -p -- "$STAGE/include/virgl"
-"$INSTALL" -m 0644 "$BUILDS/virglrenderer/src/libvirglrenderer.a" \
-	"$STAGE/lib/libvirglrenderer.a"
-"$INSTALL" -m 0644 "$SOURCES/virglrenderer/src/virglrenderer.h" \
-	"$STAGE/include/virgl/virglrenderer.h"
-"$INSTALL" -m 0644 "$BUILDS/virglrenderer/src/virgl-version.h" \
-	"$STAGE/include/virgl/virgl-version.h"
-"$INSTALL" -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
-	"$STAGE/include/virgl/virgl_hw.h"
 
 # The emulator imports exact archives and headers rather than upstream CMake
 # packages.  Remove unused exports because they can serialize build-only paths

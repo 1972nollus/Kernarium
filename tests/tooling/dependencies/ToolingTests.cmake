@@ -25,6 +25,12 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME dependency-apple-gpu-prefix-verifier
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh
+    LABELS dependency gpu
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME dependency-runtime-closure
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_runtime_dependencies.sh
     LABELS dependency

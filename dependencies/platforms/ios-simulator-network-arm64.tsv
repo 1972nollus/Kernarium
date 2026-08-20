@@ -5,5 +5,5 @@ platform	ios-simulator
 architecture	arm64
 deployment_target	16.0
 linkage	static
-components	pcre2,libffi,proxy-libintl,glib-ios,libslirp
+components	pcre2,libffi,proxy-libintl,glib-ios,gvdb,libslirp
 source_manifest	dependencies/manifest.tsv

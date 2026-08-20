@@ -182,7 +182,7 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_GUEST_16K_PAGES": true,
-        "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/gpu",
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/network",
         "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
       }
@@ -209,7 +209,7 @@
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
         "UML_GUEST_16K_PAGES": true,
-        "UML_IOS_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/gpu",
+        "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-simulator-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/network",
         "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
       }
@@ -244,12 +244,12 @@
     {
       "name": "gpu-unit-test-binaries",
       "configurePreset": "macos-unit-gpu",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
     },
     {
       "name": "gpu-unit-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-asan-ubsan",
-      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "uml_gpu_device_atomicity_tests", "uml_gpu_host_gl_provider_tests", "uml_gpu_service_fd_tests", "uml_gpu_service_stop_wake_tests", "uml_gpu_transport_wire_tests", "uml_gpu_vnc_lifetime_tests", "uml_virtio_input_tests", "uml_virtio_sound_tests", "architecture-audit"]
     },
     {
       "name": "macos-integration",
@@ -358,7 +358,7 @@
       },
       "filter": {
         "include": {
-          "name": "^(gpu-device-command-atomicity|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-sound-protocol)$"
+          "name": "^(gpu-device-command-atomicity|gpu-host-gl-provider-lifetime|gpu-service-fd-ownership|gpu-service-stop-wake|gpu-transport-wire-ownership|gpu-vnc-lifetime|virtio-sound-protocol)$"
         }
       },
       "execution": {

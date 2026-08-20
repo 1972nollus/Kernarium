@@ -1,5 +1,17 @@
 # Refactor evidence
 
+## Common Apple ANGLE/Metal transition (2026-08-21)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Product authority | One `apple-gpu` manifest membership owns UTM WebKit/ANGLE, libepoxy, and virglrenderer for macOS, Simulator, and device. One offline builder publishes three format-3 prefixes with the same `gl_provider=angle-metal` and component/feature contract. The ordinary macOS product no longer owns a graphics source or recipe. |
+| Provider and presentation | Common `HostGlProvider` requests the hardware ANGLE Metal display and ES 3 contexts behind one opaque renderer pointer. Common `MetalPresentation` consumes same-device full-frame `MTLTexture` scanouts; AppKit/UIKit are shells, and macOS VNC is platform-selected. The focused provider test pins exact virgl context-parameter versioning, sharing, make-current, rejection, and teardown; the device fixture pins direct, dropped, unsupported, and counted CPU-fallback outcomes. |
+| Negative closure | Prefix verification rejects wrong architecture/platform/deployment target, unexpected payloads, install names, `LC_SUB_CLIENT`, symlinks, provenance drift, and CGL/EAGL/Vulkan provider symbols in frameworks and static libepoxy/virglrenderer archives. Runtime verification accepts exactly flat authenticated EGL/GLES companions and rejects legacy desktop attribution or closure. Invalid existing prefixes are not replaced. |
+| Dependency gates | Central manifest validation; real read-only `apple-gpu` and `ios-network` prepared-repository verification; all three installed Apple-GPU prefix checks; and the preparation, patch-regeneration, build-manifest, ordinary-prefix, Apple-GPU-prefix, and runtime-closure tooling scripts passed. The unchanged local desktop prepared-source root contains a pre-Git legacy zlib tree, so its `prepare.sh --verify` gate was not claimed; the installed desktop prefix was revalidated before linking. |
+| Host gates | `check-gpu` and `check-gpu-asan-ubsan` each passed the architecture audit, seven GPU unit tests, and `virtio-gpu-vnc-smoke` 1/1. The audited host graph reported 606 targets, 55 layered targets, and a 639-entry test manifest. Test children that exercise process death now `exec` before constructing Metal, avoiding unsupported post-`fork` Metal compiler initialization while preserving descriptor, signal, watchdog, and reset coverage. |
+| Apple products | The final provider source rebuilt `uml-darwin` and passed its post-link Apple-GPU closure check. Both page profiles rebuilt for iOS Simulator and device. `Kernarium/scripts/package-ios-frameworks.sh` reverified the two mobile GPU prefixes and published the 4 KiB and 16 KiB runtime XCFrameworks plus EGL and GLESv2. Sandbox-denied CoreSimulator logging produced warnings during packaging but did not affect `xcodebuild -create-xcframework`, which exited successfully four times. |
+| Qualification boundary | No Linux, ABI, kernel, rootfs, Mesa, libdrm, or CTS payload changed. No guest API or performance claim is promoted. The macOS guest identity/capset sentinel, complete display-backed caselist, same-path Simulator validation, and connected-iPad campaign remain outstanding; the frozen missing CTS source/build receipt keeps qualification fail-closed. |
+
 ## Shared Apple GL/GLES baseline (2026-08-20)
 
 | Boundary | Current evidence and limitation |

@@ -32,6 +32,7 @@ legacy_name	current_name	owner	suite	disposition	rationale
 -	gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional	fragmented wire input, connection retry, notification, device rollback, and service startup preserve GPU ownership
 -	gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional	fragmented and malformed frames adopt ancillary descriptors once, close them on every failure path, and preserve retryability without a listener
 -	gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional	partial header and payload shutdown require the in-process service's separately owned endpoint wake rather than timeout polling
+-	gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional	ANGLE Metal provider context sharing, make-current behavior, and same-thread teardown
 -	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove mutating command atomicity, retry, checked EDID mode and density, and direct GPU presentation without CPU readback
 -	gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional	post-listen event-thread construction failure releases the VNC server and permits immediate retry
 -	vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
@@ -647,6 +648,7 @@ dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/
 -	dependency-patch-regenerator	tests/tooling/dependencies/test_rebase_patches.sh	tooling	retained	maintained dependency commits are rebased onto the pinned upstream and patches are regenerated exclusively with git format-patch
 -	dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
 -	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private prefix manifest, required payload, symlink exclusion, static arm64 format, platform, and deployment compatibility
+-	dependency-apple-gpu-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh	tooling	retained	common Apple ANGLE/Metal prefix contract, exact provenance and payload, binary platform and deployment identity, forbidden provider symbols, and non-replacement of invalid prefixes
 -	dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained	production executables may depend dynamically only on Apple system libraries without object or link-map attribution
 -	guest-overlay-systemd-smoke	tests/integration	integration	retained	EROFS lower, required /opt plus LTP userspace and offline Geekbench payload, image-owned uml tty0 login, Docker and containerd tmpfs state, offline source-built hello-world container execution, and systemd guest boot
 -	guest-interpreter-smoke	tests/integration/jit	integration	retained	lightweight interpreter kernel, shell, and CPU-feature smoke

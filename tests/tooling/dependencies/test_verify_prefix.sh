@@ -102,11 +102,8 @@ include/libintl.h
 include/glib-2.0/glib.h
 lib/glib-2.0/include/glibconfig.h
 include/slirp/libslirp.h
-include/epoxy/gl.h
 include/rfb/rfb.h
-include/rfb/rfbclient.h
-include/virgl/virglrenderer.h
-include/virgl/virgl_hw.h'
+include/rfb/rfbclient.h'
 printf '%s\n' "$required_headers" | while IFS= read -r relative; do
 	printf '%s\n' fixture >"$BASE_PREFIX/$relative"
 done
@@ -126,10 +123,8 @@ libiconv.a
 libintl.a
 libglib-2.0.a
 libslirp.a
-libepoxy.a
 libvncserver.a
-libvncclient.a
-libvirglrenderer.a'
+libvncclient.a'
 printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 	cp "$TEST_ROOT/fixture-arm64.a" "$BASE_PREFIX/lib/$archive"
 done

@@ -46,7 +46,7 @@ An existing mismatched source repository or prefix is never replaced. Move it
 aside after reviewing the diagnostic, then prepare or build again. Downstream
 build scripts are offline and copy prepared source without `.git` metadata.
 
-The macOS builder publishes one verified private static prefix at
+The macOS builder publishes one verified private non-graphics static prefix at
 `.build/dependencies/macos-arm64`. Its ordered recipe list must exactly match
 the `macos` manifest rows. Git checkouts of libffi and libiconv omit generated
 Autotools outputs, so the builder regenerates them locally. Libiconv uses the
@@ -59,22 +59,25 @@ libtool metadata before publication. The verifier checks the current manifest
 and patch policy, receipt, required headers, static-only payload, arm64 format,
 deployment target, and absence of symlinks or undeclared libraries.
 
-## iOS prefixes
+## Apple GPU and iOS network prefixes
 
-The iOS build and verification entry points are also owned here:
+One `apple-gpu` product owns the ANGLE/Metal graphics source matrix for macOS,
+iOS Simulator, and iOS device. The iOS network product remains separate:
 
 ```sh
-dependencies/prepare.sh --product ios-gpu
-dependencies/build-ios-gpu.sh
-dependencies/build-ios-gpu.sh --platform ios
+dependencies/prepare.sh --product apple-gpu
+dependencies/build-apple-gpu.sh --platform macos
+dependencies/build-apple-gpu.sh --platform ios-simulator
+dependencies/build-apple-gpu.sh --platform ios
 
 dependencies/prepare.sh --product ios-network
 dependencies/build-ios-network.sh
 dependencies/build-ios-network.sh --platform ios
 
 # Read-only installed-prefix checks
-dependencies/build-ios-gpu.sh --verify-only
-dependencies/build-ios-gpu.sh --platform ios --verify-only
+dependencies/build-apple-gpu.sh --platform macos --verify-only
+dependencies/build-apple-gpu.sh --platform ios-simulator --verify-only
+dependencies/build-apple-gpu.sh --platform ios --verify-only
 dependencies/build-ios-network.sh --verify-only
 dependencies/build-ios-network.sh --platform ios --verify-only
 ```
@@ -82,8 +85,9 @@ dependencies/build-ios-network.sh --platform ios --verify-only
 The published locations are:
 
 ```text
-.build/dependencies/ios-simulator-arm64/gpu
-.build/dependencies/ios-device-arm64/gpu
+.build/dependencies/apple-gpu/macos-arm64
+.build/dependencies/apple-gpu/ios-simulator-arm64
+.build/dependencies/apple-gpu/ios-device-arm64
 .build/dependencies/ios-simulator-arm64/network
 .build/dependencies/ios-device-arm64/network
 ```
@@ -91,14 +95,25 @@ The published locations are:
 Graphics uses the exact UTM WebKit/ANGLE, libepoxy, and virglrenderer commits
 from the central manifest. The WebKit checkout is sparse to the ANGLE,
 configuration, and ccache paths used by the build. The prefix contains static
-libepoxy/virglrenderer plus `EGL.framework` and `GLESv2.framework`; no UTM
-checkout or manifest remains under `Kernarium/`.
+libepoxy/virglrenderer plus flat `EGL.framework` and `GLESv2.framework`
+payloads. All three format-3 contracts select `gl_provider=angle-metal`, the
+same renderer features, and one common offline recipe. Prefix verification
+compares the installed manifest, ordered series, and patch bytes; rejects a
+wrong architecture, Mach-O platform, deployment target, install name, payload,
+runtime closure, symlink, `LC_SUB_CLIENT`, or legacy CGL/EAGL/Vulkan provider
+symbol; and never replaces an invalid existing prefix. The macOS executable
+stages exactly those two authenticated frameworks beside itself, while
+Kernarium packaging revalidates the Simulator and device prefixes before
+forming XCFrameworks. No UTM checkout, manifest, or graphics builder remains
+under `Kernarium/`, and the retired `build-ios-gpu.sh` has no compatibility
+entry point.
 
-Network uses the pinned PCRE2, libffi, proxy-libintl, GLib, and libslirp Git
+Network uses the pinned PCRE2, libffi, proxy-libintl, GLib, GVDB, and libslirp Git
 sources. Its GLib source is a separately named prepared repository because the
 iOS availability topic is applied only to that product. Platform contracts are
-under [`platforms/`](platforms/) and every installed iOS prefix carries the
-central manifest, applicable series and patch bytes, and its platform receipt.
+under [`platforms/`](platforms/) and every installed product prefix carries
+the central manifest, applicable series and patch bytes, and its platform
+contract or receipt.
 
 Kernarium’s SwiftTerm dependency remains an exact Swift Package Manager input
 to the Xcode application target. Xcode requires its declaration and
@@ -123,7 +138,7 @@ For a dependency with a maintained series:
 
    ```sh
    dependencies/rebase-patches.sh \
-     --dependency virglrenderer --source /path/to/topic-checkout
+     --dependency utm-webkit --source /path/to/topic-checkout
    ```
 
 The regenerator requires a clean linear branch, performs an explicit rebase
@@ -146,6 +161,8 @@ cmake -S . -B build -DUML_DEPENDENCY_PREFIX=/path/to/prefix
 ```
 
 Production consumers import exact headers and static libraries through
-[`cmake/UmlThirdPartyTargets.cmake`](cmake/UmlThirdPartyTargets.cmake). The
-unit-only 16 KiB and 4 KiB presets do not require the private desktop prefix;
-GPU presets do, but still require neither a kernel build nor a rootfs.
+[`cmake/UmlThirdPartyTargets.cmake`](cmake/UmlThirdPartyTargets.cmake) and the
+GPU-only [`cmake/AppleGpuDependencies.cmake`](cmake/AppleGpuDependencies.cmake).
+The unit-only 16 KiB and 4 KiB presets do not require the private desktop
+prefix; GPU presets require both the non-graphics macOS prefix and the matching
+Apple-GPU prefix, but still require neither a kernel build nor a rootfs.

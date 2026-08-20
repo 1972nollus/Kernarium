@@ -208,10 +208,10 @@ private:
             testing::startupCheckpoint(testing::StartupFailure::workerEntry);
 #endif
             /*
-             * CGL current contexts are pthread-local. Construct and destroy
-             * virglrenderer on the transport thread so its initialization
-             * context remains current when the guest later requests capsets
-             * and submits commands on this same thread.
+             * EGL current contexts are thread-local. Construct, use, reset,
+             * and destroy the single virglrenderer owner on the transport
+             * thread; provider context creation is serialized, while current
+             * context and guest submission stay on this one thread.
              */
             VhostUserServer server(
                 {},

@@ -98,17 +98,6 @@ function(uml_define_third_party_targets prefix)
         LINKS UML::ThirdPartyGlib "${_uml_sdk_resolver}")
     add_library(UML::ThirdPartySlirp ALIAS uml_third_party_slirp)
 
-    _uml_import_static_dependency(epoxy "${_lib}/libepoxy.a"
-        INCLUDES "${_include}")
-    add_library(UML::ThirdPartyEpoxy ALIAS uml_third_party_epoxy)
-
-    _uml_import_static_dependency(virglrenderer
-        "${_lib}/libvirglrenderer.a"
-        INCLUDES "${_include}/virgl"
-        LINKS UML::ThirdPartyEpoxy Threads::Threads "${_uml_sdk_math}")
-    add_library(UML::ThirdPartyVirglrenderer ALIAS
-        uml_third_party_virglrenderer)
-
     _uml_import_static_dependency(vnc_server "${_lib}/libvncserver.a"
         INCLUDES "${_include}"
         LINKS UML::ThirdPartyZlib Threads::Threads)
