@@ -487,6 +487,10 @@ def main() -> None:
         "PRODUCT_BUILD_ODM_DLKM_IMAGE",
         "BOARD_VENDOR_RAMDISK_KERNEL_MODULES",
         "BOARD_SYSTEM_KERNEL_MODULES",
+        "TRUSTY_SYSTEM_VM",
+        "com.android.hardware.gatekeeper.nonsecure",
+        "com.android.hardware.keymint.rust_nonsecure",
+        "trusty_security_vm.elf",
         "target-files-package",
     ):
         if token not in build_aosp:

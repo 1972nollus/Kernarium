@@ -156,6 +156,26 @@ for variable in \
 		fail "$variable must be empty for the built-in-only kernel"
 done
 
+[[ "$(get_build_var TRUSTY_SYSTEM_VM)" == disabled ]] ||
+	fail "TRUSTY_SYSTEM_VM must be disabled for the UML guest"
+PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
+for package in \
+	com.android.hardware.gatekeeper.nonsecure \
+	com.android.hardware.keymint.rust_nonsecure; do
+	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
+		fail "required nonsecure security HAL is absent: $package"
+done
+for package in \
+	com.android.hardware.gatekeeper.cf_remote \
+	com.android.hardware.keymint.rust_cf_guest_trusty_nonsecure \
+	com.android.hardware.keymint.rust_cf_remote \
+	trusty_security_vm.elf \
+	trusty_security_vm_launcher \
+	trusty_security_vm_launcher.rc; do
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "unsupported Trusty or remote security package is present: $package"
+done
+
 # target-files always carries a kernel input even when this product does not
 # build an Android boot image. Stage only the already-built, verified ACK UML
 # ELF in the output tree; never copy it into an AOSP source project.

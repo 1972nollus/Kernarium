@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-cuttlefish-add-16K-arm64-UML-produ.patch	406e2f4431b58f5cf0aba1a054833f836a5e6c15	e138baf191e5437f28466fb2217d5e9cb108887d08bcea17e8d24315983c4ad8	UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML product
-2	0002-UML-ANDROID-LOCAL-cuttlefish-remove-loadable-kernel-.patch	9e84df826407edf66a79ba480566286bcee5c383	2fbeba0e1e3b5af613acc169fa674f825eba51b3915e75720733a50f28b488e7	UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel modules
+1	0001-UML-ANDROID-LOCAL-cuttlefish-add-16K-arm64-UML-produ.patch	406e2f4431b58f5cf0aba1a054833f836a5e6c15	4258b5052f054c59b5af762c3015390a4499c3f03cf8c527ae9c1264937fa5ce	UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML product
+2	0002-UML-ANDROID-LOCAL-cuttlefish-remove-loadable-kernel-.patch	9e84df826407edf66a79ba480566286bcee5c383	d4720d94d433ec2eb70262786009e2d71de26be83b4fcce9887bd0d6073bb021	UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel modules
+3	0003-UML-ANDROID-LOCAL-cuttlefish-use-nonsecure-security-.patch	c7ae86f126c9114086e29f7de0bf40c47cb72e38	ed27d07614e36e3b42962e483ac7d397d25ce59f326b852a13f93745f4a56b59	UML-ANDROID-LOCAL: cuttlefish: use nonsecure security HALs

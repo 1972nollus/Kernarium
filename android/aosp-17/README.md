@@ -87,7 +87,10 @@ The Android kernel has one profile: 16 KiB, ARM64-only, with
 and verifies the built-in Android feature set, ELF geometry, and exact Darwin
 bridge imports. The AOSP product disables system, vendor, and ODM DLKM images,
 clears every inherited Cuttlefish module list, and rejects a module-bearing
-configuration before compilation. AOSP image assembly, release publication,
+configuration before compilation. It also disables Cuttlefish's Trusty
+security VM before inheritance and retains only the explicitly nonsecure
+software KeyMint and gatekeeper APEXes; the build rejects remote or
+guest-Trusty alternatives. AOSP image assembly, release publication,
 and Apple consumers remain separate from the host build. The current product is
 still an initial page-size and ABI composition based on Cuttlefish; standalone
 UML storage, boot, VINTF, SELinux, and HAL adaptation remain later milestones.
