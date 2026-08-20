@@ -5,12 +5,19 @@ conformance claim. It incorporates the measured results in
 [GPU_BACKEND_FEASIBILITY.md](GPU_BACKEND_FEASIBILITY.md), the current Virgl
 implementation in
 [VIRTIO_GPU_VIRGL_IMPLEMENTATION_PLAN.md](VIRTIO_GPU_VIRGL_IMPLEMENTATION_PLAN.md),
-and the additional requirement that guest graphics libraries remain
-unmodified upstream releases.
+and the additional requirement that guest userspace graphics libraries remain
+unmodified upstream releases. That restriction does not apply to the guest
+kernel: this project owns its Linux build and maintained patch series, including
+the `virtio_gpu` driver and UML transport, and may change them when required.
 
 Dependency-management assumptions were revised after the 2026-08-20
 centralization under `dependencies/`; paths and workflows in this document
 refer to that post-refactor ownership model.
+
+In this plan, “maximum” means the highest truthful profile that preserves the
+shared high-performance ANGLE/Metal path. A higher version is rejected when it
+materially worsens throughput, latency, frame pacing, CPU/GPU time, energy,
+memory, thermals, or presentation efficiency.
 
 ## Decision summary
 
@@ -35,28 +42,43 @@ be validated on iOS; a macOS-only graphics provider is forbidden.
 - Require the complete agreed physical-device campaign on the connected iPad
   before qualifying any profile. Simulator and macOS evidence cannot replace
   that gate.
-- Treat truthful GLES 3.1 as the first product target. Prove ANGLE's Vulkan
-  backend over MoltenVK on macOS first, validate the same implementation on
-  Simulator, and qualify it on the connected iPad. Upstream ANGLE does not
-  currently list its Vulkan backend as supported on macOS or iOS, so this is a
-  real Apple-platform port rather than a display-selector change.
-- Treat GLES 3.2 and desktop GL 4.6 as separately funded maximum-ceiling
-  projects. GLES 3.2 needs geometry-stage emulation on MoltenVK/Metal. GL 4.4
-  through 4.6 additionally needs coherent Virtio-GPU blob resources and a
-  truthful desktop OpenGL implementation beyond the archived macOS GL 4.1
-  measurement, implemented on the same provider on every Apple product.
+- Treat guest-kernel graphics support as an owned implementation layer, not an
+  external ceiling. Backport or implement required `virtio_gpu` DRM/KMS,
+  blob-resource, mapping, fence, and UML transport behavior in the maintained
+  common kernel patch series while keeping the ABI consumed by released Mesa
+  and libdrm compatible with upstream userspace.
+- Make **GLES 3.0 and desktop GL 2.1 expected** the committed direct-hardware
+  shared baseline candidate. Phase 2 must still qualify its absolute
+  performance on macOS, Simulator, and iPad. Treat GLES 3.1 as a stretch target only through direct
+  ANGLE/Metal implementation of compute, storage, image, atomic, and related
+  behavior on the GPU. The GL/GLES compatibility path must never select
+  ANGLE/Vulkan, MoltenVK, Zink-over-Vulkan, or another Vulkan translation
+  layer.
+- Consider desktop GL 3.0/3.1 only when every missing gate can remain
+  GPU-resident and the complete profile passes the performance budget. Do not
+  implement conditional rendering, geometry expansion, draw rewriting, or
+  another advertised feature with synchronous readback, per-draw CPU work,
+  shader interpretation, or substantial CPU command replay.
+- Stop at the last fast profile. GLES/GL 3.2 and GL 4.x are not targets in this
+  plan because the chosen ANGLE/Metal provider lacks the required direct
+  geometry/desktop feature path and the known alternatives add heavy
+  translation or multi-pass emulation. Efficient hardware-backed support may
+  be reconsidered only after a new measured Metal capability or provider makes
+  those statements false on the connected iPad.
 
 The recommended development order is therefore:
 
 ```text
 retain the already-recorded CGL result as archived evidence only
     -> replace every Apple product with one ANGLE provider/build product
+    -> backport or implement any required common virtio_gpu kernel support
     -> develop and test the exact shared path on macOS first
     -> validate the same change on the iPhone 17 Pro Max Simulator
     -> qualify the milestone on the connected iPad
-    -> qualify truthful guest GLES 3.1
-    -> optionally emulate the missing desktop-GL 3.x gates
-    -> separately fund geometry emulation and coherent blobs for the maxima
+    -> ship the measured GLES 3.0 / desktop GL 2.1 expected baseline
+    -> attempt direct ANGLE/Metal GLES 3.1 mappings
+    -> attempt only GPU-resident desktop-GL 3.0/3.1 gates
+    -> stop when the next profile requires CPU-heavy or materially slower emulation
 ```
 
 ## Scope and invariants
@@ -66,12 +88,13 @@ This plan keeps the guest API path:
 ```text
 guest application
     -> released upstream Mesa Virgl Gallium
-    -> upstream virtio_gpu DRM/KMS
-    -> UML Virtio/vhost-user transport
+    -> project-maintained Linux virtio_gpu DRM/KMS
+    -> project-maintained UML Virtio/vhost-user transport
     -> VirtioGpuDevice
     -> virglrenderer
-    -> common Apple host GL provider
-    -> Metal presentation
+    -> ANGLE EGL/GLES frontend
+    -> ANGLE Metal renderer
+    -> Metal rendering and presentation
 ```
 
 The following are non-negotiable:
@@ -80,31 +103,64 @@ The following are non-negotiable:
    public-API, signing, sandbox, lifecycle, and 1.5 GiB memory constraints
    first. macOS is the fast development host for that design and may not add
    desktop-only graphics assumptions.
-2. Do not patch or replace guest Mesa privately. A rootfs update may consume a
-   released, unmodified upstream Mesa. Development images carrying an
-   unmerged upstream candidate must be labeled custom and cannot satisfy the
-   release gate.
-3. Never use `MESA_GL_VERSION_OVERRIDE`, `MESA_GLES_VERSION_OVERRIDE`, forced
+2. Only guest userspace is externally constrained. Guest Mesa and libdrm must
+   always be released, unmodified upstream builds. Do not patch, replace,
+   package, or use an unmerged guest-userspace candidate even in a development
+   rootfs. A milestone that requires guest-userspace changes remains blocked
+   until an independently released version contains them.
+3. The guest kernel is controlled by this project. Required `virtio_gpu`, DRM,
+   UAPI implementation, Kconfig, or `arch/um` transport changes belong in the
+   maintained common Linux patch series and one kernel image per page profile.
+   Prefer standard Virtio-GPU and DRM interfaces; a project-specific
+   kernel-to-emulator extension is acceptable only when negotiated, bounded,
+   invisible to guest userspace, and presented through an upstream-compatible
+   ABI that an unmodified released Mesa/libdrm already understands. Do not
+   make a private userspace ioctl or library a production dependency. Any new
+   graphics Kconfig support belongs built-in in `kernel/config/common.fragment`
+   because loadable modules remain disabled; page fragments vary only genuine
+   page-derived values.
+4. Never use `MESA_GL_VERSION_OVERRIDE`, `MESA_GLES_VERSION_OVERRIDE`, forced
    Virgl capability bits, or extension-string injection as evidence. A version
    rises only when natural capset discovery and functional tests agree.
-4. Preserve the real Virtio-GPU/Virgl path. Do not substitute an app-owned
+5. Preserve the real Virtio-GPU/Virgl path. Do not substitute an app-owned
    framebuffer or Chromium-specific library preload.
-5. Preserve one common 4 KiB/16 KiB guest-kernel source and the existing
-   platform-neutral device ownership. Backend selection must not create a
-   platform-specific Linux image or public ABI.
-6. Keep the shared ANGLE/Metal path and any ANGLE/Vulkan experiment in
-   authenticated project-private dependency prefixes. Do not build, link, or
-   package CGL or a desktop-only virglrenderer/libepoxy graphics family. Do not
+6. Preserve one common maintained Linux source and the existing
+   platform-neutral device ownership. Build exactly the canonical 16 KiB and
+   4 KiB artifacts; graphics changes must not create a platform-specific Linux
+   image or public emulator ABI.
+7. ANGLE/Metal is the only GL/GLES host provider. Do not route GL/GLES through
+   ANGLE/Vulkan, MoltenVK, Zink, Venus, or another Vulkan implementation, even
+   as an experimental profile-promotion lane. Do not build, link, or package
+   CGL or a desktop-only virglrenderer/libepoxy graphics family, and do not
    fall back to Homebrew or ambient Vulkan, EGL, GL, or `pkg-config`
-   installations.
-7. Keep iOS App Store compatibility: public APIs only, ordinary signing, no
+   installations. If Vulkan support is also built, its Venus-to-MoltenVK
+   targets and loader remain separate from the ANGLE/Metal GL facade.
+8. Keep iOS App Store compatibility: public APIs only, ordinary signing, no
    JIT entitlement, no private Metal API, and no helper process required by
    the graphics backend.
-8. Report macOS, Simulator, and connected iPad separately. macOS is the first
+9. Report macOS, Simulator, and connected iPad separately. macOS is the first
    development stage, Simulator is the required iOS validation stage, and the
    connected iPad is the mandatory physical-device qualification stage.
-9. Do not run WebGL Aquarium on the connected iPad. Use its normal 1.5 GiB
+10. Do not run WebGL Aquarium on the connected iPad. Use its normal 1.5 GiB
    desktop boot and the agreed focused graphics/qualification workloads.
+11. Profile version is subordinate to performance. Software emulation is
+   forbidden when it adds heavy CPU work, synchronous GPU-to-CPU feedback,
+   per-draw CPU expansion, or sustained command serialization. GPU-accelerated
+   lowering is allowed only when it stays GPU-resident and passes the explicit
+   regression, CPU, frame-pacing, memory, and thermal budgets in this plan.
+   A lower, faster profile is a successful final outcome.
+12. External-project access is fetch-only. Never push a branch, open or update
+   a pull request, merge request, or issue, send a patch or email, or upload an
+   artifact to an external project. First-party emulator, test, and rootfs
+   build/orchestration changes live directly in this repository; third-party
+   ANGLE or virglrenderer source changes live only in
+   `dependencies/patches`; Linux changes live only in `kernel/patches`.
+   Qualification CTS source remains released and unmodified. Prepared
+   dependency trees remain remote-less and builders stay offline after
+   `dependencies/prepare.sh`.
+   Guest graphics userspace remains an unmodified released input; if it lacks a
+   required behavior, stop at the lower truthful ceiling until an independent
+   release supplies it.
 
 Hardware video encode/decode, a new guest display server, and a Vulkan guest
 API are outside this file. The Vulkan transport and memory plan is in
@@ -113,18 +169,19 @@ share coherent-blob infrastructure but retain separate acceptance claims.
 
 ## Baseline and target ladder
 
-The values below distinguish measured state, a near-term target, and an
-architectural maximum. “Expected” means the capset predicates imply the value
-but a current guest probe has not yet captured it.
+The values below distinguish measured state, the committed direct-hardware
+baseline candidate, and conditional stretch work. “Expected” means the capset
+predicates imply the value but a current guest probe has not yet captured it.
+A stretch row is discarded if it violates the performance gates; it is not
+replaced by a slower emulation path.
 
 | Host renderer | macOS guest | Simulator guest | Connected-iPad guest | Status |
 | --- | --- | --- | --- | --- |
 | Apple CGL 4.1 | GL 4.1, GLES 3.0 | unavailable | unavailable | archived pre-migration measurement only; no planned build, runtime, or test lane |
-| Current UTM ANGLE/Metal | GL 2.1 expected, GLES 3.0 target | GL 2.1 expected; host ES 3.0 measured and guest WebGL 2 workload passed; direct guest GLES probe pending | GL 2.1 expected, GLES 3.0 source-derived | existing iOS path and required shared production path; macOS slice not yet built |
-| ANGLE/Vulkan/MoltenVK | GL 2.1 expected, GLES 3.1 target | same target | same target | unproven Apple composition; macOS-first development, Simulator validation |
-| Previous row plus complete desktop GL 3.1 gate emulation | GL 3.1 target, GLES 3.1 | same | same | host virglrenderer work; connected-iPad qualification required |
-| Geometry-capable Vulkan/Metal translation | at least GL 3.2 and GLES 3.2 | same | same | large geometry-emulation project |
-| Complete desktop GL provider plus coherent blobs | GL 4.6, GLES 3.2 architectural maximum | same architectural protocol maximum | same architectural protocol maximum | absolute Virgl target, not a committed product claim |
+| Current UTM ANGLE/Metal | GL 2.1 expected, GLES 3.0 | GL 2.1 expected; host ES 3.0 measured and guest WebGL 2 workload passed; direct guest GLES probe pending | GL 2.1 expected, GLES 3.0 source-derived | committed direct-hardware baseline candidate; macOS slice and full iPad performance qualification pending |
+| Direct ANGLE/Metal ES 3.1 implementation | GL 2.1 expected, GLES 3.1 stretch ceiling | same conditional ceiling | same conditional ceiling | acceptable only with native Metal compute/storage/image/atomic mappings and the full performance gate |
+| Previous row plus GPU-resident desktop gates | at most GL 3.1, GLES 3.1 | same conditional ceiling | same conditional ceiling | optional stretch; retain the immediately lower qualified desktop tier, GL 2.1 or GL 3.0, when a required next-tier gate needs CPU-heavy or materially slower emulation |
+| GLES/GL 3.2 or GL 4.x | not targeted | not targeted | not targeted | geometry/desktop translation does not meet the selected direct ANGLE/Metal, performance-first architecture |
 
 Important limits behind the table:
 
@@ -135,18 +192,34 @@ Important limits behind the table:
 - The shipped Simulator ANGLE build refuses explicit ES 3.1 and ES 3.2
   contexts. Changing macOS to that exact path aligns the version ceiling; it
   does not increase it.
-- The macOS MoltenVK probe reports the headline compute, SSBO, image, and
-  atomic functionality needed for a GLES 3.1 feasibility target, but reports
-  `geometryShader = VK_FALSE`. Every ANGLE gate still needs a per-platform
-  probe, and the Vulkan backend cannot naturally expose GLES 3.2 on that
-  device.
+- Metal exposes hardware compute, storage, image, and atomic primitives that
+  may support a direct ANGLE/Metal GLES 3.1 implementation. That possibility
+  must be proved feature by feature on macOS, Simulator, and the connected
+  iPad; a Vulkan detour is not an allowed proof or fallback.
 - Unchanged virglrenderer does not advertise conditional rendering on a GLES
   host lacking `GL_NV_conditional_render`. Released Mesa consequently cannot
   derive desktop GL 3.0 even when the same host reaches GLES 3.1.
-- Virgl's legacy resource path can reach GL 4.3. Mesa requires coherent blob
-  support for the buffer-storage gate used by GL 4.4 through GL 4.6, matching
-  the upstream project's published
-  [Virgl capability and blob-resource summary](https://www.collabora.com/news-and-blog/blog/2025/01/15/the-state-of-gfx-virtualization-using-virglrenderer/).
+- GLES 3.2 requires geometry behavior that the selected ANGLE/Metal backend
+  does not expose directly. Compute/mesh expansion, multi-pass rewriting, or a
+  second translation provider is outside the target unless a new probe proves
+  a fully GPU-resident implementation meets the same performance budget on the
+  connected iPad. GL 4.x is likewise outside this provider's target surface.
+- Missing Linux `virtio_gpu` behavior does not lower the architectural ceiling:
+  it is implementation work owned by this repository. The external ceiling is
+  the intersection of released, unmodified guest userspace and the truthful
+  host/backend behavior after the maintained kernel supplies the standard
+  userspace-facing ABI.
+- The pinned Linux source already contains the standard blob wire definitions,
+  DRM blob ioctls, and `RESOURCE_BLOB`/`HOST_VISIBLE` getparams. Its
+  `virtgpu_kms.c` exposes host-visible memory only when the transport supplies a
+  Virtio shared-memory region, while the maintained UML transport does not yet
+  implement `.get_shm_region` and the host device does not yet implement blob
+  commands. Released Mesa naturally derives Virgl `supports_coherent` from
+  exactly those two standard getparams. Separately, its persistent-coherent
+  buffer gate requires `VIRGL_CAP_ARB_BUFFER_STORAGE` and host feature-check
+  version 4 or later. This owned host/kernel work is optional transport
+  optimization under the selected lower profile; it is not justification for
+  pursuing GL 4.4-4.6 or accepting a slower provider.
 
 ## Architecture changes
 
@@ -167,10 +240,10 @@ the Apple-GPU product contract for all three platform slices:
 
 ```text
 Apple platform slice:       iOS Simulator | iOS device | macOS
-product-fixed GL provider:  ANGLE Metal | ANGLE Vulkan
+product-fixed GL provider:  ANGLE Metal
 thin UI shell:              UIKit (Simulator/device) | AppKit (macOS)
 optional output consumer:   native view | VNC view (macOS only)
-resource result:            Metal texture | CPU readback | unsupported
+resource result:            Metal texture | diagnostic/VNC readback | unsupported
 ```
 
 Prefer a fixed-layout `VirglRenderer` with an opaque provider object rather
@@ -178,7 +251,7 @@ than another public layout-changing macro. Candidate internal types are:
 
 ```text
 HostGlProvider
-    AngleHostGlProvider       (Metal or Vulkan EGL display attributes)
+    AngleMetalHostGlProvider  (Metal EGL display attributes only)
 
 NativeResource
     MetalTextureResource
@@ -190,17 +263,16 @@ submission, capsets, resource lifetime, and fences. All callers see one class
 layout, and the provider remains in the device layer.
 
 If the Vulkan plan is implemented too, its renderer session becomes the sole
-owner of virglrenderer's process-global initialization and this provider lives
-under the session's GL facade. Do not create independent GL and Venus owners
-that each call global init/cleanup.
+owner of virglrenderer's process-global initialization, but this provider
+remains an ANGLE/Metal GL facade and Venus remains a separate MoltenVK Vulkan
+facade. Do not create independent global owners, and do not let the GL facade
+resolve MoltenVK entry points or select ANGLE's Vulkan display type.
 
-Each accepted or experimental Apple-GPU product contract selects exactly one
-ANGLE backend for macOS, Simulator, and device. A backend experiment therefore
-builds and tests the same product-wide configuration on all three platforms;
-macOS has no runtime selector or private provider choice that can diverge from
-iOS. CGL has no enum, option, preset, imported target, or compiled fallback.
-An incomplete platform slice or unsupported common backend fails dependency
-verification before the guest starts.
+Each Apple-GPU product contract selects ANGLE/Metal for macOS, Simulator, and
+device. macOS has no runtime selector or private provider choice that can
+diverge from iOS. CGL, ANGLE/Vulkan, and Zink have no GL-provider enum, option,
+preset, imported target, or compiled fallback. An incomplete platform slice
+fails dependency verification before the guest starts.
 
 ### 2. Share Metal-texture presentation without sharing UIKit/AppKit
 
@@ -215,7 +287,8 @@ device-owned code:
 - one newest-frame-wins publication state;
 - at most one Metal command buffer in flight;
 - accepted/dropped/unsupported outcomes;
-- full CPU fallback after an unsupported direct resource;
+- bounded diagnostic/VNC CPU readback after an unsupported direct resource,
+  never a steady-state native-display fallback;
 - existing `UML_GPU_FRAME_STATS` accounting; and
 - no Objective-C types in platform-neutral headers.
 
@@ -225,17 +298,21 @@ Keep thin platform shells:
   wheel input, window title, and VNC availability;
 - UIKit retains the application-provided `MTKView`, touch/text integration,
   safe-area sizing, and lifecycle;
-- ANGLE backends deliver the native Metal texture when their resource-export
+- the ANGLE/Metal provider delivers the native Metal texture when its resource-export
   contract supports it.
 
 If retained, VNC is only a presentation consumer of the common renderer's CPU
 readback/damage stream. It cannot create a context, select a provider, change a
-capset, or fall back to desktop GL.
+capset, or fall back to desktop GL. Optional VNC readback must be damage-bounded
+and satisfy a separately frozen host/guest CPU budget. Disable VNC for a
+format/mode that requires sustained full-frame readback or exceeds that budget;
+diagnostic status does not waive the no-heavy-CPU rule.
 
-Bring up every new renderer over CPU readback first. Direct presentation is a
-separate optimization gate, not a prerequisite for proving GL correctness.
-ANGLE/Vulkan must not reuse UTM's ANGLE/Metal native-share flag unless a probe
-proves that it returns a valid same-device Metal texture.
+Use bounded CPU readback only as an early diagnostic and VNC correctness tool.
+Sustained native-display qualification requires the same-device ANGLE/Metal
+texture path with no per-frame CPU readback. If an accepted format cannot use
+that path without heavy CPU copies, mark it unsupported or retain the lower
+profile instead of shipping the slow fallback as normal presentation.
 
 ### 3. Authenticate one source matrix for all Apple products
 
@@ -347,7 +424,7 @@ before treating them as a matched qualification set.
 | `/opt/vk-gl-cts/gles2/deqp-gles2` | AArch64/Linux PIE, 11,118,432 bytes, build ID `d2f695f3ac1ed9e7d4b85b2ff19326ce5cce3f1a` | fast GLES 2 functional and regression groups |
 | `/opt/vk-gl-cts/gles3/deqp-gles3` | AArch64/Linux PIE, 17,923,136 bytes, build ID `54febf8ac17f594ca10ec7523a3e91af5d6f1e69` | fast GLES 3.0 functional and regression groups |
 | `/opt/vk-gl-cts/openglcts/glcts` | AArch64/Linux PIE, 65,486,984 bytes, build ID `884796d1a220663afb5b79d1e96f622b3c1e7e14` | Khronos GLES 2/3/3.1/3.2 and desktop GL 3.0 through 4.6 promotion gates |
-| `/home/uml/vk-gl-cts-1.4.5.5` | co-located 1.4.5.5-labeled source; no `.git` directory | read-only test-logic and expected-result derivation, failure localization, and preparation of upstream CTS fixes |
+| `/home/uml/vk-gl-cts-1.4.5.5` | co-located 1.4.5.5-labeled source; no `.git` directory | read-only test-logic and expected-result derivation plus failure localization; never a source for external submissions or altered qualification expectations |
 
 The resource trees beside each executable are part of the artifact. Run from
 the executable's directory or pass that directory through
@@ -402,8 +479,10 @@ must:
    UID-1000 Phosh session user under greetd/Phrog, inheriting that session's
    `DISPLAY`, `XAUTHORITY`, `XDG_RUNTIME_DIR`, and DRI permissions. Prove
    Xwayland exists on the selected iOS desktop before qualification; otherwise
-   rebuild an appropriate upstream CTS platform target as part of the matched
-   whole-image update;
+   build an existing platform target from the authenticated released CTS source
+   as part of the matched whole-image update. If that release has no usable
+   target, mark qualification blocked; do not patch CTS or submit a target
+   externally;
 3. preserve the actual Virgl path and reject llvmpipe, software rasterizers,
    unexpected guest Zink, Xvfb, and a missing or mismatched renderer before
    counting any result;
@@ -464,7 +543,7 @@ Here `egl` is the registered platform context factory; the `KHR-GLES31`
 package requests the ES 3.1 API. The driver must still validate registered
 factory names against the exact binary before freezing them. For an official
 promotion run, use the provisioned upstream `cts-runner` (for example its
-verified `--type=es31` or `--type=gl46` mode) to consume every configuration
+verified `--type=es31` mode) to consume every configuration
 declared by `mustpass.xml`, or reproduce and differential-test those generated
 arguments exactly. Do not override its seed, watchdog policy, first/other EGL
 configuration split, specified 64x64 or 113x47 surfaces, or required color,
@@ -489,23 +568,22 @@ Run these levels in order:
    interfaces/separate programs, barriers, multisample/sample shading, limits,
    and negative API/shader cases. Run both `dEQP-GLES31` functional groups and
    the corresponding `KHR-GLES31` groups.
-3. **Cross-feature and next-version gap scans.** Nightly or on a merge
+3. **Cross-feature and stretch-profile gap scans.** Nightly or on a repository
    candidate, deterministically shard the complete relevant module with
-   `--deqp-fraction=N,M`. Run the next version periodically on macOS first and
-   then Simulator to
-   turn its failures into an implementation backlog; this is discovery, not a
-   profile claim.
+   `--deqp-fraction=N,M`. Run only the permitted GLES 3.1 and GL 3.0/3.1
+   stretch modules on macOS first and then Simulator. Use failures to decide
+   whether to continue or stop at the lower profile; do not turn GLES 3.2 or
+   GL 4.x into an implementation backlog.
 4. **Version-promotion gate.** Run every `mustpass.xml` configuration and its
    shipped Khronos list for the candidate version and every lower version that
    remains claimed. Run macOS first, the identical Simulator campaign second,
    and the complete selected campaign on the connected iPad last.
-5. **Absolute-ceiling qualification.** For GLES 3.2 include both
-   `gles32-khr-main.txt` and `gles32-khr-glesext.txt`, geometry/tessellation,
-   texture-buffer, cube-array, advanced-blend, sample-shading, copy-image, and
-   interaction coverage. At every desktop GL transition run that version's
-   main and GTF lists cumulatively. GL 4.4 adds non-CTS blob/coherent-mapping
-   stress; GL 4.5/4.6 add cumulative DSA, sync, image/SSBO/atomic, indirect,
-   robustness, limit, and negative coverage.
+5. **Performance-ceiling qualification.** For a GLES 3.1 or desktop GL 3.0/3.1
+   candidate, run the cumulative Khronos lists and the representative
+   performance corpus in the same promotion campaign. A CTS pass does not
+   override a performance failure. GLES 3.2 and GL 4.x lists may be run only
+   as occasional read-only capability probes that confirm the documented stop
+   boundary; they do not authorize emulation work or a higher claim.
 
 The production iPad guest remains 1,536 MiB. Run one shard at a time, disable
 the suite's deliberate OOM tests, keep routine image/shader logging off, bound
@@ -528,8 +606,9 @@ outside the claimed API remain gap-discovery data.
 A retry is diagnostic: preserve both attempts, the seed, and the first failure;
 a retry pass does not erase a flake. Never convert a baseline failure list into
 success. A development exception ledger must name an exact case, observed
-signature, CTS identity, backend/platform/device/page profile, upstream spec or
-CTS issue, owner, rationale, and expiry, while retaining the failure in totals.
+signature, CTS identity, backend/platform/device/page profile, published
+specification, pre-existing CTS issue or repository-local defect record,
+owner, rationale, and expiry, while retaining the failure in totals.
 Qualification accepts a non-`Pass` only when that exact CTS release's Khronos
 criteria explicitly permit it. Broad wildcard exceptions, local
 renderer-defect waivers, and waivers for a newly advertised core requirement
@@ -542,13 +621,15 @@ trace a failing case from registration to its assertion/expected-result
 derivation, identify the precise API state or limit, and construct the smallest
 exact-case rerun. Do not patch expected results, reference images, discovery,
 or caselists to make the renderer pass.
-Because the source has no `.git` metadata, reproduce any proposed CTS fix in
-an authenticated upstream 1.4.5.5 checkout before submission. Diagnostic
-rebuilds may run in disposable Simulator/macOS storage with recorded flags,
-but cannot qualify a release. If the target API or required CTS revision
-outgrows 1.4.5.5, rebuild the binary, resources, must-pass data, and source as
-one authenticated rootfs update; never mix generations or mutate the image in
-place.
+Because the source has no `.git` metadata, diagnostic rebuilds must use an
+authenticated 1.4.5.5 checkout in disposable Simulator/macOS storage with
+recorded flags, but they cannot alter expectations or qualify a release. Do
+not upload CTS changes. If a CTS defect prevents qualification, use only an
+exact status explicitly accepted by that Khronos release criteria or wait for
+an independently published corrected release. If the target API or required
+CTS revision outgrows 1.4.5.5, rebuild the unmodified binary, resources,
+must-pass data, and source as one authenticated rootfs update; never mix
+generations or mutate the image in place.
 
 ## Implementation phases
 
@@ -557,36 +638,63 @@ place.
 Before changing a provider:
 
 1. Record the revision and dirty status, compiler/SDK, Apple-GPU platform
-   contracts and installed provenance, rootfs Mesa version, and kernel page
-   profile.
-2. Validate the central manifest and patch inventory and record the current
+   contracts and installed provenance, rootfs Mesa version, pinned Linux base
+   and reviewed final-tree identities, ordered kernel-topic manifest, resolved
+   common configuration, and both page-profile configurations.
+2. Freeze the matched performance corpus, run length, warm-up, sample count,
+   noise envelope, and promotion budgets before implementing a higher profile.
+   The maximum promotion thresholds are a 3% throughput decrease or
+   frame-time/resource-cost increase on unaffected lower-profile workloads; a
+   5% median throughput decrease or median frame-time increase on
+   representative candidate-feature workloads; and a 10% increase in p95
+   frame time, host/guest CPU time, GPU time/energy, or resident memory.
+   Improvements are unrestricted. Measurement uncertainty must be
+   sufficiently below the applicable limit to establish compliance; otherwise
+   the result is inconclusive and cannot promote. These thresholds may be
+   tightened; loosening them requires an explicit plan revision before the
+   candidate is measured, never a post-hoc exception. For candidate-only
+   behavior with no semantic lower-profile A/B, freeze an equivalent
+   direct-Metal/reference workload or absolute CPU/GPU, pass, submission,
+   bytes-moved, and work-amplification budget. Zero sustained native-display
+   CPU fallback, per-draw synchronization, new thermal escalation, and iPad
+   app termination are hard requirements rather than percentage budgets.
+3. Validate the central manifest and patch inventory and record the current
    platform contracts. Copy the already-recorded CGL version/capset result into
    the evidence index as explicitly archival data. Do not rebuild, rerun, or
    preserve a CGL executable, prefix, preset, or CTS lane for comparison.
-3. Define the atomic dependency transition: one `apple-gpu` membership, one
+4. Define the atomic dependency transition: one `apple-gpu` membership, one
    builder, three platform prefixes, and no desktop libepoxy/virglrenderer
    graphics rows in the `macos` product. Prepare all target repositories once
    and verify them offline before any consumer switches.
-4. Turn the existing host probes into maintained source and test targets. A
+5. Turn the existing host probes into maintained source and test targets. A
    probe must request ES 3.0, 3.1, and 3.2 separately and report every Virgl
    feature predicate, not only version strings.
-5. Build common ANGLE and Metal capability probes. Run the macOS probe first
+6. Build common ANGLE and Metal capability probes. Run the macOS probe first
    on every iteration, then run the separately signed iOS probe on the iPhone
    17 Pro Max Simulator with the same schema. Do not attach to or replace a
    running Kernarium guest merely to obtain host capabilities.
-6. Record the connected-iPad host and guest baseline needed for later
+7. Record the connected-iPad host and guest baseline needed for later
    qualification. Capture the exact guest desktop GL value on Simulator and
    the iPad; until then retain “GL 2.1 expected” rather than converting it to
    measured.
-7. Inventory VK-GL-CTS from the image, verify the release, executable build
+8. Record the current standard Virtio-GPU getparams and released-Mesa blob call
+   sequence for possible use only if Phase 6 measurements select the
+   blob/shared-region optimization or the separate Vulkan plan needs it. This
+   inventory is not a GL profile-promotion commitment.
+9. Document conditional kernel topic ownership for that optimization. Create
+   or amend the UML shared-region/aperture and any generic `virtio_gpu` topic
+   only after Phase 6 or the Vulkan plan selects the work; then record the
+   required outside-port ownership, overlap/extraction, delta, and next-version
+   policy updates.
+10. Inventory VK-GL-CTS from the image, verify the release, executable build
    IDs, installed resources, registered modules, `mustpass.xml` files, leaf
    counts, and digests. Recover or recreate the source/build receipt needed to
    prove the co-located source and provisioned binaries match, and store those
    identities in the evidence bundle.
-8. Bring up the dedicated CTS driver with a software-renderer negative control:
+11. Bring up the dedicated CTS driver with a software-renderer negative control:
    it must reject llvmpipe, unexpected Zink, Xvfb, a missing DRM device, a
    truncated QPA, and an incomplete shard rather than recording a pass.
-9. After the atomic shared-path switch in Phase 1, run the identity sentinel
+12. After the atomic shared-path switch in Phase 1, run the identity sentinel
    and shipped GLES 2/GLES 3.0 baseline selections on macOS first, Simulator
    second, and the connected iPad last. Classify existing failures without
    waiving them.
@@ -601,7 +709,7 @@ preparation creates no second runnable macOS graphics lane.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
-1. Introduce the fixed-layout ANGLE provider boundary. The selected backend is
+1. Introduce the fixed-layout ANGLE/Metal provider boundary. That fixed provider is
    fixed by the common Apple-GPU product contract, not a macOS runtime option.
 2. Move EGL-specific state out of the public `VirglRenderer` layout and delete
    the CGL provider, OpenGL-texture native resource, CLI selector, presets, and
@@ -630,7 +738,7 @@ preparation creates no second runnable macOS graphics lane.
 Exit: every macOS GPU binary, test, and package links only the platform slice
 from the common Apple-GPU product. The CGL provider/options/tests and desktop
 graphics dependency rows/recipes/imported targets are absent, final-link
-audits reject their return, and `check-gpu` exercises common ANGLE. The three
+audits reject their return, and `check-gpu` exercises common ANGLE/Metal. The three
 platform contracts select one semantic recipe, all prepared/build inputs are
 offline and centrally declared, and negative dependency fixtures fail closed.
 There is no phase exit in which both macOS graphics paths remain runnable.
@@ -649,8 +757,8 @@ There is no phase exit in which both macOS graphics paths remain runnable.
 4. Request `EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE`, hardware device type, and an
    ES 3 context exactly as iOS does.
 5. Bring up the host probe and Virgl capsets before booting a macOS guest.
-6. Bring up macOS over VNC/CPU readback, then add AppKit direct
-   `MTLTexture` presentation.
+6. Use VNC/CPU readback only for bounded bring-up diagnostics, then require
+   AppKit direct `MTLTexture` presentation before performance qualification.
 7. On every iteration, run host/unit/guest/CTS work on macOS first and the same
    workload on the iPhone 17 Pro Max Simulator second. Diff the full capsets
    and limits; an
@@ -668,198 +776,168 @@ desktop GL 2.1. This is a successful parity result, not a regression to hide.
 Exit: macOS can use only the same ANGLE provider architecture, dependency
 identity, EGL attributes, capset logic, and native-resource contract as iOS;
 accepted native scanouts have zero unexpected CPU fallback; and the connected
-iPad passes the phase qualification. The shipped GLES 2 and GLES 3.0 Khronos
+iPad passes frozen absolute frame-pacing, host/guest CPU, memory, thermal,
+direct-presentation, and lifecycle budgets. The shipped GLES 2 and GLES 3.0 Khronos
 must-pass matrices have complete macOS-first, same-path Simulator, and connected-iPad
 result sets: every required core case is `Pass`, and any other accepted status
 is explicitly permitted by the exact Khronos criteria.
 
-### Phase 3: prove the GLES 3.1 host provider
+### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
-Run this as a feasibility gate before changing production packages.
+Run this as a performance feasibility gate before changing the advertised
+profile. MoltenVK and ANGLE's Vulkan renderer are forbidden in this phase.
 
-#### Preferred spike: ANGLE/Vulkan over MoltenVK
+1. Extend only ANGLE's Metal backend for the missing ES 3.1 behavior. Map
+   compute, SSBOs, image load/store, atomics, indirect draw/dispatch,
+   framebuffer-without-attachments, program interfaces, barriers, limits, and
+   formats to native Metal render/compute/resource operations.
+2. Keep shader lowering and command generation GPU-oriented. Reject any design
+   that interprets shaders on the CPU, expands ordinary draws on the CPU,
+   synchronously reads query/image data back to decide later commands, or
+   serializes the graphics queue for routine operation.
+3. Request only `EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE` with the hardware device
+   type. In a combined app MoltenVK may be loaded for Venus, so test the precise
+   invariant: the GL facade has no MoltenVK target edge or function resolution
+   and creates no Vulkan object, call, submission, or ANGLE Vulkan display.
+4. Exercise a focused sentinel for each GLES 3.1/Virgl gate. Then run matched
+   candidate-versus-Phase-2 A/B workloads for unaffected GLES 2/3.0 behavior.
+   For compute/SSBO/image or another candidate-only API, compare with an
+   equivalent direct-Metal reference and record CPU/GPU time, queue
+   submissions, passes, bytes moved, and command/memory amplification against a
+   frozen absolute budget.
+5. Run the performance canaries on macOS first, repeat the same configuration
+   on the iPhone 17 Pro Max Simulator, and run the short correctness,
+   performance, memory, and thermal canary on the connected iPad. A correct but
+   materially slower ES 3.1 implementation is rejected; retain GLES 3.0.
+6. After the short canaries pass, run the change-local CTS families, direct
+   presentation/lifecycle checks, and the decisive sustained connected-iPad
+   performance/thermal gate. Only after that gate selects the candidate run
+   complete `dEQP-GLES31` diagnostic shards, every
+   `gles31-khr-main.txt` configuration, and all lower claimed GLES lists.
+   Post-CTS device work confirms stability; it does not defer the first
+   performance accept/reject decision.
 
-1. Add Vulkan-Headers, MoltenVK, and every required transitive source as exact
-   repository/full-commit rows or declared sparse paths in the central
-   manifest. Select them through a distinct experimental product/prefix (for
-   example `apple-gpu-vulkan-experiment`) but use the same generalized,
-   platform-parameterized GPU builder, platform-contract schema, installed
-   provenance rules, verifier, and CMake target design. Do not contaminate the
-   accepted ANGLE/Metal prefix, add a second Vulkan manifest, or fetch from
-   Xcode, GN/gclient, Git submodules, or any downstream build step.
-2. Build the authenticated MoltenVK macOS slice and run the shared ANGLE probe
-   first; then build the Simulator slice and separately signed iOS probe from
-   the same prepared inputs and recipe.
-3. Port/build ANGLE's Vulkan renderer for iOS and request
-   `EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE`.
-4. Handle MoltenVK portability enumeration in the host composition and verify
-   on macOS, then the iPhone 17 Pro Max Simulator, that ANGLE creates an ES 3.1
-   context without overrides.
-5. Exercise compute, SSBOs, image load/store, atomic counters, indirect draws,
-   framebuffer-without-attachment behavior, arrays-of-arrays, and the exact
-   Virgl gates individually.
-6. Use macOS for the first debugger, sanitizer, focused CTS, and guest runs,
-   but reject any change that cannot be built and validated through the same
-   Simulator product configuration.
-7. Build the authenticated device slice and run the complete phase gate on the
-   connected iPad. Upstream ANGLE's Apple rules currently exclude iOS from the
-   Vulkan renderer and its support table does not claim this combination, so
-   build flags, loader injection, portability, feature discovery, packaging,
-   lifecycle, and native export all need proof on iOS.
-8. Start with CPU readback. Design Vulkan-to-Metal direct scanout only after
-   the API path is correct.
-9. Promote the proven revisions/features from the experimental product into
-   the accepted common Apple-GPU product only after macOS, same-path Simulator,
-   and connected-iPad gates pass. Publication must remain completely
-   offline after `prepare.sh`.
+Exit: either the unmodified guest naturally reports a performant GLES 3.1 on
+all three products, or the plan records GLES 3.0 as the final shared ceiling.
+Promotion requires complete correctness evidence, direct ANGLE/Metal identity,
+no forbidden CPU-heavy path, and every performance budget; CTS success alone
+cannot exit the phase.
 
-#### Fallback: extend ANGLE's Metal backend to ES 3.1
+### Phase 4: evaluate GPU-resident desktop GL 3.0/3.1 gates
 
-If the Vulkan composition cannot be made supportable, implement the missing
-ES 3.1 Metal functionality in ANGLE rather than faking Virgl caps. This means
-upstream-quality support for compute, storage buffers, image operations,
-atomics, limits, barriers, program interfaces, and conformance. Land or carry
-the host-side work under authenticated patches; guest Mesa remains unchanged.
+GLES 3.1 does not automatically produce desktop GL 3.x. Generate the exact
+gate checklist from the released guest Mesa and compare it with the Virgl
+capset and ANGLE/Metal implementation. This phase is optional and stops at the
+first gate without an efficient GPU-backed implementation.
 
-Exit: an unmodified guest Mesa naturally reports GLES 3.1 on macOS, Simulator,
-and the connected iPad; functional tests for all mandatory feature families
-pass; the complete `dEQP-GLES31` module has been sharded as diagnostic gap
-coverage; and every `mustpass.xml` configuration using
-`gles31-khr-main.txt`, plus every lower claimed GLES list, has no unexplained
-local failure: required core cases are `Pass`, and any other accepted status is
-explicitly permitted by the exact Khronos criteria. The phase cannot exit
-without the connected-iPad campaign.
+For conditional rendering, accept only a Metal/ANGLE mechanism that retains
+the predicate and draw decision on the GPU and implements WAIT, NO_WAIT,
+BY_REGION, inverted modes, query lifetime, draw/clear/blit/indirect
+interactions, reset, and context loss. CPU polling, per-draw readback, command
+buffer round trips, or forced serialization are disqualifying. Apply the same
+rule to every remaining GL 3.0/3.1 gate and required format.
 
-### Phase 4: raise desktop GL to the truthful GLES-3.1-backed limit
+Prefer truthful hardware-backed extension exposure over forcing a higher core
+version. A useful Metal-backed compute/storage capability may remain available
+while desktop core GL stays at 2.1 or 3.0 because an unrelated mandatory gate
+is unavailable or too slow.
 
-GLES 3.1 does not automatically produce desktop GL 3.x. Generate a checklist
-from the exact released guest Mesa's `src/mesa/main/version.c`, then compare it
-with the Virgl capset and host implementation.
+Run focused Piglit and conditional-render interaction sentinels, then the
+matched macOS/Simulator/iPad performance canaries. For an operation absent
+from the lower GL profile, compare an equivalent direct-Metal/reference
+workload or the Phase 0 absolute cost and work-amplification budget. After the
+short canaries pass, run change-local CTS, direct presentation/lifecycle
+checks, and the decisive sustained connected-iPad performance/thermal gate.
+Only after that gate selects the candidate run the cumulative GL 3.0/3.1 main
+and GTF lists. If a gate is correct but violates the budget, do not advertise
+it and keep the previous desktop version. Do not infer GL 3.1 from conditional
+rendering alone.
 
-The first known blocker is conditional rendering. Implement its complete
-semantics in host virglrenderer when the GLES host lacks native
-`GL_NV_conditional_render`:
+Exit: either `glxinfo -B` naturally reports a performance-qualified GL 3.0 or
+3.1 on macOS, Simulator, and connected iPad, or desktop GL 2.1 remains the
+final shared ceiling. GLES behavior and performance must not regress.
 
-- WAIT, NO_WAIT, BY_REGION, and inverted modes;
-- query creation, completion, deletion, and context ownership;
-- draw, clear, blit, transform-feedback, indirect, and multi-draw paths;
-- nested/invalid command rejection;
-- reset and context-loss behavior; and
-- no synchronous guest-visible stall in a NO_WAIT mode.
+### Phase 5: enforce the GLES/GL 3.2 and GL 4.x stop boundary
 
-Advertise the capability only after positive and negative tests pass. Repeat
-the same process for every remaining GL 3.0 and GL 3.1 gate and required
-format. Do not infer GL 3.1 from conditional rendering alone.
+The selected ANGLE/Metal path lacks a direct geometry stage and is not a
+desktop GL 4.x provider. Do not implement those profiles through MoltenVK,
+Zink, ANGLE/Vulkan, CPU geometry expansion, shader interpretation, or
+unbounded, CPU-driven, or materially slower multi-pass command rewriting.
+Those paths conflict with the architecture and performance policy even if they
+could raise a version string.
 
-Exit: `glxinfo -B` naturally reports the target desktop version; focused
-macOS development tests, Piglit, conditional-render interaction cases, and
-cumulative GL 3.0/3.1 main and GTF must-pass matrices pass, followed by the
-identical Simulator validation and connected-iPad qualification; GLES 3.1
-remains unchanged.
+On an authenticated direct-Metal proof, ANGLE/Metal update, or Metal SDK
+update, run a small capability probe and the existing next-profile sentinel.
+Reopen the ceiling only if the new path maps the missing semantics to public
+GPU hardware, remains common to macOS/Simulator/device, needs no sustained CPU
+fallback, and passes the predeclared spike on macOS first, the iPhone 17 Pro
+Max Simulator second, and the connected iPad last. Until then, GLES 3.2,
+desktop GL 3.2+, and GL 4.x are explicitly out of scope rather than an open
+implementation backlog.
 
-### Phase 5: reach the GLES 3.2 maximum
+Exit: documentation, capset tests, and product claims stop at the last
+performance-qualified Phase 3/4 result; no higher profile is advertised.
 
-GLES 3.2 requires geometry shaders. Current MoltenVK/Metal does not expose a
-geometry stage, so this phase is a compiler/runtime project, not a capset
-change.
+### Phase 6: optimize the selected profile and transport
 
-Run a design spike comparing:
+Optimize the chosen lower profile instead of spending CPU or GPU bandwidth on
+a higher version:
 
-1. geometry-shader lowering in ANGLE's Vulkan backend using compute, mesh, or
-   multi-pass expansion;
-2. a reusable geometry emulation in MoltenVK; and
-3. geometry emulation in a host desktop-GL-on-Vulkan provider that can also
-   serve the GL 4.6 phase.
+1. Require direct same-device `MTLTexture` presentation for sustained native
+   display workloads. Keep CPU readback bounded to diagnostics and optional VNC;
+   it is not an accepted normal-frame path on Simulator or the connected iPad.
+2. Reduce copies, queue submissions, state translation, shader compilation,
+   and synchronization stalls. Preserve asynchronous fences and cache compiled
+   Metal pipelines without unbounded memory growth.
+3. Add standard coherent blob/shared-region support only when a measured
+   workload shows that it reduces mapping or transfer overhead at the selected
+   profile. Implement the complete host commands, maintained UML shared-region
+   mapping, standard released-userspace DRM ABI, strict bounds/lifetime rules,
+   and both page profiles before advertising it. Do not use blob support to
+   justify GL 4.4-4.6 work.
+4. Share only the bounded memory infrastructure with Venus. GL feature
+   discovery, contexts, shaders, command submission, and presentation remain
+   on ANGLE/Metal and never traverse MoltenVK.
+5. Run the matched macOS-first, Simulator-second, connected-iPad-last
+   performance campaign after every optimization. Reject an optimization that
+   merely shifts substantial work from the GPU to the CPU or worsens device
+   thermal throttling/frame pacing.
 
-Select the smallest implementation that preserves primitive ordering,
-adjacency, amplification limits, transform feedback, clipping, layered
-rendering, queries, indirect draws, synchronization, and robust-access
-semantics. A Metal-private or device-family-only shortcut is not acceptable.
+Exit: the selected profile has direct hardware rendering and presentation,
+bounded memory, stable frame pacing, and measured performance on the connected
+iPad under both page profiles where mapping-sensitive. The exit makes no GL
+4.x or GLES 3.2 claim.
 
-After geometry works, close every other GLES 3.2 gate, including copy image,
-texture-buffer ranges, advanced blend equations, tessellation, cube-map
-arrays, sample shading, ASTC LDR, and the required limits and formats.
+### Phase 7: product adoption and carried-patch maintenance
 
-Exit: the host creates ES 3.2 without a testing override and the guest
-naturally reports GLES 3.2. Run the complete GLES 3.2 gap scan continuously on
-macOS first and validate it on the iPhone 17 Pro Max Simulator; require every configured run of
-`gles32-khr-main.txt`, `gles32-khr-glesext.txt`, and all lower claimed GLES
-lists. Keep both on the same renderer path and complete the identical agreed
-physical-device selection on the connected iPad before qualification. Every
-remaining non-`Pass` is explicitly permitted by the exact Khronos criteria;
-local waivers cannot promote the version.
-
-### Phase 6: reach the desktop GL 4.6 maximum
-
-ANGLE's GLES frontend is not a complete desktop GL 4.6 provider.
-First evaluate an authenticated upstream desktop-GL-on-Vulkan provider, such
-as Mesa Zink over MoltenVK, in an offscreen EGL configuration. First prove
-that the provider can be built, packaged, and created through public APIs on
-macOS first, then the iPhone 17 Pro Max Simulator. Use macOS to accelerate
-shared-code debugging without admitting a desktop-only provider, and require the connected iPad
-before making any product claim. A macOS-only GL 4.6 context is irrelevant if
-the same provider cannot run on iOS. If the iOS feasibility gate fails, the
-remaining work is equivalent to implementing the missing desktop GL semantics
-in a host library and must be estimated as such.
-
-Provision that spike as an explicitly experimental product in the same central
-Git manifest and common Apple-GPU builder. Pin the provider's repository/full
-commit, every transitive source, sparse paths, and any generated ordered patch
-series; add its payload and feature policy to separate experimental platform
-contracts, prefixes, and verifiers. Prove the builder is offline after the
-sole `prepare.sh` network step. Do not
-place a Zink/Mesa checkout under Kernarium, discover an ambient build through
-`pkg-config`, or merge its libraries into an accepted prefix until the
-macOS-first and Simulator-validation gates select it. If selected, reconcile imported-target names and
-process-global loader state before it can coexist with or replace ANGLE.
-
-In parallel, add the standard coherent resource path needed above GL 4.3:
-
-- `VIRTIO_GPU_F_RESOURCE_BLOB`;
-- `RESOURCE_CREATE_BLOB`;
-- `RESOURCE_MAP_BLOB` and `RESOURCE_UNMAP_BLOB`;
-- `SET_SCANOUT_BLOB` where required;
-- strict blob ID, size, flag, offset, cache-mode, and lifetime validation;
-- a coherent mapping design valid for both 4 KiB and 16 KiB guest profiles;
-- reset-time unmapping before guest memory disappears; and
-- a truthful `supports_coherent` result in the guest winsys.
-
-Share the bounded mapping mechanism with the Vulkan plan where possible, but
-keep GL and Vulkan feature negotiation independent. Do not advertise blob or
-coherency merely because the commands parse.
-
-Then qualify GL versions in order: 3.2, 3.3, 4.0, 4.1, 4.2, 4.3, 4.4, 4.5,
-and 4.6. At every transition, record the exact newly satisfied Mesa gates,
-formats, limits, shader version, and test coverage. Stop at the last truthful
-version if the Apple portability backend cannot supply the next one.
-
-Exit: the guest naturally reports GL 4.6 with a released upstream Mesa; the
-full agreed Piglit coverage and the cumulative main/GTF must-pass matrices for
-every claimed desktop version pass macOS first and Simulator second; the
-selected shard union matches the frozen caselist exactly; the
-connected iPad completes the mandatory device matrix; and coherent blob stress
-passes both guest page profiles without leaks or stale mappings.
-
-### Phase 7: product adoption and upstreaming
-
-1. Ship only the shared ANGLE provider on macOS even if its initial desktop-GL
+1. Ship only the shared ANGLE/Metal provider on macOS even if its initial desktop-GL
    ceiling is below the archived CGL measurement. Keep final-link and option
    tests that reject reintroduction of the removed desktop path.
 2. Document macOS as the normal first development loop, the iPhone 17 Pro Max
    Simulator as the required same-change validation loop, and the connected
    iPad as the physical-device release gate.
-3. Upstream ANGLE, virglrenderer, MoltenVK, Mesa/Zink, or protocol changes in
-   their owning projects. For a carried dependency change, maintain the commit
-   in a clean topic branch and regenerate its ordered mail series with
+3. Keep every ANGLE, virglrenderer, or related dependency
+   protocol change inside this repository. Maintain it as a clean carried topic
+   and regenerate its ordered mail series with
    `dependencies/rebase-patches.sh`; generated patch files are not editing
-   authorities. Repository topics must stay focused and removable.
-4. Update the whole EROFS image only when consuming a released Mesa. Follow
+   authorities. Do not upload the topic, patch, or proposal to an external
+   project. Topics must stay focused and removable if a later independently
+   published source revision already contains equivalent behavior.
+4. Carry required Linux changes in the maintained kernel series; inclusion in
+   a later external Linux release is not a product gate. Author or amend
+   commits in the
+   configured case-sensitive checkout, use `kernel/rebase-patches.sh` to
+   regenerate mail patches and identities, and update final-tree, delta,
+   ownership/overlap/extraction, next-version, and `kernel/README.md` policy.
+   Keep those Linux changes in this emulator repository and do not submit them
+   externally.
+5. Update the whole EROFS image only when consuming a released Mesa. Follow
    the signed whole-image provisioning workflow; do not mutate the image in
    place.
-5. Promote a version separately for macOS, Simulator, and connected iPad, but
+6. Promote a version separately for macOS, Simulator, and connected iPad, but
    do not qualify the common product profile until the connected iPad
    completes its acceptance matrix.
-6. Pin the CTS release, executable build IDs, source identity, resources,
+7. Pin the CTS release, executable build IDs, source identity, resources,
    must-pass data, and caselist digests in rootfs provisioning metadata. After
    any Mesa or CTS update, rebuild the whole authenticated image and rerun the
    baseline; never compare totals from different case universes as if they
@@ -869,38 +947,58 @@ passes both guest page profiles without leaks or stale mappings.
 
 | Area | Primary files | Planned responsibility |
 | --- | --- | --- |
-| Renderer selection | `darwin/device/gpu/CMakeLists.txt`, `virgl_renderer.hpp`, `virgl_renderer.cpp` | fixed-layout ANGLE/EGL provider boundary, Metal native handle, backend validation, and removal of CGL code/options/tests |
-| Device propagation | `in_process_service.*`, `vhost_user_server.*`, `virtio_gpu_device.*` | carry the product-fixed provider result, reject configuration drift, select the checked presentation handle, and preserve reset/fence ownership |
-| Displays | `display.cpp`, `display.hpp`, `native_display.mm`, `native_display_ios.mm` | separate VNC from renderer, share Metal timeline, retain AppKit/UIKit shells and CPU fallback |
+| Renderer selection | `darwin/device/gpu/CMakeLists.txt`, `virgl_renderer.hpp`, `virgl_renderer.cpp` | fixed-layout ANGLE/Metal EGL provider boundary, Metal native handle, provider validation, and removal of CGL code/options/tests |
+| Device propagation | `in_process_service.*`, `vhost_user_server.*`, `virtio_gpu_device.*` | carry the product-fixed ANGLE/Metal result, reject configuration drift, select the checked presentation handle, and preserve reset/fence ownership |
+| Displays | `display.cpp`, `display.hpp`, `native_display.mm`, `native_display_ios.mm` | separate VNC from renderer, share the Metal timeline, retain AppKit/UIKit shells, require direct native texture presentation, and bound CPU readback to diagnostics/VNC |
 | macOS shared-path composition | `darwin/app/macos/main.cpp`, common-product and final-link tests | consume the product-fixed Apple-GPU backend with no renderer option; reject CGL, OpenGL.framework, and product drift before guest start |
-| Kernarium composition | `Kernarium/Runtime/KernariumRuntime.mm`, runtime CMake | select the supported iOS backend without changing app/kernel ABI |
+| Kernarium composition | `Kernarium/Runtime/KernariumRuntime.mm`, runtime CMake | select the supported iOS backend without adding a platform-specific kernel or app API; update the canonical bridge ABI only if its declarations actually change |
 | Common Apple GPU dependency identity | `dependencies/manifest.tsv`, `dependencies/prepare.sh`, `dependencies/rebase-patches.sh`, `dependencies/patches/*/series.tsv` | own exact Git repositories/full commits, sparse paths, product membership, and generated ordered mail-patch identity; no product-local manifests or fetches |
 | Common Apple GPU build and verification | planned `dependencies/build-apple-gpu.sh`, `dependencies/platforms/*-gpu-arm64.tsv`, generalized Apple-GPU CMake importer/verifier | replace the iOS-only recipe with one macOS/Simulator/device ANGLE recipe; publish transactionally, install provenance, and verify exact payload/platform/closure without backend drift |
 | macOS dependency cleanup | `dependencies/manifest.tsv`, `dependencies/build.sh`, `dependencies/verify-prefix.sh`, `dependencies/cmake/UmlThirdPartyTargets.cmake` | remove desktop libepoxy/virglrenderer graphics rows, recipes, and imported targets from the ordinary macOS prefix; make final-link audits reject CGL/OpenGL.framework |
 | Product packaging | `Kernarium/scripts/package-ios-frameworks.sh`, `Kernarium/Kernarium.xcodeproj/project.pbxproj`, macOS bundle/runtime-closure verification | consume only verified prefix targets; embed each required framework exactly once and keep signing/rpath/lifecycle differences out of renderer configuration |
-| Virgl and ANGLE topics | `dependencies/patches/utm-virglrenderer/`, `dependencies/patches/utm-webkit/` | use one production renderer series on all three products, add truthful host emulation, retire desktop-only graphics topics, and regenerate every carried series from commits with `rebase-patches.sh` |
-| Blob protocol | `darwin/device/gpu/protocol.hpp`, `virtio_gpu_device.*`, renderer/resource boundary | standard commands, bounded mapping, coherent lifetime |
+| Virgl and ANGLE topics | `dependencies/patches/utm-virglrenderer/`, `dependencies/patches/utm-webkit/` | use one production renderer series on all three products, add only truthful GPU-backed feature mappings, retire desktop-only graphics topics, and regenerate every carried series from commits with `rebase-patches.sh` |
+| Conditional host blob optimization | `darwin/device/gpu/protocol.hpp`, `virtio_gpu_device.*`, renderer/resource boundary | only if Phase 6 measurements or Venus select it: standard feature/commands, bounded aperture ownership, map-info/cache semantics, and coherent lifetime |
+| Conditional guest-kernel graphics optimization | maintained Linux `arch/um/drivers/virtio_uml.c`, UML physical/IOMEM/MM code as selected, `drivers/gpu/drm/virtio/virtgpu_*`, `include/uapi/drm/virtgpu_drm.h`, and common Kconfig policy | only after selection: implement shared-region discovery and mapping, backport/fix generic Virtio-GPU behavior only when needed, preserve the released-userspace DRM ABI, and share one runtime-negotiated kernel artifact per page profile across all Apple products |
+| Kernel series and verification | `kernel/patches/series/`, `kernel/patches/metadata.env`, ownership/overlap/extraction/next-version policy, `kernel/README.md`, kernel tooling tests | own generated topic identity, reviewed final tree and delta, bridge-ABI updates only when required, offline replay, and LLVM 22 builds of both page profiles |
 | Rootfs CTS | `tools/rootfs/manifest.json`, provisioning inputs/tests, in-image `/opt/vk-gl-cts` and `/home/uml/vk-gl-cts-1.4.5.5` | provision the upstream `cts-runner`; keep executable, source/build receipt, resources, must-pass data, build IDs, and caselist identities matched through authenticated whole-image updates |
 | CTS and guest tests | `tests/integration/gpu/run_vk_gl_cts.py`, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/rootfs tests, `tests/test-manifest.tsv` | graphical-session launch, identity rejection, exact caselist/config sharding, QPA egress/parsing, backend lifetime, protocol validation, package shape, guest probes and rendered campaigns |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | keep `dependency-source-preparer`, `dependency-patch-regenerator`, `dependency-build-manifest`, `dependency-prefix-verifier`, and `dependency-runtime-closure` green; add Apple-GPU platform/payload/provenance/concurrent-publication fixtures |
 
-New implementation sources must remain in `darwin/device/gpu/` and be owned by
-its CMake target. Do not include implementation files into other C++ sources.
+New host GPU implementation sources must remain in `darwin/device/gpu/` and be
+owned by its CMake target. Linux implementation changes remain in the
+maintained kernel topic stack. Do not include implementation files into other
+C++ sources.
 
 ## Verification matrix
 
 ### Host and unit gates
 
-- backend option parsing and unsupported-platform rejection;
+- rejection of any runtime GL-backend option and unsupported-platform product;
 - fixed `VirglRenderer` and enclosing object size across all consumers;
 - provider construction failure, partial cleanup, context sharing, make-current
   behavior, and same-thread teardown;
 - EGL error draining and missing-entry-point handling;
-- Metal-texture, dropped, unsupported, and CPU-fallback
-  presentation paths;
-- malformed resource/blob commands, overflow, duplicate IDs, rollback, reset,
-  and connection retry;
-- VNC lifetime and port reuse with the common ANGLE renderer; and
+- provider-graph, EGL-display, symbol-resolution, and GL-only workload tests
+  proving capsets 1/2 terminate at ANGLE/Metal. A combined app may load
+  MoltenVK solely for the separate Venus facade, so fail the GL path on any
+  MoltenVK target edge/function resolution, ANGLE Vulkan display, Vulkan
+  instance/device/queue/resource, or submission rather than on framework
+  presence alone;
+- execution-path classification and negative tests for CPU shader/raster/
+  geometry work, resource-sized conversion, readback-driven decisions, and
+  per-operation synchronous feedback;
+- Metal-texture, dropped, unsupported, and bounded diagnostic/VNC readback
+  presentation paths, plus a negative test rejecting sustained native-display
+  fallback;
+- ordinary resource/reset/connection-retry validation and, only if Phase 6 or
+  Venus selects blob/shared-region work, malformed blob commands, overflow,
+  duplicate IDs, and rollback;
+- when that optional optimization is selected, host wire-structure/layout
+  checks against pinned Linux Virtio-GPU definitions, kernel shared-region
+  discovery and fail-closed feature negotiation, standard getparam/ioctl
+  compatibility, aperture bounds, coherent visibility, and reset/unmap ordering
+  under both page profiles;
+- VNC lifetime and port reuse with the common ANGLE/Metal renderer; and
 - dependency build receipt/platform contract, architecture, deployment target,
   install name, `LC_SUB_CLIENT`, rpath, embed phase, and runtime dynamic
   closure;
@@ -945,24 +1043,47 @@ cmake --build --preset kernarium-ios-device-4k
 Kernarium/scripts/package-ios-frameworks.sh
 ```
 
+Whenever a maintained Linux graphics topic changes, regenerate and validate it
+through the configured case-sensitive source rather than editing patch files:
+
+```sh
+kernel/rebase-patches.sh
+kernel/prepare-source.sh --verify
+kernel/audit-delta.sh --tree HEAD
+kernel/abi/sync.sh --verify
+env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
+  UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
+  UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
+  kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
+cmake --workflow --preset check-integration
+cmake --workflow --preset check-integration-4k
+```
+
+The replay must build both profiles; do not use `--skip-build` for promotion.
+Ordinary Virtio-GPU/DRM changes do not advance the separate `darwin_uml_*`
+bridge ABI. If a canonical bridge declaration actually changes, update its
+version, fingerprint, identity/history, generated copies, kernel topic, and
+undefined-import checks according to `kernel/abi/README.md` before running the
+same verification.
+
 Phase 1 must make these common interfaces directly runnable. The command order
 is intentional: build and test macOS first, validate the same revision and
 recipe on Simulator second, then build and qualify the connected iPad. The
 retired `build-ios-gpu.sh` must not remain as an independently maintained
 compatibility recipe. `check-gpu` and its sanitizer variant switch atomically
-to common ANGLE and final-link checks prove that CGL, OpenGL.framework, and the
+to common ANGLE/Metal and final-link checks prove that CGL, OpenGL.framework, and the
 desktop virglrenderer/libepoxy family are absent. An iOS device build alone is
 not device evidence. Preserve the architecture audit and test-manifest
 ownership.
 
 ### Guest API and function gates
 
-For every claimed ANGLE backend and Apple platform:
+For the fixed ANGLE/Metal provider on every claimed Apple platform:
 
 - verify `/dev/dri/card0` and `/dev/dri/renderD128`;
 - capture capsets 1 and 2;
 - run `eglinfo -B -p gbm`, `glxinfo -B`, and explicit ES context creation;
-- assert `virgl` and the selected host renderer, never llvmpipe or guest Zink;
+- assert `virgl` and ANGLE/Metal identity, never llvmpipe or guest Zink;
 - compile and execute focused tests for every newly advertised feature family;
 - test robustness, reset, context loss, allocation failure, and repeated
   create/destroy cycles; and
@@ -984,7 +1105,8 @@ artifact integrity before interpreting status totals.
 - UIKit direct presentation and lifecycle qualification on the connected
   iPad;
 - AppKit native ANGLE presentation with no OpenGL-framework dependency;
-- zero CPU fallback only after native interop is implemented and proved;
+- direct same-device Metal-texture presentation with zero unexpected CPU
+  fallback for ordinary native-display workloads;
 - normal KDE/Phosh compositor startup and clean shutdown;
 - WebGL 1 and WebGL 2 functional pages;
 - WebGL Aquarium only on macOS and Simulator; and
@@ -1001,8 +1123,38 @@ Keep the guest, page profile, CPU count, memory, display geometry, and workload
 fixed, and record raw frame statistics, host/guest CPU, memory, shader-compile
 behavior, CPU fallback, and shutdown status.
 
-Correctness acceptance must precede performance comparison. Diagnostic or
-sanitizer builds are not score evidence.
+Use matched interleaved A/B runs between the candidate and the immediately
+lower truthful ANGLE/Metal profile. The order for each milestone is renderer
+identity, a focused correctness sentinel, a macOS performance canary, the same
+Simulator canary, a short connected-iPad performance/thermal canary,
+change-local CTS, direct presentation/lifecycle checks, the decisive sustained
+connected-iPad performance/thermal gate, and only then the full promotion CTS.
+Post-CTS device work confirms stability and packaging rather than making the
+first performance decision. This prevents a large conformance campaign from
+legitimizing an obviously slow implementation. Diagnostic or sanitizer builds
+are not score evidence.
+
+Apply the Phase 0 budgets without averaging away a failing primary workload:
+
+- unaffected lower-profile workloads lose no more than 3% throughput and add
+  no more than 3% frame time or measured resource cost;
+- candidate-feature median throughput decreases or median frame time increases
+  by no more than 5%, while p95 frame time, host/guest CPU time, GPU
+  time/energy, and resident memory increase by no more than 10%; improvements
+  are unrestricted, and measurement uncertainty must be sufficiently below the
+  applicable threshold or the result is inconclusive. Candidate-only behavior
+  uses the frozen equivalent direct-Metal/reference workload or absolute cost
+  and work-amplification budget rather than an undefined lower-profile A/B;
+- ordinary native display has zero sustained CPU readback, no per-draw or
+  per-dispatch synchronous feedback, and no CPU execution whose work scales
+  with vertices, primitives, pixels, samples, invocations, texels, or resource
+  bytes; and
+- no new sustained iPad thermal escalation, throttling, Jetsam/app termination,
+  or lifecycle failure is permitted.
+
+An inconclusive or noisy result does not promote the profile. CTS success
+never overrides a failed performance gate; retaining the lower version is the
+preferred outcome.
 
 ## Risk register and stop conditions
 
@@ -1011,78 +1163,111 @@ sanitizer builds are not score evidence.
 | shared ANGLE lowers macOS from the archived GL 4.1 result toward GL 2.1 | make the change explicit in product strings and tests and accept the lower macOS ceiling; do not preserve or rerun the old provider |
 | renderer macro changes object layout again | use one opaque provider pointer and one public layout; compile-time assertions and cross-target consumer tests |
 | Simulator or macOS evidence is mistaken for device proof | require the full connected-iPad campaign for every promoted capability; no substitution |
-| ANGLE/Vulkan cannot build or enumerate MoltenVK on iOS | fail the feasibility gate before production integration; either upstream the Apple port or use the Metal-ES3.1 fallback |
-| native-share API is ANGLE/Metal-only | begin with CPU readback; design Vulkan/Metal interop independently |
+| a GL target or runtime path accidentally reaches Vulkan, Venus, MoltenVK, or Zink | fail the provider graph, EGL-display, symbol-resolution, capset, and GL-only workload tests; the only valid route is Virgl to ANGLE/Metal to Metal |
+| native Metal texture export is unavailable for an ordinary scanout | do not silently use sustained CPU readback; fix the direct path, narrow the supported format/mode, or retain the lower profile |
 | a forced cap produces a higher string but broken behavior | prohibit overrides; gate every capability on functional and conformance tests |
 | software rendering or a truncated CTS shard creates a false pass | reject unexpected renderers before execution; require QPA identity/trailer, exact caselist union, artifact digest, clean process exit, and clean guest shutdown |
 | full CTS exhausts the 1.5 GiB iPad guest | run one bounded shard per fresh guest, export artifacts immediately, disable deliberate OOM/image logging, and treat OOM or app termination as failure rather than a skip |
-| geometry emulation changes ordering or query semantics | do not advertise GLES/GL 3.2 until complete geometry and interaction coverage passes |
+| a conformant feature silently executes workload-proportional work on the CPU | classify the data path before promotion and reject CPU shader/raster/geometry/format work, readback-driven decisions, and per-operation round trips |
+| GPU lowering requires excessive passes, command amplification, or memory traffic | fail the frozen performance budget and retain the lower profile even when CTS passes |
+| a higher profile regresses ordinary lower-profile workloads | require matched interleaved A/B canaries before full CTS and reject any repeatable regression beyond the frozen threshold |
 | blob mappings leak or outlive guest memory | bounded ownership table, exact unmap/reset ordering, ASan/UBSan stress, both page profiles |
-| host GL 4.6 provider is not viable on iOS | retain the last truthful per-platform profile; do not turn an architectural protocol maximum into a product promise |
+| a private DRM ioctl, capset, or winsys patch silently makes the rootfs custom | stop the promotion; released Mesa/libdrm must use the standard ABI naturally, while any repository-specific extension remains negotiated below the userspace boundary |
+| blob support is advertised before UML exposes a valid host-visible aperture | require `RESOURCE_BLOB` and `HOST_VISIBLE` getparams, map-info, coherent round trips, and fail-closed reconnect/reset tests before the feature bit or capset gate is enabled |
+| a 4 KiB guest mapping aliases another subpage in a 16 KiB host slot | validate whole-slot ownership, offset bounds, remap/TLB visibility, and teardown under both page profiles on macOS, Simulator, and the connected iPad |
+| cached map-info is claimed without real CPU/GPU coherence | require bidirectional persistent-map visibility without transfer commands; otherwise report a truthful noncoherent/unsupported mode |
+| a kernel patch is hand-edited, stale, or loses ownership metadata | edit the configured Git topic, regenerate with `kernel/rebase-patches.sh`, update final-tree/delta/ownership policy, and require clean replay plus both LLVM 22 page-profile builds |
+| a dependency or kernel change is accidentally sent outside this repository | keep prepared sources remote-less, provide no push/submission step, review only generated carried series in this repository, and fail documentation/tooling checks on outbound workflow instructions |
+| a future GLES/GL 3.2+ or GL 4.x proposal lacks a direct efficient ANGLE/Metal route | keep it outside the product plan; a version string is not a reason to add a Vulkan provider or heavy emulation |
 | dynamic frameworks weaken dependency provenance | exact allowed framework identities and rpaths; no ambient lookup or global verifier relaxation |
 | the new common GPU product duplicates or bypasses the refactored dependency authority | one central manifest and prepare step; extend product membership, common builder, platform contracts, CMake verifier, and packaging atomically; reject any Kernarium-local manifest/fetch |
 | a hand-edited or stale dependency patch produces an unreviewable prepared tree | edit commits in a clean topic branch, regenerate with `dependencies/rebase-patches.sh`, validate the complete manifest/series inventory, and refuse mismatched prepared repositories |
 | atomic removal leaves a hidden desktop graphics consumer | delete the desktop libepoxy/virglrenderer rows, recipes, imports, CGL provider/CLI/tests, and OpenGL-texture bridge together; make source, File API, link-map, and runtime-closure negatives reject each one |
-| an experimental MoltenVK/Zink dependency leaks into the accepted product | use distinct manifest products, prefixes, platform contracts, CMake targets, and package checks until every promotion gate passes |
+| a combined GL+Vulkan product obscures provider isolation | record `gl_provider=angle-metal` and `vk_provider=venus-moltenvk` separately and prove no GL-facade target edge, EGL choice, function resolution, capset 1/2 behavior, or resource path touches MoltenVK |
 | GN, Xcode, submodules, or another transitive tool fetches undeclared source | list every transitive source/commit/path centrally, run only `prepare.sh` with network access, and test builders in an offline environment |
 
 ## Completion criteria
 
 The plan is complete only when all of the following are true:
 
-1. macOS can build, test, and ship only the same ANGLE provider architecture as iOS,
+1. macOS can build, test, and ship only the same ANGLE/Metal provider architecture as iOS,
    including source identity, patches, EGL attributes, capset logic, and
    native-resource contract. No CGL provider, CLI choice, preset, test lane,
    desktop graphics dependency row/recipe/target, OpenGL.framework link, or
    fallback exists.
-2. The product-fixed backend no longer changes GPU object layout or controls
+2. The product-fixed ANGLE/Metal provider no longer changes GPU object layout or controls
    VNC/UI platform ownership, and macOS cannot select a provider independently
    of the two iOS slices.
 3. The three Apple products consume authenticated slices from one reviewed
    host-graphics source matrix, one common GPU recipe, and platform-specific
    contracts verified against the same central manifest and ordered series.
-4. Every claimed GL/GLES version arises naturally from an unmodified released
-   guest Mesa and passes the matching functional/conformance gate.
-5. Native presentation and CPU fallback have explicit, measured behavior on
-   each platform.
-6. GL 4.4 or later is claimed only after coherent blobs work under both guest
-   page profiles.
-7. GLES 3.2 or desktop GL 3.2+ over MoltenVK is claimed only after geometry
-   shader behavior is implemented and qualified.
-8. macOS is the documented first development loop; the same revision then
+4. Every required Linux graphics change is carried in the generated maintained
+   kernel series, replays to the reviewed final tree, builds both canonical
+   page profiles with LLVM 22, and yields the same per-profile kernel artifact
+   for macOS, Simulator, and device. The standard Virtio-GPU/DRM ABI remains
+   usable by released guest userspace; no private userspace dependency is
+   introduced.
+5. Every claimed GL/GLES version arises naturally from an unmodified released
+   guest Mesa and passes both the matching functional/conformance gate and the
+   frozen matched performance budget. No claimed feature uses prohibited
+   CPU-heavy software emulation.
+6. Ordinary AppKit/UIKit presentation uses the direct same-device Metal texture
+   path with zero unexpected CPU fallback. Bounded readback is separately
+   labeled as diagnostic/VNC behavior and cannot qualify native performance.
+7. The provider graph and runtime evidence prove
+   `VirglGlFacade -> AngleMetalHostGlProvider -> Metal`. A combined Vulkan
+   product may contain a separate `VenusVkFacade -> MoltenVK -> Metal`, but no
+   GL target edge, EGL display selection, function-pointer resolution, capset
+   1/2 behavior, or GL resource path touches it.
+8. Select the GLES ceiling independently as GLES 3.0 or 3.1 and the desktop
+   ceiling independently as GL 2.1, 3.0, or 3.1; each is the highest candidate
+   that passes every correctness and performance gate. Retaining a lower
+   profile is successful completion; GLES/GL 3.2+ and GL 4.x remain unclaimed
+   unless a later direct, efficient ANGLE/Metal path causes this plan to be
+   explicitly revised.
+9. macOS is the documented first development loop; the same revision then
    passes the iPhone 17 Pro Max Simulator validation loop, and every final
    claimed profile completes the required campaign on the connected iPad. Run
    the full must-pass matrix under the default 16 KiB
    profile; repeat it under 4 KiB for page-, resource-, mapping-, or
    blob-sensitive changes, and otherwise run the fixed 4 KiB sentinel and
    regression selection.
-9. Every required CTS configuration and shard completes exactly once against a
+10. Every required CTS configuration and shard completes exactly once against a
    frozen source/build receipt and binary/resource/caselist identity; its
    verified union has no missing cases. Every required core case is `Pass`;
    any other accepted status is explicitly permitted by the exact Khronos
    criteria. Required connected-iPad shards run under both profiles for
    mapping-sensitive milestones.
-10. `check-gpu` and `check-gpu-asan-ubsan` exercise common ANGLE and reject the
+11. `check-gpu` and `check-gpu-asan-ubsan` exercise common ANGLE/Metal and reject the
    removed desktop path; dependency verification, the four
    GPU-bearing Kernarium runtime presets,
    `Kernarium/scripts/package-ios-frameworks.sh`, architecture audit, and the
    selected guest campaigns pass. Run the independent public-library
    `scripts/build-xcframework.sh` gate only when that package graph is affected;
    it is not evidence for ANGLE/Kernarium packaging.
-11. The dependency workflow passes manifest/series validation, offline
+12. The dependency workflow passes manifest/series validation, offline
    prepared-source verification, all three prefix verifiers, installed
    provenance comparison, package/runtime-closure checks, and negative tests
    for stale or wrong-platform inputs. This includes exactly one Apple-GPU
    prefix for macOS, Simulator, and device; no legacy graphics prefix remains.
    No deleted Kernarium-local dependency authority or archive-preparation path
    has returned.
-12. `darwin/README.md`, `dependencies/README.md`, `docs/testing.md`, the Virgl
-   implementation plan, feasibility report, and evidence index are updated to
-   distinguish current state, experiment, and accepted product support.
+13. `darwin/README.md`, `dependencies/README.md`, `kernel/README.md`,
+   `docs/testing.md`, the Virgl implementation plan, feasibility report, kernel
+   patch evidence, and evidence index are updated to distinguish current state,
+   experiment, and accepted product support.
+14. No workflow submits or uploads changes outside this emulator repository.
+    Every third-party host change and Linux change is reproducible from the
+    checked-in dependency/kernel patch series, while guest Mesa/libdrm and the
+    qualification CTS remain released and unmodified.
 
 The truthful evidence statement is: an older macOS CGL build measured guest
 GL 4.1/GLES 3.0, while the current iOS ANGLE/Metal path measured an ES 3.0 host
 and passed the recorded WebGL 2 workload. The macOS number is archival only and
 does not define a lane in this plan. No new shared capability is claimed until
 the exact Apple-GPU path passes macOS first, the iPhone 17 Pro Max Simulator
-second, and the connected iPad qualification last.
+second, and the connected iPad qualification last. The committed shared target
+is the direct-hardware ANGLE/Metal GL 2.1 expected/GLES 3.0 baseline candidate;
+it becomes the performance baseline only after Phase 2 passes. GLES 3.1
+and desktop GL 3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus
+GL 4.x are not planned claims.
