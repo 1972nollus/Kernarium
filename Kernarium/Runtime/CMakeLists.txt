@@ -89,7 +89,30 @@ if(NOT _kernarium_cts_result EQUAL 0)
         "${_kernarium_cts_output}${_kernarium_cts_error}")
 endif()
 
+set(_kernarium_aquarium_generator
+    "${PROJECT_SOURCE_DIR}/Kernarium/scripts/generate-aquarium-header.py")
+set(_kernarium_aquarium_runner
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py")
+set(_kernarium_aquarium_header
+    "${CMAKE_CURRENT_BINARY_DIR}/KernariumAquarium.hpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_kernarium_aquarium_generator}"
+    "${_kernarium_aquarium_runner}")
+execute_process(
+    COMMAND "${_kernarium_python3}" -B "${_kernarium_aquarium_generator}"
+        --runner "${_kernarium_aquarium_runner}"
+        --output "${_kernarium_aquarium_header}"
+    RESULT_VARIABLE _kernarium_aquarium_result
+    OUTPUT_VARIABLE _kernarium_aquarium_output
+    ERROR_VARIABLE _kernarium_aquarium_error)
+if(NOT _kernarium_aquarium_result EQUAL 0)
+    message(FATAL_ERROR
+        "Cannot generate Kernarium Aquarium probe:\n"
+        "${_kernarium_aquarium_output}${_kernarium_aquarium_error}")
+endif()
+
 add_library(KernariumRuntime SHARED
+    "${_kernarium_aquarium_header}"
     "${_kernarium_cts_header}"
     KernariumRuntime.h
     KernariumRuntime.mm)
@@ -120,7 +143,13 @@ target_compile_features(KernariumRuntime PRIVATE cxx_std_20)
 target_compile_options(KernariumRuntime PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     -Wall -Wextra -Werror)
+if(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
+    set(_kernarium_aquarium_supported 1)
+else()
+    set(_kernarium_aquarium_supported 0)
+endif()
 target_compile_definitions(KernariumRuntime PRIVATE
+    KERNARIUM_AQUARIUM_SUPPORTED=${_kernarium_aquarium_supported}
     KERNARIUM_KERNEL_RELEASE="${KERNARIUM_KERNEL_RELEASE}"
     KERNARIUM_RUNTIME_FRAMEWORK_NAME="${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 target_link_options(KernariumRuntime PRIVATE

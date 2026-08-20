@@ -19,6 +19,10 @@ enum KernelPageSize: Int, CaseIterable, Identifiable {
 }
 
 struct EmulatorConfiguration: Equatable {
+    static let vCPUEnvironmentKey = "KERNARIUM_VCPU_COUNT"
+    static let guestMemoryEnvironmentKey = "KERNARIUM_GUEST_MEMORY_MIB"
+    static let overlaySizeEnvironmentKey = "KERNARIUM_OVERLAY_SIZE_GIB"
+    static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
     static let guestMemoryRangeMiB = 512...4096
     static let guestMemoryStepMiB = 128
     static let overlaySizeRangeGiB = 1...32
@@ -81,13 +85,35 @@ struct EmulatorConfiguration: Equatable {
         let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
             ? defaultRetinaMode
             : defaults.bool(forKey: Key.retinaMode)
+        let environmentVCPUCount = environmentInteger(
+            environment[vCPUEnvironmentKey], in: 1...maximumVCPUCount
+        )
+        let environmentGuestMemoryMiB = environmentInteger(
+            environment[guestMemoryEnvironmentKey], in: guestMemoryRangeMiB
+        ).flatMap { value in
+            (value - guestMemoryRangeMiB.lowerBound) % guestMemoryStepMiB == 0
+                ? value
+                : nil
+        }
+        let environmentOverlaySizeGiB = environmentInteger(
+            environment[overlaySizeEnvironmentKey], in: overlaySizeRangeGiB
+        )
+        let environmentRetinaMode = environment[retinaEnvironmentKey].flatMap {
+            value in
+            switch value {
+            case "0": false
+            case "1": true
+            default: nil
+            }
+        }
 
         return Self(
-            vCPUCount: min(max(storedVCPUCount, 1), maximumVCPUCount),
-            guestMemoryMiB: normalizedGuestMemoryMiB(
-                storedGuestMemoryMiB
+            vCPUCount: environmentVCPUCount ?? min(
+                max(storedVCPUCount, 1), maximumVCPUCount
             ),
-            overlaySizeGiB: min(
+            guestMemoryMiB: environmentGuestMemoryMiB ??
+                normalizedGuestMemoryMiB(storedGuestMemoryMiB),
+            overlaySizeGiB: environmentOverlaySizeGiB ?? min(
                 max(storedOverlaySizeGiB, overlaySizeRangeGiB.lowerBound),
                 overlaySizeRangeGiB.upperBound
             ),
@@ -97,7 +123,7 @@ struct EmulatorConfiguration: Equatable {
             kernelPageSize: environmentKernelPageSize ??
                 KernelPageSize(rawValue: storedKernelPageSize) ??
                 defaultKernelPageSize,
-            retinaMode: storedRetinaMode
+            retinaMode: environmentRetinaMode ?? storedRetinaMode
         )
     }
 
@@ -124,6 +150,16 @@ struct EmulatorConfiguration: Equatable {
             guestMemoryStepMiB
         return guestMemoryRangeMiB.lowerBound +
             roundedSteps * guestMemoryStepMiB
+    }
+
+    private static func environmentInteger(
+        _ value: String?,
+        in range: ClosedRange<Int>
+    ) -> Int? {
+        guard let value, let parsed = Int(value), range.contains(parsed) else {
+            return nil
+        }
+        return parsed
     }
 
     private enum Key {

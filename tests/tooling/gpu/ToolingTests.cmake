@@ -27,3 +27,10 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_chromium_webgl.py
     LABELS gpu;webgl
     TIMEOUT 120)
+
+uml_add_tooling_test(
+    NAME ios-simulator-webgl-aquarium-policy
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py
+    LABELS gpu;webgl;ios
+    TIMEOUT 120)

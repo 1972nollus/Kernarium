@@ -360,13 +360,42 @@ records such as `[    0.004448]` retain sub-10-ms precision even though the
 kernel tick remains 100 Hz. Time-travel modes retain their deterministic
 simulated-jiffies clock.
 
-`--aquarium` remains an opt-in Simulator-only launcher check. It requires a
-live WebGL 2 context, samples rendered FPS, and emits one `UML_AQUARIUM_OK`
-record with the GL version and renderer. The dated 2 GiB Simulator evidence
+Aquarium is an opt-in macOS/Simulator-only performance canary. The common
+probe requires WebGL 2 through guest Virgl, fixes 500 fish, waits 15 seconds,
+then records thirty one-second FPS samples. A fixed native macOS run comes
+first:
+
+```sh
+python3 -B tests/integration/gpu/run_chromium_webgl.py \
+  --display native --page-profile 16k \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --engine gadgets --memory 1536M --cpus 4 \
+  --width 440 --height 860 --dpi 160
+```
+
+Pass that run's `run.json` to the Simulator adapter so it reparses rather than
+trusts the predecessor evidence:
+
+```sh
+python3 -B tests/integration/gpu/run_ios_simulator_chromium_webgl.py \
+  --page-profile 16k --device booted \
+  --macos-run .build/chromium-webgl/<run>/run.json
+```
+
+Use the corresponding `macos-integration-4k` emulator and `--page-profile 4k`
+for the compatibility profile. Each adapter preserves raw FPS samples,
+derived frame-time statistics, shader compile/link calls and synchronous CPU
+time, raw host-process and synchronized guest CPU/memory snapshots, final
+native-display counters, exact configuration identity, and clean shutdown.
+Any CPU-fallback frame, missing sample/counter, dirty DRM teardown, nonzero
+runtime result, software renderer, or mismatched macOS predecessor fails the
+run. `Kernarium/scripts/run-ios-simulator.sh --aquarium` uses the same generated
+probe and fixed Simulator configuration as a manual bring-up convenience; the
+evidence adapter above owns recorded runs. The dated 2 GiB Simulator evidence
 reports `WebGL 2.0 (OpenGL ES 3.0 Chromium)` and
-`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Aquarium is not a current physical-device
-acceptance workload; do not add swap or another memory workaround solely for
-that campaign.
+`ANGLE (Mesa, virgl, OpenGL ES 3.0)`. Aquarium is forbidden on the physical
+iPad acceptance guest; do not add swap or another memory workaround solely
+for that campaign.
 
 The repeated physical checkpoint used a standard-signed Release build on an
 iPad mini 6 with `phosh.erofs`, `mem=1536M`, and all six reported CPUs under

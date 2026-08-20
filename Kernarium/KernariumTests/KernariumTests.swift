@@ -134,6 +134,46 @@ struct KernariumTests {
     }
 
     @Test
+    func environmentCanFreezePerformanceConfiguration() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(2, forKey: "emulator.vCPUCount")
+        defaults.set(2048, forKey: "emulator.guestMemoryMiB")
+        defaults.set(16, forKey: "emulator.overlaySizeGiB")
+        defaults.set(true, forKey: "emulator.retinaMode")
+
+        let selected = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [
+                EmulatorConfiguration.vCPUEnvironmentKey: "4",
+                EmulatorConfiguration.guestMemoryEnvironmentKey: "1536",
+                EmulatorConfiguration.overlaySizeEnvironmentKey: "8",
+                EmulatorConfiguration.retinaEnvironmentKey: "0"
+            ]
+        )
+        #expect(selected.vCPUCount == 4)
+        #expect(selected.guestMemoryMiB == 1536)
+        #expect(selected.overlaySizeGiB == 8)
+        #expect(selected.retinaMode == false)
+
+        let invalid = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [
+                EmulatorConfiguration.vCPUEnvironmentKey: "7",
+                EmulatorConfiguration.guestMemoryEnvironmentKey: "1500",
+                EmulatorConfiguration.overlaySizeEnvironmentKey: "0",
+                EmulatorConfiguration.retinaEnvironmentKey: "false"
+            ]
+        )
+        #expect(invalid.vCPUCount == 2)
+        #expect(invalid.guestMemoryMiB == 2048)
+        #expect(invalid.overlaySizeGiB == 16)
+        #expect(invalid.retinaMode == true)
+    }
+
+    @Test
     func rootfsSelectionAcceptsOnlyDocumentsFilenames() {
         #expect(
             RootfsImage.selectedFilename(

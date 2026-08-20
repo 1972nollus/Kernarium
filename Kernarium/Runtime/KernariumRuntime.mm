@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "KernariumRuntime.h"
+#include "KernariumAquarium.hpp"
 #include "KernariumCtsCampaigns.hpp"
 
 #include "audio/in_process_service.hpp"
@@ -352,149 +353,6 @@ PMOS_DEVICE_ACCESS
 else
     echo "Kernarium desktop setup is owned by the rootfs image"
 fi
-if [ "${KERNARIUM_AQUARIUM:-0}" = 1 ]; then
-    for unit in docker.service docker.socket containerd.service \
-        packagekit.service apt-daily.service apt-daily.timer \
-        apt-daily-upgrade.service apt-daily-upgrade.timer; do
-        ln -sf /dev/null "/etc/systemd/system/$unit"
-    done
-    install -d -m 0755 /var/tmp/kernarium-aquarium-extension
-    cat > /var/tmp/kernarium-aquarium-extension/manifest.json <<'AQUARIUM_MANIFEST'
-{
-  "manifest_version": 3,
-  "name": "Kernarium Aquarium verifier",
-  "version": "1.0",
-  "content_scripts": [{
-    "matches": ["https://webglsamples.org/aquarium/*"],
-    "js": ["verify.js"],
-    "run_at": "document_start"
-  }]
-}
-AQUARIUM_MANIFEST
-    cat > /var/tmp/kernarium-aquarium-extension/verify.js <<'AQUARIUM_SCRIPT'
-(() => {
-  const delay = (milliseconds) =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds));
-  const fail = (error) => console.error("UML_AQUARIUM_ERROR|" +
-    String(error && error.stack || error).replace(/\s+/g, " ").trim());
-  const run = async () => {
-    if (document.readyState !== "complete") {
-      await new Promise((resolve) =>
-        addEventListener("load", resolve, {once: true}));
-    }
-    const marker = document.createElement("div");
-    marker.textContent = "KERNARIUM WEBGL WARMUP";
-    marker.style.cssText = [
-      "position:fixed", "right:8px", "top:8px", "z-index:2147483647",
-      "padding:12px", "background:#ff00ff", "color:#00ff00",
-      "font:20px monospace"
-    ].join(";");
-    document.documentElement.appendChild(marker);
-
-    let positiveReadings = 0;
-    const deadline = Date.now() + 180000;
-    while (Date.now() < deadline && positiveReadings < 5) {
-      const message = document.getElementById("msgContainer")?.textContent || "";
-      if (message.includes("does not appear your computer supports WebGL")) {
-        throw new Error(message);
-      }
-      const fps = Number.parseFloat(
-        document.getElementById("fps")?.textContent || "");
-      positiveReadings = Number.isFinite(fps) && fps > 0
-        ? positiveReadings + 1 : 0;
-      await delay(1000);
-    }
-    if (positiveReadings < 5)
-      throw new Error("Aquarium did not produce positive FPS readings");
-
-    const canvas = document.getElementById("canvas");
-    const gl = canvas?.getContext("webgl2");
-    if (!gl || gl.isContextLost())
-      throw new Error("WebGL 2 context unavailable or lost");
-
-    const samples = [];
-    marker.textContent = "KERNARIUM WEBGL MEASURING";
-    for (let index = 0; index < 10; ++index) {
-      await delay(1000);
-      const fps = Number.parseFloat(
-        document.getElementById("fps")?.textContent || "");
-      if (!Number.isFinite(fps) || fps <= 0 || gl.isContextLost())
-        throw new Error("invalid live WebGL FPS sample");
-      samples.push(fps);
-    }
-    const average = samples.reduce((sum, value) => sum + value, 0) /
-      samples.length;
-    const extension = gl.getExtension("WEBGL_debug_renderer_info");
-    const renderer = extension
-      ? gl.getParameter(extension.UNMASKED_RENDERER_WEBGL)
-      : gl.getParameter(gl.RENDERER);
-    marker.textContent = average.toFixed(2) + " AVG FPS";
-    console.log("UML_AQUARIUM_OK|AVG_FPS=" + average.toFixed(3) +
-      "|MIN_FPS=" + Math.min(...samples).toFixed(3) +
-      "|MAX_FPS=" + Math.max(...samples).toFixed(3) +
-      "|SAMPLES=" + samples.length + "|FISH=500" +
-      "|CANVAS=" + canvas.width + "x" + canvas.height +
-      "|VERSION=" + gl.getParameter(gl.VERSION) +
-      "|RENDERER=" + renderer);
-  };
-  run().catch(fail);
-})();
-AQUARIUM_SCRIPT
-    cat > /usr/local/libexec/kernarium-chromium-aquarium <<'AQUARIUM_LAUNCHER'
-#!/bin/sh
-set -eu
-runtime="/run/user/$(id -u uml)"
-remaining=600
-while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
-    if [ "$remaining" -le 0 ]; then
-        echo "UML_CHROMIUM_ERROR: KDE display did not become ready"
-        exit 1
-    fi
-    remaining=$((remaining - 1))
-    sleep 1
-done
-xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
-    head -n 1)"
-if [ -z "$xauthority" ]; then
-    echo "UML_CHROMIUM_ERROR: Xauthority cookie was not found"
-    exit 1
-fi
-chromium --version || true
-exec runuser -u uml -- env \
-    HOME=/home/uml DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 \
-    XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
-    chromium --no-first-run --disable-crash-reporter \
-    --enable-logging=stderr --start-maximized --use-gl=angle \
-    --use-angle=gles-egl --ignore-gpu-blocklist \
-    --user-data-dir=/tmp/chromium-aquarium \
-    --disable-extensions-except=/var/tmp/kernarium-aquarium-extension \
-    --load-extension=/var/tmp/kernarium-aquarium-extension \
-    'https://webglsamples.org/aquarium/aquarium.html?numFish=500'
-AQUARIUM_LAUNCHER
-    chmod 0755 /usr/local/libexec/kernarium-chromium-aquarium
-    cat > /etc/systemd/system/kernarium-chromium-aquarium.service <<'AQUARIUM_SERVICE'
-[Unit]
-Description=Kernarium Chromium WebGL Aquarium verification
-After=display-manager.service network-online.target
-Wants=display-manager.service network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/libexec/kernarium-chromium-aquarium
-TasksMax=infinity
-StandardInput=null
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=graphical.target
-AQUARIUM_SERVICE
-    install -d -m 0755 /etc/systemd/system/graphical.target.wants
-    ln -sf ../kernarium-chromium-aquarium.service \
-        /etc/systemd/system/graphical.target.wants/kernarium-chromium-aquarium.service
-    echo "Kernarium Aquarium verification enabled"
-fi
 )krn";
 
 constexpr std::string_view desktopBootstrapSuffix = R"krn(echo "Darwin UML root overlay: lower=erofs, upper=ext4"
@@ -703,8 +561,6 @@ public:
                                 observed.erase(0, observed.size() - 1024U);
                             if (observed.find(shellReady) != std::string::npos) {
                                 std::string bootstrap;
-                                if (bootMode == ConsoleBootMode::aquarium)
-                                    bootstrap = "KERNARIUM_AQUARIUM=1\n";
                                 if (bootMode == ConsoleBootMode::geekbench) {
                                     if (!geekbenchWorkloads.empty()) {
                                         bootstrap =
@@ -715,6 +571,9 @@ public:
                                     bootstrap.append(geekbenchBootstrap);
                                 } else {
                                     bootstrap.append(desktopBootstrapPrefix);
+                                    if (bootMode == ConsoleBootMode::aquarium)
+                                        bootstrap.append(
+                                            kernarium::aquarium::setup);
                                     if (bootMode == ConsoleBootMode::cts)
                                         bootstrap.append(ctsCampaign->setup);
                                     bootstrap.append(desktopBootstrapSuffix);
@@ -737,6 +596,8 @@ public:
                                             ? "Geekbench"
                                             : bootMode == ConsoleBootMode::cts
                                             ? "CTS"
+                                            : bootMode == ConsoleBootMode::aquarium
+                                            ? "Aquarium"
                                             : "desktop");
                                 observed.clear();
                             }
@@ -988,6 +849,11 @@ int runtimeRun(
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
+        if (aquarium && KERNARIUM_AQUARIUM_SUPPORTED == 0) {
+            std::fputs(
+                "Kernarium: WebGL Aquarium is Simulator-only\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
         const char* ctsCampaignEnvironment =
             std::getenv("KERNARIUM_CTS_CAMPAIGN");
@@ -1034,7 +900,9 @@ int runtimeRun(
         ConsoleBridge consoleBridge {
             bootMode, geekbenchWorkloads, ctsCampaign};
         if (aquarium)
-            std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);
+            std::fputs(
+                "Kernarium: WebGL Aquarium verification requested\n",
+                stderr);
         if (ctsRequested) {
             std::fprintf(
                 stderr,

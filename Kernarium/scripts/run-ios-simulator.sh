@@ -107,5 +107,11 @@ printf '%s\n' \
 	"launching Kernarium; guest console follows on stdout"
 if [ "$AQUARIUM" -eq 1 ]; then
 	export SIMCTL_CHILD_KERNARIUM_WEBGL_AQUARIUM=1
+	export SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE=gadgets
+	export SIMCTL_CHILD_KERNARIUM_VCPU_COUNT=4
+	export SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB=1536
+	export SIMCTL_CHILD_KERNARIUM_OVERLAY_SIZE_GIB=8
+	export SIMCTL_CHILD_KERNARIUM_RETINA_MODE=0
+	export SIMCTL_CHILD_UML_GPU_FRAME_STATS=1
 fi
 exec xcrun simctl launch --console-pty "$DEVICE" "$BUNDLE_ID"
