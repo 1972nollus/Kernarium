@@ -62,6 +62,19 @@ def synthetic_aarch64_elf(alignment: int = 16384) -> bytes:
     return bytes(payload)
 
 
+UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
+/dev/block/by-name/system /system erofs ro wait,first_stage_mount
+/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/product /product erofs ro wait,first_stage_mount
+/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+"""
+
+
 def verify_target_files_fixtures(verifier: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
@@ -72,10 +85,15 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           module_loader: bool = False, dlkm_image: bool = False,
                           dynamic_image: bool = False, ota_tool: bool = False,
                           virtual_ab: bool = False, abi32: bool = False,
+                          wrong_fstab: bool = False, stock_fstab: bool = False,
+                          seriallogging: bool = False,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
+                archive.writestr("INIT_BOOT/RAMDISK/init", b"init")
+                archive.writestr("META/init_boot_filesystem_config.txt", "")
                 archive.writestr("META/misc_info.txt", "")
+                archive.writestr("META/ramdisk_node_list", "")
                 for image in (
                     "odm.img",
                     "product.img",
@@ -99,6 +117,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
                 )
+                fstab = UML_FSTAB.replace("/system erofs", "/system ext4", 1) if wrong_fstab else UML_FSTAB
+                archive.writestr("VENDOR/etc/fstab.uml", fstab)
+                archive.writestr(
+                    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+                    fstab,
+                )
+                archive.writestr(
+                    "VENDOR/etc/init/init.cutf_cvm.rc",
+                    "on fs\n    mount_all --early\n"
+                    "on late-fs\n    mount_all --late\n"
+                    "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
+                )
+                archive.writestr("VENDOR/etc/ueventd.rc", "/dev/ttyS0 0660 root shell\n")
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -109,6 +140,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("IMAGES/super_empty.img", b"dynamic")
                 if ota_tool:
                     archive.writestr("OTA/bin/updater", b"updater")
+                if stock_fstab:
+                    archive.writestr("VENDOR/etc/fstab.cf.ext4.hctr2", b"stock")
+                if seriallogging:
+                    archive.writestr("VENDOR/etc/init/seriallogging.rc", b"stock")
 
         good = root / "good.zip"
         write_fixture(good)
@@ -134,6 +169,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("virtual-ab", {"virtual_ab": True}),
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
+            ("wrong-fstab", {"wrong_fstab": True}),
+            ("stock-fstab", {"stock_fstab": True}),
+            ("seriallogging", {"seriallogging": True}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -153,6 +191,75 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             )
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
+
+
+def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
+    fields = (
+        inode,
+        mode,
+        0,
+        0,
+        1,
+        0,
+        len(payload),
+        0,
+        0,
+        0,
+        0,
+        len(name.encode()) + 1,
+        0,
+    )
+    result = bytearray(b"070701" + b"".join(f"{value:08x}".encode() for value in fields))
+    result.extend(name.encode() + b"\0")
+    result.extend(b"\0" * (-len(result) % 4))
+    result.extend(payload)
+    result.extend(b"\0" * (-len(result) % 4))
+    return bytes(result)
+
+
+def synthetic_initramfs(*, wrong_fstab: bool = False, module_loader: bool = False,
+                        duplicate_file: bool = False) -> bytes:
+    fstab = UML_FSTAB.replace("/system erofs", "/system ext4", 1) if wrong_fstab else UML_FSTAB
+    entries = [
+        newc_entry("dev", 0o40755, b"", 1),
+        newc_entry("dev", 0o40755, b"", 2),
+        newc_entry("init", 0o100750, b"init", 3),
+        newc_entry(
+            "first_stage_ramdisk/system/etc/fstab.uml",
+            0o100644,
+            fstab.encode(),
+            4,
+        ),
+    ]
+    if module_loader:
+        entries.append(newc_entry("system/bin/modprobe", 0o120777, b"toybox", 5))
+    if duplicate_file:
+        entries.append(newc_entry("init", 0o100750, b"init", 6))
+    entries.append(newc_entry("TRAILER!!!", 0, b"", len(entries) + 1))
+    return b"".join(entries)
+
+
+def verify_initramfs_fixtures(verifier: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="android-initramfs-") as temporary:
+        root = Path(temporary)
+        good = root / "ramdisk.img"
+        good.write_bytes(synthetic_initramfs())
+        subprocess.run([sys.executable, "-B", str(verifier), str(good)], check=True)
+        for label, options in (
+            ("wrong-fstab", {"wrong_fstab": True}),
+            ("module-loader", {"module_loader": True}),
+            ("duplicate-file", {"duplicate_file": True}),
+        ):
+            fixture = root / f"bad-{label}.img"
+            fixture.write_bytes(synthetic_initramfs(**options))
+            result = subprocess.run(
+                [sys.executable, "-B", str(verifier), str(fixture)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if result.returncode == 0:
+                fail(f"initramfs verifier accepted the {label} fixture")
 
 
 def synthetic_sparse_image() -> bytes:
@@ -452,6 +559,7 @@ def main() -> None:
         android_root / "build/apply-aosp-patches.sh",
         android_root / "build/build-aosp.sh",
         android_root / "build/assemble-image.sh",
+        android_root / "build/assemble-ramdisk.sh",
         android_root / "build/apply-kernel-patches.sh",
         android_root / "build/build-kernel.sh",
         android_root / "build/verify-kernel-elf.py",
@@ -468,7 +576,9 @@ def main() -> None:
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
         android_root / "tools/verify-target-files.py",
+        android_root / "tools/verify-initramfs.py",
         android_root / "tools/ubd-disk.py",
+        android_root / "support/boot/kernel-command-line.txt",
         android_root / "support/image/partition-layout.json",
         kernel_root / "README.md",
         kernel_root / "config/android.fragment",
@@ -526,6 +636,7 @@ def main() -> None:
         check=True,
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_ubd_disk_fixtures(
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",
@@ -585,6 +696,7 @@ def main() -> None:
     apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
     assemble_image = (android_root / "build/assemble-image.sh").read_text()
+    assemble_ramdisk = (android_root / "build/assemble-ramdisk.sh").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     build_make_patch = next(
@@ -606,6 +718,17 @@ def main() -> None:
     ):
         if token not in assemble_image:
             fail(f"Android disk assembler is missing fixed policy: {token}")
+    for token in (
+        "verify-target-files.py",
+        "verify-initramfs.py",
+        "--mkbootfs",
+        'TARGET_FILES_DIR=${TARGET_FILES%.zip}',
+        "first_stage_ramdisk/system/etc/fstab.uml",
+        "system/bin/modprobe",
+        "system/bin/snapuserd",
+    ):
+        if token not in assemble_ramdisk:
+            fail(f"Android ramdisk assembler is missing fixed policy: {token}")
     for token in (
         "command -v zip",
         "--kernel-elf",
@@ -646,9 +769,26 @@ def main() -> None:
         "update_engine_sideload",
         "trusty_security_vm.elf",
         "target-files-package",
+        "device_google_cuttlefish_uml_config_ueventd_rc",
+        "fstab.uml.vendor_ramdisk",
     ):
         if token not in build_aosp:
             fail(f"AOSP builder is missing fixed product policy: {token}")
+
+    command_line = (android_root / "support/boot/kernel-command-line.txt").read_text()
+    for token in (
+        "init=/init",
+        "console=tty0",
+        "console=ttyS0",
+        "androidboot.fstab_suffix=uml",
+        "androidboot.boot_devices=uml-blkdev.0",
+        "androidboot.selinux=enforcing",
+        "androidboot.serialconsole=1",
+    ):
+        if token not in command_line.split():
+            fail(f"Android kernel command line is missing fixed token: {token}")
+    if "ubd0=" in command_line or "/home/" in command_line:
+        fail("Android kernel command line stores a machine-specific disk path")
     for token in (
         "CONFIG_MODULES=n",
         "CONFIG_[A-Za-z0-9_]+=m$",

@@ -126,6 +126,18 @@ longer depends on or copies the legacy non-A/B `updater` binary. This keeps the
 useful target-files verification input without manufacturing an OTA path for a
 product that cannot consume one.
 
+Route `p0001` also replaces the inherited dynamic/virtio fstab with
+`fstab.uml`. Android first-stage init discovers the fixed GPT partitions below
+the `uml-blkdev.0` platform device and mounts the immutable filesystems
+directly from `/dev/block/by-name`; there are no logical, slot-select, AVB, or
+DLKM mount flags. The UML init and ueventd inputs keep the first-stage mount,
+late writable-state mount, serial console, and bugreport paths while removing
+Cuttlefish-only HVC, vsock, Wi-Fi, custom-partition, persistent-memory, and
+suspend actions. Soong disables the inherited stock fstabs and serial-logging
+file even though the base product still contributes their package names.
+`verify-target-files.py` checks the installed result rather than trusting that
+inherited package list.
+
 Once the static AOSP product emits the declared image names, assemble and
 immediately verify a raw UBD disk locally on the builder with:
 
@@ -147,9 +159,37 @@ Recheck an existing image with the `verify` subcommand. The fixed partition
 capacities are intentionally larger than the initial inherited Cuttlefish
 dynamic groups; every concrete image must fit before publication.
 
+## Standalone UML initramfs
+
+The emulator consumes neither Android `boot.img` nor `vendor_boot.img`.
+Compose the generic init-boot tree with only the patch-owned UML first-stage
+fstab and emit an uncompressed newc archive:
+
+```sh
+android/aosp-17/build/assemble-ramdisk.sh \
+  --target-files /absolute/path/to/aosp_uml_arm64_pgagnostic-target_files.zip \
+  --kernel-elf /absolute/path/to/vmlinux \
+  --mkbootfs /absolute/path/to/aosp/host/linux-x86/bin/mkbootfs \
+  --output /absolute/path/to/release/ramdisk.img
+```
+
+The assembler removes generic `modprobe` and snapshot-userdata helpers before
+packing because this guest has `CONFIG_MODULES=n`, no Virtual A/B snapshots,
+and no loadable module path. `verify-initramfs.py` parses the raw newc stream,
+requires executable `/init` and the exact first-stage fstab, and rejects
+ambiguous duplicate files, unsafe paths, module payloads, and snapshot helpers.
+The one harmless duplicate `dev` directory emitted by AOSP `mkbootfs` from its
+tree and node list is accepted only when both directory records have identical
+mode and zero size.
+
+`support/boot/kernel-command-line.txt` owns the machine-independent launch
+arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
+SELinux, and the `ttyS0` diagnostic shell. The runtime adds its local `ubd0=`
+disk and initrd paths; no builder or workstation path is stored in this tree.
+
 The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
-with 4,578 entries and 1,162 verified target executables, then assembled and
-reverified the seven-partition 17,179,869,184-byte GPT disk. The sparse host
-file allocated 1,677,701,120 bytes in that run. This is build and image-layout
-evidence only; it does not claim that the current inherited fstab, VINTF,
-SELinux, or HAL composition boots under UML yet.
+with 4,571 entries and 1,162 verified target executables, a 4,374,784-byte raw
+initramfs with 35 unique entries, and a reverified seven-partition
+17,179,869,184-byte GPT disk. The sparse disk allocated 1,677,684,736 bytes in
+that run. This proves the build, fstab, initramfs, and image-layout contracts;
+it does not yet claim a UML boot or accepted VINTF, SELinux, and HAL runtime.

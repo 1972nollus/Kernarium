@@ -235,9 +235,13 @@ done
 PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
 for package in \
 	com.android.hardware.gatekeeper.nonsecure \
-	com.android.hardware.keymint.rust_nonsecure; do
+	com.android.hardware.keymint.rust_nonsecure \
+	device_google_cuttlefish_uml_config_init_vendor_rc \
+	device_google_cuttlefish_uml_config_ueventd_rc \
+	fstab.uml \
+	fstab.uml.vendor_ramdisk; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
-		fail "required nonsecure security HAL is absent: $package"
+		fail "required UML product package is absent: $package"
 done
 for package in \
 	com.android.hardware.gatekeeper.cf_remote \

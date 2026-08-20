@@ -24,13 +24,20 @@ MAX_PROGRAM_HEADERS_SIZE = 1 << 20
 
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
+    "INIT_BOOT/RAMDISK/init",
     "IMAGES/odm.img",
     "IMAGES/product.img",
     "IMAGES/system.img",
     "IMAGES/system_ext.img",
     "IMAGES/userdata.img",
     "IMAGES/vendor.img",
+    "META/init_boot_filesystem_config.txt",
     "META/misc_info.txt",
+    "META/ramdisk_node_list",
+    "VENDOR/etc/fstab.uml",
+    "VENDOR/etc/init/init.cutf_cvm.rc",
+    "VENDOR/etc/ueventd.rc",
+    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
 DLKM_COMPATIBILITY_ENTRIES = {
@@ -80,7 +87,37 @@ FORBIDDEN_STATIC_ENTRIES = {
     "IMAGES/vbmeta_system.img",
     "IMAGES/vbmeta_vendor.img",
     "META/ab_partitions.txt",
+    "VENDOR/etc/init/seriallogging.rc",
 }
+UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
+/dev/block/by-name/system /system erofs ro wait,first_stage_mount
+/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/product /product erofs ro wait,first_stage_mount
+/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
+/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+"""
+UML_FSTAB_ENTRIES = (
+    "VENDOR/etc/fstab.uml",
+    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+)
+UML_INIT_REQUIRED = (
+    "mount_all --early",
+    "mount_all --late",
+    "ro.hardware.audio.primary",
+)
+UML_INIT_FORBIDDEN = (
+    "metrics_helper",
+    "rename_eth0",
+    "setup_wifi",
+    "socket_vsock_proxy",
+    "/dev/hvc",
+    "suspend_blocker",
+    "/dev/block/by-name/custom",
+)
 
 
 def fail(message: str) -> None:
@@ -141,6 +178,39 @@ def reject_nonstatic_payload(path: PurePosixPath) -> None:
         fail(f"OTA tool payload is forbidden: {path}")
     if path.parts[0] == "IMAGES" and path.name.endswith("_dlkm.img"):
         fail(f"DLKM image is forbidden: {path}")
+    if path.name.startswith("fstab.cf.") and path.parts[0] in {"VENDOR", "VENDOR_BOOT"}:
+        fail(f"Cuttlefish fstab is forbidden: {path}")
+
+
+def read_small(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
+    if info.is_dir() or info.file_size > 1 << 20:
+        fail(f"boot-policy file is missing or unexpectedly large: {info.filename}")
+    return archive.read(info)
+
+
+def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    for entry in UML_FSTAB_ENTRIES:
+        if read_small(archive, infos[entry]) != UML_FSTAB:
+            fail(f"UML fstab differs from the fixed UBD contract: {entry}")
+
+    init_payload = read_small(
+        archive, infos["VENDOR/etc/init/init.cutf_cvm.rc"]
+    ).decode("utf-8", errors="strict")
+    for token in UML_INIT_REQUIRED:
+        if token not in init_payload:
+            fail(f"UML init policy is missing required action: {token}")
+    for token in UML_INIT_FORBIDDEN:
+        if token in init_payload:
+            fail(f"UML init policy retains unsupported Cuttlefish action: {token}")
+
+    ueventd_payload = read_small(
+        archive, infos["VENDOR/etc/ueventd.rc"]
+    ).decode("utf-8", errors="strict")
+    if "/dev/ttyS0 0660 root shell" not in ueventd_payload:
+        fail("UML ueventd policy does not expose the serial console")
+    for token in ("/dev/hvc", "/dev/ion", "/dev/pmem", "/dev/vhci"):
+        if token in ueventd_payload:
+            fail(f"UML ueventd policy retains unsupported device: {token}")
 
 
 def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
@@ -265,6 +335,7 @@ def main() -> None:
         missing = sorted(REQUIRED_ENTRIES - seen)
         if missing:
             fail(f"required entries are missing: {', '.join(missing)}")
+        check_boot_policy(archive, infos)
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
             fail("BOOT/kernel does not match the verified ACK UML ELF")
 
