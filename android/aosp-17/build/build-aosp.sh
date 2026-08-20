@@ -7,6 +7,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
+TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 
 AOSP_SOURCE=
@@ -100,6 +101,7 @@ fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || fail "jobs must be a positive integer"
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
+[[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
@@ -168,6 +170,10 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 fi
 
 m -j"$JOBS" target-files-package
+TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${ANDROID17_PRODUCT}-target_files.zip"
+[[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
+"$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
+	--kernel-elf "$KERNEL_ELF"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "built AOSP 17 UML target files under: $OUT_DIR_ABSOLUTE"

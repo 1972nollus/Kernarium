@@ -55,6 +55,10 @@ destined for the AOSP checkout, including the UML product definition, are
 introduced only by generated `git format-patch` series under `patches/projects`;
 `support/` is never copied over an AOSP project.
 
+After packaging, the builder verifies that `BOOT/kernel` exactly matches the
+selected ACK ELF, rejects DLKM and loadable-module payloads, rejects 32-bit
+target ABIs, and checks 16 KiB load alignment for target executables.
+
 `prepare-sources.sh` is the only producer command in this lane that may access
 the public source network. It moves clean builder-local workspaces to the pinned
 AOSP manifest and ACK commit. All later commands operate offline.

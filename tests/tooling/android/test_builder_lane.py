@@ -7,7 +7,11 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
+import struct
 import subprocess
+import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -30,6 +34,95 @@ def parse_env(path: Path) -> dict[str, str]:
             fail(f"{path}:{line_number}: duplicate metadata key {key}")
         values[key] = quoted if quoted is not None else numeric
     return values
+
+
+def synthetic_aarch64_elf(alignment: int = 16384) -> bytes:
+    payload = bytearray(64 + 56)
+    payload[:4] = b"\x7fELF"
+    payload[4] = 2
+    payload[5] = 1
+    payload[6] = 1
+    struct.pack_into("<HHI", payload, 16, 3, 183, 1)
+    struct.pack_into("<Q", payload, 32, 64)
+    struct.pack_into("<HHH", payload, 52, 64, 56, 1)
+    struct.pack_into(
+        "<IIQQQQQQ",
+        payload,
+        64,
+        1,
+        5,
+        0,
+        0,
+        0,
+        len(payload),
+        len(payload),
+        alignment,
+    )
+    return bytes(payload)
+
+
+def verify_target_files_fixtures(verifier: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
+        root = Path(temporary)
+        kernel = root / "vmlinux"
+        kernel.write_bytes(synthetic_aarch64_elf())
+
+        def write_fixture(path: Path, *, module: bool = False, abi32: bool = False,
+                          alignment: int = 16384) -> None:
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("BOOT/kernel", kernel.read_bytes())
+                archive.writestr("META/misc_info.txt", "")
+                abilist32 = "armeabi-v7a" if abi32 else ""
+                archive.writestr(
+                    "SYSTEM/build.prop",
+                    "ro.product.cpu.abi=arm64-v8a\n"
+                    "ro.product.cpu.abilist=arm64-v8a\n"
+                    f"ro.product.cpu.abilist32={abilist32}\n",
+                )
+                archive.writestr(
+                    "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
+                )
+                if module:
+                    archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
+
+        good = root / "good.zip"
+        write_fixture(good)
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(verifier),
+                "--target-files",
+                str(good),
+                "--kernel-elf",
+                str(kernel),
+            ],
+            check=True,
+        )
+
+        for label, options in (
+            ("module", {"module": True}),
+            ("abi32", {"abi32": True}),
+            ("alignment", {"alignment": 4096}),
+        ):
+            fixture = root / f"bad-{label}.zip"
+            write_fixture(fixture, **options)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(verifier),
+                    "--target-files",
+                    str(fixture),
+                    "--kernel-elf",
+                    str(kernel),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if result.returncode == 0:
+                fail(f"target-files verifier accepted the {label} fixture")
 
 
 def main() -> None:
@@ -61,6 +154,7 @@ def main() -> None:
         android_root / "patches/projects/p0001/metadata.env",
         android_root / "patches/projects/p0001/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
+        android_root / "tools/verify-target-files.py",
         kernel_root / "README.md",
         kernel_root / "config/android.fragment",
         kernel_root / "patches/metadata.env",
@@ -116,6 +210,7 @@ def main() -> None:
         ],
         check=True,
     )
+    verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
 
     scripts = list((android_root / "build").rglob("*.sh"))
     scripts += list((android_root / "tools").rglob("*.py"))
@@ -182,6 +277,8 @@ def main() -> None:
         "command -v zip",
         "--kernel-elf",
         "verify-kernel-elf.py",
+        "verify-target-files.py",
+        "target_files_intermediates",
         'install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"',
         "SOONG_NINJA=ninja",
         "SOONG_INCREMENTAL_ANALYSIS=false",
