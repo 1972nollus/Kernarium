@@ -476,7 +476,12 @@ obtain_cache()
 	IFS=,
 	set -- $source_paths
 	IFS=$old_ifs
-	if [ "$FETCH" -eq 1 ]; then
+	CACHE_HAS_COMPLETE_COMMIT=0
+	missing_any=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
+		rev-list --objects --missing=print "$commit" | sed -n 's/^?//p' | \
+		sed -n '1p')
+	[ -n "$missing_any" ] || CACHE_HAS_COMPLETE_COMMIT=1
+	if [ "$FETCH" -eq 1 ] && [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 0 ]; then
 		# `cat-file --batch-check` asks a promisor remote for each missing
 		# object independently. A large sparse tree such as ANGLE can therefore
 		# create thousands of lazy-fetch subprocesses and race the shallow
@@ -511,6 +516,12 @@ obtain_cache()
 	)
 	[ -z "$missing_selected" ] ||
 		fail "$name sparse source is incomplete in the Git cache: $missing_selected"
+	if [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 0 ]; then
+		missing_any=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
+			rev-list --objects --missing=print "$commit" | \
+			sed -n 's/^?//p' | sed -n '1p')
+		[ -n "$missing_any" ] || CACHE_HAS_COMPLETE_COMMIT=1
+	fi
 }
 
 prepare_repository()
@@ -528,6 +539,11 @@ prepare_repository()
 	if [ "$source_paths" = '.' ]; then
 		git clone --quiet --no-checkout \
 			"file://$cache_repository" "$staged_repository"
+	elif [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 1 ]; then
+		# A complete shallow cache can be cloned directly without spending
+		# minutes repacking the same object graph through a blob filter.
+		git clone --quiet --no-checkout --no-local \
+			"$cache_repository" "$staged_repository"
 	else
 		git clone --quiet --no-checkout --filter=blob:none \
 			"file://$cache_repository" "$staged_repository"
