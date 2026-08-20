@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+if(NOT DEFINED PREFIX)
+    message(FATAL_ERROR "PREFIX is required for dependency verification")
+endif()
+if(NOT DEFINED SOURCE_ROOT)
+    message(FATAL_ERROR "SOURCE_ROOT is required for dependency verification")
+endif()
+if(NOT DEFINED PLATFORM)
+    set(PLATFORM ios-simulator)
+endif()
+if(PLATFORM STREQUAL "ios-simulator")
+    set(_platform_receipt ios-simulator-network-arm64.tsv)
+    set(_mach_platform 7)
+elseif(PLATFORM STREQUAL "ios")
+    set(_platform_receipt ios-device-network-arm64.tsv)
+    set(_mach_platform 2)
+else()
+    message(FATAL_ERROR "Unsupported iOS network platform: ${PLATFORM}")
+endif()
+
+set(_required
+    "${PREFIX}/lib/libpcre2-8.a"
+    "${PREFIX}/lib/libffi.a"
+    "${PREFIX}/lib/libintl.a"
+    "${PREFIX}/lib/libglib-2.0.a"
+    "${PREFIX}/lib/libslirp.a"
+    "${PREFIX}/include/pcre2.h"
+    "${PREFIX}/include/ffi.h"
+    "${PREFIX}/include/glib-2.0/glib.h"
+    "${PREFIX}/lib/glib-2.0/include/glibconfig.h"
+    "${PREFIX}/include/slirp/libslirp.h")
+foreach(_file IN LISTS _required)
+    if(NOT EXISTS "${_file}" OR IS_SYMLINK "${_file}")
+        message(FATAL_ERROR "Invalid iOS network dependency: ${_file}")
+    endif()
+endforeach()
+
+set(_provenance_files
+    "manifest.tsv"
+    "${_platform_receipt}")
+set(_series "patches/glib-ios/series.tsv")
+list(APPEND _provenance_files "${_series}")
+get_filename_component(_series_directory "${_series}" DIRECTORY)
+file(STRINGS "${SOURCE_ROOT}/dependencies/${_series}" _series_rows)
+foreach(_row IN LISTS _series_rows)
+    if(_row MATCHES "^#" OR _row STREQUAL "")
+        continue()
+    endif()
+    string(REPLACE "\t" ";" _fields "${_row}")
+    list(GET _fields 0 _order)
+    if(NOT _order STREQUAL "order")
+        list(GET _fields 1 _patch)
+        list(APPEND _provenance_files
+            "${_series_directory}/${_patch}")
+    endif()
+endforeach()
+foreach(_relative IN LISTS _provenance_files)
+    if(_relative STREQUAL "${_platform_receipt}")
+        set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
+    else()
+        set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
+    endif()
+    set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
+    if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
+        message(FATAL_ERROR
+            "Missing iOS network dependency provenance: ${_installed}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E compare_files
+            "${_source}" "${_installed}"
+        RESULT_VARIABLE _provenance_status)
+    if(NOT _provenance_status EQUAL 0)
+        message(FATAL_ERROR
+            "iOS network dependency provenance does not match: ${_relative}")
+    endif()
+endforeach()
+
+foreach(_archive IN ITEMS
+        libpcre2-8.a libffi.a libintl.a libglib-2.0.a libslirp.a)
+    set(_path "${PREFIX}/lib/${_archive}")
+    execute_process(
+        COMMAND lipo -archs "${_path}"
+        RESULT_VARIABLE _lipo_status
+        OUTPUT_VARIABLE _architectures
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _lipo_status EQUAL 0 OR NOT _architectures STREQUAL "arm64")
+        message(FATAL_ERROR
+            "${_path} is not an arm64-only Apple archive: ${_architectures}")
+    endif()
+
+    execute_process(
+        COMMAND otool -l "${_path}"
+        RESULT_VARIABLE _otool_status
+        OUTPUT_VARIABLE _load_commands)
+    if(NOT _otool_status EQUAL 0 OR
+       NOT _load_commands MATCHES "platform ${_mach_platform}([^0-9]|$)" OR
+       NOT _load_commands MATCHES "minos 16\\.0")
+        message(FATAL_ERROR
+            "${_path} is not a ${PLATFORM} 16.0 archive")
+    endif()
+endforeach()

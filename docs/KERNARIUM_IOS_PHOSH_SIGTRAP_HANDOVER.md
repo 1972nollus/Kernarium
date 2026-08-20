@@ -299,9 +299,9 @@ If physical boot is rechecked:
 
 ### Local dependency-prefix note
 
-`.build/kernarium-network-dependencies/ios-simulator-arm64` and
-`ios-device-arm64` are older than the current `dependencies/manifest.tsv`, so
-the checked presets fail their pinned-prefix verification. The matching
-prefixes on this host are the `-20260815` directories; pass
-`-DUML_IOS_NETWORK_DEPENDENCY_PREFIX=...` at configure time rather than
-overwriting the user's prefix directories.
+The former `.build/kernarium-network-dependencies/*` locations are retired.
+Current presets use `.build/dependencies/ios-simulator-arm64/network` and
+`.build/dependencies/ios-device-arm64/network`, built by the centralized
+`dependencies/build-ios-network.sh` workflow. Historical `-20260815` prefixes
+do not satisfy the current Git-only source manifest and must not be selected as
+canonical inputs.

@@ -10,7 +10,6 @@ DEPENDENCY_DIR="$TEST_ROOT/dependencies"
 mkdir -p "$DEPENDENCY_DIR"
 cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$SOURCE_DEPENDENCY_DIR/prepare.sh" \
-	"$SOURCE_DEPENDENCY_DIR/source_archive.py" \
 	"$DEPENDENCY_DIR/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
@@ -55,7 +54,9 @@ expect_failure()
 
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 MANIFEST="$DEPENDENCY_DIR/manifest.tsv"
-PATCH="$DEPENDENCY_DIR/patches/fixture.patch"
+PATCH_DIRECTORY="$DEPENDENCY_DIR/patches/fixture"
+PATCH="$PATCH_DIRECTORY/0001-fixture-maintained-change.patch"
+SERIES="$PATCH_DIRECTORY/series.tsv"
 BASE_PREFIX="$TEST_ROOT/prefix"
 FAILURE_NUMBER=0
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
@@ -65,18 +66,29 @@ mkdir -p "$BASE_PREFIX/include/glib-2.0" \
 	"$BASE_PREFIX/include/virgl" \
 	"$BASE_PREFIX/lib/glib-2.0/include" \
 	"$BASE_PREFIX/share/uml-dependencies" \
-	"$DEPENDENCY_DIR/patches"
-cat >"$PATCH" <<'EOF'
---- a/fixture.txt
-+++ b/fixture.txt
-@@ -1 +1 @@
--upstream
-+project-patched
-EOF
+	"$PATCH_DIRECTORY"
+PATCH_REPOSITORY="$TEST_ROOT/patch-repository"
+mkdir -p "$PATCH_REPOSITORY"
+git -C "$PATCH_REPOSITORY" init --quiet
+git -C "$PATCH_REPOSITORY" config user.name fixture
+git -C "$PATCH_REPOSITORY" config user.email fixture@example.invalid
+printf '%s\n' upstream >"$PATCH_REPOSITORY/fixture.txt"
+git -C "$PATCH_REPOSITORY" add fixture.txt
+git -C "$PATCH_REPOSITORY" commit --quiet -m 'fixture: upstream base'
+BASE_COMMIT=$(git -C "$PATCH_REPOSITORY" rev-parse HEAD)
+printf '%s\n' project-patched >"$PATCH_REPOSITORY/fixture.txt"
+git -C "$PATCH_REPOSITORY" commit --quiet -am 'fixture: maintained change'
+git -C "$PATCH_REPOSITORY" format-patch --no-signature -1 --stdout HEAD >"$PATCH"
 PATCH_HASH=$(sha256_file "$PATCH")
+PATCH_ID=$(git patch-id --stable <"$PATCH" | awk '{print $1}')
+cat >"$SERIES" <<EOF
+# SPDX-License-Identifier: GPL-2.0-or-later
+order	patch	stable_patch_id	sha256	subject
+1	$(basename "$PATCH")	$PATCH_ID	$PATCH_HASH	fixture: maintained change
+EOF
 cat >"$MANIFEST" <<EOF
-name	version	kind	archive_url	archive_file	archive_sha256	archive_root	prepared_tree_sha256	patch	patch_sha256
-fixture	1.0	release	https://example.invalid/fixture-1.0.tar.gz	fixture-1.0.tar.gz	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	fixture-1.0	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	patches/fixture.patch	$PATCH_HASH
+name	version	products	repository	commit	source_paths	patch_series
+fixture	1.0	macos	https://example.invalid/fixture.git	$BASE_COMMIT	.	patches/fixture/series.tsv
 EOF
 cp "$MANIFEST" "$MANIFEST.original"
 cp "$PATCH" "$PATCH.original"

@@ -8,8 +8,8 @@ precedence over this file.
 
 This repository implements an arm64 Apple host for User-Mode Linux. The outer
 project is C++20, assembly, CMake, and Python tooling with a plain-C public and
-host/kernel ABI; the maintained Linux port is an authenticated upstream
-release plus an ordered patch series.
+host/kernel ABI; the maintained Linux port is a pinned upstream stable Git
+commit plus an ordered Git-generated patch series.
 
 Before changing code, read the documents that own the relevant truth:
 
@@ -34,8 +34,15 @@ historical sections as history.
   `CMakeUserPresets.json` is local and ignored.
 - Linux keeps its Kbuild/GNU Make boundary. Third-party projects keep their
   verified upstream build systems.
+- Kernel preparation and builds require the Git-ignored
+  `kernel/source-location.conf`. Copy
+  `kernel/source-location.conf.example`, set its absolute
+  `UML_KERNEL_SOURCE_DIR`, and keep that checkout on a case-sensitive
+  filesystem. The checked presets and command-line environment may not replace
+  the configured source path; a missing or invalid file is a hard build error.
 - Apple builds require arm64 macOS, Xcode command-line tools and SDKs, Clang,
-  CMake, Ninja, Python 3, GNU Make, Meson, `pkg-config`, `curl`, and `patch`.
+  CMake, Ninja, Python 3, GNU Make, Meson, `pkg-config`, Git, rsync, Autoconf,
+  Automake, gettext, GNU libtool, gperf, `curl`, and `patch`.
   Dependency and kernel preparation have additional tools documented in their
   READMEs.
 - On the current Apple acceptance host, never run a standalone kernel build or
@@ -190,10 +197,11 @@ cmake --workflow --preset check-integration
 cmake --workflow --preset check-integration-4k
 ```
 
-The checked presets pin `/Volumes/<case-sensitive-volume>/linux` and the matching
-`/Volumes/<case-sensitive-volume>/build-16k` or `/Volumes/<case-sensitive-volume>/build-4k` kernel
-directory. A non-canonical layout must override both `UML_KERNEL_SOURCE_DIR`
-and `UML_KERNEL_BUILD_DIR` explicitly at configure time.
+The ignored `kernel/source-location.conf` pins the kernel checkout. The checked
+presets pin the matching `/Volumes/<case-sensitive-volume>/build-16k` or
+`/Volumes/<case-sensitive-volume>/build-4k` kernel directory. A non-canonical layout
+must update the ignored source configuration and override only
+`UML_KERNEL_BUILD_DIR` at configure time.
 
 - `rootfs.erofs` is the ignored, unified guest image. Ordinary guest runs use
   it directly without hashing or sidecar locking. Map the shared image with
@@ -310,10 +318,13 @@ other ambient package roots, `CMAKE_PREFIX_PATH`, or unrestricted
   dependencies/build.sh
   ```
 
-- Changes to `dependencies/manifest.tsv`, authenticated source inputs, or
-  dependency patches invalidate the prefix receipt. Rebuild the prefix and run
+- Changes to `dependencies/manifest.tsv`, pinned source inputs, or dependency
+  patch series invalidate the prefix receipt. Rebuild the prefix and run
   the dependency tooling tests. Git reviews changes to `prepare.sh` and
   `build.sh`; the receipt does not duplicate their identity.
+- Dependency patch files are generated artifacts. Modify topic commits with
+  `git rebase -i`/`git commit --amend`, then run
+  `dependencies/rebase-patches.sh`; never edit patch bytes manually.
 - Keep `dependencies/README.md` synchronized with source, version, patch,
   recipe, prefix-policy, or prerequisite changes.
 
@@ -324,13 +335,13 @@ outer repository's source of truth, and edits there must not be committed as
 the final change.
 
 - Linux must be materialized on a case-sensitive filesystem. The canonical
-  source is the authenticated release metadata and ordered policy under
-  `kernel/patches/`.
+  source is the pinned upstream stable repository/branch/full commit and
+  ordered policy under `kernel/patches/`.
 - Safe verification examples:
 
   ```sh
-  kernel/prepare-source.sh --source /case-sensitive/path/linux --verify
-  kernel/audit-delta.sh --source /case-sensitive/path/linux --tree HEAD
+  kernel/prepare-source.sh --verify
+  kernel/audit-delta.sh --tree HEAD
   kernel/verify-replay.sh --work-root /case-sensitive/path --skip-build
   ```
 
@@ -338,9 +349,11 @@ the final change.
   Kernel compilation uses every online host processor by default; set
   `UML_KERNEL_JOBS` or pass `--jobs N` only when an explicit resource limit is
   required.
-- Update patch bytes, `kernel/patches/series/manifest.tsv`, stable patch IDs and
-  hashes, expected final tree, delta ceilings, ownership/overlap/extraction
-  metadata, and `kernel/README.md` together.
+- Kernel patch files are generated artifacts. Modify, reorder, or drop topic
+  commits only with Git rebase/amend, update the reviewed final-tree identity,
+  then run `kernel/rebase-patches.sh` to regenerate patch bytes, the series
+  manifest, stable IDs, hashes, subjects, and order. Update delta ceilings,
+  ownership/overlap/extraction metadata, and `kernel/README.md` as applicable.
 - Preserve real timestamps, commit IDs, compiler metadata, build IDs, and
   binary hashes as observations. Do not rewrite them to manufacture byte
   equality.
@@ -627,7 +640,7 @@ counter into every status document:
 - Darwin layout or runtime contracts -> `darwin/README.md`;
 - dependency sources, versions, patches, recipes, prefix policy, or tools ->
   `dependencies/README.md`;
-- Linux release, replay, topics, delta, toolchain, or build policy ->
+- Linux upstream Git identity, replay, topics, delta, toolchain, or build policy ->
   `kernel/README.md`;
 - public/kernel ABI -> `kernel/abi/README.md`, identities, histories, generated
   copies, and consumers as applicable;

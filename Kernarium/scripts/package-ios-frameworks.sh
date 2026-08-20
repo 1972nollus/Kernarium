@@ -47,8 +47,8 @@ SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernar
 SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
-SIMULATOR_GPU="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-simulator-arm64/Frameworks"
-DEVICE_GPU="$ROOT_DIR/.build/kernarium-gpu-dependencies/ios-device-arm64/Frameworks"
+SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/ios-simulator-arm64/gpu/Frameworks"
+DEVICE_GPU="$ROOT_DIR/.build/dependencies/ios-device-arm64/gpu/Frameworks"
 
 for framework in \
 	"$SIMULATOR_RUNTIME_4K" \

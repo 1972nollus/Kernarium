@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Fresh packaged-release replay verification. This never points at ./linux, so
-# a passing result proves the authenticated archive and tracked patch series
+# Fresh pinned-commit replay verification. This never points at ./linux, so a
+# passing result proves the exact upstream Git input and tracked patch series
 # rather than a developer's pre-existing managed branch.
 set -eu
 
@@ -20,8 +20,8 @@ usage()
 Usage: kernel/verify-replay.sh --work-root PATH [--keep] [--skip-build]
                                [--jobs N]
 
-PATH must be on a case-sensitive filesystem. The command materializes a fresh
-authenticated official release there, validates its exact final tree, and by
+PATH must be on a case-sensitive filesystem. The command materializes the
+exact pinned stable-branch commit there, validates its final tree, and by
 default builds both 16 KiB and 4 KiB configurations out of tree.
 EOF
 }
@@ -78,22 +78,28 @@ cleanup()
 }
 trap cleanup 0 HUP INT TERM
 
-# Deliberately pass arguments without eval so a caller-controlled work root is
-# never reparsed as shell source.
-"$ROOT_DIR/kernel/prepare-source.sh" --source "$REPLAY_DIR/linux"
-"$ROOT_DIR/kernel/prepare-source.sh" --source "$REPLAY_DIR/linux" --verify --no-fetch
-"$ROOT_DIR/kernel/audit-delta.sh" --source "$REPLAY_DIR/linux" --tree HEAD
+# The replay has its own disposable source configuration. It remains outside
+# the outer Git repository and is validated by the same case-sensitivity gate
+# as the maintained checkout.
+UML_KERNEL_SOURCE_CONFIG="$REPLAY_DIR/source-location.conf"
+export UML_KERNEL_SOURCE_CONFIG
+printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
+	> "$UML_KERNEL_SOURCE_CONFIG"
+
+"$ROOT_DIR/kernel/prepare-source.sh"
+"$ROOT_DIR/kernel/prepare-source.sh" --verify --no-fetch
+"$ROOT_DIR/kernel/audit-delta.sh" --tree HEAD
 
 if [ "$BUILD" -eq 1 ]; then
 	if [ -n "$JOBS" ]; then
-		"$ROOT_DIR/kernel/build-kernel.sh" --source "$REPLAY_DIR/linux" \
+		"$ROOT_DIR/kernel/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-16k" --page-size 16k --jobs "$JOBS"
-		"$ROOT_DIR/kernel/build-kernel.sh" --source "$REPLAY_DIR/linux" \
+		"$ROOT_DIR/kernel/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-4k" --page-size 4k --jobs "$JOBS"
 	else
-		"$ROOT_DIR/kernel/build-kernel.sh" --source "$REPLAY_DIR/linux" \
+		"$ROOT_DIR/kernel/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-16k" --page-size 16k
-		"$ROOT_DIR/kernel/build-kernel.sh" --source "$REPLAY_DIR/linux" \
+		"$ROOT_DIR/kernel/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-4k" --page-size 4k
 	fi
 fi

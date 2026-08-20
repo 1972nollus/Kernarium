@@ -1,5 +1,39 @@
 # Refactor handoff
 
+## Required case-sensitive kernel source configuration (2026-08-20)
+
+The maintained Linux checkout now comes only from the Git-ignored
+`kernel/source-location.conf`. Copy the tracked example and set one absolute
+`UML_KERNEL_SOURCE_DIR`; `kernel/source-location.sh` parses it as data,
+canonicalizes the location, and proves case sensitivity with a case-collision
+probe. Preparation, CMake, Kbuild, delta audit, and patch regeneration consume
+that single value. Checked presets no longer embed or accept a source path, and
+a missing/malformed config, source mismatch, missing checkout during build, or
+case-insensitive location is a hard failure. Fresh replay verification writes
+an isolated disposable config beside its temporary checkout.
+
+## Git-only dependency and kernel provenance (2026-08-20)
+
+All project-owned external-library manifests, platform receipts, patches,
+builders, and CMake prefix verifiers now live under `dependencies/`. Every
+source row names an upstream HTTPS Git repository and full commit; optional
+changes replay as an ordered Git mail series. Source archives, extraction
+identities, prepared-tree hashes, `Kernarium/dependencies/`, and Kernarium’s
+dependency build scripts/CMake modules are retired. The kernel keeps the same
+model under its existing `kernel/` ownership boundary: upstream stable
+repository branch `linux-6.18.y`, commit
+`2fe596715f840d053aed5cee5455f701bdcd2b50`, and final replay tree
+`f78217b082f6becb8af1656bcc69521307eb729b`.
+
+Patch files are generated artifacts in both domains. Modify topic commits with
+`git rebase -i` and `git commit --amend`, then run
+`dependencies/rebase-patches.sh` or `kernel/rebase-patches.sh`; never edit mail
+patch hunks or headers manually. Focused dependency preparation/generation/
+prefix tests, kernel Git materialization, canonical replay verification, delta
+audit, and a fresh pinned-commit kernel replay without compilation passed.
+Earlier archive-based evidence below is retained only as dated history and no
+longer describes the preparation or patch-maintenance workflow.
+
 ## Apple Virtio Sound playback (2026-08-18)
 
 Both Apple application compositions now include a standard Virtio Sound
@@ -1294,11 +1328,12 @@ next thing to instrument: log every `os_send_ipi()` decision path together with
 All kernel instrumentation has been reverted and the managed checkout verified
 back to canonical tree `640b3d1404118f336d70496483f87f244076e574`.
 
-**Changing the kernel requires clearing four pinned gates**, in this order:
-edit the patch under `kernel/patches/series/` including its `@@` hunk counts;
-update the patch SHA-256 in `patches/series/manifest.tsv`; update the stable
-`git patch-id` in the same row; then `prepare-source.sh --recreate` and update
-`UML_KERNEL_FINAL_TREE` in `patches/metadata.env`.
+**This historical manual patch-editing procedure is superseded.** Changing the
+kernel now means editing/reordering the topic commits with `git rebase -i` and
+`git commit --amend`, updating the reviewed final tree in metadata, and running
+`kernel/rebase-patches.sh`. That command alone regenerates patch bytes,
+SHA-256 values, stable patch IDs, subjects, and ordering with Git before a
+fresh replay.
 
 Historical detail retained below.
 

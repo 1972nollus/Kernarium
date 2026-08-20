@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 uml_add_tooling_test(
-    NAME kernel-release-source-preparer
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_release.sh
+    NAME kernel-git-source-preparer
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_git.sh
     LABELS kernel;dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME kernel-source-location-config
+    COMMAND
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_source_location_config.sh
+    LABELS kernel;audit
     TIMEOUT 30)
 
 uml_add_tooling_test(

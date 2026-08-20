@@ -18,6 +18,7 @@ CHECK_MANIFEST_ONLY=0
 BUILD_RECIPES='zlib|1.3.2
 pcre2|10.47
 libffi|3.7.1
+gnulib|2024-12-12
 libiconv|1.18
 proxy-libintl|0.5
 glib|2.88.3
@@ -90,7 +91,9 @@ verify_build_manifest()
 	manifest_recipes=$(awk -F '\t' '
 		/^#/ || /^[[:space:]]*$/ { next }
 		$1 == "name" { header++; next }
-		header == 1 { print $1 "|" $2 }
+		header == 1 && index("," $3 ",", ",macos,") {
+			print $1 "|" $2
+		}
 		END { if (header != 1) exit 2 }
 	' "$MANIFEST") || fail "could not read dependency recipes from $MANIFEST"
 	[ "$manifest_recipes" = "$BUILD_RECIPES" ] || {
@@ -151,6 +154,14 @@ find_tool MESON_CMAKE_BLOCKER /usr/bin/false
 find_tool XCRUN xcrun
 find_tool INSTALL install
 find_tool SHASUM shasum
+find_tool RSYNC rsync
+find_tool AUTORECONF autoreconf
+find_tool AUTOCONF autoconf
+find_tool AUTOMAKE automake
+find_tool ACLOCAL aclocal
+find_tool AUTOPOINT autopoint
+find_tool LIBTOOLIZE glibtoolize libtoolize
+find_tool GPERF gperf
 
 if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	"$ROOT_DIR/dependencies/verify-prefix.sh" \
@@ -161,7 +172,7 @@ if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
 	exit 0
 fi
 
-"$PREPARE_SCRIPT" --root "$SOURCE_ROOT" --verify
+"$PREPARE_SCRIPT" --product macos --root "$SOURCE_ROOT" --verify
 
 SDK_ROOT=$($XCRUN --sdk macosx --show-sdk-path)
 [ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid macOS SDK path"
@@ -203,14 +214,7 @@ copy_source()
 	name=$1
 	[ -d "$SOURCE_ROOT/$name" ] || fail "prepared source is missing: $name"
 	mkdir -p -- "$SOURCES/$name"
-	cp -R "$SOURCE_ROOT/$name/." "$SOURCES/$name"
-	expected_tree=$(awk -F '\t' -v dependency="$name" \
-		'$1 == dependency { print $8; exit }' "$MANIFEST")
-	[ -n "$expected_tree" ] || fail "$name has no prepared-tree identity"
-	actual_tree=$($PYTHON "$ROOT_DIR/dependencies/source_archive.py" \
-		tree-hash --root "$SOURCES/$name")
-	[ "$actual_tree" = "$expected_tree" ] ||
-		fail "$name copied source tree failed identity verification"
+	$RSYNC -a --exclude .git "$SOURCE_ROOT/$name/" "$SOURCES/$name/"
 }
 
 for dependency in $BUILD_DEPENDENCIES; do
@@ -383,6 +387,10 @@ cmake_setup "$SOURCES/pcre2" "$BUILDS/pcre2" \
 cmake_build_install "$BUILDS/pcre2"
 
 printf '%s\n' "building libffi 3.7.1"
+(
+	cd "$SOURCES/libffi"
+	private_env ./autogen.sh
+)
 mkdir -p -- "$BUILDS/libffi"
 (
 	cd "$BUILDS/libffi"
@@ -395,6 +403,11 @@ mkdir -p -- "$BUILDS/libffi"
 )
 
 printf '%s\n' "building GNU libiconv 1.18"
+(
+	cd "$SOURCES/libiconv"
+	private_env env MAKE="$MAKE" GNULIB_SRCDIR="$SOURCES/gnulib" \
+		./autogen.sh
+)
 mkdir -p -- "$BUILDS/libiconv"
 (
 	cd "$BUILDS/libiconv"

@@ -38,3 +38,8 @@ __pycache__/
 # Per-developer CMake configuration; checked-in workflows live in
 # CMakePresets.json.
 CMakeUserPresets.json
+
+# Per-checkout kernel source location. The tracked example documents the
+# required format; the real path is host-specific and must name a
+# case-sensitive filesystem.
+/kernel/source-location.conf

@@ -9,6 +9,7 @@ OUTSIDE_POLICY="$ROOT_DIR/kernel/patches/outside-port-justification.tsv"
 SERIES_MANIFEST="$ROOT_DIR/kernel/patches/series/manifest.tsv"
 SERIES_DIR="$ROOT_DIR/kernel/patches/series"
 SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
+SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
 
 fail()
 {
@@ -19,20 +20,20 @@ fail()
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/audit-delta.sh --source PATH [--tree TREE]
+Usage: kernel/audit-delta.sh [--source CONFIGURED_PATH] [--tree TREE]
 
-Classify every path changed from the authenticated packaged Linux base and
+Classify every path changed from the pinned upstream Linux stable commit and
 enforce the checked-in file-count ceilings. TREE defaults to HEAD.
 EOF
 }
 
-SOURCE=''
+REQUESTED_SOURCE=''
 TREE=''
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--source)
 		[ "$#" -ge 2 ] || fail "--source requires a path"
-		SOURCE=$2
+		REQUESTED_SOURCE=$2
 		shift 2
 		;;
 	--tree)
@@ -48,7 +49,12 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-[ -n "$SOURCE" ] || fail "--source is required"
+[ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
+SOURCE=$("$SOURCE_LOCATION" --require-source) ||
+	fail "kernel source configuration is invalid"
+if [ -n "$REQUESTED_SOURCE" ] && [ "$REQUESTED_SOURCE" != "$SOURCE" ]; then
+	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE"
+fi
 [ -r "$METADATA" ] || fail "missing metadata: $METADATA"
 [ -r "$OWNERSHIP" ] || fail "missing ownership manifest: $OWNERSHIP"
 [ -r "$OUTSIDE_POLICY" ] || fail "missing outside-port policy: $OUTSIDE_POLICY"
@@ -60,10 +66,13 @@ done
 [ -d "$SOURCE/.git" ] || fail "not a Linux checkout: $SOURCE"
 TREE=${TREE:-HEAD}
 git -C "$SOURCE" show-ref --verify --quiet "$UML_KERNEL_BASE_REF" ||
-	fail "authenticated packaged base ref is unavailable"
+	fail "pinned upstream base ref is unavailable"
+base_commit=$(git -C "$SOURCE" rev-parse "$UML_KERNEL_BASE_REF^{commit}")
+[ "$base_commit" = "$UML_KERNEL_UPSTREAM_COMMIT" ] ||
+	fail "upstream base is $base_commit, expected $UML_KERNEL_UPSTREAM_COMMIT"
 base_tree=$(git -C "$SOURCE" rev-parse "$UML_KERNEL_BASE_REF^{tree}")
-[ "$base_tree" = "$UML_KERNEL_PACKAGED_TREE" ] ||
-	fail "packaged base tree is $base_tree, expected $UML_KERNEL_PACKAGED_TREE"
+[ "$base_tree" = "$UML_KERNEL_UPSTREAM_TREE" ] ||
+	fail "upstream base tree is $base_tree, expected $UML_KERNEL_UPSTREAM_TREE"
 git -C "$SOURCE" cat-file -e "$TREE^{tree}" 2>/dev/null ||
 	fail "tree is unavailable: $TREE"
 

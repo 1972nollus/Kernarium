@@ -1,5 +1,26 @@
 # Refactor progress
 
+## 2026-08-20: required local kernel source location
+
+- Added the Git-ignored `kernel/source-location.conf` contract and tracked
+  example/parser.
+- Kernel preparation, CMake, standalone builds, delta audit, and patch
+  regeneration now require the configured case-sensitive checkout.
+- Removed the checked preset source path and made missing configuration a hard
+  kernel-build failure.
+
+## Git-only dependency provenance (2026-08-20)
+
+External-library preparation now uses only upstream Git repositories and full
+commits from the central `dependencies/manifest.tsv`; all iOS/macOS build
+recipes, platform receipts, patch series, and CMake verifiers are consolidated
+under `dependencies/`. Git-generated patches are maintained by rebasing topic
+commits and running `dependencies/rebase-patches.sh`. The Linux source remains
+owned by `kernel/` and now starts from the pinned `linux-6.18.y` stable commit;
+its 19 topics were rebased and regenerated with Git, producing final tree
+`f78217b082f6becb8af1656bcc69521307eb729b`. Focused tooling and a fresh
+case-sensitive replay without compilation passed.
+
 ## Apple Virtio Sound playback (2026-08-18)
 
 The macOS CLI and both Kernarium iOS products now share an in-process standard

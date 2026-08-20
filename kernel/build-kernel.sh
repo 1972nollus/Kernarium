@@ -8,6 +8,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # shellcheck disable=SC1091
 . "$ROOT_DIR/kernel/toolchain/darwin.env"
 CONFIG_DIR="$ROOT_DIR/kernel/config"
+SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
 
 fail()
 {
@@ -18,8 +19,8 @@ fail()
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/build-kernel.sh --source PATH --build PATH --page-size 16k|4k
-                              [--jobs N]
+Usage: kernel/build-kernel.sh --build PATH --page-size 16k|4k [--jobs N]
+                              [--source CONFIGURED_PATH]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
@@ -29,18 +30,20 @@ and only the page-size fragment varies. The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
 kernel/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
 the same constrained native address-space profile. An omitted jobs value uses
-all online host processors.
+all online host processors. The source is always read from the required,
+Git-ignored kernel/source-location.conf. --source is accepted only as an exact
+assertion of that configured path.
 EOF
 }
 
-SOURCE_DIR=''
+REQUESTED_SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--source)
 		[ "$#" -ge 2 ] || fail "--source requires a path"
-		SOURCE_DIR=$2
+		REQUESTED_SOURCE_DIR=$2
 		shift 2
 		;;
 	--build)
@@ -68,10 +71,16 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-[ -n "$SOURCE_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$PAGE_SIZE" ] || {
+[ -n "$BUILD_DIR" ] && [ -n "$PAGE_SIZE" ] || {
 	usage >&2
 	exit 2
 }
+[ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
+SOURCE_DIR=$("$SOURCE_LOCATION" --require-source) ||
+	fail "kernel build requires a valid kernel/source-location.conf"
+if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" ]; then
+	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE_DIR"
+fi
 case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;

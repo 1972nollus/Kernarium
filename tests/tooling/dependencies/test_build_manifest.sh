@@ -59,7 +59,7 @@ expect_failure "recipe version drift" "$VERSION"
 
 MALFORMED="$TEST_ROOT/malformed.tsv"
 awk -F '\t' 'BEGIN { OFS = FS }
-	$1 == "zlib" { NF = 9 }
+	$1 == "zlib" { NF = 6 }
 	{ print }
 ' "$SOURCE_MANIFEST" >"$MALFORMED"
 expect_failure "malformed manifest row" "$MALFORMED"

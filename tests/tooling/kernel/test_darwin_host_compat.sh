@@ -4,7 +4,7 @@ set -eu
 
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 COMPAT_INCLUDE="$REPOSITORY/kernel/toolchain/darwin-host/include"
-TOPIC="$REPOSITORY/kernel/patches/series/0008-kbuild-make-host-ELF-tools-portable-to-Darwin.patch"
+TOPIC="$REPOSITORY/kernel/patches/series/0011-kbuild-make-host-ELF-tools-portable-to-Darwin.patch"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-darwin-host-compat.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 

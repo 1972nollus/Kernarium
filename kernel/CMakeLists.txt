@@ -12,9 +12,8 @@ endif()
 
 # By default, each CMake binary tree owns a page-variant-specific Kbuild
 # directory. The canonical integration presets override that default with
-# dedicated 16 KiB and 4 KiB trees on /Volumes/Kernel, so concurrent
-# builds still never reuse or replace one another's .config, objects, or
-# embedded vmlinux.
+# dedicated 16 KiB and 4 KiB trees, so concurrent builds never reuse or
+# replace one another's .config, objects, or embedded vmlinux.
 include("${PROJECT_SOURCE_DIR}/kernel/CMakeBuildLayout.cmake")
 uml_kernel_build_layout(
     BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}"
@@ -28,22 +27,31 @@ set(UML_KERNEL_BUILD_DIR "${UML_KERNEL_DEFAULT_BUILD_DIR}" CACHE PATH
 # to compile one kernel while embedding a stale image from another directory.
 set(UML_KERNEL_IMAGE "${UML_KERNEL_BUILD_DIR}/vmlinux" CACHE INTERNAL
     "Derived Linux UML kernel ELF embedded in the transitional macOS CLI" FORCE)
-set(UML_KERNEL_SOURCE_DIR "${PROJECT_SOURCE_DIR}/linux" CACHE PATH
-    "Prepared official Linux UML source checkout")
-if(UML_KERNEL_SOURCE_DIR STREQUAL "")
-    message(FATAL_ERROR
-        "UML_KERNEL_SOURCE_DIR is empty. Name a clean prepared Linux checkout "
-        "on a case-sensitive filesystem; canonical integration presets pin "
-        "/Volumes/Kernel/linux.")
-endif()
-if(NOT EXISTS "${UML_KERNEL_SOURCE_DIR}/Makefile")
-    message(FATAL_ERROR
-        "UML_KERNEL_SOURCE_DIR must contain a prepared Linux checkout: "
-        "${UML_KERNEL_SOURCE_DIR}")
-endif()
+set(UML_KERNEL_SOURCE_CONFIG
+    "${PROJECT_SOURCE_DIR}/kernel/source-location.conf" CACHE FILEPATH
+    "Required Git-ignored kernel source-location configuration")
 execute_process(
-    COMMAND "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
-        --source "${UML_KERNEL_SOURCE_DIR}" --verify --no-fetch
+    COMMAND "${PROJECT_SOURCE_DIR}/kernel/source-location.sh"
+        --config "${UML_KERNEL_SOURCE_CONFIG}" --require-source
+    RESULT_VARIABLE UML_KERNEL_SOURCE_CONFIG_RESULT
+    OUTPUT_VARIABLE UML_KERNEL_SOURCE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_VARIABLE UML_KERNEL_SOURCE_CONFIG_ERROR)
+if(NOT UML_KERNEL_SOURCE_CONFIG_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "Kernel builds require an explicit source location on a case-sensitive "
+        "filesystem. Copy kernel/source-location.conf.example to the ignored "
+        "kernel/source-location.conf and set UML_KERNEL_SOURCE_DIR.\n"
+        "${UML_KERNEL_SOURCE_CONFIG_ERROR}")
+endif()
+set(UML_KERNEL_SOURCE_DIR "${UML_KERNEL_SOURCE_DIR}" CACHE INTERNAL
+    "Configured case-sensitive Linux source checkout" FORCE)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${UML_KERNEL_SOURCE_CONFIG}")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env
+        "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
+        "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh" --verify --no-fetch
     RESULT_VARIABLE UML_KERNEL_SOURCE_VERIFY_RESULT
     OUTPUT_VARIABLE UML_KERNEL_SOURCE_VERIFY_OUTPUT
     ERROR_VARIABLE UML_KERNEL_SOURCE_VERIFY_ERROR)
@@ -53,8 +61,9 @@ if(NOT UML_KERNEL_SOURCE_VERIFY_RESULT EQUAL 0)
         "${UML_KERNEL_SOURCE_VERIFY_OUTPUT}${UML_KERNEL_SOURCE_VERIFY_ERROR}")
 endif()
 execute_process(
-    COMMAND "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh"
-        --source "${UML_KERNEL_SOURCE_DIR}" --tree HEAD
+    COMMAND ${CMAKE_COMMAND} -E env
+        "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
+        "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh" --tree HEAD
     RESULT_VARIABLE UML_KERNEL_DELTA_AUDIT_RESULT
     OUTPUT_VARIABLE UML_KERNEL_DELTA_AUDIT_OUTPUT
     ERROR_VARIABLE UML_KERNEL_DELTA_AUDIT_ERROR)
@@ -183,10 +192,12 @@ set(UML_KERNEL_LLVM "" CACHE STRING
     "Optional Kbuild LLVM selector (for example 1 or a tool-prefix)")
 
 add_custom_target(uml_kernel_source_verify
-    COMMAND "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
-        --source "${UML_KERNEL_SOURCE_DIR}" --verify --no-fetch
-    COMMAND "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh"
-        --source "${UML_KERNEL_SOURCE_DIR}" --tree HEAD
+    COMMAND ${CMAKE_COMMAND} -E env
+        "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
+        "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh" --verify --no-fetch
+    COMMAND ${CMAKE_COMMAND} -E env
+        "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
+        "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh" --tree HEAD
     COMMENT "Verifying clean canonical Linux replay and delta policy"
     VERBATIM)
 
@@ -210,8 +221,8 @@ add_custom_command(
             "UML_KERNEL_OBJDUMP=${UML_KERNEL_OBJDUMP_EXECUTABLE}"
             "UML_KERNEL_READELF=${UML_KERNEL_READELF_EXECUTABLE}"
             "UML_KERNEL_STRIP=${UML_KERNEL_STRIP_EXECUTABLE}"
+            "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
             "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
-            --source "${UML_KERNEL_SOURCE_DIR}"
             --build "${UML_KERNEL_BUILD_DIR}"
             --page-size "${UML_KERNEL_PAGE_VARIANT}"
     DEPENDS
@@ -235,13 +246,14 @@ add_custom_command(
             "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_memory.h"
             "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_network.h"
             "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/materialize-release.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/materialize-git.sh"
+            "${PROJECT_SOURCE_DIR}/kernel/source-location.sh"
+            "${UML_KERNEL_SOURCE_CONFIG}"
             "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh"
             "${PROJECT_SOURCE_DIR}/kernel/verify-series-policy.py"
             "${PROJECT_SOURCE_DIR}/kernel/verify-replay.sh"
             "${PROJECT_SOURCE_DIR}/kernel/check-next-version.sh"
             "${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env"
-            "${PROJECT_SOURCE_DIR}/kernel/keys/38DBBDC86092693E.asc"
             "${PROJECT_SOURCE_DIR}/kernel/patches/path-ownership.tsv"
             "${PROJECT_SOURCE_DIR}/kernel/patches/extraction-decisions.tsv"
             "${PROJECT_SOURCE_DIR}/kernel/patches/outside-port-justification.tsv"

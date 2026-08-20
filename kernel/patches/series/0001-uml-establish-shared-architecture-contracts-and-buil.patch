@@ -1,4 +1,4 @@
-From 53ebdd45e260d5ce88acc11d93d9e6e4df4fd166 Mon Sep 17 00:00:00 2001
+From 203c96f65f5876c09234e315d1bf13cf73cafd31 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:02 +0900
 Subject: [PATCH 01/19] uml: establish shared architecture contracts and build
@@ -39,7 +39,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/skas/mm_id.h     |  11 +
  arch/um/include/shared/skas/skas.h      |   8 +
  arch/um/include/shared/smp.h            |  21 ++
- arch/um/kernel/dyn.lds.S                 |  13 ++
+ arch/um/kernel/dyn.lds.S                |  13 ++
  34 files changed, 898 insertions(+), 38 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/hugetlb.h
@@ -1675,5 +1675,3 @@ index ad3cefeff..21cb40a67 100644
  
    /* Read-only sections, merged into text segment: */
    .hash           : { *(.hash) }
--- 
-2.50.1 (Apple Git-155)

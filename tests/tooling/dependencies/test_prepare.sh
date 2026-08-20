@@ -4,8 +4,6 @@ set -eu
 
 DEPENDENCY_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../../dependencies" && pwd)
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
-ARCHIVE_TOOL="$DEPENDENCY_DIR/source_archive.py"
-PYTHON=${PYTHON:-python3}
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-prepare.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -20,23 +18,18 @@ sha256_file()
 	shasum -a 256 "$1" | awk '{print $1}'
 }
 
-tree_hash()
-{
-	"$PYTHON" "$ARCHIVE_TOOL" tree-hash --root "$1"
-}
-
 prepare()
 {
 	UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-	UML_DEPENDENCY_PATCH_ROOT="$PATCH_ROOT" \
-		"$PREPARE" --root "$1" --cache "$CACHE" --no-fetch
+	UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+		"$PREPARE" --product fixture --root "$1" --cache "$CACHE" --no-fetch
 }
 
 verify()
 {
 	UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-	UML_DEPENDENCY_PATCH_ROOT="$PATCH_ROOT" \
-		"$PREPARE" --root "$1" --cache "$CACHE" --verify
+	UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+		"$PREPARE" --product fixture --root "$1" --cache "$CACHE" --verify
 }
 
 expect_failure()
@@ -53,105 +46,134 @@ expect_failure()
 }
 
 CACHE="$TEST_ROOT/cache"
-PATCH_ROOT="$TEST_ROOT/patches"
-ARCHIVE_INPUT="$TEST_ROOT/archive-input"
-REFERENCE="$TEST_ROOT/reference"
+METADATA="$TEST_ROOT/metadata"
+UPSTREAM="$TEST_ROOT/upstream"
 PREPARED="$TEST_ROOT/prepared"
-MANIFEST="$TEST_ROOT/manifest.tsv"
-PATCH="$PATCH_ROOT/fixture.patch"
-ARCHIVE="$CACHE/fixture-1.0.tar.gz"
+MANIFEST="$METADATA/manifest.tsv"
+SERIES_DIR="$METADATA/patches/patched"
 FAILURE_NUMBER=0
-mkdir -p "$CACHE" "$PATCH_ROOT" "$REFERENCE" \
-	"$ARCHIVE_INPUT/fixture-1.0/sub"
-printf '%s\n' baseline >"$ARCHIVE_INPUT/fixture-1.0/payload.txt"
-printf '%s\n' secondary >"$ARCHIVE_INPUT/fixture-1.0/sub/secondary.txt"
-chmod +x "$ARCHIVE_INPUT/fixture-1.0/sub/secondary.txt"
-COPYFILE_DISABLE=1 tar -C "$ARCHIVE_INPUT" -czf "$ARCHIVE" fixture-1.0
-cp "$ARCHIVE" "$ARCHIVE.original"
+mkdir -p "$CACHE/git" "$METADATA/patches" "$UPSTREAM"
 
-"$PYTHON" "$ARCHIVE_TOOL" extract \
-	--archive "$ARCHIVE" \
-	--expected-root fixture-1.0 \
-	--destination "$REFERENCE/clean"
-CLEAN_TREE_HASH=$(tree_hash "$REFERENCE/clean")
+git -C "$UPSTREAM" init --quiet
+git -C "$UPSTREAM" config user.name fixture
+git -C "$UPSTREAM" config user.email fixture@example.invalid
+printf '%s\n' baseline >"$UPSTREAM/payload.txt"
+mkdir -p "$UPSTREAM/sub"
+printf '#!/bin/sh\nexit 0\n' >"$UPSTREAM/sub/tool.sh"
+chmod +x "$UPSTREAM/sub/tool.sh"
+git -C "$UPSTREAM" add payload.txt sub/tool.sh
+git -C "$UPSTREAM" commit --quiet -m 'fixture: upstream base'
+BASE=$(git -C "$UPSTREAM" rev-parse HEAD)
 
-cat >"$PATCH" <<'EOF'
---- a/payload.txt
-+++ b/payload.txt
-@@ -1 +1 @@
--baseline
-+patched
-EOF
-cp -R "$REFERENCE/clean" "$REFERENCE/patched"
-patch --batch --forward -p1 -d "$REFERENCE/patched" <"$PATCH" >/dev/null
-PATCHED_TREE_HASH=$(tree_hash "$REFERENCE/patched")
+printf '%s\n' patched >"$UPSTREAM/payload.txt"
+git -C "$UPSTREAM" commit --quiet -am 'fixture: first maintained change'
+printf '%s\n' added >"$UPSTREAM/added.txt"
+git -C "$UPSTREAM" add added.txt
+git -C "$UPSTREAM" commit --quiet -m 'fixture: second maintained change'
+mkdir -p "$SERIES_DIR"
+git -C "$UPSTREAM" format-patch --no-signature --output-directory "$SERIES_DIR" \
+	"$BASE..HEAD" >/dev/null
+{
+	printf '%s\n' '# SPDX-License-Identifier: GPL-2.0-or-later'
+	printf 'order\tpatch\tstable_patch_id\tsha256\tsubject\n'
+	order=1
+	find "$SERIES_DIR" -type f -name '*.patch' -print | LC_ALL=C sort |
+	while IFS= read -r patch; do
+		patch_id=$(git patch-id --stable <"$patch" | awk '{print $1}')
+		digest=$(sha256_file "$patch")
+		subject=$(git mailinfo /dev/null /dev/null <"$patch" |
+			sed -n 's/^Subject: //p')
+		printf '%s\t%s\t%s\t%s\t%s\n' "$order" "$(basename "$patch")" \
+			"$patch_id" "$digest" "$subject"
+		order=$((order + 1))
+	done
+} >"$SERIES_DIR/series.tsv"
 
-ARCHIVE_HASH=$(sha256_file "$ARCHIVE")
-PATCH_HASH=$(sha256_file "$PATCH")
+for name in clean patched; do
+	git clone --quiet "$UPSTREAM" "$CACHE/git/$name"
+	git -C "$CACHE/git/$name" remote set-url origin \
+		"https://example.invalid/$name.git"
+	git -C "$CACHE/git/$name" update-ref refs/heads/uml-pin "$BASE"
+	git -C "$CACHE/git/$name" config uploadpack.allowFilter true
+done
+
 cat >"$MANIFEST" <<EOF
-name	version	kind	archive_url	archive_file	archive_sha256	archive_root	prepared_tree_sha256	patch	patch_sha256
-clean	1.0	release	https://example.invalid/fixture-1.0.tar.gz	fixture-1.0.tar.gz	$ARCHIVE_HASH	fixture-1.0	$CLEAN_TREE_HASH	-	-
-patched	1.0	release	https://example.invalid/fixture-1.0.tar.gz	fixture-1.0.tar.gz	$ARCHIVE_HASH	fixture-1.0	$PATCHED_TREE_HASH	fixture.patch	$PATCH_HASH
+name	version	products	repository	commit	source_paths	patch_series
+clean	1.0	fixture	https://example.invalid/clean.git	$BASE	.	-
+patched	1.0	fixture	https://example.invalid/patched.git	$BASE	.	patches/patched/series.tsv
 EOF
 cp "$MANIFEST" "$MANIFEST.original"
-cp "$PATCH" "$PATCH.original"
+cp -R "$SERIES_DIR" "$TEST_ROOT/series-original"
 
-cp "$PATCH" "$PATCH_ROOT/unlisted.patch"
+cp "$(find "$SERIES_DIR" -name '*.patch' -print -quit)" \
+	"$METADATA/patches/unlisted.patch"
 expect_failure "unlisted dependency patch" \
 	env UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-		UML_DEPENDENCY_PATCH_ROOT="$PATCH_ROOT" \
+		UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
 		"$PREPARE" --validate-manifest-only
-rm -f -- "$PATCH_ROOT/unlisted.patch"
+rm "$METADATA/patches/unlisted.patch"
 
 prepare "$PREPARED" >/dev/null
 verify "$PREPARED" >/dev/null
 [ "$(cat "$PREPARED/clean/payload.txt")" = baseline ] ||
-	fail "unpatched dependency contents changed"
+	fail "unpatched dependency did not use the pinned commit"
 [ "$(cat "$PREPARED/patched/payload.txt")" = patched ] ||
-	fail "dependency patch was not applied"
-[ -x "$PREPARED/clean/sub/secondary.txt" ] ||
-	fail "prepared tree lost executable status"
+	fail "dependency patch series was not replayed"
+[ "$(cat "$PREPARED/patched/added.txt")" = added ] ||
+	fail "ordered dependency patch series was incomplete"
+[ -x "$PREPARED/clean/sub/tool.sh" ] ||
+	fail "prepared Git checkout lost executable status"
+[ -z "$(git -C "$PREPARED/patched" remote)" ] ||
+	fail "prepared dependency retained a network remote"
+[ "$(git -C "$PREPARED/patched" rev-list --count "$BASE..HEAD")" -eq 2 ] ||
+	fail "prepared dependency history has the wrong topology"
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &
 FIRST_PREPARER=$!
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-2.out" 2>&1 &
 SECOND_PREPARER=$!
-wait "$FIRST_PREPARER" || fail "first concurrent preparer failed"
-wait "$SECOND_PREPARER" || fail "second concurrent preparer failed"
+if ! wait "$FIRST_PREPARER"; then
+	cat "$TEST_ROOT/concurrent-1.out" >&2
+	fail "first concurrent preparer failed"
+fi
+if ! wait "$SECOND_PREPARER"; then
+	cat "$TEST_ROOT/concurrent-2.out" >&2
+	fail "second concurrent preparer failed"
+fi
 verify "$CONCURRENT" >/dev/null
-[ ! -e "$CONCURRENT/clean/clean" ] ||
-	fail "concurrent publication nested one prepared tree inside another"
-[ ! -e "$CONCURRENT/patched/patched" ] ||
-	fail "concurrent publication nested one patched tree inside another"
 
 printf '%s\n' tampered >>"$PREPARED/clean/payload.txt"
-expect_failure "prepared-tree tampering" verify "$PREPARED"
-cp "$REFERENCE/clean/payload.txt" "$PREPARED/clean/payload.txt"
+expect_failure "prepared-repository tampering" verify "$PREPARED"
+git -C "$PREPARED/clean" restore payload.txt
 verify "$PREPARED" >/dev/null
 
-printf '%s\n' tampered >>"$ARCHIVE"
-expect_failure "cached archive tampering" prepare "$TEST_ROOT/archive-tamper"
-cp "$ARCHIVE.original" "$ARCHIVE"
-
-printf '%s\n' '# tampered' >>"$PATCH"
-expect_failure "patch tampering" prepare "$TEST_ROOT/patch-tamper"
-cp "$PATCH.original" "$PATCH"
+PATCH=$(find "$SERIES_DIR" -name '*.patch' -print -quit)
+printf '%s\n' '# manually edited' >>"$PATCH"
+expect_failure "manual patch-file editing" prepare "$TEST_ROOT/patch-tamper"
+rm -rf "$SERIES_DIR"
+cp -R "$TEST_ROOT/series-original" "$SERIES_DIR"
 
 tail -n 1 "$MANIFEST.original" >>"$MANIFEST"
 expect_failure "duplicate dependency identity" verify "$PREPARED"
 cp "$MANIFEST.original" "$MANIFEST"
 
 mkdir "$TEST_ROOT/existing-mismatch"
-cp -R "$REFERENCE/clean" "$TEST_ROOT/existing-mismatch/clean"
-printf '%s\n' tampered >>"$TEST_ROOT/existing-mismatch/clean/payload.txt"
-expect_failure "replacement of an existing mismatched tree" \
+mkdir "$TEST_ROOT/existing-mismatch/clean"
+printf '%s\n' retained >"$TEST_ROOT/existing-mismatch/clean/payload.txt"
+expect_failure "replacement of an existing non-Git source" \
 	prepare "$TEST_ROOT/existing-mismatch"
-[ "$(tail -n 1 "$TEST_ROOT/existing-mismatch/clean/payload.txt")" = tampered ] ||
-	fail "failed preparation replaced the mismatched source tree"
+[ "$(cat "$TEST_ROOT/existing-mismatch/clean/payload.txt")" = retained ] ||
+	fail "failed preparation replaced the mismatched source"
 
-mv "$ARCHIVE" "$ARCHIVE.absent"
-expect_failure "missing offline archive" prepare "$TEST_ROOT/missing-cache"
-mv "$ARCHIVE.absent" "$ARCHIVE"
+git -C "$CACHE/git/clean" remote set-url origin \
+	https://example.invalid/wrong.git
+expect_failure "cache origin tampering" prepare "$TEST_ROOT/cache-tamper"
+git -C "$CACHE/git/clean" remote set-url origin \
+	https://example.invalid/clean.git
 
-printf '%s\n' "dependency archive preparation tests passed"
+mv "$CACHE/git/clean" "$CACHE/git/clean.absent"
+expect_failure "missing offline Git cache" prepare "$TEST_ROOT/missing-cache"
+mv "$CACHE/git/clean.absent" "$CACHE/git/clean"
+
+printf '%s\n' "dependency Git preparation tests passed"

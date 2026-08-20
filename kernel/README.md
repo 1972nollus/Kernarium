@@ -1,34 +1,34 @@
 # Linux source policy
 
-Linux is built from the official `linux-6.18.41.tar.xz` release package and
-detached signature recorded in
-[`patches/metadata.env`](patches/metadata.env). Preparation downloads both only
-from kernel.org over HTTPS, verifies their pinned SHA-256 identities, verifies
-the uncompressed tar stream with the checked-in release-signing key and exact
-signer fingerprint, and then checks the extracted packaged Git tree. GnuPG,
-`xz`, `tar`, Git, and `shasum` are source-preparation tools, not linked runtime
-dependencies.
+Linux is built from the exact commit recorded in
+[`patches/metadata.env`](patches/metadata.env) in the upstream stable Linux Git
+repository. The maintained upstream line is `linux-6.18.y`; commit
+`2fe596715f840d053aed5cee5455f701bdcd2b50` and tree
+`9b4299714b8020ae57ca8c6310d747c2299aea0f` are the immutable source identity.
+There is no release-archive, detached-signature, imported-root-commit, or
+packaged-tree input.
 
-The official release package intentionally export-ignores
-`Documentation/.renames.txt`. Its packaged tree therefore differs from the
-upstream `v6.18.41` tag tree by exactly that documentation-only path. The tag
-commit and tree remain provenance observations; the authenticated packaged
-tree is the build input and the omitted file is not reconstructed from Git.
+`materialize-git.sh` fetches only the pinned commit into the project Git cache,
+verifies its commit and tree identities, creates the local upstream base ref,
+and removes the network remote from the published replay checkout. Subsequent
+verification is offline.
 
-## Latest verified replay (2026-08-18)
+## Latest verified replay (2026-08-20)
 
 The manifest contains 19 ordered topics and replays to canonical tree
-`930696044f4ca953f7ee63f1514585f9fd1e06b6`. A fresh authenticated replay,
+`f78217b082f6becb8af1656bcc69521307eb729b`. A fresh pinned-commit replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, delta audit, and both LLVM 22 production page-profile builds passed.
+checks, and delta audit passed after rebasing the topics onto the upstream
+stable commit. The earlier LLVM 22 production page-profile builds predate this
+source-provenance-only rebase and were not repeated.
 The exact delta policy is 160 changed files
 with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
-UML serial-line count configurable. Topic 0002a repairs the software-MMU mapping
+UML serial-line count configurable. Topic 0002 repairs the software-MMU mapping
 that uaccess verifies when the address carries none at all: `matches()`
 reports 1 for an equal mapping, 0 for one naming different backing, and -1
 for an absent one, and only the second was rebound, so a missing mapping was
-treated as checked and left missing. Topic 0002b also gives ordinary UML a
+treated as checked and left missing. Topic 0003 also gives ordinary UML a
 host-monotonic nanosecond scheduler clock while keeping deterministic
 time-travel semantics. Topic 0015 replaces the former macOS/iOS split
 with one scalable Darwin address mechanism, including the page-rounded
@@ -74,14 +74,13 @@ exact overlaps are declared, including its update to the arm64 profile
 constants in `arch/arm64/Makefile.um` and removes the retired platform selector.
 The manifest verifier rejects undeclared, stale, or mismatched overlaps.
 
-The signed archive, packaged/final trees, ordered stable patch IDs, and patch
-hashes are the reproducible identities. The local archive-import and replay
-commit IDs are observations: their real creation timestamps are retained and
-may legitimately differ between preparations. Kernel binary hashes, build
-identity, and timestamps are observations for the same reason. Configure and
-build both run the offline clean-tree verifier and delta audit, so a merely
-plausible Makefile, branch name, or locally cloned upstream tree is never
-accepted.
+The upstream repository/branch/full commit/tree, final tree, ordered stable
+patch IDs, generated patch hashes, and subjects are the source identities.
+Replay commit IDs are observations because `git am` retains real replay
+committer timestamps. Kernel binary hashes, build identity, and timestamps are
+observations for the same reason. Configure and build both run the offline
+clean-tree verifier and delta audit, so a merely plausible branch name or
+locally cloned source tree is never accepted.
 
 Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
 represent several upstream paths that differ only by case. The canonical
@@ -92,25 +91,59 @@ product and both 16 KiB iOS runtime slices consume the same
 `build-16k/vmlinux`; the macOS compatibility product and both 4 KiB iOS
 runtime slices consume `build-4k/vmlinux`. There is no platform-specific kernel
 build. Transient case-sensitive mounts under `/tmp` are not used for the
-canonical source or build trees:
+canonical source or build trees. The source path has no repository default and
+cannot be supplied through a CMake cache override or environment variable.
+Create the required local configuration first; the actual file is ignored by
+Git:
 
 ```sh
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux \
-  --cache /path/to/kernel-cache --no-fetch
+cp kernel/source-location.conf.example kernel/source-location.conf
+# Edit UML_KERNEL_SOURCE_DIR to the absolute checkout path, then:
+kernel/prepare-source.sh
+kernel/prepare-source.sh --verify
+kernel/prepare-source.sh --cache /path/to/kernel-cache --no-fetch
 kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
 ```
 
-The first preparation populates `.build/kernel-cache` unless another cache is
-selected. `--no-fetch` requires both authenticated release files to be present
-there; ordinary `--verify` never reads the cache or network. The last command
-starts from a fresh signed release package and builds both 16 KiB and 4 KiB
+`kernel/source-location.sh` parses the file as data, requires one unquoted
+absolute `UML_KERNEL_SOURCE_DIR` assignment, canonicalizes its parent, and
+performs a real case-collision probe. Preparation, CMake, delta audit, patch
+regeneration, and standalone Kbuild all consume that result. A missing config,
+missing source during builds, path mismatch, or case-insensitive filesystem is
+a hard error. `--source` remains only as a compatibility assertion and cannot
+override the configured path.
+
+The first preparation populates `.build/kernel-cache/git` unless another cache
+is selected. `--no-fetch` requires the exact commit to be present there;
+ordinary `--verify` never reads the cache or network. The last command starts
+from a fresh checkout of the pinned stable commit and builds both 16 KiB and 4 KiB
 configurations out of tree. Kernel builds default to every online host
 processor. Resource-constrained hosts may override `UML_KERNEL_JOBS` or pass
 `--jobs N` to set a smaller explicit limit. `--recreate` is the only mode allowed to replace a
 clean stale managed replay branch, and it never replaces the source directory
 itself.
+
+## Patch maintenance
+
+The `.patch` files below `patches/series/` are generated mail artifacts. Never
+edit their hunks, context, headers, or subjects manually. Modify the maintained
+Git commits instead:
+
+```sh
+cd "$(kernel/source-location.sh --require-source)"
+git rebase -i 2fe596715f840d053aed5cee5455f701bdcd2b50
+# amend/reorder/drop commits with Git, then return to the outer repository
+cd /path/to/linux-um-darwin
+kernel/rebase-patches.sh
+```
+
+The regenerator requires a clean linear `codex/linux-6.18-darwin` branch,
+performs an explicit rebase onto the pinned stable commit, invokes
+`git format-patch --numbered`, replaces the series, rewrites the manifest’s
+stable patch IDs/hashes/subjects, and runs topology policy. If the resulting
+source changes, update `UML_KERNEL_FINAL_TREE` to the reviewed `HEAD^{tree}`
+before regeneration, then run a fresh replay and both page-profile validation
+required by the affected kernel behavior.
 
 ## Kernel configuration
 
@@ -169,11 +202,9 @@ signed-framework delivery mechanisms, respectively:
 
 ```sh
 kernel/build-kernel.sh \
-  --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-16k \
   --page-size 16k
 kernel/build-kernel.sh \
-  --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-4k \
   --page-size 4k
 ```

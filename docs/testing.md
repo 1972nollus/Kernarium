@@ -68,8 +68,8 @@ and owner paths enforce that suite-level taxonomy. Domain words in names and
 source ownership remain useful, but secondary per-domain labels and a specific
 per-domain subdirectory layout are optional organization, not acceptance gates.
 
-Reproducibility here means pinned official release archive and signature
-identities, patch bytes and order, verified prepared source trees,
+Reproducibility here means pinned upstream Git repositories and full commits,
+Git-generated patch bytes/IDs/subjects/order, verified prepared repositories,
 configuration inputs, ABI identity, and a recorded build procedure. Git,
 Kbuild, compiler, linker, and Xcode-generated timestamps, commit IDs, build
 IDs, user/host fields, package layouts, and output hashes stay authentic and
@@ -176,40 +176,31 @@ at 96 TiB. Explicit kernel command-line values continue to override these
 defaults.
 
 The graphics and network dependency prefixes are separate from the macOS
-dependency prefix. Graphics uses the exact UTM WebKit/ANGLE, libepoxy, and
-virglrenderer commits in
-[`../Kernarium/dependencies/utm-gpu-sources.tsv`](../Kernarium/dependencies/utm-gpu-sources.tsv).
-The source build is offline and accepts only clean local checkouts at those
-commits. Build both Apple-mobile slices before packaging the Xcode app:
+dependency prefix. Their repositories, full commits, ordered Git mail patches,
+platform receipts, preparation, builders, and verifiers are all owned by
+[`../dependencies/`](../dependencies/README.md). Prepare the sources once,
+then build both Apple-mobile slices before packaging the Xcode app:
 
 ```sh
-Kernarium/scripts/build-ios-gpu-dependencies.sh \
-  --webkit /path/to/utm-WebKit \
-  --libepoxy /path/to/utm-libepoxy \
-  --virglrenderer /path/to/utm-virglrenderer
-Kernarium/scripts/build-ios-gpu-dependencies.sh --platform ios \
-  --webkit /path/to/utm-WebKit \
-  --libepoxy /path/to/utm-libepoxy \
-  --virglrenderer /path/to/utm-virglrenderer
+dependencies/prepare.sh --product ios-gpu
+dependencies/build-ios-gpu.sh
+dependencies/build-ios-gpu.sh --platform ios
 
-Kernarium/scripts/build-ios-network-dependencies.sh
-Kernarium/scripts/build-ios-network-dependencies.sh --platform ios
+dependencies/prepare.sh --product ios-network
+dependencies/build-ios-network.sh
+dependencies/build-ios-network.sh --platform ios
 
 # Read-only checks once the prefix exists.
-Kernarium/scripts/build-ios-gpu-dependencies.sh --verify-only
-Kernarium/scripts/build-ios-gpu-dependencies.sh \
-  --platform ios --verify-only
-Kernarium/scripts/build-ios-network-dependencies.sh --verify-only
-Kernarium/scripts/build-ios-network-dependencies.sh \
-  --platform ios --verify-only
+dependencies/build-ios-gpu.sh --verify-only
+dependencies/build-ios-gpu.sh --platform ios --verify-only
+dependencies/build-ios-network.sh --verify-only
+dependencies/build-ios-network.sh --platform ios --verify-only
 
 # Build the two canonical page-profile inputs shared by macOS and iOS.
 kernel/build-kernel.sh \
-  --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-16k \
   --page-size 16k
 kernel/build-kernel.sh \
-  --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-4k \
   --page-size 4k
 
@@ -413,26 +404,26 @@ sparsebundle for the canonical workflow, and do not substitute a transient
 case-sensitive mount under `/tmp`.
 
 Source preparation, dependency-prefix construction, and Linux replay are
-explicit mutating setup steps. Kernel preparation authenticates the official
-signed `linux-6.18.41.tar.xz` release archive and detached signature, then
-creates a local Git replay with real generation timestamps. Their verification
-paths are read-only and are what ordinary builds should use once those inputs
-exist:
+explicit mutating setup steps. Kernel preparation fetches the exact commit
+pinned on the upstream `linux-6.18.y` stable branch, verifies its tree, then
+replays the Git-generated project topics. Verification is read-only and is what
+ordinary builds should use once those inputs exist:
 
 ```sh
 dependencies/prepare.sh
 dependencies/build.sh
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux
-# A fresh offline replay can use the authenticated files already in the cache.
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux-offline \
-  --no-fetch
+cp kernel/source-location.conf.example kernel/source-location.conf
+# Set the absolute case-sensitive UML_KERNEL_SOURCE_DIR in that ignored file.
+kernel/prepare-source.sh
+# Recreating that configured checkout can use the pinned offline Git cache.
+kernel/prepare-source.sh --no-fetch
 
 dependencies/prepare.sh --verify
 dependencies/verify-prefix.sh \
   --prefix .build/dependencies/macos-arm64 \
   --manifest dependencies/manifest.tsv \
   --deployment-target 14.0
-kernel/prepare-source.sh --source /Volumes/<case-sensitive-volume>/linux --verify
+kernel/prepare-source.sh --verify
 kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --skip-build
 cmake --preset macos-integration
 cmake --build --preset macos-integration
@@ -442,20 +433,22 @@ ctest --preset integration-fast
 Kernel compilation uses every online host processor by default. Set
 `UML_KERNEL_JOBS` or pass `--jobs N` only to impose an explicit lower limit.
 
-The checked integration presets pin `/Volumes/<case-sensitive-volume>/linux`,
-`/Volumes/<case-sensitive-volume>/build-16k`, and
-`/Volumes/<case-sensitive-volume>/build-4k`. For another case-sensitive layout, override
-both cache paths during each configure rather than relying on an environment
-prefix:
+The ignored `kernel/source-location.conf` is the sole authority for the source
+checkout. The checked integration presets pin
+`/Volumes/<case-sensitive-volume>/build-16k` and `/Volumes/<case-sensitive-volume>/build-4k` only.
+For another case-sensitive layout, update the ignored config and override the
+page-specific build cache path if needed:
 
 ```sh
 cmake --preset macos-integration \
-  -DUML_KERNEL_SOURCE_DIR=/other/case-sensitive/linux \
   -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-16k
 cmake --preset macos-integration-4k \
-  -DUML_KERNEL_SOURCE_DIR=/other/case-sensitive/linux \
   -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-4k
 ```
+
+Kernel-enabled CMake configuration and `kernel/build-kernel.sh` fail before
+toolchain selection when `kernel/source-location.conf` is absent, malformed,
+points at a missing checkout, or resolves to a case-insensitive filesystem.
 
 `dependencies/prepare.sh --verify` authenticates the already prepared source
 trees; it does not construct or verify the compiled dependency prefix.

@@ -6,7 +6,6 @@ PREFIX=
 MANIFEST=
 DEPLOYMENT_TARGET=
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ARCHIVE_TOOL="$SCRIPT_DIR/source_archive.py"
 PREPARE_SCRIPT="$SCRIPT_DIR/prepare.sh"
 
 fail()
@@ -43,7 +42,6 @@ done
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
 command -v shasum >/dev/null 2>&1 || fail "shasum build tool is required"
 command -v xcrun >/dev/null 2>&1 || fail "xcrun build tool is required"
-[ -x "$ARCHIVE_TOOL" ] || fail "source archive verifier is missing: $ARCHIVE_TOOL"
 [ -x "$PREPARE_SCRIPT" ] || fail "source preparation policy is missing: $PREPARE_SCRIPT"
 
 if ! manifest_validation=$(

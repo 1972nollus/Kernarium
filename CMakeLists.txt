@@ -5,7 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH
+    "${PROJECT_SOURCE_DIR}/cmake"
+    "${PROJECT_SOURCE_DIR}/dependencies/cmake")
 include(UmlTesting)
 include(VerifyDependencies)
 include(VerifyAbi)
@@ -197,10 +199,10 @@ if((UML_BUILD_GPU OR UML_BUILD_NETWORK_PROVIDER) AND NOT UML_TARGET_MACOS)
             "The Kernarium GPU and network providers require an iOS target")
     endif()
     if(UML_BUILD_GPU)
-        include(Kernarium/Runtime/cmake/IosGpuDependencies.cmake)
+        include(dependencies/cmake/IosGpuDependencies.cmake)
     endif()
     if(UML_BUILD_NETWORK_PROVIDER)
-        include(Kernarium/Runtime/cmake/IosNetworkDependencies.cmake)
+        include(dependencies/cmake/IosNetworkDependencies.cmake)
     endif()
 endif()
 

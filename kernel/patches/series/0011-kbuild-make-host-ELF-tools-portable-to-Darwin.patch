@@ -1,0 +1,72 @@
+From 5fd113962d570d5b840eab133785483a2d1bceb4 Mon Sep 17 00:00:00 2001
+From: Darwin UML maintainers <uml-darwin@example.invalid>
+Date: Mon, 3 Aug 2026 17:24:12 +0900
+Subject: [PATCH 11/19] kbuild: make host ELF tools portable to Darwin
+
+Apply the reviewed final-state topic without intermediate churn.
+---
+ scripts/Makefile.vmlinux | 7 ++++++-
+ scripts/link-vmlinux.sh  | 6 +++++-
+ scripts/mod/file2alias.c | 6 ++++++
+ 3 files changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/Makefile.vmlinux b/scripts/Makefile.vmlinux
+index 276c3134a..fbe545bd4 100644
+--- a/scripts/Makefile.vmlinux
++++ b/scripts/Makefile.vmlinux
+@@ -112,8 +112,13 @@ vmlinux: vmlinux.unstripped FORCE
+ # Strip the trailing padding bytes after extracting .modinfo to comply with
+ # what kmod expects to parse.
+ quiet_cmd_modules_builtin_modinfo = GEN     $@
++ifeq ($(UML_HOST_OS),Darwin)
++      cmd_trim_modinfo_padding = perl -0777 -pi -e 's/\x00+\z/\x00/' $@
++else
++      cmd_trim_modinfo_padding = sed -i 's/\x00\+$$/\x00/g' $@
++endif
+       cmd_modules_builtin_modinfo = $(cmd_objcopy); \
+-                                    sed -i 's/\x00\+$$/\x00/g' $@; \
++				    $(cmd_trim_modinfo_padding); \
+                                     chmod -x $@
+ 
+ OBJCOPYFLAGS_modules.builtin.modinfo := -j .modinfo -O binary
+diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
+index 433849ff7..73b21ea84 100755
+--- a/scripts/link-vmlinux.sh
++++ b/scripts/link-vmlinux.sh
+@@ -80,7 +80,11 @@ vmlinux_link()
+ 		wl=-Wl,
+ 		ld="${CC}"
+ 		ldflags="${CFLAGS_vmlinux}"
+-		ldlibs="-lutil -lrt -lpthread"
++		if [ "${UML_HOST_OS}" = "Darwin" ]; then
++			ldlibs=""
++		else
++			ldlibs="-lutil -lrt -lpthread"
++		fi
+ 	else
+ 		wl=
+ 		ld="${LD}"
+diff --git a/scripts/mod/file2alias.c b/scripts/mod/file2alias.c
+index 4e99393a3..5820eb1b8 100644
+--- a/scripts/mod/file2alias.c
++++ b/scripts/mod/file2alias.c
+@@ -107,6 +107,9 @@ typedef struct {
+ 	__u8 b[16];
+ } guid_t;
+ 
++#ifdef __APPLE__
++#define uuid_t linux_uuid_t
++#endif
+ typedef struct {
+ 	__u8 b[16];
+ } uuid_t;
+@@ -122,6 +125,9 @@ typedef struct {
+  * even potentially has different endianness and word sizes, since
+  * we handle those differences explicitly below */
+ #include "../../include/linux/mod_devicetable.h"
++#ifdef __APPLE__
++#undef uuid_t
++#endif
+ 
+ struct devtable {
+ 	const char *device_id;

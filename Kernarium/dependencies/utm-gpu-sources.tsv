@@ -1,6 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-# These are the exact UTM-maintained sources used by the iOS ANGLE/Metal path.
-name	repository	commit	required_subtree
-WebKit	https://github.com/utmapp/WebKit.git	ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10	Source/ThirdParty/ANGLE
-libepoxy	https://github.com/utmapp/libepoxy.git	bf98587477fe68d07b93319ece7b40a7d0e2eabe	.
-virglrenderer	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.

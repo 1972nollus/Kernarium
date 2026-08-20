@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+order	patch	stable_patch_id	sha256	subject
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	1493b458066f785ee4ab308691edd69ecd433111c0d65e58c6b21d8fe8b80337	Add check for iOS simulator when initializing caps in metal

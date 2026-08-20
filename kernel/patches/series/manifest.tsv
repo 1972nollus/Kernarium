@@ -1,24 +1,23 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Ordered final-state topic identity manifest. Fields are order, file, stable
-# patch-id, SHA-256 of the patch file, and subject. prepare-source.sh validates
-# every field before it creates or accepts the managed replay branch.
+# patch-id, SHA-256 of the git-generated patch, and commit subject.
 order	filename	stable_patch_id	sha256	subject
-1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	b2e03fc2455fdaf964cb601bc431bd1bbbe7c091	65b3522e3fad368a070fa6bd98d24676d274ec97d6a9428d552fdc2e1889fee9	uml: establish shared architecture contracts and build wiring
-2	0002a-uml-add-MMU-synchronization-and-large-page-support.patch	631e080132bf7ebb42b0a4ccd79b9a41d4692831	915b1bd3e004380c0fabd7478ddd357be34f73d8a4ed7935b401c4012cf2c943	uml: add MMU synchronization and large-page support
-3	0002b-uml-add-SMP-timer-and-interrupt-core-support.patch	865c55069a4330fab28a6d4a2160e920b70f73c6	efc2dd63f0ca4f1a05355bae418b16dbff00dc6cf967f90494795d1af80e9a2d	uml: add SMP timer and interrupt core support
-4	0002c-uml-add-execution-and-capability-core-support.patch	0ff6f82a1fa86ed639a76c7e6cf70760efc62f32	3c27c206c454ed9769d6a0535dcb7a760ae42495129d5d80eaac3eae19cbf7e3	uml: add execution and capability core support
-5	0002d-uml-make-core-build-rules-portable-across-hosts.patch	5946f4f48cf44db894ebe4d5bdd810c3a9186010	82ec34312c62637befcf7179523e7e7db60a071612aca6ff075f2b404faddc33	uml: make core build rules portable across hosts
-6	0003-uml-keep-Linux-host-services-aligned-with-shared-cor.patch	e1bf51f96d9b17463cffb18d7f184925a24c505a	2676364c4f96fbf28867e2e5991f17a3ee0ac0a644c914e6cb82d162165727a6	uml: keep Linux host services aligned with shared core contracts
-7	0004-uml-add-Darwin-host-service-implementation.patch	15c90afaae07d8d959d0403dc9f3e2676c351330	af887af59f8f8fd99832cd0aa99dd1de43d891136f75edf24dc25d0f9235368c	uml: add Darwin host service implementation
-8	0005-uml-define-the-Darwin-fixed-arity-host-bridge-ABI.patch	d795f84f13036de8bb4e9ca75dec76b10f9b94ac	3c6b94544d7509da8f920a77b87a8a34b04de4971e0c52dbd8465b1b6877765a	uml: define the Darwin fixed-arity host bridge ABI
-9	0006-arm64-add-the-user-mode-Linux-architecture-port.patch	b3f99fb2ca3cba849c8a38cef4625e674c48dd35	4899a5ca7f7f20d7207a71cbc51bbe1e8696bb83234a952c1a0e6b9b578bc403	arm64: add the user-mode Linux architecture port
-10	0007-uml-adapt-standard-virtual-devices-to-Darwin-host-pr.patch	8550604087cca56cbb70b24cbd42cb1a0b1be9c6	4ecf2c107a3fe9f592259edb27d7a294d5dc9bf038b6c01f203216a705f8712b	uml: adapt standard virtual devices to Darwin host providers
-11	0008-kbuild-make-host-ELF-tools-portable-to-Darwin.patch	76a3ae876a65b0746468d5e3dc74d00bc21a6345	ff9737cc82931a391f2a7f5a2a41896f7d440a0508f82e5623b2d3fa5e4023bb	kbuild: make host ELF tools portable to Darwin
-12	0009-mm-handle-zero-length-cachestat-ranges.patch	92e4637379a7d13b8f4f743ecc4ef60bcd66c8c0	4faca3bebe93dfd94fb9830902a2729fa71b764a9bcc78ccda6ed2a63d5d9a20	mm: handle zero-length cachestat ranges
-13	0010-smack-use-the-connected-socket-for-stream-sendmsg-ch.patch	1112b0d3c164b1a4d13af588b3ff640f7698c234	dda1d34de168ed4aa6a64ffa5bb5653e5c199732db6ff293f0c115a5fd39f8a7	smack: use the connected socket for stream sendmsg checks
-14	0011-virtio-uml-use-a-64-bit-DMA-mask-for-vhost-user-tran.patch	4293e280ee408165ae454f97819e652e00906581	9771bb71769bd71753337b7442b11c649bb459bbf233e52a48d564aa18c88fc2	virtio: uml: use a 64-bit DMA mask for vhost-user transports
-15	0012-uml-use-one-scalable-Darwin-native-address-profile.patch	8ee25be2662de308f20fb83536fcea368f7a2fe3	c00d031f18c04ddce54a3edb038d1ffef4d2042e8a8c07dfe7edefadf4372b6e	uml: use one scalable Darwin native address profile
-16	0013-uml-run-Darwin-guests-on-fixed-vCPU-carriers.patch	12c17640c56e86bebe4ba5aec3db6e088458074a	79195f6cf8b7d70823e86b796f64b06ba270390645c7a8fe7019c397d6b33e17	uml: run Darwin guests on fixed vCPU carriers
-17	0014-uml-wake-fixed-vCPU-carriers-for-host-stop.patch	f470dc1a66b29b282c4107c7f718bb1a04f38ed3	b9fc86885cd167c0e7c1cb2a2c2768770095cbfa96e7470f2cb1d0d9e3fa73f2	uml: wake fixed vCPU carriers for host stop
-18	0015-uml-service-cross-CPU-work-on-fixed-carriers.patch	0b3f2d0e9d422d1d75df86b4fc832e07b1832a7c	11e902b4310ad602b5c93f185d56c69561f09ecbc7df4984c20b13e8f251056a	uml: service cross-CPU work on fixed carriers
-19	0016-uml-read-the-Darwin-current-vCPU-without-pthread_onc.patch	a9fd3f578e9c6400befbea6084ca59c380d013ce	71384883215fe471822db81d8020eeb584004e8d14ca76763838b3570cf082e7	uml: read the Darwin current vCPU without pthread_once
+1	0001-uml-establish-shared-architecture-contracts-and-buil.patch	b2e03fc2455fdaf964cb601bc431bd1bbbe7c091	55c46569be12098dd9b01c9393e18107561863cc12496039b466b8272b524da7	uml: establish shared architecture contracts and build wiring
+2	0002-uml-add-MMU-synchronization-and-large-page-support.patch	631e080132bf7ebb42b0a4ccd79b9a41d4692831	9593b2566438d9feb9817c5bd4cdc34dfbd7f05b5b8dda0f5136eb09302e74f4	uml: add MMU synchronization and large-page support
+3	0003-uml-add-SMP-timer-and-interrupt-core-support.patch	865c55069a4330fab28a6d4a2160e920b70f73c6	efe9759d3e5a4139f4f007c0a100c265a9eeb098f29d29f547d3c5b8578f4019	uml: add SMP timer and interrupt core support
+4	0004-uml-add-execution-and-capability-core-support.patch	0ff6f82a1fa86ed639a76c7e6cf70760efc62f32	fa01206de77e83c54c7091a0a5f2fec021753f46f3c6f2672cae8e1d30b00824	uml: add execution and capability core support
+5	0005-uml-make-core-build-rules-portable-across-hosts.patch	5946f4f48cf44db894ebe4d5bdd810c3a9186010	6557e74f0b4373dce027978d5d7aa4a28a2b2af14918f914e480404654c349c9	uml: make core build rules portable across hosts
+6	0006-uml-keep-Linux-host-services-aligned-with-shared-cor.patch	e1bf51f96d9b17463cffb18d7f184925a24c505a	67d315e95c7a70fd2d9253667c55d28d74fa40df7675b2e6585580ed9033232d	uml: keep Linux host services aligned with shared core contracts
+7	0007-uml-add-Darwin-host-service-implementation.patch	15c90afaae07d8d959d0403dc9f3e2676c351330	25f98e2ca45f31a12b15ec0b3ba42345d2cf08b079e165cf481ee68db47159b8	uml: add Darwin host service implementation
+8	0008-uml-define-the-Darwin-fixed-arity-host-bridge-ABI.patch	d795f84f13036de8bb4e9ca75dec76b10f9b94ac	a806686d7f643180617de795b97adcd4fcc924c8b4d68f460de6efefdee309a1	uml: define the Darwin fixed-arity host bridge ABI
+9	0009-arm64-add-the-user-mode-Linux-architecture-port.patch	b3f99fb2ca3cba849c8a38cef4625e674c48dd35	e3669ff330655c3c8d8f37752cec2adf48aba6aaa442b85bc3d20fec40d2927c	arm64: add the user-mode Linux architecture port
+10	0010-uml-adapt-standard-virtual-devices-to-Darwin-host-pr.patch	8550604087cca56cbb70b24cbd42cb1a0b1be9c6	932d74f5ffbe994aa68ef56b881af7e935cce66270bf56b2a303a91c100af4d9	uml: adapt standard virtual devices to Darwin host providers
+11	0011-kbuild-make-host-ELF-tools-portable-to-Darwin.patch	76a3ae876a65b0746468d5e3dc74d00bc21a6345	f8b3047ffb79c6849f5456d23ac439897c9ab6a6df6bb845ea1109aae2bd3bdf	kbuild: make host ELF tools portable to Darwin
+12	0012-mm-handle-zero-length-cachestat-ranges.patch	92e4637379a7d13b8f4f743ecc4ef60bcd66c8c0	6201d93a723481aa6af0b56e0657631439da8d299c0f750afd2e280d45ade1f2	mm: handle zero-length cachestat ranges
+13	0013-smack-use-the-connected-socket-for-stream-sendmsg-ch.patch	1112b0d3c164b1a4d13af588b3ff640f7698c234	ef266572e06b5c072b53fd174c26af593af6d4fd43f1137c4d8915d04d69d830	smack: use the connected socket for stream sendmsg checks
+14	0014-virtio-uml-use-a-64-bit-DMA-mask-for-vhost-user-tran.patch	4293e280ee408165ae454f97819e652e00906581	644c5b58c806ffd606547999ded7b70987d8feb5b8b313781044c66c8afcc1b1	virtio: uml: use a 64-bit DMA mask for vhost-user transports
+15	0015-uml-use-one-scalable-Darwin-native-address-profile.patch	8ee25be2662de308f20fb83536fcea368f7a2fe3	c4ae172d265fdb85379c983a5c3866837d4034933f388878b969e272a1308bda	uml: use one scalable Darwin native address profile
+16	0016-uml-run-Darwin-guests-on-fixed-vCPU-carriers.patch	12c17640c56e86bebe4ba5aec3db6e088458074a	f3ed5916deec0ecdaa8362341af14592f6b1e690d617dfa5992ee8390db45832	uml: run Darwin guests on fixed vCPU carriers
+17	0017-uml-wake-fixed-vCPU-carriers-for-host-stop.patch	f470dc1a66b29b282c4107c7f718bb1a04f38ed3	50b4e55c2f453519a52d8271eb09d02877fcf6d9d2a9a3d0483edcf483c8a88e	uml: wake fixed vCPU carriers for host stop
+18	0018-uml-service-cross-CPU-work-on-fixed-carriers.patch	0b3f2d0e9d422d1d75df86b4fc832e07b1832a7c	f2ee88cfee9549fc8091e564633385701b280ab42403930437d181374c97541c	uml: service cross-CPU work on fixed carriers
+19	0019-uml-read-the-Darwin-current-vCPU-without-pthread_onc.patch	a9fd3f578e9c6400befbea6084ca59c380d013ce	1301e693102dc381c8f2a239af621fc760d97def031c94540d8589ba10b9ba58	uml: read the Darwin current vCPU without pthread_once

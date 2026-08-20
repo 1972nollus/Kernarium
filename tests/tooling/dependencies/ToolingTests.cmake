@@ -1,17 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# Source archive extraction and preparation intentionally exercise the
-# Python-based build helper.  Keep them in the host tooling suite rather than
-# presenting them as Python-free unit tests.
 uml_add_tooling_test(
-    NAME dependency-source-archive-verifier
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_source_archive.sh
+    NAME dependency-source-preparer
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_prepare.sh
     LABELS dependency
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME dependency-source-preparer
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_prepare.sh
+    NAME dependency-patch-regenerator
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_rebase_patches.sh
     LABELS dependency
     TIMEOUT 30)
 

@@ -1,9 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Report patch-series conflicts against a caller-selected development ref.
-# This opt-in audit uses a temporary Git clone because arbitrary future refs do
-# not have release archives. It never supplies source to a build or rewrites a
-# managed packaged-release checkout.
+# This opt-in audit uses a temporary Git clone and never supplies source to a
+# build or rewrites a managed pinned-commit checkout.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -83,7 +82,7 @@ audit_git()
 		-c core.hooksPath=/dev/null "$@"
 }
 
-audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_NEXT_VERSION_ORIGIN" \
+audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_UPSTREAM_REPOSITORY" \
 	"$CHECK_ROOT/linux"
 audit_git -C "$CHECK_ROOT/linux" fetch --no-tags origin "$UPSTREAM_REF"
 audit_git -C "$CHECK_ROOT/linux" switch --detach FETCH_HEAD

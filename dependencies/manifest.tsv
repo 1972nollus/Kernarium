@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Source identity is the pinned archive plus the prepared-tree hash.  Release
-# archives come from the upstream project's official distribution endpoint.
-# LibVNCServer uses its official pristine 0.9.15 release package without a
-# project-maintained post-release patch layer.
-name	version	kind	archive_url	archive_file	archive_sha256	archive_root	prepared_tree_sha256	patch	patch_sha256
-zlib	1.3.2	release	https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz	zlib-1.3.2.tar.xz	d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3	zlib-1.3.2	c52e6a4606f3b3a7a8f0ade0a965357c5d4023fd377362a08eec9d9a3ca9e3da	-	-
-pcre2	10.47	release	https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.bz2	pcre2-10.47.tar.bz2	47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7	pcre2-10.47	b40cd067445af4cfadee3e537a338f7b8cce5cd391b21b6081660f4c0a020717	-	-
-libffi	3.7.1	release	https://github.com/libffi/libffi/releases/download/v3.7.1/libffi-3.7.1.tar.gz	libffi-3.7.1.tar.gz	d5e9a6638ddbd2513ddb54518eb67e4bbe6fa707bcc01c10f6212f0a088d819d	libffi-3.7.1	56cc10ab60f2b7934e8c048f1085930bb0e14247b35f4c89cc169f2be5520b10	-	-
-libiconv	1.18	release	https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz	libiconv-1.18.tar.gz	3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8	libiconv-1.18	6c7cd24f4a1c7c310ac1be57da9df9048f9b875076753ba9b727592d106129a5	-	-
-proxy-libintl	0.5	release	https://github.com/frida/proxy-libintl/archive/refs/tags/0.5.tar.gz	proxy-libintl-0.5.tar.gz	f7a1cbd7579baaf575c66f9d99fb6295e9b0684a28b095967cfda17857595303	proxy-libintl-0.5	5ebc86f7f6e25c42b611cd1a2bf12ce95fd1b5e5a3e4cee9535dbcf21b1f685e	-	-
-glib	2.88.3	release	https://download.gnome.org/sources/glib/2.88/glib-2.88.3.tar.xz	glib-2.88.3.tar.xz	ab24d24e698dfa1e408b7bcdb508f4aafc906185a8b8ce72fdf79bbbdc9b383b	glib-2.88.3	9ce8ccc6368bbe9aefecd43aedfc91c478052d977c4f497abca2e75e2312ed5a	-	-
-libslirp	4.9.3	release	https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.3/libslirp-v4.9.3.tar.bz2	libslirp-4.9.3.tar.bz2	c82e22c73bdc3f2c038e538d4f0c9c2166defb2402212d61bb7cb1b530ba952f	libslirp-v4.9.3	114eaf38504462dd2f48cef62675cd64e5dd4bdb4a66c33e2e8d260ed596627e	-	-
-libepoxy	1.5.10	release	https://github.com/anholt/libepoxy/archive/refs/tags/1.5.10.tar.gz	libepoxy-1.5.10.tar.gz	a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15	libepoxy-1.5.10	0bb97be6774746009f44b1cc8c7ace1806a74e8a7a56f8b2ebd79f47a4dd392c	-	-
-libvncserver	0.9.15	release	https://github.com/LibVNC/libvncserver/archive/refs/tags/LibVNCServer-0.9.15.tar.gz	libvncserver-0.9.15.tar.gz	62352c7795e231dfce044beb96156065a05a05c974e5de9e023d688d8ff675d7	libvncserver-LibVNCServer-0.9.15	3b0f5deb99f726cc0cfb963b783fcc396017fde8e646240a9ed3b01c18077a35	-	-
-virglrenderer	1.3.0	release	https://gitlab.freedesktop.org/virgl/virglrenderer/-/archive/1.3.0/virglrenderer-1.3.0.tar.bz2	virglrenderer-1.3.0.tar.bz2	088040d130eaa0458a978fe7867fbfb1fcf1fdff52bf3b27a00658828bc4189f	virglrenderer-1.3.0	af34da083f3461560b523097c66bb1f096a391215786f88532582a6c4d91a67c	patches/virglrenderer/0001-darwin-core-profile-compatibility.patch	1a9f08487842d40662bc8d8497fb1066327f851980c5a90c86a324b45326bd7f
+# Source identity is the exact upstream repository and full commit. Maintained
+# changes exist only as the ordered git-format-patch series in the final field.
+name	version	products	repository	commit	source_paths	patch_series
+zlib	1.3.2	macos	https://github.com/madler/zlib.git	da607da739fa6047df13e66a2af6b8bec7c2a498	.	-
+pcre2	10.47	macos,ios-network	https://github.com/PCRE2Project/pcre2.git	f454e231fe5006dd7ff8f4693fd2b8eb94333429	.	-
+libffi	3.7.1	macos,ios-network	https://github.com/libffi/libffi.git	5c1c43091ed611fdea774374355eb938c73a9157	.	-
+gnulib	2024-12-12	macos	https://git.savannah.gnu.org/git/gnulib.git	2e8033f55cbe31f49db6e78f2b9d15f2677bde90	.	-
+libiconv	1.18	macos	https://git.savannah.gnu.org/git/libiconv.git	ed5a57cfedda75a6abbe4d0fb89a6f7b832f073e	.	-
+proxy-libintl	0.5	macos,ios-network	https://github.com/frida/proxy-libintl.git	33934de09af6a6627eb44e310a8079df009abdbb	.	-
+glib	2.88.3	macos	https://gitlab.gnome.org/GNOME/glib.git	43bc79ea8803e33c5eb368085e2d5906f9f98079	.	-
+glib-ios	2.88.3	ios-network	https://gitlab.gnome.org/GNOME/glib.git	43bc79ea8803e33c5eb368085e2d5906f9f98079	.	patches/glib-ios/series.tsv
+libslirp	4.9.3	macos,ios-network	https://gitlab.freedesktop.org/slirp/libslirp.git	dd76415fce457e319d665eb8210d05c5731360ba	.	-
+libepoxy	1.5.10	macos	https://github.com/anholt/libepoxy.git	c84bc9459357a40e46e2fec0408d04fbdde2c973	.	-
+libvncserver	0.9.15	macos	https://github.com/LibVNC/libvncserver.git	9b54b1ec32731bd23158ca014dc18014db4194c3	.	-
+virglrenderer	1.3.0	macos	https://gitlab.freedesktop.org/virgl/virglrenderer.git	ca50e008863837e094747a69974dde3ae148aeaa	.	patches/virglrenderer/series.tsv
+utm-webkit	ed78ab6	ios-gpu	https://github.com/utmapp/WebKit.git	ed78ab6e1a37f4f11583a0bd038f22ec91f3ff10	Source/ThirdParty/ANGLE,Configurations,Tools/ccache	patches/utm-webkit/series.tsv
+utm-libepoxy	bf98587	ios-gpu	https://github.com/utmapp/libepoxy.git	bf98587477fe68d07b93319ece7b40a7d0e2eabe	.	-
+utm-virglrenderer	65cc14e	ios-gpu	https://github.com/utmapp/virglrenderer.git	65cc14eb896f121ffc5130ce04815a923a03c41d	.	patches/utm-virglrenderer/series.tsv
