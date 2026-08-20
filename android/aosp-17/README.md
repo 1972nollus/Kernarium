@@ -189,9 +189,10 @@ mode and zero size.
 
 `support/boot/kernel-command-line.txt` owns the machine-independent launch
 arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
-SELinux, the DRM-HWC composer APEX for the Virtio-GPU path, and the `ttyS0`
-diagnostic shell. The runtime adds its local `ubd0=` disk and initrd paths; no
-builder or workstation path is stored in this tree.
+SELinux, the DRM-HWC composer APEX for the Virtio-GPU path, disables both
+inherited camera-provider APEX variants because UML exposes no camera, and
+selects the `ttyS0` diagnostic shell. The runtime adds its local `ubd0=` disk
+and initrd paths; no builder or workstation path is stored in this tree.
 
 The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
 with 4,575 entries and 1,162 verified target executables, a 4,374,784-byte raw
