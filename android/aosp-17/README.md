@@ -18,7 +18,21 @@ android/aosp-17/build/preflight.sh \
   --ack-workspace /absolute/path/to/ack-workspace \
   --darwin-sdk /absolute/path/to/MacOSX.sdk \
   --work-root /absolute/path/to/work \
-  --release-root /absolute/path/to/releases
+	--release-root /absolute/path/to/releases
+```
+
+Materialize and build the tracked ACK series in a separate worktree:
+
+```sh
+android/aosp-17/build/apply-kernel-patches.sh \
+  --ack-workspace /absolute/path/to/ack-workspace \
+  --kernel-source /absolute/path/to/new-android-kernel-source
+
+android/aosp-17/build/build-kernel.sh \
+  --ack-workspace /absolute/path/to/ack-workspace \
+  --kernel-source /absolute/path/to/new-android-kernel-source \
+  --darwin-sdk /absolute/path/to/MacOSX.sdk \
+  --build /absolute/path/to/kernel-build
 ```
 
 `prepare-sources.sh` is the only producer command in this lane that may access
@@ -31,6 +45,7 @@ then copy completed releases back through an operator-managed workflow outside
 the repository.
 
 The Android kernel has one profile: 16 KiB, ARM64-only, with
-`CONFIG_MODULES=n`. Every required facility must resolve built-in. AOSP product
-patches, image assembly, release publication, and Apple consumers are later
-milestones and are not claimed by this initial producer checkpoint.
+`CONFIG_MODULES=n`. The build rejects any `=m` configuration or `.ko` output
+and verifies the built-in Android feature set, ELF geometry, and exact Darwin
+bridge imports. AOSP product patches, image assembly, release publication, and
+Apple consumers are later milestones and are not claimed by this checkpoint.

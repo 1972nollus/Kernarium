@@ -1,0 +1,64 @@
+From 5d669b693655e1a6d419be0857d786db6e80f03a Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 13 Aug 2026 18:21:18 +0900
+Subject: [PATCH 15/23] uml: service cross-CPU work on fixed carriers
+
+---
+ arch/arm64/um/asm/processor.h |  9 +++++++++
+ arch/um/os-Darwin/smp.c       | 16 ++++++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
+index 3cf7106cc489ca9442d562b9a938233804f938d6..c113d51b88be1c7c68818bcbce0d4dc78763da46 100644
+--- a/arch/arm64/um/asm/processor.h
++++ b/arch/arm64/um/asm/processor.h
+@@ -39,13 +39,22 @@ static inline void arch_copy_thread(struct arch_thread *from,
+ 	((address) + 65536 + 32 * sizeof(unsigned long) >= \
+ 	 UPT_SP(&current->thread.regs.regs))
+ 
++#ifdef UML_HOST_DARWIN
++void darwin_cpu_relax(void);
++#endif
++
+ static __always_inline void cpu_relax(void)
+ {
+ 	if (time_travel_mode == TT_MODE_INFCPU ||
+ 	    time_travel_mode == TT_MODE_EXTERNAL)
+ 		time_travel_ndelay(1);
++#ifdef UML_HOST_DARWIN
++	else
++		darwin_cpu_relax();
++#else
+ 	else
+ 		asm volatile("yield" : : : "memory");
++#endif
+ }
+ 
+ #define task_pt_regs(task) (&(task)->thread.regs)
+diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
+index 53b74bb06e6cb4107cde8ace59e7be46184acdaa..458e885159fec443421fb2778c37b92078f36627 100644
+--- a/arch/um/os-Darwin/smp.c
++++ b/arch/um/os-Darwin/smp.c
+@@ -206,6 +206,22 @@ void darwin_ipi_poll(void)
+ 		darwin_exit_cpu_carrier();
+ }
+ 
++void darwin_cpu_relax(void)
++{
++	int cpu = uml_curr_cpu();
++
++	asm volatile("yield" : : : "memory");
++	/* Darwin signals are wake edges, not Linux interrupt frames.  A carrier
++	 * waiting synchronously for remote kernel work must therefore service a
++	 * pending call-function IPI itself; otherwise two vCPUs can wait on one
++	 * another forever inside csd_lock_wait().  Only enter Linux interrupt code
++	 * when local IRQs are enabled.  Other spin loops retain the ordinary yield.
++	 */
++	if (__atomic_load_n(&pending_ipis[cpu], __ATOMIC_ACQUIRE) != 0 &&
++	    um_get_signals())
++		darwin_ipi_poll();
++}
++
+ int darwin_ipi_idle_fd(void)
+ {
+ 	return ipi_wake_pipes[uml_curr_cpu()][0];

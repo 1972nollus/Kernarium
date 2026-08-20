@@ -46,11 +46,18 @@ def main() -> None:
         android_root / "metadata/aosp.env",
         android_root / "build/prepare-sources.sh",
         android_root / "build/preflight.sh",
+        android_root / "build/apply-kernel-patches.sh",
+        android_root / "build/build-kernel.sh",
+        android_root / "build/verify-kernel-elf.py",
         android_root / "build/toolchain/aarch64-linux-clang.sh",
         android_root / "build/toolchain/linux-host-clang.sh",
         android_root / "build/toolchain/linux-host-compat.h",
+        android_root / "support/verification/required-kernel-builtins.txt",
+        android_root / "support/verification/forbidden-kernel-options.txt",
         kernel_root / "README.md",
+        kernel_root / "config/android.fragment",
         kernel_root / "patches/metadata.env",
+        kernel_root / "patches/topic-path-overlaps.tsv",
         kernel_root / "patches/series/manifest.tsv",
     ]
     for path in required:
@@ -71,11 +78,14 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_PATCH_COUNT": "0",
+        "UML_KERNEL_FINAL_TREE": "ef82c4396c776d300101fbb951509d1e3be36b4d",
+        "UML_KERNEL_PATCH_COUNT": "23",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
+        "UML_KERNEL_RUST_VERSION": "1.91.1.p3",
+        "UML_KERNEL_BINDGEN_VERSION": "0.72.1",
+        "UML_KERNEL_HOST_GLIBC_TOOLCHAIN": "x86_64-linux-glibc2.17-4.8",
     }
     for key, value in expected_aosp.items():
         if aosp.get(key) != value:
@@ -105,6 +115,20 @@ def main() -> None:
         if "/home/build/" in text:
             fail(f"tracked producer stores a builder-specific path: {script}")
 
+    tracked_policy_text = "\n".join(
+        path.read_text(errors="surrogateescape")
+        for path in (
+            android_root / "README.md",
+            android_root / "metadata/aosp.env",
+            kernel_root / "README.md",
+            kernel_root / "config/android.fragment",
+            kernel_root / "patches/metadata.env",
+        )
+    )
+    for token in ("BUILDER_ALIAS", "/home/build/", "BUILDER_HOST", "PRIVATE_KEY"):
+        if token in tracked_policy_text:
+            fail(f"tracked Android policy stores operator state: {token}")
+
     prepare = (android_root / "build/prepare-sources.sh").read_text()
     preflight = (android_root / "build/preflight.sh").read_text()
     if "--aosp-source" not in prepare or "--ack-workspace" not in prepare:
@@ -123,6 +147,25 @@ def main() -> None:
             fail(f"{script_name} mistakes Repo's clean status prose for a delta")
         if "repo forall" not in text or "git status --porcelain" not in text:
             fail(f"{script_name} does not inspect each project porcelain status")
+
+    apply_kernel = (android_root / "build/apply-kernel-patches.sh").read_text()
+    build_kernel = (android_root / "build/build-kernel.sh").read_text()
+    kernel_config = (kernel_root / "config/android.fragment").read_text()
+    if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
+        fail("ACK materializer does not replay generated topics in a worktree")
+    for token in (
+        "CONFIG_MODULES=n",
+        "CONFIG_[A-Za-z0-9_]+=m$",
+        "-name '*.ko'",
+        "--page-size 16k",
+        "verify-kernel-elf.py",
+    ):
+        if token not in build_kernel:
+            fail(f"Android kernel build is missing fixed built-in policy: {token}")
+    if "# CONFIG_MODULES is not set" not in kernel_config:
+        fail("Android kernel fragment does not disable loadable modules")
+    if "CONFIG_MSEAL_SYSTEM_MAPPINGS=y" not in kernel_config:
+        fail("Android kernel fragment does not enable system mapping sealing")
 
     print("Android 17 builder lane ownership passed")
 

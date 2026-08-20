@@ -10,4 +10,5 @@ set -eu
 exec "$UML_ANDROID17_HOST_CLANG" \
 	--sysroot="$UML_ANDROID17_HOST_SYSROOT" \
 	-B"$UML_ANDROID17_HOST_GCC_LIB" \
+	-include "$UML_ANDROID17_HOST_SYSROOT/usr/include/linux/types.h" \
 	-include "$UML_ANDROID17_HOST_COMPAT" "$@"
