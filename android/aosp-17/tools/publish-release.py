@@ -322,8 +322,12 @@ def main() -> None:
         / f"clang-{kernel_metadata['UML_KERNEL_CLANG_VERSION']}"
         / "bin"
     )
-    clang = regular_file(clang_root / "clang", "pinned Clang", executable=True)
-    linker = regular_file(clang_root / "ld.lld", "pinned linker", executable=True)
+    clang = regular_file(
+        (clang_root / "clang").resolve(), "pinned Clang", executable=True
+    )
+    linker = regular_file(
+        (clang_root / "ld.lld").resolve(), "pinned linker", executable=True
+    )
     java_candidates = (
         aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin/java",
         aosp_source / "prebuilts/jdk/jdk17/linux-x86/bin/java",
