@@ -201,3 +201,29 @@ kernel metadata; `atest elf_alignment_test` built but correctly deferred because
 it is a device-side test. It remains a post-boot gate. This proves the static
 build, VINTF, SELinux capability, fstab, initramfs, and image-layout contracts;
 it does not yet claim a UML boot or accepted HAL runtime.
+
+## Local release installation contract
+
+`support/release/release-manifest.schema.json` and `tools/release_common.py`
+define the compact runtime release. The inventory is fixed to the ACK UML ELF
+and built-in-module evidence, external initramfs and command line, compressed
+raw GPT disk and layout, VINTF/fstab support, and compact source provenance.
+The verifier rejects symlinks, special files, undeclared files or directories,
+unsafe paths, wrong family/page/ABI/source identities, size changes, and a
+kernel configuration with module support or any `=m` value.
+
+After an operator copies a complete release directory to the workstation, use
+only its local path:
+
+```sh
+android/aosp-17/tools/install-release.py \
+  --source /absolute/local/path/android17-ack6.18-16k-release-id
+```
+
+The installer requires `metadata/accepted-release.env`, validates the copied
+directory before writing, copies only declared regular files into a fresh
+staging directory under `.build/android/releases`, expands the GPT archive as
+a sparse local file, revalidates it, and atomically installs the result. It
+refuses to replace an existing release. The acceptance descriptor is added only
+when a clean builder-local publication has been reviewed; until then the
+default installer intentionally has no selectable release.
