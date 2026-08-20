@@ -14,12 +14,18 @@ fail()
 
 for path in \
 	"$COMMON/abi/identity.env" \
+	"$COMMON/artifacts/kernel-artifact-manifest.schema.json" \
+	"$COMMON/artifacts/kernel_artifact.py" \
+	"$COMMON/artifacts/verify-kernel-artifact.py" \
 	"$COMMON/config/page-16k.fragment" \
 	"$COMMON/tooling/verify-series-policy.py" \
 	"$LINE/config/common.fragment" \
 	"$LINE/config/page-4k.fragment" \
+	"$LINE/artifacts/accepted-16k.env" \
+	"$LINE/artifacts/accepted-4k.env" \
 	"$LINE/patches/metadata.env" \
 	"$LINE/build/build-kernel.sh" \
+	"$LINE/build/publish-artifact.py" \
 	"$LINE/scripts/prepare-source.sh" \
 	"$LINE/source-location.conf.example"; do
 	[ -f "$path" ] || fail "required owner is missing: $path"

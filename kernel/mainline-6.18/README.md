@@ -225,6 +225,30 @@ kernel/mainline-6.18/build/build-kernel.sh \
   --page-size 4k
 ```
 
+After a standalone build, publish the compact prebuilt input consumed by Apple
+products. Publication requires a clean replay at the tracked final tree,
+rechecks the resolved page/module policy, ELF geometry, and bridge imports, and
+copies only the ELF and support evidence into the selected local output root:
+
+```sh
+python3 -B kernel/mainline-6.18/build/publish-artifact.py \
+  --source /absolute/path/to/replayed-linux \
+  --build /absolute/path/to/build-16k \
+  --page-size 16k \
+  --output-root /absolute/path/to/kernel-artifacts \
+  --release-id reviewed-release-id
+```
+
+Run the command separately with the 4 KiB build and `--page-size 4k`. The
+publisher refuses loadable-module output and never builds, fetches, replays, or
+changes a source checkout.
+
+[`artifacts/accepted-16k.env`](artifacts/accepted-16k.env) and
+[`artifacts/accepted-4k.env`](artifacts/accepted-4k.env) select the reviewed
+local publications. Artifact directories are installed outside Git under
+`.build/kernel/artifacts`; the descriptors pin semantic source, page, release,
+and ABI identity without storing machine paths or binary payloads.
+
 The common policy builds zswap in, enables it by default, and selects zstd. It
 retains zram with zstd as a separately activatable compressed swap device.
 Zswap is a cache in front of backing swap rather than backing by itself; it
