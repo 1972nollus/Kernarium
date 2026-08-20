@@ -9,6 +9,7 @@ METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
+PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 
 AOSP_SOURCE=
 OUT_DIR=
@@ -50,6 +51,25 @@ absolute_path()
 	esac
 }
 
+partition_size_from_layout()
+{
+	python3 -B - "$PARTITION_LAYOUT" "$1" <<'PY'
+import json
+import sys
+
+layout_path, partition_name = sys.argv[1:]
+with open(layout_path, encoding="utf-8") as source:
+    layout = json.load(source)
+matches = [
+    partition for partition in layout.get("partitions", [])
+    if partition.get("name") == partition_name
+]
+if len(matches) != 1 or not isinstance(matches[0].get("size_bytes"), int):
+    raise SystemExit(f"invalid partition size in {layout_path}: {partition_name}")
+print(matches[0]["size_bytes"])
+PY
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--aosp-source)
@@ -89,8 +109,10 @@ absolute_path "kernel ELF" "$KERNEL_ELF"
 [[ "$(uname -s)" == Linux ]] || fail "builder host must be Linux"
 [[ "$(uname -m)" == x86_64 ]] || fail "builder host must be x86_64"
 command -v zip >/dev/null 2>&1 || fail "zip is not available on PATH"
+command -v python3 >/dev/null 2>&1 || fail "python3 is not available on PATH"
 [[ -d "$AOSP_SOURCE/.repo/manifests" ]] || fail "AOSP Repo metadata is missing"
 [[ -f "$KERNEL_ELF" ]] || fail "kernel ELF does not exist: $KERNEL_ELF"
+[[ -f "$PARTITION_LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 case "$OUT_DIR" in
 "$AOSP_SOURCE"/*) ;;
 *) fail "output directory must be inside the AOSP workspace for this source tag" ;;
@@ -137,6 +159,47 @@ lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIAN
 [[ "$(get_build_var TARGET_BOOTS_16K)" == true ]] ||
 	fail "product does not select the 16 KiB boot contract"
 for variable in \
+	PRODUCT_USE_DYNAMIC_PARTITIONS \
+	PRODUCT_USE_DYNAMIC_PARTITION_SIZE \
+	PRODUCT_BUILD_SUPER_PARTITION \
+	PRODUCT_BUILD_SUPER_EMPTY_IMAGE \
+	PRODUCT_VIRTUAL_AB_OTA \
+	PRODUCT_VIRTUAL_AB_COMPRESSION \
+	PRODUCT_OTA_FORCE_NON_AB_PACKAGE \
+	AB_OTA_UPDATER \
+	BOARD_AVB_ENABLE; do
+	[[ "$(get_build_var "$variable")" == false ]] ||
+		fail "$variable must be false for the fixed UBD product"
+done
+for variable in \
+	PRODUCT_VIRTUAL_AB_COMPRESSION_METHOD \
+	PRODUCT_VIRTUAL_AB_COMPRESSION_FACTOR \
+	BOARD_SUPER_PARTITION_SIZE \
+	BOARD_SUPER_PARTITION_GROUPS \
+	AB_OTA_PARTITIONS \
+	AB_OTA_POSTINSTALL_CONFIG; do
+	[[ -z "$(get_build_var "$variable")" ]] ||
+		fail "$variable must be empty for the fixed UBD product"
+done
+while read -r variable partition; do
+	expected_size=$(partition_size_from_layout "$partition")
+	[[ "$(get_build_var "$variable")" == "$expected_size" ]] ||
+		fail "$variable does not match the fixed UBD layout"
+done <<'EOF'
+BOARD_SYSTEMIMAGE_PARTITION_SIZE system
+BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE system_ext
+BOARD_PRODUCTIMAGE_PARTITION_SIZE product
+BOARD_VENDORIMAGE_PARTITION_SIZE vendor
+BOARD_ODMIMAGE_PARTITION_SIZE odm
+BOARD_METADATAIMAGE_PARTITION_SIZE metadata
+BOARD_USERDATAIMAGE_PARTITION_SIZE userdata
+EOF
+for property in $(get_build_var PRODUCT_VENDOR_PROPERTIES); do
+	case "$property" in
+	ro.virtual_ab.*) fail "Virtual A/B property remains enabled: $property" ;;
+	esac
+done
+for variable in \
 	PRODUCT_BUILD_SYSTEM_DLKM_IMAGE \
 	PRODUCT_BUILD_VENDOR_DLKM_IMAGE \
 	PRODUCT_BUILD_ODM_DLKM_IMAGE; do
@@ -153,9 +216,6 @@ for variable in \
 	[[ -z "$(get_build_var "$variable")" ]] ||
 		fail "$variable must be empty for the built-in-only kernel"
 done
-ab_ota_partitions=$(get_build_var AB_OTA_PARTITIONS)
-[[ "$ab_ota_partitions" != *dlkm* ]] ||
-	fail "AB_OTA_PARTITIONS retains a DLKM payload: $ab_ota_partitions"
 for variable in \
 	BOARD_GENERIC_RAMDISK_KERNEL_MODULES \
 	BOARD_GENERIC_RAMDISK_KERNEL_MODULES_LOAD \
@@ -190,6 +250,10 @@ for package in \
 done
 [[ "$PRODUCT_PACKAGES" != *" dlkm_loader "* ]] ||
 	fail "dlkm_loader is forbidden for the built-in-only kernel"
+for package in checkpoint_gc update_engine_sideload; do
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "Cuttlefish OTA package is forbidden for the fixed UBD product: $package"
+done
 
 # target-files always carries a kernel input even when this product does not
 # build an Android boot image. Stage only the already-built, verified ACK UML

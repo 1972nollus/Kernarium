@@ -108,6 +108,16 @@ separate `system`, `system_ext`, `product`, `vendor`, `odm`, `metadata`, and
 kernel ELF and Android ramdisks remain separate release artifacts and are not
 placed in this disk.
 
+The routed UML product selects static storage before inheriting the shared
+Cuttlefish products. This prevents their dynamic-partition and Virtual A/B
+inheritance, properties, postinstall configuration, and OTA-only packages from
+entering the resolved product. It also disables A/B OTA packaging and AVB.
+`build-aosp.sh` rejects any regression in those switches and requires every
+resolved partition capacity to match the JSON layout. AOSP core still assigns
+its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
+that inert format default is not an enablement signal when
+`PRODUCT_VIRTUAL_AB_OTA=false`.
+
 Once the static AOSP product emits the declared image names, assemble and
 immediately verify a raw UBD disk locally on the builder with:
 

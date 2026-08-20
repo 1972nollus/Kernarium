@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-cuttlefish-add-16K-arm64-UML-produ.patch	406e2f4431b58f5cf0aba1a054833f836a5e6c15	c3b2fe6b39eb7c5662b461bd5d323ca92c4b5f264446bb028d754af670097604	UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML product
-2	0002-UML-ANDROID-LOCAL-cuttlefish-remove-loadable-kernel-.patch	9e84df826407edf66a79ba480566286bcee5c383	ba70137f235bd48f9d0acf1c93ce1571a3edcf83d915f405d5ee9880986c8eb0	UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel modules
-3	0003-UML-ANDROID-LOCAL-cuttlefish-use-nonsecure-security-.patch	c7ae86f126c9114086e29f7de0bf40c47cb72e38	6c0d4c526dcc6aa326a80f781cf26634ef6930477377eb04283b5782a79cdc5f	UML-ANDROID-LOCAL: cuttlefish: use nonsecure security HALs
-4	0004-UML-ANDROID-LOCAL-cuttlefish-scope-nonsecure-securit.patch	f31264cc915bb10840b9c2bad1986e3dff13b441	3da974690f32521ed585a9cbc21bf6a426bf2957c9181f28c1095d1700dc93d0	UML-ANDROID-LOCAL: cuttlefish: scope nonsecure security packages
-5	0005-UML-ANDROID-LOCAL-cuttlefish-avoid-duplicate-SoC-pro.patch	f6323bbe0fa34f6b62d141bd4f58f9d8bc7dcbc7	90ba72cb8be5a2118cb32e773f2715f93c0fe487ca4cdef85281737d21a11a6e	UML-ANDROID-LOCAL: cuttlefish: avoid duplicate SoC properties
-6	0006-UML-ANDROID-LOCAL-cuttlefish-drop-DLKM-OTA-metadata.patch	38126d669fc3af1adbe19c2a98d0104769568d80	d162001a38c98ef13421089b1f12a199e8c898e028037ec0dec5a2495bf0078f	UML-ANDROID-LOCAL: cuttlefish: drop DLKM OTA metadata
-7	0007-UML-ANDROID-LOCAL-cuttlefish-disable-DLKM-board-imag.patch	7e6de897f252e08d0b54af09a5464f63405d43c6	8631b9853f8b0141e65fc2177f949cc02335f6cd084fad1c5a1004c307354a63	UML-ANDROID-LOCAL: cuttlefish: disable DLKM board images
-8	0008-UML-ANDROID-LOCAL-cuttlefish-use-built-in-kernel-ini.patch	83139ab44d0942d783f0556ce2a32a3d1a086625	18ef84ff7e8403ecf69a25ac9bcf4bbaa12058b24b90476694f2a7b243fe498f	UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init
+1	0001-UML-ANDROID-LOCAL-cuttlefish-add-16K-arm64-UML-produ.patch	406e2f4431b58f5cf0aba1a054833f836a5e6c15	5d2268396bf6a2c4b37f2bfcfccc4735322ba16abd0c18069cb6f16c4cbe3828	UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML product
+2	0002-UML-ANDROID-LOCAL-cuttlefish-remove-loadable-kernel-.patch	9e84df826407edf66a79ba480566286bcee5c383	62839b7eba3f76d4455f51779c7d34607868a404600ceec6bda96cb6f775e843	UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel modules
+3	0003-UML-ANDROID-LOCAL-cuttlefish-use-nonsecure-security-.patch	c7ae86f126c9114086e29f7de0bf40c47cb72e38	027cc8cf87ee69b91f9f1978c9b447c62dfca3dbf1bf58b799f6e7064406daeb	UML-ANDROID-LOCAL: cuttlefish: use nonsecure security HALs
+4	0004-UML-ANDROID-LOCAL-cuttlefish-scope-nonsecure-securit.patch	f31264cc915bb10840b9c2bad1986e3dff13b441	273bf29a922c8ab59514c4082c1f499034f8a7728e5af32ce3b0c49b9601a8e0	UML-ANDROID-LOCAL: cuttlefish: scope nonsecure security packages
+5	0005-UML-ANDROID-LOCAL-cuttlefish-avoid-duplicate-SoC-pro.patch	f6323bbe0fa34f6b62d141bd4f58f9d8bc7dcbc7	328abbd82a0942530815cd7f7f2958de5d1eb10e7ad8aac6180b7bdff3c054cd	UML-ANDROID-LOCAL: cuttlefish: avoid duplicate SoC properties
+6	0006-UML-ANDROID-LOCAL-cuttlefish-drop-DLKM-OTA-metadata.patch	38126d669fc3af1adbe19c2a98d0104769568d80	27257ba371e2dc2af960809f0d19449e3af928c071c9668ba581af29cc65b0e4	UML-ANDROID-LOCAL: cuttlefish: drop DLKM OTA metadata
+7	0007-UML-ANDROID-LOCAL-cuttlefish-disable-DLKM-board-imag.patch	7e6de897f252e08d0b54af09a5464f63405d43c6	f0b904c243f08bbac58c101ffa9466608034883a911c1a52daa106a1f741575b	UML-ANDROID-LOCAL: cuttlefish: disable DLKM board images
+8	0008-UML-ANDROID-LOCAL-cuttlefish-use-built-in-kernel-ini.patch	83139ab44d0942d783f0556ce2a32a3d1a086625	4b9edb154038e107be93e54f1ea9f4cf1e646a8f73bc7546e17ad4a7646512a7	UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init
+9	0009-UML-ANDROID-LOCAL-cuttlefish-use-fixed-UBD-partition.patch	19c06f1d46c04ee9482cd45a6beeebf55502b082	c653a5f2aedc2a912cbdcf9115e1fd09fe34d6c0600fcf6b457712de9cb9adb5	UML-ANDROID-LOCAL: cuttlefish: use fixed UBD partitions
