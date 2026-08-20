@@ -1,0 +1,358 @@
+From e4e9cfb5d011c80800c87b50efed88ebd415529a Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 20:02:57 +0000
+Subject: [PATCH 11/11] UML-ANDROID-LOCAL: cuttlefish: add UML boot policy
+
+Change-Id: I5b4b2ec84cbabc1191ac1da604036e249591b81b
+---
+ shared/config/Android.bp                      | 24 +++++
+ shared/device.mk                              | 18 +++-
+ vsoc_uml_arm64_pgagnostic/config/Android.bp   | 32 +++++++
+ vsoc_uml_arm64_pgagnostic/config/fstab.uml    | 10 ++
+ .../config/init.vendor.rc                     | 95 +------------------
+ vsoc_uml_arm64_pgagnostic/config/ueventd.rc   |  4 +
+ 6 files changed, 84 insertions(+), 99 deletions(-)
+ create mode 100644 vsoc_uml_arm64_pgagnostic/config/fstab.uml
+ create mode 100644 vsoc_uml_arm64_pgagnostic/config/ueventd.rc
+
+diff --git a/shared/config/Android.bp b/shared/config/Android.bp
+index 1467339b7af856eb7874e75283ce685e86c82604..f98204452cfc61aed24fdefbc83e6b14ac251961 100644
+--- a/shared/config/Android.bp
++++ b/shared/config/Android.bp
+@@ -98,12 +98,14 @@ genrule {
+ 
+ prebuilt_etc {
+     name: "fstab.cf.f2fs.hctr2",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     src: ":gen_fstab_cf_f2fs_hctr2",
+     vendor: true,
+ }
+ 
+ prebuilt_etc {
+     name: "fstab.cf.f2fs.hctr2.vendor_ramdisk",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     srcs: [
+         ":gen_fstab_cf_f2fs_hctr2",
+     ],
+@@ -115,12 +117,14 @@ prebuilt_etc {
+ 
+ prebuilt_etc {
+     name: "fstab.cf.f2fs.cts",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     src: ":gen_fstab_cf_f2fs_cts",
+     vendor: true,
+ }
+ 
+ prebuilt_etc {
+     name: "fstab.cf.f2fs.cts.vendor_ramdisk",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     srcs: [
+         ":gen_fstab_cf_f2fs_cts",
+     ],
+@@ -132,12 +136,14 @@ prebuilt_etc {
+ 
+ prebuilt_etc {
+     name: "fstab.cf.ext4.hctr2",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     src: ":gen_fstab_cf_ext4_hctr2",
+     vendor: true,
+ }
+ 
+ prebuilt_etc {
+     name: "fstab.cf.ext4.hctr2.vendor_ramdisk",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     srcs: [
+         ":gen_fstab_cf_ext4_hctr2",
+     ],
+@@ -149,12 +155,14 @@ prebuilt_etc {
+ 
+ prebuilt_etc {
+     name: "fstab.cf.ext4.cts",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     src: ":gen_fstab_cf_ext4_cts",
+     vendor: true,
+ }
+ 
+ prebuilt_etc {
+     name: "fstab.cf.ext4.cts.vendor_ramdisk",
++    defaults: ["cuttlefish_config_not_builtin_kernel_defaults"],
+     srcs: [
+         ":gen_fstab_cf_ext4_cts",
+     ],
+@@ -196,6 +204,14 @@ prebuilt_defaults {
+     }),
+ }
+ 
++prebuilt_defaults {
++    name: "cuttlefish_config_not_builtin_kernel_defaults",
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: false,
++        default: unset,
++    }),
++}
++
+ prebuilt_etc {
+     name: "device_google_cuttlefish_shared_config_init_vendor_rc",
+     defaults: ["cuttlefish_config_general_files_defaults"],
+@@ -267,6 +283,10 @@ prebuilt_etc {
+     ],
+     relative_install_path: "init",
+     vendor: true,
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: false,
++        default: unset,
++    }),
+ }
+ 
+ prebuilt_etc {
+@@ -276,6 +296,10 @@ prebuilt_etc {
+         "ueventd.rc",
+     ],
+     vendor: true,
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: false,
++        default: unset,
++    }),
+ }
+ 
+ prebuilt_etc {
+diff --git a/shared/device.mk b/shared/device.mk
+index cb914f0b3d1813a208c1266b19fcbaa980ca3e9d..f7caacee022c468edd73d67375010de3200a8584 100644
+--- a/shared/device.mk
++++ b/shared/device.mk
+@@ -236,18 +236,19 @@ $(call soong_config_set_bool,cuttlefish_config,use_general_files,true)
+ ifeq ($(UML_ANDROID_BUILTIN_KERNEL),true)
+ $(call soong_config_set_bool,cuttlefish_config,use_builtin_kernel,true)
+ PRODUCT_PACKAGES += \
+-    device_google_cuttlefish_uml_config_init_vendor_rc
++    device_google_cuttlefish_uml_config_init_vendor_rc \
++    device_google_cuttlefish_uml_config_ueventd_rc
+ else
+ PRODUCT_PACKAGES += \
+-    device_google_cuttlefish_shared_config_init_vendor_rc
++    device_google_cuttlefish_shared_config_init_vendor_rc \
++    device_google_cuttlefish_shared_config_seriallogging_rc \
++    device_google_cuttlefish_shared_config_ueventd_rc
+ endif
+ PRODUCT_PACKAGES += \
+     device_google_cuttlefish_shared_config_init_product_rc \
+     device_google_cuttlefish_shared_config_media_codecs \
+     device_google_cuttlefish_shared_config_media_profiles \
+     device_google_cuttlefish_shared_config_media_profiles_vendor \
+-    device_google_cuttlefish_shared_config_seriallogging_rc \
+-    device_google_cuttlefish_shared_config_ueventd_rc \
+     device_google_cuttlefish_shared_default_permissions_cuttlefish \
+     device_google_cuttlefish_shared_privapp_permissions_cuttlefish
+ 
+@@ -274,6 +275,11 @@ endif
+ #
+ PRODUCT_PACKAGES += com.google.cf.input.config
+ 
++ifeq ($(UML_ANDROID_STATIC_STORAGE),true)
++PRODUCT_PACKAGES += \
++    fstab.uml \
++    fstab.uml.vendor_ramdisk
++else
+ PRODUCT_PACKAGES += \
+     fstab.cf.f2fs.hctr2 \
+     fstab.cf.f2fs.hctr2.vendor_ramdisk \
+@@ -282,7 +288,9 @@ PRODUCT_PACKAGES += \
+     fstab.cf.ext4.hctr2 \
+     fstab.cf.ext4.hctr2.vendor_ramdisk \
+     fstab.cf.ext4.cts \
+-    fstab.cf.ext4.cts.vendor_ramdisk \
++    fstab.cf.ext4.cts.vendor_ramdisk
++
++endif
+ 
+ # Packages for HAL implementations
+ 
+diff --git a/vsoc_uml_arm64_pgagnostic/config/Android.bp b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+index 3c243c524def4d45062dfbf1efddafad715101df..abe461c3614d670bcc4e1e074415acc6210b1c26 100644
+--- a/vsoc_uml_arm64_pgagnostic/config/Android.bp
++++ b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+@@ -29,3 +29,35 @@ prebuilt_etc {
+         default: false,
+     }),
+ }
++
++prebuilt_etc {
++    name: "device_google_cuttlefish_uml_config_ueventd_rc",
++    srcs: ["ueventd.rc"],
++    vendor: true,
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: true,
++        default: false,
++    }),
++}
++
++prebuilt_etc {
++    name: "fstab.uml",
++    srcs: ["fstab.uml"],
++    dsts: ["fstab.uml"],
++    vendor: true,
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: true,
++        default: false,
++    }),
++}
++
++prebuilt_etc {
++    name: "fstab.uml.vendor_ramdisk",
++    srcs: ["fstab.uml"],
++    dsts: ["fstab.uml"],
++    vendor_ramdisk: true,
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: true,
++        default: false,
++    }),
++}
+diff --git a/vsoc_uml_arm64_pgagnostic/config/fstab.uml b/vsoc_uml_arm64_pgagnostic/config/fstab.uml
+new file mode 100644
+index 0000000000000000000000000000000000000000..7f03bc60de4c2ddbafe405de68a3970d21277bc3
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/config/fstab.uml
+@@ -0,0 +1,10 @@
++# Fixed GPT partitions exposed by the Darwin UML UBD device.
++/dev/block/by-name/system /system erofs ro wait,first_stage_mount
++/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
++/dev/block/by-name/product /product erofs ro wait,first_stage_mount
++/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
++/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
++/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
++/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
++/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
++/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+diff --git a/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc b/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
+index 8ae17feab93b07c3e050102e4974334138dd4358..a5d9a8a17e05b234c39ee07f45515b7282d4e4e8 100644
+--- a/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
++++ b/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
+@@ -1,99 +1,18 @@
+ on early-init
+-#    loglevel 8
+-
+     setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
+     setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}
+-
+-    start metrics_helper
+-
+-on init
+-    # ZRAM setup
+-    write /sys/block/zram0/comp_algorithm lz4
+-
+-    # EAS uclamp interfaces
+-    mkdir /dev/cpuctl/foreground
+-    mkdir /dev/cpuctl/background
+-    mkdir /dev/cpuctl/top-app
+-    mkdir /dev/cpuctl/rt
+-    chown system system /dev/cpuctl
+-    chown system system /dev/cpuctl/foreground
+-    chown system system /dev/cpuctl/background
+-    chown system system /dev/cpuctl/top-app
+-    chown system system /dev/cpuctl/rt
+-    chown system system /dev/cpuctl/tasks
+-    chown system system /dev/cpuctl/foreground/tasks
+-    chown system system /dev/cpuctl/background/tasks
+-    chown system system /dev/cpuctl/top-app/tasks
+-    chown system system /dev/cpuctl/rt/tasks
+-    chmod 0664 /dev/cpuctl/tasks
+-    chmod 0664 /dev/cpuctl/foreground/tasks
+-    chmod 0664 /dev/cpuctl/background/tasks
+-    chmod 0664 /dev/cpuctl/top-app/tasks
+-    chmod 0664 /dev/cpuctl/rt/tasks
++    setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
+ 
+ on fs
+-    mkdir /mnt/vendor/shared 0770 system system
+-
+-    # Mount everything that does not require fsck
+     mount_all --early
+-
+-    # So GceBootReporter can print to kmsg
+     chmod 622 /dev/kmsg
+ 
+-on post-fs-data && property:ro.vendor.disable_rename_eth0=
+-    # works around framework netiface enumeration issue
+-    # TODO(b/202731768): Add this `start rename_eth0` command to the init.rc for rename_netiface
+-    wait /sys/class/net/eth0
+-    start rename_eth0
+-
+-on post-fs-data && property:ro.boot.wifi_impl=virt_wifi
+-    # TODO(b/202731768): Add this `start setup_wifi` command to the init.rc for setup_wifi
+-    start setup_wifi
+-
+-on post-fs-data
+-    mkdir /data/vendor/modem_dump 0777 system system
+-    mkdir /data/vendor/radio 0777 system system
+-
+ on late-fs
+-    # Mount RW partitions which need run fsck
+     mount_all --late
+-
+     write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+ 
+-on post-fs-data && property:ro.boot.wifi_impl=mac80211_hwsim_virtio
+-    mkdir /data/vendor/wifi 0770 wifi wifi
+-    mkdir /data/vendor/wifi/hostapd 0770 wifi wifi
+-    mkdir /data/vendor/wifi/hostapd/sockets 0770 wifi wifi
+-    start init_wifi_sh
+-
+ on boot
+-    chmod 0770 /dev/cpuctl
+-    mkdir /data/vendor/wifi 0770 wifi wifi
+-    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+-    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
+-    start socket_vsock_proxy
+     setprop ro.hardware.audio.primary goldfish
+-    symlink /dev/hvc6 /dev/gnss0
+-    symlink /dev/hvc7 /dev/gnss1
+-
+-on property:sys.boot_completed=1
+-    trigger sys-boot-completed-set
+-    mkdir /mnt/vendor/custom 0755 root root
+-    mount ext2 /dev/block/by-name/custom /mnt/vendor/custom loop rw sync
+-
+-# We want one opportunity per boot to enable zram, so we
+-# use a trigger we fire from the above stanza. If
+-# persist.sys.zram_enabled becomes true after boot,
+-# we don't want to run swapon_all at that time.
+-on sys-boot-completed-set && property:persist.sys.zram_enabled=1
+-    swapon_all
+-
+-service metrics_helper /vendor/bin/metrics_helper
+-    group system
+-    user root
+-
+-service socket_vsock_proxy /vendor/bin/socket_vsock_proxy -server_type=vsock -server_vsock_port=6520 -client_type=tcp -client_tcp_host=0.0.0.0 -client_tcp_port=5555
+-    user root
+ 
+ service bugreport /system/bin/dumpstate -d -p -z
+     class main
+@@ -102,17 +21,5 @@ service bugreport /system/bin/dumpstate -d -p -z
+     oneshot
+     keycodes 30 48
+ 
+-# TODO: disable this service once cuttlefish implements system suspend
+-service suspend_blocker /vendor/bin/suspend_blocker
+-    class early_hal # Start together with system_suspend HAL
+-    group system
+-    user root
+-
+-on early-init
+-    setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
+-
+-on early-init
+-    setprop ro.vendor.cuttlefish_service_bluetooth_checker ${ro.boot.cuttlefish_service_bluetooth_checker}
+-
+ on early-init && property:ro.boot.enable_bootanimation=0
+     setprop debug.sf.nobootanimation 1
+diff --git a/vsoc_uml_arm64_pgagnostic/config/ueventd.rc b/vsoc_uml_arm64_pgagnostic/config/ueventd.rc
+new file mode 100644
+index 0000000000000000000000000000000000000000..b8f93d489709350a6385b3e43a5d8f8d62fc668b
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/config/ueventd.rc
+@@ -0,0 +1,4 @@
++# The generic Android policy owns input, sound, and DRM nodes. The UML product
++# adds only its serial console permission; unsupported Cuttlefish HVC, media,
++# and persistent-memory devices are deliberately absent.
++/dev/ttyS0 0660 root shell
