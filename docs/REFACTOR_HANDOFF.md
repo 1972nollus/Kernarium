@@ -41,7 +41,14 @@ GLES 3.0, passed one frozen GLES 3 shader-declaration case, exported a complete
 QPA, and powered off cleanly. The full capset/fixed-sentinel selection,
 display-backed complete caselist, matched Simulator campaign, and connected-
 iPad correctness, performance, thermal, presentation, and lifecycle campaign
-remain open. Qualification is still fail-closed because no authoritative
+remain open. A normal 16 KiB iPhone 17 Pro Max Simulator boot selected the
+common hardware provider, two Virgl capsets, and direct Metal presentation and
+rendered KDE at 440x860/160 DPI. Both runtime page profiles now embed the exact
+allow-listed sentinel launcher generated from the common driver. The thin
+Simulator wrapper captures and validates framed artifacts; the physical-iPad
+wrapper additionally requires matching passing Simulator evidence. The
+Simulator was not booted for the subsequent CTS attempt, so no Simulator QPA
+is claimed. Qualification is still fail-closed because no authoritative
 receipt ties the installed CTS binaries to the co-located source. Phase 3 and
 later profile work must not start until the lower shared baseline is measured
 and qualified or its exact blocker is accepted.

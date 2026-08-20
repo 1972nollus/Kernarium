@@ -38,6 +38,9 @@ from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IDENTITY_PATH = Path(__file__).with_name("vk_gl_cts_identity.json")
+APPLE_CAMPAIGNS_PATH = Path(__file__).with_name(
+    "vk_gl_cts_apple_campaigns.json"
+)
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vk-gl-cts"
@@ -52,6 +55,7 @@ ALLOWED_ARTIFACTS = frozenset(
     {"renderer.txt", "results.qpa", "selected.txt", "summary.txt"}
 )
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
+APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FORBIDDEN_RENDERERS = re.compile(
     r"(?:llvmpipe|softpipe|swrast|software rasterizer|\bzink\b|xvfb)",
@@ -100,6 +104,20 @@ class Selection:
         if remaining <= 0:
             return 0
         return (remaining + self.fraction_count - 1) // self.fraction_count
+
+
+@dataclass(frozen=True)
+class AppleCampaign:
+    identifier: str
+    api: str
+    leaf: LeafIdentity
+    exact_case: str
+    seed: int
+    shard_timeout: int
+
+    @property
+    def selection(self) -> Selection:
+        return Selection(self.leaf, self.exact_case, 0, 1)
 
 
 @dataclass
@@ -162,6 +180,86 @@ def leaf_identities(identity: dict[str, Any]) -> dict[str, LeafIdentity]:
         if leaf.identifier in result:
             raise CampaignError(f"duplicate CTS leaf identity: {leaf.identifier}")
         result[leaf.identifier] = leaf
+    return result
+
+
+def load_apple_campaigns(
+    identity: dict[str, Any] | None = None,
+    path: Path = APPLE_CAMPAIGNS_PATH,
+) -> dict[str, AppleCampaign]:
+    if identity is None:
+        identity = load_identity()
+    leaves = leaf_identities(identity)
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise CampaignError(
+            f"cannot read Apple CTS campaigns {path}: {error}"
+        ) from error
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "campaigns",
+    }:
+        raise CampaignError("invalid Apple CTS campaign document")
+    if value["schema_version"] != 1 or not isinstance(
+        value["campaigns"], list
+    ):
+        raise CampaignError("unsupported Apple CTS campaign schema")
+
+    result: dict[str, AppleCampaign] = {}
+    required_keys = {
+        "id",
+        "api",
+        "leaf",
+        "exact_case",
+        "seed",
+        "shard_timeout",
+    }
+    for row in value["campaigns"]:
+        if not isinstance(row, dict) or set(row) != required_keys:
+            raise CampaignError("invalid Apple CTS campaign row")
+        identifier = row["id"]
+        api = row["api"]
+        leaf_identifier = row["leaf"]
+        exact = row["exact_case"]
+        seed = row["seed"]
+        shard_timeout = row["shard_timeout"]
+        if (
+            not isinstance(identifier, str)
+            or not APPLE_CAMPAIGN_ID.fullmatch(identifier)
+            or not isinstance(api, str)
+            or not isinstance(leaf_identifier, str)
+            or not isinstance(exact, str)
+            or not CASE_NAME.fullmatch(exact)
+            or type(seed) is not int
+            or seed < 0
+            or seed > 0xFFFFFFFF
+            or type(shard_timeout) is not int
+            or shard_timeout < 1
+            or shard_timeout > 3600
+        ):
+            raise CampaignError(f"invalid Apple CTS campaign: {identifier!r}")
+        leaf = leaves.get(leaf_identifier)
+        if leaf is None or api != leaf.identifier.split("-", 1)[0]:
+            raise CampaignError(f"invalid Apple CTS campaign: {identifier!r}")
+        campaign = AppleCampaign(
+            identifier=identifier,
+            api=api,
+            leaf=leaf,
+            exact_case=exact,
+            seed=seed,
+            shard_timeout=shard_timeout,
+        )
+        if campaign.identifier in result:
+            raise CampaignError(
+                f"duplicate Apple CTS campaign: {campaign.identifier}"
+            )
+        result[campaign.identifier] = campaign
+    if not result:
+        raise CampaignError("Apple CTS campaign allow-list is empty")
     return result
 
 
@@ -299,6 +397,25 @@ def validate_qpa_union(qpa: str, selected: Sequence[str]) -> dict[str, str]:
             details.append(f"unexpected={unexpected[:5]!r}")
         raise CampaignError("incomplete QPA case union: " + ", ".join(details))
     return results
+
+
+def status_totals(results: dict[str, str]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for status in results.values():
+        totals[status] = totals.get(status, 0) + 1
+    return totals
+
+
+def validate_required_passes(results: dict[str, str]) -> None:
+    non_pass = {
+        case: status for case, status in results.items() if status != "Pass"
+    }
+    if non_pass:
+        first_case = sorted(non_pass)[0]
+        raise CampaignError(
+            "required CTS case did not pass: "
+            f"{first_case}={non_pass[first_case]}"
+        )
 
 
 def validate_renderer_probe(text: str, expected_page_size: int | None = None) -> None:
@@ -918,9 +1035,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     results = validate_qpa_union(qpa_text, selected_cases)
     if summary_text.strip() != "cts_rc=0":
         raise CampaignError(f"CTS process failed: {summary_text.strip()}")
-    totals: dict[str, int] = {}
-    for status in results.values():
-        totals[status] = totals.get(status, 0) + 1
+    totals = status_totals(results)
     metadata.update(
         {
             "emulator_return_code": process.returncode,
@@ -933,6 +1048,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
     )
     write_json(artifact_directory / "run.json", metadata)
+    validate_required_passes(results)
     print(f"VK-GL-CTS completed {len(results)} cases: {totals}")
     print(f"Artifacts: {artifact_directory}")
     return 0

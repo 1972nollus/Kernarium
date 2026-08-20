@@ -33,12 +33,18 @@ same-schema Simulator plus connected-iPad baselines are not recorded. Phase 2
 has completed the common host implementation, dependency, unit, macOS product,
 mobile product, and packaging portions. A focused 16 KiB macOS guest diagnostic
 now proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0, one
-passing frozen GLES 3 case, complete artifact egress, and clean shutdown. The
-complete identity/capset sentinel, matched Simulator run, connected-iPad
-qualification, performance campaigns, and complete Khronos matrices remain
-open. No kernel/rootfs change or capability promotion is claimed. Phases 3
-through 7 have not started; they remain gated on a truthful, measured lower
-shared baseline and the explicit stop conditions below.
+passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A
+separate normal 16 KiB iPhone 17 Pro Max Simulator boot selected the common
+hardware ANGLE/Metal provider, direct Metal presentation, both Virgl capsets,
+and a rendered KDE desktop. The signed app now embeds page-specific launchers
+generated from one allow-listed CTS campaign definition; thin Simulator and
+physical-iPad wrappers enforce exact IDs, framed artifacts, `Pass`, and
+Simulator-before-device ordering. The matching Simulator CTS run, complete
+identity/capset sentinel, connected-iPad qualification, performance campaigns,
+and complete Khronos matrices remain open. No kernel/rootfs change or
+capability promotion is claimed. Phases 3 through 7 have not started; they
+remain gated on a truthful, measured lower shared baseline and the explicit
+stop conditions below.
 
 In this plan, “maximum” means the highest truthful profile that preserves the
 shared high-performance ANGLE/Metal path. A higher version is rejected when it
@@ -214,7 +220,7 @@ replaced by a slower emulation path.
 | Host renderer | macOS guest | Simulator guest | Connected-iPad guest | Status |
 | --- | --- | --- | --- | --- |
 | Apple CGL 4.1 | GL 4.1, GLES 3.0 | unavailable | unavailable | archived pre-migration measurement only; no planned build, runtime, or test lane |
-| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | GL 2.1 expected; host ES 3.0 measured and guest WebGL 2 workload passed; direct guest GLES probe pending | GL 2.1 expected, GLES 3.0 source-derived | all three host slices build from the common product; complete identity/capset, Simulator, and physical-iPad qualification remain pending |
+| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | normal 16 KiB guest boot proved the hardware provider, two Virgl capsets, direct Metal presentation, and rendered KDE; GL 2.1 expected, host ES 3.0 and dated WebGL 2 measured, direct guest CTS pending | GL 2.1 expected, GLES 3.0 source-derived | all three host slices build from the common product and the app CTS adapters are implemented; complete identity/capset, Simulator CTS, and physical-iPad qualification remain pending |
 | Direct ANGLE/Metal ES 3.1 implementation | GL 2.1 expected, GLES 3.1 stretch ceiling | same conditional ceiling | same conditional ceiling | acceptable only with native Metal compute/storage/image/atomic mappings and the full performance gate |
 | Previous row plus GPU-resident desktop gates | at most GL 3.1, GLES 3.1 | same conditional ceiling | same conditional ceiling | optional stretch; retain the immediately lower qualified desktop tier, GL 2.1 or GL 3.0, when a required next-tier gate needs CPU-heavy or materially slower emulation |
 | GLES/GL 3.2 or GL 4.x | not targeted | not targeted | not targeted | geometry/desktop translation does not meet the selected direct ANGLE/Metal, performance-first architecture |
@@ -766,6 +772,13 @@ only in archived prose/evidence. The CTS identity/caselist baseline and current
 source/build-receipt gap are recorded, and the campaign adapters reject
 software rendering and incomplete artifacts on every product shell. This
 preparation creates no second runnable macOS graphics lane.
+
+Current status: the app-side campaign allow-list, page-specific generated
+launcher, Simulator wrapper, and connected-iPad wrapper are implemented and
+tooling-tested. The device wrapper requires a matching passing Simulator
+`run.json` plus its QPA before it will launch. A normal common-path Simulator
+desktop boot passed, but the exact CTS sentinel has not yet produced a
+Simulator result set, so this exit remains open.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 

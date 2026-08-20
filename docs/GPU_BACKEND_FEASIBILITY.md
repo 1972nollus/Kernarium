@@ -32,6 +32,12 @@ the complete sentinel, and the agreed matrices remain required. GLES 3.1 is
 still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
 scope.
 
+A current normal 16 KiB Simulator boot also selected the common hardware
+provider and direct Metal presentation and rendered the KDE desktop. That is
+product-path evidence only: the newly implemented allow-listed app CTS adapter
+has not yet produced the matching Simulator QPA, so it does not revise the
+measured API ceiling or qualification boundary.
+
 ## Method
 
 Every number below is a measurement taken on this host (Apple M1 Ultra,

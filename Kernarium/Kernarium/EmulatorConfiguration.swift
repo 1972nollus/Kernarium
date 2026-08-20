@@ -1,6 +1,8 @@
 import Foundation
 
 enum KernelPageSize: Int, CaseIterable, Identifiable {
+    static let environmentKey = "KERNARIUM_KERNEL_PAGE_SIZE"
+
     case fourKiB = 4096
     case sixteenKiB = 16384
 
@@ -39,13 +41,15 @@ struct EmulatorConfiguration: Equatable {
     static func load(defaults: UserDefaults = .standard) -> Self {
         load(
             defaults: defaults,
-            physicalProcessorCount: physicalProcessorCount
+            physicalProcessorCount: physicalProcessorCount,
+            environment: ProcessInfo.processInfo.environment
         )
     }
 
     static func load(
         defaults: UserDefaults,
-        physicalProcessorCount: Int
+        physicalProcessorCount: Int,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Self {
         let maximumVCPUCount = max(physicalProcessorCount, 1)
         let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
@@ -69,6 +73,11 @@ struct EmulatorConfiguration: Equatable {
         ) == nil
             ? defaultKernelPageSize.rawValue
             : defaults.integer(forKey: Key.kernelPageSize)
+        let environmentKernelPageSize = environment[
+            KernelPageSize.environmentKey
+        ].flatMap { value in
+            Int(value).flatMap(KernelPageSize.init(rawValue:))
+        }
         let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
             ? defaultRetinaMode
             : defaults.bool(forKey: Key.retinaMode)
@@ -85,7 +94,8 @@ struct EmulatorConfiguration: Equatable {
             rootfsFilename: RootfsImage.validatedFilename(
                 storedRootfsFilename
             ) ?? RootfsImage.defaultFilename,
-            kernelPageSize: KernelPageSize(rawValue: storedKernelPageSize) ??
+            kernelPageSize: environmentKernelPageSize ??
+                KernelPageSize(rawValue: storedKernelPageSize) ??
                 defaultKernelPageSize,
             retinaMode: storedRetinaMode
         )

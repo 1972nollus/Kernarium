@@ -664,6 +664,41 @@ python3 tests/integration/gpu/run_vk_gl_cts.py \
   --api gles3 --leaf gles3 --fraction 0,16
 ```
 
+Kernarium accepts no arbitrary CTS script or selector. The checked Apple
+campaign document currently names one exact GLES 3 sentinel; CMake generates
+its bounded launcher from the same driver into each 4 KiB and 16 KiB runtime.
+After packaging and building a clean app, run it only on an already-booted
+Simulator:
+
+```sh
+python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
+  --campaign gles3-declaration-sentinel-v1 \
+  --page-profile 16k \
+  --device "$(xcrun simctl getenv booted SIMULATOR_UDID)" \
+  --app .build/kernarium-cts-derived/Build/Products/Debug-iphonesimulator/Kernarium.app
+```
+
+The adapter verifies the frozen rootfs before copying it to app Documents,
+forces the selected runtime and gadgets engine, captures the app/guest console,
+decodes the same bounded artifact frames, requires exact page/DRM/Xwayland/
+Virgl evidence and one `Pass`, then stops the app after guest poweroff. It does
+not boot a Simulator. The connected-iPad wrapper uses the same campaign and
+validation but additionally requires the matching Simulator `run.json` and
+QPA, a normally signed device app, and a booted paired developer-enabled
+physical iPad:
+
+```sh
+python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
+  --campaign gles3-declaration-sentinel-v1 \
+  --page-profile 16k --device DEVICE_IDENTIFIER \
+  --simulator-run .build/vk-gl-cts-ios-simulator/RUN/run.json \
+  --app .build/kernarium-device-derived/Build/Products/Release-iphoneos/Kernarium.app
+```
+
+Do not run the device wrapper before its matching Simulator result, and do not
+substitute Aquarium on the physical iPad. Both wrappers retain the same
+`--qualification` receipt/caselist refusal as the macOS driver.
+
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
 transcript must contain its exact backend marker and any CGL marker is fatal.

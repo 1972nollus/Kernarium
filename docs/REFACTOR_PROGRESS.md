@@ -24,6 +24,15 @@
   connected-iPad, performance, and CTS work remains open; qualification is
   blocked by its missing authoritative build receipt and incomplete
   display-backed caselist.
+- Added one common allow-list for signed-app CTS campaigns, generated the exact
+  page-specific guest launcher into all four Kernarium runtime slices, and
+  added thin Simulator and connected-iPad wrappers. Both reject arbitrary
+  selectors and non-`Pass` results; the device wrapper also requires a matching
+  passing Simulator QPA. Twenty focused tooling tests, all four runtime builds,
+  seven focused Xcode app tests, packaging, and the canonical GPU workflow
+  passed. A normal 16 KiB Simulator boot reached direct ANGLE/Metal KDE
+  presentation; the exact Simulator CTS run remains pending because no
+  Simulator was booted when the adapter attempted installation.
 
 ## 2026-08-20: versioned kernel ownership groundwork
 

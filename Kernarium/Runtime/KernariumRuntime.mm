@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "KernariumRuntime.h"
+#include "KernariumCtsCampaigns.hpp"
 
 #include "audio/in_process_service.hpp"
 #include "audio/protocol.hpp"
@@ -153,7 +154,7 @@ private:
     void* context_ {};
 };
 
-constexpr std::string_view desktopBootstrap = R"krn(set -eu
+constexpr std::string_view desktopBootstrapPrefix = R"krn(set -eu
 fail()
 {
     echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
@@ -494,7 +495,9 @@ AQUARIUM_SERVICE
         /etc/systemd/system/graphical.target.wants/kernarium-chromium-aquarium.service
     echo "Kernarium Aquarium verification enabled"
 fi
-echo "Darwin UML root overlay: lower=erofs, upper=ext4"
+)krn";
+
+constexpr std::string_view desktopBootstrapSuffix = R"krn(echo "Darwin UML root overlay: lower=erofs, upper=ext4"
 if [ -x /lib/systemd/systemd ]; then
     exec /lib/systemd/systemd
 fi
@@ -564,6 +567,7 @@ exit "$benchmark_rc"
 enum class ConsoleBootMode {
     desktop,
     aquarium,
+    cts,
     geekbench,
 };
 
@@ -629,8 +633,11 @@ class ConsoleBridge final {
 public:
     explicit ConsoleBridge(
         ConsoleBootMode bootMode,
-        std::string geekbenchWorkloads)
+        std::string geekbenchWorkloads,
+        const kernarium::cts::Campaign* ctsCampaign)
     {
+        if ((bootMode == ConsoleBootMode::cts) != (ctsCampaign != nullptr))
+            throw std::invalid_argument("invalid CTS console campaign");
         int descriptors[2] {-1, -1};
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
             throw std::runtime_error(
@@ -659,7 +666,8 @@ public:
             relay_ = std::thread([
                 this,
                 bootMode,
-                geekbenchWorkloads = std::move(geekbenchWorkloads)] {
+                geekbenchWorkloads = std::move(geekbenchWorkloads),
+                ctsCampaign] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
                 bool bootstrapDelivered = false;
@@ -706,7 +714,10 @@ public:
                                     }
                                     bootstrap.append(geekbenchBootstrap);
                                 } else {
-                                    bootstrap.append(desktopBootstrap);
+                                    bootstrap.append(desktopBootstrapPrefix);
+                                    if (bootMode == ConsoleBootMode::cts)
+                                        bootstrap.append(ctsCampaign->setup);
+                                    bootstrap.append(desktopBootstrapSuffix);
                                 }
                                 bootstrap.push_back('\n');
                                 const int error = sendInput(
@@ -724,6 +735,8 @@ public:
                                         "Kernarium: %s bootstrap delivered\n",
                                         bootMode == ConsoleBootMode::geekbench
                                             ? "Geekbench"
+                                            : bootMode == ConsoleBootMode::cts
+                                            ? "CTS"
                                             : "desktop");
                                 observed.clear();
                             }
@@ -843,6 +856,16 @@ bool environmentEnabled(const char* name)
 {
     const char* value = std::getenv(name);
     return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+const kernarium::cts::Campaign* findCtsCampaign(
+    std::string_view identifier) noexcept
+{
+    for (const auto& campaign : kernarium::cts::campaigns) {
+        if (campaign.identifier == identifier)
+            return &campaign;
+    }
+    return nullptr;
 }
 
 bool validGeekbenchWorkloads(std::string_view workloads)
@@ -966,15 +989,31 @@ int runtimeRun(
         auto networkCallbacks = network.callbacks();
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
+        const char* ctsCampaignEnvironment =
+            std::getenv("KERNARIUM_CTS_CAMPAIGN");
+        const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
+            ctsCampaignEnvironment[0] != '\0';
+        const kernarium::cts::Campaign* ctsCampaign = ctsRequested
+            ? findCtsCampaign(ctsCampaignEnvironment)
+            : nullptr;
         const char* geekbenchWorkloadsEnvironment =
             std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS");
         const std::string geekbenchWorkloads =
             geekbenchWorkloadsEnvironment == nullptr
             ? std::string {}
             : std::string {geekbenchWorkloadsEnvironment};
-        if (aquarium && geekbench) {
+        if (ctsRequested && ctsCampaign == nullptr) {
             std::fputs(
-                "Kernarium: Aquarium and Geekbench modes are mutually "
+                "Kernarium: unknown CTS campaign identifier\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        const unsigned int specialModeCount =
+            static_cast<unsigned int>(aquarium) +
+            static_cast<unsigned int>(geekbench) +
+            static_cast<unsigned int>(ctsRequested);
+        if (specialModeCount > 1U) {
+            std::fputs(
+                "Kernarium: Aquarium, CTS, and Geekbench modes are mutually "
                 "exclusive\n",
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
@@ -989,10 +1028,19 @@ int runtimeRun(
         }
         const ConsoleBootMode bootMode = geekbench
             ? ConsoleBootMode::geekbench
-            : aquarium ? ConsoleBootMode::aquarium : ConsoleBootMode::desktop;
-        ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads};
+            : ctsRequested ? ConsoleBootMode::cts
+            : aquarium ? ConsoleBootMode::aquarium
+            : ConsoleBootMode::desktop;
+        ConsoleBridge consoleBridge {
+            bootMode, geekbenchWorkloads, ctsCampaign};
         if (aquarium)
             std::fputs("Kernarium: WebGL Aquarium verification requested\n", stderr);
+        if (ctsRequested) {
+            std::fprintf(
+                stderr,
+                "Kernarium: VK-GL-CTS campaign requested: %s\n",
+                ctsCampaignEnvironment);
+        }
         if (geekbench)
             std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
         std::vector<std::string> arguments {

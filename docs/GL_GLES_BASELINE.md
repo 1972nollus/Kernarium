@@ -25,6 +25,15 @@ macOS/Simulator measurements, and connected-iPad campaign remain outstanding.
 The authoritative CTS build receipt is still missing, so qualification remains
 fail-closed and no rootfs or guest-userspace change is authorized.
 
+A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
+`KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and
+`Native Metal display: 440x860`, exposed Virgl capsets 1 and 2, mounted the
+3,802,316,800-byte immutable image, and rendered KDE at 440x860/160 DPI. The
+host then terminated the app successfully; orderly guest shutdown and a
+Simulator CTS result are not claimed. Both page-profile runtimes now embed a
+launcher generated from the exact allow-listed GLES 3 sentinel, but the
+matching Simulator campaign still has to run.
+
 ## Host, dependency, and kernel input
 
 The capture host is an arm64 Apple M1 Ultra Mac Studio with 64 GiB of memory,

@@ -77,6 +77,17 @@ default. The standalone macOS app retains its larger
 default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
 `ncpus=`; explicit values continue to override those defaults independently.
 
+The opt-in Apple CTS adapters pass only an identifier from the checked
+campaign allow-list. CMake generates that campaign's exact bounded guest
+launcher from the common VK-GL-CTS driver into each page-profile runtime; the
+app rejects an unknown identifier and makes CTS, Aquarium, and Geekbench modes
+mutually exclusive. Adapter launches may select exactly 4096 or 16384 through
+`KERNARIUM_KERNEL_PAGE_SIZE`, while ordinary launches continue to use the
+saved setting. CTS runs use the same serial relay for checksummed artifact
+egress and request guest poweroff; the connected-device wrapper refuses to run
+before a matching passing Simulator artifact. This diagnostic composition
+does not modify the EROFS image or advertise a new guest API.
+
 Every Apple product derives the native window from guest RAM plus a
 page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) and biases
 its ET_DYN image as one unit. Both iOS products top-pack that window below the

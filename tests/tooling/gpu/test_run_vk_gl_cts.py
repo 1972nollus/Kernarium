@@ -7,19 +7,27 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import base64
+import contextlib
 import gzip
 import hashlib
 import io
+import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as cts  # noqa: E402
+import run_ios_device_vk_gl_cts as device_cts  # noqa: E402
+import run_ios_simulator_vk_gl_cts as ios_cts  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def qpa_result(case: str, status: str = "Pass") -> str:
@@ -88,6 +96,42 @@ class VkGlCtsToolingTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(Exception):
                 cts.exact_case(value)
 
+    def test_apple_campaign_allow_list_is_exact_and_fail_closed(self) -> None:
+        campaigns = cts.load_apple_campaigns()
+        self.assertEqual(set(campaigns), {"gles3-declaration-sentinel-v1"})
+        campaign = campaigns["gles3-declaration-sentinel-v1"]
+        self.assertEqual(campaign.api, "gles3")
+        self.assertEqual(campaign.leaf.identifier, "gles3")
+        self.assertEqual(campaign.selection.expected_count, 1)
+        self.assertEqual(
+            campaign.exact_case,
+            "KHR-GLES3.shaders.declarations.declarations."
+            "missing_variable_name_vertex",
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            invalid = Path(temporary) / "campaigns.json"
+            invalid.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "campaigns": [
+                            {
+                                "id": "bad",
+                                "api": "gles3",
+                                "leaf": "gles3",
+                                "exact_case": "KHR-GLES3.*",
+                                "seed": 0,
+                                "shard_timeout": 900,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(cts.CampaignError, "invalid Apple"):
+                cts.load_apple_campaigns(path=invalid)
+
     def test_fraction_shards_have_an_exact_disjoint_union(self) -> None:
         cases = [f"KHR-GLES3.group.case{index}" for index in range(17)]
         shards = [cts.select_fraction(cases, index, 4) for index in range(4)]
@@ -128,6 +172,10 @@ class VkGlCtsToolingTests(unittest.TestCase):
             cts.validate_qpa_union(qpa(qpa_result(first)), [first, second])
         with self.assertRaisesRegex(cts.CampaignError, "duplicate QPA"):
             cts.parse_qpa(qpa(qpa_result(first), qpa_result(first)))
+
+        cts.validate_required_passes({first: "Pass"})
+        with self.assertRaisesRegex(cts.CampaignError, "did not pass"):
+            cts.validate_required_passes({second: "NotSupported"})
 
     def test_qpa_case_path_must_match_container_marker(self) -> None:
         container = "KHR-GLES2.info.version"
@@ -263,6 +311,146 @@ OpenGL renderer string: virgl (Apple GPU)
             check=False,
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
+        generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "KernariumCtsCampaigns.hpp"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(generator),
+                    "--runner",
+                    str(INTEGRATION_GPU / "run_vk_gl_cts.py"),
+                    "--identity",
+                    str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
+                    "--campaigns",
+                    str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
+                    "--page-size",
+                    "4096",
+                    "--output",
+                    str(output),
+                ],
+                check=True,
+            )
+            generated = output.read_text(encoding="utf-8")
+            self.assertIn("gles3-declaration-sentinel-v1", generated)
+            self.assertIn("does not match 4096", generated)
+            self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
+            self.assertIn("x11_server=xwayland", generated)
+            self.assertIn("uml-vk-gl-cts.service", generated)
+            self.assertNotIn("/dev/ubda", generated)
+
+    def test_simulator_adapter_accepts_only_campaign_ids_and_fixed_engine(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                ios_cts.main(
+                    [
+                        "--campaign",
+                        "gles3-declaration-sentinel-v1",
+                        "--page-profile",
+                        "4k",
+                        "--dry-run",
+                    ]
+                ),
+                0,
+            )
+        dry_run = json.loads(stdout.getvalue())
+        self.assertEqual(dry_run["page_profile"], "4k")
+        self.assertEqual(
+            dry_run["launch_environment"],
+            {
+                "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN":
+                    "gles3-declaration-sentinel-v1",
+                "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
+                "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": "4096",
+                "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
+            },
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            ios_cts.parse_arguments(
+                ["--campaign", "gles3-declaration-sentinel-v1", "--case", "x"]
+            )
+
+    def test_simulator_adapter_requires_an_already_booted_device(self) -> None:
+        device = "00000000-0000-0000-0000-000000000000"
+        with mock.patch.object(
+            ios_cts.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 0, device + "\n", ""),
+        ):
+            ios_cts.require_booted_device(device)
+        with mock.patch.object(
+            ios_cts.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([], 149, "", "Shutdown"),
+        ), self.assertRaisesRegex(cts.CampaignError, "not booted"):
+            ios_cts.require_booted_device(device)
+
+    def test_device_adapter_requires_matching_passing_simulator_evidence(self) -> None:
+        campaign = cts.load_apple_campaigns()[
+            "gles3-declaration-sentinel-v1"
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            run_directory = Path(temporary)
+            artifacts = run_directory / "artifacts"
+            artifacts.mkdir()
+            selected = (campaign.exact_case + "\n").encode()
+            qpa_payload = qpa(qpa_result(campaign.exact_case)).encode()
+            (artifacts / "selected.txt").write_bytes(selected)
+            (artifacts / "results.qpa").write_bytes(qpa_payload)
+            run = run_directory / "run.json"
+            metadata = {
+                "adapter": "ios-simulator-kernarium",
+                "backend": "angle-metal",
+                "campaign": campaign.identifier,
+                "page_profile": "16k",
+                "runtime_return_code": 0,
+                "completed_cases": 1,
+                "status_totals": {"Pass": 1},
+                "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
+            }
+            run.write_text(json.dumps(metadata), encoding="utf-8")
+            self.assertEqual(
+                device_cts.validate_simulator_evidence(
+                    run, campaign, "16k"
+                ),
+                metadata,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(
+                    device_cts.main(
+                        [
+                            "--campaign",
+                            campaign.identifier,
+                            "--device",
+                            "device-id",
+                            "--simulator-run",
+                            str(run),
+                            "--dry-run",
+                        ]
+                    ),
+                    0,
+                )
+            dry_run = json.loads(stdout.getvalue())
+            self.assertEqual(
+                dry_run["launch_environment"][
+                    "DEVICECTL_CHILD_KERNARIUM_EXECUTION_ENGINE"
+                ],
+                "gadgets",
+            )
+
+            metadata["status_totals"] = {"NotSupported": 1}
+            run.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "matching passing"):
+                device_cts.validate_simulator_evidence(
+                    run, campaign, "16k"
+                )
 
     def test_cli_blocks_qualification_and_interpreter(self) -> None:
         stderr = io.StringIO()

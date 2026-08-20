@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "campaigns": [
+    {
+      "id": "gles3-declaration-sentinel-v1",
+      "api": "gles3",
+      "leaf": "gles3",
+      "exact_case": "KHR-GLES3.shaders.declarations.declarations.missing_variable_name_vertex",
+      "seed": 0,
+      "shard_timeout": 900
+    }
+  ]
+}

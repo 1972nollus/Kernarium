@@ -113,6 +113,27 @@ struct KernariumTests {
     }
 
     @Test
+    func environmentCanSelectAnExactCampaignPageProfile() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(4096, forKey: "emulator.kernelPageSize")
+
+        let selected = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [KernelPageSize.environmentKey: "16384"]
+        )
+        #expect(selected.kernelPageSize == .sixteenKiB)
+
+        let invalid = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6,
+            environment: [KernelPageSize.environmentKey: "8192"]
+        )
+        #expect(invalid.kernelPageSize == .fourKiB)
+    }
+
+    @Test
     func rootfsSelectionAcceptsOnlyDocumentsFilenames() {
         #expect(
             RootfsImage.selectedFilename(

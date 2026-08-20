@@ -23,10 +23,12 @@ string(REPLACE "." "_" KERNARIUM_KERNEL_RELEASE_COMPONENT
 
 if(UML_GUEST_16K_PAGES)
     set(KERNARIUM_KERNEL_PAGE_VARIANT 16K)
+    set(_kernarium_guest_page_size 16384)
     set(_kernarium_kernel_image_default
         "/Volumes/Kernel/build-16k/vmlinux")
 else()
     set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
+    set(_kernarium_guest_page_size 4096)
     set(_kernarium_kernel_image_default
         "/Volumes/Kernel/build-4k/vmlinux")
 endif()
@@ -56,13 +58,46 @@ if(NOT _kernarium_carrier_result EQUAL 0)
         "${_kernarium_carrier_output}${_kernarium_carrier_error}")
 endif()
 
+set(_kernarium_cts_generator
+    "${PROJECT_SOURCE_DIR}/Kernarium/scripts/generate-cts-campaign-header.py")
+set(_kernarium_cts_runner
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_vk_gl_cts.py")
+set(_kernarium_cts_identity
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_identity.json")
+set(_kernarium_cts_campaigns
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_campaigns.json")
+set(_kernarium_cts_header
+    "${CMAKE_CURRENT_BINARY_DIR}/KernariumCtsCampaigns.hpp")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_kernarium_cts_generator}"
+    "${_kernarium_cts_runner}"
+    "${_kernarium_cts_identity}"
+    "${_kernarium_cts_campaigns}")
+execute_process(
+    COMMAND "${_kernarium_python3}" -B "${_kernarium_cts_generator}"
+        --runner "${_kernarium_cts_runner}"
+        --identity "${_kernarium_cts_identity}"
+        --campaigns "${_kernarium_cts_campaigns}"
+        --page-size "${_kernarium_guest_page_size}"
+        --output "${_kernarium_cts_header}"
+    RESULT_VARIABLE _kernarium_cts_result
+    OUTPUT_VARIABLE _kernarium_cts_output
+    ERROR_VARIABLE _kernarium_cts_error)
+if(NOT _kernarium_cts_result EQUAL 0)
+    message(FATAL_ERROR
+        "Cannot generate Kernarium CTS campaigns:\n"
+        "${_kernarium_cts_output}${_kernarium_cts_error}")
+endif()
+
 add_library(KernariumRuntime SHARED
+    "${_kernarium_cts_header}"
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)
 target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/api/include
         ${PROJECT_SOURCE_DIR}/darwin/device
         ${PROJECT_SOURCE_DIR}/darwin/device/audio
