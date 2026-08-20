@@ -1,7 +1,7 @@
 From 212d9d3b66af511345ab24b6a10ff3bd6e950ad3 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 16:08:33 +0000
-Subject: [PATCH 2/4] UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel
+Subject: [PATCH 2/5] UML-ANDROID-LOCAL: cuttlefish: remove loadable kernel
  modules
 
 Change-Id: I97eb4c780963a4372f10c90cce004a9d1004b725
