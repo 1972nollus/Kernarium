@@ -1,5 +1,14 @@
 # Refactor evidence
 
+## Shared Apple GL/GLES baseline (2026-08-20)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Frozen inputs | [`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md) records the clean pre-change revision, host toolchain, dependency split, kernel identities and both page-profile configuration digests, immutable rootfs/Mesa/libdrm identity, and predeclared performance corpus/noise/promotion budgets. |
+| CTS identity | `tests/integration/gpu/vk_gl_cts_identity.json` records the installed CTS binary sizes, SHA-256 digests and build IDs plus the Khronos XML and leaf counts/digests. `vk-gl-cts-campaign-safety` rejects unsafe selectors, software renderers, missing DRM/Xwayland, retired CGL, truncated or incomplete QPA unions, and corrupt or unsafe artifact frames. |
+| Qualification blocker | Read-only inspection found no authoritative build receipt tying the co-located 1.4.5.5-labeled source to the installed binaries. The display-backed complete caselist is also intentionally deferred until the common ANGLE/Metal path exists. Diagnostic development may continue, but official qualification is fail-closed and no guest image change is authorized. |
+| Archived CGL result | The previously measured macOS guest GL 4.1/GLES 3.0 result is archival only. It is not a runnable lane, performance comparison, or qualification input. |
+
 ## Required kernel source-location evidence (2026-08-20)
 
 | Boundary | Evidence |

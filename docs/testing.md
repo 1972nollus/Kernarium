@@ -640,6 +640,32 @@ cmake --preset macos-integration \
 ctest --preset integration-full
 ```
 
+The repository-owned VK-GL-CTS runner uses the same KDE graphical session,
+the image's `uml` account, real Xwayland authorization, and the immutable CTS
+and resource tree. It accepts only typed leaf, exact-case/fraction, API,
+context, page-profile, engine, seed, and timeout inputs. The runner verifies
+both DRM nodes and Virgl before execution, rejects llvmpipe, softpipe, swrast,
+Zink, Xvfb, the retired CGL host marker, incomplete QPA unions, and corrupt or
+unsafe framed artifacts, and always requests guest poweroff. Long shards use
+JIT or gadgets, never the interpreter:
+
+```sh
+python3 tests/integration/gpu/run_vk_gl_cts.py \
+  --api gles3 --leaf gles3 \
+  --case KHR-GLES3.info.renderer
+
+python3 tests/integration/gpu/run_vk_gl_cts.py \
+  --api gles3 --leaf gles3 --fraction 0,16
+```
+
+These commands remain intentionally dormant until the common macOS
+ANGLE/Metal provider lands: the host transcript must contain its exact backend
+marker and any CGL marker is fatal. `--qualification` additionally refuses to
+run while the frozen identity lacks an authoritative CTS build receipt and a
+complete display-backed caselist. See
+[`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md); do not work around the block by
+changing, rebuilding, overlaying, or preloading guest userspace.
+
 `guest-docker-hello-world` joins that opt-in set. `guest-overlay-systemd-smoke`
 already proves Docker runs a locally imported image with no network; this one
 covers the path a real user takes instead — registry DNS and TLS over SLiRP, an

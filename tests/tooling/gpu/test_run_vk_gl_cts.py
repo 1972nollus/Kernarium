@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+from __future__ import annotations
+
+# Standalone runners must not leave source-adjacent bytecode caches.
+__import__("sys").dont_write_bytecode = True
+
+import base64
+import gzip
+import hashlib
+import io
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
+sys.path.insert(0, str(INTEGRATION_GPU))
+import run_vk_gl_cts as cts  # noqa: E402
+
+
+def qpa_result(case: str, status: str = "Pass") -> str:
+    return f"""#beginTestCaseResult {case}
+<?xml version="1.0" encoding="UTF-8"?>
+<TestCaseResult Version="0.3.4" CasePath="{case}">
+ <Result StatusCode="{status}">result</Result>
+</TestCaseResult>
+#endTestCaseResult
+"""
+
+
+def qpa(*results: str) -> str:
+    return "#sessionInfo releaseName 1.4.5.5\n#beginSession\n" + "".join(
+        results
+    ) + "#endSession\n"
+
+
+def framed_artifact(name: str, payload: bytes) -> str:
+    compressed = gzip.compress(payload, mtime=0)
+    digest = hashlib.sha256(compressed).hexdigest()
+    encoded = base64.b64encode(compressed).decode("ascii")
+    chunks = [encoded[offset : offset + 16] for offset in range(0, len(encoded), 16)]
+    lines = [
+        f"UML_CTS_ARTIFACT_BEGIN|{name}|gzip+base64|{len(compressed)}|{digest}"
+    ]
+    lines.extend(
+        f"UML_CTS_ARTIFACT_CHUNK|{name}|{index}|{chunk}"
+        for index, chunk in enumerate(chunks)
+    )
+    lines.append(f"UML_CTS_ARTIFACT_END|{name}|{len(chunks)}")
+    return "\n".join(lines) + "\n"
+
+
+class VkGlCtsToolingTests(unittest.TestCase):
+    def test_frozen_identity_is_complete_and_qualification_is_blocked(self) -> None:
+        identity = cts.load_identity()
+        leaves = cts.leaf_identities(identity)
+        self.assertFalse(identity["cts"]["qualification_ready"])
+        self.assertIsNone(identity["cts"]["authoritative_build_receipt"])
+        self.assertEqual(leaves["gles2"].case_count, 473)
+        self.assertEqual(leaves["gles3"].case_count, 6498)
+        self.assertEqual(leaves["gles31"].case_count, 4101)
+        self.assertEqual(leaves["gles32-extensions"].case_count, 1097)
+        self.assertEqual(leaves["gl31"].case_count, 888)
+        self.assertEqual(leaves["gl46"].case_count, 18647)
+        for leaf in leaves.values():
+            self.assertRegex(leaf.sha256, r"^[0-9a-f]{64}$")
+            self.assertTrue(leaf.path.startswith("/opt/vk-gl-cts/"))
+
+    def test_typed_fraction_and_exact_case_reject_shell_input(self) -> None:
+        self.assertEqual(cts.parse_fraction("0,8"), (0, 8))
+        with self.assertRaises(Exception):
+            cts.parse_fraction("8,8")
+        with self.assertRaises(Exception):
+            cts.parse_fraction("1/8")
+        self.assertEqual(
+            cts.exact_case("KHR-GLES3.info.renderer"),
+            "KHR-GLES3.info.renderer",
+        )
+        for value in ("KHR-GLES3.*", "a,b", "$(id)", "case name", "../case"):
+            with self.subTest(value=value), self.assertRaises(Exception):
+                cts.exact_case(value)
+
+    def test_fraction_shards_have_an_exact_disjoint_union(self) -> None:
+        cases = [f"KHR-GLES3.group.case{index}" for index in range(17)]
+        shards = [cts.select_fraction(cases, index, 4) for index in range(4)]
+        flattened = [case for shard in shards for case in shard]
+        self.assertEqual(set(flattened), set(cases))
+        self.assertEqual(len(flattened), len(cases))
+        self.assertEqual(shards[0], cases[0::4])
+
+    def test_caselist_parser_rejects_duplicates_and_invalid_rows(self) -> None:
+        self.assertEqual(
+            cts.parse_case_list("# comment\nKHR-GLES2.info.version\n\n"),
+            ["KHR-GLES2.info.version"],
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "duplicate case"):
+            cts.parse_case_list("a.b\na.b\n")
+        with self.assertRaisesRegex(cts.CampaignError, "invalid case"):
+            cts.parse_case_list("a.b;uname\n")
+        with self.assertRaisesRegex(cts.CampaignError, "empty"):
+            cts.parse_case_list("# only a comment\n")
+
+    def test_qpa_parser_requires_complete_unique_results(self) -> None:
+        first = "KHR-GLES2.info.version"
+        second = "KHR-GLES2.info.renderer"
+        parsed = cts.validate_qpa_union(
+            qpa(qpa_result(first), qpa_result(second, "NotSupported")),
+            [first, second],
+        )
+        self.assertEqual(parsed, {first: "Pass", second: "NotSupported"})
+
+        terminated = qpa(
+            f"#beginTestCaseResult {first}\n#terminateTestCaseResult Crash\n"
+        )
+        self.assertEqual(cts.parse_qpa(terminated), {first: "Crash"})
+
+        with self.assertRaisesRegex(cts.CampaignError, "truncated"):
+            cts.parse_qpa(qpa(qpa_result(first)).replace("#endSession\n", ""))
+        with self.assertRaisesRegex(cts.CampaignError, "incomplete QPA"):
+            cts.validate_qpa_union(qpa(qpa_result(first)), [first, second])
+        with self.assertRaisesRegex(cts.CampaignError, "duplicate QPA"):
+            cts.parse_qpa(qpa(qpa_result(first), qpa_result(first)))
+
+    def test_qpa_case_path_must_match_container_marker(self) -> None:
+        container = "KHR-GLES2.info.version"
+        payload = qpa_result("KHR-GLES2.info.renderer").replace(
+            "#beginTestCaseResult KHR-GLES2.info.renderer",
+            f"#beginTestCaseResult {container}",
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "case-path mismatch"):
+            cts.parse_qpa(qpa(payload))
+
+    def test_renderer_probe_rejects_every_software_negative_control(self) -> None:
+        valid = """device=/dev/dri/card0
+device=/dev/dri/renderD128
+x11_server=xwayland
+OpenGL renderer string: virgl (Apple GPU)
+"""
+        cts.validate_renderer_probe(valid)
+        cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 16384)
+        with self.assertRaisesRegex(cts.CampaignError, "4096-byte guest pages"):
+            cts.validate_renderer_probe(valid + "guest_page_size=16384\n", 4096)
+        for forbidden in ("llvmpipe", "softpipe", "swrast", "Zink", "Xvfb"):
+            with self.subTest(forbidden=forbidden), self.assertRaisesRegex(
+                cts.CampaignError, "forbidden renderer"
+            ):
+                cts.validate_renderer_probe(valid + forbidden)
+        with self.assertRaisesRegex(cts.CampaignError, "renderD128"):
+            cts.validate_renderer_probe(valid.replace("device=/dev/dri/renderD128\n", ""))
+        with self.assertRaisesRegex(cts.CampaignError, "Xwayland"):
+            cts.validate_renderer_probe(valid.replace("x11_server=xwayland\n", ""))
+
+    def test_host_backend_refuses_cgl_and_requires_angle_metal(self) -> None:
+        cts.validate_host_backend("Virgl ANGLE/Metal provider: hardware\n")
+        with self.assertRaisesRegex(cts.CampaignError, "retired CGL"):
+            cts.validate_host_backend(
+                "Virgl CGL capset probe\nVirgl ANGLE/Metal provider: hardware\n"
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "marker is missing"):
+            cts.validate_host_backend("virgl started\n")
+
+    def test_artifact_frames_round_trip_and_tolerate_console_prefixes(self) -> None:
+        transcript = "".join(
+            "[  10.0] service: " + line + "\r\n"
+            for line in framed_artifact("results.qpa", b"qpa payload").splitlines()
+        )
+        self.assertEqual(
+            cts.decode_artifacts(transcript),
+            {"results.qpa": b"qpa payload"},
+        )
+
+    def test_artifact_frames_reject_path_checksum_and_chunk_failures(self) -> None:
+        unsafe = framed_artifact("../results.qpa", b"payload")
+        with self.assertRaisesRegex(cts.CampaignError, "unsafe"):
+            cts.decode_artifacts(unsafe)
+
+        corrupt = framed_artifact("results.qpa", b"payload")
+        digest = hashlib.sha256(gzip.compress(b"payload", mtime=0)).hexdigest()
+        replacement = ("0" if digest[0] != "0" else "1") + digest[1:]
+        corrupt = corrupt.replace(digest, replacement, 1)
+        with self.assertRaisesRegex(cts.CampaignError, "checksum"):
+            cts.decode_artifacts(corrupt)
+
+        truncated = framed_artifact("results.qpa", b"payload")
+        truncated = "\n".join(truncated.splitlines()[:-2]) + "\n"
+        with self.assertRaisesRegex(cts.CampaignError, "missing its trailer"):
+            cts.decode_artifacts(truncated)
+
+    def test_artifact_writer_keeps_outputs_beneath_new_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "artifacts"
+            cts.write_artifacts({"summary.txt": b"cts_rc=0\n"}, destination)
+            self.assertEqual(
+                (destination / "summary.txt").read_bytes(),
+                b"cts_rc=0\n",
+            )
+            with self.assertRaises(FileExistsError):
+                cts.write_artifacts({"summary.txt": b"again"}, destination)
+
+    def test_launcher_uses_only_frozen_guest_inputs_and_bounded_output(self) -> None:
+        leaf = cts.leaf_identities(cts.load_identity())["gles3"]
+        selection = cts.Selection(leaf, None, 1, 8)
+        launcher = cts.build_guest_launcher(
+            selection,
+            seed=7,
+            timeout=300,
+            guest_page_size=16384,
+        )
+        self.assertIn(leaf.path, launcher)
+        self.assertIn(leaf.sha256, launcher)
+        self.assertIn("/opt/vk-gl-cts/openglcts/glcts", launcher)
+        self.assertIn("--deqp-gl-context-type=egl", launcher)
+        self.assertIn("--deqp-log-images=disable", launcher)
+        self.assertIn("--deqp-test-oom=disable", launcher)
+        self.assertIn("timeout --signal=TERM --kill-after=30 300", launcher)
+        self.assertIn("runuser -u uml", launcher)
+        self.assertIn("pgrep -x Xwayland", launcher)
+        self.assertIn("pgrep -x Xvfb", launcher)
+        self.assertIn("/dev/dri/renderD128", launcher)
+        self.assertIn("guest_page_size=", launcher)
+        self.assertIn("does not match 16384", launcher)
+        self.assertIn("UML_CTS_ARTIFACT_BEGIN", launcher)
+        self.assertIn("systemctl poweroff", launcher)
+        self.assertNotIn("apt ", launcher)
+        self.assertNotIn("curl ", launcher)
+        self.assertNotIn("MESA_GL_VERSION_OVERRIDE", launcher)
+        self.assertNotIn("MESA_GLES_VERSION_OVERRIDE", launcher)
+        self.assertNotIn("/dev/ubda", launcher)
+        self.assertNotIn("\n+    ", launcher)
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_cli_blocks_qualification_and_interpreter(self) -> None:
+        stderr = io.StringIO()
+        old_stderr = sys.stderr
+        try:
+            sys.stderr = stderr
+            with self.assertRaises(SystemExit):
+                cts.parse_arguments(
+                    [
+                        "--leaf",
+                        "gles3",
+                        "--api",
+                        "gles3",
+                        "--qualification",
+                    ]
+                )
+            self.assertIn("No authoritative receipt", stderr.getvalue())
+            with self.assertRaises(SystemExit):
+                cts.parse_arguments(
+                    [
+                        "--leaf",
+                        "gles3",
+                        "--api",
+                        "gles3",
+                        "--engine",
+                        "interpreter",
+                    ]
+                )
+        finally:
+            sys.stderr = old_stderr
+
+    def test_page_profile_selects_the_matching_default_emulator(self) -> None:
+        options = cts.parse_arguments(
+            ["--leaf", "gles3", "--api", "gles3", "--page-profile", "4k"]
+        )
+        self.assertIn("macos-integration-4k", str(options.emulator))
+        options = cts.parse_arguments(
+            ["--leaf", "gles3", "--api", "gles3", "--page-profile", "16k"]
+        )
+        self.assertEqual(options.emulator, cts.DEFAULT_EMULATOR)
+
+    def test_native_harness_does_not_pass_vnc_only_options(self) -> None:
+        options = cts.parse_arguments(
+            [
+                "--leaf",
+                "gles3",
+                "--api",
+                "gles3",
+                "--display",
+                "native",
+            ]
+        )
+        leaf = options.leaves["gles3"]
+        command = cts.build_harness_command(
+            options,
+            cts.Selection(leaf, None, 0, 1),
+            Path("/tmp/uml-cts-test"),
+        )
+        self.assertIn("--gpu-display=native", command)
+        self.assertFalse(any(item.startswith("--gpu-vnc-") for item in command))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,6 +8,13 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
+    NAME vk-gl-cts-campaign-safety
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_vk_gl_cts.py
+    LABELS gpu;cts;rootfs
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME kde-vnc-launcher-options
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_boot_kde_vnc.py
