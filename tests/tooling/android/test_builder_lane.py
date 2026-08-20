@@ -44,8 +44,11 @@ def main() -> None:
         root / "android/README.md",
         android_root / "README.md",
         android_root / "metadata/aosp.env",
+        android_root / "metadata/base-manifest.xml",
         android_root / "build/prepare-sources.sh",
         android_root / "build/preflight.sh",
+        android_root / "build/apply-aosp-patches.sh",
+        android_root / "build/build-aosp.sh",
         android_root / "build/apply-kernel-patches.sh",
         android_root / "build/build-kernel.sh",
         android_root / "build/verify-kernel-elf.py",
@@ -54,6 +57,10 @@ def main() -> None:
         android_root / "build/toolchain/linux-host-compat.h",
         android_root / "support/verification/required-kernel-builtins.txt",
         android_root / "support/verification/forbidden-kernel-options.txt",
+        android_root / "patches/projects.tsv",
+        android_root / "patches/projects/p0001/metadata.env",
+        android_root / "patches/projects/p0001/series/manifest.tsv",
+        android_root / "tools/verify-aosp-patches.py",
         kernel_root / "README.md",
         kernel_root / "config/android.fragment",
         kernel_root / "patches/metadata.env",
@@ -70,8 +77,11 @@ def main() -> None:
         "ANDROID17_MANIFEST_TAG": "android-17.0.0_r1",
         "ANDROID17_MANIFEST_COMMIT": "5bc9a7ce1cd78dd53613bbfd0ebf506e1e4adb0f",
         "ANDROID17_MANIFEST_TREE": "1541b7154f1532032baf7c73f222256cc29e8cfb",
+        "ANDROID17_BASE_MANIFEST_SHA256": "3aa2cfa6bf79012561b33755177e094cddd9f6488ba2f7fca583f12cbba698c1",
         "ANDROID17_MAJOR": "17",
+        "ANDROID17_PRODUCT": "aosp_uml_arm64_pgagnostic",
         "ANDROID17_PAGE_SIZE": "16384",
+        "ANDROID17_RELEASE_CONFIG": "trunk_staging",
     }
     expected_ack = {
         "UML_KERNEL_FAMILY": "android-6.18",
@@ -98,8 +108,17 @@ def main() -> None:
     subprocess.run(
         [str(verifier), "--line-root", str(kernel_root), "manifest"], check=True
     )
+    subprocess.run(
+        [
+            str(android_root / "tools/verify-aosp-patches.py"),
+            "--android-root",
+            str(android_root),
+        ],
+        check=True,
+    )
 
     scripts = list((android_root / "build").rglob("*.sh"))
+    scripts += list((android_root / "tools").rglob("*.py"))
     forbidden_commands = re.compile(
         r"(^|[;&|()\s])(ssh|scp|sftp|rsync|rsh)([;&|()\s]|$)", re.MULTILINE
     )
@@ -149,10 +168,26 @@ def main() -> None:
             fail(f"{script_name} does not inspect each project porcelain status")
 
     apply_kernel = (android_root / "build/apply-kernel-patches.sh").read_text()
+    apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
+    build_aosp = (android_root / "build/build-aosp.sh").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
+    if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
+        fail("AOSP materializer does not replay the routed per-project series")
+    if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
+        fail("AOSP materializer stages an overlay instead of applying project patches")
+    for token in (
+        "command -v zip",
+        "SOONG_NINJA=ninja",
+        "SOONG_INCREMENTAL_ANALYSIS=false",
+        "TARGET_2ND_ARCH",
+        "TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE",
+        "target-files-package",
+    ):
+        if token not in build_aosp:
+            fail(f"AOSP builder is missing fixed product policy: {token}")
     for token in (
         "CONFIG_MODULES=n",
         "CONFIG_[A-Za-z0-9_]+=m$",

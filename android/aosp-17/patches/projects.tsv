@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+order	route_id	manifest_project	checkout_path	manifest_revision	base_commit	base_tree	final_tree	patch_count	series_manifest_sha256	series_dir
+1	p0001	device/google/cuttlefish	device/google/cuttlefish	refs/tags/android-17.0.0_r1	283645aacf6cdb56cc31a9362f54d412dbc132a1	4156349bff4677184427409d9f633edb45e4ba84	e31029c5783adebf6eb09ff8031b9f4d8359571e	1	764f83f790e527dc51dbb062633c967dceae70ed06e931b8cb9d6634b3c399db	patches/projects/p0001/series

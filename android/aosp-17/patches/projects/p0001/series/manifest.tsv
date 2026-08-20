@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ordered generated AOSP project topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-cuttlefish-add-16K-arm64-UML-produ.patch	406e2f4431b58f5cf0aba1a054833f836a5e6c15	4b909e98d0ea611fd4fb72f547246b0bb164ceed9d2aabf6c55b56cc7b14aa19	UML-ANDROID-LOCAL: cuttlefish: add 16K arm64 UML product

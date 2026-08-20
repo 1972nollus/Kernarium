@@ -165,6 +165,8 @@ if [ "$SOURCE_ONLY" -eq 1 ]; then
 	exit 0
 fi
 
+command -v zip >/dev/null 2>&1 || fail "zip is not available on PATH"
+
 [ -n "$DARWIN_SDK" ] || fail "--darwin-sdk is required"
 [ -n "$WORK_ROOT" ] || fail "--work-root is required"
 [ -n "$RELEASE_ROOT" ] || fail "--release-root is required"
