@@ -28,10 +28,10 @@
   kernels rebuilt, and three consecutive Simulator plus three iPad sentinels
   then passed and powered off cleanly. A schema-2 campaign authority then
   froze ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels;
-  both passed on 16 KiB macOS, Simulator, and iPad with matching selections,
-  clean shutdown, and zero CPU fallback. Three non-passes encountered while
-  choosing those bounded sets remain diagnostic defects, not waivers. The 4
-  KiB repeat, performance, sustained lifecycle, and CTS matrices remain open;
+  both passed on 16 KiB and 4 KiB macOS, Simulator, and iPad with matching
+  selections, clean shutdown, and zero CPU fallback. Three non-passes encountered while
+  choosing those bounded sets remain diagnostic defects, not waivers.
+  Performance, sustained lifecycle, and CTS matrices remain open;
   qualification is blocked by its missing authoritative build receipt and
   incomplete display-backed caselist. The new `--inventory` path attempted
   the exact package-aware export through the rebuilt emulator, retained a

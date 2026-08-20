@@ -28,10 +28,11 @@ dirty DRM manager teardown; maintained kernel topic 0020 now shuts atomic
 Virtio-GPU state down before unplug. Both LLVM 22 page-profile kernels rebuilt,
 and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
-missing clean-stop markers. The broader 16 KiB fixed identity sentinel now
-passes its five GLES 2 and twelve GLES 3 cases in strict macOS-to-Simulator-to-
-iPad order. Complete caselist identity and matrices, performance, thermal, and
-sustained lifecycle campaigns remain outstanding. The authoritative CTS build
+missing clean-stop markers. The fixed identity sentinels now pass their five
+GLES 2 and twelve GLES 3 cases under both 16 KiB and 4 KiB in strict
+macOS-to-Simulator-to-iPad order. Complete caselist identity and matrices,
+performance, thermal, and sustained lifecycle campaigns remain outstanding.
+The authoritative CTS build
 receipt is still missing, so qualification remains fail-closed and no rootfs
 or guest-userspace change is authorized.
 
@@ -92,6 +93,29 @@ CPU-fallback frames. The selected-list digests are
 for GLES 2 and
 `495136cf6676bdfdaa0ba3838b1c97de83fed3296f43de06d67f93cd0a5759bd`
 for GLES 3.
+
+The ordered 4 KiB GLES 2 chain is
+`.build/vk-gl-cts/20260821-053254-80436-4k-gles2-identity-sentinel-v1`,
+`.build/vk-gl-cts-ios-simulator/20260821-053355-80513-4k-gles2-identity-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-053448-80794-4k-gles2-identity-sentinel-v1`;
+all passed 5/5. Their QPA SHA-256 values are
+`a7806d4e004aea920136f6deceab7e7d127c3adc858704c60e53b0797d958c46`,
+`c970b6bd184b6f650cc0652a4e2175f774e910ca62fb014b0ab3717bda5457d3`,
+and `9d438964b4a92796f06bea27bedfbb3fc0bb0b0bd0f9e6b922a30db0e91c8dd1`;
+final guest/presented/dropped/CPU-fallback counters are 193/379/1/0,
+135/268/0/0, and 211/466/0/0. The 4 KiB GLES 3 chain is
+`.build/vk-gl-cts/20260821-053622-80929-4k-gles3-identity-sentinel-v1`,
+`.build/vk-gl-cts-ios-simulator/20260821-053835-81090-4k-gles3-identity-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-053953-81340-4k-gles3-identity-sentinel-v1`;
+all passed 12/12. Their QPA SHA-256 values are
+`fa9907e76ad25b7f623e7a48cc35e009200518b3851b9bb29111e1bae2bb6897`,
+`c81dcde869dc010d86580402cfe0a05b6446aecdd4365736bbc6ed43c3a9727d`,
+and `93b857107bab3c93be3e49fdc3a4439edff297d2af3bbd9ba67784b40edaf96e`;
+counters are 520/931/1/0, 491/699/0/0, and 539/726/0/0. Both chains retain
+the same selected-list digests as their 16 KiB counterparts, shut down
+cleanly, and prove page-profile parity only for this bounded corpus.
 
 Sentinel selection also exposed three diagnostic non-passes that remain open,
 not waived. The macOS run at

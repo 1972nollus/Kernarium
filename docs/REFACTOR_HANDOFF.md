@@ -68,9 +68,9 @@ use the ordered stdout/guest-console stream because device capture may merge
 separate stdout/stderr transports between bytes.
 
 The campaign authority is now schema 2 and freezes ordered multi-case sets.
-The 16 KiB `gles2-identity-sentinel-v1` campaign passed 5/5 on macOS,
+Under both 16 KiB and 4 KiB, `gles2-identity-sentinel-v1` passed 5/5 on macOS,
 Simulator, and the connected iPad; `gles3-identity-sentinel-v1` passed 12/12
-on the same ordered chain. Every accepted run had a matching selected-list
+on the same ordered chains. Every accepted run had a matching selected-list
 identity, clean shutdown, and zero CPU fallback. Two macOS GLES 3 non-passes
 (depth-buffer `NotSupported` and a transform-feedback query mismatch) and one
 Simulator-only GLES 2 texture image-comparison failure found while constructing
@@ -88,8 +88,8 @@ repackaged, and three consecutive Simulator plus three connected-iPad exact
 sentinels passed and powered off without the warning. A focused tooling test
 pins the kernel ordering, while adapter validation rejects the old signature
 and any missing clean-stop marker. The broader lifecycle gate remains open
-alongside the 4 KiB sentinel repeat, complete matrices,
-performance, thermal, and presentation campaigns. A new fail-closed
+alongside complete matrices, performance, thermal, and presentation campaigns.
+A new fail-closed
 display-backed inventory mode exercised the rebuilt common emulator and the
 exact installed `glcts`: eight module hierarchies exported, but enumeration
 aborted at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` because package traversal

@@ -753,15 +753,16 @@ consecutive Simulator runs and three gated iPad runs passed the exact case and
 the clean-shutdown validator. That focused repair does not satisfy the broader
 performance, thermal, sustained-lifecycle, or qualification gates.
 
-The final broader 16 KiB identity run passed the exact five-case GLES 2 and
-twelve-case GLES 3 sets on macOS first, the booted Simulator second, and the
-connected iPad last. Predecessor validation reparses the selected list and QPA
-and rechecks campaign, leaf, seed, renderer, capability, and frame evidence.
+The final broader identity runs passed the exact five-case GLES 2 and
+twelve-case GLES 3 sets under both 16 KiB and 4 KiB on macOS first, the booted
+Simulator second, and the connected iPad last. Predecessor validation reparses
+the selected list and QPA and rechecks campaign, leaf, seed, renderer,
+capability, and frame evidence.
 The accepted runs all shut down cleanly and reported zero CPU fallback. Two
 macOS GLES 3 non-passes and one Simulator-only GLES 2 texture comparison
 failure discovered while selecting these bounded sentinels remain open
-diagnostic defects; they are not qualification waivers. The 4 KiB repeat and
-complete matrices remain outstanding.
+diagnostic defects; they are not qualification waivers. Complete matrices
+remain outstanding.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
