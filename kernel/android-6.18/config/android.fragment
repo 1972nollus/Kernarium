@@ -51,6 +51,14 @@ CONFIG_ZRAM_DEF_COMP_ZSTD=y
 CONFIG_MD=y
 CONFIG_BLK_DEV_DM=y
 CONFIG_DM_CRYPT=y
+# Android metadata encryption places dm-default-key above userdata. UML's UBD
+# device has no hardware inline-encryption capability, so the block-crypto
+# software fallback, fscrypt hooks, and target must all be built into the one
+# signed kernel ELF.
+CONFIG_BLK_INLINE_ENCRYPTION=y
+CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y
+CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y
+CONFIG_DM_DEFAULT_KEY=y
 CONFIG_DM_SNAPSHOT=y
 CONFIG_DM_THIN_PROVISIONING=y
 CONFIG_DM_VERITY=y

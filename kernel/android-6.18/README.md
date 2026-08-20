@@ -20,4 +20,6 @@ The product has exactly one 16 KiB configuration in
 [`config/android.fragment`](config/android.fragment). Loadable modules are
 forbidden: `CONFIG_MODULES=n`, Binder, ashmem compatibility, SELinux, audit,
 DMA-BUF heaps, storage, networking, and guest devices resolve built-in, and no
-`.ko` or DLKM output is accepted.
+`.ko` or DLKM output is accepted. Android userdata metadata encryption also
+requires the built-in block inline-encryption core, its software fallback,
+fscrypt inline hooks, and `dm-default-key`; UBD has no hardware crypto offload.

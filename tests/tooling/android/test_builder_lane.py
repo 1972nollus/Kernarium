@@ -882,6 +882,14 @@ def main() -> None:
         fail("Android kernel fragment does not disable loadable modules")
     if "CONFIG_MSEAL_SYSTEM_MAPPINGS=y" not in kernel_config:
         fail("Android kernel fragment does not enable system mapping sealing")
+    for symbol in (
+        "CONFIG_BLK_INLINE_ENCRYPTION=y",
+        "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y",
+        "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y",
+        "CONFIG_DM_DEFAULT_KEY=y",
+    ):
+        if symbol not in kernel_config:
+            fail(f"Android kernel fragment does not build in {symbol}")
 
     print("Android 17 builder lane ownership passed")
 
