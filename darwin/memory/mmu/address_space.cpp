@@ -458,6 +458,33 @@ public:
 		return 0;
 	}
 
+	int flush_generation(std::uint64_t generation)
+	{
+		auto state = state_for(generation);
+		ExecutionQuiesce quiesce{state, generation};
+		std::lock_guard lock{state->mappings_mutex};
+		if (state->mappings.empty()) {
+			/* A batch which started before this flush must not publish an old
+			 * page-table snapshot after the flush returns, even when no mapping
+			 * had reached the host cache yet. */
+			state->invalidation_epoch.fetch_add(
+				1, std::memory_order_release);
+			return 0;
+		}
+		/* A zero-length history entry tells every executor to discard its
+		 * complete private TLB.  Whole-mm Linux invalidation cannot retain a
+		 * narrower range, and clearing the generation here replaces one host
+		 * execution quiesce per VMA with one generation-wide boundary. */
+		const std::array changes{
+			MappingChangePlan{0, 0, true}};
+		PendingMappingChanges pending{*state, changes};
+		state->invalidation_epoch.fetch_add(
+			1, std::memory_order_release);
+		state->mappings.clear();
+		pending.commit();
+		return 0;
+	}
+
 	int activate(std::uint64_t generation)
 	{
 		/* A UML process is a Darwin thread, so the selected Linux mm is a
@@ -1833,6 +1860,13 @@ extern "C" int darwin_uml_static_vm_unmap_generation(
 		return space.unmap(generation,
 			reinterpret_cast<std::uintptr_t>(address), length);
 	});
+}
+
+extern "C" int darwin_uml_static_vm_flush_generation(
+	unsigned long generation)
+{
+	return with_address_space(
+		[&](auto &space) { return space.flush_generation(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_activate(unsigned long generation)

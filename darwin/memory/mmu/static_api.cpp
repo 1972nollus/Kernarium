@@ -389,9 +389,9 @@ extern "C" int darwin_uml_vm_flush_active(void)
 {
 	return 0;
 }
-extern "C" int darwin_uml_vm_flush_generation(unsigned long)
+extern "C" int darwin_uml_vm_flush_generation(unsigned long generation)
 {
-	return 0;
+	return darwin_uml_static_vm_flush_generation(generation);
 }
 extern "C" int darwin_uml_vm_sync_to_backing(unsigned long)
 {

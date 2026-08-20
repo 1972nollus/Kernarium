@@ -49,6 +49,9 @@ int darwin_uml_static_vm_unmap(void *address, unsigned long length);
 int darwin_uml_static_vm_unmap_generation(unsigned long generation,
 					    void *address,
 					    unsigned long length);
+/* Discards every cached mapping without retiring the generation. A following
+ * synchronized Linux page-table walk may republish it immediately. */
+int darwin_uml_static_vm_flush_generation(unsigned long generation);
 int darwin_uml_static_vm_activate(unsigned long generation);
 int darwin_uml_static_vm_destroy(unsigned long generation);
 int darwin_uml_static_vm_mapping_matches(unsigned long address, int fd,

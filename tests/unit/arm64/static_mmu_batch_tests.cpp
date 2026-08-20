@@ -620,6 +620,83 @@ void test_large_sparse_unmap_visits_only_mapped_pages()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+void test_generation_flush_is_complete_and_reusable()
+{
+	using uml::memory::testing::AllocationSite;
+	using uml::memory::testing::fail_next_allocation;
+	constexpr unsigned long generation = 313;
+	constexpr unsigned long other_generation = 314;
+	constexpr unsigned long base = 0x50'0000;
+	TemporaryBacking backing{3 * DARWIN_UML_GUEST_PAGE_SIZE};
+
+	require(darwin_uml_static_vm_map_generation(
+		generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+		2 * DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 1, 1) == 0);
+	require(darwin_uml_static_vm_map_generation(
+		other_generation, reinterpret_cast<void *>(base), backing.fd(),
+		2 * DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, 1) == 0);
+	const auto before = darwin_uml_static_vm_sequences(generation);
+	fail_next_allocation(AllocationSite::history);
+	require(darwin_uml_static_vm_flush_generation(generation) == -1);
+	void *translated = nullptr;
+	require(darwin_uml_static_vm_translate(
+		generation, base, DARWIN_UML_STATIC_READ, &translated) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(translated != nullptr);
+	require(darwin_uml_static_vm_sequences(generation).mapping_changes ==
+		before.mapping_changes);
+	require(darwin_uml_static_vm_flush_generation(generation) == 0);
+	require_unmapped(generation, base);
+	require_unmapped(generation, base + DARWIN_UML_GUEST_PAGE_SIZE);
+	translated = nullptr;
+	require(darwin_uml_static_vm_translate(
+		other_generation, base, DARWIN_UML_STATIC_READ, &translated) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(translated != nullptr);
+	const auto after = darwin_uml_static_vm_sequences(generation);
+	require(after.mapping_changes == before.mapping_changes + 1);
+	require(after.code_changes == before.code_changes + 1);
+	std::array<darwin_uml_static_mapping_change, 1> changes{};
+	std::uint64_t current = 0;
+	require(darwin_uml_static_vm_mapping_changes(
+		generation, before.mapping_changes, changes.data(), changes.size(),
+		&current) == -1);
+	require(current == after.mapping_changes);
+
+	/* Flushing does not retire the generation; the synchronized Linux walker
+	 * must be able to republish the current PTEs immediately. */
+	require(darwin_uml_static_vm_map_generation(
+		generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	translated = nullptr;
+	require(darwin_uml_static_vm_translate(
+		generation, base, DARWIN_UML_STATIC_READ, &translated) ==
+		DARWIN_UML_STATIC_TRANSLATED);
+	require(translated != nullptr);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+	require(darwin_uml_static_vm_destroy(other_generation) == 0);
+}
+
+void test_empty_generation_flush_rejects_an_older_batch()
+{
+	constexpr unsigned long generation = 315;
+	constexpr unsigned long base = 0x60'0000;
+	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+
+	require(darwin_uml_static_vm_batch_begin(generation) == 0);
+	require(darwin_uml_static_vm_map_generation(
+		generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
+	std::thread flusher{[&] {
+		require(darwin_uml_static_vm_flush_generation(generation) == 0);
+	}};
+	flusher.join();
+	require(darwin_uml_static_vm_batch_end() == -EAGAIN);
+	require_unmapped(generation, base);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 /* A batch plans one entry per touched page and indexes them by page address,
  * reserving the index up to a power-of-two cap.  libc++ keeps a power-of-two
  * bucket count for such a reservation and constrains the hash by masking, so
@@ -740,6 +817,8 @@ int main()
 	test_large_overlapping_batch_preserves_last_operation();
 	test_batch_index_allocation_failure_is_atomic_and_retryable();
 	test_large_sparse_unmap_visits_only_mapped_pages();
+	test_generation_flush_is_complete_and_reusable();
+	test_empty_generation_flush_rejects_an_older_batch();
 	test_page_index_hash_spreads_page_aligned_addresses();
 	test_retired_batch_cannot_commit_into_replacement_generation();
 	test_waiting_execution_context_cannot_enter_retired_generation();
