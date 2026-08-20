@@ -127,12 +127,12 @@ EXTENSION_SCRIPT = """(() => {
   };
 
   const run = async () => {
-    const loadDeadline = Date.now() + 300000;
+    const loadDeadline = Date.now() + 600000;
     while (document.readyState !== "complete" && Date.now() < loadDeadline) {
       await delay(1000);
     }
     if (document.readyState !== "complete") {
-      throw new Error("document load did not finish within 300 seconds");
+      throw new Error("document load did not finish within 600 seconds");
     }
 
     const rasterMarker = document.createElement("div");

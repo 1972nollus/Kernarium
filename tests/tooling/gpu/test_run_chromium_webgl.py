@@ -188,7 +188,7 @@ class AquariumProbePolicyTests(unittest.TestCase):
     def test_only_unrelated_site_favicon_is_ignored(self) -> None:
         script = run_chromium_webgl.EXTENSION_SCRIPT
         self.assertIn('url.pathname === "/favicon.ico"', script)
-        self.assertIn("document load did not finish within 300 seconds", script)
+        self.assertIn("document load did not finish within 600 seconds", script)
         self.assertIn("!isIgnoredSiteDecoration(entry.name)", script)
         self.assertIn("resource returned ", script)
 
