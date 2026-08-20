@@ -80,6 +80,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         root = Path(temporary)
         kernel = root / "vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
+        kernel_config = root / ".config"
+        kernel_config.write_text(
+            "CONFIG_ARM64_16K_PAGES=y\n# CONFIG_MODULES is not set\n"
+        )
+        kernel_release = root / "include/config/kernel.release"
+        kernel_release.parent.mkdir(parents=True)
+        kernel_release.write_text("6.18.21-uml-fixture\n")
 
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
@@ -87,11 +94,26 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           virtual_ab: bool = False, abi32: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           seriallogging: bool = False,
+                          wrong_kernel_config: bool = False,
+                          wrong_kernel_release: bool = False,
+                          missing_memfd_policy: bool = False,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
                 archive.writestr("INIT_BOOT/RAMDISK/init", b"init")
                 archive.writestr("META/init_boot_filesystem_config.txt", "")
+                archive.writestr(
+                    "META/kernel_configs.txt",
+                    "CONFIG_ARM64_16K_PAGES=n\n"
+                    if wrong_kernel_config
+                    else kernel_config.read_bytes(),
+                )
+                archive.writestr(
+                    "META/kernel_version.txt",
+                    "6.18.21-wrong\n"
+                    if wrong_kernel_release
+                    else kernel_release.read_bytes(),
+                )
                 archive.writestr("META/misc_info.txt", "")
                 archive.writestr("META/ramdisk_node_list", "")
                 for image in (
@@ -129,7 +151,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "on late-fs\n    mount_all --late\n"
                     "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
                 )
+                archive.writestr(
+                    "VENDOR/etc/selinux/vendor_sepolicy.cil",
+                    "(policycap open_perms)\n"
+                    if missing_memfd_policy
+                    else "(policycap memfd_class)\n",
+                )
                 archive.writestr("VENDOR/etc/ueventd.rc", "/dev/ttyS0 0660 root shell\n")
+                archive.writestr(
+                    "VENDOR/etc/vintf/compatibility_matrix.xml",
+                    "<compatibility-matrix/>\n",
+                )
+                archive.writestr("VENDOR/etc/vintf/manifest.xml", "<manifest/>\n")
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -172,6 +205,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wrong-fstab", {"wrong_fstab": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
+            ("kernel-config", {"wrong_kernel_config": True}),
+            ("kernel-release", {"wrong_kernel_release": True}),
+            ("memfd-policy", {"missing_memfd_policy": True}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -698,6 +734,9 @@ def main() -> None:
     assemble_image = (android_root / "build/assemble-image.sh").read_text()
     assemble_ramdisk = (android_root / "build/assemble-ramdisk.sh").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
+    target_files_verifier = (
+        android_root / "tools/verify-target-files.py"
+    ).read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
@@ -734,6 +773,7 @@ def main() -> None:
         "--kernel-elf",
         "verify-kernel-elf.py",
         "verify-target-files.py",
+        "check_target_files_vintf",
         "target_files_intermediates",
         'install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"',
         "SOONG_NINJA=ninja",
@@ -774,6 +814,15 @@ def main() -> None:
     ):
         if token not in build_aosp:
             fail(f"AOSP builder is missing fixed product policy: {token}")
+    for token in (
+        "META/kernel_configs.txt",
+        "META/kernel_version.txt",
+        "policycap memfd_class",
+        "VENDOR/etc/vintf/manifest.xml",
+        "VENDOR/etc/vintf/compatibility_matrix.xml",
+    ):
+        if token not in target_files_verifier:
+            fail(f"target-files verifier is missing fixed policy: {token}")
 
     command_line = (android_root / "support/boot/kernel-command-line.txt").read_text()
     for token in (

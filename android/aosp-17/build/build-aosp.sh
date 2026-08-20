@@ -112,6 +112,11 @@ command -v zip >/dev/null 2>&1 || fail "zip is not available on PATH"
 command -v python3 >/dev/null 2>&1 || fail "python3 is not available on PATH"
 [[ -d "$AOSP_SOURCE/.repo/manifests" ]] || fail "AOSP Repo metadata is missing"
 [[ -f "$KERNEL_ELF" ]] || fail "kernel ELF does not exist: $KERNEL_ELF"
+KERNEL_BUILD_DIR=$(dirname -- "$KERNEL_ELF")
+KERNEL_CONFIG="$KERNEL_BUILD_DIR/.config"
+KERNEL_RELEASE_FILE="$KERNEL_BUILD_DIR/include/config/kernel.release"
+[[ -f "$KERNEL_CONFIG" ]] || fail "kernel configuration is missing: $KERNEL_CONFIG"
+[[ -f "$KERNEL_RELEASE_FILE" ]] || fail "kernel release file is missing: $KERNEL_RELEASE_FILE"
 [[ -f "$PARTITION_LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 case "$OUT_DIR" in
 "$AOSP_SOURCE"/*) ;;
@@ -273,11 +278,17 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 	install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"
 fi
 
-m -j"$JOBS" target-files-package
+m -j"$JOBS" target-files-package check_target_files_vintf
 TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${ANDROID17_PRODUCT}-target_files.zip"
 [[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
-	--kernel-elf "$KERNEL_ELF"
+	--kernel-elf "$KERNEL_ELF" \
+	--kernel-config "$KERNEL_CONFIG" \
+	--kernel-release-file "$KERNEL_RELEASE_FILE"
+HOST_BIN="$OUT_DIR_ABSOLUTE/host/linux-x86/bin"
+VINTF_CHECKER="$HOST_BIN/check_target_files_vintf"
+[[ -x "$VINTF_CHECKER" ]] || fail "packaged VINTF checker is missing: $VINTF_CHECKER"
+PATH="$HOST_BIN:/usr/bin:/bin" "$VINTF_CHECKER" "$TARGET_FILES"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "built AOSP 17 UML target files under: $OUT_DIR_ABSOLUTE"

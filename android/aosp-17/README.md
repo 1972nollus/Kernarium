@@ -73,9 +73,14 @@ The topic must descend directly from the route's exact base commit, every
 subject must start with `UML-ANDROID-LOCAL:`, and the worktree must be clean.
 Never edit the generated patch bytes or either identity table by hand.
 
-After packaging, the builder verifies that `BOOT/kernel` exactly matches the
-selected ACK ELF, rejects DLKM and loadable-module payloads, rejects 32-bit
-target ABIs, and checks 16 KiB load alignment for target executables.
+After packaging, the builder verifies that `BOOT/kernel`, the packaged kernel
+configuration, and the packaged kernel release exactly match the selected ACK
+build. It rejects DLKM and loadable-module payloads, rejects 32-bit target ABIs,
+checks 16 KiB load alignment for target executables, requires Android 17's
+`memfd_class` SELinux policy capability, and runs AOSP's packaged target-files
+VINTF checker against the exact kernel metadata. The companion `.config` and
+`include/config/kernel.release` are read from the selected ELF's build
+directory unless the verifier receives explicit paths.
 
 `prepare-sources.sh` is the only producer command in this lane that may access
 the public source network. It moves clean builder-local workspaces to the pinned
@@ -188,8 +193,11 @@ SELinux, and the `ttyS0` diagnostic shell. The runtime adds its local `ubd0=`
 disk and initrd paths; no builder or workstation path is stored in this tree.
 
 The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
-with 4,571 entries and 1,162 verified target executables, a 4,374,784-byte raw
+with 4,575 entries and 1,162 verified target executables, a 4,374,784-byte raw
 initramfs with 35 unique entries, and a reverified seven-partition
 17,179,869,184-byte GPT disk. The sparse disk allocated 1,677,684,736 bytes in
-that run. This proves the build, fstab, initramfs, and image-layout contracts;
-it does not yet claim a UML boot or accepted VINTF, SELinux, and HAL runtime.
+that run. AOSP's packaged VINTF checker accepted the target files and exact ACK
+kernel metadata; `atest elf_alignment_test` built but correctly deferred because
+it is a device-side test. It remains a post-boot gate. This proves the static
+build, VINTF, SELinux capability, fstab, initramfs, and image-layout contracts;
+it does not yet claim a UML boot or accepted HAL runtime.

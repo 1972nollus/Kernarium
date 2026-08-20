@@ -32,11 +32,16 @@ REQUIRED_ENTRIES = {
     "IMAGES/userdata.img",
     "IMAGES/vendor.img",
     "META/init_boot_filesystem_config.txt",
+    "META/kernel_configs.txt",
+    "META/kernel_version.txt",
     "META/misc_info.txt",
     "META/ramdisk_node_list",
     "VENDOR/etc/fstab.uml",
     "VENDOR/etc/init/init.cutf_cvm.rc",
+    "VENDOR/etc/selinux/vendor_sepolicy.cil",
     "VENDOR/etc/ueventd.rc",
+    "VENDOR/etc/vintf/compatibility_matrix.xml",
+    "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
@@ -184,7 +189,7 @@ def reject_nonstatic_payload(path: PurePosixPath) -> None:
 
 def read_small(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
     if info.is_dir() or info.file_size > 1 << 20:
-        fail(f"boot-policy file is missing or unexpectedly large: {info.filename}")
+        fail(f"policy file is missing or unexpectedly large: {info.filename}")
     return archive.read(info)
 
 
@@ -211,6 +216,32 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     for token in ("/dev/hvc", "/dev/ion", "/dev/pmem", "/dev/vhci"):
         if token in ueventd_payload:
             fail(f"UML ueventd policy retains unsupported device: {token}")
+
+
+def check_kernel_policy(
+    archive: zipfile.ZipFile,
+    infos: dict[str, zipfile.ZipInfo],
+    kernel_config: Path,
+    kernel_release_file: Path,
+) -> None:
+    packaged_config = read_small(archive, infos["META/kernel_configs.txt"])
+    if packaged_config != kernel_config.read_bytes():
+        fail("packaged kernel configuration differs from the ACK UML build")
+
+    packaged_release = read_small(
+        archive, infos["META/kernel_version.txt"]
+    ).decode("utf-8", errors="strict").strip()
+    kernel_release = kernel_release_file.read_text(
+        encoding="utf-8", errors="strict"
+    ).strip()
+    if not kernel_release or packaged_release != kernel_release:
+        fail("packaged kernel release differs from the ACK UML build")
+
+    vendor_policy = read_small(
+        archive, infos["VENDOR/etc/selinux/vendor_sepolicy.cil"]
+    )
+    if b"(policycap memfd_class)" not in vendor_policy:
+        fail("Android 17 vendor policy does not enable policycap memfd_class")
 
 
 def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
@@ -294,12 +325,24 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-files", type=Path, required=True)
     parser.add_argument("--kernel-elf", type=Path, required=True)
+    parser.add_argument("--kernel-config", type=Path)
+    parser.add_argument("--kernel-release-file", type=Path)
     args = parser.parse_args()
+
+    kernel_config = args.kernel_config or args.kernel_elf.parent / ".config"
+    kernel_release_file = (
+        args.kernel_release_file
+        or args.kernel_elf.parent / "include/config/kernel.release"
+    )
 
     if not args.target_files.is_file():
         fail(f"target-files archive does not exist: {args.target_files}")
     if not args.kernel_elf.is_file():
         fail(f"kernel ELF does not exist: {args.kernel_elf}")
+    if not kernel_config.is_file():
+        fail(f"kernel configuration does not exist: {kernel_config}")
+    if not kernel_release_file.is_file():
+        fail(f"kernel release file does not exist: {kernel_release_file}")
 
     seen: set[str] = set()
     infos: dict[str, zipfile.ZipInfo] = {}
@@ -336,6 +379,9 @@ def main() -> None:
         if missing:
             fail(f"required entries are missing: {', '.join(missing)}")
         check_boot_policy(archive, infos)
+        check_kernel_policy(
+            archive, infos, kernel_config, kernel_release_file
+        )
         if sha256_member(archive, infos["BOOT/kernel"]) != sha256_path(args.kernel_elf):
             fail("BOOT/kernel does not match the verified ACK UML ELF")
 
