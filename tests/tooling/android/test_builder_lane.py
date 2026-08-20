@@ -44,6 +44,9 @@ def main() -> None:
         android_root / "metadata/aosp.env",
         android_root / "build/prepare-sources.sh",
         android_root / "build/preflight.sh",
+        android_root / "build/toolchain/aarch64-linux-clang.sh",
+        android_root / "build/toolchain/linux-host-clang.sh",
+        android_root / "build/toolchain/linux-host-compat.h",
         kernel_root / "README.md",
         kernel_root / "patches/metadata.env",
         kernel_root / "patches/series/manifest.tsv",
@@ -84,7 +87,7 @@ def main() -> None:
         [str(verifier), "--line-root", str(kernel_root), "manifest"], check=True
     )
 
-    scripts = list((android_root / "build").glob("*.sh"))
+    scripts = list((android_root / "build").rglob("*.sh"))
     forbidden_commands = re.compile(
         r"(^|[;&|()\s])(ssh|scp|sftp|rsync|rsh)([;&|()\s]|$)", re.MULTILINE
     )
