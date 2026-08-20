@@ -45,6 +45,18 @@ absolute_directory()
 	[ -d "$value" ] || fail "$name does not exist: $value"
 }
 
+dirty_repo_projects()
+{
+	(
+		cd "$AOSP_SOURCE"
+		repo forall -c '
+			if test -n "$(git status --porcelain)"; then
+				printf "%s\n" "$REPO_PATH"
+			fi
+		'
+	)
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--aosp-source)
@@ -96,8 +108,9 @@ command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
 [ -d "$ACK_WORKSPACE/.repo" ] || fail "ACK workspace is not a Repo workspace"
 [ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
-if [ -n "$(cd "$AOSP_SOURCE" && repo status)" ]; then
-	fail "AOSP Repo workspace is dirty"
+dirty_projects=$(dirty_repo_projects)
+if [ -n "$dirty_projects" ]; then
+	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
 if [ -n "$(git -C "$ACK_WORKSPACE/common" status --porcelain)" ]; then
 	fail "ACK common checkout is dirty"

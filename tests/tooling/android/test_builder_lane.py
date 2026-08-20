@@ -113,6 +113,11 @@ def main() -> None:
     ):
         if token not in preflight:
             fail(f"builder preflight is missing policy: {token}")
+    for script_name, text in (("prepare", prepare), ("preflight", preflight)):
+        if "repo status" in text:
+            fail(f"{script_name} mistakes Repo's clean status prose for a delta")
+        if "repo forall" not in text or "git status --porcelain" not in text:
+            fail(f"{script_name} does not inspect each project porcelain status")
 
     print("Android 17 builder lane ownership passed")
 

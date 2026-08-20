@@ -69,6 +69,18 @@ require_git_identity()
 		fail "$label checkout is dirty"
 }
 
+dirty_repo_projects()
+{
+	(
+		cd "$AOSP_SOURCE"
+		repo forall -c '
+			if test -n "$(git status --porcelain)"; then
+				printf "%s\n" "$REPO_PATH"
+			fi
+		'
+	)
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--aosp-source)
@@ -141,8 +153,9 @@ require_git_identity "$AOSP_SOURCE/.repo/manifests" \
 require_git_identity "$ACK_WORKSPACE/common" \
 	"$UML_KERNEL_UPSTREAM_COMMIT" "$UML_KERNEL_UPSTREAM_TREE" \
 	"ACK common"
-if [ -n "$(cd "$AOSP_SOURCE" && repo status)" ]; then
-	fail "AOSP Repo workspace is dirty"
+dirty_projects=$(dirty_repo_projects)
+if [ -n "$dirty_projects" ]; then
+	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
 
 if [ "$SOURCE_ONLY" -eq 1 ]; then
