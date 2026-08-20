@@ -345,6 +345,7 @@ def main() -> None:
         android_root / "patches/projects/p0001/metadata.env",
         android_root / "patches/projects/p0001/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
+        android_root / "tools/regenerate-aosp-patches.py",
         android_root / "tools/verify-target-files.py",
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",

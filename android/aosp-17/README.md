@@ -55,6 +55,20 @@ destined for the AOSP checkout, including the UML product definition, are
 introduced only by generated `git format-patch` series under `patches/projects`;
 `support/` is never copied over an AOSP project.
 
+After amending a clean, linear per-project topic branch, regenerate its patch
+bytes and all routed final-tree/count/manifest identities together:
+
+```sh
+android/aosp-17/tools/regenerate-aosp-patches.py \
+  --android-root /absolute/path/to/copied/repository/android/aosp-17 \
+  --route-id p0001 \
+  --topic-checkout /absolute/path/to/project-topic
+```
+
+The topic must descend directly from the route's exact base commit, every
+subject must start with `UML-ANDROID-LOCAL:`, and the worktree must be clean.
+Never edit the generated patch bytes or either identity table by hand.
+
 After packaging, the builder verifies that `BOOT/kernel` exactly matches the
 selected ACK ELF, rejects DLKM and loadable-module payloads, rejects 32-bit
 target ABIs, and checks 16 KiB load alignment for target executables.
