@@ -104,14 +104,20 @@ def validate_macos_evidence(
         "engine": "gadgets",
         "api": campaign.api,
         "leaf": campaign.leaf.identifier,
-        "exact_case": campaign.exact_case,
+        "leaf_sha256": campaign.leaf.sha256,
+        "expected_cases": len(campaign.cases),
+        "seed": campaign.seed,
         "emulator_return_code": 0,
-        "completed_cases": 1,
-        "status_totals": {"Pass": 1},
+        "completed_cases": len(campaign.cases),
+        "status_totals": {"Pass": len(campaign.cases)},
     }
     if any(metadata.get(key) != value for key, value in required.items()):
         raise cts.CampaignError(
             "Simulator campaign requires a matching passing native macOS run"
+        )
+    if metadata.get("campaign") not in (None, campaign.identifier):
+        raise cts.CampaignError(
+            "Simulator campaign requires matching macOS campaign identity"
         )
     artifacts = path.parent / "artifacts"
     selected = artifacts / "selected.txt"
@@ -119,16 +125,27 @@ def validate_macos_evidence(
     qpa = artifacts / "results.qpa"
     if not selected.is_file() or not renderer.is_file() or not qpa.is_file():
         raise cts.CampaignError("matching macOS artifacts are incomplete")
-    if cts.parse_case_list(selected.read_text(encoding="utf-8")) != [
-        campaign.exact_case
-    ]:
-        raise cts.CampaignError("matching macOS evidence selected another case")
+    selected_cases = cts.parse_case_list(
+        selected.read_text(encoding="utf-8")
+    )
+    if selected_cases != list(campaign.cases):
+        raise cts.CampaignError("matching macOS evidence selected other cases")
+    if hashlib.sha256(selected.read_bytes()).hexdigest() != metadata.get(
+        "selected_caselist_sha256"
+    ):
+        raise cts.CampaignError("matching macOS selected caselist changed")
     for artifact, key in (
         (renderer, "renderer_sha256"),
         (qpa, "qpa_sha256"),
     ):
         if hashlib.sha256(artifact.read_bytes()).hexdigest() != metadata.get(key):
             raise cts.CampaignError(f"matching macOS {artifact.name} changed")
+    results = cts.validate_qpa_union(
+        qpa.read_text(encoding="utf-8"), selected_cases
+    )
+    cts.validate_required_passes(results)
+    if cts.status_totals(results) != metadata["status_totals"]:
+        raise cts.CampaignError("matching macOS QPA totals changed")
     if (
         [row.get("requested") for row in metadata.get("host_contexts", [])]
         != [[3, 0], [3, 1], [3, 2]]
@@ -225,8 +242,8 @@ def validate_transcript(
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     cts.validate_renderer_probe(renderer_text, guest_page_size)
     selected_cases = cts.parse_case_list(selected_text)
-    if selected_cases != [campaign.exact_case]:
-        raise cts.CampaignError("Kernarium campaign selected the wrong exact case")
+    if selected_cases != list(campaign.cases):
+        raise cts.CampaignError("Kernarium campaign selected the wrong cases")
     results = cts.validate_qpa_union(qpa_text, selected_cases)
     if summary_text.strip() != "cts_rc=0":
         raise cts.CampaignError(f"CTS process failed: {summary_text.strip()}")

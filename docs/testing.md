@@ -677,9 +677,11 @@ common path, the command is expected to exit nonzero: enumeration reaches
 Partial module/count/digest data is retained only as diagnostic evidence and
 must not populate `vk_gl_cts_identity.json`.
 
-Kernarium accepts no arbitrary CTS script or selector. The checked Apple
-campaign document currently names one exact GLES 3 sentinel; CMake generates
-its bounded launcher from the same driver into each 4 KiB and 16 KiB runtime.
+Kernarium accepts no arbitrary CTS script or selector. The schema-2 Apple
+campaign document names the original exact GLES 3 declaration sentinel plus
+fixed ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels; CMake
+generates their bounded launchers from the same driver into each 4 KiB and 16
+KiB runtime.
 Run the native macOS gadgets lane first so it records the common host context,
 full decoded Virgl capsets, direct-presentation counters, and passing QPA that
 the Simulator must consume. After packaging and building a clean app, boot the
@@ -688,15 +690,14 @@ ordered adapters:
 
 ```sh
 python3 -B tests/integration/gpu/run_vk_gl_cts.py \
-  --api gles3 --leaf gles3 \
-  --case KHR-GLES3.shaders.declarations.declarations.missing_variable_name_vertex \
+  --campaign gles3-identity-sentinel-v1 \
   --page-profile 16k --engine gadgets --display native
 
 xcrun simctl boot SIMULATOR_UDID
 xcrun simctl bootstatus SIMULATOR_UDID -b
 
 python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
-  --campaign gles3-declaration-sentinel-v1 \
+  --campaign gles3-identity-sentinel-v1 \
   --page-profile 16k \
   --macos-run .build/vk-gl-cts/MACOS_RUN/run.json \
   --device "$(xcrun simctl getenv booted SIMULATOR_UDID)" \
@@ -706,7 +707,8 @@ python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
 decodes the same bounded artifact frames, requires exact page/DRM/Xwayland/
-Virgl evidence and one `Pass`, then stops the app after guest poweroff. An
+Virgl evidence and a `Pass` for every exact ordered case, then stops the app
+after guest poweroff. An
 accepted transcript must contain the successful Darwin stop, guest-exit, and
 runtime-return markers and must not contain the dirty DRM memory-manager
 teardown signature. Echoed launcher source is not an artifact frame; raw
@@ -729,7 +731,7 @@ app, and a booted paired developer-enabled physical iPad:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
-  --campaign gles3-declaration-sentinel-v1 \
+  --campaign gles3-identity-sentinel-v1 \
   --page-profile 16k --device DEVICE_IDENTIFIER \
   --simulator-run .build/vk-gl-cts-ios-simulator/RUN/run.json \
   --app .build/kernarium-device-derived/Build/Products/Release-iphoneos/Kernarium.app
@@ -750,6 +752,16 @@ after both page-profile kernels and all runtime slices were rebuilt, three
 consecutive Simulator runs and three gated iPad runs passed the exact case and
 the clean-shutdown validator. That focused repair does not satisfy the broader
 performance, thermal, sustained-lifecycle, or qualification gates.
+
+The final broader 16 KiB identity run passed the exact five-case GLES 2 and
+twelve-case GLES 3 sets on macOS first, the booted Simulator second, and the
+connected iPad last. Predecessor validation reparses the selected list and QPA
+and rechecks campaign, leaf, seed, renderer, capability, and frame evidence.
+The accepted runs all shut down cleanly and reported zero CPU fallback. Two
+macOS GLES 3 non-passes and one Simulator-only GLES 2 texture comparison
+failure discovered while selecting these bounded sentinels remain open
+diagnostic defects; they are not qualification waivers. The 4 KiB repeat and
+complete matrices remain outstanding.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host

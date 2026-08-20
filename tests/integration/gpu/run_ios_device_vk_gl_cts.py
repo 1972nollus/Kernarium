@@ -100,9 +100,15 @@ def validate_simulator_evidence(
         "backend": "angle-metal",
         "campaign": campaign.identifier,
         "page_profile": page_profile,
+        "engine": "gadgets",
+        "api": campaign.api,
+        "leaf": campaign.leaf.identifier,
+        "leaf_sha256": campaign.leaf.sha256,
+        "expected_cases": len(campaign.cases),
+        "seed": campaign.seed,
         "runtime_return_code": 0,
-        "completed_cases": 1,
-        "status_totals": {"Pass": 1},
+        "completed_cases": len(campaign.cases),
+        "status_totals": {"Pass": len(campaign.cases)},
     }
     if any(metadata.get(key) != value for key, value in required.items()):
         raise cts.CampaignError(
@@ -114,16 +120,27 @@ def validate_simulator_evidence(
     renderer = artifacts / "renderer.txt"
     if not selected.is_file() or not qpa.is_file() or not renderer.is_file():
         raise cts.CampaignError("matching Simulator artifacts are incomplete")
-    if cts.parse_case_list(selected.read_text(encoding="utf-8")) != [
-        campaign.exact_case
-    ]:
-        raise cts.CampaignError("matching Simulator evidence selected another case")
+    selected_cases = cts.parse_case_list(
+        selected.read_text(encoding="utf-8")
+    )
+    if selected_cases != list(campaign.cases):
+        raise cts.CampaignError("matching Simulator evidence selected other cases")
+    if hashlib.sha256(selected.read_bytes()).hexdigest() != metadata.get(
+        "selected_caselist_sha256"
+    ):
+        raise cts.CampaignError("matching Simulator selected caselist changed")
     if hashlib.sha256(qpa.read_bytes()).hexdigest() != metadata.get("qpa_sha256"):
         raise cts.CampaignError("matching Simulator QPA identity changed")
     if hashlib.sha256(renderer.read_bytes()).hexdigest() != metadata.get(
         "renderer_sha256"
     ):
         raise cts.CampaignError("matching Simulator renderer identity changed")
+    results = cts.validate_qpa_union(
+        qpa.read_text(encoding="utf-8"), selected_cases
+    )
+    cts.validate_required_passes(results)
+    if cts.status_totals(results) != metadata["status_totals"]:
+        raise cts.CampaignError("matching Simulator QPA totals changed")
     if (
         [row.get("requested") for row in metadata.get("host_contexts", [])]
         != [[3, 0], [3, 1], [3, 2]]
@@ -256,6 +273,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "campaign": campaign.identifier,
+                    "cases": list(campaign.cases),
                     "device": options.device,
                     "page_profile": options.page_profile,
                     "simulator_run": str(simulator_run),
@@ -308,8 +326,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "api": campaign.api,
         "leaf": campaign.leaf.identifier,
         "leaf_sha256": campaign.leaf.sha256,
-        "exact_case": campaign.exact_case,
-        "expected_cases": 1,
+        "cases": list(campaign.cases),
+        "expected_cases": len(campaign.cases),
         "seed": campaign.seed,
         "qualification": options.qualification,
         "simulator_run": str(simulator_run),

@@ -170,15 +170,32 @@ registered_module=KHR-GLES3
 
     def test_apple_campaign_allow_list_is_exact_and_fail_closed(self) -> None:
         campaigns = cts.load_apple_campaigns()
-        self.assertEqual(set(campaigns), {"gles3-declaration-sentinel-v1"})
+        self.assertEqual(
+            set(campaigns),
+            {
+                "gles2-identity-sentinel-v1",
+                "gles3-declaration-sentinel-v1",
+                "gles3-identity-sentinel-v1",
+            },
+        )
         campaign = campaigns["gles3-declaration-sentinel-v1"]
         self.assertEqual(campaign.api, "gles3")
         self.assertEqual(campaign.leaf.identifier, "gles3")
         self.assertEqual(campaign.selection.expected_count, 1)
         self.assertEqual(
-            campaign.exact_case,
-            "KHR-GLES3.shaders.declarations.declarations."
-            "missing_variable_name_vertex",
+            campaign.cases,
+            (
+                "KHR-GLES3.shaders.declarations.declarations."
+                "missing_variable_name_vertex",
+            ),
+        )
+        self.assertEqual(
+            campaigns["gles2-identity-sentinel-v1"].selection.expected_count,
+            5,
+        )
+        self.assertEqual(
+            campaigns["gles3-identity-sentinel-v1"].selection.expected_count,
+            12,
         )
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -186,13 +203,13 @@ registered_module=KHR-GLES3
             invalid.write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "campaigns": [
                             {
                                 "id": "bad",
                                 "api": "gles3",
                                 "leaf": "gles3",
-                                "exact_case": "KHR-GLES3.*",
+                                "cases": ["KHR-GLES3.*"],
                                 "seed": 0,
                                 "shard_timeout": 900,
                             }
@@ -211,6 +228,31 @@ registered_module=KHR-GLES3
         self.assertEqual(set(flattened), set(cases))
         self.assertEqual(len(flattened), len(cases))
         self.assertEqual(shards[0], cases[0::4])
+
+    def test_macos_campaign_owns_its_exact_set_seed_and_timeout(self) -> None:
+        options = cts.parse_arguments(
+            ["--campaign", "gles3-identity-sentinel-v1", "--dry-run"]
+        )
+        campaign = options.campaigns[options.campaign]
+        self.assertEqual(options.seed, campaign.seed)
+        self.assertEqual(options.shard_timeout, campaign.shard_timeout)
+        self.assertEqual(campaign.selection.expected_count, 12)
+        for conflicting in (
+            ["--leaf", "gles3"],
+            ["--case", campaign.cases[0]],
+            ["--seed", "1"],
+            ["--shard-timeout", "1"],
+        ):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+                SystemExit
+            ):
+                cts.parse_arguments(
+                    [
+                        "--campaign",
+                        "gles3-identity-sentinel-v1",
+                        *conflicting,
+                    ]
+                )
 
     def test_caselist_parser_rejects_duplicates_and_invalid_rows(self) -> None:
         self.assertEqual(
@@ -425,7 +467,7 @@ Kernarium: runtime returned 0
 
     def test_launcher_uses_only_frozen_guest_inputs_and_bounded_output(self) -> None:
         leaf = cts.leaf_identities(cts.load_identity())["gles3"]
-        selection = cts.Selection(leaf, None, 1, 8)
+        selection = cts.Selection(leaf, (), 1, 8)
         launcher = cts.build_guest_launcher(
             selection,
             seed=7,
@@ -460,8 +502,11 @@ Kernarium: runtime returned 0
         exact_launcher = cts.build_guest_launcher(
             cts.Selection(
                 leaf,
-                "KHR-GLES3.shaders.declarations.declarations."
-                "missing_variable_name_vertex",
+                (
+                    "KHR-GLES3.shaders.declarations.declarations."
+                    "missing_variable_name_vertex",
+                    "KHR-GLES3.exposed_extensions.validate_extensions",
+                ),
                 0,
                 1,
             ),
@@ -473,14 +518,15 @@ Kernarium: runtime returned 0
             "exact case is absent from selected must-pass leaf",
             exact_launcher,
         )
-        syntax = subprocess.run(
-            ["sh", "-n"],
-            input=launcher,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        for generated_launcher in (launcher, exact_launcher):
+            syntax = subprocess.run(
+                ["sh", "-n"],
+                input=generated_launcher,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
     def test_inventory_launcher_uses_real_display_and_no_case_selector(self) -> None:
         launcher = cts.build_guest_launcher(None, 0, 900, 16384)
@@ -530,6 +576,8 @@ Kernarium: runtime returned 0
             )
             generated = output.read_text(encoding="utf-8")
             self.assertIn("gles3-declaration-sentinel-v1", generated)
+            self.assertIn("gles2-identity-sentinel-v1", generated)
+            self.assertIn("gles3-identity-sentinel-v1", generated)
             self.assertIn("does not match 4096", generated)
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
             self.assertIn("x11_server=xwayland", generated)
@@ -591,6 +639,77 @@ Kernarium: runtime returned 0
         ), self.assertRaisesRegex(cts.CampaignError, "not booted"):
             ios_cts.require_booted_device(device)
 
+    def test_simulator_adapter_revalidates_macos_campaign_evidence(self) -> None:
+        campaign = cts.load_apple_campaigns()[
+            "gles3-declaration-sentinel-v1"
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            run_directory = Path(temporary)
+            artifacts = run_directory / "artifacts"
+            artifacts.mkdir()
+            selected = (campaign.cases[0] + "\n").encode()
+            qpa_payload = qpa(qpa_result(campaign.cases[0])).encode()
+            renderer_payload = b"renderer evidence\n"
+            (artifacts / "selected.txt").write_bytes(selected)
+            (artifacts / "results.qpa").write_bytes(qpa_payload)
+            (artifacts / "renderer.txt").write_bytes(renderer_payload)
+            capability = cts.parse_gpu_capability_report(
+                gpu_capability_report()
+            )
+            native_display = {
+                "guest_frames": 8,
+                "presented_frames": 7,
+                "dropped_frames": 1,
+                "cpu_fallback_frames": 0,
+            }
+            metadata = {
+                "adapter": "macos",
+                "backend": "angle-metal",
+                "campaign": campaign.identifier,
+                "display": "native",
+                "page_profile": "16k",
+                "engine": "gadgets",
+                "api": campaign.api,
+                "leaf": campaign.leaf.identifier,
+                "leaf_sha256": campaign.leaf.sha256,
+                "expected_cases": 1,
+                "seed": campaign.seed,
+                "emulator_return_code": 0,
+                "completed_cases": 1,
+                "status_totals": {"Pass": 1},
+                **capability,
+                "native_display_final": native_display,
+                "selected_caselist_sha256": hashlib.sha256(
+                    selected
+                ).hexdigest(),
+                "renderer_sha256": hashlib.sha256(
+                    renderer_payload
+                ).hexdigest(),
+                "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
+            }
+            (run_directory / "console.log").write_text(
+                gpu_capability_report()
+                + "Native display: direct virgl/ANGLE/Metal presentation\n"
+                + "Native display final: guest 8 presented 7 dropped 1 "
+                "cpu-fallback 0\n",
+                encoding="utf-8",
+            )
+            run = run_directory / "run.json"
+            run.write_text(json.dumps(metadata), encoding="utf-8")
+            self.assertEqual(
+                ios_cts.common.validate_macos_evidence(
+                    run, campaign, "16k"
+                ),
+                metadata,
+            )
+
+            metadata["campaign"] = "another-campaign"
+            run.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "campaign identity"):
+                ios_cts.common.validate_macos_evidence(
+                    run, campaign, "16k"
+                )
+
     def test_device_adapter_requires_matching_passing_simulator_evidence(self) -> None:
         campaign = cts.load_apple_campaigns()[
             "gles3-declaration-sentinel-v1"
@@ -599,8 +718,8 @@ Kernarium: runtime returned 0
             run_directory = Path(temporary)
             artifacts = run_directory / "artifacts"
             artifacts.mkdir()
-            selected = (campaign.exact_case + "\n").encode()
-            qpa_payload = qpa(qpa_result(campaign.exact_case)).encode()
+            selected = (campaign.cases[0] + "\n").encode()
+            qpa_payload = qpa(qpa_result(campaign.cases[0])).encode()
             (artifacts / "selected.txt").write_bytes(selected)
             (artifacts / "results.qpa").write_bytes(qpa_payload)
             renderer_payload = b"renderer evidence\n"
@@ -614,6 +733,12 @@ Kernarium: runtime returned 0
                 "backend": "angle-metal",
                 "campaign": campaign.identifier,
                 "page_profile": "16k",
+                "engine": "gadgets",
+                "api": campaign.api,
+                "leaf": campaign.leaf.identifier,
+                "leaf_sha256": campaign.leaf.sha256,
+                "expected_cases": 1,
+                "seed": campaign.seed,
                 "runtime_return_code": 0,
                 "completed_cases": 1,
                 "status_totals": {"Pass": 1},
@@ -628,6 +753,9 @@ Kernarium: runtime returned 0
                     renderer_payload
                 ).hexdigest(),
                 "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
+                "selected_caselist_sha256": hashlib.sha256(
+                    selected
+                ).hexdigest(),
                 "macos_run": "/tmp/macos-run.json",
                 "macos_host_contexts_equal": True,
                 "macos_virgl_capsets_equal": True,
@@ -747,7 +875,7 @@ Kernarium: runtime returned 0
         leaf = options.leaves["gles3"]
         command = cts.build_harness_command(
             options,
-            cts.Selection(leaf, None, 0, 1),
+            cts.Selection(leaf, (), 0, 1),
             Path("/tmp/uml-cts-test"),
         )
         self.assertIn("--gpu-display=native", command)

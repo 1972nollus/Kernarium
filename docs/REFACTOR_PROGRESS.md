@@ -26,8 +26,12 @@
   exposed an intermittent `drm_mm` managed-release warning. Kernel topic 0020
   now retires atomic Virtio-GPU state before unplug; both LLVM 22 page-profile
   kernels rebuilt, and three consecutive Simulator plus three iPad sentinels
-  then passed and powered off cleanly. The broader fixed identity sentinel,
-  performance, sustained lifecycle, and CTS matrices remain open;
+  then passed and powered off cleanly. A schema-2 campaign authority then
+  froze ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels;
+  both passed on 16 KiB macOS, Simulator, and iPad with matching selections,
+  clean shutdown, and zero CPU fallback. Three non-passes encountered while
+  choosing those bounded sets remain diagnostic defects, not waivers. The 4
+  KiB repeat, performance, sustained lifecycle, and CTS matrices remain open;
   qualification is blocked by its missing authoritative build receipt and
   incomplete display-backed caselist. The new `--inventory` path attempted
   the exact package-aware export through the rebuilt emulator, retained a
@@ -50,7 +54,10 @@
   page-specific guest launcher into all four Kernarium runtime slices, and
   added thin Simulator and connected-iPad wrappers. Both reject arbitrary
   selectors and non-`Pass` results; the device wrapper also requires a matching
-  passing Simulator QPA. Twenty-five focused tooling tests, all four runtime
+  passing Simulator QPA. The schema-2 allow-list supports exact ordered
+  multi-case sets and predecessor revalidation covers campaign/leaf/seed,
+  selected-list, QPA, renderer, capability, and frame identity. Twenty-seven
+  focused tooling tests, all four runtime
   builds, seven focused Xcode app tests, packaging, and the canonical GPU
   workflow passed. A normal 16 KiB Simulator boot reached direct ANGLE/Metal
   KDE presentation. The exact CTS adapter initially rejected echoed launcher

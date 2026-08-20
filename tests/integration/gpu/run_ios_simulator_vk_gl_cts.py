@@ -152,7 +152,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "campaign": campaign.identifier,
-                    "exact_case": campaign.exact_case,
+                    "cases": list(campaign.cases),
                     "page_profile": options.page_profile,
                     "macos_run": str(macos_run),
                     "launch_environment": launch_environment,
@@ -208,8 +208,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "api": campaign.api,
         "leaf": campaign.leaf.identifier,
         "leaf_sha256": campaign.leaf.sha256,
-        "exact_case": campaign.exact_case,
-        "expected_cases": 1,
+        "cases": list(campaign.cases),
+        "expected_cases": len(campaign.cases),
         "seed": campaign.seed,
         "qualification": options.qualification,
         "macos_run": str(macos_run),

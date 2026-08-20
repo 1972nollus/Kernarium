@@ -28,11 +28,12 @@ dirty DRM manager teardown; maintained kernel topic 0020 now shuts atomic
 Virtio-GPU state down before unplug. Both LLVM 22 page-profile kernels rebuilt,
 and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
-missing clean-stop markers. The broader fixed identity sentinel, complete
-caselist identity, matrices, performance, thermal, and sustained lifecycle
-campaigns remain outstanding. The authoritative CTS build receipt is still
-missing, so qualification remains fail-closed and no rootfs or guest-userspace
-change is authorized.
+missing clean-stop markers. The broader 16 KiB fixed identity sentinel now
+passes its five GLES 2 and twelve GLES 3 cases in strict macOS-to-Simulator-to-
+iPad order. Complete caselist identity and matrices, performance, thermal, and
+sustained lifecycle campaigns remain outstanding. The authoritative CTS build
+receipt is still missing, so qualification remains fail-closed and no rootfs
+or guest-userspace change is authorized.
 
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
@@ -68,6 +69,42 @@ reported zero CPU-fallback frames and clean guest/runtime shutdown. These
 short-run counters prove direct presentation and fallback absence only. They
 are not the frozen sustained frame-pacing, CPU/GPU, memory, energy, or thermal
 qualification campaign.
+
+The schema-2 campaign authority additionally freezes a five-case GLES 2
+identity sentinel across negative and optimized shaders, internal formats,
+copy/renderbuffer behavior, and 3D texture filtering, plus a twelve-case GLES
+3 identity sentinel across extension/API coverage, framebuffer blit and
+completeness, packed depth/pixels, shaders, driver errors, parallel compile,
+compressed texture storage, and synchronization-sensitive updates. The final
+ordered GLES 2 chain is
+`.build/vk-gl-cts/20260821-050712-53069-16k-gles2-identity-sentinel-v1`,
+`.build/vk-gl-cts-ios-simulator/20260821-051121-61347-16k-gles2-identity-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-051207-61486-16k-gles2-identity-sentinel-v1`;
+the GLES 3 chain is
+`.build/vk-gl-cts/20260821-045622-44382-16k-gles3-identity-sentinel-v1`,
+`.build/vk-gl-cts-ios-simulator/20260821-050221-52605-16k-gles3-identity-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-050341-52752-16k-gles3-identity-sentinel-v1`.
+Every run passed its exact ordered set, powered off cleanly, and reported zero
+CPU-fallback frames. The selected-list digests are
+`1248dc6887e7ba9bb0316da73fc48961f7051c27c6f3bfc420d7361410a4d7eb`
+for GLES 2 and
+`495136cf6676bdfdaa0ba3838b1c97de83fed3296f43de06d67f93cd0a5759bd`
+for GLES 3.
+
+Sentinel selection also exposed three diagnostic non-passes that remain open,
+not waived. The macOS run at
+`.build/vk-gl-cts/20260821-045416-44189-16k-gles3-identity-sentinel-v1`
+reported `KHR-GLES3.shaders.fragdepth.write.const` as `NotSupported` because a
+depth buffer was required and failed
+`KHR-GLES3.transform_feedback2.transform_feedback2_states` with query result
+`0 != 2`. The Simulator run at
+`.build/vk-gl-cts-ios-simulator/20260821-050029-52429-16k-gles2-identity-sentinel-v1`
+failed `KHR-GLES2.core.internalformat.texture2d.rgba_unsigned_byte_rgba` with
+an image-comparison difference after that case had passed on macOS. These cases
+are outside the small cross-product identity sentinel, but remain required
+classification work for the complete matrices.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and

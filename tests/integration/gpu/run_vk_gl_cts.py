@@ -127,14 +127,14 @@ class LeafIdentity:
 @dataclass(frozen=True)
 class Selection:
     leaf: LeafIdentity
-    exact_case: str | None
+    exact_cases: tuple[str, ...]
     fraction_index: int
     fraction_count: int
 
     @property
     def expected_count(self) -> int:
-        if self.exact_case is not None:
-            return 1
+        if self.exact_cases:
+            return len(self.exact_cases)
         remaining = self.leaf.case_count - self.fraction_index
         if remaining <= 0:
             return 0
@@ -146,13 +146,13 @@ class AppleCampaign:
     identifier: str
     api: str
     leaf: LeafIdentity
-    exact_case: str
+    cases: tuple[str, ...]
     seed: int
     shard_timeout: int
 
     @property
     def selection(self) -> Selection:
-        return Selection(self.leaf, self.exact_case, 0, 1)
+        return Selection(self.leaf, self.cases, 0, 1)
 
 
 @dataclass
@@ -239,7 +239,7 @@ def load_apple_campaigns(
         "campaigns",
     }:
         raise CampaignError("invalid Apple CTS campaign document")
-    if value["schema_version"] != 1 or not isinstance(
+    if value["schema_version"] != 2 or not isinstance(
         value["campaigns"], list
     ):
         raise CampaignError("unsupported Apple CTS campaign schema")
@@ -249,7 +249,7 @@ def load_apple_campaigns(
         "id",
         "api",
         "leaf",
-        "exact_case",
+        "cases",
         "seed",
         "shard_timeout",
     }
@@ -259,7 +259,7 @@ def load_apple_campaigns(
         identifier = row["id"]
         api = row["api"]
         leaf_identifier = row["leaf"]
-        exact = row["exact_case"]
+        cases = row["cases"]
         seed = row["seed"]
         shard_timeout = row["shard_timeout"]
         if (
@@ -267,8 +267,13 @@ def load_apple_campaigns(
             or not APPLE_CAMPAIGN_ID.fullmatch(identifier)
             or not isinstance(api, str)
             or not isinstance(leaf_identifier, str)
-            or not isinstance(exact, str)
-            or not CASE_NAME.fullmatch(exact)
+            or not isinstance(cases, list)
+            or not 1 <= len(cases) <= 64
+            or any(
+                not isinstance(case, str) or not CASE_NAME.fullmatch(case)
+                for case in cases
+            )
+            or len(set(cases)) != len(cases)
             or type(seed) is not int
             or seed < 0
             or seed > 0xFFFFFFFF
@@ -284,7 +289,7 @@ def load_apple_campaigns(
             identifier=identifier,
             api=api,
             leaf=leaf,
-            exact_case=exact,
+            cases=tuple(cases),
             seed=seed,
             shard_timeout=shard_timeout,
         )
@@ -950,7 +955,7 @@ caselist_count=$(awk '$1 == "TEST:" { count++ } END { print count + 0 }' "$selec
 } > "$inventory_report"
 chown uml:uml "$inventory_report" "$renderer"
 """
-    elif selection.exact_case is None:
+    elif not selection.exact_cases:
         selection_command = (
             "awk -v index="
             f"{selection.fraction_index} -v count={selection.fraction_count} "
@@ -958,12 +963,15 @@ chown uml:uml "$inventory_report" "$renderer"
             '"$leaf" > "$selected"'
         )
     else:
-        selection_command = (
-            f"if ! grep -Fx -- {shlex.quote(selection.exact_case)} "
-            '"$leaf" > "$selected"; then '
-            "echo 'UML_CTS_ERROR: exact case is absent from selected must-pass leaf'; "
-            "exit 1; fi"
+        selection_lines = [': > "$selected"']
+        selection_lines.extend(
+            f"if ! grep -Fx -- {shlex.quote(case)} \"$leaf\" >> "
+            '"$selected"; then '
+            "echo 'UML_CTS_ERROR: exact case is absent from selected "
+            "must-pass leaf'; exit 1; fi"
+            for case in selection.exact_cases
         )
+        selection_command = "\n".join(selection_lines)
     if not inventory:
         leaf_identity_check = f"""
 actual_leaf_sha=$(sha256sum "$leaf" | cut -d ' ' -f 1)
@@ -1272,6 +1280,7 @@ def api_for_leaf(identifier: str) -> str:
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     identity = load_identity()
     leaves = leaf_identities(identity)
+    campaigns = load_apple_campaigns(identity)
     parser = argparse.ArgumentParser(
         description="run a bounded in-image VK-GL-CTS shard through Virgl"
     )
@@ -1280,6 +1289,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         action="store_true",
         help="capture the complete display-backed glcts text caselist",
     )
+    parser.add_argument("--campaign", choices=sorted(campaigns))
     parser.add_argument("--leaf", choices=sorted(leaves))
     parser.add_argument(
         "--api",
@@ -1289,7 +1299,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--case", type=exact_case)
     selection.add_argument("--fraction", type=parse_fraction)
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int)
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
@@ -1297,7 +1307,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--cpus", type=positive_integer, default=10)
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
-    parser.add_argument("--shard-timeout", type=positive_integer, default=900)
+    parser.add_argument("--shard-timeout", type=positive_integer)
     parser.add_argument("--guest-timeout", type=positive_integer, default=1200)
     parser.add_argument("--emulator", type=Path)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
@@ -1310,12 +1320,31 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
     if options.inventory:
-        if options.leaf is not None or options.api is not None:
-            parser.error("--inventory does not accept --leaf or --api")
+        if (
+            options.campaign is not None
+            or options.leaf is not None
+            or options.api is not None
+        ):
+            parser.error("--inventory does not accept a campaign, leaf, or API")
         if options.case is not None or options.fraction is not None:
             parser.error("--inventory does not accept a case or fraction")
         if options.qualification:
             parser.error("inventory capture is diagnostic, not qualification")
+    elif options.campaign is not None:
+        if (
+            options.leaf is not None
+            or options.api is not None
+            or options.case is not None
+            or options.fraction is not None
+        ):
+            parser.error(
+                "--campaign does not accept a leaf, API, case, or fraction"
+            )
+        if options.seed is not None or options.shard_timeout is not None:
+            parser.error("--campaign owns its seed and shard timeout")
+        campaign = campaigns[options.campaign]
+        options.seed = campaign.seed
+        options.shard_timeout = campaign.shard_timeout
     else:
         if options.leaf is None or options.api is None:
             parser.error("a developer shard requires --leaf and --api")
@@ -1323,6 +1352,10 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error(
                 f"--leaf {options.leaf} does not belong to --api {options.api}"
             )
+    if options.seed is None:
+        options.seed = 0
+    if options.shard_timeout is None:
+        options.shard_timeout = 900
     if options.fraction is None:
         options.fraction = (0, 1)
     if options.seed < 0 or options.seed > 0xFFFFFFFF:
@@ -1337,6 +1370,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         )
     options.identity = identity
     options.leaves = leaves
+    options.campaigns = campaigns
     return options
 
 
@@ -1347,11 +1381,24 @@ def main(arguments: Sequence[str] | None = None) -> int:
     selection: Selection | None = None
     suffix = "inventory"
     if not options.inventory:
-        leaf = options.leaves[options.leaf]
-        selection = Selection(leaf, options.case, fraction_index, fraction_count)
+        if options.campaign is not None:
+            campaign = options.campaigns[options.campaign]
+            leaf = campaign.leaf
+            selection = campaign.selection
+            api_identifier = campaign.api
+            leaf_identifier = campaign.leaf.identifier
+            suffix = campaign.identifier
+        else:
+            leaf = options.leaves[options.leaf]
+            exact_cases = (options.case,) if options.case is not None else ()
+            selection = Selection(
+                leaf, exact_cases, fraction_index, fraction_count
+            )
+            api_identifier = options.api
+            leaf_identifier = options.leaf
+            suffix = options.leaf
         if selection.expected_count < 1:
             raise CampaignError("selected fraction contains no cases")
-        suffix = options.leaf
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
@@ -1425,15 +1472,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
     else:
         metadata.update(
             {
-                "api": options.api,
-                "leaf": options.leaf,
+                "api": api_identifier,
+                "leaf": leaf_identifier,
                 "leaf_sha256": leaf.sha256,
                 "fraction": [fraction_index, fraction_count],
-                "exact_case": options.case,
+                "exact_cases": list(selection.exact_cases),
                 "expected_cases": selection.expected_count,
                 "seed": options.seed,
             }
         )
+        if options.campaign is not None:
+            metadata["campaign"] = options.campaign
     write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
     with log_path.open("wb") as log:

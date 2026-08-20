@@ -40,14 +40,19 @@ one passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A
 separate normal 16 KiB iPhone 17 Pro Max Simulator boot selected the common
 hardware ANGLE/Metal provider, direct Metal presentation, both Virgl capsets,
 and a rendered KDE desktop. The signed app embeds page-specific launchers
-generated from one allow-listed CTS campaign definition; thin Simulator and
+generated from common allow-listed CTS campaign definitions; thin Simulator and
 physical-iPad wrappers enforce exact IDs, framed artifacts, `Pass`, and
 Simulator-before-device ordering. That exact 16 KiB sentinel now passes 1/1 on
 both the iOS 26.5 Simulator and the connected iPad mini 6, measuring guest
 desktop GL 2.1 and GLES 3.0 through the same DRM/Xwayland/virgl path on each.
-The broader fixed identity sentinel, connected-iPad qualification, performance
-campaigns, sustained lifecycle acceptance, and complete Khronos matrices
-remain open. The exact allow-listed sentinel now also captures
+The campaign schema now also freezes five-case GLES 2 and twelve-case GLES 3
+identity sentinels. Both pass their exact ordered sets on 16 KiB macOS,
+Simulator, and iPad with clean shutdown and zero CPU fallback. Three non-passes
+encountered while choosing that bounded identity corpus remain recorded as
+diagnostic defects rather than waivers. Connected-iPad qualification,
+performance campaigns, sustained lifecycle acceptance, the 4 KiB campaign
+repeat, and complete Khronos matrices remain open. The original exact
+allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
 decoded Virgl v1/v2 capset field, cross-product semantic diffs, and final
 native-display counters. The ordered macOS, Simulator, and iPad runs all create
@@ -55,8 +60,8 @@ ES 3.0, naturally reject ES 3.1/3.2 with `EGL_BAD_MATCH`, retain the measured
 guest GL 2.1/GLES 3.0 result, pass 1/1, and report zero CPU-fallback frames.
 Hardware-specific capset differences are recorded rather than incorrectly
 requiring byte equality. This completes the plan's host-context/full-capset
-probe checkpoint, but not the broader fixed identity sentinel or performance
-qualification. The first iPad shutdown exposed an intermittent `drm_mm`
+probe checkpoint and the bounded 16 KiB fixed identity sentinel, but not
+performance qualification. The first iPad shutdown exposed an intermittent `drm_mm`
 managed-release warning. Maintained kernel topic 0020 now retires atomic
 Virtio-GPU scanout state before device unplug; both LLVM 22 page-profile builds
 passed, and three consecutive 16 KiB Simulator plus three connected-iPad exact
@@ -808,7 +813,12 @@ now fails closed on its signature or missing clean-stop markers. A later
 ordered macOS/Simulator/iPad run captured explicit ES 3.0/3.1/3.2 attempts,
 sorted extensions, full raw and decoded Virgl capsets, exact platform diffs,
 and zero native CPU fallback on all three products. The broader fixed sentinel,
-performance, thermal, and sustained lifecycle baselines remain missing. The
+now comprising five GLES 2 and twelve GLES 3 cases, passed in strict order on
+all three products. Selection retained three diagnostic non-passes without
+waiving them: macOS depth-buffer `NotSupported` and transform-feedback query
+failures, plus a Simulator-only GLES 2 texture image-comparison failure. The
+4 KiB repeat, performance, thermal, and sustained lifecycle baselines remain
+missing. The
 complete caselist attempt also fails closed at
 `dEQP-GL45-ES3` because text enumeration creates an unsupported context; no
 partial digest/count/module set was promoted. Together with the absent

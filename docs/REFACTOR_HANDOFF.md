@@ -67,6 +67,18 @@ are evidence, not a requirement for false byte parity. iOS capability records
 use the ordered stdout/guest-console stream because device capture may merge
 separate stdout/stderr transports between bytes.
 
+The campaign authority is now schema 2 and freezes ordered multi-case sets.
+The 16 KiB `gles2-identity-sentinel-v1` campaign passed 5/5 on macOS,
+Simulator, and the connected iPad; `gles3-identity-sentinel-v1` passed 12/12
+on the same ordered chain. Every accepted run had a matching selected-list
+identity, clean shutdown, and zero CPU fallback. Two macOS GLES 3 non-passes
+(depth-buffer `NotSupported` and a transform-feedback query mismatch) and one
+Simulator-only GLES 2 texture image-comparison failure found while constructing
+the bounded sets remain diagnostic defects, not waivers. The exact paths and
+hashes are indexed in `docs/refactor-evidence.md`. Predecessor validation now
+reparses the QPA and rechecks campaign, leaf, seed, selected-list, renderer,
+capability, and frame evidence before launching the next product.
+
 The first iPad shutdown emitted `Memory manager not clean during takedown`
 from `drm_managed_release`. Maintained Linux topic 0020 now calls the atomic
 DRM shutdown helper before unplugging Virtio-GPU, producing final replay tree
@@ -76,7 +88,7 @@ repackaged, and three consecutive Simulator plus three connected-iPad exact
 sentinels passed and powered off without the warning. A focused tooling test
 pins the kernel ordering, while adapter validation rejects the old signature
 and any missing clean-stop marker. The broader lifecycle gate remains open
-alongside the broader fixed-sentinel selection, complete matrices,
+alongside the 4 KiB sentinel repeat, complete matrices,
 performance, thermal, and presentation campaigns. A new fail-closed
 display-backed inventory mode exercised the rebuilt common emulator and the
 exact installed `glcts`: eight module hierarchies exported, but enumeration
