@@ -44,7 +44,8 @@ android/aosp-17/build/apply-aosp-patches.sh \
 
 android/aosp-17/build/build-aosp.sh \
   --aosp-source /absolute/path/to/aosp \
-  --out /absolute/path/to/aosp/out-uml-android17
+  --out /absolute/path/to/aosp/out-uml-android17 \
+  --kernel-elf /absolute/path/to/kernel-build/vmlinux
 ```
 
 [`metadata/base-manifest.xml`](metadata/base-manifest.xml) locks every resolved

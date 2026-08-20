@@ -180,6 +180,9 @@ def main() -> None:
         fail("AOSP materializer stages an overlay instead of applying project patches")
     for token in (
         "command -v zip",
+        "--kernel-elf",
+        "verify-kernel-elf.py",
+        'install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"',
         "SOONG_NINJA=ninja",
         "SOONG_INCREMENTAL_ANALYSIS=false",
         "TARGET_2ND_ARCH",

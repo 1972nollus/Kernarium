@@ -7,9 +7,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
+ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 
 AOSP_SOURCE=
 OUT_DIR=
+KERNEL_ELF=
 JOBS=
 
 fail()
@@ -23,7 +25,8 @@ usage()
 	cat <<'EOF'
 Usage: android/aosp-17/build/build-aosp.sh \
        --aosp-source ABSOLUTE_PATH \
-       --out ABSOLUTE_PATH [--jobs N]
+       --out ABSOLUTE_PATH \
+       --kernel-elf ABSOLUTE_PATH [--jobs N]
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
 series. The output directory must be an ignored directory inside the AOSP Repo
@@ -58,6 +61,11 @@ while [[ $# -gt 0 ]]; do
 		OUT_DIR=$2
 		shift 2
 		;;
+	--kernel-elf)
+		[[ $# -ge 2 ]] || fail "--kernel-elf requires a path"
+		KERNEL_ELF=$2
+		shift 2
+		;;
 	--jobs)
 		[[ $# -ge 2 ]] || fail "--jobs requires a positive integer"
 		JOBS=$2
@@ -73,12 +81,15 @@ done
 
 [[ -n "$AOSP_SOURCE" ]] || fail "--aosp-source is required"
 [[ -n "$OUT_DIR" ]] || fail "--out is required"
+[[ -n "$KERNEL_ELF" ]] || fail "--kernel-elf is required"
 absolute_path "AOSP source" "$AOSP_SOURCE"
 absolute_path "output directory" "$OUT_DIR"
+absolute_path "kernel ELF" "$KERNEL_ELF"
 [[ "$(uname -s)" == Linux ]] || fail "builder host must be Linux"
 [[ "$(uname -m)" == x86_64 ]] || fail "builder host must be x86_64"
 command -v zip >/dev/null 2>&1 || fail "zip is not available on PATH"
 [[ -d "$AOSP_SOURCE/.repo/manifests" ]] || fail "AOSP Repo metadata is missing"
+[[ -f "$KERNEL_ELF" ]] || fail "kernel ELF does not exist: $KERNEL_ELF"
 case "$OUT_DIR" in
 "$AOSP_SOURCE"/*) ;;
 *) fail "output directory must be inside the AOSP workspace for this source tag" ;;
@@ -89,11 +100,13 @@ fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || fail "jobs must be a positive integer"
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
+[[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
 
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
+"$ELF_VERIFIER" "$KERNEL_ELF"
 mkdir -p -- "$OUT_DIR"
 OUT_DIR_ABSOLUTE=$OUT_DIR
 # This tag's test_package path validation treats absolute generated paths as
@@ -140,6 +153,19 @@ for variable in \
 	[[ -z "$(get_build_var "$variable")" ]] ||
 		fail "$variable must be empty for the built-in-only kernel"
 done
+
+# target-files always carries a kernel input even when this product does not
+# build an Android boot image. Stage only the already-built, verified ACK UML
+# ELF in the output tree; never copy it into an AOSP source project.
+PRODUCT_OUT=$(get_build_var PRODUCT_OUT)
+case "$PRODUCT_OUT" in
+"$OUT_DIR"/*) ;;
+*) fail "PRODUCT_OUT is outside the selected output directory: $PRODUCT_OUT" ;;
+esac
+mkdir -p -- "$PRODUCT_OUT"
+if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
+	install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"
+fi
 
 m -j"$JOBS" target-files-package
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
