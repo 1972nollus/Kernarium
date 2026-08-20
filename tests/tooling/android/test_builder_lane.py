@@ -833,6 +833,8 @@ def main() -> None:
         "ubd-disk.py",
         "check_no_module_output",
         "verify_kernel_config",
+        'parser.add_argument("--clang"',
+        'parser.add_argument("--linker"',
         "release-manifest.json",
         "android-17-uml-arm64.img.zst",
         "repo",

@@ -226,6 +226,8 @@ def main() -> None:
     parser.add_argument("--ramdisk", type=Path, required=True)
     parser.add_argument("--disk", type=Path, required=True)
     parser.add_argument("--darwin-sdk", type=Path, required=True)
+    parser.add_argument("--clang", type=Path, required=True)
+    parser.add_argument("--linker", type=Path, required=True)
     parser.add_argument("--vintf-checker", type=Path, required=True)
     parser.add_argument("--zstd", type=Path, required=True)
     parser.add_argument("--release-root", type=Path, required=True)
@@ -247,6 +249,10 @@ def main() -> None:
     target_files = regular_file(args.target_files, "target-files archive")
     ramdisk = regular_file(args.ramdisk, "initramfs")
     disk = regular_file(args.disk, "raw GPT disk")
+    absolute_path(args.clang, "pinned Clang")
+    absolute_path(args.linker, "pinned linker")
+    clang = regular_file(args.clang.resolve(), "pinned Clang", executable=True)
+    linker = regular_file(args.linker.resolve(), "pinned linker", executable=True)
     vintf_checker = regular_file(args.vintf_checker, "VINTF checker", executable=True)
     zstd = resolve_zstd(args.zstd)
 
@@ -316,18 +322,6 @@ def main() -> None:
         str(disk),
     ])
 
-    clang_root = (
-        aosp_source
-        / "prebuilts/clang/host/linux-x86"
-        / f"clang-{kernel_metadata['UML_KERNEL_CLANG_VERSION']}"
-        / "bin"
-    )
-    clang = regular_file(
-        (clang_root / "clang").resolve(), "pinned Clang", executable=True
-    )
-    linker = regular_file(
-        (clang_root / "ld.lld").resolve(), "pinned linker", executable=True
-    )
     java_candidates = (
         aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin/java",
         aosp_source / "prebuilts/jdk/jdk17/linux-x86/bin/java",
@@ -500,6 +494,8 @@ def main() -> None:
                         "verified UML initramfs",
                         "verified fixed-layout UBD disk",
                         "explicit Darwin SDK",
+                        "explicit pinned Clang",
+                        "explicit pinned linker",
                         "explicit AOSP VINTF checker",
                         "explicit AOSP zstd",
                     ],

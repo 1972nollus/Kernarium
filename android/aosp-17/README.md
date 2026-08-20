@@ -240,6 +240,8 @@ android/aosp-17/build/publish-release.sh \
   --ramdisk /absolute/path/to/ramdisk.img \
   --disk /absolute/path/to/android17-ubd.img \
   --darwin-sdk /absolute/path/to/MacOSX.sdk \
+  --clang /absolute/path/to/pinned/clang \
+  --linker /absolute/path/to/pinned/ld.lld \
   --vintf-checker /absolute/path/to/check_target_files_vintf \
   --zstd /absolute/path/to/zstd \
   --release-root /absolute/path/to/releases \
