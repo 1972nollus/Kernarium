@@ -1,27 +1,44 @@
-From a010757e51873e6a1c9a7b05b2758683743c2da7 Mon Sep 17 00:00:00 2001
+From 8896cf9efa403043116cd5edf4747d6147a1eba0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 18:43:12 +0000
 Subject: [PATCH 8/8] UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init
 
 Change-Id: I547049cc8f52d019a6fc533ba6c0d38ae563d400
 ---
- shared/device.mk                              |  12 +-
- vsoc_uml_arm64_pgagnostic/config/Android.bp   |  27 ++++
+ shared/config/Android.bp                      |   4 +
+ shared/device.mk                              |  13 +-
+ vsoc_uml_arm64_pgagnostic/config/Android.bp   |  31 +++++
  .../config/init.vendor.rc                     | 118 ++++++++++++++++++
  vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk   |   2 +
- 4 files changed, 157 insertions(+), 2 deletions(-)
+ 5 files changed, 166 insertions(+), 2 deletions(-)
  create mode 100644 vsoc_uml_arm64_pgagnostic/config/Android.bp
  create mode 100644 vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
 
+diff --git a/shared/config/Android.bp b/shared/config/Android.bp
+index 730495feaab680b5c16ed8f99db9c87172ae75a8..1467339b7af856eb7874e75283ce685e86c82604 100644
+--- a/shared/config/Android.bp
++++ b/shared/config/Android.bp
+@@ -203,6 +203,10 @@ prebuilt_etc {
+     dsts: ["init.cutf_cvm.rc"],
+     vendor: true,
+     relative_install_path: "init",
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: false,
++        default: unset,
++    }),
+ }
+ 
+ prebuilt_etc {
 diff --git a/shared/device.mk b/shared/device.mk
-index 0636cf70dee9f4459e43329581bdb111e71c6bb0..5608c11e5de8ef047473f2e2af691b3f1cfc6ed6 100644
+index 0636cf70dee9f4459e43329581bdb111e71c6bb0..8b984765b40370dc72c2a4ed5b65eebff1ea4abc 100644
 --- a/shared/device.mk
 +++ b/shared/device.mk
-@@ -227,8 +227,14 @@ PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
+@@ -227,8 +227,15 @@ PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
  #
  
  $(call soong_config_set_bool,cuttlefish_config,use_general_files,true)
 +ifeq ($(UML_ANDROID_BUILTIN_KERNEL),true)
++$(call soong_config_set_bool,cuttlefish_config,use_builtin_kernel,true)
 +PRODUCT_PACKAGES += \
 +    device_google_cuttlefish_uml_config_init_vendor_rc
 +else
@@ -33,7 +50,7 @@ index 0636cf70dee9f4459e43329581bdb111e71c6bb0..5608c11e5de8ef047473f2e2af691b3f
      device_google_cuttlefish_shared_config_init_product_rc \
      device_google_cuttlefish_shared_config_media_codecs \
      device_google_cuttlefish_shared_config_media_profiles \
-@@ -594,9 +600,11 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
+@@ -594,9 +601,11 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
  # Start fingerprint virtual HAL process
  PRODUCT_VENDOR_PROPERTIES += ro.vendor.fingerprint_virtual_hal_start=true
  
@@ -48,10 +65,10 @@ index 0636cf70dee9f4459e43329581bdb111e71c6bb0..5608c11e5de8ef047473f2e2af691b3f
  PRODUCT_PACKAGES += \
 diff --git a/vsoc_uml_arm64_pgagnostic/config/Android.bp b/vsoc_uml_arm64_pgagnostic/config/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..45b87a2978e991695f7646c11b59cbccb94398a0
+index 0000000000000000000000000000000000000000..3c243c524def4d45062dfbf1efddafad715101df
 --- /dev/null
 +++ b/vsoc_uml_arm64_pgagnostic/config/Android.bp
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,31 @@
 +//
 +// Copyright 2026 The Android Open Source Project
 +//
@@ -78,6 +95,10 @@ index 0000000000000000000000000000000000000000..45b87a2978e991695f7646c11b59cbcc
 +    dsts: ["init.cutf_cvm.rc"],
 +    vendor: true,
 +    relative_install_path: "init",
++    enabled: select(soong_config_variable("cuttlefish_config", "use_builtin_kernel"), {
++        true: true,
++        default: false,
++    }),
 +}
 diff --git a/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc b/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
 new file mode 100644
