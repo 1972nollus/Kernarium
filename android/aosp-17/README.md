@@ -77,3 +77,28 @@ configuration before compilation. AOSP image assembly, release publication,
 and Apple consumers remain separate from the host build. The current product is
 still an initial page-size and ABI composition based on Cuttlefish; standalone
 UML storage, boot, VINTF, SELinux, and HAL adaptation remain later milestones.
+
+## Static UBD disk contract
+
+`support/image/partition-layout.json` owns the first fixed GPT layout. It has
+separate `system`, `system_ext`, `product`, `vendor`, `odm`, `metadata`, and
+`userdata` partitions; it deliberately has no `super` or DLKM partition. The
+kernel ELF and Android ramdisks remain separate release artifacts and are not
+placed in this disk.
+
+Once the static AOSP product emits the declared image names, assemble and
+immediately verify a raw UBD disk locally on the builder with:
+
+```sh
+android/aosp-17/tools/ubd-disk.py assemble \
+  --layout android/aosp-17/support/image/partition-layout.json \
+  --images-dir /absolute/path/to/product-output \
+  --output /absolute/path/to/release/android17-ubd.img
+```
+
+The assembler accepts ordinary raw images and Android sparse images, expands
+payloads into a sparse host file, rejects overflow and unsafe image paths, and
+writes matching primary and backup GPT metadata. Recheck an existing image
+with the `verify` subcommand. The fixed partition capacities are intentionally
+larger than the initial inherited Cuttlefish dynamic groups; the first static
+product build must still prove every concrete image fits before publication.

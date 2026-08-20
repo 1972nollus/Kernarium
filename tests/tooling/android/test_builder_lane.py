@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import json
 import re
 import struct
 import subprocess
@@ -125,6 +126,196 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 fail(f"target-files verifier accepted the {label} fixture")
 
 
+def synthetic_sparse_image() -> bytes:
+    block_size = 4096
+    raw = b"A" * block_size
+    return b"".join(
+        (
+            struct.pack(
+                "<IHHHHIIII",
+                0xED26FF3A,
+                1,
+                0,
+                28,
+                12,
+                block_size,
+                3,
+                3,
+                0,
+            ),
+            struct.pack("<HHII", 0xCAC1, 0, 1, 12 + block_size),
+            raw,
+            struct.pack("<HHII", 0xCAC2, 0, 1, 16),
+            b"\x12\x34\x56\x78",
+            struct.pack("<HHII", 0xCAC3, 0, 1, 12),
+        )
+    )
+
+
+def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(tool),
+            "validate",
+            "--layout",
+            str(production_layout),
+        ],
+        check=True,
+    )
+    layout = json.loads(production_layout.read_text())
+    names = [partition["name"] for partition in layout["partitions"]]
+    if names != [
+        "system",
+        "system_ext",
+        "product",
+        "vendor",
+        "odm",
+        "metadata",
+        "userdata",
+    ]:
+        fail("production UBD layout has the wrong fixed partition order")
+    if "super" in names or any("dlkm" in name for name in names):
+        fail("production UBD layout contains a dynamic or DLKM partition")
+    if layout["sector_size"] != 512 or layout["alignment_bytes"] != 1024 * 1024:
+        fail("production UBD layout has the wrong sector geometry")
+    for partition in layout["partitions"]:
+        if partition["start_bytes"] % layout["alignment_bytes"]:
+            fail(f"production UBD partition is misaligned: {partition['name']}")
+        if partition["size_bytes"] % layout["alignment_bytes"]:
+            fail(f"production UBD partition has a partial alignment unit: {partition['name']}")
+
+    with tempfile.TemporaryDirectory(prefix="android-ubd-disk-") as temporary:
+        root = Path(temporary)
+        images = root / "images"
+        images.mkdir()
+        (images / "system.img").write_bytes(b"raw-system")
+        (images / "userdata.img").write_bytes(synthetic_sparse_image())
+        fixture_layout = root / "layout.json"
+        fixture_layout.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "sector_size": 512,
+                    "alignment_bytes": 1024 * 1024,
+                    "disk_size_bytes": 16 * 1024 * 1024,
+                    "partition_entry_count": 128,
+                    "disk_guid": "253a21bd-933f-5273-8cd3-586ec7288d68",
+                    "partitions": [
+                        {
+                            "name": "system",
+                            "start_bytes": 1024 * 1024,
+                            "size_bytes": 2 * 1024 * 1024,
+                            "image": "system.img",
+                            "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+                            "unique_guid": "e2c6424a-9fda-551e-b5d2-c1ba3b29ae33",
+                            "writable": False,
+                        },
+                        {
+                            "name": "userdata",
+                            "start_bytes": 3 * 1024 * 1024,
+                            "size_bytes": 4 * 1024 * 1024,
+                            "image": "userdata.img",
+                            "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+                            "unique_guid": "f07a1ac4-5c95-5c37-86dd-70eaa487a193",
+                            "writable": True,
+                        },
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        disk = root / "android.img"
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "assemble",
+                "--layout",
+                str(fixture_layout),
+                "--images-dir",
+                str(images),
+                "--output",
+                str(disk),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "verify",
+                "--layout",
+                str(fixture_layout),
+                "--disk",
+                str(disk),
+            ],
+            check=True,
+        )
+        if disk.stat().st_size != 16 * 1024 * 1024:
+            fail("assembled UBD fixture has the wrong logical size")
+        with disk.open("rb") as image:
+            image.seek(1024 * 1024)
+            if image.read(len(b"raw-system")) != b"raw-system":
+                fail("raw partition payload was not staged at its fixed offset")
+            image.seek(3 * 1024 * 1024)
+            if image.read(4096) != b"A" * 4096:
+                fail("Android sparse RAW chunk was not expanded")
+            if image.read(8) != b"\x12\x34\x56\x78" * 2:
+                fail("Android sparse FILL chunk was not expanded")
+            image.seek(3 * 1024 * 1024 + 2 * 4096)
+            if image.read(32) != b"\0" * 32:
+                fail("Android sparse DONT_CARE chunk is not a disk hole")
+
+        with disk.open("r+b") as image:
+            image.seek(512 + 20)
+            byte = image.read(1)
+            image.seek(512 + 20)
+            image.write(bytes((byte[0] ^ 0x80,)))
+        corrupted = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "verify",
+                "--layout",
+                str(fixture_layout),
+                "--disk",
+                str(disk),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if corrupted.returncode == 0:
+            fail("UBD verifier accepted a corrupted primary GPT")
+
+        (images / "system.img").write_bytes(b"X" * (2 * 1024 * 1024 + 1))
+        oversized = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "assemble",
+                "--layout",
+                str(fixture_layout),
+                "--images-dir",
+                str(images),
+                "--output",
+                str(root / "oversized.img"),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if oversized.returncode == 0:
+            fail("UBD assembler accepted a partition payload that exceeds its capacity")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
@@ -155,6 +346,8 @@ def main() -> None:
         android_root / "patches/projects/p0001/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/verify-target-files.py",
+        android_root / "tools/ubd-disk.py",
+        android_root / "support/image/partition-layout.json",
         kernel_root / "README.md",
         kernel_root / "config/android.fragment",
         kernel_root / "patches/metadata.env",
@@ -211,6 +404,10 @@ def main() -> None:
         check=True,
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    verify_ubd_disk_fixtures(
+        android_root / "tools/ubd-disk.py",
+        android_root / "support/image/partition-layout.json",
+    )
 
     scripts = list((android_root / "build").rglob("*.sh"))
     scripts += list((android_root / "tools").rglob("*.py"))
