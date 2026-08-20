@@ -38,6 +38,16 @@
   strict diagnostic report, and failed closed when the ninth package,
   `dEQP-GL45-ES3`, requested an unsupported EGL context after eight modules
   and 148,476 test rows. No partial identity was frozen.
+- Diagnosed the initial 4 KiB macOS Aquarium RCU stalls as generic nested
+  `mmu_gather` promotion to a full-mm flush. Kernel topic 0021 retains precise
+  Darwin nested ranges behind a default-conservative architecture hook. Fresh
+  LLVM 22 replay/builds produced accepted 16 KiB and 4 KiB artifacts at final
+  tree `436f25b3c4cad9cbbead1d37bad19e219ce4075d` without changing bridge ABI
+  v8. Clean accepted-artifact Aquarium canaries passed on macOS at 2.533/2.867
+  FPS and Simulator at 5.767/5.933 FPS for 16 KiB/4 KiB, respectively, with 30
+  samples, clean shutdown, and zero dropped or CPU-fallback frames. These are
+  single implementation canaries, not the seven-pair performance or physical
+  iPad thermal/lifecycle gate.
 - Added an opt-in common provider/capset report and final native-display
   counters. The host requests ES 3.0, 3.1, and 3.2 independently, emits sorted
   extensions plus complete raw Virgl capsets, and the runner strictly decodes

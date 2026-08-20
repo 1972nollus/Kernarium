@@ -31,7 +31,24 @@ powered off without the warning. The app adapters reject that signature and
 missing clean-stop markers. The fixed identity sentinels now pass their five
 GLES 2 and twelve GLES 3 cases under both 16 KiB and 4 KiB in strict
 macOS-to-Simulator-to-iPad order. Complete caselist identity and matrices,
-performance, thermal, and sustained lifecycle campaigns remain outstanding.
+the seven-pair performance campaign, connected-iPad thermal acceptance, and
+sustained lifecycle campaigns remain outstanding.
+
+The fixed Aquarium canary is now runnable on both permitted products and both
+page profiles. An initial 4 KiB macOS run reached measurement but suffered two
+RCU stalls while nested `mmu_gather` promoted a precise Chromium `mprotect`
+range to a full address-space flush. Kernel topic 0021 preserves precise
+Darwin nested ranges; the default generic behavior remains conservative. The
+resulting Linux commit `28bfc7baf`, replay tree
+`436f25b3c4cad9cbbead1d37bad19e219ce4075d`, fresh LLVM 22 16 KiB/4 KiB builds,
+and accepted artifacts `mainline-6.18-{16k,4k}-20260821-28bfc7ba-1` verify
+without a bridge-ABI change. Clean accepted-artifact runs at revision
+`9f30073a` passed at 2.533/2.867 FPS on macOS and 5.767/5.933 FPS on Simulator
+for 16 KiB/4 KiB, respectively; all used 30 samples, WebGL 2/GLES 3.0, clean
+shutdown, and zero dropped or CPU-fallback frames. These single observations
+are implementation canaries, not the seven interleaved pairs or a performance
+qualification. Aquarium remains excluded from physical-iPad acceptance.
+
 The authoritative CTS build
 receipt is still missing, so qualification remains fail-closed and no rootfs
 or guest-userspace change is authorized.

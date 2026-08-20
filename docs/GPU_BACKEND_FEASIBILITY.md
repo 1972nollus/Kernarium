@@ -38,6 +38,17 @@ off cleanly under a validator that rejects the old signature. GLES 3.1 is
 still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
 scope.
 
+The frozen Aquarium canary has also run through the current direct path on
+macOS and Simulator under both page profiles. The first 4 KiB macOS attempt
+exposed nested-TLB full-address-space invalidation and RCU starvation, not a
+Virgl or ANGLE capability failure. Maintained kernel topic 0021 preserves the
+precise Darwin `mmu_gather` range, and fresh accepted 16 KiB/4 KiB kernels then
+completed clean macOS canaries at 2.533/2.867 FPS and Simulator canaries at
+5.767/5.933 FPS, each over 30 samples with zero dropped or CPU-fallback
+frames. These single-run diagnostics validate bring-up and the bounded kernel
+repair only; they do not satisfy the frozen seven-pair, thermal, or lifecycle
+qualification policy.
+
 A current normal 16 KiB Simulator boot also selected the common hardware
 provider and direct Metal presentation and rendered the KDE desktop. That is
 product-path evidence. The later allow-listed app CTS run produced a matching

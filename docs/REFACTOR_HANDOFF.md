@@ -87,8 +87,27 @@ page profiles rebuilt with LLVM 22, all four runtime slices rebuilt and
 repackaged, and three consecutive Simulator plus three connected-iPad exact
 sentinels passed and powered off without the warning. A focused tooling test
 pins the kernel ordering, while adapter validation rejects the old signature
-and any missing clean-stop marker. The broader lifecycle gate remains open
-alongside complete matrices, performance, thermal, and presentation campaigns.
+and any missing clean-stop marker.
+
+The first fixed 4 KiB macOS Aquarium run then reached its measurement window
+but hit two RCU stalls. The captured stacks showed Chromium's nested
+`mprotect` path entering `tlb_finish_mmu`, where generic `mmu_gather` promoted
+the precise range to `fullmm`; Darwin consequently repeated whole-mm walks and
+executor quiesces. Maintained Linux topic 0021 adds a default-conservative
+architecture hook and opts Darwin into retaining the precise range because its
+synchronous invalidation already serializes every executor. Its source commit
+is `28bfc7baf`, the 21-topic replay tree is
+`436f25b3c4cad9cbbead1d37bad19e219ce4075d`, and the audited delta is 163/9.
+A fresh LLVM 22 replay and both page-profile builds passed; accepted artifacts
+`mainline-6.18-{16k,4k}-20260821-28bfc7ba-1` keep bridge ABI v8. Clean revision
+`9f30073a` canaries then passed on macOS at 2.533/2.867 FPS and Simulator at
+5.767/5.933 FPS for 16 KiB/4 KiB, with WebGL 2/GLES 3.0, 30 samples, clean
+shutdown, and zero dropped or CPU-fallback frames. The four runs are
+implementation canaries, not a controlled performance qualification or A/B.
+
+The broader lifecycle gate remains open alongside complete matrices, seven
+interleaved performance pairs, connected-iPad thermal, and presentation
+campaigns.
 A new fail-closed
 display-backed inventory mode exercised the rebuilt common emulator and the
 exact installed `glcts`: eight module hierarchies exported, but enumeration

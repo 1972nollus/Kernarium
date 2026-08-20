@@ -50,7 +50,7 @@ identity sentinels. Both pass their exact ordered sets on 16 KiB and 4 KiB
 macOS, Simulator, and iPad with clean shutdown and zero CPU fallback. Three
 non-passes encountered while choosing that bounded identity corpus remain
 recorded as diagnostic defects rather than waivers. Connected-iPad qualification,
-performance campaigns, sustained lifecycle acceptance, and complete Khronos
+seven-pair performance campaigns, sustained lifecycle acceptance, and complete Khronos
 matrices remain open. The original exact
 allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
@@ -69,9 +69,27 @@ passed, and three consecutive 16 KiB Simulator plus three connected-iPad exact
 CTS runs then powered off cleanly. The adapters now reject that warning and any
 missing clean-stop marker. This is a bounded lifecycle repair, not complete
 lifecycle qualification or a capability promotion. No rootfs or guest
-userspace changed. Phases 3 through 7 have not started; they remain gated on a
-truthful, measured lower shared baseline and the explicit stop conditions
-below.
+userspace changed.
+
+The first fixed 4 KiB macOS Aquarium run exposed a separate kernel
+scalability defect: it reached the measurement window, then stalled RCU twice
+while Chromium's nested `mprotect` teardown forced generic `mmu_gather`
+promotion to `fullmm`. That made Darwin repeat whole-address-space walks and
+executor quiesces instead of invalidating the already precise range.
+Maintained topic 0021 adds a conservative architecture hook and lets only
+Darwin retain precise nested ranges, whose synchronous invalidation already
+serializes all executors. A fresh LLVM 22 replay and both canonical builds
+passed at final tree `436f25b3c4cad9cbbead1d37bad19e219ce4075d` (163 changed
+paths, 9 outside the port), and accepted artifacts
+`mainline-6.18-{16k,4k}-20260821-28bfc7ba-1` retain bridge ABI v8. Clean
+accepted-artifact Aquarium runs then passed on macOS at 2.533 FPS for 16 KiB
+and 2.867 FPS for 4 KiB, and on Simulator at 5.767 FPS and 5.933 FPS,
+respectively. Every run captured 30 samples, WebGL 2/GLES 3.0, clean shutdown,
+and zero dropped or CPU-fallback frames. These are one-run implementation
+canaries, not the frozen seven-pair performance qualification, and Aquarium
+remains forbidden on the physical iPad. Phases 3 through 7 have not started;
+they remain gated on a truthful, qualified lower shared baseline and the
+explicit stop conditions below.
 
 In this plan, “maximum” means the highest truthful profile that preserves the
 shared high-performance ANGLE/Metal path. A higher version is rejected when it
@@ -818,8 +836,11 @@ now comprising five GLES 2 and twelve GLES 3 cases, passed in strict order on
 all three products under both page profiles. Selection retained three
 diagnostic non-passes without waiving them: macOS depth-buffer `NotSupported`
 and transform-feedback query failures, plus a Simulator-only GLES 2 texture
-image-comparison failure. The
-performance, thermal, and sustained lifecycle baselines remain missing. The
+image-comparison failure. Single fixed Aquarium canaries now pass on macOS and
+Simulator under both page profiles, including repaired-kernel runs with zero
+dropped or CPU-fallback frames. The seven interleaved performance pairs,
+connected-iPad thermal and sustained lifecycle baselines, and complete
+matrices remain missing. The
 complete caselist attempt also fails closed at
 `dEQP-GL45-ES3` because text enumeration creates an unsupported context; no
 partial digest/count/module set was promoted. Together with the absent
@@ -908,10 +929,13 @@ host, capture all extensions and both complete Virgl capsets, decode every
 known field, record exact cross-product differences, require direct
 presentation, and report zero CPU fallback. ES 3.1 and 3.2
 fail with `EGL_BAD_MATCH` on macOS, Simulator, and iPad, so no Phase 3 profile
-work is authorized by this evidence. The full shipped matrices and frozen
-absolute performance, thermal, and sustained-lifecycle campaigns remain open;
-the missing CTS build receipt and incomplete complete-caselist identity keep
-qualification fail-closed.
+work is authorized by this evidence. Single accepted-artifact Aquarium
+canaries now pass on macOS and Simulator under both page profiles, after topic
+0021 repaired the 4 KiB nested-TLB RCU starvation. They establish workload
+bring-up and zero-fallback coverage only. The full shipped matrices, seven-pair
+performance campaign, connected-iPad thermal gate, and sustained-lifecycle
+campaign remain open; the missing CTS build receipt and incomplete
+complete-caselist identity keep qualification fail-closed.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
@@ -1410,9 +1434,14 @@ GLES 3 identity sentinels also pass on macOS, Simulator, and iPad under both
 16 KiB and 4 KiB guest profiles. The first iPad poweroff's dirty DRM teardown
 was repaired in maintained kernel topic 0020 and followed by three clean
 Simulator plus three clean iPad repetitions, with fail-closed transcript
-validation. The incomplete complete-caselist identity and matrices, absent
-performance/thermal/sustained-lifecycle campaigns, and missing authoritative
-CTS receipt still prevent any new shared capability or conformance claim. A
+validation. Topic 0021 separately preserves precise Darwin nested TLB ranges
+after a 4 KiB Aquarium run exposed repeated full-address-space invalidation and
+RCU starvation; a fresh replay, both LLVM 22 builds, accepted artifacts, and
+clean macOS/Simulator canaries under both page profiles validate the bounded
+repair. The incomplete complete-caselist identity and matrices, absent
+seven-pair performance/connected-iPad thermal/sustained-lifecycle campaigns,
+and missing authoritative CTS receipt still prevent any new shared capability
+or conformance claim. A
 display-backed complete-caselist attempt additionally stops at
 `dEQP-GL45-ES3` with `EGL_BAD_MATCH`; its partial result remains diagnostic
 and the complete identity fields remain null. The committed shared target
