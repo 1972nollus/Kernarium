@@ -399,9 +399,27 @@ def write_partition_image(image: Path, destination: BinaryIO, maximum: int) -> i
         return size
 
 
-def assemble(layout: Layout, images_dir: Path, output: Path) -> None:
+def assemble(
+    layout: Layout,
+    images_dir: Path,
+    output: Path,
+    blank_partition_names: list[str],
+) -> None:
     if images_dir.is_symlink() or not images_dir.is_dir():
         raise DiskError(f"images directory must be a non-symlink directory: {images_dir}")
+    if output.exists() or output.is_symlink():
+        raise DiskError(f"output already exists: {output}")
+    if len(blank_partition_names) != len(set(blank_partition_names)):
+        raise DiskError("blank partition names must not be repeated")
+    partitions_by_name = {partition.name: partition for partition in layout.partitions}
+    blank_partitions: set[str] = set()
+    for name in blank_partition_names:
+        partition = partitions_by_name.get(name)
+        if partition is None:
+            raise DiskError(f"blank partition is absent from the layout: {name}")
+        if not partition.writable:
+            raise DiskError(f"immutable partition cannot be blank: {name}")
+        blank_partitions.add(name)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp.{os.getpid()}")
     if temporary.exists():
@@ -437,7 +455,14 @@ def assemble(layout: Layout, images_dir: Path, output: Path) -> None:
             for partition in layout.partitions:
                 disk.seek(partition.start_bytes)
                 image = images_dir / partition.image
-                used = write_partition_image(image, disk, partition.size_bytes)
+                if partition.name in blank_partitions:
+                    if image.exists() or image.is_symlink():
+                        raise DiskError(
+                            f"blank partition also has an image payload: {partition.name}"
+                        )
+                    used = 0
+                else:
+                    used = write_partition_image(image, disk, partition.size_bytes)
                 print(
                     f"staged {partition.name}: {used}/{partition.size_bytes} bytes "
                     f"at {partition.start_bytes}"
@@ -552,6 +577,7 @@ def main() -> None:
     assemble_parser.add_argument("--layout", type=Path, required=True)
     assemble_parser.add_argument("--images-dir", type=Path, required=True)
     assemble_parser.add_argument("--output", type=Path, required=True)
+    assemble_parser.add_argument("--blank-partition", action="append", default=[])
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--layout", type=Path, required=True)
     verify_parser.add_argument("--disk", type=Path, required=True)
@@ -559,7 +585,12 @@ def main() -> None:
     try:
         layout = load_layout(args.layout.resolve())
         if args.command == "assemble":
-            assemble(layout, args.images_dir.resolve(), args.output.resolve())
+            assemble(
+                layout,
+                args.images_dir.resolve(),
+                args.output.resolve(),
+                args.blank_partition,
+            )
             verify(layout, args.output.resolve())
         elif args.command == "verify":
             verify(layout, args.disk.resolve())

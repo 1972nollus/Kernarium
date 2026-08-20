@@ -24,6 +24,12 @@ MAX_PROGRAM_HEADERS_SIZE = 1 << 20
 
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
+    "IMAGES/odm.img",
+    "IMAGES/product.img",
+    "IMAGES/system.img",
+    "IMAGES/system_ext.img",
+    "IMAGES/userdata.img",
+    "IMAGES/vendor.img",
     "META/misc_info.txt",
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
@@ -66,6 +72,15 @@ MODULE_METADATA = {
     "modules.symbols.bin",
 }
 TARGET_PARTITIONS = {"SYSTEM", "SYSTEM_EXT", "PRODUCT", "VENDOR", "ODM"}
+FORBIDDEN_STATIC_ENTRIES = {
+    "IMAGES/super.img",
+    "IMAGES/super_empty.img",
+    "IMAGES/system_other.img",
+    "IMAGES/vbmeta.img",
+    "IMAGES/vbmeta_system.img",
+    "IMAGES/vbmeta_vendor.img",
+    "META/ab_partitions.txt",
+}
 
 
 def fail(message: str) -> None:
@@ -118,6 +133,16 @@ def reject_module_payload(path: PurePosixPath) -> None:
         fail(f"kernel module directory is forbidden: {path}")
 
 
+def reject_nonstatic_payload(path: PurePosixPath) -> None:
+    canonical = str(path)
+    if canonical in FORBIDDEN_STATIC_ENTRIES:
+        fail(f"nonstatic image or metadata is forbidden: {path}")
+    if path.parts[:2] == ("OTA", "bin"):
+        fail(f"OTA tool payload is forbidden: {path}")
+    if path.parts[0] == "IMAGES" and path.name.endswith("_dlkm.img"):
+        fail(f"DLKM image is forbidden: {path}")
+
+
 def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
     if info.file_size > 1 << 20:
         fail(f"property file is unexpectedly large: {info.filename}")
@@ -127,6 +152,10 @@ def check_property_file(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> None
         if not separator:
             continue
         value = value.strip()
+        if key.startswith("ro.virtual_ab."):
+            fail(f"Virtual A/B property is forbidden in {info.filename}: {key}")
+        if key == "ro.build.ab_update" and value == "true":
+            fail(f"A/B update property is enabled in {info.filename}")
         if key == "ro.product.cpu.abilist32" and value:
             fail(f"32-bit ABI list is not empty in {info.filename}: {value}")
         if key in {"ro.product.cpu.abi", "ro.product.cpu.abilist"}:
@@ -219,6 +248,7 @@ def main() -> None:
             seen.add(canonical)
             infos[canonical] = info
             reject_module_payload(path)
+            reject_nonstatic_payload(path)
             if info.is_dir():
                 continue
             if path.name in {"build.prop", "default.prop"}:

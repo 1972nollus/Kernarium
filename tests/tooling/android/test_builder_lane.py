@@ -70,18 +70,31 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
-                          abi32: bool = False, alignment: int = 16384) -> None:
+                          dynamic_image: bool = False, ota_tool: bool = False,
+                          virtual_ab: bool = False, abi32: bool = False,
+                          alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
                 archive.writestr("META/misc_info.txt", "")
+                for image in (
+                    "odm.img",
+                    "product.img",
+                    "system.img",
+                    "system_ext.img",
+                    "userdata.img",
+                    "vendor.img",
+                ):
+                    archive.writestr(f"IMAGES/{image}", b"image")
                 archive.writestr("ROOT/system_dlkm/", b"")
                 archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 abilist32 = "armeabi-v7a" if abi32 else ""
+                virtual_ab_property = "ro.virtual_ab.enabled=true\n" if virtual_ab else ""
                 archive.writestr(
                     "SYSTEM/build.prop",
                     "ro.product.cpu.abi=arm64-v8a\n"
                     "ro.product.cpu.abilist=arm64-v8a\n"
-                    f"ro.product.cpu.abilist32={abilist32}\n",
+                    f"ro.product.cpu.abilist32={abilist32}\n"
+                    f"{virtual_ab_property}",
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
@@ -92,6 +105,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("VENDOR/bin/dlkm_loader", b"loader")
                 if dlkm_image:
                     archive.writestr("SYSTEM_DLKM/etc/build.prop", "")
+                if dynamic_image:
+                    archive.writestr("IMAGES/super_empty.img", b"dynamic")
+                if ota_tool:
+                    archive.writestr("OTA/bin/updater", b"updater")
 
         good = root / "good.zip"
         write_fixture(good)
@@ -112,6 +129,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("module", {"module": True}),
             ("module-loader", {"module_loader": True}),
             ("dlkm-image", {"dlkm_image": True}),
+            ("dynamic-image", {"dynamic_image": True}),
+            ("ota-tool", {"ota_tool": True}),
+            ("virtual-ab", {"virtual_ab": True}),
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
         ):
@@ -200,7 +220,8 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
         images = root / "images"
         images.mkdir()
         (images / "system.img").write_bytes(b"raw-system")
-        (images / "userdata.img").write_bytes(synthetic_sparse_image())
+        userdata_payload = synthetic_sparse_image()
+        (images / "userdata.img").write_bytes(userdata_payload)
         fixture_layout = root / "layout.json"
         fixture_layout.write_text(
             json.dumps(
@@ -280,6 +301,94 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             if image.read(32) != b"\0" * 32:
                 fail("Android sparse DONT_CARE chunk is not a disk hole")
 
+        existing = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "assemble",
+                "--layout",
+                str(fixture_layout),
+                "--images-dir",
+                str(images),
+                "--output",
+                str(disk),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if existing.returncode == 0:
+            fail("UBD assembler replaced an existing disk without permission")
+
+        (images / "userdata.img").unlink()
+        missing = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "assemble",
+                "--layout",
+                str(fixture_layout),
+                "--images-dir",
+                str(images),
+                "--output",
+                str(root / "missing.img"),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if missing.returncode == 0:
+            fail("UBD assembler silently accepted a missing writable image")
+
+        blank = root / "blank.img"
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(tool),
+                "assemble",
+                "--layout",
+                str(fixture_layout),
+                "--images-dir",
+                str(images),
+                "--blank-partition",
+                "userdata",
+                "--output",
+                str(blank),
+            ],
+            check=True,
+        )
+        with blank.open("rb") as image:
+            image.seek(3 * 1024 * 1024)
+            if image.read(4096) != b"\0" * 4096:
+                fail("explicit blank UBD partition is not zero initialized")
+
+        for label, partition in (("immutable", "system"), ("unknown", "missing")):
+            rejected = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(tool),
+                    "assemble",
+                    "--layout",
+                    str(fixture_layout),
+                    "--images-dir",
+                    str(images),
+                    "--blank-partition",
+                    partition,
+                    "--output",
+                    str(root / f"bad-blank-{label}.img"),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if rejected.returncode == 0:
+                fail(f"UBD assembler accepted an {label} blank partition")
+        (images / "userdata.img").write_bytes(userdata_payload)
+
         with disk.open("r+b") as image:
             image.seek(512 + 20)
             byte = image.read(1)
@@ -342,6 +451,7 @@ def main() -> None:
         android_root / "build/preflight.sh",
         android_root / "build/apply-aosp-patches.sh",
         android_root / "build/build-aosp.sh",
+        android_root / "build/assemble-image.sh",
         android_root / "build/apply-kernel-patches.sh",
         android_root / "build/build-kernel.sh",
         android_root / "build/verify-kernel-elf.py",
@@ -474,6 +584,7 @@ def main() -> None:
     apply_kernel = (android_root / "build/apply-kernel-patches.sh").read_text()
     apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
+    assemble_image = (android_root / "build/assemble-image.sh").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     build_make_patch = next(
@@ -487,6 +598,14 @@ def main() -> None:
         fail("AOSP materializer stages an overlay instead of applying project patches")
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
+    for token in (
+        "verify-target-files.py",
+        "ubd-disk.py",
+        "--blank-partition metadata",
+        'TARGET_FILES_DIR=${TARGET_FILES%.zip}',
+    ):
+        if token not in assemble_image:
+            fail(f"Android disk assembler is missing fixed policy: {token}")
     for token in (
         "command -v zip",
         "--kernel-elf",
@@ -502,6 +621,7 @@ def main() -> None:
         "TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE",
         "PRODUCT_USE_DYNAMIC_PARTITIONS",
         "PRODUCT_BUILD_SUPER_PARTITION",
+        "PRODUCT_BUILD_SYSTEM_OTHER_IMAGE",
         "PRODUCT_VIRTUAL_AB_OTA",
         "AB_OTA_UPDATER",
         "BOARD_AVB_ENABLE",

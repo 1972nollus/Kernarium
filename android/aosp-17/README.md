@@ -112,6 +112,8 @@ The routed UML product selects static storage before inheriting the shared
 Cuttlefish products. This prevents their dynamic-partition and Virtual A/B
 inheritance, properties, postinstall configuration, and OTA-only packages from
 entering the resolved product. It also disables A/B OTA packaging and AVB.
+The unused `system_other` image is disabled because this product has no second
+slot and does not copy preoptimized artifacts from one.
 `build-aosp.sh` rejects any regression in those switches and requires every
 resolved partition capacity to match the JSON layout. AOSP core still assigns
 its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
@@ -128,15 +130,26 @@ Once the static AOSP product emits the declared image names, assemble and
 immediately verify a raw UBD disk locally on the builder with:
 
 ```sh
-android/aosp-17/tools/ubd-disk.py assemble \
-  --layout android/aosp-17/support/image/partition-layout.json \
-  --images-dir /absolute/path/to/product-output \
+android/aosp-17/build/assemble-image.sh \
+  --target-files /absolute/path/to/aosp_uml_arm64_pgagnostic-target_files.zip \
+  --kernel-elf /absolute/path/to/vmlinux \
   --output /absolute/path/to/release/android17-ubd.img
 ```
 
-The assembler accepts ordinary raw images and Android sparse images, expands
-payloads into a sparse host file, rejects overflow and unsafe image paths, and
-writes matching primary and backup GPT metadata. Recheck an existing image
-with the `verify` subcommand. The fixed partition capacities are intentionally
-larger than the initial inherited Cuttlefish dynamic groups; the first static
-product build must still prove every concrete image fits before publication.
+The wrapper revalidates target-files against the selected kernel, consumes its
+adjacent `IMAGES` staging directory, and explicitly leaves `metadata` as the
+zero-filled writable template that Cuttlefish normally creates at assembly
+time. Every other partition requires its declared image. The disk assembler
+accepts ordinary raw images and Android sparse images, expands payloads into a
+sparse host file, rejects overflow and unsafe image paths, refuses to replace
+an existing output, and writes matching primary and backup GPT metadata.
+Recheck an existing image with the `verify` subcommand. The fixed partition
+capacities are intentionally larger than the initial inherited Cuttlefish
+dynamic groups; every concrete image must fit before publication.
+
+The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
+with 4,578 entries and 1,162 verified target executables, then assembled and
+reverified the seven-partition 17,179,869,184-byte GPT disk. The sparse host
+file allocated 1,677,701,120 bytes in that run. This is build and image-layout
+evidence only; it does not claim that the current inherited fstab, VINTF,
+SELinux, or HAL composition boots under UML yet.
