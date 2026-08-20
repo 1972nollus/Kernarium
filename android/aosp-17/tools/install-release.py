@@ -74,9 +74,11 @@ def main() -> None:
     if destination.exists() or destination.is_symlink():
         fail("accepted release is already installed")
 
-    staging_path = Path(tempfile.mkdtemp(
+    staging_parent = Path(tempfile.mkdtemp(
         prefix=f".{manifest['directory_name']}.", dir=destination_root
     ))
+    staging_path = staging_parent / manifest["directory_name"]
+    staging_path.mkdir()
     try:
         copy_declared(source, staging_path)
         expanded_disk = staging_path / "guest/android-17-uml-arm64.img"
@@ -105,8 +107,9 @@ def main() -> None:
             allow_expanded_disk=True,
         )
         os.replace(staging_path, destination)
+        staging_parent.rmdir()
     except BaseException:
-        shutil.rmtree(staging_path, ignore_errors=True)
+        shutil.rmtree(staging_parent, ignore_errors=True)
         raise
 
     print(f"installed Android release: {destination}")
