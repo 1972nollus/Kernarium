@@ -2,10 +2,10 @@
 
 Written 2026-08-20. This is an implementation plan, not a capability,
 Vulkan Profile, or conformance claim. It builds on the measured feasibility
-results in [GPU_BACKEND_FEASIBILITY.md](GPU_BACKEND_FEASIBILITY.md) and assumes
-that production guest userspace graphics libraries must be unmodified upstream
-releases. The guest kernel is not external: this project owns its Linux build,
-`virtio_gpu` driver, UML transport, and maintained patch series.
+results in [GPU_BACKEND_FEASIBILITY.md](GPU_BACKEND_FEASIBILITY.md) and treats
+the exact guest userspace in the current authenticated `rootfs.erofs` as an
+immutable input. The guest kernel is not external: this project owns its Linux
+build, `virtio_gpu` driver, UML transport, and maintained patch series.
 
 Dependency-management assumptions were revised after the 2026-08-20
 centralization under `dependencies/`; paths and workflows in this document
@@ -51,12 +51,12 @@ There are four important qualifications:
 1. The current repository has no usable guest Vulkan path on any Apple
    product. Venus is disabled, capset 4 and blob resources are absent, and the
    required guest/host memory-sharing mechanism is not implemented.
-2. Current upstream Mesa Venus does not transport or advertise
+2. The Mesa Venus installed in the current rootfs does not transport or advertise
    `VK_KHR_portability_subset`. MoltenVK is a portability driver, so an honest
-   production path with the upstream-only guest policy is blocked until that
-   support appears independently in a released Mesa. This project will not
-   author or upload the missing Mesa work. Lowering the core API version to 1.3
-   or earlier does not remove the portability-subset obligation.
+   production path is blocked. A future independently released Mesa could
+   remove the software limitation, but consuming it would require a rootfs
+   replacement that this plan does not authorize. Lowering the core API
+   version to 1.3 or earlier does not remove the portability-subset obligation.
 3. That release gate applies to guest userspace, not to Linux. Required
    `virtio_gpu`, DRM, UAPI implementation, and UML transport changes may be
    carried in the authenticated kernel series; the product need not wait for
@@ -77,8 +77,11 @@ reproducible host probes
     -> capset 4, blob resources, and asynchronous fences
     -> implement/backport required virtio_gpu and UML transport support in the maintained kernel
     -> select and implement the shared-memory model
-    -> wait for an independently released Mesa with Venus portability-subset support
-    -> consume a released unmodified Mesa
+    -> audit future released Mesa and corrected CTS candidates read-only
+    -> ROOTFS AUTHORIZATION STOP: report the exact delta and ask the user
+    -> without explicit authorization: stop; production guest Vulkan remains unsupported
+    -- separately authorized plan revision only -->
+    -> build/sign/provision one authenticated replacement image
     -> headless macOS guest bring-up on the iOS graphics path
     -> direct-GPU macOS scanout plus focused correctness/performance canaries
     -> iPhone 17 Pro Max Simulator same-path canaries
@@ -89,14 +92,19 @@ reproducible host probes
     -> claim only that tested high-performance portability tier, up to 1.4
 ```
 
+The current plan executes only through the authorization stop. The continuation
+after the dashed marker is retained to document downstream dependencies, but it
+must not begin unless the user explicitly authorizes a rootfs replacement in a
+later decision.
+
 ## Scope and invariants
 
 The intended API path is:
 
 ```text
 guest Vulkan application
-    -> upstream Vulkan loader
-    -> released upstream Mesa Venus ICD
+    -> Vulkan loader installed in rootfs.erofs
+    -> Mesa Venus ICD installed in rootfs.erofs
     -> project-maintained Linux virtio_gpu DRM/KMS
     -> project-maintained UML Virtio/vhost-user transport
     -> VirtioGpuDevice
@@ -121,10 +129,11 @@ The following constraints are non-negotiable:
    add a desktop-only GL/Vulkan provider, resource, capset, or fallback path;
    AppKit or VNC may only consume the common presentation output.
 2. Only guest userspace is externally constrained. Development and production
-   use released, unmodified upstream Mesa, libdrm, the Vulkan loader, and the
-   Venus ICD. Do not author, carry, or test a project-patched guest graphics
-   library as a substitute for the missing portability path; it cannot satisfy
-   any plan gate.
+   use the exact Mesa, libdrm, Vulkan loader, Venus ICD/manifest, CTS, WSI, and
+   tools already installed in the current authenticated `rootfs.erofs`. Do not
+   replace, preload, overlay-substitute, rebuild, repackage, or provision any of
+   them, even with a newer unmodified release. A missing guest capability is a
+   hard pause-and-ask condition, not permission to inject a substitute.
 3. Do not hide MoltenVK's portability status, inject extension strings, force
    a higher Vulkan version, or omit required portability
    features/properties. The guest must enumerate, query, and enable the subset
@@ -143,8 +152,9 @@ The following constraints are non-negotiable:
    Simulator, device, and macOS and build only the existing 16 KiB and 4 KiB
    profiles. Prefer standard Virtio-GPU/DRM interfaces; any project-specific
    kernel-to-emulator extension must be negotiated, bounded, invisible to
-   userspace, and expose an upstream-compatible ABI that released Mesa/libdrm
-   already consumes. A private userspace ioctl or library cannot be required.
+   userspace, and expose a standard-compatible ABI that the exact Mesa/libdrm
+   installed in `rootfs.erofs` already consumes. A private userspace ioctl or
+   library cannot be required.
    Any new graphics Kconfig support belongs built-in in
    `kernel/config/common.fragment` because loadable modules remain disabled;
    page fragments vary only genuine page-derived values.
@@ -168,13 +178,13 @@ The following constraints are non-negotiable:
     Vulkan acceptance gate.
 14. External-project access is fetch-only. Never push a branch, open or update
     a pull request, merge request, or issue, send a patch or email, or upload
-    an artifact to an external project. First-party emulator, test, and rootfs
-    build/orchestration changes live directly in this repository; third-party
+    an artifact to an external project. First-party emulator and test-orchestration
+    changes live directly in this repository; third-party
     virglrenderer, MoltenVK, or ANGLE source changes live only in
     `dependencies/patches`; Linux changes live only in `kernel/patches`.
-    Qualification CTS source and guest Mesa, libdrm, loader, and ICD remain
-    unmodified released inputs; a missing guest-userspace capability is an
-    external wait condition, not permission to patch or contact that project.
+    The exact installed qualification CTS and guest Mesa, libdrm, loader, and
+    ICD remain unchanged; a missing guest-userspace capability is a stop
+    condition, not permission to patch or contact that project.
 15. Bounded command decoding, validation, resource bookkeeping,
     synchronization, and shader compilation are ordinary control-plane work.
     Data-plane feature emulation on the CPU is forbidden when work scales with
@@ -186,6 +196,16 @@ The following constraints are non-negotiable:
     candidate with the immediately lower truthful tier; and keep the lower tier
     when correctness, performance, memory, thermals, lifecycle, or frame pacing
     fails. CTS or Profiles-tool success cannot override that decision.
+17. The current `rootfs.erofs` and `tools/rootfs/manifest.json` are read-only
+    evidence, not work products. Do not build, sign, provision, replace, or
+    modify the image; do not install a package, replace an ICD JSON, or use
+    preload/OverlayFS to inject graphics libraries, CTS executables/resources,
+    tools, WSI components, permissions, or service rules. Disposable overlay,
+    `/run`, and scratch storage remain available only for first-party campaign
+    scripts, transient configuration, and bounded output. If any guest byte
+    must change, stop before preparing the replacement, report the exact
+    released inputs and artifact delta, explain the ceiling if declined, and
+    ask the user for explicit authorization.
 
 The maximum GL/GLES work is specified separately in
 [MAX_GL_GLES_SUPPORT_PLAN.md](MAX_GL_GLES_SUPPORT_PLAN.md). That path is
@@ -202,7 +222,7 @@ qualification, or performance path.
 | Repository device protocol | Virgl capsets 1/2; no Venus capset 4 or blob commands | guest cannot discover or use Venus |
 | Current renderer split (historical removal input) | macOS selects upstream virglrenderer 1.3.0 plus CGL from the static desktop aggregate, while iOS selects the UTM virglrenderer/ANGLE topic through `dependencies/build-ios-gpu.sh`; both pass `-Dvenus=false` | this divergence must be deleted, not preserved as a migration preset or fallback; the common Apple-GPU product becomes macOS's only graphics provider |
 | Accepted Vulkan host dependencies | no Vulkan-Headers, MoltenVK, or SPIRV-Cross manifest row, prefix payload, imported target, platform component, or package slice | the local MoltenVK build cannot enter a production claim; a new common Apple-GPU product is required |
-| Maintained guest kernel | pinned Linux 6.18 already contains the standard Virtio-GPU blob, context-init, Venus capset, and DRM UAPI, but the UML transport lacks the complete shared-region/guest-VRAM implementation needed by Venus | kernel/UML work is an owned production deliverable, not an external ceiling; preserve the released-userspace ABI and patch the implementation through the maintained common series |
+| Maintained guest kernel | pinned Linux 6.18 already contains the standard Virtio-GPU blob, context-init, Venus capset, and DRM UAPI, but the UML transport lacks the complete shared-region/guest-VRAM implementation needed by Venus | kernel/UML work is an owned production deliverable, not an external ceiling; preserve the ABI consumed by the current rootfs and patch the implementation through the maintained common series |
 | Current signed rootfs | Debian Mesa 25.0.7; Virtio ICD manifest reports API 1.3.305 | mechanical guest-ICD ceiling is 1.3.305 even after transport work |
 | Candidate upstream guest Mesa | Mesa 25.1 and later can advertise Vulkan 1.4 | version is sufficient, but portability-subset transport is still missing |
 | Prepared virglrenderer 1.3.0 Venus | `VKR_MAX_API_VERSION` caps the major/minor API at Vulkan 1.4; generated protocol inputs use Vulkan headers 1.4.334 | establishes a 1.4 design cap, not a 1.4.334 profile, conformance, or patch-level ceiling |
@@ -232,31 +252,29 @@ dma-buf behavior.
 | Current repository | none | none | none | no guest Venus Vulkan |
 | Host/transport prototype with current rootfs | experimental only | experimental only | experimental only | at most enumeration/smoke evidence; not an honest MoltenVK portability profile |
 | Project-patched guest Mesa/libdrm/loader/ICD | forbidden | forbidden | forbidden | not a development or qualification state in this plan |
-| Future independently released Mesa carrying portability support, current rootfs otherwise upgraded | up to 1.4 + portability subset on the first development lane | same conditional shared-path ceiling; required iOS validation | same conditional ceiling; mandatory device performance qualification | report the highest API tier and optional features that pass correctness and the frozen performance budget on every required platform |
+| Future released Mesa/CTS inputs exist but rootfs replacement is not authorized | paused | paused | paused | report the exact proposed image delta and keep production Vulkan unsupported while awaiting user direction |
+| Separately user-authorized future rootfs replacement | conditionally up to 1.4 + portability subset | same conditional shared-path ceiling | same conditional ceiling | outside the executable scope of this plan until explicit authorization; after a revised plan, report only the tier passing all gates |
 
 A maintained kernel/UML patch does not make a result “custom guest userspace”
 or lower the permitted claim. A patched Mesa, libdrm, loader, or Venus ICD is
 prohibited rather than a fallback state; the maintained kernel is an
 authenticated part of this emulator product.
 
-Under this policy, today's production ceiling is no usable guest Venus Vulkan,
+Under the immutable-rootfs policy, today's production ceiling is no usable guest Venus Vulkan,
 not Vulkan 1.3: lowering the core version does not remove MoltenVK's mandatory
 portability-subset path. Vulkan 1.4 plus the subset remains a conditional
-target only if a future unmodified Mesa release independently supplies the
-missing support. There is no full software-emulation alternative. If no such
-release appears, production Venus remains unsupported. After a qualifying
-release exists, if a higher tier cannot be implemented through efficient Metal
-GPU behavior, cap production at the last lower tier whose complete requirements
-pass.
+architectural target only if a future unmodified Mesa release independently
+supplies the missing support and the user separately authorizes replacing the
+image. There is no full software-emulation alternative. Without both
+conditions, production Venus remains unsupported.
 
 The current rootfs's 1.3.305 manifest is not a useful reason to promise Vulkan
-1.3. The implementation should remain version-capable through 1.4, then update
-the signed whole rootfs to a released, unmodified Mesa containing portability
-support and protocol capability sufficient for the selected candidate tier,
-up to Vulkan 1.4. Negotiate no higher than the measured performance-qualified
-tier. If the released components or performance gates
-intersect at a lower major/minor version, claim that lower result and record
-the instance, requested-instance, and physical-device API values separately.
+1.3. Host, renderer, and kernel implementation may remain version-capable
+through 1.4, but this plan must not update the signed rootfs to consume a later
+Mesa. If a suitable release appears, audit it read-only, prepare an exact
+proposed component/artifact delta without building the image, pause, and ask
+the user. If authorization is declined, record the terminal shipping result as
+unsupported.
 Mesa 25.1's
 release notes record the
 [return of Venus Vulkan 1.4 support](https://docs.mesa3d.org/relnotes/25.1.0.html),
@@ -265,8 +283,8 @@ but API-version support alone does not solve portability.
 At the Mesa main revision audited for this plan, Venus's
 [complete passthrough-extension whitelist](https://gitlab.freedesktop.org/mesa/mesa/-/blob/302736bcf272ccf12572879dcc6846196a45f143/src/virtio/vulkan/vn_physical_device.c#L1240-1484)
 still omits `VK_KHR_portability_subset`, and its generated Venus protocol has
-no codecs for the subset feature/property structures. This is the specific
-upstream release gate, not an inference from the current rootfs alone.
+no codecs for the subset feature/property structures. This identifies what a
+future candidate must contain; it does not authorize consuming that candidate.
 
 [`VK_KHR_portability_enumeration`](https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_portability_enumeration.html)
 controls discovery of portability devices. MoltenVK must be enumerated with
@@ -276,7 +294,7 @@ describes the missing or restricted device behavior and must be exposed,
 queried, transported, and enabled when supported. These are distinct
 requirements. MoltenVK's own documentation describes it as a
 [Vulkan 1.4 subset implementation](https://github.com/KhronosGroup/MoltenVK#moltenvk-and-vulkan-compliance).
-The released guest ICD also needs the loader's documented
+Any future candidate guest ICD also needs the loader's documented
 [`is_portability_driver` manifest contract](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderDriverInterface.md#driver-manifest-file-version-101),
 so guest applications enumerate it through the standard portability path.
 
@@ -389,8 +407,8 @@ provides the exact MoltenVK `PFN_vkGetInstanceProcAddr` to
 valid until callbacks/fences drain and teardown completes. Build host Venus
 with Vulkan dynamic loading disabled. It must not resolve a host Vulkan Loader,
 ICD JSON, `VK_ICD_FILENAMES`, ambient `vulkan.pc`, or generic `dlopen`. This is
-separate from the guest, which continues to use the upstream Vulkan Loader and
-released Mesa Venus ICD manifest.
+separate from the guest, which continues to use the Vulkan Loader and Mesa
+Venus ICD manifest already installed in `rootfs.erofs`.
 
 Use a dynamic MoltenVK framework as the production package contract. Dependency
 builds emit verified unsigned platform framework slices; packaging assembles
@@ -431,8 +449,9 @@ Classify every enabled path as Metal-native, GPU-lowered, bounded CPU
 control-plane work, or forbidden CPU data-plane emulation. Do not enable a
 feature with unknown classification. If mandatory behavior for a proposed API
 tier cannot remain Metal-native/GPU-lowered within the performance budget, cap
-the advertised tier through ordinary Venus negotiation. If released guest
-userspace cannot consume that cap truthfully, keep production Venus disabled.
+the advertised tier through ordinary Venus negotiation. If the current
+rootfs's guest userspace cannot consume that cap truthfully, keep production
+Venus disabled.
 Omit costly optional features/extensions rather than chasing a named Profile.
 
 Audit at least `src/venus/vkr_instance.c`, `vkr_renderer.c`, allocator and
@@ -449,7 +468,8 @@ Own this boundary end to end: extend the local device protocol and, wherever
 its implementation is incomplete, patch the maintained Linux
 `virtio_gpu`/UML transport. The pinned kernel already carries the standard
 Venus DRM UAPI, so retain its ioctl numbers and structure layouts and implement
-the behavior required by the exact released guest Mesa. Do not wait for a
+the behavior required by the exact Mesa 25.0.7 userspace installed in the
+current rootfs. Do not wait for a
 later Linux release. Keep standard wire definitions aligned with the
 [Virtio specification](https://docs.oasis-open.org/virtio/virtio/v1.3/virtio-v1.3.html),
 not a repository-private approximation:
@@ -470,18 +490,18 @@ not a repository-private approximation:
 - propagate execbuffer ring index and BO handles to submit-3D and preserve
   `VIRTIO_GPU_FLAG_INFO_RING_IDX`; and
 - support the standard blob memory, flags, map-cache, and UUID values actually
-  exercised by the selected released userspace, plus only the explicitly
-  versioned released-Mesa/virglrenderer guest-VRAM extension described below.
+  exercised by the current rootfs userspace, plus only an explicitly versioned
+  guest-VRAM extension that a read-only trace proves that userspace consumes.
 
-Match the released Mesa DRM transcript explicitly:
+Match the current rootfs Mesa DRM transcript explicitly:
 
 | Guest operation | Required maintained-kernel/host behavior |
 | --- | --- |
-| `GETPARAM` | report 3D, capset-query-fix, resource-blob, and context-init only when complete; report host-visible or the exact selected-release guest-VRAM route truthfully |
+| `GETPARAM` | report 3D, capset-query-fix, resource-blob, and context-init only when complete; report host-visible or an exact current-image-proven guest-VRAM route truthfully |
 | `GET_CAPS` | return Venus capset 4/version 0 with exact renderer bytes, including wire-format, extension, blob-ID-0, wait-sync, timeline, and guest-VRAM fields |
 | `CONTEXT_INIT` | accept capset 4, 64 rings, and poll-rings mask 0; preserve per-file context/ring ownership |
 | Ring/reply shared memory | create HOST3D + MAPPABLE + blob ID 0, then support DRM map and `mmap`; this remains required even when Vulkan device BOs use guest-VRAM |
-| Device BO | use HOST3D when host-visible is supported, otherwise the exact guest-VRAM route; return accurate resource-info blob memory and rounded size |
+| Device BO | use HOST3D when host-visible is supported, otherwise an exact current-image-proven guest-VRAM route; return accurate resource-info blob memory and rounded size |
 | Submit/sync | carry execbuffer ring index and BO handles to submit-3D, preserve info-ring-index, and return a guest-local fence fd when requested |
 | Close/reset | `munmap`, GEM close, context/file close, owner reset, and disconnect revoke renderer access and drain delayed responses before backing disappears |
 
@@ -511,7 +531,7 @@ be presented as one host pointer. Select one of the following designs only
 after testing its complete allocation, mapping, cache, and teardown behavior.
 
 Before choosing device memory, implement the control-plane memory class that
-the audited released Mesa Venus path always needs: ring/reply shared memory is
+the current rootfs Mesa Venus path always needs: ring/reply shared memory is
 a small HOST3D, mappable, blob-ID-0 resource followed by the standard map ioctl
 and `mmap`.
 Guest-VRAM does not replace this class. Every viable design therefore supplies
@@ -527,9 +547,16 @@ Newer upstream Mesa contains a Venus guest-VRAM path using
 provide the complete implementation needed here, but that work is owned by
 this repository and may be carried in the maintained kernel series.
 
-For the audited released-Mesa route, getparam 9 and blob memory value `0x4`
+That future-source observation does not authorize selecting the route. Use
+guest-VRAM in executable work only if a read-only audit of the exact Mesa
+25.0.7 binary/source identity in the current rootfs proves the same transcript;
+otherwise reject it for the immutable-image plan and use a route the installed
+userspace already supports. It may remain only a synthetic future-candidate
+test behind the Phase 5 authorization stop.
+
+For a current-image guest-VRAM route proven by that audit, getparam 9 and blob memory value `0x4`
 are an exact Mesa/virglrenderer guest-VRAM extension rather than Virtio 1.3
-core. Pin the selected released Mesa call transcript, do not renumber existing
+core. Pin the exact current Mesa call transcript, do not renumber existing
 UAPI, return `EINVAL` for unknown parameters or memory types, and advertise
 this route only when its complete heap, resource-info, renderer, and mapping
 semantics exist. A guest-VRAM heap without the separate HOST3D ring/reply map
@@ -580,8 +607,8 @@ IDs, permissions, cache mode, rollback, reset, and ownership when the backend
 disconnects. Do not introduce a Darwin-private command if the standardized
 mechanism suffices.
 
-Choose guest-owned VRAM only if released upstream Mesa can use it without a
-custom guest library, the mandatory HOST3D ring/reply mapping also works, and
+Choose guest-owned VRAM only if the exact Mesa 25.0.7 in the current rootfs can
+use it without a custom guest library, the mandatory HOST3D ring/reply mapping also works, and
 every required MoltenVK allocation class works without a steady-state bounce
 or repacking path. Choose the standardized aperture if that route is
 incomplete, cannot cover images, requires CPU-heavy copying, or requires a
@@ -613,9 +640,16 @@ automatically interchangeable with ANGLE's Metal texture export.
 
 The authenticated guest image already contains a VK-GL-CTS 1.4.5.5-labeled
 installation and can drive the implementation from first enumeration through
-the Vulkan ceiling. Its current build is immediately useful for development,
-but an audited build-configuration defect and missing source/build receipt mean
-it must be rebuilt before it becomes qualification evidence.
+the host/kernel development ceiling. Its current build is immediately useful
+for development, but an audited build-configuration defect and missing
+source/build receipt make it ineligible for qualification while the image is
+immutable.
+
+Before Phase 5 receives explicit rootfs authorization, execute only the
+installed binary's no-device identity/harness cases and failure-localization
+runs. Positive portability enumeration, feature tests, full/current-manifest
+shards, WSI qualification, and the Profiles tool are dormant even if the host
+and kernel prototype is ready.
 
 ### Audited inventory and trust boundary
 
@@ -652,12 +686,10 @@ and the ELF are AArch64, reports release name `unknown`, release ID
 `0xcafebabe`, and target `Default`. `DE_CPU` can select compiled behavior, so
 this is more than a cosmetic metadata discrepancy. Keep using the binary for
 bring-up and regression localization, but label its results development-only.
-Before any qualification gate, rebuild VK-GL-CTS from authenticated,
-unmodified release source configured so `info.build` reports `DE_CPU_ARM_64` and real
-release metadata, then provision the binary, source, Amber/data archives,
-current manifest, and all generated leaf lists as one signed whole-image
-update. Re-audit the new build report, ELF, build ID, caselist counts, and
-resource/list digests.
+Do not rebuild, stage, provision, or overlay-inject a corrected CTS. If Vulkan
+qualification is requested, stop first, report the required unmodified CTS
+input and exact proposed image delta together with the Mesa delta, and ask the
+user. Until explicit authorization, qualification remains unavailable.
 
 ### Exact invocation and artifact contract
 
@@ -683,7 +715,10 @@ watchdog/crash handlers off in the baseline command until focused UML
 timer/signal/crash tests qualify them; the outer shard timeout remains
 mandatory.
 
-Use the suite's native current-manifest fraction contract for broad campaigns:
+After the Phase 5 authorization gate only, use the suite's native
+current-manifest fraction contract for broad campaigns. The command is
+documented here but is not executable under the current immutable-rootfs
+policy:
 
 ```sh
 cd /opt/vk-gl-cts/vulkan
@@ -699,7 +734,7 @@ export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/virtio_icd.json
   --deqp-test-oom=disable
 ```
 
-Development may defer video until presentation/video prerequisites are ready,
+In the separately authorized qualification branch, development may defer video until presentation/video prerequisites are ready,
 but final current-manifest qualification executes its leaf. Unsupported video
 must be reported naturally from truthful feature discovery; advertised video
 support requires its authenticated sample data. Missing required resources are
@@ -755,7 +790,11 @@ only the gadget or JIT engine, never the interpreter.
 
 ### Development ladder mapped to implementation work
 
-Run each gate first on macOS for fast iteration, repeat the identical
+Pre-authorization work is limited to the installed 19-case identity/no-device
+baseline, runner/QPA/sharding mechanics, LVP rejection, and host/synthetic
+compatibility tests. The positive numbered ladder below is dormant until Phase
+5 is explicitly authorized and a corrected image is available. Then run each
+gate first on macOS for fast iteration, repeat the identical
 backend/configuration on the iPhone 17 Pro Max Simulator for iOS validation,
 and require the connected iPad before the capability is qualified:
 
@@ -819,7 +858,7 @@ macOS iteration data and Simulator duration/peak-memory measurements. Each
 shard records its first
 and last case, exact count/digest, page profile, platform, and resources.
 
-On the connected iPad retain the normal 1,536 MiB guest, no swap or disk-backed
+For the separately authorized qualification branch, on the connected iPad retain the normal 1,536 MiB guest, no swap or disk-backed
 memory workaround, and one CTS process/shard at a time. Boot a fresh guest at
 each shard boundary, disable deliberate OOM tests and routine image/shader
 logging, bound QPA size, export it immediately, and monitor guest/host memory,
@@ -846,10 +885,12 @@ framework/must-pass sources read-only to find a failed test's feature predicate
 and expected behavior and reduce it to an exact unmodified-case rerun. Record a
 minimal reproducer and analysis only in this repository. Do not patch or
 instrument the qualification CTS, change discovery/expected results/lists, or
-submit/upload a fix externally. A genuine CTS defect blocks promotion until a
-later released, unmodified CTS fixes it or an exact pre-existing Khronos waiver
-applies. Promotion uses a correctly identified `/opt` executable and matching
-current manifest/resources in one authenticated rootfs.
+submit/upload a fix externally. A genuine CTS defect blocks promotion unless
+an exact pre-existing Khronos waiver applies. Record any later unmodified CTS
+correction as a possible resolution, then pause and ask before changing the
+image. The installed executable remains development-only; producing a
+correctly identified qualification set is a rootfs authorization checkpoint,
+not an action in this plan.
 
 ## Implementation phases
 
@@ -904,13 +945,13 @@ current manifest/resources in one authenticated rootfs.
    attach to or terminate a live Kernarium guest merely to obtain host
    capabilities, and do not silently substitute another physical target.
 8. The current image does not contain `vulkaninfo`. Force the Virtio ICD and
-   capture the expected no-device result with `deqp-vk` information cases or a
-   repository-owned machine-readable probe, plus the exact Mesa/ICD identity.
-   Record LVP only as a separately labeled harness control. Add a released,
-   authenticated `vulkan-tools` package only through a whole-image update if its
-   additional report is worth maintaining.
+   capture the expected no-device result with the installed `deqp-vk`
+   information cases plus host-side parsing of the exact Mesa/ICD identity.
+   Record LVP only as a separately labeled harness control. Do not add Vulkan
+   Tools or inject a guest probe; if the installed information cases are
+   insufficient for a required decision, pause and ask the user.
 9. Freeze the pinned kernel's standard Virtio-GPU/DRM layouts and the exact
-   released-Mesa getparam, capset, context-init, HOST3D ring/reply blob,
+   current-rootfs Mesa getparam, capset, context-init, HOST3D ring/reply blob,
    device-BO, resource-info, map/mmap, execbuffer/fence, GEM-close, and reset
    transcript. Record current failures and add a sentinel rejecting any private
    userspace ioctl or library dependency.
@@ -921,9 +962,11 @@ current manifest/resources in one authenticated rootfs.
    delta, and next-version policy obligations.
 11. Inventory the in-image CTS executable, source, resources, current manifest,
    mandatory fraction, leaf lists, build ID, case counts, and digests. Preserve
-   the measured bad `info.build` CPU/release metadata as a test that the
-   qualification rebuild must fix, and recover or recreate a source/build
-   receipt rather than inferring provenance from co-location.
+   the measured bad `info.build` CPU/release metadata as a frozen qualification
+   blocker, and recover an existing authoritative source/build receipt
+   read-only rather than inferring or recreating provenance from co-location.
+   Do not change the image or its manifest; failed receipt recovery remains a
+   blocker.
 12. Bring up the dedicated CTS driver through manifest expansion, exact-case
    sharding, QPA export, and software-ICD rejection. It must fail closed on LVP,
    a malformed/truncated QPA, an incomplete shard, or an unclean shutdown.
@@ -934,7 +977,7 @@ current manifest/resources in one authenticated rootfs.
 
 Exit: macOS is the daily raw MoltenVK development baseline, the Simulator has
 required same-path iOS evidence, the connected iPad has the mandatory
-qualification baseline, current guest absence is reproducible, and the shared
+physical-device prototype baseline, current guest absence is reproducible, and the shared
 protocol plus iOS ANGLE GPU workflows remain green. CTS identities and the
 current case universe are frozen, and the campaign driver proves that it cannot
 mistake LVP or an incomplete artifact for Venus success. The lower-tier and
@@ -1005,9 +1048,10 @@ the packaged app contains one MoltenVK copy.
    throughput with Venus absent, enabled but unused, and used. Lazily create
    MoltenVK/Venus state where the single-session lifetime permits it; unused
    Vulkan support must not materially regress the primary GL path.
-7. Use macOS host unit/sanitizer and guest tests as the primary iteration gate,
-   then run the identical behavioral probe on the Simulator. Run the focused
-   renderer/device probe on the connected iPad before phase exit.
+7. Use macOS host unit/sanitizer and current-image no-device/GL-regression guest
+   tests as the primary iteration gate, then run the identical behavioral probe
+   on the Simulator. Run the focused host renderer/device probe on the connected
+   iPad before phase exit. Positive guest portability tests remain dormant.
 8. Keep `-Dvenus=false` in the accepted production products until the backend
    initializes without false capability advertisement.
 9. Represent the opt-in Venus state in the experimental product's common recipe
@@ -1030,7 +1074,7 @@ accepted `apple-gpu` membership and platform contracts.
 2. Add exact VIRGL/resource-blob/context-init negotiation, capset 4/version 0,
    blob/map-info commands, ring-index propagation, and resource tables with
    strict validation.
-3. Add a maintained-kernel/host compatibility harness for the released Mesa
+3. Add a maintained-kernel/host compatibility harness for the current-rootfs Mesa
    getparam, get-caps, context-init, ring/reply blob, device-BO, execbuffer,
    fence, map/mmap, resource-info, GEM-close, and reset transcript. Keep the
    production feature bits disabled while using an explicit experimental gate
@@ -1053,9 +1097,13 @@ remains off until Phase 5.
 
 ### Phase 4: implement the selected shared-memory mechanism
 
-Run both memory spikes with small focused host/guest payloads on macOS first,
-unchanged on the Simulator for iOS validation, and on the connected iPad before
-making the selection final. Select one using released-userspace compatibility,
+Run both memory spikes with small focused host/kernel compatibility payloads on
+macOS first, unchanged on the Simulator for iOS validation, and on the
+connected iPad before making the selection final. An experimental guest
+run may use only executables already installed in the immutable image and may
+not claim a portability device. If no installed executable can exercise the
+needed behavior, use the host/synthetic compatibility harness or pause and ask;
+do not inject a payload. Select one using current-rootfs compatibility,
 direct buffer/image coverage, coherent semantics, code size, memory overhead
 at 1.5 GiB, reset safety, and cross-platform behavior. Reject any design that
 works only on macOS or requires steady-state full-resource CPU bounce,
@@ -1064,10 +1112,10 @@ repacking, or serialization.
 The kernel side is an owned Phase 4 deliverable, not a conditional external
 dependency. Complete it as follows for whichever device-memory route wins:
 
-1. Preserve the released-Mesa transcript and all existing Virtio-GPU DRM ioctl
+1. Preserve the current-rootfs Mesa transcript and all existing Virtio-GPU DRM ioctl
    numbers, structures, getparams, errors, and mmap behavior. Implement the
    mandatory HOST3D/mappable/blob-ID-0 ring/reply path plus either truthful
-   host-visible device blobs or the exact selected-release guest-VRAM route.
+   host-visible device blobs or an exact current-image-proven guest-VRAM route.
 2. For guest-VRAM, reserve and charge a bounded UML heap, implement the exact
    getparam/blob-memory values, accurate resource-info memory type and rounded
    size, GEM mmap bounds, and revocation before renderer or guest-memory
@@ -1101,16 +1149,18 @@ dependency. Complete it as follows for whichever device-memory route wins:
    macOS, Simulator, and device and select capabilities at runtime. Inclusion
    in a later external Linux release is not a product gate.
 
-Exit: Venus initializes through the required HOST3D ring/reply mapping and
-coherent buffer/image round trips use the selected direct device-memory route under
-both guest page profiles on macOS and Simulator. The connected iPad passes the
-required memory and performance campaign with no steady-state bounce path, and
-allocation pressure, invalid maps, backend reconnect, and teardown leave no
-stale host access.
+Exit: the host/kernel compatibility harness and synthetic Venus client prove
+the required HOST3D ring/reply mapping and coherent buffer/image round trips on
+both page profiles, macOS first, Simulator second, and connected iPad last. Any
+current-image guest result remains development-only, production feature
+advertisement remains off, and the phase makes no portability-device claim.
+Allocation pressure, invalid maps, backend reconnect, and teardown leave no
+stale host access or steady-state bounce path.
 
-### Phase 5: wait for and consume released guest-userspace portability support
+### Phase 5: audit the external gate, then pause for rootfs authorization
 
-This is an external release gate, not project implementation work. Do not
+This is an external release and user-authorization gate, not project
+implementation work. Do not
 modify, patch, submit, or upload Mesa, libdrm, the Vulkan loader, or the Venus
 ICD. Monitor independently published releases and audit a candidate unmodified
 release only after it is available. It must already contain all of the
@@ -1128,20 +1178,30 @@ following:
 - protocol/version compatibility with renderers that do not expose the
   extension.
 
-Do not create a locally patched Mesa prototype or custom rootfs to bypass this
-gate. Host, renderer, protocol, and maintained-kernel work may continue behind
-experimental feature advertisement and synthetic compatibility tests, but
-honest guest enumeration, end-to-end CTS, and product qualification remain
-blocked until the independently released guest userspace satisfies the list.
+The candidate image would also need a correctly ARM64-identified, unmodified
+CTS executable with matching source/resources/current must-pass data. Audit
+those candidate inputs read-only and prepare only a written proposed delta:
+exact released versions, files/components that would change, expected guest
+API consequence, qualification coverage, and the shipping ceiling if the
+change is declined. Do not edit `tools/rootfs/manifest.json`, prepare an image,
+build/sign it, run provisioning, install packages, or inject the candidates
+through OverlayFS.
 
-Exit: an independently released, unmodified Mesa contains the complete
-support, and the signed EROFS image is rebuilt and provisioned as a whole with
-that release. The same whole-image update contains the correctly rebuilt,
-ARM64-identified pinned unmodified CTS executable and matching
-source/resources/current must-pass data. Only then may capset 4 be enabled in a
-production configuration or CTS results be treated as qualification evidence.
+Then stop and ask the user. Host, renderer, protocol, and maintained-kernel
+work may continue behind experimental feature advertisement and synthetic
+compatibility tests, but honest guest enumeration, end-to-end CTS, production
+capset 4, and product qualification remain blocked. If authorization is
+declined or absent, record the terminal production result as unsupported.
+
+Exit: **blocked awaiting explicit user direction.** Phase 6 may begin only
+after the user separately authorizes the precise rootfs replacement and a
+revised, authenticated whole-image workflow completes. No such update is
+authorized by this plan.
 
 ### Phase 6: headless common-path guest bring-up, macOS first
+
+This and Phases 7-9 are dormant downstream work. They cannot start with the
+current immutable rootfs or merely because a suitable release exists.
 
 1. Enable Venus and the selected memory model without scanout on macOS. Keep
    this as the continuous guest-development lane, using only the common
@@ -1150,14 +1210,13 @@ production configuration or CTS results be treated as qualification evidence.
    accidentally installed second ICD.
 3. Run allocation/map/flush/invalidate, transfer, compute, rendering,
    synchronization, query, descriptor, pipeline-cache, and reset smoke tests.
-4. Capture the `dEQP-VK.info.*` QPA and the repository-owned machine-readable
-   feature/property/extension report. If an authenticated released Vulkan Tools
-   package was deliberately added to the rebuilt image, capture `vulkaninfo --summary`
-   too; do not make an absent ambient tool a prerequisite.
+4. Capture the `dEQP-VK.info.*` QPA and a host-side machine-readable
+   feature/property/extension summary derived from installed-tool output. Do
+   not require or install Vulkan Tools or another guest probe.
 5. Evaluate available core tiers in ascending order. Classify every required
    behavior and omit costly optional features. Do not expose the next tier if
    any mandatory operation is prohibited CPU emulation or cannot be capped
-   truthfully through released userspace.
+   truthfully through the authorized image's exact guest userspace.
 6. After the focused correctness sentinel, run the matched macOS performance
    canary, the same Simulator canary, and a short connected-iPad
    performance/thermal canary before broad CTS. Compare with the immediately
@@ -1299,9 +1358,9 @@ tier; otherwise the lower high-performance result is the intended outcome.
 | Common Apple GPU build | planned `dependencies/build-apple-gpu.sh`, `dependencies/cmake/AppleGpuDependencies.cmake`, `dependencies/cmake/VerifyAppleGpuPrefix.cmake` | emit and verify separate macOS/Simulator/device prefixes from one recipe with distinct `gl_provider=angle-metal` and `vk_provider=venus-moltenvk` fields; inject MoltenVK only into Venus, install provenance, remain offline, fail on cross-facade edges or a second provider, and retire the iOS-only builder after atomic migration |
 | macOS dependency cleanup | `dependencies/manifest.tsv`, `dependencies/build.sh`, `dependencies/verify-prefix.sh`, `dependencies/cmake/UmlThirdPartyTargets.cmake` | remove desktop libepoxy/virglrenderer/CGL graphics rows, recipes, and imports while retaining only required non-graphics macOS dependencies |
 | Thin product packaging | `Kernarium/scripts/package-ios-frameworks.sh`, `Kernarium/Kernarium.xcodeproj/project.pbxproj`, macOS runtime-closure verification | assemble/sign one app-level MoltenVK framework and verify thin AppKit/UIKit embed/rpath/lifecycle shells without changing or supplementing the common renderer implementation |
-| Guest kernel graphics | maintained Linux `drivers/gpu/drm/virtio/virtgpu_*`, applicable Virtio-GPU DRM UAPI implementation, `arch/um/drivers/virtio_uml.c`, and UML physical/IOMEM/MM code as selected | preserve the released-userspace ioctl transcript; implement ring/reply HOST3D mapping, guest-VRAM or host-visible device memory, context/ring/fence semantics, shared-region negotiation, resource-info, mmap, and reset in one runtime-negotiated artifact per page profile |
+| Guest kernel graphics | maintained Linux `drivers/gpu/drm/virtio/virtgpu_*`, applicable Virtio-GPU DRM UAPI implementation, `arch/um/drivers/virtio_uml.c`, and UML physical/IOMEM/MM code as selected | preserve the current-rootfs userspace ioctl transcript; implement ring/reply HOST3D mapping, guest-VRAM only if current-image-proven or otherwise host-visible device memory, context/ring/fence semantics, shared-region negotiation, resource-info, mmap, and reset in one runtime-negotiated artifact per page profile |
 | Kernel series and verification | `kernel/patches/series/`, `kernel/patches/metadata.env`, ownership/outside-port/overlap/extraction/next-version policy, `kernel/README.md`, and kernel tooling tests | own generated topic identities, reviewed final tree/delta, bridge-ABI changes only when necessary, offline replay, and LLVM 22 builds of both page profiles; inclusion in a later external Linux release is not a product gate |
-| Rootfs | `tools/rootfs/manifest.json`, provisioning inputs and tests | consume released unmodified Mesa portability support and a correctly identified, matched CTS executable/source/resource/must-pass set as one signed whole image |
+| Immutable rootfs authorization boundary | read-only `rootfs.erofs`, `tools/rootfs/manifest.json`, installed Mesa/ICD/CTS identities, and repository evidence | preserve the image and manifest unchanged; add only read-only identity/immutability checks; document any proposed image delta and stop to ask the user before all build/sign/provision work |
 | CTS and guest tests | `tests/integration/gpu/run_vk_cts.py`, shared QPA/artifact support, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/kernel/rootfs tooling tests, `tests/test-manifest.tsv` | manifest expansion, ICD/device identity, deterministic shards, QPA egress/parsing, protocol, memory, portability, package, lifecycle, guest, and conformance gates |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | retain source-preparer, patch-regenerator, build-manifest, prefix-verifier, and runtime-closure gates; add offline transitive-source, three-platform recipe/payload, concurrent-publication, direct-loader, and one-copy-package fixtures |
 | Documentation | this plan, feasibility report, implementation plan, architecture/testing/dependency docs, evidence index | distinguish current absence, external-release-blocked state, locally carried host/kernel work, accepted portability support, and profile claims |
@@ -1314,6 +1373,14 @@ the relevant authenticated source generator.
 
 ## Validation plan
 
+Before the Phase 5 authorization gate, this validation plan executes only
+host/unit/synthetic tests, package/prototype checks, current-image no-device
+identity runs, GL regressions, and artifact-runner mechanics. Positive guest
+portability enumeration, Vulkan feature/WSI tests, full CTS/Profile work, and
+production qualification are dormant. Commands below that build Simulator or
+device products are prototype parity gates until authorization, not evidence of
+guest Vulkan support.
+
 ### Unit and protocol tests
 
 Add focused coverage for:
@@ -1321,7 +1388,7 @@ Add focused coverage for:
 - feature negotiation and capset ordering with Venus unavailable, available,
   and initialization-failed;
 - exact capset version/size, short buffers, unknown IDs, and retry behavior;
-- released-Mesa transcript compatibility for required getparams, capset
+- current-rootfs Mesa transcript compatibility for required getparams, capset
   4/version 0, context-init with 64 rings/poll mask 0, HOST3D ring/reply blob,
   resource-info, map/mmap, execbuffer ring/BO propagation, guest-local sync-file
   fence, GEM close, and reset;
@@ -1390,7 +1457,7 @@ cmake --build --preset kernarium-ios-simulator-venus
 cmake --preset kernarium-ios-simulator-venus-4k
 cmake --build --preset kernarium-ios-simulator-venus-4k
 
-# Mandatory physical qualification lane.
+# Mandatory physical prototype/parity lane before rootfs authorization.
 dependencies/build-apple-gpu.sh \
   --product apple-gpu-vulkan-experiment --platform ios
 dependencies/build-apple-gpu.sh \
@@ -1441,20 +1508,27 @@ audit. Because the Venus memory path includes maintained-kernel work, its
 canonical LLVM 22 replay/build of both page profiles is a mandatory promotion
 gate, not a conditional extra. The macOS runtime campaign is the default per-change gate; the
 Simulator run is required same-path iOS validation; and connected-iPad
-execution plus package verification is the required qualification gate. The
+execution plus package verification is the required prototype parity gate.
+Only the separately authorized downstream branch may treat it as a
+qualification gate. The
 generic `ios-*` presets and root `scripts/build-xcframework.sh` do not exercise
 or package this GPU path.
 
 ### Guest functional gates
+
+These positive gates are dormant until Phase 5 receives explicit authorization
+and a corrected image exists. Before then, run only the installed information
+cases expecting no usable Venus device, host/synthetic transcript tests, LVP
+rejection, permissions inspection, and GL regressions.
 
 On macOS, the iPhone 17 Pro Max Simulator, and the connected iPad for every
 claimed platform/page-profile combination:
 
 - verify `/dev/dri/card0` and `/dev/dri/renderD128` ownership and permissions;
 - capture the kernel Virtio-GPU feature negotiation and capsets;
-- run `dEQP-VK.info.*` and the repository-owned machine-readable
-  feature/property dump; optionally add `vulkaninfo --summary` only when the
-  authenticated image deliberately provisions Vulkan Tools;
+- run the installed `dEQP-VK.info.*` cases and generate any machine-readable
+  feature/property summary by parsing their exported output on the host; do not
+  install Vulkan Tools or another guest probe;
 - assert the selected ICD and physical device are Venus/MoltenVK, not lavapipe
   or another ambient ICD;
 - create devices at each intended API version and test the required
@@ -1468,6 +1542,11 @@ claimed platform/page-profile combination:
 - run change-local CTS families as features land and the complete current
   manifest, with verified non-mandatory exact-once and mandatory-per-fraction
   coverage plus intact artifacts, before promoting the claim.
+
+If the current image's device permissions, groups, ICD JSON, desktop-session
+environment, or service rules are insufficient, do not inject an overlay rule
+or guest configuration workaround. Stop the affected gate, record the exact
+required image change, and ask the user.
 
 Test unsupported extension requests and false feature combinations as
 carefully as successful ones. A portability implementation is defined in part
@@ -1580,8 +1659,8 @@ Use these exact claim boundaries in reports and product documentation:
 6. **“Vulkan conformant.”** Use only with the applicable Khronos conformance
    status; neither a version string nor local CTS success grants this claim.
 
-The word “maximum” in this plan means the highest truthful intersection of
-released guest Mesa, negotiated Venus protocol, host renderer, MoltenVK, and
+The word “maximum” in this plan means the highest truthful intersection of the
+immutable current-rootfs Mesa, negotiated Venus protocol, host renderer, MoltenVK, and
 the tested Apple GPU after the owned kernel layer implements the compatible
 Virtio-GPU/DRM contract. The current kernel implementation is not treated as a
 frozen external ceiling. The performance gate is part of that intersection.
@@ -1591,14 +1670,14 @@ frozen external ceiling. The performance gate is part of that intersection.
 
 | Risk | Mitigation or stop condition |
 | --- | --- |
-| no released Mesa provides the required portability support | keep production Venus disabled; do not create a custom guest or external submission workaround, and report the external release gate explicitly |
+| no released Mesa provides the required portability support, or a suitable release exists but rootfs replacement is not authorized | keep production Venus disabled; audit candidates read-only, report the exact blocker/delta, pause and ask the user, and do not create a custom guest or external submission workaround |
 | GL/GLES reaches Venus, a Vulkan loader, ANGLE/Vulkan, Zink, or MoltenVK | fail the product graph and runtime route; capsets 1/2 must terminate at ANGLE/Metal while only capset 4 reaches MoltenVK |
 | a required Vulkan behavior executes data-parallel work on the CPU | reduce the advertised API tier or remain unsupported; do not use CPU shader/raster/geometry work, resource-sized conversion, or readback-driven command decisions |
 | GPU-backed lowering exceeds the frozen performance budget | select the immediately lower tier or omit the optional feature even when CTS passes |
-| MoltenVK host-pointer import cannot cover required images | reject guest-VRAM design and implement the standardized shared-memory aperture or another released-userspace-compatible memory model |
+| MoltenVK host-pointer import cannot cover required images | reject guest-VRAM design and implement the standardized shared-memory aperture or another memory model the exact current rootfs already consumes; otherwise stop at the Phase 5 authorization gate |
 | a guest-VRAM-only design omits mandatory Venus ring/reply shared memory | require the separate HOST3D, mappable, blob-ID-0 map/mmap path before Mesa initialization can pass |
 | memory works on 4 KiB but aliases on a 16 KiB Apple host | require alignment/range tests under both profiles before feature negotiation is enabled |
-| a private or renumbered DRM UAPI makes the rootfs depend on custom userspace | stop promotion; pin the released-Mesa transcript, preserve existing ioctl layouts/semantics, reject unknown values, and keep project-specific details below the userspace boundary |
+| a private or renumbered DRM UAPI makes the rootfs depend on custom userspace | stop promotion; pin the current rootfs Mesa transcript, preserve existing ioctl layouts/semantics, reject unknown values, and keep project-specific details below the userspace boundary |
 | a guest-local sync-file fence is mistaken for a MoltenVK external-fence fd | test the delayed Virtio response and exact context/ring/fence identity locally; keep unsupported host Vulkan fd extensions filtered |
 | capset/blob/context-init is partially advertised | fail closed unless the complete driver, ring/reply memory, device-memory, fence, reset, and renderer path is usable |
 | a kernel patch is hand-edited, stale, or loses outside-port ownership policy | author the managed Git topic, regenerate with `kernel/rebase-patches.sh`, update final-tree/delta/ownership metadata, and require clean LLVM 22 replay/builds of both profiles |
@@ -1614,7 +1693,8 @@ frozen external ceiling. The performance gate is part of that intersection.
 | concurrent Vulkan starves or serializes GL | require bounded memory, scheduler/fence fairness, and matched concurrent workload tests before enabling both capsets together |
 | connected iPad exceeds the physical-device memory policy | bound VRAM/aperture and CTS shards; retain the normal 1.5 GiB guest and no disk-swap workaround |
 | LVP or another ICD creates a false guest success | force `VK_DRIVER_FILES` to the Virtio ICD and validate the QPA device/driver identity before counting a case |
-| current CTS binary is mistaken for qualification-grade | retain it for development, but require a whole-image rebuild with ARM64 CPU and pinned release metadata plus matching resources/lists before qualification |
+| current CTS binary is mistaken for qualification-grade | retain it for development only; qualification is unavailable while the image is immutable, so stop and ask before any corrected CTS/image work |
+| a package install, preload, OverlayFS copy, ICD replacement, permission rule, manifest edit, or provisioning step mutates or supplements guest userspace | fail the immutability gate, discard that evidence, restore use of the unchanged image, record the required delta, and ask the user before any retry involving rootfs bytes |
 | a large CTS run truncates, OOMs, or loses its QPA | one bounded shard per fresh iPad guest, framed checksummed artifact egress, exact non-mandatory/mandatory-fraction coverage verification, and hard failure on OOM, device loss, missing trailer, or incomplete shard |
 | platform contracts still select different renderer identities or feature flags | one `apple-gpu` product, one selected virglrenderer row/series and semantic recipe, byte-verified contracts, and a three-platform configuration-diff test before promotion |
 | execution-path classification is unknown | keep the feature/tier disabled until tracing proves Metal-native, GPU-lowered, or bounded CPU control-plane behavior |
@@ -1628,7 +1708,29 @@ frozen external ceiling. The performance gate is part of that intersection.
 
 ## Completion criteria
 
-The plan is complete only when all of the following are true:
+### Current immutable-rootfs completion
+
+The executable scope of this plan reaches its authorized terminal point when:
+
+1. Phases 0-4 have completed at the chosen host/kernel prototype scope without
+   changing or supplementing `rootfs.erofs`.
+2. The exact current Mesa/ICD and CTS limitations remain recorded: production
+   guest Vulkan is unsupported and the installed CTS is development-only.
+3. A suitable independently released Mesa/CTS candidate, if one exists, has
+   been audited read-only and the exact proposed image delta and consequence of
+   declining it have been documented without editing provisioning inputs or
+   preparing an image.
+4. Phase 5 has stopped and asked the user before any rootfs build, sign,
+   provision, package-install, preload, or overlay-substitution action.
+5. No production capset 4, Vulkan API/Profile, or conformance claim is made.
+
+This is a valid no-update completion outcome, not Vulkan support.
+
+### Conditional production completion after separate user authorization
+
+The following downstream criteria are dormant. They become executable only if
+the user explicitly authorizes the precise replacement image in a later
+decision and the plan is revised accordingly:
 
 1. One central `apple-gpu` product selects one reviewed virglrenderer,
    MoltenVK, Vulkan-Headers, SPIRV-Cross, and transitive-source identity and
@@ -1648,13 +1750,14 @@ The plan is complete only when all of the following are true:
    class without steady-state full-resource CPU bounce or repacking.
 5. Every required Linux graphics change is carried in the generated maintained
    patch series, replays to the reviewed final tree, and builds both canonical
-   page profiles with LLVM 22. The exact released-Mesa getparam/capset/context/
-   ring-reply/device-BO/map/mmap/execbuffer/fence/close transcript passes with
-   no private userspace dependency, and the same per-profile kernel artifact
-   runs on macOS, Simulator, and device.
-6. An independently released, unmodified Mesa containing the required Venus
-   portability work is installed through the authenticated whole-image
-   workflow; no private guest graphics patch or version override is present.
+   page profiles with LLVM 22. The authorized image's exact Mesa getparam,
+   capset, context, ring-reply, device-BO, map/mmap, execbuffer, fence, and
+   close transcript passes with no private userspace dependency, and the same
+   per-profile kernel artifact runs on macOS, Simulator, and device.
+6. Only after the separate explicit authorization, an independently released,
+   unmodified Mesa containing the required Venus portability work is installed
+   through the authenticated whole-image workflow; no private guest graphics
+   patch or version override is present.
 7. macOS is the maintained first development/acceptance target, and an
    unmodified guest naturally enumerates and uses the selected
    performance-qualified MoltenVK portability tier there. The iPhone 17 Pro
@@ -1664,7 +1767,8 @@ The plan is complete only when all of the following are true:
    memory, thermal, presentation, and lifecycle qualification for both 4 KiB
    and 16 KiB profiles. Simulator or macOS success cannot satisfy this
    criterion.
-9. The qualification rootfs contains a correctly ARM64-identified pinned CTS
+9. Only under that same authorization, the qualification rootfs contains a
+   correctly ARM64-identified pinned CTS
    build with matching source/resources/current must-pass data. Every required
    manifest shard completes; every non-mandatory case occurs exactly once and
    the 19 mandatory cases occur in each native fraction; and every required QPA
@@ -1689,18 +1793,20 @@ The plan is complete only when all of the following are true:
    owner, and make no unsupported Vulkan Profile or conformance claim.
 12. No workflow submits or uploads changes outside this emulator repository.
     Every third-party host change and Linux change is reproducible from the
-    checked-in dependency/kernel patch series; guest Mesa/libdrm/loader/ICD and
-    qualification CTS remain independently released and unmodified.
+    checked-in dependency/kernel patch series; the authorized image's guest
+    Mesa/libdrm/loader/ICD and qualification CTS remain independently released
+    and unmodified.
 13. Every promoted operation is classified as Metal-native, GPU-lowered, or
     bounded CPU control-plane work. No promoted feature uses CPU-heavy
     data-path emulation, and checked-in matched evidence records both accepted
     and rejected API tiers against the frozen performance budgets. The exposed
     API and any named Profile are no higher than the last tier that passed.
 
-Until those gates pass, the accurate production statement is: **guest Vulkan
-through Venus and MoltenVK is unsupported on iOS Simulator, connected iPad,
-and macOS; up to Vulkan 1.4 plus portability subset on one iOS-targeted shared
-path, developed on macOS first and qualified on Simulator plus iPad, is the
-conditional architectural ceiling if an independently released guest Mesa
-provides the required portability support. The shipping tier may be lower when
-that is the highest result meeting the performance policy.**
+Under the current immutable-rootfs policy, the accurate production statement
+is: **guest Vulkan through Venus and MoltenVK is unsupported on iOS Simulator,
+connected iPad, and macOS. Up to Vulkan 1.4 plus portability subset remains an
+architectural target only; reaching it additionally requires explicit user
+authorization to replace the guest image with independently released,
+unmodified portability-capable Mesa and correctly identified unmodified CTS
+inputs. Without that authorization, the plan stops at Phase 5 and the shipping
+Vulkan ceiling is none.**

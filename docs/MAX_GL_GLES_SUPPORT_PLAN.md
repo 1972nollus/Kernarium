@@ -5,10 +5,11 @@ conformance claim. It incorporates the measured results in
 [GPU_BACKEND_FEASIBILITY.md](GPU_BACKEND_FEASIBILITY.md), the current Virgl
 implementation in
 [VIRTIO_GPU_VIRGL_IMPLEMENTATION_PLAN.md](VIRTIO_GPU_VIRGL_IMPLEMENTATION_PLAN.md),
-and the additional requirement that guest userspace graphics libraries remain
-unmodified upstream releases. That restriction does not apply to the guest
-kernel: this project owns its Linux build and maintained patch series, including
-the `virtio_gpu` driver and UML transport, and may change them when required.
+and the additional requirement that the exact guest userspace graphics
+libraries in the current authenticated `rootfs.erofs` remain unchanged. That
+restriction does not apply to the guest kernel: this project owns its Linux
+build and maintained patch series, including the `virtio_gpu` driver and UML
+transport, and may change them when required.
 
 Dependency-management assumptions were revised after the 2026-08-20
 centralization under `dependencies/`; paths and workflows in this document
@@ -45,8 +46,9 @@ be validated on iOS; a macOS-only graphics provider is forbidden.
 - Treat guest-kernel graphics support as an owned implementation layer, not an
   external ceiling. Backport or implement required `virtio_gpu` DRM/KMS,
   blob-resource, mapping, fence, and UML transport behavior in the maintained
-  common kernel patch series while keeping the ABI consumed by released Mesa
-  and libdrm compatible with upstream userspace.
+  common kernel patch series while keeping the ABI consumed by the exact Mesa
+  and libdrm installed in the current image compatible with their standard
+  userspace contract.
 - Make **GLES 3.0 and desktop GL 2.1 expected** the committed direct-hardware
   shared baseline candidate. Phase 2 must still qualify its absolute
   performance on macOS, Simulator, and iPad. Treat GLES 3.1 as a stretch target only through direct
@@ -103,18 +105,22 @@ The following are non-negotiable:
    public-API, signing, sandbox, lifecycle, and 1.5 GiB memory constraints
    first. macOS is the fast development host for that design and may not add
    desktop-only graphics assumptions.
-2. Only guest userspace is externally constrained. Guest Mesa and libdrm must
-   always be released, unmodified upstream builds. Do not patch, replace,
-   package, or use an unmerged guest-userspace candidate even in a development
-   rootfs. A milestone that requires guest-userspace changes remains blocked
-   until an independently released version contains them.
+2. Only guest userspace is externally constrained. `rootfs.erofs` and its
+   installed guest userspace are fixed inputs to this plan. Use the exact Mesa,
+   libdrm, CTS executables/resources, WSI support, and desktop packages already
+   installed there. Do not replace, preload, overlay-substitute, rebuild,
+   repackage, or provision any of them, even with a newer unmodified release.
+   If a milestone requires different guest userspace, stop that phase, retain
+   the lower truthful ceiling, record the exact blocker, and ask the user before
+   any rootfs or guest-userspace change.
 3. The guest kernel is controlled by this project. Required `virtio_gpu`, DRM,
    UAPI implementation, Kconfig, or `arch/um` transport changes belong in the
    maintained common Linux patch series and one kernel image per page profile.
    Prefer standard Virtio-GPU and DRM interfaces; a project-specific
    kernel-to-emulator extension is acceptable only when negotiated, bounded,
-   invisible to guest userspace, and presented through an upstream-compatible
-   ABI that an unmodified released Mesa/libdrm already understands. Do not
+   invisible to guest userspace, and presented through a standard-compatible
+   ABI that the exact unmodified Mesa/libdrm in `rootfs.erofs` already
+   understands. Do not
    make a private userspace ioctl or library a production dependency. Any new
    graphics Kconfig support belongs built-in in `kernel/config/common.fragment`
    because loadable modules remain disabled; page fragments vary only genuine
@@ -151,16 +157,21 @@ The following are non-negotiable:
    A lower, faster profile is a successful final outcome.
 12. External-project access is fetch-only. Never push a branch, open or update
    a pull request, merge request, or issue, send a patch or email, or upload an
-   artifact to an external project. First-party emulator, test, and rootfs
-   build/orchestration changes live directly in this repository; third-party
+   artifact to an external project. First-party emulator and test-orchestration
+   changes live directly in this repository; third-party
    ANGLE or virglrenderer source changes live only in
    `dependencies/patches`; Linux changes live only in `kernel/patches`.
    Qualification CTS source remains released and unmodified. Prepared
    dependency trees remain remote-less and builders stay offline after
    `dependencies/prepare.sh`.
-   Guest graphics userspace remains an unmodified released input; if it lacks a
-   required behavior, stop at the lower truthful ceiling until an independent
-   release supplies it.
+13. The current authenticated `rootfs.erofs` and its provisioning manifest are
+   read-only evidence, not work products. No step in this plan may rebuild,
+   replace, reprovision, or modify the image or substitute guest graphics
+   libraries, CTS executables/resources, runners, or WSI components through an
+   overlay or preload. A disposable overlay remains permitted only for
+   first-party campaign scripts, transient configuration, and bounded output.
+   If an image change becomes unavoidable, pause the plan and ask the user
+   before running any rootfs build or provisioning command.
 
 Hardware video encode/decode, a new guest display server, and a Vulkan guest
 API are outside this file. The Vulkan transport and memory plan is in
@@ -197,7 +208,7 @@ Important limits behind the table:
   must be proved feature by feature on macOS, Simulator, and the connected
   iPad; a Vulkan detour is not an allowed proof or fallback.
 - Unchanged virglrenderer does not advertise conditional rendering on a GLES
-  host lacking `GL_NV_conditional_render`. Released Mesa consequently cannot
+  host lacking `GL_NV_conditional_render`. The current image's Mesa consequently cannot
   derive desktop GL 3.0 even when the same host reaches GLES 3.1.
 - GLES 3.2 requires geometry behavior that the selected ANGLE/Metal backend
   does not expose directly. Compute/mesh expansion, multi-pass rewriting, or a
@@ -206,7 +217,8 @@ Important limits behind the table:
   connected iPad. GL 4.x is likewise outside this provider's target surface.
 - Missing Linux `virtio_gpu` behavior does not lower the architectural ceiling:
   it is implementation work owned by this repository. The external ceiling is
-  the intersection of released, unmodified guest userspace and the truthful
+  the intersection of the immutable guest userspace currently installed in
+  `rootfs.erofs` and the truthful
   host/backend behavior after the maintained kernel supplies the standard
   userspace-facing ABI.
 - The pinned Linux source already contains the standard blob wire definitions,
@@ -214,12 +226,19 @@ Important limits behind the table:
   `virtgpu_kms.c` exposes host-visible memory only when the transport supplies a
   Virtio shared-memory region, while the maintained UML transport does not yet
   implement `.get_shm_region` and the host device does not yet implement blob
-  commands. Released Mesa naturally derives Virgl `supports_coherent` from
+  commands. The current image's Mesa naturally derives Virgl `supports_coherent` from
   exactly those two standard getparams. Separately, its persistent-coherent
   buffer gate requires `VIRGL_CAP_ARB_BUFFER_STORAGE` and host feature-check
   version 4 or later. This owned host/kernel work is optional transport
   optimization under the selected lower profile; it is not justification for
   pursuing GL 4.4-4.6 or accepting a slower provider.
+
+The current rootfs Mesa and installed CTS case universe cover the planned GL
+2.1/GLES 3.0 baseline and the GL 3.0/3.1/GLES 3.1 attempts, so an image update
+is not inherently required for this plan. Qualification still depends on
+reconstructing the existing CTS provenance and reproducing its exact
+`mustpass.xml` matrix. If either cannot be established read-only, development
+evidence may continue but promotion pauses and asks the user.
 
 ## Architecture changes
 
@@ -414,8 +433,13 @@ The current authenticated `rootfs.erofs` contains useful VK-GL-CTS
 main guest-side test instrument instead of adding a private test library or
 relying only on browser workloads. The whole-image signature authenticates the
 bytes but the current provisioning metadata does not prove that the co-located
-source produced the ELF files; Phase 0 must recover or recreate a build receipt
-before treating them as a matched qualification set.
+source produced the ELF files. Phase 0 may recover an existing authoritative
+build receipt through read-only inspection, but it must not reconstruct or
+invent historical provenance. Without that receipt, keep the artifacts
+diagnostic-only, record the provenance gap in repository-local evidence, pause
+qualification, and ask the user before proposing any image change. No such
+inspection may change `rootfs.erofs`, its provisioning manifest, or an
+installed file.
 
 ### Installed artifacts and their roles
 
@@ -432,12 +456,13 @@ the executable's directory or pass that directory through
 with old resources and caselists. The image has no `deqp-runner` or
 `cts-runner`, so the repository must own the campaign orchestration rather than
 silently depending on an ambient package. The source does define upstream
-`cts-runner`; add that exact target to the next authenticated rootfs build and
-prefer it for official GL/GLES must-pass configuration enumeration. Continue
-to use `glcts` for exact-case and diagnostic fraction runs. Until the upstream
-runner is provisioned, differential-test the repository's configuration
-expansion against a disposable build of that runner before accepting a
-promotion result.
+`cts-runner`, but do not provision it into the image or a guest overlay. Use
+the installed `glcts` plus repository-owned exact `mustpass.xml` expansion for
+GL/GLES qualification. Differential-test that expansion against a disposable
+macOS build of the same released runner used solely as an argument-generation
+oracle; never copy the oracle into the guest. If the exact configuration matrix
+cannot be reproduced with the installed artifacts, pause qualification and ask
+the user rather than changing the rootfs.
 
 For release promotion, prefer `glcts` and the installed Khronos material:
 
@@ -472,17 +497,19 @@ guest workflows rather than on the pre-display arbitrary-command runner. It
 must:
 
 1. boot the ordinary Virtio-GPU guest with a disposable OverlayFS upper layer
-   and use the gadget or JIT engine, never the interpreter for a long CTS run;
+   and use the gadget or JIT engine, never the interpreter for a long CTS run.
+   The upper layer may hold only first-party campaign scripts, transient
+   configuration, and output; it must not replace or add Mesa, libdrm, CTS
+   executables/resources, Xwayland, loaders, or other guest components;
 2. wait for the real display manager and DRM nodes, then use the actual CTS WSI
    and selected image account. The provisioned binaries currently require the
    real X11/Xwayland socket and xauth: use `uml` for KDE, or the image's
    UID-1000 Phosh session user under greetd/Phrog, inheriting that session's
    `DISPLAY`, `XAUTHORITY`, `XDG_RUNTIME_DIR`, and DRI permissions. Prove
-   Xwayland exists on the selected iOS desktop before qualification; otherwise
-   build an existing platform target from the authenticated released CTS source
-   as part of the matched whole-image update. If that release has no usable
-   target, mark qualification blocked; do not patch CTS or submit a target
-   externally;
+   Xwayland exists on the selected iOS desktop before qualification. If the
+   installed image lacks a usable CTS WSI, mark qualification blocked, record
+   the exact missing component, and ask the user; do not build, inject,
+   preload, overlay, or provision a replacement target;
 3. preserve the actual Virgl path and reject llvmpipe, software rasterizers,
    unexpected guest Zink, Xvfb, and a missing or mismatched renderer before
    counting any result;
@@ -542,10 +569,11 @@ cd /opt/vk-gl-cts/openglcts
 Here `egl` is the registered platform context factory; the `KHR-GLES31`
 package requests the ES 3.1 API. The driver must still validate registered
 factory names against the exact binary before freezing them. For an official
-promotion run, use the provisioned upstream `cts-runner` (for example its
-verified `--type=es31` mode) to consume every configuration
-declared by `mustpass.xml`, or reproduce and differential-test those generated
-arguments exactly. Do not override its seed, watchdog policy, first/other EGL
+promotion run, use the installed `glcts` with the repository-owned,
+externally differential-tested expansion of every configuration declared by
+`mustpass.xml`. If that exact expansion cannot be reproduced, pause and ask
+the user rather than provisioning `cts-runner`. Do not override the declared
+seed, watchdog policy, first/other EGL
 configuration split, specified 64x64 or 113x47 surfaces, or required color,
 depth, and stencil formats with one convenient pbuffer. A focused developer
 case may use an offscreen pbuffer only when that case permits it. Re-run a
@@ -623,13 +651,16 @@ exact-case rerun. Do not patch expected results, reference images, discovery,
 or caselists to make the renderer pass.
 Because the source has no `.git` metadata, diagnostic rebuilds must use an
 authenticated 1.4.5.5 checkout in disposable Simulator/macOS storage with
-recorded flags, but they cannot alter expectations or qualify a release. Do
-not upload CTS changes. If a CTS defect prevents qualification, use only an
-exact status explicitly accepted by that Khronos release criteria or wait for
-an independently published corrected release. If the target API or required
-CTS revision outgrows 1.4.5.5, rebuild the unmodified binary, resources,
-must-pass data, and source as one authenticated rootfs update; never mix
-generations or mutate the image in place.
+recorded flags, but they cannot be copied into the guest, alter expectations,
+or qualify a release. Do not upload CTS changes. If a CTS defect prevents
+qualification, use only an exact status explicitly accepted by that Khronos
+release criteria. Otherwise stop qualification, record any independently
+published correction as a possible resolution, and ask the user before any
+image or guest-CTS change. If the target API or required
+CTS revision outgrows the installed 1.4.5.5 set, stop the affected promotion,
+record the exact missing coverage, and ask the user before any image change.
+Do not rebuild, inject, or mix a newer executable, resources, must-pass data,
+or source into the guest under this plan.
 
 ## Implementation phases
 
@@ -688,9 +719,13 @@ Before changing a provider:
    policy updates.
 10. Inventory VK-GL-CTS from the image, verify the release, executable build
    IDs, installed resources, registered modules, `mustpass.xml` files, leaf
-   counts, and digests. Recover or recreate the source/build receipt needed to
-   prove the co-located source and provisioned binaries match, and store those
-   identities in the evidence bundle.
+   counts, and digests. Search read-only for an existing authoritative
+   source/build receipt that proves the co-located source and provisioned
+   binaries match. Do not reconstruct missing historical provenance. Store
+   recovered identities only in ordinary repository evidence; do not edit the
+   rootfs manifest or installed artifacts. If no authoritative receipt exists,
+   keep CTS qualification blocked, record the gap, and ask the user before any
+   image change.
 11. Bring up the dedicated CTS driver with a software-renderer negative control:
    it must reject llvmpipe, unexpected Zink, Xvfb, a missing DRM device, a
    truncated QPA, and an incomplete shard rather than recording a pass.
@@ -701,8 +736,8 @@ Before changing a provider:
 
 Exit: macOS is the reproducible first-stage development baseline, the
 Simulator adapter is ready to validate that exact path, and the connected iPad
-has a recorded qualification baseline. The old CGL number exists only in
-archived prose/evidence. The CTS identity/caselist baseline and current
+has a recorded physical-device prototype baseline. The old CGL number exists
+only in archived prose/evidence. The CTS identity/caselist baseline and current
 source/build-receipt gap are recorded, and the campaign adapters reject
 software rendering and incomplete artifacts on every product shell. This
 preparation creates no second runnable macOS graphics lane.
@@ -826,7 +861,7 @@ cannot exit the phase.
 ### Phase 4: evaluate GPU-resident desktop GL 3.0/3.1 gates
 
 GLES 3.1 does not automatically produce desktop GL 3.x. Generate the exact
-gate checklist from the released guest Mesa and compare it with the Virgl
+gate checklist from the guest Mesa already installed in `rootfs.erofs` and compare it with the Virgl
 capset and ANGLE/Metal implementation. This phase is optional and stops at the
 first gate without an efficient GPU-backed implementation.
 
@@ -931,17 +966,19 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
    ownership/overlap/extraction, next-version, and `kernel/README.md` policy.
    Keep those Linux changes in this emulator repository and do not submit them
    externally.
-5. Update the whole EROFS image only when consuming a released Mesa. Follow
-   the signed whole-image provisioning workflow; do not mutate the image in
-   place.
+5. Do not consume a different Mesa/libdrm or update `rootfs.erofs`. If the
+   selected profile requires a different guest component, retain the lower
+   profile, record the exact proposed image delta and reason, pause this phase,
+   and ask the user before preparing or running any image workflow.
 6. Promote a version separately for macOS, Simulator, and connected iPad, but
    do not qualify the common product profile until the connected iPad
    completes its acceptance matrix.
-7. Pin the CTS release, executable build IDs, source identity, resources,
-   must-pass data, and caselist digests in rootfs provisioning metadata. After
-   any Mesa or CTS update, rebuild the whole authenticated image and rerun the
-   baseline; never compare totals from different case universes as if they
-   were a regression A/B.
+7. Record the current CTS release, executable build IDs, reconstructed source
+   identity, resources, must-pass data, caselist digests, and immutable rootfs
+   identity in ordinary repository evidence, not rootfs provisioning metadata.
+   No Mesa or CTS update is authorized. Never compare totals from different
+   case universes as if they were a regression A/B; if a different universe is
+   required, pause and ask the user.
 
 ## Repository work map
 
@@ -960,7 +997,7 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
 | Conditional host blob optimization | `darwin/device/gpu/protocol.hpp`, `virtio_gpu_device.*`, renderer/resource boundary | only if Phase 6 measurements or Venus select it: standard feature/commands, bounded aperture ownership, map-info/cache semantics, and coherent lifetime |
 | Conditional guest-kernel graphics optimization | maintained Linux `arch/um/drivers/virtio_uml.c`, UML physical/IOMEM/MM code as selected, `drivers/gpu/drm/virtio/virtgpu_*`, `include/uapi/drm/virtgpu_drm.h`, and common Kconfig policy | only after selection: implement shared-region discovery and mapping, backport/fix generic Virtio-GPU behavior only when needed, preserve the released-userspace DRM ABI, and share one runtime-negotiated kernel artifact per page profile across all Apple products |
 | Kernel series and verification | `kernel/patches/series/`, `kernel/patches/metadata.env`, ownership/overlap/extraction/next-version policy, `kernel/README.md`, kernel tooling tests | own generated topic identity, reviewed final tree and delta, bridge-ABI updates only when required, offline replay, and LLVM 22 builds of both page profiles |
-| Rootfs CTS | `tools/rootfs/manifest.json`, provisioning inputs/tests, in-image `/opt/vk-gl-cts` and `/home/uml/vk-gl-cts-1.4.5.5` | provision the upstream `cts-runner`; keep executable, source/build receipt, resources, must-pass data, build IDs, and caselist identities matched through authenticated whole-image updates |
+| Immutable rootfs CTS contract | read-only in-image `/opt/vk-gl-cts`, `/home/uml/vk-gl-cts-1.4.5.5`, and ordinary repository evidence | inventory and use the exact installed binaries/source/resources read-only; reconstruct receipts outside the image; validate configuration expansion against a host-only oracle; stop and ask if the current artifacts are insufficient |
 | CTS and guest tests | `tests/integration/gpu/run_vk_gl_cts.py`, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/rootfs tests, `tests/test-manifest.tsv` | graphical-session launch, identity rejection, exact caselist/config sharding, QPA egress/parsing, backend lifetime, protocol validation, package shape, guest probes and rendered campaigns |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | keep `dependency-source-preparer`, `dependency-patch-regenerator`, `dependency-build-manifest`, `dependency-prefix-verifier`, and `dependency-runtime-closure` green; add Apple-GPU platform/payload/provenance/concurrent-publication fixtures |
 
@@ -1172,7 +1209,8 @@ preferred outcome.
 | GPU lowering requires excessive passes, command amplification, or memory traffic | fail the frozen performance budget and retain the lower profile even when CTS passes |
 | a higher profile regresses ordinary lower-profile workloads | require matched interleaved A/B canaries before full CTS and reject any repeatable regression beyond the frozen threshold |
 | blob mappings leak or outlive guest memory | bounded ownership table, exact unmap/reset ordering, ASan/UBSan stress, both page profiles |
-| a private DRM ioctl, capset, or winsys patch silently makes the rootfs custom | stop the promotion; released Mesa/libdrm must use the standard ABI naturally, while any repository-specific extension remains negotiated below the userspace boundary |
+| a private DRM ioctl, capset, or winsys patch silently makes the rootfs custom | stop the promotion; the exact installed Mesa/libdrm must use the standard ABI naturally, while any repository-specific extension remains negotiated below the userspace boundary |
+| the current image lacks required Mesa/libdrm behavior, a usable CTS WSI/configuration path, CTS coverage/provenance, or another guest component | retain the lower profile, record the exact blocker and proposed image delta, pause the affected phase, and ask the user; never rebuild, provision, preload, or overlay-substitute guest userspace |
 | blob support is advertised before UML exposes a valid host-visible aperture | require `RESOURCE_BLOB` and `HOST_VISIBLE` getparams, map-info, coherent round trips, and fail-closed reconnect/reset tests before the feature bit or capset gate is enabled |
 | a 4 KiB guest mapping aliases another subpage in a 16 KiB host slot | validate whole-slot ownership, offset bounds, remap/TLB visibility, and teardown under both page profiles on macOS, Simulator, and the connected iPad |
 | cached map-info is claimed without real CPU/GPU coherence | require bidirectional persistent-map visibility without transfer commands; otherwise report a truthful noncoherent/unsupported mode |
@@ -1205,10 +1243,10 @@ The plan is complete only when all of the following are true:
    kernel series, replays to the reviewed final tree, builds both canonical
    page profiles with LLVM 22, and yields the same per-profile kernel artifact
    for macOS, Simulator, and device. The standard Virtio-GPU/DRM ABI remains
-   usable by released guest userspace; no private userspace dependency is
+   usable by the guest userspace already installed in `rootfs.erofs`; no private userspace dependency is
    introduced.
-5. Every claimed GL/GLES version arises naturally from an unmodified released
-   guest Mesa and passes both the matching functional/conformance gate and the
+5. Every claimed GL/GLES version arises naturally from the exact unmodified
+   guest Mesa already installed in `rootfs.erofs` and passes both the matching functional/conformance gate and the
    frozen matched performance budget. No claimed feature uses prohibited
    CPU-heavy software emulation.
 6. Ordinary AppKit/UIKit presentation uses the direct same-device Metal texture
@@ -1258,8 +1296,14 @@ The plan is complete only when all of the following are true:
    experiment, and accepted product support.
 14. No workflow submits or uploads changes outside this emulator repository.
     Every third-party host change and Linux change is reproducible from the
-    checked-in dependency/kernel patch series, while guest Mesa/libdrm and the
-    qualification CTS remain released and unmodified.
+    checked-in dependency/kernel patch series, while the exact installed guest
+    Mesa/libdrm and qualification CTS remain unchanged.
+15. No workflow writes, rebuilds, reprovisions, replaces, or supplements
+    `rootfs.erofs` or edits its provisioning manifest for this work. No overlay
+    or preload substitutes a guest graphics library, CTS executable/resource,
+    runner, or WSI component. Any unavoidable guest-userspace need leaves its
+    phase blocked until the plan reports the exact delta and asks the user for
+    explicit direction.
 
 The truthful evidence statement is: an older macOS CGL build measured guest
 GL 4.1/GLES 3.0, while the current iOS ANGLE/Metal path measured an ES 3.0 host
