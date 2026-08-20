@@ -227,3 +227,28 @@ a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed; until then the
 default installer intentionally has no selectable release.
+
+Publish only from the clean copied Git checkout on the builder, after rebuilding
+the disk and initramfs from the current target-files staging directory:
+
+```sh
+android/aosp-17/build/publish-release.sh \
+  --aosp-source /absolute/path/to/aosp \
+  --kernel-source /absolute/path/to/replayed-ack \
+  --kernel-build /absolute/path/to/kernel-build \
+  --target-files /absolute/path/to/target-files.zip \
+  --ramdisk /absolute/path/to/ramdisk.img \
+  --disk /absolute/path/to/android17-ubd.img \
+  --darwin-sdk /absolute/path/to/MacOSX.sdk \
+  --vintf-checker /absolute/path/to/check_target_files_vintf \
+  --zstd /absolute/path/to/zstd \
+  --release-root /absolute/path/to/releases \
+  --release-id reviewed-release-id
+```
+
+The publisher accepts only builder-local paths. It repeats ACK series/source,
+kernel, target-files, VINTF, initramfs, and GPT checks, rejects any module output,
+records only role-based input descriptions rather than builder paths, compresses
+the disk with a frame checksum, verifies the completed staging tree, and then
+atomically exposes the new release directory. It never changes the checked-in
+acceptance descriptor.

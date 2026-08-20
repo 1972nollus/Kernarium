@@ -733,6 +733,7 @@ def main() -> None:
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
     assemble_image = (android_root / "build/assemble-image.sh").read_text()
     assemble_ramdisk = (android_root / "build/assemble-ramdisk.sh").read_text()
+    publish_release = (android_root / "tools/publish-release.py").read_text()
     build_kernel = (android_root / "build/build-kernel.sh").read_text()
     target_files_verifier = (
         android_root / "tools/verify-target-files.py"
@@ -823,6 +824,24 @@ def main() -> None:
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")
+    for token in (
+        "verify-aosp-patches.py",
+        "verify-series-policy.py",
+        "verify-kernel-elf.py",
+        "verify-target-files.py",
+        "verify-initramfs.py",
+        "ubd-disk.py",
+        "check_no_module_output",
+        "verify_kernel_config",
+        "release-manifest.json",
+        "android-17-uml-arm64.img.zst",
+        "repo",
+        "manifest",
+        '"-r"',
+        "os.replace",
+    ):
+        if token not in publish_release:
+            fail(f"Android release publisher is missing fixed policy: {token}")
 
     command_line = (android_root / "support/boot/kernel-command-line.txt").read_text()
     for token in (
