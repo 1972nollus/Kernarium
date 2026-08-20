@@ -495,11 +495,68 @@ def validate_trap_repair(trap: str) -> None:
     )
 
 
-def validate_sources(tlb: str, trap: str) -> None:
+def validate_nested_tlb_range_policy(um_tlb_header: str, mmu_gather: str) -> None:
+    header_masked = mask_c_comments_and_literals(um_tlb_header)
+    hook_pattern = re.compile(
+        r"#\s*define\s+arch_tlb_flush_nested_requires_fullmm\s*"
+        r"\(\s*tlb\s*\)\s+false\b"
+    )
+    hook_matches = list(hook_pattern.finditer(header_masked))
+    require(
+        len(hook_matches) == 1,
+        "UML must define exactly one false nested-TLB fullmm hook",
+    )
+    hook_context = tuple(
+        re.sub(r"\s+", "", expression)
+        for expression in preprocessor_context(
+            um_tlb_header, hook_matches[0].start()
+        )
+    )
+    require(
+        hook_context[-1:] == ("defined(UML_HOST_DARWIN)",)
+        and not any("CONFIG_PAGE_SIZE" in expression for expression in hook_context),
+        "nested-TLB range preservation must cover every Darwin page profile",
+    )
+
+    gather_masked = mask_c_comments_and_literals(mmu_gather)
+    default_pattern = re.compile(
+        r"#\s*ifndef\s+arch_tlb_flush_nested_requires_fullmm\s*\n"
+        r"\s*#\s*define\s+arch_tlb_flush_nested_requires_fullmm\s*"
+        r"\(\s*tlb\s*\)\s+true\b\s*\n\s*#\s*endif\b"
+    )
+    defaults = list(default_pattern.finditer(gather_masked))
+    require(
+        len(defaults) == 1,
+        "generic mmu-gather must default nested TLB flushing to fullmm",
+    )
+    require(
+        preprocessor_context(mmu_gather, defaults[0].start()) == (),
+        "generic nested-TLB fullmm default must be unconditional",
+    )
+
+    finish = function_region(mmu_gather, "tlb_finish_mmu")
+    find(
+        finish.text,
+        r"if\s*\(\s*mm_tlb_flush_nested\s*\(\s*tlb->mm\s*\)\s*&&\s*"
+        r"arch_tlb_flush_nested_requires_fullmm\s*\(\s*tlb\s*\)\s*\)\s*\{\s*"
+        r"tlb->fullmm\s*=\s*1\s*;\s*__tlb_reset_range\s*\(\s*tlb\s*\)\s*;\s*"
+        r"tlb->freed_tables\s*=\s*1\s*;\s*\}",
+        "tlb_finish_mmu must gate nested fullmm promotion on the architecture hook",
+        flags=re.DOTALL,
+    )
+
+
+def validate_sources(
+    tlb: str,
+    trap: str,
+    um_tlb_header: str,
+    mmu_gather: str,
+) -> None:
     validate_init_mm_wrapper(tlb)
     validate_pending_range_transaction(tlb)
     validate_four_k_slot_policy(tlb)
     validate_trap_repair(trap)
+    validate_nested_tlb_range_policy(um_tlb_header, mmu_gather)
 
 
 def substitute_once(source: str, pattern: str, replacement: str) -> str:
@@ -515,7 +572,12 @@ def move_literal_after(source: str, moving: str, anchor: str) -> str:
     return without.replace(anchor, anchor + moving, 1)
 
 
-def run_mutation_fixtures(tlb: str, trap: str) -> None:
+def run_mutation_fixtures(
+    tlb: str,
+    trap: str,
+    um_tlb_header: str,
+    mmu_gather: str,
+) -> None:
     Mutation = tuple[str, str, Callable[[str], str]]
     mutations: tuple[Mutation, ...] = (
         (
@@ -744,13 +806,61 @@ def run_mutation_fixtures(tlb: str, trap: str) -> None:
                 r"\1\n\t\treturn 0;",
             ),
         ),
+        (
+            "darwin-nested-flush-fullmm",
+            "um_tlb_header",
+            lambda value: substitute_once(
+                value,
+                r"(arch_tlb_flush_nested_requires_fullmm\(tlb\)\s+)false",
+                r"\1true",
+            ),
+        ),
+        (
+            "darwin-nested-flush-page-profile",
+            "um_tlb_header",
+            lambda value: substitute_once(
+                value,
+                r"#ifdef\s+UML_HOST_DARWIN",
+                "#ifdef CONFIG_PAGE_SIZE_16KB",
+            ),
+        ),
+        (
+            "generic-nested-flush-default",
+            "mmu_gather",
+            lambda value: substitute_once(
+                value,
+                r"(arch_tlb_flush_nested_requires_fullmm\(tlb\)\s+)true",
+                r"\1false",
+            ),
+        ),
+        (
+            "nested-flush-hook-dispatch",
+            "mmu_gather",
+            lambda value: substitute_once(
+                value,
+                r"if \(mm_tlb_flush_nested\(tlb->mm\) &&\s*"
+                r"arch_tlb_flush_nested_requires_fullmm\(tlb\)\)",
+                "if (mm_tlb_flush_nested(tlb->mm))",
+            ),
+        ),
     )
 
+    sources = {
+        "tlb": tlb,
+        "trap": trap,
+        "um_tlb_header": um_tlb_header,
+        "mmu_gather": mmu_gather,
+    }
     for name, target, mutate in mutations:
-        mutated_tlb = mutate(tlb) if target == "tlb" else tlb
-        mutated_trap = mutate(trap) if target == "trap" else trap
+        mutated = dict(sources)
+        mutated[target] = mutate(mutated[target])
         try:
-            validate_sources(mutated_tlb, mutated_trap)
+            validate_sources(
+                mutated["tlb"],
+                mutated["trap"],
+                mutated["um_tlb_header"],
+                mutated["mmu_gather"],
+            )
         except PolicyError:
             continue
         raise AssertionError(f"{name}: policy validator accepted the mutation")
@@ -772,12 +882,26 @@ def main() -> int:
     kernel_directory = arguments.linux_source / "arch" / "um" / "kernel"
     tlb_path = kernel_directory / "tlb.c"
     trap_path = kernel_directory / "trap.c"
+    um_tlb_header_path = (
+        arguments.linux_source / "arch" / "um" / "include" / "asm" / "tlb.h"
+    )
+    mmu_gather_path = arguments.linux_source / "mm" / "mmu_gather.c"
     require(tlb_path.is_file(), f"missing prepared kernel source: {tlb_path}")
     require(trap_path.is_file(), f"missing prepared kernel source: {trap_path}")
+    require(
+        um_tlb_header_path.is_file(),
+        f"missing prepared kernel source: {um_tlb_header_path}",
+    )
+    require(
+        mmu_gather_path.is_file(),
+        f"missing prepared kernel source: {mmu_gather_path}",
+    )
     tlb = tlb_path.read_text(encoding="utf-8")
     trap = trap_path.read_text(encoding="utf-8")
-    validate_sources(tlb, trap)
-    run_mutation_fixtures(tlb, trap)
+    um_tlb_header = um_tlb_header_path.read_text(encoding="utf-8")
+    mmu_gather = mmu_gather_path.read_text(encoding="utf-8")
+    validate_sources(tlb, trap, um_tlb_header, mmu_gather)
+    run_mutation_fixtures(tlb, trap, um_tlb_header, mmu_gather)
     print("Darwin init_mm TLB policy fixtures passed")
     return 0
 

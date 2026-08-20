@@ -15,14 +15,14 @@ verification is offline.
 
 ## Latest verified replay (2026-08-21)
 
-The manifest contains 20 ordered topics and replays to canonical tree
-`b7ebf6944c6ed87956d27992bbef32c84c3692f7`. A fresh pinned-commit replay,
+The manifest contains 21 ordered topics and replays to canonical tree
+`436f25b3c4cad9cbbead1d37bad19e219ce4075d`. A fresh pinned-commit replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, configured-checkout verification, and the delta audit passed. Both
 canonical production page profiles rebuilt with LLVM 22 in that fresh replay
 after the latest topic was added.
-The exact delta policy is 161 changed files
-with 8 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
+The exact delta policy is 163 changed files
+with 9 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
 UML serial-line count configurable. Topic 0002 repairs the software-MMU mapping
 that uaccess verifies when the address carries none at all: `matches()`
@@ -53,6 +53,13 @@ GEM mapping and VMA manager are still live. A focused policy test pins the
 ordering, and three consecutive 16 KiB Simulator plus three connected-iPad CTS
 shutdowns completed without the formerly intermittent
 `Memory manager not clean during takedown` warning.
+Topic 0021 keeps Darwin's precise nested `mmu_gather` ranges instead of
+promoting concurrent users to a generation-wide flush. Darwin range
+invalidation already quiesces every executor and advances the mapping epoch;
+discarding the collected ranges repeatedly walked every VMA and starved RCU
+during the 4 KiB Chromium workload. The generic hook defaults to the existing
+full-mm policy for every other architecture, and mutation fixtures pin both
+sides of that fail-safe contract.
 Topic 0001 also aligns the Darwin ET_DYN image's early executable boundaries
 to the 16 KiB host-page granularity. That keeps a 4 KiB guest kernel's signed
 text carrier from sharing an iOS host page with the following dynamic loader

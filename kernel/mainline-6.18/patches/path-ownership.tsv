@@ -10,4 +10,5 @@ drivers/gpu/drm/virtio/virtgpu_drv.c	base-correctness	drop-locally-if-contained	
 drivers/video/console/Kconfig	uml-devices	carry-locally	The standard fbcon selection must avoid UML's legacy stdio-console major only when that driver is configured.
 scripts/*	darwin-host-build	carry-locally	Kbuild host tools run before the outer emulator exists, so their ELF portability remains in this local line; see extraction-decisions.tsv.
 mm/filemap.c	base-correctness	drop-locally-if-contained	Independent cachestat zero-length correctness fix; remove locally when the selected base contains it.
+mm/mmu_gather.c	uml-generic	carry-locally	Architecture hook for preserving precise nested mmu-gather ranges when a synchronous range flush already serializes all executors.
 security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	Independent connected-stream sendmsg correctness fix; remove locally when the selected base contains it.

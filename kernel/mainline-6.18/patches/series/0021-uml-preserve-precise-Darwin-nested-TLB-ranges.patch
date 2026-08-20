@@ -1,0 +1,53 @@
+From 28bfc7baf71d64fb233436795c3953a49139ec6b Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 07:52:49 +0900
+Subject: [PATCH 21/21] uml: preserve precise Darwin nested TLB ranges
+
+---
+ arch/um/include/asm/tlb.h | 9 +++++++++
+ mm/mmu_gather.c           | 7 ++++++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
+index 0422467bd..ed4e77942 100644
+--- a/arch/um/include/asm/tlb.h
++++ b/arch/um/include/asm/tlb.h
+@@ -8,4 +8,13 @@
+ #include <asm/cacheflush.h>
+ #include <asm-generic/tlb.h>
+ 
++#ifdef UML_HOST_DARWIN
++/* Darwin range invalidation quiesces every executor for the generation and
++ * advances the mapping epoch before it returns.  Concurrent mmu-gather users
++ * therefore retain the precise range they collected instead of converting it
++ * to a generation-wide flush that would discard the software-MMU working set.
++ */
++#define arch_tlb_flush_nested_requires_fullmm(tlb) false
++#endif
++
+ #endif
+diff --git a/mm/mmu_gather.c b/mm/mmu_gather.c
+index 5619ee967..ac7842d2a 100644
+--- a/mm/mmu_gather.c
++++ b/mm/mmu_gather.c
+@@ -14,6 +14,10 @@
+ #include <asm/pgalloc.h>
+ #include <asm/tlb.h>
+ 
++#ifndef arch_tlb_flush_nested_requires_fullmm
++#define arch_tlb_flush_nested_requires_fullmm(tlb) true
++#endif
++
+ #ifndef CONFIG_MMU_GATHER_NO_GATHER
+ 
+ static bool tlb_next_batch(struct mmu_gather *tlb)
+@@ -513,7 +517,8 @@ void tlb_finish_mmu(struct mmu_gather *tlb)
+ 	 * may result in having stale TLB entries for some architectures,
+ 	 * e.g. aarch64, that could specify flush what level TLB.
+ 	 */
+-	if (mm_tlb_flush_nested(tlb->mm)) {
++	if (mm_tlb_flush_nested(tlb->mm) &&
++	    arch_tlb_flush_nested_requires_fullmm(tlb)) {
+ 		/*
+ 		 * The aarch64 yields better performance with fullmm by
+ 		 * avoiding multiple CPUs spamming TLBI messages at the
