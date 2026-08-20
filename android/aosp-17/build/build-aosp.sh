@@ -143,6 +143,16 @@ for variable in \
 	[[ "$(get_build_var "$variable")" == false ]] ||
 		fail "$variable must be false for the built-in-only kernel"
 done
+for variable in \
+	BOARD_USES_SYSTEM_DLKMIMAGE \
+	BOARD_USES_VENDOR_DLKMIMAGE \
+	BOARD_USES_ODM_DLKMIMAGE \
+	BOARD_SYSTEM_DLKMIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_VENDOR_DLKMIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_ODM_DLKMIMAGE_FILE_SYSTEM_TYPE; do
+	[[ -z "$(get_build_var "$variable")" ]] ||
+		fail "$variable must be empty for the built-in-only kernel"
+done
 ab_ota_partitions=$(get_build_var AB_OTA_PARTITIONS)
 [[ "$ab_ota_partitions" != *dlkm* ]] ||
 	fail "AB_OTA_PARTITIONS retains a DLKM payload: $ab_ota_partitions"
