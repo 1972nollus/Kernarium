@@ -227,11 +227,11 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-15f81808-static1`, published from clean
-outer revision `15f818086cbaf737d7a1f82eed6e074c9f659201` after the static kernel,
-target-files, VINTF, SELinux, initramfs, and disk gates passed. This is artifact
-acceptance for Apple-product integration; Android boot and HAL acceptance remain
-separate later gates.
+selects `android17-ack6.18-16k-20260821-c68cad2a-composer1`, published from clean
+outer revision `c68cad2a113a338e0c0bc84d10179e88a3c2fed2` after the static kernel,
+target-files, VINTF, SELinux, initramfs, disk, and DRM-HWC APEX-selection gates
+passed. This is artifact acceptance for Apple-product integration; Android boot
+and HAL acceptance remain separate later gates.
 
 Apple consumers validate that installed directory without a builder or transfer
 tool. The installed mode requires and checks the expanded GPT disk and all other
