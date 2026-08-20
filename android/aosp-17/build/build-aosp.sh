@@ -188,6 +188,8 @@ for package in \
 	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
 		fail "unsupported Trusty or remote security package is present: $package"
 done
+[[ "$PRODUCT_PACKAGES" != *" dlkm_loader "* ]] ||
+	fail "dlkm_loader is forbidden for the built-in-only kernel"
 
 # target-files always carries a kernel input even when this product does not
 # build an Android boot image. Stage only the already-built, verified ACK UML

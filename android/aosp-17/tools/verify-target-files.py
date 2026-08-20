@@ -27,6 +27,27 @@ REQUIRED_ENTRIES = {
     "META/misc_info.txt",
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
+DLKM_COMPATIBILITY_ENTRIES = {
+    "ROOT/odm_dlkm",
+    "ROOT/odm_dlkm/etc",
+    "ROOT/system_dlkm",
+    "ROOT/vendor_dlkm",
+    "ROOT/vendor_dlkm/etc",
+    "SYSTEM/system_dlkm",
+    "SYSTEM/system_dlkm/etc",
+    "SYSTEM/system_dlkm/etc/build.prop",
+    "VENDOR/odm_dlkm",
+    "VENDOR/odm_dlkm/etc",
+    "VENDOR/odm_dlkm/etc/build.prop",
+    "VENDOR/vendor_dlkm",
+    "VENDOR/vendor_dlkm/etc",
+    "VENDOR/vendor_dlkm/etc/build.prop",
+    "VENDOR_BOOT/RAMDISK/odm_dlkm",
+    "VENDOR_BOOT/RAMDISK/odm_dlkm/etc",
+    "VENDOR_BOOT/RAMDISK/system_dlkm",
+    "VENDOR_BOOT/RAMDISK/vendor_dlkm",
+    "VENDOR_BOOT/RAMDISK/vendor_dlkm/etc",
+}
 MODULE_METADATA = {
     "modules.alias",
     "modules.alias.bin",
@@ -80,9 +101,12 @@ def safe_name(name: str) -> PurePosixPath:
 
 def reject_module_payload(path: PurePosixPath) -> None:
     lowered = tuple(part.lower() for part in path.parts)
-    if any(part in DLKM_COMPONENTS for part in lowered):
+    if (any(part in DLKM_COMPONENTS for part in lowered)
+            and str(path) not in DLKM_COMPATIBILITY_ENTRIES):
         fail(f"DLKM payload is forbidden: {path}")
     basename = lowered[-1]
+    if basename == "dlkm_loader":
+        fail(f"kernel module loader is forbidden: {path}")
     if basename.endswith(".ko") or ".ko." in basename:
         fail(f"loadable kernel module is forbidden: {path}")
     if basename in MODULE_METADATA:

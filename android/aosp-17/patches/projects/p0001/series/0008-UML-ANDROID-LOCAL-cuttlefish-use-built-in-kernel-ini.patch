@@ -1,0 +1,218 @@
+From a010757e51873e6a1c9a7b05b2758683743c2da7 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 18:43:12 +0000
+Subject: [PATCH 8/8] UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init
+
+Change-Id: I547049cc8f52d019a6fc533ba6c0d38ae563d400
+---
+ shared/device.mk                              |  12 +-
+ vsoc_uml_arm64_pgagnostic/config/Android.bp   |  27 ++++
+ .../config/init.vendor.rc                     | 118 ++++++++++++++++++
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk   |   2 +
+ 4 files changed, 157 insertions(+), 2 deletions(-)
+ create mode 100644 vsoc_uml_arm64_pgagnostic/config/Android.bp
+ create mode 100644 vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
+
+diff --git a/shared/device.mk b/shared/device.mk
+index 0636cf70dee9f4459e43329581bdb111e71c6bb0..5608c11e5de8ef047473f2e2af691b3f1cfc6ed6 100644
+--- a/shared/device.mk
++++ b/shared/device.mk
+@@ -227,8 +227,14 @@ PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
+ #
+ 
+ $(call soong_config_set_bool,cuttlefish_config,use_general_files,true)
++ifeq ($(UML_ANDROID_BUILTIN_KERNEL),true)
++PRODUCT_PACKAGES += \
++    device_google_cuttlefish_uml_config_init_vendor_rc
++else
++PRODUCT_PACKAGES += \
++    device_google_cuttlefish_shared_config_init_vendor_rc
++endif
+ PRODUCT_PACKAGES += \
+-    device_google_cuttlefish_shared_config_init_vendor_rc \
+     device_google_cuttlefish_shared_config_init_product_rc \
+     device_google_cuttlefish_shared_config_media_codecs \
+     device_google_cuttlefish_shared_config_media_profiles \
+@@ -594,9 +600,11 @@ PRODUCT_SYSTEM_EXT_PROPERTIES += \
+ # Start fingerprint virtual HAL process
+ PRODUCT_VENDOR_PROPERTIES += ro.vendor.fingerprint_virtual_hal_start=true
+ 
+-# Vendor Dlkm Locader
++# Vendor DLKM loader
++ifneq ($(UML_ANDROID_BUILTIN_KERNEL),true)
+ PRODUCT_PACKAGES += \
+    dlkm_loader
++endif
+ 
+ # CAS AIDL HAL
+ PRODUCT_PACKAGES += \
+diff --git a/vsoc_uml_arm64_pgagnostic/config/Android.bp b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+new file mode 100644
+index 0000000000000000000000000000000000000000..45b87a2978e991695f7646c11b59cbccb94398a0
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+@@ -0,0 +1,27 @@
++//
++// Copyright 2026 The Android Open Source Project
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//      http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++//
++
++package {
++    default_applicable_licenses: ["Android-Apache-2.0"],
++}
++
++prebuilt_etc {
++    name: "device_google_cuttlefish_uml_config_init_vendor_rc",
++    srcs: ["init.vendor.rc"],
++    dsts: ["init.cutf_cvm.rc"],
++    vendor: true,
++    relative_install_path: "init",
++}
+diff --git a/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc b/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ae17feab93b07c3e050102e4974334138dd4358
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/config/init.vendor.rc
+@@ -0,0 +1,118 @@
++on early-init
++#    loglevel 8
++
++    setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
++    setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}
++
++    start metrics_helper
++
++on init
++    # ZRAM setup
++    write /sys/block/zram0/comp_algorithm lz4
++
++    # EAS uclamp interfaces
++    mkdir /dev/cpuctl/foreground
++    mkdir /dev/cpuctl/background
++    mkdir /dev/cpuctl/top-app
++    mkdir /dev/cpuctl/rt
++    chown system system /dev/cpuctl
++    chown system system /dev/cpuctl/foreground
++    chown system system /dev/cpuctl/background
++    chown system system /dev/cpuctl/top-app
++    chown system system /dev/cpuctl/rt
++    chown system system /dev/cpuctl/tasks
++    chown system system /dev/cpuctl/foreground/tasks
++    chown system system /dev/cpuctl/background/tasks
++    chown system system /dev/cpuctl/top-app/tasks
++    chown system system /dev/cpuctl/rt/tasks
++    chmod 0664 /dev/cpuctl/tasks
++    chmod 0664 /dev/cpuctl/foreground/tasks
++    chmod 0664 /dev/cpuctl/background/tasks
++    chmod 0664 /dev/cpuctl/top-app/tasks
++    chmod 0664 /dev/cpuctl/rt/tasks
++
++on fs
++    mkdir /mnt/vendor/shared 0770 system system
++
++    # Mount everything that does not require fsck
++    mount_all --early
++
++    # So GceBootReporter can print to kmsg
++    chmod 622 /dev/kmsg
++
++on post-fs-data && property:ro.vendor.disable_rename_eth0=
++    # works around framework netiface enumeration issue
++    # TODO(b/202731768): Add this `start rename_eth0` command to the init.rc for rename_netiface
++    wait /sys/class/net/eth0
++    start rename_eth0
++
++on post-fs-data && property:ro.boot.wifi_impl=virt_wifi
++    # TODO(b/202731768): Add this `start setup_wifi` command to the init.rc for setup_wifi
++    start setup_wifi
++
++on post-fs-data
++    mkdir /data/vendor/modem_dump 0777 system system
++    mkdir /data/vendor/radio 0777 system system
++
++on late-fs
++    # Mount RW partitions which need run fsck
++    mount_all --late
++
++    write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
++
++on post-fs-data && property:ro.boot.wifi_impl=mac80211_hwsim_virtio
++    mkdir /data/vendor/wifi 0770 wifi wifi
++    mkdir /data/vendor/wifi/hostapd 0770 wifi wifi
++    mkdir /data/vendor/wifi/hostapd/sockets 0770 wifi wifi
++    start init_wifi_sh
++
++on boot
++    chmod 0770 /dev/cpuctl
++    mkdir /data/vendor/wifi 0770 wifi wifi
++    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
++    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
++    start socket_vsock_proxy
++    setprop ro.hardware.audio.primary goldfish
++    symlink /dev/hvc6 /dev/gnss0
++    symlink /dev/hvc7 /dev/gnss1
++
++on property:sys.boot_completed=1
++    trigger sys-boot-completed-set
++    mkdir /mnt/vendor/custom 0755 root root
++    mount ext2 /dev/block/by-name/custom /mnt/vendor/custom loop rw sync
++
++# We want one opportunity per boot to enable zram, so we
++# use a trigger we fire from the above stanza. If
++# persist.sys.zram_enabled becomes true after boot,
++# we don't want to run swapon_all at that time.
++on sys-boot-completed-set && property:persist.sys.zram_enabled=1
++    swapon_all
++
++service metrics_helper /vendor/bin/metrics_helper
++    group system
++    user root
++
++service socket_vsock_proxy /vendor/bin/socket_vsock_proxy -server_type=vsock -server_vsock_port=6520 -client_type=tcp -client_tcp_host=0.0.0.0 -client_tcp_port=5555
++    user root
++
++service bugreport /system/bin/dumpstate -d -p -z
++    class main
++    user root
++    disabled
++    oneshot
++    keycodes 30 48
++
++# TODO: disable this service once cuttlefish implements system suspend
++service suspend_blocker /vendor/bin/suspend_blocker
++    class early_hal # Start together with system_suspend HAL
++    group system
++    user root
++
++on early-init
++    setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
++
++on early-init
++    setprop ro.vendor.cuttlefish_service_bluetooth_checker ${ro.boot.cuttlefish_service_bluetooth_checker}
++
++on early-init && property:ro.boot.enable_bootanimation=0
++    setprop debug.sf.nobootanimation 1
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 4e4ff7cb9a1e3ce9888a5e817e5e08e78fc3ef68..480734de859c975368f5247792fbeaafd7e8baf8 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -21,6 +21,8 @@
+ # Cuttlefish does not add the Trusty security VM and its nested kernel build.
+ TRUSTY_SYSTEM_VM := disabled
+ UML_ANDROID_SECURITY_HALS := nonsecure
++# The ACK UML kernel has CONFIG_MODULES=n; select the module-free init path.
++UML_ANDROID_BUILTIN_KERNEL := true
+ $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+ 
+ PRODUCT_NAME := aosp_uml_arm64_pgagnostic

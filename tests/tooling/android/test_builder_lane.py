@@ -68,11 +68,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel = root / "vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
 
-        def write_fixture(path: Path, *, module: bool = False, abi32: bool = False,
-                          alignment: int = 16384) -> None:
+        def write_fixture(path: Path, *, module: bool = False,
+                          module_loader: bool = False, dlkm_image: bool = False,
+                          abi32: bool = False, alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
                 archive.writestr("META/misc_info.txt", "")
+                archive.writestr("ROOT/system_dlkm/", b"")
+                archive.writestr("SYSTEM/system_dlkm/etc/build.prop", "")
                 abilist32 = "armeabi-v7a" if abi32 else ""
                 archive.writestr(
                     "SYSTEM/build.prop",
@@ -85,6 +88,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
+                if module_loader:
+                    archive.writestr("VENDOR/bin/dlkm_loader", b"loader")
+                if dlkm_image:
+                    archive.writestr("SYSTEM_DLKM/etc/build.prop", "")
 
         good = root / "good.zip"
         write_fixture(good)
@@ -103,6 +110,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
 
         for label, options in (
             ("module", {"module": True}),
+            ("module-loader", {"module_loader": True}),
+            ("dlkm-image", {"dlkm_image": True}),
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
         ):
@@ -493,6 +502,7 @@ def main() -> None:
         "TRUSTY_SYSTEM_VM",
         "com.android.hardware.gatekeeper.nonsecure",
         "com.android.hardware.keymint.rust_nonsecure",
+        "dlkm_loader",
         "trusty_security_vm.elf",
         "target-files-package",
     ):
