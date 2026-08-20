@@ -63,6 +63,11 @@ The following decisions are requirements, not optional implementation ideas:
     transferring files to or from the build machine. An operator copies the
     required tracked files to the build machine before running its local build
     scripts and copies the finished release back outside those scripts.
+12. The Android ACK kernel sets `CONFIG_MODULES=n`. Every kernel facility the
+    Android guest requires is linked into `vmlinux`; no `.ko`, DLKM partition,
+    module loader, or late executable-code path exists. This is required by
+    the iOS runtime, which executes the signed immutable kernel carrier without
+    a JIT entitlement and cannot publish loadable module text at runtime.
 
 ## Non-goals
 
@@ -209,8 +214,8 @@ android/
       release/
         release-manifest.schema.json
       verification/
-        required-features.txt
-        forbidden-features.txt
+        required-kernel-builtins.txt
+        forbidden-kernel-config.txt
     build/
       prepare-sources.sh
       apply-aosp-patches.sh
@@ -496,6 +501,11 @@ The build fails if the resolved configuration does not select 16 KiB pages or
 if a 4 KiB fragment, build directory, artifact name, or manifest value appears
 in the Android lane.
 
+`android/aosp-17/support/verification/required-kernel-builtins.txt` owns the
+exact Kconfig symbol set required by the selected Android product. Every entry
+must resolve to `y`; resolving one to `m` or enabling module support to satisfy
+a dependency is a hard build failure.
+
 The resolved policy must provide at least:
 
 - AArch64-only UML with no 32-bit compatibility ABI;
@@ -513,6 +523,12 @@ The resolved policy must provide at least:
 - `CONFIG_HOSTFS=n`, preserving the existing rule that a guest cannot select
   an arbitrary host directory as a filesystem.
 
+`CONFIG_MODULES=n` is a carrier-safety boundary, not an optimization. The
+signed Android `vmlinux` must contain the complete executable kernel closure
+before Apple packaging. Android init, first-stage ramdisk, vendor configuration,
+and release support files must not invoke `modprobe`, `insmod`, `rmmod`, or an
+equivalent module loader, and no driver may rely on deferred `.ko` loading.
+
 Use the conventional built-in C Binder for initial bring-up and remove the
 Cuttlefish `binder.impl=rust` selection. Rust Binder can be evaluated later as
 a separately justified local product change after the native Android guest is
@@ -529,7 +545,10 @@ The builder-local kernel gate requires:
   expected entry point, relocation policy, and 16 KiB executable boundaries;
 - no writable-executable segment;
 - undefined `darwin_uml_*` imports exactly matching the common 16 KiB ABI;
-- no loadable modules and no Android 4 KiB output; and
+- exact `CONFIG_MODULES=n`, every required kernel feature resolved to `y`, no
+  Kconfig value resolved to `m`, and no `.ko`, module-dependency inventory,
+  DLKM image, or module-loading init action;
+- no Android 4 KiB output; and
 - generation of the compact kernel support set used by release verification.
 
 ## AOSP 17 product
@@ -673,6 +692,12 @@ Keep target-files archives, symbols, object directories, AOSP source trees,
 ACK source trees, intermediate boot images, and full logs on the builder. They
 are not emulator dependencies and are not part of the release directory copied
 back to the workstation.
+
+`modules.builtin` and `modules.builtin.modinfo` are read-only evidence of code
+already linked into `vmlinux`; they are not loadable-module artifacts. The
+publisher rejects `.ko` or `.ko.*` files, `modules.dep*`, `modules.alias*`,
+`modules.load*`, DLKM images, and any other input intended for runtime module
+discovery or loading.
 
 ### Manifest contents
 
@@ -982,7 +1007,9 @@ Exit criteria:
 - only one 16 KiB kernel artifact is produced;
 - Binder, SELinux, `memfd_class`, ashmem compatibility, DMA-BUF, UBD, Virtio
   devices, namespaces, cgroups, and required filesystems verify built-in;
-- HostFS and loadable modules verify disabled; and
+- `CONFIG_MODULES=n`, every required feature is `y`, no feature is `m`, and
+  the build and release trees contain no loadable-module or DLKM payload;
+- HostFS verifies disabled; and
 - common ABI import verification passes.
 
 ### Phase 4: build the AOSP 17 UML product and disk
@@ -1061,6 +1088,9 @@ Exit criteria:
 
 - both framework slices contain the exact accepted ELF;
 - carrier verification and package-shape tests pass;
+- physical-iOS execution requires no JIT entitlement, anonymous executable
+  allocation, RW-to-RX publication, or module-text relocation outside the
+  signed immutable carrier;
 - framework discovery cannot collide with current `KernariumRuntime_*` names;
 - no Android 4 KiB framework exists; and
 - current dual-profile framework packaging still passes independently.
@@ -1142,6 +1172,8 @@ The Android producer records and checks:
 - every routed AOSP project's base identity, ordered patch series, clean final
   tree, and absence of changes outside `projects.tsv`;
 - resolved kernel configuration;
+- `CONFIG_MODULES=n`, an all-`y` required-builtins set, absence of every `=m`
+  value, and absence of `.ko`, module-loader, and DLKM release inputs;
 - kernel ELF and common ABI imports;
 - AOSP 16 KiB native-library alignment;
 - VINTF and SELinux policy;
@@ -1170,6 +1202,7 @@ acceptance includes only its one 16 KiB profile.
 | Linux-hosted Darwin UML cross-build accidentally uses Linux host ABI | Separate `HOSTCC` and AArch64 target compilers, require an explicit Darwin SDK/sysroot, and inspect every final undefined import and ELF property. |
 | AOSP build time hides a kernel/toolchain failure | Complete Phase 0 before starting AOSP. |
 | CMake regains a hidden source/build dependency | File-API and source audits reject Kbuild, SSH, Git, Soong, or artifact-producing commands in Apple targets. |
+| A required Android driver silently becomes a module | Resolve every symbol in `required-kernel-builtins.txt` to `y`, require `CONFIG_MODULES=n`, reject every `=m` value and module-loading artifact/action, and prove the signed `vmlinux` is the complete executable kernel closure. |
 | An AOSP patch is applied to the wrong Repo project | Route patches by opaque ID, verify the manifest project/path and exact base before replay, and require the recorded clean final tree. |
 | Product files bypass patch ownership through a copied overlay | Structural and post-build audits reject support-tree staging, untracked Repo-root files, and changed projects absent from `projects.tsv`. |
 | The operator copies a partial or wrong release from the builder | Publish atomically on the builder and require the local installer to reject incomplete, undeclared, wrong-family, and semantically invalid incoming directories. |
@@ -1197,9 +1230,12 @@ The plan is complete when:
    tracked script initiates execution on or transport to or from that machine;
 5. `uml-darwin-android17` and
    `KernariumAndroidRuntime_17_ACK6_18_16K` are separate accepted products;
-6. Android 17 boots enforcing with a real 16 KiB page size and runs both
+6. the Android ACK configuration has `CONFIG_MODULES=n`, every required kernel
+   feature is built in, and the release/runtime has no loadable-module, DLKM,
+   or JIT-dependent kernel-code path;
+7. Android 17 boots enforcing with a real 16 KiB page size and runs both
    managed and native ARM64 applications; and
-7. the existing mainline 16 KiB and 4 KiB products retain their names,
+8. the existing mainline 16 KiB and 4 KiB products retain their names,
    artifacts, workflows, and accepted behavior.
 
 ## Primary external references
