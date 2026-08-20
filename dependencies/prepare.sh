@@ -477,16 +477,40 @@ obtain_cache()
 	set -- $source_paths
 	IFS=$old_ifs
 	if [ "$FETCH" -eq 1 ]; then
-		git -C "$cache_repository" ls-tree -r "$commit" -- "$@" |
-			awk '$2 == "blob" { print $3 }' |
-			git -C "$cache_repository" cat-file \
-				--batch-check='%(objectname) %(objecttype)' >/dev/null
-	else
+		# `cat-file --batch-check` asks a promisor remote for each missing
+		# object independently. A large sparse tree such as ANGLE can therefore
+		# create thousands of lazy-fetch subprocesses and race the shallow
+		# boundary. A transient sparse checkout lets unpack-trees request the
+		# complete missing-object set in one bounded fetch. Direct its object
+		# writes into the shared cache, while keeping HEAD, the index, sparse
+		# configuration, and worktree private to this preparation process.
+		if [ -z "$STAGING_ROOT" ]; then
+			STAGING_ROOT=$(mktemp -d "$DEPENDENCY_ROOT/.prepare.XXXXXX")
+		fi
+		materialization_repository="$STAGING_ROOT/.materialize-$name"
+		git -C "$STAGING_ROOT" init --quiet ".materialize-$name"
+		git -C "$materialization_repository" remote add origin "$repository"
+		git -C "$materialization_repository" config remote.origin.promisor true
+		git -C "$materialization_repository" config \
+			remote.origin.partialclonefilter blob:none
+		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
+			git -C "$materialization_repository" sparse-checkout init --cone
+		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
+			git -C "$materialization_repository" sparse-checkout set --cone "$@"
+		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
+			git -C "$materialization_repository" switch --detach "$commit" \
+				>/dev/null
+		rm -rf -- "$materialization_repository"
+	fi
+	missing_selected=$(
 		git -C "$cache_repository" ls-tree -r "$commit" -- "$@" |
 			awk '$2 == "blob" { print $3 }' |
 			env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" cat-file \
-				--batch-check='%(objectname) %(objecttype)' >/dev/null
-	fi
+				--batch-check='%(objectname) %(objecttype)' |
+			awk '$2 != "blob" { print $1; exit }'
+	)
+	[ -z "$missing_selected" ] ||
+		fail "$name sparse source is incomplete in the Git cache: $missing_selected"
 }
 
 prepare_repository()

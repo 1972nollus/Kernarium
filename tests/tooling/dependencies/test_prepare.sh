@@ -61,7 +61,9 @@ printf '%s\n' baseline >"$UPSTREAM/payload.txt"
 mkdir -p "$UPSTREAM/sub"
 printf '#!/bin/sh\nexit 0\n' >"$UPSTREAM/sub/tool.sh"
 chmod +x "$UPSTREAM/sub/tool.sh"
-git -C "$UPSTREAM" add payload.txt sub/tool.sh
+mkdir -p "$UPSTREAM/other"
+printf '%s\n' unselected >"$UPSTREAM/other/unselected.txt"
+git -C "$UPSTREAM" add payload.txt sub/tool.sh other/unselected.txt
 git -C "$UPSTREAM" commit --quiet -m 'fixture: upstream base'
 BASE=$(git -C "$UPSTREAM" rev-parse HEAD)
 
@@ -89,7 +91,7 @@ git -C "$UPSTREAM" format-patch --no-signature --output-directory "$SERIES_DIR" 
 	done
 } >"$SERIES_DIR/series.tsv"
 
-for name in clean patched; do
+for name in clean patched sparse; do
 	git clone --quiet "$UPSTREAM" "$CACHE/git/$name"
 	git -C "$CACHE/git/$name" remote set-url origin \
 		"https://example.invalid/$name.git"
@@ -101,6 +103,7 @@ cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
 clean	1.0	fixture	https://example.invalid/clean.git	$BASE	.	-
 patched	1.0	fixture	https://example.invalid/patched.git	$BASE	.	patches/patched/series.tsv
+sparse	1.0	sparse-fixture	https://example.invalid/sparse.git	$BASE	sub	-
 EOF
 cp "$MANIFEST" "$MANIFEST.original"
 cp -R "$SERIES_DIR" "$TEST_ROOT/series-original"
@@ -127,6 +130,22 @@ verify "$PREPARED" >/dev/null
 	fail "prepared dependency retained a network remote"
 [ "$(git -C "$PREPARED/patched" rev-list --count "$BASE..HEAD")" -eq 2 ] ||
 	fail "prepared dependency history has the wrong topology"
+
+SPARSE_PREPARED="$TEST_ROOT/sparse-prepared"
+SPARSE_CACHE_HEAD=$(git -C "$CACHE/git/sparse" rev-parse HEAD)
+SPARSE_CACHE_STATUS=$(git -C "$CACHE/git/sparse" status --porcelain)
+UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+	"$PREPARE" --product sparse-fixture --root "$SPARSE_PREPARED" \
+		--cache "$CACHE" >/dev/null
+[ -x "$SPARSE_PREPARED/sparse/sub/tool.sh" ] ||
+	fail "sparse preparation omitted its selected source path"
+[ ! -e "$SPARSE_PREPARED/sparse/other/unselected.txt" ] ||
+	fail "sparse preparation materialized an unselected source path"
+[ "$(git -C "$CACHE/git/sparse" rev-parse HEAD)" = "$SPARSE_CACHE_HEAD" ] ||
+	fail "sparse materialization changed the shared cache HEAD"
+[ "$(git -C "$CACHE/git/sparse" status --porcelain)" = "$SPARSE_CACHE_STATUS" ] ||
+	fail "sparse materialization changed the shared cache worktree"
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &
