@@ -667,10 +667,13 @@ python3 tests/integration/gpu/run_vk_gl_cts.py \
 Kernarium accepts no arbitrary CTS script or selector. The checked Apple
 campaign document currently names one exact GLES 3 sentinel; CMake generates
 its bounded launcher from the same driver into each 4 KiB and 16 KiB runtime.
-After packaging and building a clean app, run it only on an already-booted
-Simulator:
+After packaging and building a clean app, boot the selected Simulator when
+needed, wait for it to become ready, and then run the adapter:
 
 ```sh
+xcrun simctl boot SIMULATOR_UDID
+xcrun simctl bootstatus SIMULATOR_UDID -b
+
 python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
   --campaign gles3-declaration-sentinel-v1 \
   --page-profile 16k \
@@ -681,8 +684,11 @@ python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
 decodes the same bounded artifact frames, requires exact page/DRM/Xwayland/
-Virgl evidence and one `Pass`, then stops the app after guest poweroff. It does
-not boot a Simulator. The connected-iPad wrapper uses the same campaign and
+Virgl evidence and one `Pass`, then stops the app after guest poweroff. Echoed
+launcher source is not an artifact frame; raw frames and service-prefixed
+frames remain fail-closed. The adapter does not boot a Simulator, so use the
+explicit `simctl boot`/`bootstatus` pair above when the selected device is
+shut down. The connected-iPad wrapper uses the same campaign and
 validation but additionally requires the matching Simulator `run.json` and
 QPA, a normally signed device app, and a booted paired developer-enabled
 physical iPad:
@@ -698,6 +704,14 @@ python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
 Do not run the device wrapper before its matching Simulator result, and do not
 substitute Aquarium on the physical iPad. Both wrappers retain the same
 `--qualification` receipt/caselist refusal as the macOS driver.
+
+The 2026-08-21 16 KiB diagnostic passed the allow-listed case 1/1 first on the
+iOS 26.5 iPhone 17 Pro Max Simulator and then on the wired iPad mini 6 running
+iOS 18.5. Both produced identical renderer and selected-caselist artifacts,
+reported desktop GL 2.1/GLES 3.0, and returned guest/runtime status zero. The
+iPad poweroff emitted a `drm_managed_release` warning that its memory manager
+was not clean, so this result does not satisfy the lifecycle or qualification
+gate.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host

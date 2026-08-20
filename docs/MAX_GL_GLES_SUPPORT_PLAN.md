@@ -28,20 +28,23 @@ runtime builds, and XCFramework packaging pass.
 
 Phase 0 remains intentionally incomplete at its external evidence boundary:
 the installed CTS binaries have no recovered authoritative source/build
-receipt, the complete display-backed caselist has not been captured, and the
-same-schema Simulator plus connected-iPad baselines are not recorded. Phase 2
-has completed the common host implementation, dependency, unit, macOS product,
-mobile product, and packaging portions. A focused 16 KiB macOS guest diagnostic
-now proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0, one
-passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A
+receipt and the complete display-backed caselist has not been captured. Phase
+2 has completed the common host implementation, dependency, unit, macOS
+product, mobile product, and packaging portions. A focused 16 KiB macOS guest
+diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
+one passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A
 separate normal 16 KiB iPhone 17 Pro Max Simulator boot selected the common
 hardware ANGLE/Metal provider, direct Metal presentation, both Virgl capsets,
-and a rendered KDE desktop. The signed app now embeds page-specific launchers
+and a rendered KDE desktop. The signed app embeds page-specific launchers
 generated from one allow-listed CTS campaign definition; thin Simulator and
 physical-iPad wrappers enforce exact IDs, framed artifacts, `Pass`, and
-Simulator-before-device ordering. The matching Simulator CTS run, complete
-identity/capset sentinel, connected-iPad qualification, performance campaigns,
-and complete Khronos matrices remain open. No kernel/rootfs change or
+Simulator-before-device ordering. That exact 16 KiB sentinel now passes 1/1 on
+both the iOS 26.5 Simulator and the connected iPad mini 6, measuring guest
+desktop GL 2.1 and GLES 3.0 through the same DRM/Xwayland/virgl path on each.
+The complete identity/capset sentinel, connected-iPad qualification,
+performance campaigns, lifecycle acceptance, and complete Khronos matrices
+remain open. The iPad shutdown also exposes a `drm_mm` managed-release warning,
+so the diagnostic is not lifecycle qualification. No kernel/rootfs change or
 capability promotion is claimed. Phases 3 through 7 have not started; they
 remain gated on a truthful, measured lower shared baseline and the explicit
 stop conditions below.
@@ -80,11 +83,12 @@ be validated on iOS; a macOS-only graphics provider is forbidden.
   common kernel patch series while keeping the ABI consumed by the exact Mesa
   and libdrm installed in the current image compatible with their standard
   userspace contract.
-- Make **GLES 3.0 and desktop GL 2.1 expected** the committed direct-hardware
-  shared baseline candidate. Phase 2 must still qualify its absolute
-  performance on macOS, Simulator, and iPad. Treat GLES 3.1 as a stretch target only through direct
-  ANGLE/Metal implementation of compute, storage, image, atomic, and related
-  behavior on the GPU. The GL/GLES compatibility path must never select
+- Make **GLES 3.0 and desktop GL 2.1 measured but unqualified** the committed
+  direct-hardware shared baseline candidate. Phase 2 must still qualify its
+  absolute performance on macOS, Simulator, and iPad. Treat GLES 3.1 as a
+  stretch target only through direct ANGLE/Metal implementation of compute,
+  storage, image, atomic, and related behavior on the GPU. The GL/GLES
+  compatibility path must never select
   ANGLE/Vulkan, MoltenVK, Zink-over-Vulkan, or another Vulkan translation
   layer.
 - Consider desktop GL 3.0/3.1 only when every missing gate can remain
@@ -108,7 +112,7 @@ retain the already-recorded CGL result as archived evidence only
     -> develop and test the exact shared path on macOS first
     -> validate the same change on the iPhone 17 Pro Max Simulator
     -> qualify the milestone on the connected iPad
-    -> ship the measured GLES 3.0 / desktop GL 2.1 expected baseline
+    -> ship the measured GLES 3.0 / desktop GL 2.1 baseline after qualification
     -> attempt direct ANGLE/Metal GLES 3.1 mappings
     -> attempt only GPU-resident desktop-GL 3.0/3.1 gates
     -> stop when the next profile requires CPU-heavy or materially slower emulation
@@ -220,7 +224,7 @@ replaced by a slower emulation path.
 | Host renderer | macOS guest | Simulator guest | Connected-iPad guest | Status |
 | --- | --- | --- | --- | --- |
 | Apple CGL 4.1 | GL 4.1, GLES 3.0 | unavailable | unavailable | archived pre-migration measurement only; no planned build, runtime, or test lane |
-| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | normal 16 KiB guest boot proved the hardware provider, two Virgl capsets, direct Metal presentation, and rendered KDE; GL 2.1 expected, host ES 3.0 and dated WebGL 2 measured, direct guest CTS pending | GL 2.1 expected, GLES 3.0 source-derived | all three host slices build from the common product and the app CTS adapters are implemented; complete identity/capset, Simulator CTS, and physical-iPad qualification remain pending |
+| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | GL 2.1 and GLES 3.0 measured by the exact 16 KiB signed-app sentinel; the normal boot also proved both Virgl capsets, direct Metal presentation, and rendered KDE | GL 2.1 and GLES 3.0 measured by the identical 16 KiB signed-app sentinel | all three host slices build from the common product and the exact allow-listed case passes on macOS, Simulator, and iPad; complete identity/capset, matrices, performance, thermal, and lifecycle qualification remain pending |
 | Direct ANGLE/Metal ES 3.1 implementation | GL 2.1 expected, GLES 3.1 stretch ceiling | same conditional ceiling | same conditional ceiling | acceptable only with native Metal compute/storage/image/atomic mappings and the full performance gate |
 | Previous row plus GPU-resident desktop gates | at most GL 3.1, GLES 3.1 | same conditional ceiling | same conditional ceiling | optional stretch; retain the immediately lower qualified desktop tier, GL 2.1 or GL 3.0, when a required next-tier gate needs CPU-heavy or materially slower emulation |
 | GLES/GL 3.2 or GL 4.x | not targeted | not targeted | not targeted | geometry/desktop translation does not meet the selected direct ANGLE/Metal, performance-first architecture |
@@ -776,9 +780,12 @@ preparation creates no second runnable macOS graphics lane.
 Current status: the app-side campaign allow-list, page-specific generated
 launcher, Simulator wrapper, and connected-iPad wrapper are implemented and
 tooling-tested. The device wrapper requires a matching passing Simulator
-`run.json` plus its QPA before it will launch. A normal common-path Simulator
-desktop boot passed, but the exact CTS sentinel has not yet produced a
-Simulator result set, so this exit remains open.
+`run.json` plus its QPA before it will launch. The exact 16 KiB sentinel passed
+1/1 on the booted Simulator and then on the connected iPad, with matching
+renderer and selected-caselist identities and guest/runtime status zero. The
+iPad console recorded `Memory manager not clean during takedown` while powering
+off, and the complete sentinel, caselist, performance, thermal, and lifecycle
+baselines remain missing, so this exit remains open.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
@@ -1345,12 +1352,13 @@ The plan is complete only when all of the following are true:
 
 The truthful evidence statement is: an older macOS CGL build measured guest
 GL 4.1/GLES 3.0 and is archival only. The current common ANGLE/Metal path has a
-focused 16 KiB macOS diagnostic measuring guest GL 2.1/GLES 3.0 and one passing
-GLES 3 case; the iOS path separately measured an ES 3.0 host and passed the
-recorded WebGL 2 workload. No new shared capability is claimed until the exact
-Apple-GPU path completes macOS first, the iPhone 17 Pro Max Simulator second,
-and connected-iPad qualification last. The committed shared target remains the
-direct-hardware ANGLE/Metal GL 2.1 expected/GLES 3.0 baseline candidate; it
-becomes the performance baseline only after Phase 2 passes. GLES 3.1 and
-desktop GL 3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus GL
-4.x are not planned claims.
+focused 16 KiB macOS diagnostic and matched signed-app Simulator/iPad
+diagnostics measuring guest GL 2.1/GLES 3.0; the same exact frozen GLES 3 case
+passes 1/1 on all three products. The iPad shutdown warning, incomplete
+identity/capset sentinel and matrices, absent performance/thermal/lifecycle
+campaigns, and missing authoritative CTS receipt prevent any new shared
+capability or conformance claim. The committed shared target remains the
+direct-hardware ANGLE/Metal GL 2.1/GLES 3.0 baseline candidate and becomes the
+performance baseline only after Phase 2 passes. GLES 3.1 and desktop GL
+3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus GL 4.x are not
+planned claims.

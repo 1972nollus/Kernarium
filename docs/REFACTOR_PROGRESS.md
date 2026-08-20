@@ -20,19 +20,23 @@
 - Made no kernel or rootfs change and promoted no guest API. A focused 16 KiB
   macOS diagnostic reached DRM/Xwayland/virgl, measured desktop GL 2.1 and GLES
   3.0 naturally, and passed one exact GLES 3 CTS case with complete artifact
-  egress and clean shutdown. The complete identity/capset sentinel, Simulator,
-  connected-iPad, performance, and CTS work remains open; qualification is
+  egress and clean shutdown. The identical signed-app 16 KiB sentinel then
+  passed 1/1 on the iOS 26.5 Simulator and connected iPad mini 6, measuring the
+  same guest GL 2.1/GLES 3.0 result. The complete identity/capset sentinel,
+  performance, lifecycle, and CTS matrices remain open; qualification is
   blocked by its missing authoritative build receipt and incomplete
-  display-backed caselist.
+  display-backed caselist. The iPad poweroff recorded a `drm_mm`
+  managed-release warning, so that diagnostic is not lifecycle acceptance.
 - Added one common allow-list for signed-app CTS campaigns, generated the exact
   page-specific guest launcher into all four Kernarium runtime slices, and
   added thin Simulator and connected-iPad wrappers. Both reject arbitrary
   selectors and non-`Pass` results; the device wrapper also requires a matching
-  passing Simulator QPA. Twenty focused tooling tests, all four runtime builds,
-  seven focused Xcode app tests, packaging, and the canonical GPU workflow
-  passed. A normal 16 KiB Simulator boot reached direct ANGLE/Metal KDE
-  presentation; the exact Simulator CTS run remains pending because no
-  Simulator was booted when the adapter attempted installation.
+  passing Simulator QPA. Twenty-one focused tooling tests, all four runtime
+  builds, seven focused Xcode app tests, packaging, and the canonical GPU
+  workflow passed. A normal 16 KiB Simulator boot reached direct ANGLE/Metal
+  KDE presentation. The exact CTS adapter initially rejected echoed launcher
+  text; marker recognition was tightened and regression-tested before the
+  matched Simulator/device evidence was accepted.
 
 ## 2026-08-20: versioned kernel ownership groundwork
 

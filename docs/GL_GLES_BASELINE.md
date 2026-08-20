@@ -20,19 +20,30 @@ diagnostic reached the immutable guest's two DRM nodes through real Xwayland
 and virgl, naturally measured desktop GL 2.1 and GLES 3.0, passed one exact
 frozen GLES 3 case, exported a complete QPA, and powered off cleanly. Host
 compilation, prefix identity, packaging, and that single case are development
-evidence; the complete identity/capset sentinel, caselist export, frozen
-macOS/Simulator measurements, and connected-iPad campaign remain outstanding.
-The authoritative CTS build receipt is still missing, so qualification remains
-fail-closed and no rootfs or guest-userspace change is authorized.
+evidence. The same exact case now also passes through the signed 16 KiB
+Kernarium app on the iOS 26.5 Simulator and connected iPad mini 6. Both report
+desktop GL 2.1 and GLES 3.0 through real DRM/Xwayland/virgl, and both return
+guest/runtime status zero. The complete identity/capset sentinel, caselist
+export, complete matrices, performance, thermal, and lifecycle campaigns remain
+outstanding. The authoritative CTS build receipt is still missing, so
+qualification remains fail-closed and no rootfs or guest-userspace change is
+authorized.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and
 `Native Metal display: 440x860`, exposed Virgl capsets 1 and 2, mounted the
 3,802,316,800-byte immutable image, and rendered KDE at 440x860/160 DPI. The
 host then terminated the app successfully; orderly guest shutdown and a
-Simulator CTS result are not claimed. Both page-profile runtimes now embed a
-launcher generated from the exact allow-listed GLES 3 sentinel, but the
-matching Simulator campaign still has to run.
+Simulator CTS result were not claimed by that normal desktop capture. Both
+page-profile runtimes embed a launcher generated from the exact allow-listed
+GLES 3 sentinel. The later 16 KiB Simulator run at
+`.build/vk-gl-cts-ios-simulator/20260821-020501-10804-16k-gles3-declaration-sentinel-v1`
+passed it 1/1 and powered the guest off with runtime status zero. Its matching
+device-gated run at
+`.build/vk-gl-cts-ios-device/20260821-020554-10897-16k-gles3-declaration-sentinel-v1`
+also passed 1/1 and returned guest/runtime status zero. The iPad kernel emitted
+`Memory manager not clean during takedown` from `drm_managed_release`, so that
+run is correctness evidence but not lifecycle acceptance.
 
 ## Host, dependency, and kernel input
 
@@ -98,8 +109,9 @@ A complete text-caselist export also remains pending. `glcts` initializes its
 X11 platform before it can finish that export; the pre-migration CGL product
 is not rerun or preserved merely to obtain it. Although the common
 ANGLE/Metal path now builds, its display-backed guest export has not yet been
-run. Until the registered-module list, digest, and count are frozen, the
-corresponding JSON fields stay `null` and promotion remains disabled.
+run to completion. Until the registered-module list, digest, and count are
+frozen, the corresponding JSON fields stay `null` and promotion remains
+disabled.
 
 ## Frozen campaign and performance policy
 
@@ -148,6 +160,8 @@ noisy performance gate.
 The older macOS CGL result—guest desktop GL 4.1 and GLES 3.0—is historical
 context only. It is not rebuilt, rerun, retained as a preset, used as an A/B,
 or accepted by the new CTS driver. The focused macOS diagnostic measured
-desktop GL 2.1 and GLES 3.0 through ANGLE/Metal, but the shared candidate
-remains unqualified until macOS, the iPhone 17 Pro Max Simulator, and the
-connected iPad each produce the complete required evidence.
+desktop GL 2.1 and GLES 3.0 through ANGLE/Metal, and the exact signed-app
+sentinel measured the same values on Simulator and iPad. The shared candidate
+remains unqualified until all three produce the complete required correctness,
+performance, thermal, and lifecycle evidence against an authoritative CTS
+identity.

@@ -38,20 +38,23 @@ promotion. No Linux, bridge ABI, kernel artifact, rootfs, Mesa, libdrm, or CTS
 payload changed. A focused 16 KiB common-path macOS diagnostic reached both DRM
 nodes through real Xwayland and virgl, naturally reported desktop GL 2.1 and
 GLES 3.0, passed one frozen GLES 3 shader-declaration case, exported a complete
-QPA, and powered off cleanly. The full capset/fixed-sentinel selection,
-display-backed complete caselist, matched Simulator campaign, and connected-
-iPad correctness, performance, thermal, presentation, and lifecycle campaign
-remain open. A normal 16 KiB iPhone 17 Pro Max Simulator boot selected the
-common hardware provider, two Virgl capsets, and direct Metal presentation and
-rendered KDE at 440x860/160 DPI. Both runtime page profiles now embed the exact
-allow-listed sentinel launcher generated from the common driver. The thin
-Simulator wrapper captures and validates framed artifacts; the physical-iPad
-wrapper additionally requires matching passing Simulator evidence. The
-Simulator was not booted for the subsequent CTS attempt, so no Simulator QPA
-is claimed. Qualification is still fail-closed because no authoritative
-receipt ties the installed CTS binaries to the co-located source. Phase 3 and
-later profile work must not start until the lower shared baseline is measured
-and qualified or its exact blocker is accepted.
+QPA, and powered off cleanly. The same exact allow-listed case then passed 1/1
+through the signed 16 KiB app on the iOS 26.5 iPhone 17 Pro Max Simulator and,
+only after that QPA gate, on the connected iPad mini 6. Both reported desktop
+GL 2.1 and GLES 3.0 through real DRM/Xwayland/virgl and returned guest/runtime
+status zero. A normal Simulator boot separately selected the common hardware
+provider, two Virgl capsets, and direct Metal presentation and rendered KDE at
+440x860/160 DPI. Both runtime page profiles embed the exact sentinel launcher
+generated from the common driver. The thin Simulator wrapper captures and
+validates framed artifacts; the physical-iPad wrapper requires its matching
+passing Simulator evidence. The iPad shutdown emitted `Memory manager not
+clean during takedown` from `drm_managed_release`, so lifecycle acceptance
+remains open alongside the full capset/fixed-sentinel selection,
+display-backed complete caselist, complete matrices, performance, thermal, and
+presentation campaigns. Qualification is still fail-closed because no
+authoritative receipt ties the installed CTS binaries to the co-located
+source. Phase 3 and later profile work must not start until the lower shared
+baseline is measured and qualified or its exact blocker is accepted.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

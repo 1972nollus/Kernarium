@@ -27,16 +27,18 @@ resource presentation.
 The old Apple OpenGL 4.1 probe is archived input. A focused current 16 KiB
 macOS guest diagnostic now naturally reports desktop GL 2.1 and GLES 3.0 and
 passes one exact frozen GLES 3 case, but that does not qualify the shared
-candidate. Simulator and connected-iPad correctness and performance evidence,
-the complete sentinel, and the agreed matrices remain required. GLES 3.1 is
-still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
-scope.
+candidate. The identical signed-app 16 KiB sentinel subsequently passed 1/1
+on the iOS 26.5 Simulator and the connected iPad mini 6, measuring the same
+desktop GL 2.1/GLES 3.0 guest result. The complete sentinel and agreed matrices,
+performance, thermal, and lifecycle evidence remain required; the iPad
+shutdown exposed a `drm_mm` managed-release warning. GLES 3.1 is still a direct
+ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of scope.
 
 A current normal 16 KiB Simulator boot also selected the common hardware
 provider and direct Metal presentation and rendered the KDE desktop. That is
-product-path evidence only: the newly implemented allow-listed app CTS adapter
-has not yet produced the matching Simulator QPA, so it does not revise the
-measured API ceiling or qualification boundary.
+product-path evidence. The later allow-listed app CTS run produced a matching
+passing Simulator QPA and gated the physical-iPad run, but the focused case
+does not revise the qualification boundary or establish a complete profile.
 
 ## Method
 
