@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+__import__("sys").dont_write_bytecode = True
+
 import argparse
 import re
 import subprocess
