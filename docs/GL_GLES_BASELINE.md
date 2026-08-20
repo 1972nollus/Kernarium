@@ -23,11 +23,16 @@ compilation, prefix identity, packaging, and that single case are development
 evidence. The same exact case now also passes through the signed 16 KiB
 Kernarium app on the iOS 26.5 Simulator and connected iPad mini 6. Both report
 desktop GL 2.1 and GLES 3.0 through real DRM/Xwayland/virgl, and both return
-guest/runtime status zero. The complete identity/capset sentinel, caselist
-export, complete matrices, performance, thermal, and lifecycle campaigns remain
-outstanding. The authoritative CTS build receipt is still missing, so
-qualification remains fail-closed and no rootfs or guest-userspace change is
-authorized.
+guest/runtime status zero. The first iPad shutdown exposed an intermittent
+dirty DRM manager teardown; maintained kernel topic 0020 now shuts atomic
+Virtio-GPU state down before unplug. Both LLVM 22 page-profile kernels rebuilt,
+and three consecutive Simulator plus three connected-iPad exact-case runs then
+powered off without the warning. The app adapters reject that signature and
+missing clean-stop markers. The complete identity/capset sentinel, caselist
+export, complete matrices, performance, thermal, and sustained lifecycle
+campaigns remain outstanding. The authoritative CTS build receipt is still
+missing, so qualification remains fail-closed and no rootfs or guest-userspace
+change is authorized.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and
@@ -36,14 +41,16 @@ A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 host then terminated the app successfully; orderly guest shutdown and a
 Simulator CTS result were not claimed by that normal desktop capture. Both
 page-profile runtimes embed a launcher generated from the exact allow-listed
-GLES 3 sentinel. The later 16 KiB Simulator run at
+GLES 3 sentinel. The first 16 KiB matched pair remains preserved at
 `.build/vk-gl-cts-ios-simulator/20260821-020501-10804-16k-gles3-declaration-sentinel-v1`
-passed it 1/1 and powered the guest off with runtime status zero. Its matching
-device-gated run at
-`.build/vk-gl-cts-ios-device/20260821-020554-10897-16k-gles3-declaration-sentinel-v1`
-also passed 1/1 and returned guest/runtime status zero. The iPad kernel emitted
-`Memory manager not clean during takedown` from `drm_managed_release`, so that
-run is correctness evidence but not lifecycle acceptance.
+and
+`.build/vk-gl-cts-ios-device/20260821-020554-10897-16k-gles3-declaration-sentinel-v1`.
+Both passed 1/1 and returned guest/runtime status zero, but the iPad emitted
+`Memory manager not clean during takedown`. After topic 0020, the three
+Simulator runs ending in `022946`, `023030`, and `023106` and the three gated
+iPad runs ending in `023151`, `023443`, and `023640` all passed 1/1 and met the
+new clean-shutdown validator. These repetitions resolve the focused defect but
+do not substitute for the plan's sustained lifecycle campaign.
 
 ## Host, dependency, and kernel input
 

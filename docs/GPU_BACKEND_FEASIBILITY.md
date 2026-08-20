@@ -30,9 +30,13 @@ passes one exact frozen GLES 3 case, but that does not qualify the shared
 candidate. The identical signed-app 16 KiB sentinel subsequently passed 1/1
 on the iOS 26.5 Simulator and the connected iPad mini 6, measuring the same
 desktop GL 2.1/GLES 3.0 guest result. The complete sentinel and agreed matrices,
-performance, thermal, and lifecycle evidence remain required; the iPad
-shutdown exposed a `drm_mm` managed-release warning. GLES 3.1 is still a direct
-ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of scope.
+performance, thermal, and sustained lifecycle evidence remain required. The
+first iPad shutdown exposed a `drm_mm` managed-release warning; maintained
+kernel topic 0020 now orders atomic scanout shutdown before device unplug, and
+three consecutive Simulator plus three connected-iPad sentinel runs powered
+off cleanly under a validator that rejects the old signature. GLES 3.1 is
+still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
+scope.
 
 A current normal 16 KiB Simulator boot also selected the common hardware
 provider and direct Metal presentation and rendered the KDE desktop. That is

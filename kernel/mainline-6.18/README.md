@@ -13,16 +13,16 @@ verifies its commit and tree identities, creates the local upstream base ref,
 and removes the network remote from the published replay checkout. Subsequent
 verification is offline.
 
-## Latest verified replay (2026-08-20)
+## Latest verified replay (2026-08-21)
 
-The manifest contains 19 ordered topics and replays to canonical tree
-`f78217b082f6becb8af1656bcc69521307eb729b`. A fresh pinned-commit replay,
+The manifest contains 20 ordered topics and replays to canonical tree
+`b7ebf6944c6ed87956d27992bbef32c84c3692f7`. A fresh pinned-commit replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, and delta audit passed after rebasing the topics onto the upstream
-stable commit. The earlier LLVM 22 production page-profile builds predate this
-source-provenance-only rebase and were not repeated.
-The exact delta policy is 160 changed files
-with 7 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
+checks, configured-checkout verification, and the delta audit passed. Both
+canonical production page profiles rebuilt with LLVM 22 in that fresh replay
+after the latest topic was added.
+The exact delta policy is 161 changed files
+with 8 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
 available when the conflicting UML stdio console is disabled and makes the
 UML serial-line count configurable. Topic 0002 repairs the software-MMU mapping
 that uaccess verifies when the address carries none at all: `matches()`
@@ -47,6 +47,12 @@ cross-calls while preserving Linux interrupt masking. Topic 0019 takes the
 reaches through `local_signal_state()` on every `block_signals()` and
 `unblock_signals()`; the setters keep the once-guard, so the key and its
 carrier destructor are still created exactly once.
+Topic 0020 shuts down Virtio-GPU atomic state before unplugging the DRM device
+during system poweroff. This retires the final scanout framebuffer while its
+GEM mapping and VMA manager are still live. A focused policy test pins the
+ordering, and three consecutive 16 KiB Simulator plus three connected-iPad CTS
+shutdowns completed without the formerly intermittent
+`Memory manager not clean during takedown` warning.
 Topic 0001 also aligns the Darwin ET_DYN image's early executable boundaries
 to the 16 KiB host-page granularity. That keeps a 4 KiB guest kernel's signed
 text carrier from sharing an iOS host page with the following dynamic loader

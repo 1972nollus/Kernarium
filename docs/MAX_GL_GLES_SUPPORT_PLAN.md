@@ -42,12 +42,17 @@ Simulator-before-device ordering. That exact 16 KiB sentinel now passes 1/1 on
 both the iOS 26.5 Simulator and the connected iPad mini 6, measuring guest
 desktop GL 2.1 and GLES 3.0 through the same DRM/Xwayland/virgl path on each.
 The complete identity/capset sentinel, connected-iPad qualification,
-performance campaigns, lifecycle acceptance, and complete Khronos matrices
-remain open. The iPad shutdown also exposes a `drm_mm` managed-release warning,
-so the diagnostic is not lifecycle qualification. No kernel/rootfs change or
-capability promotion is claimed. Phases 3 through 7 have not started; they
-remain gated on a truthful, measured lower shared baseline and the explicit
-stop conditions below.
+performance campaigns, sustained lifecycle acceptance, and complete Khronos
+matrices remain open. The first iPad shutdown exposed an intermittent `drm_mm`
+managed-release warning. Maintained kernel topic 0020 now retires atomic
+Virtio-GPU scanout state before device unplug; both LLVM 22 page-profile builds
+passed, and three consecutive 16 KiB Simulator plus three connected-iPad exact
+CTS runs then powered off cleanly. The adapters now reject that warning and any
+missing clean-stop marker. This is a bounded lifecycle repair, not complete
+lifecycle qualification or a capability promotion. No rootfs or guest
+userspace changed. Phases 3 through 7 have not started; they remain gated on a
+truthful, measured lower shared baseline and the explicit stop conditions
+below.
 
 In this plan, “maximum” means the highest truthful profile that preserves the
 shared high-performance ANGLE/Metal path. A higher version is rejected when it
@@ -781,11 +786,13 @@ Current status: the app-side campaign allow-list, page-specific generated
 launcher, Simulator wrapper, and connected-iPad wrapper are implemented and
 tooling-tested. The device wrapper requires a matching passing Simulator
 `run.json` plus its QPA before it will launch. The exact 16 KiB sentinel passed
-1/1 on the booted Simulator and then on the connected iPad, with matching
-renderer and selected-caselist identities and guest/runtime status zero. The
-iPad console recorded `Memory manager not clean during takedown` while powering
-off, and the complete sentinel, caselist, performance, thermal, and lifecycle
-baselines remain missing, so this exit remains open.
+1/1 in three consecutive booted-Simulator runs and then three consecutive
+connected-iPad runs, with matching renderer and selected-caselist identities,
+guest/runtime status zero, and clean poweroff. Topic 0020 repaired the first
+iPad run's intermittent dirty DRM teardown, and transcript validation now
+fails closed on its signature or missing clean-stop markers. The complete
+sentinel, caselist, performance, thermal, and sustained lifecycle baselines
+remain missing, so this exit remains open.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
@@ -1354,11 +1361,13 @@ The truthful evidence statement is: an older macOS CGL build measured guest
 GL 4.1/GLES 3.0 and is archival only. The current common ANGLE/Metal path has a
 focused 16 KiB macOS diagnostic and matched signed-app Simulator/iPad
 diagnostics measuring guest GL 2.1/GLES 3.0; the same exact frozen GLES 3 case
-passes 1/1 on all three products. The iPad shutdown warning, incomplete
-identity/capset sentinel and matrices, absent performance/thermal/lifecycle
-campaigns, and missing authoritative CTS receipt prevent any new shared
-capability or conformance claim. The committed shared target remains the
-direct-hardware ANGLE/Metal GL 2.1/GLES 3.0 baseline candidate and becomes the
-performance baseline only after Phase 2 passes. GLES 3.1 and desktop GL
-3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus GL 4.x are not
-planned claims.
+passes 1/1 on all three products. The first iPad poweroff's dirty DRM teardown
+was repaired in maintained kernel topic 0020 and followed by three clean
+Simulator plus three clean iPad repetitions, with fail-closed transcript
+validation. The incomplete identity/capset sentinel and matrices, absent
+performance/thermal/sustained-lifecycle campaigns, and missing authoritative
+CTS receipt still prevent any new shared capability or conformance claim. The
+committed shared target remains the direct-hardware ANGLE/Metal GL 2.1/GLES
+3.0 baseline candidate and becomes the performance baseline only after Phase
+2 passes. GLES 3.1 and desktop GL 3.0/3.1 are conditional stretch ceilings,
+and GLES/GL 3.2+ plus GL 4.x are not planned claims.

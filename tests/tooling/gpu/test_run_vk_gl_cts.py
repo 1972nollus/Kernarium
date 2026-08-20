@@ -215,6 +215,21 @@ OpenGL renderer string: virgl (Apple GPU)
         with self.assertRaisesRegex(cts.CampaignError, "marker is missing"):
             cts.validate_host_backend("virgl started\n")
 
+    def test_kernarium_transcript_requires_a_clean_guest_shutdown(self) -> None:
+        clean = """Darwin UML stopped: result=0 exitcode=0
+Kernarium: guest exited with status 0
+Kernarium: runtime returned 0
+"""
+        ios_cts.common.validate_clean_shutdown(clean)
+        with self.assertRaisesRegex(cts.CampaignError, "clean shutdown markers"):
+            ios_cts.common.validate_clean_shutdown(
+                clean.replace("Kernarium: guest exited with status 0\n", "")
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "memory manager"):
+            ios_cts.common.validate_clean_shutdown(
+                clean + "Memory manager not clean during takedown.\n"
+            )
+
     def test_artifact_frames_round_trip_and_tolerate_console_prefixes(self) -> None:
         transcript = "".join(
             "[  10.0] service: " + line + "\r\n"

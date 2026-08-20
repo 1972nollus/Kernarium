@@ -19,6 +19,12 @@ import run_vk_gl_cts as cts
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_ID = "com.imxieyi.Kernarium"
 RUNTIME_RESULT = re.compile(r"Kernarium: runtime returned (-?[0-9]+)")
+REQUIRED_SHUTDOWN_MARKERS = (
+    "Darwin UML stopped: result=0 exitcode=0",
+    "Kernarium: guest exited with status 0",
+    "Kernarium: runtime returned 0",
+)
+DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
 
 
 def validate_app(app: Path) -> None:
@@ -81,12 +87,29 @@ def wait_for_runtime(
     raise TimeoutError(f"{platform} VK-GL-CTS guest exceeded {timeout} seconds")
 
 
+def validate_clean_shutdown(transcript: str) -> None:
+    if DIRTY_DRM_SHUTDOWN in transcript:
+        raise cts.CampaignError(
+            "Virtio-GPU memory manager was not clean during guest shutdown"
+        )
+    missing = [
+        marker
+        for marker in REQUIRED_SHUTDOWN_MARKERS
+        if marker not in transcript
+    ]
+    if missing:
+        raise cts.CampaignError(
+            f"Kernarium campaign omitted clean shutdown markers: {missing!r}"
+        )
+
+
 def validate_transcript(
     transcript: str,
     campaign: cts.AppleCampaign,
     guest_page_size: int,
 ) -> tuple[dict[str, bytes], dict[str, str], dict[str, int]]:
     cts.validate_host_backend(transcript)
+    validate_clean_shutdown(transcript)
     artifacts = cts.decode_artifacts(transcript)
     required = cts.ALLOWED_ARTIFACTS - set(artifacts)
     if required:

@@ -1,7 +1,7 @@
 From 382766b5cc8e919bae744e9327186dc2836b472d Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:07 +0900
-Subject: [PATCH 08/19] uml: define the Darwin fixed-arity host bridge ABI
+Subject: [PATCH 08/20] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---

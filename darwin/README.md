@@ -86,15 +86,19 @@ mutually exclusive. Adapter launches may select exactly 4096 or 16384 through
 saved setting. CTS runs use the same serial relay for checksummed artifact
 egress and request guest poweroff; the connected-device wrapper refuses to run
 before a matching passing Simulator artifact. This diagnostic composition
-does not modify the EROFS image or advertise a new guest API.
+does not modify the EROFS image or advertise a new guest API. Both adapters
+require the successful Darwin stop, guest-exit, and runtime-return markers and
+reject the dirty DRM memory-manager teardown signature.
 
 The first matched 16 KiB campaign passed the exact allow-listed GLES 3 case
 1/1 on the iOS 26.5 iPhone 17 Pro Max Simulator and then on the connected iPad
 mini 6. Both used gadgets, reported the hardware ANGLE/Metal provider, real
 DRM/Xwayland/virgl, desktop GL 2.1, GLES 3.0, and guest/runtime status zero.
-The iPad kernel warned that the DRM memory manager was not clean during
-takedown, so the result is focused correctness evidence rather than lifecycle
-or conformance qualification.
+The first iPad poweroff warned that the DRM memory manager was not clean during
+takedown. Maintained kernel topic 0020 now shuts Virtio-GPU atomic state down
+before device unplug; three consecutive rebuilt Simulator runs and three gated
+iPad runs subsequently passed 1/1 and powered off cleanly. This bounded repair
+evidence is not the full sustained-lifecycle or conformance qualification.
 
 Every Apple product derives the native window from guest RAM plus a
 page-rounded one-eighth auxiliary allowance (with a 32 MiB floor) and biases

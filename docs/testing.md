@@ -684,14 +684,16 @@ python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
 decodes the same bounded artifact frames, requires exact page/DRM/Xwayland/
-Virgl evidence and one `Pass`, then stops the app after guest poweroff. Echoed
-launcher source is not an artifact frame; raw frames and service-prefixed
-frames remain fail-closed. The adapter does not boot a Simulator, so use the
-explicit `simctl boot`/`bootstatus` pair above when the selected device is
-shut down. The connected-iPad wrapper uses the same campaign and
-validation but additionally requires the matching Simulator `run.json` and
-QPA, a normally signed device app, and a booted paired developer-enabled
-physical iPad:
+Virgl evidence and one `Pass`, then stops the app after guest poweroff. An
+accepted transcript must contain the successful Darwin stop, guest-exit, and
+runtime-return markers and must not contain the dirty DRM memory-manager
+teardown signature. Echoed launcher source is not an artifact frame; raw
+frames and service-prefixed frames remain fail-closed. The adapter does not
+boot a Simulator, so use the explicit `simctl boot`/`bootstatus` pair above
+when the selected device is shut down. The connected-iPad wrapper uses the
+same campaign and validation but additionally requires the matching Simulator
+`run.json` and QPA, a normally signed device app, and a booted paired
+developer-enabled physical iPad:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
@@ -708,10 +710,13 @@ substitute Aquarium on the physical iPad. Both wrappers retain the same
 The 2026-08-21 16 KiB diagnostic passed the allow-listed case 1/1 first on the
 iOS 26.5 iPhone 17 Pro Max Simulator and then on the wired iPad mini 6 running
 iOS 18.5. Both produced identical renderer and selected-caselist artifacts,
-reported desktop GL 2.1/GLES 3.0, and returned guest/runtime status zero. The
-iPad poweroff emitted a `drm_managed_release` warning that its memory manager
-was not clean, so this result does not satisfy the lifecycle or qualification
-gate.
+reported desktop GL 2.1/GLES 3.0, and returned guest/runtime status zero. Its
+first iPad poweroff exposed an intermittent dirty `drm_managed_release`.
+Maintained kernel topic 0020 shuts atomic scanout down before device unplug;
+after both page-profile kernels and all runtime slices were rebuilt, three
+consecutive Simulator runs and three gated iPad runs passed the exact case and
+the clean-shutdown validator. That focused repair does not satisfy the broader
+performance, thermal, sustained-lifecycle, or qualification gates.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
