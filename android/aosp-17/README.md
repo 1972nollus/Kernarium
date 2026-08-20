@@ -300,7 +300,7 @@ path whose parent already exists:
 .build/presets/macos-android17/bin/uml-darwin-android17 \
   --android-release=/absolute/path/to/.build/android/releases/accepted-directory \
   --android-instance=/absolute/path/to/android17-instance.cow \
-  --engine=gadgets
+  --execution-engine=gadgets
 ```
 
 The executable embeds the accepted ACK ELF and release-manifest identity. It
