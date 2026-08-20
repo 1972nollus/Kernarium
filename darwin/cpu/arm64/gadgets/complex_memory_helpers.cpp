@@ -65,8 +65,8 @@ template <Ls64Operation operation, bool base_sp, bool status_discard = false>
 	auto *const transfer = reinterpret_cast<std::byte *>(cpu) + first_offset;
 	const auto tagged_address =
 		base_sp ? cpu->sp : cpu_slot(cpu, base_offset);
-	const bool tagged = !base_sp && cpu->mte_enabled;
-	const bool tagchecked = tagged && !cpu->pstate_tco;
+	const bool tagged = !base_sp && cpu->tagged_addresses_enabled();
+	const bool tagchecked = !base_sp && cpu->mte_enabled && !cpu->pstate_tco;
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	constexpr bool load = operation == Ls64Operation::load;
@@ -378,13 +378,18 @@ template <MopsOperation operation, bool source_zero = false>
 			if constexpr (operation != MopsOperation::set)
 				from_address = from;
 		}
+		to_address = cpu->untag_data_address(to_address, false);
+		if constexpr (operation != MopsOperation::set)
+			from_address =
+				cpu->untag_data_address(from_address, false);
 
 		std::byte *read_pointer{};
 		if constexpr (operation != MopsOperation::set) {
 			read_pointer = tlb->translate(from_address, Access::read);
 			if (read_pointer == nullptr) {
 				if (backward) {
-					tlb->fault_address = from - 1;
+					tlb->fault_address = cpu->untag_data_address(
+						from - 1, false);
 					tlb->fault_access = Access::read;
 				}
 				commit();
@@ -394,7 +399,8 @@ template <MopsOperation operation, bool source_zero = false>
 		auto *write_pointer = tlb->translate(to_address, Access::write);
 		if (write_pointer == nullptr) {
 			if (backward) {
-				tlb->fault_address = to - 1;
+				tlb->fault_address = cpu->untag_data_address(
+					to - 1, false);
 				tlb->fault_access = Access::write;
 			}
 			commit();

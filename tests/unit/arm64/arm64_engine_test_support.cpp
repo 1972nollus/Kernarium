@@ -730,6 +730,7 @@ void require_architecture_equal(const arm64::CpuState &expected,
   require_equal(expected.tls == actual.tls, expected, actual, "tls", case_name,
                 engine, instruction);
   require_equal(expected.mte_enabled == actual.mte_enabled &&
+                    expected.tbi_enabled == actual.tbi_enabled &&
                     expected.mte_exclude == actual.mte_exclude &&
                     expected.mte_tag_choices == actual.mte_tag_choices &&
                     expected.mte_random_tags == actual.mte_random_tags &&
@@ -817,6 +818,7 @@ namespace {
     const arm64::CpuState &expected) noexcept {
   return initial.fpmr != expected.fpmr || initial.tls != expected.tls ||
       initial.mte_enabled != expected.mte_enabled ||
+      initial.tbi_enabled != expected.tbi_enabled ||
       initial.mte_exclude != expected.mte_exclude ||
       initial.mte_tag_choices != expected.mte_tag_choices ||
       initial.mte_random_tags != expected.mte_random_tags ||

@@ -9,6 +9,7 @@ struct LaunchConfiguration {
 	const char *rootfs_path {};
 	std::string_view default_guest_memory;
 	std::string_view default_guest_cpus;
+	bool top_byte_ignore{};
 };
 
 int runEmbeddedKernel(int argc, char *argv[], char *envp[],

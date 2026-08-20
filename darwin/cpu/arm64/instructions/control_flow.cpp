@@ -390,8 +390,10 @@ RunResult Dispatcher::cache_maintenance(CpuState &cpu, GuestMemory &memory,
 		 * through GuestMemory so an invalid mapping cannot expose a partial
 		 * architectural store.
 		 */
-		const auto block = cpu.read_register(
-			instruction & 0x1fU, false) & ~std::uint64_t{63};
+		const auto tagged_block = cpu.read_register(
+			instruction & 0x1fU, false);
+		const auto block = cpu.untag_data_address(tagged_block, false) &
+			~std::uint64_t{63};
 		const std::array<std::byte, 64> zeros{};
 		if (!memory.write(block, zeros))
 			return {StopReason::memory_fault, block, instruction, 0, true};
@@ -408,7 +410,8 @@ RunResult Dispatcher::cache_maintenance(CpuState &cpu, GuestMemory &memory,
 	std::atomic_thread_fence(std::memory_order_seq_cst);
 	if (operation == 0xd50b'7520U)
 		memory.invalidate_code(
-			cpu.read_register(instruction & 0x1fU, false));
+			cpu.untag_data_address(
+				cpu.read_register(instruction & 0x1fU, false), false));
 	cpu.pc += 4;
 	return continue_after(address, instruction);
 }

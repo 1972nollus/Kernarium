@@ -79,6 +79,10 @@ gadget cache_zero_\name
 	.else
 	ldr x8, [_stream], #8
 	ldr x7, [_cpu, x8]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	cbz w9, .Lcache_zero_untagged\@
+	ubfx x7, x7, #0, #56
+.Lcache_zero_untagged\@:
 	and x7, x7, #0xffffffffffffffc0
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
@@ -109,6 +113,10 @@ gadget code_synchronize_\name
 	.else
 	ldr x8, [_stream], #8
 	ldr x0, [_cpu, x8]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	cbz w9, .Lcode_synchronize_untagged\@
+	ubfx x0, x0, #0, #56
+.Lcode_synchronize_untagged\@:
 	.endif
 	stp x1, x2, [sp, #-16]!
 	bl NAME(uml_arm64_guest_code_synchronize)
@@ -909,7 +917,7 @@ gadget simd_structure_\name
 	b.ne .Lsimd_structure_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w8, .Lsimd_structure_slow\@
 	.endif
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
@@ -1101,7 +1109,7 @@ gadget simd_replicate_\name
 	b.ne .Lsimd_replicate_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w8, .Lsimd_replicate_slow\@
 	.endif
 	.if \count * \width > 1
@@ -1294,7 +1302,7 @@ gadget simd_lane_\name
 	b.ne .Lsimd_lane_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w8, .Lsimd_lane_slow\@
 	.endif
 	.if \count * \width > 1
@@ -1653,7 +1661,7 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
 	ubfx w20, w19, #16, #5
 	ldr x7, [_cpu, x20, lsl #3]
 	/* Tagged-address handling is cold for normal untagged programs. */
-	ldrb w8, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w8, 89f
 		.if \alignment
 	tst x7, #\alignment

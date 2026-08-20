@@ -1121,6 +1121,7 @@ static_assert(offsetof(CpuState, fpcr) == 784);
 static_assert(offsetof(CpuState, fpsr) == 788);
 static_assert(offsetof(CpuState, tls) == 792);
 static_assert(offsetof(CpuState, mte_enabled) == 800);
+static_assert(offsetof(CpuState, tbi_enabled) == 801);
 static_assert(offsetof(CpuState, mte_exclude) == 802);
 static_assert(offsetof(CpuState, mte_tag_choices) == 804);
 static_assert(offsetof(CpuState, mte_random_tags) == 1060);

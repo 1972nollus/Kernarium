@@ -65,6 +65,31 @@ void every_register_and_alignment_bit()
 				&region, 1},
 		});
 	}
+	{
+		const auto initial_page = test::filled_page();
+		const auto expected_page =
+			test::zeroed_page(test::block_offset);
+		const test::engine_tests::MemoryRegion region{
+			.address = test::engine_tests::engine_test_data_base,
+			.initial = initial_page,
+			.expected = expected_page,
+		};
+		auto initial = test::state(0x54b1U);
+		initial.tbi_enabled = true;
+		initial.registers[3] =
+			(std::uint64_t{2} << 56U) |
+			(test::engine_tests::engine_test_data_base +
+			 test::block_offset + 23U);
+		harness.check({
+			.name = "cache-zero TBI without MTE",
+			.instruction = test::instruction(3),
+			.initial = initial,
+			.expected = initial,
+			.native = test::native_requirements(),
+			.memory = std::span<const test::engine_tests::MemoryRegion>{
+				&region, 1},
+		});
+	}
 	harness.print_summary("arm64-base-cache-zero");
 }
 

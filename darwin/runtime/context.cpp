@@ -390,6 +390,16 @@ ExecutionEngine Context::execution_engine() const noexcept
 	return selected_engine_.load(std::memory_order_acquire);
 }
 
+void Context::set_top_byte_ignore(bool enabled) noexcept
+{
+	top_byte_ignore_.store(enabled, std::memory_order_release);
+}
+
+bool Context::top_byte_ignore() const noexcept
+{
+	return top_byte_ignore_.load(std::memory_order_acquire);
+}
+
 GuestEntry Context::guest_entry() const noexcept
 {
 	return selected_entry_.load(std::memory_order_acquire);

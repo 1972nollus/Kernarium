@@ -329,6 +329,8 @@ PreparedArguments prepare_host_arguments(
 		prepared.kernel, "mem=", configuration.default_guest_memory);
 	append_default_kernel_argument(
 		prepared.kernel, "ncpus=", configuration.default_guest_cpus);
+	if (configuration.top_byte_ignore)
+		prepared.kernel.emplace_back("--guest-top-byte-ignore");
 	return prepared;
 }
 

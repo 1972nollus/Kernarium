@@ -487,6 +487,73 @@ void cross_page_fault_atomicity(engine_tests::EngineHarness &harness)
 	}
 }
 
+void top_byte_ignore_without_mte(engine_tests::EngineHarness &harness)
+{
+	constexpr std::uint64_t top_byte = 0x1000'0000'0000'0000ULL;
+	const auto target = pair_test::data_base + pair_test::page_size / 2U;
+	for (unsigned variant_index = 0; variant_index < variants.size();
+	     ++variant_index) {
+		const auto &variant = variants[variant_index];
+		for (unsigned mode = 0; mode < 4; ++mode) {
+			if (!valid_mode(variant, mode))
+				continue;
+			constexpr unsigned imm7 = 2;
+			const auto physical_base =
+				base_for_target(target, variant, mode, imm7);
+			const auto tagged_base = physical_base | top_byte;
+			auto memory = std::vector<std::byte>(pair_test::page_size);
+			pair_test::fill_memory(memory,
+				0xe0U + variant_index * 7U + mode);
+			auto expected_memory = memory;
+			auto initial = pair_test::seeded_state(
+				0x8100'0000'0000'0000ULL |
+				(static_cast<std::uint64_t>(variant_index) << 16U) |
+				mode);
+			initial.tbi_enabled = true;
+			initial.registers[base_register] = tagged_base;
+			initial.registers[first_register] = first_store;
+			initial.registers[second_register] = second_store;
+			auto expected = initial;
+			const auto offset = static_cast<std::size_t>(
+				target - pair_test::data_base);
+			if (variant.load) {
+				expected.registers[first_register] = loaded_value(
+					variant, pair_test::decode_little_endian(
+						memory, offset, variant.size));
+				expected.registers[second_register] = loaded_value(
+					variant, pair_test::decode_little_endian(
+						memory, offset + variant.size,
+						variant.size));
+			} else {
+				pair_test::encode_little_endian(expected_memory,
+					offset, variant.size, first_store);
+				pair_test::encode_little_endian(expected_memory,
+					offset + variant.size, variant.size,
+					second_store);
+			}
+			if (writeback(mode))
+				expected.registers[base_register] =
+					tagged_base + static_cast<std::uint64_t>(
+						pair_test::signed_imm7(imm7) *
+						static_cast<std::int64_t>(variant.size));
+			char name[112];
+			std::snprintf(name, sizeof(name),
+				"%.*s TBI without MTE mode=%u",
+				static_cast<int>(variant.name.size()),
+				variant.name.data(), mode);
+			pair_test::check_memory(
+				harness, name,
+				pair_test::pair(variant.operation, false, variant.load,
+					mode, imm7, base_register, first_register,
+					second_register),
+				initial, expected,
+				engine_tests::NativeRequirements::baseline(), memory,
+				variant.load ? std::span<const std::byte>{} :
+					std::span<const std::byte>{expected_memory});
+		}
+	}
+}
+
 /* Every other fault case above addresses through a general register. A
  * frame-saving prologue instead stores through SP itself, which is the shape a
  * guest hits when its stack has grown into an unmapped guard page, so keep the
@@ -562,6 +629,7 @@ int main()
 	base_transfer_overlap_choices(harness);
 	cross_page_success(harness);
 	cross_page_fault_atomicity(harness);
+	top_byte_ignore_without_mte(harness);
 	stack_pointer_base_fault_is_precise(harness);
 	stack_alignment_faults(harness);
 	harness.print_summary("arm64-base-load-store-pair");

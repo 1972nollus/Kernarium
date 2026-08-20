@@ -77,6 +77,8 @@ public:
 
 	[[nodiscard]] int set_execution_engine(ExecutionEngine engine) noexcept;
 	[[nodiscard]] ExecutionEngine execution_engine() const noexcept;
+	void set_top_byte_ignore(bool enabled) noexcept;
+	[[nodiscard]] bool top_byte_ignore() const noexcept;
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
@@ -87,6 +89,7 @@ private:
 
 	std::atomic<ExecutionEngine> selected_engine_;
 	std::atomic<GuestEntry> selected_entry_;
+	std::atomic_bool top_byte_ignore_{false};
 	std::atomic_uint64_t memory_domain_;
 	std::atomic_bool stop_requested_{false};
 	int stop_notification_read_{-1};

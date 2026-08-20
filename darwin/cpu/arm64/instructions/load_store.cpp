@@ -44,8 +44,10 @@ RunResult Dispatcher::load_store_64b(CpuState &cpu, GuestMemory &memory,
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const unsigned status_register = (instruction >> 16) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	const bool tagged = base_register != 31U && cpu.mte_enabled;
-	const bool tagchecked = tagged && !cpu.pstate_tco;
+	const bool tagged = base_register != 31U &&
+		cpu.tagged_addresses_enabled();
+	const bool tagchecked = base_register != 31U && cpu.mte_enabled &&
+		!cpu.pstate_tco;
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & 63U) != 0)
@@ -385,9 +387,13 @@ RunResult Dispatcher::memory_copy_set(CpuState &cpu, GuestMemory &memory,
 		return continue_after(pc, instruction);
 	}
 	while (remaining != 0) {
-		const auto to_address = backward ? to - 1 : to;
+		const auto tagged_to_address = backward ? to - 1 : to;
+		const auto to_address =
+			cpu.untag_data_address(tagged_to_address, false);
 		if (!set) {
-			const auto from_address = backward ? from - 1 : from;
+			const auto tagged_from_address = backward ? from - 1 : from;
+			const auto from_address =
+				cpu.untag_data_address(tagged_from_address, false);
 			if (!memory.read(from_address, byte)) {
 				cpu.registers[count] = remaining;
 				cpu.registers[destination] = to;
@@ -455,16 +461,14 @@ RunResult Dispatcher::load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		return {StopReason::memory_fault, base, instruction, 0, !load};
 	const auto tagged_address = base +
 		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
-	std::uint64_t address = tagged_address;
-	if (vector) {
-		std::uint64_t fault_address{};
-		if (!simd_structure_address(cpu, memory, tagged_address,
-			    base_register == 31U, base_register != 31U, size, size,
-			    load ? MemoryAccess::read : MemoryAccess::write,
-			    address, fault_address))
-			return {StopReason::memory_fault, fault_address, instruction, 0,
-				!load};
-	}
+	std::uint64_t address{};
+	std::uint64_t fault_address{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, base_register != 31U, size, size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, fault_address))
+		return {StopReason::memory_fault, fault_address, instruction, 0,
+			!load};
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
 	if (load) {
@@ -606,18 +610,16 @@ RunResult Dispatcher::load_store_other(CpuState &cpu, GuestMemory &memory,
 			writeback = mode == 3;
 		}
 	}
-	if (vector) {
-		const auto tagged_address = address;
-		std::uint64_t fault_address{};
-		if (!simd_structure_address(cpu, memory, tagged_address,
-			    base_register == 31U,
-			    register_offset || writeback || base_register != 31U,
-			    size, size,
-			    load ? MemoryAccess::read : MemoryAccess::write,
-			    address, fault_address))
-			return {StopReason::memory_fault, fault_address, instruction, 0,
-				!load};
-	}
+	const auto tagged_address = address;
+	std::uint64_t fault_address{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U,
+		    register_offset || writeback || base_register != 31U,
+		    size, size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, fault_address))
+		return {StopReason::memory_fault, fault_address, instruction, 0,
+			!load};
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
 	if (load) {
@@ -734,16 +736,14 @@ RunResult Dispatcher::load_store_pair(CpuState &cpu, GuestMemory &memory,
 		writeback = false;
 	if (base_register == 31U && (base & 15U) != 0)
 		return {StopReason::memory_fault, base, instruction, 0, !load};
-	if (vector) {
-		std::uint64_t fault_address{};
-		if (!simd_structure_address(cpu, memory, tagged_address,
-			    base_register == 31U,
-			    writeback || base_register != 31U, size * 2U, size * 2U,
-			    load ? MemoryAccess::read : MemoryAccess::write,
-			    address, fault_address))
-			return {StopReason::memory_fault, fault_address, instruction, 0,
-				!load};
-	}
+	std::uint64_t fault_address{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U,
+		    writeback || base_register != 31U, size * 2U, size * 2U,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, fault_address))
+		return {StopReason::memory_fault, fault_address, instruction, 0,
+			!load};
 	std::array<std::byte, 32> pair_bytes{};
 	if (load) {
 		if (!memory.read(address, std::span{pair_bytes}.first(size * 2U)))

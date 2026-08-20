@@ -242,19 +242,21 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
   /*
    * Deferring the second-way probe and preserving miss bridge leaves a
-   * 25-word single-store hot body. The persistent linked-block ABI contributes
-   * seven fixed prologue/epilogue words. The opt-in bank adds four hot words
-   * and ten total words: outer save/load/store/restore, the returning TLB
-   * pair, and one pair at each terminal cold exit. Keep the control ceiling
-   * exact while allowing only that structurally pinned experiment overhead.
+   * 25-word single-store hot body. The two-word tagged-address-state gate
+   * selects the exact semantic path for TBI or MTE without changing the
+   * preserving miss bridge. The persistent linked-block ABI contributes seven
+   * fixed prologue/epilogue words. The opt-in bank adds four hot words and ten
+   * total words: outer save/load/store/restore, the returning TLB pair, and one
+   * pair at each terminal cold exit. Keep the control ceiling exact while
+   * allowing only those structurally pinned additions.
    */
   const std::size_t persistent_hot_frame_words =
       7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
   const std::size_t persistent_total_frame_words =
       13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
-  require(compiled.hot_words <= 26 + persistent_hot_frame_words,
+  require(compiled.hot_words <= 28 + persistent_hot_frame_words,
           "single-store JIT hot expansion lost the deferred-translation budget");
-  require(compiled.words.size() <= 66 + persistent_total_frame_words,
+  require(compiled.words.size() <= 68 + persistent_total_frame_words,
           "single-store JIT total expansion exceeded the "
           "preserving-call budget");
 #else
@@ -262,16 +264,17 @@ void miss_call_is_cold_and_has_no_resident_spills() {
    * The 4K translation has no second-way probe, and its deferred miss leaves a
    * 27-word single-store hot body. The fixed-bank allowances match the 16K
    * shape: four outer hot words and ten total words across the returning and
-   * terminal cold boundaries. The control arm retains its original ceiling.
+   * terminal cold boundaries. The two-word tagged-address-state gate matches
+   * the 16K profile, while the control arm retains its original ceiling.
    */
   const std::size_t persistent_hot_frame_words =
       7U + (jit_test::linked_x8_x9_bank_enabled() ? 4U : 0U);
   const std::size_t persistent_total_frame_words =
       13U + (jit_test::linked_x8_x9_bank_enabled() ? 10U : 0U);
-  require(compiled.hot_words <= 28 + persistent_hot_frame_words,
+  require(compiled.hot_words <= 30 + persistent_hot_frame_words,
           "single-store 4K JIT hot expansion lost the "
           "deferred-translation budget");
-  require(compiled.words.size() <= 64 + persistent_total_frame_words,
+  require(compiled.words.size() <= 66 + persistent_total_frame_words,
           "single-store 4K JIT total expansion exceeded the "
           "preserving-call budget");
 #endif

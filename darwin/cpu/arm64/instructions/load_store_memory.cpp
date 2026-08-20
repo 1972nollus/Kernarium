@@ -910,12 +910,12 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 	bool tagchecked, std::size_t transfer_size, std::size_t element_size,
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address)
 {
-	const bool tagged = !base_sp && cpu.mte_enabled;
+	const bool tagged = !base_sp && cpu.tagged_addresses_enabled();
 	address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	const bool check_tags =
 		tagchecked && cpu.mte_enabled && !cpu.pstate_tco;
-	const auto logical_tag = tagged ?
+	const auto logical_tag = !base_sp && cpu.mte_enabled ?
 		static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
 	for (std::size_t completed = 0; completed < transfer_size;
 	     completed += element_size) {

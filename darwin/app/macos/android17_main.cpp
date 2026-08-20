@@ -378,6 +378,7 @@ int main(int argc, char *argv[], char *envp[])
 				.rootfs_path = nullptr,
 				.default_guest_memory = android_default_guest_memory,
 				.default_guest_cpus = android_default_guest_cpus,
+				.top_byte_ignore = true,
 			});
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure Android guest: %s\n",

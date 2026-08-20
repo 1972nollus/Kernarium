@@ -30,13 +30,17 @@ bool contains(const uml::emulator::EmulatorOptions &options,
 void test_defaults_and_engine_selection()
 {
 	const char *arguments[]{"uml-test", "--execution-engine=interpreter",
-		"console=ttyS0"};
+		"--guest-top-byte-ignore", "console=ttyS0"};
 	const auto options = uml::emulator::prepare_emulator_options(
-		3, arguments, "/tmp/rootfs.erofs", true);
+		4, arguments, "/tmp/rootfs.erofs", true);
 	require(options.valid, "valid emulator options were rejected");
 	require(options.engine ==
 			uml::runtime::ExecutionEngine::interpreter,
 		"execution engine was not parsed");
+	require(options.top_byte_ignore,
+		"guest top-byte-ignore mode was not parsed");
+	require(!contains(options, "--guest-top-byte-ignore"),
+		"guest top-byte-ignore host option reached the kernel command line");
 	require(contains(options, "console=ttyS0"), "kernel argument was lost");
 	require(contains(options, "ubd0c=/tmp/rootfs.erofs"),
 		"rootfs default was not added");
@@ -74,6 +78,8 @@ void test_explicit_defaults_are_preserved()
 	const auto options = uml::emulator::prepare_emulator_options(
 		9, arguments, "/unused/rootfs", true);
 	require(options.valid, "explicit emulator options were rejected");
+	require(!options.top_byte_ignore,
+		"guest top-byte-ignore mode was enabled by default");
 	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
 	require(options.arguments.size() == 7,

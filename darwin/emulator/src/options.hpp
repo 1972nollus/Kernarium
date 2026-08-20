@@ -34,6 +34,7 @@ struct EmulatorOptions final {
 		default_jit_executor_cache_budget};
 	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
+	bool top_byte_ignore{};
 	bool informational{};
 	bool valid{true};
 };

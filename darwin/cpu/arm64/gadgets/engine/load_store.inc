@@ -102,6 +102,12 @@ gadget \suffix
 		.endif
 	.endif
 	add x7, x7, x21
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, .Lscalar_unsigned_untagged\@
+	ubfx x7, x7, #0, #56
+.Lscalar_unsigned_untagged\@:
+	.endif
 	.if \bits64
 	branch_if_cross_page x7, 8, x9, .Lscalar_unsigned_cross\@
 	.else
@@ -194,6 +200,12 @@ gadget \name
 	b.ne .Lscalar_alignment_fault_read
 	.endif
 	add x7, x7, x21
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, .Lscalar_unsigned_narrow_load_untagged\@
+	ubfx x7, x7, #0, #56
+.Lscalar_unsigned_narrow_load_untagged\@:
+	.endif
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_load_cross\@
 	.endif
@@ -262,6 +274,12 @@ gadget \name
 	b.ne .Lscalar_alignment_fault_write
 	.endif
 	add x7, x7, x21
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, .Lscalar_unsigned_narrow_store_untagged\@
+	ubfx x7, x7, #0, #56
+.Lscalar_unsigned_narrow_store_untagged\@:
+	.endif
 	.if \bytes > 1
 	branch_if_cross_page x7, \bytes, x9, .Lscalar_unsigned_narrow_store_cross\@
 	.endif
@@ -322,7 +340,7 @@ gadget \name
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_unsigned_tagged\@
 	.endif
 	branch_if_cross_page x7, \bytes, x9, .Lvector_unsigned_cross\@
@@ -426,6 +444,12 @@ gadget \name
 	mov x26, x24
 	.else
 	mov x26, x25
+	.endif
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, .Lscalar_other_immediate_untagged\@
+	ubfx x26, x26, #0, #56
+.Lscalar_other_immediate_untagged\@:
 	.endif
 	.if \bytes > 1
 	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_immediate_cross\@
@@ -589,6 +613,12 @@ gadget \name
 		.endif
 	.endif
 	add x26, x24, x26
+	.if !\base_sp
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, .Lscalar_other_register_untagged\@
+	ubfx x26, x26, #0, #56
+.Lscalar_other_register_untagged\@:
+	.endif
 	.if \bytes > 1
 	branch_if_cross_page x26, \bytes, x9, .Lscalar_other_register_cross\@
 	.endif
@@ -711,7 +741,7 @@ gadget \name
 	mov x26, x25
 	.endif
 	.if !\base_sp || \mode != 0
-	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_immediate_tagged\@
 	.endif
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_immediate_cross\@
@@ -824,7 +854,7 @@ gadget \name
 		.endif
 	.endif
 	add x26, x24, x26
-	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_other_register_tagged\@
 	branch_if_cross_page x26, \bytes, x9, .Lvector_other_register_cross\@
 	mov x7, x26
@@ -944,6 +974,22 @@ gadget \name
 	.else
 	mov x19, x21
 	.endif
+	.if !\sp_base
+	/* CpuState keeps the MTE and TBI flags in the low and high bytes of
+	 * this halfword. MTE requires the precise allocation-tag helper, while
+	 * TBI alone can retain the ordinary pair fast path after stripping the
+	 * logical tag from the effective address. */
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	cbz w9, .Linteger_pair_untagged\@
+	tbnz w9, #0, .Linteger_pair_tagged\@
+	ubfx x19, x19, #0, #56
+.Linteger_pair_untagged\@:
+	.elseif \mode != 0
+	/* SP is never top-byte ignored, but writeback pair forms remain
+	 * allocation-tag checked when MTE is active. */
+	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	cbnz w9, .Linteger_pair_tagged\@
+	.endif
 	/* Comparing the page bits of the first and final transfer bytes catches
 	 * both page crossing and address wraparound with one hot-path branch. */
 	branch_if_cross_page x19, (2 * \bytes), x9, .Linteger_pair_cross\@
@@ -1025,6 +1071,68 @@ gadget \name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+
+	.if !\sp_base || \mode != 0
+.Linteger_pair_tagged\@:
+	sub sp, sp, #32
+	stp x1, x2, [sp, #16]
+	.if \load
+	stp xzr, xzr, [sp]
+	.else
+		.if \first_zero
+	mov x6, xzr
+		.else
+	ldr x6, [_cpu, x22]
+		.endif
+		.if \second_zero
+	mov x7, xzr
+		.else
+	ldr x7, [_cpu, x23]
+		.endif
+		.if \bytes == 4
+	stp w6, w7, [sp]
+		.else
+	stp x6, x7, [sp]
+		.endif
+	.endif
+	mov x0, _cpu
+	mov x1, _tlb
+	mov x2, x19
+	mov x3, sp
+	mov x4, #(2 * \bytes)
+	mov w5, #(!\load)
+	mov w6, #\sp_base
+	mov w7, #((\bytes << 8) | 1)
+	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	ldp x1, x2, [sp, #16]
+	cbz w0, 97f
+	.if \load
+		.if \bytes == 4
+	ldp w6, w7, [sp]
+			.if \sign_extend
+	sxtw x6, w6
+	sxtw x7, w7
+			.endif
+		.else
+	ldp x6, x7, [sp]
+		.endif
+		.if !\first_zero
+	str x6, [_cpu, x22]
+		.endif
+		.if !\second_zero
+	str x7, [_cpu, x23]
+		.endif
+	.endif
+	.if \mode == 1 || \mode == 2
+	str x21, [_cpu, x24]
+	.endif
+	add sp, sp, #32
+	add _stream, _stream, #8
+	next_gadget
+97:
+	add sp, sp, #32
+	b uml_arm64_gadget_memory_fault
+	.endif
 .endm
 
 .macro integer_pair_mode name, load, instruction, host_register, bytes, sign_extend, mode
@@ -1090,7 +1198,7 @@ gadget \name
 	mov x19, x21
 	.endif
 	.if !\sp_base || \mode != 0
-	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
+	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w9, .Lvector_pair_tagged\@
 	.endif
 	branch_if_cross_page x19, (2 * \bytes), x9, .Lvector_pair_cross\@

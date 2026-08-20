@@ -292,6 +292,62 @@ void cross_page_success(engine_tests::EngineHarness &harness)
 	}
 }
 
+void top_byte_ignore_without_mte(engine_tests::EngineHarness &harness)
+{
+	constexpr std::uint64_t top_byte = std::uint64_t{2} << 56U;
+	for (const unsigned variant_index : {0U, 1U}) {
+		const auto &variant = test::variants[variant_index];
+		for (const auto form : test::all_forms) {
+			std::vector<std::byte> memory(test::page_size);
+			test::fill_memory(memory, 61U + variant_index * 7U +
+				static_cast<unsigned>(form));
+			auto expected_memory = memory;
+			const auto target = test::data_base + test::page_size / 2U;
+			const unsigned immediate =
+				form == test::Form::unsigned_offset ? 3U :
+				test::encode_imm9(7);
+			const auto physical_base = test::base_for_address(
+				variant, form, target, immediate);
+			const auto tagged_base = physical_base | top_byte;
+			auto initial = test::seeded_state(
+				0x9600'0000'0000'0000ULL |
+				(static_cast<std::uint64_t>(variant_index) << 8U) |
+				static_cast<unsigned>(form));
+			initial.tbi_enabled = true;
+			initial.registers[4] = tagged_base;
+			initial.registers[5] = test::store_value;
+			auto expected = initial;
+			const auto offset = static_cast<std::size_t>(
+				target - test::data_base);
+			if (variant.load) {
+				expected.write_register(5,
+					test::expected_load(variant,
+						test::decode_little_endian(
+							expected_memory, offset,
+							variant.size)),
+					false);
+			} else {
+				test::encode_little_endian(expected_memory, offset,
+					variant.size, test::store_value);
+			}
+			if (test::writes_back(form))
+				expected.registers[4] = test::writeback_for(
+					form, tagged_base, immediate);
+			char name[112];
+			std::snprintf(name, sizeof(name),
+				"%.*s %.*s TBI without MTE",
+				static_cast<int>(variant.name.size()),
+				variant.name.data(),
+				static_cast<int>(test::form_name(form).size()),
+				test::form_name(form).data());
+			test::check_memory(harness, name,
+				test::encode(variant, form, immediate, 4, 5),
+				initial, expected, test::data_base,
+				memory, expected_memory);
+		}
+	}
+}
+
 } // namespace
 
 int main()
@@ -303,7 +359,8 @@ int main()
 	base_register_sweep(harness);
 	writeback_overlap(harness);
 	cross_page_success(harness);
-	test::require_engine_counts(harness, 5111U);
+	top_byte_ignore_without_mte(harness);
+	test::require_engine_counts(harness, 5121U);
 	harness.print_summary("arm64-base-immediate-memory-behavior");
 	return 0;
 }

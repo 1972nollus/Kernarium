@@ -170,7 +170,9 @@ RunResult Dispatcher::guarded_control_stack(CpuState &cpu,
 		/* CheckGCSSTREnabled precedes address generation and SP alignment. */
 		if (!cpu.gcs_store_enabled)
 			return gcs_fault(cpu, instruction);
-		const auto address = cpu.read_register(decoded.base, true);
+		const auto tagged_address = cpu.read_register(decoded.base, true);
+		const auto address = cpu.untag_data_address(
+			tagged_address, decoded.base == 31U);
 		if (decoded.base == 31U && (address & 15U) != 0)
 			return memory_fault(instruction, address, true);
 		const auto value = cpu.read_register(decoded.transfer, false);

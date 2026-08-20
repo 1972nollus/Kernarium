@@ -37,7 +37,9 @@ RunResult Dispatcher::load_store_simd_ordered(CpuState &cpu,
 	if (lane_form) {
 		/* LDAP1/STL1 are the only allocated R=1,o2=1,opcode=100,size=01
 		 * members of this class. Their Q bit selects D[0] or D[1]. */
-		const auto address = cpu.read_register(base_register, true);
+		const auto tagged_address = cpu.read_register(base_register, true);
+		const auto address = cpu.untag_data_address(
+			tagged_address, base_register == 31U);
 		if ((address & 7U) != 0U)
 			return {StopReason::memory_fault, address, instruction, 0, !load};
 		const std::size_t lane = instruction >> 30;
@@ -72,8 +74,10 @@ RunResult Dispatcher::load_store_simd_ordered(CpuState &cpu,
 	const std::size_t size = (opc & 2U) != 0U ? 16U :
 		(std::size_t{1} << size_code);
 	const auto offset = sign_extend((instruction >> 12) & 0x1ffU, 9);
-	const auto address = cpu.read_register(base_register, true) +
+	const auto tagged_address = cpu.read_register(base_register, true) +
 		static_cast<std::uint64_t>(offset);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((address & (size - 1U)) != 0U)
 		return {StopReason::memory_fault, address, instruction, 0, !load};
 
@@ -138,7 +142,9 @@ RunResult Dispatcher::load_store_exclusive(CpuState &cpu,
 	const unsigned transfer = instruction & 0x1fU;
 	const unsigned second_transfer = (instruction >> 10) & 0x1fU;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	const bool ordered = (instruction & 0x0000'8000U) != 0;
 	if (pair) {
 		/* Pair-exclusive encodings fix bit 31, use Rt2 as a real transfer
@@ -340,7 +346,9 @@ RunResult Dispatcher::load_store_compare_swap(CpuState &cpu,
 	const unsigned compare_register = (instruction >> 16) & 31U;
 	const unsigned replacement_register = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
@@ -380,7 +388,9 @@ RunResult Dispatcher::load_store_compare_swap_pair(CpuState &cpu,
 	const std::size_t element_size = std::size_t{4} << size_code;
 	const auto total_size = element_size * 2;
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (total_size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
@@ -436,7 +446,9 @@ RunResult Dispatcher::load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	const unsigned source = (instruction >> 16) & 31U;
 	const unsigned destination = instruction & 31U;
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
@@ -472,7 +484,7 @@ RunResult Dispatcher::load_store_atomic_floating(CpuState &cpu,
 		return {StopReason::memory_fault, tagged_address, instruction, 0,
 			true};
 	const auto untagged_address =
-		base_register != 31U && cpu.mte_enabled ?
+		base_register != 31U && cpu.tagged_addresses_enabled() ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((untagged_address & (size - 1U)) != 0U)
 		return {StopReason::memory_fault, untagged_address, instruction, 0,
@@ -524,7 +536,9 @@ RunResult Dispatcher::load_store_atomic_pair_128(CpuState &cpu,
 	    first == 31U || second == 31U || first == second)
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((address & 15U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 	/* Capture both operands before either result can overwrite an overlapping
@@ -563,7 +577,9 @@ RunResult Dispatcher::load_store_rcw(CpuState &cpu, GuestMemory &memory,
 
 	const bool soft = (instruction & 0x4000'0000U) != 0;
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    (address & 7U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
@@ -613,7 +629,9 @@ RunResult Dispatcher::load_store_rcw_pair(CpuState &cpu,
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 
 	const unsigned base_register = (instruction >> 5) & 31U;
-	const auto address = cpu.read_register(base_register, true);
+	const auto tagged_address = cpu.read_register(base_register, true);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((address & 15U) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, true};
 
@@ -680,7 +698,9 @@ RunResult Dispatcher::load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const unsigned transfer = instruction & 31U;
 	const auto base = cpu.read_register(base_register, true);
-	const auto address = base + static_cast<std::uint64_t>(offset);
+	const auto tagged_address = base + static_cast<std::uint64_t>(offset);
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, !load};
 
@@ -764,7 +784,9 @@ RunResult Dispatcher::load_store_ordered_pair(CpuState &cpu,
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto base = cpu.read_register(base_register, true);
-	const auto address = load || !writeback ? base : base - total_size;
+	const auto tagged_address = load || !writeback ? base : base - total_size;
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	if ((address & (element_size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, !load};
 
@@ -819,7 +841,9 @@ RunResult Dispatcher::load_store_ordered_writeback(
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const unsigned transfer = instruction & 31U;
 	const auto base = cpu.read_register(base_register, true);
-	const auto address = load ? base : base - size;
+	const auto tagged_address = load ? base : base - size;
+	const auto address = cpu.untag_data_address(
+		tagged_address, base_register == 31U);
 	const auto adjusted = load ? base + size : base - size;
 	if ((address & (size - 1U)) != 0)
 		return {StopReason::memory_fault, address, instruction, 0, !load};

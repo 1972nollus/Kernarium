@@ -189,6 +189,44 @@ void non_format_flags_are_ignored(engine::EngineHarness &harness)
 	});
 }
 
+void top_byte_ignore_without_mte(engine::EngineHarness &harness)
+{
+	constexpr std::size_t destination_offset = 421;
+	constexpr std::size_t size = 79;
+	constexpr std::uint64_t destination_tag = 0x0d00'0000'0000'0000ULL;
+	std::vector<std::byte> initial(mops::page_size, std::byte{0xcc});
+	auto expected_memory = initial;
+	mops::set_bytes(expected_memory, destination_offset, size,
+		std::byte{0x5a});
+	const auto destination = mops::data_base + destination_offset;
+	auto initial_cpu = mops::state();
+	initial_cpu.set_mte_configuration(false, 0);
+	initial_cpu.tbi_enabled = true;
+	initial_cpu.registers[destination_register] =
+		destination_tag | destination;
+	initial_cpu.registers[count_register] = size;
+	initial_cpu.registers[source_register] = 0x5a;
+	auto expected_cpu = initial_cpu;
+	expected_cpu.nzcv = mops::option_b_forward;
+	expected_cpu.registers[destination_register] += size;
+	expected_cpu.registers[count_register] = 0;
+	expected_cpu.pc = mops::successful_program_pc(4);
+	const std::array regions{engine::MemoryRegion{
+		.address = mops::data_base,
+		.initial = initial,
+		.expected = expected_memory,
+	}};
+	const auto code = sequence(1, source_register);
+	harness.check_program({
+		.name = "SET TBI without MTE",
+		.code = code,
+		.initial = initial_cpu,
+		.expected = expected_cpu,
+		.native = mops::native(),
+		.memory = regions,
+	});
+}
+
 void write_permission_fault_restart(engine::EngineHarness &harness)
 {
 	const auto writable_page = mops::data_base + mops::page_size;
@@ -247,6 +285,7 @@ int main()
 	all_options_sources_and_pages(harness);
 	zero_maximum_and_malformed_state(harness);
 	non_format_flags_are_ignored(harness);
+	top_byte_ignore_without_mte(harness);
 	write_permission_fault_restart(harness);
 	harness.print_summary("arm64-base-mops-set");
 }

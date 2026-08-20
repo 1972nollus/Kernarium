@@ -280,6 +280,7 @@ public:
 			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
+		runtime_.set_top_byte_ignore(prepared.top_byte_ignore);
 		const bool jit_run = !prepared.informational &&
 			runtime_.execution_engine() ==
 				::uml::runtime::ExecutionEngine::jit;

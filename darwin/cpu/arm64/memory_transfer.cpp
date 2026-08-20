@@ -63,7 +63,7 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	const auto direction =
 		access == static_cast<std::uint32_t>(Access::write) ?
 			Access::write : Access::read;
-	const bool tagged = base_sp == 0U && cpu->mte_enabled;
+	const bool tagged = base_sp == 0U && cpu->tagged_addresses_enabled();
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	const auto element_size = static_cast<std::size_t>(options >> 8);
@@ -71,7 +71,7 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	if (element_size == 0U || element_size > 32U)
 		return 0;
 	if (tagchecked && cpu->mte_enabled && !cpu->pstate_tco) {
-		const auto logical_tag = tagged ?
+		const auto logical_tag = base_sp == 0U && cpu->mte_enabled ?
 			static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
 		for (std::size_t completed = 0; completed < size;
 		     completed += element_size) {
@@ -126,7 +126,7 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 		tlb->fault_access = Access::write;
 		return nullptr;
 	}
-	const bool tagged = base_sp == 0U && cpu->mte_enabled;
+	const bool tagged = base_sp == 0U && cpu->tagged_addresses_enabled();
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
 	if ((address & (size - 1U)) != 0U) {

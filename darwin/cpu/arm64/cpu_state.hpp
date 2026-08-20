@@ -38,12 +38,15 @@ struct CpuState final {
 	std::uint32_t fpcr{};
 	std::uint32_t fpsr{};
 	std::uint64_t tls{};
-	/* EL0's effective MTE state and the GCR_EL1.Exclude value supplied by
-	 * the userspace runtime. Production ADDG/SUBG gadgets use the derived
+	/* EL0's effective MTE state, independent TBI0 address state, and the
+	 * GCR_EL1.Exclude value supplied by the userspace runtime. MTE implies
+	 * tagged addresses, while Android also uses top-byte-ignore without MTE
+	 * allocation-tag checks. Production ADDG/SUBG gadgets use the derived
 	 * table so tag selection is a single indexed load with no hot-path loop.
-	 * Change these fields only through set_mte_configuration().
+	 * Change the MTE fields only through set_mte_configuration().
 	 */
 	bool mte_enabled{};
+	bool tbi_enabled{};
 	std::uint16_t mte_exclude{};
 	std::array<std::uint8_t, 256> mte_tag_choices{};
 	bool mte_random_tags{};
@@ -122,6 +125,17 @@ struct CpuState final {
 	 * leaner guest profile before entering any execution engine.
 	 */
 	bool pointer_authentication_enabled{true};
+	[[nodiscard]] bool tagged_addresses_enabled() const noexcept
+	{
+		return mte_enabled || tbi_enabled;
+	}
+	[[nodiscard]] std::uint64_t untag_data_address(
+		std::uint64_t address, bool base_sp) const noexcept
+	{
+		return !base_sp && tagged_addresses_enabled() ?
+			address & 0x00ff'ffff'ffff'ffffULL : address;
+	}
+
 	[[nodiscard]] std::uint8_t choose_mte_tag(
 		unsigned start, unsigned offset) const noexcept
 	{

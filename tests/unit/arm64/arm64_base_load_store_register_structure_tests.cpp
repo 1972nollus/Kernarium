@@ -231,11 +231,16 @@ struct BodyShape final {
 	unsigned instructions{};
 	unsigned conditional_branches{};
 	unsigned direct_branches{};
+	unsigned tbi_state_loads{};
 	bool threaded_dispatch{};
 };
 
 [[nodiscard]] BodyShape body_shape(Gadget gadget)
 {
+	constexpr std::uint32_t tbi_state_load = 0x3940'0000U |
+		(static_cast<std::uint32_t>(
+			offsetof(arm64::CpuState, tbi_enabled)) << 10U) |
+		(1U << 5U) | 9U;
 	const auto *code = reinterpret_cast<const std::uint32_t *>(
 		function_address(gadget));
 	BodyShape result{};
@@ -252,6 +257,7 @@ struct BodyShape final {
 			++result.conditional_branches;
 		else if ((instruction & 0x7c00'0000U) == 0x1400'0000U)
 			++result.direct_branches;
+		result.tbi_state_loads += instruction == tbi_state_load;
 	}
 	return result;
 }
@@ -271,12 +277,16 @@ void hot_path_shape_audit()
 						sp.threaded_dispatch,
 					"register-offset scalar-memory gadget lacks threaded dispatch");
 				test::require(
-					sp.instructions == gpr.instructions + 2U,
-					"SP specialization contains work beyond its required alignment test");
+					gpr.tbi_state_loads == 1U &&
+						sp.tbi_state_loads == 0U,
+					"register-offset gadget has the wrong TBI-state check");
+				test::require(
+					gpr.instructions == sp.instructions + 1U,
+					"GPR TBI specialization has unexpected hot-path work");
 				test::require(
 					sp.conditional_branches ==
-						gpr.conditional_branches + 1U,
-					"GPR specialization gained an SP-alignment branch");
+						gpr.conditional_branches,
+					"SP alignment and GPR TBI branch counts differ");
 				test::require(
 					sp.direct_branches ==
 						gpr.direct_branches,

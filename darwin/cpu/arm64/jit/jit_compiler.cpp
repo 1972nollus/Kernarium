@@ -676,6 +676,13 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
     mark_direct_memory_write();
     const unsigned source = instruction & 31U;
     load_gpr(8, source, false);
+    if (source != 31U) {
+      const auto no_tagged_state = emitter_.make_label();
+      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.compare_zero(no_tagged_state, 0, false, false);
+      emitter_.ubfm(8, 8, 0, 55);
+      emitter_.bind(no_tagged_state);
+    }
     mask_register(8, ~std::uint64_t{63}, true);
     const auto fault = emitter_.make_label();
     cold_.push_back(
@@ -707,8 +714,14 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
 #endif
     if (source == 31U)
       emitter_.move_x(0, 31);
-    else
+    else {
       emitter_.load_x(0, 15, register_offset(source, false));
+      const auto no_tagged_state = emitter_.make_label();
+      emitter_.load_h(8, 15, offsetof(CpuState, mte_enabled));
+      emitter_.compare_zero(no_tagged_state, 8, false, false);
+      emitter_.ubfm(0, 0, 0, 55);
+      emitter_.bind(no_tagged_state);
+    }
     emitter_.call(
         reinterpret_cast<const void *>(&uml_arm64_guest_code_synchronize));
     emitter_.return_constant(Event::continued, count);

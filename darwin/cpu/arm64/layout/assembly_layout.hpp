@@ -21,6 +21,7 @@ static_assert(offsetof(CpuState, fpcr) == UML_GADGET_CPU_FPCR);
 static_assert(offsetof(CpuState, fpsr) == UML_GADGET_CPU_FPSR);
 static_assert(offsetof(CpuState, tls) == UML_GADGET_CPU_TLS);
 static_assert(offsetof(CpuState, mte_enabled) == UML_GADGET_CPU_MTE_ENABLED);
+static_assert(offsetof(CpuState, tbi_enabled) == UML_GADGET_CPU_TBI_ENABLED);
 static_assert(offsetof(CpuState, mte_exclude) == UML_GADGET_CPU_MTE_EXCLUDE);
 static_assert(offsetof(CpuState, mte_tag_choices) == UML_GADGET_CPU_MTE_TAG_CHOICES);
 static_assert(offsetof(CpuState, mte_random_tags) == UML_GADGET_CPU_MTE_RANDOM_TAGS);

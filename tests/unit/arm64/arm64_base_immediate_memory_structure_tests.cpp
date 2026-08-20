@@ -277,28 +277,58 @@ void select_all_reachable_gadgets()
 	return 0;
 }
 
+[[nodiscard]] unsigned instruction_count(Gadget gadget, std::uint32_t expected)
+{
+	const auto *code = reinterpret_cast<const std::uint32_t *>(
+		address(gadget));
+	unsigned count = 0;
+	for (unsigned index = 0; index < 160U; ++index) {
+		const auto instruction = code[index];
+		if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U)
+			return count;
+		count += instruction == expected;
+	}
+	test::require(false,
+		"scalar immediate-memory gadget has no threaded dispatch");
+	return 0;
+}
+
 void hot_path_branch_audit()
 {
+	constexpr std::uint32_t tbi_state_load = 0x3940'0000U |
+		(static_cast<std::uint32_t>(
+			offsetof(arm64::CpuState, tbi_enabled)) << 10U) |
+		(1U << 5U) | 9U;
 	for (unsigned index = 0; index < rows.size(); ++index) {
 		const auto &row = rows[index];
 		for (unsigned transfer_zero = 0;
 		     transfer_zero < 2; ++transfer_zero) {
-			test::require(conditional_branches(
-				row.unsigned_offset[1][transfer_zero]) ==
-					conditional_branches(
-						row.unsigned_offset[0]
-							[transfer_zero]) + 1U,
-				"unsigned SP gadget has a non-alignment branch");
-			for (unsigned mode = 0; mode < 3; ++mode)
-				test::require(conditional_branches(
-					row.immediate[mode][1]
-						[transfer_zero]) ==
-						conditional_branches(
-							row.immediate[mode][0]
-								[transfer_zero]) +
-							1U,
-					"immediate SP gadget has a "
-					"non-alignment branch");
+			const auto unsigned_gpr =
+				row.unsigned_offset[0][transfer_zero];
+			const auto unsigned_sp =
+				row.unsigned_offset[1][transfer_zero];
+			test::require(
+				instruction_count(unsigned_gpr, tbi_state_load) == 1U &&
+				instruction_count(unsigned_sp, tbi_state_load) == 0U,
+				"unsigned gadget has the wrong TBI-state check");
+			test::require(conditional_branches(unsigned_sp) ==
+				conditional_branches(unsigned_gpr),
+				"unsigned SP alignment and GPR TBI branch counts differ");
+			for (unsigned mode = 0; mode < 3; ++mode) {
+				const auto immediate_gpr =
+					row.immediate[mode][0][transfer_zero];
+				const auto immediate_sp =
+					row.immediate[mode][1][transfer_zero];
+				test::require(
+					instruction_count(immediate_gpr,
+						tbi_state_load) == 1U &&
+					instruction_count(immediate_sp,
+						tbi_state_load) == 0U,
+					"immediate gadget has the wrong TBI-state check");
+				test::require(conditional_branches(immediate_sp) ==
+					conditional_branches(immediate_gpr),
+					"immediate SP alignment and GPR TBI branch counts differ");
+			}
 		}
 	}
 }

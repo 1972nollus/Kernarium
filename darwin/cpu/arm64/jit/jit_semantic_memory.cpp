@@ -420,7 +420,8 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
   const auto adjusted =
       tagged_base + static_cast<std::uint64_t>(displacement);
   const auto tagged_address = mode == 1U ? tagged_base : adjusted;
-  const bool tagged = base_register != 31U && cpu->mte_enabled;
+  const bool tagged =
+      base_register != 31U && cpu->tagged_addresses_enabled();
   const auto address =
       tagged ? tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
   const unsigned first = instruction & 31U;
@@ -442,8 +443,9 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
                    static_cast<std::size_t>(
                        page_size - (current & (page_size - 1U))));
     }
-    const auto logical_tag =
-        tagged ? static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
+    const auto logical_tag = base_register != 31U && cpu->mte_enabled
+                                 ? static_cast<std::uint8_t>(tagged_address >> 56) & 15U
+                                 : 0U;
     for (std::size_t checked = 0; checked < transfer.size();) {
       const auto current = address + checked;
       std::uint8_t allocation_tag{};
@@ -516,7 +518,8 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const std::size_t size = std::size_t{1} << size_shift;
   const unsigned base = (instruction >> 5) & 31U;
   const unsigned transfer = instruction & 31U;
-  const auto address = cpu->read_register(base, true);
+  const auto tagged_address = cpu->read_register(base, true);
+  const auto address = cpu->untag_data_address(tagged_address, base == 31U);
   if ((address & (size - 1U)) != 0) {
     tlb->fault_address = address;
     tlb->fault_access = load ? Access::read : Access::write;

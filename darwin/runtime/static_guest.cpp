@@ -158,10 +158,12 @@ void ensure_pointer_auth_keys(
 
 void load_cpu(arm64::CpuState &cpu,
 	      darwin_uml_guest_registers &registers,
-	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls)
+	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls,
+	      bool top_byte_ignore)
 {
 	ensure_pointer_auth_keys(registers);
 	cpu.pointer_authentication_enabled = false;
+	cpu.tbi_enabled = top_byte_ignore;
 	std::copy(std::begin(registers.x), std::end(registers.x),
 		  cpu.registers.begin());
 	cpu.registers[29] = registers.fp;
@@ -394,7 +396,7 @@ int run_common_guest(
 	auto runtime = context->thread_execution_state();
 	auto &cpu = runtime->cpu;
 	auto &memory = runtime->memory;
-	load_cpu(cpu, mutable_registers, fp, *tls);
+	load_cpu(cpu, mutable_registers, fp, *tls, context->top_byte_ignore());
 	if constexpr (Kind != uml::cpu::EngineKind::gadgets)
 		cpu.access_fp_state();
 	auto *engine = common_engine<Kind>(*runtime);
