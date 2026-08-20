@@ -50,6 +50,14 @@ def regular_file(value: Path, label: str, *, executable: bool = False) -> Path:
     return value
 
 
+def executable_tool(value: Path, label: str) -> Path:
+    absolute_path(value, label)
+    target = value.resolve()
+    if not target.is_file() or not os.access(target, os.X_OK):
+        fail(f"{label} must resolve to a regular executable")
+    return value
+
+
 def regular_directory(value: Path, label: str) -> Path:
     absolute_path(value, label)
     if not value.is_dir() or value.is_symlink():
@@ -249,10 +257,8 @@ def main() -> None:
     target_files = regular_file(args.target_files, "target-files archive")
     ramdisk = regular_file(args.ramdisk, "initramfs")
     disk = regular_file(args.disk, "raw GPT disk")
-    absolute_path(args.clang, "pinned Clang")
-    absolute_path(args.linker, "pinned linker")
-    clang = regular_file(args.clang.resolve(), "pinned Clang", executable=True)
-    linker = regular_file(args.linker.resolve(), "pinned linker", executable=True)
+    clang = executable_tool(args.clang, "pinned Clang")
+    linker = executable_tool(args.linker, "pinned linker")
     vintf_checker = regular_file(args.vintf_checker, "VINTF checker", executable=True)
     zstd = resolve_zstd(args.zstd)
 
