@@ -110,6 +110,7 @@ void* HostGlProvider::display() noexcept
             return nullptr;
         }
         config_ = eglConfig;
+        std::fputs("Virgl ANGLE/Metal provider: hardware\n", stderr);
         display_.store(eglDisplay, std::memory_order_release);
         return eglDisplay;
     } catch (...) {

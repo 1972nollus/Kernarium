@@ -35,8 +35,11 @@ prefixes.
 
 This is an implementation and packaging checkpoint, not a GL/GLES capability
 promotion. No Linux, bridge ABI, kernel artifact, rootfs, Mesa, libdrm, or CTS
-payload changed. The common-path macOS guest identity/capset sentinel,
-display-backed CTS caselist, matched macOS/Simulator campaign, and connected-
+payload changed. A focused 16 KiB common-path macOS diagnostic reached both DRM
+nodes through real Xwayland and virgl, naturally reported desktop GL 2.1 and
+GLES 3.0, passed one frozen GLES 3 shader-declaration case, exported a complete
+QPA, and powered off cleanly. The full capset/fixed-sentinel selection,
+display-backed complete caselist, matched Simulator campaign, and connected-
 iPad correctness, performance, thermal, presentation, and lifecycle campaign
 remain open. Qualification is still fail-closed because no authoritative
 receipt ties the installed CTS binaries to the co-located source. Phase 3 and

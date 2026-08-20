@@ -15,11 +15,14 @@ Metal-texture contract; CGL, OpenGL.framework, the desktop graphics family,
 and the layout-changing provider macro are absent from the current graph.
 macOS stages the same flat EGL/GLES framework shape that Kernarium packages.
 
-This checkpoint does not promote a guest profile. Host compilation, prefix
-identity, framework closure, and product packaging are implementation evidence;
-the display-backed guest sentinel, complete caselist export, frozen macOS and
-Simulator measurements, and connected-iPad campaign remain outstanding. The
-authoritative CTS build receipt is still missing, so qualification remains
+This checkpoint does not promote a guest profile. A focused 16 KiB macOS
+diagnostic reached the immutable guest's two DRM nodes through real Xwayland
+and virgl, naturally measured desktop GL 2.1 and GLES 3.0, passed one exact
+frozen GLES 3 case, exported a complete QPA, and powered off cleanly. Host
+compilation, prefix identity, packaging, and that single case are development
+evidence; the complete identity/capset sentinel, caselist export, frozen
+macOS/Simulator measurements, and connected-iPad campaign remain outstanding.
+The authoritative CTS build receipt is still missing, so qualification remains
 fail-closed and no rootfs or guest-userspace change is authorized.
 
 ## Host, dependency, and kernel input
@@ -135,6 +138,7 @@ noisy performance gate.
 
 The older macOS CGL result—guest desktop GL 4.1 and GLES 3.0—is historical
 context only. It is not rebuilt, rerun, retained as a preset, used as an A/B,
-or accepted by the new CTS driver. The shared candidate remains desktop GL 2.1
-expected and GLES 3.0 through ANGLE/Metal until macOS, the iPhone 17 Pro Max
-Simulator, and the connected iPad each produce the required evidence.
+or accepted by the new CTS driver. The focused macOS diagnostic measured
+desktop GL 2.1 and GLES 3.0 through ANGLE/Metal, but the shared candidate
+remains unqualified until macOS, the iPhone 17 Pro Max Simulator, and the
+connected iPad each produce the complete required evidence.

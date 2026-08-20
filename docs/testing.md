@@ -658,7 +658,7 @@ JIT or gadgets, never the interpreter:
 ```sh
 python3 tests/integration/gpu/run_vk_gl_cts.py \
   --api gles3 --leaf gles3 \
-  --case KHR-GLES3.info.renderer
+  --case KHR-GLES3.shaders.declarations.declarations.missing_variable_name_vertex
 
 python3 tests/integration/gpu/run_vk_gl_cts.py \
   --api gles3 --leaf gles3 --fraction 0,16

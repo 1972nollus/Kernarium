@@ -52,6 +52,16 @@ cat >"$TEST_ROOT/gles.c" <<'EOF'
 int uml_gles_fixture(void) { return 23; }
 EOF
 cat >"$TEST_ROOT/framework-main.c" <<'EOF'
+#include <stdio.h>
+int uml_egl_fixture(void);
+int uml_gles_fixture(void);
+int main(void)
+{
+	puts("Virgl ANGLE/Metal provider: hardware");
+	return uml_egl_fixture() == uml_gles_fixture();
+}
+EOF
+cat >"$TEST_ROOT/framework-main-missing-marker.c" <<'EOF'
 int uml_egl_fixture(void);
 int uml_gles_fixture(void);
 int main(void) { return uml_egl_fixture() == uml_gles_fixture(); }
@@ -82,6 +92,16 @@ verify_framework_runtime()
 		--framework-directory "$RUNTIME/Frameworks"
 }
 verify_framework_runtime >/dev/null
+
+xcrun --sdk macosx clang -arch arm64 \
+	"$TEST_ROOT/framework-main-missing-marker.c" \
+	-F"$PREFIX/Frameworks" -framework EGL -framework GLESv2 \
+	-Wl,-rpath,@executable_path/Frameworks \
+	-o "$RUNTIME/apple-gpu-client-missing-marker"
+expect_rejection 'host-provider marker' \
+	--binary "$RUNTIME/apple-gpu-client-missing-marker" \
+	--apple-gpu-prefix "$PREFIX" \
+	--framework-directory "$RUNTIME/Frameworks"
 
 printf '\0' >> "$RUNTIME/Frameworks/EGL.framework/EGL"
 expect_rejection 'does not match the authenticated prefix' \

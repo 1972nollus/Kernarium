@@ -68,6 +68,7 @@ END_ARTIFACT = re.compile(
 )
 RESULT_STATUS = re.compile(r"<Result\s+StatusCode=\"([^\"]+)\"")
 RESULT_CASE = re.compile(r"<TestCaseResult\b[^>]*\bCasePath=\"([^\"]+)\"")
+GUEST_ERROR = re.compile(r"UML_CTS_ERROR: ([^\r\n]+)")
 HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
 RETIRED_BACKEND_MARKER = "Virgl CGL"
 
@@ -468,8 +469,10 @@ def build_guest_launcher(
         )
     else:
         selection_command = (
-            f"grep -Fx -- {shlex.quote(selection.exact_case)} "
-            '"$leaf" > "$selected"'
+            f"if ! grep -Fx -- {shlex.quote(selection.exact_case)} "
+            '"$leaf" > "$selected"; then '
+            "echo 'UML_CTS_ERROR: exact case is absent from selected must-pass leaf'; "
+            "exit 1; fi"
         )
 
     return f"""#!/bin/sh
@@ -538,25 +541,44 @@ actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
     exit 1
 }}
 
-runtime="/run/user/$(id -u uml)"
+uml_uid=$(id -u uml)
+runtime="/run/user/$uml_uid"
+xdisplay=
+xauthority=
+
+find_xwayland()
+{{
+    candidates=$(pgrep -u "$uml_uid" -x Xwayland 2>/dev/null || true)
+    for candidate_pid in $candidates; do
+        command_line="/proc/$candidate_pid/cmdline"
+        [ -r "$command_line" ] || continue
+        candidate_display=$(tr '\\000' '\\n' < "$command_line" |
+            grep -E '^:[0-9]+$' | head -n 1 || true)
+        candidate_xauthority=$(tr '\\000' '\\n' < "$command_line" |
+            awk 'previous == "-auth" {{ print; exit }} {{ previous = $0 }}')
+        [ -n "$candidate_display" ] || continue
+        case "$candidate_xauthority" in
+        "$runtime"/xauth_*) ;;
+        *) continue ;;
+        esac
+        xsocket="/tmp/.X11-unix/X${{candidate_display#:}}"
+        [ -S "$xsocket" ] && [ -f "$candidate_xauthority" ] || continue
+        xdisplay=$candidate_display
+        xauthority=$candidate_xauthority
+        return 0
+    done
+    return 1
+}}
+
 remaining=600
-while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
+while [ ! -S "$runtime/bus" ] || ! find_xwayland; do
     [ "$remaining" -gt 0 ] || {{
-        echo 'UML_CTS_ERROR: graphical session did not become ready'
+        echo 'UML_CTS_ERROR: graphical Xwayland session did not become ready'
         exit 1
     }}
     remaining=$((remaining - 1))
     sleep 1
 done
-xauthority=$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print | head -n 1)
-[ -n "$xauthority" ] || {{
-    echo 'UML_CTS_ERROR: Xauthority cookie was not found'
-    exit 1
-}}
-pgrep -x Xwayland >/dev/null || {{
-    echo 'UML_CTS_ERROR: Xwayland is not running'
-    exit 1
-}}
 if pgrep -x Xvfb >/dev/null; then
     echo 'UML_CTS_ERROR: Xvfb is forbidden'
     exit 1
@@ -570,13 +592,13 @@ for device in /dev/dri/card0 /dev/dri/renderD128; do
 done
 printf 'x11_server=xwayland\n' >> "$renderer"
 runuser -u uml -- env \
-    HOME=/home/uml DISPLAY=:0 XAUTHORITY="$xauthority" \
+    HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" glxinfo -B >> "$renderer" 2>&1 || {{
         echo 'UML_CTS_ERROR: glxinfo failed'
         exit 1
     }}
 runuser -u uml -- env \
-    HOME=/home/uml DISPLAY=:0 XAUTHORITY="$xauthority" \
+    HOME=/home/uml DISPLAY="$xdisplay" XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" eglinfo -B -p gbm >> "$renderer" 2>&1 || true
 grep -Eiq 'virgl' "$renderer" || {{
     echo 'UML_CTS_ERROR: renderer is not Virgl'
@@ -597,7 +619,7 @@ chown uml:uml "$selected" "$renderer"
 
 set +e
 runuser -u uml -- env \
-    HOME=/home/uml DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 \
+    HOME=/home/uml DISPLAY="$xdisplay" WAYLAND_DISPLAY=wayland-0 \
     XAUTHORITY="$xauthority" XDG_RUNTIME_DIR="$runtime" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
     timeout --signal=TERM --kill-after=30 {timeout} \
@@ -876,6 +898,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     artifacts = decode_artifacts(transcript)
     required = ALLOWED_ARTIFACTS - set(artifacts)
     if required:
+        guest_errors = GUEST_ERROR.findall(transcript)
+        if guest_errors:
+            raise CampaignError(f"guest campaign failed: {guest_errors[-1]}")
         raise CampaignError(f"campaign omitted artifacts: {sorted(required)!r}")
     output_directory = artifact_directory / "artifacts"
     write_artifacts(artifacts, output_directory)

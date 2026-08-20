@@ -77,8 +77,12 @@ class VkGlCtsToolingTests(unittest.TestCase):
         with self.assertRaises(Exception):
             cts.parse_fraction("1/8")
         self.assertEqual(
-            cts.exact_case("KHR-GLES3.info.renderer"),
-            "KHR-GLES3.info.renderer",
+            cts.exact_case(
+                "KHR-GLES3.shaders.declarations.declarations."
+                "missing_variable_name_vertex"
+            ),
+            "KHR-GLES3.shaders.declarations.declarations."
+            "missing_variable_name_vertex",
         )
         for value in ("KHR-GLES3.*", "a,b", "$(id)", "case name", "../case"):
             with self.subTest(value=value), self.assertRaises(Exception):
@@ -218,7 +222,11 @@ OpenGL renderer string: virgl (Apple GPU)
         self.assertIn("--deqp-test-oom=disable", launcher)
         self.assertIn("timeout --signal=TERM --kill-after=30 300", launcher)
         self.assertIn("runuser -u uml", launcher)
-        self.assertIn("pgrep -x Xwayland", launcher)
+        self.assertIn('pgrep -u "$uml_uid" -x Xwayland', launcher)
+        self.assertIn(r"tr '\000' '\n'", launcher)
+        self.assertNotIn("\0", launcher)
+        self.assertIn('DISPLAY="$xdisplay"', launcher)
+        self.assertNotIn("DISPLAY=:0", launcher)
         self.assertIn("pgrep -x Xvfb", launcher)
         self.assertIn("/dev/dri/renderD128", launcher)
         self.assertIn("guest_page_size=", launcher)
@@ -231,6 +239,22 @@ OpenGL renderer string: virgl (Apple GPU)
         self.assertNotIn("MESA_GLES_VERSION_OVERRIDE", launcher)
         self.assertNotIn("/dev/ubda", launcher)
         self.assertNotIn("\n+    ", launcher)
+        exact_launcher = cts.build_guest_launcher(
+            cts.Selection(
+                leaf,
+                "KHR-GLES3.shaders.declarations.declarations."
+                "missing_variable_name_vertex",
+                0,
+                1,
+            ),
+            seed=7,
+            timeout=300,
+            guest_page_size=16384,
+        )
+        self.assertIn(
+            "exact case is absent from selected must-pass leaf",
+            exact_launcher,
+        )
         syntax = subprocess.run(
             ["sh", "-n"],
             input=launcher,

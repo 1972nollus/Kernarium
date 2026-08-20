@@ -44,6 +44,8 @@ esac
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 OTOOL=$(xcrun --find otool)
 [ -x "$OTOOL" ] || fail "xcrun returned an invalid otool"
+STRINGS=$(xcrun --find strings)
+[ -x "$STRINGS" ] || fail "xcrun returned an invalid strings tool"
 
 forbidden_dependency()
 {
@@ -75,6 +77,10 @@ done
 	printf '%s\n' "verified production runtime dependency closure: $BINARY"
 	exit 0
 }
+
+"$STRINGS" "$BINARY" |
+	grep -F -x 'Virgl ANGLE/Metal provider: hardware' >/dev/null ||
+	fail "production executable is missing the ANGLE/Metal host-provider marker"
 
 [ -d "$APPLE_GPU_PREFIX" ] && [ ! -L "$APPLE_GPU_PREFIX" ] ||
 	fail "Apple GPU prefix is missing or symbolic: $APPLE_GPU_PREFIX"

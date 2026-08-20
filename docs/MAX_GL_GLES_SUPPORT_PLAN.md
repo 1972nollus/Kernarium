@@ -31,11 +31,14 @@ the installed CTS binaries have no recovered authoritative source/build
 receipt, the complete display-backed caselist has not been captured, and the
 same-schema Simulator plus connected-iPad baselines are not recorded. Phase 2
 has completed the common host implementation, dependency, unit, macOS product,
-mobile product, and packaging portions, but not the macOS guest sentinel,
-matched Simulator run, connected-iPad qualification, performance campaigns, or
-complete Khronos matrices. No kernel/rootfs change or capability promotion is
-claimed. Phases 3 through 7 have not started; they remain gated on a truthful,
-measured lower shared baseline and the explicit stop conditions below.
+mobile product, and packaging portions. A focused 16 KiB macOS guest diagnostic
+now proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0, one
+passing frozen GLES 3 case, complete artifact egress, and clean shutdown. The
+complete identity/capset sentinel, matched Simulator run, connected-iPad
+qualification, performance campaigns, and complete Khronos matrices remain
+open. No kernel/rootfs change or capability promotion is claimed. Phases 3
+through 7 have not started; they remain gated on a truthful, measured lower
+shared baseline and the explicit stop conditions below.
 
 In this plan, “maximum” means the highest truthful profile that preserves the
 shared high-performance ANGLE/Metal path. A higher version is rejected when it
@@ -211,7 +214,7 @@ replaced by a slower emulation path.
 | Host renderer | macOS guest | Simulator guest | Connected-iPad guest | Status |
 | --- | --- | --- | --- | --- |
 | Apple CGL 4.1 | GL 4.1, GLES 3.0 | unavailable | unavailable | archived pre-migration measurement only; no planned build, runtime, or test lane |
-| Current UTM ANGLE/Metal | GL 2.1 expected, GLES 3.0 | GL 2.1 expected; host ES 3.0 measured and guest WebGL 2 workload passed; direct guest GLES probe pending | GL 2.1 expected, GLES 3.0 source-derived | all three host slices build from the common product; guest identity/capset and full physical-iPad qualification remain pending |
+| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | GL 2.1 expected; host ES 3.0 measured and guest WebGL 2 workload passed; direct guest GLES probe pending | GL 2.1 expected, GLES 3.0 source-derived | all three host slices build from the common product; complete identity/capset, Simulator, and physical-iPad qualification remain pending |
 | Direct ANGLE/Metal ES 3.1 implementation | GL 2.1 expected, GLES 3.1 stretch ceiling | same conditional ceiling | same conditional ceiling | acceptable only with native Metal compute/storage/image/atomic mappings and the full performance gate |
 | Previous row plus GPU-resident desktop gates | at most GL 3.1, GLES 3.1 | same conditional ceiling | same conditional ceiling | optional stretch; retain the immediately lower qualified desktop tier, GL 2.1 or GL 3.0, when a required next-tier gate needs CPU-heavy or materially slower emulation |
 | GLES/GL 3.2 or GL 4.x | not targeted | not targeted | not targeted | geometry/desktop translation does not meet the selected direct ANGLE/Metal, performance-first architecture |
@@ -1328,12 +1331,13 @@ The plan is complete only when all of the following are true:
     explicit direction.
 
 The truthful evidence statement is: an older macOS CGL build measured guest
-GL 4.1/GLES 3.0, while the current iOS ANGLE/Metal path measured an ES 3.0 host
-and passed the recorded WebGL 2 workload. The macOS number is archival only and
-does not define a lane in this plan. No new shared capability is claimed until
-the exact Apple-GPU path passes macOS first, the iPhone 17 Pro Max Simulator
-second, and the connected iPad qualification last. The committed shared target
-is the direct-hardware ANGLE/Metal GL 2.1 expected/GLES 3.0 baseline candidate;
-it becomes the performance baseline only after Phase 2 passes. GLES 3.1
-and desktop GL 3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus
-GL 4.x are not planned claims.
+GL 4.1/GLES 3.0 and is archival only. The current common ANGLE/Metal path has a
+focused 16 KiB macOS diagnostic measuring guest GL 2.1/GLES 3.0 and one passing
+GLES 3 case; the iOS path separately measured an ES 3.0 host and passed the
+recorded WebGL 2 workload. No new shared capability is claimed until the exact
+Apple-GPU path completes macOS first, the iPhone 17 Pro Max Simulator second,
+and connected-iPad qualification last. The committed shared target remains the
+direct-hardware ANGLE/Metal GL 2.1 expected/GLES 3.0 baseline candidate; it
+becomes the performance baseline only after Phase 2 passes. GLES 3.1 and
+desktop GL 3.0/3.1 are conditional stretch ceilings, and GLES/GL 3.2+ plus GL
+4.x are not planned claims.

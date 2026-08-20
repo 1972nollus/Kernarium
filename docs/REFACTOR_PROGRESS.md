@@ -17,10 +17,13 @@
 - Passed the dependency tooling suite, normal and ASan/UBSan GPU workflows,
   the rebuilt macOS integration product, all four Kernarium runtime builds,
   and four-XCFramework packaging from the final provider source.
-- Made no kernel or rootfs change and promoted no guest API. Phase 2 guest
-  identity/capset, Simulator, connected-iPad, performance, and CTS work remains
-  open; CTS qualification is blocked by its missing authoritative build
-  receipt and incomplete display-backed caselist.
+- Made no kernel or rootfs change and promoted no guest API. A focused 16 KiB
+  macOS diagnostic reached DRM/Xwayland/virgl, measured desktop GL 2.1 and GLES
+  3.0 naturally, and passed one exact GLES 3 CTS case with complete artifact
+  egress and clean shutdown. The complete identity/capset sentinel, Simulator,
+  connected-iPad, performance, and CTS work remains open; qualification is
+  blocked by its missing authoritative build receipt and incomplete
+  display-backed caselist.
 
 ## 2026-08-20: versioned kernel ownership groundwork
 

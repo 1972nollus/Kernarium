@@ -24,10 +24,11 @@ family are removed rather than retained as an alternative lane. No Vulkan
 facade participates in GL context creation, capsets, symbol resolution, or
 resource presentation.
 
-That implementation result does not revise the measured ceilings below. The
-old Apple OpenGL 4.1 probe is archived input; the committed shared candidate
-remains desktop GL 2.1 expected/GLES 3.0 until macOS, Simulator, and connected
-iPad guest correctness and performance qualification complete. GLES 3.1 is
+The old Apple OpenGL 4.1 probe is archived input. A focused current 16 KiB
+macOS guest diagnostic now naturally reports desktop GL 2.1 and GLES 3.0 and
+passes one exact frozen GLES 3 case, but that does not qualify the shared
+candidate. Simulator and connected-iPad correctness and performance evidence,
+the complete sentinel, and the agreed matrices remain required. GLES 3.1 is
 still a direct ANGLE/Metal-only stretch target, and GLES/GL 3.2+ remains out of
 scope.
 
