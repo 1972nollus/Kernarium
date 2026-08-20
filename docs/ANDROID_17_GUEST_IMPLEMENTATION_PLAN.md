@@ -46,6 +46,18 @@ The following decisions are requirements, not optional implementation ideas:
 8. The Android macOS executable and Android runtime framework have distinct
    target names, output names, bundle identities, and output directories from
    the current products.
+9. Every change made inside an AOSP Git project is represented by a generated
+   per-project patch series under `android/aosp-17/patches`; copying an overlay
+   into an AOSP checkout is not an accepted source-management workflow.
+10. Android 17 build scripts, image-layout inputs, release tooling, and other
+    non-kernel support files live under `android/aosp-17`. Android ACK patches,
+    configuration, and line metadata remain under `kernel/android-6.18`.
+11. The repository stores no build-machine SSH hostname, user, port,
+    credential, key path, or connection option. Tracked scripts contain no
+    SSH, scp, sftp, rsync, or equivalent command for executing on or
+    transferring files to or from the build machine. An operator copies the
+    required tracked files to the build machine before running its local build
+    scripts and copies the finished release back outside those scripts.
 
 ## Non-goals
 
@@ -61,36 +73,45 @@ The first accepted product does not include:
   bring-up;
 - Vulkan, camera, microphone, telephony, Wi-Fi, Bluetooth, GNSS, UWB, or sensor
   claims; or
-- automatic remote builds from an Apple configure, build, test, or packaging
-  command.
+- automatic builder invocation from an Apple configure, build, test, or
+  packaging command.
 
 ## Architectural boundary
 
 The result has one producer boundary and one consumer boundary:
 
 ```text
-dedicated x86_64 Linux builder
+reviewed outer-project revision on the operator workstation
+    android/aosp-17 build scripts, AOSP patch series, and support files
+    kernel/android-6.18 ACK patch series and configuration
+             |
+             | operator-managed copy outside tracked scripts
+             v
+dedicated x86_64 Linux builder staging tree
     pinned outer-project revision
     pinned AOSP 17 manifest
     pinned ACK 6.18 commit
-    local ACK and AOSP patch/support inputs
              |
-             | standalone prepare/build/verify/publish
+             | builder-local prepare/build/verify/publish
              v
 versioned Android release bundle on the Linux builder
              |
-             | explicit SSH import and local verification
+             | operator-managed copy outside tracked scripts
              v
-Git-ignored local prebuilt release under .build/android/releases
+Git-ignored incoming release on the workstation
+             |
+             | local-only install and verification
+             v
+validated prebuilt release under .build/android/releases
              |
              | read-only manifest import
              v
 macOS executable / iOS Device framework / iOS Simulator framework
 ```
 
-There is no reverse edge. The Apple product graph does not know the builder's
-hostname, remote paths, AOSP checkout, ACK checkout, compiler invocation, or
-image assembly commands.
+There is no build edge across the copy boundaries. The Apple product graph
+does not know a builder hostname, remote path, AOSP checkout, ACK checkout,
+compiler invocation, image assembly command, or transport command.
 
 The same prebuilt-only rule is applied to the current upstream-stable kernel
 products during the directory migration. Standalone kernel workflows produce
@@ -109,8 +130,8 @@ kernel/
     README.md
     abi/
     artifacts/
-      release-manifest.schema.json
-      verify-release.py
+      kernel-artifact-manifest.schema.json
+      verify-kernel-artifact.py
       KernelArtifact.cmake
     config/
       page-16k.fragment
@@ -149,12 +170,6 @@ kernel/
 
   android-6.18/
     README.md
-    builder.conf.example
-    source-location.conf.example
-    metadata/
-      aosp.env
-      kernel.env
-      accepted-release.env
     config/
       android.fragment
     patches/
@@ -164,33 +179,57 @@ kernel/
       path-ownership.tsv
       topic-path-overlaps.tsv
       series/
+
+android/
+  README.md
+  aosp-17/
+    README.md
+    metadata/
+      aosp.env
+      accepted-release.env
+    patches/
+      projects.tsv
+      projects/
+        <route-id>/
+          metadata.env
+          path-ownership.tsv
+          series/
+            manifest.tsv
+            0001-*.patch
     support/
-      aosp/
-        device/uml/darwin/
-        sepolicy/
-        init/
-        fstab/
-        patches/
-          manifest.tsv
-          projects/
+      boot/
+        kernel-command-line.txt
       image/
         partition-layout.json
+      release/
+        release-manifest.schema.json
+      verification/
+        required-features.txt
+        forbidden-features.txt
     build/
-      prepare-source.sh
+      prepare-sources.sh
+      apply-aosp-patches.sh
       build-kernel.sh
       build-aosp.sh
       assemble-image.sh
       build-release.sh
       verify-release.sh
       publish-release.sh
-    remote/
-      invoke-build.sh
-      import-release.sh
+    tools/
+      regenerate-aosp-series.sh
+      verify-aosp-patches.py
+      install-release.py
 ```
 
 `kernel/README.md` becomes a short index. It explains the two kernel lines,
 the shared ABI and artifact contracts, and the fact that the emulator build is
 an artifact consumer. It does not contain either line's source or patch policy.
+
+`kernel/android-6.18` owns only ACK line documentation, configuration, and
+generated kernel patches. `android/aosp-17/build/build-kernel.sh` is the
+versioned Android release orchestrator that consumes those inputs; it does not
+duplicate or modify their source of truth. All other Android producer scripts
+and non-kernel support stay beside it under `android/aosp-17`.
 
 ### Current-path migration
 
@@ -213,10 +252,10 @@ Move the current kernel material as follows:
 The ignored `kernel/source-location.conf` is user-owned local data and must not
 be deleted or moved automatically. Migration documents copying its value to
 `kernel/upstream-6.18/source-location.conf`; the new per-line files remain
-ignored. The actual Android source-location configuration exists only in the
-outer-project checkout on the Linux builder. A workstation that imports a
-release may have an ignored SSH/import configuration derived from
-`builder.conf.example`, but it has no Android or ACK source path.
+ignored. Android and ACK checkout paths are supplied only to the copied build
+scripts on the Linux machine, through builder-local command-line arguments or
+an untracked file created there. The repository contains no build-machine
+endpoint configuration.
 
 Move the current patch series as one byte-preserving operation before changing
 its scripts. Do not combine the path move with a patch rebase or configuration
@@ -229,7 +268,7 @@ Only behavior proven identical belongs in `kernel/common`:
 
 - the canonical plain-C Darwin host/kernel ABI;
 - the 16 KiB page and 128 KiB task-stack fragment;
-- the release-manifest schema and read-only artifact verifier;
+- the kernel-artifact schema and read-only artifact verifier;
 - ELF/import validation that accepts an explicit kernel-line policy; and
 - source/patch helpers parameterized by a required line root.
 
@@ -249,8 +288,8 @@ separate Android series.
 
 ## Local-only change policy
 
-Both kernel lines remain private project replays. Active policy and command
-output use local dispositions such as:
+Both kernel lines and every routed AOSP project remain private project
+replays. Active policy and command output use local dispositions such as:
 
 - `carry-locally`;
 - `drop-locally-if-contained`;
@@ -259,17 +298,59 @@ output use local dispositions such as:
 
 Do not add a submit, upload, push, review-server, or contribution command.
 Project-authored ACK topics use a clear local prefix such as
-`UML-DARWIN-LOCAL:`. A commit copied from a pinned source retains its original
+`UML-DARWIN-LOCAL:`; project-authored AOSP topics use a distinct prefix such as
+`UML-ANDROID-LOCAL:`. A commit copied from a pinned source retains its original
 authorship and provenance, but its presence in this project does not imply a
 submission plan.
 
-Patch files remain generated artifacts. Each line owns a clean linear local
-topic branch. Changes are made with Git commit/rebase/amend operations and
-regenerated with `git format-patch`; patch bytes are never edited manually.
+Patch files remain generated artifacts. Each kernel line and AOSP route owns a
+clean linear local topic branch. Changes are made with Git
+commit/rebase/amend operations and regenerated with `git format-patch`; patch
+bytes are never edited manually.
 
 The active series tooling must take an explicit line root and fail if that root
 does not match its metadata. A regeneration command for one line must be
 structurally unable to write the other line's metadata or patch directory.
+
+### AOSP multi-project patch contract
+
+`android/aosp-17/patches/projects.tsv` is the routing authority for every AOSP
+project changed by this product. Each row records an opaque stable route ID,
+manifest project name, exact checkout path, manifest revision, base commit and
+tree, expected final tree, patch count, series-manifest identity, and the
+relative series directory.
+Opaque route IDs prevent nested Repo project paths from aliasing one another.
+Each corresponding `projects/<route-id>/metadata.env` repeats the
+project-specific identity needed by its verifier.
+
+All source-tree changes are generated patches, including newly added product
+makefiles, BoardConfig files, SELinux policy, init and ueventd rules, fstab,
+VINTF declarations, feature XML, and HAL configuration. The initial product
+places those additions within explicitly selected projects already present in
+the pinned AOSP manifest, so each series has a real pinned base. If a future
+change requires a new Git project, that project first needs a separately
+reviewed baseline and manifest entry in this patch contract; copying an
+untracked directory into the checkout is never the fallback.
+
+Each AOSP project is maintained as its own clean local topic branch. Modify the
+commits with Git rebase/amend and regenerate its `git format-patch` series and
+metadata; never edit patch bytes. Each series manifest records patch order,
+filename, stable patch ID, hash, and subject. Generate with full indexes and
+binary support so additions, deletions, renames, modes, symlinks, and any
+necessary binary changes remain Git-owned. The builder verifies every project
+at its declared base, applies only that project's ordered series, checks the
+expected final tree, and rejects unmanifested AOSP changes. Applying or
+regenerating one project's series must be structurally unable to write another
+project or either kernel line.
+
+Application tooling resolves the route against the pinned Repo manifest and
+rejects checkout-path mismatches, dirty bases, symlink escapes, and patch paths
+that are absolute, contain `..`, or enter `.git` or `.repo`.
+
+`android/aosp-17/support` contains only inputs consumed outside AOSP source,
+such as disk assembly, release-schema, and verification policy. A file copied
+into an AOSP worktree is source-tree content and therefore belongs in a patch
+series, not in `support`.
 
 ## Shared host/kernel ABI
 
@@ -289,25 +370,34 @@ current products before consuming it from Android.
 
 ## Dedicated Linux builder
 
-### Builder configuration
+### Builder staging and configuration
 
-Use a Git-ignored configuration file parsed as data rather than sourced by a
-shell, for example:
+The Linux machine remains reachable through the operator's normal SSH setup,
+but that setup is wholly outside this repository. Do not add a hostname, user,
+port, key or credential path, connection option, remote work path, or example
+endpoint to a tracked configuration, preset, script, or test fixture.
 
-```text
-ANDROID_BUILDER_HOST=android-builder
-ANDROID_BUILDER_WORK_ROOT=/srv/uml-android/work
-ANDROID_BUILDER_RELEASE_ROOT=/srv/uml-android/releases
-ANDROID_BUILDER_DARWIN_SDKROOT=/opt/darwin-sdk/MacOSX.sdk
-```
+Before a build, the operator copies a clean snapshot of the selected
+outer-project revision to a staging directory on the Linux machine using an
+external administrative workflow. At minimum, the snapshot contains
+`android/aosp-17`, `kernel/android-6.18`, `kernel/common`, and the outer source
+needed to build and validate the shared host/kernel bridge. The copy operation
+is not implemented or wrapped by any repository script.
 
-`ANDROID_BUILDER_HOST` names an entry in the user's normal SSH configuration.
-Passwords, keys, tokens, private host options, and options that disable host
-verification never enter the repository.
+After the copy, every producer script runs locally on the Linux machine. It
+accepts builder-local AOSP, ACK, work, output, release, toolchain, and Darwin
+SDK/sysroot paths through command-line arguments or an untracked data file
+created on that machine. None of those values describes how to connect to the
+machine.
 
-The preparer proves that the remote host reports `Linux` and `x86_64`. It also
+The preparer proves that its current host reports `Linux` and `x86_64`. It also
 checks available disk, RAM, JDK, `repo`, Git, Python, build tools, LLVM, and the
-configured Darwin SDK/sysroot before starting an expensive build.
+configured Darwin SDK/sysroot before starting an expensive build. A tooling
+test rejects build-machine remote-execution/file-transfer commands and
+endpoint/credential fields anywhere under `android/aosp-17/build`.
+Builder-local public source synchronization by `repo` and Git during the
+prepare phase is allowed; it is not a workstation-to-builder transport path
+and must not embed authentication data in tracked source URLs.
 
 ### Compiler domains
 
@@ -333,31 +423,32 @@ Do not assume ACK Kleaf already understands this nonstandard Darwin UML
 target. A project-local wrapper may invoke Kbuild directly with the pinned ACK
 toolchain. The command and tool versions are recorded in the build receipt.
 
-### Remote phases
+### Builder-local phases and copy boundary
 
-The remote workflow has four separate phases:
+After the tracked files have been copied to the builder, the workflow has four
+phases:
 
-1. **Prepare.** The only network-enabled phase synchronizes the exact AOSP
-   manifest and ACK commit, verifies their commits/trees, creates clean local
-   worktrees, replays the ACK-local patch series, and installs the
-   project-owned Android support tree into a disposable AOSP worktree. If an
-   existing AOSP repository must be changed, it also replays the explicitly
-   routed per-project series below `support/aosp/patches`.
-2. **Build.** The offline build phase builds the ACK UML kernel, AOSP product,
-   ramdisk/support files, and composite guest disk. It writes only to remote
-   out/work directories.
-3. **Verify and publish.** Verification runs against a staged release
-   directory. Publication atomically renames the verified directory to a new
-   release ID and refuses to replace an existing release.
-4. **Import.** A workstation operator explicitly retrieves one completed
-   release. Import never starts, resumes, repairs, or deletes a remote build.
+1. **Prepare.** `android/aosp-17/build/prepare-sources.sh` is the only
+   network-enabled producer step. It synchronizes the exact AOSP manifest and
+   ACK commit into builder-local storage, verifies commits and trees, creates
+   clean worktrees, replays the ACK-local series, and applies every routed AOSP
+   project series from `android/aosp-17/patches/projects.tsv`.
+2. **Build.** The offline scripts build the ACK UML kernel, AOSP product,
+   ramdisk/support files, and composite guest disk. They write only to
+   builder-local work and output directories.
+3. **Verify and publish.** Verification runs against a staged builder-local
+   release directory. Publication atomically renames it to a new release ID
+   and refuses to replace an existing release.
+4. **Copy and install.** After publication is complete, the operator copies the
+   entire release directory to a fresh incoming directory on the workstation
+   through an external workflow. The local-only
+   `android/aosp-17/tools/install-release.py` validates and installs that
+   already-copied directory; it never contacts or names the builder.
 
-`prepare-source.sh` is the only remote step allowed to access source networks.
 The build, verify, and publish steps must succeed with source-network access
-disabled.
-
-No remote command is a CMake target, build preset, CTest, Xcode build phase, or
-dependency of an Apple target.
+disabled. No builder preparation, build, copy, publication, or installation
+command is a CMake target, build preset, CTest, Xcode build phase, or dependency
+of an Apple target.
 
 ## ACK 6.18 kernel product
 
@@ -424,7 +515,7 @@ accepted; it is not part of the first kernel port.
 
 ### Kernel verification
 
-The remote kernel gate requires:
+The builder-local kernel gate requires:
 
 - exact ACK base and final replay tree;
 - clean ordered local series and policy metadata;
@@ -441,12 +532,13 @@ The remote kernel gate requires:
 ### Product ownership
 
 Create a project-owned, 64-bit-only product such as
-`aosp_uml_arm64_pgagnostic`. Keep its source of truth below
-`kernel/android-6.18/support/aosp`. The remote preparer stages that tree into a
-disposable AOSP checkout. Changes to existing AOSP repositories, if required,
-are maintained as separate local Git topic commits and generated per-project
-patch series below `kernel/android-6.18/support/aosp/patches`; the prepared
-AOSP worktree is never the source of truth.
+`aosp_uml_arm64_pgagnostic`. Its source of truth is the set of routed
+per-project series below `android/aosp-17/patches`; there is no product-source
+overlay under either `android/aosp-17/support` or `kernel/android-6.18`.
+Product makefiles and every device, policy, init, fstab, VINTF, feature, and
+HAL file added to an AOSP checkout are introduced by the series for the AOSP
+Git project that owns their destination. The prepared AOSP worktree is never a
+source of truth.
 
 Derive the product from Cuttlefish's page-size-agnostic ARM64 definitions and
 reuse only the portions matching this emulator. The product must retain:
@@ -516,15 +608,17 @@ release ID and partition layout. Resetting an instance is an explicit operation
 that replaces only that instance from the same accepted base.
 
 The UBD-aware fstab, init properties, ueventd rules, SELinux policy, VINTF
-manifests, compatibility matrices, HAL declarations, and kernel command line
-are versioned support inputs under `kernel/android-6.18` and published in the
-release bundle. The Android property set selects the ACK memfd path with
-`sys.use_memfd=true`; the ACK ashmem compatibility behavior remains available
-for legacy applications.
+manifests, compatibility matrices, HAL declarations, and Android property set
+are patch-owned AOSP source under `android/aosp-17/patches`. The external disk
+layout, release-time kernel command line, release schema, and verification
+policy live under `android/aosp-17/support`. Nothing in this list is stored as
+Android support under `kernel/android-6.18`. The Android property set selects
+the ACK memfd path with `sys.use_memfd=true`; the ACK ashmem compatibility
+behavior remains available for legacy applications.
 
 ### Android build verification
 
-The remote AOSP gate requires:
+The builder-local AOSP gate requires:
 
 - `atest elf_alignment_test`;
 - AOSP's 16 KiB prebuilt-library checker;
@@ -533,12 +627,16 @@ The remote AOSP gate requires:
   6.18 kernel identity;
 - compiled SELinux policy with `policycap memfd_class`;
 - filesystem and partition-layout checks against the checked support file;
-- no undeclared hardware feature XML; and
-- a target-files/image inventory containing no DLKM or 4 KiB kernel artifact.
+- no undeclared hardware feature XML;
+- a target-files/image inventory containing no DLKM or 4 KiB kernel artifact;
+- exact replayed final trees for every route in
+  `android/aosp-17/patches/projects.tsv`; and
+- no untracked Repo-root file, no changed project absent from `projects.tsv`,
+  and no source file copied from `android/aosp-17/support`.
 
 ## Published release contract
 
-### Remote release layout
+### Builder-local release layout
 
 Publish a compact runtime release, not the AOSP or kernel object trees:
 
@@ -568,7 +666,8 @@ android17-ack6.18-16k-<release-id>/
 
 Keep target-files archives, symbols, object directories, AOSP source trees,
 ACK source trees, intermediate boot images, and full logs on the builder. They
-are not emulator dependencies and are not part of routine SSH import.
+are not emulator dependencies and are not part of the release directory copied
+back to the workstation.
 
 ### Manifest contents
 
@@ -577,6 +676,8 @@ The versioned manifest records:
 - release ID and product family `android-17-ack-6.18-16k`;
 - Android major, build ID, build variant, fingerprint, and vendor API level;
 - AOSP manifest tag and pinned `repo manifest -r` identity;
+- `android/aosp-17/patches/projects.tsv` identity plus every routed AOSP
+  project's base commit/tree, ordered-series identity, and final tree;
 - ACK repository, tag, base commit/tree, local final tree, and patch-manifest
   identity;
 - outer-project revision and dirty-state observation;
@@ -586,8 +687,12 @@ The versioned manifest records:
 - selected product and configuration identities;
 - an exact inventory of published relative paths, roles, expected formats, and
   observed byte sizes;
-- exact producer command; and
+- exact builder-local producer entry point and functional options, with local
+  filesystem paths recorded only by role; and
 - builder OS, JDK, LLVM, linker, SDK/sysroot, and Android build-tool versions.
+
+The manifest and receipt do not record a builder hostname, user, port, home
+directory, connection option, credential, or transport command.
 
 Git commits, patch identities, configuration, and procedure are the source
 reproducibility contract. The manifest records real build IDs and file sizes as
@@ -604,38 +709,42 @@ identities, page size, product family, and common ABI identity, not binary
 digests or the large artifacts. Publishing a release and accepting it into the
 Apple product are separate review steps.
 
-### SSH import
+### Operator transfer and local installation
 
-The explicit importer:
+Once builder-local publication succeeds, the operator copies the complete
+release directory to a fresh workstation-local incoming directory. The
+repository neither chooses nor implements that transport. No tracked script
+accepts a hostname, remote URI, account, port, SSH configuration, or credential,
+and no tracked script starts a remote shell or file-transfer process.
 
-1. reads the ignored builder configuration;
-2. validates the release ID;
-3. retrieves the manifest first through normal host-key-verified SSH;
-4. requires the manifest identity and semantic fields to match the checked-in
-   acceptance descriptor;
-5. transfers the exact declared payload into a fresh staging directory under
+The explicit local installer then:
+
+1. accepts only a local filesystem source path and validates the release ID;
+2. reads the already-copied manifest from that directory;
+3. requires its identity and semantic fields to match the checked-in acceptance
+   descriptor;
+4. copies the exact declared payload into a fresh staging directory under
    `.build/android/releases`;
-6. rejects undeclared files, symlinks, special files, absolute paths, and path
-   traversal;
-7. verifies the declared inventory, observed sizes, and transport completion;
-8. repeats portable ELF, ABI, config, ramdisk, and image-layout checks;
-9. expands the disk image into the final local release only after its archive
+5. rejects undeclared files, symlinks, special files, absolute paths, path
+   traversal, remote-URI syntax, and incomplete input;
+6. verifies the declared inventory and observed sizes;
+7. repeats portable ELF, ABI, config, ramdisk, and image-layout checks;
+8. expands the disk image into the final local release only after its archive
    integrity and declared filesystem/image structure validate; and
-10. atomically renames the completed staging directory and refuses to replace
-    an existing release.
+9. atomically renames the completed staging directory and refuses to replace an
+   existing release.
 
-The importer does not use a broad `--delete`, modify another local release, or
-make a partial release visible. Deleting or replacing an imported release is a
-separate explicit maintenance operation.
+The installer does not modify another local release or make a partial release
+visible. Deleting or replacing an installed release is a separate explicit
+maintenance operation. Transport authentication and integrity belong to the
+operator-managed environment outside this repository; the repository trust
+boundary begins with the selected local incoming directory.
 
-The trust boundary is the controlled builder reached through authenticated
-SSH. SSH supplies host authentication and transport integrity; the importer
-supplies release-ID, inventory, format, ABI, page-size, and image-structure
-validation. In accordance with the repository's lean workflow policy, this
-plan does not add a product hash manifest. References to an "exact" ELF below
-mean that the Apple carrier is compared byte-for-byte with the already-imported
-local ELF it was configured to consume, not that independent producer builds
-must be byte-identical.
+In accordance with the repository's lean workflow policy, this plan does not
+add a product hash manifest. References to an "exact" ELF below mean that the
+Apple carrier is compared byte-for-byte with the already-installed local ELF
+it was configured to consume, not that independent producer builds must be
+byte-identical.
 
 ## Apple build consumption
 
@@ -665,7 +774,7 @@ Remove these operations from every Apple configure/build:
 - patch replay and delta audit;
 - compiler/toolchain selection for Kbuild;
 - kernel configuration and Kbuild;
-- SSH, scp, rsync, or remote path discovery; and
+- SSH, scp, sftp, rsync, or remote path discovery; and
 - AOSP/Soong/image construction.
 
 A missing, stale, wrong-family, wrong-page-size, wrong-architecture, or
@@ -711,7 +820,7 @@ The target:
 - records the Android release identity in its build metadata;
 - accepts the imported disk/ramdisk release at runtime and refuses a mismatched
   release; and
-- has no dependency on `uml_kernel`, an ACK checkout, or a remote build target.
+- has no dependency on `uml_kernel`, an ACK checkout, or a builder build target.
 
 Factor common executable construction only after preserving target-specific
 boot policy. Host GPU, input, audio, network, CPU, memory, and emulator
@@ -776,7 +885,9 @@ Deliverables:
 - pinned ACK metadata;
 - minimal ACK-based Darwin UML local topic series;
 - x86_64-host/AArch64-target compiler separation;
-- explicit Darwin SDK/sysroot input; and
+- explicit Darwin SDK/sysroot input;
+- builder-local kernel command owned by
+  `android/aosp-17/build/build-kernel.sh`; and
 - one standalone 16 KiB ET_DYN `vmlinux` plus config/import verification.
 
 Exit criteria:
@@ -785,25 +896,31 @@ Exit criteria:
 - no AOSP build has yet been required;
 - ELF architecture, type, alignment, signed-carrier layout, and ABI imports
   pass;
-- the resolved kernel page size is 16 KiB; and
-- the build system has no Android 4 KiB path.
+- the resolved kernel page size is 16 KiB;
+- the build system has no Android 4 KiB path;
+- the reviewed scripts and kernel inputs were copied to the machine before
+  execution; and
+- no tracked script knows or contacts the build-machine endpoint.
 
 Stop here if the designated Linux toolchain cannot reproduce the Darwin UML
 ELF contract. Resolve that locally before starting the multi-hour AOSP lane.
 
-### Phase 1: split kernel ownership without changing products
+### Phase 1: split kernel and Android ownership without changing products
 
 Deliverables:
 
-- `kernel/common`, `kernel/upstream-6.18`, and `kernel/android-6.18` layout;
+- `kernel/common`, `kernel/upstream-6.18`, `kernel/android-6.18`, and
+  `android/aosp-17` layout;
 - current patch/config/build material moved to the upstream line;
 - common ABI and parameterized tooling moved to common ownership;
-- per-line ignored source configurations and cache roots;
+- the upstream line's ignored source configuration, isolated per-line cache
+  roots, and builder-local Android/ACK path inputs;
 - updated tests, `.gitignore`, and `.gitattributes` paths;
 - updates to `AGENTS.md`, `docs/architecture.md`, `docs/testing.md`,
   `docs/REFACTOR_HANDOFF.md`, `docs/REFACTOR_PROGRESS.md`, `darwin/README.md`,
-  the new `kernel/README.md` index, and each line's README so active guidance
-  names the new paths and the staged transition; and
+  the new `kernel/README.md` and `android/README.md` indexes, and each versioned
+  line's README so active guidance names the new paths and staged transition;
+  and
 - preservation of explicitly dated historical sections as history rather than
   rewriting them into current instructions.
 
@@ -812,8 +929,12 @@ Exit criteria:
 - current upstream replay and both standalone page builds pass;
 - generated current patch bytes and final tree are unchanged by the move;
 - one line's replay/regenerator cannot touch the other line;
-- ABI generated copies verify from the new common path; and
-- no old tracked path remains as a second source of truth.
+- ABI generated copies verify from the new common path;
+- no old tracked path remains as a second source of truth;
+- `kernel/android-6.18` contains no AOSP patch, Android build script, image
+  layout, release tool, or non-kernel support file; and
+- `android/aosp-17` contains every AOSP patch series and all Android-specific
+  build and support files.
 
 ### Phase 2: make every emulator build prebuilt-only
 
@@ -831,7 +952,7 @@ Deliverables:
 Exit criteria:
 
 - current macOS and framework builds succeed without a kernel source checkout,
-  Kbuild toolchain, Git network, or SSH command available;
+  Kbuild toolchain, Git network, builder endpoint, or transport tool available;
 - build graphs contain no command that produces a kernel ELF;
 - current 16 KiB and 4 KiB products embed their matching imported artifacts;
 - the architecture and documentation-path audits find no active instruction
@@ -847,7 +968,8 @@ Deliverables:
 - Android-only kernel configuration;
 - built-in Android subsystems and SELinux policy capability support;
 - local delta/ownership/overlap metadata; and
-- standalone remote kernel replay/build/verification.
+- standalone builder-local kernel replay/build/verification invoked from the
+  copied `android/aosp-17/build` workflow.
 
 Exit criteria:
 
@@ -862,9 +984,12 @@ Exit criteria:
 
 Deliverables:
 
+- routed per-project patch metadata and generated series under
+  `android/aosp-17/patches`;
 - `aosp_uml_arm64_pgagnostic` product;
-- UBD fstab/ueventd/init/VINTF/SELinux support;
+- patch-owned UBD fstab/ueventd/init/VINTF/SELinux source;
 - selected software HALs and accurate feature declarations;
+- external image/release/verification inputs under `android/aosp-17/support`;
 - standalone ramdisk and GPT disk assembly; and
 - Android page-alignment and image-layout verification.
 
@@ -873,25 +998,33 @@ Exit criteria:
 - AOSP build passes on the dedicated machine;
 - all selected userspace native ELF files pass 16 KiB alignment checks;
 - no 32-bit ABI, DLKM partition, module-loading service, or 4 KiB kernel
-  artifact is present; and
+  artifact is present;
+- every routed AOSP project starts at its pinned base and finishes at its
+  expected clean final tree;
+- no changed AOSP project is absent from `projects.tsv` and no support overlay
+  is copied into the source tree;
+- no Android build/support ownership remains under `kernel/android-6.18`;
 - the disk and ramdisk validate against the checked support contract.
 
-### Phase 5: publish and import a complete Android release
+### Phase 5: publish, copy, and locally install an Android release
 
 Deliverables:
 
-- atomic remote publisher;
+- atomic builder-local publisher;
 - versioned release manifest and checked-in acceptance descriptor;
-- explicit SSH importer; and
-- local semantic verifier.
+- an operator-performed copy outside repository scripts; and
+- a local-path semantic installer with no network or builder-endpoint input.
 
 Exit criteria:
 
-- a complete release imports into `.build/android/releases`;
+- a complete already-copied incoming release installs into
+  `.build/android/releases`;
 - partial, structurally or semantically altered, wrong-family, wrong-page,
   path-traversal, symlink, and undeclared-file fixtures fail;
-- a second import cannot overwrite the first; and
-- CMake can validate the local release with the Linux builder offline.
+- a second installation cannot overwrite the first;
+- CMake can validate the local release with the Linux builder offline; and
+- tracked scripts contain no workstation-to-builder remote-shell/file-transfer
+  command, endpoint, account, credential, or remote URI handling.
 
 ### Phase 6: add the dedicated macOS executable
 
@@ -957,15 +1090,29 @@ Exit criteria:
 Add or update tooling tests for:
 
 - exact directory ownership and absence of duplicate old paths;
-- per-line source configuration and cache isolation;
+- `kernel/android-6.18` containing only ACK documentation, configuration,
+  metadata, and patches, with Android build/support ownership confined to
+  `android/aosp-17`;
+- upstream source-configuration, builder-local Android/ACK path, and cache
+  isolation;
 - parameterized patch-series verification and write isolation;
+- AOSP `projects.tsv` routing, exact per-project base commit/tree, ordered
+  series manifest, final tree, path ownership, and cross-route write isolation;
+- proof that every changed AOSP project is routed, that no product source is
+  copied from `support`, and that the Repo checkout has no untracked root file;
 - common ABI path, identity, generated-copy, and per-line import checks;
 - Android lane references to the shared 16 KiB fragment and no reference to a
   4 KiB fragment;
 - release-manifest schema, inventory, path safety, size, and semantic
   validation;
 - accepted-release descriptor validation;
-- CMake graph inspection proving no Git, Kbuild, Soong, SSH, scp, rsync,
+- structural scans proving tracked Android scripts contain no
+  workstation-to-builder remote-shell, SSH-family, or file-transfer invocation
+  and accept no hostname, account, credential, remote URI, port, or connection
+  option;
+- local-installer tests proving it accepts only an already-copied filesystem
+  directory and performs no network or endpoint discovery;
+- CMake graph inspection proving no Git, Kbuild, Soong, SSH, scp, sftp, rsync,
   remote path, or artifact-producing command is reachable from an Apple
   target;
 - distinct current and Android executable/framework target names;
@@ -986,7 +1133,9 @@ The Android producer records and checks:
 
 - AOSP and ACK source identities;
 - outer-project revision and dirty observation;
-- local patch replay/final tree;
+- ACK patch replay/final tree;
+- every routed AOSP project's base identity, ordered patch series, clean final
+  tree, and absence of changes outside `projects.tsv`;
 - resolved kernel configuration;
 - kernel ELF and common ABI imports;
 - AOSP 16 KiB native-library alignment;
@@ -1016,28 +1165,36 @@ acceptance includes only its one 16 KiB profile.
 | Linux-hosted Darwin UML cross-build accidentally uses Linux host ABI | Separate `HOSTCC` and AArch64 target compilers, require an explicit Darwin SDK/sysroot, and inspect every final undefined import and ELF property. |
 | AOSP build time hides a kernel/toolchain failure | Complete Phase 0 before starting AOSP. |
 | CMake regains a hidden source/build dependency | File-API and source audits reject Kbuild, SSH, Git, Soong, or artifact-producing commands in Apple targets. |
+| An AOSP patch is applied to the wrong Repo project | Route patches by opaque ID, verify the manifest project/path and exact base before replay, and require the recorded clean final tree. |
+| Product files bypass patch ownership through a copied overlay | Structural and post-build audits reject support-tree staging, untracked Repo-root files, and changed projects absent from `projects.tsv`. |
+| The operator copies a partial or wrong release from the builder | Publish atomically on the builder and require the local installer to reject incomplete, undeclared, wrong-family, and semantically invalid incoming directories. |
 | An ELF is mixed with another release's ramdisk or disk | Accept one manifest/release root, derive all paths internally, and embed/check the release identity. |
 | Current and Android frameworks collide in loader discovery | Use the distinct `KernariumAndroidRuntime_` prefix and a dedicated identity contract. |
-| Cuttlefish declares devices the emulator does not implement | Own feature XML and VINTF locally; omit unsupported services and declarations. |
+| Cuttlefish declares devices the emulator does not implement | Own feature XML and VINTF through the routed AOSP patches; omit unsupported services and declarations. |
 | Android native apps contain 4 KiB-only libraries | Enforce AOSP alignment checks and include a native `arm64-v8a` APK in acceptance. |
 | ADB starts but is unreachable from the host | Add and test an explicit local SLiRP forwarding path before APK-install acceptance. |
-| Large remote artifacts leak into Git or routine builds | Publish only the compact manifest inventory, import under `.build`, and keep producer object trees on the Linux builder. |
+| Large builder artifacts leak into Git or routine builds | Publish only the compact runtime inventory, copy it through the operator-managed workflow, install under `.build`, and keep producer object trees on the Linux builder. |
 
 ## Completion definition
 
 The plan is complete when:
 
-1. the versioned kernel directory split is the only source of truth;
+1. `kernel/common`, `kernel/upstream-6.18`, and `kernel/android-6.18` are the
+   only kernel sources of truth, while `android/aosp-17` exclusively owns AOSP
+   patch series and Android build/support files;
 2. all emulator and framework builds consume validated prebuilt artifacts and
    contain no kernel/image producer edge;
 3. the dedicated x86_64 Linux builder reproducibly prepares pinned AOSP 17 and
-   ACK 6.18 sources, applies only local project changes, and publishes one
-   verified 16 KiB Android release;
-4. `uml-darwin-android17` and
+   ACK 6.18 sources, replays the separate routed AOSP and ACK patch series, and
+   publishes one verified 16 KiB Android release using only scripts copied to
+   and executed locally on that machine;
+4. no tracked file contains a build-machine endpoint or credential and no
+   tracked script initiates execution on or transport to or from that machine;
+5. `uml-darwin-android17` and
    `KernariumAndroidRuntime_17_ACK6_18_16K` are separate accepted products;
-5. Android 17 boots enforcing with a real 16 KiB page size and runs both
+6. Android 17 boots enforcing with a real 16 KiB page size and runs both
    managed and native ARM64 applications; and
-6. the existing upstream-stable 16 KiB and 4 KiB products retain their names,
+7. the existing upstream-stable 16 KiB and 4 KiB products retain their names,
    artifacts, workflows, and accepted behavior.
 
 ## Primary external references
