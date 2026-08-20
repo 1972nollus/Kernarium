@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 uml_add_tooling_test(
+    NAME kernel-versioned-layout
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_versioned_layout.sh
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-git-source-preparer
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_materialize_git.sh
     LABELS kernel;dependency
@@ -22,7 +28,7 @@ uml_add_tooling_test(
 uml_add_tooling_test(
     NAME kernel-cmake-build-layout
     COMMAND ${CMAKE_COMMAND}
-        -DLAYOUT_MODULE=${PROJECT_SOURCE_DIR}/kernel/CMakeBuildLayout.cmake
+        -DLAYOUT_MODULE=${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/CMakeBuildLayout.cmake
         -P ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_cmake_build_layout.cmake
     LABELS kernel;audit
     TIMEOUT 30)
@@ -30,7 +36,7 @@ uml_add_tooling_test(
 uml_add_tooling_test(
     NAME kernel-compiler-selection
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_toolchain.sh
-        ${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake
+        ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/KernelToolchain.cmake
     LABELS kernel;audit
     TIMEOUT 30)
 
@@ -50,7 +56,8 @@ uml_add_tooling_test(
     NAME kernel-compressed-memory-policy
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_compressed_memory_policy.py
-        --kernel-config ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
+        --kernel-config
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
     LABELS kernel;audit
     TIMEOUT 30)
 
@@ -76,8 +83,9 @@ uml_add_tooling_test(
         --carrier-verifier
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
         --linker-patch
-            ${PROJECT_SOURCE_DIR}/kernel/patches/series/0001-uml-establish-shared-architecture-contracts-and-buil.patch
-        --metadata ${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0001-uml-establish-shared-architecture-contracts-and-buil.patch
+        --metadata
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/metadata.env
         --package-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
         --xcode-project
@@ -87,7 +95,8 @@ uml_add_tooling_test(
         --simulator-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp
-        --toolchain-env ${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin.env
+        --toolchain-env
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/toolchain/darwin.env
     LABELS kernel;audit
     TIMEOUT 30)
 
@@ -109,10 +118,14 @@ if(DEFINED UML_KERNEL_SOURCE_DIR AND
         COMMAND ${Python3_EXECUTABLE} -B
             ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py
             --linux-source ${UML_KERNEL_SOURCE_DIR}
-            --kernel-config ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
-            --page-16k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment
-            --page-4k-config ${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment
-            --kernel-build-script ${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh
+            --kernel-config
+                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
+            --page-16k-config
+                ${PROJECT_SOURCE_DIR}/kernel/common/config/page-16k.fragment
+            --page-4k-config
+                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/page-4k.fragment
+            --kernel-build-script
+                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/build-kernel.sh
             --project-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
             --kernarium-runtime
                 ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm

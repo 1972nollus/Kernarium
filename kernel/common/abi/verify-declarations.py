@@ -14,13 +14,13 @@ sys.dont_write_bytecode = True
 
 
 KERNEL_ABI_FILES = (
-    "kernel/abi/darwin_uml_abi.h",
-    "kernel/abi/darwin_uml_cpu.h",
-    "kernel/abi/darwin_uml_host.h",
-    "kernel/abi/darwin_uml_memory.h",
-    "kernel/abi/darwin_uml_network.h",
-    "kernel/abi/darwin_uml_bridge.h",
-    "kernel/abi/uml_tlb_sync_ranges.h",
+    "kernel/common/abi/darwin_uml_abi.h",
+    "kernel/common/abi/darwin_uml_cpu.h",
+    "kernel/common/abi/darwin_uml_host.h",
+    "kernel/common/abi/darwin_uml_memory.h",
+    "kernel/common/abi/darwin_uml_network.h",
+    "kernel/common/abi/darwin_uml_bridge.h",
+    "kernel/common/abi/uml_tlb_sync_ranges.h",
 )
 PUBLIC_ABI_FILES = (
     "darwin/api/include/uml/abi_identity.h",
@@ -30,8 +30,8 @@ PUBLIC_ABI_FILES = (
 DOMAINS = {
     "kernel": {
         "files": KERNEL_ABI_FILES,
-        "identity": "kernel/abi/identity.env",
-        "history": "kernel/abi/declaration-history.tsv",
+        "identity": "kernel/common/abi/identity.env",
+        "history": "kernel/common/abi/declaration-history.tsv",
         "prefix": "DARWIN_UML_ABI",
     },
     "public": {
@@ -57,7 +57,7 @@ TOKEN = re.compile(
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"kernel/abi/verify-declarations.py: {message}")
+    raise SystemExit(f"kernel/common/abi/verify-declarations.py: {message}")
 
 
 def without_comments(source: str) -> str:
@@ -108,7 +108,13 @@ def declaration_digest(root: Path, domain: str) -> str:
         if not path.is_file():
             fail(f"missing ABI input: {path}")
         source = without_comments(path.read_text(encoding="utf-8"))
-        if relative == "kernel/abi/darwin_uml_abi.h":
+        # Physical ownership moved under kernel/common without changing the
+        # declaration domain. Keep the established logical labels in the
+        # digest so a path-only repository refactor cannot advance the ABI.
+        identity_relative = relative.replace(
+            "kernel/common/abi/", "kernel/abi/", 1
+        )
+        if identity_relative == "kernel/abi/darwin_uml_abi.h":
             # These checks mirror identity.env. Hashing their right-hand
             # literals would make a derived fingerprint depend on itself.
             source = re.sub(
@@ -128,7 +134,7 @@ def declaration_digest(root: Path, domain: str) -> str:
                 source,
             )
         tokens = TOKEN.findall(source)
-        normalized.append(f"FILE {relative}\n")
+        normalized.append(f"FILE {identity_relative}\n")
         normalized.extend(f"{token}\n" for token in tokens)
     return hashlib.sha256("".join(normalized).encode()).hexdigest()
 
@@ -194,7 +200,7 @@ def history(root: Path, domain: str) -> list[tuple[int, str, str]]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--root", type=Path, default=Path(__file__).resolve().parents[2]
+        "--root", type=Path, default=Path(__file__).resolve().parents[3]
     )
     parser.add_argument("--compute", action="store_true")
     parser.add_argument(

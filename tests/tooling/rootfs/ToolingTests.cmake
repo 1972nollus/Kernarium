@@ -15,6 +15,6 @@ uml_add_tooling_test(
         --kernarium-runtime
         ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
         --kernel-config
-        ${PROJECT_SOURCE_DIR}/kernel/config/common.fragment
+        ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
     LABELS rootfs;audit
     TIMEOUT 30)

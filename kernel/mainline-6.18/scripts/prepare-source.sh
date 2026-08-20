@@ -5,33 +5,35 @@
 # pinned on the upstream stable repository and branch.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-METADATA_PATH="$ROOT_DIR/kernel/patches/metadata.env"
-PATCH_DIR="$ROOT_DIR/kernel/patches/series"
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+COMMON_ROOT="$ROOT_DIR/kernel/common"
+METADATA_PATH="$LINE_ROOT/patches/metadata.env"
+PATCH_DIR="$LINE_ROOT/patches/series"
 MANIFEST_PATH="$PATCH_DIR/manifest.tsv"
-MATERIALIZER="$ROOT_DIR/kernel/materialize-git.sh"
-SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
+SERIES_POLICY="$COMMON_ROOT/tooling/verify-series-policy.py"
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 
 fail()
 {
-	printf '%s\n' "kernel/prepare-source.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/prepare-source.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/prepare-source.sh [options]
+Usage: kernel/mainline-6.18/scripts/prepare-source.sh [options]
 
 Prepare the pinned Darwin UML Linux source, or verify an existing prepared
 checkout.  The source location must reside on a case-sensitive filesystem.
 
 Options:
   --source PATH   Compatibility assertion; PATH must exactly match the
-                  required kernel/source-location.conf value
-  --cache PATH    Pinned upstream Git cache (default: .build/kernel-cache or
-                  UML_KERNEL_CACHE_DIR)
+                  required kernel/mainline-6.18/source-location.conf value
+  --cache PATH    Pinned source Git cache (default:
+                  .build/kernel-cache/mainline-6.18 or UML_KERNEL_CACHE_DIR)
   --verify        Verify only; never download, switch branches, or apply patches
   --recreate      Explicitly discard a clean, stale managed replay branch and
                   replay the checked-in series from the pinned base
@@ -50,7 +52,7 @@ EOF
 	fail "unsupported kernel series schema"
 
 REQUESTED_SOURCE_DIR=
-CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache"}
+CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache/mainline-6.18"}
 VERIFY_ONLY=0
 RECREATE=0
 FETCH=1
@@ -109,8 +111,8 @@ command -v shasum >/dev/null 2>&1 ||
 	fail "stock macOS shasum is required to verify patch hashes"
 [ -x "$MATERIALIZER" ] || fail "missing Git materializer: $MATERIALIZER"
 [ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
-"$ROOT_DIR/kernel/abi/sync.sh" --verify ||
-	fail "host ABI copies are stale; run kernel/abi/sync.sh"
+"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" --verify ||
+	fail "host ABI copies are stale; run kernel/common/abi/sync.sh"
 
 manifest_patch_ids=''
 manifest_subjects=''
@@ -150,8 +152,8 @@ validate_manifest()
 }
 
 validate_manifest
-"$SERIES_POLICY" manifest >/dev/null
-"$SERIES_POLICY" policy >/dev/null
+"$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
+"$SERIES_POLICY" --line-root "$LINE_ROOT" policy >/dev/null
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	[ "$VERIFY_ONLY" -eq 0 ] || fail "Linux checkout is missing: $SOURCE_DIR"
@@ -205,9 +207,11 @@ verify_managed_branch()
 	branch_tree=$(git -C "$SOURCE_DIR" rev-parse "$UML_KERNEL_PATCH_BRANCH^{tree}")
 	[ "$branch_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
 		fail "managed branch has tree $branch_tree; expected $UML_KERNEL_FINAL_TREE (use --recreate only after reviewing it)"
-	"$SERIES_POLICY" topology --source "$SOURCE_DIR" --base "$BASE_COMMIT" \
+	"$SERIES_POLICY" --line-root "$LINE_ROOT" topology \
+		--source "$SOURCE_DIR" --base "$BASE_COMMIT" \
 		--tip "$UML_KERNEL_PATCH_BRANCH" >/dev/null
-	"$SERIES_POLICY" policy --source "$SOURCE_DIR" --base "$BASE_COMMIT" \
+	"$SERIES_POLICY" --line-root "$LINE_ROOT" policy \
+		--source "$SOURCE_DIR" --base "$BASE_COMMIT" \
 		--tip "$UML_KERNEL_PATCH_BRANCH" >/dev/null
 	actual_commits=$(git -C "$SOURCE_DIR" rev-list --reverse \
 		"$BASE_COMMIT..$UML_KERNEL_PATCH_BRANCH")
@@ -235,7 +239,8 @@ verify_managed_branch()
 	git -C "$SOURCE_DIR" merge-base --is-ancestor "$BASE_COMMIT" \
 		"$UML_KERNEL_PATCH_BRANCH" ||
 		fail "managed branch is not based on the pinned upstream stable commit"
-	"$ROOT_DIR/kernel/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
+	"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" \
+		--kernel-source "$SOURCE_DIR" --verify ||
 		fail "managed Linux ABI copies are stale"
 	printf '%s\n' "verified managed branch HEAD $actual_head against canonical tree $UML_KERNEL_FINAL_TREE" >&2
 }

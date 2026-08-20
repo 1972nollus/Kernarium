@@ -1,20 +1,23 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+set(UML_KERNEL_COMMON_ROOT "${PROJECT_SOURCE_DIR}/kernel/common")
+set(UML_KERNEL_LINE_ROOT "${PROJECT_SOURCE_DIR}/kernel/mainline-6.18")
+
 if(UML_GUEST_16K_PAGES)
     set(UML_KERNEL_PAGE_VARIANT 16k)
     set(UML_KERNEL_PAGE_FRAGMENT
-        "${PROJECT_SOURCE_DIR}/kernel/config/page-16k.fragment")
+        "${UML_KERNEL_COMMON_ROOT}/config/page-16k.fragment")
 else()
     set(UML_KERNEL_PAGE_VARIANT 4k)
     set(UML_KERNEL_PAGE_FRAGMENT
-        "${PROJECT_SOURCE_DIR}/kernel/config/page-4k.fragment")
+        "${UML_KERNEL_LINE_ROOT}/config/page-4k.fragment")
 endif()
 
 # By default, each CMake binary tree owns a page-variant-specific Kbuild
 # directory. The canonical integration presets override that default with
 # dedicated 16 KiB and 4 KiB trees, so concurrent builds never reuse or
 # replace one another's .config, objects, or embedded vmlinux.
-include("${PROJECT_SOURCE_DIR}/kernel/CMakeBuildLayout.cmake")
+include("${UML_KERNEL_LINE_ROOT}/build/CMakeBuildLayout.cmake")
 uml_kernel_build_layout(
     BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}"
     PAGE_VARIANT "${UML_KERNEL_PAGE_VARIANT}"
@@ -28,10 +31,10 @@ set(UML_KERNEL_BUILD_DIR "${UML_KERNEL_DEFAULT_BUILD_DIR}" CACHE PATH
 set(UML_KERNEL_IMAGE "${UML_KERNEL_BUILD_DIR}/vmlinux" CACHE INTERNAL
     "Derived Linux UML kernel ELF embedded in the transitional macOS CLI" FORCE)
 set(UML_KERNEL_SOURCE_CONFIG
-    "${PROJECT_SOURCE_DIR}/kernel/source-location.conf" CACHE FILEPATH
+    "${UML_KERNEL_LINE_ROOT}/source-location.conf" CACHE FILEPATH
     "Required Git-ignored kernel source-location configuration")
 execute_process(
-    COMMAND "${PROJECT_SOURCE_DIR}/kernel/source-location.sh"
+    COMMAND "${UML_KERNEL_LINE_ROOT}/scripts/source-location.sh"
         --config "${UML_KERNEL_SOURCE_CONFIG}" --require-source
     RESULT_VARIABLE UML_KERNEL_SOURCE_CONFIG_RESULT
     OUTPUT_VARIABLE UML_KERNEL_SOURCE_DIR
@@ -40,8 +43,9 @@ execute_process(
 if(NOT UML_KERNEL_SOURCE_CONFIG_RESULT EQUAL 0)
     message(FATAL_ERROR
         "Kernel builds require an explicit source location on a case-sensitive "
-        "filesystem. Copy kernel/source-location.conf.example to the ignored "
-        "kernel/source-location.conf and set UML_KERNEL_SOURCE_DIR.\n"
+        "filesystem. Copy kernel/mainline-6.18/source-location.conf.example "
+        "to the ignored kernel/mainline-6.18/source-location.conf and set "
+        "UML_KERNEL_SOURCE_DIR.\n"
         "${UML_KERNEL_SOURCE_CONFIG_ERROR}")
 endif()
 set(UML_KERNEL_SOURCE_DIR "${UML_KERNEL_SOURCE_DIR}" CACHE INTERNAL
@@ -51,7 +55,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E env
         "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
-        "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh" --verify --no-fetch
+        "${UML_KERNEL_LINE_ROOT}/scripts/prepare-source.sh" --verify --no-fetch
     RESULT_VARIABLE UML_KERNEL_SOURCE_VERIFY_RESULT
     OUTPUT_VARIABLE UML_KERNEL_SOURCE_VERIFY_OUTPUT
     ERROR_VARIABLE UML_KERNEL_SOURCE_VERIFY_ERROR)
@@ -63,7 +67,7 @@ endif()
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E env
         "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
-        "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh" --tree HEAD
+        "${UML_KERNEL_LINE_ROOT}/scripts/audit-delta.sh" --tree HEAD
     RESULT_VARIABLE UML_KERNEL_DELTA_AUDIT_RESULT
     OUTPUT_VARIABLE UML_KERNEL_DELTA_AUDIT_OUTPUT
     ERROR_VARIABLE UML_KERNEL_DELTA_AUDIT_ERROR)
@@ -127,7 +131,7 @@ find_program(UML_KERNEL_MAKE_EXECUTABLE NAMES gmake make REQUIRED)
 # authoritative; otherwise a caller-supplied toolchain root precedes the
 # configured compiler and PATH. LLVM companion tools come from the selected
 # compiler directory so an unrelated PATH entry cannot silently mix versions.
-include("${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake")
+include("${UML_KERNEL_LINE_ROOT}/build/KernelToolchain.cmake")
 set(_uml_kernel_toolchain_root_default "$ENV{UML_KERNEL_TOOLCHAIN_ROOT}")
 set(UML_KERNEL_TOOLCHAIN_ROOT "${_uml_kernel_toolchain_root_default}" CACHE PATH
     "LLVM installation root used for the Linux kernel build")
@@ -194,15 +198,15 @@ set(UML_KERNEL_LLVM "" CACHE STRING
 add_custom_target(uml_kernel_source_verify
     COMMAND ${CMAKE_COMMAND} -E env
         "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
-        "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh" --verify --no-fetch
+        "${UML_KERNEL_LINE_ROOT}/scripts/prepare-source.sh" --verify --no-fetch
     COMMAND ${CMAKE_COMMAND} -E env
         "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
-        "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh" --tree HEAD
+        "${UML_KERNEL_LINE_ROOT}/scripts/audit-delta.sh" --tree HEAD
     COMMENT "Verifying clean canonical Linux replay and delta policy"
     VERBATIM)
 
 file(GLOB UML_KERNEL_PATCH_FILES CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/kernel/patches/series/*.patch")
+    "${UML_KERNEL_LINE_ROOT}/patches/series/*.patch")
 
 add_custom_command(
     OUTPUT "${UML_KERNEL_IMAGE}"
@@ -222,43 +226,43 @@ add_custom_command(
             "UML_KERNEL_READELF=${UML_KERNEL_READELF_EXECUTABLE}"
             "UML_KERNEL_STRIP=${UML_KERNEL_STRIP_EXECUTABLE}"
             "UML_KERNEL_SOURCE_CONFIG=${UML_KERNEL_SOURCE_CONFIG}"
-            "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
+            "${UML_KERNEL_LINE_ROOT}/build/build-kernel.sh"
             --build "${UML_KERNEL_BUILD_DIR}"
             --page-size "${UML_KERNEL_PAGE_VARIANT}"
     DEPENDS
-            "${PROJECT_SOURCE_DIR}/kernel/config/common.fragment"
+            "${UML_KERNEL_LINE_ROOT}/config/common.fragment"
             "${UML_KERNEL_PAGE_FRAGMENT}"
-            "${PROJECT_SOURCE_DIR}/kernel/build-kernel.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/KernelToolchain.cmake"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin.env"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/host_compat.h"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/byteswap.h"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/elf.h"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/include/libelf.h"
-            "${PROJECT_SOURCE_DIR}/kernel/toolchain/darwin-host/bin/find"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/sync.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/verify-linux-imports.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/import-policy.tsv"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_abi.h"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_bridge.h"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_cpu.h"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_host.h"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_memory.h"
-            "${PROJECT_SOURCE_DIR}/kernel/abi/darwin_uml_network.h"
-            "${PROJECT_SOURCE_DIR}/kernel/prepare-source.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/materialize-git.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/source-location.sh"
+            "${UML_KERNEL_LINE_ROOT}/build/build-kernel.sh"
+            "${UML_KERNEL_LINE_ROOT}/build/KernelToolchain.cmake"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin.env"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin-host/host_compat.h"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin-host/include/byteswap.h"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin-host/include/elf.h"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin-host/include/libelf.h"
+            "${UML_KERNEL_LINE_ROOT}/build/toolchain/darwin-host/bin/find"
+            "${UML_KERNEL_COMMON_ROOT}/abi/sync.sh"
+            "${UML_KERNEL_COMMON_ROOT}/abi/verify-linux-imports.sh"
+            "${UML_KERNEL_COMMON_ROOT}/abi/import-policy.tsv"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_abi.h"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_bridge.h"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_cpu.h"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_host.h"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_memory.h"
+            "${UML_KERNEL_COMMON_ROOT}/abi/darwin_uml_network.h"
+            "${UML_KERNEL_LINE_ROOT}/scripts/prepare-source.sh"
+            "${UML_KERNEL_LINE_ROOT}/scripts/materialize-git.sh"
+            "${UML_KERNEL_LINE_ROOT}/scripts/source-location.sh"
             "${UML_KERNEL_SOURCE_CONFIG}"
-            "${PROJECT_SOURCE_DIR}/kernel/audit-delta.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/verify-series-policy.py"
-            "${PROJECT_SOURCE_DIR}/kernel/verify-replay.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/check-next-version.sh"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/path-ownership.tsv"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/extraction-decisions.tsv"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/outside-port-justification.tsv"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/topic-path-overlaps.tsv"
-            "${PROJECT_SOURCE_DIR}/kernel/patches/series/manifest.tsv"
+            "${UML_KERNEL_LINE_ROOT}/scripts/audit-delta.sh"
+            "${UML_KERNEL_COMMON_ROOT}/tooling/verify-series-policy.py"
+            "${UML_KERNEL_LINE_ROOT}/scripts/verify-replay.sh"
+            "${UML_KERNEL_LINE_ROOT}/scripts/check-next-version.sh"
+            "${UML_KERNEL_LINE_ROOT}/patches/metadata.env"
+            "${UML_KERNEL_LINE_ROOT}/patches/path-ownership.tsv"
+            "${UML_KERNEL_LINE_ROOT}/patches/extraction-decisions.tsv"
+            "${UML_KERNEL_LINE_ROOT}/patches/outside-port-justification.tsv"
+            "${UML_KERNEL_LINE_ROOT}/patches/topic-path-overlaps.tsv"
+            "${UML_KERNEL_LINE_ROOT}/patches/series/manifest.tsv"
             ${UML_KERNEL_PATCH_FILES}
             uml_kernel_source_verify
             "${UML_KERNEL_REVISION_FILE}"

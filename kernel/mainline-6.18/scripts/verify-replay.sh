@@ -6,19 +6,20 @@
 # rather than a developer's pre-existing managed branch.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 
 fail()
 {
-	printf '%s\n' "kernel/verify-replay.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/verify-replay.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/verify-replay.sh --work-root PATH [--keep] [--skip-build]
-                               [--jobs N]
+Usage: kernel/mainline-6.18/scripts/verify-replay.sh \
+       --work-root PATH [--keep] [--skip-build] [--jobs N]
 
 PATH must be on a case-sensitive filesystem. The command materializes the
 exact pinned stable-branch commit there, validates its final tree, and by
@@ -86,20 +87,20 @@ export UML_KERNEL_SOURCE_CONFIG
 printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 	> "$UML_KERNEL_SOURCE_CONFIG"
 
-"$ROOT_DIR/kernel/prepare-source.sh"
-"$ROOT_DIR/kernel/prepare-source.sh" --verify --no-fetch
-"$ROOT_DIR/kernel/audit-delta.sh" --tree HEAD
+"$LINE_ROOT/scripts/prepare-source.sh"
+"$LINE_ROOT/scripts/prepare-source.sh" --verify --no-fetch
+"$LINE_ROOT/scripts/audit-delta.sh" --tree HEAD
 
 if [ "$BUILD" -eq 1 ]; then
 	if [ -n "$JOBS" ]; then
-		"$ROOT_DIR/kernel/build-kernel.sh" \
+		"$LINE_ROOT/build/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-16k" --page-size 16k --jobs "$JOBS"
-		"$ROOT_DIR/kernel/build-kernel.sh" \
+		"$LINE_ROOT/build/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-4k" --page-size 4k --jobs "$JOBS"
 	else
-		"$ROOT_DIR/kernel/build-kernel.sh" \
+		"$LINE_ROOT/build/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-16k" --page-size 16k
-		"$ROOT_DIR/kernel/build-kernel.sh" \
+		"$LINE_ROOT/build/build-kernel.sh" \
 			--build "$REPLAY_DIR/build-4k" --page-size 4k
 	fi
 fi

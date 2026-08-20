@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Exact policy for every replayed path outside arch/arm64/um and arch/um.
+path	owner	disposition	origin_patch	next_version_policy	rationale
+arch/arm64/Makefile.um	arm64-uml-port	carry-locally	0009	carry-locally	ARCH=um with SUBARCH=arm64 requires the architecture selection and generated-header wiring at this base-owned path.
+drivers/video/console/Kconfig	uml-devices	carry-locally	0010	carry-locally	Let fbcon own the standard VT major on UML configurations that deliberately disable the legacy stdio console driver.
+mm/filemap.c	base-correctness	drop-locally-if-contained	0012	drop-locally-if-contained	Independent zero-length cachestat range correction required by the port's guest workload; keep it isolated so this local line can drop it when contained.
+scripts/Makefile.vmlinux	darwin-host-build	carry-locally	0011	carry-locally	Use Perl for Darwin's in-place trailing-NUL trim while retaining the existing sed command on Linux hosts.
+scripts/link-vmlinux.sh	darwin-host-build	carry-locally	0011	carry-locally	Avoid Linux-only linker options when the kernel host is Darwin.
+scripts/mod/file2alias.c	darwin-host-build	carry-locally	0011	carry-locally	Temporarily rename Linux's device-table uuid_t while Darwin system headers expose their own type.
+security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	0013	drop-locally-if-contained	Independent connected-stream sendmsg socket lookup correction exercised by SMP UML; keep it isolated so this local line can drop it when contained.

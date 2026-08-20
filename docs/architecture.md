@@ -121,6 +121,17 @@ The arm64 spin-loop relaxation checkpoint services pending IPIs only while
 Linux interrupts are enabled, which breaks synchronous cross-call wait cycles
 without violating an IRQ-disabled critical section.
 
+## Kernel-family ownership
+
+`kernel/mainline-6.18` owns the current stable source identity, generated
+series, complete configuration, standalone build policy, and source location.
+`kernel/common` owns only the plain-C bridge, shared 16 KiB page geometry, and
+line-root-parameterized policy verification. Root `kernel/CMakeLists.txt`
+selects the current line explicitly so another family can be added without
+turning a singleton patch, config, cache, or checkout path into shared state.
+The current Apple targets and page-profile behavior are unchanged by this
+source-ownership split.
+
 ## iOS display composition
 
 Kernarium preserves the real Virtio-GPU protocol and renderer rather than
@@ -196,6 +207,7 @@ The report covers first-party code and support sources below `cmake`, `darwin`,
 declarative configuration, manifests, and patches are included as
 informational rows without a numeric guideline.
 
-The canonical host/kernel C ABI is in [`../kernel/abi`](../kernel/abi). Its
-version/fingerprint and host/kernel layout assertions fail compilation when a
-guest-register boundary drifts.
+The canonical host/kernel C ABI is in
+[`../kernel/common/abi`](../kernel/common/abi). Its version/fingerprint and
+host/kernel layout assertions fail compilation when a guest-register boundary
+drifts.

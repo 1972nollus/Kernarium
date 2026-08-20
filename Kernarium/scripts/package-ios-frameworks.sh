@@ -35,7 +35,7 @@ find_tool()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 
-. "$ROOT_DIR/kernel/patches/metadata.env"
+. "$ROOT_DIR/kernel/mainline-6.18/patches/metadata.env"
 case "$UML_KERNEL_RELEASE_VERSION" in
 ''|*[!0-9.]*|.*|*..*|*.) fail "invalid kernel release identity" ;;
 esac

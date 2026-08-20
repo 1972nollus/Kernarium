@@ -6,8 +6,13 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
+Implementation has not started. The versioned current-kernel and shared-
+contract ownership established outside this plan is preparatory repository
+groundwork only: it adds no Android source lane, product, build, artifact, or
+Apple runtime target and does not complete any phase below.
+
 The Android product is additive. It does not replace, rename, or silently
-change either of the current upstream-stable Linux products. All project
+change either of the current mainline Linux products. All project
 changes remain in this repository and its private build workspaces. No phase
 of this plan proposes, submits, pushes, or otherwise sends a change to AOSP,
 ACK, or upstream Linux.
@@ -37,9 +42,9 @@ The following decisions are requirements, not optional implementation ideas:
 4. The Android kernel line has exactly one page profile: 16 KiB. It has no 4
    KiB configuration, artifact, preset, framework, executable, or test product.
 5. The Android UML kernel is built from the pinned ACK repository, not from the
-   upstream-stable repository used by the current products.
+   Linux stable repository used by the current mainline products.
 6. Kernel sources of truth are organized under `kernel/common`,
-   `kernel/upstream-6.18`, and `kernel/android-6.18`.
+   `kernel/mainline-6.18`, and `kernel/android-6.18`.
 7. CMake, Ninja, and Xcode consume already-built local artifacts only. They
    never fetch sources, contact the Linux builder, replay patches, invoke
    Kbuild, run Soong, or assemble a disk image.
@@ -113,7 +118,7 @@ There is no build edge across the copy boundaries. The Apple product graph
 does not know a builder hostname, remote path, AOSP checkout, ACK checkout,
 compiler invocation, image assembly command, or transport command.
 
-The same prebuilt-only rule is applied to the current upstream-stable kernel
+The same prebuilt-only rule is applied to the current mainline kernel
 products during the directory migration. Standalone kernel workflows produce
 artifacts; emulator workflows import them.
 
@@ -141,7 +146,7 @@ kernel/
       verify-linux-imports.sh
       shared script libraries
 
-  upstream-6.18/
+  mainline-6.18/
     README.md
     source-location.conf.example
     config/
@@ -237,21 +242,21 @@ Move the current kernel material as follows:
 
 | Current path | Target path |
 | --- | --- |
-| `kernel/patches/**` | `kernel/upstream-6.18/patches/**` |
-| `kernel/config/common.fragment` | `kernel/upstream-6.18/config/common.fragment` |
-| `kernel/config/page-4k.fragment` | `kernel/upstream-6.18/config/page-4k.fragment` |
+| `kernel/patches/**` | `kernel/mainline-6.18/patches/**` |
+| `kernel/config/common.fragment` | `kernel/mainline-6.18/config/common.fragment` |
+| `kernel/config/page-4k.fragment` | `kernel/mainline-6.18/config/page-4k.fragment` |
 | `kernel/config/page-16k.fragment` | `kernel/common/config/page-16k.fragment` |
-| `kernel/toolchain/**` | `kernel/upstream-6.18/build/toolchain/**` |
-| `kernel/build-kernel.sh` | `kernel/upstream-6.18/build/build-kernel.sh` |
-| `kernel/KernelToolchain.cmake` | `kernel/upstream-6.18/build/KernelToolchain.cmake` |
-| `kernel/CMakeBuildLayout.cmake` | `kernel/upstream-6.18/build/CMakeBuildLayout.cmake` if still needed by the standalone workflow |
+| `kernel/toolchain/**` | `kernel/mainline-6.18/build/toolchain/**` |
+| `kernel/build-kernel.sh` | `kernel/mainline-6.18/build/build-kernel.sh` |
+| `kernel/KernelToolchain.cmake` | `kernel/mainline-6.18/build/KernelToolchain.cmake` |
+| `kernel/CMakeBuildLayout.cmake` | `kernel/mainline-6.18/build/CMakeBuildLayout.cmake` if still needed by the standalone workflow |
 | `kernel/abi/**` | `kernel/common/abi/**` |
-| current source/replay scripts | fixed-line wrappers under `kernel/upstream-6.18/scripts/` plus parameterized engines under `kernel/common/tooling/` where genuinely shared |
-| `kernel/README.md` | `kernel/upstream-6.18/README.md`, followed by a new root index |
+| current source/replay scripts | fixed-line wrappers under `kernel/mainline-6.18/scripts/` plus parameterized engines under `kernel/common/tooling/` where genuinely shared |
+| `kernel/README.md` | `kernel/mainline-6.18/README.md`, followed by a new root index |
 
 The ignored `kernel/source-location.conf` is user-owned local data and must not
 be deleted or moved automatically. Migration documents copying its value to
-`kernel/upstream-6.18/source-location.conf`; the new per-line files remain
+`kernel/mainline-6.18/source-location.conf`; the new per-line files remain
 ignored. Android and ACK checkout paths are supplied only to the copied build
 scripts on the Linux machine, through builder-local command-line arguments or
 an untracked file created there. The repository contains no build-machine
@@ -282,7 +287,7 @@ The following remain version-specific:
 - compiler/sysroot policy; and
 - guest support files tied to Android 17 or the current desktop guests.
 
-Do not share one generated mail patch between upstream-stable 6.18 and ACK
+Do not share one generated mail patch between mainline 6.18 and ACK
 6.18. Port the intended behavior as ACK-based topic commits and regenerate a
 separate Android series.
 
@@ -759,7 +764,7 @@ Use one release root or manifest cache variable per family rather than
 independently overridable ELF and support paths, for example:
 
 ```text
-UML_UPSTREAM_618_KERNEL_ARTIFACT_MANIFEST
+UML_MAINLINE_618_KERNEL_ARTIFACT_MANIFEST
 UML_ANDROID17_RELEASE_DIR
 ```
 
@@ -788,7 +793,7 @@ product family and enforce its properties.
 
 Preserve the existing output names and behavior:
 
-- `uml-darwin` continues to embed the current upstream-stable kernel artifact;
+- `uml-darwin` continues to embed the current mainline kernel artifact;
 - `KernariumRuntime_<release>_16K` remains the current 16 KiB framework;
 - `KernariumRuntime_<release>_4K` remains the current compatibility framework;
   and
@@ -909,11 +914,11 @@ ELF contract. Resolve that locally before starting the multi-hour AOSP lane.
 
 Deliverables:
 
-- `kernel/common`, `kernel/upstream-6.18`, `kernel/android-6.18`, and
+- `kernel/common`, `kernel/mainline-6.18`, `kernel/android-6.18`, and
   `android/aosp-17` layout;
-- current patch/config/build material moved to the upstream line;
+- current patch/config/build material moved to the mainline family;
 - common ABI and parameterized tooling moved to common ownership;
-- the upstream line's ignored source configuration, isolated per-line cache
+- the mainline family's ignored source configuration, isolated per-line cache
   roots, and builder-local Android/ACK path inputs;
 - updated tests, `.gitignore`, and `.gitattributes` paths;
 - updates to `AGENTS.md`, `docs/architecture.md`, `docs/testing.md`,
@@ -1179,7 +1184,7 @@ acceptance includes only its one 16 KiB profile.
 
 The plan is complete when:
 
-1. `kernel/common`, `kernel/upstream-6.18`, and `kernel/android-6.18` are the
+1. `kernel/common`, `kernel/mainline-6.18`, and `kernel/android-6.18` are the
    only kernel sources of truth, while `android/aosp-17` exclusively owns AOSP
    patch series and Android build/support files;
 2. all emulator and framework builds consume validated prebuilt artifacts and
@@ -1194,7 +1199,7 @@ The plan is complete when:
    `KernariumAndroidRuntime_17_ACK6_18_16K` are separate accepted products;
 6. Android 17 boots enforcing with a real 16 KiB page size and runs both
    managed and native ARM64 applications; and
-7. the existing upstream-stable 16 KiB and 4 KiB products retain their names,
+7. the existing mainline 16 KiB and 4 KiB products retain their names,
    artifacts, workflows, and accepted behavior.
 
 ## Primary external references

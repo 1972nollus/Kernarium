@@ -1,9 +1,22 @@
 # Refactor progress
 
+## 2026-08-20: versioned kernel ownership groundwork
+
+- Moved the current stable source, generated series, complete configuration,
+  toolchain, and standalone scripts under `kernel/mainline-6.18` without
+  changing patch bytes, final-tree identity, products, or page profiles.
+- Moved the unchanged bridge ABI and 16 KiB page/task-stack geometry under
+  `kernel/common`; series verification now requires an explicit line root.
+- Scoped the current source configuration and Git cache to the stable line,
+  while leaving the former ignored developer configuration untouched for
+  manual migration.
+- Converted active next-base results to local carry/drop/rebase/retest language.
+  No Android, ACK, AOSP, guest-image, or Android product work has started.
+
 ## 2026-08-20: required local kernel source location
 
-- Added the Git-ignored `kernel/source-location.conf` contract and tracked
-  example/parser.
+- Added the Git-ignored `kernel/mainline-6.18/source-location.conf` contract
+  and tracked example/parser.
 - Kernel preparation, CMake, standalone builds, delta audit, and patch
   regeneration now require the configured case-sensitive checkout.
 - Removed the checked preset source path and made missing configuration a hard
@@ -15,8 +28,8 @@ External-library preparation now uses only upstream Git repositories and full
 commits from the central `dependencies/manifest.tsv`; all iOS/macOS build
 recipes, platform receipts, patch series, and CMake verifiers are consolidated
 under `dependencies/`. Git-generated patches are maintained by rebasing topic
-commits and running `dependencies/rebase-patches.sh`. The Linux source remains
-owned by `kernel/` and now starts from the pinned `linux-6.18.y` stable commit;
+commits and running `dependencies/rebase-patches.sh`. The Linux source is owned
+by `kernel/mainline-6.18` and starts from the pinned `linux-6.18.y` stable commit;
 its 19 topics were rebased and regenerated with Git, producing final tree
 `f78217b082f6becb8af1656bcc69521307eb729b`. Focused tooling and a fresh
 case-sensitive replay without compilation passed.

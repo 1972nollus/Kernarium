@@ -7,7 +7,7 @@ if(NOT UML_APPLE_PLATFORM MATCHES "^ios" OR
         "KernariumRuntime requires the iOS runner, GPU, audio, and network")
 endif()
 
-file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/patches/metadata.env"
+file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/metadata.env"
     _kernarium_kernel_release_line
     REGEX "^UML_KERNEL_RELEASE_VERSION='[0-9]+(\\.[0-9]+)+'$")
 list(LENGTH _kernarium_kernel_release_line _kernarium_kernel_release_count)

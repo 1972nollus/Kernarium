@@ -4,34 +4,37 @@
 # LLVM, LLD, or cross-tool location.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+COMMON_ROOT="$ROOT_DIR/kernel/common"
 # shellcheck disable=SC1091
-. "$ROOT_DIR/kernel/toolchain/darwin.env"
-CONFIG_DIR="$ROOT_DIR/kernel/config"
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+. "$LINE_ROOT/build/toolchain/darwin.env"
+CONFIG_DIR="$LINE_ROOT/config"
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 
 fail()
 {
-	printf '%s\n' "kernel/build-kernel.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/build/build-kernel.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/build-kernel.sh --build PATH --page-size 16k|4k [--jobs N]
-                              [--source CONFIGURED_PATH]
+Usage: kernel/mainline-6.18/build/build-kernel.sh \
+       --build PATH --page-size 16k|4k [--jobs N]
+       [--source CONFIGURED_PATH]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
 OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
-kernel policy ships: kernel/config/common.fragment is the whole configuration
+kernel policy ships: kernel/mainline-6.18/config/common.fragment is the whole configuration
 and only the page-size fragment varies. The output directory must be outside
 the Linux source tree. Darwin host-tool compatibility is injected from
-kernel/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
+kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
 the same constrained native address-space profile. An omitted jobs value uses
 all online host processors. The source is always read from the required,
-Git-ignored kernel/source-location.conf. --source is accepted only as an exact
+Git-ignored kernel/mainline-6.18/source-location.conf. --source is accepted only as an exact
 assertion of that configured path.
 EOF
 }
@@ -77,7 +80,7 @@ done
 }
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE_DIR=$("$SOURCE_LOCATION" --require-source) ||
-	fail "kernel build requires a valid kernel/source-location.conf"
+	fail "kernel build requires a valid kernel/mainline-6.18/source-location.conf"
 if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" ]; then
 	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE_DIR"
 fi
@@ -91,8 +94,10 @@ esac
 [ "$UML_KERNEL_JOBS" -gt 0 ] || fail "UML_KERNEL_JOBS must be a positive integer"
 
 [ -f "$SOURCE_DIR/Makefile" ] || fail "not a Linux source tree: $SOURCE_DIR"
-"$ROOT_DIR/kernel/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
-	fail "kernel ABI copies are stale; replay the tracked series or run kernel/abi/sync.sh"
+"$COMMON_ROOT/abi/sync.sh" \
+	--kernel-metadata "$LINE_ROOT/patches/metadata.env" \
+	--kernel-source "$SOURCE_DIR" --verify ||
+	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
 mkdir -p -- "$BUILD_DIR"
 SOURCE_DIR=$(CDPATH= cd -- "$SOURCE_DIR" && pwd -P)
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)
@@ -140,9 +145,9 @@ fi
 
 run_make()
 {
-	host_compat="$ROOT_DIR/kernel/toolchain/darwin-host/host_compat.h"
-	host_include="$ROOT_DIR/kernel/toolchain/darwin-host/include"
-	host_tool_bin="$ROOT_DIR/kernel/toolchain/darwin-host/bin"
+	host_compat="$LINE_ROOT/build/toolchain/darwin-host/host_compat.h"
+	host_include="$LINE_ROOT/build/toolchain/darwin-host/include"
+	host_tool_bin="$LINE_ROOT/build/toolchain/darwin-host/bin"
 	host_uapi_flags="-I$host_include -idirafter $BUILD_DIR/arch/arm64/include/generated/uapi -idirafter $SOURCE_DIR/arch/arm64/include/uapi -idirafter $SOURCE_DIR/include/uapi -idirafter $BUILD_DIR/include/generated/uapi"
 	host_cflags="-include $host_compat $host_uapi_flags $UML_KERNEL_EXTRA_HOST_CFLAGS"
 	host_cxxflags="$host_uapi_flags $UML_KERNEL_EXTRA_HOST_CXXFLAGS"
@@ -271,7 +276,8 @@ verify_config_fragment()
 	}
 	' "$fragment")
 	[ -z "$mismatches" ] || {
-		printf '%s\n' "kernel/build-kernel.sh: $fragment did not survive olddefconfig:" >&2
+		printf '%s\n' \
+			"kernel/mainline-6.18/build/build-kernel.sh: $fragment did not survive olddefconfig:" >&2
 		printf '%s\n' "$mismatches" >&2
 		fail "kernel configuration does not match its fragment"
 	}
@@ -279,7 +285,7 @@ verify_config_fragment()
 
 case "$PAGE_SIZE" in
 16k)
-	CONFIG_FRAGMENT="$CONFIG_DIR/page-16k.fragment"
+	CONFIG_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment"
 		;;
 4k)
 	CONFIG_FRAGMENT="$CONFIG_DIR/page-4k.fragment"
@@ -296,11 +302,11 @@ run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
 if [ -n "$UML_KERNEL_NM" ]; then
-	"$ROOT_DIR/kernel/abi/verify-linux-imports.sh" \
+	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
 		--kernel-binary "$BUILD_DIR/vmlinux" --nm "$UML_KERNEL_NM" \
 		--page-size "$PAGE_SIZE"
 else
-	"$ROOT_DIR/kernel/abi/verify-linux-imports.sh" \
+	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
 		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE"
 fi
 printf '%s\n' "built $PAGE_SIZE Darwin UML kernel: $BUILD_DIR/vmlinux"

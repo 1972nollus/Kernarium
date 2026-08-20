@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Shared manifest, topology, extraction, and delta-policy verifier."""
+"""Verify one explicitly selected kernel line's series and local policy."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ sys.dont_write_bytecode = True
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"kernel/verify-series-policy.py: {message}")
+    raise SystemExit(
+        f"kernel/common/tooling/verify-series-policy.py: {message}"
+    )
 
 
 def run(*arguments: str, input_bytes: bytes | None = None) -> str:
@@ -32,6 +34,23 @@ def run(*arguments: str, input_bytes: bytes | None = None) -> str:
         detail = result.stderr.decode(errors="replace").strip()
         fail(f"command failed ({' '.join(arguments)}): {detail}")
     return result.stdout.decode(errors="strict")
+
+
+def patch_parse_root(line_root: Path) -> Path:
+    """Use the outer worktree root so Git does not subdirectory-filter paths."""
+    result = subprocess.run(
+        ["git", "-C", str(line_root), "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        text=True,
+    )
+    if result.returncode == 0:
+        candidate = Path(result.stdout.strip()).resolve()
+        if candidate.is_dir():
+            return candidate
+    # Temporary policy fixtures need not themselves be Git repositories.
+    return line_root
 
 
 def table(path: Path, fields: int) -> list[tuple[str, ...]]:
@@ -163,7 +182,7 @@ def verify_added_source_whitespace(filename: str, contents: bytes) -> None:
 
 
 def verify_topic_path_overlaps(root: Path, rows: list[ManifestRow]) -> None:
-    policy_path = root / "kernel/patches/topic-path-overlaps.tsv"
+    policy_path = root / "patches/topic-path-overlaps.tsv"
     declared: dict[str, tuple[str, ...]] = {}
     if policy_path.is_file():
         for path, topic_text, _ in table(policy_path, 3):
@@ -211,11 +230,12 @@ def verify_topic_path_overlaps(root: Path, rows: list[ManifestRow]) -> None:
 
 
 def manifest(root: Path) -> list[ManifestRow]:
-    series = root / "kernel/patches/series"
+    series = root / "patches/series"
     manifest_path = series / "manifest.tsv"
-    metadata = root / "kernel/patches/metadata.env"
+    metadata = root / "patches/metadata.env"
     expected_count = int(metadata_value(metadata, "UML_KERNEL_PATCH_COUNT"))
     rows: list[ManifestRow] = []
+    apply_root = patch_parse_root(root)
     seen_files: set[str] = set()
     seen_ids: set[str] = set()
     for expected_order, values in enumerate(table(manifest_path, 5), 1):
@@ -251,7 +271,9 @@ def manifest(root: Path) -> list[ManifestRow]:
         if patch_subject(contents) != subject:
             fail(f"patch subject mismatch for {filename}")
         paths: set[str] = set()
-        for line in run("git", "-C", str(root), "apply", "--numstat", str(patch)).splitlines():
+        for line in run(
+            "git", "-C", str(apply_root), "apply", "--numstat", str(patch)
+        ).splitlines():
             values = line.split("\t")
             if len(values) != 3 or not values[2]:
                 fail(f"cannot parse changed path in {filename}")
@@ -317,9 +339,9 @@ def verify_policy(root: Path, source: Path | None, base: str, tip: str) -> None:
     rows = manifest(root)
     paths_by_order = {f"{row.order:04d}": row.paths for row in rows}
     all_paths = set().union(*(row.paths for row in rows))
-    ownership = table(root / "kernel/patches/path-ownership.tsv", 4)
-    extraction_rows = table(root / "kernel/patches/extraction-decisions.tsv", 6)
-    outside_rows = table(root / "kernel/patches/outside-port-justification.tsv", 6)
+    ownership = table(root / "patches/path-ownership.tsv", 4)
+    extraction_rows = table(root / "patches/extraction-decisions.tsv", 6)
+    outside_rows = table(root / "patches/outside-port-justification.tsv", 6)
 
     extraction: dict[str, tuple[str, ...]] = {}
     for row in extraction_rows:
@@ -331,7 +353,7 @@ def verify_policy(root: Path, source: Path | None, base: str, tip: str) -> None:
             fail(f"extraction owner does not match path ownership: {path}")
         if decision not in {"keep-kernel", "keep-build"}:
             fail(f"invalid extraction decision for {path}: {decision}")
-        if action not in {"carry", "upstream", "upstream-with-port"}:
+        if action != "carry-locally":
             fail(f"invalid extraction next action for {path}: {action}")
         if not boundary.strip() or not rationale.strip():
             fail(f"incomplete extraction decision: {path}")
@@ -356,9 +378,8 @@ def verify_policy(root: Path, source: Path | None, base: str, tip: str) -> None:
         if origin not in paths_by_order or path not in paths_by_order[origin]:
             fail(f"outside-port origin does not own path: {path}")
         allowed = {
-            ("keep", "carry"),
-            ("upstream", "retest-and-upstream"),
-            ("upstream", "drop-when-base-contains-fix"),
+            ("carry-locally", "carry-locally"),
+            ("drop-locally-if-contained", "drop-locally-if-contained"),
         }
         if (disposition, next_policy) not in allowed:
             fail(f"invalid next-version policy for {path}: {next_policy}")
@@ -390,7 +411,7 @@ def verify_policy(root: Path, source: Path | None, base: str, tip: str) -> None:
 def recorded_path_policy(root: Path, path: str) -> str:
     outside = {
         row[0]: row for row in table(
-            root / "kernel/patches/outside-port-justification.tsv", 6
+            root / "patches/outside-port-justification.tsv", 6
         )
     }
     if path in outside:
@@ -398,45 +419,40 @@ def recorded_path_policy(root: Path, path: str) -> str:
 
     extraction = {
         row[0]: row for row in table(
-            root / "kernel/patches/extraction-decisions.tsv", 6
+            root / "patches/extraction-decisions.tsv", 6
         )
     }
     if path in extraction:
         return f"extraction/{extraction[path][4]}"
 
-    ownership = table(root / "kernel/patches/path-ownership.tsv", 4)
+    ownership = table(root / "patches/path-ownership.tsv", 4)
     classified = owner_for(path, ownership)
     if classified is None:
         fail(f"next-version path has no recorded policy: {path}")
     _, disposition = classified
-    if disposition == "keep":
-        return "ownership/carry"
-    if disposition == "upstream":
-        return "ownership/retest-and-upstream"
-    fail(f"unsupported next-version disposition for {path}: {disposition}")
+    if disposition in {"carry-locally", "drop-locally-if-contained"}:
+        return f"ownership/{disposition}"
+    fail(f"unsupported next-base disposition for {path}: {disposition}")
 
 
 def required_next_action(state: str, policy: str) -> str:
     name = policy.rsplit("/", 1)[-1]
     if state == "contained":
-        if name == "drop-when-base-contains-fix":
-            return "drop-and-retest"
-        if name == "carry":
-            return "review-contained-port-before-carrying-and-retest"
-        return "drop-duplicate-retest-and-upstream"
+        if name == "drop-locally-if-contained":
+            return "drop-locally-and-retest"
+        return "review-contained-change-before-carrying-locally-and-retest"
     if state == "conflict":
-        if name == "drop-when-base-contains-fix":
-            return "check-for-equivalent-fix-then-drop-or-rebase-and-retest"
-        if name == "carry":
-            return "rebase-carry-and-retest"
-        return "rebase-retest-and-upstream"
+        if name == "drop-locally-if-contained":
+            return (
+                "check-for-equivalent-base-change-then-drop-locally-or-"
+                "rebase-locally-and-retest"
+            )
+        return "rebase-locally-and-retest"
     if state != "applied":
         fail(f"unknown next-version state: {state}")
-    if name == "drop-when-base-contains-fix":
-        return "carry-temporarily-retest-and-drop-when-contained"
-    if name == "carry":
-        return "carry-and-retest"
-    return "retest-and-upstream"
+    if name == "drop-locally-if-contained":
+        return "carry-locally-until-contained-and-retest"
+    return "carry-locally-and-retest"
 
 
 def emit_next_actions(root: Path, row: ManifestRow, state: str) -> None:
@@ -474,7 +490,7 @@ def verify_next_version(root: Path, source: Path, base: str) -> None:
 
     print("patch\tpath\tstate\trecorded_policy\trequired_action", flush=True)
     for row in rows:
-        patch = root / "kernel/patches/series" / row.filename
+        patch = root / "patches/series" / row.filename
         if git_check(source, "apply", "--reverse", "--check", str(patch)):
             emit_next_actions(root, row, "contained")
             fail(
@@ -509,8 +525,7 @@ def verify_next_version(root: Path, source: Path, base: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path,
-                        default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--line-root", type=Path, required=True)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--base")
     parser.add_argument("--tip", default="HEAD")
@@ -518,7 +533,9 @@ def main() -> int:
         "action", choices=("manifest", "topology", "policy", "next-version")
     )
     options = parser.parse_args()
-    root = options.root.resolve()
+    root = options.line_root.resolve()
+    if not root.is_dir():
+        fail(f"kernel line root is not a directory: {root}")
     if options.action == "manifest":
         manifest(root)
     elif options.action == "topology":
@@ -534,7 +551,7 @@ def main() -> int:
         if options.source is None or not options.base:
             fail("next-version requires --source and --base")
         verify_next_version(root, options.source.resolve(), options.base)
-    print(f"verified Linux series {options.action} policy")
+    print(f"verified {root.name} Linux series {options.action}")
     return 0
 
 

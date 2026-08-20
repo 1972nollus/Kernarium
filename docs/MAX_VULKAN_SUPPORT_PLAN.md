@@ -156,7 +156,7 @@ The following constraints are non-negotiable:
    installed in `rootfs.erofs` already consumes. A private userspace ioctl or
    library cannot be required.
    Any new graphics Kconfig support belongs built-in in
-   `kernel/config/common.fragment` because loadable modules remain disabled;
+   `kernel/mainline-6.18/config/common.fragment` because loadable modules remain disabled;
    page fragments vary only genuine page-derived values.
 7. Keep all third-party source identities, patches, build recipes, slices, and
    dynamic dependencies authenticated by the private dependency workflows.
@@ -181,7 +181,7 @@ The following constraints are non-negotiable:
     an artifact to an external project. First-party emulator and test-orchestration
     changes live directly in this repository; third-party
     virglrenderer, MoltenVK, or ANGLE source changes live only in
-    `dependencies/patches`; Linux changes live only in `kernel/patches`.
+    `dependencies/patches`; Linux changes live only in `kernel/mainline-6.18/patches`.
     The exact installed qualification CTS and guest Mesa, libdrm, loader, and
     ICD remain unchanged; a missing guest-userspace capability is a stop
     condition, not permission to patch or contact that project.
@@ -1134,13 +1134,13 @@ dependency. Complete it as follows for whichever device-memory route wins:
    independently reviewable. Update the reviewed final tree, delta ceilings,
    path ownership, outside-port justification, overlaps, extraction and
    next-version policy, and `kernel/README.md`, then run
-   `kernel/rebase-patches.sh`; never edit generated patch or manifest identity
+   `kernel/mainline-6.18/scripts/rebase-patches.sh`; never edit generated patch or manifest identity
    bytes by hand.
 5. Add mutation-pinned tooling tests for feature/capset/context/ring
    negotiation, unknown parameter and memory-type rejection, mapping bounds,
    rounded sizes, partial mmap, info-ring fences, reset, and unmap ordering.
    Ordinary DRM/UAPI changes do not advance the separate `darwin_uml_*` bridge
-   ABI; follow the full `kernel/abi` version/fingerprint/sync workflow only if a
+   ABI; follow the full `kernel/common/abi` version/fingerprint/sync workflow only if a
    canonical bridge declaration actually changes.
 6. Replay and build both 16 KiB and 4 KiB kernels with LLVM 22. Test 4 KiB
    subpages on a 16 KiB host page, alignment, alias isolation, noncoherent
@@ -1359,7 +1359,7 @@ tier; otherwise the lower high-performance result is the intended outcome.
 | macOS dependency cleanup | `dependencies/manifest.tsv`, `dependencies/build.sh`, `dependencies/verify-prefix.sh`, `dependencies/cmake/UmlThirdPartyTargets.cmake` | remove desktop libepoxy/virglrenderer/CGL graphics rows, recipes, and imports while retaining only required non-graphics macOS dependencies |
 | Thin product packaging | `Kernarium/scripts/package-ios-frameworks.sh`, `Kernarium/Kernarium.xcodeproj/project.pbxproj`, macOS runtime-closure verification | assemble/sign one app-level MoltenVK framework and verify thin AppKit/UIKit embed/rpath/lifecycle shells without changing or supplementing the common renderer implementation |
 | Guest kernel graphics | maintained Linux `drivers/gpu/drm/virtio/virtgpu_*`, applicable Virtio-GPU DRM UAPI implementation, `arch/um/drivers/virtio_uml.c`, and UML physical/IOMEM/MM code as selected | preserve the current-rootfs userspace ioctl transcript; implement ring/reply HOST3D mapping, guest-VRAM only if current-image-proven or otherwise host-visible device memory, context/ring/fence semantics, shared-region negotiation, resource-info, mmap, and reset in one runtime-negotiated artifact per page profile |
-| Kernel series and verification | `kernel/patches/series/`, `kernel/patches/metadata.env`, ownership/outside-port/overlap/extraction/next-version policy, `kernel/README.md`, and kernel tooling tests | own generated topic identities, reviewed final tree/delta, bridge-ABI changes only when necessary, offline replay, and LLVM 22 builds of both page profiles; inclusion in a later external Linux release is not a product gate |
+| Kernel series and verification | `kernel/mainline-6.18/patches/series/`, `kernel/mainline-6.18/patches/metadata.env`, ownership/outside-port/overlap/extraction/next-version policy, `kernel/README.md`, and kernel tooling tests | own generated topic identities, reviewed final tree/delta, bridge-ABI changes only when necessary, offline replay, and LLVM 22 builds of both page profiles; inclusion in a later external Linux release is not a product gate |
 | Immutable rootfs authorization boundary | read-only `rootfs.erofs`, `tools/rootfs/manifest.json`, installed Mesa/ICD/CTS identities, and repository evidence | preserve the image and manifest unchanged; add only read-only identity/immutability checks; document any proposed image delta and stop to ask the user before all build/sign/provision work |
 | CTS and guest tests | `tests/integration/gpu/run_vk_cts.py`, shared QPA/artifact support, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/kernel/rootfs tooling tests, `tests/test-manifest.tsv` | manifest expansion, ICD/device identity, deterministic shards, QPA egress/parsing, protocol, memory, portability, package, lifecycle, guest, and conformance gates |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | retain source-preparer, patch-regenerator, build-manifest, prefix-verifier, and runtime-closure gates; add offline transitive-source, three-platform recipe/payload, concurrent-publication, direct-loader, and one-copy-package fixtures |
@@ -1476,14 +1476,14 @@ kernel topic stack. After authoring/amending the logical topic in the configured
 case-sensitive checkout, regenerate and run the canonical gates:
 
 ```sh
-kernel/rebase-patches.sh
-kernel/prepare-source.sh --verify
-kernel/audit-delta.sh --tree HEAD
-kernel/abi/sync.sh --verify
+kernel/mainline-6.18/scripts/rebase-patches.sh
+kernel/mainline-6.18/scripts/prepare-source.sh --verify
+kernel/mainline-6.18/scripts/audit-delta.sh --tree HEAD
+kernel/common/abi/sync.sh --verify
 env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
   UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
   UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
-  kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
+  kernel/mainline-6.18/scripts/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
 cmake --workflow --preset check-integration
 cmake --workflow --preset check-integration-4k
 ```
@@ -1492,7 +1492,7 @@ The replay must build both profiles; do not use `--skip-build` for promotion.
 Ordinary Virtio-GPU DRM/UAPI implementation does not advance the separate
 `darwin_uml_*` bridge ABI. If a canonical bridge declaration changes, update
 its version, fingerprint, identity/history, synchronized copies, kernel topic,
-and undefined-import checks according to `kernel/abi/README.md` before running
+and undefined-import checks according to `kernel/common/abi/README.md` before running
 the same gates.
 
 The `apple-gpu*`, `build-apple-gpu.sh`, and `*-venus*` names are Phase 1/2
@@ -1680,7 +1680,7 @@ frozen external ceiling. The performance gate is part of that intersection.
 | a private or renumbered DRM UAPI makes the rootfs depend on custom userspace | stop promotion; pin the current rootfs Mesa transcript, preserve existing ioctl layouts/semantics, reject unknown values, and keep project-specific details below the userspace boundary |
 | a guest-local sync-file fence is mistaken for a MoltenVK external-fence fd | test the delayed Virtio response and exact context/ring/fence identity locally; keep unsupported host Vulkan fd extensions filtered |
 | capset/blob/context-init is partially advertised | fail closed unless the complete driver, ring/reply memory, device-memory, fence, reset, and renderer path is usable |
-| a kernel patch is hand-edited, stale, or loses outside-port ownership policy | author the managed Git topic, regenerate with `kernel/rebase-patches.sh`, update final-tree/delta/ownership metadata, and require clean LLVM 22 replay/builds of both profiles |
+| a kernel patch is hand-edited, stale, or loses outside-port ownership policy | author the managed Git topic, regenerate with `kernel/mainline-6.18/scripts/rebase-patches.sh`, update final-tree/delta/ownership metadata, and require clean LLVM 22 replay/builds of both profiles |
 | a dependency, CTS, or kernel change is accidentally sent outside this repository | keep prepared sources remote-less, provide no push/submission step, review only checked-in carried series and local defect records, and fail documentation/tooling checks on outbound workflow instructions |
 | a Venus Linux fd assumption remains hidden | run exact extension filters and failure injection; no fd-like extension is advertised without complete semantics |
 | asynchronous completion outlives reset or guest RAM | generation-tag callbacks and drain/cancel them before renderer/memory destruction; sanitizer stress is mandatory |

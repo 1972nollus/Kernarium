@@ -18,7 +18,7 @@ Before changing code, read the documents that own the relevant truth:
 2. `docs/testing.md` — canonical commands, prerequisites, and campaign scope.
 3. `docs/architecture.md` — enforced dependency direction and ownership.
 4. The relevant subsystem guide: `darwin/README.md`,
-   `dependencies/README.md`, `kernel/README.md`, or `kernel/abi/README.md`.
+   `dependencies/README.md`, `kernel/README.md`, or `kernel/common/abi/README.md`.
 
 `docs/REFACTORING_PLAN.md` is a historical proposed plan. Its old paths, counts,
 open checklists, per-domain label proposal, and blanket implementation-fragment
@@ -34,9 +34,13 @@ historical sections as history.
   `CMakeUserPresets.json` is local and ignored.
 - Linux keeps its Kbuild/GNU Make boundary. Third-party projects keep their
   verified upstream build systems.
+- Kernel material is family/version scoped. `kernel/mainline-6.18` owns the
+  current source, patch, complete configuration, and build policy;
+  `kernel/common` owns only the shared ABI, 16 KiB geometry, and parameterized
+  series verifier. Do not restore singleton owners directly under `kernel/`.
 - Kernel preparation and builds require the Git-ignored
-  `kernel/source-location.conf`. Copy
-  `kernel/source-location.conf.example`, set its absolute
+  `kernel/mainline-6.18/source-location.conf`. Copy
+  `kernel/mainline-6.18/source-location.conf.example`, set its absolute
   `UML_KERNEL_SOURCE_DIR`, and keep that checkout on a case-sensitive
   filesystem. The checked presets and command-line environment may not replace
   the configured source path; a missing or invalid file is a hard build error.
@@ -46,7 +50,8 @@ historical sections as history.
   Dependency and kernel preparation have additional tools documented in their
   READMEs.
 - On the current Apple acceptance host, never run a standalone kernel build or
-  `kernel/verify-replay.sh` with the default `/usr/bin/clang`. Apple Clang 21
+  `kernel/mainline-6.18/scripts/verify-replay.sh` with the default
+  `/usr/bin/clang`. Apple Clang 21
   fails Linux 6.18's `__counted_by` type-expression probe. Select the known-good
   LLVM 22 toolchain explicitly:
 
@@ -54,7 +59,7 @@ historical sections as history.
   env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
     UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
     UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
-    kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
+    kernel/mainline-6.18/scripts/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
   ```
 
   Use `UML_KERNEL_TOOLCHAIN_ROOT=/opt/homebrew/opt/llvm` for CMake configure
@@ -197,7 +202,8 @@ cmake --workflow --preset check-integration
 cmake --workflow --preset check-integration-4k
 ```
 
-The ignored `kernel/source-location.conf` pins the kernel checkout. The checked
+The ignored `kernel/mainline-6.18/source-location.conf` pins the kernel
+checkout. The checked
 presets pin the matching `/Volumes/<case-sensitive-volume>/build-16k` or
 `/Volumes/<case-sensitive-volume>/build-4k` kernel directory. A non-canonical layout
 must update the ignored source configuration and override only
@@ -336,13 +342,13 @@ the final change.
 
 - Linux must be materialized on a case-sensitive filesystem. The canonical
   source is the pinned upstream stable repository/branch/full commit and
-  ordered policy under `kernel/patches/`.
+  ordered policy under `kernel/mainline-6.18/patches/`.
 - Safe verification examples:
 
   ```sh
-  kernel/prepare-source.sh --verify
-  kernel/audit-delta.sh --tree HEAD
-  kernel/verify-replay.sh --work-root /case-sensitive/path --skip-build
+  kernel/mainline-6.18/scripts/prepare-source.sh --verify
+  kernel/mainline-6.18/scripts/audit-delta.sh --tree HEAD
+  kernel/mainline-6.18/scripts/verify-replay.sh --work-root /case-sensitive/path --skip-build
   ```
 
   Omit `--skip-build` for a fresh replay plus both production page-size builds.
@@ -351,14 +357,19 @@ the final change.
   required.
 - Kernel patch files are generated artifacts. Modify, reorder, or drop topic
   commits only with Git rebase/amend, update the reviewed final-tree identity,
-  then run `kernel/rebase-patches.sh` to regenerate patch bytes, the series
-  manifest, stable IDs, hashes, subjects, and order. Update delta ceilings,
-  ownership/overlap/extraction metadata, and `kernel/README.md` as applicable.
+  then run `kernel/mainline-6.18/scripts/rebase-patches.sh` to regenerate patch
+  bytes, the series manifest, stable IDs, hashes, subjects, and order. Update
+  delta ceilings, ownership/overlap/extraction metadata, and
+  `kernel/mainline-6.18/README.md` as applicable.
+- All maintained kernel changes stay local to this project. Next-base tooling
+  may recommend carrying, dropping, or rebasing a local topic; it must not
+  suggest submitting, uploading, or pushing one.
 - Preserve real timestamps, commit IDs, compiler metadata, build IDs, and
   binary hashes as observations. Do not rewrite them to manufacture byte
   equality.
-- `kernel/prepare-source.sh --recreate` is the only supported way to replace a
-  clean stale managed replay branch. Never replace an arbitrary source tree.
+- `kernel/mainline-6.18/scripts/prepare-source.sh --recreate` is the only
+  supported way to replace a clean stale managed replay branch. Never replace
+  an arbitrary source tree.
 
 ## ABI and generated copies
 
@@ -367,9 +378,9 @@ There are two independent ABI domains:
 - Installed public API: declarations under `darwin/api/include/uml/`, identity
   and history under `darwin/api/abi/`.
 - Host/Linux bridge: canonical declarations, identity, and history under
-  `kernel/abi/`.
+  `kernel/common/abi/`.
 
-`kernel/abi/sync.sh` is the exact generated-copy authority. Its host outputs
+`kernel/common/abi/sync.sh` is the exact generated-copy authority. Its host outputs
 under `darwin/include/` are `uml_darwin_abi.h`,
 `uml_darwin_abi_identity.h`, `uml_darwin_cpu.h`, `uml_darwin_host.h`,
 `uml_darwin_memory.h`, `uml_darwin_network.h`, `uml_darwin_bridge.h`, and
@@ -378,8 +389,8 @@ not edit those copies directly.
 `darwin/include/uml_darwin_guest.h`, `uml_darwin_static_mmu.h`, and
 `uml_elf64.h` are authored host-only contracts, not sync outputs.
 
-- Use `kernel/abi/sync.sh --verify` for ordinary verification.
-- For an intentional declaration change, follow `kernel/abi/README.md`:
+- Use `kernel/common/abi/sync.sh --verify` for ordinary verification.
+- For an intentional declaration change, follow `kernel/common/abi/README.md`:
   update only the affected ABI domain's version/fingerprint/history, run the
   sync, and update the Linux topic only when the host/kernel bridge changed.
 - A public-only API change does not alter the kernel ABI or patch series.
@@ -640,10 +651,11 @@ counter into every status document:
 - Darwin layout or runtime contracts -> `darwin/README.md`;
 - dependency sources, versions, patches, recipes, prefix policy, or tools ->
   `dependencies/README.md`;
-- Linux upstream Git identity, replay, topics, delta, toolchain, or build policy ->
+- Linux upstream Git identity, replay, topics, delta, toolchain, or build
+  policy -> `kernel/mainline-6.18/README.md`; kernel-family ownership ->
   `kernel/README.md`;
-- public/kernel ABI -> `kernel/abi/README.md`, identities, histories, generated
-  copies, and consumers as applicable;
+- public/kernel ABI -> `kernel/common/abi/README.md`, identities, histories,
+  generated copies, and consumers as applicable;
 - test registration or ownership -> `tests/test-manifest.tsv`, plus the
   migration ledger for renames/removals;
 - instruction evidence or completeness -> `docs/A64_INSTRUCTION_PROGRESS.md`;

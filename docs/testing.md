@@ -77,6 +77,11 @@ may differ between runs; record them as observations rather than rewriting
 metadata or requiring byte equality. Rootfs artifact authentication is limited
 to explicit provisioning and is not repeated around guest execution.
 
+Kernel paths are family/version scoped. All commands in this document select
+`kernel/mainline-6.18` explicitly; `kernel/common` supplies only the shared ABI
+and 16 KiB geometry. This ownership refactor adds no Android kernel, image,
+product, build, or acceptance workflow.
+
 ## Green checkpoints and bisectable commits
 
 Every completed feature or bug fix ends in a local commit only after
@@ -197,10 +202,10 @@ dependencies/build-ios-network.sh --verify-only
 dependencies/build-ios-network.sh --platform ios --verify-only
 
 # Build the two canonical page-profile inputs shared by macOS and iOS.
-kernel/build-kernel.sh \
+kernel/mainline-6.18/build/build-kernel.sh \
   --build /Volumes/<case-sensitive-volume>/build-16k \
   --page-size 16k
-kernel/build-kernel.sh \
+kernel/mainline-6.18/build/build-kernel.sh \
   --build /Volumes/<case-sensitive-volume>/build-4k \
   --page-size 4k
 
@@ -412,19 +417,21 @@ ordinary builds should use once those inputs exist:
 ```sh
 dependencies/prepare.sh
 dependencies/build.sh
-cp kernel/source-location.conf.example kernel/source-location.conf
+cp kernel/mainline-6.18/source-location.conf.example \
+  kernel/mainline-6.18/source-location.conf
 # Set the absolute case-sensitive UML_KERNEL_SOURCE_DIR in that ignored file.
-kernel/prepare-source.sh
+kernel/mainline-6.18/scripts/prepare-source.sh
 # Recreating that configured checkout can use the pinned offline Git cache.
-kernel/prepare-source.sh --no-fetch
+kernel/mainline-6.18/scripts/prepare-source.sh --no-fetch
 
 dependencies/prepare.sh --verify
 dependencies/verify-prefix.sh \
   --prefix .build/dependencies/macos-arm64 \
   --manifest dependencies/manifest.tsv \
   --deployment-target 14.0
-kernel/prepare-source.sh --verify
-kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume> --skip-build
+kernel/mainline-6.18/scripts/prepare-source.sh --verify
+kernel/mainline-6.18/scripts/verify-replay.sh \
+  --work-root /Volumes/<case-sensitive-volume> --skip-build
 cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
@@ -433,8 +440,8 @@ ctest --preset integration-fast
 Kernel compilation uses every online host processor by default. Set
 `UML_KERNEL_JOBS` or pass `--jobs N` only to impose an explicit lower limit.
 
-The ignored `kernel/source-location.conf` is the sole authority for the source
-checkout. The checked integration presets pin
+The ignored `kernel/mainline-6.18/source-location.conf` is the sole authority
+for the source checkout. The checked integration presets pin
 `/Volumes/<case-sensitive-volume>/build-16k` and `/Volumes/<case-sensitive-volume>/build-4k` only.
 For another case-sensitive layout, update the ignored config and override the
 page-specific build cache path if needed:
@@ -446,9 +453,10 @@ cmake --preset macos-integration-4k \
   -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-4k
 ```
 
-Kernel-enabled CMake configuration and `kernel/build-kernel.sh` fail before
-toolchain selection when `kernel/source-location.conf` is absent, malformed,
-points at a missing checkout, or resolves to a case-insensitive filesystem.
+Kernel-enabled CMake configuration and
+`kernel/mainline-6.18/build/build-kernel.sh` fail before toolchain selection
+when `kernel/mainline-6.18/source-location.conf` is absent, malformed, points
+at a missing checkout, or resolves to a case-insensitive filesystem.
 
 `dependencies/prepare.sh --verify` authenticates the already prepared source
 trees; it does not construct or verify the compiled dependency prefix.
@@ -464,12 +472,10 @@ Host build tools and the Apple SDK may come from the configured toolchain or
 PATH. Production third-party library headers and binaries may come only from
 the verified private prefix, never from system or package-manager locations.
 
-`kernel/verify-replay.sh` creates and removes a fresh checkout, so its work root
-must have several GiB free. Omit `--skip-build` to rebuild both page-size
-kernels inside that replay. The materializer keeps its isolated GnuPG home on
-a short secure temporary path to avoid Unix-domain socket limits under deeply
-nested case-sensitive volumes; `UML_KERNEL_GPG_TEMP_ROOT` may override `/tmp`
-for a restricted builder.
+`kernel/mainline-6.18/scripts/verify-replay.sh` creates and removes a fresh
+checkout, so its work root must have several GiB free. Omit `--skip-build` to
+rebuild both page-size kernels inside that replay. The line-scoped Git cache is
+`.build/kernel-cache/mainline-6.18` unless explicitly overridden.
 
 `integration-fast` runs host fixtures plus short real guest boots: the
 production overlay/systemd path, interpreter, gadgets, JIT, and deterministic

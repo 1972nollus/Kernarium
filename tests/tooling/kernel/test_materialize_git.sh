@@ -3,10 +3,11 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-MATERIALIZER="$ROOT_DIR/kernel/materialize-git.sh"
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 TEST_PARENT=${TMPDIR:-/tmp}
-if [ -f "$ROOT_DIR/kernel/source-location.conf" ]; then
+if [ -f "$LINE_ROOT/source-location.conf" ]; then
 	configured_source=$("$SOURCE_LOCATION" --require-source 2>/dev/null || true)
 	if [ -n "$configured_source" ]; then
 		TEST_PARENT=$(dirname -- "$configured_source")
@@ -14,6 +15,7 @@ if [ -f "$ROOT_DIR/kernel/source-location.conf" ]; then
 fi
 TEST_ROOT=$(mktemp -d "$TEST_PARENT/.uml-kernel-git.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
+FAILURE_NUMBER=0
 
 fail()
 {
@@ -56,7 +58,6 @@ CACHE_REPOSITORY="$CACHE/git"
 METADATA="$TEST_ROOT/metadata.env"
 BASE_REF=refs/heads/uml/upstream-linux-1.2.3
 REPOSITORY=https://example.invalid/stable-linux.git
-FAILURE_NUMBER=0
 mkdir -p "$UPSTREAM" "$CACHE"
 git -C "$UPSTREAM" init --quiet
 git -C "$UPSTREAM" config user.name fixture

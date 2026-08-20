@@ -122,7 +122,7 @@ The following are non-negotiable:
    ABI that the exact unmodified Mesa/libdrm in `rootfs.erofs` already
    understands. Do not
    make a private userspace ioctl or library a production dependency. Any new
-   graphics Kconfig support belongs built-in in `kernel/config/common.fragment`
+   graphics Kconfig support belongs built-in in `kernel/mainline-6.18/config/common.fragment`
    because loadable modules remain disabled; page fragments vary only genuine
    page-derived values.
 4. Never use `MESA_GL_VERSION_OVERRIDE`, `MESA_GLES_VERSION_OVERRIDE`, forced
@@ -160,7 +160,7 @@ The following are non-negotiable:
    artifact to an external project. First-party emulator and test-orchestration
    changes live directly in this repository; third-party
    ANGLE or virglrenderer source changes live only in
-   `dependencies/patches`; Linux changes live only in `kernel/patches`.
+   `dependencies/patches`; Linux changes live only in `kernel/mainline-6.18/patches`.
    Qualification CTS source remains released and unmodified. Prepared
    dependency trees remain remote-less and builders stay offline after
    `dependencies/prepare.sh`.
@@ -961,7 +961,7 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
 4. Carry required Linux changes in the maintained kernel series; inclusion in
    a later external Linux release is not a product gate. Author or amend
    commits in the
-   configured case-sensitive checkout, use `kernel/rebase-patches.sh` to
+   configured case-sensitive checkout, use `kernel/mainline-6.18/scripts/rebase-patches.sh` to
    regenerate mail patches and identities, and update final-tree, delta,
    ownership/overlap/extraction, next-version, and `kernel/README.md` policy.
    Keep those Linux changes in this emulator repository and do not submit them
@@ -996,7 +996,7 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
 | Virgl and ANGLE topics | `dependencies/patches/utm-virglrenderer/`, `dependencies/patches/utm-webkit/` | use one production renderer series on all three products, add only truthful GPU-backed feature mappings, retire desktop-only graphics topics, and regenerate every carried series from commits with `rebase-patches.sh` |
 | Conditional host blob optimization | `darwin/device/gpu/protocol.hpp`, `virtio_gpu_device.*`, renderer/resource boundary | only if Phase 6 measurements or Venus select it: standard feature/commands, bounded aperture ownership, map-info/cache semantics, and coherent lifetime |
 | Conditional guest-kernel graphics optimization | maintained Linux `arch/um/drivers/virtio_uml.c`, UML physical/IOMEM/MM code as selected, `drivers/gpu/drm/virtio/virtgpu_*`, `include/uapi/drm/virtgpu_drm.h`, and common Kconfig policy | only after selection: implement shared-region discovery and mapping, backport/fix generic Virtio-GPU behavior only when needed, preserve the released-userspace DRM ABI, and share one runtime-negotiated kernel artifact per page profile across all Apple products |
-| Kernel series and verification | `kernel/patches/series/`, `kernel/patches/metadata.env`, ownership/overlap/extraction/next-version policy, `kernel/README.md`, kernel tooling tests | own generated topic identity, reviewed final tree and delta, bridge-ABI updates only when required, offline replay, and LLVM 22 builds of both page profiles |
+| Kernel series and verification | `kernel/mainline-6.18/patches/series/`, `kernel/mainline-6.18/patches/metadata.env`, ownership/overlap/extraction/next-version policy, `kernel/README.md`, kernel tooling tests | own generated topic identity, reviewed final tree and delta, bridge-ABI updates only when required, offline replay, and LLVM 22 builds of both page profiles |
 | Immutable rootfs CTS contract | read-only in-image `/opt/vk-gl-cts`, `/home/uml/vk-gl-cts-1.4.5.5`, and ordinary repository evidence | inventory and use the exact installed binaries/source/resources read-only; reconstruct receipts outside the image; validate configuration expansion against a host-only oracle; stop and ask if the current artifacts are insufficient |
 | CTS and guest tests | `tests/integration/gpu/run_vk_gl_cts.py`, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/rootfs tests, `tests/test-manifest.tsv` | graphical-session launch, identity rejection, exact caselist/config sharding, QPA egress/parsing, backend lifetime, protocol validation, package shape, guest probes and rendered campaigns |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | keep `dependency-source-preparer`, `dependency-patch-regenerator`, `dependency-build-manifest`, `dependency-prefix-verifier`, and `dependency-runtime-closure` green; add Apple-GPU platform/payload/provenance/concurrent-publication fixtures |
@@ -1084,14 +1084,14 @@ Whenever a maintained Linux graphics topic changes, regenerate and validate it
 through the configured case-sensitive source rather than editing patch files:
 
 ```sh
-kernel/rebase-patches.sh
-kernel/prepare-source.sh --verify
-kernel/audit-delta.sh --tree HEAD
-kernel/abi/sync.sh --verify
+kernel/mainline-6.18/scripts/rebase-patches.sh
+kernel/mainline-6.18/scripts/prepare-source.sh --verify
+kernel/mainline-6.18/scripts/audit-delta.sh --tree HEAD
+kernel/common/abi/sync.sh --verify
 env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
   UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
   UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
-  kernel/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
+  kernel/mainline-6.18/scripts/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
 cmake --workflow --preset check-integration
 cmake --workflow --preset check-integration-4k
 ```
@@ -1100,7 +1100,7 @@ The replay must build both profiles; do not use `--skip-build` for promotion.
 Ordinary Virtio-GPU/DRM changes do not advance the separate `darwin_uml_*`
 bridge ABI. If a canonical bridge declaration actually changes, update its
 version, fingerprint, identity/history, generated copies, kernel topic, and
-undefined-import checks according to `kernel/abi/README.md` before running the
+undefined-import checks according to `kernel/common/abi/README.md` before running the
 same verification.
 
 Phase 1 must make these common interfaces directly runnable. The command order
@@ -1214,7 +1214,7 @@ preferred outcome.
 | blob support is advertised before UML exposes a valid host-visible aperture | require `RESOURCE_BLOB` and `HOST_VISIBLE` getparams, map-info, coherent round trips, and fail-closed reconnect/reset tests before the feature bit or capset gate is enabled |
 | a 4 KiB guest mapping aliases another subpage in a 16 KiB host slot | validate whole-slot ownership, offset bounds, remap/TLB visibility, and teardown under both page profiles on macOS, Simulator, and the connected iPad |
 | cached map-info is claimed without real CPU/GPU coherence | require bidirectional persistent-map visibility without transfer commands; otherwise report a truthful noncoherent/unsupported mode |
-| a kernel patch is hand-edited, stale, or loses ownership metadata | edit the configured Git topic, regenerate with `kernel/rebase-patches.sh`, update final-tree/delta/ownership policy, and require clean replay plus both LLVM 22 page-profile builds |
+| a kernel patch is hand-edited, stale, or loses ownership metadata | edit the configured Git topic, regenerate with `kernel/mainline-6.18/scripts/rebase-patches.sh`, update final-tree/delta/ownership policy, and require clean replay plus both LLVM 22 page-profile builds |
 | a dependency or kernel change is accidentally sent outside this repository | keep prepared sources remote-less, provide no push/submission step, review only generated carried series in this repository, and fail documentation/tooling checks on outbound workflow instructions |
 | a future GLES/GL 3.2+ or GL 4.x proposal lacks a direct efficient ANGLE/Metal route | keep it outside the product plan; a version string is not a reason to add a Vulkan provider or heavy emulation |
 | dynamic frameworks weaken dependency provenance | exact allowed framework identities and rpaths; no ambient lookup or global verifier relaxation |

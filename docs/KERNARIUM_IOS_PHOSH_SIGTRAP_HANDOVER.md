@@ -267,7 +267,7 @@ result path, so host process `SIGTRAP` probably should not be installed as an
 ordinary UML signal handler. Relevant Linux patch-series locations:
 
 ```text
-kernel/patches/series/0004-uml-add-Darwin-host-service-implementation.patch
+kernel/mainline-6.18/patches/series/0004-uml-add-Darwin-host-service-implementation.patch
 linux/arch/um/os-Darwin/process.c
 linux/arch/um/os-Darwin/signal.c
 linux/arch/um/os-Darwin/skas/process.c
@@ -276,8 +276,8 @@ linux/arch/um/os-Darwin/skas/process.c
 If this is changed, follow the kernel patch-series policy, not direct `linux/`
 edits:
 
-- Update patch bytes under `kernel/patches/series/`.
-- Update `kernel/patches/series/manifest.tsv`, stable patch IDs and hashes,
+- Update patch bytes under `kernel/mainline-6.18/patches/series/`.
+- Update `kernel/mainline-6.18/patches/series/manifest.tsv`, stable patch IDs and hashes,
   expected final tree metadata, and relevant kernel docs/tests.
 - Verify replay with the repository's kernel tooling.
 

@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-VERIFIER="$REPOSITORY/kernel/verify-series-policy.py"
+VERIFIER="$REPOSITORY/kernel/common/tooling/verify-series-policy.py"
 WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/uml-series-topology.XXXXXX")
 
 cleanup()
@@ -14,7 +14,7 @@ trap cleanup 0 HUP INT TERM
 
 SOURCE="$WORK_DIRECTORY/source"
 FIXTURE="$WORK_DIRECTORY/fixture"
-mkdir -p "$SOURCE" "$FIXTURE/kernel/patches/series"
+mkdir -p "$SOURCE" "$FIXTURE/kernel/mainline-6.18/patches/series"
 git -C "$SOURCE" init -q
 git -C "$SOURCE" config user.name 'series topology test'
 git -C "$SOURCE" config user.email 'noreply@linux-um-darwin.invalid'
@@ -37,21 +37,21 @@ CANONICAL_TIP=$COMMIT_TWO
 
 git -C "$SOURCE" format-patch --subject-prefix='PATCH 1/2' -1 \
 	--stdout "$COMMIT_ONE" \
-	> "$FIXTURE/kernel/patches/series/0001.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 \
 	--stdout "$COMMIT_TWO" \
-	> "$FIXTURE/kernel/patches/series/0002.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch"
 printf '%s\n' 'UML_KERNEL_PATCH_COUNT=2' \
-	> "$FIXTURE/kernel/patches/metadata.env"
+	> "$FIXTURE/kernel/mainline-6.18/patches/metadata.env"
 printf '%s\n' 'path	topic_orders	rationale' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 
 write_manifest()
 {
 	{
 	printf '%s\n' 'order	filename	stable_patch_id	sha256	subject'
 	order=1
-	for patch in "$FIXTURE"/kernel/patches/series/*.patch; do
+	for patch in "$FIXTURE"/kernel/mainline-6.18/patches/series/*.patch; do
 		patch_id=$(git patch-id --stable < "$patch" | awk '{print $1}')
 		digest=$(shasum -a 256 "$patch" | awk '{print $1}')
 		subject=$(git mailinfo "$WORK_DIRECTORY/message" \
@@ -60,19 +60,19 @@ write_manifest()
 			"$(basename -- "$patch")" "$patch_id" "$digest" "$subject"
 		order=$((order + 1))
 	done
-	} > "$FIXTURE/kernel/patches/series/manifest.tsv"
+	} > "$FIXTURE/kernel/mainline-6.18/patches/series/manifest.tsv"
 }
 write_manifest
 
 verify()
 {
-	"$VERIFIER" --root "$FIXTURE" --source "$SOURCE" --base "$BASE" \
+	"$VERIFIER" --line-root "$FIXTURE/kernel/mainline-6.18" --source "$SOURCE" --base "$BASE" \
 		--tip "$1" topology >/dev/null
 }
 
 verify_manifest()
 {
-	"$VERIFIER" --root "$FIXTURE" manifest >/dev/null
+	"$VERIFIER" --line-root "$FIXTURE/kernel/mainline-6.18" manifest >/dev/null
 }
 
 reject()
@@ -85,14 +85,14 @@ reject()
 	fi
 }
 
-cp "$FIXTURE/kernel/patches/series/0001.patch" \
+cp "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch" \
 	"$WORK_DIRECTORY/canonical-0001.patch"
 awk '
 	!changed && /^\+one$/ { print $0 " "; changed = 1; next }
 	{ print }
 	END { if (!changed) exit 2 }
 ' "$WORK_DIRECTORY/canonical-0001.patch" \
-	> "$FIXTURE/kernel/patches/series/0001.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 write_manifest
 WHITESPACE_ERROR="$WORK_DIRECTORY/added-source-whitespace.err"
 if verify_manifest 2>"$WHITESPACE_ERROR"; then
@@ -108,7 +108,7 @@ if ! grep -q 'added source line has trailing whitespace' \
 	exit 1
 fi
 cp "$WORK_DIRECTORY/canonical-0001.patch" \
-	"$FIXTURE/kernel/patches/series/0001.patch"
+	"$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 write_manifest
 verify_manifest
 
@@ -120,7 +120,7 @@ awk '
 	{ print }
 	END { if (!changed) exit 2 }
 ' "$WORK_DIRECTORY/canonical-0001.patch" \
-	> "$FIXTURE/kernel/patches/series/0001.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 write_manifest
 WRONG_ORDINAL="$WORK_DIRECTORY/wrong-subject-ordinal.err"
 if verify_manifest 2>"$WRONG_ORDINAL"; then
@@ -143,7 +143,7 @@ awk '
 	{ print }
 	END { if (!changed) exit 2 }
 ' "$WORK_DIRECTORY/canonical-0001.patch" \
-	> "$FIXTURE/kernel/patches/series/0001.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 write_manifest
 WRONG_TOTAL="$WORK_DIRECTORY/wrong-subject-total.err"
 if verify_manifest 2>"$WRONG_TOTAL"; then
@@ -158,7 +158,7 @@ if ! grep -F -q 'expected [PATCH 1/2]' "$WRONG_TOTAL"; then
 	exit 1
 fi
 cp "$WORK_DIRECTORY/canonical-0001.patch" \
-	"$FIXTURE/kernel/patches/series/0001.patch"
+	"$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch"
 write_manifest
 verify_manifest
 
@@ -166,22 +166,22 @@ verify "$CANONICAL_TIP"
 
 printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/um/one	0001,0002	stale fixture overlap' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 if verify_manifest 2>/dev/null; then
 	printf '%s\n' 'manifest verifier accepted a stale topic-path overlap' >&2
 	exit 1
 fi
 printf '%s\n' 'path	topic_orders	rationale' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 
-cp "$FIXTURE/kernel/patches/series/0002.patch" \
+cp "$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch" \
 	"$WORK_DIRECTORY/canonical-0002.patch"
 git -C "$SOURCE" switch -q -c overlap-policy-case "$CANONICAL_TIP"
 printf '%s\n' changed > "$SOURCE/arch/um/one"
 git -C "$SOURCE" add arch/um/one
 git -C "$SOURCE" commit -q -m 'overlap policy topic'
 git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 --stdout HEAD \
-	> "$FIXTURE/kernel/patches/series/0002.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch"
 write_manifest
 if verify_manifest 2>/dev/null; then
 	printf '%s\n' 'manifest verifier accepted an undeclared topic-path overlap' >&2
@@ -189,19 +189,19 @@ if verify_manifest 2>/dev/null; then
 fi
 printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/um/one	0001,0003	wrong owner fixture' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 if verify_manifest 2>/dev/null; then
 	printf '%s\n' 'manifest verifier accepted the wrong overlap owners' >&2
 	exit 1
 fi
 printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/um/one	0001,0002	intentional fixture overlap' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 verify_manifest
 cp "$WORK_DIRECTORY/canonical-0002.patch" \
-	"$FIXTURE/kernel/patches/series/0002.patch"
+	"$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch"
 printf '%s\n' 'path	topic_orders	rationale' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 write_manifest
 verify "$CANONICAL_TIP"
 
@@ -210,15 +210,15 @@ printf '%s\n' scaled-profile > "$SOURCE/arch/arm64/Makefile.um"
 git -C "$SOURCE" add arch/arm64/Makefile.um
 git -C "$SOURCE" commit -q -m 'address profile topic'
 git -C "$SOURCE" format-patch --subject-prefix='PATCH 2/2' -1 --stdout HEAD \
-	> "$FIXTURE/kernel/patches/series/0002.patch"
+	> "$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch"
 write_manifest
 printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/arm64/Makefile.um	0001,0002	intentional profile overlap' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 verify_manifest
 printf '%s\n' 'path	topic_orders	rationale' \
 	'arch/arm64/Makefile	0001,0002	invalid broad build overlap' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 OUTSIDE_PORT="$WORK_DIRECTORY/outside-port-overlap.err"
 if verify_manifest 2>"$OUTSIDE_PORT"; then
 	printf '%s\n' 'manifest verifier accepted a build path outside the port' >&2
@@ -232,16 +232,16 @@ if ! grep -F -q 'topic overlap is outside the port-owned paths' \
 	exit 1
 fi
 cp "$WORK_DIRECTORY/canonical-0002.patch" \
-	"$FIXTURE/kernel/patches/series/0002.patch"
+	"$FIXTURE/kernel/mainline-6.18/patches/series/0002.patch"
 printf '%s\n' 'path	topic_orders	rationale' \
-	> "$FIXTURE/kernel/patches/topic-path-overlaps.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/topic-path-overlaps.tsv"
 write_manifest
 verify "$CANONICAL_TIP"
 
-cp "$FIXTURE/kernel/patches/series/0001.patch" \
-	"$FIXTURE/kernel/patches/series/unlisted.patch"
+cp "$FIXTURE/kernel/mainline-6.18/patches/series/0001.patch" \
+	"$FIXTURE/kernel/mainline-6.18/patches/series/unlisted.patch"
 reject unlisted-patch "$CANONICAL_TIP"
-rm -f -- "$FIXTURE/kernel/patches/series/unlisted.patch"
+rm -f -- "$FIXTURE/kernel/mainline-6.18/patches/series/unlisted.patch"
 verify "$CANONICAL_TIP"
 
 git -C "$SOURCE" switch -q -c empty-case "$CANONICAL_TIP"

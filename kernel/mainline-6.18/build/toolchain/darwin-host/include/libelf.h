@@ -8,7 +8,8 @@
  * the libelf library API.  Reuse the UAPI declarations from the Linux source
  * being built so the layouts always match that source version.
  *
- * kernel/build-kernel.sh supplies the source and generated UAPI directories
+ * kernel/mainline-6.18/build/build-kernel.sh supplies the source and generated
+ * UAPI directories
  * after the platform include paths.  __EXPORTED_HEADERS__ suppresses the
  * intentional warning emitted when raw UAPI headers are consumed directly.
  */

@@ -6,32 +6,34 @@
 # does not.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-METADATA_PATH=${UML_KERNEL_METADATA_PATH:-"$ROOT_DIR/kernel/patches/metadata.env"}
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+METADATA_PATH=${UML_KERNEL_METADATA_PATH:-"$LINE_ROOT/patches/metadata.env"}
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 REQUESTED_SOURCE_DIR=
-CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache"}
+CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache/mainline-6.18"}
 FETCH=1
 WORK_ROOT=
 TEMPORARY_CACHE=
 
 fail()
 {
-	printf '%s\n' "kernel/materialize-git.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/materialize-git.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/materialize-git.sh [options]
+Usage: kernel/mainline-6.18/scripts/materialize-git.sh [options]
 
 Materialize the exact upstream Linux stable commit as a local replay checkout.
 
 Options:
   --source PATH   Compatibility assertion; PATH must exactly match the
-                  required kernel/source-location.conf value
-  --cache PATH    Pinned Git cache (default: .build/kernel-cache)
+                  required kernel/mainline-6.18/source-location.conf value
+  --cache PATH    Pinned Git cache
+                  (default: .build/kernel-cache/mainline-6.18)
   --no-fetch      Use only the exact commit already present in the Git cache
   -h, --help      Show this help
 

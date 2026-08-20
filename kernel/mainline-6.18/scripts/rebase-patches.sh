@@ -5,24 +5,26 @@
 # replace the checked-in mail series exclusively with git format-patch output.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-METADATA="$ROOT_DIR/kernel/patches/metadata.env"
-SERIES_DIR="$ROOT_DIR/kernel/patches/series"
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+METADATA="$LINE_ROOT/patches/metadata.env"
+SERIES_DIR="$LINE_ROOT/patches/series"
 MANIFEST="$SERIES_DIR/manifest.tsv"
-POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 REQUESTED_SOURCE=
 
 fail()
 {
-	printf '%s\n' "kernel/rebase-patches.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/rebase-patches.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/rebase-patches.sh [--source CONFIGURED_PATH]
+Usage: kernel/mainline-6.18/scripts/rebase-patches.sh \
+       [--source CONFIGURED_PATH]
 
 PATH must be the clean maintained kernel topic branch. To modify a patch, use
 `git rebase -i <UML_KERNEL_UPSTREAM_COMMIT>` in that checkout, amend/reorder the
@@ -125,7 +127,8 @@ find "$SERIES_DIR" -maxdepth 1 -type f -name '*.patch' -delete
 find "$temporary" -maxdepth 1 -type f -name '*.patch' \
 	-exec mv {} "$SERIES_DIR" \;
 mv -- "$manifest_tmp" "$MANIFEST"
-"$POLICY" manifest >/dev/null
-"$POLICY" topology --source "$SOURCE" --base "$UML_KERNEL_UPSTREAM_COMMIT" \
+"$POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
+"$POLICY" --line-root "$LINE_ROOT" topology \
+	--source "$SOURCE" --base "$UML_KERNEL_UPSTREAM_COMMIT" \
 	--tip "$UML_KERNEL_PATCH_BRANCH" >/dev/null
 printf '%s\n' "regenerated kernel patch series from rebased Git commits"

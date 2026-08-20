@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-VERIFIER="$REPOSITORY/kernel/verify-series-policy.py"
+VERIFIER="$REPOSITORY/kernel/common/tooling/verify-series-policy.py"
 WORK_DIRECTORY=$(mktemp -d "${TMPDIR:-/tmp}/uml-next-version-policy.XXXXXX")
 
 cleanup()
@@ -20,7 +20,7 @@ fail()
 
 UPSTREAM="$WORK_DIRECTORY/upstream"
 FIXTURE="$WORK_DIRECTORY/fixture"
-mkdir -p "$UPSTREAM" "$FIXTURE/kernel/patches/series"
+mkdir -p "$UPSTREAM" "$FIXTURE/kernel/mainline-6.18/patches/series"
 git -C "$UPSTREAM" init -q
 git -C "$UPSTREAM" config user.name 'next-version policy fixture'
 git -C "$UPSTREAM" config user.email 'noreply@linux-um-darwin.invalid'
@@ -37,7 +37,7 @@ printf '%s\n' ported > "$UPSTREAM/port.txt"
 git -C "$UPSTREAM" add fix.txt host.txt port.txt
 git -C "$UPSTREAM" commit -q -m 'fixture policy topic'
 FIX_COMMIT=$(git -C "$UPSTREAM" rev-parse HEAD)
-PATCH="$FIXTURE/kernel/patches/series/0001-fixture-policy.patch"
+PATCH="$FIXTURE/kernel/mainline-6.18/patches/series/0001-fixture-policy.patch"
 git -C "$UPSTREAM" format-patch -1 --stdout "$FIX_COMMIT" > "$PATCH"
 
 git -C "$UPSTREAM" switch -q -c conflict-base "$BASE"
@@ -47,28 +47,28 @@ git -C "$UPSTREAM" commit -q -m 'conflicting base rewrite'
 CONFLICT_COMMIT=$(git -C "$UPSTREAM" rev-parse HEAD)
 
 printf '%s\n' 'UML_KERNEL_PATCH_COUNT=1' \
-	> "$FIXTURE/kernel/patches/metadata.env"
+	> "$FIXTURE/kernel/mainline-6.18/patches/metadata.env"
 patch_id=$(git patch-id --stable < "$PATCH" | awk '{print $1}')
 digest=$(shasum -a 256 "$PATCH" | awk '{print $1}')
 {
 	printf 'order\tfilename\tstable_patch_id\tsha256\tsubject\n'
 	printf '1\t%s\t%s\t%s\t%s\n' "$(basename -- "$PATCH")" \
 		"$patch_id" "$digest" 'fixture policy topic'
-} > "$FIXTURE/kernel/patches/series/manifest.tsv"
+} > "$FIXTURE/kernel/mainline-6.18/patches/series/manifest.tsv"
 {
 	printf 'pattern\towner\tdisposition\trationale\n'
-	printf 'fix.txt\tpending-upstream\tupstream\tcontained fix fixture\n'
-	printf 'host.txt\thost-port\tupstream\tupstream retest fixture\n'
-	printf 'port.txt\tarm64-port\tkeep\tcarried port fixture\n'
-} > "$FIXTURE/kernel/patches/path-ownership.tsv"
+	printf 'fix.txt\tbase-fix\tdrop-locally-if-contained\tcontained fix fixture\n'
+	printf 'host.txt\thost-port\tcarry-locally\tlocal host fixture\n'
+	printf 'port.txt\tarm64-port\tcarry-locally\tlocal port fixture\n'
+} > "$FIXTURE/kernel/mainline-6.18/patches/path-ownership.tsv"
 printf 'path\towner\tdecision\touter_boundary\tnext_action\trationale\n' \
-	> "$FIXTURE/kernel/patches/extraction-decisions.tsv"
+	> "$FIXTURE/kernel/mainline-6.18/patches/extraction-decisions.tsv"
 {
 	printf 'path\towner\tdisposition\torigin_patch\tnext_version_policy\trationale\n'
-	printf 'fix.txt\tpending-upstream\tupstream\t0001\tdrop-when-base-contains-fix\tdrop fixture\n'
-	printf 'host.txt\thost-port\tupstream\t0001\tretest-and-upstream\tretest fixture\n'
-	printf 'port.txt\tarm64-port\tkeep\t0001\tcarry\tcarry fixture\n'
-} > "$FIXTURE/kernel/patches/outside-port-justification.tsv"
+	printf 'fix.txt\tbase-fix\tdrop-locally-if-contained\t0001\tdrop-locally-if-contained\tdrop fixture\n'
+	printf 'host.txt\thost-port\tcarry-locally\t0001\tcarry-locally\tcarry fixture\n'
+	printf 'port.txt\tarm64-port\tcarry-locally\t0001\tcarry-locally\tcarry fixture\n'
+} > "$FIXTURE/kernel/mainline-6.18/patches/outside-port-justification.tsv"
 
 assert_action()
 {
@@ -88,20 +88,20 @@ assert_action()
 APPLIED="$WORK_DIRECTORY/applied"
 git clone -q "$UPSTREAM" "$APPLIED"
 git -C "$APPLIED" switch -q --detach "$BASE"
-"$VERIFIER" --root "$FIXTURE" --source "$APPLIED" --base HEAD \
+"$VERIFIER" --line-root "$FIXTURE/kernel/mainline-6.18" --source "$APPLIED" --base HEAD \
 	next-version > "$WORK_DIRECTORY/applied.out"
 assert_action "$WORK_DIRECTORY/applied.out" fix.txt applied \
-	outside/drop-when-base-contains-fix \
-	carry-temporarily-retest-and-drop-when-contained
+	outside/drop-locally-if-contained \
+	carry-locally-until-contained-and-retest
 assert_action "$WORK_DIRECTORY/applied.out" host.txt applied \
-	outside/retest-and-upstream retest-and-upstream
+	outside/carry-locally carry-locally-and-retest
 assert_action "$WORK_DIRECTORY/applied.out" port.txt applied \
-	outside/carry carry-and-retest
+	outside/carry-locally carry-locally-and-retest
 
 CONTAINED="$WORK_DIRECTORY/contained"
 git clone -q "$UPSTREAM" "$CONTAINED"
 git -C "$CONTAINED" switch -q --detach "$FIX_COMMIT"
-if "$VERIFIER" --root "$FIXTURE" --source "$CONTAINED" --base HEAD \
+if "$VERIFIER" --line-root "$FIXTURE/kernel/mainline-6.18" --source "$CONTAINED" --base HEAD \
 	next-version > "$WORK_DIRECTORY/contained.out" \
 	2> "$WORK_DIRECTORY/contained.err"; then
 	fail 'already-contained topic was accepted'
@@ -109,16 +109,18 @@ fi
 grep -F 'is already contained' "$WORK_DIRECTORY/contained.err" >/dev/null ||
 	fail 'already-contained topic was reported as a generic conflict'
 assert_action "$WORK_DIRECTORY/contained.out" fix.txt contained \
-	outside/drop-when-base-contains-fix drop-and-retest
+	outside/drop-locally-if-contained drop-locally-and-retest
 assert_action "$WORK_DIRECTORY/contained.out" host.txt contained \
-	outside/retest-and-upstream drop-duplicate-retest-and-upstream
+	outside/carry-locally \
+	review-contained-change-before-carrying-locally-and-retest
 assert_action "$WORK_DIRECTORY/contained.out" port.txt contained \
-	outside/carry review-contained-port-before-carrying-and-retest
+	outside/carry-locally \
+	review-contained-change-before-carrying-locally-and-retest
 
 CONFLICT="$WORK_DIRECTORY/conflict"
 git clone -q "$UPSTREAM" "$CONFLICT"
 git -C "$CONFLICT" switch -q --detach "$CONFLICT_COMMIT"
-if "$VERIFIER" --root "$FIXTURE" --source "$CONFLICT" --base HEAD \
+if "$VERIFIER" --line-root "$FIXTURE/kernel/mainline-6.18" --source "$CONFLICT" --base HEAD \
 	next-version > "$WORK_DIRECTORY/conflict.out" \
 	2> "$WORK_DIRECTORY/conflict.err"; then
 	fail 'genuine patch conflict was accepted'
@@ -126,11 +128,11 @@ fi
 grep -F 'genuinely conflicts' "$WORK_DIRECTORY/conflict.err" >/dev/null ||
 	fail 'genuine conflict was not distinguished from containment'
 assert_action "$WORK_DIRECTORY/conflict.out" fix.txt conflict \
-	outside/drop-when-base-contains-fix \
-	check-for-equivalent-fix-then-drop-or-rebase-and-retest
+	outside/drop-locally-if-contained \
+	check-for-equivalent-base-change-then-drop-locally-or-rebase-locally-and-retest
 assert_action "$WORK_DIRECTORY/conflict.out" host.txt conflict \
-	outside/retest-and-upstream rebase-retest-and-upstream
+	outside/carry-locally rebase-locally-and-retest
 assert_action "$WORK_DIRECTORY/conflict.out" port.txt conflict \
-	outside/carry rebase-carry-and-retest
+	outside/carry-locally rebase-locally-and-retest
 
 printf '%s\n' 'Linux next-version policy action fixtures passed'

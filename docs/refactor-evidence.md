@@ -4,8 +4,8 @@
 
 | Boundary | Evidence |
 |---|---|
-| Local authority | `kernel/source-location.conf` is Git-ignored; its tracked example contains the only supported assignment schema. |
-| Case sensitivity | `kernel/source-location.sh` creates a lowercase probe at the configured location and rejects an uppercase path alias. |
+| Local authority | `kernel/mainline-6.18/source-location.conf` is Git-ignored; its tracked example contains the only supported assignment schema. The former ignored `kernel/source-location.conf` remains developer-owned migration input. |
+| Case sensitivity | `kernel/mainline-6.18/scripts/source-location.sh` creates a lowercase probe at the configured location and rejects an uppercase path alias. |
 | Fail closed | `kernel-source-location-config` proves standalone Kbuild rejects a missing config and checked presets cannot bypass it with `UML_KERNEL_SOURCE_DIR`. |
 
 ## Git-only source replay evidence (2026-08-20)

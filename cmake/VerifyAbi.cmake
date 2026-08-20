@@ -3,17 +3,17 @@ include_guard(GLOBAL)
 
 function(uml_verify_generated_abi)
     execute_process(
-        COMMAND "${PROJECT_SOURCE_DIR}/kernel/abi/sync.sh" --verify
+        COMMAND "${PROJECT_SOURCE_DIR}/kernel/common/abi/sync.sh" --verify
         RESULT_VARIABLE _uml_abi_result
         OUTPUT_VARIABLE _uml_abi_output
         ERROR_VARIABLE _uml_abi_error)
     if(NOT _uml_abi_result EQUAL 0)
         message(FATAL_ERROR
             "Generated Darwin UML host ABI files are stale. Run "
-            "kernel/abi/sync.sh.\n${_uml_abi_output}${_uml_abi_error}")
+            "kernel/common/abi/sync.sh.\n${_uml_abi_output}${_uml_abi_error}")
     endif()
 
-    file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/abi/identity.env"
+    file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/common/abi/identity.env"
         _uml_identity_rows)
     foreach(_uml_identity_row IN LISTS _uml_identity_rows)
         if(_uml_identity_row MATCHES
@@ -26,7 +26,7 @@ function(uml_verify_generated_abi)
     endforeach()
     if(NOT DEFINED _uml_abi_version OR
        NOT DEFINED _uml_abi_fingerprint)
-        message(FATAL_ERROR "Unable to parse kernel/abi/identity.env")
+        message(FATAL_ERROR "Unable to parse kernel/common/abi/identity.env")
     endif()
     set(UML_KERNEL_ABI_VERSION "${_uml_abi_version}" CACHE INTERNAL
         "Canonical Darwin UML host/kernel ABI version" FORCE)

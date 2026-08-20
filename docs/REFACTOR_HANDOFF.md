@@ -1,10 +1,27 @@
 # Refactor handoff
 
+## Versioned kernel ownership preparation (2026-08-20)
+
+The former singleton kernel layout is split into
+`kernel/mainline-6.18` and `kernel/common`. The mainline family owns its
+source identity, generated patches, complete configuration, compiler policy,
+and standalone scripts. Common ownership is limited to the unchanged bridge
+ABI, the shared 16 KiB page/task-stack geometry, and a series verifier that
+requires an explicit line root. Root `kernel/CMakeLists.txt` still composes the
+same current products and target names.
+
+This is repository preparation only. It adds no Android directory, ACK source
+identity, AOSP patch, Android build script, guest image, Apple Android target,
+or Android acceptance claim. The current generated Linux patch bytes and final
+tree are unchanged. Active next-base policy now emits only local carry, drop,
+rebase, and retest actions; it defines no contribution workflow.
+
 ## Required case-sensitive kernel source configuration (2026-08-20)
 
 The maintained Linux checkout now comes only from the Git-ignored
-`kernel/source-location.conf`. Copy the tracked example and set one absolute
-`UML_KERNEL_SOURCE_DIR`; `kernel/source-location.sh` parses it as data,
+`kernel/mainline-6.18/source-location.conf`. Copy the tracked example and set
+one absolute `UML_KERNEL_SOURCE_DIR`;
+`kernel/mainline-6.18/scripts/source-location.sh` parses it as data,
 canonicalizes the location, and proves case sensitivity with a case-collision
 probe. Preparation, CMake, Kbuild, delta audit, and patch regeneration consume
 that single value. Checked presets no longer embed or accept a source path, and
@@ -20,15 +37,16 @@ source row names an upstream HTTPS Git repository and full commit; optional
 changes replay as an ordered Git mail series. Source archives, extraction
 identities, prepared-tree hashes, `Kernarium/dependencies/`, and Kernarium’s
 dependency build scripts/CMake modules are retired. The kernel keeps the same
-model under its existing `kernel/` ownership boundary: upstream stable
+model under its versioned `kernel/mainline-6.18` ownership boundary: stable
 repository branch `linux-6.18.y`, commit
 `2fe596715f840d053aed5cee5455f701bdcd2b50`, and final replay tree
 `f78217b082f6becb8af1656bcc69521307eb729b`.
 
 Patch files are generated artifacts in both domains. Modify topic commits with
 `git rebase -i` and `git commit --amend`, then run
-`dependencies/rebase-patches.sh` or `kernel/rebase-patches.sh`; never edit mail
-patch hunks or headers manually. Focused dependency preparation/generation/
+`dependencies/rebase-patches.sh` or
+`kernel/mainline-6.18/scripts/rebase-patches.sh`; never edit mail patch hunks
+or headers manually. Focused dependency preparation/generation/
 prefix tests, kernel Git materialization, canonical replay verification, delta
 audit, and a fresh pinned-commit kernel replay without compilation passed.
 Earlier archive-based evidence below is retained only as dated history and no
@@ -146,7 +164,8 @@ dockerd stats `/proc/<pid>/ns/pid` while initializing buildkit, exits 1, and
 `docker.service` never reaches active. The fragment now names
 `CONFIG_NAMESPACES=y`, both profiles rebuilt, and that test passes in 33 s.
 
-`verify_config_fragment` in `kernel/build-kernel.sh` now compares both
+`verify_config_fragment` in
+`kernel/mainline-6.18/build/build-kernel.sh` now compares both
 fragments against the resolved `.config` after `olddefconfig` and fails the
 build on any divergence, so this class cannot recur silently. Applying it
 found two more: `CONFIG_HZ_100` and its three companion choice symbols never

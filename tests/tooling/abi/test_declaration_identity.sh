@@ -12,17 +12,17 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$WORK_DIRECTORY/kernel" \
+mkdir -p "$WORK_DIRECTORY/kernel/common" \
 	"$WORK_DIRECTORY/darwin/api/include/uml" \
 	"$WORK_DIRECTORY/darwin/api"
-cp -R "$REPOSITORY/kernel/abi" "$WORK_DIRECTORY/kernel/abi"
+cp -R "$REPOSITORY/kernel/common/abi" "$WORK_DIRECTORY/kernel/common/abi"
 cp -R "$REPOSITORY/darwin/api/abi" "$WORK_DIRECTORY/darwin/api/abi"
 cp "$REPOSITORY/darwin/api/include/uml/emulator.h" \
 	"$WORK_DIRECTORY/darwin/api/include/uml/emulator.h"
 cp "$REPOSITORY/darwin/api/include/uml/abi_identity.h" \
 	"$WORK_DIRECTORY/darwin/api/include/uml/abi_identity.h"
 
-VERIFY="$REPOSITORY/kernel/abi/verify-declarations.py"
+VERIFY="$REPOSITORY/kernel/common/abi/verify-declarations.py"
 "$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" >/dev/null
 
 printf '%s\n' '/* Comment-only edits do not alter declaration identity. */' >> \
@@ -33,7 +33,7 @@ PUBLIC_BEFORE=$(
 	"$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain public --compute
 )
 printf '%s\n' 'int darwin_uml_unrecorded_bridge_change(void);' >> \
-	"$WORK_DIRECTORY/kernel/abi/darwin_uml_host.h"
+	"$WORK_DIRECTORY/kernel/common/abi/darwin_uml_host.h"
 [ "$("$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" \
 	--domain public --compute)" = "$PUBLIC_BEFORE" ] || {
 	printf '%s\n' "kernel-only mutation changed public identity" >&2
@@ -45,8 +45,8 @@ if "$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain kernel \
 		"kernel declaration mutation passed without a kernel history update" >&2
 	exit 1
 fi
-cp "$REPOSITORY/kernel/abi/darwin_uml_host.h" \
-	"$WORK_DIRECTORY/kernel/abi/darwin_uml_host.h"
+cp "$REPOSITORY/kernel/common/abi/darwin_uml_host.h" \
+	"$WORK_DIRECTORY/kernel/common/abi/darwin_uml_host.h"
 
 KERNEL_BEFORE=$(
 	"$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain kernel --compute
@@ -65,12 +65,12 @@ if "$PYTHON" "$VERIFY" --root "$WORK_DIRECTORY" --domain public \
 	exit 1
 fi
 
-IMPORT_VERIFY="$REPOSITORY/kernel/abi/verify-linux-imports.sh"
+IMPORT_VERIFY="$REPOSITORY/kernel/common/abi/verify-linux-imports.sh"
 sed -n -E 's/.*(darwin_uml_[A-Za-z0-9_]+)\(.*/\1/p' \
-	"$REPOSITORY"/kernel/abi/darwin_uml_*.h |
+	"$REPOSITORY"/kernel/common/abi/darwin_uml_*.h |
 	LC_ALL=C sort -u > "$WORK_DIRECTORY/all-symbols"
 awk -F '\t' 'NR > 1 { print $1 }' \
-	"$REPOSITORY/kernel/abi/import-policy.tsv" |
+	"$REPOSITORY/kernel/common/abi/import-policy.tsv" |
 	LC_ALL=C sort > "$WORK_DIRECTORY/4k-only-symbols"
 comm -23 "$WORK_DIRECTORY/all-symbols" "$WORK_DIRECTORY/4k-only-symbols" \
 	> "$WORK_DIRECTORY/16k-symbols"

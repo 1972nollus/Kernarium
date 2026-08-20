@@ -3,20 +3,22 @@
 # Resolve and validate the required, Git-ignored kernel source configuration.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-CONFIG_PATH=${UML_KERNEL_SOURCE_CONFIG:-"$ROOT_DIR/kernel/source-location.conf"}
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+CONFIG_PATH=${UML_KERNEL_SOURCE_CONFIG:-"$LINE_ROOT/source-location.conf"}
 REQUIRE_SOURCE=0
 
 fail()
 {
-	printf '%s\n' "kernel/source-location.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/source-location.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/source-location.sh [--config PATH] [--require-source]
+Usage: kernel/mainline-6.18/scripts/source-location.sh \
+       [--config PATH] [--require-source]
 
 Print the configured canonical Linux source path after verifying that its
 location is case-sensitive. The configuration must contain exactly one active
@@ -24,9 +26,9 @@ line:
 
   UML_KERNEL_SOURCE_DIR=/absolute/case-sensitive/path/linux
 
-The default configuration is kernel/source-location.conf, which is ignored by
-Git. UML_KERNEL_SOURCE_CONFIG or --config may select another configuration
-file for an isolated replay or tooling fixture.
+The default configuration is kernel/mainline-6.18/source-location.conf, which
+is ignored by Git. UML_KERNEL_SOURCE_CONFIG or --config may select another
+configuration file for an isolated replay or tooling fixture.
 EOF
 }
 
@@ -50,7 +52,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$CONFIG_PATH" ] ||
-	fail "required configuration is missing: $CONFIG_PATH (copy kernel/source-location.conf.example and set UML_KERNEL_SOURCE_DIR)"
+	fail "required configuration is missing: $CONFIG_PATH (copy kernel/mainline-6.18/source-location.conf.example and set UML_KERNEL_SOURCE_DIR)"
 
 active_count=$(awk '
 	/^[[:space:]]*#/ || /^[[:space:]]*$/ { next }

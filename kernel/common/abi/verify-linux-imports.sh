@@ -3,16 +3,16 @@
 # Require the synchronized bridge to match the Linux image's actual imports.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 KERNEL_BINARY=''
 NM_TOOL=${NM:-nm}
 NM_OUTPUT=''
 PAGE_SIZE=''
-IMPORT_POLICY="$ROOT_DIR/kernel/abi/import-policy.tsv"
+IMPORT_POLICY="$ROOT_DIR/kernel/common/abi/import-policy.tsv"
 
 fail()
 {
-	printf '%s\n' "kernel/abi/verify-linux-imports.sh: $*" >&2
+	printf '%s\n' "kernel/common/abi/verify-linux-imports.sh: $*" >&2
 	exit 1
 }
 
@@ -66,7 +66,7 @@ cleanup()
 trap cleanup 0 HUP INT TERM
 
 sed -n -E 's/.*(darwin_uml_[A-Za-z0-9_]+)\(.*/\1/p' \
-	"$ROOT_DIR"/kernel/abi/darwin_uml_*.h |
+	"$ROOT_DIR"/kernel/common/abi/darwin_uml_*.h |
 	LC_ALL=C sort -u > "$WORK_DIRECTORY/declared"
 
 if ! awk -F '\t' '

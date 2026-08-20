@@ -5,24 +5,27 @@
 # build or rewrites a managed pinned-commit checkout.
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-METADATA="$ROOT_DIR/kernel/patches/metadata.env"
-SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+METADATA="$LINE_ROOT/patches/metadata.env"
+SERIES_POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
 
 fail()
 {
-	printf '%s\n' "kernel/check-next-version.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/check-next-version.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/check-next-version.sh --work-root PATH --ref REF [--keep]
+Usage: kernel/mainline-6.18/scripts/check-next-version.sh \
+       --work-root PATH --ref REF [--keep]
 
 Clone the audit-only Linux origin, detach at REF, and apply the complete tracked
-series with git am --3way. Report the recorded carry, drop, retest, or upstream
-action for every path when a topic applies, is already contained, or conflicts.
+series with git am --3way. Report the recorded local carry, drop, rebase, and
+retest action for every path when a topic applies, is already contained, or
+conflicts. This command never submits or pushes a change.
 EOF
 }
 
@@ -59,8 +62,8 @@ done
 [ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
 # shellcheck disable=SC1090
 . "$METADATA"
-"$SERIES_POLICY" manifest >/dev/null
-"$SERIES_POLICY" policy >/dev/null
+"$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
+"$SERIES_POLICY" --line-root "$LINE_ROOT" policy >/dev/null
 
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
@@ -88,7 +91,8 @@ audit_git -C "$CHECK_ROOT/linux" fetch --no-tags origin "$UPSTREAM_REF"
 audit_git -C "$CHECK_ROOT/linux" switch --detach FETCH_HEAD
 NEXT_BASE=$(audit_git -C "$CHECK_ROOT/linux" rev-parse HEAD)
 
-if ! "$SERIES_POLICY" next-version --source "$CHECK_ROOT/linux" \
+if ! "$SERIES_POLICY" --line-root "$LINE_ROOT" next-version \
+	--source "$CHECK_ROOT/linux" \
 	--base "$NEXT_BASE"; then
 	exit 1
 fi

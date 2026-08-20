@@ -3,7 +3,8 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-BUILD_SCRIPT="$ROOT_DIR/kernel/build-kernel.sh"
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+BUILD_SCRIPT="$LINE_ROOT/build/build-kernel.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-source-config.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -21,24 +22,28 @@ if UML_KERNEL_SOURCE_CONFIG="$MISSING_CONFIG" \
 fi
 grep -F 'required configuration is missing' "$TEST_ROOT/build.err" >/dev/null ||
 	fail "missing configuration failure did not identify the required file"
-grep -F 'kernel build requires a valid kernel/source-location.conf' \
+grep -F 'kernel build requires a valid kernel/mainline-6.18/source-location.conf' \
 	"$TEST_ROOT/build.err" >/dev/null ||
 	fail "build did not report its mandatory source-location contract"
 
+git -C "$ROOT_DIR" check-ignore --quiet \
+	kernel/mainline-6.18/source-location.conf ||
+	fail "kernel/mainline-6.18/source-location.conf is not ignored by Git"
 git -C "$ROOT_DIR" check-ignore --quiet kernel/source-location.conf ||
-	fail "kernel/source-location.conf is not ignored by Git"
-[ -f "$ROOT_DIR/kernel/source-location.conf.example" ] ||
+	fail "the developer-owned former source configuration is not ignored"
+[ -f "$LINE_ROOT/source-location.conf.example" ] ||
 	fail "the source-location example is missing"
 if git -C "$ROOT_DIR" check-ignore --quiet \
-	kernel/source-location.conf.example; then
+	kernel/mainline-6.18/source-location.conf.example; then
 	fail "the source-location example is incorrectly ignored"
 fi
 if git -C "$ROOT_DIR" ls-files --error-unmatch \
-	kernel/source-location.conf >/dev/null 2>&1; then
+	kernel/mainline-6.18/source-location.conf >/dev/null 2>&1; then
 	fail "the developer-specific source-location configuration is tracked"
 fi
 
-grep -F 'kernel/source-location.conf' "$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
+grep -F 'kernel/mainline-6.18/source-location.conf' \
+	"$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
 	fail "CMake does not require the local source-location configuration"
 grep -F 'UML_KERNEL_SOURCE_CONFIG' "$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
 	fail "CMake does not propagate the selected source configuration"

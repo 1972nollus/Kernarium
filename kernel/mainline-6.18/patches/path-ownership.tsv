@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+pattern	owner	disposition	rationale
+arch/arm64/um/*	arm64-uml-port	carry-locally	Architecture implementation unique to the arm64 UML port.
+arch/arm64/Makefile.um	arm64-uml-port	carry-locally	Required top-level architecture wiring for ARCH=um SUBARCH=arm64.
+arch/um/os-Darwin/*	darwin-host	carry-locally	Darwin host services behind the established UML host-OS boundary.
+arch/um/drivers/*	uml-devices	carry-locally	Kernel-side standard device semantics stay in Linux; only Darwin host services belong in outer providers, as recorded in extraction-decisions.tsv.
+arch/um/os-Linux/*	uml-generic	carry-locally	Linux-host parity changes required by shared SMP and host-service abstractions.
+arch/um/*	uml-generic	carry-locally	Shared UML architecture hooks, MMU, SMP, and page-size support.
+drivers/video/console/Kconfig	uml-devices	carry-locally	The standard fbcon selection must avoid UML's legacy stdio-console major only when that driver is configured.
+scripts/*	darwin-host-build	carry-locally	Kbuild host tools run before the outer emulator exists, so their ELF portability remains in this local line; see extraction-decisions.tsv.
+mm/filemap.c	base-correctness	drop-locally-if-contained	Independent cachestat zero-length correctness fix; remove locally when the selected base contains it.
+security/smack/smack_lsm.c	base-correctness	drop-locally-if-contained	Independent connected-stream sendmsg correctness fix; remove locally when the selected base contains it.

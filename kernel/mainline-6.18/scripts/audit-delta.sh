@@ -2,25 +2,28 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -eu
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-METADATA="$ROOT_DIR/kernel/patches/metadata.env"
-OWNERSHIP="$ROOT_DIR/kernel/patches/path-ownership.tsv"
-OUTSIDE_POLICY="$ROOT_DIR/kernel/patches/outside-port-justification.tsv"
-SERIES_MANIFEST="$ROOT_DIR/kernel/patches/series/manifest.tsv"
-SERIES_DIR="$ROOT_DIR/kernel/patches/series"
-SERIES_POLICY="$ROOT_DIR/kernel/verify-series-policy.py"
-SOURCE_LOCATION="$ROOT_DIR/kernel/source-location.sh"
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
+COMMON_ROOT="$ROOT_DIR/kernel/common"
+METADATA="$LINE_ROOT/patches/metadata.env"
+OWNERSHIP="$LINE_ROOT/patches/path-ownership.tsv"
+OUTSIDE_POLICY="$LINE_ROOT/patches/outside-port-justification.tsv"
+SERIES_MANIFEST="$LINE_ROOT/patches/series/manifest.tsv"
+SERIES_DIR="$LINE_ROOT/patches/series"
+SERIES_POLICY="$COMMON_ROOT/tooling/verify-series-policy.py"
+SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 
 fail()
 {
-	printf '%s\n' "kernel/audit-delta.sh: $*" >&2
+	printf '%s\n' "kernel/mainline-6.18/scripts/audit-delta.sh: $*" >&2
 	exit 1
 }
 
 usage()
 {
 	cat <<'EOF'
-Usage: kernel/audit-delta.sh [--source CONFIGURED_PATH] [--tree TREE]
+Usage: kernel/mainline-6.18/scripts/audit-delta.sh \
+       [--source CONFIGURED_PATH] [--tree TREE]
 
 Classify every path changed from the pinned upstream Linux stable commit and
 enforce the checked-in file-count ceilings. TREE defaults to HEAD.
@@ -60,7 +63,7 @@ fi
 [ -r "$OUTSIDE_POLICY" ] || fail "missing outside-port policy: $OUTSIDE_POLICY"
 [ -r "$SERIES_MANIFEST" ] || fail "missing series manifest: $SERIES_MANIFEST"
 [ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
-"$SERIES_POLICY" manifest >/dev/null
+"$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
 # shellcheck disable=SC1090
 . "$METADATA"
 [ -d "$SOURCE/.git" ] || fail "not a Linux checkout: $SOURCE"
@@ -155,7 +158,7 @@ while IFS="$tab" read -r policy_path policy_owner policy_disposition \
 	[ "$policy_disposition" = "$CLASSIFIED_DISPOSITION" ] ||
 		fail "outside-port disposition mismatch for $policy_path: $policy_disposition, expected $CLASSIFIED_DISPOSITION"
 	case "$policy_disposition:$next_version_policy" in
-	keep:carry|upstream:retest-and-upstream|upstream:drop-when-base-contains-fix) ;;
+	carry-locally:carry-locally|drop-locally-if-contained:drop-locally-if-contained) ;;
 	*) fail "invalid next-version policy for $policy_path: $policy_disposition/$next_version_policy" ;;
 	esac
 	case "$origin_patch" in

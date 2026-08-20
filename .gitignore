@@ -39,7 +39,9 @@ __pycache__/
 # CMakePresets.json.
 CMakeUserPresets.json
 
-# Per-checkout kernel source location. The tracked example documents the
-# required format; the real path is host-specific and must name a
-# case-sensitive filesystem.
+# Per-line kernel source locations. The tracked examples document the required
+# format; real paths are host-specific and must name case-sensitive
+# filesystems. Keep the former singleton path ignored because it is
+# developer-owned migration input and must not be deleted or committed.
 /kernel/source-location.conf
+/kernel/mainline-6.18/source-location.conf
