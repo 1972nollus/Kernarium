@@ -3,8 +3,9 @@
 #include "audio/protocol.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/native_display_application.hpp"
-#include "profile_reporter.hpp"
 #include "gpu/protocol.hpp"
+#include "launcher.hpp"
+#include "profile_reporter.hpp"
 #include "uml/emulator.h"
 
 #include <array>
@@ -15,11 +16,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
 #include <limits>
 #include <memory>
 #include <new>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -27,8 +26,6 @@
 #include <vector>
 
 #include <mach/arm/thread_status.h>
-#include <mach-o/dyld.h>
-#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
@@ -56,9 +53,6 @@ constexpr char host_fault_pc_prefix[] = " at pc=0x";
 constexpr char host_fault_address_prefix[] = " address=0x";
 constexpr std::size_t host_fault_hex_digits = sizeof(std::uintptr_t) * 2U;
 constexpr std::size_t host_fault_message_capacity = 128;
-constexpr std::string_view macos_default_guest_memory{"mem=8G"};
-constexpr std::string_view macos_default_guest_cpus{"ncpus=10"};
-
 class AppNetwork final {
 public:
 	AppNetwork()
@@ -203,15 +197,6 @@ bool has_argument(int argc, char *const argv[], std::string_view argument)
 	return false;
 }
 
-bool has_prefix(int argc, char *const argv[], std::string_view prefix)
-{
-	for (int index = 1; index < argc; ++index)
-		if (argv[index] != nullptr &&
-		    std::string_view{argv[index]}.starts_with(prefix))
-			return true;
-	return false;
-}
-
 bool informational(int argc, char *const argv[])
 {
 	return has_argument(argc, argv, "--help") ||
@@ -265,7 +250,9 @@ bool parse_host_integer(std::string_view argument, std::string_view prefix,
 	return true;
 }
 
-PreparedArguments prepare_host_arguments(int argc, char *const argv[])
+PreparedArguments prepare_host_arguments(
+	int argc, char *const argv[],
+	const uml::app::LaunchConfiguration &configuration)
 {
 	PreparedArguments prepared;
 	prepared.kernel.reserve(static_cast<std::size_t>(argc) + 3U);
@@ -339,9 +326,9 @@ PreparedArguments prepare_host_arguments(int argc, char *const argv[])
 		throw std::invalid_argument(
 			"--gpu-dpi requires display dimensions no larger than 4095");
 	append_default_kernel_argument(
-		prepared.kernel, "mem=", macos_default_guest_memory);
+		prepared.kernel, "mem=", configuration.default_guest_memory);
 	append_default_kernel_argument(
-		prepared.kernel, "ncpus=", macos_default_guest_cpus);
+		prepared.kernel, "ncpus=", configuration.default_guest_cpus);
 	return prepared;
 }
 
@@ -365,60 +352,16 @@ bool host_has_lse_atomics()
 		size == sizeof(supported) && supported != 0;
 }
 
-bool usable_rootfs(const std::filesystem::path &path)
-{
-	struct stat details {};
-	return stat(path.c_str(), &details) == 0 && S_ISREG(details.st_mode) &&
-		access(path.c_str(), R_OK) == 0;
-}
-
-std::optional<std::filesystem::path> canonical_rootfs(
-	const std::filesystem::path &candidate)
-{
-	std::error_code error;
-	auto path = std::filesystem::canonical(candidate, error);
-	if (!error && usable_rootfs(path))
-		return path;
-	return std::nullopt;
-}
-
-std::optional<std::filesystem::path> locate_rootfs()
-{
-	if (const char *configured = std::getenv("UML_ROOTFS");
-	    configured != nullptr && configured[0] != '\0') {
-		auto path = canonical_rootfs(configured);
-		if (!path)
-			std::fprintf(stderr,
-				"UML_ROOTFS is not a readable EROFS image: %s\n",
-				configured);
-		return path;
-	}
-
-	std::array<char, 4096> executable{};
-	std::uint32_t length = executable.size();
-	if (_NSGetExecutablePath(executable.data(), &length) == 0) {
-		std::error_code error;
-		auto parent = std::filesystem::canonical(executable.data(), error)
-			.parent_path();
-		if (!error)
-			if (auto path = canonical_rootfs(parent / "rootfs.erofs"))
-				return path;
-	}
-	if (auto path = canonical_rootfs("rootfs.erofs"))
-		return path;
-	std::fputs("rootfs.erofs was not found beside the executable or in the "
-		"current directory\n", stderr);
-	return std::nullopt;
-}
-
 } // namespace
 
-int main(int argc, char *argv[], char *envp[])
+int uml::app::runEmbeddedKernel(
+	int argc, char *argv[], char *envp[],
+	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
 	PreparedArguments prepared;
 	try {
-		prepared = prepare_host_arguments(argc, argv);
+		prepared = prepare_host_arguments(argc, argv, configuration);
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to configure host devices: %s\n",
 			     error.what());
@@ -429,14 +372,6 @@ int main(int argc, char *argv[], char *envp[])
 			   "instructions on the host\n", stderr);
 		return 1;
 	}
-	std::string rootfs;
-	if (!informational(argc, argv) && !has_prefix(argc, argv, "ubd0")) {
-		auto located = locate_rootfs();
-		if (!located)
-			return 1;
-		rootfs = located->string();
-	}
-
 	std::unique_ptr<AppNetwork> app_network;
 	uml_emulator_network_callbacks network_callbacks{};
 	if (user_network_enabled()) {
@@ -453,7 +388,7 @@ int main(int argc, char *argv[], char *envp[])
 	const uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = rootfs.empty() ? nullptr : rootfs.c_str(),
+		.rootfs_path = configuration.rootfs_path,
 		.kernel_image = uml_elf_start,
 		.kernel_image_size = static_cast<std::size_t>(
 			uml_elf_end - uml_elf_start),

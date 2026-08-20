@@ -105,6 +105,24 @@
       }
     },
     {
+      "name": "macos-android17",
+      "displayName": "macOS Android 17 guest executable",
+      "inherits": "macos-unit-16k",
+      "binaryDir": "${sourceDir}/.build/presets/${presetName}",
+      "cacheVariables": {
+        "UML_BUILD_CLI": false,
+        "UML_BUILD_ANDROID17_CLI": true,
+        "UML_BUILD_KERNEL_RUNNER": true,
+        "UML_BUILD_NETWORK_PROVIDER": true,
+        "UML_BUILD_GPU": true,
+        "UML_BUILD_AUDIO": true,
+        "UML_BUILD_UNIT_TESTS": false,
+        "UML_BUILD_INTEGRATION_TESTS": false,
+        "UML_BUILD_TOOLING_TESTS": true,
+        "UML_GUEST_16K_PAGES": true
+      }
+    },
+    {
       "name": "macos-all",
       "displayName": "macOS unit and integration tests",
       "inherits": "macos-integration",
@@ -262,6 +280,11 @@
       "name": "macos-jitprof",
       "configurePreset": "macos-jitprof",
       "targets": ["tooling-test-binaries", "architecture-audit"]
+    },
+    {
+      "name": "macos-android17",
+      "configurePreset": "macos-android17",
+      "targets": ["uml-darwin-android17", "tooling-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-all",

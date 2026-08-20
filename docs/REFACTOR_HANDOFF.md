@@ -112,7 +112,8 @@ validates accepted local bundles and exposes their files to the unchanged
 current product targets without running Git, replay, toolchain selection, or
 Kbuild. The Android ACK series, AOSP product, static disk/initramfs producer,
 and accepted release are separately owned by `kernel/android-6.18` and
-`android/aosp-17`; the Apple Android executable/runtime remain later work.
+`android/aosp-17`. A separate 16 KiB-only macOS executable now consumes that
+accepted release; the signed iOS Android runtime remains later work.
 
 ## Required case-sensitive kernel source configuration (2026-08-20)
 

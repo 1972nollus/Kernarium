@@ -106,6 +106,13 @@ uml_add_tooling_test(
         --macos-app-cmake
             ${PROJECT_SOURCE_DIR}/darwin/app/macos/CMakeLists.txt
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp
+        --macos-linux-main
+            ${PROJECT_SOURCE_DIR}/darwin/app/macos/linux_main.cpp
+        --android-cmake ${PROJECT_SOURCE_DIR}/android/aosp-17/CMakeLists.txt
+        --android-release-cmake
+            ${PROJECT_SOURCE_DIR}/android/aosp-17/cmake/AndroidRelease.cmake
+        --android-main
+            ${PROJECT_SOURCE_DIR}/darwin/app/macos/android17_main.cpp
         --toolchain-env
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/toolchain/darwin.env
     LABELS kernel;audit

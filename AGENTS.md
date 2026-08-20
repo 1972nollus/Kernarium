@@ -454,6 +454,10 @@ Executable-memory policy:
   product and both 4 KiB iOS runtime slices likewise consume the same accepted
   4 KiB artifact; do not create a platform-specific Kbuild tree or kernel
   image. Apple product graphs may only validate and embed already-built files.
+  The separate `uml-darwin-android17` product accepts only a validated,
+  installed 16 KiB Android 17 release, embeds its ACK 6.18 ELF and manifest
+  identity, and maps the static GPT only behind a per-instance COW file. It has
+  no 4 KiB variant and must not inherit Linux desktop rootfs discovery.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 

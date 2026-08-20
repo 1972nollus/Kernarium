@@ -35,11 +35,15 @@ endif()
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(UML_TARGET_MACOS ON)
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
+    option(UML_BUILD_ANDROID17_CLI
+        "Build the separate Android 17 arm64 macOS executable" OFF)
     option(UML_BUILD_KERNEL_RUNNER
            "Build the embedded ELF kernel runner for the macOS CLI" ON)
 elseif(UML_APPLE_PLATFORM MATCHES "^ios")
     set(UML_TARGET_MACOS OFF)
     option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
+    option(UML_BUILD_ANDROID17_CLI
+        "Build the separate Android 17 arm64 macOS executable" OFF)
     option(UML_BUILD_KERNEL_RUNNER
         "Build the prototype embedded ELF runner for Kernarium on iOS" OFF)
 endif()
@@ -206,6 +210,12 @@ endif()
 
 if(UML_BUILD_CLI OR UML_BUILD_KERNARIUM_RUNTIME)
     add_subdirectory(kernel)
+endif()
+if(UML_BUILD_ANDROID17_CLI)
+    if(NOT UML_TARGET_MACOS)
+        message(FATAL_ERROR "The Android 17 CLI is supported only on macOS")
+    endif()
+    add_subdirectory(android/aosp-17)
 endif()
 
 add_subdirectory(darwin)

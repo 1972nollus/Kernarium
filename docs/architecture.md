@@ -81,8 +81,9 @@ window below the iOS ceiling and uses `vm_remap` to alias only immutable,
 relocation-free executable ELF pages from that signed mapping; non-executable
 data and BSS remain ordinary anonymous mappings. The Darwin kernel link keeps
 signed executable boundaries on 16 KiB host pages even for a 4 KiB guest.
-Simulator, physical device, and macOS consume the same accepted prebuilt
-mainline artifact within each profile. The acceptance descriptors under
+The current Linux Simulator, physical-device, and macOS products consume the
+same accepted prebuilt mainline artifact within each profile. The acceptance
+descriptors under
 `kernel/mainline-6.18/artifacts` select local bundles below
 `.build/kernel/artifacts`; CMake validates each manifest, page size, ABI,
 configuration, ELF, and support inventory before deriving any path. Simulator
@@ -128,12 +129,19 @@ without violating an IRQ-disabled critical section.
 
 `kernel/mainline-6.18` owns the current stable source identity, generated
 series, complete configuration, standalone build policy, and source location.
-`kernel/common` owns only the plain-C bridge, shared 16 KiB page geometry, and
+`kernel/android-6.18` separately owns the ACK identity, local Darwin UML patch
+series, and built-in-only 16 KiB configuration. `kernel/common` owns only the
+plain-C bridge, shared 16 KiB page geometry, artifact contract, and
 line-root-parameterized policy verification. Root `kernel/CMakeLists.txt`
-selects the current line explicitly so another family can be added without
-turning a singleton patch, config, cache, or checkout path into shared state.
-The current Apple targets and page-profile behavior are unchanged by this
-source-ownership split.
+imports accepted mainline bundles. `android/aosp-17` imports the accepted
+combined Android release and exposes its ACK ELF and boot support through a
+distinct target. Neither Apple graph can invoke a kernel or Android producer.
+
+The separate `uml-darwin-android17` target embeds that ACK ELF and the accepted
+release-manifest identity. It reads the external initramfs and static GPT from
+the installed release, maps the GPT only as a per-instance UML COW backing
+file, and does not inherit Linux desktop rootfs discovery. It has no 4 KiB
+variant.
 
 ## Apple GPU display composition
 

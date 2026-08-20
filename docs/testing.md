@@ -77,10 +77,11 @@ may differ between runs; record them as observations rather than rewriting
 metadata or requiring byte equality. Rootfs artifact authentication is limited
 to explicit provisioning and is not repeated around guest execution.
 
-Kernel paths are family/version scoped. All commands in this document select
-`kernel/mainline-6.18` explicitly; `kernel/common` supplies only the shared ABI
-and 16 KiB geometry. This ownership refactor adds no Android kernel, image,
-product, build, or acceptance workflow.
+Kernel paths are family/version scoped. Mainline commands in this document
+select `kernel/mainline-6.18` explicitly; `kernel/common` supplies only the
+shared ABI, 16 KiB geometry, and artifact contract. The separate Android 17
+producer and accepted-release workflow are documented in
+`android/aosp-17/README.md`; ACK inputs remain under `kernel/android-6.18`.
 
 ## Green checkpoints and bisectable commits
 
@@ -508,6 +509,22 @@ cmake --preset macos-integration-4k \
 when its source configuration is absent or invalid. Apple configuration does
 not read that configuration; it fails when the selected accepted artifact is
 missing, stale, wrong-family, wrong-page, or ABI-incompatible.
+
+The dedicated Android macOS product consumes only an already-installed accepted
+release and has no 4 KiB variant:
+
+```sh
+cmake --preset macos-android17
+cmake --build --preset macos-android17
+ctest --test-dir .build/presets/macos-android17 \
+  -R '^apple-shared-kernel-image-policy$' --output-on-failure
+```
+
+Configuration repeats the installed-release verification and imports its ACK
+ELF, initramfs, command line, and expanded static GPT through one read-only
+target. The executable's `--help`, `--version`, missing-path rejection, and
+Mach-O carrier inspection are host-side gates. An Android boot is a separate
+guest acceptance gate and is not implied by a successful product build.
 
 `dependencies/prepare.sh --verify` authenticates the already prepared source
 trees; it does not construct or verify the compiled dependency prefix.

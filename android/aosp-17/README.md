@@ -244,6 +244,12 @@ android/aosp-17/tools/verify-release.py \
   --installed
 ```
 
+When the dedicated Android macOS product is selected, CMake performs this
+installed-release validation during configure and exposes the accepted files
+through one read-only `uml_android17_release` interface target. It never
+declares a release payload as an output and has no source, Soong, Kbuild, or
+transport operation.
+
 Publish only from the clean copied Git checkout on the builder, after rebuilding
 the disk and initramfs from the current target-files staging directory:
 
@@ -276,3 +282,29 @@ GPT disk to 817,358,408 bytes. The workstation installer restored a sparse disk
 with approximately 1.6 GiB allocated, reverified all seven partitions, exposed
 the completed local release only after validation, and rejected a second
 installation rather than replacing it.
+
+## Separate macOS Android executable
+
+Configure and build the Android-only 16 KiB product after installing the
+accepted release:
+
+```sh
+cmake --preset macos-android17
+cmake --build --preset macos-android17
+```
+
+Launch it with the accepted release directory and a dedicated writable COW
+path whose parent already exists:
+
+```sh
+.build/presets/macos-android17/bin/uml-darwin-android17 \
+  --android-release=/absolute/path/to/.build/android/releases/accepted-directory \
+  --android-instance=/absolute/path/to/android17-instance.cow \
+  --engine=gadgets
+```
+
+The executable embeds the accepted ACK ELF and release-manifest identity. It
+rejects another release, protects release-owned boot arguments, maps the large
+installed GPT image only as the COW backing file, and binds each instance to
+the accepted release with an adjacent manifest receipt. The current
+`uml-darwin` executable and Linux desktop rootfs discovery remain separate.

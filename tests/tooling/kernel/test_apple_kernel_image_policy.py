@@ -187,6 +187,10 @@ def main() -> int:
     parser.add_argument("--simulator-script", type=Path, required=True)
     parser.add_argument("--macos-app-cmake", type=Path, required=True)
     parser.add_argument("--macos-app", type=Path, required=True)
+    parser.add_argument("--macos-linux-main", type=Path, required=True)
+    parser.add_argument("--android-cmake", type=Path, required=True)
+    parser.add_argument("--android-release-cmake", type=Path, required=True)
+    parser.add_argument("--android-main", type=Path, required=True)
     parser.add_argument("--toolchain-env", type=Path, required=True)
     arguments = parser.parse_args()
 
@@ -215,6 +219,17 @@ def main() -> int:
         and "UML_KERNEL_BUILD_DIR"
         not in configurations["macos-integration-4k"]["cacheVariables"],
         "macOS integration still exposes a Kbuild output directory",
+    )
+    android_profile = configurations["macos-android17"]
+    require(
+        android_profile["cacheVariables"]["UML_BUILD_CLI"] is False
+        and android_profile["cacheVariables"]["UML_BUILD_ANDROID17_CLI"] is True
+        and android_profile["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
+        "Android macOS product is not a distinct 16 KiB-only executable",
+    )
+    require(
+        "macos-android17-4k" not in configurations,
+        "Android product exposes a forbidden 4 KiB configure preset",
     )
     for platform in ("device", "simulator"):
         profile_16k = configurations[f"kernarium-ios-{platform}"]
@@ -449,30 +464,78 @@ def main() -> int:
     macos_app_cmake = read(arguments.macos_app_cmake)
     for contract in (
         "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
-        "get_target_property(_uml_macos_kernel_image",
-        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_macos_kernel_image}",
+        "uml_add_macos_embedded_kernel_app",
+        "get_target_property(_uml_kernel_image",
+        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}",
+        "uml-darwin linux_main.cpp",
+        "uml-darwin-android17 android17_main.cpp",
+        "LINKER:-sectcreate,__DATA,__uml_android,${_uml_android_manifest}",
     ):
         require(contract in macos_app_cmake, f"macOS app binding lacks {contract}")
-    for forbidden in ("uml_kernel", "UML_KERNEL_BUILD_DIR"):
+    for forbidden in ("TARGET uml_kernel", "UML_KERNEL_BUILD_DIR"):
         require(
             forbidden not in macos_app_cmake,
             f"macOS app binding retains producer-global input {forbidden}",
         )
 
     macos_app = read(arguments.macos_app)
+    for prefix, member in (("mem=", "memory"), ("ncpus=", "cpus")):
+        require(
+            f'prepared.kernel, "{prefix}", configuration.default_guest_{member}'
+            in macos_app,
+            f"shared macOS runner does not apply the selected {prefix} default",
+        )
+
+    macos_linux_main = read(arguments.macos_linux_main)
     for declaration in (
         'macos_default_guest_memory{"mem=8G"}',
         'macos_default_guest_cpus{"ncpus=10"}',
     ):
-        require(declaration in macos_app, f"macOS app lacks {declaration}")
-    for prefix, value in (
-        ("mem=", "macos_default_guest_memory"),
-        ("ncpus=", "macos_default_guest_cpus"),
+        require(declaration in macos_linux_main, f"Linux launcher lacks {declaration}")
+    for member, value in (
+        ("default_guest_memory", "macos_default_guest_memory"),
+        ("default_guest_cpus", "macos_default_guest_cpus"),
     ):
         require(
-            f'prepared.kernel, "{prefix}", {value}' in macos_app,
-            f"macOS app does not apply {value} only when {prefix} is absent",
+            f".{member} = {value}" in macos_linux_main,
+            f"Linux launcher does not select {value}",
         )
+
+    android_cmake = read(arguments.android_cmake)
+    android_release_cmake = read(arguments.android_release_cmake)
+    for contract in (
+        "if(NOT UML_GUEST_16K_PAGES)",
+        "UML_ANDROID17_RELEASE_DIR",
+        "uml_import_android17_release",
+    ):
+        require(contract in android_cmake, f"Android product lacks {contract}")
+    for contract in (
+        "verify-release.py",
+        "--installed",
+        'STREQUAL "android-17-ack-6.18-16k"',
+        'STREQUAL "android-6.18"',
+        "UML_KERNEL_PAGE_SIZE",
+        "UML_ANDROID_BASE_DISK",
+    ):
+        require(
+            contract in android_release_cmake,
+            f"Android release importer lacks {contract}",
+        )
+
+    android_main = read(arguments.android_main)
+    for contract in (
+        'android_default_guest_memory{"mem=4G"}',
+        'android_default_guest_cpus{"ncpus=4"}',
+        'release_option{"--android-release="}',
+        'instance_option{"--android-instance="}',
+        "section$start$__DATA$__uml_android",
+        '"ubd0=" + instance.string()',
+        '"initrd=" + (release / "boot/ramdisk.img").string()',
+        '"root=/dev/ram0"',
+        "release-owned kernel argument cannot be overridden",
+        "Android instance belongs to another accepted release",
+    ):
+        require(contract in android_main, f"Android launcher lacks {contract}")
 
     for path, source in (
         (arguments.presets, presets_source),
@@ -480,6 +543,10 @@ def main() -> int:
         (arguments.simulator_script, simulator_script),
         (arguments.macos_app_cmake, macos_app_cmake),
         (arguments.macos_app, macos_app),
+        (arguments.macos_linux_main, macos_linux_main),
+        (arguments.android_cmake, android_cmake),
+        (arguments.android_release_cmake, android_release_cmake),
+        (arguments.android_main, android_main),
         (arguments.toolchain_env, toolchain_env),
     ):
         require(
