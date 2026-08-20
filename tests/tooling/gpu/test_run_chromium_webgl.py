@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -161,6 +162,28 @@ class AquariumProbePolicyTests(unittest.TestCase):
         self.assertIn('R"AQUARIUM(', header)
         self.assertIn("Kernarium Aquarium performance probe enabled", header)
         self.assertIn(driver.build_kernarium_setup(), header)
+
+    def test_generated_setup_uses_bounded_lossless_console_lines(self) -> None:
+        setup = run_chromium_webgl.build_kernarium_setup()
+        self.assertLessEqual(
+            max(len(line.encode("utf-8")) for line in setup.splitlines()),
+            2048,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "probe.txt"
+            content = "line\n" * 4096
+            subprocess.run(
+                [
+                    "/bin/sh",
+                    "-c",
+                    run_chromium_webgl.install_text(
+                        str(destination), content, "0600"
+                    ),
+                ],
+                check=True,
+            )
+            self.assertEqual(destination.read_text(encoding="utf-8"), content)
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
 
     def test_only_unrelated_site_favicon_is_ignored(self) -> None:
         script = run_chromium_webgl.EXTENSION_SCRIPT

@@ -32,6 +32,7 @@ AQUARIUM_URL = (
 FISH_COUNT = 500
 DEFAULT_WARMUP_SECONDS = 15
 DEFAULT_SAMPLE_SECONDS = 30
+CONSOLE_BASE64_CHUNK_CHARACTERS = 1024
 EXTENSION_MANIFEST = """{
   "manifest_version": 3,
   "name": "UML Aquarium verifier",
@@ -400,11 +401,12 @@ def announced_vnc_port(console: str) -> int:
 def install_text(path: str, content: str, mode: str = "0644") -> str:
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     parent = str(Path(path).parent)
-    return (
-        f"install -d -m 0755 {parent}; "
-        f"printf '%s' '{encoded}' | base64 -d > {path}; "
-        f"chmod {mode} {path}"
-    )
+    commands = [f"install -d -m 0755 {parent}", f": > {path}"]
+    for offset in range(0, len(encoded), CONSOLE_BASE64_CHUNK_CHARACTERS):
+        chunk = encoded[offset : offset + CONSOLE_BASE64_CHUNK_CHARACTERS]
+        commands.append(f"printf '%s' '{chunk}' | base64 -d >> {path}")
+    commands.append(f"chmod {mode} {path}")
+    return "\n".join(commands)
 
 
 def build_probe_script(
