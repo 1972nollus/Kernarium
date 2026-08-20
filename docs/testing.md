@@ -662,7 +662,20 @@ python3 tests/integration/gpu/run_vk_gl_cts.py \
 
 python3 tests/integration/gpu/run_vk_gl_cts.py \
   --api gles3 --leaf gles3 --fraction 0,16
+
+python3 -B tests/integration/gpu/run_vk_gl_cts.py --inventory
 ```
+
+`--inventory` is a fail-closed display-backed diagnostic. It asks the exact
+installed multi-package `glcts` binary for package-specific text exports,
+combines them only in the disposable guest, and egresses a small strict report
+containing completion state, raw caselist SHA-256, executable-case count, and
+registered modules. A zero CTS exit and nonempty complete export are required
+before the host accepts that identity. On the current natural GL 2.1/GLES 3.0
+common path, the command is expected to exit nonzero: enumeration reaches
+`dEQP-GL45-ES3`, whose context initialization returns `EGL_BAD_MATCH`.
+Partial module/count/digest data is retained only as diagnostic evidence and
+must not populate `vk_gl_cts_identity.json`.
 
 Kernarium accepts no arbitrary CTS script or selector. The checked Apple
 campaign document currently names one exact GLES 3 sentinel; CMake generates
@@ -722,7 +735,10 @@ The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
 transcript must contain its exact backend marker and any CGL marker is fatal.
 `--qualification` still refuses to run while the frozen identity lacks an
-authoritative CTS build receipt and a complete display-backed caselist. See
+authoritative CTS build receipt and a complete display-backed caselist. The
+automated inventory attempt above proves that the latter currently fails at
+an unsupported package-context request; it does not authorize skipping that
+module or freezing the partial export. See
 [`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md); do not work around the block by
 changing, rebuilding, overlaying, or preloading guest userspace.
 

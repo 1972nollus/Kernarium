@@ -58,12 +58,17 @@ repackaged, and three consecutive Simulator plus three connected-iPad exact
 sentinels passed and powered off without the warning. A focused tooling test
 pins the kernel ordering, while adapter validation rejects the old signature
 and any missing clean-stop marker. The broader lifecycle gate remains open
-alongside the full capset/fixed-sentinel selection, display-backed complete
-caselist, complete matrices, performance, thermal, and presentation campaigns.
-Qualification is still fail-closed because no authoritative receipt ties the
-installed CTS binaries to the co-located source. Phase 3 and later profile work
-must not start until the lower shared baseline is measured and qualified or
-its exact blocker is accepted.
+alongside the full capset/fixed-sentinel selection, complete matrices,
+performance, thermal, and presentation campaigns. A new fail-closed
+display-backed inventory mode exercised the rebuilt common emulator and the
+exact installed `glcts`: eight module hierarchies exported, but enumeration
+aborted at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` because package traversal
+creates an unsupported context. Its partial 148,476-case report is diagnostic
+only, and all complete-caselist identity fields remain null. Qualification is
+also fail-closed because no authoritative receipt ties the installed CTS
+binaries to the co-located source. Phase 3 and later profile work must not
+start until the lower shared baseline is measured and qualified or these exact
+blockers are accepted.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

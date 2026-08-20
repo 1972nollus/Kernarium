@@ -78,6 +78,38 @@ class VkGlCtsToolingTests(unittest.TestCase):
             self.assertRegex(leaf.sha256, r"^[0-9a-f]{64}$")
             self.assertTrue(leaf.path.startswith("/opt/vk-gl-cts/"))
 
+    def test_complete_inventory_identity_is_exact_and_fail_closed(self) -> None:
+        identity = json.loads(json.dumps(cts.load_identity()))
+        digest = hashlib.sha256(b"complete caselist\n").hexdigest()
+        payload = f"""schema_version=1
+complete=1
+exported_package_count=2
+complete_caselist_sha256={digest}
+complete_caselist_case_count=2
+registered_module=KHR-GLES2
+registered_module=KHR-GLES3
+""".encode()
+        count, parsed_digest, modules, packages = cts.validate_inventory_report(
+            payload, identity
+        )
+        self.assertEqual(count, 2)
+        self.assertEqual(parsed_digest, digest)
+        self.assertEqual(modules, ["KHR-GLES2", "KHR-GLES3"])
+        self.assertEqual(packages, 2)
+
+        identity["cts"]["complete_caselist_sha256"] = digest
+        identity["cts"]["complete_caselist_case_count"] = count
+        identity["cts"]["registered_modules"] = modules
+        cts.validate_inventory_report(payload, identity)
+        with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
+            cts.validate_inventory_report(
+                payload.replace(digest.encode(), b"0" * 64), identity
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "not complete"):
+            cts.validate_inventory_report(
+                payload.replace(b"complete=1", b"complete=0"), identity
+            )
+
     def test_typed_fraction_and_exact_case_reject_shell_input(self) -> None:
         self.assertEqual(cts.parse_fraction("0,8"), (0, 8))
         with self.assertRaises(Exception):
@@ -229,6 +261,13 @@ Kernarium: runtime returned 0
             ios_cts.common.validate_clean_shutdown(
                 clean + "Memory manager not clean during takedown.\n"
             )
+        cts.validate_guest_shutdown(clean)
+        with self.assertRaisesRegex(cts.CampaignError, "clean Darwin"):
+            cts.validate_guest_shutdown("")
+        with self.assertRaisesRegex(cts.CampaignError, "memory manager"):
+            cts.validate_guest_shutdown(
+                clean + "Memory manager not clean during takedown.\n"
+            )
 
     def test_artifact_frames_round_trip_and_tolerate_console_prefixes(self) -> None:
         transcript = "".join(
@@ -341,6 +380,30 @@ Kernarium: runtime returned 0
             check=False,
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    def test_inventory_launcher_uses_real_display_and_no_case_selector(self) -> None:
+        launcher = cts.build_guest_launcher(None, 0, 900, 16384)
+        self.assertIn("--deqp-runmode=txt-caselist", launcher)
+        self.assertIn(
+            "'--deqp-caselist-export-file=/run/uml-cts/${packageName}-cases."
+            "${typeExtension}'",
+            launcher,
+        )
+        self.assertIn("--deqp-duplicate-case-name-check=enable", launcher)
+        self.assertIn("--deqp-log-filename=/run/uml-cts/results.qpa", launcher)
+        self.assertNotIn("--deqp-caselist-file=", launcher)
+        self.assertIn('cat "$package_caselist" >> "$selected"', launcher)
+        self.assertIn('emit_artifact inventory.txt "$inventory_report"', launcher)
+        self.assertIn("x11_server=xwayland", launcher)
+        self.assertIn("systemctl poweroff", launcher)
+        options = cts.parse_arguments(["--inventory", "--dry-run"])
+        self.assertTrue(options.inventory)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            cts.parse_arguments(
+                ["--inventory", "--leaf", "gles3", "--api", "gles3"]
+            )
 
     def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
         generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"

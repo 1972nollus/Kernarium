@@ -51,9 +51,13 @@ import boot_kde_vnc  # noqa: E402
 
 MAX_COMPRESSED_ARTIFACT = 64 * 1024 * 1024
 MAX_UNCOMPRESSED_ARTIFACT = 512 * 1024 * 1024
-ALLOWED_ARTIFACTS = frozenset(
+SHARD_ARTIFACTS = frozenset(
     {"renderer.txt", "results.qpa", "selected.txt", "summary.txt"}
 )
+INVENTORY_ARTIFACTS = frozenset(
+    {"inventory.txt", "renderer.txt", "results.qpa", "summary.txt"}
+)
+ALLOWED_ARTIFACTS = SHARD_ARTIFACTS | INVENTORY_ARTIFACTS
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -75,6 +79,8 @@ RESULT_CASE = re.compile(r"<TestCaseResult\b[^>]*\bCasePath=\"([^\"]+)\"")
 GUEST_ERROR = re.compile(r"UML_CTS_ERROR: ([^\r\n]+)")
 HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
 RETIRED_BACKEND_MARKER = "Virgl CGL"
+DARWIN_CLEAN_STOP = "Darwin UML stopped: result=0 exitcode=0"
+DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
 
 
 class CampaignError(RuntimeError):
@@ -318,6 +324,67 @@ def select_fraction(cases: Sequence[str], index: int, count: int) -> list[str]:
     return selected
 
 
+def validate_inventory_report(
+    payload: bytes,
+    identity: dict[str, Any],
+) -> tuple[int, str, list[str], int]:
+    text = payload.decode("utf-8", errors="strict")
+    values: dict[str, str] = {}
+    modules: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        key, separator, value = line.partition("=")
+        if not separator or not value:
+            raise CampaignError(f"invalid CTS inventory row at line {line_number}")
+        if key == "registered_module":
+            if CASE_NAME.fullmatch(value) is None or "." in value:
+                raise CampaignError(f"invalid registered module at line {line_number}")
+            modules.append(value)
+            continue
+        if key not in {
+            "schema_version",
+            "complete",
+            "exported_package_count",
+            "complete_caselist_sha256",
+            "complete_caselist_case_count",
+        }:
+            raise CampaignError(f"unknown CTS inventory key: {key}")
+        if key in values:
+            raise CampaignError(f"duplicate CTS inventory key: {key}")
+        values[key] = value
+    required = {
+        "schema_version",
+        "complete",
+        "exported_package_count",
+        "complete_caselist_sha256",
+        "complete_caselist_case_count",
+    }
+    if set(values) != required:
+        raise CampaignError("CTS inventory report is incomplete")
+    if values["schema_version"] != "1" or values["complete"] != "1":
+        raise CampaignError("CTS inventory report is not complete")
+    if not values["exported_package_count"].isdigit():
+        raise CampaignError("CTS inventory package count is invalid")
+    package_count = int(values["exported_package_count"])
+    if not values["complete_caselist_case_count"].isdigit():
+        raise CampaignError("CTS inventory case count is invalid")
+    case_count = int(values["complete_caselist_case_count"])
+    digest = values["complete_caselist_sha256"]
+    if package_count < 1 or case_count < 1 or SHA256.fullmatch(digest) is None:
+        raise CampaignError("CTS inventory identity is invalid")
+    if not modules or modules != sorted(set(modules)):
+        raise CampaignError("registered CTS module set is not sorted and unique")
+    frozen_digest = identity["cts"]["complete_caselist_sha256"]
+    frozen_count = identity["cts"]["complete_caselist_case_count"]
+    frozen_modules = identity["cts"]["registered_modules"]
+    if frozen_digest is not None and frozen_digest != digest:
+        raise CampaignError("complete CTS caselist identity changed")
+    if frozen_count is not None and frozen_count != case_count:
+        raise CampaignError("complete CTS caselist count changed")
+    if frozen_modules is not None and frozen_modules != modules:
+        raise CampaignError("registered CTS module set changed")
+    return case_count, digest, modules, package_count
+
+
 def parse_qpa(text: str) -> dict[str, str]:
     if text.count("#beginSession") != 1:
         raise CampaignError("QPA does not contain exactly one session start")
@@ -446,6 +513,15 @@ def validate_host_backend(transcript: str) -> None:
         raise CampaignError("common ANGLE/Metal host-provider marker is missing")
 
 
+def validate_guest_shutdown(transcript: str) -> None:
+    if DIRTY_DRM_SHUTDOWN in transcript:
+        raise CampaignError(
+            "Virtio-GPU memory manager was not clean during guest shutdown"
+        )
+    if DARWIN_CLEAN_STOP not in transcript:
+        raise CampaignError("campaign omitted the clean Darwin guest stop marker")
+
+
 def artifact_marker(line: str) -> str | None:
     offset = line.find("UML_CTS_ARTIFACT_")
     if offset < 0:
@@ -553,7 +629,7 @@ def install_text(path: str, content: str, mode: str = "0644") -> str:
 
 
 def build_guest_launcher(
-    selection: Selection,
+    selection: Selection | None,
     seed: int,
     timeout: int,
     guest_page_size: int,
@@ -565,23 +641,71 @@ def build_guest_launcher(
     qpa = f"{output}/results.qpa"
     renderer = f"{output}/renderer.txt"
     summary = f"{output}/summary.txt"
-    command = [
-        glcts,
-        "--deqp-gl-context-type=egl",
-        f"--deqp-caselist-file={selected}",
-        f"--deqp-archive-dir={archive}",
-        "--deqp-watchdog=disable",
-        "--deqp-crashhandler=disable",
-        "--deqp-test-oom=disable",
-        "--deqp-log-images=disable",
-        "--deqp-log-shader-sources=disable",
-        "--deqp-log-flush=enable",
-        "--deqp-terminate-on-fail=disable",
-        f"--deqp-base-seed={seed}",
-        f"--deqp-log-filename={qpa}",
-    ]
+    inventory_report = f"{output}/inventory.txt"
+    inventory = selection is None
+    if inventory:
+        export_pattern = f"{output}/${{packageName}}-cases.${{typeExtension}}"
+        command = [
+            glcts,
+            "--deqp-runmode=txt-caselist",
+            f"--deqp-caselist-export-file={export_pattern}",
+            f"--deqp-archive-dir={archive}",
+            "--deqp-gl-context-type=egl",
+            "--deqp-duplicate-case-name-check=enable",
+            f"--deqp-log-filename={qpa}",
+        ]
+    else:
+        command = [
+            glcts,
+            "--deqp-gl-context-type=egl",
+            f"--deqp-caselist-file={selected}",
+            f"--deqp-archive-dir={archive}",
+            "--deqp-watchdog=disable",
+            "--deqp-crashhandler=disable",
+            "--deqp-test-oom=disable",
+            "--deqp-log-images=disable",
+            "--deqp-log-shader-sources=disable",
+            "--deqp-log-flush=enable",
+            "--deqp-terminate-on-fail=disable",
+            f"--deqp-base-seed={seed}",
+            f"--deqp-log-filename={qpa}",
+        ]
     quoted_command = " \\\n    ".join(shlex.quote(argument) for argument in command)
-    if selection.exact_case is None:
+    leaf_path = "" if inventory else selection.leaf.path
+    leaf_identity_check = ""
+    prepare_command = ""
+    post_run_command = ""
+    if inventory:
+        post_run_command = """
+LC_ALL=C
+export LC_ALL
+: > "$selected"
+exported_packages=0
+for package_caselist in "$output"/*-cases.txt; do
+    [ -f "$package_caselist" ] || continue
+    cat "$package_caselist" >> "$selected"
+    exported_packages=$((exported_packages + 1))
+done
+if [ "$status" -eq 0 ] && { [ "$exported_packages" -eq 0 ] || [ ! -s "$selected" ]; }; then
+    echo 'UML_CTS_ERROR: complete text caselist export is empty'
+    status=1
+fi
+complete=0
+[ "$status" -ne 0 ] || complete=1
+caselist_digest=$(sha256sum "$selected" | cut -d ' ' -f 1)
+caselist_count=$(awk '$1 == "TEST:" { count++ } END { print count + 0 }' "$selected")
+{
+    printf 'schema_version=1\n'
+    printf 'complete=%s\n' "$complete"
+    printf 'exported_package_count=%s\n' "$exported_packages"
+    printf 'complete_caselist_sha256=%s\n' "$caselist_digest"
+    printf 'complete_caselist_case_count=%s\n' "$caselist_count"
+    awk '$1 == "TEST:" || $1 == "GROUP:" { split($2, part, "."); print part[1] }' "$selected" |
+        sort -u | sed 's/^/registered_module=/'
+} > "$inventory_report"
+chown uml:uml "$inventory_report" "$renderer"
+"""
+    elif selection.exact_case is None:
         selection_command = (
             "awk -v index="
             f"{selection.fraction_index} -v count={selection.fraction_count} "
@@ -595,15 +719,34 @@ def build_guest_launcher(
             "echo 'UML_CTS_ERROR: exact case is absent from selected must-pass leaf'; "
             "exit 1; fi"
         )
+    if not inventory:
+        leaf_identity_check = f"""
+actual_leaf_sha=$(sha256sum "$leaf" | cut -d ' ' -f 1)
+[ "$actual_leaf_sha" = {shlex.quote(selection.leaf.sha256)} ] || {{
+    echo 'UML_CTS_ERROR: selected must-pass leaf identity changed'
+    exit 1
+}}
+"""
+        prepare_command = f"""
+{selection_command}
+selected_count=$(grep -Evc '^[[:space:]]*(#|$)' "$selected")
+[ "$selected_count" -eq {selection.expected_count} ] || {{
+    echo "UML_CTS_ERROR: selected $selected_count cases, expected {selection.expected_count}"
+    exit 1
+}}
+chown uml:uml "$selected" "$renderer"
+"""
 
     return f"""#!/bin/sh
 set -eu
 output={shlex.quote(output)}
-leaf={shlex.quote(selection.leaf.path)}
+leaf={shlex.quote(leaf_path)}
 selected={shlex.quote(selected)}
 qpa={shlex.quote(qpa)}
 renderer={shlex.quote(renderer)}
 summary={shlex.quote(summary)}
+inventory_report={shlex.quote(inventory_report)}
+inventory_mode={1 if inventory else 0}
 status=1
 
 emit_artifact()
@@ -636,7 +779,11 @@ finish()
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
     emit_artifact renderer.txt "$renderer"
-    emit_artifact selected.txt "$selected"
+    if [ "$inventory_mode" -eq 1 ]; then
+        emit_artifact inventory.txt "$inventory_report"
+    else
+        emit_artifact selected.txt "$selected"
+    fi
     emit_artifact results.qpa "$qpa"
     emit_artifact summary.txt "$summary"
     sync
@@ -651,11 +798,7 @@ actual_page_size=$(getconf PAGESIZE)
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" >> "$renderer"
-actual_leaf_sha=$(sha256sum "$leaf" | cut -d ' ' -f 1)
-[ "$actual_leaf_sha" = {shlex.quote(selection.leaf.sha256)} ] || {{
-    echo 'UML_CTS_ERROR: selected must-pass leaf identity changed'
-    exit 1
-}}
+{leaf_identity_check}
 actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
 [ "$actual_glcts_sha" = b74aa4337f7225bceb0f81ccad1da96f391efde5591f18030b614b8f5380c664 ] || {{
     echo 'UML_CTS_ERROR: glcts identity changed'
@@ -730,13 +873,7 @@ if grep -Eiq 'llvmpipe|softpipe|swrast|software rasterizer|zink|xvfb' "$renderer
     exit 1
 fi
 
-{selection_command}
-selected_count=$(grep -Evc '^[[:space:]]*(#|$)' "$selected")
-[ "$selected_count" -eq {selection.expected_count} ] || {{
-    echo "UML_CTS_ERROR: selected $selected_count cases, expected {selection.expected_count}"
-    exit 1
-}}
-chown uml:uml "$selected" "$renderer"
+{prepare_command}
 
 set +e
 runuser -u uml -- env \
@@ -747,6 +884,7 @@ runuser -u uml -- env \
     {quoted_command}
 status=$?
 set -e
+{post_run_command}
 exit "$status"
 """
 
@@ -770,7 +908,7 @@ WantedBy=graphical.target
 
 def build_harness_command(
     options: argparse.Namespace,
-    selection: Selection,
+    selection: Selection | None,
     artifact_directory: Path,
 ) -> list[str]:
     launcher_arguments = [
@@ -889,16 +1027,20 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(
         description="run a bounded in-image VK-GL-CTS shard through Virgl"
     )
-    parser.add_argument("--leaf", required=True, choices=sorted(leaves))
+    parser.add_argument(
+        "--inventory",
+        action="store_true",
+        help="capture the complete display-backed glcts text caselist",
+    )
+    parser.add_argument("--leaf", choices=sorted(leaves))
     parser.add_argument(
         "--api",
-        required=True,
         choices=sorted({api_for_leaf(identifier) for identifier in leaves}),
     )
     parser.add_argument("--context", choices=("egl",), default="egl")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--case", type=exact_case)
-    selection.add_argument("--fraction", type=parse_fraction, default=(0, 1))
+    selection.add_argument("--fraction", type=parse_fraction)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
@@ -919,8 +1061,22 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
-    if api_for_leaf(options.leaf) != options.api:
-        parser.error(f"--leaf {options.leaf} does not belong to --api {options.api}")
+    if options.inventory:
+        if options.leaf is not None or options.api is not None:
+            parser.error("--inventory does not accept --leaf or --api")
+        if options.case is not None or options.fraction is not None:
+            parser.error("--inventory does not accept a case or fraction")
+        if options.qualification:
+            parser.error("inventory capture is diagnostic, not qualification")
+    else:
+        if options.leaf is None or options.api is None:
+            parser.error("a developer shard requires --leaf and --api")
+        if api_for_leaf(options.leaf) != options.api:
+            parser.error(
+                f"--leaf {options.leaf} does not belong to --api {options.api}"
+            )
+    if options.fraction is None:
+        options.fraction = (0, 1)
     if options.seed < 0 or options.seed > 0xFFFFFFFF:
         parser.error("--seed must be between 0 and 4294967295")
     if options.qualification and not identity["cts"]["qualification_ready"]:
@@ -939,14 +1095,19 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     fraction_index, fraction_count = options.fraction
-    leaf = options.leaves[options.leaf]
-    selection = Selection(leaf, options.case, fraction_index, fraction_count)
-    if selection.expected_count < 1:
-        raise CampaignError("selected fraction contains no cases")
+    leaf: LeafIdentity | None = None
+    selection: Selection | None = None
+    suffix = "inventory"
+    if not options.inventory:
+        leaf = options.leaves[options.leaf]
+        selection = Selection(leaf, options.case, fraction_index, fraction_count)
+        if selection.expected_count < 1:
+            raise CampaignError("selected fraction contains no cases")
+        suffix = options.leaf
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{options.leaf}"
+        f"{timestamp}-{os.getpid()}-{options.page_profile}-{suffix}"
     )
     command = build_harness_command(options, selection, artifact_directory)
     if options.dry_run:
@@ -992,18 +1153,31 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "cpus": options.cpus,
         "display": options.display,
         "surface": [options.width, options.height],
-        "api": options.api,
         "context": options.context,
-        "leaf": options.leaf,
-        "leaf_sha256": leaf.sha256,
-        "fraction": [fraction_index, fraction_count],
-        "exact_case": options.case,
-        "expected_cases": selection.expected_count,
-        "seed": options.seed,
+        "mode": "inventory" if options.inventory else "shard",
         "rootfs_sha256": rootfs_identity["sha256"],
         "qualification": options.qualification,
         "command": command,
     }
+    if options.inventory:
+        metadata["expected_artifacts"] = [
+            "inventory.txt",
+            "renderer.txt",
+            "results.qpa",
+            "summary.txt",
+        ]
+    else:
+        metadata.update(
+            {
+                "api": options.api,
+                "leaf": options.leaf,
+                "leaf_sha256": leaf.sha256,
+                "fraction": [fraction_index, fraction_count],
+                "exact_case": options.case,
+                "expected_cases": selection.expected_count,
+                "seed": options.seed,
+            }
+        )
     write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
     with log_path.open("wb") as log:
@@ -1016,38 +1190,65 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if process.returncode != 0:
         raise CampaignError(f"guest harness exited with status {process.returncode}")
     validate_host_backend(transcript)
+    validate_guest_shutdown(transcript)
     artifacts = decode_artifacts(transcript)
-    required = ALLOWED_ARTIFACTS - set(artifacts)
+    required_artifacts = INVENTORY_ARTIFACTS if options.inventory else SHARD_ARTIFACTS
+    required = required_artifacts - set(artifacts)
     if required:
         guest_errors = GUEST_ERROR.findall(transcript)
         if guest_errors:
             raise CampaignError(f"guest campaign failed: {guest_errors[-1]}")
         raise CampaignError(f"campaign omitted artifacts: {sorted(required)!r}")
+    unexpected = set(artifacts) - required_artifacts
+    if unexpected:
+        raise CampaignError(
+            f"campaign emitted unexpected artifacts: {sorted(unexpected)!r}"
+        )
     output_directory = artifact_directory / "artifacts"
     write_artifacts(artifacts, output_directory)
     renderer_text = artifacts["renderer.txt"].decode("utf-8", errors="strict")
-    selected_text = artifacts["selected.txt"].decode("utf-8", errors="strict")
-    qpa_text = artifacts["results.qpa"].decode("utf-8", errors="strict")
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     validate_renderer_probe(
         renderer_text,
         16384 if options.page_profile == "16k" else 4096,
     )
-    selected_cases = parse_case_list(selected_text)
-    if len(selected_cases) != selection.expected_count:
-        raise CampaignError("egressed caselist count changed")
-    results = validate_qpa_union(qpa_text, selected_cases)
     if summary_text.strip() != "cts_rc=0":
         raise CampaignError(f"CTS process failed: {summary_text.strip()}")
+    if options.inventory:
+        case_count, caselist_digest, modules, package_count = validate_inventory_report(
+            artifacts["inventory.txt"], options.identity
+        )
+        metadata.update(
+            {
+                "emulator_return_code": process.returncode,
+                "complete_caselist_case_count": case_count,
+                "complete_caselist_sha256": caselist_digest,
+                "exported_package_count": package_count,
+                "registered_modules": modules,
+            }
+        )
+        write_json(artifact_directory / "run.json", metadata)
+        print(
+            f"VK-GL-CTS inventory captured {case_count} cases "
+            f"from {len(modules)} modules"
+        )
+        print(f"Artifacts: {artifact_directory}")
+        return 0
+
+    selected_text = artifacts["selected.txt"].decode("utf-8", errors="strict")
+    selected_cases = parse_case_list(selected_text)
+    selected_digest = hashlib.sha256(artifacts["selected.txt"]).hexdigest()
+    if len(selected_cases) != selection.expected_count:
+        raise CampaignError("egressed caselist count changed")
+    qpa_text = artifacts["results.qpa"].decode("utf-8", errors="strict")
+    results = validate_qpa_union(qpa_text, selected_cases)
     totals = status_totals(results)
     metadata.update(
         {
             "emulator_return_code": process.returncode,
             "completed_cases": len(results),
             "status_totals": totals,
-            "selected_caselist_sha256": hashlib.sha256(
-                artifacts["selected.txt"]
-            ).hexdigest(),
+            "selected_caselist_sha256": selected_digest,
             "qpa_sha256": hashlib.sha256(artifacts["results.qpa"]).hexdigest(),
         }
     )

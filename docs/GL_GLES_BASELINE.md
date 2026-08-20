@@ -28,8 +28,8 @@ dirty DRM manager teardown; maintained kernel topic 0020 now shuts atomic
 Virtio-GPU state down before unplug. Both LLVM 22 page-profile kernels rebuilt,
 and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
-missing clean-stop markers. The complete identity/capset sentinel, caselist
-export, complete matrices, performance, thermal, and sustained lifecycle
+missing clean-stop markers. The complete identity/capset sentinel, complete
+caselist identity, matrices, performance, thermal, and sustained lifecycle
 campaigns remain outstanding. The authoritative CTS build receipt is still
 missing, so qualification remains fail-closed and no rootfs or guest-userspace
 change is authorized.
@@ -112,13 +112,24 @@ also has no Git metadata. Therefore:
 - any proposal to change the image or CTS inputs requires explicit user
   direction first.
 
-A complete text-caselist export also remains pending. `glcts` initializes its
-X11 platform before it can finish that export; the pre-migration CGL product
-is not rerun or preserved merely to obtain it. Although the common
-ANGLE/Metal path now builds, its display-backed guest export has not yet been
-run to completion. Until the registered-module list, digest, and count are
-frozen, the corresponding JSON fields stay `null` and promotion remains
-disabled.
+A complete text-caselist identity also remains unavailable, now with a
+reproducible display-backed blocker. The repository runner's `--inventory`
+mode uses the installed binary's package-aware export pattern, concatenates
+the transient package files in C-locale order, and records only a strict
+digest/count/module report after a zero exit. On the rebuilt 16 KiB common
+ANGLE/Metal emulator, the exact binary exported eight nonempty module
+hierarchies and began `dEQP-GL45-ES3`, then aborted with
+`EGL_BAD_MATCH` from `eglCreateContext()`. The partial diagnostic contains
+148,476 `TEST:` rows across `CTS-Configs`, `dEQP-EGL`, `KHR-GLES2`,
+`dEQP-GLES2`, `KHR-GLES3`, `dEQP-GLES3`, `dEQP-GLES31`, and
+`dEQP-GL45-ES31`; its raw concatenated digest is
+`dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
+It is explicitly `complete=0`, exited 137, and is not a frozen identity. The
+guest nevertheless powered off cleanly, with evidence at
+`.build/vk-gl-cts/20260821-032519-85656-16k-inventory`. Because the fixed
+GL 2.1/GLES 3.0 renderer cannot create every context demanded during this
+multi-package enumeration, the complete digest, count, and module fields in
+the JSON remain `null` and promotion remains disabled.
 
 ## Frozen campaign and performance policy
 

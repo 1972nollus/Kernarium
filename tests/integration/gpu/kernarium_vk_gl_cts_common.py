@@ -111,10 +111,15 @@ def validate_transcript(
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
     artifacts = cts.decode_artifacts(transcript)
-    required = cts.ALLOWED_ARTIFACTS - set(artifacts)
+    required = cts.SHARD_ARTIFACTS - set(artifacts)
     if required:
         raise cts.CampaignError(
             f"Kernarium campaign omitted artifacts: {sorted(required)!r}"
+        )
+    unexpected = set(artifacts) - cts.SHARD_ARTIFACTS
+    if unexpected:
+        raise cts.CampaignError(
+            f"Kernarium campaign emitted unexpected artifacts: {sorted(unexpected)!r}"
         )
     renderer_text = artifacts["renderer.txt"].decode("utf-8", errors="strict")
     selected_text = artifacts["selected.txt"].decode("utf-8", errors="strict")

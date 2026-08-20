@@ -28,7 +28,11 @@ runtime builds, and XCFramework packaging pass.
 
 Phase 0 remains intentionally incomplete at its external evidence boundary:
 the installed CTS binaries have no recovered authoritative source/build
-receipt and the complete display-backed caselist has not been captured. Phase
+receipt. The complete display-backed caselist capture is now automated and
+was attempted on the common path, but the multi-package binary creates a
+package context while enumerating and aborts at `dEQP-GL45-ES3` with
+`EGL_BAD_MATCH` after eight modules on the natural GL 2.1/GLES 3.0 renderer.
+The incomplete report is rejected and the frozen identity remains null. Phase
 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
@@ -791,8 +795,12 @@ connected-iPad runs, with matching renderer and selected-caselist identities,
 guest/runtime status zero, and clean poweroff. Topic 0020 repaired the first
 iPad run's intermittent dirty DRM teardown, and transcript validation now
 fails closed on its signature or missing clean-stop markers. The complete
-sentinel, caselist, performance, thermal, and sustained lifecycle baselines
-remain missing, so this exit remains open.
+sentinel, performance, thermal, and sustained lifecycle baselines remain
+missing. The complete caselist attempt also fails closed at
+`dEQP-GL45-ES3` because text enumeration creates an unsupported context; no
+partial digest/count/module set was promoted. Together with the absent
+authoritative CTS receipt, this keeps the exit open without a rootfs or guest
+userspace change.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
@@ -1366,8 +1374,11 @@ was repaired in maintained kernel topic 0020 and followed by three clean
 Simulator plus three clean iPad repetitions, with fail-closed transcript
 validation. The incomplete identity/capset sentinel and matrices, absent
 performance/thermal/sustained-lifecycle campaigns, and missing authoritative
-CTS receipt still prevent any new shared capability or conformance claim. The
-committed shared target remains the direct-hardware ANGLE/Metal GL 2.1/GLES
+CTS receipt still prevent any new shared capability or conformance claim. A
+display-backed complete-caselist attempt additionally stops at
+`dEQP-GL45-ES3` with `EGL_BAD_MATCH`; its partial result remains diagnostic
+and the complete identity fields remain null. The committed shared target
+remains the direct-hardware ANGLE/Metal GL 2.1/GLES
 3.0 baseline candidate and becomes the performance baseline only after Phase
 2 passes. GLES 3.1 and desktop GL 3.0/3.1 are conditional stretch ceilings,
 and GLES/GL 3.2+ plus GL 4.x are not planned claims.
