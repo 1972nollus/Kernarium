@@ -450,6 +450,10 @@ def artifact_marker(line: str) -> str | None:
     offset = line.find("UML_CTS_ARTIFACT_")
     if offset < 0:
         return None
+    if offset != 0:
+        prefix = line[:offset]
+        if not prefix[-1].isspace() or not prefix.rstrip().endswith(":"):
+            return None
     return line[offset:].strip()
 
 

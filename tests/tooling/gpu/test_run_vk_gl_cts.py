@@ -225,6 +225,21 @@ OpenGL renderer string: virgl (Apple GPU)
             {"results.qpa": b"qpa payload"},
         )
 
+    def test_artifact_frames_ignore_echoed_launcher_source(self) -> None:
+        transcript = (
+            "    printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s\\n'\n"
+            + framed_artifact("results.qpa", b"qpa payload")
+        )
+        self.assertEqual(
+            cts.decode_artifacts(transcript),
+            {"results.qpa": b"qpa payload"},
+        )
+
+        with self.assertRaisesRegex(cts.CampaignError, "malformed"):
+            cts.decode_artifacts(
+                "[  10.0] service: UML_CTS_ARTIFACT_BROKEN|results.qpa\n"
+            )
+
     def test_artifact_frames_reject_path_checksum_and_chunk_failures(self) -> None:
         unsafe = framed_artifact("../results.qpa", b"payload")
         with self.assertRaisesRegex(cts.CampaignError, "unsafe"):
