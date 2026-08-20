@@ -176,6 +176,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
         if (!validStreamHeader(parameters.header))
             return status(protocol::Status::badMessage, responseCapacity);
         if (state_ == StreamState::running ||
+            state_ == StreamState::stopped ||
             parameters.bufferBytes == 0 || parameters.periodBytes == 0 ||
             parameters.bufferBytes > protocol::maximumBufferBytes ||
             parameters.bufferBytes % parameters.periodBytes != 0 ||
@@ -213,8 +214,12 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
             return status(protocol::Status::badMessage, responseCapacity);
         const auto command = static_cast<protocol::Request>(header.code);
         if (command == protocol::Request::pcmPrepare) {
-            if (state_ != StreamState::configured || !sink_->prepare())
+            if ((state_ != StreamState::configured &&
+                 state_ != StreamState::prepared &&
+                 state_ != StreamState::released) ||
+                !sink_->prepare()) {
                 return status(protocol::Status::ioError, responseCapacity);
+            }
             state_ = StreamState::prepared;
         } else if (command == protocol::Request::pcmStart) {
             if ((state_ != StreamState::prepared &&
@@ -229,11 +234,12 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
             sink_->stop();
             state_ = StreamState::stopped;
         } else {
-            if (state_ == StreamState::unconfigured)
+            if (state_ != StreamState::prepared &&
+                state_ != StreamState::stopped) {
                 return status(protocol::Status::ioError, responseCapacity);
+            }
             sink_->release();
-            parameters_ = {};
-            state_ = StreamState::unconfigured;
+            state_ = StreamState::released;
         }
         return status(protocol::Status::ok, responseCapacity);
     }

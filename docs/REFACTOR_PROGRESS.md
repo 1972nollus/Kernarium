@@ -21,6 +21,18 @@ its 19 topics were rebased and regenerated with Git, producing final tree
 `f78217b082f6becb8af1656bcc69521307eb729b`. Focused tooling and a fresh
 case-sensitive replay without compilation passed.
 
+## Desktop PipeWire userspace requirement (2026-08-19)
+
+The host and kernel audio paths were present in a standard KDE boot, but the
+current unified image has PipeWire/Pulse without a session manager and exposed
+only Plasma's dummy output. A static sink/router experiment proved a PulseAudio
+tone could reach the host, but it was reverted because device discovery and
+routing belong to a packaged guest session manager. The authenticated rootfs
+must add WirePlumber or an equivalent supported package; the macOS KDE and
+Kernarium overlays do not synthesize that policy. The retained host PCM state
+machine fix accepts VirtIO's repeatable SET_PARAMS/PREPARE transitions and
+PREPARE after RELEASE, which the protocol test pins.
+
 ## Apple Virtio Sound playback (2026-08-18)
 
 The macOS CLI and both Kernarium iOS products now share an in-process standard

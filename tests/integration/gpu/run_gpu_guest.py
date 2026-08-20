@@ -12,13 +12,17 @@ import io
 import json
 import os
 from pathlib import Path
+import pty
 import select
 import shlex
 import signal
+import socket
+import stat
 import subprocess
 import sys
 import tarfile
 import time
+import tty
 from typing import Any, BinaryIO, Sequence
 
 
@@ -30,6 +34,8 @@ PASS_MARKER = "UML_GPU_OVERLAY_TEST: PASS"
 FAIL_MARKER = "UML_GPU_OVERLAY_TEST: FAIL"
 DOCKER_HELLO_WORLD_IMAGE = "uml/hello-world:local"
 MAX_DOCKER_HELLO_WORLD_SIZE = 1024 * 1024
+MAX_SERIAL_CLIENT_BACKLOG = 1024 * 1024
+MAX_SERIAL_INPUT_BACKLOG = 1024 * 1024
 PROTECTED_ARGUMENTS = (
     "ubd0",
     "root=",
@@ -43,6 +49,107 @@ PROTECTED_ARGUMENTS = (
 
 class SafetyError(RuntimeError):
     """Raised when a boot could risk modifying the base image."""
+
+
+class SerialConsoleSocket:
+    """One reconnectable Unix client for the runner-owned serial stream."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.client: socket.socket | None = None
+        self.output = bytearray()
+        self._identity: tuple[int, int] | None = None
+        if path.exists() or path.is_symlink():
+            self.listener.close()
+            raise SafetyError(f"serial socket path already exists: {path}")
+        if not path.parent.is_dir():
+            self.listener.close()
+            raise SafetyError(
+                f"serial socket parent is not a directory: {path.parent}"
+            )
+        try:
+            self.listener.bind(str(path))
+            details = path.lstat()
+            self._identity = (details.st_dev, details.st_ino)
+            self.listener.listen(1)
+            self.listener.setblocking(False)
+        except OSError as error:
+            self.close()
+            raise SafetyError(f"cannot create serial socket {path}: {error}") from error
+
+    def close_client(self) -> None:
+        if self.client is not None:
+            self.client.close()
+            self.client = None
+        self.output.clear()
+
+    def accept(self, history: bytes) -> None:
+        try:
+            client, _ = self.listener.accept()
+        except BlockingIOError:
+            return
+        client.setblocking(False)
+        self.close_client()
+        self.client = client
+        self.output.extend(history)
+
+    def read_input(self) -> bytes:
+        if self.client is None:
+            return b""
+        try:
+            data = self.client.recv(65536)
+        except BlockingIOError:
+            return b""
+        except OSError:
+            self.close_client()
+            return b""
+        if not data:
+            self.close_client()
+            return b""
+        return data
+
+    def queue_output(self, data: bytes) -> None:
+        if self.client is None:
+            return
+        if len(self.output) + len(data) > MAX_SERIAL_CLIENT_BACKLOG:
+            self.close_client()
+            return
+        self.output.extend(data)
+
+    def flush_output(self) -> None:
+        if self.client is None or not self.output:
+            return
+        try:
+            sent = self.client.send(self.output)
+        except BlockingIOError:
+            return
+        except OSError:
+            self.close_client()
+            return
+        if sent > 0:
+            del self.output[:sent]
+
+    def close(self) -> None:
+        self.close_client()
+        self.listener.close()
+        if self._identity is None:
+            return
+        try:
+            details = self.path.lstat()
+        except FileNotFoundError:
+            return
+        if (
+            stat.S_ISSOCK(details.st_mode)
+            and (details.st_dev, details.st_ino) == self._identity
+        ):
+            self.path.unlink()
+
+    def __enter__(self) -> SerialConsoleSocket:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 def validate_extra_arguments(arguments: Sequence[str]) -> None:
@@ -305,20 +412,20 @@ def terminate_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=5)
 
 
-def write_all(stream: BinaryIO, payload: bytes) -> None:
-    """Write an entire init-shell payload even when the pipe short-writes."""
-    offset = 0
-    while offset < len(payload):
+def write_pending(stream: BinaryIO, pending: bytearray) -> None:
+    """Drain as much queued console input as a nonblocking tty accepts."""
+    while pending:
         try:
-            written = stream.write(payload[offset:])
+            written = stream.write(pending)
         except InterruptedError:
             continue
         except BlockingIOError:
-            select.select([], [stream], [], 0.25)
-            continue
-        if written is None or written <= 0:
-            raise RuntimeError("guest bootstrap pipe stopped accepting input")
-        offset += written
+            return
+        if written is None:
+            return
+        if written <= 0:
+            raise RuntimeError("guest console stopped accepting input")
+        del pending[:written]
 
 
 def run_guest(
@@ -327,32 +434,99 @@ def run_guest(
     console_log: Path,
     timeout: float,
     expect_poweroff: bool,
+    serial_socket: Path | None = None,
 ) -> tuple[int, bool, bool]:
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=0,
+    serial = (
+        SerialConsoleSocket(serial_socket) if serial_socket is not None else None
     )
-    assert process.stdin is not None
-    assert process.stdout is not None
+    try:
+        master, slave = pty.openpty()
+    except BaseException:
+        if serial is not None:
+            serial.close()
+        raise
+    try:
+        tty.setraw(slave)
+    except BaseException:
+        os.close(master)
+        os.close(slave)
+        if serial is not None:
+            serial.close()
+        raise
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            bufsize=0,
+            close_fds=True,
+        )
+    except BaseException:
+        os.close(master)
+        if serial is not None:
+            serial.close()
+        raise
+    finally:
+        os.close(slave)
+    console = os.fdopen(master, "r+b", buffering=0)
+    os.set_blocking(console.fileno(), False)
     saw_pass = False
     saw_fail = False
     deadline = time.monotonic() + timeout if timeout > 0 else None
     pending = bytearray()
+    guest_input = bytearray(bootstrap + b"\n")
+    console_input_enabled = False
+    if serial is not None:
+        print(f"Serial console socket: {serial.path}", file=sys.stderr)
 
     try:
-        write_all(process.stdin, bootstrap + b"\n")
-        process.stdin.flush()
         with console_log.open("wb") as log:
             while process.poll() is None:
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"guest did not finish within {timeout:.0f}s")
-                readable, _, _ = select.select([process.stdout], [], [], 0.25)
-                if not readable:
+                read_descriptors: list[Any] = [console]
+                write_descriptors: list[Any] = (
+                    [console] if console_input_enabled and guest_input else []
+                )
+                if serial is not None:
+                    read_descriptors.append(serial.listener)
+                    if serial.client is not None:
+                        read_descriptors.append(serial.client)
+                        if serial.output:
+                            write_descriptors.append(serial.client)
+                readable, writable, _ = select.select(
+                    read_descriptors, write_descriptors, [], 0.25
+                )
+                if serial is not None and serial.listener in readable:
+                    serial.accept(bytes(pending))
+                if (
+                    serial is not None
+                    and serial.client is not None
+                    and serial.client in readable
+                ):
+                    data = serial.read_input()
+                    if data:
+                        if len(guest_input) + len(data) > MAX_SERIAL_INPUT_BACKLOG:
+                            serial.close_client()
+                        else:
+                            guest_input.extend(data)
+                if (
+                    serial is not None
+                    and serial.client is not None
+                    and serial.client in writable
+                ):
+                    serial.flush_output()
+                if console in writable:
+                    write_pending(console, guest_input)
+                if console not in readable:
                     continue
-                data = os.read(process.stdout.fileno(), 65536)
+                try:
+                    data = os.read(console.fileno(), 65536)
+                except OSError:
+                    if process.poll() is not None:
+                        break
+                    raise
                 if not data:
                     break
                 log.write(data)
@@ -362,12 +536,20 @@ def run_guest(
                 pending.extend(data)
                 if len(pending) > 8192:
                     del pending[:-8192]
+                if not console_input_enabled:
+                    normalized = bytes(pending).replace(b"\r", b"")
+                    console_input_enabled = b"\n# " in normalized
                 decoded = pending.decode("utf-8", errors="replace")
                 saw_pass = saw_pass or PASS_MARKER in decoded
                 saw_fail = saw_fail or FAIL_MARKER in decoded
+                if serial is not None:
+                    serial.queue_output(data)
             return_code = process.wait(timeout=5)
     finally:
+        if serial is not None:
+            serial.close()
         terminate_process(process)
+        console.close()
 
     if expect_poweroff and return_code != 0:
         raise RuntimeError(f"emulator exited with status {return_code}")
@@ -407,6 +589,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--no-auto-poweroff",
         action="store_true",
         help="leave the guest running after its checks instead of shutting down normally",
+    )
+    parser.add_argument(
+        "--serial-socket",
+        type=Path,
+        help=(
+            "expose the bidirectional serial console at this Unix-domain "
+            "socket while retaining the normal log/stdout copy"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -450,6 +640,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs": str(rootfs),
         "auto_poweroff": not options.no_auto_poweroff,
     }
+    serial_socket = (
+        options.serial_socket.resolve() if options.serial_socket is not None else None
+    )
+    if serial_socket is not None:
+        result["serial_socket"] = str(serial_socket)
     if options.docker_hello_world_binary is not None:
         result["docker_hello_world"] = str(
             options.docker_hello_world_binary.resolve()
@@ -470,6 +665,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         artifact_directory / "console.log",
         options.timeout,
         expect_poweroff=not options.no_auto_poweroff,
+        serial_socket=serial_socket,
     )
     result.update(
         {

@@ -7,9 +7,12 @@ __import__("sys").dont_write_bytecode = True
 
 import io
 from pathlib import Path
+import socket
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 
 GPU_INTEGRATION_ROOT = Path(__file__).resolve().parents[2] / "integration/gpu"
@@ -181,14 +184,110 @@ class GpuGuestSafetyTests(unittest.TestCase):
         )
         self.assertIn("    (\n        set -e\nfalse\ntrue\n    )", script)
 
-    def test_bootstrap_pipe_short_writes_are_retried(self) -> None:
+    def test_console_short_writes_are_retried(self) -> None:
         class ShortWriter(io.BytesIO):
             def write(self, payload: bytes) -> int:
                 return super().write(payload[:3])
 
         stream = ShortWriter()
-        run_gpu_guest.write_all(stream, b"0123456789")
+        pending = bytearray(b"0123456789")
+        run_gpu_guest.write_pending(stream, pending)
+        self.assertEqual(pending, b"")
         self.assertEqual(stream.getvalue(), b"0123456789")
+
+    def test_serial_socket_relays_console_output_and_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            serial_path = root / "serial.sock"
+            received = bytearray()
+            client_errors: list[BaseException] = []
+
+            def attach() -> None:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not serial_path.exists():
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("serial socket was not created")
+                        time.sleep(0.01)
+
+                    def receive_until(
+                        client: socket.socket,
+                        output: bytearray,
+                        marker: bytes,
+                    ) -> None:
+                        while marker not in output:
+                            chunk = client.recv(4096)
+                            if not chunk:
+                                raise RuntimeError(
+                                    "serial console closed before expected output"
+                                )
+                            output.extend(chunk)
+
+                    first = bytearray()
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                        client.settimeout(5)
+                        client.connect(str(serial_path))
+                        receive_until(client, first, b"READY\n")
+
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                        client.settimeout(5)
+                        client.connect(str(serial_path))
+                        receive_until(client, received, b"READY\n")
+                        client.sendall(b"status\n")
+                        receive_until(client, received, b"ECHO:status\n")
+                except BaseException as error:
+                    client_errors.append(error)
+
+            fake_emulator = (
+                "import sys,time;"
+                "sys.stdout.write('\\n# ');sys.stdout.flush();"
+                "sys.stdin.buffer.readline();"
+                f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+"
+                "'\\nTTY:'+str(int(sys.stdin.isatty()))+'\\nREADY\\n');"
+                "sys.stdout.flush();"
+                "line=sys.stdin.buffer.readline();"
+                "sys.stdout.buffer.write(b'ECHO:'+line);"
+                "sys.stdout.buffer.flush();"
+                "time.sleep(0.2)"
+            )
+            client_thread = threading.Thread(target=attach)
+            client_thread.start()
+            return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
+                [sys.executable, "-c", fake_emulator],
+                b"BOOT",
+                root / "console.log",
+                timeout=10,
+                expect_poweroff=False,
+                serial_socket=serial_path,
+            )
+            client_thread.join(timeout=5)
+            self.assertFalse(client_thread.is_alive())
+            self.assertEqual(client_errors, [])
+            self.assertEqual(return_code, 0)
+            self.assertTrue(saw_pass)
+            self.assertFalse(saw_fail)
+            self.assertIn(b"TTY:1\n", received)
+            self.assertIn(b"ECHO:status\n", received)
+            self.assertFalse(serial_path.exists())
+
+    def test_serial_socket_refuses_to_replace_an_existing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "serial.sock"
+            path.write_text("keep", encoding="utf-8")
+            with self.assertRaisesRegex(
+                run_gpu_guest.SafetyError, "already exists"
+            ):
+                run_gpu_guest.SerialConsoleSocket(path)
+            self.assertEqual(path.read_text(encoding="utf-8"), "keep")
+
+    def test_serial_socket_does_not_remove_a_replacement_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "serial.sock"
+            serial = run_gpu_guest.SerialConsoleSocket(path)
+            path.unlink()
+            path.write_text("replacement", encoding="utf-8")
+            serial.close()
+            self.assertEqual(path.read_text(encoding="utf-8"), "replacement")
 
 
 if __name__ == "__main__":

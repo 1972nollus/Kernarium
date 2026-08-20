@@ -38,6 +38,25 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("ncpus=6", command[separator + 1 :])
         self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
 
+    def test_standard_launch_attaches_host_audio(self) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        self.assertEqual(command.count("--audio"), 1)
+        self.assertIn("--audio", command[separator + 1 :])
+
+    def test_serial_socket_is_forwarded_to_the_guest_harness(self) -> None:
+        options = boot_kde_vnc.parse_arguments(
+            ["--serial-socket", "/tmp/uml-serial.sock"]
+        )
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        self.assertEqual(
+            command[command.index("--serial-socket") : separator],
+            ["--serial-socket", "/tmp/uml-serial.sock"],
+        )
+
     def test_iso_is_attached_read_only_and_mounted_at_cdrom(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             iso = Path(directory) / "installer.iso"

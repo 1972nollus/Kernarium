@@ -34,6 +34,31 @@ audit, and a fresh pinned-commit kernel replay without compilation passed.
 Earlier archive-based evidence below is retained only as dated history and no
 longer describes the preparation or patch-maintenance workflow.
 
+## Desktop PipeWire userspace ownership (2026-08-19)
+
+The unified desktop image registers the VirtIO ALSA card but contains
+`pipewire` and `pipewire-pulse` without WirePlumber or
+`pipewire-media-session`. Plasma consequently advertised only its dummy output
+after the host and kernel audio paths were already working. The standard
+macOS KDE launcher passes `--audio`, while Kernarium attaches the same host
+device. ALSA discovery and application routing remain guest-userspace policy.
+The accepted resolution is a whole-image update that adds a packaged session
+manager such as WirePlumber to the authenticated EROFS rootfs. The macOS KDE
+and Kernarium overlays do not install a static sink, link router, or substitute
+session policy.
+
+An escalated macOS guest probe using the production integration binary proved
+the kernel card and `/dev/snd/pcmC0D0p`. A full KDE boot using the production
+overlay experiment then created an automatically linked PulseAudio stream,
+wrote and drained a 440 Hz tone through `uml-virtio-sound`, and shut down
+cleanly. That experiment was not retained because a packaged session manager
+owns the behavior. It also exposed Linux's valid repeated PREPARE sequence,
+which the host had incorrectly rejected. The retained host fix implements the
+repeatable SET_PARAMS and PREPARE transitions plus RELEASE-to-PREPARE re-entry
+required by the VirtIO PCM lifecycle. The protocol and KDE launcher tests pin
+the retained behavior. The image still lacks `aplay`, so documentation and
+probes must not claim that command as an image prerequisite.
+
 ## Apple Virtio Sound playback (2026-08-18)
 
 Both Apple application compositions now include a standard Virtio Sound

@@ -43,6 +43,7 @@ private:
         prepared,
         running,
         stopped,
+        released,
     };
 
     [[nodiscard]] uml::virtio::VhostUserQueueResult processControl(

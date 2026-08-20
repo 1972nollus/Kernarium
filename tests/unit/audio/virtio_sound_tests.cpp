@@ -51,6 +51,7 @@ class TestSink final : public uml::audio::PlaybackSink {
 public:
     bool configure(const uml::audio::PlaybackParameters& parameters) override
     {
+        ++configureCount;
         configured = parameters;
         return configureResult;
     }
@@ -98,6 +99,7 @@ public:
     std::vector<std::uint8_t> enqueued;
     std::deque<uml::audio::PlaybackCompletion> completions;
     std::uint64_t enqueuedRequest {};
+    unsigned configureCount {};
     unsigned prepareCount {};
     unsigned startCount {};
     unsigned stopCount {};
@@ -312,6 +314,39 @@ void playbackDefersUntilTheAppleSinkConsumesAPeriod()
     require(fixture.sink->releaseCount == 1);
 }
 
+void acceptsTheVirtioPcmLifecycleTransitions()
+{
+    Fixture fixture;
+    auto selected = parameters();
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+    require(fixture.sink->configureCount == 2);
+
+    const auto prepare = bytes(pcmCommand(protocol::Request::pcmPrepare));
+    require(responseStatus(control(*fixture.device, prepare)) ==
+            protocol::Status::ok);
+    require(responseStatus(control(*fixture.device, prepare)) ==
+            protocol::Status::ok);
+    require(fixture.sink->prepareCount == 2);
+
+    selected.periodBytes = 2048;
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+    require(fixture.sink->configured.periodBytes == selected.periodBytes);
+    require(responseStatus(control(*fixture.device, prepare)) ==
+            protocol::Status::ok);
+
+    const auto release = bytes(pcmCommand(protocol::Request::pcmRelease));
+    require(responseStatus(control(*fixture.device, release)) ==
+            protocol::Status::ok);
+    require(fixture.sink->releaseCount == 1);
+    require(responseStatus(control(*fixture.device, prepare)) ==
+            protocol::Status::ok);
+    require(fixture.sink->prepareCount == 4);
+}
+
 void rejectsUnsupportedParametersAndRetriesWhenFull()
 {
     Fixture fixture;
@@ -352,6 +387,7 @@ int main()
     exposesFrontLeftAndRightChannelMap();
     rejectsMalformedAndOutOfOrderControlRequests();
     playbackDefersUntilTheAppleSinkConsumesAPeriod();
+    acceptsTheVirtioPcmLifecycleTransitions();
     rejectsUnsupportedParametersAndRetriesWhenFull();
     return EXIT_SUCCESS;
 }

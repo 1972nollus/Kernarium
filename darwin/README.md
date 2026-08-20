@@ -63,8 +63,13 @@ and the legacy UML hostaudio relay remain absent. PCM periods stay owned by the
 device until AVAudio reports them consumed. iOS uses the playback audio-session
 category and restarts the engine after route/configuration changes or
 interruptions. The macOS CLI attaches the same service only when passed the
-host-only `--audio` option, while Kernarium attaches it for every normal
-launch.
+host-only `--audio` option. The standard KDE launcher passes that option by
+default, while Kernarium attaches audio for every normal launch.
+
+Desktop guest images own ALSA discovery and application routing and must ship a
+supported PipeWire session manager such as WirePlumber. The macOS KDE overlay
+and Kernarium bootstrap do not synthesize a sink or routing policy when that
+package is absent.
 
 Kernarium's network callback is the ordinary SLiRP provider compiled against
 the private iOS GLib/libslirp prefix. The application disables the UIKit idle

@@ -192,6 +192,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         ),
     )
     parser.add_argument(
+        "--serial-socket",
+        type=Path,
+        help=(
+            "expose ttyS0 at this Unix-domain socket for an attachable "
+            "interactive console"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the emulator command without booting",
@@ -229,6 +237,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         command.extend(("--command", overlay_command))
     if options.iso is not None:
         command.extend(("--command", ISO_MOUNT_COMMAND))
+    if options.serial_socket is not None:
+        command.extend(("--serial-socket", str(options.serial_socket)))
     if options.dry_run:
         command.append("--dry-run")
     command.extend((
@@ -238,7 +248,7 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     ))
     if options.iso is not None:
         command.append(f"ubd1r={options.iso}")
-    command.extend(("--gpu", f"--gpu-display={options.display}"))
+    command.extend(("--audio", "--gpu", f"--gpu-display={options.display}"))
     if options.display == "vnc":
         command.extend((
             f"--gpu-vnc-bind={options.bind}",
@@ -284,6 +294,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(
             "The server is reachable on every IPv4 interface; use "
             "--bind 127.0.0.1 for local-only access.",
+            file=sys.stderr,
+        )
+    if options.serial_socket is not None:
+        print(
+            f"Serial console will listen on {options.serial_socket}.",
             file=sys.stderr,
         )
     if options.iso is not None:

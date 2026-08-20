@@ -568,7 +568,16 @@ removes only the socket inode it created. Attach from another terminal with
 console tail, so a prompt printed before attachment remains visible. The same
 option is available directly on `run_gpu_guest.py` for focused diagnostics.
 
-The launcher always passes the host-only `--gpu-display=native|vnc` option.
+The launcher always passes the host-only `--audio` and
+`--gpu-display=native|vnc` options, so the standard KDE desktop has the Apple
+Virtio Sound playback device as well as the selected display backend.
+The current image ships `pipewire` and `pipewire-pulse` without WirePlumber or
+`pipewire-media-session`; without a session manager, Plasma exposes only its
+fallback dummy output even though ALSA has registered the card. Resolve that
+guest-userspace deficiency with a whole-image update that installs a supported
+session-manager package such as WirePlumber. The KDE and Kernarium overlays do
+not synthesize a PipeWire sink or routing policy.
+
 `--bind`, `--port`, and `--password` configure only VNC and therefore require
 `--display vnc`. The bare `uml-darwin --gpu` host option retains VNC
 as its compatibility default, while the KDE launcher deliberately selects
@@ -582,16 +591,20 @@ accepts but cannot present yet is dropped, because answering host backpressure
 with a GPU-to-CPU readback on the guest's flush path would couple the two
 timelines exactly where they must stay independent.
 
-The standalone macOS launcher attaches the same Virtio Sound device only when
-the host-only `--audio` option is present. `tools/guest-shell.py --audio`
-provides that attachment for focused guest commands; for example, use
-`aplay -l` or inspect `/dev/snd/pcmC0D0p` after boot. The
-`virtio-sound-protocol` unit test covers discovery, format negotiation, stream
-state, malformed requests, and deferred TX completion. The shared vhost-user
+The standalone macOS executable attaches the same Virtio Sound device only
+when the host-only `--audio` option is present; the standard KDE launcher
+supplies it automatically. `tools/guest-shell.py --audio` provides that
+attachment for focused guest commands; inspect `/proc/asound/cards` or
+`/dev/snd/pcmC0D0p` after boot. The current image does not contain the `aplay`
+utility. The
+`virtio-sound-protocol` unit test covers discovery, format negotiation,
+repeatable SET_PARAMS/PREPARE and RELEASE-to-PREPARE transitions, malformed
+requests, and deferred TX completion. The shared vhost-user
 transport test also exercises a four-queue device whose descriptor is not
 published to the used ring until an asynchronous completion arrives. A guest
 desktop still needs its normal PipeWire or ALSA session policy to route
-application audio; the host device does not replace guest userspace.
+application audio; the host device and launchers do not replace guest
+userspace.
 
 `UML_GPU_FRAME_STATS=<seconds>` turns on native-display frame accounting on
 macOS and in Kernarium; unset, zero, or unparseable keeps it off. Each interval
