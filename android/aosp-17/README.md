@@ -258,3 +258,9 @@ records only role-based input descriptions rather than builder paths, compresses
 the disk with a frame checksum, verifies the completed staging tree, and then
 atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
+
+The accepted 2026-08-21 publication compressed the 17,179,869,184-byte sparse
+GPT disk to 817,358,408 bytes. The workstation installer restored a sparse disk
+with approximately 1.6 GiB allocated, reverified all seven partitions, exposed
+the completed local release only after validation, and rejected a second
+installation rather than replacing it.

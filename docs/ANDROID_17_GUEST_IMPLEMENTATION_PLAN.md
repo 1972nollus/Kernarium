@@ -6,11 +6,16 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation started on 2026-08-20 with the versioned AOSP 17/ACK 6.18
-source metadata and builder-local preparation/preflight lane. That checkpoint
-does not yet add a Darwin UML ACK patch series, Android product, build artifact,
-disk image, or Apple runtime target and does not by itself complete a phase
-below.
+Implementation started on 2026-08-20. As of 2026-08-21, the builder-local lane
+has produced and verified the 23-topic ACK 6.18 Darwin UML series, its 16 KiB
+built-in-only kernel, the routed AOSP 17 static UML product, standalone
+initramfs, and fixed seven-partition UBD image. It has also published, copied,
+and atomically installed accepted release
+`android17-ack6.18-16k-20260821-15f81808-static1`. The release installer rejects
+an overwrite and the structural negative fixtures below pass. Import-only
+CMake consumption, the separate macOS executable/runtime framework, and actual
+Android boot/HAL/application acceptance remain unfinished phases; no boot is
+claimed by this checkpoint.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project

@@ -80,11 +80,18 @@ def main() -> None:
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
         fail("tracked acceptance descriptor keys differ from the release contract")
     tracked_expected = {
+        "ANDROID17_ACCEPTED_SCHEMA": "1",
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
         "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT": aosp["ANDROID17_MANIFEST_COMMIT"],
         "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": aosp["ANDROID17_BASE_MANIFEST_SHA256"],
+        "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256": sha256_path(
+            android_root / "patches/projects.tsv"
+        ),
         "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE": kernel["UML_KERNEL_FINAL_TREE"],
+        "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256": sha256_path(
+            kernel_root / "patches/series/manifest.tsv"
+        ),
         "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
         "ANDROID17_ACCEPTED_ABI_VERSION": abi["DARWIN_UML_ABI_VERSION"],
         "ANDROID17_ACCEPTED_ABI_FINGERPRINT": abi["DARWIN_UML_ABI_FINGERPRINT"],
