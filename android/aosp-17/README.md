@@ -38,6 +38,10 @@ android/aosp-17/build/build-kernel.sh \
 Apply the generated per-project AOSP series and build the initial 16 KiB,
 ARM64-only product composition:
 
+The builder host must provide `zip` and `rsync` for AOSP packaging. Install
+both before invoking the producer; the tracked producer scripts do not invoke
+transport tools themselves.
+
 ```sh
 android/aosp-17/build/apply-aosp-patches.sh \
   --aosp-source /absolute/path/to/aosp
