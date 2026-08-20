@@ -84,23 +84,21 @@ The upstream repository/branch/full commit/tree, final tree, ordered stable
 patch IDs, generated patch hashes, and subjects are the source identities.
 Replay commit IDs are observations because `git am` retains real replay
 committer timestamps. Kernel binary hashes, build identity, and timestamps are
-observations for the same reason. Configure and build both run the offline
-clean-tree verifier and delta audit, so a merely plausible branch name or
-locally cloned source tree is never accepted.
+observations for the same reason. Standalone source/build workflows run the
+offline clean-tree verifier and delta audit. Apple configure instead validates
+the accepted artifact's recorded final-tree, page, ABI, ELF, and inventory
+contract and does not inspect a source checkout.
 
 Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
 represent several upstream paths that differ only by case. The canonical
 checkout is the dedicated APFS case-sensitive volume mounted at
-`/Volumes/<case-sensitive-volume>`; its production page-profile builds remain in
-`build-16k` and `build-4k` on that volume. The default macOS integration
-product and both 16 KiB iOS runtime slices consume the same
-`build-16k/vmlinux`; the macOS compatibility product and both 4 KiB iOS
-runtime slices consume `build-4k/vmlinux`. There is no platform-specific kernel
-build. Transient case-sensitive mounts under `/tmp` are not used for the
-canonical source or build trees. The source path has no repository default and
-cannot be supplied through a CMake cache override or environment variable.
-Create the required local configuration first; the actual file is ignored by
-Git:
+`/Volumes/<case-sensitive-volume>`; its standalone page-profile builds remain in
+`build-16k` and `build-4k` on that volume. Publish both outputs into compact
+repository-local ignored bundles before configuring an Apple product. There is
+no platform-specific kernel build. Transient case-sensitive mounts under
+`/tmp` are not used for the canonical source or build trees. The source path
+has no repository default and is never a CMake input. Create the required
+standalone configuration first; the actual file is ignored by Git:
 
 ```sh
 cp kernel/mainline-6.18/source-location.conf.example \
@@ -155,6 +153,11 @@ stable patch IDs/hashes/subjects, and runs topology policy. If the resulting
 source changes, update `UML_KERNEL_FINAL_TREE` to the reviewed `HEAD^{tree}`
 before regeneration, then run a fresh replay and both page-profile validation
 required by the affected kernel behavior.
+
+Fresh replay verification also runs the source-dependent `init_mm` TLB and
+fixed-vCPU carrier policy fixtures directly against its disposable checkout.
+Those checks intentionally do not enter Apple CMake or CTest, which consume no
+kernel source tree.
 
 This series is maintained locally. The optional next-base audit reports only
 `carry-locally`, `drop-locally-if-contained`, and local rebase/retest actions.

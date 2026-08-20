@@ -78,7 +78,7 @@ established the 44 accepted cases below.
 
 `TST_NEEDS_DRIVERS` searches the version-matched text files `modules.dep` and
 `modules.builtin`; it does not load a module. Each LTP campaign now requires
-the complete `modules.builtin` from its selected `UML_KERNEL_BUILD_DIR`. The
+the complete `kernel/modules.builtin` from its selected prebuilt artifact. The
 runner validates every entry as a canonical `kernel/.../*.ko` path, validates
 the sibling `include/config/kernel.release` against guest `uname -r`, and
 generates the complete setup script on the host. The harness gzip-compresses

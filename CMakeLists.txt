@@ -204,7 +204,7 @@ if(UML_BUILD_NETWORK_PROVIDER AND NOT UML_TARGET_MACOS)
     include(dependencies/cmake/IosNetworkDependencies.cmake)
 endif()
 
-if(UML_BUILD_CLI)
+if(UML_BUILD_CLI OR UML_BUILD_KERNARIUM_RUNTIME)
     add_subdirectory(kernel)
 endif()
 

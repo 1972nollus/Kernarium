@@ -11,6 +11,16 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
+   NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+    message(FATAL_ERROR "Integration tests require a selected kernel artifact")
+endif()
+get_target_property(_uml_integration_modules_builtin
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_MODULES_BUILTIN)
+if(NOT _uml_integration_modules_builtin)
+    message(FATAL_ERROR "Selected kernel artifact lacks modules.builtin evidence")
+endif()
+
 set(UML_LTP_JOBS 16 CACHE STRING
     "Concurrent isolated guest workers for each LTP engine campaign")
 if(NOT UML_LTP_JOBS MATCHES "^[1-9][0-9]*$")
@@ -41,7 +51,7 @@ function(uml_add_ltp_engine_campaign ENGINE)
             --emulator $<TARGET_FILE:uml-darwin>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --manifest ${PROJECT_SOURCE_DIR}/tests/integration/ltp/verified-tests.tsv
-            --modules-builtin ${UML_KERNEL_BUILD_DIR}/modules.builtin
+            --modules-builtin ${_uml_integration_modules_builtin}
             --engine ${ENGINE}
             --results-dir ${_results}
             --jobs ${UML_LTP_JOBS}

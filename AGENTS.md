@@ -38,12 +38,14 @@ historical sections as history.
   current source, patch, complete configuration, and build policy;
   `kernel/common` owns only the shared ABI, 16 KiB geometry, and parameterized
   series verifier. Do not restore singleton owners directly under `kernel/`.
-- Kernel preparation and builds require the Git-ignored
+- Standalone mainline kernel preparation and builds require the Git-ignored
   `kernel/mainline-6.18/source-location.conf`. Copy
   `kernel/mainline-6.18/source-location.conf.example`, set its absolute
   `UML_KERNEL_SOURCE_DIR`, and keep that checkout on a case-sensitive
-  filesystem. The checked presets and command-line environment may not replace
-  the configured source path; a missing or invalid file is a hard build error.
+  filesystem. Apple CMake never reads this file or invokes Kbuild. It consumes
+  the accepted bundles selected by
+  `kernel/mainline-6.18/artifacts/accepted-{16k,4k}.env`, installed below
+  `.build/kernel/artifacts` by the standalone publisher.
 - Apple builds require arm64 macOS, Xcode command-line tools and SDKs, Clang,
   CMake, Ninja, Python 3, GNU Make, Meson, `pkg-config`, Git, rsync, Autoconf,
   Automake, gettext, GNU libtool, gperf, `curl`, and `patch`.
@@ -62,9 +64,7 @@ historical sections as history.
     kernel/mainline-6.18/scripts/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
   ```
 
-  Use `UML_KERNEL_TOOLCHAIN_ROOT=/opt/homebrew/opt/llvm` for CMake configure
-  workflows. Do not repeat a bare-Clang replay after the capability preflight
-  rejects it.
+  Do not repeat a bare-Clang replay after the capability preflight rejects it.
 - Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
   targets are owned by `cmake/toolchains/Apple.cmake`.
 - Each Darwin guest page profile uses one relocatable kernel image and the same
@@ -194,20 +194,19 @@ compatibility profile, not an optional approximation.
 
 ## Integration tests and unified EROFS rootfs
 
-Integration requires a clean replayed Linux source on a case-sensitive
-filesystem and the verified private dependency prefix:
+Integration requires the accepted prebuilt mainline kernel artifact for the
+selected page profile, the unified rootfs, and the verified private dependency
+prefix. It does not require a kernel source checkout or compiler:
 
 ```sh
 cmake --workflow --preset check-integration
 cmake --workflow --preset check-integration-4k
 ```
 
-The ignored `kernel/mainline-6.18/source-location.conf` pins the kernel
-checkout. The checked
-presets pin the matching `/Volumes/<case-sensitive-volume>/build-16k` or
-`/Volumes/<case-sensitive-volume>/build-4k` kernel directory. A non-canonical layout
-must update the ignored source configuration and override only
-`UML_KERNEL_BUILD_DIR` at configure time.
+The checked acceptance descriptors select the matching bundle directory below
+`.build/kernel/artifacts`. A non-default local installation may override only
+`UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; CMake validates the whole bundle and
+derives the ELF and support paths from its manifest.
 
 - `rootfs.erofs` is the ignored, unified guest image. Ordinary guest runs use
   it directly without hashing or sidecar locking. Map the shared image with
@@ -287,8 +286,8 @@ must update the ignored source configuration and override only
   `tools/guest-shell.py --engine interpreter` instead.
 - Full LTP uses `/opt/ltp` from `rootfs.erofs`. Tests that require deliberately
   removed kernel configuration must be listed in `disabled-tests.tsv`; do not
-  re-enable those flags merely to increase the LTP count. Each campaign must
-  pass the selected `${UML_KERNEL_BUILD_DIR}/modules.builtin`; the runner
+  re-enable those flags merely to increase the LTP count. Each campaign uses
+  the selected artifact's `kernel/modules.builtin`; the runner
   release-checks and copies its complete contents into disposable OverlayFS
   state so built-in-driver discovery matches the embedded kernel. The host
   compresses that generated setup and sends it through independently
@@ -451,10 +450,10 @@ Executable-memory policy:
   loader behavior and high native-window placement. All three products use
   the same scalable address mechanism and sparse guest profile.
   The default macOS integration product and both 16 KiB iOS runtime slices
-  consume the exact canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input.
-  The macOS compatibility product and both 4 KiB iOS runtime slices likewise
-  consume `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`; do not create a
-  platform-specific Kbuild tree or kernel image.
+  consume the same accepted 16 KiB mainline artifact. The macOS compatibility
+  product and both 4 KiB iOS runtime slices likewise consume the same accepted
+  4 KiB artifact; do not create a platform-specific Kbuild tree or kernel
+  image. Apple product graphs may only validate and embed already-built files.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 

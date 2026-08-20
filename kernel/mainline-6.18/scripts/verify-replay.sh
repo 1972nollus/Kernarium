@@ -90,6 +90,18 @@ printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 "$LINE_ROOT/scripts/prepare-source.sh"
 "$LINE_ROOT/scripts/prepare-source.sh" --verify --no-fetch
 "$LINE_ROOT/scripts/audit-delta.sh" --tree HEAD
+python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py" \
+	--linux-source "$REPLAY_DIR/linux"
+python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py" \
+	--linux-source "$REPLAY_DIR/linux" \
+	--kernel-config "$LINE_ROOT/config/common.fragment" \
+	--page-16k-config "$ROOT_DIR/kernel/common/config/page-16k.fragment" \
+	--page-4k-config "$LINE_ROOT/config/page-4k.fragment" \
+	--kernel-build-script "$LINE_ROOT/build/build-kernel.sh" \
+	--project-cmake "$ROOT_DIR/CMakeLists.txt" \
+	--kernarium-runtime "$ROOT_DIR/Kernarium/Runtime/KernariumRuntime.mm" \
+	--kernarium-runtime-loader \
+		"$ROOT_DIR/Kernarium/Kernarium/KernariumRuntimeLoader.mm"
 
 if [ "$BUILD" -eq 1 ]; then
 	if [ -n "$JOBS" ]; then

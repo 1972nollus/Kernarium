@@ -83,7 +83,7 @@
         "UML_BUILD_UNIT_TESTS": false,
         "UML_BUILD_INTEGRATION_TESTS": true,
         "UML_INTEGRATION_ROOTFS": "${sourceDir}/rootfs.erofs",
-        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-16k"
+        "UML_KERNEL_PRODUCT": "mainline-6.18"
       }
     },
     {
@@ -92,8 +92,7 @@
       "inherits": "macos-integration",
       "binaryDir": "${sourceDir}/.build/presets/${presetName}",
       "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false,
-        "UML_KERNEL_BUILD_DIR": "/Volumes/Kernel/build-4k"
+        "UML_GUEST_16K_PAGES": false
       }
     },
     {
@@ -184,7 +183,7 @@
         "UML_GUEST_16K_PAGES": true,
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/network",
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
+        "UML_KERNEL_PRODUCT": "mainline-6.18"
       }
     },
     {
@@ -193,8 +192,7 @@
       "inherits": "kernarium-ios-device",
       "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-4k",
       "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false,
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-4k/vmlinux"
+        "UML_GUEST_16K_PAGES": false
       }
     },
     {
@@ -211,7 +209,7 @@
         "UML_GUEST_16K_PAGES": true,
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu/ios-simulator-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-simulator-arm64/network",
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-16k/vmlinux"
+        "UML_KERNEL_PRODUCT": "mainline-6.18"
       }
     },
     {
@@ -220,8 +218,7 @@
       "inherits": "kernarium-ios-simulator",
       "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-simulator-4k",
       "cacheVariables": {
-        "UML_GUEST_16K_PAGES": false,
-        "UML_KERNARIUM_KERNEL_IMAGE": "/Volumes/Kernel/build-4k/vmlinux"
+        "UML_GUEST_16K_PAGES": false
       }
     }
   ],

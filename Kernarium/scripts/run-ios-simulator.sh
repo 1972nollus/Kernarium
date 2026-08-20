@@ -5,8 +5,12 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS="$ROOT_DIR/rootfs.erofs"
-KERNEL_IMAGE_16K=${UML_KERNARIUM_KERNEL_IMAGE_16K:-/Volumes/Kernel/build-16k/vmlinux}
-KERNEL_IMAGE_4K=${UML_KERNARIUM_KERNEL_IMAGE_4K:-/Volumes/Kernel/build-4k/vmlinux}
+# shellcheck disable=SC1091
+. "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-16k.env"
+ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
+# shellcheck disable=SC1091
+. "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-4k.env"
+ARTIFACT_4K=${UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 DEVICE=${KERNARIUM_SIMULATOR_UDID:-booted}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
@@ -25,9 +29,8 @@ usage()
 		"" \
 		"Options:" \
 		"  --rootfs PATH  EROFS image to copy into app Documents" \
-		"  --kernel-16k PATH  Maintained 16 KiB UML kernel image" \
-		"  --kernel-4k PATH   Maintained 4 KiB UML kernel image" \
-		"  --kernel PATH      Alias for --kernel-16k" \
+		"  --artifact-16k PATH  Accepted 16 KiB kernel artifact directory" \
+		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
 		"  --device UDID  Booted Simulator UDID (default: booted)" \
 		"  --aquarium     Launch Chromium WebGL Aquarium verification" \
 		"  -h, --help      Show this help"
@@ -40,14 +43,14 @@ while [ "$#" -gt 0 ]; do
 		ROOTFS=$2
 		shift 2
 		;;
-	--kernel|--kernel-16k)
-		[ "$#" -ge 2 ] || fail "$1 requires a path"
-		KERNEL_IMAGE_16K=$2
+	--artifact-16k)
+		[ "$#" -ge 2 ] || fail "--artifact-16k requires a path"
+		ARTIFACT_16K=$2
 		shift 2
 		;;
-	--kernel-4k)
-		[ "$#" -ge 2 ] || fail "--kernel-4k requires a path"
-		KERNEL_IMAGE_4K=$2
+	--artifact-4k)
+		[ "$#" -ge 2 ] || fail "--artifact-4k requires a path"
+		ARTIFACT_4K=$2
 		shift 2
 		;;
 	--device)
@@ -68,10 +71,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$ROOTFS" ] || fail "rootfs image is unavailable: $ROOTFS"
-[ -f "$KERNEL_IMAGE_16K" ] ||
-	fail "16 KiB kernel image is unavailable: $KERNEL_IMAGE_16K"
-[ -f "$KERNEL_IMAGE_4K" ] ||
-	fail "4 KiB kernel image is unavailable: $KERNEL_IMAGE_4K"
+[ -d "$ARTIFACT_16K" ] ||
+	fail "16 KiB kernel artifact is unavailable: $ARTIFACT_16K"
+[ -d "$ARTIFACT_4K" ] ||
+	fail "4 KiB kernel artifact is unavailable: $ARTIFACT_4K"
 if [ "$DEVICE" = booted ]; then
 	DEVICE=$(xcrun simctl getenv booted SIMULATOR_UDID)
 fi
@@ -79,10 +82,10 @@ fi
 
 cd "$ROOT_DIR"
 cmake --preset kernarium-ios-simulator \
-	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE_16K"
+	-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_16K"
 cmake --build --preset kernarium-ios-simulator
 cmake --preset kernarium-ios-simulator-4k \
-	-DUML_KERNARIUM_KERNEL_IMAGE="$KERNEL_IMAGE_4K"
+	-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_4K"
 cmake --build --preset kernarium-ios-simulator-4k
 "$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh"
 xcodebuild \

@@ -1827,7 +1827,7 @@ page dumped because: still mapped when deleted
     def test_ltp_cmake_campaign_feeds_exact_kernel_metadata(self) -> None:
         cmake = (LTP_ROOT.parent / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn(
-            "--modules-builtin ${UML_KERNEL_BUILD_DIR}/modules.builtin",
+            "--modules-builtin ${_uml_integration_modules_builtin}",
             cmake,
         )
         self.assertNotIn('command -v modprobe', cmake)

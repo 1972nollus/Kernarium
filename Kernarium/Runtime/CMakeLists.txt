@@ -7,48 +7,50 @@ if(NOT UML_APPLE_PLATFORM MATCHES "^ios" OR
         "KernariumRuntime requires the iOS runner, GPU, audio, and network")
 endif()
 
-file(STRINGS "${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/metadata.env"
-    _kernarium_kernel_release_line
-    REGEX "^UML_KERNEL_RELEASE_VERSION='[0-9]+(\\.[0-9]+)+'$")
-list(LENGTH _kernarium_kernel_release_line _kernarium_kernel_release_count)
-if(NOT _kernarium_kernel_release_count EQUAL 1)
+if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
+   NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     message(FATAL_ERROR
-        "Cannot derive one Kernarium kernel release from metadata.env")
+        "KernariumRuntime requires a validated prebuilt kernel artifact")
 endif()
-string(REGEX REPLACE
-    "^UML_KERNEL_RELEASE_VERSION='([^']+)'$" "\\1"
-    KERNARIUM_KERNEL_RELEASE "${_kernarium_kernel_release_line}")
+get_target_property(_kernarium_artifact_family
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ARTIFACT_FAMILY)
+get_target_property(_kernarium_kernel_image
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+get_target_property(_kernarium_kernel_page_size
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_PAGE_SIZE)
+get_target_property(_kernarium_kernel_release
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_RELEASE)
+if(NOT _kernarium_artifact_family STREQUAL "mainline-6.18")
+    message(FATAL_ERROR "KernariumRuntime requires the mainline-6.18 artifact")
+endif()
+string(REGEX MATCH "^[0-9]+(\\.[0-9]+)+"
+    KERNARIUM_KERNEL_RELEASE "${_kernarium_kernel_release}")
+if(NOT KERNARIUM_KERNEL_RELEASE)
+    message(FATAL_ERROR "Cannot derive the Kernarium release from the artifact")
+endif()
 string(REPLACE "." "_" KERNARIUM_KERNEL_RELEASE_COMPONENT
     "${KERNARIUM_KERNEL_RELEASE}")
 
 if(UML_GUEST_16K_PAGES)
     set(KERNARIUM_KERNEL_PAGE_VARIANT 16K)
     set(_kernarium_guest_page_size 16384)
-    set(_kernarium_kernel_image_default
-        "/Volumes/Kernel/build-16k/vmlinux")
 else()
     set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
     set(_kernarium_guest_page_size 4096)
-    set(_kernarium_kernel_image_default
-        "/Volumes/Kernel/build-4k/vmlinux")
+endif()
+if(NOT _kernarium_kernel_page_size EQUAL _kernarium_guest_page_size)
+    message(FATAL_ERROR "Kernarium page profile differs from its kernel artifact")
 endif()
 set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
     "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
 string(REPLACE "_" "-" _kernarium_runtime_bundle_component
     "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 
-set(UML_KERNARIUM_KERNEL_IMAGE "${_kernarium_kernel_image_default}"
-    CACHE FILEPATH
-        "Page-profile-specific AArch64 UML ET_DYN image embedded in Kernarium")
-if(NOT EXISTS "${UML_KERNARIUM_KERNEL_IMAGE}")
-    message(FATAL_ERROR
-        "Kernarium kernel image does not exist: ${UML_KERNARIUM_KERNEL_IMAGE}")
-endif()
 find_program(_kernarium_python3 NAMES python3 REQUIRED)
 execute_process(
     COMMAND "${_kernarium_python3}" -B
         "${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py"
-        --image "${UML_KERNARIUM_KERNEL_IMAGE}"
+        --image "${_kernarium_kernel_image}"
     RESULT_VARIABLE _kernarium_carrier_result
     OUTPUT_VARIABLE _kernarium_carrier_output
     ERROR_VARIABLE _kernarium_carrier_error)
@@ -160,15 +162,17 @@ if(UML_APPLE_PLATFORM MATCHES "^ios")
     # kernel's runtime-selected native window instead of creating anonymous
     # code.
     target_link_options(KernariumRuntime PRIVATE
-        "LINKER:-sectcreate,__TEXT,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}"
+        "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}"
         "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
     set_property(TARGET KernariumRuntime APPEND PROPERTY
-        LINK_DEPENDS "${UML_KERNARIUM_KERNEL_IMAGE}")
+        LINK_DEPENDS "${_kernarium_kernel_image}")
 endif()
-add_dependencies(KernariumRuntime uml_dependency_prefix_verify)
+add_dependencies(KernariumRuntime
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+    uml_dependency_prefix_verify)
 add_dependencies(KernariumRuntime uml_ios_network_prefix_verify)
 set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
-    "${UML_KERNARIUM_KERNEL_IMAGE}")
+    "${_kernarium_kernel_image}")
 set_target_properties(KernariumRuntime PROPERTIES
     OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"
     FRAMEWORK TRUE

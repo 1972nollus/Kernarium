@@ -270,12 +270,13 @@ deliberately make those timings unfit for score comparisons. Ordinary products
 compile out the source, environment control, wrapper storage and every call
 site.
 
-The CLI requires a replayed Linux source and embeds its Kbuild `vmlinux`. The
-default 16 KiB CLI and both 16 KiB Kernarium slices consume the exact same
-canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` input. The 4 KiB macOS
-compatibility product and both 4 KiB Kernarium slices similarly consume
-`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`; only host delivery changes from the
-macOS CLI section to the iOS framework's signed `__TEXT` carrier.
+The CLI and Kernarium consume validated, already-built mainline kernel bundles;
+their CMake graphs do not prepare or compile Linux. The default 16 KiB CLI and
+both 16 KiB Kernarium slices derive their ELF from the same accepted 16 KiB
+artifact, while the 4 KiB macOS compatibility product and both 4 KiB
+Kernarium slices derive it from the accepted 4 KiB artifact. Only host delivery
+changes from the macOS CLI section to the iOS framework's signed `__TEXT`
+carrier.
 `UML_GUEST_16K_PAGES=ON` remains the default.
 
 Guest integration uses the unified raw EROFS image `rootfs.erofs` at

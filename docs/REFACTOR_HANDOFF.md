@@ -106,15 +106,13 @@ The former singleton kernel layout is split into
 `kernel/mainline-6.18` and `kernel/common`. The mainline family owns its
 source identity, generated patches, complete configuration, compiler policy,
 and standalone scripts. Common ownership is limited to the unchanged bridge
-ABI, the shared 16 KiB page/task-stack geometry, and a series verifier that
-requires an explicit line root. Root `kernel/CMakeLists.txt` still composes the
-same current products and target names.
-
-This is repository preparation only. It adds no Android directory, ACK source
-identity, AOSP patch, Android build script, guest image, Apple Android target,
-or Android acceptance claim. The current generated Linux patch bytes and final
-tree are unchanged. Active next-base policy now emits only local carry, drop,
-rebase, and retest actions; it defines no contribution workflow.
+ABI, shared 16 KiB page/task-stack geometry, parameterized series verifier, and
+prebuilt-artifact contract. Root `kernel/CMakeLists.txt` is now import-only: it
+validates accepted local bundles and exposes their files to the unchanged
+current product targets without running Git, replay, toolchain selection, or
+Kbuild. The Android ACK series, AOSP product, static disk/initramfs producer,
+and accepted release are separately owned by `kernel/android-6.18` and
+`android/aosp-17`; the Apple Android executable/runtime remain later work.
 
 ## Required case-sensitive kernel source configuration (2026-08-20)
 
@@ -123,11 +121,12 @@ The maintained Linux checkout now comes only from the Git-ignored
 one absolute `UML_KERNEL_SOURCE_DIR`;
 `kernel/mainline-6.18/scripts/source-location.sh` parses it as data,
 canonicalizes the location, and proves case sensitivity with a case-collision
-probe. Preparation, CMake, Kbuild, delta audit, and patch regeneration consume
-that single value. Checked presets no longer embed or accept a source path, and
-a missing/malformed config, source mismatch, missing checkout during build, or
-case-insensitive location is a hard failure. Fresh replay verification writes
-an isolated disposable config beside its temporary checkout.
+probe. Preparation, Kbuild, delta audit, and patch regeneration consume that
+single value. Apple CMake consumes accepted artifacts only and never reads the
+source configuration. A missing/malformed config, source mismatch, missing
+checkout during standalone build, or case-insensitive location remains a hard
+producer failure. Fresh replay verification writes an isolated disposable
+config beside its temporary checkout.
 
 ## Git-only dependency and kernel provenance (2026-08-20)
 
@@ -358,9 +357,10 @@ firewall startup, started tinydm, and produced a 440x860 Sxmo/Sway frame over
 VNC; the image's account, runlevel, and session were not replaced.
 
 The default macOS integration target and both 16 KiB iOS runtime slices consume
-the exact same canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN
-bytes. The macOS 4 KiB compatibility target and both 4 KiB iOS slices likewise
-consume `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Kernarium packages them as
+the same accepted 16 KiB mainline bundle. The macOS 4 KiB compatibility target
+and both 4 KiB iOS slices likewise consume the accepted 4 KiB bundle. CMake
+derives the ELF only after manifest, source, page, ABI, configuration, import,
+and inventory checks. Kernarium packages them as
 `KernariumRuntime_6_18_41_16K` and `KernariumRuntime_6_18_41_4K`, embeds both
 without linking either at process launch, and dynamically loads exactly the
 saved profile for the process lifetime. The selected framework places its ELF

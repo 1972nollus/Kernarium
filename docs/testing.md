@@ -211,6 +211,18 @@ kernel/mainline-6.18/build/build-kernel.sh \
 kernel/mainline-6.18/build/build-kernel.sh \
   --build /Volumes/<case-sensitive-volume>/build-4k \
   --page-size 4k
+python3 -B kernel/mainline-6.18/build/publish-artifact.py \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-16k \
+  --page-size 16k \
+  --output-root "$PWD/.build/kernel/artifacts" \
+  --release-id reviewed-release-id
+python3 -B kernel/mainline-6.18/build/publish-artifact.py \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-4k \
+  --page-size 4k \
+  --output-root "$PWD/.build/kernel/artifacts" \
+  --release-id reviewed-release-id
 
 cmake --preset kernarium-ios-simulator
 cmake --build --preset kernarium-ios-simulator
@@ -245,23 +257,23 @@ guest still receives the normal SLiRP callback provider used by the emulator.
 GLESv2 device and Simulator slices below `.build/kernarium-xcframeworks`, which
 is the only framework location referenced by the Xcode project.
 
-The canonical 16 KiB image for the default macOS integration target and iOS
-runtime is `/Volumes/<case-sensitive-volume>/build-16k/vmlinux`; the corresponding 4 KiB
-compatibility products use `/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. macOS
-embeds the selected profile directly. Kernarium packages the same bytes into
+The default macOS integration target and iOS runtime consume the accepted
+16 KiB mainline bundle below `.build/kernel/artifacts`; the corresponding
+4 KiB compatibility products consume the accepted 4 KiB bundle. macOS embeds
+the manifest-derived ELF directly. Kernarium packages the same bytes into
 `KernariumRuntime_<release>_16K` and `KernariumRuntime_<release>_4K`, embeds
 both without a launch-time dependency, and loads only the saved profile.
-Override a kernel input only when deliberately testing another maintained
-artifact of the matching page profile. With one Simulator already booted, the
-following command builds both runtimes and the Xcode app, installs it, copies
-the EROFS image into the app's Documents directory, and only then launches the
-app with the guest console on the invoking terminal's stdout:
+Override a whole artifact directory only when deliberately testing another
+maintained publication of the matching page profile. With one Simulator
+already booted, the following command builds both runtimes and the Xcode app,
+installs it, copies the EROFS image into the app's Documents directory, and only
+then launches the app with the guest console on the invoking terminal's stdout:
 
 ```sh
 Kernarium/scripts/run-ios-simulator.sh \
   --rootfs "$PWD/rootfs.erofs" \
-  --kernel-16k /Volumes/<case-sensitive-volume>/build-16k/vmlinux \
-  --kernel-4k /Volumes/<case-sensitive-volume>/build-4k/vmlinux
+  --artifact-16k "$PWD/.build/kernel/artifacts/accepted-16k-directory" \
+  --artifact-4k "$PWD/.build/kernel/artifacts/accepted-4k-directory"
 ```
 
 The serial console remains on that stdout relay and is also copied, in order,
@@ -435,11 +447,11 @@ plane, and CRTC at origin under otherwise identical conditions. The validation
 started the image's development Phosh unit directly to isolate the post-login
 path; it did not replace the production greetd login flow.
 
-Prepare full integration explicitly. Linux must be replayed on a
-case-sensitive filesystem. The canonical source and page-specific kernel build
-trees stay on the dedicated `/Volumes/<case-sensitive-volume>` volume at `linux`,
-`build-16k`, and `build-4k`. Do not create or attach a repository-local
-sparsebundle for the canonical workflow, and do not substitute a transient
+Prepare full integration explicitly. Linux replay and Kbuild remain standalone
+producer work on a case-sensitive filesystem. After both builds pass, publish
+their compact artifacts below `.build/kernel/artifacts`; Apple configure and
+build use only those local bundles. Do not create or attach a repository-local
+sparsebundle for the kernel source workflow, and do not substitute a transient
 case-sensitive mount under `/tmp`.
 
 Source preparation, dependency-prefix construction, and Linux replay are
@@ -466,6 +478,12 @@ dependencies/verify-prefix.sh \
 kernel/mainline-6.18/scripts/prepare-source.sh --verify
 kernel/mainline-6.18/scripts/verify-replay.sh \
   --work-root /Volumes/<case-sensitive-volume> --skip-build
+python3 -B kernel/mainline-6.18/build/publish-artifact.py \
+  --source /Volumes/<case-sensitive-volume>/linux \
+  --build /Volumes/<case-sensitive-volume>/build-16k \
+  --page-size 16k \
+  --output-root "$PWD/.build/kernel/artifacts" \
+  --release-id reviewed-release-id
 cmake --preset macos-integration
 cmake --build --preset macos-integration
 ctest --preset integration-fast
@@ -475,22 +493,21 @@ Kernel compilation uses every online host processor by default. Set
 `UML_KERNEL_JOBS` or pass `--jobs N` only to impose an explicit lower limit.
 
 The ignored `kernel/mainline-6.18/source-location.conf` is the sole authority
-for the source checkout. The checked integration presets pin
-`/Volumes/<case-sensitive-volume>/build-16k` and `/Volumes/<case-sensitive-volume>/build-4k` only.
-For another case-sensitive layout, update the ignored config and override the
-page-specific build cache path if needed:
+for standalone source preparation and Kbuild. Apple CMake instead derives its
+default bundle from the checked page-specific acceptance descriptor. To test a
+different reviewed local publication, override the complete artifact directory:
 
 ```sh
 cmake --preset macos-integration \
-  -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-16k
+  -DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR=/local/artifacts/mainline-6.18-16k-release
 cmake --preset macos-integration-4k \
-  -DUML_KERNEL_BUILD_DIR=/other/case-sensitive/build-4k
+  -DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR=/local/artifacts/mainline-6.18-4k-release
 ```
 
-Kernel-enabled CMake configuration and
-`kernel/mainline-6.18/build/build-kernel.sh` fail before toolchain selection
-when `kernel/mainline-6.18/source-location.conf` is absent, malformed, points
-at a missing checkout, or resolves to a case-insensitive filesystem.
+`kernel/mainline-6.18/build/build-kernel.sh` fails before toolchain selection
+when its source configuration is absent or invalid. Apple configuration does
+not read that configuration; it fails when the selected accepted artifact is
+missing, stale, wrong-family, wrong-page, or ABI-incompatible.
 
 `dependencies/prepare.sh --verify` authenticates the already prepared source
 trees; it does not construct or verify the compiled dependency prefix.
@@ -1060,12 +1077,12 @@ python3 tests/integration/ltp/run_guest_ltp.py \
   --emulator .build/presets/macos-integration/bin/uml-darwin \
   --rootfs rootfs.erofs \
   --manifest tests/integration/ltp/verified-tests.tsv \
-  --modules-builtin /Volumes/<case-sensitive-volume>/build-16k/modules.builtin \
+  --modules-builtin .build/kernel/artifacts/mainline-6.18-16k-release/kernel/modules.builtin \
   --case containers/netns_sysfs
 ```
 
-The CMake engine targets supply the corresponding
-`${UML_KERNEL_BUILD_DIR}/modules.builtin` automatically. The harness copies
+The CMake engine targets supply the selected artifact's `kernel/modules.builtin`
+automatically. The harness copies
 that complete file byte-exact into disposable OverlayFS state and replaces
 `modules.dep` with an empty file only when the running config proves
 `CONFIG_MODULES=n`. The generated setup is gzip-compressed on the host and

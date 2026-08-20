@@ -169,10 +169,12 @@ Kernarium recreates a sparse temporary image on launch at the configured size
 (8 GiB by default). The guest formats it as ext4 and uses separate OverlayFS,
 Docker, and containerd directories on the same free-space pool; the app does
 not create or activate disk-backed swap.
-Both 16 KiB iOS slices and default macOS integration consume the exact same
-canonical `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` ET_DYN bytes; the 4 KiB
-iOS slices and macOS compatibility product likewise share
-`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Kernarium names the two signed
+Both 16 KiB iOS slices and default macOS integration consume the same accepted
+16 KiB mainline artifact; the 4 KiB iOS slices and macOS compatibility product
+likewise share the accepted 4 KiB artifact. Root kernel CMake is import-only and
+derives every ELF/support path from a locally installed, validated manifest;
+source replay, toolchain selection, and Kbuild remain standalone. Kernarium
+names the two signed
 carriers `KernariumRuntime_6_18_41_16K` and
 `KernariumRuntime_6_18_41_4K`, embeds both without linking either at launch,
 and dynamically loads exactly the saved profile for the process lifetime. The

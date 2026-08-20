@@ -81,13 +81,16 @@ window below the iOS ceiling and uses `vm_remap` to alias only immutable,
 relocation-free executable ELF pages from that signed mapping; non-executable
 data and BSS remain ordinary anonymous mappings. The Darwin kernel link keeps
 signed executable boundaries on 16 KiB host pages even for a 4 KiB guest.
-Simulator, physical device, and macOS consume the exact same canonical bytes
-within each profile: `/Volumes/<case-sensitive-volume>/build-16k/vmlinux` or
-`/Volumes/<case-sensitive-volume>/build-4k/vmlinux`. Simulator and physical device carry
-them through the same signed framework strategy. macOS retains its established
-unsigned CLI embedding and uses the same guest range, RAM-scaled window
-derivation, relocation, and exclusion-hole handling, but places that window at
-96 TiB rather than inside iOS's constrained sub-62 GiB host range.
+Simulator, physical device, and macOS consume the same accepted prebuilt
+mainline artifact within each profile. The acceptance descriptors under
+`kernel/mainline-6.18/artifacts` select local bundles below
+`.build/kernel/artifacts`; CMake validates each manifest, page size, ABI,
+configuration, ELF, and support inventory before deriving any path. Simulator
+and physical device carry the selected ELF through the same signed framework
+strategy. macOS retains its established unsigned CLI embedding and uses the
+same guest range, RAM-scaled window derivation, relocation, and exclusion-hole
+handling, but places that window at 96 TiB rather than inside iOS's constrained
+sub-62 GiB host range.
 Product policy still lets
 macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1.5 GiB and all
 processors reported by iOS; the app can persist a smaller launch configuration

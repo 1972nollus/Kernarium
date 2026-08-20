@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# Application composition belongs here; the foreign Kbuild policy and its
-# generated image are owned by kernel/CMakeLists.txt.
-if(NOT TARGET uml_kernel OR NOT UML_KERNEL_IMAGE)
-    message(FATAL_ERROR "The macOS application requires the kernel module")
+# Application composition belongs here; kernel/CMakeLists.txt owns only a
+# validated, already-built local artifact.
+if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
+   NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+    message(FATAL_ERROR "The macOS application requires a kernel artifact")
+endif()
+get_target_property(_uml_macos_kernel_image
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+if(NOT _uml_macos_kernel_image)
+    message(FATAL_ERROR "The selected kernel artifact has no ELF image")
 endif()
 
 add_executable(uml-darwin main.cpp)
@@ -11,9 +17,11 @@ uml_declare_architecture_target(uml-darwin app)
 target_include_directories(uml-darwin PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/emulator/src
     ${PROJECT_SOURCE_DIR}/darwin/device)
-add_dependencies(uml-darwin uml_kernel uml_dependency_prefix_verify)
+add_dependencies(uml-darwin
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
+    uml_dependency_prefix_verify)
 set_property(TARGET uml-darwin APPEND PROPERTY LINK_DEPENDS
-    "${UML_KERNEL_IMAGE}"
+    "${_uml_macos_kernel_image}"
     "${PROJECT_SOURCE_DIR}/dependencies/verify-runtime-dependencies.sh"
     "${UML_DEPENDENCY_PREFIX}/share/uml-dependencies/receipt.tsv"
     "${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/EGL.framework/EGL"
@@ -37,7 +45,7 @@ target_link_options(uml-darwin PRIVATE
     # symbols have no native Mach-O callers, so force-load the deliberately
     # aggregated emulator product at the application boundary.
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
-    "LINKER:-sectcreate,__DATA,__uml_elf,${UML_KERNEL_IMAGE}")
+    "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_macos_kernel_image}")
 
 set_target_properties(uml-darwin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin

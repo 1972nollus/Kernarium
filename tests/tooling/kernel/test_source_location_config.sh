@@ -42,11 +42,13 @@ if git -C "$ROOT_DIR" ls-files --error-unmatch \
 	fail "the developer-specific source-location configuration is tracked"
 fi
 
-grep -F 'kernel/mainline-6.18/source-location.conf' \
+if grep -E 'source-location\.conf|UML_KERNEL_SOURCE_(CONFIG|DIR)' \
+	"$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null; then
+	fail "Apple CMake still consults the standalone source configuration"
+fi
+grep -F 'UML_MAINLINE_618_KERNEL_ARTIFACT_DIR' \
 	"$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
-	fail "CMake does not require the local source-location configuration"
-grep -F 'UML_KERNEL_SOURCE_CONFIG' "$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
-	fail "CMake does not propagate the selected source configuration"
+	fail "Apple CMake does not consume the accepted prebuilt artifact"
 if grep -F '"UML_KERNEL_SOURCE_DIR":' "$ROOT_DIR/CMakePresets.json" >/dev/null; then
 	fail "checked presets still bypass the ignored source configuration"
 fi

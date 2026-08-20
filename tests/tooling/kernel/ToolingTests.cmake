@@ -26,14 +26,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME kernel-cmake-build-layout
-    COMMAND ${CMAKE_COMMAND}
-        -DLAYOUT_MODULE=${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/CMakeBuildLayout.cmake
-        -P ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_cmake_build_layout.cmake
-    LABELS kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME kernel-compiler-selection
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_toolchain.sh
         ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/KernelToolchain.cmake
@@ -78,6 +70,12 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_apple_kernel_image_policy.py
         --presets ${PROJECT_SOURCE_DIR}/CMakePresets.json
         --kernel-cmake ${PROJECT_SOURCE_DIR}/kernel/CMakeLists.txt
+        --artifact-cmake
+            ${PROJECT_SOURCE_DIR}/kernel/common/artifacts/KernelArtifact.cmake
+        --acceptance-16k
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-16k.env
+        --acceptance-4k
+            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-4k.env
         --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
         --runtime-source
             ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
@@ -105,43 +103,10 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
         --simulator-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/run-ios-simulator.sh
+        --macos-app-cmake
+            ${PROJECT_SOURCE_DIR}/darwin/app/macos/CMakeLists.txt
         --macos-app ${PROJECT_SOURCE_DIR}/darwin/app/macos/main.cpp
         --toolchain-env
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/toolchain/darwin.env
     LABELS kernel;audit
     TIMEOUT 30)
-
-# A CLI configuration always supplies the prepared replay. A tooling-only
-# configuration may opt in by naming one explicitly; the fixture itself is
-# host-only and rootfs-free.
-if(DEFINED UML_KERNEL_SOURCE_DIR AND
-   EXISTS "${UML_KERNEL_SOURCE_DIR}/arch/um/kernel/tlb.c")
-    uml_add_tooling_test(
-        NAME darwin-init-mm-tlb-policy
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py
-            --linux-source ${UML_KERNEL_SOURCE_DIR}
-        LABELS kernel;audit
-        TIMEOUT 30)
-
-    uml_add_tooling_test(
-        NAME darwin-vcpu-carrier-policy
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py
-            --linux-source ${UML_KERNEL_SOURCE_DIR}
-            --kernel-config
-                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
-            --page-16k-config
-                ${PROJECT_SOURCE_DIR}/kernel/common/config/page-16k.fragment
-            --page-4k-config
-                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/page-4k.fragment
-            --kernel-build-script
-                ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/build-kernel.sh
-            --project-cmake ${PROJECT_SOURCE_DIR}/CMakeLists.txt
-            --kernarium-runtime
-                ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm
-            --kernarium-runtime-loader
-                ${PROJECT_SOURCE_DIR}/Kernarium/Kernarium/KernariumRuntimeLoader.mm
-        LABELS kernel;audit
-        TIMEOUT 30)
-endif()

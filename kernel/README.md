@@ -9,22 +9,22 @@ has begun with a separately pinned ACK baseline:
   commands;
 - [`common/`](common/README.md) owns contracts that are deliberately shared
   across kernel families; and
-- [`android-6.18/`](android-6.18/README.md) owns the pinned ACK 6.18 identity
-  and will own its independently generated Darwin UML series and one 16 KiB
+- [`android-6.18/`](android-6.18/README.md) owns the pinned ACK 6.18 identity,
+  independently generated Darwin UML series, and one built-in-only 16 KiB
   Android configuration; and
-- [`CMakeLists.txt`](CMakeLists.txt) preserves the current Apple product graph
-  by composing the mainline family explicitly.
+- [`CMakeLists.txt`](CMakeLists.txt) imports accepted local artifacts for Apple
+  products without reading either source checkout or invoking Kbuild.
 
-The Android lane currently provides source preparation and preflight only. It
-does not yet provide a Darwin UML ACK patch series, Android product/image, or
-Apple runtime target. It must not reuse the mainline family's generated patch
-bytes, source configuration, cache, or complete product policy.
+The Android producer and release support live under `android/aosp-17`; no AOSP
+patch, image builder, or release tool is owned by the kernel directories. The
+ACK line must not reuse the mainline family's generated patch bytes, source
+configuration, cache, or complete product policy.
 
-The move from the former singleton layout does not change the current Linux
-source, patch bytes, final tree, page profiles, kernel target names, or Apple
-products. The old ignored `kernel/source-location.conf` remains untouched as
-developer-owned data. Copy its value manually into the new ignored
-`kernel/mainline-6.18/source-location.conf` when adopting this layout.
+Standalone mainline source preparation still uses the ignored
+`kernel/mainline-6.18/source-location.conf`. Product builds consume the compact
+accepted bundles under `.build/kernel/artifacts`, selected by the checked
+descriptors in `kernel/mainline-6.18/artifacts`; source and Kbuild state are not
+part of the Apple graph.
 
 All maintained changes remain local to this project. Source repositories and
 branch names are provenance only; the kernel tooling has no submission or

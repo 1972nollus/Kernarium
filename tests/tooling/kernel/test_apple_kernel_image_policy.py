@@ -15,10 +15,6 @@ import tempfile
 from pathlib import Path
 
 
-CANONICAL_BUILD_16K = "/Volumes/Kernel/build-16k"
-CANONICAL_BUILD_4K = "/Volumes/Kernel/build-4k"
-CANONICAL_IMAGE_16K = f"{CANONICAL_BUILD_16K}/vmlinux"
-CANONICAL_IMAGE_4K = f"{CANONICAL_BUILD_4K}/vmlinux"
 OBSOLETE_BUILD = "build-ios-device-16k"
 SWIFTTERM_REVISION = "7691f85b222a67a66b58499e1b2647443cf0dda7"
 SWIFTTERM_VERSION = "1.18.0"
@@ -33,6 +29,13 @@ def require(condition: bool, message: str) -> None:
 
 def read(path: Path) -> str:
     return path.resolve().read_text(encoding="utf-8")
+
+
+def env_value(source: str, key: str) -> str:
+    prefix = f"{key}="
+    rows = [row[len(prefix):] for row in source.splitlines() if row.startswith(prefix)]
+    require(len(rows) == 1, f"metadata lacks one {key}")
+    return rows[0].strip("'")
 
 
 def kernel_release(metadata: str) -> str:
@@ -165,6 +168,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--presets", type=Path, required=True)
     parser.add_argument("--kernel-cmake", type=Path, required=True)
+    parser.add_argument("--artifact-cmake", type=Path, required=True)
+    parser.add_argument("--acceptance-16k", type=Path, required=True)
+    parser.add_argument("--acceptance-4k", type=Path, required=True)
     parser.add_argument("--runtime-cmake", type=Path, required=True)
     parser.add_argument("--runtime-source", type=Path, required=True)
     parser.add_argument("--runtime-header", type=Path, required=True)
@@ -179,6 +185,7 @@ def main() -> int:
     parser.add_argument("--xcode-project", type=Path, required=True)
     parser.add_argument("--package-resolved", type=Path, required=True)
     parser.add_argument("--simulator-script", type=Path, required=True)
+    parser.add_argument("--macos-app-cmake", type=Path, required=True)
     parser.add_argument("--macos-app", type=Path, required=True)
     parser.add_argument("--toolchain-env", type=Path, required=True)
     arguments = parser.parse_args()
@@ -188,37 +195,41 @@ def main() -> int:
     configurations = {
         preset["name"]: preset for preset in presets["configurePresets"]
     }
+    acceptance_16k = read(arguments.acceptance_16k)
+    acceptance_4k = read(arguments.acceptance_4k)
+    directory_16k = env_value(
+        acceptance_16k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+    )
+    directory_4k = env_value(
+        acceptance_4k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+    )
     require(
         configurations["macos-integration"]["cacheVariables"]
-        ["UML_KERNEL_BUILD_DIR"]
-        == CANONICAL_BUILD_16K,
-        "macOS integration does not build and embed the canonical 16 KiB kernel",
+        ["UML_KERNEL_PRODUCT"]
+        == "mainline-6.18",
+        "macOS integration does not select the mainline artifact family",
     )
     require(
-        configurations["macos-integration-4k"]["cacheVariables"]
-        ["UML_KERNEL_BUILD_DIR"]
-        == CANONICAL_BUILD_4K,
-        "macOS 4 KiB integration does not use its canonical kernel",
-    )
-    require(
-        "UML_KERNEL_JOBS"
-        not in configurations["macos-integration"]["cacheVariables"],
-        "macOS integration overrides the all-host-CPU kernel build default",
+        "UML_KERNEL_BUILD_DIR"
+        not in configurations["macos-integration"]["cacheVariables"]
+        and "UML_KERNEL_BUILD_DIR"
+        not in configurations["macos-integration-4k"]["cacheVariables"],
+        "macOS integration still exposes a Kbuild output directory",
     )
     for platform in ("device", "simulator"):
         profile_16k = configurations[f"kernarium-ios-{platform}"]
         profile_4k = configurations[f"kernarium-ios-{platform}-4k"]
         require(
-            profile_16k["cacheVariables"]["UML_KERNARIUM_KERNEL_IMAGE"]
-            == CANONICAL_IMAGE_16K
+            profile_16k["cacheVariables"]["UML_KERNEL_PRODUCT"]
+            == "mainline-6.18"
             and profile_16k["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
-            f"{platform} 16 KiB runtime profile is not canonical",
+            f"{platform} 16 KiB runtime profile does not select mainline",
         )
         require(
-            profile_4k["cacheVariables"]["UML_KERNARIUM_KERNEL_IMAGE"]
-            == CANONICAL_IMAGE_4K
-            and profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False,
-            f"{platform} 4 KiB runtime profile is not canonical",
+            profile_4k["cacheVariables"]["UML_GUEST_16K_PAGES"] is False
+            and "UML_KERNARIUM_KERNEL_IMAGE"
+            not in profile_4k["cacheVariables"],
+            f"{platform} 4 KiB runtime profile bypasses artifact selection",
         )
         require(
             profile_16k["binaryDir"] != profile_4k["binaryDir"],
@@ -226,20 +237,45 @@ def main() -> int:
         )
 
     kernel_cmake = read(arguments.kernel_cmake)
+    artifact_cmake = read(arguments.artifact_cmake)
+    for contract in (
+        "uml_import_mainline_kernel_artifact",
+        "UML_MAINLINE_618_KERNEL_ARTIFACT_DIR",
+        "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
+        "accepted-16k.env",
+        "accepted-4k.env",
+    ):
+        require(contract in kernel_cmake, f"kernel importer lacks {contract}")
+    for forbidden in (
+        "add_custom_command",
+        "build-kernel.sh",
+        "prepare-source.sh",
+        "source-location.conf",
+        "UML_KERNEL_BUILD_DIR",
+        "UML_KERNEL_SOURCE_DIR",
+        "UML_KERNEL_JOBS",
+    ):
+        require(
+            forbidden not in kernel_cmake,
+            f"Apple kernel importer retains producer operation {forbidden}",
+        )
+    for contract in (
+        "verify-kernel-artifact.py",
+        "add_library(\"${ARTIFACT_TARGET}\" INTERFACE)",
+        "UML_KERNEL_IMAGE",
+        "UML_KERNEL_MODULES_BUILTIN",
+        "CMAKE_CONFIGURE_DEPENDS",
+    ):
+        require(contract in artifact_cmake, f"artifact CMake lacks {contract}")
     require(
-        'set(UML_KERNEL_IMAGE "${UML_KERNEL_BUILD_DIR}/vmlinux" CACHE INTERNAL'
-        in kernel_cmake,
-        "the macOS embedded image is not derived from its selected Kbuild tree",
+        env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
+        and directory_16k.startswith("mainline-6.18-16k-"),
+        "16 KiB artifact acceptance is malformed",
     )
     require(
-        '"Derived Linux UML kernel ELF embedded in the transitional macOS CLI" FORCE)'
-        in kernel_cmake,
-        "the derived macOS kernel input can be overridden independently",
-    )
-    require(
-        'set(UML_KERNEL_JOBS "" CACHE STRING' in kernel_cmake
-        and 'NOT UML_KERNEL_JOBS STREQUAL ""' in kernel_cmake,
-        "CMake does not leave kernel parallelism on the online-CPU default",
+        env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
+        and directory_4k.startswith("mainline-6.18-4k-"),
+        "4 KiB artifact acceptance is malformed",
     )
 
     toolchain_env = read(arguments.toolchain_env)
@@ -255,15 +291,26 @@ def main() -> int:
 
     runtime_cmake = read(arguments.runtime_cmake)
     for contract in (
-        CANONICAL_IMAGE_16K,
-        CANONICAL_IMAGE_4K,
+        "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
+        "UML_ARTIFACT_FAMILY",
+        "UML_KERNEL_PAGE_SIZE",
+        "UML_KERNEL_RELEASE",
         "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}",
         'OUTPUT_NAME "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}"',
         "verify-signed-kernel-carrier.py",
-        "LINKER:-sectcreate,__TEXT,__uml_elf,${UML_KERNARIUM_KERNEL_IMAGE}",
-        'LINK_DEPENDS "${UML_KERNARIUM_KERNEL_IMAGE}"',
+        "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
+        'LINK_DEPENDS "${_kernarium_kernel_image}"',
     ):
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
+    for forbidden in (
+        "UML_KERNARIUM_KERNEL_IMAGE",
+        "/Volumes/Kernel/build-16k",
+        "/Volumes/Kernel/build-4k",
+    ):
+        require(
+            forbidden not in runtime_cmake,
+            f"runtime carrier retains direct kernel input {forbidden}",
+        )
 
     runtime_source = read(arguments.runtime_source)
     runtime_header = read(arguments.runtime_header)
@@ -390,12 +437,27 @@ def main() -> int:
 
     simulator_script = read(arguments.simulator_script)
     for contract in (
-        "UML_KERNARIUM_KERNEL_IMAGE_16K:-" + CANONICAL_IMAGE_16K,
-        "UML_KERNARIUM_KERNEL_IMAGE_4K:-" + CANONICAL_IMAGE_4K,
+        "UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR",
+        "UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR",
+        "accepted-16k.env",
+        "accepted-4k.env",
         "cmake --build --preset kernarium-ios-simulator",
         "cmake --build --preset kernarium-ios-simulator-4k",
     ):
         require(contract in simulator_script, f"Simulator launcher lacks {contract}")
+
+    macos_app_cmake = read(arguments.macos_app_cmake)
+    for contract in (
+        "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
+        "get_target_property(_uml_macos_kernel_image",
+        "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_macos_kernel_image}",
+    ):
+        require(contract in macos_app_cmake, f"macOS app binding lacks {contract}")
+    for forbidden in ("uml_kernel", "UML_KERNEL_BUILD_DIR"):
+        require(
+            forbidden not in macos_app_cmake,
+            f"macOS app binding retains producer-global input {forbidden}",
+        )
 
     macos_app = read(arguments.macos_app)
     for declaration in (
@@ -416,6 +478,7 @@ def main() -> int:
         (arguments.presets, presets_source),
         (arguments.runtime_cmake, runtime_cmake),
         (arguments.simulator_script, simulator_script),
+        (arguments.macos_app_cmake, macos_app_cmake),
         (arguments.macos_app, macos_app),
         (arguments.toolchain_env, toolchain_env),
     ):
