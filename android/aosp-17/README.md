@@ -203,7 +203,7 @@ and initrd paths; no builder or workstation path is stored in this tree.
 The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
 with 4,571 entries and 1,162 verified target executables, a 4,375,040-byte raw
 initramfs with 35 unique entries, and a reverified seven-partition
-17,179,869,184-byte GPT disk. The compressed transfer artifact is 817,207,465
+17,179,869,184-byte GPT disk. The compressed transfer artifact is 817,207,500
 bytes. AOSP's packaged VINTF checker accepted the target files and exact ACK
 kernel metadata; `atest elf_alignment_test` built but correctly deferred because
 it is a device-side test. It remains a post-boot gate. This proves the static
@@ -234,11 +234,12 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-4cbc02c1-static2`, published from clean
-outer revision `4cbc02c1e2397bd8ac7caec3d17bba7e80936bac` after the static
-kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC, no-camera APEX,
-and non-A/B storage gates passed. This is artifact acceptance for Apple-product
-integration; HAL and application acceptance remain separate later gates.
+selects `android17-ack6.18-16k-20260821-70861dcc-dmdefault1`, published from
+clean outer revision `70861dccce0abf56371fa429050cebe348a38425` after the
+static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
+no-camera APEX, non-A/B storage, and built-in userdata-encryption gates passed.
+This is artifact acceptance for Apple-product integration; HAL and application
+acceptance remain separate later gates.
 
 Apple consumers validate that installed directory without a builder or transfer
 tool. The installed mode requires and checks the expanded GPT disk and all other
