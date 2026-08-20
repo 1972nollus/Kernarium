@@ -143,6 +143,9 @@ for variable in \
 	[[ "$(get_build_var "$variable")" == false ]] ||
 		fail "$variable must be false for the built-in-only kernel"
 done
+ab_ota_partitions=$(get_build_var AB_OTA_PARTITIONS)
+[[ "$ab_ota_partitions" != *dlkm* ]] ||
+	fail "AB_OTA_PARTITIONS retains a DLKM payload: $ab_ota_partitions"
 for variable in \
 	BOARD_GENERIC_RAMDISK_KERNEL_MODULES \
 	BOARD_GENERIC_RAMDISK_KERNEL_MODULES_LOAD \
