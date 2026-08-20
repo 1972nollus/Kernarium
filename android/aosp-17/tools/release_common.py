@@ -294,7 +294,9 @@ def validate_manifest(value: object) -> dict:
         require_string(option, f"producer option {index}")
     builder = require_exact_keys(producer["builder"], BUILDER_KEYS, "producer.builder")
     for key in BUILDER_KEYS:
-        require_string(builder[key], f"producer.builder.{key}")
+        value = require_string(builder[key], f"producer.builder.{key}")
+        if re.search(r"(^|[ (])/[^ )]+", value):
+            fail(f"producer.builder.{key} stores an absolute filesystem path")
     if builder["architecture"] != "x86_64":
         fail("release was not produced on an x86_64 builder")
 

@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -98,7 +99,8 @@ def first_version(arguments: list[str], *, cwd: Path | None = None) -> str:
     )
     if result.returncode != 0 or not result.stdout.strip():
         fail(f"cannot record tool version: {arguments[0]}")
-    return result.stdout.splitlines()[0].strip().replace("\t", " ")
+    line = result.stdout.splitlines()[0].strip().replace("\t", " ")
+    return re.sub(r"(^|[ (])/[^ )]+", r"\1<tool-build-source>", line)
 
 
 def read_properties(archive: zipfile.ZipFile, member: str) -> dict[str, str]:
