@@ -260,9 +260,13 @@ for package in \
 done
 [[ "$PRODUCT_PACKAGES" != *" dlkm_loader "* ]] ||
 	fail "dlkm_loader is forbidden for the built-in-only kernel"
-for package in checkpoint_gc update_engine_sideload; do
+for package in \
+	android.hardware.boot-service.default_recovery \
+	checkpoint_gc \
+	com.android.hardware.boot \
+	update_engine_sideload; do
 	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
-		fail "Cuttlefish OTA package is forbidden for the fixed UBD product: $package"
+		fail "Cuttlefish A/B package is forbidden for the fixed UBD product: $package"
 done
 
 # target-files always carries a kernel input even when this product does not

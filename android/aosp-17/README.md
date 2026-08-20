@@ -131,6 +131,12 @@ longer depends on or copies the legacy non-A/B `updater` binary. This keeps the
 useful target-files verification input without manufacturing an OTA path for a
 product that cannot consume one.
 
+Route `p0001` also omits the inherited BootControl APEX and recovery service for
+this non-A/B product. Its fixed userdata fstab has no checkpoint flag, so vold
+does not wait for a slot-based BootControl service that the static GPT cannot
+provide. The builder and target-files verifier reject either package, the APEX
+payload, or a checkpoint-bearing fstab if those contracts regress.
+
 Route `p0001` also replaces the inherited dynamic/virtio fstab with
 `fstab.uml`. Android first-stage init discovers the fixed GPT partitions below
 the `uml-blkdev.0` platform device and mounts the immutable filesystems

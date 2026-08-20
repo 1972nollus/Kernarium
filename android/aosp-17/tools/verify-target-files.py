@@ -92,6 +92,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "IMAGES/vbmeta_system.img",
     "IMAGES/vbmeta_vendor.img",
     "META/ab_partitions.txt",
+    "VENDOR/apex/com.android.hardware.boot.apex",
     "VENDOR/etc/init/seriallogging.rc",
 }
 UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
@@ -102,8 +103,9 @@ UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 """
 UML_FSTAB_ENTRIES = (
     "VENDOR/etc/fstab.uml",

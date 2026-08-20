@@ -70,8 +70,9 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 """
 
 
@@ -94,6 +95,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           virtual_ab: bool = False, abi32: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           seriallogging: bool = False,
+                          boot_control: bool = False,
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
@@ -177,6 +179,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr("VENDOR/etc/fstab.cf.ext4.hctr2", b"stock")
                 if seriallogging:
                     archive.writestr("VENDOR/etc/init/seriallogging.rc", b"stock")
+                if boot_control:
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.boot.apex", b"apex"
+                    )
 
         good = root / "good.zip"
         write_fixture(good)
@@ -205,6 +211,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("wrong-fstab", {"wrong_fstab": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
+            ("boot-control", {"boot_control": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
@@ -807,6 +814,8 @@ def main() -> None:
         "com.android.hardware.keymint.rust_nonsecure",
         "dlkm_loader",
         "checkpoint_gc",
+        "com.android.hardware.boot",
+        "android.hardware.boot-service.default_recovery",
         "update_engine_sideload",
         "trusty_security_vm.elf",
         "target-files-package",
@@ -821,6 +830,7 @@ def main() -> None:
         "policycap memfd_class",
         "VENDOR/etc/vintf/manifest.xml",
         "VENDOR/etc/vintf/compatibility_matrix.xml",
+        "VENDOR/apex/com.android.hardware.boot.apex",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")

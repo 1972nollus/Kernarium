@@ -23,8 +23,9 @@ UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,checkpoint=block,fileencryption=aes-256-xts:aes-256-hctr2
+# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 """
 FORBIDDEN_PATHS = {
     "system/bin/modprobe",
