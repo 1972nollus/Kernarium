@@ -26,7 +26,7 @@
   exposed an intermittent `drm_mm` managed-release warning. Kernel topic 0020
   now retires atomic Virtio-GPU state before unplug; both LLVM 22 page-profile
   kernels rebuilt, and three consecutive Simulator plus three iPad sentinels
-  then passed and powered off cleanly. The complete identity/capset sentinel,
+  then passed and powered off cleanly. The broader fixed identity sentinel,
   performance, sustained lifecycle, and CTS matrices remain open;
   qualification is blocked by its missing authoritative build receipt and
   incomplete display-backed caselist. The new `--inventory` path attempted
@@ -34,11 +34,23 @@
   strict diagnostic report, and failed closed when the ninth package,
   `dEQP-GL45-ES3`, requested an unsupported EGL context after eight modules
   and 148,476 test rows. No partial identity was frozen.
+- Added an opt-in common provider/capset report and final native-display
+  counters. The host requests ES 3.0, 3.1, and 3.2 independently, emits sorted
+  extensions plus complete raw Virgl capsets, and the runner strictly decodes
+  every known v1/v2 field. Simulator now requires a passing native macOS
+  gadgets predecessor; iPad still requires the matching Simulator run. The
+  accepted ordered 16 KiB chain passed 1/1 and cleanly shut down on all three
+  products. Each created ES 3.0, rejected ES 3.1/3.2 with `EGL_BAD_MATCH`, and
+  reported zero CPU fallback. Exact semantic capset differences are retained
+  instead of requiring hardware-specific masks and limits to be byte-equal.
+  Device capability records use the stdout/guest-console stream after a real
+  iPad capture proved that `devicectl` can merge separate stdout/stderr streams
+  between bytes.
 - Added one common allow-list for signed-app CTS campaigns, generated the exact
   page-specific guest launcher into all four Kernarium runtime slices, and
   added thin Simulator and connected-iPad wrappers. Both reject arbitrary
   selectors and non-`Pass` results; the device wrapper also requires a matching
-  passing Simulator QPA. Twenty-four focused tooling tests, all four runtime
+  passing Simulator QPA. Twenty-five focused tooling tests, all four runtime
   builds, seven focused Xcode app tests, packaging, and the canonical GPU
   workflow passed. A normal 16 KiB Simulator boot reached direct ANGLE/Metal
   KDE presentation. The exact CTS adapter initially rejected echoed launcher

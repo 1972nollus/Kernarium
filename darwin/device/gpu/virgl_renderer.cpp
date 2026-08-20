@@ -5,16 +5,20 @@
 #include "host_gl_provider.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <epoxy/gl.h>
 #include <stdexcept>
 #include <string>
 #include <sys/uio.h>
+#include <utility>
+#include <unistd.h>
 
 extern "C" {
 #include <virgl_hw.h>
@@ -34,9 +38,108 @@ namespace {
 // malformed guest command or a lost emulator callback from hanging the whole
 // in-process emulator indefinitely.
 constexpr auto maximumFenceWait = std::chrono::seconds(60);
+// Stable Virtio-GPU ABI identifiers consumed by virgl_renderer_get_cap_set().
+constexpr std::uint32_t virglCapsetId = 1;
+constexpr std::uint32_t virgl2CapsetId = 2;
 
 std::atomic_bool missingGlEntryPoint;
 std::atomic_bool rendererInstanceActive;
+
+[[nodiscard]] bool capabilityReportEnabled() noexcept
+{
+    const char* value = std::getenv("UML_GPU_CAPABILITY_REPORT");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+}
+
+[[nodiscard]] std::string hexEncode(std::span<const std::uint8_t> bytes)
+{
+    constexpr char digits[] = "0123456789abcdef";
+    std::string encoded;
+    encoded.resize(bytes.size() * 2U);
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        encoded[index * 2U] = digits[bytes[index] >> 4U];
+        encoded[index * 2U + 1U] = digits[bytes[index] & 0x0fU];
+    }
+    return encoded;
+}
+
+[[nodiscard]] std::string hexEncode(std::string_view text)
+{
+    return hexEncode(std::span {
+        reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
+}
+
+void writeCapabilityRecord(std::string_view record) noexcept
+{
+    /*
+     * iOS device console capture transports stdout and stderr independently
+     * before merging them on the host. A short stderr write can therefore be
+     * split around later stdout readiness output even though the producer
+     * writes one logical record at a time. Keep the complete diagnostic on
+     * the same ordered stream as GPU readiness and the relayed guest console.
+     */
+    while (!record.empty()) {
+        const auto written = ::write(STDOUT_FILENO, record.data(), record.size());
+        if (written > 0) {
+            record.remove_prefix(static_cast<std::size_t>(written));
+            continue;
+        }
+        if (written < 0 && errno == EINTR)
+            continue;
+        return;
+    }
+}
+
+void reportContextProbe(const HostGlProvider::ContextProbe& probe)
+{
+    std::string record =
+        "UML_GPU_HOST_CONTEXT|requested=" +
+        std::to_string(probe.requestedMajor) + "." +
+        std::to_string(probe.requestedMinor) + "|created=" +
+        std::to_string(probe.created ? 1U : 0U) + "|egl_error=" +
+        std::to_string(probe.eglError) + "|actual=" +
+        std::to_string(probe.actualMajor) + "." +
+        std::to_string(probe.actualMinor) + "|vendor_hex=" +
+        hexEncode(probe.vendor) + "|renderer_hex=" +
+        hexEncode(probe.renderer) + "|version_hex=" +
+        hexEncode(probe.version) + "|glsl_hex=" +
+        hexEncode(probe.shadingLanguageVersion) + "|extensions=" +
+        std::to_string(probe.extensions.size()) + "\n";
+    writeCapabilityRecord(record);
+    for (const auto& extension : probe.extensions) {
+        record = "UML_GPU_HOST_EXTENSION|requested=" +
+            std::to_string(probe.requestedMajor) + "." +
+            std::to_string(probe.requestedMinor) + "|name_hex=" +
+            hexEncode(extension) + "\n";
+        writeCapabilityRecord(record);
+    }
+}
+
+void reportCapset(
+    std::uint32_t identifier,
+    const VirglRenderer::Capset& capset)
+{
+    constexpr std::size_t chunkBytes = 256;
+    const std::size_t chunks =
+        (capset.data.size() + chunkBytes - 1U) / chunkBytes;
+    writeCapabilityRecord(
+        "UML_GPU_CAPSET_BEGIN|id=" + std::to_string(identifier) +
+        "|version=" + std::to_string(capset.maximumVersion) +
+        "|size=" + std::to_string(capset.data.size()) +
+        "|chunks=" + std::to_string(chunks) + "\n");
+    for (std::size_t index = 0; index < chunks; ++index) {
+        const std::size_t offset = index * chunkBytes;
+        const std::size_t size = std::min(
+            chunkBytes, capset.data.size() - offset);
+        writeCapabilityRecord(
+            "UML_GPU_CAPSET_CHUNK|id=" + std::to_string(identifier) +
+            "|index=" + std::to_string(index) + "|hex=" +
+            hexEncode(std::span {capset.data}.subspan(offset, size)) + "\n");
+    }
+    writeCapabilityRecord(
+        "UML_GPU_CAPSET_END|id=" + std::to_string(identifier) +
+        "|chunks=" + std::to_string(chunks) + "\n");
+}
 
 void unavailableGlEntryPoint()
 {
@@ -73,6 +176,7 @@ VirglRenderer::VirglRenderer()
         throw std::runtime_error(
             "an in-process Virgl renderer is already active");
     }
+    bool initialized = false;
     try {
         epoxy_set_resolver_failure_handler(&handleMissingGlEntryPoint);
         // virgl_renderer_init() retains this pointer until cleanup rather than
@@ -106,7 +210,21 @@ VirglRenderer::VirglRenderer()
                 "failed to initialize in-process Virgl renderer: " +
                 std::to_string(checkedResult));
         }
+        initialized = true;
+        if (capabilityReportEnabled()) {
+            constexpr std::array versions {
+                std::pair {3U, 0U},
+                std::pair {3U, 1U},
+                std::pair {3U, 2U},
+            };
+            for (const auto [major, minor] : versions)
+                reportContextProbe(provider_->probeContext(major, minor));
+            reportCapset(virglCapsetId, capset(virglCapsetId));
+            reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
+        }
     } catch (...) {
+        if (initialized)
+            virgl_renderer_cleanup(this);
         rendererInstanceActive.store(false, std::memory_order_release);
         throw;
     }

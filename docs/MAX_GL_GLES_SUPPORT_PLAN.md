@@ -45,9 +45,18 @@ physical-iPad wrappers enforce exact IDs, framed artifacts, `Pass`, and
 Simulator-before-device ordering. That exact 16 KiB sentinel now passes 1/1 on
 both the iOS 26.5 Simulator and the connected iPad mini 6, measuring guest
 desktop GL 2.1 and GLES 3.0 through the same DRM/Xwayland/virgl path on each.
-The complete identity/capset sentinel, connected-iPad qualification,
-performance campaigns, sustained lifecycle acceptance, and complete Khronos
-matrices remain open. The first iPad shutdown exposed an intermittent `drm_mm`
+The broader fixed identity sentinel, connected-iPad qualification, performance
+campaigns, sustained lifecycle acceptance, and complete Khronos matrices
+remain open. The exact allow-listed sentinel now also captures
+explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
+decoded Virgl v1/v2 capset field, cross-product semantic diffs, and final
+native-display counters. The ordered macOS, Simulator, and iPad runs all create
+ES 3.0, naturally reject ES 3.1/3.2 with `EGL_BAD_MATCH`, retain the measured
+guest GL 2.1/GLES 3.0 result, pass 1/1, and report zero CPU-fallback frames.
+Hardware-specific capset differences are recorded rather than incorrectly
+requiring byte equality. This completes the plan's host-context/full-capset
+probe checkpoint, but not the broader fixed identity sentinel or performance
+qualification. The first iPad shutdown exposed an intermittent `drm_mm`
 managed-release warning. Maintained kernel topic 0020 now retires atomic
 Virtio-GPU scanout state before device unplug; both LLVM 22 page-profile builds
 passed, and three consecutive 16 KiB Simulator plus three connected-iPad exact
@@ -789,14 +798,18 @@ preparation creates no second runnable macOS graphics lane.
 Current status: the app-side campaign allow-list, page-specific generated
 launcher, Simulator wrapper, and connected-iPad wrapper are implemented and
 tooling-tested. The device wrapper requires a matching passing Simulator
-`run.json` plus its QPA before it will launch. The exact 16 KiB sentinel passed
-1/1 in three consecutive booted-Simulator runs and then three consecutive
-connected-iPad runs, with matching renderer and selected-caselist identities,
-guest/runtime status zero, and clean poweroff. Topic 0020 repaired the first
-iPad run's intermittent dirty DRM teardown, and transcript validation now
-fails closed on its signature or missing clean-stop markers. The complete
-sentinel, performance, thermal, and sustained lifecycle baselines remain
-missing. The complete caselist attempt also fails closed at
+`run.json` plus its QPA before it will launch, and the Simulator wrapper now
+requires the matching passing native macOS gadgets run. The exact 16 KiB
+sentinel passed 1/1 in three consecutive booted-Simulator runs and then three
+consecutive connected-iPad runs, with matching renderer and selected-caselist
+identities, guest/runtime status zero, and clean poweroff. Topic 0020 repaired
+the first iPad run's intermittent dirty DRM teardown, and transcript validation
+now fails closed on its signature or missing clean-stop markers. A later
+ordered macOS/Simulator/iPad run captured explicit ES 3.0/3.1/3.2 attempts,
+sorted extensions, full raw and decoded Virgl capsets, exact platform diffs,
+and zero native CPU fallback on all three products. The broader fixed sentinel,
+performance, thermal, and sustained lifecycle baselines remain missing. The
+complete caselist attempt also fails closed at
 `dEQP-GL45-ES3` because text enumeration creates an unsupported context; no
 partial digest/count/module set was promoted. Together with the absent
 authoritative CTS receipt, this keeps the exit open without a rootfs or guest
@@ -876,6 +889,17 @@ direct-presentation, and lifecycle budgets. The shipped GLES 2 and GLES 3.0 Khro
 must-pass matrices have complete macOS-first, same-path Simulator, and connected-iPad
 result sets: every required core case is `Pass`, and any other accepted status
 is explicitly permitted by the exact Khronos criteria.
+
+Current status: items 1 through 5 and the capset/context portion of items 7
+through 9 are implemented. The accepted ordered 16 KiB diagnostic requests ES
+3.0, 3.1, and 3.2 on each host, captures all extensions and both complete Virgl
+capsets, decodes every known field, records exact cross-product differences,
+requires direct presentation, and reports zero CPU fallback. ES 3.1 and 3.2
+fail with `EGL_BAD_MATCH` on macOS, Simulator, and iPad, so no Phase 3 profile
+work is authorized by this evidence. The full shipped matrices and frozen
+absolute performance, thermal, and sustained-lifecycle campaigns remain open;
+the missing CTS build receipt and incomplete complete-caselist identity keep
+qualification fail-closed.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 

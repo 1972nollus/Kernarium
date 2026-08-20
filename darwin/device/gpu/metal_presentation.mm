@@ -304,6 +304,21 @@ struct MetalPresentationState final :
         };
     }
 
+    void reportFinal() const noexcept
+    {
+        if (frameStatisticsInterval() <= 0.0)
+            return;
+        const DisplayStatistics total = snapshot();
+        std::fprintf(
+            stderr,
+            "Native display final: guest %llu presented %llu dropped %llu "
+            "cpu-fallback %llu\n",
+            static_cast<unsigned long long>(total.guestFrames),
+            static_cast<unsigned long long>(total.presentedFrames),
+            static_cast<unsigned long long>(total.droppedFrames),
+            static_cast<unsigned long long>(total.cpuFallbackFrames));
+    }
+
     void maybeReport() noexcept
     {
         const double interval = frameStatisticsInterval();
@@ -443,6 +458,7 @@ void MetalPresentation::shutdown() noexcept
         !state_->running.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
+    state_->reportFinal();
     std::lock_guard lock(state_->callbackMutex);
     state_->redrawCallback = {};
 }

@@ -35,6 +35,9 @@ import sys
 import time
 from typing import Any, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import virgl_capset  # noqa: E402
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IDENTITY_PATH = Path(__file__).with_name("vk_gl_cts_identity.json")
@@ -73,6 +76,32 @@ CHUNK_ARTIFACT = re.compile(
 )
 END_ARTIFACT = re.compile(
     r"UML_CTS_ARTIFACT_END\|([^|]+)\|([0-9]+)\Z"
+)
+HOST_CONTEXT = re.compile(
+    r"UML_GPU_HOST_CONTEXT\|requested=([0-9]+)\.([0-9]+)\|"
+    r"created=([01])\|egl_error=([0-9]+)\|actual=([0-9]+)\.([0-9]+)\|"
+    r"vendor_hex=([0-9a-f]*)\|renderer_hex=([0-9a-f]*)\|"
+    r"version_hex=([0-9a-f]*)\|glsl_hex=([0-9a-f]*)\|"
+    r"extensions=([0-9]+)\Z"
+)
+HOST_EXTENSION = re.compile(
+    r"UML_GPU_HOST_EXTENSION\|requested=([0-9]+)\.([0-9]+)\|"
+    r"name_hex=([0-9a-f]+)\Z"
+)
+CAPSET_BEGIN = re.compile(
+    r"UML_GPU_CAPSET_BEGIN\|id=([0-9]+)\|version=([0-9]+)\|"
+    r"size=([0-9]+)\|chunks=([0-9]+)\Z"
+)
+CAPSET_CHUNK = re.compile(
+    r"UML_GPU_CAPSET_CHUNK\|id=([0-9]+)\|index=([0-9]+)\|"
+    r"hex=([0-9a-f]+)\Z"
+)
+CAPSET_END = re.compile(
+    r"UML_GPU_CAPSET_END\|id=([0-9]+)\|chunks=([0-9]+)\Z"
+)
+NATIVE_DISPLAY_FINAL = re.compile(
+    r"Native display final: guest ([0-9]+) presented ([0-9]+) "
+    r"dropped ([0-9]+) cpu-fallback ([0-9]+)"
 )
 RESULT_STATUS = re.compile(r"<Result\s+StatusCode=\"([^\"]+)\"")
 RESULT_CASE = re.compile(r"<TestCaseResult\b[^>]*\bCasePath=\"([^\"]+)\"")
@@ -511,6 +540,222 @@ def validate_host_backend(transcript: str) -> None:
         raise CampaignError("retired CGL renderer was selected")
     if HOST_BACKEND_MARKER not in transcript:
         raise CampaignError("common ANGLE/Metal host-provider marker is missing")
+
+
+def report_marker(line: str, prefix: str) -> str | None:
+    offset = line.find(prefix)
+    if offset < 0:
+        return None
+    return line[offset:].strip()
+
+
+def decode_report_text(value: str, field: str) -> str:
+    if len(value) % 2 != 0:
+        raise CampaignError(f"host capability {field} has odd-length hex")
+    try:
+        decoded = bytes.fromhex(value).decode("utf-8", errors="strict")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise CampaignError(
+            f"host capability {field} is not valid UTF-8 hex"
+        ) from error
+    if "\x00" in decoded or "\n" in decoded or "\r" in decoded:
+        raise CampaignError(f"host capability {field} contains control data")
+    return decoded
+
+
+def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
+    contexts: dict[tuple[int, int], dict[str, Any]] = {}
+    context_extensions: dict[tuple[int, int], list[str]] = {}
+    capsets: dict[int, dict[str, Any]] = {}
+    for raw_line in transcript.replace("\r", "").splitlines():
+        marker = report_marker(raw_line, "UML_GPU_HOST_")
+        if marker is None:
+            marker = report_marker(raw_line, "UML_GPU_CAPSET_")
+        if marker is None:
+            continue
+        match = HOST_CONTEXT.fullmatch(marker)
+        if match is not None:
+            (
+                major_text,
+                minor_text,
+                created_text,
+                error_text,
+                actual_major_text,
+                actual_minor_text,
+                vendor_hex,
+                renderer_hex,
+                version_hex,
+                glsl_hex,
+                extension_count_text,
+            ) = match.groups()
+            requested = (int(major_text), int(minor_text))
+            if requested in contexts:
+                raise CampaignError(
+                    f"duplicate host-context probe: {requested[0]}.{requested[1]}"
+                )
+            contexts[requested] = {
+                "requested": list(requested),
+                "created": created_text == "1",
+                "egl_error": int(error_text),
+                "actual": [int(actual_major_text), int(actual_minor_text)],
+                "vendor": decode_report_text(vendor_hex, "vendor"),
+                "renderer": decode_report_text(renderer_hex, "renderer"),
+                "version": decode_report_text(version_hex, "version"),
+                "shading_language_version": decode_report_text(
+                    glsl_hex, "shading-language version"
+                ),
+                "extension_count": int(extension_count_text),
+            }
+            context_extensions[requested] = []
+            continue
+        match = HOST_EXTENSION.fullmatch(marker)
+        if match is not None:
+            major_text, minor_text, extension_hex = match.groups()
+            requested = (int(major_text), int(minor_text))
+            if requested not in contexts:
+                raise CampaignError("host extension preceded its context probe")
+            context_extensions[requested].append(
+                decode_report_text(extension_hex, "extension")
+            )
+            continue
+        match = CAPSET_BEGIN.fullmatch(marker)
+        if match is not None:
+            identifier_text, version_text, size_text, chunks_text = match.groups()
+            identifier = int(identifier_text)
+            if identifier in capsets:
+                raise CampaignError(f"duplicate Virgl capset start: {identifier}")
+            size = int(size_text)
+            chunks = int(chunks_text)
+            if size < 1 or size > 64 * 1024 or chunks < 1 or chunks > 256:
+                raise CampaignError(f"invalid Virgl capset bounds: {identifier}")
+            capsets[identifier] = {
+                "maximum_version": int(version_text),
+                "size": size,
+                "expected_chunks": chunks,
+                "chunks": {},
+                "ended": False,
+            }
+            continue
+        match = CAPSET_CHUNK.fullmatch(marker)
+        if match is not None:
+            identifier_text, index_text, payload = match.groups()
+            identifier = int(identifier_text)
+            if identifier not in capsets:
+                raise CampaignError("Virgl capset chunk preceded its header")
+            index = int(index_text)
+            chunks = capsets[identifier]["chunks"]
+            if index in chunks:
+                raise CampaignError(
+                    f"duplicate Virgl capset chunk: {identifier}[{index}]"
+                )
+            if len(payload) % 2 != 0:
+                raise CampaignError("Virgl capset chunk has odd-length hex")
+            try:
+                chunks[index] = bytes.fromhex(payload)
+            except ValueError as error:
+                raise CampaignError("Virgl capset chunk has invalid hex") from error
+            continue
+        match = CAPSET_END.fullmatch(marker)
+        if match is not None:
+            identifier_text, chunks_text = match.groups()
+            identifier = int(identifier_text)
+            if identifier not in capsets or capsets[identifier]["ended"]:
+                raise CampaignError("Virgl capset trailer has no unique header")
+            if int(chunks_text) != capsets[identifier]["expected_chunks"]:
+                raise CampaignError("Virgl capset trailer count changed")
+            capsets[identifier]["ended"] = True
+            continue
+        raise CampaignError(f"malformed GPU capability marker: {marker[:120]}")
+
+    required_contexts = {(3, 0), (3, 1), (3, 2)}
+    if set(contexts) != required_contexts:
+        raise CampaignError("host capability report omitted an ES 3.x request")
+    serialized_contexts: list[dict[str, Any]] = []
+    for requested in sorted(contexts):
+        context = contexts[requested]
+        extensions = context_extensions[requested]
+        if extensions != sorted(set(extensions)):
+            raise CampaignError("host extension report is not sorted and unique")
+        if len(extensions) != context.pop("extension_count"):
+            raise CampaignError("host extension count changed during capture")
+        context["extensions"] = extensions
+        if context["created"]:
+            if context["egl_error"] != 0x3000:
+                raise CampaignError("successful host context has an EGL error")
+            if tuple(context["actual"]) < requested:
+                raise CampaignError("host context is below its requested ES version")
+            for field in (
+                "vendor",
+                "renderer",
+                "version",
+                "shading_language_version",
+            ):
+                if not context[field]:
+                    raise CampaignError(
+                        f"successful host context omitted its {field}"
+                    )
+        elif (
+            context["egl_error"] == 0x3000
+            or context["actual"] != [0, 0]
+            or extensions
+        ):
+            raise CampaignError("failed host context has contradictory evidence")
+        serialized_contexts.append(context)
+
+    if set(capsets) != {1, 2}:
+        raise CampaignError("GPU capability report omitted a Virgl capset")
+    serialized_capsets: list[dict[str, Any]] = []
+    for identifier in sorted(capsets):
+        capset = capsets[identifier]
+        expected_chunks = capset["expected_chunks"]
+        if not capset["ended"] or set(capset["chunks"]) != set(
+            range(expected_chunks)
+        ):
+            raise CampaignError(f"Virgl capset {identifier} is incomplete")
+        payload = b"".join(
+            capset["chunks"][index] for index in range(expected_chunks)
+        )
+        if len(payload) != capset["size"]:
+            raise CampaignError(f"Virgl capset {identifier} size changed")
+        try:
+            decoded = virgl_capset.decode_capset(identifier, payload)
+        except ValueError as error:
+            raise CampaignError(str(error)) from error
+        serialized_capsets.append(
+            {
+                "id": identifier,
+                "maximum_version": capset["maximum_version"],
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "data_hex": payload.hex(),
+                "decoded": decoded,
+            }
+        )
+    return {
+        "host_contexts": serialized_contexts,
+        "virgl_capsets": serialized_capsets,
+    }
+
+
+def parse_native_display_final(transcript: str) -> dict[str, int]:
+    if "Native display: direct virgl/ANGLE/Metal presentation" not in transcript:
+        raise CampaignError("native display never accepted direct Metal presentation")
+    matches = NATIVE_DISPLAY_FINAL.findall(transcript)
+    if len(matches) != 1:
+        raise CampaignError("native display did not emit one final frame report")
+    guest, presented, dropped, cpu_fallback = (
+        int(value) for value in matches[0]
+    )
+    if guest < 1 or presented < 1:
+        raise CampaignError("native display final frame totals are empty")
+    if cpu_fallback != 0:
+        raise CampaignError("native display used CPU scanout fallback")
+    return {
+        "guest_frames": guest,
+        "presented_frames": presented,
+        "dropped_frames": dropped,
+        "cpu_fallback_frames": cpu_fallback,
+    }
 
 
 def validate_guest_shutdown(transcript: str) -> None:
@@ -955,7 +1200,10 @@ def build_harness_command(
     for overlay_command in overlay_commands:
         additions.extend(("--command", overlay_command))
     command[separator:separator] = additions
-    return command
+    launch_environment = ["UML_GPU_CAPABILITY_REPORT=1"]
+    if options.display == "native":
+        launch_environment.append("UML_GPU_FRAME_STATS=1")
+    return ["env", *launch_environment, *command]
 
 
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
@@ -1157,6 +1405,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "mode": "inventory" if options.inventory else "shard",
         "rootfs_sha256": rootfs_identity["sha256"],
         "qualification": options.qualification,
+        "launch_environment": {
+            "UML_GPU_CAPABILITY_REPORT": "1",
+            **(
+                {"UML_GPU_FRAME_STATS": "1"}
+                if options.display == "native"
+                else {}
+            ),
+        },
         "command": command,
     }
     if options.inventory:
@@ -1191,6 +1447,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise CampaignError(f"guest harness exited with status {process.returncode}")
     validate_host_backend(transcript)
     validate_guest_shutdown(transcript)
+    metadata.update(parse_gpu_capability_report(transcript))
+    if options.display == "native":
+        metadata["native_display_final"] = parse_native_display_final(transcript)
+    write_json(artifact_directory / "run.json", metadata)
     artifacts = decode_artifacts(transcript)
     required_artifacts = INVENTORY_ARTIFACTS if options.inventory else SHARD_ARTIFACTS
     required = required_artifacts - set(artifacts)
@@ -1206,6 +1466,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
     output_directory = artifact_directory / "artifacts"
     write_artifacts(artifacts, output_directory)
+    metadata["renderer_sha256"] = hashlib.sha256(
+        artifacts["renderer.txt"]
+    ).hexdigest()
     renderer_text = artifacts["renderer.txt"].decode("utf-8", errors="strict")
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     validate_renderer_probe(

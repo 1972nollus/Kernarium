@@ -6,6 +6,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 from pathlib import Path
+import hashlib
+import json
 import plistlib
 import re
 import subprocess
@@ -60,6 +62,94 @@ def validate_rootfs(rootfs: Path, identity: dict[str, Any]) -> None:
     )
 
 
+def validate_recorded_gpu_evidence(
+    run_path: Path,
+    metadata: dict[str, Any],
+    product: str,
+) -> None:
+    console_path = run_path.parent / "console.log"
+    try:
+        transcript = console_path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching {product} console: {error}"
+        ) from error
+    capability = cts.parse_gpu_capability_report(transcript)
+    native_display = cts.parse_native_display_final(transcript)
+    if any(
+        metadata.get(key) != capability[key]
+        for key in ("host_contexts", "virgl_capsets")
+    ) or metadata.get("native_display_final") != native_display:
+        raise cts.CampaignError(
+            f"matching {product} GPU evidence changed after capture"
+        )
+
+
+def validate_macos_evidence(
+    path: Path,
+    campaign: cts.AppleCampaign,
+    page_profile: str,
+) -> dict[str, Any]:
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching macOS evidence: {error}"
+        ) from error
+    required = {
+        "adapter": "macos",
+        "backend": "angle-metal",
+        "display": "native",
+        "page_profile": page_profile,
+        "engine": "gadgets",
+        "api": campaign.api,
+        "leaf": campaign.leaf.identifier,
+        "exact_case": campaign.exact_case,
+        "emulator_return_code": 0,
+        "completed_cases": 1,
+        "status_totals": {"Pass": 1},
+    }
+    if any(metadata.get(key) != value for key, value in required.items()):
+        raise cts.CampaignError(
+            "Simulator campaign requires a matching passing native macOS run"
+        )
+    artifacts = path.parent / "artifacts"
+    selected = artifacts / "selected.txt"
+    renderer = artifacts / "renderer.txt"
+    qpa = artifacts / "results.qpa"
+    if not selected.is_file() or not renderer.is_file() or not qpa.is_file():
+        raise cts.CampaignError("matching macOS artifacts are incomplete")
+    if cts.parse_case_list(selected.read_text(encoding="utf-8")) != [
+        campaign.exact_case
+    ]:
+        raise cts.CampaignError("matching macOS evidence selected another case")
+    for artifact, key in (
+        (renderer, "renderer_sha256"),
+        (qpa, "qpa_sha256"),
+    ):
+        if hashlib.sha256(artifact.read_bytes()).hexdigest() != metadata.get(key):
+            raise cts.CampaignError(f"matching macOS {artifact.name} changed")
+    if (
+        [row.get("requested") for row in metadata.get("host_contexts", [])]
+        != [[3, 0], [3, 1], [3, 2]]
+        or [row.get("id") for row in metadata.get("virgl_capsets", [])]
+        != [1, 2]
+        or any(
+            not isinstance(row.get("decoded"), dict)
+            for row in metadata.get("virgl_capsets", [])
+        )
+        or metadata.get("native_display_final", {}).get(
+            "cpu_fallback_frames"
+        )
+        != 0
+    ):
+        raise cts.CampaignError(
+            "matching macOS evidence omitted GPU capability or frame data"
+        )
+    validate_recorded_gpu_evidence(path, metadata, "macOS")
+    return metadata
+
+
 def wait_for_runtime(
     process: subprocess.Popen[bytes],
     log_path: Path,
@@ -107,9 +197,17 @@ def validate_transcript(
     transcript: str,
     campaign: cts.AppleCampaign,
     guest_page_size: int,
-) -> tuple[dict[str, bytes], dict[str, str], dict[str, int]]:
+) -> tuple[
+    dict[str, bytes],
+    dict[str, str],
+    dict[str, int],
+    dict[str, Any],
+    dict[str, int],
+]:
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
+    capability = cts.parse_gpu_capability_report(transcript)
+    native_display = cts.parse_native_display_final(transcript)
     artifacts = cts.decode_artifacts(transcript)
     required = cts.SHARD_ARTIFACTS - set(artifacts)
     if required:
@@ -132,4 +230,10 @@ def validate_transcript(
     results = cts.validate_qpa_union(qpa_text, selected_cases)
     if summary_text.strip() != "cts_rc=0":
         raise cts.CampaignError(f"CTS process failed: {summary_text.strip()}")
-    return artifacts, results, cts.status_totals(results)
+    return (
+        artifacts,
+        results,
+        cts.status_totals(results),
+        capability,
+        native_display,
+    )

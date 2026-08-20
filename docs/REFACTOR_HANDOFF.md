@@ -49,6 +49,24 @@ from the common driver. The thin Simulator wrapper captures and validates
 framed artifacts; the physical-iPad wrapper requires its matching passing
 Simulator evidence.
 
+The current adapters additionally enforce a native macOS gadgets predecessor
+before Simulator and preserve a full capability schema on every product. An
+opt-in provider probe requests ES 3.0, 3.1, and 3.2 separately, captures the
+successful context identity and sorted extension set, and records explicit EGL
+failure codes. Virgl capsets 1 and 2 are framed with their complete raw bytes,
+strictly decoded through every known v1/v2 field, and semantically diffed at
+each macOS-to-Simulator-to-iPad boundary. The final accepted 16 KiB chain is
+`.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
+`.build/vk-gl-cts-ios-simulator/20260821-042130-33165-16k-gles3-declaration-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-042215-33330-16k-gles3-declaration-sentinel-v1`.
+All three create ES 3.0, reject ES 3.1/3.2 with `EGL_BAD_MATCH`, pass the exact
+case 1/1, and report zero final CPU-fallback frames. Extension counts and
+format masks differ by Apple GPU as expected; their exact decoded differences
+are evidence, not a requirement for false byte parity. iOS capability records
+use the ordered stdout/guest-console stream because device capture may merge
+separate stdout/stderr transports between bytes.
+
 The first iPad shutdown emitted `Memory manager not clean during takedown`
 from `drm_managed_release`. Maintained Linux topic 0020 now calls the atomic
 DRM shutdown helper before unplugging Virtio-GPU, producing final replay tree
@@ -58,7 +76,7 @@ repackaged, and three consecutive Simulator plus three connected-iPad exact
 sentinels passed and powered off without the warning. A focused tooling test
 pins the kernel ordering, while adapter validation rejects the old signature
 and any missing clean-stop marker. The broader lifecycle gate remains open
-alongside the full capset/fixed-sentinel selection, complete matrices,
+alongside the broader fixed-sentinel selection, complete matrices,
 performance, thermal, and presentation campaigns. A new fail-closed
 display-backed inventory mode exercised the rebuilt common emulator and the
 exact installed `glcts`: eight module hierarchies exported, but enumeration

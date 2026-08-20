@@ -14,6 +14,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -59,6 +60,45 @@ def framed_artifact(name: str, payload: bytes) -> str:
         for index, chunk in enumerate(chunks)
     )
     lines.append(f"UML_CTS_ARTIFACT_END|{name}|{len(chunks)}")
+    return "\n".join(lines) + "\n"
+
+
+def gpu_capability_report() -> str:
+    lines: list[str] = []
+    extensions = ["GL_EXT_alpha", "GL_EXT_beta"]
+    for major, minor in ((3, 0), (3, 1), (3, 2)):
+        encode = lambda value: value.encode().hex()
+        lines.append(
+            "UML_GPU_HOST_CONTEXT|"
+            f"requested={major}.{minor}|created=1|egl_error=12288|"
+            f"actual={major}.{minor}|vendor_hex={encode('vendor')}|"
+            f"renderer_hex={encode('renderer')}|"
+            f"version_hex={encode(f'OpenGL ES {major}.{minor}')}|"
+            f"glsl_hex={encode('GLSL ES')}|extensions={len(extensions)}"
+        )
+        lines.extend(
+            "UML_GPU_HOST_EXTENSION|"
+            f"requested={major}.{minor}|name_hex={extension.encode().hex()}"
+            for extension in extensions
+        )
+    capset_v1 = bytearray(308)
+    struct.pack_into("<I", capset_v1, 0, 1)
+    capset_v2 = bytearray(1408)
+    struct.pack_into("<I", capset_v2, 0, 2)
+    capset_v2[696:705] = b"renderer\0"
+    for identifier, version, payload in (
+        (1, 1, bytes(capset_v1)),
+        (2, 2, bytes(capset_v2)),
+    ):
+        lines.extend(
+            (
+                "UML_GPU_CAPSET_BEGIN|"
+                f"id={identifier}|version={version}|size={len(payload)}|chunks=1",
+                "UML_GPU_CAPSET_CHUNK|"
+                f"id={identifier}|index=0|hex={payload.hex()}",
+                f"UML_GPU_CAPSET_END|id={identifier}|chunks=1",
+            )
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -246,6 +286,67 @@ OpenGL renderer string: virgl (Apple GPU)
             )
         with self.assertRaisesRegex(cts.CampaignError, "marker is missing"):
             cts.validate_host_backend("virgl started\n")
+
+    def test_gpu_capability_and_native_frame_reports_are_fail_closed(self) -> None:
+        report = gpu_capability_report()
+        parsed = cts.parse_gpu_capability_report(report)
+        self.assertEqual(
+            [context["requested"] for context in parsed["host_contexts"]],
+            [[3, 0], [3, 1], [3, 2]],
+        )
+        self.assertEqual(
+            [capset["id"] for capset in parsed["virgl_capsets"]], [1, 2]
+        )
+        self.assertEqual(
+            parsed["virgl_capsets"][0]["sha256"],
+            hashlib.sha256(struct.pack("<I", 1) + bytes(304)).hexdigest(),
+        )
+        self.assertEqual(
+            parsed["virgl_capsets"][1]["decoded"]["v2"]["renderer"],
+            "renderer",
+        )
+        comparison = cts.virgl_capset.compare_reports(
+            parsed["virgl_capsets"], parsed["virgl_capsets"]
+        )
+        self.assertTrue(comparison["equal"])
+        self.assertEqual(comparison["capsets"][0]["differences"], [])
+        changed = json.loads(json.dumps(parsed["virgl_capsets"]))
+        changed[0]["decoded"]["v1"]["glsl_level"] = 300
+        changed[0]["data_hex"] = "00" + changed[0]["data_hex"][2:]
+        changed_comparison = cts.virgl_capset.compare_reports(
+            parsed["virgl_capsets"], changed
+        )
+        self.assertFalse(changed_comparison["equal"])
+        self.assertEqual(
+            changed_comparison["capsets"][0]["differences"][0]["field"],
+            "$.decoded.v1.glsl_level",
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "omitted an ES 3.x"):
+            cts.parse_gpu_capability_report(
+                "\n".join(
+                    line
+                    for line in report.splitlines()
+                    if "requested=3.2" not in line
+                )
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "size changed"):
+            cts.parse_gpu_capability_report(
+                report.replace(
+                    "id=1|version=1|size=308", "id=1|version=1|size=309"
+                )
+            )
+
+        final = (
+            "Native display: direct virgl/ANGLE/Metal presentation\n"
+            "Native display final: guest 8 presented 7 dropped 1 cpu-fallback 0\n"
+        )
+        self.assertEqual(
+            cts.parse_native_display_final(final)["cpu_fallback_frames"], 0
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "CPU scanout fallback"):
+            cts.parse_native_display_final(
+                final.replace("cpu-fallback 0", "cpu-fallback 1")
+            )
 
     def test_kernarium_transcript_requires_a_clean_guest_shutdown(self) -> None:
         clean = """Darwin UML stopped: result=0 exitcode=0
@@ -445,6 +546,8 @@ Kernarium: runtime returned 0
                         "gles3-declaration-sentinel-v1",
                         "--page-profile",
                         "4k",
+                        "--macos-run",
+                        "/tmp/macos-run.json",
                         "--dry-run",
                     ]
                 ),
@@ -453,6 +556,9 @@ Kernarium: runtime returned 0
         dry_run = json.loads(stdout.getvalue())
         self.assertEqual(dry_run["page_profile"], "4k")
         self.assertEqual(
+            dry_run["macos_run"], str(Path("/tmp/macos-run.json").resolve())
+        )
+        self.assertEqual(
             dry_run["launch_environment"],
             {
                 "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN":
@@ -460,6 +566,8 @@ Kernarium: runtime returned 0
                 "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
                 "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": "4096",
                 "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
+                "SIMCTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
+                "SIMCTL_CHILD_UML_GPU_FRAME_STATS": "1",
             },
         )
         stderr = io.StringIO()
@@ -495,7 +603,12 @@ Kernarium: runtime returned 0
             qpa_payload = qpa(qpa_result(campaign.exact_case)).encode()
             (artifacts / "selected.txt").write_bytes(selected)
             (artifacts / "results.qpa").write_bytes(qpa_payload)
+            renderer_payload = b"renderer evidence\n"
+            (artifacts / "renderer.txt").write_bytes(renderer_payload)
             run = run_directory / "run.json"
+            capability = cts.parse_gpu_capability_report(
+                gpu_capability_report()
+            )
             metadata = {
                 "adapter": "ios-simulator-kernarium",
                 "backend": "angle-metal",
@@ -504,8 +617,33 @@ Kernarium: runtime returned 0
                 "runtime_return_code": 0,
                 "completed_cases": 1,
                 "status_totals": {"Pass": 1},
+                **capability,
+                "native_display_final": {
+                    "guest_frames": 8,
+                    "presented_frames": 7,
+                    "dropped_frames": 1,
+                    "cpu_fallback_frames": 0,
+                },
+                "renderer_sha256": hashlib.sha256(
+                    renderer_payload
+                ).hexdigest(),
                 "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
+                "macos_run": "/tmp/macos-run.json",
+                "macos_host_contexts_equal": True,
+                "macos_virgl_capsets_equal": True,
+                "macos_virgl_capset_comparison":
+                    cts.virgl_capset.compare_reports(
+                        capability["virgl_capsets"],
+                        capability["virgl_capsets"],
+                    ),
             }
+            (run_directory / "console.log").write_text(
+                gpu_capability_report()
+                + "Native display: direct virgl/ANGLE/Metal presentation\n"
+                + "Native display final: guest 8 presented 7 dropped 1 "
+                "cpu-fallback 0\n",
+                encoding="utf-8",
+            )
             run.write_text(json.dumps(metadata), encoding="utf-8")
             self.assertEqual(
                 device_cts.validate_simulator_evidence(
@@ -541,6 +679,16 @@ Kernarium: runtime returned 0
             metadata["status_totals"] = {"NotSupported": 1}
             run.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(cts.CampaignError, "matching passing"):
+                device_cts.validate_simulator_evidence(
+                    run, campaign, "16k"
+                )
+
+            metadata["status_totals"] = {"Pass": 1}
+            metadata["virgl_capsets"][0]["decoded"]["v1"][
+                "glsl_level"
+            ] = 999
+            run.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "changed after capture"):
                 device_cts.validate_simulator_evidence(
                     run, campaign, "16k"
                 )
@@ -604,6 +752,10 @@ Kernarium: runtime returned 0
         )
         self.assertIn("--gpu-display=native", command)
         self.assertFalse(any(item.startswith("--gpu-vnc-") for item in command))
+        self.assertEqual(
+            command[:3],
+            ["env", "UML_GPU_CAPABILITY_REPORT=1", "UML_GPU_FRAME_STATS=1"],
+        )
 
 
 if __name__ == "__main__":

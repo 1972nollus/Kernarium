@@ -6,9 +6,11 @@ extern "C" {
 #include <virglrenderer.h>
 }
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <utility>
 
 namespace {
 
@@ -77,11 +79,41 @@ void providerRejectsUnsupportedContexts()
     require(provider.createContext(parameters) == nullptr);
 }
 
+void providerReportsExplicitEsVersionRequests()
+{
+    uml::gpu::HostGlProvider provider;
+    for (const auto [major, minor] : {
+             std::pair {3U, 0U},
+             std::pair {3U, 1U},
+             std::pair {3U, 2U}}) {
+        const auto probe = provider.probeContext(major, minor);
+        require(probe.requestedMajor == major);
+        require(probe.requestedMinor == minor);
+        if (!probe.created) {
+            require(probe.eglError != 0);
+            continue;
+        }
+        require(
+            probe.actualMajor > major ||
+            (probe.actualMajor == major && probe.actualMinor >= minor));
+        require(!probe.vendor.empty());
+        require(!probe.renderer.empty());
+        require(!probe.version.empty());
+        require(!probe.shadingLanguageVersion.empty());
+        require(std::ranges::is_sorted(probe.extensions));
+        require(
+            std::adjacent_find(
+                probe.extensions.begin(), probe.extensions.end()) ==
+            probe.extensions.end());
+    }
+}
+
 } // namespace
 
 int main()
 {
     providerRejectsUnsupportedContexts();
+    providerReportsExplicitEsVersionRequests();
     providerOwnsOneSharedAngleTopology();
     std::puts("ANGLE/Metal host GL provider lifetime tests passed");
     return 0;

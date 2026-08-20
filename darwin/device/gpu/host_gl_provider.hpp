@@ -2,7 +2,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <string>
+#include <vector>
 
 struct virgl_renderer_gl_ctx_param;
 
@@ -13,6 +16,20 @@ namespace uml::gpu {
 // layout seen by protocol, transport, or application consumers.
 class HostGlProvider final {
 public:
+    struct ContextProbe {
+        std::uint32_t requestedMajor {};
+        std::uint32_t requestedMinor {};
+        bool created {};
+        std::uint32_t eglError {};
+        std::uint32_t actualMajor {};
+        std::uint32_t actualMinor {};
+        std::string vendor;
+        std::string renderer;
+        std::string version;
+        std::string shadingLanguageVersion;
+        std::vector<std::string> extensions;
+    };
+
     HostGlProvider() = default;
     ~HostGlProvider();
 
@@ -24,6 +41,9 @@ public:
     void destroyContext(void* context) noexcept;
     [[nodiscard]] int makeCurrent(void* context) noexcept;
     [[nodiscard]] void* display() noexcept;
+    [[nodiscard]] ContextProbe probeContext(
+        std::uint32_t major,
+        std::uint32_t minor) noexcept;
 
 private:
     // EGL display creation and context topology changes are serialized.

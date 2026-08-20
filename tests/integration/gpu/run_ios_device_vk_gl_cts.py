@@ -111,7 +111,8 @@ def validate_simulator_evidence(
     artifacts = path.parent / "artifacts"
     selected = artifacts / "selected.txt"
     qpa = artifacts / "results.qpa"
-    if not selected.is_file() or not qpa.is_file():
+    renderer = artifacts / "renderer.txt"
+    if not selected.is_file() or not qpa.is_file() or not renderer.is_file():
         raise cts.CampaignError("matching Simulator artifacts are incomplete")
     if cts.parse_case_list(selected.read_text(encoding="utf-8")) != [
         campaign.exact_case
@@ -119,6 +120,41 @@ def validate_simulator_evidence(
         raise cts.CampaignError("matching Simulator evidence selected another case")
     if hashlib.sha256(qpa.read_bytes()).hexdigest() != metadata.get("qpa_sha256"):
         raise cts.CampaignError("matching Simulator QPA identity changed")
+    if hashlib.sha256(renderer.read_bytes()).hexdigest() != metadata.get(
+        "renderer_sha256"
+    ):
+        raise cts.CampaignError("matching Simulator renderer identity changed")
+    if (
+        [row.get("requested") for row in metadata.get("host_contexts", [])]
+        != [[3, 0], [3, 1], [3, 2]]
+        or [row.get("id") for row in metadata.get("virgl_capsets", [])]
+        != [1, 2]
+        or any(
+            not isinstance(row.get("decoded"), dict)
+            for row in metadata.get("virgl_capsets", [])
+        )
+        or metadata.get("native_display_final", {}).get(
+            "cpu_fallback_frames"
+        )
+        != 0
+        or not isinstance(metadata.get("macos_run"), str)
+        or not isinstance(metadata.get("macos_host_contexts_equal"), bool)
+        or not isinstance(metadata.get("macos_virgl_capsets_equal"), bool)
+        or not isinstance(metadata.get("macos_virgl_capset_comparison"), dict)
+        or metadata["macos_virgl_capset_comparison"].get("equal")
+        != metadata["macos_virgl_capsets_equal"]
+        or [
+            row.get("id")
+            for row in metadata["macos_virgl_capset_comparison"].get(
+                "capsets", []
+            )
+        ]
+        != [1, 2]
+    ):
+        raise cts.CampaignError(
+            "matching Simulator evidence omitted GPU capability or frame data"
+        )
+    common.validate_recorded_gpu_evidence(path, metadata, "Simulator")
     return metadata
 
 
@@ -212,6 +248,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
         "DEVICECTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
         "DEVICECTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
+        "DEVICECTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
+        "DEVICECTL_CHILD_UML_GPU_FRAME_STATS": "1",
     }
     if options.dry_run:
         print(
@@ -276,6 +314,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "qualification": options.qualification,
         "simulator_run": str(simulator_run),
         "simulator_qpa_sha256": simulator_metadata["qpa_sha256"],
+        "simulator_renderer_sha256": simulator_metadata["renderer_sha256"],
         "command": command,
         "launch_environment": launch_environment,
     }
@@ -313,19 +352,39 @@ def main(arguments: Sequence[str] | None = None) -> int:
         detail = f": {guest_errors[-1]}" if guest_errors else ""
         raise cts.CampaignError(f"iPad guest returned {runtime_status}{detail}")
 
-    artifacts, results, totals = common.validate_transcript(
-        transcript, campaign, guest_page_size
-    )
+    (
+        artifacts,
+        results,
+        totals,
+        capability,
+        native_display,
+    ) = common.validate_transcript(transcript, campaign, guest_page_size)
     output_directory = artifact_directory / "artifacts"
     cts.write_artifacts(artifacts, output_directory)
+    capset_comparison = cts.virgl_capset.compare_reports(
+        simulator_metadata["virgl_capsets"], capability["virgl_capsets"]
+    )
+    context_differences = cts.virgl_capset.structured_differences(
+        simulator_metadata["host_contexts"], capability["host_contexts"]
+    )
     metadata.update(
         {
+            **capability,
+            "native_display_final": native_display,
             "completed_cases": len(results),
             "status_totals": totals,
             "selected_caselist_sha256": hashlib.sha256(
                 artifacts["selected.txt"]
             ).hexdigest(),
+            "renderer_sha256": hashlib.sha256(
+                artifacts["renderer.txt"]
+            ).hexdigest(),
             "qpa_sha256": hashlib.sha256(artifacts["results.qpa"]).hexdigest(),
+            "simulator_host_contexts_equal":
+                not context_differences,
+            "simulator_host_context_differences": context_differences,
+            "simulator_virgl_capsets_equal": capset_comparison["equal"],
+            "simulator_virgl_capset_comparison": capset_comparison,
         }
     )
     cts.write_json(artifact_directory / "run.json", metadata)

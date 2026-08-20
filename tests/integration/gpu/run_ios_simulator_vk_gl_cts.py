@@ -119,6 +119,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--campaign", required=True, choices=sorted(campaigns))
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--device", default="booted")
+    parser.add_argument("--macos-run", type=Path, required=True)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
     parser.add_argument("--rootfs", type=Path, default=cts.DEFAULT_ROOTFS)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
@@ -137,11 +138,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     campaign = options.campaigns[options.campaign]
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
+    macos_run = options.macos_run.resolve()
     launch_environment = {
         "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN": campaign.identifier,
         "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
         "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
+        "SIMCTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
+        "SIMCTL_CHILD_UML_GPU_FRAME_STATS": "1",
     }
     if options.dry_run:
         print(
@@ -150,6 +154,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "campaign": campaign.identifier,
                     "exact_case": campaign.exact_case,
                     "page_profile": options.page_profile,
+                    "macos_run": str(macos_run),
                     "launch_environment": launch_environment,
                 },
                 indent=2,
@@ -160,6 +165,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     app = options.app.resolve()
     rootfs = options.rootfs.resolve()
+    macos_metadata = common.validate_macos_evidence(
+        macos_run, campaign, options.page_profile
+    )
     common.validate_app(app)
     common.validate_rootfs(rootfs, options.identity)
     device = resolve_device(options.device)
@@ -204,6 +212,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "expected_cases": 1,
         "seed": campaign.seed,
         "qualification": options.qualification,
+        "macos_run": str(macos_run),
+        "macos_qpa_sha256": macos_metadata["qpa_sha256"],
+        "macos_renderer_sha256": macos_metadata["renderer_sha256"],
         "command": command,
         "launch_environment": launch_environment,
     }
@@ -248,19 +259,39 @@ def main(arguments: Sequence[str] | None = None) -> int:
             f"Simulator guest returned {runtime_status}{detail}"
         )
 
-    artifacts, results, totals = common.validate_transcript(
-        transcript, campaign, guest_page_size
-    )
+    (
+        artifacts,
+        results,
+        totals,
+        capability,
+        native_display,
+    ) = common.validate_transcript(transcript, campaign, guest_page_size)
     output_directory = artifact_directory / "artifacts"
     cts.write_artifacts(artifacts, output_directory)
+    capset_comparison = cts.virgl_capset.compare_reports(
+        macos_metadata["virgl_capsets"], capability["virgl_capsets"]
+    )
+    context_differences = cts.virgl_capset.structured_differences(
+        macos_metadata["host_contexts"], capability["host_contexts"]
+    )
     metadata.update(
         {
+            **capability,
+            "native_display_final": native_display,
             "completed_cases": len(results),
             "status_totals": totals,
             "selected_caselist_sha256": hashlib.sha256(
                 artifacts["selected.txt"]
             ).hexdigest(),
+            "renderer_sha256": hashlib.sha256(
+                artifacts["renderer.txt"]
+            ).hexdigest(),
             "qpa_sha256": hashlib.sha256(artifacts["results.qpa"]).hexdigest(),
+            "macos_host_contexts_equal":
+                not context_differences,
+            "macos_host_context_differences": context_differences,
+            "macos_virgl_capsets_equal": capset_comparison["equal"],
+            "macos_virgl_capset_comparison": capset_comparison,
         }
     )
     cts.write_json(artifact_directory / "run.json", metadata)

@@ -28,11 +28,46 @@ dirty DRM manager teardown; maintained kernel topic 0020 now shuts atomic
 Virtio-GPU state down before unplug. Both LLVM 22 page-profile kernels rebuilt,
 and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
-missing clean-stop markers. The complete identity/capset sentinel, complete
+missing clean-stop markers. The broader fixed identity sentinel, complete
 caselist identity, matrices, performance, thermal, and sustained lifecycle
 campaigns remain outstanding. The authoritative CTS build receipt is still
 missing, so qualification remains fail-closed and no rootfs or guest-userspace
 change is authorized.
+
+The current ordered 16 KiB capability diagnostic is preserved at
+`.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
+`.build/vk-gl-cts-ios-simulator/20260821-042130-33165-16k-gles3-declaration-sentinel-v1`,
+and
+`.build/vk-gl-cts-ios-device/20260821-042215-33330-16k-gles3-declaration-sentinel-v1`.
+The Simulator adapter accepted the first run as its mandatory macOS
+predecessor, and the device adapter accepted the Simulator run before
+installing the signed app. Each product explicitly requested host ES 3.0, 3.1,
+and 3.2 contexts. ES 3.0 succeeded; ES 3.1 and 3.2 both failed naturally with
+`EGL_BAD_MATCH` (`0x3004`). The ES 3.0 extension counts are 117 on the M1 Ultra,
+98 on the Simulator GPU, and 109 on the iPad's A15 GPU.
+
+The same run captured and decoded every field and raw byte in Virgl capset 1
+(version 1, 308 bytes) and capset 2 (version 2, 1,408 bytes). Their respective
+SHA-256 pairs are `37ddba6b...`/`e074ac11...` on macOS,
+`996cec8c...`/`185907f8...` on Simulator, and
+`5bd1ec0d...`/`f205336a...` on iPad. All report GLSL level 130. The exact
+macOS-to-Simulator diff removes `start_instance`, one render format, eleven
+sampler formats, the 3D-ASTC capability, three multisample formats, three
+readback formats, and changes `max_vertex_outputs` from 30 to 31 plus the
+renderer name. The Simulator-to-iPad diff adds `start_instance`, one render
+format, three sampler formats, 3D ASTC, one multisample format, three readback
+formats, and changes only the renderer name among scalar limits. The complete
+format-number sets, bit values, arrays, video slots, raw payloads, and semantic
+diffs remain in the three `run.json` files; equal version strings are not used
+as a substitute for that comparison.
+
+All three exact CTS cases passed with the same selected-list and renderer
+artifact identities. Final native-display counters were macOS 124 guest/299
+presented/1 dropped, Simulator 100/201/1, and iPad 618/942/0; every product
+reported zero CPU-fallback frames and clean guest/runtime shutdown. These
+short-run counters prove direct presentation and fallback absence only. They
+are not the frozen sustained frame-pacing, CPU/GPU, memory, energy, or thermal
+qualification campaign.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and

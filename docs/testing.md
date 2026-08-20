@@ -680,16 +680,25 @@ must not populate `vk_gl_cts_identity.json`.
 Kernarium accepts no arbitrary CTS script or selector. The checked Apple
 campaign document currently names one exact GLES 3 sentinel; CMake generates
 its bounded launcher from the same driver into each 4 KiB and 16 KiB runtime.
-After packaging and building a clean app, boot the selected Simulator when
-needed, wait for it to become ready, and then run the adapter:
+Run the native macOS gadgets lane first so it records the common host context,
+full decoded Virgl capsets, direct-presentation counters, and passing QPA that
+the Simulator must consume. After packaging and building a clean app, boot the
+selected Simulator when needed, wait for it to become ready, and run the
+ordered adapters:
 
 ```sh
+python3 -B tests/integration/gpu/run_vk_gl_cts.py \
+  --api gles3 --leaf gles3 \
+  --case KHR-GLES3.shaders.declarations.declarations.missing_variable_name_vertex \
+  --page-profile 16k --engine gadgets --display native
+
 xcrun simctl boot SIMULATOR_UDID
 xcrun simctl bootstatus SIMULATOR_UDID -b
 
 python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
   --campaign gles3-declaration-sentinel-v1 \
   --page-profile 16k \
+  --macos-run .build/vk-gl-cts/MACOS_RUN/run.json \
   --device "$(xcrun simctl getenv booted SIMULATOR_UDID)" \
   --app .build/kernarium-cts-derived/Build/Products/Debug-iphonesimulator/Kernarium.app
 ```
@@ -701,12 +710,22 @@ Virgl evidence and one `Pass`, then stops the app after guest poweroff. An
 accepted transcript must contain the successful Darwin stop, guest-exit, and
 runtime-return markers and must not contain the dirty DRM memory-manager
 teardown signature. Echoed launcher source is not an artifact frame; raw
-frames and service-prefixed frames remain fail-closed. The adapter does not
-boot a Simulator, so use the explicit `simctl boot`/`bootstatus` pair above
-when the selected device is shut down. The connected-iPad wrapper uses the
-same campaign and validation but additionally requires the matching Simulator
-`run.json` and QPA, a normally signed device app, and a booted paired
-developer-enabled physical iPad:
+frames and service-prefixed frames remain fail-closed. The opt-in host report
+requests ES 3.0, 3.1, and 3.2 separately; captures sorted extensions; preserves
+the full raw capset 1/2 payloads; decodes every known v1/v2 field; and records
+exact macOS-to-Simulator and Simulator-to-device semantic differences. Native
+campaigns also require a final frame report with nonzero guest/presented totals
+and zero CPU fallback. iOS capability records use the ordered stdout/guest
+console stream because `devicectl` can merge separate stdout/stderr transports
+between bytes.
+The strict console frames are sufficient for these bounded artifacts, so this
+workflow does not require VirtioFS or a new Virtio-serial device.
+
+The adapter does not boot a Simulator, so use the explicit `simctl boot` and
+`simctl bootstatus` commands above when the selected device is shut down. The
+connected-iPad wrapper uses the same campaign and validation but additionally
+requires the matching Simulator `run.json` and QPA, a normally signed device
+app, and a booted paired developer-enabled physical iPad:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
@@ -717,6 +736,7 @@ python3 -B tests/integration/gpu/run_ios_device_vk_gl_cts.py \
 ```
 
 Do not run the device wrapper before its matching Simulator result, and do not
+run the Simulator wrapper before its matching native macOS result. Do not
 substitute Aquarium on the physical iPad. Both wrappers retain the same
 `--qualification` receipt/caselist refusal as the macOS driver.
 
