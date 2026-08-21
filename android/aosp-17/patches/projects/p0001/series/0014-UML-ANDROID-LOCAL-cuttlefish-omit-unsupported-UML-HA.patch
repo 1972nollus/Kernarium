@@ -1,0 +1,75 @@
+From a85eecb3e890d83a238c5175c2dad15915f4b3e4 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 03:10:32 +0000
+Subject: [PATCH 14/14] UML-ANDROID-LOCAL: cuttlefish omit unsupported UML HALs
+
+Change-Id: I05393f893579352c038ddd796633c6d1ecb91099
+---
+ shared/device.mk                            |  3 +++
+ shared/sensors/device_vendor.mk             |  5 +++++
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 11 +++++++++++
+ 3 files changed, 19 insertions(+)
+
+diff --git a/shared/device.mk b/shared/device.mk
+index c89d4b9fbefe2285c6fa126dff59bfaae39759f2..3610bbe69fe98304bc820b1519b3f9851797dc3a 100644
+--- a/shared/device.mk
++++ b/shared/device.mk
+@@ -520,6 +520,8 @@ PRODUCT_PACKAGES += $(LOCAL_THERMAL_HAL_PRODUCT_PACKAGE)
+ #
+ # NeuralNetworks HAL
+ #
++LOCAL_ENABLE_NEURALNETWORKS ?= true
++ifeq ($(LOCAL_ENABLE_NEURALNETWORKS),true)
+ PRODUCT_PACKAGES += \
+     com.android.hardware.neuralnetworks
+ 
+@@ -534,6 +536,7 @@ ifeq ($(RELEASE_AIDL_USE_UNFROZEN),true)
+     PRODUCT_COPY_FILES += \
+         frameworks/native/data/etc/android.hardware.npu.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.npu.xml
+ endif
++endif
+ 
+ # USB
+ PRODUCT_PACKAGES += \
+diff --git a/shared/sensors/device_vendor.mk b/shared/sensors/device_vendor.mk
+index f4e4bf1b35edaf25a929cbf19465c29ec34f7a0f..afaa4cd4eba97be5ca743fd40af7a6f0b08958c9 100644
+--- a/shared/sensors/device_vendor.mk
++++ b/shared/sensors/device_vendor.mk
+@@ -13,6 +13,9 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ #
++LOCAL_ENABLE_SENSORS ?= true
++ifeq ($(LOCAL_ENABLE_SENSORS),true)
++
+ 
+ # set LOCAL_SENSOR_FILE_OVERRIDES := true if a device has a custom list of sensors. Otherwise
+ # install the default set like below
+@@ -43,3 +46,5 @@ PRODUCT_PACKAGES += \
+ 
+ PRODUCT_PACKAGES += \
+     cuttlefish_sensor_injection
++
++endif
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 8835444446aaca70e301bd463f8fd4141af01776..254193be03d87c0c0f7a985a899394c33b0e6604 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -25,6 +25,17 @@ UML_ANDROID_SECURITY_HALS := nonsecure
+ UML_ANDROID_BUILTIN_KERNEL := true
+ UML_ANDROID_STATIC_STORAGE := true
+ UML_ANDROID_DISABLE_PROJECT_QUOTAS := true
++# Do not package or declare Cuttlefish HALs whose transports and backing
++# devices are absent from the Darwin UML machine. Keeping them out of the
++# product prevents init from repeatedly restarting processes that can never
++# become healthy.
++BOARD_HAVE_BLUETOOTH := false
++CF_VENDOR_NO_UWB := true
++CF_VENDOR_NO_THREADNETWORK := true
++LOCAL_ENABLE_LIGHT := false
++LOCAL_ENABLE_OEMLOCK := false
++LOCAL_ENABLE_NEURALNETWORKS := false
++LOCAL_ENABLE_SENSORS := false
+ $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+ 
+ PRODUCT_NAME := aosp_uml_arm64_pgagnostic
