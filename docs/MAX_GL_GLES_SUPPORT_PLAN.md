@@ -88,7 +88,12 @@ fixture source identities, generated header, binary, summary identities,
 first/other-config roles, and exact emitted argument order. Its expected
 status 1 reflects summary mode's zero executed sessions and is not a CTS
 result. Qualification shards re-evaluate the repository expansion against
-that evidence before booting.
+that evidence before booting. The released runner also explicitly treats a
+complete session with zero failed cases as successful when individual results
+are `Pass`, `NotSupported`, `QualityWarning`, or `CompatibilityWarning`. The
+driver reproduces that exact unwaived policy, while continuing to reject
+`Waiver`, `Fail`, resource/internal errors, device loss, crashes, timeouts,
+missing cases, and truncated sessions.
 
 At the user's direction, repeated macOS CTS boots now use headless VNC so they
 do not open an AppKit window; native direct presentation remains required for
@@ -103,7 +108,13 @@ the GLES 2 and GLES 3 QPA digests are respectively
 `516862fd96055f348ceaf1131ecc27f7a2a56e4a8f69de623a1a30567cf2d9f4`
 and `5553de17eaa9f6724dbcbb3543aba869cac7bd060e02b06e4472584dd12b02a1`.
 This freezes a 25 x (473 + 6,498) = 174,275-case baseline matrix before
-sharding. It does not claim that matrix has executed or passed.
+sharding. It does not claim that matrix has executed or passed. An eight-case
+GLES 2 preflight of config ID 1 and fraction 0/64 then completed with six
+`Pass` and two extension-dependent `NotSupported` results, QPA SHA-256
+`7d209effb5fb32d1ff630f1a3bac35961e6050d6bec480c82db77bc753c5493c`,
+and clean shutdown. This proves the first-config expansion, shard selection,
+artifact union, and released status policy end to end; it is not a complete
+configuration or matrix result.
 
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest

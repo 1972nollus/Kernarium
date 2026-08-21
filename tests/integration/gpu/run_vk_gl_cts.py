@@ -217,6 +217,7 @@ class RunnerOracle:
     size: int
     sha256: str
     fixture_configs: tuple[EglConfig, ...]
+    successful_case_statuses: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -738,6 +739,7 @@ def load_runner_oracle(
         "schema_version",
         "cts_release",
         "mustpass_xml_sha256",
+        "unwaived_successful_case_statuses",
         "oracle_build",
         "fixture_egl_configs",
         "summaries",
@@ -750,6 +752,14 @@ def load_runner_oracle(
         != identity["mustpass"]["gles_xml"]["sha256"]
     ):
         raise CampaignError("CTS runner oracle names another release")
+    successful_case_statuses = value["unwaived_successful_case_statuses"]
+    if successful_case_statuses != [
+        "Pass",
+        "NotSupported",
+        "QualityWarning",
+        "CompatibilityWarning",
+    ]:
+        raise CampaignError("CTS runner oracle has invalid success statuses")
 
     build = value["oracle_build"]
     build_keys = {
@@ -870,6 +880,7 @@ def load_runner_oracle(
         size=len(payload),
         sha256=hashlib.sha256(payload).hexdigest(),
         fixture_configs=fixture_configs,
+        successful_case_statuses=tuple(successful_case_statuses),
     )
 
 
@@ -1278,6 +1289,22 @@ def validate_required_passes(results: dict[str, str]) -> None:
         raise CampaignError(
             "required CTS case did not pass: "
             f"{first_case}={non_pass[first_case]}"
+        )
+
+
+def validate_official_runner_results(
+    results: dict[str, str],
+    successful_statuses: Sequence[str],
+) -> None:
+    accepted = set(successful_statuses)
+    nonconformant = {
+        case: status for case, status in results.items() if status not in accepted
+    }
+    if nonconformant:
+        first_case = sorted(nonconformant)[0]
+        raise CampaignError(
+            "official CTS runner rejects case result: "
+            f"{first_case}={nonconformant[first_case]}"
         )
 
 
@@ -1805,9 +1832,11 @@ chown uml:uml "$inventory_report" "$renderer"
         pass
     elif not selection.exact_cases:
         selection_command = (
-            "awk -v index="
-            f"{selection.fraction_index} -v count={selection.fraction_count} "
-            "'NF && $1 !~ /^#/ { if ((seen % count) == index) print; ++seen }' "
+            "awk -v shard_index="
+            f"{selection.fraction_index} "
+            f"-v shard_count={selection.fraction_count} "
+            "'NF && $1 !~ /^#/ { "
+            "if ((seen % shard_count) == shard_index) print; ++seen }' "
             '"$leaf" > "$selected"'
         )
     else:
@@ -2625,6 +2654,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "runner_oracle_path": options.runner_oracle.path,
                 "runner_oracle_size": options.runner_oracle.size,
                 "runner_oracle_sha256": options.runner_oracle.sha256,
+                "successful_case_statuses": list(
+                    options.runner_oracle.successful_case_statuses
+                ),
                 "configuration_name": matrix.configuration.name,
                 "configuration_role": (
                     "first"
@@ -2762,7 +2794,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
     )
     write_json(artifact_directory / "run.json", metadata)
-    validate_required_passes(results)
+    if options.matrix is not None:
+        validate_official_runner_results(
+            results, options.runner_oracle.successful_case_statuses
+        )
+    else:
+        validate_required_passes(results)
     print(f"VK-GL-CTS completed {len(results)} cases: {totals}")
     print(f"Artifacts: {artifact_directory}")
     return 0

@@ -2,6 +2,12 @@
   "schema_version": 1,
   "cts_release": "1.4.5.5",
   "mustpass_xml_sha256": "9f466f19a26120149bab06e70596c9fff57b61d767cfdbadc7ba13934ce2ea96",
+  "unwaived_successful_case_statuses": [
+    "Pass",
+    "NotSupported",
+    "QualityWarning",
+    "CompatibilityWarning"
+  ],
   "oracle_build": {
     "platform": "macos-arm64",
     "build_type": "Release",

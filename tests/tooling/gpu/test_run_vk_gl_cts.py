@@ -312,6 +312,15 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 cts.EglConfig(29, ("pixmap",)),
             ),
         )
+        self.assertEqual(
+            oracle.successful_case_statuses,
+            (
+                "Pass",
+                "NotSupported",
+                "QualityWarning",
+                "CompatibilityWarning",
+            ),
+        )
 
         with tempfile.TemporaryDirectory() as temporary:
             changed = Path(temporary) / "oracle.json"
@@ -632,6 +641,33 @@ registered_module=KHR-GLES3
         cts.validate_required_passes({first: "Pass"})
         with self.assertRaisesRegex(cts.CampaignError, "did not pass"):
             cts.validate_required_passes({second: "NotSupported"})
+        cts.validate_official_runner_results(
+            {
+                first: "Pass",
+                second: "NotSupported",
+                "KHR-GLES2.info.vendor": "QualityWarning",
+                "KHR-GLES2.info.extensions": "CompatibilityWarning",
+            },
+            (
+                "Pass",
+                "NotSupported",
+                "QualityWarning",
+                "CompatibilityWarning",
+            ),
+        )
+        for status in ("Fail", "Waiver", "ResourceError", "Crash"):
+            with self.subTest(status=status), self.assertRaisesRegex(
+                cts.CampaignError, "official CTS runner rejects"
+            ):
+                cts.validate_official_runner_results(
+                    {first: status},
+                    (
+                        "Pass",
+                        "NotSupported",
+                        "QualityWarning",
+                        "CompatibilityWarning",
+                    ),
+                )
 
     def test_qpa_case_path_must_match_container_marker(self) -> None:
         container = "KHR-GLES2.info.version"
@@ -1050,6 +1086,10 @@ Kernarium: runtime returned 0
             self.assertIn("--deqp-surface-type=pbuffer", launcher)
             self.assertIn("--deqp-base-seed=1", launcher)
             self.assertIn("--deqp-watchdog=disable", launcher)
+            self.assertIn(
+                "awk -v shard_index=3 -v shard_count=8", launcher
+            )
+            self.assertNotIn("awk -v index=", launcher)
             self.assertIn(identity["mustpass"]["gles_xml"]["sha256"], launcher)
             self.assertNotIn("--deqp-base-seed=0", launcher)
             syntax = subprocess.run(
