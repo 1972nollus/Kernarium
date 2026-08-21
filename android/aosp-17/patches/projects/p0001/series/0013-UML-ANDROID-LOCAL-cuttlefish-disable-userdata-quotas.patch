@@ -1,0 +1,40 @@
+From 259d4559be3de84b010bed6146b4366728296bb2 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 00:19:24 +0000
+Subject: [PATCH 13/13] UML-ANDROID-LOCAL: cuttlefish: disable userdata quotas
+
+Change-Id: Ia6209a62aea70ebf3bd0b359b81d6dfe1a29ddcf
+---
+ vsoc_uml_arm64_pgagnostic/config/fstab.uml  | 4 ++--
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 6 ++++++
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/vsoc_uml_arm64_pgagnostic/config/fstab.uml b/vsoc_uml_arm64_pgagnostic/config/fstab.uml
+index 6b7c07b5476ca94cbc486697368108ebd76ce052..e8bc048b9c5a0f2a1dc40e8cd7721e774cf22940 100644
+--- a/vsoc_uml_arm64_pgagnostic/config/fstab.uml
++++ b/vsoc_uml_arm64_pgagnostic/config/fstab.uml
+@@ -7,5 +7,5 @@
+ /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
+ /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
+ # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
+-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
++/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
++/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 3f1b4f27ff75e7b26e12c0869ebe128e6f651a46..7cafe3bfff1275105c02c23249dea19fc2e3243d 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -40,6 +40,12 @@ PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
+ TARGET_BOOTS_16K := true
+ PRODUCT_16K_DEVELOPER_OPTION := false
+ 
++# Keep the kernel quota implementation built in, but do not provision or mount
++# project quotas for this static UBD guest. Fresh 16 KiB userdata filesystems
++# cannot activate their hidden quota inodes on the current ACK UML slice.
++PRODUCT_QUOTA_PROJID := 0
++PRODUCT_VENDOR_PROPERTIES := $(filter-out external_storage.projid.enabled=1,$(PRODUCT_VENDOR_PROPERTIES))
++
+ # The separately published ACK UML kernel has CONFIG_MODULES=n. Never build
+ # Android DLKM partitions or package Cuttlefish module prebuilts for this guest.
+ PRODUCT_BUILD_VENDOR_DLKM_IMAGE := false

@@ -71,8 +71,8 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,first_stage_mount
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,quota,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,quota,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 """
 
 
@@ -749,6 +749,12 @@ def main() -> None:
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
+    cuttlefish_patches = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0001/series").glob("*.patch")
+        )
+    )
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
@@ -757,6 +763,13 @@ def main() -> None:
         fail("AOSP materializer stages an overlay instead of applying project patches")
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
+    for token in (
+        "PRODUCT_QUOTA_PROJID := 0",
+        "filter-out external_storage.projid.enabled=1",
+        "latemount,wait,check,formattable,keydirectory=",
+    ):
+        if token not in cuttlefish_patches:
+            fail(f"Cuttlefish patch route is missing userdata quota policy: {token}")
     for token in (
         "verify-target-files.py",
         "ubd-disk.py",

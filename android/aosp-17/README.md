@@ -137,6 +137,13 @@ does not wait for a slot-based BootControl service that the static GPT cannot
 provide. The builder and target-files verifier reject either package, the APEX
 payload, or a checkpoint-bearing fstab if those contracts regress.
 
+The same route disables project-quota provisioning and omits the userdata
+`quota` fstab flag. Both a staged ext4 image and a freshly formatted encrypted
+`dm-default` device produced invalid hidden quota inodes under the 16 KiB ACK
+UML slice. The complete kernel quota subsystem remains built in, but this guest
+does not activate filesystem quotas; Android falls back to non-quota storage
+accounting. The target-files and initramfs verifiers pin that mount policy.
+
 Route `p0001` also replaces the inherited dynamic/virtio fstab with
 `fstab.uml`. Android first-stage init discovers the fixed GPT partitions below
 the `uml-blkdev.0` platform device and mounts the immutable filesystems

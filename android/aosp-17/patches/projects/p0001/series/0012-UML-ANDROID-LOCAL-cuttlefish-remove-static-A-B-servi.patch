@@ -1,7 +1,7 @@
 From 7474302f2bb1e8ca47e67076845abaa0dada37fd Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 23:29:06 +0000
-Subject: [PATCH 12/12] UML-ANDROID-LOCAL: cuttlefish: remove static A/B
+Subject: [PATCH 12/13] UML-ANDROID-LOCAL: cuttlefish: remove static A/B
  services
 
 Change-Id: Ifb4c656b2a2097096970ad9423abcddd5faa3819

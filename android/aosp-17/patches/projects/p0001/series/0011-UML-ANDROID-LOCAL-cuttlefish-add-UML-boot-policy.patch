@@ -1,7 +1,7 @@
 From e4e9cfb5d011c80800c87b50efed88ebd415529a Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 20:02:57 +0000
-Subject: [PATCH 11/12] UML-ANDROID-LOCAL: cuttlefish: add UML boot policy
+Subject: [PATCH 11/13] UML-ANDROID-LOCAL: cuttlefish: add UML boot policy
 
 Change-Id: I5b4b2ec84cbabc1191ac1da604036e249591b81b
 ---
