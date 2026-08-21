@@ -381,9 +381,9 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
-# The outer emulator has no VIRTIO_ID_CONSOLE backend; ttyS0 is the supported
-# host-console transport until such a device exists end to end.
-# CONFIG_VIRTIO_CONSOLE is not set
+# The outer macOS emulator can attach an optional single console or named
+# multiport serial endpoint; ttyS0 remains the default host console.
+CONFIG_VIRTIO_CONSOLE=y
 CONFIG_DRM=y
 CONFIG_DRM_VIRTIO_GPU=y
 CONFIG_DRM_VIRTIO_GPU_KMS=y

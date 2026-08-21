@@ -85,6 +85,12 @@ stream socket. The console transport never waits for a client: it retains a
 bounded recent output tail before attachment and drops backpressured output
 with a diagnostic rather than blocking the guest. Its launcher does not search
 for `rootfs.erofs` or alter the current `uml-darwin` product.
+The ordinary macOS product additionally accepts the mutually exclusive
+`--virtio-serial-socket=/absolute/path`. That mode negotiates the standard
+multiport feature and publishes `org.uml.host-serial.0` at
+`/dev/virtio-ports/org.uml.host-serial.0`; it does not turn the port into an
+HVC console or interfere with an image-owned `/dev/hvc0` getty. Android keeps
+the existing single-port attachment unchanged.
 
 The opt-in Apple CTS adapters pass only an identifier from the checked
 campaign allow-list. CMake generates that campaign's exact bounded guest

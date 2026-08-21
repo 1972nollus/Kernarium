@@ -129,6 +129,34 @@ ordered leaf across fractions for every EGL config, and requires the complete
 cartesian product. Tooling and architecture registration pass. No complete
 matrix result is claimed by this automation checkpoint.
 
+The first complete GLES 2 attempt verified nine configurations before the
+unacknowledged `journal+console` artifact stream stopped during the config-ID
+18 QPA export. The CTS process itself had completed all 473 cases for that
+configuration with 438 `Pass`, 35 `NotSupported`, and no failure, but the
+interrupted campaign directory is permanently disqualified. The image-owned
+serial getty on `/dev/hvc0` also made that device unsuitable for a private
+protocol, and the launcher does not mask or replace it. Instead, both mainline
+page profiles now build `CONFIG_VIRTIO_CONSOLE=y`, and the outer runtime adds a
+standards-based multiport Virtio serial attachment while retaining the existing
+single-port Android console. `--virtio-serial-socket` publishes the named port
+`org.uml.host-serial.0` at
+`/dev/virtio-ports/org.uml.host-serial.0`; the host implements the device-ready,
+port-add, port-ready, port-name, port-open, control-queue, and asynchronous
+wakeup contracts. CTS sends each bounded frame through that raw port and waits
+for an exact host acknowledgement before sending the next. Full LLVM 22 builds
+of the 16 KiB and 4 KiB profiles passed and published local accepted artifacts
+`mainline-6.18-{16k,4k}-20260821-virtio-console-1` with unchanged release,
+source tree, patch manifest, and bridge ABI v8. A fresh VNC/JIT/ten-vCPU config
+ID 18 preflight at
+`.build/vk-gl-cts-virtio-serial-preflight-2/20260821-231607-15653-16k-matrix-gles2-cfg07-000of001`
+then passed the same 473 cases, transferred the complete 545,587-byte QPA in 27
+acknowledged frames, and shut down cleanly. Its QPA SHA-256 is
+`b81e1be7fc1365350b834e7f786030afbb98befdc85c323b9d761d91ca5be534`
+and its transport transcript SHA-256 is
+`9456708701ffd63a929c07f17d79f7696f762c7beec71a5967cfcdcc81c9cfc5`.
+This closes the macOS matrix artifact-transport defect, not either complete
+matrix or any conformance claim.
+
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,

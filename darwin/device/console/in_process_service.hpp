@@ -9,7 +9,9 @@ namespace uml::console {
 
 class InProcessConsoleService final {
 public:
-    explicit InProcessConsoleService(std::filesystem::path socketPath);
+    explicit InProcessConsoleService(
+        std::filesystem::path socketPath,
+        std::string portName = {});
     ~InProcessConsoleService();
 
     InProcessConsoleService(const InProcessConsoleService&) = delete;

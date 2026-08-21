@@ -222,6 +222,7 @@ struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
 	std::string console_socket;
+	std::string serial_socket;
 	std::vector<std::string> kernel;
 };
 
@@ -275,6 +276,15 @@ PreparedArguments prepare_host_arguments(
 			if (prepared.console_socket.empty())
 				throw std::invalid_argument(
 					"--virtio-console-socket requires a path");
+		} else if (argument.starts_with("--virtio-serial-socket=")) {
+			if (!prepared.serial_socket.empty())
+				throw std::invalid_argument(
+					"--virtio-serial-socket may be specified only once");
+			prepared.serial_socket = argument.substr(
+				std::string_view{"--virtio-serial-socket="}.size());
+			if (prepared.serial_socket.empty())
+				throw std::invalid_argument(
+					"--virtio-serial-socket requires a path");
 		} else if (argument.starts_with("--gpu-display=")) {
 			const auto mode = argument.substr(
 				std::string_view{"--gpu-display="}.size());
@@ -337,6 +347,10 @@ PreparedArguments prepare_host_arguments(
 	     prepared.gpu.height > uml::gpu::protocol::maximumEdidDimension))
 		throw std::invalid_argument(
 			"--gpu-dpi requires display dimensions no larger than 4095");
+	if (!prepared.console_socket.empty() && !prepared.serial_socket.empty())
+		throw std::invalid_argument(
+			"--virtio-console-socket and --virtio-serial-socket are "
+			"mutually exclusive");
 	append_default_kernel_argument(
 		prepared.kernel, "mem=", configuration.default_guest_memory);
 	append_default_kernel_argument(
@@ -481,25 +495,34 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::console::InProcessConsoleService> console_service;
-	if (!prepared.console_socket.empty() && !informational(argc, argv)) {
+	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
+	    !informational(argc, argv)) {
+		const bool named_serial = !prepared.serial_socket.empty();
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::console::protocol::deviceId)) {
-			std::fputs("--virtio-console-socket cannot be combined with an "
-				   "explicit Virtio console transport argument\n",
+			std::fputs("a host Virtio console or serial socket cannot be "
+				   "combined with an explicit Virtio console transport "
+				   "argument\n",
 				   stderr);
 			return 1;
 		}
 		try {
 			console_service =
 				std::make_unique<uml::console::InProcessConsoleService>(
-					prepared.console_socket);
+					named_serial ? prepared.serial_socket :
+						prepared.console_socket,
+					named_serial ?
+						std::string(
+							uml::console::protocol::hostSerialPortName) :
+						std::string {});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				console_service->takeConnectionName() + ":" +
 				std::to_string(uml::console::protocol::deviceId));
 		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio console: %s\n",
+			std::fprintf(
+				stderr, "Unable to start in-process Virtio %s: %s\n",
+				named_serial ? "serial" : "console",
 				error.what());
 			return 1;
 		}

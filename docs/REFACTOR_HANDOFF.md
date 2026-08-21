@@ -112,8 +112,11 @@ A fail-closed global display-backed diagnostic exercised the rebuilt common
 emulator and exact installed `glcts`: eight module hierarchies exported before
 the desktop-GL-dependent `dEQP-GL45-ES3` package requested an unsupported GL
 4.5 context. Native arm64 Debian reproduced its status, 148,476 rows, and
-partial digest exactly, proving it is released hierarchy behavior rather than
-an emulator defect. The qualification inventory now filters unmodified
+partial digest, but that VM is comparison evidence only and is neither ground
+truth nor a conformance oracle. Released-source inspection establishes why the
+package is outside the GLES-only inventory; only complete official matrices in
+this emulator can establish implementation compliance. The qualification
+inventory now filters unmodified
 `glcts` separately to `KHR-GLES2.*` and `KHR-GLES3.*`. A JIT/ten-vCPU emulator
 run against the sealed derivative completed exactly those two modules with
 6,972 cases, frozen SHA-256
@@ -533,11 +536,11 @@ UIKit idle timer is disabled only for the managed guest lifetime.
 The common kernel now gives Virtio-GPU to standard VT/fbcon instead of the DRM
 log client. It omits the conflicting UML stdio-console driver and legacy BSD
 PTY bank, retains dynamic Unix98 PTYs, and exposes only four UML serial lines.
-`ttyS0` is the host console because this emulator has no Virtio-console backend;
-Kernarium fans that serial endpoint out to both its stdout relay and the
+Kernarium attaches no Virtio-console device, so `ttyS0` remains its host
+console; the app fans that serial endpoint out to both its stdout relay and the
 SwiftTerm view while `tty0` remains visible on the framebuffer. SwiftTerm input
-uses the same bidirectional serial socket. Both page profiles build the selectable VGA8x16
-and TER16x32 fonts used by the two iOS density modes.
+uses the same bidirectional serial socket. Both page profiles build the
+selectable VGA8x16 and TER16x32 fonts used by the two iOS density modes.
 
 The repeated physical reliability campaign preceded the selectable display
 mode change. Its standard-signed Release app and `phosh.erofs` on an iPad mini 6

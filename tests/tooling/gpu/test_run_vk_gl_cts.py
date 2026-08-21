@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import socket
 import subprocess
 import struct
 import sys
@@ -866,6 +867,44 @@ Kernarium: runtime returned 0
         with self.assertRaisesRegex(cts.CampaignError, "missing its trailer"):
             cts.decode_artifacts(truncated)
 
+    def test_artifact_transport_acknowledges_only_canonical_frames(self) -> None:
+        frames = framed_artifact("results.qpa", b"payload").splitlines()
+        acknowledgements = [
+            cts.artifact_acknowledgement(frame) for frame in frames
+        ]
+        self.assertEqual(
+            acknowledgements[0],
+            "UML_CTS_ARTIFACT_ACK|results.qpa|begin",
+        )
+        self.assertEqual(
+            acknowledgements[-1],
+            "UML_CTS_ARTIFACT_ACK|results.qpa|end",
+        )
+        self.assertTrue(
+            all(cts.ACK_ARTIFACT.fullmatch(item) for item in acknowledgements)
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "non-frame"):
+            cts.artifact_acknowledgement("UML_CTS_STATUS|rc=0")
+
+        host, guest = socket.socketpair()
+        transport = cts.AcknowledgedArtifactSocket(Path("/unused"))
+        transport.connection = host
+        transport.connected = True
+        try:
+            guest.sendall((frames[0] + "\n").encode("ascii"))
+            transport.service()
+            transport.service()
+            self.assertEqual(
+                guest.recv(256),
+                b"UML_CTS_ARTIFACT_ACK|results.qpa|begin\n",
+            )
+            guest.close()
+            transport.service()
+            self.assertEqual(transport.finish(), frames[0] + "\n")
+        finally:
+            transport.close()
+            guest.close()
+
     def test_artifact_writer_keeps_outputs_beneath_new_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "artifacts"
@@ -941,6 +980,45 @@ Kernarium: runtime returned 0
                 check=False,
             )
             self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        virtio_launcher = cts.build_guest_launcher(
+            selection,
+            seed=7,
+            timeout=300,
+            guest_page_size=16384,
+            rootfs_contract=erofs_contract(),
+            artifact_transport="virtio-serial",
+        )
+        self.assertIn("artifact_transport=virtio-serial", virtio_launcher)
+        self.assertIn(
+            f"artifact_channel={cts.VIRTIO_SERIAL_GUEST_DEVICE}",
+            virtio_launcher,
+        )
+        protocol = (
+            REPO_ROOT / "darwin/device/console/protocol.hpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn(f'"{cts.VIRTIO_SERIAL_PORT_NAME}"', protocol)
+        self.assertNotIn('stty -F "$artifact_channel"', virtio_launcher)
+        self.assertIn('exec 3<> "$artifact_channel"', virtio_launcher)
+        self.assertIn("UML_CTS_ARTIFACT_ACK|$name|$index", virtio_launcher)
+        self.assertIn("timeout --signal=TERM 30 head -n 1", virtio_launcher)
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=virtio_launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        with self.assertRaisesRegex(cts.CampaignError, "transport"):
+            cts.build_guest_launcher(
+                selection,
+                7,
+                300,
+                16384,
+                erofs_contract(),
+                artifact_transport="virtiofs",
+            )
 
     def test_inventory_launcher_scopes_the_real_display_to_gles(self) -> None:
         launcher = cts.build_guest_launcher(
@@ -1105,6 +1183,19 @@ Kernarium: runtime returned 0
                 check=False,
             )
             self.assertEqual(syntax.returncode, 0, syntax.stderr)
+            harness = cts.build_harness_command(
+                options, matrix.selection, root / "artifacts"
+            )
+            self.assertEqual(
+                len(
+                    [
+                        argument
+                        for argument in harness
+                        if argument.startswith("--virtio-serial-socket=")
+                    ]
+                ),
+                1,
+            )
 
             without_qualification = [
                 item for item in common if item != "--qualification"

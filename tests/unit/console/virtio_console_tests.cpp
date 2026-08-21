@@ -93,6 +93,26 @@ struct DeviceFixture final {
     std::unique_ptr<uml::console::VirtioConsoleDevice> device;
 };
 
+struct NamedDeviceFixture final {
+    NamedDeviceFixture()
+    {
+        std::array<int, 2> pipeDescriptors {-1, -1};
+        require(::pipe(pipeDescriptors.data()) == 0);
+        channelEvent = uml::gpu::UniqueDescriptor {pipeDescriptors[0]};
+        channelEventWriter = uml::gpu::UniqueDescriptor {pipeDescriptors[1]};
+        auto owned = std::make_unique<TestChannel>();
+        channel = owned.get();
+        channel->descriptor = channelEvent.get();
+        device = std::make_unique<uml::console::VirtioConsoleDevice>(
+            std::move(owned), std::string(protocol::hostSerialPortName));
+    }
+
+    TestChannel* channel {};
+    uml::gpu::UniqueDescriptor channelEvent;
+    uml::gpu::UniqueDescriptor channelEventWriter;
+    std::unique_ptr<uml::console::VirtioConsoleDevice> device;
+};
+
 class TemporaryDirectory final {
 public:
     TemporaryDirectory()
@@ -138,6 +158,28 @@ uml::gpu::UniqueDescriptor connectClient(
                 reinterpret_cast<const sockaddr*>(&address),
                 sizeof(address)) == 0);
     return client;
+}
+
+std::vector<std::uint8_t> controlMessage(
+    std::uint32_t id,
+    protocol::ControlEvent event,
+    std::uint16_t value)
+{
+    const protocol::Control control {
+        .id = id,
+        .event = static_cast<std::uint16_t>(event),
+        .value = value,
+    };
+    const auto* first = reinterpret_cast<const std::uint8_t*>(&control);
+    return {first, first + sizeof(control)};
+}
+
+protocol::Control decodeControl(std::span<const std::uint8_t> message)
+{
+    require(message.size() >= sizeof(protocol::Control));
+    protocol::Control control {};
+    std::memcpy(&control, message.data(), sizeof(control));
+    return control;
 }
 
 void deviceImplementsTheTwoQueueConsoleContract()
@@ -188,6 +230,102 @@ void deviceImplementsTheTwoQueueConsoleContract()
     });
     requireThrows([&] {
         fixture.device->writeConfiguration(0, 0, output);
+    });
+}
+
+void deviceImplementsTheNamedSerialControlHandshake()
+{
+    NamedDeviceFixture fixture;
+    require(fixture.device->features() == protocol::featureMultiport);
+    require(fixture.device->queueCount() == protocol::namedSerialQueueCount);
+    const auto configurationBytes = fixture.device->configuration();
+    require(configurationBytes.size() == sizeof(protocol::Configuration));
+    protocol::Configuration configuration {};
+    std::memcpy(
+        &configuration, configurationBytes.data(), sizeof(configuration));
+    require(configuration.maximumPorts == 1);
+
+    const auto empty = fixture.device->processQueue(
+        protocol::controlInputQueue, 1, {}, 512);
+    require(empty.action == uml::virtio::VhostUserQueueAction::retry);
+
+    const auto ready = controlMessage(
+        protocol::badPortId, protocol::ControlEvent::deviceReady, 1);
+    const auto readyResult = fixture.device->processQueue(
+        protocol::controlOutputQueue, 2, ready, 0);
+    require(
+        readyResult.action == uml::virtio::VhostUserQueueAction::complete);
+    waitReadable(fixture.device->eventDescriptor());
+    fixture.device->drainEventSource();
+
+    requireThrows([&] {
+        (void)fixture.device->processQueue(
+            protocol::controlInputQueue, 3, {}, sizeof(protocol::Control) - 1U);
+    });
+    const auto add = fixture.device->processQueue(
+        protocol::controlInputQueue, 4, {}, 512);
+    require(add.action == uml::virtio::VhostUserQueueAction::complete);
+    const auto addControl = decodeControl(add.response);
+    require(addControl.id == protocol::hostSerialPortId);
+    require(addControl.event ==
+            static_cast<std::uint16_t>(protocol::ControlEvent::portAdd));
+    require(addControl.value == 1);
+
+    const auto portReady = controlMessage(
+        protocol::hostSerialPortId, protocol::ControlEvent::portReady, 1);
+    const auto portReadyResult = fixture.device->processQueue(
+        protocol::controlOutputQueue, 5, portReady, 0);
+    require(portReadyResult.action ==
+            uml::virtio::VhostUserQueueAction::complete);
+    waitReadable(fixture.device->eventDescriptor());
+    fixture.device->drainEventSource();
+
+    const auto name = fixture.device->processQueue(
+        protocol::controlInputQueue, 6, {}, 512);
+    require(name.action == uml::virtio::VhostUserQueueAction::complete);
+    const auto nameControl = decodeControl(name.response);
+    require(nameControl.id == protocol::hostSerialPortId);
+    require(nameControl.event ==
+            static_cast<std::uint16_t>(protocol::ControlEvent::portName));
+    const std::string_view receivedName {
+        reinterpret_cast<const char*>(
+            name.response.data() + sizeof(protocol::Control)),
+        name.response.size() - sizeof(protocol::Control)};
+    require(receivedName == protocol::hostSerialPortName);
+
+    const auto open = fixture.device->processQueue(
+        protocol::controlInputQueue, 7, {}, 512);
+    require(open.action == uml::virtio::VhostUserQueueAction::complete);
+    const auto openControl = decodeControl(open.response);
+    require(openControl.id == protocol::hostSerialPortId);
+    require(openControl.event ==
+            static_cast<std::uint16_t>(protocol::ControlEvent::portOpen));
+    require(openControl.value == 1);
+
+    const auto guestOpen = controlMessage(
+        protocol::hostSerialPortId, protocol::ControlEvent::portOpen, 1);
+    require(fixture.device
+                ->processQueue(
+                    protocol::controlOutputQueue, 7, guestOpen, 0)
+                .action == uml::virtio::VhostUserQueueAction::complete);
+
+    requireThrows([&] {
+        const auto invalid = controlMessage(
+            protocol::hostSerialPortId, protocol::ControlEvent::portName, 1);
+        (void)fixture.device->processQueue(
+            protocol::controlOutputQueue, 9, invalid, 0);
+    });
+
+    fixture.device->reset();
+    require(fixture.channel->resetCount == 1);
+    require(fixture.device
+                ->processQueue(protocol::controlInputQueue, 10, {}, 512)
+                .action == uml::virtio::VhostUserQueueAction::retry);
+
+    auto invalidChannel = std::make_unique<TestChannel>();
+    requireThrows([&] {
+        uml::console::VirtioConsoleDevice invalid(
+            std::move(invalidChannel), "invalid/port");
     });
 }
 
@@ -261,6 +399,17 @@ void inProcessServicePublishesAndRemovesTheExternalSocket()
     (void)::close(descriptor);
     service.stop();
     require(::lstat(path.c_str(), &status) != 0 && errno == ENOENT);
+
+    const auto serialPath = temporary.path() / "serial.sock";
+    uml::console::InProcessConsoleService serialService(
+        serialPath, std::string(protocol::hostSerialPortName));
+    require(
+        ::lstat(serialPath.c_str(), &status) == 0 && S_ISSOCK(status.st_mode));
+    const auto serialConnection = serialService.takeConnectionName();
+    require(serialConnection.starts_with("fd="));
+    (void)::close(std::stoi(serialConnection.substr(3)));
+    serialService.stop();
+    require(::lstat(serialPath.c_str(), &status) != 0 && errno == ENOENT);
 }
 
 } // namespace
@@ -268,6 +417,7 @@ void inProcessServicePublishesAndRemovesTheExternalSocket()
 int main()
 {
     deviceImplementsTheTwoQueueConsoleContract();
+    deviceImplementsTheNamedSerialControlHandshake();
     unixSocketChannelSupportsTailInputAndReconnect();
     inProcessServicePublishesAndRemovesTheExternalSocket();
     return EXIT_SUCCESS;

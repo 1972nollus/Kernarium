@@ -367,10 +367,10 @@ synthesize a desktop user, modify the EROFS image, or start VNC. Standard
 VT/fbcon renders early boot through Virtio-GPU fbdev emulation; the DRM log
 client and conflicting UML stdio console are disabled. The guest exposes the
 normal 64 VT nodes, four UML serial lines, dynamic Unix98 PTYs, and no legacy
-BSD PTY bank. This host has no Virtio-console backend, so `ttyS0` is the serial
-fallback connected to both the app's stdout relay and SwiftTerm terminal while
-`tty0` remains on fbcon. SwiftTerm delegate input is written back through the
-same serial socket.
+BSD PTY bank. Kernarium attaches no Virtio-console device, so `ttyS0` is the
+serial fallback connected to both the app's stdout relay and SwiftTerm terminal
+while `tty0` remains on fbcon. SwiftTerm delegate input is written back through
+the same serial socket.
 `CONFIG_PRINTK_TIME` gives the kernel records on both consoles guest-monotonic
 prefixes. In ordinary UML execution, `sched_clock()` derives them from a
 boot-relative host `CLOCK_MONOTONIC` nanosecond counter rather than jiffies, so
@@ -697,6 +697,16 @@ reading loses console bytes rather than stopping a guest vCPU. The focused
 `virtio-console-protocol` unit test covers both queue directions, socket path
 ownership, tail delivery, reconnect, and in-process service teardown.
 
+`--virtio-serial-socket=/absolute/path` selects the separate multiport mode of
+the same standard device and is mutually exclusive with the single-port
+option. It exposes the non-console port `org.uml.host-serial.0` as
+`/dev/virtio-ports/org.uml.host-serial.0`, implements Linux's control-queue
+handshake, and uses the same reconnectable mode-0600 Unix stream backend. The
+port is raw rather than a tty: clients must not run `stty` on it. Because it is
+not `/dev/hvc0`, attaching it neither consumes nor disables the image-owned
+serial getty. The focused protocol test covers the device-ready, add, ready,
+name, open, data, reset, validation, and asynchronous control-wakeup paths.
+
 `UML_GPU_FRAME_STATS=<seconds>` turns on native-display frame accounting on
 macOS and in Kernarium; unset, zero, or unparseable keeps it off. Each interval
 writes one bounded line to stderr, and macOS also mirrors it into the window
@@ -822,6 +832,12 @@ directory after an implementation change. Final aggregation reparses every
 QPA and console, verifies all hashes and statuses, interleaves every fraction
 back into the exact ordered leaf, checks the frozen leaf SHA-256 for every EGL
 config, and requires the complete cartesian product before writing `passed`.
+Every macOS child automatically attaches the named Virtio serial port above.
+The guest sends bounded gzip/base64 frames and waits for an exact acknowledgement
+after the begin record, every chunk, and the end record; the host retains the
+canonical raw transcript as `artifact-serial.log` and rechecks its hash during
+matrix aggregation. Do not redirect this protocol through `/dev/hvc0`, mask its
+getty, or fall back to the unacknowledged journal/console stream.
 
 A native arm64 Debian 13 direct-virgl diagnostic using the exact installed CTS
 payload reproduces status 137, the same eight nonempty modules and 148,476

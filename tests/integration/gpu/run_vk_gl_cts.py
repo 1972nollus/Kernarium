@@ -21,6 +21,7 @@ import argparse
 import base64
 import binascii
 from dataclasses import dataclass, field
+import errno
 import gzip
 import hashlib
 import io
@@ -28,8 +29,10 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -100,6 +103,9 @@ CHUNK_ARTIFACT = re.compile(
 END_ARTIFACT = re.compile(
     r"UML_CTS_ARTIFACT_END\|([^|]+)\|([0-9]+)\Z"
 )
+ACK_ARTIFACT = re.compile(
+    r"UML_CTS_ARTIFACT_ACK\|([^|]+)\|(begin|end|[0-9]+)\Z"
+)
 HOST_CONTEXT = re.compile(
     r"UML_GPU_HOST_CONTEXT\|requested=([0-9]+)\.([0-9]+)\|"
     r"created=([01])\|egl_error=([0-9]+)\|actual=([0-9]+)\.([0-9]+)\|"
@@ -138,6 +144,12 @@ HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
 RETIRED_BACKEND_MARKER = "Virgl CGL"
 DARWIN_CLEAN_STOP = "Darwin UML stopped: result=0 exitcode=0"
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
+MAX_ARTIFACT_TRANSPORT_LINE = 2048
+VIRTIO_SERIAL_PORT_NAME = "org.uml.host-serial.0"
+VIRTIO_SERIAL_GUEST_DEVICE = (
+    f"/dev/virtio-ports/{VIRTIO_SERIAL_PORT_NAME}"
+)
+ARTIFACT_TRANSPORT_LOG = "artifact-serial.log"
 
 
 class CampaignError(RuntimeError):
@@ -251,6 +263,126 @@ class RootfsContract:
     filesystem_uuid: str | None = None
     guest_receipt_path: str | None = None
     guest_receipt_sha256: str | None = None
+
+
+class AcknowledgedArtifactSocket:
+    """Drain the guest Virtio serial stream and acknowledge every frame."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.connection: socket.socket | None = None
+        self.input = bytearray()
+        self.output = bytearray()
+        self.lines: list[str] = []
+        self.connected = False
+        self.closed = False
+
+    def try_connect(self) -> None:
+        if self.connection is not None or self.connected:
+            return
+        try:
+            details = self.path.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(details.st_mode) or not stat.S_ISSOCK(details.st_mode):
+            raise CampaignError(
+                f"artifact transport path is not a Unix socket: {self.path}"
+            )
+        if (
+            stat.S_IMODE(details.st_mode) != 0o600
+            or details.st_uid != os.getuid()
+        ):
+            raise CampaignError("artifact transport socket ownership changed")
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(0.1)
+        try:
+            connection.connect(str(self.path))
+        except OSError as error:
+            connection.close()
+            if error.errno in {errno.ENOENT, errno.ECONNREFUSED}:
+                return
+            raise CampaignError(
+                f"cannot connect to artifact transport {self.path}: {error}"
+            ) from error
+        connection.setblocking(False)
+        self.connection = connection
+        self.connected = True
+
+    def service(self) -> None:
+        self.try_connect()
+        if self.connection is None:
+            return
+        readable, writable, _ = select.select(
+            [self.connection],
+            [self.connection] if self.output else [],
+            [],
+            0,
+        )
+        if self.connection in readable:
+            try:
+                payload = self.connection.recv(64 * 1024)
+            except BlockingIOError:
+                payload = None
+            except OSError as error:
+                raise CampaignError(
+                    f"artifact transport receive failed: {error}"
+                ) from error
+            if payload == b"":
+                self.connection.close()
+                self.connection = None
+                self.closed = True
+                if self.input or self.output:
+                    raise CampaignError(
+                        "artifact transport closed with an incomplete frame"
+                    )
+            elif payload:
+                self.input.extend(payload)
+                self._parse_input()
+        if self.connection is not None and self.connection in writable:
+            try:
+                written = self.connection.send(self.output)
+            except BlockingIOError:
+                written = 0
+            except OSError as error:
+                raise CampaignError(
+                    f"artifact transport acknowledgement failed: {error}"
+                ) from error
+            if written > 0:
+                del self.output[:written]
+
+    def _parse_input(self) -> None:
+        while b"\n" in self.input:
+            raw_line, _, remainder = self.input.partition(b"\n")
+            self.input = bytearray(remainder)
+            if (
+                not raw_line
+                or len(raw_line) > MAX_ARTIFACT_TRANSPORT_LINE
+                or raw_line.endswith(b"\r")
+            ):
+                raise CampaignError("artifact transport emitted an invalid line")
+            try:
+                line = raw_line.decode("ascii", errors="strict")
+            except UnicodeDecodeError as error:
+                raise CampaignError(
+                    "artifact transport emitted a non-ASCII line"
+                ) from error
+            acknowledgement = artifact_acknowledgement(line)
+            self.lines.append(line + "\n")
+            self.output.extend((acknowledgement + "\n").encode("ascii"))
+        if len(self.input) > MAX_ARTIFACT_TRANSPORT_LINE:
+            raise CampaignError("artifact transport line exceeds its bound")
+
+    def finish(self) -> str:
+        if not self.connected:
+            raise CampaignError("guest never connected the artifact transport")
+        if self.input or self.output:
+            raise CampaignError("artifact transport ended with pending bytes")
+        return "".join(self.lines)
+
+    def close(self) -> None:
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -445,6 +577,16 @@ def sha256_file(path: Path) -> str:
         while chunk := stream.read(8 * 1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def artifact_socket_path(artifact_directory: Path) -> Path:
+    identity = hashlib.sha256(
+        os.fsencode(artifact_directory.resolve())
+    ).hexdigest()[:20]
+    path = Path("/private/tmp") / f"uml-cts-artifact-{identity}.sock"
+    if len(os.fsencode(path)) >= 104:
+        raise CampaignError("CTS artifact socket path is too long")
+    return path
 
 
 def validate_rootfs_file(path: Path, contract: RootfsContract) -> None:
@@ -1574,6 +1716,19 @@ def artifact_marker(line: str) -> str | None:
     return line[offset:].strip()
 
 
+def artifact_acknowledgement(line: str) -> str:
+    begin = BEGIN_ARTIFACT.fullmatch(line)
+    if begin is not None:
+        return f"UML_CTS_ARTIFACT_ACK|{begin.group(1)}|begin"
+    chunk = CHUNK_ARTIFACT.fullmatch(line)
+    if chunk is not None:
+        return f"UML_CTS_ARTIFACT_ACK|{chunk.group(1)}|{chunk.group(2)}"
+    end = END_ARTIFACT.fullmatch(line)
+    if end is not None:
+        return f"UML_CTS_ARTIFACT_ACK|{end.group(1)}|end"
+    raise CampaignError("artifact transport emitted a non-frame line")
+
+
 def decode_artifacts(transcript: str) -> dict[str, bytes]:
     encoded: dict[str, EncodedArtifact] = {}
     for raw_line in transcript.replace("\r", "").splitlines():
@@ -1678,6 +1833,7 @@ def build_guest_launcher(
     *,
     config_inventory_api: str | None = None,
     matrix: MatrixRun | None = None,
+    artifact_transport: str = "console",
 ) -> str:
     if config_inventory_api is not None and config_inventory_api not in CONFIG_CASES:
         raise CampaignError(
@@ -1691,6 +1847,8 @@ def build_guest_launcher(
         raise CampaignError("matrix run does not match its selected shard")
     if matrix is not None and config_inventory_api is not None:
         raise CampaignError("matrix and config inventory modes are exclusive")
+    if artifact_transport not in {"console", "virtio-serial"}:
+        raise CampaignError("unsupported CTS artifact transport")
     glcts = "/opt/vk-gl-cts/openglcts/glcts"
     archive = "/opt/vk-gl-cts/openglcts"
     output = "/run/uml-cts"
@@ -1894,7 +2052,40 @@ summary={shlex.quote(summary)}
 inventory_report={shlex.quote(inventory_report)}
 hierarchy_inventory_mode={1 if hierarchy_inventory else 0}
 selected_mode={1 if selection is not None else 0}
+artifact_transport={shlex.quote(artifact_transport)}
+artifact_channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
+artifact_fd_ready=0
 status=1
+
+prepare_artifact_transport()
+{{
+    [ "$artifact_transport" = virtio-serial ] || return 0
+    remaining=60
+    while [ ! -c "$artifact_channel" ]; do
+        [ "$remaining" -gt 0 ] || return 1
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    exec 3<> "$artifact_channel" || return 1
+    artifact_fd_ready=1
+}}
+
+emit_frame()
+{{
+    frame="$1"
+    acknowledgement="$2"
+    if [ "$artifact_transport" = console ]; then
+        printf '%s\n' "$frame"
+        return 0
+    fi
+    [ "$artifact_fd_ready" -eq 1 ] || return 1
+    printf '%s\n' "$frame" >&3 || return 1
+    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
+    [ "$actual_ack" = "$acknowledgement" ] || {{
+        echo 'UML_CTS_ERROR: artifact acknowledgement changed'
+        return 1
+    }}
+}}
 
 emit_artifact()
 {{
@@ -1908,15 +2099,18 @@ emit_artifact()
     size=$(wc -c < "$compressed" | tr -d ' ')
     digest=$(sha256sum "$compressed" | cut -d ' ' -f 1)
     chunks=$(wc -l < "$encoded" | tr -d ' ')
-    printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s\n' \
-        "$name" "$size" "$digest"
+    frame=$(printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s' \
+        "$name" "$size" "$digest")
+    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|begin" || return 1
     index=0
     while IFS= read -r chunk; do
-        printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s\n' \
-            "$name" "$index" "$chunk"
+        frame=$(printf 'UML_CTS_ARTIFACT_CHUNK|%s|%s|%s' \
+            "$name" "$index" "$chunk")
+        emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|$index" || return 1
         index=$((index + 1))
     done < "$encoded"
-    printf 'UML_CTS_ARTIFACT_END|%s|%s\n' "$name" "$chunks"
+    frame=$(printf 'UML_CTS_ARTIFACT_END|%s|%s' "$name" "$chunks")
+    emit_frame "$frame" "UML_CTS_ARTIFACT_ACK|$name|end" || return 1
     rm -f "$compressed" "$encoded"
 }}
 
@@ -1925,14 +2119,33 @@ finish()
     trap - EXIT HUP INT TERM
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
-    emit_artifact renderer.txt "$renderer"
-    if [ "$hierarchy_inventory_mode" -eq 1 ]; then
-        emit_artifact inventory.txt "$inventory_report"
-    elif [ "$selected_mode" -eq 1 ]; then
-        emit_artifact selected.txt "$selected"
+    transfer_status=0
+    if ! prepare_artifact_transport; then
+        echo 'UML_CTS_ERROR: artifact transport did not become ready'
+        transfer_status=1
     fi
-    emit_artifact results.qpa "$qpa"
-    emit_artifact summary.txt "$summary"
+    if [ "$transfer_status" -eq 0 ] && \
+        ! emit_artifact renderer.txt "$renderer"; then
+        transfer_status=1
+    fi
+    if [ "$transfer_status" -eq 0 ] && \
+        [ "$hierarchy_inventory_mode" -eq 1 ]; then
+        emit_artifact inventory.txt "$inventory_report" || transfer_status=1
+    elif [ "$transfer_status" -eq 0 ] && [ "$selected_mode" -eq 1 ]; then
+        emit_artifact selected.txt "$selected" || transfer_status=1
+    fi
+    if [ "$transfer_status" -eq 0 ]; then
+        emit_artifact results.qpa "$qpa" || transfer_status=1
+    fi
+    if [ "$transfer_status" -eq 0 ]; then
+        emit_artifact summary.txt "$summary" || transfer_status=1
+    fi
+    if [ "$artifact_fd_ready" -eq 1 ]; then
+        exec 3>&-
+    fi
+    if [ "$transfer_status" -ne 0 ]; then
+        echo 'UML_CTS_ERROR: acknowledged artifact transfer failed'
+    fi
     sync
     systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1
 }}
@@ -2060,6 +2273,7 @@ def build_harness_command(
     selection: Selection | None,
     artifact_directory: Path,
 ) -> list[str]:
+    artifact_socket = artifact_socket_path(artifact_directory)
     launcher_arguments = [
         "--display",
         options.display,
@@ -2096,6 +2310,7 @@ def build_harness_command(
                 options.rootfs_contract,
                 config_inventory_api=options.config_inventory,
                 matrix=options.matrix_run,
+                artifact_transport="virtio-serial",
             ),
             "0755",
         ),
@@ -2112,6 +2327,7 @@ def build_harness_command(
     launch_environment = ["UML_GPU_CAPABILITY_REPORT=1"]
     if options.display == "native":
         launch_environment.append("UML_GPU_FRAME_STATS=1")
+    command.append(f"--virtio-serial-socket={artifact_socket}")
     return ["env", *launch_environment, *command]
 
 
@@ -2134,22 +2350,42 @@ def wait_for_guest(
     process: subprocess.Popen[bytes],
     log_path: Path,
     timeout: int,
-) -> str:
+    artifact_socket_path: Path,
+) -> tuple[str, str]:
     deadline = time.monotonic() + timeout
     next_heartbeat = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            break
-        now = time.monotonic()
-        if now >= next_heartbeat:
-            size = log_path.stat().st_size if log_path.exists() else 0
-            print(f"VK-GL-CTS guest is running; console_bytes={size}", flush=True)
-            next_heartbeat = now + 30
-        time.sleep(0.5)
-    else:
-        raise TimeoutError(f"VK-GL-CTS guest exceeded {timeout} seconds")
-    process.wait(timeout=5)
-    return log_path.read_text(encoding="utf-8", errors="replace")
+    transport = AcknowledgedArtifactSocket(artifact_socket_path)
+    try:
+        while time.monotonic() < deadline:
+            transport.service()
+            if process.poll() is not None:
+                break
+            now = time.monotonic()
+            if now >= next_heartbeat:
+                size = log_path.stat().st_size if log_path.exists() else 0
+                print(
+                    "VK-GL-CTS guest is running; "
+                    f"console_bytes={size} "
+                    f"artifact_frames={len(transport.lines)}",
+                    flush=True,
+                )
+                next_heartbeat = now + 30
+            time.sleep(0.05)
+        else:
+            raise TimeoutError(f"VK-GL-CTS guest exceeded {timeout} seconds")
+        process.wait(timeout=5)
+        drain_deadline = time.monotonic() + 2
+        while transport.connection is not None and time.monotonic() < drain_deadline:
+            transport.service()
+            if transport.connection is not None:
+                time.sleep(0.01)
+        artifact_transcript = transport.finish()
+    finally:
+        transport.close()
+    return (
+        log_path.read_text(encoding="utf-8", errors="replace"),
+        artifact_transcript,
+    )
 
 
 def git_state() -> dict[str, Any]:
@@ -2599,6 +2835,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "glcts_sha256": rootfs_contract.glcts_sha256,
         "emulator_sha256": hashlib.sha256(emulator_bytes).hexdigest(),
         "qualification": options.qualification,
+        "artifact_transport": {
+            "type": "virtio-serial-unix-socket",
+            "guest_device": VIRTIO_SERIAL_GUEST_DEVICE,
+            "port_name": VIRTIO_SERIAL_PORT_NAME,
+            "acknowledged_frames": True,
+        },
         "launch_environment": {
             "UML_GPU_CAPABILITY_REPORT": "1",
             **(
@@ -2681,22 +2923,33 @@ def main(arguments: Sequence[str] | None = None) -> int:
             }
     write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
+    artifact_socket = artifact_socket_path(artifact_directory)
+    artifact_log_path = artifact_directory / ARTIFACT_TRANSPORT_LOG
     with log_path.open("wb") as log:
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
         try:
-            transcript = wait_for_guest(process, log_path, options.guest_timeout)
+            transcript, artifact_transcript = wait_for_guest(
+                process,
+                log_path,
+                options.guest_timeout,
+                artifact_socket,
+            )
         finally:
             stop_guest(process)
 
     if process.returncode != 0:
         raise CampaignError(f"guest harness exited with status {process.returncode}")
+    if os.path.lexists(artifact_socket):
+        raise CampaignError("emulator did not remove the artifact socket")
+    artifact_log_path.write_text(artifact_transcript, encoding="ascii")
+    metadata["artifact_transport_sha256"] = sha256_file(artifact_log_path)
     validate_host_backend(transcript)
     validate_guest_shutdown(transcript)
     metadata.update(parse_gpu_capability_report(transcript))
     if options.display == "native":
         metadata["native_display_final"] = parse_native_display_final(transcript)
     write_json(artifact_directory / "run.json", metadata)
-    artifacts = decode_artifacts(transcript)
+    artifacts = decode_artifacts(artifact_transcript)
     required_artifacts = (
         INVENTORY_ARTIFACTS
         if options.inventory

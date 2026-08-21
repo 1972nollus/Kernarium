@@ -96,8 +96,11 @@ private:
 
 class InProcessConsoleService::Implementation final {
 public:
-    explicit Implementation(std::filesystem::path socketPath)
+    Implementation(
+        std::filesystem::path socketPath,
+        std::string portName)
         : socketPath_(std::move(socketPath))
+        , portName_(std::move(portName))
         , descriptors_(makeSocketPair())
         , stopDescriptor_(duplicateDescriptor(descriptors_[0].get()))
         , connectionName_("fd=" + std::to_string(descriptors_[1].get()))
@@ -141,8 +144,10 @@ private:
         try {
             auto channel =
                 std::make_unique<UnixSocketChannel>(socketPath_);
-            auto device = std::make_unique<VirtioConsoleDevice>(
-                std::move(channel));
+            auto device = portName_.empty() ?
+                std::make_unique<VirtioConsoleDevice>(std::move(channel)) :
+                std::make_unique<VirtioConsoleDevice>(
+                    std::move(channel), portName_);
             uml::gpu::VhostUserServer server(std::move(device));
             server.runConnected(
                 descriptors_[0].release(), stopRequested_, [this] {
@@ -162,6 +167,7 @@ private:
     }
 
     std::filesystem::path socketPath_;
+    std::string portName_;
     DescriptorPair descriptors_;
     uml::gpu::UniqueDescriptor stopDescriptor_;
     std::string connectionName_;
@@ -174,11 +180,12 @@ private:
 };
 
 InProcessConsoleService::InProcessConsoleService(
-    std::filesystem::path socketPath)
+    std::filesystem::path socketPath,
+    std::string portName)
 {
     ScopedGuestTimerBlock timerBlock;
-    implementation_ =
-        std::make_unique<Implementation>(std::move(socketPath));
+    implementation_ = std::make_unique<Implementation>(
+        std::move(socketPath), std::move(portName));
 }
 
 InProcessConsoleService::~InProcessConsoleService() = default;

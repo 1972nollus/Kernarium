@@ -285,10 +285,14 @@ emulation and leaves the DRM log client off. The legacy UML stdio-console
 driver is omitted so it cannot collide with the VT tty major. Unix98 PTYs are
 allocated dynamically from devpts, the legacy BSD PTY bank is disabled, and
 only four UML serial lines are registered. `ttyS0` is the host-facing console;
-the current outer runtime has no Virtio-console device backend. Launchers keep
-`console=tty0` as the framebuffer console and add `console=ttyS0` for host
-logging. The common font table includes VGA8x16 and TER16x32: Kernarium chooses
-the former for its 160-DPI point mode and the latter for Retina densities.
+the common profile also builds the standard Virtio-console driver in. The outer
+macOS runtime can attach either its legacy single-port `/dev/hvc0` console or a
+multiport named Virtio serial endpoint backed by a mode-0600 Unix socket. The
+CTS path uses `/dev/virtio-ports/org.uml.host-serial.0`, leaving every
+image-owned serial getty untouched. Launchers keep `console=tty0` as the
+framebuffer console and add `console=ttyS0` for host logging. The common font
+table includes VGA8x16 and TER16x32: Kernarium chooses the former for its
+160-DPI point mode and the latter for Retina densities.
 
 The page fragments also derive one 128 KiB Linux task-stack byte size: order 3
 for 16 KiB pages and order 5 for 4 KiB pages. Fixed carriers execute stackful

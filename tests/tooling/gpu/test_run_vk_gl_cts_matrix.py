@@ -144,6 +144,7 @@ def evidence(
         "b" * 64,
         "c" * 64,
         "d" * 64,
+        "e" * 64,
     )
 
 
@@ -251,6 +252,10 @@ class MatrixCampaignTests(unittest.TestCase):
                 "cts_rc=0\n", encoding="utf-8"
             )
             (run / "console.log").write_text("console\n", encoding="utf-8")
+            artifact_transport_payload = qpa_payload.decode()
+            (run / cts.ARTIFACT_TRANSPORT_LOG).write_text(
+                artifact_transport_payload, encoding="ascii"
+            )
             metadata = {
                 "schema_version": 1,
                 "adapter": "macos",
@@ -279,6 +284,12 @@ class MatrixCampaignTests(unittest.TestCase):
                 "seed": 1,
                 "git": campaign_definition.git,
                 "emulator_return_code": 0,
+                "artifact_transport": {
+                    "type": "virtio-serial-unix-socket",
+                    "guest_device": cts.VIRTIO_SERIAL_GUEST_DEVICE,
+                    "port_name": cts.VIRTIO_SERIAL_PORT_NAME,
+                    "acknowledged_frames": True,
+                },
                 "matrix": matrix.expected_matrix_metadata(
                     campaign_definition, key
                 ),
@@ -289,6 +300,7 @@ class MatrixCampaignTests(unittest.TestCase):
                     "--execution-engine=jit",
                     "--gpu-display=vnc",
                     "--gpu-vnc-port=0",
+                    f"--virtio-serial-socket={cts.artifact_socket_path(run)}",
                 ],
                 "completed_cases": len(selected),
                 "status_totals": {"Pass": len(selected)},
@@ -298,6 +310,9 @@ class MatrixCampaignTests(unittest.TestCase):
                 "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
                 "renderer_sha256": hashlib.sha256(
                     renderer_payload
+                ).hexdigest(),
+                "artifact_transport_sha256": hashlib.sha256(
+                    artifact_transport_payload.encode("ascii")
                 ).hexdigest(),
                 "host_contexts": [],
                 "virgl_capsets": [],

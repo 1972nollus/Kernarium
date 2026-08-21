@@ -4,13 +4,19 @@
 #include "channel.hpp"
 #include "vhost_user_device.hpp"
 
+#include <deque>
 #include <memory>
+#include <string>
+#include <string_view>
 
 namespace uml::console {
 
 class VirtioConsoleDevice final : public uml::virtio::VhostUserDevice {
 public:
     explicit VirtioConsoleDevice(std::unique_ptr<ConsoleChannel> channel);
+    VirtioConsoleDevice(
+        std::unique_ptr<ConsoleChannel> channel,
+        std::string portName);
     ~VirtioConsoleDevice() override;
 
     [[nodiscard]] const char* name() const noexcept override;
@@ -31,7 +37,22 @@ public:
     void drainEventSource() override;
 
 private:
+    class EventMultiplexer;
+
+    void validateNamedPort() const;
+    void enqueueControl(
+        std::uint32_t portId,
+        std::uint16_t event,
+        std::uint16_t value,
+        std::string_view payload = {});
+    void processControl(std::span<const std::uint8_t> request);
+
     std::unique_ptr<ConsoleChannel> channel_;
+    std::string portName_;
+    std::unique_ptr<EventMultiplexer> events_;
+    std::deque<std::vector<std::uint8_t>> controlMessages_;
+    bool deviceReady_ {};
+    bool portReady_ {};
 };
 
 } // namespace uml::console

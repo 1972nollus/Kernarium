@@ -252,6 +252,7 @@ class ShardEvidence:
     qpa_sha256: str
     selected_sha256: str
     console_sha256: str
+    artifact_transport_sha256: str
 
     @property
     def totals(self) -> dict[str, int]:
@@ -417,7 +418,9 @@ def require_metadata(metadata: dict[str, Any], expected: dict[str, Any]) -> None
 
 
 def validate_driver_command(
-    command: Any, definition: CampaignDefinition
+    command: Any,
+    definition: CampaignDefinition,
+    run_directory: Path,
 ) -> None:
     if not isinstance(command, list) or any(
         not isinstance(argument, str) for argument in command
@@ -430,6 +433,7 @@ def validate_driver_command(
         "--execution-engine=jit",
         "--gpu-display=vnc",
         "--gpu-vnc-port=0",
+        f"--virtio-serial-socket={cts.artifact_socket_path(run_directory)}",
     }
     for argument in required:
         if command.count(argument) != 1:
@@ -491,15 +495,25 @@ def validate_shard_run(
             "seed": configuration.base_seed,
             "git": definition.git,
             "emulator_return_code": 0,
+            "artifact_transport": {
+                "type": "virtio-serial-unix-socket",
+                "guest_device": cts.VIRTIO_SERIAL_GUEST_DEVICE,
+                "port_name": cts.VIRTIO_SERIAL_PORT_NAME,
+                "acknowledged_frames": True,
+            },
         },
     )
     if metadata.get("matrix") != expected_matrix_metadata(definition, key):
         raise cts.CampaignError("matrix shard expansion metadata changed")
     if "native_display_final" in metadata:
         raise cts.CampaignError("VNC matrix shard recorded native presentation")
-    validate_driver_command(metadata.get("command"), definition)
+    validate_driver_command(metadata.get("command"), definition, run_directory)
 
     artifact_directory = run_directory / "artifacts"
+    artifact_transport_path = run_directory / cts.ARTIFACT_TRANSPORT_LOG
+    regular_file(
+        artifact_transport_path, "matrix shard artifact transport log"
+    )
     if artifact_directory.is_symlink() or not artifact_directory.is_dir():
         raise cts.CampaignError("matrix shard artifact directory is invalid")
     entries = {entry.name: entry for entry in artifact_directory.iterdir()}
@@ -543,6 +557,9 @@ def validate_shard_run(
             "selected_caselist_sha256": selected_sha256,
             "qpa_sha256": qpa_sha256,
             "renderer_sha256": renderer_sha256,
+            "artifact_transport_sha256": cts.sha256_file(
+                artifact_transport_path
+            ),
         },
     )
     cts.validate_renderer_probe(
@@ -564,6 +581,7 @@ def validate_shard_run(
         qpa_sha256=qpa_sha256,
         selected_sha256=selected_sha256,
         console_sha256=cts.sha256_file(console_path),
+        artifact_transport_sha256=cts.sha256_file(artifact_transport_path),
     )
 
 
@@ -840,6 +858,9 @@ def aggregate_matrix(
                     "selected_sha256": shard.selected_sha256,
                     "qpa_sha256": shard.qpa_sha256,
                     "console_sha256": shard.console_sha256,
+                    "artifact_transport_sha256": (
+                        shard.artifact_transport_sha256
+                    ),
                     "run": str(
                         shard.run_directory.relative_to(campaign_directory)
                     ),
