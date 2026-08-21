@@ -100,6 +100,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
+                          missing_virtio_console: bool = False,
+                          unsupported_hvc: bool = False,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -160,7 +162,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if missing_memfd_policy
                     else "(policycap memfd_class)\n",
                 )
-                archive.writestr("VENDOR/etc/ueventd.rc", "/dev/ttyS0 0660 root shell\n")
+                ueventd = "/dev/ttyS0 0660 root shell\n"
+                if not missing_virtio_console:
+                    ueventd += "/dev/hvc0 0660 root shell\n"
+                if unsupported_hvc:
+                    ueventd += "/dev/hvc1 0660 root shell\n"
+                archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
                 archive.writestr(
                     "VENDOR/etc/vintf/compatibility_matrix.xml",
                     "<compatibility-matrix/>\n",
@@ -219,6 +226,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
+            ("missing-virtio-console", {"missing_virtio_console": True}),
+            ("unsupported-hvc", {"unsupported_hvc": True}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

@@ -229,11 +229,24 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     ueventd_payload = read_small(
         archive, infos["VENDOR/etc/ueventd.rc"]
     ).decode("utf-8", errors="strict")
-    if "/dev/ttyS0 0660 root shell" not in ueventd_payload:
-        fail("UML ueventd policy does not expose the serial console")
-    for token in ("/dev/hvc", "/dev/ion", "/dev/pmem", "/dev/vhci"):
-        if token in ueventd_payload:
-            fail(f"UML ueventd policy retains unsupported device: {token}")
+    ueventd_entries = {
+        line.strip()
+        for line in ueventd_payload.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    for entry in (
+        "/dev/ttyS0 0660 root shell",
+        "/dev/hvc0 0660 root shell",
+    ):
+        if entry not in ueventd_entries:
+            fail(f"UML ueventd policy is missing console entry: {entry}")
+    for entry in ueventd_entries:
+        device = entry.split(maxsplit=1)[0]
+        if device.startswith("/dev/hvc") and device != "/dev/hvc0":
+            fail(f"UML ueventd policy retains unsupported HVC device: {device}")
+        for prefix in ("/dev/ion", "/dev/pmem", "/dev/vhci"):
+            if device.startswith(prefix):
+                fail(f"UML ueventd policy retains unsupported device: {device}")
 
 
 def check_kernel_policy(
