@@ -1,14 +1,14 @@
-From 443ffe618236fb2a6083e372be090cd4d56f04ba Mon Sep 17 00:00:00 2001
+From e85639a28781c4ed45d79cf3af40723373842e50 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Fri, 21 Aug 2026 11:31:21 +0000
+Date: Fri, 21 Aug 2026 11:42:29 +0000
 Subject: [PATCH 1/1] UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
 
-Change-Id: I20fc0edf7f93aad6e82ea5e227d6ae75a276a609
+Change-Id: I448b293a9247b348ca9b97a33175629cd45b776c
 ---
  Android.bp                                    |  58 +-
  src/compiler/glsl/Android.bp                  | 701 ++++++++++++++++
  src/compiler/glsl/glcpp/Android.bp            | 267 ++++++
- src/egl/Android.bp                            | 232 ++++++
+ src/egl/Android.bp                            | 235 ++++++
  src/egl/drivers/dri2/Android.bp               |  36 +
  src/egl/generate/Android.bp                   |  43 +
  src/egl/main/Android.bp                       |  52 ++
@@ -28,8 +28,8 @@ Change-Id: I20fc0edf7f93aad6e82ea5e227d6ae75a276a609
  src/glx/Android.bp                            |  29 +
  src/mesa/Android.bp                           | 230 ++++++
  src/mesa/glapi/Android.bp                     |  47 ++
- src/mesa/glapi/es1api/Android.bp              | 164 ++++
- src/mesa/glapi/es2api/Android.bp              | 164 ++++
+ src/mesa/glapi/es1api/Android.bp              | 167 ++++
+ src/mesa/glapi/es2api/Android.bp              | 167 ++++
  src/mesa/glapi/glapi/Android.bp               | 107 +++
  src/mesa/glapi/glapi/gen/Android.bp           | 781 ++++++++++++++++++
  src/mesa/glapi/glapi/gen/genCommon.py         |   1 +
@@ -44,7 +44,7 @@ Change-Id: I20fc0edf7f93aad6e82ea5e227d6ae75a276a609
  src/mesa/vbo/Android.bp                       |  43 +
  src/util/Android.bp                           |  12 +
  src/virtio/Android.bp                         |  26 +
- 39 files changed, 4642 insertions(+), 5 deletions(-)
+ 39 files changed, 4651 insertions(+), 5 deletions(-)
  create mode 100644 src/compiler/glsl/glcpp/Android.bp
  create mode 100644 src/egl/Android.bp
  create mode 100644 src/egl/drivers/dri2/Android.bp
@@ -1152,10 +1152,10 @@ index 0000000000000000000000000000000000000000..8fb867a382bff4feedb33a34bb1d00d3
 +}
 diff --git a/src/egl/Android.bp b/src/egl/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..bea0c1aa5e146dffabb26d4d1afa8dcc09c5f3fd
+index 0000000000000000000000000000000000000000..2f937e0a463ca48750e0869581764e9049f02faf
 --- /dev/null
 +++ b/src/egl/Android.bp
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,235 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -1368,6 +1368,9 @@ index 0000000000000000000000000000000000000000..bea0c1aa5e146dffabb26d4d1afa8dcc
 +        ],
 +        default: [],
 +    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
 +    shared_libs: select(arch(), {
 +        "arm64": [
 +            "gallium_dri",
@@ -2971,10 +2974,10 @@ index 0000000000000000000000000000000000000000..a06cb1766c64c18346b83c68fda9d0b0
 +}
 diff --git a/src/mesa/glapi/es1api/Android.bp b/src/mesa/glapi/es1api/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..46d8e4995af23e9d10462bd6ee8202991ba32417
+index 0000000000000000000000000000000000000000..a75ae3b37a39a1d796a0402b37ad71b6639e9c6e
 --- /dev/null
 +++ b/src/mesa/glapi/es1api/Android.bp
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,167 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -3119,6 +3122,9 @@ index 0000000000000000000000000000000000000000..46d8e4995af23e9d10462bd6ee820299
 +        ],
 +        default: [],
 +    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
 +    shared_libs: select(arch(), {
 +        "arm64": [
 +            "gallium_dri",
@@ -3141,10 +3147,10 @@ index 0000000000000000000000000000000000000000..46d8e4995af23e9d10462bd6ee820299
 +}
 diff --git a/src/mesa/glapi/es2api/Android.bp b/src/mesa/glapi/es2api/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..411c5a6ef52ca0e92851e8cf34580c2176a3ffcf
+index 0000000000000000000000000000000000000000..b919228eae83887c99f26b87bc690df6f1c8c0a0
 --- /dev/null
 +++ b/src/mesa/glapi/es2api/Android.bp
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,167 @@
 +/*
 + * Copyright (C) 2025-2026 The Magma GPU Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -3289,6 +3295,9 @@ index 0000000000000000000000000000000000000000..411c5a6ef52ca0e92851e8cf34580c21
 +        ],
 +        default: [],
 +    }),
++    ldflags: [
++        "-Wl,--rpath,$ORIGIN/../dri",
++    ],
 +    shared_libs: select(arch(), {
 +        "arm64": [
 +            "gallium_dri",
