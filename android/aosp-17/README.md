@@ -387,6 +387,18 @@ Its built-in-only 16 KiB ACK ELF is `6.18.21-g6385729901c5` from the 27-topic
 final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
+A fresh-COW default-JIT comparison used this exact accepted release and host
+executable. With the required ten vCPUs, Android stopped after ueventd coldboot
+at guest second 9.46. A native sample found all ten fixed carriers in
+`os_idle_sleep()`/`pselect`; live inspection found no pending IPI, every carrier
+published idle, and CPU0 still owned an expired active clock-event deadline.
+The matched four-vCPU control passed that point, kept the independent `hvc0`
+shell and logcat responsive through guest second 420, and completed Android
+poweroff at second 474 with `result=0 exitcode=0`. Its `ttyS0` log contains no
+RCU-stall, lockup, BUG, oops, or panic signature. `sys.boot_completed` remained
+unset, so this control isolates the ten-vCPU idle/timer wake defect; it does not
+claim a completed graphical boot.
+
 The predecessor `20260821-5735514a-rcu-timer1` four-vCPU gadgets campaign used
 one fresh COW for a cold boot to guest uptime 982 seconds and a warm boot to
 284 seconds. Neither dedicated

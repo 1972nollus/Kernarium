@@ -21,8 +21,13 @@ oops/panic. A reconnectable Virtio console exposes the Android shell and
 image adds a source-built, 16 KiB-aligned Mesa Virgl EGL/GLES stack while
 retaining SwiftShader as an upstream fallback. Its Mesa EGL/GLES libraries now
 carry the DRI dependency and `$ORIGIN/../dri` runpath required by Android's
-restricted `sphal` namespace. Proving the hardware renderer,
-completed graphical boot, and signed iOS runtime framework remains unfinished.
+restricted `sphal` namespace. A fresh default-JIT control boot of this release
+with four vCPUs remained responsive through guest second 420 and powered down
+normally at second 474, while the same release with the required ten vCPUs
+stopped at second 9.46 with every fixed carrier asleep in `os_idle_sleep()`.
+The ten-vCPU timer/idle wake defect is therefore open. Proving the hardware
+renderer, completed graphical boot, and signed iOS runtime framework also
+remains unfinished.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project
