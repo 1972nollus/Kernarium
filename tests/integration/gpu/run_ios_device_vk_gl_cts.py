@@ -88,6 +88,7 @@ def validate_simulator_evidence(
     path: Path,
     campaign: cts.AppleCampaign,
     page_profile: str,
+    rootfs_contract: cts.RootfsContract,
 ) -> dict[str, Any]:
     try:
         metadata = json.loads(path.read_text(encoding="utf-8"))
@@ -100,6 +101,8 @@ def validate_simulator_evidence(
         "backend": "angle-metal",
         "campaign": campaign.identifier,
         "page_profile": page_profile,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
         "engine": "gadgets",
         "api": campaign.api,
         "leaf": campaign.leaf.identifier,
@@ -175,7 +178,12 @@ def validate_simulator_evidence(
     return metadata
 
 
-def install_and_provision(device: str, app: Path, rootfs: Path) -> None:
+def install_and_provision(
+    device: str,
+    app: Path,
+    rootfs: Path,
+    rootfs_filename: str,
+) -> None:
     subprocess.run(
         [
             "xcrun",
@@ -204,7 +212,7 @@ def install_and_provision(device: str, app: Path, rootfs: Path) -> None:
             "--source",
             str(rootfs),
             "--destination",
-            "Documents/rootfs.erofs",
+            f"Documents/{rootfs_filename}",
             "--domain-type",
             "appDataContainer",
             "--domain-identifier",
@@ -239,7 +247,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--device", required=True)
     parser.add_argument("--simulator-run", type=Path, required=True)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
-    parser.add_argument("--rootfs", type=Path, default=cts.DEFAULT_ROOTFS)
+    common.add_rootfs_arguments(parser)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--guest-timeout", type=cts.positive_integer, default=1200)
     parser.add_argument("--qualification", action="store_true")
@@ -247,6 +255,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     options = parser.parse_args(arguments)
     if options.qualification and not identity["cts"]["qualification_ready"]:
         parser.error(identity["cts"]["qualification_blocker"])
+    common.finish_rootfs_options(parser, options, identity)
     options.identity = identity
     options.campaigns = campaigns
     return options
@@ -256,14 +265,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     campaign = options.campaigns[options.campaign]
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
+    rootfs_contract = options.rootfs_contract
+    rootfs_filename = f"rootfs.{rootfs_contract.filesystem_type}"
     simulator_run = options.simulator_run.resolve()
     simulator_metadata = validate_simulator_evidence(
-        simulator_run, campaign, options.page_profile
+        simulator_run, campaign, options.page_profile, rootfs_contract
     )
     launch_environment = {
         "DEVICECTL_CHILD_KERNARIUM_CTS_CAMPAIGN": campaign.identifier,
         "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
-        "DEVICECTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
+        "DEVICECTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "DEVICECTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
         "DEVICECTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
         "DEVICECTL_CHILD_UML_GPU_FRAME_STATS": "1",
@@ -276,6 +287,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "cases": list(campaign.cases),
                     "device": options.device,
                     "page_profile": options.page_profile,
+                    "rootfs_type": rootfs_contract.filesystem_type,
+                    "rootfs_sha256": rootfs_contract.sha256,
                     "simulator_run": str(simulator_run),
                     "launch_environment": launch_environment,
                 },
@@ -288,12 +301,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     app = options.app.resolve()
     rootfs = options.rootfs.resolve()
     common.validate_app(app)
-    common.validate_rootfs(rootfs, options.identity)
+    common.validate_rootfs(rootfs, options.identity, rootfs_contract)
     subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(app)], check=True
     )
     device = device_details(options.device)
-    install_and_provision(options.device, app, rootfs)
+    install_and_provision(options.device, app, rootfs, rootfs_filename)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
@@ -319,7 +332,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "backend": "angle-metal",
         "device": device,
         "app": str(app),
-        "rootfs_sha256": options.identity["rootfs"]["sha256"],
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
         "page_profile": options.page_profile,
         "engine": "gadgets",
         "campaign": campaign.identifier,
@@ -336,6 +350,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "command": command,
         "launch_environment": launch_environment,
     }
+    if options.derivative_receipt is not None:
+        metadata["rootfs_receipt"] = options.derivative_receipt
     cts.write_json(artifact_directory / "run.json", metadata)
 
     environment = os.environ.copy()

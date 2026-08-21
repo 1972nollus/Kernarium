@@ -68,18 +68,22 @@ set(_kernarium_cts_identity
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_identity.json")
 set(_kernarium_cts_campaigns
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_campaigns.json")
+set(_kernarium_cts_derivative_receipt
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_derivative_rootfs.json")
 set(_kernarium_cts_header
     "${CMAKE_CURRENT_BINARY_DIR}/KernariumCtsCampaigns.hpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_kernarium_cts_generator}"
     "${_kernarium_cts_runner}"
     "${_kernarium_cts_identity}"
-    "${_kernarium_cts_campaigns}")
+    "${_kernarium_cts_campaigns}"
+    "${_kernarium_cts_derivative_receipt}")
 execute_process(
     COMMAND "${_kernarium_python3}" -B "${_kernarium_cts_generator}"
         --runner "${_kernarium_cts_runner}"
         --identity "${_kernarium_cts_identity}"
         --campaigns "${_kernarium_cts_campaigns}"
+        --derivative-receipt "${_kernarium_cts_derivative_receipt}"
         --page-size "${_kernarium_guest_page_size}"
         --output "${_kernarium_cts_header}"
     RESULT_VARIABLE _kernarium_cts_result

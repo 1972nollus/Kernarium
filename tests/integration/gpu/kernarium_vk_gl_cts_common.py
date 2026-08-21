@@ -5,9 +5,10 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-from pathlib import Path
+import argparse
 import hashlib
 import json
+from pathlib import Path
 import plistlib
 import re
 import subprocess
@@ -20,6 +21,9 @@ import run_vk_gl_cts as cts
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_ID = "com.imxieyi.Kernarium"
+DERIVATIVE_RECEIPT_PATH = Path(__file__).with_name(
+    "vk_gl_cts_derivative_rootfs.json"
+)
 RUNTIME_RESULT = re.compile(r"Kernarium: runtime returned (-?[0-9]+)")
 REQUIRED_SHUTDOWN_MARKERS = (
     "Darwin UML stopped: result=0 exitcode=0",
@@ -27,6 +31,47 @@ REQUIRED_SHUTDOWN_MARKERS = (
     "Kernarium: runtime returned 0",
 )
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
+
+
+def add_rootfs_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--rootfs", type=Path, default=cts.DEFAULT_ROOTFS)
+    parser.add_argument(
+        "--rootfs-type",
+        choices=("erofs", "ext4"),
+        default="erofs",
+        help="authenticated lower filesystem type (default: erofs)",
+    )
+    parser.add_argument(
+        "--rootfs-receipt",
+        type=Path,
+        help="required identity receipt for a derivative ext4 rootfs",
+    )
+
+
+def finish_rootfs_options(
+    parser: argparse.ArgumentParser,
+    options: argparse.Namespace,
+    identity: dict[str, Any],
+) -> None:
+    try:
+        receipt, contract = cts.select_rootfs_contract(
+            identity, options.rootfs_type, options.rootfs_receipt
+        )
+        if receipt is not None:
+            checked_receipt, checked_contract = cts.load_derivative_receipt(
+                DERIVATIVE_RECEIPT_PATH, identity
+            )
+            if receipt != checked_receipt:
+                raise cts.CampaignError(
+                    "ext4 receipt does not match the checked derivative "
+                    "rootfs identity"
+                )
+            receipt = checked_receipt
+            contract = checked_contract
+    except cts.CampaignError as error:
+        parser.error(str(error))
+    options.derivative_receipt = receipt
+    options.rootfs_contract = contract
 
 
 def validate_app(app: Path) -> None:
@@ -43,7 +88,16 @@ def validate_app(app: Path) -> None:
         raise cts.CampaignError("Kernarium app has the wrong bundle identifier")
 
 
-def validate_rootfs(rootfs: Path, identity: dict[str, Any]) -> None:
+def validate_rootfs(
+    rootfs: Path,
+    identity: dict[str, Any],
+    contract: cts.RootfsContract | None = None,
+) -> None:
+    if contract is None:
+        _, contract = cts.select_rootfs_contract(identity, "erofs", None)
+    if contract.filesystem_type == "ext4":
+        cts.validate_rootfs_file(rootfs, contract)
+        return
     frozen = identity["rootfs"]
     if not rootfs.is_file() or rootfs.stat().st_size != frozen["size"]:
         raise cts.CampaignError("rootfs size does not match the frozen identity")
@@ -89,6 +143,7 @@ def validate_macos_evidence(
     path: Path,
     campaign: cts.AppleCampaign,
     page_profile: str,
+    rootfs_contract: cts.RootfsContract,
 ) -> dict[str, Any]:
     try:
         metadata = json.loads(path.read_text(encoding="utf-8"))
@@ -101,6 +156,8 @@ def validate_macos_evidence(
         "backend": "angle-metal",
         "display": "native",
         "page_profile": page_profile,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
         "engine": "gadgets",
         "api": campaign.api,
         "leaf": campaign.leaf.identifier,

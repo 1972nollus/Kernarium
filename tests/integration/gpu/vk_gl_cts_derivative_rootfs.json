@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "artifact": "uml-gl-gles-rootfs",
+  "image": {
+    "filesystem": "ext4",
+    "filesystem_uuid": "688cb152-ce4b-4ac4-9b5d-3def792791f3",
+    "size": 8589934592,
+    "sha256": "f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a",
+    "read_only": true
+  },
+  "base_rootfs": {
+    "size": 3802316800,
+    "sha256": "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91"
+  },
+  "clone": {
+    "excluded_paths": [
+      "/home/uml/vk-gl-cts-1.4.5.5/android",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/README.md",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/data",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/doc",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/modules",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/mustpass",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/scripts",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscpc",
+      "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscserver",
+      "/opt/geekbench",
+      "/opt/hpl",
+      "/opt/ltp",
+      "/opt/node",
+      "/opt/passmark",
+      "/opt/unixbench",
+      "/opt/vk-gl-cts/vulkan",
+      "/usr/local/go"
+    ],
+    "excluded_paths_sha256": "5e8fd90745be07768de57e8826d5cdc25c9c64d54c38c29ca15e0cabe6f0f1bf"
+  },
+  "guest_receipt": {
+    "path": "/usr/share/uml-rootfs/gl-gles-cts-build.env",
+    "sha256": "97b4decef91fea71b4e221cf21a4e8d2ca20fb88514498c2310b02b026142933"
+  },
+  "cts": {
+    "glcts_path": "/opt/vk-gl-cts/openglcts/glcts",
+    "glcts_size": 65418360,
+    "glcts_sha256": "cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e",
+    "glcts_build_id": "c3980d5ebb6f4e1588bba36fe5b91e01bcc8e4d5"
+  }
+}

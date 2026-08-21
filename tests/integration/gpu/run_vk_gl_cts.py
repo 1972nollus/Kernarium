@@ -340,6 +340,30 @@ def load_derivative_receipt(
     )
 
 
+def select_rootfs_contract(
+    identity: dict[str, Any],
+    filesystem_type: str,
+    receipt_path: Path | None,
+) -> tuple[dict[str, Any] | None, RootfsContract]:
+    if filesystem_type == "erofs":
+        if receipt_path is not None:
+            raise CampaignError("a derivative receipt requires an ext4 rootfs")
+        glcts = cts_binary_identity(
+            identity, "/opt/vk-gl-cts/openglcts/glcts"
+        )
+        return None, RootfsContract(
+            filesystem_type="erofs",
+            size=identity["rootfs"]["size"],
+            sha256=identity["rootfs"]["sha256"],
+            glcts_sha256=glcts["sha256"],
+        )
+    if filesystem_type != "ext4":
+        raise CampaignError(f"unsupported root filesystem: {filesystem_type}")
+    if receipt_path is None:
+        raise CampaignError("an ext4 rootfs requires a derivative receipt")
+    return load_derivative_receipt(receipt_path.resolve(), identity)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -1577,30 +1601,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             if options.page_profile == "16k"
             else REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin"
         )
-    glcts_identity = cts_binary_identity(
-        identity, "/opt/vk-gl-cts/openglcts/glcts"
-    )
-    options.derivative_receipt = None
-    if options.rootfs_type == "erofs":
-        if options.rootfs_receipt is not None:
-            parser.error("--rootfs-receipt requires --rootfs-type ext4")
-        options.rootfs_contract = RootfsContract(
-            filesystem_type="erofs",
-            size=identity["rootfs"]["size"],
-            sha256=identity["rootfs"]["sha256"],
-            glcts_sha256=glcts_identity["sha256"],
+    try:
+        receipt, contract = select_rootfs_contract(
+            identity, options.rootfs_type, options.rootfs_receipt
         )
-    else:
-        if options.rootfs_receipt is None:
-            parser.error("--rootfs-type ext4 requires --rootfs-receipt")
-        try:
-            receipt, contract = load_derivative_receipt(
-                options.rootfs_receipt.resolve(), identity
-            )
-        except CampaignError as error:
-            parser.error(str(error))
-        options.derivative_receipt = receipt
-        options.rootfs_contract = contract
+    except CampaignError as error:
+        parser.error(str(error))
+    options.derivative_receipt = receipt
+    options.rootfs_contract = contract
     options.identity = identity
     options.leaves = leaves
     options.campaigns = campaigns

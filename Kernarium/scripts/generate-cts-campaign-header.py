@@ -59,32 +59,35 @@ def generate_header(
     driver: ModuleType,
     identity_path: Path,
     campaigns_path: Path,
+    derivative_receipt_path: Path,
     page_size: int,
 ) -> str:
     identity = driver.load_identity(identity_path)
     campaigns = driver.load_apple_campaigns(identity, campaigns_path)
-    glcts = driver.cts_binary_identity(
-        identity, "/opt/vk-gl-cts/openglcts/glcts"
+    _, erofs_contract = driver.select_rootfs_contract(
+        identity, "erofs", None
     )
-    rootfs_contract = driver.RootfsContract(
-        filesystem_type="erofs",
-        size=identity["rootfs"]["size"],
-        sha256=identity["rootfs"]["sha256"],
-        glcts_sha256=glcts["sha256"],
+    _, ext4_contract = driver.select_rootfs_contract(
+        identity, "ext4", derivative_receipt_path
     )
     rows: list[str] = []
     for index, campaign in enumerate(campaigns.values()):
-        delimiter = f"CTS{index}"
-        setup = campaign_setup(driver, campaign, page_size, rootfs_contract)
-        terminator = f"){delimiter}\""
-        if terminator in setup:
-            raise RuntimeError(
-                f"raw-string delimiter collision for {campaign.identifier}"
-            )
+        setups = (
+            campaign_setup(driver, campaign, page_size, erofs_contract),
+            campaign_setup(driver, campaign, page_size, ext4_contract),
+        )
+        delimiters = (f"CTS{index}E", f"CTS{index}X")
+        for setup, delimiter in zip(setups, delimiters):
+            if f"){delimiter}\"" in setup:
+                raise RuntimeError(
+                    "raw-string delimiter collision for "
+                    f"{campaign.identifier}"
+                )
         rows.append(
             "    Campaign {"
             f"{json.dumps(campaign.identifier)}, "
-            f"R\"{delimiter}({setup}){delimiter}\""
+            f"R\"{delimiters[0]}({setups[0]}){delimiters[0]}\", "
+            f"R\"{delimiters[1]}({setups[1]}){delimiters[1]}\""
             "},"
         )
     joined = "\n".join(rows)
@@ -99,7 +102,8 @@ namespace kernarium::cts {{
 
 struct Campaign {{
     std::string_view identifier;
-    std::string_view setup;
+    std::string_view erofsSetup;
+    std::string_view ext4Setup;
 }};
 
 inline constexpr std::array<Campaign, {len(rows)}> campaigns {{{{
@@ -115,6 +119,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--identity", type=Path, required=True)
     parser.add_argument("--campaigns", type=Path, required=True)
+    parser.add_argument("--derivative-receipt", type=Path, required=True)
     parser.add_argument("--page-size", type=int, choices=(4096, 16384), required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -127,6 +132,7 @@ def main() -> int:
         driver,
         options.identity.resolve(),
         options.campaigns.resolve(),
+        options.derivative_receipt.resolve(),
         options.page_size,
     )
     destination = options.output.resolve()

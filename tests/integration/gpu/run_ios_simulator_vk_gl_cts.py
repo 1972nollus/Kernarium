@@ -70,7 +70,12 @@ def simulator_environment(device: str, name: str) -> str | None:
     return value if result.returncode == 0 and value else None
 
 
-def provision(device: str, app: Path, rootfs: Path) -> Path:
+def provision(
+    device: str,
+    app: Path,
+    rootfs: Path,
+    rootfs_filename: str,
+) -> Path:
     subprocess.run(
         ["xcrun", "simctl", "terminate", device, common.BUNDLE_ID],
         stdout=subprocess.DEVNULL,
@@ -95,10 +100,19 @@ def provision(device: str, app: Path, rootfs: Path) -> Path:
         raise cts.CampaignError("cannot locate the Simulator app data container")
     documents = container / "Documents"
     documents.mkdir(parents=True, exist_ok=True)
-    installed_rootfs = documents / "rootfs.erofs"
-    shutil.copyfile(rootfs, installed_rootfs)
+    installed_rootfs = documents / rootfs_filename
+    installed_rootfs.unlink(missing_ok=True)
+    clone = subprocess.run(
+        ["cp", "-c", str(rootfs), str(installed_rootfs)],
+        capture_output=True,
+        text=True,
+    )
+    if clone.returncode != 0:
+        shutil.copyfile(rootfs, installed_rootfs)
     if installed_rootfs.stat().st_size != rootfs.stat().st_size:
         raise cts.CampaignError("Simulator rootfs copy is incomplete")
+    if installed_rootfs.suffix == ".ext4":
+        installed_rootfs.chmod(0o444)
     return installed_rootfs
 
 
@@ -121,7 +135,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--device", default="booted")
     parser.add_argument("--macos-run", type=Path, required=True)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
-    parser.add_argument("--rootfs", type=Path, default=cts.DEFAULT_ROOTFS)
+    common.add_rootfs_arguments(parser)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--guest-timeout", type=cts.positive_integer, default=1200)
     parser.add_argument("--qualification", action="store_true")
@@ -129,6 +143,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     options = parser.parse_args(arguments)
     if options.qualification and not identity["cts"]["qualification_ready"]:
         parser.error(identity["cts"]["qualification_blocker"])
+    common.finish_rootfs_options(parser, options, identity)
     options.identity = identity
     options.campaigns = campaigns
     return options
@@ -139,10 +154,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     campaign = options.campaigns[options.campaign]
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
     macos_run = options.macos_run.resolve()
+    rootfs_contract = options.rootfs_contract
+    rootfs_filename = f"rootfs.{rootfs_contract.filesystem_type}"
     launch_environment = {
         "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN": campaign.identifier,
         "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
-        "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
+        "SIMCTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
         "SIMCTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
         "SIMCTL_CHILD_UML_GPU_FRAME_STATS": "1",
@@ -154,6 +171,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "campaign": campaign.identifier,
                     "cases": list(campaign.cases),
                     "page_profile": options.page_profile,
+                    "rootfs_type": rootfs_contract.filesystem_type,
+                    "rootfs_sha256": rootfs_contract.sha256,
                     "macos_run": str(macos_run),
                     "launch_environment": launch_environment,
                 },
@@ -166,13 +185,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     app = options.app.resolve()
     rootfs = options.rootfs.resolve()
     macos_metadata = common.validate_macos_evidence(
-        macos_run, campaign, options.page_profile
+        macos_run, campaign, options.page_profile, rootfs_contract
     )
     common.validate_app(app)
-    common.validate_rootfs(rootfs, options.identity)
+    common.validate_rootfs(rootfs, options.identity, rootfs_contract)
     device = resolve_device(options.device)
     require_booted_device(device)
-    installed_rootfs = provision(device, app, rootfs)
+    installed_rootfs = provision(device, app, rootfs, rootfs_filename)
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
@@ -201,7 +220,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         },
         "app": str(app),
         "rootfs": str(installed_rootfs),
-        "rootfs_sha256": options.identity["rootfs"]["sha256"],
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
         "page_profile": options.page_profile,
         "engine": "gadgets",
         "campaign": campaign.identifier,
@@ -218,6 +238,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "command": command,
         "launch_environment": launch_environment,
     }
+    if options.derivative_receipt is not None:
+        metadata["rootfs_receipt"] = options.derivative_receipt
     cts.write_json(artifact_directory / "run.json", metadata)
 
     environment = os.environ.copy()

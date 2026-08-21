@@ -174,7 +174,7 @@ mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root \
     /mnt/state/docker /mnt/state/containerd || fail "overlay workspace"
 chmod 0711 /mnt/state/docker /mnt/state/containerd || \
     fail "container state directory modes"
-mount -o bind / /mnt/lower || fail "EROFS lower bind"
+mount -o bind / /mnt/lower || fail "read-only lower bind"
 mount -t overlay overlay \
     -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
     /mnt/root || fail "overlay mount"
@@ -494,7 +494,8 @@ public:
     explicit ConsoleBridge(
         ConsoleBootMode bootMode,
         std::string geekbenchWorkloads,
-        const kernarium::cts::Campaign* ctsCampaign)
+        const kernarium::cts::Campaign* ctsCampaign,
+        bool derivativeRootfs)
     {
         if ((bootMode == ConsoleBootMode::cts) != (ctsCampaign != nullptr))
             throw std::invalid_argument("invalid CTS console campaign");
@@ -527,7 +528,8 @@ public:
                 this,
                 bootMode,
                 geekbenchWorkloads = std::move(geekbenchWorkloads),
-                ctsCampaign] {
+                ctsCampaign,
+                derivativeRootfs] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
                 bool bootstrapDelivered = false;
@@ -577,7 +579,10 @@ public:
                                         bootstrap.append(
                                             kernarium::aquarium::setup);
                                     if (bootMode == ConsoleBootMode::cts)
-                                        bootstrap.append(ctsCampaign->setup);
+                                        bootstrap.append(
+                                            derivativeRootfs
+                                                ? ctsCampaign->ext4Setup
+                                                : ctsCampaign->erofsSetup);
                                     bootstrap.append(desktopBootstrapSuffix);
                                 }
                                 bootstrap.push_back('\n');
@@ -890,6 +895,7 @@ int runtimeRun(
             std::getenv("KERNARIUM_CTS_CAMPAIGN");
         const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
             ctsCampaignEnvironment[0] != '\0';
+        const bool derivativeRootfs = ext4Rootfs(rootfsPath);
         const kernarium::cts::Campaign* ctsCampaign = ctsRequested
             ? findCtsCampaign(ctsCampaignEnvironment)
             : nullptr;
@@ -929,7 +935,7 @@ int runtimeRun(
             : aquarium ? ConsoleBootMode::aquarium
             : ConsoleBootMode::desktop;
         ConsoleBridge consoleBridge {
-            bootMode, geekbenchWorkloads, ctsCampaign};
+            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs};
         if (aquarium)
             std::fputs(
                 "Kernarium: WebGL Aquarium verification requested\n",
@@ -962,7 +968,7 @@ int runtimeRun(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
                 std::to_string(uml::audio::protocol::deviceId),
         };
-        if (ext4Rootfs(rootfsPath)) {
+        if (derivativeRootfs) {
             arguments.emplace_back("ubd0cr=" + std::string(rootfsPath));
             arguments.emplace_back("root=/dev/ubda");
             arguments.emplace_back("rootfstype=ext4");

@@ -29,6 +29,7 @@ import run_ios_simulator_vk_gl_cts as ios_cts  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+DERIVATIVE_RECEIPT = INTEGRATION_GPU / "vk_gl_cts_derivative_rootfs.json"
 
 
 def erofs_contract() -> cts.RootfsContract:
@@ -185,6 +186,43 @@ class VkGlCtsToolingTests(unittest.TestCase):
             path.write_text(json.dumps(receipt), encoding="utf-8")
             with self.assertRaisesRegex(cts.CampaignError, "exclusion"):
                 cts.load_derivative_receipt(path, identity)
+
+    def test_checked_derivative_receipt_freezes_the_minimal_clone(self) -> None:
+        receipt, contract = cts.load_derivative_receipt(
+            DERIVATIVE_RECEIPT, cts.load_identity()
+        )
+        self.assertEqual(contract.filesystem_type, "ext4")
+        self.assertEqual(contract.size, 8 * 1024 * 1024 * 1024)
+        self.assertEqual(
+            contract.sha256,
+            "f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a",
+        )
+        self.assertEqual(
+            contract.glcts_sha256,
+            "cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e",
+        )
+        self.assertEqual(
+            receipt["clone"]["excluded_paths"],
+            [
+                "/home/uml/vk-gl-cts-1.4.5.5/android",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/README.md",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/data",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/doc",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/modules",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/mustpass",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/scripts",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscpc",
+                "/home/uml/vk-gl-cts-1.4.5.5/external/vulkancts/vkscserver",
+                "/opt/geekbench",
+                "/opt/hpl",
+                "/opt/ltp",
+                "/opt/node",
+                "/opt/passmark",
+                "/opt/unixbench",
+                "/opt/vk-gl-cts/vulkan",
+                "/usr/local/go",
+            ],
+        )
 
     def test_ext4_rootfs_contract_is_forwarded_and_checked_in_guest(self) -> None:
         identity = cts.load_identity()
@@ -695,6 +733,8 @@ Kernarium: runtime returned 0
                     str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
                     "--campaigns",
                     str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
+                    "--derivative-receipt",
+                    str(DERIVATIVE_RECEIPT),
                     "--page-size",
                     "4096",
                     "--output",
@@ -710,6 +750,13 @@ Kernarium: runtime returned 0
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
             self.assertIn("x11_server=xwayland", generated)
             self.assertIn("uml-vk-gl-cts.service", generated)
+            self.assertIn("std::string_view erofsSetup", generated)
+            self.assertIn("std::string_view ext4Setup", generated)
+            self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", generated)
+            self.assertIn(
+                "cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e",
+                generated,
+            )
             self.assertNotIn("/dev/ubda", generated)
 
     def test_simulator_adapter_accepts_only_campaign_ids_and_fixed_engine(self) -> None:
@@ -751,6 +798,61 @@ Kernarium: runtime returned 0
             ios_cts.parse_arguments(
                 ["--campaign", "gles3-declaration-sentinel-v1", "--case", "x"]
             )
+
+    def test_simulator_adapter_selects_the_authenticated_ext4_root(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                ios_cts.main(
+                    [
+                        "--campaign",
+                        "gles3-declaration-sentinel-v1",
+                        "--macos-run",
+                        "/tmp/macos-run.json",
+                        "--rootfs-type",
+                        "ext4",
+                        "--rootfs-receipt",
+                        str(DERIVATIVE_RECEIPT),
+                        "--dry-run",
+                    ]
+                ),
+                0,
+            )
+        dry_run = json.loads(stdout.getvalue())
+        self.assertEqual(dry_run["rootfs_type"], "ext4")
+        self.assertEqual(
+            dry_run["rootfs_sha256"],
+            "f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a",
+        )
+        self.assertEqual(
+            dry_run["launch_environment"][
+                "SIMCTL_CHILD_KERNARIUM_ROOTFS"
+            ],
+            "rootfs.ext4",
+        )
+
+    def test_mobile_adapters_reject_an_unchecked_ext4_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt = Path(temporary) / "derivative.json"
+            receipt.write_text(
+                json.dumps(derivative_receipt(cts.load_identity())),
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                ios_cts.parse_arguments(
+                    [
+                        "--campaign",
+                        "gles3-declaration-sentinel-v1",
+                        "--macos-run",
+                        "/tmp/macos-run.json",
+                        "--rootfs-type",
+                        "ext4",
+                        "--rootfs-receipt",
+                        str(receipt),
+                    ]
+                )
+        self.assertIn("does not match the checked derivative", stderr.getvalue())
 
     def test_simulator_adapter_requires_an_already_booted_device(self) -> None:
         device = "00000000-0000-0000-0000-000000000000"
@@ -796,6 +898,8 @@ Kernarium: runtime returned 0
                 "campaign": campaign.identifier,
                 "display": "native",
                 "page_profile": "16k",
+                "rootfs_type": "erofs",
+                "rootfs_sha256": erofs_contract().sha256,
                 "engine": "gadgets",
                 "api": campaign.api,
                 "leaf": campaign.leaf.identifier,
@@ -826,7 +930,7 @@ Kernarium: runtime returned 0
             run.write_text(json.dumps(metadata), encoding="utf-8")
             self.assertEqual(
                 ios_cts.common.validate_macos_evidence(
-                    run, campaign, "16k"
+                    run, campaign, "16k", erofs_contract()
                 ),
                 metadata,
             )
@@ -835,7 +939,7 @@ Kernarium: runtime returned 0
             run.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(cts.CampaignError, "campaign identity"):
                 ios_cts.common.validate_macos_evidence(
-                    run, campaign, "16k"
+                    run, campaign, "16k", erofs_contract()
                 )
 
     def test_device_adapter_requires_matching_passing_simulator_evidence(self) -> None:
@@ -861,6 +965,8 @@ Kernarium: runtime returned 0
                 "backend": "angle-metal",
                 "campaign": campaign.identifier,
                 "page_profile": "16k",
+                "rootfs_type": "erofs",
+                "rootfs_sha256": erofs_contract().sha256,
                 "engine": "gadgets",
                 "api": campaign.api,
                 "leaf": campaign.leaf.identifier,
@@ -903,7 +1009,7 @@ Kernarium: runtime returned 0
             run.write_text(json.dumps(metadata), encoding="utf-8")
             self.assertEqual(
                 device_cts.validate_simulator_evidence(
-                    run, campaign, "16k"
+                    run, campaign, "16k", erofs_contract()
                 ),
                 metadata,
             )
@@ -936,7 +1042,7 @@ Kernarium: runtime returned 0
             run.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(cts.CampaignError, "matching passing"):
                 device_cts.validate_simulator_evidence(
-                    run, campaign, "16k"
+                    run, campaign, "16k", erofs_contract()
                 )
 
             metadata["status_totals"] = {"Pass": 1}
@@ -946,7 +1052,7 @@ Kernarium: runtime returned 0
             run.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(cts.CampaignError, "changed after capture"):
                 device_cts.validate_simulator_evidence(
-                    run, campaign, "16k"
+                    run, campaign, "16k", erofs_contract()
                 )
 
     def test_cli_blocks_qualification_and_interpreter(self) -> None:

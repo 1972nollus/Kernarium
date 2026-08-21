@@ -233,7 +233,8 @@ def verify_kernarium_geekbench_contract() -> None:
         'std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS")',
         "validGeekbenchWorkloads(geekbenchWorkloads)",
         "ConsoleBootMode::geekbench",
-        "ConsoleBridge consoleBridge {bootMode, geekbenchWorkloads}",
+        "ConsoleBridge consoleBridge {\n"
+        "            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs}",
         "if (!geekbench)",
         'arguments.emplace_back("systemd.unit=graphical.target")',
         ".run = runtimeRun",
