@@ -53,6 +53,18 @@ occurred at guest second 816. Both runs shut down normally. The accepted ACK
 ELF is `6.18.21-g1edaf2cbd207`, final tree
 `d1a4d62471db6569cfe5a11e842a5a433d8d297e`.
 
+Topic 27 extends the same cooperative timer rule to the scheduler's generic
+`__cond_resched()` boundary. Android's default JIT engine can execute a long
+PREEMPT_NONE `execve` path while other vCPUs advance the cooperative clock; in
+that case no UML userspace dispatch occurs on the busy CPU soon enough to raise
+`need_resched`. When interrupts are enabled, `__cond_resched()` now polls the
+per-vCPU Darwin timer before testing the reschedule flag. The checkpoint is a
+no-op before cooperative timers become active and is deliberately excluded
+from IRQ-disabled call sites. The resulting 27-topic tree builds as a 16 KiB
+AArch64 ET_DYN image with an exact bridge-import match and no module output;
+multi-vCPU runtime qualification remains a separate gate before release
+acceptance.
+
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
 backend assumes CPU-capability, Spectre, register-frame, and exception-table

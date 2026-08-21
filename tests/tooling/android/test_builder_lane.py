@@ -666,8 +666,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "d1a4d62471db6569cfe5a11e842a5a433d8d297e",
-        "UML_KERNEL_PATCH_COUNT": "26",
+        "UML_KERNEL_FINAL_TREE": "e675d73659f9f829c7e36db035f1652ce2a85408",
+        "UML_KERNEL_PATCH_COUNT": "27",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -777,6 +777,10 @@ def main() -> None:
         kernel_root
         / "patches/series/0026-UML-DARWIN-LOCAL-service-timers-at-kernel-quiescent-.patch"
     ).read_text()
+    rcu_cond_resched_patch = (
+        kernel_root
+        / "patches/series/0027-UML-DARWIN-LOCAL-poll-timers-before-cond_resched.patch"
+    ).read_text()
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
@@ -861,6 +865,25 @@ def main() -> None:
         re.DOTALL,
     ) is None:
         fail("ACK TLB boundary no longer preserves invalidate/IRQ/timer/reschedule ordering")
+    for token in (
+        "#ifdef UML_HOST_DARWIN",
+        "#include <kern_util.h>",
+        "int __sched __cond_resched(void)",
+        "if (!irqs_disabled())",
+        "darwin_timer_kernel_checkpoint();",
+        "if (should_resched(0) && !irqs_disabled())",
+    ):
+        if token not in rcu_cond_resched_patch:
+            fail(f"ACK cond_resched timer topic is missing fixed policy: {token}")
+    if re.search(
+        r"int __sched __cond_resched\(void\).*"
+        r"if \(!irqs_disabled\(\)\).*"
+        r"darwin_timer_kernel_checkpoint\(\);.*"
+        r"if \(should_resched\(0\) && !irqs_disabled\(\)\)",
+        rcu_cond_resched_patch,
+        re.DOTALL,
+    ) is None:
+        fail("ACK cond_resched boundary no longer polls the timer before rescheduling")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
