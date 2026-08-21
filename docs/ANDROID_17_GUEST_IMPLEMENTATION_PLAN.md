@@ -6,12 +6,12 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation started on 2026-08-20. As of 2026-08-21, the builder-local lane
+Implementation started on 2026-08-20. As of 2026-08-22, the builder-local lane
 has produced and verified the 27-topic ACK 6.18 Darwin UML series, its 16 KiB
 built-in-only kernel, the routed AOSP 17 static UML product, standalone
 initramfs, and fixed seven-partition UBD image. It has also published, copied,
 and atomically installed accepted release
-`android17-ack6.18-16k-20260821-e8e1e314-virgl1`. The release installer rejects
+`android17-ack6.18-16k-20260822-6afe4225-virgl2`. The release installer rejects
 an overwrite and the structural negative fixtures below pass. Import-only
 CMake consumption and the separate macOS executable are implemented. The
 predecessor four-vCPU gadgets candidate reached guest second 982 on a cold boot
@@ -19,7 +19,9 @@ and second 284 on a same-COW warm boot without the earlier RCU stall or a kernel
 oops/panic. A reconnectable Virtio console exposes the Android shell and
 `logcat` on `hvc0`, while Linux printk remains on `ttyS0`. The current accepted
 image adds a source-built, 16 KiB-aligned Mesa Virgl EGL/GLES stack while
-retaining SwiftShader as an upstream fallback. Proving the hardware renderer,
+retaining SwiftShader as an upstream fallback. Its Mesa EGL/GLES libraries now
+carry the DRI dependency and `$ORIGIN/../dri` runpath required by Android's
+restricted `sphal` namespace. Proving the hardware renderer,
 completed graphical boot, and signed iOS runtime framework remains unfinished.
 
 The Android product is additive. It does not replace, rename, or silently

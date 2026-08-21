@@ -266,7 +266,10 @@ installs `virtio_gpu_dri.so` as a symlink to `gallium_dri.so`, leaving other
 Cuttlefish products on their existing graphics stack. The target-files
 verifier requires all four AArch64 shared objects, checks every PT_LOAD segment
 for 16 KiB alignment, and requires the exact DRI symlink before a candidate can
-be published.
+be published. Each Mesa EGL/GLES consumer must also retain a dynamic dependency
+on `gallium_dri.so` and the unbraced `$ORIGIN/../dri` runpath so Android's
+restricted `sphal` linker namespace can resolve that dependency from the DRI
+directory.
 
 This accommodation is not a claim of stock Android or VTS eBPF-JIT
 compliance. ACK's native arm64 JIT depends on native CPU-capability, `pt_regs`,
@@ -275,10 +278,10 @@ not share. The producer therefore requires built-in `BPF`, `BPF_SYSCALL`, and
 `CGROUP_BPF`, rejects `BPF_JIT`, `BPF_JIT_ALWAYS_ON`, and `HAVE_EBPF_JIT`, and
 keeps the slower interpreter choice visible in both the boot property and log.
 
-The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
-with 4,571 entries and 1,162 verified target executables, a 4,375,040-byte raw
+The 2026-08-22 builder checkpoint produced an OTA-disabled target-files archive
+with 4,542 entries and 1,155 verified target executables, a 4,374,784-byte raw
 initramfs with 35 unique entries, and a reverified seven-partition
-17,179,869,184-byte GPT disk. The compressed transfer artifact is 817,207,500
+17,179,869,184-byte GPT disk. The compressed transfer artifact is 830,866,283
 bytes. AOSP's packaged VINTF checker accepted the target files and exact ACK
 kernel metadata; `atest elf_alignment_test` built but correctly deferred because
 it is a device-side test. It remains a post-boot gate. This proves the static
@@ -309,12 +312,12 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-e8e1e314-virgl1`, published from
-clean outer revision `e8e1e314f2438619f4097cb841de75b2c1cafc7d` after the
+selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`, published from
+clean outer revision `6afe4225bb2bc9a44d31503e96de76ab64369dcc` after the
 static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
 no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
 service, built-in single-port Virtio-console, and source-built 16 KiB Mesa
-Virgl payload gates passed.
+Virgl payload and DRI namespace-resolution gates passed.
 This is artifact acceptance for Apple-product integration; HAL and application
 acceptance remain separate later gates.
 
@@ -372,10 +375,13 @@ the disk with a frame checksum, verifies the completed staging tree, and then
 atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
 
-Accepted release `20260821-e8e1e314-virgl1` compressed the
-17,179,869,184-byte sparse GPT disk to 830,859,357 bytes. Its target-files
+Accepted release `20260822-6afe4225-virgl2` compressed the
+17,179,869,184-byte sparse GPT disk to 830,866,283 bytes. Its target-files
 archive contains the source-built 16 KiB Mesa EGL/GLES and Gallium Virgl
-libraries plus the exact `virtio_gpu_dri.so -> gallium_dri.so` link. The
+libraries plus the exact `virtio_gpu_dri.so -> gallium_dri.so` link. All three
+Mesa EGL/GLES consumers retain `DT_NEEDED=gallium_dri.so` and
+`RUNPATH=$ORIGIN/../dri`, allowing the dependency to resolve inside Android's
+restricted `sphal` linker namespace. The
 workstation verifier accepted the copied compact bundle before installation.
 Its built-in-only 16 KiB ACK ELF is `6.18.21-g6385729901c5` from the 27-topic
 final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
