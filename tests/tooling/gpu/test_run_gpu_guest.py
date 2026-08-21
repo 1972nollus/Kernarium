@@ -67,6 +67,20 @@ class GpuGuestSafetyTests(unittest.TestCase):
         bootstrap = run_gpu_guest.make_bootstrap(script, "ext4").decode()
         self.assertIn("lower=ext4, upper=tmpfs", bootstrap)
 
+    def test_ext4_lower_requires_immutable_host_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            rootfs = Path(temporary) / "rootfs.ext4"
+            rootfs.touch()
+            rootfs.chmod(0o444)
+            run_gpu_guest.validate_rootfs_path(rootfs, "ext4")
+            rootfs.chmod(0o644)
+            with self.assertRaisesRegex(
+                run_gpu_guest.SafetyError, "host write permission"
+            ):
+                run_gpu_guest.validate_rootfs_path(rootfs, "ext4")
+
+            run_gpu_guest.validate_rootfs_path(rootfs, "erofs")
+
     def test_unknown_lower_filesystem_is_rejected(self) -> None:
         with self.assertRaisesRegex(
             run_gpu_guest.SafetyError, "unsupported root filesystem type"

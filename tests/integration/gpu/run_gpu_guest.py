@@ -159,6 +159,19 @@ def validate_extra_arguments(arguments: Sequence[str]) -> None:
             raise SafetyError(f"kernel argument is controlled by the harness: {argument}")
 
 
+def validate_rootfs_path(path: Path, rootfs_type: str) -> None:
+    if rootfs_type not in ROOTFS_TYPES:
+        raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
+    if not path.is_file():
+        raise SafetyError(f"rootfs is not a regular file: {path}")
+    if rootfs_type == "ext4" and path.stat().st_mode & (
+        stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    ):
+        raise SafetyError(
+            "derivative ext4 rootfs still has host write permission"
+        )
+
+
 def load_docker_hello_world(path: Path) -> bytes:
     try:
         payload = path.read_bytes()
@@ -650,8 +663,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     rootfs = options.rootfs.resolve()
     if not emulator.is_file() or not os.access(emulator, os.X_OK):
         raise SafetyError(f"emulator is not executable: {emulator}")
-    if not rootfs.is_file():
-        raise SafetyError(f"rootfs is not a regular file: {rootfs}")
+    validate_rootfs_path(rootfs, options.rootfs_type)
 
     docker_hello_world = None
     if options.docker_hello_world_binary is not None:
