@@ -251,6 +251,16 @@ inline `dscpPolicy.o` and `netd.o` variants instead; it does not omit those
 networking programs. The runtime adds its local `ubd0=` disk and initrd paths;
 no builder or workstation path is stored in this tree.
 
+Route `p0004` carries the AOSP Mesa project changes for an ARM64 Virgl-only
+Gallium build. It generates vendor `libEGL_mesa`, GLES 1 and GLES 2 libraries,
+and `gallium_dri` from source with 16 KiB load alignment; it does not package
+SwiftShader. Route `p0001` selects those modules only for the UML product and
+installs `virtio_gpu_dri.so` as a symlink to `gallium_dri.so`, leaving other
+Cuttlefish products on their existing graphics stack. The target-files
+verifier requires all four AArch64 shared objects, checks every PT_LOAD segment
+for 16 KiB alignment, and requires the exact DRI symlink before a candidate can
+be published.
+
 This accommodation is not a claim of stock Android or VTS eBPF-JIT
 compliance. ACK's native arm64 JIT depends on native CPU-capability, `pt_regs`,
 Spectre, and exception-table contracts that the arm64 UML architecture does

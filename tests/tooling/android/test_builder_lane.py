@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import json
 import re
+import stat
 import struct
 import subprocess
 import sys
@@ -102,6 +103,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_memfd_policy: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
+                          missing_virgl: bool = False,
+                          bad_virgl_elf: bool = False,
+                          bad_virgl_link: bool = False,
+                          virgl_alignment: int = 16384,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -173,6 +178,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "<compatibility-matrix/>\n",
                 )
                 archive.writestr("VENDOR/etc/vintf/manifest.xml", "<manifest/>\n")
+                virgl_entries = (
+                    "VENDOR/lib64/dri/gallium_dri.so",
+                    "VENDOR/lib64/egl/libEGL_mesa.so",
+                    "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
+                    "VENDOR/lib64/egl/libGLESv2_mesa.so",
+                )
+                for index, entry in enumerate(virgl_entries):
+                    if missing_virgl and index == 0:
+                        continue
+                    payload = (
+                        b"not an ELF"
+                        if bad_virgl_elf and index == 0
+                        else synthetic_aarch64_elf(virgl_alignment)
+                    )
+                    archive.writestr(entry, payload)
+                link = zipfile.ZipInfo("VENDOR/lib64/dri/virtio_gpu_dri.so")
+                link.create_system = 3
+                link.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(
+                    link,
+                    b"wrong_dri.so" if bad_virgl_link else b"gallium_dri.so",
+                )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
                 if module_loader:
@@ -228,6 +255,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("memfd-policy", {"missing_memfd_policy": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
+            ("missing-virgl", {"missing_virgl": True}),
+            ("virgl-not-elf", {"bad_virgl_elf": True}),
+            ("virgl-link", {"bad_virgl_link": True}),
+            ("virgl-alignment", {"virgl_alignment": 4096}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)

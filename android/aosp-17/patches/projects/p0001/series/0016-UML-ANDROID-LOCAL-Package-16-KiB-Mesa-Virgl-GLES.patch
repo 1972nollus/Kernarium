@@ -1,0 +1,61 @@
+From 4a7207fe6d4162980efd8a0073c96389c1d8c204 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 11:37:32 +0000
+Subject: [PATCH 16/16] UML-ANDROID-LOCAL: Package 16 KiB Mesa Virgl GLES
+
+Change-Id: Iccef1c6c9762d9cacd6828abcaa34bca3c1fc9dd
+---
+ shared/virgl/device_vendor.mk               | 10 +++++++++-
+ vsoc_uml_arm64_pgagnostic/config/Android.bp |  7 +++++++
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk |  4 ++++
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/shared/virgl/device_vendor.mk b/shared/virgl/device_vendor.mk
+index 347eb163ca27ba978b1d5d56638c5e886be0fdce..5006deb8c9e67fa20b1fb220ea0d8c95d14112f3 100644
+--- a/shared/virgl/device_vendor.mk
++++ b/shared/virgl/device_vendor.mk
+@@ -14,5 +14,13 @@
+ # limitations under the License.
+ #
+ 
+-
++ifeq ($(UML_ANDROID_SOURCE_MESA),true)
++PRODUCT_PACKAGES += \
++    gallium_dri \
++    libEGL_mesa \
++    libGLESv1_CM_mesa \
++    libGLESv2_mesa \
++    uml_virgl_dri_symlink
++else
+ PRODUCT_PACKAGES += libGLES_mesa
++endif
+diff --git a/vsoc_uml_arm64_pgagnostic/config/Android.bp b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+index abe461c3614d670bcc4e1e074415acc6210b1c26..855d8d68af55df656991711c97a27d605912042c 100644
+--- a/vsoc_uml_arm64_pgagnostic/config/Android.bp
++++ b/vsoc_uml_arm64_pgagnostic/config/Android.bp
+@@ -61,3 +61,10 @@ prebuilt_etc {
+         default: false,
+     }),
+ }
++
++install_symlink {
++    name: "uml_virgl_dri_symlink",
++    symlink_target: "gallium_dri.so",
++    installed_location: "lib64/dri/virtio_gpu_dri.so",
++    vendor: true,
++}
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index 254193be03d87c0c0f7a985a899394c33b0e6604..c29de5361e9d80cff101b9114feae01aef655a27 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -36,6 +36,10 @@ LOCAL_ENABLE_LIGHT := false
+ LOCAL_ENABLE_OEMLOCK := false
+ LOCAL_ENABLE_NEURALNETWORKS := false
+ LOCAL_ENABLE_SENSORS := false
++# Android 17's bundled arm64 Mesa prebuilt is linked for 4 KiB pages. Select
++# the AOSP-source EGL/GLES and Gallium Virgl modules generated for this 16 KiB
++# product while leaving every other Cuttlefish product on its existing stack.
++UML_ANDROID_SOURCE_MESA := true
+ $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
+ 
+ PRODUCT_NAME := aosp_uml_arm64_pgagnostic

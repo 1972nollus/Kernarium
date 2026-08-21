@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import hashlib
+import stat
 import struct
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -21,6 +22,13 @@ EM_AARCH64 = 183
 PT_LOAD = 1
 PAGE_SIZE = 16384
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
+VIRGL_ELF_ENTRIES = {
+    "VENDOR/lib64/dri/gallium_dri.so",
+    "VENDOR/lib64/egl/libEGL_mesa.so",
+    "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
+    "VENDOR/lib64/egl/libGLESv2_mesa.so",
+}
+VIRGL_DRI_SYMLINK = "VENDOR/lib64/dri/virtio_gpu_dri.so"
 
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
@@ -43,6 +51,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/vintf/compatibility_matrix.xml",
     "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+    *VIRGL_ELF_ENTRIES,
+    VIRGL_DRI_SYMLINK,
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
 DLKM_COMPATIBILITY_ENTRIES = {
@@ -352,6 +362,27 @@ def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
             fail(f"target ELF load alignment is incongruent: {info.filename}")
 
 
+def check_virgl_stack(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    for entry in sorted(VIRGL_ELF_ENTRIES):
+        info = infos[entry]
+        payload = read_elf_prefix(archive, info)
+        if payload is None:
+            fail(f"Virgl userspace component is not an ELF file: {entry}")
+        elf_type, machine = struct.unpack_from("<HH", payload, 16)
+        if elf_type != ET_DYN or machine != EM_AARCH64:
+            fail(f"Virgl userspace component is not AArch64 ET_DYN: {entry}")
+        check_target_elf(info, payload)
+
+    link = infos[VIRGL_DRI_SYMLINK]
+    mode = link.external_attr >> 16
+    if not stat.S_ISLNK(mode):
+        fail("Virtio-GPU DRI entry is not a symlink")
+    if link.file_size > 256 or archive.read(link) != b"gallium_dri.so":
+        fail("Virtio-GPU DRI symlink does not select gallium_dri.so")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-files", type=Path, required=True)
@@ -409,6 +440,7 @@ def main() -> None:
         missing = sorted(REQUIRED_ENTRIES - seen)
         if missing:
             fail(f"required entries are missing: {', '.join(missing)}")
+        check_virgl_stack(archive, infos)
         check_boot_policy(archive, infos)
         check_kernel_policy(
             archive, infos, kernel_config, kernel_release_file
