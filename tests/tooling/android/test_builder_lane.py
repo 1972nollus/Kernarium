@@ -771,6 +771,7 @@ def main() -> None:
     for token in (
         "platform/packages/modules/Connectivity",
         "ro.boot.uml_bpf_interpreter",
+        "api_level_full >= NETBPFLOAD_25Q2_VER && !umlInterpreter",
         "UML kernel has no eBPF JIT; using its built-in interpreter.",
     ):
         if token not in connectivity_patch and token not in (

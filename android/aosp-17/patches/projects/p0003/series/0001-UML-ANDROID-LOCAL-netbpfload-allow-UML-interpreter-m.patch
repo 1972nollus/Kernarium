@@ -1,18 +1,29 @@
-From 5b247694909101236c42f693a2bb0335ec82e4ba Mon Sep 17 00:00:00 2001
+From 6d8ac5b9ad4889e6048eb7503bd117bfca49e569 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 01:18:01 +0000
 Subject: [PATCH 1/1] UML-ANDROID-LOCAL: netbpfload: allow UML interpreter mode
 
 Change-Id: I7f4ccfc1f083fe0ffeeabf456d42c133a01f7ff2
 ---
- bpf/loader/NetBpfLoad.cpp | 37 +++++++++++++++++++++++++------------
- 1 file changed, 25 insertions(+), 12 deletions(-)
+ bpf/loader/NetBpfLoad.cpp | 41 ++++++++++++++++++++++++++-------------
+ 1 file changed, 28 insertions(+), 13 deletions(-)
 
 diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
-index 7ba3247dcc6f31ab9b612d410202067c821ab58a..797ab2f329f72b316f05f943607dd633551ba672 100644
+index 7ba3247dcc6f31ab9b612d410202067c821ab58a..deb2ffd13b32bee00702a69073fbaeaaf9c5604a 100644
 --- a/bpf/loader/NetBpfLoad.cpp
 +++ b/bpf/loader/NetBpfLoad.cpp
-@@ -1748,18 +1748,31 @@ static int doLoad(char** argv, char * const envp[]) {
+@@ -1002,7 +1002,9 @@ static int validateProg(const borrowed_fd& fd, const char* const progPinLoc) {
+     }
+     if (!isUser) ALOGD("prog %s id %d len jit:%d xlat:%d", progPinLoc, progId, jitLen, xlatLen);
+ 
+-    if (!jitLen && api_level_full >= NETBPFLOAD_25Q2_VER) {
++    const bool umlInterpreter =
++            GetProperty("ro.boot.uml_bpf_interpreter", "0") == "1";
++    if (!jitLen && api_level_full >= NETBPFLOAD_25Q2_VER && !umlInterpreter) {
+         ALOGE("Kernel eBPF JIT failure for %s", progPinLoc);
+         return -ENOTSUP;
+     }
+@@ -1748,18 +1750,31 @@ static int doLoad(char** argv, char * const envp[]) {
          // on Android T and earlier versions they're written from the 'load_bpf_programs'
          // trigger (ie. by init itself) instead.
  

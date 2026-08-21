@@ -216,7 +216,9 @@ selects the `ttyS0` diagnostic shell. It also sets the product-scoped
 NetBpfLoad's eBPF-JIT requirement. This UML product may continue only when both
 JIT sysctls are absent and the explicit boot property is present, using the
 kernel's built-in verifier and generic interpreter instead. An inconsistent
-lone kallsyms sysctl remains fatal. The runtime adds its local `ubd0=` disk and
+lone kallsyms sysctl remains fatal. The same explicit property permits a zero
+JIT-image length during post-load validation; program identity and translated
+bytecode length remain mandatory. The runtime adds its local `ubd0=` disk and
 initrd paths; no builder or workstation path is stored in this tree.
 
 This accommodation is not a claim of stock Android or VTS eBPF-JIT
