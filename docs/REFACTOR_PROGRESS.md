@@ -32,12 +32,14 @@
   selections, clean shutdown, and zero CPU fallback. Three non-passes encountered while
   choosing those bounded sets remain diagnostic defects, not waivers.
   Performance, sustained lifecycle, and CTS matrices remain open;
-  qualification is blocked by its missing authoritative build receipt and
-  incomplete display-backed caselist. The new `--inventory` path attempted
-  the exact package-aware export through the rebuilt emulator, retained a
-  strict diagnostic report, and failed closed when the ninth package,
-  `dEQP-GL45-ES3`, requested an unsupported EGL context after eight modules
-  and 148,476 test rows. No partial identity was frozen.
+  qualification is blocked by those missing gates and the original image's
+  absent authoritative build receipt. The former global inventory remains a
+  diagnostic: native Debian reproduced its failure when the desktop-GL-based
+  `dEQP-GL45-ES3` package requested an unsupported context after eight modules
+  and 148,476 rows. The corrected `--inventory` path scopes unmodified `glcts`
+  to `KHR-GLES2.*` and `KHR-GLES3.*`; a JIT/ten-vCPU emulator run against the
+  sealed derivative passed exactly two modules and 6,972 cases with frozen
+  SHA-256 `3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
 - Diagnosed the initial 4 KiB macOS Aquarium RCU stalls as generic nested
   `mmu_gather` promotion to a full-mm flush. Kernel topic 0021 retains precise
   Darwin nested ranges behind a default-conservative architecture hook. Fresh

@@ -7,8 +7,8 @@ and WSI.  This runner injects only a first-party launcher and transient output
 into the disposable OverlayFS upper layer.  It deliberately refuses the old
 macOS CGL renderer and requires the common ANGLE/Metal product.
 
-Official must-pass qualification remains fail-closed while the frozen identity
-records no authoritative CTS build receipt or complete display-backed caselist.
+Official must-pass qualification remains fail-closed while the original image
+has no authoritative CTS build receipt and the complete matrices have not run.
 Developer shards are still useful for bring-up and failure localization.
 """
 
@@ -62,6 +62,8 @@ INVENTORY_ARTIFACTS = frozenset(
     {"inventory.txt", "renderer.txt", "results.qpa", "summary.txt"}
 )
 ALLOWED_ARTIFACTS = SHARD_ARTIFACTS | INVENTORY_ARTIFACTS
+GLES_INVENTORY_SCOPE = "gles2-gles3"
+GLES_INVENTORY_MODULES = ("KHR-GLES2", "KHR-GLES3")
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -577,6 +579,7 @@ def validate_inventory_report(
             continue
         if key not in {
             "schema_version",
+            "scope",
             "complete",
             "exported_package_count",
             "complete_caselist_sha256",
@@ -588,6 +591,7 @@ def validate_inventory_report(
         values[key] = value
     required = {
         "schema_version",
+        "scope",
         "complete",
         "exported_package_count",
         "complete_caselist_sha256",
@@ -595,8 +599,10 @@ def validate_inventory_report(
     }
     if set(values) != required:
         raise CampaignError("CTS inventory report is incomplete")
-    if values["schema_version"] != "1" or values["complete"] != "1":
+    if values["schema_version"] != "2" or values["complete"] != "1":
         raise CampaignError("CTS inventory report is not complete")
+    if values["scope"] != GLES_INVENTORY_SCOPE:
+        raise CampaignError("CTS inventory scope is invalid")
     if not values["exported_package_count"].isdigit():
         raise CampaignError("CTS inventory package count is invalid")
     package_count = int(values["exported_package_count"])
@@ -604,18 +610,25 @@ def validate_inventory_report(
         raise CampaignError("CTS inventory case count is invalid")
     case_count = int(values["complete_caselist_case_count"])
     digest = values["complete_caselist_sha256"]
-    if package_count < 1 or case_count < 1 or SHA256.fullmatch(digest) is None:
+    if (
+        package_count != len(GLES_INVENTORY_MODULES)
+        or case_count < 1
+        or SHA256.fullmatch(digest) is None
+    ):
         raise CampaignError("CTS inventory identity is invalid")
-    if not modules or modules != sorted(set(modules)):
-        raise CampaignError("registered CTS module set is not sorted and unique")
+    if modules != list(GLES_INVENTORY_MODULES):
+        raise CampaignError("registered CTS modules do not match the GLES scope")
+    frozen_scope = identity["cts"].get("inventory_scope")
     frozen_digest = identity["cts"]["complete_caselist_sha256"]
     frozen_count = identity["cts"]["complete_caselist_case_count"]
     frozen_modules = identity["cts"]["registered_modules"]
-    if frozen_digest is not None and frozen_digest != digest:
+    if frozen_scope != GLES_INVENTORY_SCOPE:
+        raise CampaignError("frozen CTS inventory scope changed")
+    if frozen_digest != digest:
         raise CampaignError("complete CTS caselist identity changed")
-    if frozen_count is not None and frozen_count != case_count:
+    if frozen_count != case_count:
         raise CampaignError("complete CTS caselist count changed")
-    if frozen_modules is not None and frozen_modules != modules:
+    if frozen_modules != modules:
         raise CampaignError("registered CTS module set changed")
     return case_count, digest, modules, package_count
 
@@ -1113,15 +1126,23 @@ actual_receipt_sha=$(sha256sum \
 """
     if inventory:
         export_pattern = f"{output}/${{packageName}}-cases.${{typeExtension}}"
-        command = [
-            glcts,
-            "--deqp-runmode=txt-caselist",
-            f"--deqp-caselist-export-file={export_pattern}",
-            f"--deqp-archive-dir={archive}",
-            "--deqp-gl-context-type=egl",
-            "--deqp-duplicate-case-name-check=enable",
-            f"--deqp-log-filename={qpa}",
-        ]
+        inventory_commands = []
+        for module in GLES_INVENTORY_MODULES:
+            inventory_commands.append(
+                shlex.join(
+                    [
+                        glcts,
+                        "--deqp-runmode=txt-caselist",
+                        f"--deqp-case={module}.*",
+                        f"--deqp-caselist-export-file={export_pattern}",
+                        f"--deqp-archive-dir={archive}",
+                        "--deqp-gl-context-type=egl",
+                        "--deqp-duplicate-case-name-check=enable",
+                        f"--deqp-log-filename={qpa}",
+                    ]
+                )
+            )
+        command = ["/bin/sh", "-c", " &&\n".join(inventory_commands)]
     else:
         command = [
             glcts,
@@ -1151,25 +1172,45 @@ export LC_ALL
 exported_packages=0
 for package_caselist in "$output"/*-cases.txt; do
     [ -f "$package_caselist" ] || continue
-    cat "$package_caselist" >> "$selected"
     exported_packages=$((exported_packages + 1))
 done
-if [ "$status" -eq 0 ] && { [ "$exported_packages" -eq 0 ] || [ ! -s "$selected" ]; }; then
-    echo 'UML_CTS_ERROR: complete text caselist export is empty'
+if [ "$exported_packages" -ne 2 ]; then
+    echo "UML_CTS_ERROR: GLES inventory exported $exported_packages packages, expected 2"
     status=1
 fi
+for inventory_package in KHR-GLES2 KHR-GLES3; do
+    package_caselist="$output/$inventory_package-cases.txt"
+    if [ ! -s "$package_caselist" ]; then
+        echo "UML_CTS_ERROR: GLES inventory package $inventory_package is empty"
+        status=1
+        continue
+    fi
+    if ! awk -v expected="$inventory_package" '
+        $1 == "TEST:" || $1 == "GROUP:" {
+            split($2, part, ".")
+            if (part[1] != expected) exit 1
+            seen = 1
+        }
+        END { if (!seen) exit 1 }
+    ' "$package_caselist"; then
+        echo "UML_CTS_ERROR: GLES inventory package $inventory_package contains another module"
+        status=1
+    fi
+    cat "$package_caselist" >> "$selected"
+done
 complete=0
 [ "$status" -ne 0 ] || complete=1
 caselist_digest=$(sha256sum "$selected" | cut -d ' ' -f 1)
 caselist_count=$(awk '$1 == "TEST:" { count++ } END { print count + 0 }' "$selected")
 {
-    printf 'schema_version=1\n'
+    printf 'schema_version=2\n'
+    printf 'scope=gles2-gles3\n'
     printf 'complete=%s\n' "$complete"
     printf 'exported_package_count=%s\n' "$exported_packages"
     printf 'complete_caselist_sha256=%s\n' "$caselist_digest"
     printf 'complete_caselist_case_count=%s\n' "$caselist_count"
-    awk '$1 == "TEST:" || $1 == "GROUP:" { split($2, part, "."); print part[1] }' "$selected" |
-        sort -u | sed 's/^/registered_module=/'
+    printf 'registered_module=KHR-GLES2\n'
+    printf 'registered_module=KHR-GLES3\n'
 } > "$inventory_report"
 chown uml:uml "$inventory_report" "$renderer"
 """
@@ -1509,7 +1550,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--inventory",
         action="store_true",
-        help="capture the complete display-backed glcts text caselist",
+        help="capture the complete display-backed GLES 2/3 text caselist",
     )
     parser.add_argument("--campaign", choices=sorted(campaigns))
     parser.add_argument("--leaf", choices=sorted(leaves))

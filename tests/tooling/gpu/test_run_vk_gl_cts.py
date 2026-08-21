@@ -155,6 +155,16 @@ class VkGlCtsToolingTests(unittest.TestCase):
         leaves = cts.leaf_identities(identity)
         self.assertFalse(identity["cts"]["qualification_ready"])
         self.assertIsNone(identity["cts"]["authoritative_build_receipt"])
+        self.assertEqual(identity["cts"]["inventory_scope"], "gles2-gles3")
+        self.assertEqual(identity["cts"]["complete_caselist_case_count"], 6972)
+        self.assertEqual(
+            identity["cts"]["complete_caselist_sha256"],
+            "3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162",
+        )
+        self.assertEqual(
+            identity["cts"]["registered_modules"],
+            ["KHR-GLES2", "KHR-GLES3"],
+        )
         self.assertEqual(leaves["gles2"].case_count, 473)
         self.assertEqual(leaves["gles3"].case_count, 6498)
         self.assertEqual(leaves["gles31"].case_count, 4101)
@@ -283,7 +293,10 @@ class VkGlCtsToolingTests(unittest.TestCase):
     def test_complete_inventory_identity_is_exact_and_fail_closed(self) -> None:
         identity = json.loads(json.dumps(cts.load_identity()))
         digest = hashlib.sha256(b"complete caselist\n").hexdigest()
-        payload = f"""schema_version=1
+        identity["cts"]["complete_caselist_sha256"] = digest
+        identity["cts"]["complete_caselist_case_count"] = 2
+        payload = f"""schema_version=2
+scope=gles2-gles3
 complete=1
 exported_package_count=2
 complete_caselist_sha256={digest}
@@ -299,9 +312,6 @@ registered_module=KHR-GLES3
         self.assertEqual(modules, ["KHR-GLES2", "KHR-GLES3"])
         self.assertEqual(packages, 2)
 
-        identity["cts"]["complete_caselist_sha256"] = digest
-        identity["cts"]["complete_caselist_case_count"] = count
-        identity["cts"]["registered_modules"] = modules
         cts.validate_inventory_report(payload, identity)
         with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
             cts.validate_inventory_report(
@@ -310,6 +320,26 @@ registered_module=KHR-GLES3
         with self.assertRaisesRegex(cts.CampaignError, "not complete"):
             cts.validate_inventory_report(
                 payload.replace(b"complete=1", b"complete=0"), identity
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "scope is invalid"):
+            cts.validate_inventory_report(
+                payload.replace(b"scope=gles2-gles3", b"scope=all"), identity
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "GLES scope"):
+            cts.validate_inventory_report(
+                payload.replace(
+                    b"registered_module=KHR-GLES3",
+                    b"registered_module=dEQP-GL45-ES3",
+                ),
+                identity,
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "identity is invalid"):
+            cts.validate_inventory_report(
+                payload.replace(
+                    b"exported_package_count=2",
+                    b"exported_package_count=3",
+                ),
+                identity,
             )
 
     def test_typed_fraction_and_exact_case_reject_shell_input(self) -> None:
@@ -692,7 +722,7 @@ Kernarium: runtime returned 0
             )
             self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
-    def test_inventory_launcher_uses_real_display_and_no_case_selector(self) -> None:
+    def test_inventory_launcher_scopes_the_real_display_to_gles(self) -> None:
         launcher = cts.build_guest_launcher(
             None, 0, 900, 16384, erofs_contract()
         )
@@ -704,11 +734,30 @@ Kernarium: runtime returned 0
         )
         self.assertIn("--deqp-duplicate-case-name-check=enable", launcher)
         self.assertIn("--deqp-log-filename=/run/uml-cts/results.qpa", launcher)
+        self.assertIn("--deqp-case=KHR-GLES2.*", launcher)
+        self.assertIn("--deqp-case=KHR-GLES3.*", launcher)
+        self.assertLess(
+            launcher.index("--deqp-case=KHR-GLES2.*"),
+            launcher.index("--deqp-case=KHR-GLES3.*"),
+        )
+        self.assertNotIn("dEQP-GL45", launcher)
         self.assertNotIn("--deqp-caselist-file=", launcher)
-        self.assertIn('cat "$package_caselist" >> "$selected"', launcher)
+        self.assertIn(
+            'package_caselist="$output/$inventory_package-cases.txt"',
+            launcher,
+        )
+        self.assertIn("scope=gles2-gles3", launcher)
         self.assertIn('emit_artifact inventory.txt "$inventory_report"', launcher)
         self.assertIn("x11_server=xwayland", launcher)
         self.assertIn("systemctl poweroff", launcher)
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
         options = cts.parse_arguments(["--inventory", "--dry-run"])
         self.assertTrue(options.inventory)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(

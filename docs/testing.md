@@ -767,29 +767,30 @@ exclusion list, or an ext4 image without a receipt. The maintenance epoch for
 this artifact is closed: do not boot it writable or update it in place. The
 original `rootfs.erofs` and its provisioning manifest remain unchanged.
 
-`--inventory` is a fail-closed display-backed diagnostic. It asks the exact
-installed multi-package `glcts` binary for package-specific text exports,
-combines them only in the disposable guest, and egresses a small strict report
-containing completion state, raw caselist SHA-256, executable-case count, and
-registered modules. A zero CTS exit and nonempty complete export are required
-before the host accepts that identity. On the current natural GL 2.1/GLES 3.0
-common path, the command is expected to exit nonzero: enumeration reaches
-`dEQP-GL45-ES3`, whose context initialization returns `EGL_BAD_MATCH`.
-Partial module/count/digest data is retained only as diagnostic evidence and
-must not populate `vk_gl_cts_identity.json`.
+`--inventory` is a fail-closed display-backed GLES baseline capture. It invokes
+the exact installed multi-package `glcts` binary twice, filtering separately
+to `KHR-GLES2.*` and `KHR-GLES3.*`. It requires exactly those two nonempty
+package exports, rejects any row from another module, concatenates them in
+fixed GLES 2 then GLES 3 order inside the disposable guest, and egresses a
+small strict report containing scope, completion state, raw caselist SHA-256,
+executable-case count, and modules. Both CTS commands must exit zero before the
+host accepts the frozen 6,972-case SHA-256
+`3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
+The installed official must-pass leaves remain the execution authority and
+contain 473 GLES 2 plus 6,498 GLES 3 cases.
 
 A native arm64 Debian 13 direct-virgl control using the exact installed CTS
 payload reproduces status 137, the same eight nonempty modules and 148,476
 tests, and partial SHA-256
 `dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
 The standalone `deqp-gles2` and `deqp-gles3` text exporters succeed with
-19,825 and 48,300 tests. In the released source, the all-package hierarchy
-writer initializes `dEQP-GL45-ES3`, whose GLES 3 context path requests a real
-core GL 4.5 context even outside execute mode. This control rules out an
-emulator-specific inventory failure. Do not rebuild the rootfs from unchanged
-source or patch qualification CTS to bypass it; keep inventory fail-closed
-until the campaign owns a truthful capability-scoped or context-free
-structural definition.
+19,825 and 48,300 tests, and filtered `glcts` exports succeed with 473
+`KHR-GLES2` and 6,499 `KHR-GLES3` hierarchy cases. In the released source, the
+global all-package hierarchy writer later initializes `dEQP-GL45-ES3`, whose
+GLES 3 context path requests a real core GL 4.5 context even outside execute
+mode. That global diagnostic still fails identically in the VM and emulator,
+but the ES-on-desktop-GL package is outside the GLES qualification scope. Do
+not rebuild the rootfs or patch CTS for that diagnostic.
 
 Kernarium accepts no arbitrary CTS script or selector. The schema-2 Apple
 campaign document names the original exact GLES 3 declaration sentinel plus
@@ -899,12 +900,13 @@ The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
 transcript must contain its exact backend marker and any CGL marker is fatal.
 `--qualification` still refuses to run while the frozen identity lacks an
-authoritative original-image CTS build receipt and a complete display-backed
-caselist. The checked ext4 derivative has its own authenticated build receipt,
-but its inventory reproduces the same incomplete export and therefore does
-not lift the qualification block. The automated inventory proves that the
-caselist currently fails at an unsupported package-context request; it does
-not authorize skipping that module or freezing the partial export. See
+authoritative original-image CTS build receipt and the complete official
+cross-product matrices remain unexecuted. The checked ext4 derivative has its
+own authenticated build receipt and is the required input for future
+qualification runs. Its scoped display-backed GLES 2/GLES 3 hierarchy
+inventory is complete and frozen; the separate global all-package diagnostic
+is not a qualification input because it includes an ES-on-desktop-GL 4.5
+package outside the supported profile. See
 [`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md). Do not mutate either immutable
 lower image or work around the block by overlaying or preloading replacement
 guest graphics userspace.

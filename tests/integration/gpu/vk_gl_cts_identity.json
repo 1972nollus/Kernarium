@@ -16,10 +16,14 @@
     "source_path": "/home/uml/vk-gl-cts-1.4.5.5",
     "authoritative_build_receipt": null,
     "qualification_ready": false,
-    "qualification_blocker": "No authoritative receipt in the authenticated EROFS image proves that the co-located source produced its installed binaries, and no complete display-backed caselist exists for either the original or checked derivative CTS build.",
-    "complete_caselist_sha256": null,
-    "complete_caselist_case_count": null,
-    "registered_modules": null,
+    "qualification_blocker": "No authoritative receipt in the authenticated EROFS image proves that its co-located source produced its installed binaries, and the complete official GLES matrices have not passed on every required product. Use the checked derivative receipt for future qualification runs.",
+    "inventory_scope": "gles2-gles3",
+    "complete_caselist_sha256": "3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162",
+    "complete_caselist_case_count": 6972,
+    "registered_modules": [
+      "KHR-GLES2",
+      "KHR-GLES3"
+    ],
     "binaries": [
       {
         "path": "/opt/vk-gl-cts/gles2/deqp-gles2",

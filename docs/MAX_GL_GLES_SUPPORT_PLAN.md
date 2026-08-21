@@ -51,25 +51,29 @@ is not permission to mutate or reprovision either image.
 
 Phase 0 remains intentionally incomplete at its conformance-evidence boundary.
 The original EROFS binaries still have no recovered authoritative source/build
-receipt; the new receipt proves only the checked derivative build. The
-complete display-backed caselist capture is automated and was attempted on
-both builds, but each multi-package binary creates a package context while
-enumerating and aborts at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` after eight
-modules on the natural GL 2.1/GLES 3.0 renderer. Both incomplete reports have
-148,476 rows and the same partial SHA-256, are rejected, and leave the frozen
-complete identity null. A native arm64 Debian 13 VM running the byte-identical
-installed CTS payload over direct virgl reproduced the same failing package,
-status 137, eight modules, row count, and partial digest. The standalone GLES 2
-and GLES 3 exporters completed with 19,825 and 48,300 tests. Source inspection
-shows that the multi-package hierarchy writer initializes every registered
-package: GLES 3.1 uses an empty context outside execute mode, but the following
-`dEQP-GL45-ES3` package unconditionally requests a real core GL 4.5 context.
-The blocker is therefore in the released all-package display-backed listing
-model, not this emulator. Rebuilding the same unmodified source cannot change
-the outcome, while changing its listing behavior would violate the exact-source
-qualification boundary. No new rootfs was built; Phase 0 remains fail-closed
-until a capability-scoped inventory or unmodified context-free structural
-enumeration is explicitly defined.
+receipt; the new receipt proves only the checked derivative build. The initial
+all-package display-backed export aborts at `dEQP-GL45-ES3` with
+`EGL_BAD_MATCH` after eight modules and 148,476 rows. A native arm64 Debian 13
+VM running the byte-identical payload over direct virgl reproduced the exact
+status, row count, and partial digest, proving this is released hierarchy
+behavior rather than an emulator defect. Source inspection shows that the
+package deliberately requests a real core GL 4.5 context even outside execute
+mode. It is an ES-on-desktop-GL compatibility package, not a GLES 2/GLES 3
+profile requirement; rebuilding or modifying CTS is neither necessary nor
+valid.
+
+The qualification inventory is now explicitly scoped to the lower shared GLES
+baseline. Unmodified `glcts` exports `KHR-GLES2.*` and `KHR-GLES3.*` in two
+separate status-zero runs, and the runner requires exactly those modules with
+no cross-module rows. The native VM produced 473 and 6,499 hierarchy cases.
+The real 16 KiB common ANGLE/Metal emulator then passed the same scoped capture
+with JIT, ten vCPUs, the sealed derivative mounted read-only below OverlayFS,
+status zero, clean shutdown, 6,972 total cases, and SHA-256
+`3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
+The official GLES 2/GLES 3 must-pass leaves independently remain frozen at 473
+and 6,498 cases. The scoped caselist gate is complete; Phase 0 stays open for
+the complete official matrices and remaining qualification gates, and the
+original EROFS receipt gap remains recorded.
 
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
@@ -603,13 +607,18 @@ For release promotion, prefer `glcts` and the installed Khronos material:
   list run with a convenient pbuffer is a development slice, not execution of
   the official must-pass configuration matrix.
 
-At Phase 0, export the binary's complete text caselist and record its digest,
-case count, registered modules, executable build ID, and the digest of each
-selected must-pass leaf. `glcts` should expose `KHR-GLES2`, `KHR-GLES3`,
-`dEQP-GLES31`, `KHR-GLES31`, `KHR-GLESEXT`, `KHR-GLES32`, and `KHR-GL30`
-through `KHR-GL46`. Fail closed if the binary and installed lists disagree.
-Do not compare raw pass counts across different CTS releases or caselist
-digests.
+At Phase 0, export the complete text hierarchy for each profile in the lower
+shared baseline and record its ordered digest, case count, module, executable
+build ID, and selected must-pass-leaf digest. The initial scope is exactly
+`KHR-GLES2` and `KHR-GLES3`. Do not use an unfiltered `glcts` traversal as the
+GLES identity: that binary also registers future-profile, ES-on-desktop-GL,
+and desktop GL packages whose context requirements deliberately exceed the
+lower renderer. Record those registrations as structural diagnostics. A later
+phase adds `KHR-GLES31`, `KHR-GLESEXT`, `KHR-GLES32`, or the applicable
+`KHR-GL*` package to its own scoped identity only after that candidate context
+exists naturally. Fail closed if a scoped hierarchy and its installed list
+disagree. Do not compare raw pass counts across different CTS releases or
+caselist digests.
 
 ### Repository-owned campaign driver
 
@@ -884,12 +893,12 @@ image-comparison failure. Single fixed Aquarium canaries now pass on macOS and
 Simulator under both page profiles, including repaired-kernel runs with zero
 dropped or CPU-fallback frames. The seven interleaved performance pairs,
 connected-iPad thermal and sustained lifecycle baselines, and complete
-matrices remain missing. The
-complete caselist attempt also fails closed at
-`dEQP-GL45-ES3` because text enumeration creates an unsupported context; no
-partial digest/count/module set was promoted. Together with the absent
-authoritative CTS receipt, this keeps the exit open without a rootfs or guest
-userspace change.
+matrices remain missing. The former global all-package caselist attempt still
+fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
+GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
+inventory is complete and frozen at 6,972 cases. The missing original-image
+receipt and unexecuted official matrices keep the exit open; no further rootfs
+or guest-userspace change is required.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
@@ -979,8 +988,10 @@ canaries now pass on macOS and Simulator under both page profiles, after topic
 bring-up and zero-fallback coverage only. The full shipped matrices, seven-pair
 performance campaign, connected-iPad thermal gate, and sustained-lifecycle
 campaign remain open. The original EROFS build receipt remains missing, the
-derivative receipt does not establish a complete caselist, and the incomplete
-complete-caselist identity keeps qualification fail-closed.
+checked derivative owns its authenticated build receipt, and the scoped GLES
+hierarchy identity is complete. Qualification remains fail-closed on the full
+shipped matrices, seven-pair performance campaign, connected-iPad thermal
+gate, and sustained-lifecycle campaign rather than on caselist enumeration.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
@@ -1486,16 +1497,17 @@ validation. Topic 0021 separately preserves precise Darwin nested TLB ranges
 after a 4 KiB Aquarium run exposed repeated full-address-space invalidation and
 RCU starvation; a fresh replay, both LLVM 22 builds, accepted artifacts, and
 clean macOS/Simulator canaries under both page profiles validate the bounded
-repair. The incomplete complete-caselist identity and matrices, absent
-seven-pair performance/connected-iPad thermal/sustained-lifecycle campaigns,
-and the missing original-image receipt plus incomplete caselist still prevent
-any new shared capability or conformance claim. The derivative build has its
-own authenticated receipt and passed the fixed macOS identity sentinels under
-both page profiles plus the one-case Simulator declaration sentinel under
-both profiles; that bounded evidence does not satisfy qualification. A
-display-backed complete-caselist attempt additionally stops at
-`dEQP-GL45-ES3` with `EGL_BAD_MATCH`; its partial result remains diagnostic
-and the complete identity fields remain null. The committed shared target
+repair. The incomplete matrices, absent seven-pair performance/connected-iPad
+thermal/sustained-lifecycle campaigns, and missing original-image receipt
+still prevent any new shared capability or conformance claim. The derivative
+build has its own authenticated receipt and passed the fixed macOS identity
+sentinels under both page profiles plus the one-case Simulator declaration
+sentinel under both profiles; that bounded evidence does not satisfy
+qualification. Its filtered display-backed `KHR-GLES2`/`KHR-GLES3` hierarchy
+inventory is now complete at 6,972 cases and a frozen digest. The separate
+all-package diagnostic still stops at the desktop-GL-dependent
+`dEQP-GL45-ES3`, but that package is outside the GLES baseline scope and its
+partial result is not promoted. The committed shared target
 remains the direct-hardware ANGLE/Metal GL 2.1/GLES
 3.0 baseline candidate and becomes the performance baseline only after Phase
 2 passes. GLES 3.1 and desktop GL 3.0/3.1 are conditional stretch ceilings,

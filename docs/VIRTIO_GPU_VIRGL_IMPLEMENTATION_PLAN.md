@@ -128,8 +128,10 @@ remains desktop GL 2.1 and GLES 3.0 until macOS guest identity/function tests,
 the identical Simulator campaign, and the connected-iPad correctness,
 performance, thermal, direct-presentation, and lifecycle campaign complete.
 Official CTS promotion is additionally blocked by the missing authoritative
-receipt for the installed CTS binaries and the pending display-backed complete
-caselist. No rootfs change is authorized to remove that block.
+receipt for the original installed CTS binaries and the pending complete
+cross-product matrices. The checked derivative owns an authenticated receipt
+and a complete scoped GLES 2/GLES 3 hierarchy identity. No further rootfs
+change is authorized to remove the remaining block.
 
 ## Archived predecessor evidence
 

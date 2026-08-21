@@ -108,16 +108,21 @@ implementation canaries, not a controlled performance qualification or A/B.
 The broader lifecycle gate remains open alongside complete matrices, seven
 interleaved performance pairs, connected-iPad thermal, and presentation
 campaigns.
-A new fail-closed
-display-backed inventory mode exercised the rebuilt common emulator and the
-exact installed `glcts`: eight module hierarchies exported, but enumeration
-aborted at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` because package traversal
-creates an unsupported context. Its partial 148,476-case report is diagnostic
-only, and all complete-caselist identity fields remain null. Qualification is
-also fail-closed because no authoritative receipt ties the installed CTS
-binaries to the co-located source. Phase 3 and later profile work must not
-start until the lower shared baseline is measured and qualified or these exact
-blockers are accepted.
+A fail-closed global display-backed diagnostic exercised the rebuilt common
+emulator and exact installed `glcts`: eight module hierarchies exported before
+the desktop-GL-dependent `dEQP-GL45-ES3` package requested an unsupported GL
+4.5 context. Native arm64 Debian reproduced its status, 148,476 rows, and
+partial digest exactly, proving it is released hierarchy behavior rather than
+an emulator defect. The qualification inventory now filters unmodified
+`glcts` separately to `KHR-GLES2.*` and `KHR-GLES3.*`. A JIT/ten-vCPU emulator
+run against the sealed derivative completed exactly those two modules with
+6,972 cases, frozen SHA-256
+`3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`,
+and clean shutdown. Qualification remains fail-closed because the complete
+official matrices and Phase 2 performance, thermal, and lifecycle gates have
+not passed; the original image also lacks a build receipt, so future
+qualification must use the checked derivative. Phase 3 and later profile work
+must not start until the lower shared baseline is measured and qualified.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

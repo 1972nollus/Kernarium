@@ -104,14 +104,13 @@ and
 `.build/vk-gl-cts-ios-simulator-derivative/20260821-195421-52319-4k-gles3-declaration-sentinel-v1`.
 
 This closes build provenance only for the exact derivative. The original
-EROFS CTS build receipt is still missing, and qualification remains
-fail-closed for both artifacts because neither has a complete display-backed
-caselist. The derivative inventory at
+EROFS CTS build receipt is still missing. The initial all-package diagnostic
+at
 `.build/vk-gl-cts-derivative/20260821-194351-41416-16k-inventory` reproduced
 the original failure at `dEQP-GL45-ES3`: status 137, `complete=0`, eight
 registered modules, 148,476 rows, and the same partial SHA-256
 `dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
-No module is skipped and no partial identity is promoted.
+No partial all-package identity was promoted.
 
 A native arm64 Debian 13 VM control at
 `.build/vk-gl-cts-vm-control/20260821-native-arm64` used the exact installed
@@ -129,6 +128,9 @@ same partial digest above. By contrast, the exact standalone `deqp-gles2` and
 `deqp-gles3` exports returned zero with 19,825 and 48,300 tests and SHA-256
 `d727f1fd0f051a7dde6fbb67a0cf734ee01d111fbc36c274a6945a3ca4a046fd`
 and `bb24f19fdab379c38530c62a8a354ba102d676b75777ab3b654da063e2153860`.
+Filtered `glcts` exports of `KHR-GLES2.*` and `KHR-GLES3.*` also returned zero
+in the VM, producing the same 473-case and 6,499-case package hierarchies later
+captured in the emulator.
 
 The released source accounts for the native/emulator match.
 `framework/common/tcuTestHierarchyUtil.cpp` inflates every registered package
@@ -143,9 +145,26 @@ so the latter package asks the truthful GL 2.1 renderer for a real GL 4.5
 context and receives `EGL_BAD_MATCH`. This is not an emulator-only defect, and
 rebuilding the same unmodified source would preserve it. Patching CTS listing
 semantics would change the qualification source, so no second rootfs rebuild
-was performed. The gate remains fail-closed until the plan defines either a
-capability-scoped inventory or an unmodified structural enumeration that does
-not require unsupported live contexts.
+was performed. The all-package traversal is not a truthful inventory boundary
+for GLES qualification: `dEQP-GL45-ES3` is an ES test package deliberately run
+on a desktop GL 4.5 context, not a requirement of the GLES 2 or GLES 3 profile.
+
+The corrected inventory invokes the unmodified installed `glcts` separately
+for `KHR-GLES2.*` and `KHR-GLES3.*`, requires exactly those two nonempty
+package files, rejects any cross-module row, and concatenates them in fixed
+GLES 2 then GLES 3 order. The real 16 KiB ANGLE/Metal emulator run at
+`.build/vk-gl-cts/20260821-205148-73388-16k-inventory` completed with JIT, ten
+vCPUs, the checked derivative mounted as a read-only ext4 lower, status zero,
+clean shutdown, 6,972 hierarchy cases, and SHA-256
+`3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
+The frozen modules are exactly `KHR-GLES2` and `KHR-GLES3`. Their installed
+official must-pass leaves contain 473 and 6,498 cases respectively; the one
+additional GLES 3 hierarchy case is
+`KHR-GLES3.texture_filter_anisotropic.drawing`, which the released Khronos
+must-pass leaf does not select. Qualification remains fail-closed pending the
+complete official cross-product matrices and other Phase 2 gates, and the
+original EROFS image still lacks build provenance; the scoped caselist itself
+is no longer a blocker.
 
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
@@ -319,14 +338,11 @@ also has no Git metadata. Therefore:
 - the checked derivative above is the only explicitly authorized image/CTS
   exception; any later change requires new user direction.
 
-A complete text-caselist identity also remains unavailable, now with a
-reproducible display-backed blocker. The repository runner's `--inventory`
-mode uses the installed binary's package-aware export pattern, concatenates
-the transient package files in C-locale order, and records only a strict
-digest/count/module report after a zero exit. On the rebuilt 16 KiB common
-ANGLE/Metal emulator, the exact binary exported eight nonempty module
-hierarchies and began `dEQP-GL45-ES3`, then aborted with
-`EGL_BAD_MATCH` from `eglCreateContext()`. The partial diagnostic contains
+A global all-package text export remains unavailable and is retained only as
+a diagnostic. On the rebuilt 16 KiB common ANGLE/Metal emulator, the exact
+binary exported eight nonempty module hierarchies and began
+`dEQP-GL45-ES3`, then aborted with `EGL_BAD_MATCH` from
+`eglCreateContext()`. The partial diagnostic contains
 148,476 `TEST:` rows across `CTS-Configs`, `dEQP-EGL`, `KHR-GLES2`,
 `dEQP-GLES2`, `KHR-GLES3`, `dEQP-GLES3`, `dEQP-GLES31`, and
 `dEQP-GL45-ES31`; its raw concatenated digest is
@@ -335,14 +351,23 @@ It is explicitly `complete=0`, exited 137, and is not a frozen identity. The
 guest nevertheless powered off cleanly, with evidence at
 `.build/vk-gl-cts/20260821-032519-85656-16k-inventory`. Because the fixed
 GL 2.1/GLES 3.0 renderer cannot create every context demanded during this
-multi-package enumeration, the complete digest, count, and module fields in
-the JSON remain `null` and promotion remains disabled.
+multi-package enumeration, that result is not a GLES qualification identity.
 
 The native arm64 Debian control described above reproduces this exact partial
 digest and failure using the same CTS bytes over direct virgl, while the
-standalone GLES 2 and GLES 3 text exports complete. It isolates the blocker to
-the released multi-package hierarchy/context behavior rather than UML,
-Darwin's Virtio-GPU transport, or either guest page profile.
+standalone and filtered Khronos GLES 2 and GLES 3 text exports complete. It
+isolates the global-export failure to the released multi-package
+hierarchy/context behavior rather than UML, Darwin's Virtio-GPU transport, or
+either guest page profile.
+
+The repository runner's `--inventory` mode now owns the exact lower shared
+baseline scope instead of every package linked into `glcts`. It exports only
+`KHR-GLES2.*` and `KHR-GLES3.*` through the real display, validates the exact
+two-module boundary, concatenates in fixed profile order, and checks the
+frozen 6,972-case digest
+`3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
+The checked identity is complete for that GLES 2/GLES 3 hierarchy scope; the
+separately hashed official must-pass leaves remain the execution authority.
 
 ## Frozen campaign and performance policy
 
