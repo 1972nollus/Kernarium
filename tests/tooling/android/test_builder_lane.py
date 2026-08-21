@@ -96,6 +96,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
+                          unsupported_hal: bool = False,
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
@@ -183,6 +184,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.boot.apex", b"apex"
                     )
+                if unsupported_hal:
+                    archive.writestr("VENDOR/apex/com.google.cf.bt.apex", b"apex")
 
         good = root / "good.zip"
         write_fixture(good)
@@ -212,6 +215,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
+            ("unsupported-hal", {"unsupported_hal": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
@@ -786,6 +790,15 @@ def main() -> None:
         "external_storage.casefold.enabled=1",
         "external_storage.sdcardfs.enabled=0",
         "latemount,wait,check,formattable,keydirectory=",
+        "BOARD_HAVE_BLUETOOTH := false",
+        "CF_VENDOR_NO_UWB := true",
+        "CF_VENDOR_NO_THREADNETWORK := true",
+        "LOCAL_ENABLE_LIGHT := false",
+        "LOCAL_ENABLE_OEMLOCK := false",
+        "LOCAL_ENABLE_NEURALNETWORKS := false",
+        "LOCAL_ENABLE_NEURALNETWORKS ?= true",
+        "LOCAL_ENABLE_SENSORS := false",
+        "LOCAL_ENABLE_SENSORS ?= true",
     ):
         if token not in cuttlefish_patches:
             fail(f"Cuttlefish patch route is missing userdata quota policy: {token}")
@@ -852,6 +865,14 @@ def main() -> None:
         "android.hardware.boot-service.default_recovery",
         "update_engine_sideload",
         "trusty_security_vm.elf",
+        "android.hardware.sensors-service.multihal",
+        "com.android.hardware.neuralnetworks",
+        "com.android.hardware.threadnetwork",
+        "com.android.hardware.uwb",
+        "com.google.cf.bt",
+        "com.google.cf.light",
+        "com.google.cf.oemlock",
+        "cuttlefish_sensor_injection",
         "target-files-package",
         "device_google_cuttlefish_uml_config_ueventd_rc",
         "fstab.uml.vendor_ramdisk",
@@ -865,6 +886,13 @@ def main() -> None:
         "VENDOR/etc/vintf/manifest.xml",
         "VENDOR/etc/vintf/compatibility_matrix.xml",
         "VENDOR/apex/com.android.hardware.boot.apex",
+        "VENDOR/apex/com.android.hardware.neuralnetworks.apex",
+        "VENDOR/apex/com.android.hardware.threadnetwork.apex",
+        "VENDOR/apex/com.android.hardware.uwb.apex",
+        "VENDOR/apex/com.google.cf.bt.apex",
+        "VENDOR/apex/com.google.cf.light.apex",
+        "VENDOR/apex/com.google.cf.oemlock.apex",
+        "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")

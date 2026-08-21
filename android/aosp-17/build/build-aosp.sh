@@ -273,6 +273,22 @@ for package in \
 	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
 		fail "Cuttlefish A/B package is forbidden for the fixed UBD product: $package"
 done
+for package in \
+	ThreadNetworkDemoApp \
+	android.hardware.sensors-service.multihal \
+	android.hardware.sensors@2.1-impl.cuttlefish \
+	com.android.hardware.neuralnetworks \
+	com.android.hardware.threadnetwork \
+	com.android.hardware.uwb \
+	com.google.cf.bt \
+	com.google.cf.light \
+	com.google.cf.oemlock \
+	cuttlefish_overlay_uwb \
+	cuttlefish_overlay_uwb_gsi \
+	cuttlefish_sensor_injection; do
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "unsupported Cuttlefish HAL package is present: $package"
+done
 
 # target-files always carries a kernel input even when this product does not
 # build an Android boot image. Stage only the already-built, verified ACK UML
