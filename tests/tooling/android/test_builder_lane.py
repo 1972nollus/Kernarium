@@ -773,6 +773,8 @@ def main() -> None:
         "ro.boot.uml_bpf_interpreter",
         "api_level_full >= NETBPFLOAD_25Q2_VER && !umlInterpreter",
         "UML kernel has no eBPF JIT; using its built-in interpreter.",
+        "isAtLeastKernelVersion(6, 6, 118) && !umlInterpreter",
+        "UML BPF interpreter cannot execute callbacks; using inline BPF objects.",
     ):
         if token not in connectivity_patch and token not in (
             android_root / "patches/projects.tsv"

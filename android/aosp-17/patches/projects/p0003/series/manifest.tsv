@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-netbpfload-allow-UML-interpreter-m.patch	433ebd56a93ea6141bf8ebc93ad6ddb7c34a61f1	19276cb1603b9d936f1e985ffc69ec90b7b8c2ac5d450f3688ee72ce214c9b3a	UML-ANDROID-LOCAL: netbpfload: allow UML interpreter mode
+1	0001-UML-ANDROID-LOCAL-netbpfload-allow-UML-interpreter-m.patch	a55bdba0dee576acab94256c4fad5b19829bb87c	270ffaa619ab4a57df0c53f138b26b3374f863c43b4a2575a264d150a67f01d6	UML-ANDROID-LOCAL: netbpfload: allow UML interpreter mode

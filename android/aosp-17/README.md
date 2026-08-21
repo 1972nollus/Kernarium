@@ -218,8 +218,11 @@ JIT sysctls are absent and the explicit boot property is present, using the
 kernel's built-in verifier and generic interpreter instead. An inconsistent
 lone kallsyms sysctl remains fatal. The same explicit property permits a zero
 JIT-image length during post-load validation; program identity and translated
-bytecode length remain mandatory. The runtime adds its local `ubd0=` disk and
-initrd paths; no builder or workstation path is stored in this tree.
+bytecode length remain mandatory. When the current loader would otherwise use
+the callback/bpf-to-bpf `@funcs` objects, interpreter mode selects the shipped
+inline `dscpPolicy.o` and `netd.o` variants instead; it does not omit those
+networking programs. The runtime adds its local `ubd0=` disk and initrd paths;
+no builder or workstation path is stored in this tree.
 
 This accommodation is not a claim of stock Android or VTS eBPF-JIT
 compliance. ACK's native arm64 JIT depends on native CPU-capability, `pt_regs`,

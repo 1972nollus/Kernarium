@@ -1,29 +1,52 @@
-From 6d8ac5b9ad4889e6048eb7503bd117bfca49e569 Mon Sep 17 00:00:00 2001
+From 6ad7f8e3c30a046d907e8c1996c3e65d5371cf23 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 01:18:01 +0000
 Subject: [PATCH 1/1] UML-ANDROID-LOCAL: netbpfload: allow UML interpreter mode
 
 Change-Id: I7f4ccfc1f083fe0ffeeabf456d42c133a01f7ff2
 ---
- bpf/loader/NetBpfLoad.cpp | 41 ++++++++++++++++++++++++++-------------
- 1 file changed, 28 insertions(+), 13 deletions(-)
+ bpf/loader/NetBpfLoad.cpp | 49 ++++++++++++++++++++++++++++-----------
+ 1 file changed, 35 insertions(+), 14 deletions(-)
 
 diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
-index 7ba3247dcc6f31ab9b612d410202067c821ab58a..deb2ffd13b32bee00702a69073fbaeaaf9c5604a 100644
+index 7ba3247dcc6f31ab9b612d410202067c821ab58a..33c17c50786a232a59f7ee39241ba94ef3fbea10 100644
 --- a/bpf/loader/NetBpfLoad.cpp
 +++ b/bpf/loader/NetBpfLoad.cpp
-@@ -1002,7 +1002,9 @@ static int validateProg(const borrowed_fd& fd, const char* const progPinLoc) {
+@@ -976,6 +976,10 @@ static int pinProg(const borrowed_fd& fd, const struct bpf_prog_def& progDef) {
+     return 0;
+ }
+ 
++static bool useUmlBpfInterpreter() {
++    return GetProperty("ro.boot.uml_bpf_interpreter", "0") == "1";
++}
++
+ static int validateProg(const borrowed_fd& fd, const char* const progPinLoc) {
+     if (!isAtLeastKernelVersion(4, 14)) {
+         return 0;
+@@ -1002,7 +1006,8 @@ static int validateProg(const borrowed_fd& fd, const char* const progPinLoc) {
      }
      if (!isUser) ALOGD("prog %s id %d len jit:%d xlat:%d", progPinLoc, progId, jitLen, xlatLen);
  
 -    if (!jitLen && api_level_full >= NETBPFLOAD_25Q2_VER) {
-+    const bool umlInterpreter =
-+            GetProperty("ro.boot.uml_bpf_interpreter", "0") == "1";
++    const bool umlInterpreter = useUmlBpfInterpreter();
 +    if (!jitLen && api_level_full >= NETBPFLOAD_25Q2_VER && !umlInterpreter) {
          ALOGE("Kernel eBPF JIT failure for %s", progPinLoc);
          return -ENOTSUP;
      }
-@@ -1748,18 +1750,31 @@ static int doLoad(char** argv, char * const envp[]) {
+@@ -1351,7 +1356,11 @@ static bool loadObject(const char* const progPath, const bool useLibbpf = true)
+ static bool loadAllObjects() {
+     // Enable on kernels that have the BPF CFI backports, see: b/488034908
+     // b/494690861: funcs may trigger Real-time Kernel Protection (RKP)
+-    bool funcs = isAtLeast26Q2 && isAtLeastKernelVersion(6, 6, 118);
++    const bool umlInterpreter = useUmlBpfInterpreter();
++    bool funcs = isAtLeast26Q2 && isAtLeastKernelVersion(6, 6, 118) && !umlInterpreter;
++    if (umlInterpreter) {
++        ALOGW("UML BPF interpreter cannot execute callbacks; using inline BPF objects.");
++    }
+ 
+     if (!loadObject(BPFROOT "offload.o", /*libbpf*/false)) return false;
+     if (!loadObject(BPFROOT "test.o")) return false;
+@@ -1748,18 +1757,30 @@ static int doLoad(char** argv, char * const envp[]) {
          // on Android T and earlier versions they're written from the 'load_bpf_programs'
          // trigger (ie. by init itself) instead.
  
@@ -41,8 +64,7 @@ index 7ba3247dcc6f31ab9b612d410202067c821ab58a..deb2ffd13b32bee00702a69073fbaeaa
 -        if (!writeFile("/proc/sys/net/core/bpf_jit_kallsyms", "1\n")) return 25;
 +        static constexpr char kBpfJitEnable[] = "/proc/sys/net/core/bpf_jit_enable";
 +        static constexpr char kBpfJitKallsyms[] = "/proc/sys/net/core/bpf_jit_kallsyms";
-+        const bool umlInterpreter =
-+                GetProperty("ro.boot.uml_bpf_interpreter", "0") == "1";
++        const bool umlInterpreter = useUmlBpfInterpreter();
 +
 +        if (!exists(kBpfJitEnable) && umlInterpreter) {
 +            if (exists(kBpfJitKallsyms)) {
