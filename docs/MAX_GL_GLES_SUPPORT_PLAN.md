@@ -55,18 +55,21 @@ receipt; the new receipt proves only the checked derivative build. The initial
 all-package display-backed export aborts at `dEQP-GL45-ES3` with
 `EGL_BAD_MATCH` after eight modules and 148,476 rows. A native arm64 Debian 13
 VM running the byte-identical payload over direct virgl reproduced the exact
-status, row count, and partial digest, proving this is released hierarchy
-behavior rather than an emulator defect. Source inspection shows that the
+status, row count, and partial digest. That VM is diagnostic evidence only: it
+is not a conformance oracle and cannot excuse an emulator failure. Released
+source inspection independently shows that the
 package deliberately requests a real core GL 4.5 context even outside execute
 mode. It is an ES-on-desktop-GL compatibility package, not a GLES 2/GLES 3
 profile requirement; rebuilding or modifying CTS is neither necessary nor
-valid.
+valid. Compliance must be established by the complete official matrices in
+this emulator.
 
 The qualification inventory is now explicitly scoped to the lower shared GLES
 baseline. Unmodified `glcts` exports `KHR-GLES2.*` and `KHR-GLES3.*` in two
 separate status-zero runs, and the runner requires exactly those modules with
-no cross-module rows. The native VM produced 473 and 6,499 hierarchy cases.
-The real 16 KiB common ANGLE/Metal emulator then passed the same scoped capture
+no cross-module rows. The native VM diagnostic produced 473 and 6,499
+hierarchy cases, but those counts are not acceptance evidence. The real 16 KiB
+common ANGLE/Metal emulator independently passed the scoped capture
 with JIT, ten vCPUs, the sealed derivative mounted read-only below OverlayFS,
 status zero, clean shutdown, 6,972 total cases, and SHA-256
 `3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`.
@@ -115,6 +118,16 @@ GLES 2 preflight of config ID 1 and fraction 0/64 then completed with six
 and clean shutdown. This proves the first-config expansion, shard selection,
 artifact union, and released status policy end to end; it is not a complete
 configuration or matrix result.
+
+The macOS matrix now has a resumable fail-closed orchestrator. It fixes every
+child to VNC, JIT, ten vCPUs, 8 GiB, and the sealed ext4 lower; freezes the Git,
+emulator, CTS, XML, oracle, config-inventory, receipt, timeout, and shard
+identities; and permits no retry to erase a failed or incomplete qualification
+attempt. Final verification reparses every retained QPA and console, checks
+artifact hashes and the released unwaived status policy, reconstructs the
+ordered leaf across fractions for every EGL config, and requires the complete
+cartesian product. Tooling and architecture registration pass. No complete
+matrix result is claimed by this automation checkpoint.
 
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest

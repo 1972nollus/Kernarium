@@ -1184,6 +1184,8 @@ def validate_qpa_union(qpa: str, selected: Sequence[str]) -> dict[str, str]:
         if unexpected:
             details.append(f"unexpected={unexpected[:5]!r}")
         raise CampaignError("incomplete QPA case union: " + ", ".join(details))
+    if list(results) != list(selected):
+        raise CampaignError("QPA case order does not match the selected caselist")
     return results
 
 
@@ -2595,6 +2597,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs_type": rootfs_contract.filesystem_type,
         "rootfs_sha256": rootfs_contract.sha256,
         "glcts_sha256": rootfs_contract.glcts_sha256,
+        "emulator_sha256": hashlib.sha256(emulator_bytes).hexdigest(),
         "qualification": options.qualification,
         "launch_environment": {
             "UML_GPU_CAPABILITY_REPORT": "1",

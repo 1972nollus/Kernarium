@@ -132,7 +132,9 @@ Filtered `glcts` exports of `KHR-GLES2.*` and `KHR-GLES3.*` also returned zero
 in the VM, producing the same 473-case and 6,499-case package hierarchies later
 captured in the emulator.
 
-The released source accounts for the native/emulator match.
+The VM observation is diagnostic only and is not a conformance oracle. The
+released source, rather than agreement with the VM, accounts for why the
+global traversal reaches this out-of-scope context request.
 `framework/common/tcuTestHierarchyUtil.cpp` inflates every registered package
 during a text-caselist export, and
 `external/openglcts/modules/glcTestPackageRegistry.cpp` registers
@@ -141,9 +143,10 @@ during a text-caselist export, and
 execute mode, so the former package lists successfully. The GLES 3 context in
 `modules/gles3/tes3Context.cpp` has no corresponding run-mode branch, while
 `modules/gles3/tgl45es3TestPackage.cpp` requests `glu::ApiType::core(4, 5)`,
-so the latter package asks the truthful GL 2.1 renderer for a real GL 4.5
-context and receives `EGL_BAD_MATCH`. This is not an emulator-only defect, and
-rebuilding the same unmodified source would preserve it. Patching CTS listing
+so the latter package asks a GL 2.1 renderer for a real GL 4.5 context and
+receives `EGL_BAD_MATCH`. Rebuilding the same unmodified source would preserve
+that request. This source diagnosis scopes the inventory; it does not prove
+the emulator conformant or excuse any official case failure. Patching CTS listing
 semantics would change the qualification source, so no second rootfs rebuild
 was performed. The all-package traversal is not a truthful inventory boundary
 for GLES qualification: `dEQP-GL45-ES3` is an ES test package deliberately run
@@ -353,12 +356,12 @@ guest nevertheless powered off cleanly, with evidence at
 GL 2.1/GLES 3.0 renderer cannot create every context demanded during this
 multi-package enumeration, that result is not a GLES qualification identity.
 
-The native arm64 Debian control described above reproduces this exact partial
-digest and failure using the same CTS bytes over direct virgl, while the
-standalone and filtered Khronos GLES 2 and GLES 3 text exports complete. It
-isolates the global-export failure to the released multi-package
-hierarchy/context behavior rather than UML, Darwin's Virtio-GPU transport, or
-either guest page profile.
+The native arm64 Debian diagnostic described above reproduces this exact
+partial digest and failure using the same CTS bytes over direct virgl, while
+the standalone and filtered Khronos GLES 2 and GLES 3 text exports complete.
+That is useful corroboration, but it does not isolate or clear UML, Darwin's
+Virtio-GPU transport, either guest page profile, or any official CTS result.
+The emulator's complete official matrices are the acceptance authority.
 
 The repository runner's `--inventory` mode now owns the exact lower shared
 baseline scope instead of every package linked into `glcts`. It exports only

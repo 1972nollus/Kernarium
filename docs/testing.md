@@ -779,7 +779,51 @@ host accepts the frozen 6,972-case SHA-256
 The installed official must-pass leaves remain the execution authority and
 contain 473 GLES 2 plus 6,498 GLES 3 cases.
 
-A native arm64 Debian 13 direct-virgl control using the exact installed CTS
+Enumerate the exact conformant EGL configurations in VNC before an official
+matrix. Then run the resumable matrix orchestrator against the matching
+inventory evidence. The orchestrator has no switches for the acceptance
+execution shape: every child is VNC, JIT, ten vCPUs, 8 GiB, and the sealed
+ext4 lower with disposable OverlayFS state. `--jobs` is bounded to two such
+ten-vCPU guests; `--fraction-count` changes only deterministic shard size, not
+the required config-by-case union.
+
+```sh
+python3 -B tests/integration/gpu/run_vk_gl_cts.py \
+  --config-inventory gles2 --page-profile 16k --display vnc \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+
+python3 -B tests/integration/gpu/run_vk_gl_cts_matrix.py \
+  --api gles2 \
+  --config-inventory-run .build/vk-gl-cts/CONFIG_RUN/run.json \
+  --campaign-dir .build/vk-gl-cts/matrix/gles2-16k \
+  --fraction-count 1 --jobs 2 --page-profile 16k \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+
+python3 -B tests/integration/gpu/run_vk_gl_cts_matrix.py \
+  --api gles2 \
+  --config-inventory-run .build/vk-gl-cts/CONFIG_RUN/run.json \
+  --campaign-dir .build/vk-gl-cts/matrix/gles2-16k \
+  --fraction-count 1 --jobs 2 --page-profile 16k \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
+  --verify-only
+```
+
+Use the GLES 3 config-inventory evidence and `--api gles3` for that matrix.
+The campaign specification freezes the Git and emulator identities, CTS XML,
+runner oracle, config inventory, rootfs receipt, timeouts, and shard geometry.
+Resuming skips an already verified shard but never retries or overwrites an
+attempt. A failed, truncated, interrupted, duplicated, reordered, or
+nonconformant attempt permanently fails that campaign directory; use a new
+directory after an implementation change. Final aggregation reparses every
+QPA and console, verifies all hashes and statuses, interleaves every fraction
+back into the exact ordered leaf, checks the frozen leaf SHA-256 for every EGL
+config, and requires the complete cartesian product before writing `passed`.
+
+A native arm64 Debian 13 direct-virgl diagnostic using the exact installed CTS
 payload reproduces status 137, the same eight nonempty modules and 148,476
 tests, and partial SHA-256
 `dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
@@ -790,7 +834,9 @@ global all-package hierarchy writer later initializes `dEQP-GL45-ES3`, whose
 GLES 3 context path requests a real core GL 4.5 context even outside execute
 mode. That global diagnostic still fails identically in the VM and emulator,
 but the ES-on-desktop-GL package is outside the GLES qualification scope. Do
-not rebuild the rootfs or patch CTS for that diagnostic.
+not rebuild the rootfs or patch CTS for that diagnostic. The VM is not a
+ground truth or a conformance environment: only complete official execution
+inside this emulator can establish the implementation result.
 
 Kernarium accepts no arbitrary CTS script or selector. The schema-2 Apple
 campaign document names the original exact GLES 3 declaration sentinel plus

@@ -635,6 +635,11 @@ registered_module=KHR-GLES3
             cts.parse_qpa(qpa(qpa_result(first)).replace("#endSession\n", ""))
         with self.assertRaisesRegex(cts.CampaignError, "incomplete QPA"):
             cts.validate_qpa_union(qpa(qpa_result(first)), [first, second])
+        with self.assertRaisesRegex(cts.CampaignError, "case order"):
+            cts.validate_qpa_union(
+                qpa(qpa_result(second), qpa_result(first)),
+                [first, second],
+            )
         with self.assertRaisesRegex(cts.CampaignError, "duplicate QPA"):
             cts.parse_qpa(qpa(qpa_result(first), qpa_result(first)))
 
