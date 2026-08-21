@@ -94,6 +94,70 @@ def qpa(*results: str) -> str:
     ) + "#endSession\n"
 
 
+def config_qpa(
+    api: str,
+    rows: tuple[str, ...] = (
+        "EGL(1): window, pixmap, pbuffer",
+        "EGL(2): pbuffer, pixmap",
+    ),
+    status: str = "Pass",
+) -> str:
+    case = cts.CONFIG_CASES[api]
+    messages = "".join(f"  <Text>{row}</Text>\n" for row in rows)
+    result = f"""#beginTestCaseResult {case}
+<?xml version="1.0" encoding="UTF-8"?>
+<TestCaseResult Version="0.3.4" CasePath="{case}">
+ <Section Name="Configs" Description="Configs">
+{messages} </Section>
+ <Result StatusCode="{status}">{status}</Result>
+</TestCaseResult>
+#endTestCaseResult
+"""
+    return qpa(result)
+
+
+def write_config_inventory_evidence(
+    directory: Path,
+    api: str,
+    contract: cts.RootfsContract,
+    page_profile: str = "16k",
+    display: str = "native",
+) -> Path:
+    payload = config_qpa(api).encode()
+    configs = cts.parse_egl_config_qpa(payload.decode(), api)
+    artifacts = directory / "artifacts"
+    artifacts.mkdir(parents=True)
+    (artifacts / "results.qpa").write_bytes(payload)
+    metadata = {
+        "schema_version": 1,
+        "adapter": "macos",
+        "backend": "angle-metal",
+        "mode": "config-inventory",
+        "api": api,
+        "page_profile": page_profile,
+        "display": display,
+        "rootfs_type": contract.filesystem_type,
+        "rootfs_sha256": contract.sha256,
+        "glcts_sha256": contract.glcts_sha256,
+        "emulator_return_code": 0,
+        "completed_cases": 1,
+        "status_totals": {"Pass": 1},
+        "qpa_sha256": hashlib.sha256(payload).hexdigest(),
+        "egl_config_sha256": cts.egl_config_digest(configs),
+        "egl_configs": [
+            {
+                "id": config.identifier,
+                "surface_types": list(config.surface_types),
+                "selected_surface_type": config.selected_surface_type,
+            }
+            for config in configs
+        ],
+    }
+    run = directory / "run.json"
+    run.write_text(json.dumps(metadata), encoding="utf-8")
+    return run
+
+
 def framed_artifact(name: str, payload: bytes) -> str:
     compressed = gzip.compress(payload, mtime=0)
     digest = hashlib.sha256(compressed).hexdigest()
@@ -174,6 +238,92 @@ class VkGlCtsToolingTests(unittest.TestCase):
         for leaf in leaves.values():
             self.assertRegex(leaf.sha256, r"^[0-9a-f]{64}$")
             self.assertTrue(leaf.path.startswith("/opt/vk-gl-cts/"))
+
+    def test_checked_gles_mustpass_expansion_is_exact_and_typed(self) -> None:
+        identity = cts.load_identity()
+        payload = cts.GLES_MUSTPASS_PATH.read_bytes()
+        self.assertEqual(len(payload), identity["mustpass"]["gles_xml"]["size"])
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            identity["mustpass"]["gles_xml"]["sha256"],
+        )
+        configurations = cts.load_gles_mustpass(identity)
+        self.assertEqual(
+            set(configurations).intersection(cts.BASELINE_GLES_APIS),
+            set(cts.BASELINE_GLES_APIS),
+        )
+        first = cts.baseline_mustpass_configuration(
+            configurations, "gles3", True
+        )
+        other = cts.baseline_mustpass_configuration(
+            configurations, "gles3", False
+        )
+        self.assertEqual(first.leaf.identifier, "gles3")
+        self.assertEqual(first.base_seed, 1)
+        self.assertEqual((first.surface_width, first.surface_height), (64, 64))
+        self.assertEqual(first.watchdog, "disable")
+        self.assertEqual(first.xml_arguments, other.xml_arguments)
+
+        selection = cts.Selection(first.leaf, (), 0, 8)
+        matrix = cts.MatrixRun(
+            configuration=first,
+            egl_config=cts.EglConfig(7, ("pbuffer", "pixmap")),
+            egl_config_index=0,
+            config_inventory_sha256="1" * 64,
+            selection=selection,
+            mustpass_xml_path=identity["mustpass"]["gles_xml"]["path"],
+            mustpass_xml_size=identity["mustpass"]["gles_xml"]["size"],
+            mustpass_xml_sha256=identity["mustpass"]["gles_xml"]["sha256"],
+        )
+        self.assertEqual(
+            cts.matrix_runner_arguments(matrix, "/run/uml-cts/selected.txt"),
+            [
+                "--deqp-caselist-file=/run/uml-cts/selected.txt",
+                "--deqp-screen-rotation=unspecified",
+                "--deqp-surface-width=64",
+                "--deqp-surface-height=64",
+                "--deqp-watchdog=disable",
+                "--deqp-base-seed=1",
+                "--deqp-surface-type=pbuffer",
+                "--deqp-gl-config-id=7",
+                "--deqp-gl-context-type=egl",
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "mustpass.xml"
+            changed.write_bytes(payload.replace(b"base-seed=1", b"base-seed=9", 1))
+            with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
+                cts.load_gles_mustpass(identity, changed)
+
+    def test_released_macos_runner_oracle_matches_expansion(self) -> None:
+        identity = cts.load_identity()
+        configurations = cts.load_gles_mustpass(identity)
+        oracle = cts.load_runner_oracle(identity, configurations)
+        payload = cts.RUNNER_ORACLE_PATH.read_bytes()
+        self.assertEqual(oracle.path, "tests/integration/gpu/vk_gl_cts_runner_oracle.json")
+        self.assertEqual(oracle.size, len(payload))
+        self.assertEqual(oracle.sha256, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(
+            oracle.fixture_configs,
+            (
+                cts.EglConfig(17, ("window", "pixmap", "pbuffer")),
+                cts.EglConfig(23, ("pbuffer", "pixmap")),
+                cts.EglConfig(29, ("pixmap",)),
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            changed = Path(temporary) / "oracle.json"
+            value = json.loads(payload)
+            value["summaries"]["gles3"]["runner_arguments"][1][6] = (
+                "--deqp-surface-type=window"
+            )
+            changed.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(
+                cts.CampaignError, "oracle expansion changed"
+            ):
+                cts.load_runner_oracle(identity, configurations, changed)
 
     def test_derivative_receipt_is_strict_and_tied_to_the_base(self) -> None:
         identity = cts.load_identity()
@@ -492,6 +642,35 @@ registered_module=KHR-GLES3
         with self.assertRaisesRegex(cts.CampaignError, "case-path mismatch"):
             cts.parse_qpa(qpa(payload))
 
+    def test_egl_config_qpa_is_ordered_and_fail_closed(self) -> None:
+        configs = cts.parse_egl_config_qpa(config_qpa("gles3"), "gles3")
+        self.assertEqual(
+            configs,
+            (
+                cts.EglConfig(1, ("window", "pixmap", "pbuffer")),
+                cts.EglConfig(2, ("pbuffer", "pixmap")),
+            ),
+        )
+        self.assertEqual(configs[0].selected_surface_type, "window")
+        self.assertEqual(configs[1].selected_surface_type, "pbuffer")
+        self.assertRegex(cts.egl_config_digest(configs), r"^[0-9a-f]{64}$")
+
+        with self.assertRaisesRegex(cts.CampaignError, "duplicate config"):
+            cts.parse_egl_config_qpa(
+                config_qpa("gles3", ("EGL(1): window", "EGL(1): pbuffer")),
+                "gles3",
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "no usable configs"):
+            cts.parse_egl_config_qpa(config_qpa("gles2", ()), "gles2")
+        with self.assertRaisesRegex(cts.CampaignError, "did not pass"):
+            cts.parse_egl_config_qpa(
+                config_qpa("gles2", status="Fail"), "gles2"
+            )
+        with self.assertRaisesRegex(cts.CampaignError, "unsupported row"):
+            cts.parse_egl_config_qpa(
+                config_qpa("gles2", ("EGL(1): surfaceless",)), "gles2"
+            )
+
     def test_renderer_probe_rejects_every_software_negative_control(self) -> None:
         valid = """device=/dev/dri/card0
 device=/dev/dri/renderD128
@@ -766,6 +945,135 @@ Kernarium: runtime returned 0
             cts.parse_arguments(
                 ["--inventory", "--leaf", "gles3", "--api", "gles3"]
             )
+
+    def test_config_inventory_launcher_runs_one_exact_cts_case(self) -> None:
+        launcher = cts.build_guest_launcher(
+            None,
+            0,
+            900,
+            16384,
+            erofs_contract(),
+            config_inventory_api="gles3",
+        )
+        self.assertIn("--deqp-case=CTS-Configs.es3", launcher)
+        self.assertIn("--deqp-gl-context-type=egl", launcher)
+        self.assertNotIn("--deqp-runmode=txt-caselist", launcher)
+        self.assertIn("hierarchy_inventory_mode=0", launcher)
+        self.assertIn("selected_mode=0", launcher)
+        self.assertIn("emit_artifact results.qpa", launcher)
+        syntax = subprocess.run(
+            ["sh", "-n"],
+            input=launcher,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        options = cts.parse_arguments(
+            ["--config-inventory", "gles3", "--display", "native", "--dry-run"]
+        )
+        self.assertEqual(options.config_inventory, "gles3")
+        self.assertIsNone(options.matrix_run)
+
+    def test_config_inventory_evidence_revalidates_its_qpa(self) -> None:
+        contract = erofs_contract()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            run = write_config_inventory_evidence(directory, "gles2", contract)
+            configs, digest = cts.load_config_inventory_evidence(
+                run, "gles2", "16k", "native", contract
+            )
+            self.assertEqual(len(configs), 2)
+            self.assertEqual(digest, cts.egl_config_digest(configs))
+
+            qpa_path = directory / "artifacts" / "results.qpa"
+            qpa_path.write_bytes(qpa_path.read_bytes() + b"changed")
+            with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
+                cts.load_config_inventory_evidence(
+                    run, "gles2", "16k", "native", contract
+                )
+
+    def test_matrix_cli_requires_authenticated_discovery_and_exact_xml(self) -> None:
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            receipt_path = root / "receipt.json"
+            receipt_path.write_text(
+                json.dumps(derivative_receipt(identity)), encoding="utf-8"
+            )
+            _, contract = cts.load_derivative_receipt(receipt_path, identity)
+            inventory_run = write_config_inventory_evidence(
+                root / "inventory", "gles3", contract
+            )
+            common = [
+                "--matrix",
+                "gles3",
+                "--config-inventory-run",
+                str(inventory_run),
+                "--egl-config-index",
+                "1",
+                "--fraction",
+                "3,8",
+                "--display",
+                "native",
+                "--rootfs",
+                str(root / "rootfs.ext4"),
+                "--rootfs-type",
+                "ext4",
+                "--rootfs-receipt",
+                str(receipt_path),
+                "--qualification",
+                "--dry-run",
+            ]
+            options = cts.parse_arguments(common)
+            matrix = options.matrix_run
+            self.assertEqual(
+                options.runner_oracle.path,
+                "tests/integration/gpu/vk_gl_cts_runner_oracle.json",
+            )
+            self.assertRegex(options.runner_oracle.sha256, r"^[0-9a-f]{64}$")
+            self.assertEqual(matrix.egl_config_index, 1)
+            self.assertEqual(matrix.egl_config.identifier, 2)
+            self.assertFalse(
+                matrix.configuration.use_for_first_egl_config
+            )
+            self.assertEqual(matrix.selection.expected_count, 812)
+            launcher = cts.build_guest_launcher(
+                matrix.selection,
+                options.seed,
+                options.shard_timeout,
+                16384,
+                options.rootfs_contract,
+                matrix=matrix,
+            )
+            self.assertIn("--deqp-gl-config-id=2", launcher)
+            self.assertIn("--deqp-surface-type=pbuffer", launcher)
+            self.assertIn("--deqp-base-seed=1", launcher)
+            self.assertIn("--deqp-watchdog=disable", launcher)
+            self.assertIn(identity["mustpass"]["gles_xml"]["sha256"], launcher)
+            self.assertNotIn("--deqp-base-seed=0", launcher)
+            syntax = subprocess.run(
+                ["sh", "-n"],
+                input=launcher,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+            without_qualification = [
+                item for item in common if item != "--qualification"
+            ]
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+                SystemExit
+            ):
+                cts.parse_arguments(without_qualification)
+            wrong_display = list(common)
+            wrong_display[wrong_display.index("native")] = "vnc"
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+                SystemExit
+            ):
+                cts.parse_arguments(wrong_display)
 
     def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
         generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"

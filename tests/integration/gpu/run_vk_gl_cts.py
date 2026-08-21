@@ -35,6 +35,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Sequence
+from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import virgl_capset  # noqa: E402
@@ -44,6 +45,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 IDENTITY_PATH = Path(__file__).with_name("vk_gl_cts_identity.json")
 APPLE_CAMPAIGNS_PATH = Path(__file__).with_name(
     "vk_gl_cts_apple_campaigns.json"
+)
+GLES_MUSTPASS_PATH = Path(__file__).with_name(
+    "vk_gl_cts_gles_mustpass.xml"
+)
+RUNNER_ORACLE_PATH = Path(__file__).with_name(
+    "vk_gl_cts_runner_oracle.json"
 )
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = REPO_ROOT / "rootfs.erofs"
@@ -61,9 +68,19 @@ SHARD_ARTIFACTS = frozenset(
 INVENTORY_ARTIFACTS = frozenset(
     {"inventory.txt", "renderer.txt", "results.qpa", "summary.txt"}
 )
-ALLOWED_ARTIFACTS = SHARD_ARTIFACTS | INVENTORY_ARTIFACTS
+CONFIG_INVENTORY_ARTIFACTS = frozenset(
+    {"renderer.txt", "results.qpa", "summary.txt"}
+)
+ALLOWED_ARTIFACTS = (
+    SHARD_ARTIFACTS | INVENTORY_ARTIFACTS | CONFIG_INVENTORY_ARTIFACTS
+)
 GLES_INVENTORY_SCOPE = "gles2-gles3"
 GLES_INVENTORY_MODULES = ("KHR-GLES2", "KHR-GLES3")
+BASELINE_GLES_APIS = ("gles2", "gles3")
+CONFIG_CASES = {
+    "gles2": "CTS-Configs.es2",
+    "gles3": "CTS-Configs.es3",
+}
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -111,6 +128,11 @@ NATIVE_DISPLAY_FINAL = re.compile(
 )
 RESULT_STATUS = re.compile(r"<Result\s+StatusCode=\"([^\"]+)\"")
 RESULT_CASE = re.compile(r"<TestCaseResult\b[^>]*\bCasePath=\"([^\"]+)\"")
+EGL_CONFIG_MESSAGE = re.compile(
+    r"EGL\(([1-9][0-9]*)\): "
+    r"((?:window|pixmap|pbuffer)"
+    r"(?:, (?:window|pixmap|pbuffer))*)\Z"
+)
 GUEST_ERROR = re.compile(r"UML_CTS_ERROR: ([^\r\n]+)")
 HOST_BACKEND_MARKER = "Virgl ANGLE/Metal provider:"
 RETIRED_BACKEND_MARKER = "Virgl CGL"
@@ -145,6 +167,56 @@ class Selection:
         if remaining <= 0:
             return 0
         return (remaining + self.fraction_count - 1) // self.fraction_count
+
+
+@dataclass(frozen=True)
+class MustpassConfiguration:
+    api: str
+    leaf: LeafIdentity
+    name: str
+    use_for_first_egl_config: bool
+    screen_rotation: str
+    surface_width: int
+    surface_height: int
+    base_seed: int
+    watchdog: str
+    fbo_config: str | None
+    xml_arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EglConfig:
+    identifier: int
+    surface_types: tuple[str, ...]
+
+    @property
+    def selected_surface_type(self) -> str:
+        for surface_type in ("window", "pbuffer", "pixmap"):
+            if surface_type in self.surface_types:
+                return surface_type
+        raise CampaignError(
+            f"EGL config {self.identifier} has no supported surface type"
+        )
+
+
+@dataclass(frozen=True)
+class MatrixRun:
+    configuration: MustpassConfiguration
+    egl_config: EglConfig
+    egl_config_index: int
+    config_inventory_sha256: str
+    selection: Selection
+    mustpass_xml_path: str
+    mustpass_xml_size: int
+    mustpass_xml_sha256: str
+
+
+@dataclass(frozen=True)
+class RunnerOracle:
+    path: str
+    size: int
+    sha256: str
+    fixture_configs: tuple[EglConfig, ...]
 
 
 @dataclass(frozen=True)
@@ -421,6 +493,386 @@ def leaf_identities(identity: dict[str, Any]) -> dict[str, LeafIdentity]:
     return result
 
 
+def parse_mustpass_command(arguments: tuple[str, ...]) -> dict[str, Any]:
+    values: dict[str, str] = {}
+    allowed = {
+        "deqp-screen-rotation",
+        "deqp-surface-width",
+        "deqp-surface-height",
+        "deqp-base-seed",
+        "deqp-gl-config-name",
+        "deqp-surface-type",
+        "deqp-watchdog",
+    }
+    for argument in arguments:
+        match = re.fullmatch(r"--([a-z0-9-]+)=([^\s]+)", argument)
+        if match is None or match.group(1) not in allowed:
+            raise CampaignError(
+                f"unsupported GLES must-pass argument: {argument!r}"
+            )
+        key, value = match.groups()
+        if key in values:
+            raise CampaignError(f"duplicate GLES must-pass argument: {key}")
+        values[key] = value
+
+    required = {
+        "deqp-screen-rotation",
+        "deqp-surface-width",
+        "deqp-surface-height",
+        "deqp-base-seed",
+        "deqp-watchdog",
+    }
+    if not required.issubset(values):
+        raise CampaignError("GLES must-pass command is incomplete")
+    if values["deqp-screen-rotation"] != "unspecified":
+        raise CampaignError("unsupported GLES must-pass screen rotation")
+    if values["deqp-watchdog"] != "disable":
+        raise CampaignError("unsupported GLES must-pass watchdog policy")
+    try:
+        surface_width = int(values["deqp-surface-width"])
+        surface_height = int(values["deqp-surface-height"])
+        base_seed = int(values["deqp-base-seed"])
+    except ValueError as error:
+        raise CampaignError("GLES must-pass numeric argument is invalid") from error
+    if (
+        surface_width == 0
+        or surface_width < -1
+        or surface_height == 0
+        or surface_height < -1
+        or base_seed < 0
+        or base_seed > 0xFFFFFFFF
+    ):
+        raise CampaignError("GLES must-pass numeric argument is out of range")
+
+    gl_config = values.get("deqp-gl-config-name")
+    surface_type = values.get("deqp-surface-type")
+    if (gl_config is None) != (surface_type is None):
+        raise CampaignError("GLES must-pass FBO configuration is incomplete")
+    if gl_config is not None and (
+        re.fullmatch(r"[a-z0-9]+", gl_config) is None
+        or surface_type != "fbo"
+    ):
+        raise CampaignError("unsupported GLES must-pass FBO configuration")
+    return {
+        "screen_rotation": values["deqp-screen-rotation"],
+        "surface_width": surface_width,
+        "surface_height": surface_height,
+        "base_seed": base_seed,
+        "watchdog": values["deqp-watchdog"],
+        "fbo_config": gl_config,
+    }
+
+
+def load_gles_mustpass(
+    identity: dict[str, Any] | None = None,
+    path: Path = GLES_MUSTPASS_PATH,
+) -> dict[str, tuple[MustpassConfiguration, ...]]:
+    if identity is None:
+        identity = load_identity()
+    try:
+        xml_identity = identity["mustpass"]["gles_xml"]
+    except (KeyError, TypeError) as error:
+        raise CampaignError("CTS identity has no GLES must-pass XML") from error
+    if (
+        not isinstance(xml_identity, dict)
+        or set(xml_identity) != {"path", "size", "sha256"}
+        or type(xml_identity["size"]) is not int
+        or xml_identity["size"] < 1
+        or not isinstance(xml_identity["sha256"], str)
+        or SHA256.fullmatch(xml_identity["sha256"]) is None
+    ):
+        raise CampaignError("invalid GLES must-pass XML identity")
+    try:
+        payload = path.read_bytes()
+    except OSError as error:
+        raise CampaignError(f"cannot read GLES must-pass XML {path}: {error}") from error
+    if len(payload) != xml_identity["size"]:
+        raise CampaignError("repository GLES must-pass XML size changed")
+    if hashlib.sha256(payload).hexdigest() != xml_identity["sha256"]:
+        raise CampaignError("repository GLES must-pass XML identity changed")
+    try:
+        root = ElementTree.fromstring(payload)
+    except ElementTree.ParseError as error:
+        raise CampaignError("repository GLES must-pass XML is invalid") from error
+    if root.tag != "Mustpass" or root.attrib != {"version": "main"}:
+        raise CampaignError("unsupported GLES must-pass document")
+    packages = list(root)
+    if len(packages) != 1:
+        raise CampaignError("GLES must-pass document has an unexpected package set")
+    package = packages[0]
+    if package.tag != "TestPackage" or package.attrib != {
+        "name": "Khronos Mustpass ES"
+    }:
+        raise CampaignError("unsupported GLES must-pass package")
+
+    leaves = leaf_identities(identity)
+    leaves_by_name = {Path(leaf.path).name: leaf for leaf in leaves.values()}
+    rows: dict[str, list[MustpassConfiguration]] = {}
+    required_attributes = {
+        "caseListFile",
+        "commandLine",
+        "name",
+        "os",
+        "useForFirstEGLConfig",
+    }
+    for element in package:
+        if (
+            element.tag != "Configuration"
+            or set(element.attrib) != required_attributes
+            or list(element)
+            or (element.text is not None and element.text.strip())
+        ):
+            raise CampaignError("invalid GLES must-pass configuration")
+        case_list_file = element.attrib["caseListFile"]
+        if Path(case_list_file).name != case_list_file:
+            raise CampaignError("unsafe GLES must-pass caselist path")
+        leaf = leaves_by_name.get(case_list_file)
+        if leaf is None:
+            raise CampaignError(
+                f"unidentified GLES must-pass caselist: {case_list_file}"
+            )
+        if element.attrib["os"] != "any" or re.fullmatch(
+            r"[a-z0-9-]+", element.attrib["name"]
+        ) is None:
+            raise CampaignError("unsupported GLES must-pass configuration scope")
+        first_text = element.attrib["useForFirstEGLConfig"]
+        if first_text not in {"True", "False"}:
+            raise CampaignError("invalid GLES first-config selector")
+        try:
+            xml_arguments = tuple(shlex.split(element.attrib["commandLine"]))
+        except ValueError as error:
+            raise CampaignError("invalid GLES must-pass command line") from error
+        values = parse_mustpass_command(xml_arguments)
+        configuration = MustpassConfiguration(
+            api=leaf.identifier,
+            leaf=leaf,
+            name=element.attrib["name"],
+            use_for_first_egl_config=first_text == "True",
+            xml_arguments=xml_arguments,
+            **values,
+        )
+        rows.setdefault(leaf.identifier, []).append(configuration)
+
+    result = {api: tuple(configurations) for api, configurations in rows.items()}
+    for api in BASELINE_GLES_APIS:
+        configurations = result.get(api, ())
+        if len(configurations) != 2 or {
+            item.use_for_first_egl_config for item in configurations
+        } != {True, False}:
+            raise CampaignError(
+                f"GLES must-pass XML does not define the exact {api} split"
+            )
+    return result
+
+
+def baseline_mustpass_configuration(
+    configurations: dict[str, tuple[MustpassConfiguration, ...]],
+    api: str,
+    first: bool,
+) -> MustpassConfiguration:
+    matches = [
+        item
+        for item in configurations.get(api, ())
+        if item.use_for_first_egl_config is first
+    ]
+    if len(matches) != 1:
+        raise CampaignError(f"ambiguous {api} must-pass configuration split")
+    return matches[0]
+
+
+def matrix_runner_arguments(
+    matrix: MatrixRun,
+    caselist_path: str,
+) -> list[str]:
+    configuration = matrix.configuration
+    arguments = [
+        f"--deqp-caselist-file={caselist_path}",
+        f"--deqp-screen-rotation={configuration.screen_rotation}",
+        f"--deqp-surface-width={configuration.surface_width}",
+        f"--deqp-surface-height={configuration.surface_height}",
+        f"--deqp-watchdog={configuration.watchdog}",
+        f"--deqp-base-seed={configuration.base_seed}",
+    ]
+    if configuration.fbo_config is not None:
+        arguments.extend(
+            (
+                f"--deqp-gl-config-name={configuration.fbo_config}",
+                "--deqp-surface-type=fbo",
+            )
+        )
+    else:
+        arguments.append(
+            f"--deqp-surface-type={matrix.egl_config.selected_surface_type}"
+        )
+    arguments.extend(
+        (
+            f"--deqp-gl-config-id={matrix.egl_config.identifier}",
+            "--deqp-gl-context-type=egl",
+        )
+    )
+    return arguments
+
+
+def load_runner_oracle(
+    identity: dict[str, Any] | None = None,
+    configurations: dict[
+        str, tuple[MustpassConfiguration, ...]
+    ] | None = None,
+    path: Path = RUNNER_ORACLE_PATH,
+) -> RunnerOracle:
+    if identity is None:
+        identity = load_identity()
+    if configurations is None:
+        configurations = load_gles_mustpass(identity)
+    try:
+        payload = path.read_bytes()
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CampaignError(
+            f"cannot read CTS runner oracle {path}: {error}"
+        ) from error
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "cts_release",
+        "mustpass_xml_sha256",
+        "oracle_build",
+        "fixture_egl_configs",
+        "summaries",
+    }:
+        raise CampaignError("invalid CTS runner oracle")
+    if (
+        value["schema_version"] != 1
+        or value["cts_release"] != identity["cts"]["release_label"]
+        or value["mustpass_xml_sha256"]
+        != identity["mustpass"]["gles_xml"]["sha256"]
+    ):
+        raise CampaignError("CTS runner oracle names another release")
+
+    build = value["oracle_build"]
+    build_keys = {
+        "platform",
+        "build_type",
+        "target",
+        "fixture_scope",
+        "original_runner_sha256",
+        "fixture_runner_sha256",
+        "generated_gles_header_sha256",
+        "binary_sha256",
+        "omitted_unrelated_subdirectories",
+    }
+    if not isinstance(build, dict) or set(build) != build_keys:
+        raise CampaignError("invalid CTS runner oracle build identity")
+    digests = (
+        build["original_runner_sha256"],
+        build["fixture_runner_sha256"],
+        build["generated_gles_header_sha256"],
+        build["binary_sha256"],
+    )
+    omitted = build["omitted_unrelated_subdirectories"]
+    if (
+        build["platform"] != "macos-arm64"
+        or build["build_type"] != "Release"
+        or build["target"] != "cts-runner"
+        or build["fixture_scope"]
+        != "replace-platform-config-enumeration-only"
+        or any(
+            not isinstance(item, str) or SHA256.fullmatch(item) is None
+            for item in digests
+        )
+        or digests[0] == digests[1]
+        or not isinstance(omitted, list)
+        or omitted != sorted(set(omitted))
+        or any(
+            not isinstance(item, str)
+            or item.startswith("/")
+            or ".." in Path(item).parts
+            for item in omitted
+        )
+    ):
+        raise CampaignError("invalid CTS runner oracle build identity")
+
+    fixture_configs = egl_configs_from_json(value["fixture_egl_configs"])
+    if len(fixture_configs) < 3:
+        raise CampaignError("CTS runner oracle has too few EGL fixtures")
+    summaries = value["summaries"]
+    if not isinstance(summaries, dict) or set(summaries) != set(
+        BASELINE_GLES_APIS
+    ):
+        raise CampaignError("CTS runner oracle has an invalid API set")
+    for api in BASELINE_GLES_APIS:
+        summary = summaries[api]
+        if not isinstance(summary, dict) or set(summary) != {
+            "runner_type",
+            "exit_code",
+            "summary_sha256",
+            "configuration_roles",
+            "runner_arguments",
+        }:
+            raise CampaignError(f"invalid CTS runner oracle summary for {api}")
+        roles = summary["configuration_roles"]
+        rows = summary["runner_arguments"]
+        if (
+            summary["runner_type"] != api.replace("gles", "es")
+            or summary["exit_code"] != 1
+            or not isinstance(summary["summary_sha256"], str)
+            or SHA256.fullmatch(summary["summary_sha256"]) is None
+            or roles != ["first"] + ["other"] * (len(fixture_configs) - 1)
+            or not isinstance(rows, list)
+            or len(rows) != len(fixture_configs)
+        ):
+            raise CampaignError(f"invalid CTS runner oracle summary for {api}")
+        relative_caselist = (
+            "gl_cts/data/mustpass/gles/khronos_mustpass/main/"
+            f"{Path(leaf_identities(identity)[api].path).name}"
+        )
+        for index, (config, arguments) in enumerate(
+            zip(fixture_configs, rows, strict=True)
+        ):
+            if (
+                not isinstance(arguments, list)
+                or not arguments
+                or any(not isinstance(argument, str) for argument in arguments)
+            ):
+                raise CampaignError(
+                    f"invalid CTS runner oracle arguments for {api}"
+                )
+            configuration = baseline_mustpass_configuration(
+                configurations, api, index == 0
+            )
+            matrix = MatrixRun(
+                configuration=configuration,
+                egl_config=config,
+                egl_config_index=index,
+                config_inventory_sha256="0" * 64,
+                selection=Selection(configuration.leaf, (), 0, 1),
+                mustpass_xml_path=identity["mustpass"]["gles_xml"]["path"],
+                mustpass_xml_size=identity["mustpass"]["gles_xml"]["size"],
+                mustpass_xml_sha256=identity["mustpass"]["gles_xml"][
+                    "sha256"
+                ],
+            )
+            expected = matrix_runner_arguments(matrix, relative_caselist)
+            if arguments != expected:
+                raise CampaignError(
+                    f"CTS runner oracle expansion changed for {api} "
+                    f"config index {index}"
+                )
+    resolved_path = path.resolve()
+    try:
+        recorded_path = str(resolved_path.relative_to(REPO_ROOT))
+    except ValueError:
+        recorded_path = str(resolved_path)
+    return RunnerOracle(
+        path=recorded_path,
+        size=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        fixture_configs=fixture_configs,
+    )
+
+
 def load_apple_campaigns(
     identity: dict[str, Any] | None = None,
     path: Path = APPLE_CAMPAIGNS_PATH,
@@ -531,6 +983,16 @@ def positive_integer(value: str) -> int:
         raise argparse.ArgumentTypeError("must be an integer") from error
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def nonnegative_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be nonnegative")
     return parsed
 
 
@@ -712,6 +1174,91 @@ def validate_qpa_union(qpa: str, selected: Sequence[str]) -> dict[str, str]:
             details.append(f"unexpected={unexpected[:5]!r}")
         raise CampaignError("incomplete QPA case union: " + ", ".join(details))
     return results
+
+
+def qpa_case_xml(qpa: str, case: str) -> ElementTree.Element:
+    begin = f"#beginTestCaseResult {case}"
+    end = "#endTestCaseResult"
+    lines = qpa.splitlines()
+    starts = [index for index, line in enumerate(lines) if line == begin]
+    if len(starts) != 1:
+        raise CampaignError(f"QPA does not contain one XML payload for {case}")
+    start = starts[0] + 1
+    try:
+        finish = lines.index(end, start)
+    except ValueError as error:
+        raise CampaignError(f"QPA XML payload is truncated for {case}") from error
+    payload = "\n".join(lines[start:finish]).strip()
+    if not payload:
+        raise CampaignError(f"QPA XML payload is empty for {case}")
+    try:
+        root = ElementTree.fromstring(payload)
+    except ElementTree.ParseError as error:
+        raise CampaignError(f"QPA XML payload is invalid for {case}") from error
+    if root.tag != "TestCaseResult" or root.attrib != {
+        "Version": "0.3.4",
+        "CasePath": case,
+    }:
+        raise CampaignError(f"QPA XML payload names another case for {case}")
+    return root
+
+
+def egl_config_digest(configs: Sequence[EglConfig]) -> str:
+    payload = json.dumps(
+        [
+            {
+                "id": config.identifier,
+                "surface_types": list(config.surface_types),
+            }
+            for config in configs
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def parse_egl_config_qpa(qpa: str, api: str) -> tuple[EglConfig, ...]:
+    case = CONFIG_CASES.get(api)
+    if case is None:
+        raise CampaignError(f"unsupported EGL config inventory API: {api}")
+    results = validate_qpa_union(qpa, [case])
+    validate_required_passes(results)
+    root = qpa_case_xml(qpa, case)
+    sections = [
+        element
+        for element in root.findall("Section")
+        if element.attrib.get("Name") == "Configs"
+    ]
+    if len(sections) != 1:
+        raise CampaignError("CTS config QPA has no unique Configs section")
+    section = sections[0]
+    if section.attrib != {"Name": "Configs", "Description": "Configs"}:
+        raise CampaignError("CTS config QPA has an invalid Configs section")
+    configs: list[EglConfig] = []
+    seen: set[int] = set()
+    for element in section:
+        if element.tag != "Text" or element.attrib or element.text is None:
+            raise CampaignError("CTS config QPA has an invalid config row")
+        match = EGL_CONFIG_MESSAGE.fullmatch(element.text)
+        if match is None:
+            raise CampaignError(
+                f"CTS config QPA has an unsupported row: {element.text!r}"
+            )
+        identifier = int(match.group(1))
+        surface_types = tuple(match.group(2).split(", "))
+        if (
+            identifier in seen
+            or len(surface_types) != len(set(surface_types))
+        ):
+            raise CampaignError("CTS config QPA has a duplicate config entry")
+        seen.add(identifier)
+        config = EglConfig(identifier, surface_types)
+        config.selected_surface_type
+        configs.append(config)
+    if not configs:
+        raise CampaignError("CTS config QPA enumerated no usable configs")
+    return tuple(configs)
 
 
 def status_totals(results: dict[str, str]) -> dict[str, int]:
@@ -1098,7 +1645,22 @@ def build_guest_launcher(
     timeout: int,
     guest_page_size: int,
     rootfs_contract: RootfsContract,
+    *,
+    config_inventory_api: str | None = None,
+    matrix: MatrixRun | None = None,
 ) -> str:
+    if config_inventory_api is not None and config_inventory_api not in CONFIG_CASES:
+        raise CampaignError(
+            f"unsupported EGL config inventory API: {config_inventory_api}"
+        )
+    if config_inventory_api is not None and selection is not None:
+        raise CampaignError("config inventory cannot carry a must-pass selection")
+    if matrix is not None and (
+        selection is None or selection != matrix.selection
+    ):
+        raise CampaignError("matrix run does not match its selected shard")
+    if matrix is not None and config_inventory_api is not None:
+        raise CampaignError("matrix and config inventory modes are exclusive")
     glcts = "/opt/vk-gl-cts/openglcts/glcts"
     archive = "/opt/vk-gl-cts/openglcts"
     output = "/run/uml-cts"
@@ -1107,7 +1669,8 @@ def build_guest_launcher(
     renderer = f"{output}/renderer.txt"
     summary = f"{output}/summary.txt"
     inventory_report = f"{output}/inventory.txt"
-    inventory = selection is None
+    hierarchy_inventory = selection is None and config_inventory_api is None
+    config_inventory = config_inventory_api is not None
     derivative_checks = ""
     if rootfs_contract.filesystem_type == "ext4":
         derivative_checks = f"""
@@ -1124,7 +1687,7 @@ actual_receipt_sha=$(sha256sum \
     exit 1
 }}
 """
-    if inventory:
+    if hierarchy_inventory:
         export_pattern = f"{output}/${{packageName}}-cases.${{typeExtension}}"
         inventory_commands = []
         for module in GLES_INVENTORY_MODULES:
@@ -1143,6 +1706,28 @@ actual_receipt_sha=$(sha256sum \
                 )
             )
         command = ["/bin/sh", "-c", " &&\n".join(inventory_commands)]
+    elif config_inventory:
+        command = [
+            glcts,
+            f"--deqp-case={CONFIG_CASES[config_inventory_api]}",
+            "--deqp-gl-context-type=egl",
+            f"--deqp-archive-dir={archive}",
+            "--deqp-log-flush=enable",
+            f"--deqp-log-filename={qpa}",
+        ]
+    elif matrix is not None:
+        command = [
+            glcts,
+            *matrix_runner_arguments(matrix, selected),
+            f"--deqp-archive-dir={archive}",
+            "--deqp-crashhandler=disable",
+            "--deqp-test-oom=disable",
+            "--deqp-log-images=disable",
+            "--deqp-log-shader-sources=disable",
+            "--deqp-log-flush=enable",
+            "--deqp-terminate-on-fail=disable",
+            f"--deqp-log-filename={qpa}",
+        ]
     else:
         command = [
             glcts,
@@ -1160,11 +1745,12 @@ actual_receipt_sha=$(sha256sum \
             f"--deqp-log-filename={qpa}",
         ]
     quoted_command = " \\\n    ".join(shlex.quote(argument) for argument in command)
-    leaf_path = "" if inventory else selection.leaf.path
+    leaf_path = "" if selection is None else selection.leaf.path
     leaf_identity_check = ""
+    mustpass_identity_check = ""
     prepare_command = ""
     post_run_command = ""
-    if inventory:
+    if hierarchy_inventory:
         post_run_command = """
 LC_ALL=C
 export LC_ALL
@@ -1214,6 +1800,8 @@ caselist_count=$(awk '$1 == "TEST:" { count++ } END { print count + 0 }' "$selec
 } > "$inventory_report"
 chown uml:uml "$inventory_report" "$renderer"
 """
+    elif config_inventory:
+        pass
     elif not selection.exact_cases:
         selection_command = (
             "awk -v index="
@@ -1231,7 +1819,7 @@ chown uml:uml "$inventory_report" "$renderer"
             for case in selection.exact_cases
         )
         selection_command = "\n".join(selection_lines)
-    if not inventory:
+    if selection is not None:
         leaf_identity_check = f"""
 actual_leaf_sha=$(sha256sum "$leaf" | cut -d ' ' -f 1)
 [ "$actual_leaf_sha" = {shlex.quote(selection.leaf.sha256)} ] || {{
@@ -1248,6 +1836,20 @@ selected_count=$(grep -Evc '^[[:space:]]*(#|$)' "$selected")
 }}
 chown uml:uml "$selected" "$renderer"
 """
+    if matrix is not None:
+        mustpass_identity_check = f"""
+actual_mustpass_size=$(wc -c < {shlex.quote(matrix.mustpass_xml_path)} | tr -d ' ')
+[ "$actual_mustpass_size" -eq {matrix.mustpass_xml_size} ] || {{
+    echo 'UML_CTS_ERROR: GLES must-pass XML size changed'
+    exit 1
+}}
+actual_mustpass_sha=$(sha256sum \
+    {shlex.quote(matrix.mustpass_xml_path)} | cut -d ' ' -f 1)
+[ "$actual_mustpass_sha" = {shlex.quote(matrix.mustpass_xml_sha256)} ] || {{
+    echo 'UML_CTS_ERROR: GLES must-pass XML identity changed'
+    exit 1
+}}
+"""
 
     return f"""#!/bin/sh
 set -eu
@@ -1258,7 +1860,8 @@ qpa={shlex.quote(qpa)}
 renderer={shlex.quote(renderer)}
 summary={shlex.quote(summary)}
 inventory_report={shlex.quote(inventory_report)}
-inventory_mode={1 if inventory else 0}
+hierarchy_inventory_mode={1 if hierarchy_inventory else 0}
+selected_mode={1 if selection is not None else 0}
 status=1
 
 emit_artifact()
@@ -1291,9 +1894,9 @@ finish()
     printf 'cts_rc=%s\n' "$status" > "$summary"
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
     emit_artifact renderer.txt "$renderer"
-    if [ "$inventory_mode" -eq 1 ]; then
+    if [ "$hierarchy_inventory_mode" -eq 1 ]; then
         emit_artifact inventory.txt "$inventory_report"
-    else
+    elif [ "$selected_mode" -eq 1 ]; then
         emit_artifact selected.txt "$selected"
     fi
     emit_artifact results.qpa "$qpa"
@@ -1311,6 +1914,7 @@ actual_page_size=$(getconf PAGESIZE)
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" >> "$renderer"
 {derivative_checks}
+{mustpass_identity_check}
 {leaf_identity_check}
 actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
 [ "$actual_glcts_sha" = {shlex.quote(rootfs_contract.glcts_sha256)} ] || {{
@@ -1403,7 +2007,7 @@ exit "$status"
 
 
 CTS_SERVICE = """[Unit]
-Description=Darwin UML VK-GL-CTS developer shard
+Description=Darwin UML VK-GL-CTS campaign
 After=display-manager.service
 Wants=display-manager.service
 
@@ -1425,25 +2029,25 @@ def build_harness_command(
     artifact_directory: Path,
 ) -> list[str]:
     launcher_arguments = [
-            "--display",
-            options.display,
-            "--emulator",
-            str(options.emulator),
-            "--rootfs",
-            str(options.rootfs),
-            "--rootfs-type",
-            options.rootfs_type,
-            "--memory",
-            options.memory,
-            "--cpus",
-            str(options.cpus),
-            "--engine",
-            options.engine,
-            "--width",
-            str(options.width),
-            "--height",
-            str(options.height),
-        ]
+        "--display",
+        options.display,
+        "--emulator",
+        str(options.emulator),
+        "--rootfs",
+        str(options.rootfs),
+        "--rootfs-type",
+        options.rootfs_type,
+        "--memory",
+        options.memory,
+        "--cpus",
+        str(options.cpus),
+        "--engine",
+        options.engine,
+        "--width",
+        str(options.width),
+        "--height",
+        str(options.height),
+    ]
     if options.display == "vnc":
         launcher_arguments.extend(("--port", "0"))
     launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
@@ -1458,6 +2062,8 @@ def build_harness_command(
                 options.shard_timeout,
                 16384 if options.page_profile == "16k" else 4096,
                 options.rootfs_contract,
+                config_inventory_api=options.config_inventory,
+                matrix=options.matrix_run,
             ),
             "0755",
         ),
@@ -1536,6 +2142,110 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def egl_configs_from_json(value: Any) -> tuple[EglConfig, ...]:
+    if not isinstance(value, list) or not value:
+        raise CampaignError("config-inventory evidence has no EGL configs")
+    configs: list[EglConfig] = []
+    seen: set[int] = set()
+    for row in value:
+        if not isinstance(row, dict) or set(row) != {
+            "id",
+            "surface_types",
+            "selected_surface_type",
+        }:
+            raise CampaignError("config-inventory evidence has an invalid row")
+        identifier = row["id"]
+        surfaces = row["surface_types"]
+        if (
+            type(identifier) is not int
+            or identifier < 1
+            or identifier in seen
+            or not isinstance(surfaces, list)
+            or not surfaces
+            or any(
+                surface not in {"window", "pbuffer", "pixmap"}
+                for surface in surfaces
+            )
+            or len(surfaces) != len(set(surfaces))
+        ):
+            raise CampaignError("config-inventory evidence has an invalid row")
+        config = EglConfig(identifier, tuple(surfaces))
+        if row["selected_surface_type"] != config.selected_surface_type:
+            raise CampaignError(
+                "config-inventory evidence changed its selected surface type"
+            )
+        seen.add(identifier)
+        configs.append(config)
+    return tuple(configs)
+
+
+def load_config_inventory_evidence(
+    path: Path,
+    api: str,
+    page_profile: str,
+    display: str,
+    rootfs_contract: RootfsContract,
+) -> tuple[tuple[EglConfig, ...], str]:
+    try:
+        metadata = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise CampaignError(
+            f"cannot read config-inventory evidence {path}: {error}"
+        ) from error
+    if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+        raise CampaignError("unsupported config-inventory evidence")
+    expected = {
+        "adapter": "macos",
+        "backend": "angle-metal",
+        "mode": "config-inventory",
+        "api": api,
+        "page_profile": page_profile,
+        "display": display,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
+        "glcts_sha256": rootfs_contract.glcts_sha256,
+        "emulator_return_code": 0,
+        "completed_cases": 1,
+        "status_totals": {"Pass": 1},
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise CampaignError(
+                f"config-inventory evidence does not match {key}"
+            )
+    configs = egl_configs_from_json(metadata.get("egl_configs"))
+    digest = metadata.get("egl_config_sha256")
+    if (
+        not isinstance(digest, str)
+        or SHA256.fullmatch(digest) is None
+        or digest != egl_config_digest(configs)
+    ):
+        raise CampaignError("config-inventory evidence digest changed")
+    qpa_digest = metadata.get("qpa_sha256")
+    if not isinstance(qpa_digest, str) or SHA256.fullmatch(qpa_digest) is None:
+        raise CampaignError("config-inventory QPA identity is invalid")
+    qpa_path = path.parent / "artifacts" / "results.qpa"
+    try:
+        qpa_payload = qpa_path.read_bytes()
+    except OSError as error:
+        raise CampaignError(
+            f"cannot read config-inventory QPA {qpa_path}: {error}"
+        ) from error
+    if hashlib.sha256(qpa_payload).hexdigest() != qpa_digest:
+        raise CampaignError("config-inventory QPA identity changed")
+    try:
+        qpa_text = qpa_payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise CampaignError("config-inventory QPA is not UTF-8") from error
+    parsed = parse_egl_config_qpa(qpa_text, api)
+    if parsed != configs:
+        raise CampaignError("config-inventory QPA and metadata disagree")
+    return configs, digest
+
+
 def api_for_leaf(identifier: str) -> str:
     return identifier.split("-", 1)[0]
 
@@ -1544,15 +2254,27 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     identity = load_identity()
     leaves = leaf_identities(identity)
     campaigns = load_apple_campaigns(identity)
+    mustpass = load_gles_mustpass(identity)
     parser = argparse.ArgumentParser(
         description="run a bounded in-image VK-GL-CTS shard through Virgl"
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--inventory",
         action="store_true",
         help="capture the complete display-backed GLES 2/3 text caselist",
     )
-    parser.add_argument("--campaign", choices=sorted(campaigns))
+    mode.add_argument(
+        "--config-inventory",
+        choices=BASELINE_GLES_APIS,
+        help="enumerate the ordered conformant EGL configs for one GLES API",
+    )
+    mode.add_argument(
+        "--matrix",
+        choices=BASELINE_GLES_APIS,
+        help="run one exact official must-pass matrix shard",
+    )
+    mode.add_argument("--campaign", choices=sorted(campaigns))
     parser.add_argument("--leaf", choices=sorted(leaves))
     parser.add_argument(
         "--api",
@@ -1563,6 +2285,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     selection.add_argument("--case", type=exact_case)
     selection.add_argument("--fraction", type=parse_fraction)
     parser.add_argument("--seed", type=int)
+    parser.add_argument("--config-inventory-run", type=Path)
+    parser.add_argument("--egl-config-index", type=nonnegative_integer)
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument("--display", choices=("vnc", "native"), default="vnc")
@@ -1571,7 +2295,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--width", type=positive_integer, default=1280)
     parser.add_argument("--height", type=positive_integer, default=720)
     parser.add_argument("--shard-timeout", type=positive_integer)
-    parser.add_argument("--guest-timeout", type=positive_integer, default=1200)
+    parser.add_argument("--guest-timeout", type=positive_integer)
     parser.add_argument("--emulator", type=Path)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
     parser.add_argument(
@@ -1589,10 +2313,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--qualification",
         action="store_true",
-        help="require a frozen build receipt, caselist, and official matrix",
+        help="mark an authenticated official-matrix candidate shard",
     )
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
+    matrix_only_arguments = (
+        options.config_inventory_run is not None
+        or options.egl_config_index is not None
+    )
     if options.inventory:
         if (
             options.campaign is not None
@@ -1604,6 +2332,37 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error("--inventory does not accept a case or fraction")
         if options.qualification:
             parser.error("inventory capture is diagnostic, not qualification")
+        if matrix_only_arguments or options.seed is not None:
+            parser.error("--inventory does not accept matrix or seed options")
+    elif options.config_inventory is not None:
+        if options.leaf is not None or options.api is not None:
+            parser.error("--config-inventory does not accept a leaf or --api")
+        if options.case is not None or options.fraction is not None:
+            parser.error("--config-inventory does not accept a case or fraction")
+        if matrix_only_arguments or options.seed is not None:
+            parser.error(
+                "--config-inventory does not accept matrix or seed options"
+            )
+        if options.qualification:
+            parser.error(
+                "config discovery is an input to, not itself, qualification"
+            )
+    elif options.matrix is not None:
+        if options.leaf is not None or options.api is not None:
+            parser.error("--matrix owns its exact leaf and API")
+        if options.case is not None:
+            parser.error("--matrix does not accept an exact-case selector")
+        if options.seed is not None:
+            parser.error("--matrix uses the seed from mustpass.xml")
+        if options.config_inventory_run is None or options.egl_config_index is None:
+            parser.error(
+                "--matrix requires --config-inventory-run and "
+                "--egl-config-index"
+            )
+        if not options.qualification:
+            parser.error("--matrix requires --qualification")
+        if options.display != "native":
+            parser.error("a macOS qualification matrix requires --display native")
     elif options.campaign is not None:
         if (
             options.leaf is not None
@@ -1616,6 +2375,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             )
         if options.seed is not None or options.shard_timeout is not None:
             parser.error("--campaign owns its seed and shard timeout")
+        if matrix_only_arguments:
+            parser.error("--campaign does not accept matrix options")
         campaign = campaigns[options.campaign]
         options.seed = campaign.seed
         options.shard_timeout = campaign.shard_timeout
@@ -1626,15 +2387,23 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error(
                 f"--leaf {options.leaf} does not belong to --api {options.api}"
             )
+        if matrix_only_arguments:
+            parser.error("a developer shard does not accept matrix options")
     if options.seed is None:
         options.seed = 0
     if options.shard_timeout is None:
-        options.shard_timeout = 900
+        options.shard_timeout = 1800 if options.matrix is not None else 900
+    if options.guest_timeout is None:
+        options.guest_timeout = options.shard_timeout + 600
     if options.fraction is None:
         options.fraction = (0, 1)
     if options.seed < 0 or options.seed > 0xFFFFFFFF:
         parser.error("--seed must be between 0 and 4294967295")
-    if options.qualification and not identity["cts"]["qualification_ready"]:
+    if (
+        options.qualification
+        and options.matrix is None
+        and not identity["cts"]["qualification_ready"]
+    ):
         parser.error(identity["cts"]["qualification_blocker"])
     if options.emulator is None:
         options.emulator = (
@@ -1650,9 +2419,48 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         parser.error(str(error))
     options.derivative_receipt = receipt
     options.rootfs_contract = contract
+    options.matrix_run = None
+    options.runner_oracle = None
+    if options.matrix is not None:
+        if contract.filesystem_type != "ext4" or receipt is None:
+            parser.error(
+                "an official matrix requires the authenticated derivative ext4 rootfs"
+            )
+        try:
+            options.runner_oracle = load_runner_oracle(identity, mustpass)
+            configs, config_digest = load_config_inventory_evidence(
+                options.config_inventory_run.resolve(),
+                options.matrix,
+                options.page_profile,
+                options.display,
+                contract,
+            )
+        except (CampaignError, UnicodeDecodeError) as error:
+            parser.error(str(error))
+        if options.egl_config_index >= len(configs):
+            parser.error(
+                f"--egl-config-index exceeds the {len(configs)} discovered configs"
+            )
+        fraction_index, fraction_count = options.fraction
+        leaf = leaves[options.matrix]
+        selected = Selection(leaf, (), fraction_index, fraction_count)
+        xml_identity = identity["mustpass"]["gles_xml"]
+        options.matrix_run = MatrixRun(
+            configuration=baseline_mustpass_configuration(
+                mustpass, options.matrix, options.egl_config_index == 0
+            ),
+            egl_config=configs[options.egl_config_index],
+            egl_config_index=options.egl_config_index,
+            config_inventory_sha256=config_digest,
+            selection=selected,
+            mustpass_xml_path=xml_identity["path"],
+            mustpass_xml_size=xml_identity["size"],
+            mustpass_xml_sha256=xml_identity["sha256"],
+        )
     options.identity = identity
     options.leaves = leaves
     options.campaigns = campaigns
+    options.mustpass = mustpass
     return options
 
 
@@ -1662,23 +2470,36 @@ def main(arguments: Sequence[str] | None = None) -> int:
     leaf: LeafIdentity | None = None
     selection: Selection | None = None
     suffix = "inventory"
-    if not options.inventory:
-        if options.campaign is not None:
-            campaign = options.campaigns[options.campaign]
-            leaf = campaign.leaf
-            selection = campaign.selection
-            api_identifier = campaign.api
-            leaf_identifier = campaign.leaf.identifier
-            suffix = campaign.identifier
-        else:
-            leaf = options.leaves[options.leaf]
-            exact_cases = (options.case,) if options.case is not None else ()
-            selection = Selection(
-                leaf, exact_cases, fraction_index, fraction_count
-            )
-            api_identifier = options.api
-            leaf_identifier = options.leaf
-            suffix = options.leaf
+    if options.config_inventory is not None:
+        api_identifier = options.config_inventory
+        suffix = f"config-inventory-{api_identifier}"
+    elif options.matrix is not None:
+        matrix = options.matrix_run
+        leaf = matrix.configuration.leaf
+        selection = matrix.selection
+        api_identifier = matrix.configuration.api
+        leaf_identifier = leaf.identifier
+        suffix = (
+            f"matrix-{api_identifier}-cfg{matrix.egl_config_index:02d}-"
+            f"{fraction_index:03d}of{fraction_count:03d}"
+        )
+    elif options.campaign is not None:
+        campaign = options.campaigns[options.campaign]
+        leaf = campaign.leaf
+        selection = campaign.selection
+        api_identifier = campaign.api
+        leaf_identifier = campaign.leaf.identifier
+        suffix = campaign.identifier
+    elif not options.inventory:
+        leaf = options.leaves[options.leaf]
+        exact_cases = (options.case,) if options.case is not None else ()
+        selection = Selection(
+            leaf, exact_cases, fraction_index, fraction_count
+        )
+        api_identifier = options.api
+        leaf_identifier = options.leaf
+        suffix = options.leaf
+    if selection is not None:
         if selection.expected_count < 1:
             raise CampaignError("selected fraction contains no cases")
 
@@ -1732,9 +2553,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "display": options.display,
         "surface": [options.width, options.height],
         "context": options.context,
-        "mode": "inventory" if options.inventory else "shard",
+        "mode": (
+            "inventory"
+            if options.inventory
+            else "config-inventory"
+            if options.config_inventory is not None
+            else "mustpass-matrix-shard"
+            if options.matrix is not None
+            else "shard"
+        ),
         "rootfs_type": rootfs_contract.filesystem_type,
         "rootfs_sha256": rootfs_contract.sha256,
+        "glcts_sha256": rootfs_contract.glcts_sha256,
         "qualification": options.qualification,
         "launch_environment": {
             "UML_GPU_CAPABILITY_REPORT": "1",
@@ -1755,6 +2585,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "results.qpa",
             "summary.txt",
         ]
+    elif options.config_inventory is not None:
+        metadata.update(
+            {
+                "api": api_identifier,
+                "config_case": CONFIG_CASES[api_identifier],
+                "expected_artifacts": [
+                    "renderer.txt",
+                    "results.qpa",
+                    "summary.txt",
+                ],
+            }
+        )
     else:
         metadata.update(
             {
@@ -1764,11 +2606,43 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "fraction": [fraction_index, fraction_count],
                 "exact_cases": list(selection.exact_cases),
                 "expected_cases": selection.expected_count,
-                "seed": options.seed,
+                "seed": (
+                    options.matrix_run.configuration.base_seed
+                    if options.matrix is not None
+                    else options.seed
+                ),
             }
         )
         if options.campaign is not None:
             metadata["campaign"] = options.campaign
+        if options.matrix is not None:
+            matrix = options.matrix_run
+            metadata["matrix"] = {
+                "mustpass_xml_path": matrix.mustpass_xml_path,
+                "mustpass_xml_size": matrix.mustpass_xml_size,
+                "mustpass_xml_sha256": matrix.mustpass_xml_sha256,
+                "runner_oracle_path": options.runner_oracle.path,
+                "runner_oracle_size": options.runner_oracle.size,
+                "runner_oracle_sha256": options.runner_oracle.sha256,
+                "configuration_name": matrix.configuration.name,
+                "configuration_role": (
+                    "first"
+                    if matrix.configuration.use_for_first_egl_config
+                    else "other"
+                ),
+                "xml_arguments": list(matrix.configuration.xml_arguments),
+                "runner_arguments": matrix_runner_arguments(
+                    matrix, "/run/uml-cts/selected.txt"
+                ),
+                "egl_config_index": matrix.egl_config_index,
+                "egl_config_id": matrix.egl_config.identifier,
+                "egl_surface_types": list(matrix.egl_config.surface_types),
+                "egl_surface_type": matrix.egl_config.selected_surface_type,
+                "config_inventory_sha256": matrix.config_inventory_sha256,
+                "config_inventory_run": str(
+                    options.config_inventory_run.resolve()
+                ),
+            }
     write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
     with log_path.open("wb") as log:
@@ -1787,7 +2661,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         metadata["native_display_final"] = parse_native_display_final(transcript)
     write_json(artifact_directory / "run.json", metadata)
     artifacts = decode_artifacts(transcript)
-    required_artifacts = INVENTORY_ARTIFACTS if options.inventory else SHARD_ARTIFACTS
+    required_artifacts = (
+        INVENTORY_ARTIFACTS
+        if options.inventory
+        else CONFIG_INVENTORY_ARTIFACTS
+        if options.config_inventory is not None
+        else SHARD_ARTIFACTS
+    )
     required = required_artifacts - set(artifacts)
     if required:
         guest_errors = GUEST_ERROR.findall(transcript)
@@ -1829,6 +2709,36 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(
             f"VK-GL-CTS inventory captured {case_count} cases "
             f"from {len(modules)} modules"
+        )
+        print(f"Artifacts: {artifact_directory}")
+        return 0
+
+    if options.config_inventory is not None:
+        qpa_payload = artifacts["results.qpa"]
+        qpa_text = qpa_payload.decode("utf-8", errors="strict")
+        configs = parse_egl_config_qpa(qpa_text, options.config_inventory)
+        totals = {"Pass": 1}
+        metadata.update(
+            {
+                "emulator_return_code": process.returncode,
+                "completed_cases": 1,
+                "status_totals": totals,
+                "qpa_sha256": hashlib.sha256(qpa_payload).hexdigest(),
+                "egl_config_sha256": egl_config_digest(configs),
+                "egl_configs": [
+                    {
+                        "id": config.identifier,
+                        "surface_types": list(config.surface_types),
+                        "selected_surface_type": config.selected_surface_type,
+                    }
+                    for config in configs
+                ],
+            }
+        )
+        write_json(artifact_directory / "run.json", metadata)
+        print(
+            f"VK-GL-CTS {options.config_inventory} config inventory "
+            f"captured {len(configs)} EGL configs"
         )
         print(f"Artifacts: {artifact_directory}")
         return 0
