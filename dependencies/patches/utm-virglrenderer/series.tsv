@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	542448c4479839927e2ecfb1a032dffb2c343386bbd87f10b2a265e3cdb68876	vrend: support GLES 3.0 MSAA on iOS Metal
-2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	e25c432dfbcc67f1fe05841334997a284a01c7bc37cbdf02449a6c27055c698b	vrend: map GLES separate transform feedback buffers
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	946f8bf96a4d04f3f21d9539487dd5d3bd118518cd165b95ff28be1a370159e1	vrend: support GLES 3.0 MSAA on iOS Metal
+2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	a7d4f3c291e98254426514b53062b105cf4656ff96467250744bc47ea3f6d3be	vrend: map GLES separate transform feedback buffers
+3	0003-vrend-stop-advertising-emulated-GLES-Z32_UNORM.patch	daee3d20bc3f160e6a55fe01d7540d6e9e342974	bc83634c5d8a21801a0206547dedf921e9a82ca44c7ea04c960deea8ebde4f61	vrend: stop advertising emulated GLES Z32_UNORM
