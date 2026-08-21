@@ -484,9 +484,11 @@ CONFIG_UML_VNC_INPUT=y
 CONFIG_VIRTIO_MENU=y
 CONFIG_VIRTIO_UML=y
 CONFIG_VIRTIO_INPUT=y
-# The outer emulator has no VIRTIO_ID_CONSOLE backend; ttyS0 is the supported
-# host-console transport until such a device exists end to end.
-# CONFIG_VIRTIO_CONSOLE is not set
+# The Android macOS product exposes one standard single-port console as
+# VIRTIO_ID_CONSOLE. Keep both the device and its hvc infrastructure in the
+# signed ELF; loadable modules are unavailable on iOS.
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_HVC_DRIVER=y
 CONFIG_DRM=y
 CONFIG_DRM_VIRTIO_GPU=y
 CONFIG_DRM_VIRTIO_GPU_KMS=y

@@ -1,7 +1,7 @@
 From a85eecb3e890d83a238c5175c2dad15915f4b3e4 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 03:10:32 +0000
-Subject: [PATCH 14/14] UML-ANDROID-LOCAL: cuttlefish omit unsupported UML HALs
+Subject: [PATCH 14/15] UML-ANDROID-LOCAL: cuttlefish omit unsupported UML HALs
 
 Change-Id: I05393f893579352c038ddd796633c6d1ecb91099
 ---

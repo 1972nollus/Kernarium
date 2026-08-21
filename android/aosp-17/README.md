@@ -167,9 +167,12 @@ the `uml-blkdev.0` platform device and mounts the immutable filesystems
 directly from `/dev/block/by-name`; there are no logical, slot-select, AVB, or
 DLKM mount flags. The UML init and ueventd inputs keep the first-stage mount,
 late writable-state mount, serial console, and bugreport paths while removing
-Cuttlefish-only HVC, vsock, Wi-Fi, custom-partition, persistent-memory, and
-suspend actions. Soong disables the inherited stock fstabs and serial-logging
-file even though the base product still contributes their package names.
+Cuttlefish-only multiport HVC, vsock, Wi-Fi, custom-partition,
+persistent-memory, and suspend actions. The UML product labels its sole
+single-port `/dev/hvc0` as a serial device and grants the shell access through
+its patch-owned ueventd policy. Soong disables the inherited stock fstabs and
+serial-logging file even though the base product still contributes their
+package names.
 `verify-target-files.py` checks the installed result rather than trusting that
 inherited package list.
 
@@ -230,7 +233,8 @@ minigbm, Mesa OpenGL ES 3.0, DRM display discovery, RGBA framebuffers, and
 SkiaGL HWUI. CPU and hardware Vulkan remain disabled because the emulator does
 not implement the blob/shared-aperture and Venus facilities needed by Android
 Vulkan. The profile disables both inherited camera-provider APEX variants
-because UML exposes no camera and selects the `ttyS0` diagnostic shell. It also
+because UML exposes no camera and selects the single-port `hvc0` diagnostic
+shell while retaining `ttyS0` as a host-log fallback. It also
 sets the product-scoped
 `androidboot.uml_bpf_interpreter=1` contract consumed by route `p0003` in
 `platform/packages/modules/Connectivity`. Normal Android products retain
@@ -370,11 +374,16 @@ path whose parent already exists:
 .build/presets/macos-android17/bin/uml-darwin-android17 \
   --android-release=/absolute/path/to/.build/android/releases/accepted-directory \
   --android-instance=/absolute/path/to/android17-instance.cow \
+  --virtio-console-socket=/absolute/path/to/android17-console.sock \
   --execution-engine=gadgets
 ```
 
 The executable embeds the accepted ACK ELF and release-manifest identity. It
 rejects another release, protects release-owned boot arguments, maps the large
 installed GPT image only as the COW backing file, and binds each instance to
-the accepted release with an adjacent manifest receipt. The current
+the accepted release with an adjacent manifest receipt. Attach to the console
+socket with a local Unix-stream client such as `nc -U`; the userdebug shell on
+`hvc0` accepts `logcat` directly. Connect before boot to see the full stream, or
+press Enter after attaching to recover the shell prompt from the bounded recent
+output tail. The current
 `uml-darwin` executable and Linux desktop rootfs discovery remain separate.
