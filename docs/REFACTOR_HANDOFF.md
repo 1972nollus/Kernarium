@@ -133,6 +133,10 @@ Kbuild. The Android ACK series, AOSP product, static disk/initramfs producer,
 and accepted release are separately owned by `kernel/android-6.18` and
 `android/aosp-17`. A separate 16 KiB-only macOS executable now consumes that
 accepted release; the signed iOS Android runtime remains later work.
+The ACK source candidate now has 24 generated topics. Topic 24 services
+throttled cooperative timers from IRQ-enabled kernel spin checkpoints, fixing
+the Android multi-vCPU RCU stall: a four-vCPU gadgets run reached guest second
+198 without a stall, versus the former repeatable failure at second 56–58.
 
 ## Required case-sensitive kernel source configuration (2026-08-20)
 

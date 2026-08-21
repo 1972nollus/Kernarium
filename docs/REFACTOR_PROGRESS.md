@@ -88,6 +88,18 @@
 - Converted active next-base results to local carry/drop/rebase/retest language.
   No Android, ACK, AOSP, guest-image, or Android product work has started.
 
+## 2026-08-21: Android multi-vCPU cooperative timer checkpoint
+
+- Diagnosed the Android RCU stall as a fixed-carrier timer-starvation loop:
+  ACK's rwsem optimistic spinner remained in `darwin_cpu_relax()` while
+  cooperative timers were serviced only at guest/kernel and idle boundaries.
+- Added ACK-local topic 24, which retains immediate IRQ-enabled IPI service,
+  recomputes the current CPU after possible migration, and polls the timer once
+  per 256 spin checkpoints so `need_resched()` can release the carrier.
+- Rebuilt the 16 KiB, built-in-only ACK ELF on the x86_64 Linux builder and ran
+  a four-vCPU gadgets Android guest continuously to second 198 without an RCU
+  stall. The prior kernel reproduced the failure at second 56–58.
+
 ## 2026-08-20: required local kernel source location
 
 - Added the Git-ignored `kernel/mainline-6.18/source-location.conf` contract

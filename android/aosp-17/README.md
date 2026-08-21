@@ -35,6 +35,23 @@ android/aosp-17/build/build-kernel.sh \
   --build /absolute/path/to/kernel-build
 ```
 
+After changing or appending commits on a clean linear ACK topic checkout,
+regenerate the complete kernel mail series from that Git history on the Linux
+builder:
+
+```sh
+android/aosp-17/tools/regenerate-kernel-patches.py \
+  --android-root /absolute/path/to/copied/repository/android/aosp-17 \
+  --line-root /absolute/path/to/copied/repository/kernel/android-6.18 \
+  --topic-checkout /absolute/path/to/clean-ack-topic
+```
+
+The command is structurally limited to `kernel/android-6.18` in the same
+copied repository, rewrites final-tree and patch-count metadata together with
+the generated series, and runs the common manifest and topology verifiers
+before exposing the result. New ACK topics require the
+`UML-DARWIN-LOCAL:` subject prefix. Never edit generated kernel patch bytes.
+
 Apply the generated per-project AOSP series and build the initial 16 KiB,
 ARM64-only product composition:
 

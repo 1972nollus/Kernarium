@@ -7,15 +7,17 @@ guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
 Implementation started on 2026-08-20. As of 2026-08-21, the builder-local lane
-has produced and verified the 23-topic ACK 6.18 Darwin UML series, its 16 KiB
+has produced and verified the 24-topic ACK 6.18 Darwin UML series, its 16 KiB
 built-in-only kernel, the routed AOSP 17 static UML product, standalone
 initramfs, and fixed seven-partition UBD image. It has also published, copied,
 and atomically installed accepted release
 `android17-ack6.18-16k-20260821-15f81808-static1`. The release installer rejects
 an overwrite and the structural negative fixtures below pass. Import-only
-CMake consumption, the separate macOS executable/runtime framework, and actual
-Android boot/HAL/application acceptance remain unfinished phases; no boot is
-claimed by this checkpoint.
+CMake consumption and the separate macOS executable are implemented. A
+four-vCPU Android candidate using topic 24 advanced to guest second 198 without
+the RCU stall that reproducibly stopped the former kernel at second 56–58.
+Android service/HAL/application bring-up and the signed iOS runtime framework
+remain unfinished phases.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project

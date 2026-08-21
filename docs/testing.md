@@ -82,6 +82,11 @@ select `kernel/mainline-6.18` explicitly; `kernel/common` supplies only the
 shared ABI, 16 KiB geometry, and artifact contract. The separate Android 17
 producer and accepted-release workflow are documented in
 `android/aosp-17/README.md`; ACK inputs remain under `kernel/android-6.18`.
+The current ACK source candidate includes a cooperative timer checkpoint for
+IRQ-enabled Darwin spin waits. Its focused multi-vCPU gate is a four-vCPU
+gadgets boot: require continuing guest timestamps beyond second 180 and no
+`rcu: INFO` or `detected stalls` record. The 2026-08-21 validation reached
+second 198; the preceding kernel reproducibly stalled at second 56–58.
 
 ## Green checkpoints and bisectable commits
 

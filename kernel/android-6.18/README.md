@@ -5,9 +5,9 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 23 ACK-based topic commits and resolves to the
+The checked series contains 24 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the final seven are ACK-only local compatibility
+applicable Darwin UML behavior; the final eight are ACK-only local compatibility
 topics discovered by compiling the 16 KiB Android product. Mainline patch
 bytes are never installed as this line's source of truth.
 
@@ -26,6 +26,17 @@ fscrypt inline hooks, `dm-default-key`, and the software `hctr2(aes)` transform
 used by the product's `aes-256-xts:aes-256-hctr2` file-encryption policy; UBD
 has no hardware crypto offload. These remain built in because the iOS product
 cannot recover a missing storage or crypto feature by loading a module.
+
+Topic 24 closes a fixed-carrier scheduler deadlock exposed by Android's
+multi-vCPU `apexd` workload. Darwin switches to cooperative per-vCPU timers
+after bootstrap, so an optimistic kernel lock spinner could remain in
+`cpu_relax()` without receiving the tick that sets `need_resched()`. That
+starved the lock owner and eventually produced an RCU stall. The fix keeps IPI
+service immediate, then runs a throttled timer checkpoint only from an
+IRQ-enabled kernel spin boundary, recomputing the logical CPU after IPI work in
+case the Linux task migrated. A four-vCPU gadgets run advanced continuously to
+guest second 198 without an RCU stall; the former kernel reproduced the stall
+at guest second 56–58.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

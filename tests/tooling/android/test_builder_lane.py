@@ -634,6 +634,7 @@ def main() -> None:
         kernel_root / "patches/metadata.env",
         kernel_root / "patches/topic-path-overlaps.tsv",
         kernel_root / "patches/series/manifest.tsv",
+        android_root / "tools/regenerate-kernel-patches.py",
     ]
     for path in required:
         if not path.is_file():
@@ -656,8 +657,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "ef82c4396c776d300101fbb951509d1e3be36b4d",
-        "UML_KERNEL_PATCH_COUNT": "23",
+        "UML_KERNEL_FINAL_TREE": "45be101f1086587dc85ba2e1f205c31b3d157014",
+        "UML_KERNEL_PATCH_COUNT": "24",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -742,6 +743,9 @@ def main() -> None:
             fail(f"{script_name} does not inspect each project porcelain status")
 
     apply_kernel = (android_root / "build/apply-kernel-patches.sh").read_text()
+    regenerate_kernel = (
+        android_root / "tools/regenerate-kernel-patches.py"
+    ).read_text()
     apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
     build_aosp = (android_root / "build/build-aosp.sh").read_text()
     assemble_image = (android_root / "build/assemble-image.sh").read_text()
@@ -752,6 +756,10 @@ def main() -> None:
         android_root / "tools/verify-target-files.py"
     ).read_text()
     kernel_config = (kernel_root / "config/android.fragment").read_text()
+    rcu_spin_patch = (
+        kernel_root
+        / "patches/series/0024-UML-DARWIN-LOCAL-service-timers-from-kernel-spin-che.patch"
+    ).read_text()
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
@@ -766,6 +774,43 @@ def main() -> None:
     )
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
+    for token in (
+        'expected_line_root = outer_root / "kernel/android-6.18"',
+        'metadata.get("UML_KERNEL_FAMILY") != "android-6.18"',
+        '"format-patch"',
+        '"--full-index"',
+        '"--binary"',
+        "series_dir.rename(series_backup)",
+        '"UML_KERNEL_FINAL_TREE"',
+        '"UML_KERNEL_PATCH_COUNT"',
+        '"kernel/common/tooling/verify-series-policy.py"',
+    ):
+        if token not in regenerate_kernel:
+            fail(f"ACK patch regenerator is missing isolation policy: {token}")
+    for token in (
+        "darwin_timer_spin_checkpoint",
+        "darwin_timer_poll(&current_pt_regs()->regs)",
+        "#include <linux/ptrace.h>",
+        "spin_relax_counts[CONFIG_NR_CPUS]",
+        "if (!um_get_signals())",
+        "darwin_ipi_poll();",
+        "(++spin_relax_counts[cpu] & 0xffU) == 0",
+    ):
+        if token not in rcu_spin_patch:
+            fail(f"ACK RCU spin-timer topic is missing fixed policy: {token}")
+    if len(re.findall(r"\+\s*cpu = uml_curr_cpu\(\);", rcu_spin_patch)) != 2:
+        fail("ACK spin checkpoint does not recompute CPU identity after IPI service")
+    if re.search(
+        r"if \(!um_get_signals\(\)\).*"
+        r"return;.*"
+        r"if \(__atomic_load_n\(&pending_ipis\[cpu\].*"
+        r"darwin_ipi_poll\(\);.*"
+        r"cpu = uml_curr_cpu\(\);.*"
+        r"darwin_timer_spin_checkpoint\(\);",
+        rcu_spin_patch,
+        re.DOTALL,
+    ) is None:
+        fail("ACK spin checkpoint no longer preserves IRQ/IPI/timer ordering")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
