@@ -15,6 +15,7 @@ AOSP_SOURCE=
 OUT_DIR=
 KERNEL_ELF=
 JOBS=
+ALLOW_FRESH_OUTPUT=false
 
 fail()
 {
@@ -28,13 +29,15 @@ usage()
 Usage: android/aosp-17/build/build-aosp.sh \
        --aosp-source ABSOLUTE_PATH \
        --out ABSOLUTE_PATH \
-       --kernel-elf ABSOLUTE_PATH [--jobs N]
+       --kernel-elf ABSOLUTE_PATH [--jobs N] [--allow-fresh-output]
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
 series. The output directory must be an ignored directory inside the AOSP Repo
 workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
 from an external absolute OUT_DIR. Standard Ninja and non-incremental Soong
-analysis are fixed producer settings for this source tag.
+analysis are fixed producer settings for this source tag. Normal builds require
+an existing product Ninja graph and reuse that output incrementally. Pass
+--allow-fresh-output only for the one-time baseline build.
 EOF
 }
 
@@ -92,6 +95,10 @@ while [[ $# -gt 0 ]]; do
 		JOBS=$2
 		shift 2
 		;;
+	--allow-fresh-output)
+		ALLOW_FRESH_OUTPUT=true
+		shift
+		;;
 	-h|--help)
 		usage
 		exit 0
@@ -136,7 +143,16 @@ source "$METADATA"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 "$ELF_VERIFIER" "$KERNEL_ELF"
+SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${ANDROID17_PRODUCT}.ninja"
+if [[ "$ALLOW_FRESH_OUTPUT" == false && ! -f "$SOONG_BUILD_GRAPH" ]]; then
+	fail "incremental output graph is missing: $SOONG_BUILD_GRAPH; preserve and reuse the existing output tree, or pass --allow-fresh-output for the one-time baseline build"
+fi
 mkdir -p -- "$OUT_DIR"
+if [[ -f "$SOONG_BUILD_GRAPH" ]]; then
+	printf '%s\n' "reusing incremental AOSP output: $OUT_DIR"
+else
+	printf '%s\n' "bootstrapping one-time AOSP output: $OUT_DIR"
+fi
 OUT_DIR_ABSOLUTE=$OUT_DIR
 # This tag's test_package path validation treats absolute generated paths as
 # module source paths. The verified suffix names the same in-tree directory
@@ -144,6 +160,9 @@ OUT_DIR_ABSOLUTE=$OUT_DIR
 OUT_DIR=${OUT_DIR#"$AOSP_SOURCE"/}
 export OUT_DIR
 export SOONG_NINJA=ninja
+# This disables Soong's incompatible incremental graph-analysis implementation
+# for the pinned tag. Ninja still reuses the preserved OUT_DIR and rebuilds only
+# invalidated actions.
 export SOONG_INCREMENTAL_ANALYSIS=false
 
 cd "$AOSP_SOURCE"
