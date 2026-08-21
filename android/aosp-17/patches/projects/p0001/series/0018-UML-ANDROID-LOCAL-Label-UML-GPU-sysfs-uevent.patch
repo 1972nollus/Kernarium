@@ -1,0 +1,19 @@
+From 27e8fc8eb4c58a977a452e4a9dc1e1dc1dd994f2 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 17:59:54 +0000
+Subject: [PATCH 18/18] UML-ANDROID-LOCAL: Label UML GPU sysfs uevent
+
+Change-Id: I8b6ef7bf04e8d3ea45cc0f4c446f898c35128713
+---
+ vsoc_uml_arm64_pgagnostic/sepolicy/vendor/genfs_contexts | 2 ++
+ 1 file changed, 2 insertions(+)
+ create mode 100644 vsoc_uml_arm64_pgagnostic/sepolicy/vendor/genfs_contexts
+
+diff --git a/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/genfs_contexts b/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/genfs_contexts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ff8dc066bb3bd3ffac9674e6f6fc8037a5d41ead
+--- /dev/null
++++ b/vsoc_uml_arm64_pgagnostic/sepolicy/vendor/genfs_contexts
+@@ -0,0 +1,2 @@
++# libdrm resolves /dev/dri/card0 through this platform-device uevent.
++genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.0/uevent u:object_r:sysfs_gpu:s0
