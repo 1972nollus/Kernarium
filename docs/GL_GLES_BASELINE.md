@@ -30,9 +30,10 @@ and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
 missing clean-stop markers. The fixed identity sentinels now pass their five
 GLES 2 and twelve GLES 3 cases under both 16 KiB and 4 KiB in strict
-macOS-to-Simulator-to-iPad order. Complete caselist identity and matrices,
-the seven-pair performance campaign, connected-iPad thermal acceptance, and
-sustained lifecycle campaigns remain outstanding.
+macOS-to-Simulator-to-iPad order. The current 20-config 16 KiB macOS GLES 3
+matrix now passes completely. The current-product GLES 2 rerun, complete
+Simulator/iPad matrices, seven-pair performance campaign, connected-iPad
+thermal acceptance, and sustained lifecycle campaigns remain outstanding.
 
 The fixed Aquarium canary is now runnable on both permitted products and both
 page profiles. An initial 4 KiB macOS run reached measurement but suffered two
@@ -48,6 +49,42 @@ for 16 KiB/4 KiB, respectively; all used 30 samples, WebGL 2/GLES 3.0, clean
 shutdown, and zero dropped or CPU-fallback frames. These single observations
 are implementation canaries, not the seven interleaved pairs or a performance
 qualification. Aquarium remains excluded from physical-iPad acceptance.
+
+## Current macOS GLES qualification checkpoint (2026-08-22)
+
+Qualification found that the earlier 25-config inventory was not truthful.
+UTM Virgl's GLES format table advertised `VIRGL_FORMAT_Z32_UNORM` by mapping it
+to `GL_DEPTH_COMPONENT24`. Guest Mesa therefore exposed normalized 32-bit
+depth configurations, while the CTS correctly treated a 32-bit default depth
+buffer as floating point and rejected depth blits before they reached the
+host. Direct ANGLE and instrumented Virgl probes independently showed genuine
+32-bit floating-point MSAA depth resolve working, complete FBOs, and a
+successful host blit. Managed Virgl topic `3a287ef` and outer checkpoint
+`e741cbad` remove only the false GLES normalized-depth advertisement; genuine
+`Z32_FLOAT` and the native desktop `Z32_UNORM` path remain.
+
+The Release inventory now contains exactly 20 non-MSAA configurations: IDs
+1-4, 13-16, 25-28, 37-40, and 49-52. All support window, pixmap, and pbuffer
+surfaces. Its canonical SHA-256 is
+`843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`,
+captured at
+`.build/vk-gl-cts/qualification/gles3-z32-release-config-inventory/20260822-060342-60650-16k-config-inventory-gles3`.
+The former 25-config inventory and matrix are retained as diagnostic history,
+not current qualification evidence.
+
+The clean detached campaign
+`.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` ran the exact 6,498
+case Khronos GLES 3 leaf once against every current configuration through VNC,
+JIT, ten vCPUs, 8 GiB, a sealed read-only ext4 lower, disposable OverlayFS
+state, and acknowledged Virtio serial transfer. All 20 immutable shards passed
+their artifact and clean-shutdown checks. The exact 129,960 executions contain
+125,270 `Pass`, 4,690 Khronos-permitted `NotSupported`, and no disallowed
+status. Independent verify-only reconstruction reported
+`Verified 129960 gles3 case executions in 20 immutable shards`. The derivative
+remained mode 0444 at SHA-256
+`f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`.
+This completes the current 16 KiB macOS GLES 3 matrix only; current GLES 2 and
+the complete Simulator/iPad matrices remain required.
 
 ## Authenticated derivative-rootfs checkpoint (2026-08-21)
 
@@ -164,10 +201,11 @@ The frozen modules are exactly `KHR-GLES2` and `KHR-GLES3`. Their installed
 official must-pass leaves contain 473 and 6,498 cases respectively; the one
 additional GLES 3 hierarchy case is
 `KHR-GLES3.texture_filter_anisotropic.drawing`, which the released Khronos
-must-pass leaf does not select. Qualification remains fail-closed pending the
-complete official cross-product matrices and other Phase 2 gates, and the
-original EROFS image still lacks build provenance; the scoped caselist itself
-is no longer a blocker.
+must-pass leaf does not select. The current 20-config 16 KiB macOS GLES 3
+cross-product now passes as recorded above. Qualification remains fail-closed
+pending current GLES 2, complete Simulator/iPad matrices, and the other Phase
+2 gates, and the original EROFS image still lacks build provenance; the scoped
+caselist itself is no longer a blocker.
 
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,

@@ -15,7 +15,7 @@ Dependency-management assumptions were revised after the 2026-08-20
 centralization under `dependencies/`; paths and workflows in this document
 refer to that post-refactor ownership model.
 
-## Implementation checkpoint (2026-08-21)
+## Implementation checkpoint (2026-08-22)
 
 Phase 1 is implemented and verified as one atomic transition. All three Apple
 products now use the central `apple-gpu` UTM ANGLE/Metal matrix, fixed common
@@ -103,21 +103,24 @@ do not open an AppKit window; native direct presentation remains required for
 the separate performance qualification. On revision `79cf9184`, two 16 KiB
 VNC boots with JIT, ten vCPUs, the sealed derivative lower, and disposable
 OverlayFS state passed exactly `CTS-Configs.es2` and `CTS-Configs.es3` and shut
-down cleanly. Both APIs reported the same 25 ordered conformant non-MSAA EGL
-configs: IDs 1-5, 16-20, 31-35, 46-50, and 61-65, each supporting window,
-pixmap, and pbuffer surfaces. Their canonical config digest is
-`e7347c0a04099e4b45d777c6a141c90a7b2c1ca8047817fb280cc89af60ced56`;
-the GLES 2 and GLES 3 QPA digests are respectively
-`516862fd96055f348ceaf1131ecc27f7a2a56e4a8f69de623a1a30567cf2d9f4`
-and `5553de17eaa9f6724dbcbb3543aba869cac7bd060e02b06e4472584dd12b02a1`.
-This freezes a 25 x (473 + 6,498) = 174,275-case baseline matrix before
-sharding. It does not claim that matrix has executed or passed. An eight-case
-GLES 2 preflight of config ID 1 and fraction 0/64 then completed with six
-`Pass` and two extension-dependent `NotSupported` results, QPA SHA-256
-`7d209effb5fb32d1ff630f1a3bac35961e6050d6bec480c82db77bc753c5493c`,
-and clean shutdown. This proves the first-config expansion, shard selection,
-artifact union, and released status policy end to end; it is not a complete
-configuration or matrix result.
+down cleanly. Both APIs initially reported 25 ordered non-MSAA EGL configs:
+IDs 1-5, 16-20, 31-35, 46-50, and 61-65, each supporting window, pixmap, and
+pbuffer surfaces, with canonical digest
+`e7347c0a04099e4b45d777c6a141c90a7b2c1ca8047817fb280cc89af60ced56`.
+Later qualification proved that this inventory was not truthful: the GLES
+Virgl format table advertised normalized 32-bit depth while actually backing
+it with 24-bit depth. The 25-config inventory, its QPA digests, and its
+174,275-case cartesian product remain diagnostic history and are not current
+qualification evidence. The eight-case GLES 2 config-ID-1 preflight likewise
+remains valid only as an end-to-end automation check.
+
+After removing that false format, the Release product exposes 20 truthful
+non-MSAA configurations: IDs 1-4, 13-16, 25-28, 37-40, and 49-52. Every one
+supports window, pixmap, and pbuffer surfaces, and the canonical inventory
+digest is
+`843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
+The passing inventory run is
+`.build/vk-gl-cts/qualification/gles3-z32-release-config-inventory/20260822-060342-60650-16k-config-inventory-gles3`.
 
 The macOS matrix now has a resumable fail-closed orchestrator. It fixes every
 child to VNC, JIT, ten vCPUs, 8 GiB, and the sealed ext4 lower; freezes the Git,
@@ -163,7 +166,9 @@ all 25 EGL configurations and all 11,825 required executions: 10,950 `Pass`,
 875 `NotSupported`, and no disallowed result. Every configuration completed
 the exact 473-case leaf through VNC with JIT, ten vCPUs, 8 GiB, acknowledged
 Virtio serial artifacts, clean shutdown, and the sealed ext4 lower unchanged.
-This completes the official GLES 2 matrix.
+This completed the matrix for the then-advertised inventory. Because the
+normalized-32-bit depth advertisement was later removed, it does not qualify
+the current 20-config product; a current-revision GLES 2 matrix remains open.
 
 The first GLES 3 campaign stopped at exact official fraction `359/6498`, case
 `KHR-GLES3.shaders.loops.for_constant_iterations.conditional_continue_vertex`.
@@ -176,9 +181,40 @@ timeout. An isolated rebuild changed that helper to component-wise
 `.build/vk-gl-cts/focused/gles3-angle-select-fix/20260822-010050-53009-16k-matrix-gles3-cfg00-359of6498`.
 UTM WebKit topic `38fc4c80bc` adds the correction and a focused MSL translator
 regression. The temporary shader instrumentation was removed, and the sealed
-root remained mode 0444 at its exact authenticated hash. The complete GLES 3
-matrix remains open until the regenerated common dependency is rebuilt and the
-new campaign passes every configuration and leaf.
+root remained mode 0444 at its exact authenticated hash.
+
+The regenerated common dependency exposed a second qualification defect. The
+then-advertised normalized 32-bit depth configurations failed
+`multisampled_to_singlesampled_blit_depth_config_test` and `scissor_blit`.
+Direct ANGLE and instrumented Virgl probes showed complete source and
+destination FBOs and a successful host `glBlitFramebuffer`; guest Mesa rejected
+the operation first with `GL_INVALID_OPERATION` for a depth-format mismatch.
+Virgl's GLES table had advertised `VIRGL_FORMAT_Z32_UNORM` while mapping it to
+`GL_DEPTH_COMPONENT24`, whereas CTS correctly treats a 32-bit default depth
+buffer as floating point. Managed Virgl topic `3a287ef` and outer checkpoint
+`e741cbad` stop advertising only that emulated GLES format. Genuine
+`Z32_FLOAT` remains available, and the native desktop `Z32_UNORM` path is
+unchanged.
+
+The clean detached 16 KiB campaign at
+`.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` then completed the
+current 20-configuration matrix through VNC with JIT, ten vCPUs, 8 GiB, the
+sealed read-only ext4 lower, disposable OverlayFS state, and acknowledged
+Virtio serial artifacts. Its exact 20 x 6,498 product contains 129,960
+executions: 125,270 `Pass`, 4,690 Khronos-permitted `NotSupported`, and no
+failure, warning, waiver, missing case, incomplete shard, dirty shutdown, or
+retry. A separate verify-only pass reparsed every QPA and console, rechecked
+all artifact and frozen-input hashes, reconstructed every ordered leaf, and
+reported `Verified 129960 gles3 case executions in 20 immutable shards`. The
+sealed image remained mode 0444 at SHA-256
+`f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`.
+The current macOS Apple-GPU prefix was then rebuilt transactionally at its
+canonical path and passed its read-only verifier. `check-gpu` and
+`check-gpu-asan-ubsan` each passed the architecture audit, all eight selected
+tests, and the VNC smoke test; the matrix-orchestrator unit test also passed.
+This completes the current macOS 16 KiB official GLES 3 matrix; it does not
+substitute for the current GLES 2 rerun or the Simulator and connected-iPad
+matrices.
 
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
@@ -196,8 +232,9 @@ The campaign schema now also freezes five-case GLES 2 and twelve-case GLES 3
 identity sentinels. Both pass their exact ordered sets on 16 KiB and 4 KiB
 macOS, Simulator, and iPad with clean shutdown and zero CPU fallback. Three
 non-passes encountered while choosing that bounded identity corpus remain
-recorded as diagnostic defects rather than waivers. Connected-iPad qualification,
-seven-pair performance campaigns, sustained lifecycle acceptance, and complete Khronos
+recorded as diagnostic defects rather than waivers. Connected-iPad
+qualification, seven-pair performance campaigns, sustained lifecycle
+acceptance, the current GLES 2 rerun, and complete Simulator/iPad Khronos
 matrices remain open. The original exact
 allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
@@ -996,13 +1033,15 @@ diagnostic non-passes without waiving them: macOS depth-buffer `NotSupported`
 and transform-feedback query failures, plus a Simulator-only GLES 2 texture
 image-comparison failure. Single fixed Aquarium canaries now pass on macOS and
 Simulator under both page profiles, including repaired-kernel runs with zero
-dropped or CPU-fallback frames. The seven interleaved performance pairs,
-connected-iPad thermal and sustained lifecycle baselines, and complete
-matrices remain missing. The former global all-package caselist attempt still
+dropped or CPU-fallback frames. The current 20-config 16 KiB macOS GLES 3
+matrix now passes all 129,960 required executions. The seven interleaved
+performance pairs, connected-iPad thermal and sustained lifecycle baselines,
+the current GLES 2 rerun, and complete Simulator/iPad matrices remain missing.
+The former global all-package caselist attempt still
 fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
 GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
 inventory is complete and frozen at 6,972 cases. The missing original-image
-receipt and unexecuted official matrices keep the exit open; no further rootfs
+receipt and remaining official matrices keep the exit open; no further rootfs
 or guest-userspace change is required.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
@@ -1090,13 +1129,14 @@ fail with `EGL_BAD_MATCH` on macOS, Simulator, and iPad, so no Phase 3 profile
 work is authorized by this evidence. Single accepted-artifact Aquarium
 canaries now pass on macOS and Simulator under both page profiles, after topic
 0021 repaired the 4 KiB nested-TLB RCU starvation. They establish workload
-bring-up and zero-fallback coverage only. The full shipped matrices, seven-pair
-performance campaign, connected-iPad thermal gate, and sustained-lifecycle
-campaign remain open. The original EROFS build receipt remains missing, the
-checked derivative owns its authenticated build receipt, and the scoped GLES
-hierarchy identity is complete. Qualification remains fail-closed on the full
-shipped matrices, seven-pair performance campaign, connected-iPad thermal
-gate, and sustained-lifecycle campaign rather than on caselist enumeration.
+bring-up and zero-fallback coverage only. The current 20-config 16 KiB macOS
+GLES 3 matrix passes all 129,960 required executions. The current-product GLES
+2 rerun, complete Simulator/iPad matrices, seven-pair performance campaign,
+connected-iPad thermal gate, and sustained-lifecycle campaign remain open.
+The original EROFS build receipt remains missing, the checked derivative owns
+its authenticated build receipt, and the scoped GLES hierarchy identity is
+complete. Qualification remains fail-closed on those remaining matrices and
+performance/lifecycle gates rather than on caselist enumeration.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
@@ -1602,9 +1642,12 @@ validation. Topic 0021 separately preserves precise Darwin nested TLB ranges
 after a 4 KiB Aquarium run exposed repeated full-address-space invalidation and
 RCU starvation; a fresh replay, both LLVM 22 builds, accepted artifacts, and
 clean macOS/Simulator canaries under both page profiles validate the bounded
-repair. The incomplete matrices, absent seven-pair performance/connected-iPad
-thermal/sustained-lifecycle campaigns, and missing original-image receipt
-still prevent any new shared capability or conformance claim. The derivative
+repair. The current 20-config 16 KiB macOS GLES 3 matrix completes all 129,960
+executions with 125,270 `Pass`, 4,690 Khronos-permitted `NotSupported`, and no
+disallowed status. The current GLES 2 and Simulator/iPad matrices, absent
+seven-pair performance/connected-iPad thermal/sustained-lifecycle campaigns,
+and missing original-image receipt still prevent any new shared capability or
+conformance claim. The derivative
 build has its own authenticated receipt and passed the fixed macOS identity
 sentinels under both page profiles plus the one-case Simulator declaration
 sentinel under both profiles; that bounded evidence does not satisfy

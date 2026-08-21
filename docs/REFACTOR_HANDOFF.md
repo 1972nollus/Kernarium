@@ -105,9 +105,9 @@ A fresh LLVM 22 replay and both page-profile builds passed; accepted artifacts
 shutdown, and zero dropped or CPU-fallback frames. The four runs are
 implementation canaries, not a controlled performance qualification or A/B.
 
-The broader lifecycle gate remains open alongside complete matrices, seven
-interleaved performance pairs, connected-iPad thermal, and presentation
-campaigns.
+The broader lifecycle gate remains open alongside the current GLES 2 and
+Simulator/iPad matrices, seven interleaved performance pairs, connected-iPad
+thermal, and presentation campaigns.
 A fail-closed global display-backed diagnostic exercised the rebuilt common
 emulator and exact installed `glcts`: eight module hierarchies exported before
 the desktop-GL-dependent `dEQP-GL45-ES3` package requested an unsupported GL
@@ -121,9 +121,12 @@ inventory now filters unmodified
 run against the sealed derivative completed exactly those two modules with
 6,972 cases, frozen SHA-256
 `3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`,
-and clean shutdown. The isolated official GLES 2 matrix then passed all 25 EGL
-configurations and 11,825 executions with 10,950 `Pass`, 875 `NotSupported`,
-no disallowed result, and clean shutdown throughout.
+and clean shutdown. The isolated official GLES 2 matrix then passed all 25
+then-advertised EGL configurations and 11,825 executions with 10,950 `Pass`,
+875 `NotSupported`, no disallowed result, and clean shutdown throughout. A
+later qualification defect proved that inventory included false normalized
+32-bit depth configurations, so the historical GLES 2 result must be rerun
+against the current 20-config product.
 
 The first GLES 3 matrix exposed a common ANGLE/Metal correctness defect at
 `KHR-GLES3.shaders.loops.for_constant_iterations.conditional_continue_vertex`.
@@ -133,11 +136,27 @@ flushed the selected subnormal value. UTM WebKit topic `38fc4c80bc` now emits
 `metal::select` and adds a translator regression. The exact official case
 changed from a 60-second fence-timeout failure to `Pass` in 465,116
 microseconds under the same VNC/JIT/ten-vCPU/8-GiB immutable-root conditions.
-The dependency series and focused runtime proof pass; complete GLES 3, Phase 2
-performance, thermal, and lifecycle gates remain open. The original image also
-lacks a build receipt, so future qualification must use the checked derivative.
-Phase 3 and later profile work must not start until the lower shared baseline
-is measured and qualified.
+The regenerated product then exposed depth-blit and scissor-blit failures only
+on the falsely advertised `VIRGL_FORMAT_Z32_UNORM` configurations. Guest Mesa
+rejected their 24-bit-versus-32-bit depth mismatch before a host blit, while
+direct ANGLE and instrumented Virgl probes proved genuine 32-bit floating-point
+MSAA depth resolve. Managed Virgl topic `3a287ef` and outer checkpoint
+`e741cbad` remove only the emulated GLES normalized-depth advertisement.
+
+The resulting Release inventory has 20 window/pixmap/pbuffer configurations,
+IDs 1-4, 13-16, 25-28, 37-40, and 49-52, with SHA-256
+`843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
+The clean detached 16 KiB campaign
+`.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` passed its exact
+129,960 GLES 3 executions: 125,270 `Pass`, 4,690 released-policy
+`NotSupported`, zero disallowed results, 20/20 immutable shards, acknowledged
+artifacts, and clean shutdown throughout. Independent verify-only
+reconstruction passed, and the sealed derivative remained mode 0444 at its
+authenticated hash. This completes current 16 KiB macOS GLES 3. Current GLES
+2, Simulator/iPad matrices, and Phase 2 performance, thermal, and lifecycle
+gates remain open. The original image also lacks a build receipt, so future
+qualification must use the checked derivative. Phase 3 and later profile work
+must not start until the lower shared baseline is measured and qualified.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

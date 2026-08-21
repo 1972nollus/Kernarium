@@ -113,6 +113,12 @@ selection. This preserves exact selected bit patterns, including subnormal
 float values used to carry integer bits, instead of passing them through
 arithmetic interpolation.
 
+The maintained UTM virglrenderer series also keeps the GLES format inventory
+truthful: it does not advertise `VIRGL_FORMAT_Z32_UNORM`, whose GLES fallback
+would otherwise be only `GL_DEPTH_COMPONENT24`. Genuine floating-point
+32-bit depth remains available through `VIRGL_FORMAT_Z32_FLOAT`, and the
+native desktop `Z32_UNORM` mapping is unchanged.
+
 Network uses the pinned PCRE2, libffi, proxy-libintl, GLib, GVDB, and libslirp Git
 sources. Its GLib source is a separately named prepared repository because the
 iOS availability topic is applied only to that product. Platform contracts are

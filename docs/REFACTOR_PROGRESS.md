@@ -1,5 +1,32 @@
 # Refactor progress
 
+## 2026-08-22: truthful GLES depth inventory and complete macOS GLES 3 matrix
+
+- CTS exposed that the GLES Virgl table advertised
+  `VIRGL_FORMAT_Z32_UNORM` through a 24-bit depth backing. Guest Mesa rejected
+  depth blits for the resulting false 32-bit configurations before the host
+  operation; direct ANGLE and instrumented Virgl probes confirmed genuine
+  32-bit floating-point MSAA depth resolve works. Managed topic `3a287ef` and
+  outer checkpoint `e741cbad` remove only the false GLES normalized-depth
+  advertisement while retaining `Z32_FLOAT` and native desktop `Z32_UNORM`.
+- The Release product now exposes 20 window/pixmap/pbuffer EGL configurations,
+  IDs 1-4, 13-16, 25-28, 37-40, and 49-52, with canonical SHA-256
+  `843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
+  The earlier 25-config inventory and GLES 2 campaign remain diagnostic
+  history and do not qualify the current product.
+- Clean detached campaign
+  `.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` passed all 129,960
+  current 16 KiB macOS GLES 3 executions: 125,270 `Pass`, 4,690
+  released-policy `NotSupported`, and no disallowed result. Independent
+  verify-only reconstruction accepted all 20 immutable shards. Every guest
+  used VNC, JIT, ten vCPUs, 8 GiB, acknowledged Virtio serial artifacts, and a
+  disposable overlay above the sealed ext4 lower; that lower remained mode
+  0444 at its authenticated SHA-256. Current GLES 2, complete Simulator/iPad
+  matrices, and the performance/thermal/lifecycle gates remain open. The
+  current macOS Apple-GPU prefix was transactionally republished at the
+  canonical path; its verifier, normal/sanitizer GPU workflows, both
+  architecture audits, all selected unit tests, and both VNC smokes passed.
+
 ## 2026-08-21: common Apple ANGLE/Metal graphics transition
 
 - Replaced the split desktop CGL and mobile ANGLE products atomically with one
