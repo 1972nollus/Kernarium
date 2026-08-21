@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -64,6 +65,9 @@ ALLOWED_ARTIFACTS = SHARD_ARTIFACTS | INVENTORY_ARTIFACTS
 CASE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 APPLE_CAMPAIGN_ID = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z"
+)
 FORBIDDEN_RENDERERS = re.compile(
     r"(?:llvmpipe|softpipe|swrast|software rasterizer|\bzink\b|xvfb)",
     re.IGNORECASE,
@@ -163,6 +167,17 @@ class EncodedArtifact:
     expected_chunks: int | None = None
 
 
+@dataclass(frozen=True)
+class RootfsContract:
+    filesystem_type: str
+    size: int
+    sha256: str
+    glcts_sha256: str
+    filesystem_uuid: str | None = None
+    guest_receipt_path: str | None = None
+    guest_receipt_sha256: str | None = None
+
+
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     value: dict[str, Any] = {}
     for key, item in pairs:
@@ -183,6 +198,168 @@ def load_identity(path: Path = IDENTITY_PATH) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise CampaignError("unsupported CTS identity schema")
     return value
+
+
+def cts_binary_identity(identity: dict[str, Any], path: str) -> dict[str, Any]:
+    try:
+        rows = identity["cts"]["binaries"]
+    except (KeyError, TypeError) as error:
+        raise CampaignError("CTS identity has no binary inventory") from error
+    if not isinstance(rows, list):
+        raise CampaignError("CTS binary inventory is not a list")
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("path") == path
+    ]
+    if len(matches) != 1:
+        raise CampaignError(f"CTS identity does not uniquely identify {path}")
+    row = matches[0]
+    if (
+        set(row) != {"path", "size", "sha256", "build_id"}
+        or type(row["size"]) is not int
+        or row["size"] < 1
+        or not isinstance(row["sha256"], str)
+        or SHA256.fullmatch(row["sha256"]) is None
+        or not isinstance(row["build_id"], str)
+        or re.fullmatch(r"[0-9a-f]+", row["build_id"]) is None
+    ):
+        raise CampaignError(f"invalid CTS binary identity for {path}")
+    return row
+
+
+def exclusion_digest(paths: Sequence[str]) -> str:
+    payload = "".join(f"{path}\n" for path in paths).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def load_derivative_receipt(
+    path: Path,
+    base_identity: dict[str, Any],
+) -> tuple[dict[str, Any], RootfsContract]:
+    try:
+        receipt = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise CampaignError(
+            f"cannot read derivative rootfs receipt {path}: {error}"
+        ) from error
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "schema_version",
+        "artifact",
+        "image",
+        "base_rootfs",
+        "clone",
+        "guest_receipt",
+        "cts",
+    }:
+        raise CampaignError("invalid derivative rootfs receipt")
+    if (
+        receipt["schema_version"] != 1
+        or receipt["artifact"] != "uml-gl-gles-rootfs"
+    ):
+        raise CampaignError("unsupported derivative rootfs receipt")
+
+    image = receipt["image"]
+    base = receipt["base_rootfs"]
+    clone = receipt["clone"]
+    guest_receipt = receipt["guest_receipt"]
+    cts = receipt["cts"]
+    sections = (image, base, clone, guest_receipt, cts)
+    if not all(isinstance(value, dict) for value in sections):
+        raise CampaignError("derivative rootfs receipt sections are invalid")
+    if set(image) != {
+        "filesystem",
+        "filesystem_uuid",
+        "size",
+        "sha256",
+        "read_only",
+    }:
+        raise CampaignError("invalid derivative image identity")
+    if (
+        image["filesystem"] != "ext4"
+        or not isinstance(image["filesystem_uuid"], str)
+        or UUID.fullmatch(image["filesystem_uuid"]) is None
+        or type(image["size"]) is not int
+        or image["size"] != 8 * 1024 * 1024 * 1024
+        or not isinstance(image["sha256"], str)
+        or SHA256.fullmatch(image["sha256"]) is None
+        or image["read_only"] is not True
+    ):
+        raise CampaignError("invalid derivative image identity")
+    if set(base) != {"size", "sha256"} or base != {
+        "size": base_identity["rootfs"]["size"],
+        "sha256": base_identity["rootfs"]["sha256"],
+    }:
+        raise CampaignError("derivative receipt names a different base rootfs")
+    if set(clone) != {"excluded_paths", "excluded_paths_sha256"}:
+        raise CampaignError("invalid derivative clone identity")
+    excluded = clone["excluded_paths"]
+    if (
+        not isinstance(excluded, list)
+        or not excluded
+        or any(
+            not isinstance(item, str)
+            or not item.startswith("/")
+            or item.endswith("/")
+            for item in excluded
+        )
+        or excluded != sorted(set(excluded))
+        or clone["excluded_paths_sha256"] != exclusion_digest(excluded)
+    ):
+        raise CampaignError("invalid derivative exclusion identity")
+    if set(guest_receipt) != {"path", "sha256"} or (
+        not isinstance(guest_receipt["path"], str)
+        or not guest_receipt["path"].startswith("/usr/share/uml-rootfs/")
+        or not isinstance(guest_receipt["sha256"], str)
+        or SHA256.fullmatch(guest_receipt["sha256"]) is None
+    ):
+        raise CampaignError("invalid in-guest build receipt identity")
+    if (
+        set(cts)
+        != {"glcts_path", "glcts_size", "glcts_sha256", "glcts_build_id"}
+        or cts["glcts_path"] != "/opt/vk-gl-cts/openglcts/glcts"
+        or type(cts["glcts_size"]) is not int
+        or cts["glcts_size"] < 1
+        or not isinstance(cts["glcts_sha256"], str)
+        or SHA256.fullmatch(cts["glcts_sha256"]) is None
+        or not isinstance(cts["glcts_build_id"], str)
+        or re.fullmatch(r"[0-9a-f]+", cts["glcts_build_id"]) is None
+    ):
+        raise CampaignError("invalid derivative CTS identity")
+    return receipt, RootfsContract(
+        filesystem_type="ext4",
+        size=image["size"],
+        sha256=image["sha256"],
+        glcts_sha256=cts["glcts_sha256"],
+        filesystem_uuid=image["filesystem_uuid"],
+        guest_receipt_path=guest_receipt["path"],
+        guest_receipt_sha256=guest_receipt["sha256"],
+    )
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_rootfs_file(path: Path, contract: RootfsContract) -> None:
+    if not path.is_file():
+        raise CampaignError(f"rootfs is not a regular file: {path}")
+    details = path.stat()
+    if details.st_size != contract.size:
+        raise CampaignError("rootfs size does not match its frozen identity")
+    if contract.filesystem_type == "ext4" and details.st_mode & (
+        stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    ):
+        raise CampaignError("derivative ext4 rootfs still has host write permission")
+    if sha256_file(path) != contract.sha256:
+        raise CampaignError("rootfs digest does not match its frozen identity")
 
 
 def leaf_identities(identity: dict[str, Any]) -> dict[str, LeafIdentity]:
@@ -883,6 +1060,7 @@ def build_guest_launcher(
     seed: int,
     timeout: int,
     guest_page_size: int,
+    rootfs_contract: RootfsContract,
 ) -> str:
     glcts = "/opt/vk-gl-cts/openglcts/glcts"
     archive = "/opt/vk-gl-cts/openglcts"
@@ -893,6 +1071,22 @@ def build_guest_launcher(
     summary = f"{output}/summary.txt"
     inventory_report = f"{output}/inventory.txt"
     inventory = selection is None
+    derivative_checks = ""
+    if rootfs_contract.filesystem_type == "ext4":
+        derivative_checks = f"""
+actual_lower_uuid=$(findmnt -n -o UUID -T /.uml-lower)
+[ "$actual_lower_uuid" = {shlex.quote(rootfs_contract.filesystem_uuid)} ] || {{
+    echo 'UML_CTS_ERROR: derivative filesystem UUID changed'
+    exit 1
+}}
+actual_receipt_sha=$(sha256sum \
+    {shlex.quote(rootfs_contract.guest_receipt_path)} | cut -d ' ' -f 1)
+[ "$actual_receipt_sha" = \
+    {shlex.quote(rootfs_contract.guest_receipt_sha256)} ] || {{
+    echo 'UML_CTS_ERROR: in-guest derivative receipt changed'
+    exit 1
+}}
+"""
     if inventory:
         export_pattern = f"{output}/${{packageName}}-cases.${{typeExtension}}"
         command = [
@@ -1051,9 +1245,10 @@ actual_page_size=$(getconf PAGESIZE)
     exit 1
 }}
 printf 'guest_page_size=%s\n' "$actual_page_size" >> "$renderer"
+{derivative_checks}
 {leaf_identity_check}
 actual_glcts_sha=$(sha256sum {shlex.quote(glcts)} | cut -d ' ' -f 1)
-[ "$actual_glcts_sha" = b74aa4337f7225bceb0f81ccad1da96f391efde5591f18030b614b8f5380c664 ] || {{
+[ "$actual_glcts_sha" = {shlex.quote(rootfs_contract.glcts_sha256)} ] || {{
     echo 'UML_CTS_ERROR: glcts identity changed'
     exit 1
 }}
@@ -1171,6 +1366,8 @@ def build_harness_command(
             str(options.emulator),
             "--rootfs",
             str(options.rootfs),
+            "--rootfs-type",
+            options.rootfs_type,
             "--memory",
             options.memory,
             "--cpus",
@@ -1195,6 +1392,7 @@ def build_harness_command(
                 options.seed,
                 options.shard_timeout,
                 16384 if options.page_profile == "16k" else 4096,
+                options.rootfs_contract,
             ),
             "0755",
         ),
@@ -1311,6 +1509,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--guest-timeout", type=positive_integer, default=1200)
     parser.add_argument("--emulator", type=Path)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
+    parser.add_argument(
+        "--rootfs-type",
+        choices=("erofs", "ext4"),
+        default="erofs",
+        help="authenticated lower filesystem type (default: erofs)",
+    )
+    parser.add_argument(
+        "--rootfs-receipt",
+        type=Path,
+        help="required identity receipt for a derivative ext4 rootfs",
+    )
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument(
         "--qualification",
@@ -1368,6 +1577,30 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             if options.page_profile == "16k"
             else REPO_ROOT / ".build/presets/macos-integration-4k/bin/uml-darwin"
         )
+    glcts_identity = cts_binary_identity(
+        identity, "/opt/vk-gl-cts/openglcts/glcts"
+    )
+    options.derivative_receipt = None
+    if options.rootfs_type == "erofs":
+        if options.rootfs_receipt is not None:
+            parser.error("--rootfs-receipt requires --rootfs-type ext4")
+        options.rootfs_contract = RootfsContract(
+            filesystem_type="erofs",
+            size=identity["rootfs"]["size"],
+            sha256=identity["rootfs"]["sha256"],
+            glcts_sha256=glcts_identity["sha256"],
+        )
+    else:
+        if options.rootfs_receipt is None:
+            parser.error("--rootfs-type ext4 requires --rootfs-receipt")
+        try:
+            receipt, contract = load_derivative_receipt(
+                options.rootfs_receipt.resolve(), identity
+            )
+        except CampaignError as error:
+            parser.error(str(error))
+        options.derivative_receipt = receipt
+        options.rootfs_contract = contract
     options.identity = identity
     options.leaves = leaves
     options.campaigns = campaigns
@@ -1418,23 +1651,24 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise CampaignError("emulator contains the retired CGL provider")
     if HOST_BACKEND_MARKER.encode() not in emulator_bytes:
         raise CampaignError("emulator does not contain the ANGLE/Metal provider marker")
-    if not rootfs.is_file():
-        raise CampaignError(f"rootfs is not a regular file: {rootfs}")
-    rootfs_identity = options.identity["rootfs"]
-    if rootfs.stat().st_size != rootfs_identity["size"]:
-        raise CampaignError("rootfs size does not match the frozen CTS identity")
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "tools/rootfs/verify.py"),
-            "--image",
-            str(rootfs),
-            "--manifest",
-            str(REPO_ROOT / "tools/rootfs/manifest.json"),
-            "--quiet",
-        ],
-        check=True,
-    )
+    rootfs_contract = options.rootfs_contract
+    if rootfs_contract.filesystem_type == "erofs":
+        if not rootfs.is_file() or rootfs.stat().st_size != rootfs_contract.size:
+            raise CampaignError("rootfs size does not match the frozen CTS identity")
+        subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tools/rootfs/verify.py"),
+                "--image",
+                str(rootfs),
+                "--manifest",
+                str(REPO_ROOT / "tools/rootfs/manifest.json"),
+                "--quiet",
+            ],
+            check=True,
+        )
+    else:
+        validate_rootfs_file(rootfs, rootfs_contract)
 
     artifact_directory.mkdir(parents=True, exist_ok=False)
     metadata = {
@@ -1450,7 +1684,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "surface": [options.width, options.height],
         "context": options.context,
         "mode": "inventory" if options.inventory else "shard",
-        "rootfs_sha256": rootfs_identity["sha256"],
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
         "qualification": options.qualification,
         "launch_environment": {
             "UML_GPU_CAPABILITY_REPORT": "1",
@@ -1462,6 +1697,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         },
         "command": command,
     }
+    if options.derivative_receipt is not None:
+        metadata["rootfs_receipt"] = options.derivative_receipt
     if options.inventory:
         metadata["expected_artifacts"] = [
             "inventory.txt",

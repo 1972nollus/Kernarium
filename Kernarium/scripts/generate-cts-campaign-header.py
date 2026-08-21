@@ -26,12 +26,18 @@ def load_runner(path: Path) -> ModuleType:
     return module
 
 
-def campaign_setup(driver: ModuleType, campaign: object, page_size: int) -> str:
+def campaign_setup(
+    driver: ModuleType,
+    campaign: object,
+    page_size: int,
+    rootfs_contract: object,
+) -> str:
     launcher = driver.build_guest_launcher(
         campaign.selection,
         campaign.seed,
         campaign.shard_timeout,
         page_size,
+        rootfs_contract,
     ).rstrip()
     service = driver.CTS_SERVICE.rstrip()
     return f"""install -d -m 0755 /usr/local/libexec \\
@@ -57,10 +63,19 @@ def generate_header(
 ) -> str:
     identity = driver.load_identity(identity_path)
     campaigns = driver.load_apple_campaigns(identity, campaigns_path)
+    glcts = driver.cts_binary_identity(
+        identity, "/opt/vk-gl-cts/openglcts/glcts"
+    )
+    rootfs_contract = driver.RootfsContract(
+        filesystem_type="erofs",
+        size=identity["rootfs"]["size"],
+        sha256=identity["rootfs"]["sha256"],
+        glcts_sha256=glcts["sha256"],
+    )
     rows: list[str] = []
     for index, campaign in enumerate(campaigns.values()):
         delimiter = f"CTS{index}"
-        setup = campaign_setup(driver, campaign, page_size)
+        setup = campaign_setup(driver, campaign, page_size, rootfs_contract)
         terminator = f"){delimiter}\""
         if terminator in setup:
             raise RuntimeError(

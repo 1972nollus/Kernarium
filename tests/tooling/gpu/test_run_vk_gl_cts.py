@@ -31,6 +31,52 @@ import run_ios_simulator_vk_gl_cts as ios_cts  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def erofs_contract() -> cts.RootfsContract:
+    identity = cts.load_identity()
+    glcts = cts.cts_binary_identity(
+        identity, "/opt/vk-gl-cts/openglcts/glcts"
+    )
+    return cts.RootfsContract(
+        filesystem_type="erofs",
+        size=identity["rootfs"]["size"],
+        sha256=identity["rootfs"]["sha256"],
+        glcts_sha256=glcts["sha256"],
+    )
+
+
+def derivative_receipt(identity: dict[str, object]) -> dict[str, object]:
+    exclusions = ["/opt/geekbench", "/opt/ltp", "/opt/vk-gl-cts/vulkan"]
+    return {
+        "schema_version": 1,
+        "artifact": "uml-gl-gles-rootfs",
+        "image": {
+            "filesystem": "ext4",
+            "filesystem_uuid": "688cb152-ce4b-4ac4-9b5d-3def792791f3",
+            "size": 8 * 1024 * 1024 * 1024,
+            "sha256": "1" * 64,
+            "read_only": True,
+        },
+        "base_rootfs": {
+            "size": identity["rootfs"]["size"],
+            "sha256": identity["rootfs"]["sha256"],
+        },
+        "clone": {
+            "excluded_paths": exclusions,
+            "excluded_paths_sha256": cts.exclusion_digest(exclusions),
+        },
+        "guest_receipt": {
+            "path": "/usr/share/uml-rootfs/gl-gles-cts-build.env",
+            "sha256": "2" * 64,
+        },
+        "cts": {
+            "glcts_path": "/opt/vk-gl-cts/openglcts/glcts",
+            "glcts_size": 123456,
+            "glcts_sha256": "3" * 64,
+            "glcts_build_id": "abcd1234",
+        },
+    }
+
+
 def qpa_result(case: str, status: str = "Pass") -> str:
     return f"""#beginTestCaseResult {case}
 <?xml version="1.0" encoding="UTF-8"?>
@@ -117,6 +163,84 @@ class VkGlCtsToolingTests(unittest.TestCase):
         for leaf in leaves.values():
             self.assertRegex(leaf.sha256, r"^[0-9a-f]{64}$")
             self.assertTrue(leaf.path.startswith("/opt/vk-gl-cts/"))
+
+    def test_derivative_receipt_is_strict_and_tied_to_the_base(self) -> None:
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "receipt.json"
+            receipt = derivative_receipt(identity)
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            loaded, contract = cts.load_derivative_receipt(path, identity)
+            self.assertEqual(loaded, receipt)
+            self.assertEqual(contract.filesystem_type, "ext4")
+            self.assertEqual(contract.glcts_sha256, "3" * 64)
+
+            receipt["base_rootfs"]["sha256"] = "4" * 64
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "different base"):
+                cts.load_derivative_receipt(path, identity)
+
+            receipt = derivative_receipt(identity)
+            receipt["clone"]["excluded_paths_sha256"] = "5" * 64
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(cts.CampaignError, "exclusion"):
+                cts.load_derivative_receipt(path, identity)
+
+    def test_ext4_rootfs_contract_is_forwarded_and_checked_in_guest(self) -> None:
+        identity = cts.load_identity()
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt_path = Path(temporary) / "receipt.json"
+            receipt_path.write_text(
+                json.dumps(derivative_receipt(identity)), encoding="utf-8"
+            )
+            options = cts.parse_arguments(
+                [
+                    "--leaf",
+                    "gles3",
+                    "--api",
+                    "gles3",
+                    "--rootfs",
+                    "/tmp/rootfs.ext4",
+                    "--rootfs-type",
+                    "ext4",
+                    "--rootfs-receipt",
+                    str(receipt_path),
+                ]
+            )
+            command = cts.build_harness_command(
+                options,
+                cts.Selection(options.leaves["gles3"], (), 0, 1),
+                Path("/tmp/uml-cts-test"),
+            )
+            rootfs_type = command.index("--rootfs-type")
+            self.assertEqual(
+                command[rootfs_type : rootfs_type + 2],
+                ["--rootfs-type", "ext4"],
+            )
+            launcher = cts.build_guest_launcher(
+                cts.Selection(options.leaves["gles3"], (), 0, 1),
+                0,
+                900,
+                16384,
+                options.rootfs_contract,
+            )
+            self.assertIn("688cb152-ce4b-4ac4-9b5d-3def792791f3", launcher)
+            self.assertIn("gl-gles-cts-build.env", launcher)
+            self.assertIn("3" * 64, launcher)
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            cts.parse_arguments(
+                [
+                    "--leaf",
+                    "gles3",
+                    "--api",
+                    "gles3",
+                    "--rootfs-type",
+                    "ext4",
+                ]
+            )
 
     def test_complete_inventory_identity_is_exact_and_fail_closed(self) -> None:
         identity = json.loads(json.dumps(cts.load_identity()))
@@ -473,6 +597,7 @@ Kernarium: runtime returned 0
             seed=7,
             timeout=300,
             guest_page_size=16384,
+            rootfs_contract=erofs_contract(),
         )
         self.assertIn(leaf.path, launcher)
         self.assertIn(leaf.sha256, launcher)
@@ -513,6 +638,7 @@ Kernarium: runtime returned 0
             seed=7,
             timeout=300,
             guest_page_size=16384,
+            rootfs_contract=erofs_contract(),
         )
         self.assertIn(
             "exact case is absent from selected must-pass leaf",
@@ -529,7 +655,9 @@ Kernarium: runtime returned 0
             self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
     def test_inventory_launcher_uses_real_display_and_no_case_selector(self) -> None:
-        launcher = cts.build_guest_launcher(None, 0, 900, 16384)
+        launcher = cts.build_guest_launcher(
+            None, 0, 900, 16384, erofs_contract()
+        )
         self.assertIn("--deqp-runmode=txt-caselist", launcher)
         self.assertIn(
             "'--deqp-caselist-export-file=/run/uml-cts/${packageName}-cases."
