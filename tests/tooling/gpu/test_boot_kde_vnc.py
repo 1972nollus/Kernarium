@@ -28,6 +28,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIsNone(options.password)
         self.assertEqual(options.cpus, 10)
         self.assertEqual(options.engine, "jit")
+        self.assertEqual(options.rootfs_type, "erofs")
 
     def test_execution_settings_are_forwarded(self) -> None:
         options = boot_kde_vnc.parse_arguments(
@@ -110,14 +111,29 @@ class KdeVncLauncherTests(unittest.TestCase):
         command = boot_kde_vnc.build_harness_command(options)
         self.assertEqual(command[0], sys.executable)
         self.assertEqual(
-            command[1:6],
+            command[1:8],
             [
                 str(boot_kde_vnc.GUEST_HARNESS),
                 "--emulator",
                 str(options.emulator),
                 "--rootfs",
                 "/tmp/rootfs.erofs",
+                "--rootfs-type",
+                "erofs",
             ],
+        )
+
+    def test_ext4_root_type_is_forwarded_to_the_guest_harness(self) -> None:
+        options = boot_kde_vnc.parse_arguments(
+            ["--rootfs", "/tmp/rootfs.ext4", "--rootfs-type", "ext4"]
+        )
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        rootfs_type = command.index("--rootfs-type")
+        self.assertLess(rootfs_type, separator)
+        self.assertEqual(
+            command[rootfs_type : rootfs_type + 2],
+            ["--rootfs-type", "ext4"],
         )
 
     def test_desktop_idle_lock_is_disabled_in_overlay(self) -> None:

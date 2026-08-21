@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot KDE Plasma from the EROFS guest in a native or VNC display."""
+"""Boot KDE Plasma from a read-only lower image in a native or VNC display."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -184,6 +184,12 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
     parser.add_argument(
+        "--rootfs-type",
+        choices=("erofs", "ext4"),
+        default="erofs",
+        help="lower filesystem type (default: erofs)",
+    )
+    parser.add_argument(
         "--iso",
         type=iso_image,
         help=(
@@ -225,6 +231,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         str(options.emulator),
         "--rootfs",
         str(options.rootfs),
+        "--rootfs-type",
+        options.rootfs_type,
         "--memory",
         options.memory,
         "--unit",

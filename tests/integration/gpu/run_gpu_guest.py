@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot the GPU test guest from the unified EROFS root filesystem."""
+"""Boot the GPU test guest from a read-only lower filesystem plus tmpfs."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -45,6 +45,7 @@ PROTECTED_ARGUMENTS = (
     "console=",
     "systemd.unit=",
 )
+ROOTFS_TYPES = ("erofs", "ext4")
 
 
 class SafetyError(RuntimeError):
@@ -241,13 +242,17 @@ def build_command(
     memory: str,
     systemd_unit: str,
     extra_arguments: Sequence[str],
+    rootfs_type: str = "erofs",
 ) -> list[str]:
     validate_extra_arguments(extra_arguments)
+    if rootfs_type not in ROOTFS_TYPES:
+        raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
+    ubd_flags = "c" if rootfs_type == "erofs" else "cr"
     return [
         str(emulator.resolve()),
-        f"ubd0c={rootfs.resolve()}",
+        f"ubd0{ubd_flags}={rootfs.resolve()}",
         f"root={root_device}",
-        "rootfstype=erofs",
+        f"rootfstype={rootfs_type}",
         "init=/bin/sh",
         f"mem={memory}",
         "console=tty0",
@@ -262,7 +267,13 @@ def make_test_script(
     commands: Sequence[str],
     auto_poweroff: bool,
     docker_hello_world: bytes | None = None,
+    lower_filesystem_type: str = "erofs",
+    root_device: str = "/dev/ubda",
 ) -> str:
+    if lower_filesystem_type not in ROOTFS_TYPES:
+        raise SafetyError(
+            f"unsupported root filesystem type: {lower_filesystem_type}"
+        )
     command_parts = list(commands)
     if docker_hello_world is not None:
         command_parts.append(make_docker_hello_world_smoke(docker_hello_world))
@@ -276,6 +287,12 @@ timeout 10 systemctl poweroff --no-wall --no-block || kill -RTMIN+4 1
 """ if auto_poweroff else """
 echo "UML_GPU_OVERLAY_TEST: guest left running by request"
 """
+    block_read_only_check = ""
+    if lower_filesystem_type == "ext4":
+        block_read_only_check = (
+            f'check_equal "$(blockdev --getro {shlex.quote(root_device)})" '
+            '1 "lower block-device read-only state"\n'
+        )
     return f"""#!/bin/sh
 set -u
 status=0
@@ -297,8 +314,12 @@ case ",$(findmnt -n -o OPTIONS -T /)," in
     *,rw,*) ;;
     *) echo "overlay check failed: root overlay is not writable"; status=1 ;;
 esac
-check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower)" erofs "lower filesystem type"
-check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower/mnt)" tmpfs "upper backing type"
+check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower)" {lower_filesystem_type} "lower filesystem type"
+case ",$(findmnt -n -o OPTIONS -T /.uml-lower)," in
+    *,ro,*) ;;
+    *) echo "overlay check failed: lower filesystem is not read-only"; status=1 ;;
+esac
+{block_read_only_check}check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower/mnt)" tmpfs "upper backing type"
 check_equal "$(findmnt -n -o FSTYPE -T /var/lib/docker)" tmpfs "Docker state filesystem type"
 check_equal "$(findmnt -n -o FSTYPE -T /var/lib/containerd)" tmpfs "containerd state filesystem type"
 
@@ -311,7 +332,7 @@ rm -f "$probe"
 
 if [ "$status" -eq 0 ]; then
     # Keep command-level shell failures (including expansion errors caused by
-    # malformed test input) inside a subshell so the EROFS-root result and
+    # malformed test input) inside a subshell so the overlay-root result and
     # orderly-poweroff footer always run.
     (
         set -e
@@ -330,7 +351,14 @@ exit "$status"
 """
 
 
-def make_bootstrap(test_script: str) -> bytes:
+def make_bootstrap(
+    test_script: str,
+    lower_filesystem_type: str = "erofs",
+) -> bytes:
+    if lower_filesystem_type not in ROOTFS_TYPES:
+        raise SafetyError(
+            f"unsupported root filesystem type: {lower_filesystem_type}"
+        )
     encoded_test = base64.b64encode(test_script.encode("utf-8")).decode("ascii")
     # The bootstrap is typed into the UML init shell through its tty. Keep each
     # physical input line comfortably below the tty's canonical-input limit so
@@ -347,7 +375,7 @@ fail()
 }}
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt || fail "tmpfs mount"
 mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || fail "overlay workspace"
-mount -o bind / /mnt/lower || fail "EROFS lower bind"
+mount -o bind / /mnt/lower || fail "read-only lower bind"
 mount -t overlay overlay -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root ||
     fail "overlay mount"
 mount -t devtmpfs devtmpfs /mnt/root/dev || fail "devtmpfs mount"
@@ -371,7 +399,7 @@ printf '%s' \\
 chmod 0755 /usr/local/libexec/uml-gpu-overlay-test
 cat > /etc/systemd/system/uml-gpu-overlay-test.service <<'EOF'
 [Unit]
-Description=Darwin UML EROFS-root GPU test guard
+Description=Darwin UML read-only-root GPU test guard
 After=local-fs.target
 Before=display-manager.service
 
@@ -388,7 +416,7 @@ WantedBy=multi-user.target
 EOF
 ln -sf ../uml-gpu-overlay-test.service \
     /etc/systemd/system/multi-user.target.wants/uml-gpu-overlay-test.service
-echo "Darwin UML root overlay: lower=erofs, upper=tmpfs"
+echo "Darwin UML root overlay: lower={lower_filesystem_type}, upper=tmpfs"
 exec /lib/systemd/systemd
 """
     return bootstrap.encode("utf-8")
@@ -562,10 +590,19 @@ def write_json(path: Path, value: Any) -> None:
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Boot a tmpfs-overlay GPU guest from rootfs.erofs"
+        description="Boot a tmpfs-overlay GPU guest from a read-only lower image"
     )
     parser.add_argument("--emulator", type=Path, default=DEFAULT_EMULATOR)
     parser.add_argument("--rootfs", type=Path, default=DEFAULT_ROOTFS)
+    parser.add_argument(
+        "--rootfs-type",
+        choices=ROOTFS_TYPES,
+        default="erofs",
+        help=(
+            "lower filesystem type; ext4 images are attached block-read-only "
+            "and without the host-file lock"
+        ),
+    )
     parser.add_argument("--root-device", default="/dev/ubda")
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--unit", default="multi-user.target")
@@ -575,7 +612,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--command",
         action="append",
         default=[],
-        help="shell command to run after the EROFS-overlay checks (repeatable)",
+        help="shell command to run after the root-overlay checks (repeatable)",
     )
     parser.add_argument(
         "--docker-hello-world-binary",
@@ -628,16 +665,20 @@ def main(arguments: Sequence[str] | None = None) -> int:
         options.memory,
         options.unit,
         options.kernel_arguments,
+        rootfs_type=options.rootfs_type,
     )
     test_script = make_test_script(
         options.command,
         auto_poweroff=not options.no_auto_poweroff,
         docker_hello_world=docker_hello_world,
+        lower_filesystem_type=options.rootfs_type,
+        root_device=options.root_device,
     )
-    bootstrap = make_bootstrap(test_script)
+    bootstrap = make_bootstrap(test_script, options.rootfs_type)
     result = {
         "command": command,
         "rootfs": str(rootfs),
+        "rootfs_type": options.rootfs_type,
         "auto_poweroff": not options.no_auto_poweroff,
     }
     serial_socket = (
@@ -676,7 +717,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     write_json(artifact_directory / "run.json", result)
     if not saw_pass or saw_fail:
-        raise RuntimeError("guest EROFS-overlay verification did not pass")
+        raise RuntimeError("guest root-overlay verification did not pass")
     return 0
 
 

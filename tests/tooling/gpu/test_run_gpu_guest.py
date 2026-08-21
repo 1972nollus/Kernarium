@@ -39,6 +39,48 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertIn("console=ttyS0", command)
         self.assertNotIn(f"ubd0r={resolved_image}", command)
 
+    def test_ext4_lower_is_attached_block_read_only(self) -> None:
+        command = run_gpu_guest.build_command(
+            Path("/bin/echo"),
+            Path("/tmp/rootfs.ext4"),
+            "/dev/ubda",
+            "8G",
+            "multi-user.target",
+            ["quiet"],
+            rootfs_type="ext4",
+        )
+        resolved_image = Path("/tmp/rootfs.ext4").resolve()
+        self.assertIn(f"ubd0cr={resolved_image}", command)
+        self.assertIn("rootfstype=ext4", command)
+        self.assertNotIn(f"ubd0c={resolved_image}", command)
+
+        script = run_gpu_guest.make_test_script(
+            ["true"],
+            auto_poweroff=True,
+            lower_filesystem_type="ext4",
+            root_device="/dev/ubda",
+        )
+        self.assertIn(
+            'findmnt -n -o FSTYPE -T /.uml-lower)" ext4', script
+        )
+        self.assertIn('blockdev --getro /dev/ubda)" 1', script)
+        bootstrap = run_gpu_guest.make_bootstrap(script, "ext4").decode()
+        self.assertIn("lower=ext4, upper=tmpfs", bootstrap)
+
+    def test_unknown_lower_filesystem_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            run_gpu_guest.SafetyError, "unsupported root filesystem type"
+        ):
+            run_gpu_guest.build_command(
+                Path("/bin/echo"),
+                Path("/tmp/rootfs.unknown"),
+                "/dev/ubda",
+                "8G",
+                "multi-user.target",
+                [],
+                rootfs_type="unknown",
+            )
+
     def test_conflicting_arguments_are_rejected(self) -> None:
         forbidden = (
             "ubd0=/tmp/other.erofs",
