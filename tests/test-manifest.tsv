@@ -603,6 +603,7 @@ backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retaine
 -	virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional	host-only protocol fixture registered when GPU dependencies and tooling are built
 -	virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	conditional	genuine vhost-user Virtio input configuration and asynchronous event-queue contract registered with the GPU transport
 -	virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional	standard Virtio Sound discovery, repeatable PCM lifecycle transitions, stereo playback state machine, and deferred completion contract registered when the Apple audio provider is built
+-	virtio-console-protocol	tests/unit/console/virtio_console_tests.cpp	unit	conditional	standard single-port Virtio console queues, reconnectable nonblocking Unix-socket I/O, bounded recent-output tail, path ownership, and in-process service lifetime registered with the generic vhost-user transport
 -	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
 -	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
 -	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	provision-time local artifact validation, authenticated release installation, tamper rejection, and atomic no-replace publication

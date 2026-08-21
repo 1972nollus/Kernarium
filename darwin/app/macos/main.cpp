@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "audio/in_process_service.hpp"
 #include "audio/protocol.hpp"
+#include "console/in_process_service.hpp"
+#include "console/protocol.hpp"
 #include "gpu/in_process_service.hpp"
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
@@ -219,6 +221,7 @@ struct HostGpuOptions {
 struct PreparedArguments {
 	HostGpuOptions gpu;
 	bool audio {};
+	std::string console_socket;
 	std::vector<std::string> kernel;
 };
 
@@ -263,6 +266,15 @@ PreparedArguments prepare_host_arguments(
 			prepared.gpu.enabled = true;
 		} else if (argument == "--audio") {
 			prepared.audio = true;
+		} else if (argument.starts_with("--virtio-console-socket=")) {
+			if (!prepared.console_socket.empty())
+				throw std::invalid_argument(
+					"--virtio-console-socket may be specified only once");
+			prepared.console_socket = argument.substr(
+				std::string_view{"--virtio-console-socket="}.size());
+			if (prepared.console_socket.empty())
+				throw std::invalid_argument(
+					"--virtio-console-socket requires a path");
 		} else if (argument.starts_with("--gpu-display=")) {
 			const auto mode = argument.substr(
 				std::string_view{"--gpu-display="}.size());
@@ -468,6 +480,30 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::console::InProcessConsoleService> console_service;
+	if (!prepared.console_socket.empty() && !informational(argc, argv)) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::console::protocol::deviceId)) {
+			std::fputs("--virtio-console-socket cannot be combined with an "
+				   "explicit Virtio console transport argument\n",
+				   stderr);
+			return 1;
+		}
+		try {
+			console_service =
+				std::make_unique<uml::console::InProcessConsoleService>(
+					prepared.console_socket);
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				console_service->takeConnectionName() + ":" +
+				std::to_string(uml::console::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio console: %s\n",
+				error.what());
+			return 1;
+		}
+	}
 	std::vector<const char *> arguments;
 	arguments.reserve(prepared.kernel.size());
 	for (const auto &argument : prepared.kernel)
@@ -493,6 +529,8 @@ int uml::app::runEmbeddedKernel(
 #endif
 	if (audio_service)
 		audio_service->stop();
+	if (console_service)
+		console_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
 	/* The embedded ELF kernel installs process-wide Linux signal handlers.

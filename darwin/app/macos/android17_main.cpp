@@ -332,6 +332,7 @@ void print_usage()
 		"Android 17 options:\n"
 		"  --android-release=/absolute/accepted/release\n"
 		"  --android-instance=/absolute/writable-instance.cow\n"
+		"  --virtio-console-socket=/absolute/console.sock\n"
 		"The same paths may be supplied through UML_ANDROID17_RELEASE and "
 		"UML_ANDROID17_INSTANCE.\n",
 		stderr);

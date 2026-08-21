@@ -686,6 +686,17 @@ desktop still needs its normal PipeWire or ALSA session policy to route
 application audio; the host device and launchers do not replace guest
 userspace.
 
+The macOS executable also accepts
+`--virtio-console-socket=/absolute/path`. This is a host-only attachment for a
+standard single-port Virtio console (device ID 3), not a kernel command-line
+argument. The service refuses to replace an existing path, publishes its socket
+with mode 0600, removes only the inode it created, retains a bounded recent
+output tail for the next attachment, and supports reconnecting after a client
+disconnects. Its output path is deliberately nonblocking; a client that stops
+reading loses console bytes rather than stopping a guest vCPU. The focused
+`virtio-console-protocol` unit test covers both queue directions, socket path
+ownership, tail delivery, reconnect, and in-process service teardown.
+
 `UML_GPU_FRAME_STATS=<seconds>` turns on native-display frame accounting on
 macOS and in Kernarium; unset, zero, or unparseable keeps it off. Each interval
 writes one bounded line to stderr, and macOS also mirrors it into the window

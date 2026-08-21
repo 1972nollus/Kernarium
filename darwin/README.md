@@ -78,8 +78,13 @@ default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
 `ncpus=`; explicit values continue to override those defaults independently.
 The separate `uml-darwin-android17` composition defaults to 4 GiB and four
 vCPUs, accepts only the installed 16 KiB Android 17/ACK 6.18 release selected at
-configure time, and requires a per-instance writable COW path. Its launcher
-does not search for `rootfs.erofs` or alter the current `uml-darwin` product.
+configure time, and requires a per-instance writable COW path. Its optional
+host-only `--virtio-console-socket=/absolute/path` argument attaches one
+standard single-port Virtio console through a reconnectable, mode-0600 Unix
+stream socket. The console transport never waits for a client: it retains a
+bounded recent output tail before attachment and drops backpressured output
+with a diagnostic rather than blocking the guest. Its launcher does not search
+for `rootfs.erofs` or alter the current `uml-darwin` product.
 
 The opt-in Apple CTS adapters pass only an identifier from the checked
 campaign allow-list. CMake generates that campaign's exact bounded guest
@@ -339,13 +344,14 @@ and grants the `video` and `input` groups access after udev settles before
 executing `/sbin/init`. No image account, OpenRC runlevel, or desktop session
 is replaced.
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
-console and DRM log client are disabled; the host has no Virtio-console
-backend, so `ttyS0` carries all kernel console bytes to application stdout.
-Kernarium also publishes the same ordered chunks to its SwiftTerm terminal and
-writes SwiftTerm delegate input back to the existing serial socket. The
-framebuffer remains the default app surface, and switching views leaves both
-SwiftTerm scrollback and Virtio-GPU presentation alive. This does not introduce
-a Virtio-console backend.
+console and DRM log client are disabled. Kernarium does not attach the optional
+macOS Virtio-console service, so `ttyS0` continues to carry its kernel console
+bytes to application stdout. Kernarium also publishes the same ordered chunks
+to its SwiftTerm terminal and writes SwiftTerm delegate input back to the
+existing serial socket. The framebuffer remains the default app surface, and
+switching views leaves both SwiftTerm scrollback and Virtio-GPU presentation
+alive. The separate Android macOS product may instead attach the single-port
+Virtio console over its explicit host Unix socket.
 `CONFIG_PRINTK_TIME` prefixes kernel records on both tty0 and ttyS0 with the
 guest monotonic timestamp. Normal UML execution supplies that prefix from a
 boot-relative host-monotonic nanosecond `sched_clock()` instead of 100 Hz

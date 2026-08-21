@@ -170,8 +170,11 @@ Apple GPU target compiles or links CGL, OpenGL.framework, EAGL, ANGLE/Vulkan,
 MoltenVK, or Zink for the GL facade.
 
 The vhost-user transport owns connection, dynamic queue framing, and deferred
-used-ring publication. The GPU, Virtio-input, and Virtio Sound devices
-independently implement their protocol operations over that transport.
+used-ring publication. The GPU, Virtio-input, Virtio Sound, and single-port
+Virtio console devices independently implement their protocol operations over
+that transport. The console's device-owned Unix-stream listener is a host I/O
+boundary: queue output is always completed without waiting for an external
+client, while socket readability retries pending guest input descriptors.
 Deferred publication lets a playback descriptor remain outstanding until the
 Apple audio engine consumes the corresponding PCM period. Kernarium registers
 one signed-16-bit, stereo, 48 kHz output stream, one absolute touchscreen, and
