@@ -99,6 +99,21 @@
 - Rebuilt the 16 KiB, built-in-only ACK ELF on the x86_64 Linux builder and ran
   a four-vCPU gadgets Android guest continuously to second 198 without an RCU
   stall. The prior kernel reproduced the failure at second 56–58.
+- A later 25-topic soak exposed a second starvation path at guest second 816:
+  uaccess and completed host-TLB retry boundaries called `cond_resched()`
+  before the cooperative timer had raised `need_resched()` or awakened RCU.
+- Added ACK-local topics 25 and 26. Safe, non-atomic uaccess and post-host-TLB
+  boundaries now poll the cooperative timer before `cond_resched()`; atomic
+  futex operations remain excluded. The regenerated 26-topic final tree is
+  `d1a4d62471db6569cfe5a11e842a5a433d8d297e`.
+- Published and installed release `20260821-5735514a-rcu-timer1`, then ran a
+  four-vCPU gadgets cold boot to guest second 982 and a same-COW warm boot to
+  second 284. Both dedicated `ttyS0` logs were free of RCU-stall,
+  timer-wakeup, oops, and panic signatures and shut down normally.
+- The separate `hvc0` Unix-socket transcripts returned an Android shell and
+  `logcat -b main` output without Linux printk records. SurfaceFlinger still
+  aborts repeatedly and `sys.boot_completed` remains unset, so graphical
+  application readiness is explicitly not claimed.
 
 ## 2026-08-20: required local kernel source location
 

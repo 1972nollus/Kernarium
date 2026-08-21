@@ -45,9 +45,13 @@ locks are no longer live. Topic 26 first polls the cooperative per-vCPU timer
 at those IRQ-enabled boundaries, then calls `cond_resched()`. The ordering is
 required because the timer raises `need_resched` and wakes the RCU grace-period
 thread; a reschedule check alone cannot recover a timer deadline that was never
-serviced. Atomic futex operations remain excluded. A candidate release with
-these topics must pass a four-vCPU soak beyond the previous late warning at
-guest second 816 before its acceptance descriptor is advanced.
+serviced. Atomic futex operations remain excluded. Release
+`20260821-5735514a-rcu-timer1` passed that gate: its four-vCPU gadgets cold
+boot reached guest second 982 and a same-COW warm boot reached second 284 with
+no RCU-stall, timer-wakeup, oops, or panic signature. The former late warning
+occurred at guest second 816. Both runs shut down normally. The accepted ACK
+ELF is `6.18.21-g1edaf2cbd207`, final tree
+`d1a4d62471db6569cfe5a11e842a5a433d8d297e`.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

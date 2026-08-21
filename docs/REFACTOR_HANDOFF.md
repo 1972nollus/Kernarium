@@ -133,10 +133,18 @@ Kbuild. The Android ACK series, AOSP product, static disk/initramfs producer,
 and accepted release are separately owned by `kernel/android-6.18` and
 `android/aosp-17`. A separate 16 KiB-only macOS executable now consumes that
 accepted release; the signed iOS Android runtime remains later work.
-The ACK source candidate now has 24 generated topics. Topic 24 services
-throttled cooperative timers from IRQ-enabled kernel spin checkpoints, fixing
-the Android multi-vCPU RCU stall: a four-vCPU gadgets run reached guest second
-198 without a stall, versus the former repeatable failure at second 56–58.
+The accepted ACK source now has 26 generated topics. Topic 24 services
+throttled cooperative timers from IRQ-enabled kernel spin checkpoints. Topics
+25 and 26 add safe non-atomic uaccess and completed host-TLB quiescent
+boundaries, polling the cooperative timer before `cond_resched()` so a missed
+deadline can raise `need_resched()` and awaken RCU. The accepted built-in-only
+release `20260821-5735514a-rcu-timer1` ran a four-vCPU gadgets cold boot to
+guest second 982 and a same-COW warm boot to second 284 without an RCU-stall,
+timer-wakeup, oops, or panic signature; the previous late failure occurred at
+second 816. `ttyS0` retained kernel/init output while independent `hvc0`
+sessions returned the Android shell and main logcat buffer. SurfaceFlinger
+still aborts repeatedly and `sys.boot_completed` remains unset, so graphical
+Android application readiness remains open.
 
 ## Required case-sensitive kernel source configuration (2026-08-20)
 

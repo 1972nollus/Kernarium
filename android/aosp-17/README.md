@@ -354,11 +354,23 @@ the disk with a frame checksum, verifies the completed staging tree, and then
 atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
 
-The accepted 2026-08-21 publication compressed the 17,179,869,184-byte sparse
-GPT disk to 807,725,195 bytes. The workstation installer restored a sparse disk
-with approximately 1.6 GiB allocated, reverified all seven partitions, exposed
-the completed local release only after validation, and rejected a second
-installation rather than replacing it.
+Accepted release `20260821-5735514a-rcu-timer1` compressed the
+17,179,869,184-byte sparse GPT disk to 807,725,165 bytes. The workstation
+installer restored a sparse disk with approximately 1.6 GiB allocated,
+reverified all seven partitions, and exposed the completed local release only
+after validation. Its built-in-only 16 KiB ACK ELF is
+`6.18.21-g1edaf2cbd207` from final tree
+`d1a4d62471db6569cfe5a11e842a5a433d8d297e`.
+
+The accepted four-vCPU gadgets campaign used one fresh COW for a cold boot to
+guest uptime 982 seconds and a warm boot to 284 seconds. Neither dedicated
+`ttyS0` capture contained an RCU stall, missing timer wakeup, oops, or panic;
+both ended with `result=0 exitcode=0`. The independent `hvc0` transcripts
+reached their target markers and returned `logcat -b main` output. They contain
+no kernel timestamp, Linux version, or kernel command-line record. Android's
+`sys.boot_completed` property remained unset because SurfaceFlinger still
+restarts with `SIGABRT`; this acceptance closes the SMP timer and console
+transport gates, not graphical application readiness.
 
 ## Separate macOS Android executable
 

@@ -1,5 +1,14 @@
 # Refactor evidence
 
+## Android 17 ACK 6.18 SMP and console acceptance (2026-08-21)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Accepted producer identity | Clean outer revision `5735514ae840ac4bbdca78fd0ba9afa295351bc4` replayed 26 local ACK topics to final tree `d1a4d62471db6569cfe5a11e842a5a433d8d297e`; topic 26 has stable patch ID `110a0c41095fbdc45af477030fe945080a5829d9`. The x86_64 Linux producer built release `6.18.21-g1edaf2cbd207` with 16 KiB pages, `CONFIG_MODULES=n`, built-in HVC/Virtio console, and no `.ko` output. The matching AOSP target-files/VINTF, 4,374,784-byte initramfs, and seven-partition 17,179,869,184-byte GPT image passed their producer verifiers. Installed release `20260821-5735514a-rcu-timer1` binds patch-manifest SHA-256 `bac85a335b5dd400771b2cba2e1370fa306ce2df2d681426a11e643f41b77f3f` and bridge ABI v8 / `0x3871ad612337ea76`. |
+| Four-vCPU RCU gate | `.build/android/qualification/5735514a-timer1-cold/ttyS0.log` records a fresh-COW four-vCPU gadgets boot through guest second 1,040 and normal poweroff; its independent hvc0 soak marker reached 981.78 seconds. `ttyS0-warm.log` records the same COW booting again through second 303 and normal poweroff; its hvc0 marker reached 284.15 seconds. Exact scans found no self-detected RCU stall, missing RCU timer wakeup, BUG, oops, or panic in either kernel log. This crosses the prior late failure at second 816 as well as the earlier repeatable second-56--58 failure. |
+| Console separation | Both kernel command lines contain `console=ttyS0` and `androidboot.console=hvc0`. The two ttyS0 files own Linux/kernel/init output. `hvc0-transcript.log` and `hvc0-warm-transcript.log` independently record the UID-2000 Android shell, target-uptime markers, and `logcat -b main` output; neither contains a Linux version, kernel command line, or bracketed printk timestamp. Both console connections survived the workload and closed on orderly Android poweroff. |
+| Remaining Android blocker | `sys.boot_completed` stayed unset throughout both runs because SurfaceFlinger repeatedly received `SIGABRT`. The evidence accepts the built-in-only ACK artifact, multi-vCPU timer progress, and separated console/logcat transport. It does not claim a completed graphical Android boot, application readiness, CTS/VTS compliance, or an iOS runtime. |
+
 ## Common Apple ANGLE/Metal transition (2026-08-21)
 
 | Boundary | Current evidence and limitation |
