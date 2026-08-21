@@ -203,8 +203,13 @@ EOF
 for property in $(get_build_var PRODUCT_VENDOR_PROPERTIES); do
 	case "$property" in
 	ro.virtual_ab.*) fail "Virtual A/B property remains enabled: $property" ;;
+	external_storage.projid.enabled=*)
+		fail "project-quota property remains enabled: $property"
+		;;
 	esac
 done
+[[ -z "$(get_build_var PRODUCT_QUOTA_PROJID)" ]] ||
+	fail "PRODUCT_QUOTA_PROJID must be empty for the UML userdata filesystem"
 for variable in \
 	PRODUCT_BUILD_SYSTEM_DLKM_IMAGE \
 	PRODUCT_BUILD_VENDOR_DLKM_IMAGE \

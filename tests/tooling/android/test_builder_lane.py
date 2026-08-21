@@ -764,8 +764,10 @@ def main() -> None:
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
     for token in (
-        "PRODUCT_QUOTA_PROJID := 0",
-        "filter-out external_storage.projid.enabled=1",
+        "UML_ANDROID_DISABLE_PROJECT_QUOTAS := true",
+        "ifeq ($(UML_ANDROID_DISABLE_PROJECT_QUOTAS),true)",
+        "external_storage.casefold.enabled=1",
+        "external_storage.sdcardfs.enabled=0",
         "latemount,wait,check,formattable,keydirectory=",
     ):
         if token not in cuttlefish_patches:
@@ -804,6 +806,8 @@ def main() -> None:
         "TARGET_2ND_ARCH",
         "TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE",
         "PRODUCT_USE_DYNAMIC_PARTITIONS",
+        "PRODUCT_QUOTA_PROJID",
+        "external_storage.projid.enabled=*",
         "PRODUCT_BUILD_SUPER_PARTITION",
         "PRODUCT_BUILD_SYSTEM_OTHER_IMAGE",
         "PRODUCT_VIRTUAL_AB_OTA",
