@@ -290,10 +290,11 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-70861dcc-dmdefault1`, published from
-clean outer revision `70861dccce0abf56371fa429050cebe348a38425` after the
+selects `android17-ack6.18-16k-20260821-79506ae3-console1`, published from
+clean outer revision `79506ae3c05fae84310efcc4f40a8898065fbdcb` after the
 static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
-no-camera APEX, non-A/B storage, and built-in userdata-encryption gates passed.
+no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
+service, and built-in single-port Virtio-console gates passed.
 This is artifact acceptance for Apple-product integration; HAL and application
 acceptance remain separate later gates.
 
@@ -352,7 +353,7 @@ atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
 
 The accepted 2026-08-21 publication compressed the 17,179,869,184-byte sparse
-GPT disk to 817,358,408 bytes. The workstation installer restored a sparse disk
+GPT disk to 807,725,195 bytes. The workstation installer restored a sparse disk
 with approximately 1.6 GiB allocated, reverified all seven partitions, exposed
 the completed local release only after validation, and rejected a second
 installation rather than replacing it.
