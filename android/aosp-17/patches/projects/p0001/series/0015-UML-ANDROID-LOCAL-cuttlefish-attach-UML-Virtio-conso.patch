@@ -1,7 +1,7 @@
 From f1119844c25480ecacb2e96a1fa9bab6fd846853 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 05:03:39 +0000
-Subject: [PATCH 15/16] UML-ANDROID-LOCAL: cuttlefish: attach UML Virtio
+Subject: [PATCH 15/17] UML-ANDROID-LOCAL: cuttlefish: attach UML Virtio
  console
 
 Change-Id: I54b0d5795a29486ade9d3d1f0ae098db84a51bf4
