@@ -1147,6 +1147,12 @@ void VhostUserServer::processQueue(std::uint32_t index)
         switch (result.action) {
         case uml::virtio::VhostUserQueueAction::retry:
             pendingRequests_.erase(position);
+            // A device may consume one descriptor and then run out of data on
+            // the next descriptor in the same available-ring snapshot.  The
+            // completed prefix must be visible to the driver before waiting
+            // for the external source to become ready again.
+            if (completed)
+                notifyQueue(index);
             return;
         case uml::virtio::VhostUserQueueAction::defer:
             if (!result.response.empty())

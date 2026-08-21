@@ -164,6 +164,55 @@ private:
     std::optional<uml::virtio::VhostUserQueueCompletion> completion_;
 };
 
+class CompleteThenRetryDevice final : public uml::virtio::VhostUserDevice {
+public:
+    [[nodiscard]] const char* name() const noexcept override
+    {
+        return "complete-then-retry fixture";
+    }
+    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
+    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
+    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
+    {
+        return {};
+    }
+    void writeConfiguration(
+        std::uint32_t,
+        std::uint32_t,
+        std::span<const std::uint8_t>) override
+    {
+    }
+    [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
+        std::uint32_t index,
+        std::uint64_t,
+        std::span<const std::uint8_t> request,
+        std::size_t responseCapacity) override
+    {
+        require(index == 0);
+        require(request.empty());
+        require(responseCapacity == 4);
+        const auto attempt = attempts_.fetch_add(1, std::memory_order_relaxed);
+        if (attempt == 0) {
+            return {
+                .action = uml::virtio::VhostUserQueueAction::complete,
+                .response = {9, 8, 7, 6},
+            };
+        }
+        return {.action = uml::virtio::VhostUserQueueAction::retry};
+    }
+    void reset() noexcept override
+    {
+        attempts_.store(0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] unsigned attempts() const noexcept
+    {
+        return attempts_.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic_uint attempts_ {};
+};
+
 void deferredCompletionSupportsFourQueues()
 {
     auto device = std::make_unique<DeferredQueueDevice>();
@@ -274,6 +323,114 @@ void deferredCompletionSupportsFourQueues()
         require(std::ranges::equal(
             memory.subspan(responseOffset, 4),
             std::array<std::uint8_t, 4> {9, 8, 7, 6}));
+    });
+    require(::munmap(mapped, 4096) == 0);
+}
+
+void completedPrefixNotifiesBeforeRetry()
+{
+    auto device = std::make_unique<CompleteThenRetryDevice>();
+    auto* observed = device.get();
+    VhostUserServer server {std::move(device)};
+    auto memoryDescriptor = openMemoryDescriptor();
+    void* mapped = ::mmap(
+        nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
+        memoryDescriptor.get(), 0);
+    require(mapped != MAP_FAILED);
+    auto memory = std::span {
+        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+
+    constexpr std::uint64_t guestBase = 0x1000;
+    constexpr std::uint64_t userBase = 0x1000'0000;
+    constexpr std::size_t descriptorOffset = 0x000;
+    constexpr std::size_t availableOffset = 0x100;
+    constexpr std::size_t usedOffset = 0x200;
+    constexpr std::size_t firstResponseOffset = 0x300;
+    constexpr std::size_t secondResponseOffset = 0x400;
+    const std::array descriptors {
+        protocol::VirtqueueDescriptor {
+            .address = guestBase + firstResponseOffset,
+            .length = 4,
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+        protocol::VirtqueueDescriptor {
+            .address = guestBase + secondResponseOffset,
+            .length = 4,
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        },
+    };
+    std::memcpy(
+        memory.data() + descriptorOffset, descriptors.data(),
+        sizeof(descriptors));
+    const std::uint16_t availableIndex = 2;
+    const std::array<std::uint16_t, 2> heads {0, 1};
+    std::memcpy(
+        memory.data() + availableOffset + sizeof(std::uint16_t),
+        &availableIndex, sizeof(availableIndex));
+    std::memcpy(
+        memory.data() + availableOffset + protocol::splitRingHeaderSize,
+        heads.data(), sizeof(heads));
+    constexpr std::uint8_t responseSentinel = 0xa5;
+    std::memset(memory.data() + firstResponseOffset, responseSentinel, 4);
+    std::memset(memory.data() + secondResponseOffset, responseSentinel, 4);
+
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, memoryDescriptor.get());
+        const protocol::VringState queueSize {.index = 0, .value = 8};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
+        const protocol::VringAddress addresses {
+            .index = 0,
+            .flags = 0,
+            .descriptor = userBase + descriptorOffset,
+            .used = userBase + usedOffset,
+            .available = userBase + availableOffset,
+            .log = 0,
+        };
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
+        const protocol::VringState enable {.index = 0, .value = 1};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
+
+        std::array<int, 2> callPipe {-1, -1};
+        require(::pipe(callPipe.data()) == 0);
+        UniqueDescriptor callRead {callPipe[0]};
+        UniqueDescriptor callWrite {callPipe[1]};
+        constexpr std::uint64_t queue = 0;
+        const std::array callDescriptors {callWrite.get()};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringCall,
+            bytesOf(queue), callDescriptors);
+
+        std::array<int, 2> kickPipe {-1, -1};
+        require(::pipe(kickPipe.data()) == 0);
+        UniqueDescriptor kickRead {kickPipe[0]};
+        UniqueDescriptor kickWrite {kickPipe[1]};
+        const std::array kickDescriptors {kickRead.get()};
+        sendRequestAndReadAcknowledgement(
+            socket, protocol::VhostRequest::setVringKick,
+            bytesOf(queue), kickDescriptors);
+
+        pollfd completion {.fd = callRead.get(), .events = POLLIN};
+        require(::poll(&completion, 1, 2000) == 1);
+        std::uint64_t completionCount {};
+        readExact(callRead.get(), &completionCount, sizeof(completionCount));
+        require(completionCount == 1);
+        auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
+            memory.data() + usedOffset + sizeof(std::uint16_t));
+        require(std::atomic_ref<std::uint16_t>(usedIndex)
+                    .load(std::memory_order_acquire) == 1);
+        require(observed->attempts() == 2);
+        require(std::ranges::equal(
+            memory.subspan(firstResponseOffset, 4),
+            std::array<std::uint8_t, 4> {9, 8, 7, 6}));
+        require(std::ranges::all_of(
+            memory.subspan(secondResponseOffset, 4),
+            [](std::uint8_t byte) { return byte == responseSentinel; }));
     });
     require(::munmap(mapped, 4096) == 0);
 }
@@ -1112,6 +1269,7 @@ void runVhostUserProtocolTests()
 {
     const auto before = descriptorCount();
     deferredCompletionSupportsFourQueues();
+    completedPrefixNotifiesBeforeRetry();
     {
         VhostUserServer server {
             {}, "127.0.0.1", 0, {}, 64, 64, false};
