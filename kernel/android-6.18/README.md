@@ -22,4 +22,7 @@ forbidden: `CONFIG_MODULES=n`, Binder, ashmem compatibility, SELinux, audit,
 DMA-BUF heaps, storage, networking, and guest devices resolve built-in, and no
 `.ko` or DLKM output is accepted. Android userdata metadata encryption also
 requires the built-in block inline-encryption core, its software fallback,
-fscrypt inline hooks, and `dm-default-key`; UBD has no hardware crypto offload.
+fscrypt inline hooks, `dm-default-key`, and the software `hctr2(aes)` transform
+used by the product's `aes-256-xts:aes-256-hctr2` file-encryption policy; UBD
+has no hardware crypto offload. These remain built in because the iOS product
+cannot recover a missing storage or crypto feature by loading a module.

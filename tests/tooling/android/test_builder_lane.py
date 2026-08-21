@@ -902,6 +902,7 @@ def main() -> None:
     for symbol in (
         "CONFIG_BLK_INLINE_ENCRYPTION=y",
         "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y",
+        "CONFIG_CRYPTO_HCTR2=y",
         "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y",
         "CONFIG_DM_DEFAULT_KEY=y",
     ):
