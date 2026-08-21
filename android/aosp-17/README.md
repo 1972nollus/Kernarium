@@ -309,11 +309,12 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-5735514a-rcu-timer1`, published from
-clean outer revision `5735514ae840ac4bbdca78fd0ba9afa295351bc4` after the
+selects `android17-ack6.18-16k-20260821-e8e1e314-virgl1`, published from
+clean outer revision `e8e1e314f2438619f4097cb841de75b2c1cafc7d` after the
 static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
 no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
-service, and built-in single-port Virtio-console gates passed.
+service, built-in single-port Virtio-console, and source-built 16 KiB Mesa
+Virgl payload gates passed.
 This is artifact acceptance for Apple-product integration; HAL and application
 acceptance remain separate later gates.
 
@@ -371,16 +372,18 @@ the disk with a frame checksum, verifies the completed staging tree, and then
 atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
 
-Accepted release `20260821-5735514a-rcu-timer1` compressed the
-17,179,869,184-byte sparse GPT disk to 807,725,165 bytes. The workstation
-installer restored a sparse disk with approximately 1.6 GiB allocated,
-reverified all seven partitions, and exposed the completed local release only
-after validation. Its built-in-only 16 KiB ACK ELF is
-`6.18.21-g1edaf2cbd207` from final tree
-`d1a4d62471db6569cfe5a11e842a5a433d8d297e`.
+Accepted release `20260821-e8e1e314-virgl1` compressed the
+17,179,869,184-byte sparse GPT disk to 830,859,357 bytes. Its target-files
+archive contains the source-built 16 KiB Mesa EGL/GLES and Gallium Virgl
+libraries plus the exact `virtio_gpu_dri.so -> gallium_dri.so` link. The
+workstation verifier accepted the copied compact bundle before installation.
+Its built-in-only 16 KiB ACK ELF is `6.18.21-g6385729901c5` from the 27-topic
+final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
+qualification remains separate from this static artifact acceptance.
 
-The accepted four-vCPU gadgets campaign used one fresh COW for a cold boot to
-guest uptime 982 seconds and a warm boot to 284 seconds. Neither dedicated
+The predecessor `20260821-5735514a-rcu-timer1` four-vCPU gadgets campaign used
+one fresh COW for a cold boot to guest uptime 982 seconds and a warm boot to
+284 seconds. Neither dedicated
 `ttyS0` capture contained an RCU stall, missing timer wakeup, oops, or panic;
 both ended with `result=0 exitcode=0`. The independent `hvc0` transcripts
 reached their target markers and returned `logcat -b main` output. They contain

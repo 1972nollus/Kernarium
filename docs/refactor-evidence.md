@@ -1,5 +1,12 @@
 # Refactor evidence
 
+## Android 17 Virgl artifact acceptance (2026-08-21)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Accepted producer identity | Clean outer revision `e8e1e314f2438619f4097cb841de75b2c1cafc7d` routed four AOSP projects and replayed 27 local ACK topics to final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Release `20260821-e8e1e314-virgl1` contains the built-in-only 16 KiB kernel `6.18.21-g6385729901c5`, binds ACK patch-manifest SHA-256 `9e02c423df8c1ddf896b771ffce42d8009204daace4f3c0d3535982f22a8a5f3`, and retains bridge ABI v8 / `0x3871ad612337ea76`. The clean builder and copied-bundle verifiers accepted its target files, VINTF, 4,374,784-byte initramfs, and 17,179,869,184-byte GPT disk. |
+| Virgl payload | The target-files verifier found 16 KiB-aligned AArch64 `libEGL_mesa.so`, `libGLESv1_CM_mesa.so`, `libGLESv2_mesa.so`, and `gallium_dri.so`, with the exact `virtio_gpu_dri.so -> gallium_dri.so` link. SwiftShader remains packaged as a fallback. This is source and artifact evidence only; guest renderer strings, scanout, SurfaceFlinger stability, and hardware execution still require runtime qualification. |
+
 ## Android 17 ACK 6.18 SMP and console acceptance (2026-08-21)
 
 | Boundary | Current evidence and limitation |
