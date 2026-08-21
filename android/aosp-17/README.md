@@ -200,12 +200,31 @@ The one harmless duplicate `dev` directory emitted by AOSP `mkbootfs` from its
 tree and node list is accepted only when both directory records have identical
 mode and zero size.
 
+Current-candidate assembly requires exact byte equality with the current
+patch-owned UML fstab. Accepted-runtime import uses the verifier's structural
+mode instead: it still requires the regular first-stage fstab and every archive
+safety/module exclusion, but preserves the fstab version reviewed in that
+release rather than comparing it with a later producer revision.
+
 `support/boot/kernel-command-line.txt` owns the machine-independent launch
 arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
 SELinux, the DRM-HWC composer APEX for the Virtio-GPU path, disables both
 inherited camera-provider APEX variants because UML exposes no camera, and
-selects the `ttyS0` diagnostic shell. The runtime adds its local `ubd0=` disk
-and initrd paths; no builder or workstation path is stored in this tree.
+selects the `ttyS0` diagnostic shell. It also sets the product-scoped
+`androidboot.uml_bpf_interpreter=1` contract consumed by route `p0003` in
+`platform/packages/modules/Connectivity`. Normal Android products retain
+NetBpfLoad's eBPF-JIT requirement. This UML product may continue only when both
+JIT sysctls are absent and the explicit boot property is present, using the
+kernel's built-in verifier and generic interpreter instead. An inconsistent
+lone kallsyms sysctl remains fatal. The runtime adds its local `ubd0=` disk and
+initrd paths; no builder or workstation path is stored in this tree.
+
+This accommodation is not a claim of stock Android or VTS eBPF-JIT
+compliance. ACK's native arm64 JIT depends on native CPU-capability, `pt_regs`,
+Spectre, and exception-table contracts that the arm64 UML architecture does
+not share. The producer therefore requires built-in `BPF`, `BPF_SYSCALL`, and
+`CGROUP_BPF`, rejects `BPF_JIT`, `BPF_JIT_ALWAYS_ON`, and `HAVE_EBPF_JIT`, and
+keeps the slower interpreter choice visible in both the boot property and log.
 
 The 2026-08-21 builder checkpoint produced an OTA-disabled target-files archive
 with 4,571 entries and 1,162 verified target executables, a 4,375,040-byte raw
@@ -247,6 +266,15 @@ static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
 no-camera APEX, non-A/B storage, and built-in userdata-encryption gates passed.
 This is artifact acceptance for Apple-product integration; HAL and application
 acceptance remain separate later gates.
+
+Producer verification and accepted-runtime verification are deliberately
+separate. A new clean producer revision must match the current AOSP route table,
+ACK series, kernel policy, boot command line, and partition layout before it can
+publish a candidate. An already accepted runtime instead matches its checked-in
+descriptor and the current common host/kernel ABI. It remains importable while
+the next source candidate is built and reviewed; changing the producer route
+table alone neither silently promotes that candidate nor invalidates the last
+accepted runtime.
 
 Apple consumers validate that installed directory without a builder or transfer
 tool. The installed mode requires and checks the expanded GPT disk and all other

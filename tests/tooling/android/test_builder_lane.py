@@ -616,6 +616,8 @@ def main() -> None:
         android_root / "patches/projects/p0001/series/manifest.tsv",
         android_root / "patches/projects/p0002/metadata.env",
         android_root / "patches/projects/p0002/series/manifest.tsv",
+        android_root / "patches/projects/p0003/metadata.env",
+        android_root / "patches/projects/p0003/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
         android_root / "tools/verify-target-files.py",
@@ -749,6 +751,9 @@ def main() -> None:
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
+    connectivity_patch = next(
+        (android_root / "patches/projects/p0003/series").glob("*.patch")
+    ).read_text()
     cuttlefish_patches = "\n".join(
         path.read_text()
         for path in sorted(
@@ -763,6 +768,15 @@ def main() -> None:
         fail("AOSP materializer stages an overlay instead of applying project patches")
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
+    for token in (
+        "platform/packages/modules/Connectivity",
+        "ro.boot.uml_bpf_interpreter",
+        "UML kernel has no eBPF JIT; using its built-in interpreter.",
+    ):
+        if token not in connectivity_patch and token not in (
+            android_root / "patches/projects.tsv"
+        ).read_text():
+            fail(f"Connectivity patch route is missing UML BPF policy: {token}")
     for token in (
         "UML_ANDROID_DISABLE_PROJECT_QUOTAS := true",
         "ifeq ($(UML_ANDROID_DISABLE_PROJECT_QUOTAS),true)",
@@ -881,6 +895,7 @@ def main() -> None:
         "androidboot.boot_devices=uml-blkdev.0",
         "androidboot.selinux=enforcing",
         "androidboot.serialconsole=1",
+        "androidboot.uml_bpf_interpreter=1",
     ):
         if token not in command_line.split():
             fail(f"Android kernel command line is missing fixed token: {token}")
@@ -900,8 +915,11 @@ def main() -> None:
     if "CONFIG_MSEAL_SYSTEM_MAPPINGS=y" not in kernel_config:
         fail("Android kernel fragment does not enable system mapping sealing")
     for symbol in (
+        "CONFIG_BPF=y",
+        "CONFIG_BPF_SYSCALL=y",
         "CONFIG_BLK_INLINE_ENCRYPTION=y",
         "CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK=y",
+        "CONFIG_CGROUP_BPF=y",
         "CONFIG_CRYPTO_HCTR2=y",
         "CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y",
         "CONFIG_DM_DEFAULT_KEY=y",

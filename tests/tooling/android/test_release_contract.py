@@ -83,15 +83,6 @@ def main() -> None:
         "ANDROID17_ACCEPTED_SCHEMA": "1",
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
-        "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT": aosp["ANDROID17_MANIFEST_COMMIT"],
-        "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": aosp["ANDROID17_BASE_MANIFEST_SHA256"],
-        "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256": sha256_path(
-            android_root / "patches/projects.tsv"
-        ),
-        "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE": kernel["UML_KERNEL_FINAL_TREE"],
-        "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256": sha256_path(
-            kernel_root / "patches/series/manifest.tsv"
-        ),
         "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
         "ANDROID17_ACCEPTED_ABI_VERSION": abi["DARWIN_UML_ABI_VERSION"],
         "ANDROID17_ACCEPTED_ABI_FINGERPRINT": abi["DARWIN_UML_ABI_FINGERPRINT"],
@@ -212,6 +203,36 @@ def main() -> None:
             android_root,
             acceptance_path=acceptance,
             semantic=False,
+        )
+
+        historical = copy.deepcopy(manifest)
+        historical["aosp"]["projects_manifest_sha256"] = "b" * 64
+        historical["kernel"]["final_tree"] = "c" * 40
+        historical["kernel"]["patch_manifest_sha256"] = "d" * 64
+        historical_manifest = temporary_root / "historical-release-manifest.json"
+        historical_manifest.write_text(
+            json.dumps(historical, indent=2, sort_keys=True) + "\n"
+        )
+        manifest_path.write_bytes(historical_manifest.read_bytes())
+        historical_acceptance = temporary_root / "historical-accepted-release.env"
+        historical_acceptance.write_text(
+            acceptance.read_text()
+            .replace(manifest["aosp"]["projects_manifest_sha256"], "b" * 64)
+            .replace(manifest["kernel"]["final_tree"], "c" * 40)
+            .replace(manifest["kernel"]["patch_manifest_sha256"], "d" * 64)
+        )
+        verify_release(
+            release_root,
+            android_root,
+            acceptance_path=historical_acceptance,
+            semantic=False,
+        )
+        expect_failure(
+            lambda: verify_release(release_root, android_root, semantic=False),
+            "a historical release without its acceptance descriptor",
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         )
 
         extra = release_root / "support/undeclared"

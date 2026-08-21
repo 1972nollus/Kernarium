@@ -26,3 +26,11 @@ fscrypt inline hooks, `dm-default-key`, and the software `hctr2(aes)` transform
 used by the product's `aes-256-xts:aes-256-hctr2` file-encryption policy; UBD
 has no hardware crypto offload. These remain built in because the iOS product
 cannot recover a missing storage or crypto feature by loading a module.
+
+The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
+built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
+backend assumes CPU-capability, Spectre, register-frame, and exception-table
+contracts that do not match UML. The AOSP product carries a narrowly scoped
+NetBpfLoad patch and boot property for interpreter operation; other products
+retain Android's normal JIT requirement. This is a bring-up accommodation, not
+a claim of eBPF-JIT or VTS compliance.

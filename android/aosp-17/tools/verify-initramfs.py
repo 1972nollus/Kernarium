@@ -147,6 +147,11 @@ def parse_newc(path: Path) -> dict[str, Entry]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--structural",
+        action="store_true",
+        help="validate invariant archive safety without current fstab byte equality",
+    )
     parser.add_argument("initramfs", type=Path)
     args = parser.parse_args()
     if not args.initramfs.is_file() or args.initramfs.is_symlink():
@@ -157,8 +162,10 @@ def main() -> None:
     if init is None or not stat.S_ISREG(init.mode) or not (init.mode & 0o111):
         fail("archive does not contain an executable regular /init")
     fstab = entries.get(UML_FSTAB_PATH)
-    if fstab is None or not stat.S_ISREG(fstab.mode) or fstab.payload != UML_FSTAB:
-        fail("archive does not contain the exact UML first-stage fstab")
+    if fstab is None or not stat.S_ISREG(fstab.mode):
+        fail("archive does not contain a regular UML first-stage fstab")
+    if not args.structural and fstab.payload != UML_FSTAB:
+        fail("archive does not contain the exact current UML first-stage fstab")
 
     for name, entry in entries.items():
         path = PurePosixPath(name)

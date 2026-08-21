@@ -460,13 +460,20 @@ def parse_config(path: Path) -> dict[str, str]:
     return values
 
 
-def verify_kernel_config(release_root: Path, android_root: Path) -> None:
+def verify_kernel_config(
+    release_root: Path,
+    android_root: Path,
+    *,
+    enforce_tracked_policy: bool,
+) -> None:
     config = parse_config(release_root / "kernel/config")
     if config.get("CONFIG_MODULES") != "n":
         fail("release kernel does not have CONFIG_MODULES=n")
     module_values = sorted(key for key, value in config.items() if value == "m")
     if module_values:
         fail(f"release kernel contains loadable-module values: {module_values[:8]}")
+    if not enforce_tracked_policy:
+        return
     for path, expected in (
         (android_root / "support/verification/required-kernel-builtins.txt", "y"),
         (android_root / "support/verification/forbidden-kernel-options.txt", "n"),
@@ -512,25 +519,32 @@ def verify_semantics(
     expanded_disk: Path | None,
     *,
     verify_archive: bool,
+    enforce_tracked_policy: bool,
 ) -> None:
     run_checked([
         str(android_root / "build/verify-kernel-elf.py"),
         str(release_root / "kernel/vmlinux"),
     ])
-    verify_kernel_config(release_root, android_root)
-    run_checked([
-        str(android_root / "tools/verify-initramfs.py"),
-        str(release_root / "boot/ramdisk.img"),
-    ])
+    verify_kernel_config(
+        release_root,
+        android_root,
+        enforce_tracked_policy=enforce_tracked_policy,
+    )
+    initramfs_arguments = [str(android_root / "tools/verify-initramfs.py")]
+    if not enforce_tracked_policy:
+        initramfs_arguments.append("--structural")
+    initramfs_arguments.append(str(release_root / "boot/ramdisk.img"))
+    run_checked(initramfs_arguments)
 
-    if (release_root / "boot/kernel-command-line.txt").read_bytes() != (
-        android_root / "support/boot/kernel-command-line.txt"
-    ).read_bytes():
-        fail("release kernel command line differs from tracked policy")
-    if (release_root / "guest/partition-layout.json").read_bytes() != (
-        android_root / "support/image/partition-layout.json"
-    ).read_bytes():
-        fail("release partition layout differs from tracked policy")
+    if enforce_tracked_policy:
+        if (release_root / "boot/kernel-command-line.txt").read_bytes() != (
+            android_root / "support/boot/kernel-command-line.txt"
+        ).read_bytes():
+            fail("release kernel command line differs from tracked policy")
+        if (release_root / "guest/partition-layout.json").read_bytes() != (
+            android_root / "support/image/partition-layout.json"
+        ).read_bytes():
+            fail("release partition layout differs from tracked policy")
 
     fstab = (release_root / "support/fstab.uml").read_text(encoding="utf-8")
     for name in ("system", "system_ext", "product", "vendor", "odm", "metadata", "userdata"):
@@ -598,9 +612,21 @@ def verify_release(
     manifest = load_manifest(release_root)
     if release_root.name != manifest["directory_name"]:
         fail("release directory basename differs from its manifest")
-    verify_tracked_identity(manifest, android_root)
-    if acceptance_path is not None:
+    if acceptance_path is None:
+        verify_tracked_identity(manifest, android_root)
+    else:
         verify_acceptance(manifest, acceptance_path)
+        abi_metadata = parse_env(
+            android_root.parents[1] / "kernel/common/abi/identity.env"
+        )
+        if manifest["kernel"]["abi_version"] != int(
+            abi_metadata["DARWIN_UML_ABI_VERSION"]
+        ):
+            fail("accepted release ABI version differs from the current host bridge")
+        if manifest["kernel"]["abi_fingerprint"] != (
+            abi_metadata["DARWIN_UML_ABI_FINGERPRINT"]
+        ):
+            fail("accepted release ABI fingerprint differs from the current host bridge")
     verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
     if semantic:
         verify_semantics(
@@ -610,5 +636,6 @@ def verify_release(
             zstd,
             expanded_disk,
             verify_archive=verify_archive,
+            enforce_tracked_policy=acceptance_path is None,
         )
     return manifest
