@@ -350,8 +350,10 @@ bytes to application stdout. Kernarium also publishes the same ordered chunks
 to its SwiftTerm terminal and writes SwiftTerm delegate input back to the
 existing serial socket. The framebuffer remains the default app surface, and
 switching views leaves both SwiftTerm scrollback and Virtio-GPU presentation
-alive. The separate Android macOS product may instead attach the single-port
-Virtio console over its explicit host Unix socket.
+alive. The separate Android macOS product attaches the single-port Virtio
+console over its explicit host Unix socket for the Android shell and `logcat`.
+Its release command line keeps Linux printk exclusively on `ttyS0`; hvc0 is not
+a kernel console.
 `CONFIG_PRINTK_TIME` prefixes kernel records on both tty0 and ttyS0 with the
 guest monotonic timestamp. Normal UML execution supplies that prefix from a
 boot-relative host-monotonic nanosecond `sched_clock()` instead of 100 Hz

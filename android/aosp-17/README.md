@@ -234,7 +234,9 @@ SkiaGL HWUI. CPU and hardware Vulkan remain disabled because the emulator does
 not implement the blob/shared-aperture and Venus facilities needed by Android
 Vulkan. The profile disables both inherited camera-provider APEX variants
 because UML exposes no camera and selects the single-port `hvc0` diagnostic
-shell while retaining `ttyS0` as a host-log fallback. It also
+shell through `androidboot.console=hvc0`. The Linux console list contains only
+`ttyS0`, so kernel and init diagnostics remain on the host log and never
+contaminate the interactive shell or its `logcat` output. It also
 sets the product-scoped
 `androidboot.uml_bpf_interpreter=1` contract consumed by route `p0003` in
 `platform/packages/modules/Connectivity`. Normal Android products retain
@@ -384,7 +386,8 @@ rejects another release, protects release-owned boot arguments, maps the large
 installed GPT image only as the COW backing file, and binds each instance to
 the accepted release with an adjacent manifest receipt. Attach to the console
 socket with a local Unix-stream client such as `nc -U`; the userdebug shell on
-`hvc0` accepts `logcat` directly. Connect before boot to see the full stream, or
-press Enter after attaching to recover the shell prompt from the bounded recent
-output tail. The current
+`hvc0` accepts `logcat` directly. Linux printk is deliberately restricted to
+`ttyS0`; `hvc0` is selected only through `androidboot.console=hvc0`, so the
+interactive Android shell and logcat output cannot be mixed with kernel logs.
+Press Enter after attaching to obtain the shell prompt. The current
 `uml-darwin` executable and Linux desktop rootfs discovery remain separate.

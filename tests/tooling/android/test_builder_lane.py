@@ -666,8 +666,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "45be101f1086587dc85ba2e1f205c31b3d157014",
-        "UML_KERNEL_PATCH_COUNT": "24",
+        "UML_KERNEL_FINAL_TREE": "e84929208b2b198b4332038b31facfdf6ac4254f",
+        "UML_KERNEL_PATCH_COUNT": "25",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -769,6 +769,10 @@ def main() -> None:
         kernel_root
         / "patches/series/0024-UML-DARWIN-LOCAL-service-timers-from-kernel-spin-che.patch"
     ).read_text()
+    rcu_quiescent_patch = (
+        kernel_root
+        / "patches/series/0025-UML-DARWIN-LOCAL-add-quiescent-boundaries-to-kernel-.patch"
+    ).read_text()
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
@@ -820,6 +824,14 @@ def main() -> None:
         re.DOTALL,
     ) is None:
         fail("ACK spin checkpoint no longer preserves IRQ/IPI/timer ordering")
+    for token in (
+        "darwin_uaccess_checkpoint",
+        "!faulthandler_disabled()",
+        "cond_resched();",
+        "darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);",
+    ):
+        if token not in rcu_quiescent_patch:
+            fail(f"ACK RCU quiescent-boundary topic is missing policy: {token}")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
@@ -975,8 +987,8 @@ def main() -> None:
     command_line = (android_root / "support/boot/kernel-command-line.txt").read_text()
     for token in (
         "init=/init",
-        "console=tty0",
         "console=ttyS0",
+        "androidboot.console=hvc0",
         "androidboot.fstab_suffix=uml",
         "androidboot.boot_devices=uml-blkdev.0",
         "androidboot.selinux=enforcing",
@@ -994,6 +1006,11 @@ def main() -> None:
     ):
         if token not in command_line.split():
             fail(f"Android kernel command line is missing fixed token: {token}")
+    kernel_consoles = [
+        token for token in command_line.split() if token.startswith("console=")
+    ]
+    if kernel_consoles != ["console=ttyS0"]:
+        fail("Android kernel logs must be restricted to ttyS0")
     if "ubd0=" in command_line or "/home/" in command_line:
         fail("Android kernel command line stores a machine-specific disk path")
     if any(
