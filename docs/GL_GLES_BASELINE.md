@@ -113,6 +113,40 @@ registered modules, 148,476 rows, and the same partial SHA-256
 `dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
 No module is skipped and no partial identity is promoted.
 
+A native arm64 Debian 13 VM control at
+`.build/vk-gl-cts-vm-control/20260821-native-arm64` used the exact installed
+CTS payload, including `glcts` SHA-256
+`cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e`
+and build ID `c3980d5ebb6f4e1588bba36fe5b91e01bcc8e4d5`. The VM's direct Mesa
+25.0.7 renderer was
+`virgl (ANGLE (Apple, Apple M1 Ultra, OpenGL 4.1 Metal - 90.5))`, with the
+same natural desktop GL 2.1 and GLES 3.0 ceiling. Private, test-local
+`libEGL.so`, `libGL.so`, and `libGLESv2.so` symlinks supplied the unversioned
+names that the CTS opens dynamically; no VM system file was changed. The
+multi-package export then failed at the same `dEQP-GL45-ES3` context request
+with status 137, the same eight nonempty modules and 148,476 rows, and the
+same partial digest above. By contrast, the exact standalone `deqp-gles2` and
+`deqp-gles3` exports returned zero with 19,825 and 48,300 tests and SHA-256
+`d727f1fd0f051a7dde6fbb67a0cf734ee01d111fbc36c274a6945a3ca4a046fd`
+and `bb24f19fdab379c38530c62a8a354ba102d676b75777ab3b654da063e2153860`.
+
+The released source accounts for the native/emulator match.
+`framework/common/tcuTestHierarchyUtil.cpp` inflates every registered package
+during a text-caselist export, and
+`external/openglcts/modules/glcTestPackageRegistry.cpp` registers
+`dEQP-GL45-ES31` immediately before `dEQP-GL45-ES3`.
+`modules/gles31/tes31Context.cpp` uses `glu::EmptyRenderContext` outside
+execute mode, so the former package lists successfully. The GLES 3 context in
+`modules/gles3/tes3Context.cpp` has no corresponding run-mode branch, while
+`modules/gles3/tgl45es3TestPackage.cpp` requests `glu::ApiType::core(4, 5)`,
+so the latter package asks the truthful GL 2.1 renderer for a real GL 4.5
+context and receives `EGL_BAD_MATCH`. This is not an emulator-only defect, and
+rebuilding the same unmodified source would preserve it. Patching CTS listing
+semantics would change the qualification source, so no second rootfs rebuild
+was performed. The gate remains fail-closed until the plan defines either a
+capability-scoped inventory or an unmodified structural enumeration that does
+not require unsupported live contexts.
+
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
 `.build/vk-gl-cts-ios-simulator/20260821-042130-33165-16k-gles3-declaration-sentinel-v1`,
@@ -303,6 +337,12 @@ guest nevertheless powered off cleanly, with evidence at
 GL 2.1/GLES 3.0 renderer cannot create every context demanded during this
 multi-package enumeration, the complete digest, count, and module fields in
 the JSON remain `null` and promotion remains disabled.
+
+The native arm64 Debian control described above reproduces this exact partial
+digest and failure using the same CTS bytes over direct virgl, while the
+standalone GLES 2 and GLES 3 text exports complete. It isolates the blocker to
+the released multi-package hierarchy/context behavior rather than UML,
+Darwin's Virtio-GPU transport, or either guest page profile.
 
 ## Frozen campaign and performance policy
 

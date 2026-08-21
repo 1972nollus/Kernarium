@@ -57,8 +57,21 @@ both builds, but each multi-package binary creates a package context while
 enumerating and aborts at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` after eight
 modules on the natural GL 2.1/GLES 3.0 renderer. Both incomplete reports have
 148,476 rows and the same partial SHA-256, are rejected, and leave the frozen
-complete identity null. Phase 2 has completed the common host implementation,
-dependency, unit, macOS
+complete identity null. A native arm64 Debian 13 VM running the byte-identical
+installed CTS payload over direct virgl reproduced the same failing package,
+status 137, eight modules, row count, and partial digest. The standalone GLES 2
+and GLES 3 exporters completed with 19,825 and 48,300 tests. Source inspection
+shows that the multi-package hierarchy writer initializes every registered
+package: GLES 3.1 uses an empty context outside execute mode, but the following
+`dEQP-GL45-ES3` package unconditionally requests a real core GL 4.5 context.
+The blocker is therefore in the released all-package display-backed listing
+model, not this emulator. Rebuilding the same unmodified source cannot change
+the outcome, while changing its listing behavior would violate the exact-source
+qualification boundary. No new rootfs was built; Phase 0 remains fail-closed
+until a capability-scoped inventory or unmodified context-free structural
+enumeration is explicitly defined.
+
+Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
 one passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A

@@ -778,6 +778,19 @@ common path, the command is expected to exit nonzero: enumeration reaches
 Partial module/count/digest data is retained only as diagnostic evidence and
 must not populate `vk_gl_cts_identity.json`.
 
+A native arm64 Debian 13 direct-virgl control using the exact installed CTS
+payload reproduces status 137, the same eight nonempty modules and 148,476
+tests, and partial SHA-256
+`dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
+The standalone `deqp-gles2` and `deqp-gles3` text exporters succeed with
+19,825 and 48,300 tests. In the released source, the all-package hierarchy
+writer initializes `dEQP-GL45-ES3`, whose GLES 3 context path requests a real
+core GL 4.5 context even outside execute mode. This control rules out an
+emulator-specific inventory failure. Do not rebuild the rootfs from unchanged
+source or patch qualification CTS to bypass it; keep inventory fail-closed
+until the campaign owns a truthful capability-scoped or context-free
+structural definition.
+
 Kernarium accepts no arbitrary CTS script or selector. The schema-2 Apple
 campaign document names the original exact GLES 3 declaration sentinel plus
 fixed ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels; CMake
