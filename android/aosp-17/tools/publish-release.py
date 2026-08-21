@@ -190,7 +190,7 @@ def verify_kernel_config(config_path: Path, android_root: Path) -> None:
         release = temporary_parent / "release"
         (release / "kernel").mkdir(parents=True)
         shutil.copyfile(config_path, release / "kernel/config")
-        verify_config(release, android_root)
+        verify_config(release, android_root, enforce_tracked_policy=True)
     finally:
         shutil.rmtree(temporary_parent, ignore_errors=True)
 

@@ -876,6 +876,7 @@ def main() -> None:
         "verify_kernel_config",
         'parser.add_argument("--clang"',
         'parser.add_argument("--linker"',
+        "enforce_tracked_policy=True",
         "release-manifest.json",
         "android-17-uml-arm64.img.zst",
         "repo",
