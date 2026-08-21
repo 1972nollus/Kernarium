@@ -45,7 +45,7 @@ extern const unsigned char uml_android_manifest_end[]
 namespace {
 
 constexpr std::string_view android_default_guest_memory{"mem=4G"};
-constexpr std::string_view android_default_guest_cpus{"ncpus=4"};
+constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view instance_option{"--android-instance="};
 

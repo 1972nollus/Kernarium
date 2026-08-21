@@ -525,7 +525,7 @@ def main() -> int:
     android_main = read(arguments.android_main)
     for contract in (
         'android_default_guest_memory{"mem=4G"}',
-        'android_default_guest_cpus{"ncpus=4"}',
+        'android_default_guest_cpus{"ncpus=10"}',
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         "section$start$__DATA$__uml_android",

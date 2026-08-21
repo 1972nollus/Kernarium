@@ -76,7 +76,7 @@ next app launch. 16 KiB is the default kernel profile and Retina is off by
 default. The standalone macOS app retains its larger
 default of 8 GiB and ten vCPUs whenever the caller supplies neither `mem=` nor
 `ncpus=`; explicit values continue to override those defaults independently.
-The separate `uml-darwin-android17` composition defaults to 4 GiB and four
+The separate `uml-darwin-android17` composition defaults to 4 GiB and ten
 vCPUs, accepts only the installed 16 KiB Android 17/ACK 6.18 release selected at
 configure time, and requires a per-instance writable COW path. Its optional
 host-only `--virtio-console-socket=/absolute/path` argument attaches one
