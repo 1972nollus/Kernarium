@@ -320,7 +320,18 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       } else if (cold.action == ColdPath::Action::ordered_slow) {
         emit_ordered_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_slow) {
-        emit_exclusive_slow(cold.instruction, cold.pc, cold.count);
+        /*
+         * A native atomic block publishes its possible direct store for the
+         * whole generated invocation. Its semantic fallback must therefore
+         * unwind that publication before entering the serialized exclusive
+         * helper. Otherwise two vCPUs can deadlock: the turn owner waits for
+         * the other publication while that vCPU waits for the turn with its
+         * own publication still active.
+         */
+        if (direct_memory_write_mask_ != 0U)
+          emit_deferred_exclusive_slow(cold.pc, cold.count);
+        else
+          emit_exclusive_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action ==
                  ColdPath::Action::deferred_exclusive_slow) {
         emit_deferred_exclusive_slow(cold.pc, cold.count);

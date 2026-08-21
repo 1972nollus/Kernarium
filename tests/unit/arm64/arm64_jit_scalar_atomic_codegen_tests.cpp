@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
 #include "platform/apple/host_features.hpp"
+#include "cpu/arm64/jit/jit_emitter.hpp"
+#include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
@@ -49,6 +51,20 @@ hot(const jit_test::CompiledCode &compiled) {
   return {compiled.words.data(), compiled.hot_words};
 }
 
+[[nodiscard]] bool contains_exclusive_helper(
+    std::span<const std::uint32_t> words) noexcept {
+  const auto address = ::uml::cpu::arm64::callable_address(
+      reinterpret_cast<const void *>(
+          &::uml::cpu::arm64::uml_arm64_jit_execute_exclusive));
+  const auto low = static_cast<std::uint32_t>(address);
+  const auto high = static_cast<std::uint32_t>(address >> 32U);
+  for (std::size_t index = 0; index + 1U < words.size(); ++index) {
+    if (words[index] == low && words[index + 1U] == high)
+      return true;
+  }
+  return false;
+}
+
 void require_one_native_operation(std::uint32_t guest,
                                   std::uint64_t pc) {
   const std::array program{guest, system_call};
@@ -66,6 +82,7 @@ void require_one_native_operation(std::uint32_t guest,
   require(compiled.guest_instructions == program.size());
   require(compiled.link_target_safe);
   require((compiled.direct_memory_write_mask & 1U) != 0U);
+  require(!contains_exclusive_helper(compiled.words));
 
   unsigned matches = 0;
   for (const auto word : hot(compiled)) {
@@ -75,6 +92,17 @@ void require_one_native_operation(std::uint32_t guest,
     ++matches;
   }
   require(matches == 1U);
+}
+
+void semantic_exclusive_load_calls_exclusive_helper() {
+  constexpr std::uint32_t guest = 0xc85f'7c08U; // ldxr x8, [x0]
+  const std::array program{guest, system_call};
+  const auto compiled =
+      jit_test::compile_block(code_base + 0x20'0000U, program);
+  require(!compiled.guest_illegal);
+  require(compiled.guest_instructions == 1U);
+  require(compiled.direct_memory_write_mask == 0U);
+  require(contains_exclusive_helper(compiled.words));
 }
 
 void every_scalar_rmw_variant_is_native() {
@@ -122,6 +150,7 @@ int main() {
   }
   every_scalar_rmw_variant_is_native();
   every_scalar_compare_swap_variant_is_native();
+  semantic_exclusive_load_calls_exclusive_helper();
   std::puts("arm64-jit-scalar-atomic-codegen: passed");
   return 0;
 }
