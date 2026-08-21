@@ -287,6 +287,12 @@ Guest integration uses the unified raw EROFS image `rootfs.erofs` at
 `/dev/ubda`, with `rootfstype=erofs`. Shared guest campaigns map it with
 `ubd0c=` to avoid a conflicting host-file lock. EROFS supplies the read-only
 lower filesystem; workloads that need writable state use a tmpfs OverlayFS.
+An explicitly selected derivative whose filename ends in `.ext4` is instead
+accepted only after its host write bits have been removed. The macOS harness
+and Kernarium map that lower with `ubd0cr=`, pass `rootfstype=ext4 ro`, and
+retain the same disposable OverlayFS upper layer; Kernarium seals an imported
+Documents copy to mode `0444` before entering the runtime. The original EROFS
+image remains the default and is not rewritten by this opt-in path.
 The image owns its VT and serial getty enablement, account credentials, and
 login policy; host-fed OverlayFS launchers preserve them rather than installing
 a transient getty or credential override, and mount separate tmpfs filesystems

@@ -12,8 +12,10 @@
 #include "uml/emulator.h"
 
 #import <Foundation/Foundation.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -355,7 +357,7 @@ else
 fi
 )krn";
 
-constexpr std::string_view desktopBootstrapSuffix = R"krn(echo "Darwin UML root overlay: lower=erofs, upper=ext4"
+constexpr std::string_view desktopBootstrapSuffix = R"krn(echo "Darwin UML root overlay: lower=read-only, upper=ext4"
 if [ -x /lib/systemd/systemd ]; then
     exec /lib/systemd/systemd
 fi
@@ -713,6 +715,34 @@ bool usableFile(const char* path)
     return std::filesystem::is_regular_file(path, error) && !error;
 }
 
+bool ext4Rootfs(const char* path)
+{
+    std::string extension = std::filesystem::path {path}.extension().string();
+    std::transform(
+        extension.begin(),
+        extension.end(),
+        extension.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+    return extension == ".ext4";
+}
+
+bool immutableExt4Rootfs(const char* path)
+{
+    if (!ext4Rootfs(path))
+        return true;
+    std::error_code error;
+    const auto permissions = std::filesystem::status(path, error).permissions();
+    if (error)
+        return false;
+    constexpr auto writable =
+        std::filesystem::perms::owner_write |
+        std::filesystem::perms::group_write |
+        std::filesystem::perms::others_write;
+    return (permissions & writable) == std::filesystem::perms::none;
+}
+
 bool environmentEnabled(const char* name)
 {
     const char* value = std::getenv(name);
@@ -800,6 +830,7 @@ int runtimeRun(
         ScopedGuestTimerBlock guestTimerBlock;
         ActiveRuntime active;
         if (view == nullptr || !usableFile(rootfsPath) ||
+            !immutableExt4Rootfs(rootfsPath) ||
             !usableFile(overlayPath) ||
             width == 0 || height == 0 ||
             width > uml::gpu::protocol::maximumEdidDimension ||
@@ -931,6 +962,12 @@ int runtimeRun(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
                 std::to_string(uml::audio::protocol::deviceId),
         };
+        if (ext4Rootfs(rootfsPath)) {
+            arguments.emplace_back("ubd0cr=" + std::string(rootfsPath));
+            arguments.emplace_back("root=/dev/ubda");
+            arguments.emplace_back("rootfstype=ext4");
+            arguments.emplace_back("ro");
+        }
         if (!geekbench) {
             arguments.emplace_back("systemd.unit=graphical.target");
             arguments.emplace_back("plymouth.enable=0");

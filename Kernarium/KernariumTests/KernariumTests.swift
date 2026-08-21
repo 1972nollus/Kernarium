@@ -189,6 +189,12 @@ struct KernariumTests {
         )
         #expect(
             RootfsImage.selectedFilename(
+                configuredFilename: "rootfs-gl-gles.ext4",
+                environment: [:]
+            ) == "rootfs-gl-gles.ext4"
+        )
+        #expect(
+            RootfsImage.selectedFilename(
                 configuredFilename: "rootfs.erofs",
                 environment: [RootfsImage.environmentKey: "phosh.erofs"]
             ) == "phosh.erofs"
@@ -208,7 +214,7 @@ struct KernariumTests {
     }
 
     @Test
-    func rootfsEnumerationIncludesOnlyRegularErofsImages() throws {
+    func rootfsEnumerationIncludesOnlyRegularSupportedImages() throws {
         let manager = FileManager.default
         let directory = manager.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
@@ -241,6 +247,13 @@ struct KernariumTests {
         )
         #expect(
             manager.createFile(
+                atPath: directory
+                    .appendingPathComponent("rootfs-gl-gles.ext4").path,
+                contents: Data()
+            )
+        )
+        #expect(
+            manager.createFile(
                 atPath: directory.appendingPathComponent("ignored.img").path,
                 contents: Data()
             )
@@ -254,6 +267,7 @@ struct KernariumTests {
             RootfsImage.availableFilenames(in: directory) == [
                 "phosh.erofs",
                 "pmos-sxmo.erofs",
+                "rootfs-gl-gles.ext4",
                 "rootfs.erofs",
             ]
         )

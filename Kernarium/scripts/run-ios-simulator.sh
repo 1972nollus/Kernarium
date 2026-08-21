@@ -28,7 +28,7 @@ usage()
 		"Usage: Kernarium/scripts/run-ios-simulator.sh [options]" \
 		"" \
 		"Options:" \
-		"  --rootfs PATH  EROFS image to copy into app Documents" \
+		"  --rootfs PATH  EROFS or sealed ext4 image for app Documents" \
 		"  --artifact-16k PATH  Accepted 16 KiB kernel artifact directory" \
 		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
 		"  --device UDID  Booted Simulator UDID (default: booted)" \
@@ -71,6 +71,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -f "$ROOTFS" ] || fail "rootfs image is unavailable: $ROOTFS"
+case "$ROOTFS" in
+*.erofs) ROOTFS_FILENAME=rootfs.erofs ;;
+*.ext4) ROOTFS_FILENAME=rootfs.ext4 ;;
+*) fail "rootfs must have an .erofs or .ext4 suffix: $ROOTFS" ;;
+esac
 [ -d "$ARTIFACT_16K" ] ||
 	fail "16 KiB kernel artifact is unavailable: $ARTIFACT_16K"
 [ -d "$ARTIFACT_4K" ] ||
@@ -104,9 +109,14 @@ xcrun simctl install "$DEVICE" "$APP"
 DATA_CONTAINER=$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data)
 [ -d "$DATA_CONTAINER" ] || fail "cannot locate the app data container"
 mkdir -p -- "$DATA_CONTAINER/Documents"
-cp "$ROOTFS" "$DATA_CONTAINER/Documents/rootfs.erofs"
+rm -f -- "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
+cp "$ROOTFS" "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
+if [ "$ROOTFS_FILENAME" = rootfs.ext4 ]; then
+	chmod 0444 "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
+fi
+export SIMCTL_CHILD_KERNARIUM_ROOTFS=$ROOTFS_FILENAME
 printf '%s\n' \
-	"copied rootfs to $DATA_CONTAINER/Documents/rootfs.erofs" \
+	"copied rootfs to $DATA_CONTAINER/Documents/$ROOTFS_FILENAME" \
 	"launching Kernarium; guest console follows on stdout"
 if [ "$AQUARIUM" -eq 1 ]; then
 	export SIMCTL_CHILD_KERNARIUM_WEBGL_AQUARIUM=1

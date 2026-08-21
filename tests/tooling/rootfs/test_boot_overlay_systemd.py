@@ -84,6 +84,20 @@ def main() -> int:
     )
 
     runtime_source = arguments.kernarium_runtime.read_text(encoding="utf-8")
+    for token in (
+        "immutableExt4Rootfs(rootfsPath)",
+        'arguments.emplace_back("ubd0cr=" + std::string(rootfsPath))',
+        'arguments.emplace_back("rootfstype=ext4")',
+        'arguments.emplace_back("ro")',
+        "std::filesystem::perms::owner_write",
+        "std::filesystem::perms::group_write",
+        "std::filesystem::perms::others_write",
+    ):
+        require(
+            token in runtime_source,
+            "Kernarium ext4 roots must be host-immutable and attached "
+            "block-read-only as the common OverlayFS lower",
+        )
     require(
         runtime_source.count('arguments.emplace_back("plymouth.enable=0")') == 1,
         "Kernarium systemd boots must disable the Plymouth handoff that "
@@ -98,10 +112,15 @@ def main() -> int:
         "Kernarium must apply the Plymouth policy with its systemd boot "
         "arguments, leaving the direct Geekbench shell unchanged",
     )
-    declaration = 'constexpr std::string_view desktopBootstrap = R"krn('
-    bootstrap_start = runtime_source.index(declaration)
-    bootstrap_end = runtime_source.index(')krn";', bootstrap_start)
-    kernarium_bootstrap = runtime_source[bootstrap_start:bootstrap_end]
+    bootstrap_fragments = []
+    for name in ("desktopBootstrapPrefix", "desktopBootstrapSuffix"):
+        declaration = f'constexpr std::string_view {name} = R"krn('
+        bootstrap_start = runtime_source.index(declaration) + len(declaration)
+        bootstrap_end = runtime_source.index(')krn";', bootstrap_start)
+        bootstrap_fragments.append(
+            runtime_source[bootstrap_start:bootstrap_end]
+        )
+    kernarium_bootstrap = "".join(bootstrap_fragments)
     require(
         "mkfs_ext4=$(command -v mkfs.ext4 || true)" in kernarium_bootstrap
         and '"$mkfs_ext4" -F -q -m 0' in kernarium_bootstrap,
@@ -287,7 +306,7 @@ def main() -> int:
                 f"{kernel_argument}\n{result.stdout}",
             )
 
-    print("overlay launcher EROFS option policy tests passed")
+    print("overlay launcher rootfs option policy tests passed")
     return 0
 
 

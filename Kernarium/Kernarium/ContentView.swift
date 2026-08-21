@@ -539,6 +539,17 @@ private final class EmulatorLauncher {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        if rootfs.pathExtension.lowercased() == "ext4" {
+            do {
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o444],
+                    ofItemAtPath: rootfs.path
+                )
+            } catch {
+                print("Kernarium: cannot seal the ext4 rootfs read-only")
+                return
+            }
+        }
         guard kernarium_runtime_loader_select(
             UInt32(configuration.kernelPageSize.rawValue)
         ) == 0 else {

@@ -184,9 +184,10 @@ enum RootfsImage {
     }
 
     static func validatedFilename(_ filename: String) -> String? {
+        let pathExtension = (filename as NSString).pathExtension.lowercased()
         guard !filename.isEmpty,
               (filename as NSString).lastPathComponent == filename,
-              (filename as NSString).pathExtension.lowercased() == "erofs"
+              pathExtension == "erofs" || pathExtension == "ext4"
         else {
             return nil
         }
