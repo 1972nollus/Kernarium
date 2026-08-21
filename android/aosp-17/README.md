@@ -208,9 +208,13 @@ release rather than comparing it with a later producer revision.
 
 `support/boot/kernel-command-line.txt` owns the machine-independent launch
 arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
-SELinux, the DRM-HWC composer APEX for the Virtio-GPU path, disables both
-inherited camera-provider APEX variants because UML exposes no camera, and
-selects the `ttyS0` diagnostic shell. It also sets the product-scoped
+SELinux, and the DRM-HWC composer APEX for the Virtio-GPU path. That path uses
+minigbm, Mesa OpenGL ES 3.0, DRM display discovery, RGBA framebuffers, and
+SkiaGL HWUI. CPU and hardware Vulkan remain disabled because the emulator does
+not implement the blob/shared-aperture and Venus facilities needed by Android
+Vulkan. The profile disables both inherited camera-provider APEX variants
+because UML exposes no camera and selects the `ttyS0` diagnostic shell. It also
+sets the product-scoped
 `androidboot.uml_bpf_interpreter=1` contract consumed by route `p0003` in
 `platform/packages/modules/Connectivity`. Normal Android products retain
 NetBpfLoad's eBPF-JIT requirement. This UML product may continue only when both

@@ -899,12 +899,26 @@ def main() -> None:
         "androidboot.boot_devices=uml-blkdev.0",
         "androidboot.selinux=enforcing",
         "androidboot.serialconsole=1",
+        "androidboot.hardware.gralloc=minigbm",
+        "androidboot.hardware.hwcomposer=drm_hwcomposer",
+        "androidboot.hardware.hwcomposer.display_finder_mode=drm",
+        "androidboot.hardware.hwcomposer.display_framebuffer_format=rgba",
+        "androidboot.hardware.egl=mesa",
+        "androidboot.opengles.version=196608",
+        "androidboot.cpuvulkan.version=0",
+        "androidboot.hardware.guest_hwui_renderer=skiagl",
+        "androidboot.hardware.guest_disable_renderer_preload=false",
         "androidboot.uml_bpf_interpreter=1",
     ):
         if token not in command_line.split():
             fail(f"Android kernel command line is missing fixed token: {token}")
     if "ubd0=" in command_line or "/home/" in command_line:
         fail("Android kernel command line stores a machine-specific disk path")
+    if any(
+        token.startswith("androidboot.hardware.vulkan=")
+        for token in command_line.split()
+    ):
+        fail("Android UML must not select or advertise a Vulkan implementation")
     for token in (
         "CONFIG_MODULES=n",
         "CONFIG_[A-Za-z0-9_]+=m$",
