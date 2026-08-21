@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	91a06b57dbc32a327ad33128500c8b2707914660a1b65adc88dd637d2010caac	vrend: support GLES 3.0 MSAA on iOS Metal
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	542448c4479839927e2ecfb1a032dffb2c343386bbd87f10b2a265e3cdb68876	vrend: support GLES 3.0 MSAA on iOS Metal
+2	0002-vrend-map-GLES-separate-transform-feedback-buffers.patch	99d09ff19db1d47398bb3fa6a884502a0551d60d	e25c432dfbcc67f1fe05841334997a284a01c7bc37cbdf02449a6c27055c698b	vrend: map GLES separate transform feedback buffers
