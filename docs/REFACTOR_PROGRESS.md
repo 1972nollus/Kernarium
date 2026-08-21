@@ -114,6 +114,21 @@
   `logcat -b main` output without Linux printk records. SurfaceFlinger still
   aborts repeatedly and `sys.boot_completed` remains unset, so graphical
   application readiness is explicitly not claimed.
+- Diagnosed the remaining default-JIT four-vCPU stop as a host publication
+  deadlock rather than another ACK timer failure. Native LSE atomic blocks
+  entered their serialized cold fallback before their direct-write publication
+  had unwound, allowing two vCPUs to wait on each other.
+- Commit `2a28713a` defers that fallback until the block publication ends and
+  adds a scalar-atomic code-generation regression plus a semantic-memory
+  positive control. Both page-profile unit workflows passed (576/576 at
+  16 KiB and 578/578 at 4 KiB); the sole tooling failure in each sandboxed
+  matrix was the Unix-socket `EPERM`, and its exact rerun passed outside the
+  sandbox.
+- A fresh-COW four-vCPU default-JIT run of the accepted Android release kept
+  the independent `hvc0` shell/logcat stream responsive through guest second
+  319.98 and powered off normally at second 368.49. No RCU-stall, oops, or
+  panic report was observed on `ttyS0`; the graphical SurfaceFlinger blocker
+  remains unchanged.
 
 ## 2026-08-20: required local kernel source location
 

@@ -292,8 +292,8 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260821-79506ae3-console1`, published from
-clean outer revision `79506ae3c05fae84310efcc4f40a8898065fbdcb` after the
+selects `android17-ack6.18-16k-20260821-5735514a-rcu-timer1`, published from
+clean outer revision `5735514ae840ac4bbdca78fd0ba9afa295351bc4` after the
 static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
 no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
 service, and built-in single-port Virtio-console gates passed.
@@ -371,6 +371,15 @@ no kernel timestamp, Linux version, or kernel command-line record. Android's
 `sys.boot_completed` property remained unset because SurfaceFlinger still
 restarts with `SIGABRT`; this acceptance closes the SMP timer and console
 transport gates, not graphical application readiness.
+
+The current host default-JIT gate additionally uses commit `2a28713a`, which
+defers a native atomic block's serialized cold fallback until its direct-write
+publication has unwound. A fresh-COW, four-vCPU run of this same accepted
+release kept the Unix-socket `hvc0` shell and main logcat buffer responsive
+through guest second 319.98, then powered off normally at second 368.49 with no
+observed RCU-stall, oops, or panic report on `ttyS0`. This closes the earlier
+approximately-25-second JIT publication deadlock without changing the accepted
+ACK or disk artifacts. SurfaceFlinger still prevents graphical boot completion.
 
 ## Separate macOS Android executable
 

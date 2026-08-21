@@ -146,6 +146,22 @@ sessions returned the Android shell and main logcat buffer. SurfaceFlinger
 still aborts repeatedly and `sys.boot_completed` remains unset, so graphical
 Android application readiness remains open.
 
+The default JIT then exposed a separate host-side SMP deadlock before that ACK
+timer gate: a native LSE RMW/CAS block published its direct write before a cold
+fallback entered the serialized exclusive helper. One vCPU could own the
+exclusive turn while waiting for another vCPU's publication, as that second
+vCPU waited for the turn with its own publication still active. Commit
+`2a28713a` defers that fallback until `run_block()` has unwound publication;
+the scalar-atomic code-generation regression rejects a direct serialized-helper
+call from every native atomic block while retaining a semantic-memory positive
+control. A fresh-COW, four-vCPU default-JIT Android run using the unchanged
+accepted release kept the `hvc0` shell and main logcat buffer responsive through
+guest second 319.98, powered off normally at second 368.49, and emitted no
+observed RCU-stall, oops, or panic report on `ttyS0`. Both host page-profile
+workflows passed all unit tests (576/576 at 16 KiB and 578/578 at 4 KiB); each
+tooling matrix passed apart from the sandbox's Unix-socket `EPERM`, whose exact
+`gpu-guest-rootfs-safety` rerun passed outside that restriction.
+
 ## Required case-sensitive kernel source configuration (2026-08-20)
 
 The maintained Linux checkout now comes only from the Git-ignored
