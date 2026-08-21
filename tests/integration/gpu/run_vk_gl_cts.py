@@ -1196,8 +1196,9 @@ def qpa_case_xml(qpa: str, case: str) -> ElementTree.Element:
     except ElementTree.ParseError as error:
         raise CampaignError(f"QPA XML payload is invalid for {case}") from error
     if root.tag != "TestCaseResult" or root.attrib != {
-        "Version": "0.3.4",
         "CasePath": case,
+        "Version": "0.3.4",
+        "CaseType": "SelfValidate",
     }:
         raise CampaignError(f"QPA XML payload names another case for {case}")
     return root
@@ -2361,8 +2362,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             )
         if not options.qualification:
             parser.error("--matrix requires --qualification")
-        if options.display != "native":
-            parser.error("a macOS qualification matrix requires --display native")
+        if options.display != "vnc":
+            parser.error("a macOS qualification matrix requires --display vnc")
     elif options.campaign is not None:
         if (
             options.leaf is not None

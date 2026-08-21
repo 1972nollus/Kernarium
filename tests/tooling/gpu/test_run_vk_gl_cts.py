@@ -106,7 +106,7 @@ def config_qpa(
     messages = "".join(f"  <Text>{row}</Text>\n" for row in rows)
     result = f"""#beginTestCaseResult {case}
 <?xml version="1.0" encoding="UTF-8"?>
-<TestCaseResult Version="0.3.4" CasePath="{case}">
+<TestCaseResult Version="0.3.4" CasePath="{case}" CaseType="SelfValidate">
  <Section Name="Configs" Description="Configs">
 {messages} </Section>
  <Result StatusCode="{status}">{status}</Result>
@@ -121,7 +121,7 @@ def write_config_inventory_evidence(
     api: str,
     contract: cts.RootfsContract,
     page_profile: str = "16k",
-    display: str = "native",
+    display: str = "vnc",
 ) -> Path:
     payload = config_qpa(api).encode()
     configs = cts.parse_egl_config_qpa(payload.decode(), api)
@@ -970,7 +970,7 @@ Kernarium: runtime returned 0
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
         options = cts.parse_arguments(
-            ["--config-inventory", "gles3", "--display", "native", "--dry-run"]
+            ["--config-inventory", "gles3", "--display", "vnc", "--dry-run"]
         )
         self.assertEqual(options.config_inventory, "gles3")
         self.assertIsNone(options.matrix_run)
@@ -981,7 +981,7 @@ Kernarium: runtime returned 0
             directory = Path(temporary)
             run = write_config_inventory_evidence(directory, "gles2", contract)
             configs, digest = cts.load_config_inventory_evidence(
-                run, "gles2", "16k", "native", contract
+                run, "gles2", "16k", "vnc", contract
             )
             self.assertEqual(len(configs), 2)
             self.assertEqual(digest, cts.egl_config_digest(configs))
@@ -990,7 +990,7 @@ Kernarium: runtime returned 0
             qpa_path.write_bytes(qpa_path.read_bytes() + b"changed")
             with self.assertRaisesRegex(cts.CampaignError, "identity changed"):
                 cts.load_config_inventory_evidence(
-                    run, "gles2", "16k", "native", contract
+                    run, "gles2", "16k", "vnc", contract
                 )
 
     def test_matrix_cli_requires_authenticated_discovery_and_exact_xml(self) -> None:
@@ -1015,7 +1015,7 @@ Kernarium: runtime returned 0
                 "--fraction",
                 "3,8",
                 "--display",
-                "native",
+                "vnc",
                 "--rootfs",
                 str(root / "rootfs.ext4"),
                 "--rootfs-type",
@@ -1069,7 +1069,7 @@ Kernarium: runtime returned 0
             ):
                 cts.parse_arguments(without_qualification)
             wrong_display = list(common)
-            wrong_display[wrong_display.index("native")] = "vnc"
+            wrong_display[wrong_display.index("vnc")] = "native"
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
                 SystemExit
             ):

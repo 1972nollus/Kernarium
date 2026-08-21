@@ -75,6 +75,36 @@ and 6,498 cases. The scoped caselist gate is complete; Phase 0 stays open for
 the complete official matrices and remaining qualification gates, and the
 original EROFS receipt gap remains recorded.
 
+Official GLES matrix expansion is now implemented fail-closed. The repository
+owns the byte-identical released `mustpass.xml` at SHA-256
+`9f466f19a26120149bab06e70596c9fff57b61d767cfdbadc7ba13934ce2ea96`
+and validates every typed field before use. A disposable Release build of the
+same 1.4.5.5 `cts-runner` on arm64 macOS served only as an argument-generation
+oracle. Because macOS cannot enumerate EGL configs, its build-only fixture
+replaced platform config discovery with three EGL configs exercising the
+runner's window, pbuffer, and pixmap priority; the released XML generator and
+expansion code were unchanged. The checked oracle records the original and
+fixture source identities, generated header, binary, summary identities,
+first/other-config roles, and exact emitted argument order. Its expected
+status 1 reflects summary mode's zero executed sessions and is not a CTS
+result. Qualification shards re-evaluate the repository expansion against
+that evidence before booting.
+
+At the user's direction, repeated macOS CTS boots now use headless VNC so they
+do not open an AppKit window; native direct presentation remains required for
+the separate performance qualification. On revision `79cf9184`, two 16 KiB
+VNC boots with JIT, ten vCPUs, the sealed derivative lower, and disposable
+OverlayFS state passed exactly `CTS-Configs.es2` and `CTS-Configs.es3` and shut
+down cleanly. Both APIs reported the same 25 ordered conformant non-MSAA EGL
+configs: IDs 1-5, 16-20, 31-35, 46-50, and 61-65, each supporting window,
+pixmap, and pbuffer surfaces. Their canonical config digest is
+`e7347c0a04099e4b45d777c6a141c90a7b2c1ca8047817fb280cc89af60ced56`;
+the GLES 2 and GLES 3 QPA digests are respectively
+`516862fd96055f348ceaf1131ecc27f7a2a56e4a8f69de623a1a30567cf2d9f4`
+and `5553de17eaa9f6724dbcbb3543aba869cac7bd060e02b06e4472584dd12b02a1`.
+This freezes a 25 x (473 + 6,498) = 174,275-case baseline matrix before
+sharding. It does not claim that matrix has executed or passed.
+
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
