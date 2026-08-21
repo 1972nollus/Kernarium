@@ -1,7 +1,7 @@
 From 6d463d835799259bc253ee961d414057ca63e765 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 18 Aug 2026 14:16:50 +0900
-Subject: [PATCH 16/25] uml: read the Darwin current vCPU without pthread_once
+Subject: [PATCH 16/26] uml: read the Darwin current vCPU without pthread_once
 
 uml_curr_cpu() is UML's smp_processor_id() on Darwin, and it is far hotter
 than a per-thread lookup usually is. local_signal_state() resolves the

@@ -1,7 +1,7 @@
 From fae440c89513c8a1b059e5843473245e1f52efdb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 14:49:49 +0000
-Subject: [PATCH 19/25] UML-DARWIN-LOCAL: um: use generic SIMD availability
+Subject: [PATCH 19/26] UML-DARWIN-LOCAL: um: use generic SIMD availability
 
 Change-Id: Ibb6351ff74e2e9533609cd6b2a2dd295a5508c37
 ---

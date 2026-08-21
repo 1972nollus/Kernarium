@@ -5,9 +5,9 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 24 ACK-based topic commits and resolves to the
+The checked series contains 26 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the final eight are ACK-only local compatibility
+applicable Darwin UML behavior; the final ten are ACK-only local compatibility
 topics discovered by compiling the 16 KiB Android product. Mainline patch
 bytes are never installed as this line's source of truth.
 
@@ -37,6 +37,17 @@ IRQ-enabled kernel spin boundary, recomputing the logical CPU after IPI work in
 case the Linux task migrated. A four-vCPU gadgets run advanced continuously to
 guest second 198 without an RCU stall; the former kernel reproduced the stall
 at guest second 56–58.
+
+Topics 25 and 26 cover longer non-spinning kernel retry paths. Topic 25 adds
+explicit PREEMPT_NONE quiescent boundaries after fault-enabled uaccess and
+completed host TLB invalidations, once their mmap/page-table or host mapping
+locks are no longer live. Topic 26 first polls the cooperative per-vCPU timer
+at those IRQ-enabled boundaries, then calls `cond_resched()`. The ordering is
+required because the timer raises `need_resched` and wakes the RCU grace-period
+thread; a reschedule check alone cannot recover a timer deadline that was never
+serviced. Atomic futex operations remain excluded. A candidate release with
+these topics must pass a four-vCPU soak beyond the previous late warning at
+guest second 816 before its acceptance descriptor is advanced.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

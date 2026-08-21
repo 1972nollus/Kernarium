@@ -1,7 +1,7 @@
 From f1823982d2e110ef7265f997091699047ef8a228 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:11:45 +0000
-Subject: [PATCH 22/25] UML-DARWIN-LOCAL: rust: bind ashmem personality
+Subject: [PATCH 22/26] UML-DARWIN-LOCAL: rust: bind ashmem personality
  constant explicitly
 
 Change-Id: I7f97edb3c3dbfe8dc454785972747e80a67bae8b
