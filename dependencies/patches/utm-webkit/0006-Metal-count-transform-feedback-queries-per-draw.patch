@@ -1,0 +1,186 @@
+From a25e51c14ba7d7e2f785ab5bb483da297cc92153 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 03:19:04 +0900
+Subject: [PATCH 6/6] Metal: count transform feedback queries per draw
+
+---
+ .../ANGLE/src/libANGLE/TransformFeedback.cpp  |  5 +++
+ .../libANGLE/renderer/TransformFeedbackImpl.h |  2 ++
+ .../src/libANGLE/renderer/metal/QueryMtl.h    |  2 +-
+ .../src/libANGLE/renderer/metal/QueryMtl.mm   | 10 ++----
+ .../renderer/metal/TransformFeedbackMtl.h     |  1 +
+ .../renderer/metal/TransformFeedbackMtl.mm    | 20 ++++++-----
+ .../tests/gl_tests/TransformFeedbackTest.cpp  | 34 +++++++++++++++++++
+ 7 files changed, 58 insertions(+), 16 deletions(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/TransformFeedback.cpp b/Source/ThirdParty/ANGLE/src/libANGLE/TransformFeedback.cpp
+index af1875ac50..5e3cb0c4bd 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/TransformFeedback.cpp
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/TransformFeedback.cpp
+@@ -225,11 +225,16 @@ bool TransformFeedback::checkBufferSpaceForDraw(GLsizei count, GLsizei primcount
+ void TransformFeedback::onVerticesDrawn(const Context *context, GLsizei count, GLsizei primcount)
+ {
+     ASSERT(mState.mActive && !mState.mPaused);
++    const GLsizeiptr previousPrimitivesDrawn = mState.getPrimitivesDrawn();
++
+     // All draws should be validated with checkBufferSpaceForDraw so ValueOrDie should never fail.
+     mState.mVerticesDrawn =
+         (mState.mVerticesDrawn + GetVerticesNeededForDraw(mState.mPrimitiveMode, count, primcount))
+             .ValueOrDie();
+ 
++    mImplementation->onVerticesDrawn(context,
++                                     mState.getPrimitivesDrawn() - previousPrimitivesDrawn);
++
+     for (auto &buffer : mState.mIndexedBuffers)
+     {
+         if (buffer.get() != nullptr)
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/TransformFeedbackImpl.h b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/TransformFeedbackImpl.h
+index 75ef6fdbf8..2888369199 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/TransformFeedbackImpl.h
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/TransformFeedbackImpl.h
+@@ -27,6 +27,8 @@ class TransformFeedbackImpl : angle::NonCopyable
+     virtual angle::Result pause(const gl::Context *context)                                  = 0;
+     virtual angle::Result resume(const gl::Context *context)                                 = 0;
+ 
++    virtual void onVerticesDrawn(const gl::Context *context, GLsizeiptr primitivesDrawn) {}
++
+     virtual angle::Result bindIndexedBuffer(
+         const gl::Context *context,
+         size_t index,
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.h b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.h
+index 363d7657a2..d6e4ee6e7d 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.h
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.h
+@@ -98,7 +98,7 @@ class QueryMtl : public QueryImpl
+     const mtl::BufferRef &getVisibilityResultBuffer() const { return mVisibilityResultBuffer; }
+     // Reset the occlusion query result stored in buffer to zero
+     void resetVisibilityResult(ContextMtl *contextMtl);
+-    void onTransformFeedbackEnd(const gl::Context *context);
++    void onTransformFeedbackPrimitivesDrawn(GLsizeiptr primitivesDrawn);
+ 
+     // If the timestamp query is still active upon context switch,
+     // must set/unset the active timestamp query entry on the command
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.mm
+index 29a9ab56e8..a6b92dfdf0 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/QueryMtl.mm
+@@ -84,7 +84,6 @@ angle::Result QueryMtl::end(const gl::Context *context)
+             contextMtl->onOcclusionQueryEnd(context, this);
+             break;
+         case gl::QueryType::TransformFeedbackPrimitivesWritten:
+-            onTransformFeedbackEnd(context);
+             break;
+         case gl::QueryType::TimeElapsed:
+         {
+@@ -214,13 +213,10 @@ void QueryMtl::resetVisibilityResult(ContextMtl *contextMtl)
+     mVisibilityResultBuffer->syncContent(contextMtl, blitEncoder);
+ }
+ 
+-void QueryMtl::onTransformFeedbackEnd(const gl::Context *context)
++void QueryMtl::onTransformFeedbackPrimitivesDrawn(GLsizeiptr primitivesDrawn)
+ {
+-    gl::TransformFeedback *transformFeedback = context->getState().getCurrentTransformFeedback();
+-    if (transformFeedback)
+-    {
+-        mTransformFeedbackPrimitivesDrawn += transformFeedback->getPrimitivesDrawn();
+-    }
++    ASSERT(primitivesDrawn >= 0);
++    mTransformFeedbackPrimitivesDrawn += static_cast<size_t>(primitivesDrawn);
+ }
+ 
+ void QueryMtl::onContextMakeCurrent(const gl::Context *context)
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.h b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.h
+index aa45bf94e0..5bc657bdfc 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.h
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.h
+@@ -27,6 +27,7 @@ class TransformFeedbackMtl : public TransformFeedbackImpl
+     angle::Result end(const gl::Context *context) override;
+     angle::Result pause(const gl::Context *context) override;
+     angle::Result resume(const gl::Context *context) override;
++    void onVerticesDrawn(const gl::Context *context, GLsizeiptr primitivesDrawn) override;
+ 
+     angle::Result bindIndexedBuffer(const gl::Context *context,
+                                     size_t index,
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.mm
+index 5dd9a305bc..e465fa537b 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/TransformFeedbackMtl.mm
+@@ -34,14 +34,6 @@ angle::Result TransformFeedbackMtl::begin(const gl::Context *context,
+ 
+ angle::Result TransformFeedbackMtl::end(const gl::Context *context)
+ {
+-    const gl::State &glState = context->getState();
+-    gl::Query *transformFeedbackQuery =
+-        glState.getActiveQuery(gl::QueryType::TransformFeedbackPrimitivesWritten);
+-    if (transformFeedbackQuery)
+-    {
+-        mtl::GetImpl(transformFeedbackQuery)->onTransformFeedbackEnd(context);
+-    }
+-
+     mtl::GetImpl(context)->onTransformFeedbackInactive(context, this);
+ 
+     return angle::Result::Continue;
+@@ -63,6 +55,18 @@ angle::Result TransformFeedbackMtl::resume(const gl::Context *context)
+     return angle::Result::Continue;
+ }
+ 
++void TransformFeedbackMtl::onVerticesDrawn(const gl::Context *context,
++                                           GLsizeiptr primitivesDrawn)
++{
++    gl::Query *transformFeedbackQuery =
++        context->getState().getActiveQuery(gl::QueryType::TransformFeedbackPrimitivesWritten);
++    if (transformFeedbackQuery)
++    {
++        mtl::GetImpl(transformFeedbackQuery)
++            ->onTransformFeedbackPrimitivesDrawn(primitivesDrawn);
++    }
++}
++
+ angle::Result TransformFeedbackMtl::bindIndexedBuffer(
+     const gl::Context *context,
+     size_t index,
+diff --git a/Source/ThirdParty/ANGLE/src/tests/gl_tests/TransformFeedbackTest.cpp b/Source/ThirdParty/ANGLE/src/tests/gl_tests/TransformFeedbackTest.cpp
+index 2fce4b4672..6bd5ad9445 100644
+--- a/Source/ThirdParty/ANGLE/src/tests/gl_tests/TransformFeedbackTest.cpp
++++ b/Source/ThirdParty/ANGLE/src/tests/gl_tests/TransformFeedbackTest.cpp
+@@ -247,6 +247,40 @@ TEST_P(TransformFeedbackTest, QueryActiveNoXfbDrawThenXfbBeginEnd)
+     EXPECT_EQ(primitivesWritten, 0u);
+ }
+ 
++// Test that a primitives-written query counts only draws inside its scope when transform feedback
++// was already active, including a pause before the first queried draw and the feedback-before-query
++// end order.
++TEST_P(TransformFeedbackTest, QueryScopeAcrossPauseResume)
++{
++    const std::vector<std::string> tfVaryings = {"gl_Position"};
++    compileDefaultProgram(tfVaryings, GL_INTERLEAVED_ATTRIBS);
++
++    glUseProgram(mProgram);
++    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mTransformFeedbackBuffer);
++    glBeginTransformFeedback(GL_POINTS);
++
++    // This draw precedes the query and must not contribute to its result.
++    glDrawArrays(GL_POINTS, 0, 1);
++
++    GLQuery primitivesWrittenQuery;
++    glBeginQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, primitivesWrittenQuery);
++    glPauseTransformFeedback();
++
++    // A paused draw is also outside the set of primitives written by transform feedback.
++    glDrawArrays(GL_POINTS, 0, 4);
++
++    glResumeTransformFeedback();
++    glDrawArrays(GL_POINTS, 0, 2);
++
++    glEndTransformFeedback();
++    glEndQuery(GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN);
++
++    GLuint primitivesWritten = 0;
++    glGetQueryObjectuiv(primitivesWrittenQuery, GL_QUERY_RESULT_EXT, &primitivesWritten);
++    EXPECT_GL_NO_ERROR();
++    EXPECT_EQ(2u, primitivesWritten);
++}
++
+ // Test that rebinding a buffer with the same offset resets the offset (no longer appending from the
+ // old position)
+ TEST_P(TransformFeedbackTest, BufferRebinding)

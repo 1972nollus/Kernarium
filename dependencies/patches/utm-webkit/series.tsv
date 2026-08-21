@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	f9c9a88a9bba576f4dd113659a25c98e4fbbad115a9fce931d6224046ad43cb6	Add check for iOS simulator when initializing caps in metal
-2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	27b41d7a53451d187e5eac05acb029f1417c05f5ca467846c0af81f207706d4a	Metal: disable native GL backends in Apple product
-3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	c93fe4fb3215c6ef547b299d477f85403dacb00ede4fc8c1bf4abe3a2ce5363f	Apple: use flat authenticated ANGLE frameworks
-4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	5a42c28bb6aee6e8e86be362c571709b368ee8383c11a3d6cd1eb1282692f8dc	Metal: accept the arm64 macOS product baseline
-5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	298dbe72b82471516873cb2aa17d8b5eaf29ade4e451cd3fee2d587e261b5e14	Metal: preserve boolean mix bit patterns
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	93b5b21ee17576c49b32a7af7b60905bd60b6a15f5271a7359a4e6524a20450c	Add check for iOS simulator when initializing caps in metal
+2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	bf317a924239c341597fa2a9bc6fbac93b0fb5465f944babe20c973a5dc1eb2c	Metal: disable native GL backends in Apple product
+3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	d6698e5f5eb3de29eb15abe410a117c001b2a8f005c6c5bcf27b4df2bf3268e7	Apple: use flat authenticated ANGLE frameworks
+4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	322990f20cbeec540f143790806949a86bb9215922221936724ae37203d755bd	Metal: accept the arm64 macOS product baseline
+5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	9377b267bdba17967186f94cb41b38c30c6b652e3a4c9fe1c4eaf79bcf52e2fd	Metal: preserve boolean mix bit patterns
+6	0006-Metal-count-transform-feedback-queries-per-draw.patch	cd928c5939daea89ba11ba78992a82d0c965affe	0823a7278dc120f6c1b498b1140d646c7f48ecc130a28e7db62ec4ee930d015b	Metal: count transform feedback queries per draw
