@@ -745,6 +745,28 @@ python3 tests/integration/gpu/run_vk_gl_cts.py \
 python3 -B tests/integration/gpu/run_vk_gl_cts.py --inventory
 ```
 
+The default remains the authenticated EROFS image. The one user-authorized
+GL/GLES derivative is an ignored local 8 GiB ext4 artifact whose complete
+identity is checked in at
+`tests/integration/gpu/vk_gl_cts_derivative_rootfs.json`. Select it explicitly:
+
+```sh
+python3 -B tests/integration/gpu/run_vk_gl_cts.py \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
+  --campaign gles3-identity-sentinel-v1 \
+  --page-profile 16k --engine gadgets --display native
+```
+
+The driver requires the ext4 host file to be a regular mode-0444 file with the
+exact checked size and SHA-256, verifies its filesystem UUID and in-guest
+receipt, attaches it as `ubd0cr`, mounts it read-only, and builds disposable
+OverlayFS state. It rejects a writable file, an unmatched receipt, any changed
+exclusion list, or an ext4 image without a receipt. The maintenance epoch for
+this artifact is closed: do not boot it writable or update it in place. The
+original `rootfs.erofs` and its provisioning manifest remain unchanged.
+
 `--inventory` is a fail-closed display-backed diagnostic. It asks the exact
 installed multi-package `glcts` binary for package-specific text exports,
 combines them only in the disposable guest, and egresses a small strict report
@@ -782,6 +804,23 @@ python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
   --device "$(xcrun simctl getenv booted SIMULATOR_UDID)" \
   --app .build/kernarium-cts-derived/Build/Products/Debug-iphonesimulator/Kernarium.app
 ```
+
+To use the checked derivative in the same ordered chain, add these arguments
+to the native macOS command and both signed-app adapters, and pass the
+matching derivative predecessor `run.json` at each step:
+
+```sh
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+```
+
+The mobile adapters accept only semantic equality with the repository's
+checked derivative receipt. The Simulator copies the sealed image into app
+Documents with an APFS clone when available, falls back to an ordinary copy,
+and enforces mode 0444. Kernarium selects `rootfstype=ext4`, passes `ro`,
+attaches the lower block device read-only, and keeps all runtime writes in its
+ordinary overlay disk. An arbitrary ext4 image is not accepted as CTS input.
 
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
@@ -847,12 +886,15 @@ The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
 transcript must contain its exact backend marker and any CGL marker is fatal.
 `--qualification` still refuses to run while the frozen identity lacks an
-authoritative CTS build receipt and a complete display-backed caselist. The
-automated inventory attempt above proves that the latter currently fails at
-an unsupported package-context request; it does not authorize skipping that
-module or freezing the partial export. See
-[`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md); do not work around the block by
-changing, rebuilding, overlaying, or preloading guest userspace.
+authoritative original-image CTS build receipt and a complete display-backed
+caselist. The checked ext4 derivative has its own authenticated build receipt,
+but its inventory reproduces the same incomplete export and therefore does
+not lift the qualification block. The automated inventory proves that the
+caselist currently fails at an unsupported package-context request; it does
+not authorize skipping that module or freezing the partial export. See
+[`GL_GLES_BASELINE.md`](GL_GLES_BASELINE.md). Do not mutate either immutable
+lower image or work around the block by overlaying or preloading replacement
+guest graphics userspace.
 
 `guest-docker-hello-world` joins that opt-in set. `guest-overlay-systemd-smoke`
 already proves Docker runs a locally imported image with no network; this one

@@ -49,9 +49,69 @@ shutdown, and zero dropped or CPU-fallback frames. These single observations
 are implementation canaries, not the seven interleaved pairs or a performance
 qualification. Aquarium remains excluded from physical-iPad acceptance.
 
-The authoritative CTS build
-receipt is still missing, so qualification remains fail-closed and no rootfs
-or guest-userspace change is authorized.
+## Authenticated derivative-rootfs checkpoint (2026-08-21)
+
+The user explicitly authorized a separate 8 GiB ext4 clone for CTS
+reconstruction. The original `rootfs.erofs` remains unchanged at SHA-256
+`73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91`.
+The derivative `.build/rootfs/rootfs-gl-gles.ext4` has filesystem UUID
+`688cb152-ce4b-4ac4-9b5d-3def792791f3`, exact size 8,589,934,592 bytes, and
+final SHA-256
+`f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`.
+Its checked authority is
+[`../tests/integration/gpu/vk_gl_cts_derivative_rootfs.json`](../tests/integration/gpu/vk_gl_cts_derivative_rootfs.json).
+That receipt freezes the exact sorted exclusion list and its SHA-256
+`5e8fd90745be07768de57e8826d5cdc25c9c64d54c38c29ca15e0cabe6f0f1bf`.
+The clone omits unrelated benchmark suites, Node, Go, installed Vulkan CTS,
+and Vulkan/Vulkan-SC source payloads. It retains only the 12,895,859-byte
+shared Vulkan framework required by upstream `tcutil-platform` through static
+`vkutil`; its semantic archive SHA-256 is
+`a7c6bc03a0678e164cf6112f88ef8422f97d84eda4f0242b42b81b8ba7c8427a`.
+
+The selected 1.4.5.5 source closure contains 12,964 entries and 356,332,856
+bytes with POSIX archive SHA-256
+`3eaf1fe6937de7db36966ba63a162ddffd980746386daf1c46ae617cc1ad0d25`.
+Inside the emulator, a clean Release build used the JIT engine, ten vCPUs,
+and `cmake --build --parallel 10`; the derivative root device was already
+block-read-only and build output lived on a separate scratch ext4 disk. Only
+`deqp-gles2`, `deqp-gles3`, and `glcts` were selected. Their SHA-256/build-ID
+pairs are
+`6f377730dd919c66970d7c8e06aaca76f1487eeb1ec3ba3c8d05e6d604ad297a`/
+`308925e0d2d85b72ae581894f912bccfa96c2587`,
+`456eb99a3ba1c8198fa73fe70a6fdcb1b8f0f51d2bb319d44ea7a63058a8d635`/
+`f4e13c9880ce3594e4fa9fb666dd746336a3afa5`, and
+`cfb17f07d4e7e78ed71a2c065670465c720d9109bb557f4316cbabd1f1c9834e`/
+`c3980d5ebb6f4e1588bba36fe5b91e01bcc8e4d5`. The link audit found no
+selected Vulkan module, Vulkan SC, Shaderc, or runtime Vulkan dependency.
+Installation replaced only those executables and preserved all six
+authenticated base resource trees verbatim. The resulting in-guest receipt
+at `/usr/share/uml-rootfs/gl-gles-cts-build.env` has SHA-256
+`97b4decef91fea71b4e221cf21a4e8d2ca20fb88514498c2310b02b026142933`.
+
+The maintenance epoch ended only after the root remounted read-only, the
+emulator shut down cleanly, and a block-read-only filesystem check passed.
+The host file is mode 0444. Every later boot attached it with `ubd0cr`, mounted
+it as a read-only ext4 lower, and supplied writable state through OverlayFS.
+Exact JIT/ten-vCPU validation passed under both 16 KiB and 4 KiB at
+`.build/rootfs/overlay-validation-16k/20260821-193546-39978` and
+`.build/rootfs/overlay-validation-4k/20260821-193934-40379`. The derivative
+then passed the declaration sentinel 1/1 and the GLES 2/GLES 3 identity
+sentinels 5/5 and 12/12 on native macOS under both page profiles, with clean
+shutdown and zero CPU fallback. The signed Simulator app also passed the
+declaration sentinel 1/1 with the derivative under both page profiles at
+`.build/vk-gl-cts-ios-simulator-derivative/20260821-195324-52203-16k-gles3-declaration-sentinel-v1`
+and
+`.build/vk-gl-cts-ios-simulator-derivative/20260821-195421-52319-4k-gles3-declaration-sentinel-v1`.
+
+This closes build provenance only for the exact derivative. The original
+EROFS CTS build receipt is still missing, and qualification remains
+fail-closed for both artifacts because neither has a complete display-backed
+caselist. The derivative inventory at
+`.build/vk-gl-cts-derivative/20260821-194351-41416-16k-inventory` reproduced
+the original failure at `dEQP-GL45-ES3`: status 137, `complete=0`, eight
+registered modules, 148,476 rows, and the same partial SHA-256
+`dbad92115f7c3a80891f6842faa191e6cb02c577955ae31fc38ba5e2e1bea5dc`.
+No module is skipped and no partial identity is promoted.
 
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
@@ -209,7 +269,7 @@ Read-only guest inspection confirmed the three CTS executable sizes, SHA-256
 digests, and GNU build IDs, plus both Khronos `mustpass.xml` files and every
 GLES/desktop leaf count and digest. The machine-readable authority is
 [`../tests/integration/gpu/vk_gl_cts_identity.json`](../tests/integration/gpu/vk_gl_cts_identity.json).
-No rootfs byte or provisioning metadata was changed.
+No original-rootfs byte or provisioning metadata was changed.
 
 No authoritative receipt exists in the image tying the co-located
 `/home/uml/vk-gl-cts-1.4.5.5` source to the installed executables. A read-only
@@ -222,8 +282,8 @@ also has no Git metadata. Therefore:
   `--qualification`;
 - no commit, source reconstruction, or conformance claim is inferred from the
   1.4.5.5 directory label; and
-- any proposal to change the image or CTS inputs requires explicit user
-  direction first.
+- the checked derivative above is the only explicitly authorized image/CTS
+  exception; any later change requires new user direction.
 
 A complete text-caselist identity also remains unavailable, now with a
 reproducible display-backed blocker. The repository runner's `--inventory`

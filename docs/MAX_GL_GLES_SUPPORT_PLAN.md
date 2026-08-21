@@ -26,14 +26,39 @@ family, layout-changing provider macro, and independently maintained
 dependency verifiers, macOS integration link/closure, all four Kernarium
 runtime builds, and XCFramework packaging pass.
 
-Phase 0 remains intentionally incomplete at its external evidence boundary:
-the installed CTS binaries have no recovered authoritative source/build
-receipt. The complete display-backed caselist capture is now automated and
-was attempted on the common path, but the multi-package binary creates a
-package context while enumerating and aborts at `dEQP-GL45-ES3` with
-`EGL_BAD_MATCH` after eight modules on the natural GL 2.1/GLES 3.0 renderer.
-The incomplete report is rejected and the frozen identity remains null. Phase
-2 has completed the common host implementation, dependency, unit, macOS
+After this plan was written, the user explicitly authorized one narrow
+derivative-rootfs exception to its no-image-change rules. The original
+`rootfs.erofs` and provisioning manifest remain byte-for-byte unchanged. An
+8 GiB ext4 clone at `.build/rootfs/rootfs-gl-gles.ext4` instead excludes the
+checked unrelated benchmark, language-runtime, Vulkan runtime, and Vulkan CTS
+paths listed in
+`tests/integration/gpu/vk_gl_cts_derivative_rootfs.json`. The one restored
+Vulkan-named subtree is the 12,895,859-byte shared build framework that
+upstream `tcutil-platform` unconditionally needs through static `vkutil`; no
+Vulkan module, data, must-pass, or runtime payload was restored. During its
+bounded maintenance epoch the emulator built only `deqp-gles2`, `deqp-gles3`,
+and `glcts` in Release mode using JIT, ten guest vCPUs, and build parallelism
+ten, with the derivative root block read-only and a separate writable scratch
+disk. The clean build and link audit found no selected Vulkan, Vulkan SC, or
+Shaderc runtime input. Installation replaced only the three audited
+executables, preserved all authenticated base resource trees verbatim, and
+wrote the in-guest build/install receipt. After final shutdown and read-only
+filesystem checking, the image was sealed mode 0444 at SHA-256
+`f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`;
+every subsequent boot attaches it block-read-only and supplies writable state
+through OverlayFS. The checked receipt authenticates that exact lifecycle and
+is not permission to mutate or reprovision either image.
+
+Phase 0 remains intentionally incomplete at its conformance-evidence boundary.
+The original EROFS binaries still have no recovered authoritative source/build
+receipt; the new receipt proves only the checked derivative build. The
+complete display-backed caselist capture is automated and was attempted on
+both builds, but each multi-package binary creates a package context while
+enumerating and aborts at `dEQP-GL45-ES3` with `EGL_BAD_MATCH` after eight
+modules on the natural GL 2.1/GLES 3.0 renderer. Both incomplete reports have
+148,476 rows and the same partial SHA-256, are rejected, and leave the frozen
+complete identity null. Phase 2 has completed the common host implementation,
+dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
 one passing frozen GLES 3 case, complete artifact egress, and clean shutdown. A
@@ -68,8 +93,10 @@ Virtio-GPU scanout state before device unplug; both LLVM 22 page-profile builds
 passed, and three consecutive 16 KiB Simulator plus three connected-iPad exact
 CTS runs then powered off cleanly. The adapters now reject that warning and any
 missing clean-stop marker. This is a bounded lifecycle repair, not complete
-lifecycle qualification or a capability promotion. No rootfs or guest
-userspace changed.
+lifecycle qualification or a capability promotion. Those lifecycle results
+used the unchanged original EROFS image; the separately authenticated
+derivative CTS workflow is the only guest-userspace exception described by
+this checkpoint.
 
 The first fixed 4 KiB macOS Aquarium run exposed a separate kernel
 scalability defect: it reached the measurement window, then stalled RCU twice
@@ -189,7 +216,9 @@ The following are non-negotiable:
    repackage, or provision any of them, even with a newer unmodified release.
    If a milestone requires different guest userspace, stop that phase, retain
    the lower truthful ceiling, record the exact blocker, and ask the user before
-   any rootfs or guest-userspace change.
+   any rootfs or guest-userspace change. The implementation checkpoint records
+   the one subsequently requested derivative exception; it does not change the
+   original image or relax this rule for later work.
 3. The guest kernel is controlled by this project. Required `virtio_gpu`, DRM,
    UAPI implementation, Kconfig, or `arch/um` transport changes belong in the
    maintained common Linux patch series and one kernel image per page profile.
@@ -516,7 +545,9 @@ invent historical provenance. Without that receipt, keep the artifacts
 diagnostic-only, record the provenance gap in repository-local evidence, pause
 qualification, and ask the user before proposing any image change. No such
 inspection may change `rootfs.erofs`, its provisioning manifest, or an
-installed file.
+installed file. The separately authenticated derivative in the implementation
+checkpoint was built only after that explicit direction and is not historical
+provenance for these original binaries.
 
 ### Installed artifacts and their roles
 
@@ -934,8 +965,9 @@ canaries now pass on macOS and Simulator under both page profiles, after topic
 0021 repaired the 4 KiB nested-TLB RCU starvation. They establish workload
 bring-up and zero-fallback coverage only. The full shipped matrices, seven-pair
 performance campaign, connected-iPad thermal gate, and sustained-lifecycle
-campaign remain open; the missing CTS build receipt and incomplete
-complete-caselist identity keep qualification fail-closed.
+campaign remain open. The original EROFS build receipt remains missing, the
+derivative receipt does not establish a complete caselist, and the incomplete
+complete-caselist identity keeps qualification fail-closed.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
@@ -1096,9 +1128,10 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
 7. Record the current CTS release, executable build IDs, reconstructed source
    identity, resources, must-pass data, caselist digests, and immutable rootfs
    identity in ordinary repository evidence, not rootfs provisioning metadata.
-   No Mesa or CTS update is authorized. Never compare totals from different
-   case universes as if they were a regression A/B; if a different universe is
-   required, pause and ask the user.
+   No further Mesa or CTS update is authorized beyond the checked derivative
+   recorded above. Never compare totals from different case universes as if
+   they were a regression A/B; if a different universe is required, pause and
+   ask the user.
 
 ## Repository work map
 
@@ -1117,7 +1150,7 @@ iPad under both page profiles where mapping-sensitive. The exit makes no GL
 | Conditional host blob optimization | `darwin/device/gpu/protocol.hpp`, `virtio_gpu_device.*`, renderer/resource boundary | only if Phase 6 measurements or Venus select it: standard feature/commands, bounded aperture ownership, map-info/cache semantics, and coherent lifetime |
 | Conditional guest-kernel graphics optimization | maintained Linux `arch/um/drivers/virtio_uml.c`, UML physical/IOMEM/MM code as selected, `drivers/gpu/drm/virtio/virtgpu_*`, `include/uapi/drm/virtgpu_drm.h`, and common Kconfig policy | only after selection: implement shared-region discovery and mapping, backport/fix generic Virtio-GPU behavior only when needed, preserve the released-userspace DRM ABI, and share one runtime-negotiated kernel artifact per page profile across all Apple products |
 | Kernel series and verification | `kernel/mainline-6.18/patches/series/`, `kernel/mainline-6.18/patches/metadata.env`, ownership/overlap/extraction/next-version policy, `kernel/README.md`, kernel tooling tests | own generated topic identity, reviewed final tree and delta, bridge-ABI updates only when required, offline replay, and LLVM 22 builds of both page profiles |
-| Immutable rootfs CTS contract | read-only in-image `/opt/vk-gl-cts`, `/home/uml/vk-gl-cts-1.4.5.5`, and ordinary repository evidence | inventory and use the exact installed binaries/source/resources read-only; reconstruct receipts outside the image; validate configuration expansion against a host-only oracle; stop and ask if the current artifacts are insufficient |
+| Immutable rootfs CTS contract | original read-only `rootfs.erofs`, checked `vk_gl_cts_derivative_rootfs.json`, in-image CTS paths, and ordinary repository evidence | keep the original image untouched; accept only the exact sealed ext4 derivative authorized in the implementation checkpoint; attach it block-read-only with OverlayFS state; reject any identity, exclusion, receipt, or permission drift |
 | CTS and guest tests | `tests/integration/gpu/run_vk_gl_cts.py`, `tests/unit/gpu/`, `tests/tooling/gpu/`, dependency/rootfs tests, `tests/test-manifest.tsv` | graphical-session launch, identity rejection, exact caselist/config sharding, QPA egress/parsing, backend lifetime, protocol validation, package shape, guest probes and rendered campaigns |
 | Dependency tooling tests | `tests/tooling/dependencies/`, `tests/test-manifest.tsv` | keep `dependency-source-preparer`, `dependency-patch-regenerator`, `dependency-build-manifest`, `dependency-prefix-verifier`, and `dependency-runtime-closure` green; add Apple-GPU platform/payload/provenance/concurrent-publication fixtures |
 
@@ -1330,7 +1363,7 @@ preferred outcome.
 | a higher profile regresses ordinary lower-profile workloads | require matched interleaved A/B canaries before full CTS and reject any repeatable regression beyond the frozen threshold |
 | blob mappings leak or outlive guest memory | bounded ownership table, exact unmap/reset ordering, ASan/UBSan stress, both page profiles |
 | a private DRM ioctl, capset, or winsys patch silently makes the rootfs custom | stop the promotion; the exact installed Mesa/libdrm must use the standard ABI naturally, while any repository-specific extension remains negotiated below the userspace boundary |
-| the current image lacks required Mesa/libdrm behavior, a usable CTS WSI/configuration path, CTS coverage/provenance, or another guest component | retain the lower profile, record the exact blocker and proposed image delta, pause the affected phase, and ask the user; never rebuild, provision, preload, or overlay-substitute guest userspace |
+| the current image lacks required Mesa/libdrm behavior, a usable CTS WSI/configuration path, CTS coverage/provenance, or another guest component | retain the lower profile, record the exact blocker and proposed image delta, pause the affected phase, and ask the user; outside the exact checked derivative already authorized, never rebuild, provision, preload, or overlay-substitute guest userspace |
 | blob support is advertised before UML exposes a valid host-visible aperture | require `RESOURCE_BLOB` and `HOST_VISIBLE` getparams, map-info, coherent round trips, and fail-closed reconnect/reset tests before the feature bit or capset gate is enabled |
 | a 4 KiB guest mapping aliases another subpage in a 16 KiB host slot | validate whole-slot ownership, offset bounds, remap/TLB visibility, and teardown under both page profiles on macOS, Simulator, and the connected iPad |
 | cached map-info is claimed without real CPU/GPU coherence | require bidirectional persistent-map visibility without transfer commands; otherwise report a truthful noncoherent/unsupported mode |
@@ -1419,11 +1452,13 @@ The plan is complete only when all of the following are true:
     checked-in dependency/kernel patch series, while the exact installed guest
     Mesa/libdrm and qualification CTS remain unchanged.
 15. No workflow writes, rebuilds, reprovisions, replaces, or supplements
-    `rootfs.erofs` or edits its provisioning manifest for this work. No overlay
-    or preload substitutes a guest graphics library, CTS executable/resource,
-    runner, or WSI component. Any unavoidable guest-userspace need leaves its
-    phase blocked until the plan reports the exact delta and asks the user for
-    explicit direction.
+    `rootfs.erofs` or edits its provisioning manifest for this work. The one
+    user-authorized derivative described by the implementation checkpoint is
+    independently authenticated, sealed, and mounted as a read-only lower
+    filesystem; it does not authorize an overlay or preload substitution of a
+    guest graphics library, CTS resource, runner, or WSI component. Any later
+    guest-userspace need leaves its phase blocked until the plan reports the
+    exact delta and asks the user for explicit direction.
 
 The truthful evidence statement is: an older macOS CGL build measured guest
 GL 4.1/GLES 3.0 and is archival only. The current common ANGLE/Metal path has a
@@ -1440,8 +1475,11 @@ RCU starvation; a fresh replay, both LLVM 22 builds, accepted artifacts, and
 clean macOS/Simulator canaries under both page profiles validate the bounded
 repair. The incomplete complete-caselist identity and matrices, absent
 seven-pair performance/connected-iPad thermal/sustained-lifecycle campaigns,
-and missing authoritative CTS receipt still prevent any new shared capability
-or conformance claim. A
+and the missing original-image receipt plus incomplete caselist still prevent
+any new shared capability or conformance claim. The derivative build has its
+own authenticated receipt and passed the fixed macOS identity sentinels under
+both page profiles plus the one-case Simulator declaration sentinel under
+both profiles; that bounded evidence does not satisfy qualification. A
 display-backed complete-caselist attempt additionally stops at
 `dEQP-GL45-ES3` with `EGL_BAD_MATCH`; its partial result remains diagnostic
 and the complete identity fields remain null. The committed shared target
