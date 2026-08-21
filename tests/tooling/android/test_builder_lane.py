@@ -980,7 +980,6 @@ def main() -> None:
         'install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"',
         "SOONG_NINJA=ninja",
         "SOONG_INCREMENTAL_ANALYSIS=false",
-        "--allow-fresh-output",
         "SOONG_BUILD_GRAPH",
         "reusing incremental AOSP output",
         "PARTITION_LAYOUT",

@@ -66,17 +66,15 @@ android/aosp-17/build/apply-aosp-patches.sh \
 android/aosp-17/build/build-aosp.sh \
   --aosp-source /absolute/path/to/aosp \
   --out /absolute/path/to/aosp/out-uml-android17 \
-  --kernel-elf /absolute/path/to/kernel-build/vmlinux \
-  --allow-fresh-output
+  --kernel-elf /absolute/path/to/kernel-build/vmlinux
 ```
 
-`--allow-fresh-output` is reserved for this one-time baseline build. Preserve
-that output directory after it succeeds. Every later invocation omits the flag
-and passes the exact same `--out` path; the wrapper then requires the existing
-product Ninja graph and reuses all valid Android outputs. It refuses to
-silently bootstrap another full tree. `SOONG_INCREMENTAL_ANALYSIS=false` is a
-compatibility requirement for this pinned tag's graph analysis and does not
-disable Ninja's ordinary incremental object and packaging rebuilds.
+Preserve that output directory after the baseline build and pass the exact same
+`--out` path to later invocations so Ninja reuses all valid Android outputs. A
+new builder needs no special bootstrap option: a missing output path is created
+automatically. `SOONG_INCREMENTAL_ANALYSIS=false` is a compatibility
+requirement for this pinned tag's graph analysis and does not disable Ninja's
+ordinary incremental object and packaging rebuilds.
 
 [`metadata/base-manifest.xml`](metadata/base-manifest.xml) locks every resolved
 Repo project. [`patches/projects.tsv`](patches/projects.tsv) routes each changed
