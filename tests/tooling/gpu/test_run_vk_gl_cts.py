@@ -675,6 +675,20 @@ registered_module=KHR-GLES3
                     ),
                 )
 
+    def test_qpa_decoder_preserves_non_utf8_test_input(self) -> None:
+        case = "KHR-GLES3.shaders.invalid_character"
+        payload = qpa(qpa_result(case)).encode("utf-8").replace(
+            b">result</Result>",
+            b"><ShaderSource>#extension all\xa4 : warn</ShaderSource>"
+            b"</Result>",
+        )
+        decoded = cts.decode_qpa(payload)
+
+        self.assertEqual(
+            decoded.encode("utf-8", errors="surrogateescape"), payload
+        )
+        self.assertEqual(cts.validate_qpa_union(decoded, [case]), {case: "Pass"})
+
     def test_qpa_case_path_must_match_container_marker(self) -> None:
         container = "KHR-GLES2.info.version"
         payload = qpa_result("KHR-GLES2.info.renderer").replace(

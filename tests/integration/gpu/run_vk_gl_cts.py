@@ -1176,6 +1176,11 @@ def select_fraction(cases: Sequence[str], index: int, count: int) -> list[str]:
     return selected
 
 
+def decode_qpa(payload: bytes) -> str:
+    """Decode QPA control text without rejecting raw test-input bytes."""
+    return payload.decode("utf-8", errors="surrogateescape")
+
+
 def validate_inventory_report(
     payload: bytes,
     identity: dict[str, Any],
@@ -2504,10 +2509,7 @@ def load_config_inventory_evidence(
         ) from error
     if hashlib.sha256(qpa_payload).hexdigest() != qpa_digest:
         raise CampaignError("config-inventory QPA identity changed")
-    try:
-        qpa_text = qpa_payload.decode("utf-8", errors="strict")
-    except UnicodeDecodeError as error:
-        raise CampaignError("config-inventory QPA is not UTF-8") from error
+    qpa_text = decode_qpa(qpa_payload)
     parsed = parse_egl_config_qpa(qpa_text, api)
     if parsed != configs:
         raise CampaignError("config-inventory QPA and metadata disagree")
@@ -3004,7 +3006,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     if options.config_inventory is not None:
         qpa_payload = artifacts["results.qpa"]
-        qpa_text = qpa_payload.decode("utf-8", errors="strict")
+        qpa_text = decode_qpa(qpa_payload)
         configs = parse_egl_config_qpa(qpa_text, options.config_inventory)
         totals = {"Pass": 1}
         metadata.update(
@@ -3037,7 +3039,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     selected_digest = hashlib.sha256(artifacts["selected.txt"]).hexdigest()
     if len(selected_cases) != selection.expected_count:
         raise CampaignError("egressed caselist count changed")
-    qpa_text = artifacts["results.qpa"].decode("utf-8", errors="strict")
+    qpa_text = decode_qpa(artifacts["results.qpa"])
     results = validate_qpa_union(qpa_text, selected_cases)
     totals = status_totals(results)
     metadata.update(

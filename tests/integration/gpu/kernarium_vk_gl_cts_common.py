@@ -198,7 +198,7 @@ def validate_macos_evidence(
         if hashlib.sha256(artifact.read_bytes()).hexdigest() != metadata.get(key):
             raise cts.CampaignError(f"matching macOS {artifact.name} changed")
     results = cts.validate_qpa_union(
-        qpa.read_text(encoding="utf-8"), selected_cases
+        cts.decode_qpa(qpa.read_bytes()), selected_cases
     )
     cts.validate_required_passes(results)
     if cts.status_totals(results) != metadata["status_totals"]:
@@ -295,7 +295,7 @@ def validate_transcript(
         )
     renderer_text = artifacts["renderer.txt"].decode("utf-8", errors="strict")
     selected_text = artifacts["selected.txt"].decode("utf-8", errors="strict")
-    qpa_text = artifacts["results.qpa"].decode("utf-8", errors="strict")
+    qpa_text = cts.decode_qpa(artifacts["results.qpa"])
     summary_text = artifacts["summary.txt"].decode("utf-8", errors="strict")
     cts.validate_renderer_probe(renderer_text, guest_page_size)
     selected_cases = cts.parse_case_list(selected_text)

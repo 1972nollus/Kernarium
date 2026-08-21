@@ -139,7 +139,7 @@ def validate_simulator_evidence(
     ):
         raise cts.CampaignError("matching Simulator renderer identity changed")
     results = cts.validate_qpa_union(
-        qpa.read_text(encoding="utf-8"), selected_cases
+        cts.decode_qpa(qpa.read_bytes()), selected_cases
     )
     cts.validate_required_passes(results)
     if cts.status_totals(results) != metadata["status_totals"]:

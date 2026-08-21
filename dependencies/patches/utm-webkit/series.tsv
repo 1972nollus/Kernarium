@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	93b5b21ee17576c49b32a7af7b60905bd60b6a15f5271a7359a4e6524a20450c	Add check for iOS simulator when initializing caps in metal
-2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	bf317a924239c341597fa2a9bc6fbac93b0fb5465f944babe20c973a5dc1eb2c	Metal: disable native GL backends in Apple product
-3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	d6698e5f5eb3de29eb15abe410a117c001b2a8f005c6c5bcf27b4df2bf3268e7	Apple: use flat authenticated ANGLE frameworks
-4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	322990f20cbeec540f143790806949a86bb9215922221936724ae37203d755bd	Metal: accept the arm64 macOS product baseline
-5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	9377b267bdba17967186f94cb41b38c30c6b652e3a4c9fe1c4eaf79bcf52e2fd	Metal: preserve boolean mix bit patterns
-6	0006-Metal-count-transform-feedback-queries-per-draw.patch	cd928c5939daea89ba11ba78992a82d0c965affe	0823a7278dc120f6c1b498b1140d646c7f48ecc130a28e7db62ec4ee930d015b	Metal: count transform feedback queries per draw
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	9daf2399276ea7520a8366aa7947c990ff14982254bea344eda21aa2ddb1e7f1	Add check for iOS simulator when initializing caps in metal
+2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	3e00ef95b3923b8679f5a111e6f9918f895b6e9eb854d03611e3447aaa14f309	Metal: disable native GL backends in Apple product
+3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	32850daf7f9bbe103a18e0030d874008200c38ac00b49f854e66d30227e13182	Apple: use flat authenticated ANGLE frameworks
+4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	d1a142e267568a095c545c6507c569d80ed0ebf35f1c921b02cc0b3699ca96c1	Metal: accept the arm64 macOS product baseline
+5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	ea11cf7c05bbc838b1db2938b262919f85eb79f9cb71775a9e2d8791b59b1bea	Metal: preserve boolean mix bit patterns
+6	0006-Metal-count-transform-feedback-queries-per-draw.patch	cd928c5939daea89ba11ba78992a82d0c965affe	5985cd75422c150a9edf1f5679829d718e4ad332fe283cd8be24692e5c98d0bf	Metal: count transform feedback queries per draw
+7	0007-Metal-preserve-non-finite-shader-semantics.patch	762201186149ae7ec035b091819f485b32d5afa3	7c90f394dbce42b71832f287a217e0e2a8cd4e5b18d1f375f94e349f376925cb	Metal: preserve non-finite shader semantics

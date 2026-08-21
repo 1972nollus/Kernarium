@@ -528,7 +528,6 @@ def validate_shard_run(
     summary_payload = entries["summary.txt"].read_bytes()
     try:
         selected_text = selected_payload.decode("utf-8", errors="strict")
-        qpa_text = qpa_payload.decode("utf-8", errors="strict")
         renderer_text = renderer_payload.decode("utf-8", errors="strict")
         summary_text = summary_payload.decode("utf-8", errors="strict")
         console_text = console_path.read_text(
@@ -538,6 +537,7 @@ def validate_shard_run(
         raise cts.CampaignError("matrix shard artifact is not UTF-8") from error
     if summary_text.strip() != "cts_rc=0":
         raise cts.CampaignError("matrix shard CTS process did not exit zero")
+    qpa_text = cts.decode_qpa(qpa_payload)
     selected = cts.parse_case_list(selected_text)
     if len(selected) != selection.expected_count:
         raise cts.CampaignError("matrix shard selected-case count changed")
