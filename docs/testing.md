@@ -246,13 +246,15 @@ The Apple-GPU contracts authenticate one source and topic matrix across all
 three platforms. Its UTM WebKit topics retain the Simulator ES 3 minimum
 varying correction, disable CGL/EAGL/native-GL backends, load only the flat
 authenticated EGL/GLES frameworks, export the platform-display bootstrap, and
-enable the arm64 macOS Metal baseline. The UTM libepoxy topic resolves GL/EGL
-only through those framework install names; UTM virglrenderer retains its ES 3
-multisampled-renderbuffer and native Metal resource path. Wholesale replacement
-with ambient or latest desktop branches is not equivalent: every consumer uses
-the central full commits, ordered generated patches, common builder, and
-verified format-3 contract. Chromium is launched through its ordinary
-ANGLE/GLES selection; the app does not preload, replace, or otherwise
+enable the arm64 macOS Metal baseline. They also implement GLSL boolean `mix`
+with Metal component selection so selected subnormal float bit-carriers are
+not changed by arithmetic interpolation. The UTM libepoxy topic resolves
+GL/EGL only through those framework install names; UTM virglrenderer retains
+its ES 3 multisampled-renderbuffer and native Metal resource path. Wholesale
+replacement with ambient or latest desktop branches is not equivalent: every
+consumer uses the central full commits, ordered generated patches, common
+builder, and verified format-3 contract. Chromium is launched through its
+ordinary ANGLE/GLES selection; the app does not preload, replace, or otherwise
 interfere with Chromium libraries.
 
 The network prefixes reuse the authenticated PCRE2, libffi, proxy-libintl,

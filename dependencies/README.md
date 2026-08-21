@@ -108,6 +108,11 @@ forming XCFrameworks. No UTM checkout, manifest, or graphics builder remains
 under `Kernarium/`, and the retired `build-ios-gpu.sh` has no compatibility
 entry point.
 
+The maintained UTM WebKit series maps GLSL boolean `mix` to Metal component
+selection. This preserves exact selected bit patterns, including subnormal
+float values used to carry integer bits, instead of passing them through
+arithmetic interpolation.
+
 Network uses the pinned PCRE2, libffi, proxy-libintl, GLib, GVDB, and libslirp Git
 sources. Its GLib source is a separately named prepared repository because the
 iOS availability topic is applied only to that product. Platform contracts are

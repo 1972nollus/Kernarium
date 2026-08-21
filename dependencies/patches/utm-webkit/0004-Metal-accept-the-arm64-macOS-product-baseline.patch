@@ -1,7 +1,7 @@
 From 8d692a4029b2d49902a571294ba0bd7f000ea5cb Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 23:58:50 +0900
-Subject: [PATCH 4/4] Metal: accept the arm64 macOS product baseline
+Subject: [PATCH 4/5] Metal: accept the arm64 macOS product baseline
 
 ---
  .../ThirdParty/ANGLE/src/common/apple_platform_utils.mm  | 9 ++++++++-

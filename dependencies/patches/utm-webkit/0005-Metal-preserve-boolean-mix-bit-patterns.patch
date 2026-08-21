@@ -1,0 +1,59 @@
+From 38fc4c80bcd60670b0a235e0661e50775351c3e6 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 01:06:08 +0900
+Subject: [PATCH 5/5] Metal: preserve boolean mix bit patterns
+
+---
+ .../translator/msl/ProgramPrelude.cpp         |  2 +-
+ .../tests/compiler_tests/MSLOutput_test.cpp   | 25 +++++++++++++++++++
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/compiler/translator/msl/ProgramPrelude.cpp b/Source/ThirdParty/ANGLE/src/compiler/translator/msl/ProgramPrelude.cpp
+index bdf2c87b90..509ccf9f45 100644
+--- a/Source/ThirdParty/ANGLE/src/compiler/translator/msl/ProgramPrelude.cpp
++++ b/Source/ThirdParty/ANGLE/src/compiler/translator/msl/ProgramPrelude.cpp
+@@ -508,7 +508,7 @@ PROGRAM_PRELUDE_DECLARE(mixBool,
+ template <typename T, int N>
+ ANGLE_ALWAYS_INLINE metal::vec<T,N> ANGLE_mix_bool(metal::vec<T, N> a, metal::vec<T, N> b, metal::vec<bool, N> c)
+ {
+-    return metal::mix(a, b, static_cast<metal::vec<T,N>>(c));
++    return metal::select(a, b, c);
+ }
+ )")
+ 
+diff --git a/Source/ThirdParty/ANGLE/src/tests/compiler_tests/MSLOutput_test.cpp b/Source/ThirdParty/ANGLE/src/tests/compiler_tests/MSLOutput_test.cpp
+index 5894b296f3..871427b686 100644
+--- a/Source/ThirdParty/ANGLE/src/tests/compiler_tests/MSLOutput_test.cpp
++++ b/Source/ThirdParty/ANGLE/src/tests/compiler_tests/MSLOutput_test.cpp
+@@ -36,6 +36,31 @@ class MSLOutputTest : public MatchOutputCodeTest
+     }
+ };
+ 
++// Boolean mix selects components and must not perform arithmetic on their bit patterns.  In
++// particular, integer values carried through uintBitsToFloat may be subnormal floats that Metal
++// arithmetic is permitted to flush to zero.
++TEST_F(MSLOutputTest, BooleanMixUsesBitPreservingSelect)
++{
++    const std::string &shaderString =
++        R"(#version 300 es
++        precision highp float;
++        precision highp int;
++        uniform uvec4 aBits;
++        uniform uvec4 bBits;
++        uniform bvec4 chooseB;
++        out vec4 outColor;
++        void main()
++        {
++            vec4 a = uintBitsToFloat(aBits);
++            vec4 b = uintBitsToFloat(bBits);
++            outColor = mix(a, b, chooseB);
++        })";
++    compile(shaderString);
++
++    EXPECT_TRUE(foundInCode("return metal::select(a, b, c);"));
++    EXPECT_TRUE(notFoundInCode("return metal::mix(a, b, static_cast<metal::vec<T,N>>(c));"));
++}
++
+ // Test that having dynamic indexing of a vector inside the right hand side of logical or doesn't
+ // trigger asserts in MSL output.
+ TEST_F(MSLOutputTest, DynamicIndexingOfVectorOnRightSideOfLogicalOr)

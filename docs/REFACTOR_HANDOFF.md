@@ -121,11 +121,23 @@ inventory now filters unmodified
 run against the sealed derivative completed exactly those two modules with
 6,972 cases, frozen SHA-256
 `3ec390ed2d36f0fd8e32a02718e19c5750cf9381eab002aac9b71f848ebc6162`,
-and clean shutdown. Qualification remains fail-closed because the complete
-official matrices and Phase 2 performance, thermal, and lifecycle gates have
-not passed; the original image also lacks a build receipt, so future
-qualification must use the checked derivative. Phase 3 and later profile work
-must not start until the lower shared baseline is measured and qualified.
+and clean shutdown. The isolated official GLES 2 matrix then passed all 25 EGL
+configurations and 11,825 executions with 10,950 `Pass`, 875 `NotSupported`,
+no disallowed result, and clean shutdown throughout.
+
+The first GLES 3 matrix exposed a common ANGLE/Metal correctness defect at
+`KHR-GLES3.shaders.loops.for_constant_iterations.conditional_continue_vertex`.
+Virgl's lowered shader used `uintBitsToFloat` to carry integer loop state, but
+ANGLE implemented boolean `mix` through arithmetic Metal interpolation and
+flushed the selected subnormal value. UTM WebKit topic `38fc4c80bc` now emits
+`metal::select` and adds a translator regression. The exact official case
+changed from a 60-second fence-timeout failure to `Pass` in 465,116
+microseconds under the same VNC/JIT/ten-vCPU/8-GiB immutable-root conditions.
+The dependency series and focused runtime proof pass; complete GLES 3, Phase 2
+performance, thermal, and lifecycle gates remain open. The original image also
+lacks a build receipt, so future qualification must use the checked derivative.
+Phase 3 and later profile work must not start until the lower shared baseline
+is measured and qualified.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

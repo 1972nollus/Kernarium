@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	fa8327dfc077ff088585e39cc4c4871d2827084ba7a78a5bac28749f5f876f2c	Add check for iOS simulator when initializing caps in metal
-2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	07dd6b7a8c8a6300c232230328058798a26edca3f1a462aa775382f47ed8fcfe	Metal: disable native GL backends in Apple product
-3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	0015881689c2c3b3afc6e50ae2383c4be7aed2c92f3cd129716a7f823ea90df0	Apple: use flat authenticated ANGLE frameworks
-4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	cb0474bae78b519875099c1a77e4e5610ddd54e1dfdb8cd9cccee26d29c51807	Metal: accept the arm64 macOS product baseline
+1	0001-Add-check-for-iOS-simulator-when-initializing-caps-i.patch	8d81fa3f1a26639853c47d3becf3744d9647d7b9	f9c9a88a9bba576f4dd113659a25c98e4fbbad115a9fce931d6224046ad43cb6	Add check for iOS simulator when initializing caps in metal
+2	0002-Metal-disable-native-GL-backends-in-Apple-product.patch	7a2db74c57b9566b724d615d5a1385de1e21faa5	27b41d7a53451d187e5eac05acb029f1417c05f5ca467846c0af81f207706d4a	Metal: disable native GL backends in Apple product
+3	0003-Apple-use-flat-authenticated-ANGLE-frameworks.patch	a76d6b27488c195a7a3011d5548d12f52e36df06	c93fe4fb3215c6ef547b299d477f85403dacb00ede4fc8c1bf4abe3a2ce5363f	Apple: use flat authenticated ANGLE frameworks
+4	0004-Metal-accept-the-arm64-macOS-product-baseline.patch	11d677627d3fe1f55d284bf6adf01cc1172ff09b	5a42c28bb6aee6e8e86be362c571709b368ee8383c11a3d6cd1eb1282692f8dc	Metal: accept the arm64 macOS product baseline
+5	0005-Metal-preserve-boolean-mix-bit-patterns.patch	c3ebf38321cac29e4251cd659fa85df6726cf26d	298dbe72b82471516873cb2aa17d8b5eaf29ade4e451cd3fee2d587e261b5e14	Metal: preserve boolean mix bit patterns

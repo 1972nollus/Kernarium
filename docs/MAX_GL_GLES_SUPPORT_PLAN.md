@@ -157,6 +157,29 @@ and its transport transcript SHA-256 is
 This closes the macOS matrix artifact-transport defect, not either complete
 matrix or any conformance claim.
 
+A clean isolated GLES 2 campaign at
+`.build/vk-gl-cts/matrix/gles2-16k-ece975c5-isolated` subsequently completed
+all 25 EGL configurations and all 11,825 required executions: 10,950 `Pass`,
+875 `NotSupported`, and no disallowed result. Every configuration completed
+the exact 473-case leaf through VNC with JIT, ten vCPUs, 8 GiB, acknowledged
+Virtio serial artifacts, clean shutdown, and the sealed ext4 lower unchanged.
+This completes the official GLES 2 matrix.
+
+The first GLES 3 campaign stopped at exact official fraction `359/6498`, case
+`KHR-GLES3.shaders.loops.for_constant_iterations.conditional_continue_vertex`.
+The generated Virgl shader carried the integer loop bound 3 through
+`uintBitsToFloat`; ANGLE's Metal prelude implemented boolean `mix` with
+arithmetic interpolation, which flushed that selected subnormal bit pattern to
+zero and made the lowered loop nonterminating until the 60-second Virgl fence
+timeout. An isolated rebuild changed that helper to component-wise
+`metal::select`; the same case then passed in 465,116 microseconds at
+`.build/vk-gl-cts/focused/gles3-angle-select-fix/20260822-010050-53009-16k-matrix-gles3-cfg00-359of6498`.
+UTM WebKit topic `38fc4c80bc` adds the correction and a focused MSL translator
+regression. The temporary shader instrumentation was removed, and the sealed
+root remained mode 0444 at its exact authenticated hash. The complete GLES 3
+matrix remains open until the regenerated common dependency is rebuilt and the
+new campaign passes every configuration and leaf.
+
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
