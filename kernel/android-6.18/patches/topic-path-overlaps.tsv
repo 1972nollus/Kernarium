@@ -12,7 +12,9 @@ arch/um/include/asm/processor-generic.h	0001,0012	The shared task-layout contrac
 arch/um/include/shared/kern_util.h	0001,0024	The shared architecture contract owns kernel-side host helpers while topic 0024 adds the cooperative timer checkpoint used by IRQ-enabled Darwin spin waits.
 arch/um/kernel/process.c	0004,0013	The execution core owns Linux task entry while topic 0013 adapts its first activation to fixed Darwin vCPU carriers.
 arch/um/kernel/skas/process.c	0002,0013	The shared SKAS bootstrap owns CPU0 setup while topic 0013 installs Darwin's signal stack on the new CPU0 carrier.
+arch/um/kernel/skas/uaccess.c	0002,0025	The MMU topic makes user-page lookup safe across sibling page-table changes while topic 0025 adds a non-atomic PREEMPT_NONE quiescent boundary after all lookup locks are released.
 arch/um/kernel/time.c	0003,0024	The shared timer core owns Darwin timer delivery while topic 0024 exposes that delivery through a kernel-register checkpoint for cooperative spin waits.
+arch/um/kernel/tlb.c	0002,0025	The MMU topic owns Darwin TLB synchronization and host invalidation while topic 0025 adds a quiescent boundary after each completed host VMA invalidation.
 arch/um/kernel/trap.c	0002,0012	The MMU core owns guest fault dispatch while topic 0012 rejects faults that intersect the shared sparse native hole.
 arch/um/kernel/um_arch.c	0004,0012	The execution core owns Darwin task-size setup while topic 0012 selects the common Apple task ceiling, scalable native hole, and guest-memory-scaled auxiliary vmalloc capacity.
 arch/um/os-Darwin/internal.h	0007,0013,0014	The Darwin host implementation owns private service declarations, topic 0013 replaces per-task scheduler hooks with fixed-carrier lifetime hooks, and topic 0014 adds the host-stop boundary.
