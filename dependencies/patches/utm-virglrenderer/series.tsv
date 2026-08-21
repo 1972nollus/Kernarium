@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 order	patch	stable_patch_id	sha256	subject
-1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	0755017646f0e05bfb8a1f4eee63b6223ebacd1f	03d4ba0432e6903910fdbefbcdf9cda31e3d629ad5fcffec59b65fa4ff07af1e	vrend: support GLES 3.0 MSAA on iOS Metal
+1	0001-vrend-support-GLES-3.0-MSAA-on-iOS-Metal.patch	5e0671cca871b873cb87be44683f93c8dda29ace	91a06b57dbc32a327ad33128500c8b2707914660a1b65adc88dd637d2010caac	vrend: support GLES 3.0 MSAA on iOS Metal

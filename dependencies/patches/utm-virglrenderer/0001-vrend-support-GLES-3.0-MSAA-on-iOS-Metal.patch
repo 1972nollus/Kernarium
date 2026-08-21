@@ -1,4 +1,4 @@
-From b495fbae74286c6261c39fe2e8b42920a130f783 Mon Sep 17 00:00:00 2001
+From 42b8c000a5264046fcda9aefa34b5eee094b13b4 Mon Sep 17 00:00:00 2001
 From: Kernarium <kernarium@localhost>
 Date: Thu, 13 Aug 2026 00:00:00 +0900
 Subject: [PATCH] vrend: support GLES 3.0 MSAA on iOS Metal
@@ -18,12 +18,29 @@ RGBA8 native texture when no packed guest-memory layout is involved, matching
 ANGLE's existing Simulator format emulation, and otherwise fall back from the
 native sharing path.
 ---
- src/vrend/vrend_formats.c  | 42 +++++++++++++++------
+ src/vrend/vrend_decode.c   |  4 +-
+ src/vrend/vrend_formats.c  | 42 ++++++++++++++------
  src/vrend/vrend_metal.m    | 22 ++++++++---
- src/vrend/vrend_renderer.c | 75 +++++++++++++++++++++++++++++++++++---
+ src/vrend/vrend_renderer.c | 81 ++++++++++++++++++++++++++++++++++----
  src/vrend/vrend_renderer.h |  1 +
- 4 files changed, 118 insertions(+), 22 deletions(-)
+ tests/test_virgl_cmd.c     | 40 +++++++++++++++++++
+ 6 files changed, 164 insertions(+), 26 deletions(-)
 
+diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
+index 7774a25..d154feb 100644
+--- a/src/vrend/vrend_decode.c
++++ b/src/vrend/vrend_decode.c
+@@ -652,7 +652,9 @@ static int vrend_decode_create_surface_common(struct vrend_context *ctx, const u
+    uint32_t res_handle = get_buf_entry(buf, VIRGL_OBJ_SURFACE_RES_HANDLE);
+ 
+    struct vrend_resource *res = vrend_renderer_ctx_res_lookup(ctx, res_handle);
+-   if (!res || !res->gl_id) {
++   if (!res || (!res->gl_id &&
++                !(has_bit(res->storage_bits, VREND_STORAGE_GL_RENDERBUFFER) &&
++                  res->rbo_id))) {
+       vrend_report_context_error(ctx, VIRGL_ERROR_CTX_ILLEGAL_RESOURCE, res_handle);
+       return EINVAL;
+    }
 diff --git a/src/vrend/vrend_formats.c b/src/vrend/vrend_formats.c
 index 40ed4d5..8566fd3 100644
 --- a/src/vrend/vrend_formats.c
@@ -143,9 +160,18 @@ index e8ded74..d9113c5 100644
     if (!mtl_device || !descriptor) {
        [descriptor release];
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index e6ae007..ef5a6f6 100644
+index e6ae007..86498a9 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
+@@ -1492,7 +1492,7 @@ static bool vrend_compile_shader(struct vrend_sub_context *sub_ctx,
+ 
+    shader->id = glCreateShader(conv_shader_type(shader->sel->type));
+    glShaderSource(shader->id, shader->glsl_strings.num_strings, shader_parts, NULL);
+-   
++
+    /* Free temporary modified shader strings */
+    for (int i = 0; i < shader->glsl_strings.num_strings; i++) {
+       if (modified_shaders[i])
 @@ -3084,6 +3084,15 @@ void vrend_fb_bind_texture_id(struct vrend_resource *res,
           attachment = GL_DEPTH_ATTACHMENT;
     }
@@ -246,14 +272,16 @@ index e6ae007..ef5a6f6 100644
     /* ANGLE/Metal GLES path returns GL_INVALID_ENUM for copy_image on MSAA
      * targets; avoid copy_image there. Also prefer shader blit when running
      * GLES on macOS even for non-MSAA to steer clear of driver quirks.
-@@ -13146,14 +13211,14 @@ angle_done:
+@@ -13145,16 +13210,16 @@ angle_done:
+     * and returning the faked max_samples value with graceful downgrade. */
     caps->v1.max_samples = vrend_renderer_query_multisample_caps(caps->v1.max_samples, &caps->v2);
     virgl_debug("[VREND CAPS] After query_multisample_caps: max_samples=%u\n", caps->v1.max_samples);
-    
+-   
 -   /* For macOS Metal backend: Override to max_samples=1 to trigger Mesa's fake_sw_msaa.
 -    * Even though MSAA tests confirm 4 samples work, Mesa's format queries can't verify
 -    * multisample support, causing MaxSamples=0. Reporting 1 triggers fake_sw_msaa workaround.
 -    * Apply to both desktop GL and GLES (ANGLE) modes. */
++
 +   /* Keep the fake_sw_msaa workaround for the macOS desktop Metal backend.
 +    * GLES 3.0 uses the renderbuffer path and must expose its real sample count.
 +    * Reporting one there makes Mesa expose ES 3 without the multisample
@@ -262,10 +290,12 @@ index e6ae007..ef5a6f6 100644
     bool is_metal = (version && strstr(version, "Metal"));
     bool is_angle = (version && strstr(version, "ANGLE"));
 -   if ((is_metal || is_angle) && caps->v1.max_samples > 1) {
+-      virgl_debug("[VREND CAPS] %s backend: Overriding max_samples %u -> 1 for fake_sw_msaa\n", 
 +   if (!vrend_state.use_gles && (is_metal || is_angle) && caps->v1.max_samples > 1) {
-       virgl_debug("[VREND CAPS] %s backend: Overriding max_samples %u -> 1 for fake_sw_msaa\n", 
++      virgl_debug("[VREND CAPS] %s backend: Overriding max_samples %u -> 1 for fake_sw_msaa\n",
                    is_angle ? "ANGLE" : "Metal",
                    caps->v1.max_samples);
+       caps->v1.max_samples = 1;
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
 index 814eb7e..3ae1fed 100644
 --- a/src/vrend/vrend_renderer.h
@@ -278,3 +308,61 @@ index 814eb7e..3ae1fed 100644
  
  struct vrend_resource {
     struct pipe_resource base;
+diff --git a/tests/test_virgl_cmd.c b/tests/test_virgl_cmd.c
+index 3124e5f..8ab37ca 100644
+--- a/tests/test_virgl_cmd.c
++++ b/tests/test_virgl_cmd.c
+@@ -1460,6 +1460,45 @@ START_TEST(virgl_test_create_surface_pass)
+ }
+ END_TEST
+ 
++START_TEST(virgl_test_create_multisample_surface_pass)
++{
++   struct virgl_renderer_resource_create_args args;
++   struct virgl_context ctx;
++   struct virgl_resource res = {0};
++   struct virgl_surface surf;
++   int ret;
++
++   ret = testvirgl_init_ctx_cmdbuf(&ctx, context_flags);
++   ck_assert_int_eq(ret, 0);
++
++   testvirgl_init_simple_2d_resource(&args, 1);
++   args.format = PIPE_FORMAT_B8G8R8A8_UNORM;
++   args.nr_samples = 4;
++   args.bind = PIPE_BIND_RENDER_TARGET;
++   ret = virgl_renderer_resource_create(&args, NULL, 0);
++   ck_assert_int_eq(ret, 0);
++
++   res.handle = args.handle;
++   res.base.target = args.target;
++   res.base.format = args.format;
++   res.base.nr_samples = args.nr_samples;
++   virgl_renderer_ctx_attach_resource(ctx.ctx_id, res.handle);
++
++   memset(&surf, 0, sizeof(surf));
++   surf.base.format = args.format;
++   surf.handle = 1;
++   surf.base.texture = &res.base;
++   ret = virgl_encoder_create_surface(&ctx, surf.handle, &res, &surf.base);
++   ck_assert_int_eq(ret, 0);
++   ret = testvirgl_ctx_send_cmdbuf(&ctx);
++   ck_assert_int_eq(ret, 0);
++
++   virgl_renderer_ctx_detach_resource(ctx.ctx_id, res.handle);
++   virgl_renderer_resource_unref(res.handle);
++   testvirgl_fini_ctx_cmdbuf(&ctx);
++}
++END_TEST
++
+ START_TEST(virgl_test_create_surface_fail_format)
+ {
+    test_create_surface(VIRGL_FORMAT_MAX, EINVAL);
+@@ -1991,6 +2030,7 @@ static Suite *virgl_init_suite(void)
+   tcase_add_test(tc_core, virgl_test_encode_sampler_view_fail_layers);
+   tcase_add_test(tc_core, virgl_test_encode_sampler_view_texture_buffer);
+   tcase_add_test(tc_core, virgl_test_create_surface_pass);
++  tcase_add_test(tc_core, virgl_test_create_multisample_surface_pass);
+   tcase_add_test(tc_core, virgl_test_create_surface_fail_format);
+   tcase_add_test(tc_core, virgl_test_create_surface_fail_layers);
+   tcase_add_test(tc_core, virgl_test_create_vertex_elements_pass);
