@@ -33,10 +33,9 @@ Usage: android/aosp-17/build/build-aosp.sh \
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
 series. The output directory must be an ignored directory inside the AOSP Repo
 workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
-from an external absolute OUT_DIR. Standard Ninja and non-incremental Soong
-analysis are fixed producer settings for this source tag. Reusing the same
-output path preserves Ninja's ordinary incremental build behavior; a missing
-output path is initialized automatically.
+from an external absolute OUT_DIR. Reusing the same output path lets the
+Android build system select and preserve its compatible incremental state; a
+missing output path is initialized automatically.
 EOF
 }
 
@@ -152,10 +151,9 @@ OUT_DIR_ABSOLUTE=$OUT_DIR
 OUT_DIR=${OUT_DIR#"$AOSP_SOURCE"/}
 export OUT_DIR
 export SOONG_NINJA=ninja
-# This disables Soong's incompatible incremental graph-analysis implementation
-# for the pinned tag. Ninja still reuses the preserved OUT_DIR and rebuilds only
-# invalidated actions.
-export SOONG_INCREMENTAL_ANALYSIS=false
+# Do not force a Soong analysis mode here. The pinned build environment owns
+# that choice, and changing modes on a populated OUT_DIR invalidates otherwise
+# reusable intermediates.
 
 cd "$AOSP_SOURCE"
 # shellcheck disable=SC1091

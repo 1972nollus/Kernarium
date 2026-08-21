@@ -1033,7 +1033,6 @@ def main() -> None:
         "target_files_intermediates",
         'install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"',
         "SOONG_NINJA=ninja",
-        "SOONG_INCREMENTAL_ANALYSIS=false",
         "SOONG_BUILD_GRAPH",
         "reusing incremental AOSP output",
         "PARTITION_LAYOUT",
@@ -1084,6 +1083,10 @@ def main() -> None:
     ):
         if token not in build_aosp:
             fail(f"AOSP builder is missing fixed product policy: {token}")
+    if re.search(
+        r"^\s*(?:export\s+)?SOONG_INCREMENTAL_ANALYSIS=", build_aosp, re.MULTILINE
+    ):
+        fail("AOSP builder forces a Soong analysis mode instead of preserving reuse")
     for token in (
         "META/kernel_configs.txt",
         "META/kernel_version.txt",

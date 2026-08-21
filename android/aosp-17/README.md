@@ -72,9 +72,9 @@ android/aosp-17/build/build-aosp.sh \
 Preserve that output directory after the baseline build and pass the exact same
 `--out` path to later invocations so Ninja reuses all valid Android outputs. A
 new builder needs no special bootstrap option: a missing output path is created
-automatically. `SOONG_INCREMENTAL_ANALYSIS=false` is a compatibility
-requirement for this pinned tag's graph analysis and does not disable Ninja's
-ordinary incremental object and packaging rebuilds.
+automatically. The wrapper does not force `SOONG_INCREMENTAL_ANALYSIS`; the
+pinned Android environment owns that setting so subsequent builds keep using
+the analysis mode already associated with the preserved output tree.
 
 [`metadata/base-manifest.xml`](metadata/base-manifest.xml) locks every resolved
 Repo project. [`patches/projects.tsv`](patches/projects.tsv) routes each changed
