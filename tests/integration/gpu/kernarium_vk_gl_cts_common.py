@@ -315,7 +315,7 @@ def validate_matrix_semantics(
         raise cts.CampaignError("signed matrix manifest identity changed")
 
 
-def validate_matrix_artifacts(
+def parse_matrix_artifacts(
     artifacts: dict[str, bytes],
     shard: cts.AppleMatrixShard,
     guest_page_size: int,
@@ -354,14 +354,25 @@ def validate_matrix_artifacts(
     results = cts.validate_qpa_union(
         cts.decode_qpa(artifacts["results.qpa"]), selected_cases
     )
-    cts.validate_official_runner_results(
-        results, shard.oracle.successful_case_statuses
-    )
     if summary_text.strip() != "cts_rc=0":
         raise cts.CampaignError(
             f"matrix CTS process failed: {summary_text.strip()}"
         )
     return results, cts.status_totals(results)
+
+
+def validate_matrix_artifacts(
+    artifacts: dict[str, bytes],
+    shard: cts.AppleMatrixShard,
+    guest_page_size: int,
+) -> tuple[dict[str, str], dict[str, int]]:
+    results, totals = parse_matrix_artifacts(
+        artifacts, shard, guest_page_size
+    )
+    cts.validate_official_runner_results(
+        results, shard.oracle.successful_case_statuses
+    )
+    return results, totals
 
 
 def read_matrix_artifacts(path: Path) -> dict[str, bytes]:
@@ -568,7 +579,7 @@ def validate_matrix_transcript(
     capability = cts.parse_gpu_capability_report(transcript)
     native_display = cts.parse_native_display_final(transcript)
     artifacts = cts.decode_artifacts(transcript)
-    results, totals = validate_matrix_artifacts(
+    results, totals = parse_matrix_artifacts(
         artifacts, shard, guest_page_size
     )
     return artifacts, results, totals, capability, native_display

@@ -1397,6 +1397,10 @@ OpenGL renderer string: virgl
         artifacts["results.qpa"] = qpa(
             qpa_result(cases[0]), qpa_result(cases[1], "Fail")
         ).encode()
+        _, totals = ios_cts.common.parse_matrix_artifacts(
+            artifacts, shard, 16384
+        )
+        self.assertEqual(totals, {"Pass": 1, "Fail": 1})
         with self.assertRaisesRegex(
             cts.CampaignError, "official CTS runner rejects"
         ):

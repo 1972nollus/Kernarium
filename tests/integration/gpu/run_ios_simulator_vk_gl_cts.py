@@ -544,9 +544,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         cts.validate_required_passes(results)
         print(f"Simulator VK-GL-CTS completed {len(results)} cases: {totals}")
     elif matrix_shard is not None:
+        cts.validate_official_runner_results(
+            results, matrix_shard.oracle.successful_case_statuses
+        )
         print(
-            f"Simulator VK-GL-CTS matrix shard {matrix_shard.identifier} "
-            f"completed {len(results)} cases: {totals}"
+            f"Simulator VK-GL-CTS matrix shard "
+            f"{matrix_shard.identifier} completed {len(results)} cases: "
+            f"{totals}"
         )
     else:
         print(
