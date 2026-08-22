@@ -323,6 +323,19 @@ xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
     head -n 1)"
 test -n "$xauthority"
 rm -rf /tmp/chromium-webgl-samples
+first_url="https://webglsamples.org@FIRST_PATH@"
+if ! curl --fail --location --silent --show-error \
+    --connect-timeout 30 --max-time 120 \
+    --output /run/uml-webgl-first.html "$first_url"; then
+    echo "UML_WEBGL_RUNNER_ERROR: first page fetch failed"
+    exit 1
+fi
+first_size="$(wc -c < /run/uml-webgl-first.html)"
+if [ "$first_size" -le 0 ]; then
+    echo "UML_WEBGL_RUNNER_ERROR: first page fetch was empty"
+    exit 1
+fi
+echo "UML_WEBGL_FETCH_OK|BYTES=$first_size|URL=$first_url"
 runuser -u uml -- env \
     DISPLAY=:0 \
     XAUTHORITY="$xauthority" \
@@ -348,7 +361,7 @@ exec runuser -u uml -- env \
     --user-data-dir=/tmp/chromium-webgl-samples \
     --disable-extensions-except=/var/tmp/uml-webgl-samples-extension \
     --load-extension=/var/tmp/uml-webgl-samples-extension \
-    https://webglsamples.org@FIRST_PATH@
+    "$first_url"
 """
 
 SERVICE = """[Unit]
