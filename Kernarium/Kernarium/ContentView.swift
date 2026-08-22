@@ -1,3 +1,4 @@
+import Foundation
 import MetalKit
 import SwiftUI
 
@@ -511,12 +512,50 @@ enum OverlayDisk {
     }
 }
 
+enum ThermalSamplePhase: String {
+    case start
+    case change
+    case finish
+}
+
+enum ThermalStateReport {
+    static func name(for state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal:
+            return "nominal"
+        case .fair:
+            return "fair"
+        case .serious:
+            return "serious"
+        case .critical:
+            return "critical"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    static func line(
+        phase: ThermalSamplePhase,
+        state: ProcessInfo.ThermalState,
+        uptime: TimeInterval
+    ) -> String {
+        let uptimeText = String(
+            format: "%.3f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            uptime
+        )
+        return "Kernarium thermal state: phase=\(phase.rawValue) " +
+            "state=\(name(for: state)) uptime=\(uptimeText)"
+    }
+}
+
 @MainActor
 private final class EmulatorLauncher {
     static let shared = EmulatorLauncher(configuration: .load())
 
     private let configuration: EmulatorConfiguration
     private var started = false
+    private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
 
@@ -572,6 +611,7 @@ private final class EmulatorLauncher {
             return
         }
         started = true
+        startThermalObservation()
         let size = geometry.pixelSize
         view.guestPixelSize = size
         UIApplication.shared.isIdleTimerDisabled = true
@@ -599,6 +639,7 @@ private final class EmulatorLauncher {
     }
 
     private func finished(result: Int32) {
+        stopThermalObservation()
         started = false
         UIApplication.shared.isIdleTimerDisabled = false
         print("Kernarium: runtime returned \(result)")
@@ -606,5 +647,36 @@ private final class EmulatorLauncher {
 
     func stop() {
         kernarium_runtime_loader_request_stop()
+    }
+
+    private func reportThermalState(phase: ThermalSamplePhase) {
+        print(
+            ThermalStateReport.line(
+                phase: phase,
+                state: ProcessInfo.processInfo.thermalState,
+                uptime: ProcessInfo.processInfo.systemUptime
+            )
+        )
+    }
+
+    private func startThermalObservation() {
+        reportThermalState(phase: .start)
+        thermalObserver = NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                EmulatorLauncher.shared.reportThermalState(phase: .change)
+            }
+        }
+    }
+
+    private func stopThermalObservation() {
+        reportThermalState(phase: .finish)
+        if let thermalObserver {
+            NotificationCenter.default.removeObserver(thermalObserver)
+            self.thermalObserver = nil
+        }
     }
 }

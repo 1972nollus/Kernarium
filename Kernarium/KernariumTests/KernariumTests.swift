@@ -5,6 +5,22 @@ import UIKit
 
 struct KernariumTests {
     @Test
+    func thermalStateReportHasStableMachineReadableFields() {
+        #expect(ThermalStateReport.name(for: .nominal) == "nominal")
+        #expect(ThermalStateReport.name(for: .fair) == "fair")
+        #expect(ThermalStateReport.name(for: .serious) == "serious")
+        #expect(ThermalStateReport.name(for: .critical) == "critical")
+        #expect(
+            ThermalStateReport.line(
+                phase: .start,
+                state: .nominal,
+                uptime: 12.5
+            ) == "Kernarium thermal state: phase=start state=nominal " +
+                "uptime=12.500"
+        )
+    }
+
+    @Test
     @MainActor
     func floatingControlsAndSpecialKeysHaveExpectedGeometryAndCodes() {
         #expect(FloatingControlMetrics.buttonSide == 32)

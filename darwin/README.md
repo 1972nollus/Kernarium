@@ -66,8 +66,13 @@ package is absent.
 Kernarium's network callback is the ordinary SLiRP provider compiled against
 the private iOS GLib/libslirp prefix. The application disables the UIKit idle
 timer while the managed guest run is active and restores it when that run
-finishes. Both iOS products default to all processors reported by
-`NSProcessInfo`; Simulator defaults to 4 GiB of guest RAM and physical devices
+finishes. It records the public `ProcessInfo.thermalState` at managed-run
+start, on every iOS state-change notification, and at clean finish. Those
+stable markers let signed-app qualification distinguish nominal, fair,
+serious, critical, and unknown states without private APIs; they are evidence
+inputs rather than a thermal pass by themselves. Both iOS products default to
+all processors reported by `NSProcessInfo`; Simulator defaults to 4 GiB of
+guest RAM and physical devices
 default to 2 GiB. The settings sheet can persist one through that processor
 count, 512 MiB through 4 GiB of RAM in 64 MiB steps, a 1--32 GiB overlay image, the
 selected `.erofs` filename from Documents, and either a 4 KiB or 16 KiB kernel

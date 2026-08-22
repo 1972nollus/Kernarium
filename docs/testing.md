@@ -1007,6 +1007,11 @@ campaigns also require a final frame report with nonzero guest/presented totals
 and zero CPU fallback. iOS capability records use the ordered stdout/guest
 console stream because `devicectl` can merge separate stdout/stderr transports
 between bytes.
+The signed app also emits stable `Kernarium thermal state` records at managed
+guest start, every public `ProcessInfo.thermalState` notification, and clean
+finish. Preserve those records across the complete physical-device campaign;
+they provide thermal and lifecycle inputs but do not turn a partial matrix or
+a serious/critical state into acceptance.
 The strict console frames are sufficient for these bounded artifacts, so this
 workflow does not require VirtioFS or a new Virtio-serial device.
 

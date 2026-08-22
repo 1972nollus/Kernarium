@@ -1204,6 +1204,11 @@ GLES 2 and GLES 3 matrices pass all 9,460 and 129,960 required executions,
 respectively. Complete Simulator/iPad matrices, the seven-pair performance
 campaign, connected-iPad thermal gate, and sustained-lifecycle campaign remain
 open.
+The normally signed app now records public iOS thermal state at managed-run
+start, on every state-change notification, and at clean finish. Its stable
+markers are captured by the existing device transcript, providing the input
+needed to audit the final repeated-shard campaign without a private API; no
+thermal or lifecycle result is claimed until that campaign completes.
 The original EROFS build receipt remains missing, the checked derivative owns
 its authenticated build receipt, and the scoped GLES hierarchy identity is
 complete. Qualification remains fail-closed on those remaining matrices and
