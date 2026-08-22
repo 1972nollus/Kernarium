@@ -1062,7 +1062,11 @@ repaired-kernel runs with zero dropped or CPU-fallback frames. The current
 129,960 required executions. Fixed signed Simulator GLES 2 and GLES 3 config
 inventories now match those macOS predecessors exactly at all 20 tuples and
 canonical digest, with direct ANGLE/Metal presentation, clean shutdown, and
-zero dropped or CPU-fallback frames. The seven interleaved performance pairs,
+zero dropped or CPU-fallback frames. A schema-1 manifest now compiles one
+full-leaf campaign per config/API into the signed runtimes, and a fail-closed
+single-attempt orchestrator validates the exact macOS-to-Simulator-to-iPad
+chain; its builds and read-only preflight pass, but no complete mobile matrix
+is yet claimed. The seven interleaved performance pairs,
 connected-iPad thermal and sustained lifecycle baselines, and complete
 Simulator/iPad matrices remain missing.
 The former global all-package caselist attempt still
@@ -1679,7 +1683,9 @@ disallowed status. Fixed generated signed-app inventories subsequently proved
 that the iOS 26.5 Simulator exposes the same exact 20 config tuples and digest
 for both APIs while using Gadgets, direct ANGLE/Metal presentation, and the
 sealed read-only lower; both runs returned zero with no dropped or
-CPU-fallback frames. The Simulator/iPad case matrices, absent seven-pair
+CPU-fallback frames. The fixed 40-ID signed matrix authority, mobile adapters,
+and immutable sequential orchestrator are implemented and build-tested. The
+Simulator/iPad case matrices, absent seven-pair
 performance/connected-iPad thermal/sustained-lifecycle campaigns, and missing
 original-image receipt still prevent any new shared capability or conformance
 claim. The derivative

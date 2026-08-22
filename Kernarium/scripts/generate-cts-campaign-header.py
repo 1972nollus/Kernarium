@@ -77,15 +77,34 @@ def config_inventory_setup(
     return wrap_setup(driver, launcher, identifier)
 
 
+def matrix_setup(
+    driver: ModuleType,
+    shard: object,
+    page_size: int,
+    rootfs_contract: object,
+) -> str:
+    launcher = driver.build_guest_launcher(
+        shard.selection,
+        shard.seed,
+        shard.shard_timeout,
+        page_size,
+        rootfs_contract,
+        matrix=shard.matrix,
+    ).rstrip()
+    return wrap_setup(driver, launcher, shard.identifier)
+
+
 def generate_header(
     driver: ModuleType,
     identity_path: Path,
     campaigns_path: Path,
+    matrix_path: Path,
     derivative_receipt_path: Path,
     page_size: int,
 ) -> str:
     identity = driver.load_identity(identity_path)
     campaigns = driver.load_apple_campaigns(identity, campaigns_path)
+    matrix_shards = driver.load_apple_matrix_shards(identity, matrix_path)
     _, erofs_contract = driver.select_rootfs_contract(
         identity, "erofs", None
     )
@@ -108,6 +127,25 @@ def generate_header(
         rows.append(
             "    Campaign {"
             f"{json.dumps(campaign.identifier)}, "
+            f"R\"{delimiters[0]}({setups[0]}){delimiters[0]}\", "
+            f"R\"{delimiters[1]}({setups[1]}){delimiters[1]}\""
+            "},"
+        )
+    for shard in matrix_shards.values():
+        index = len(rows)
+        setups = (
+            matrix_setup(driver, shard, page_size, erofs_contract),
+            matrix_setup(driver, shard, page_size, ext4_contract),
+        )
+        delimiters = (f"CTS{index}E", f"CTS{index}X")
+        for setup, delimiter in zip(setups, delimiters):
+            if f"){delimiter}\"" in setup:
+                raise RuntimeError(
+                    f"raw-string delimiter collision for {shard.identifier}"
+                )
+        rows.append(
+            "    Campaign {"
+            f"{json.dumps(shard.identifier)}, "
             f"R\"{delimiters[0]}({setups[0]}){delimiters[0]}\", "
             f"R\"{delimiters[1]}({setups[1]}){delimiters[1]}\""
             "},"
@@ -161,6 +199,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--identity", type=Path, required=True)
     parser.add_argument("--campaigns", type=Path, required=True)
+    parser.add_argument("--matrix", type=Path, required=True)
     parser.add_argument("--derivative-receipt", type=Path, required=True)
     parser.add_argument("--page-size", type=int, choices=(4096, 16384), required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -174,6 +213,7 @@ def main() -> int:
         driver,
         options.identity.resolve(),
         options.campaigns.resolve(),
+        options.matrix.resolve(),
         options.derivative_receipt.resolve(),
         options.page_size,
     )

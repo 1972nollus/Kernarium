@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "config_inventory": {
+    "sha256": "843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607",
+    "ids": [
+      1,
+      2,
+      3,
+      4,
+      13,
+      14,
+      15,
+      16,
+      25,
+      26,
+      27,
+      28,
+      37,
+      38,
+      39,
+      40,
+      49,
+      50,
+      51,
+      52
+    ],
+    "surface_types": [
+      "window",
+      "pixmap",
+      "pbuffer"
+    ],
+    "selected_surface_type": "window"
+  },
+  "apis": {
+    "gles2": {
+      "fraction_count": 1,
+      "shard_timeout": 7200
+    },
+    "gles3": {
+      "fraction_count": 1,
+      "shard_timeout": 7200
+    }
+  }
+}

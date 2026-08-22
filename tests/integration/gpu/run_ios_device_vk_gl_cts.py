@@ -239,6 +239,7 @@ def stop_console_process(process: subprocess.Popen[bytes]) -> None:
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     identity = cts.load_identity()
     campaigns = cts.load_apple_campaigns(identity)
+    matrix_shards = cts.load_apple_matrix_shards(identity)
     parser = argparse.ArgumentParser(
         description="run a Simulator-proven CTS campaign on a connected iPad"
     )
@@ -247,23 +248,54 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     mode.add_argument(
         "--config-inventory", choices=cts.BASELINE_GLES_APIS
     )
+    mode.add_argument("--matrix-shard", choices=sorted(matrix_shards))
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--device", required=True)
     parser.add_argument("--simulator-run", type=Path, required=True)
+    parser.add_argument("--config-inventory-run", type=Path)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
     common.add_rootfs_arguments(parser)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
-    parser.add_argument("--guest-timeout", type=cts.positive_integer, default=1200)
+    parser.add_argument("--guest-timeout", type=cts.positive_integer)
     parser.add_argument("--qualification", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
+    common.finish_rootfs_options(parser, options, identity)
+    matrix = (
+        matrix_shards[options.matrix_shard]
+        if options.matrix_shard is not None
+        else None
+    )
     if options.config_inventory is not None and options.qualification:
         parser.error("config discovery is an input to, not itself, qualification")
-    if options.qualification and not identity["cts"]["qualification_ready"]:
+    if matrix is not None:
+        if not options.qualification:
+            parser.error("a signed matrix shard requires --qualification")
+        if options.config_inventory_run is None:
+            parser.error(
+                "a signed matrix shard requires --config-inventory-run"
+            )
+        if (
+            options.rootfs_contract.filesystem_type != "ext4"
+            or options.derivative_receipt is None
+        ):
+            parser.error(
+                "a signed matrix shard requires the authenticated derivative "
+                "ext4 rootfs"
+            )
+    elif options.config_inventory_run is not None:
+        parser.error("--config-inventory-run is only valid for a matrix shard")
+    elif options.qualification and not identity["cts"]["qualification_ready"]:
         parser.error(identity["cts"]["qualification_blocker"])
-    common.finish_rootfs_options(parser, options, identity)
+    if options.guest_timeout is None:
+        options.guest_timeout = (
+            matrix.shard_timeout + 600 if matrix is not None else 1200
+        )
+    if matrix is not None and options.guest_timeout <= matrix.shard_timeout:
+        parser.error("--guest-timeout must exceed the matrix shard timeout")
     options.identity = identity
     options.campaigns = campaigns
+    options.matrix_shards = matrix_shards
     return options
 
 
@@ -274,11 +306,24 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if options.campaign is not None
         else None
     )
-    api = campaign.api if campaign is not None else options.config_inventory
+    matrix_shard = (
+        options.matrix_shards[options.matrix_shard]
+        if options.matrix_shard is not None
+        else None
+    )
+    api = (
+        campaign.api
+        if campaign is not None
+        else matrix_shard.api
+        if matrix_shard is not None
+        else options.config_inventory
+    )
     assert api is not None
     identifier = (
         campaign.identifier
         if campaign is not None
+        else matrix_shard.identifier
+        if matrix_shard is not None
         else f"{api}-config-inventory-v1"
     )
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
@@ -290,6 +335,44 @@ def main(arguments: Sequence[str] | None = None) -> int:
             simulator_run, campaign, options.page_profile, rootfs_contract
         )
         simulator_configs = None
+        matrix_inventory_metadata = None
+        matrix_inventory_configs = None
+    elif matrix_shard is not None:
+        simulator_metadata = common.validate_mobile_matrix_evidence(
+            simulator_run,
+            "ios-simulator-kernarium",
+            matrix_shard,
+            options.page_profile,
+            rootfs_contract,
+        )
+        assert options.config_inventory_run is not None
+        matrix_inventory_metadata, matrix_inventory_configs = (
+            common.validate_mobile_config_inventory_evidence(
+                options.config_inventory_run.resolve(),
+                "ios-device-kernarium",
+                api,
+                options.page_profile,
+                rootfs_contract,
+            )
+        )
+        expected_configs = cts.apple_matrix_configs(
+            options.matrix_shards, api
+        )
+        common.validate_matching_config_inventories(
+            expected_configs,
+            matrix_inventory_configs,
+            "signed matrix manifest",
+        )
+        if (
+            matrix_inventory_configs[
+                matrix_shard.matrix.egl_config_index
+            ]
+            != matrix_shard.matrix.egl_config
+        ):
+            raise cts.CampaignError(
+                "matrix shard names another device EGL config"
+            )
+        simulator_configs = None
     else:
         simulator_metadata, simulator_configs = (
             common.validate_mobile_config_inventory_evidence(
@@ -300,6 +383,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 rootfs_contract,
             )
         )
+        matrix_inventory_metadata = None
+        matrix_inventory_configs = None
     launch_environment = {
         "DEVICECTL_CHILD_KERNARIUM_CTS_CAMPAIGN": identifier,
         "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
@@ -316,6 +401,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         campaign.identifier if campaign is not None else None
                     ),
                     "config_inventory": options.config_inventory,
+                    "matrix_shard": (
+                        matrix_shard.identifier
+                        if matrix_shard is not None
+                        else None
+                    ),
                     "cases": (
                         list(campaign.cases) if campaign is not None else None
                     ),
@@ -324,6 +414,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     "rootfs_type": rootfs_contract.filesystem_type,
                     "rootfs_sha256": rootfs_contract.sha256,
                     "simulator_run": str(simulator_run),
+                    "config_inventory_run": (
+                        str(options.config_inventory_run.resolve())
+                        if options.config_inventory_run is not None
+                        else None
+                    ),
                     "launch_environment": launch_environment,
                 },
                 indent=2,
@@ -371,7 +466,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "page_profile": options.page_profile,
         "engine": "gadgets",
         "mode": (
-            "campaign" if campaign is not None else "config-inventory"
+            "campaign"
+            if campaign is not None
+            else "mustpass-matrix-shard"
+            if matrix_shard is not None
+            else "config-inventory"
         ),
         "api": api,
         "qualification": options.qualification,
@@ -390,6 +489,35 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 "cases": list(campaign.cases),
                 "expected_cases": len(campaign.cases),
                 "seed": campaign.seed,
+            }
+        )
+    elif matrix_shard is not None:
+        assert matrix_inventory_metadata is not None
+        matrix_metadata = common.matrix_semantics(matrix_shard)
+        matrix_metadata["signed_manifest_sha256"] = (
+            matrix_shard.manifest_sha256
+        )
+        metadata.update(
+            {
+                "campaign": matrix_shard.identifier,
+                "leaf": matrix_shard.leaf.identifier,
+                "leaf_sha256": matrix_shard.leaf.sha256,
+                "fraction": [
+                    matrix_shard.selection.fraction_index,
+                    matrix_shard.selection.fraction_count,
+                ],
+                "expected_cases": matrix_shard.selection.expected_count,
+                "seed": matrix_shard.seed,
+                "matrix": matrix_metadata,
+                "config_inventory_run": str(
+                    options.config_inventory_run.resolve()
+                ),
+                "config_inventory_qpa_sha256": (
+                    matrix_inventory_metadata["qpa_sha256"]
+                ),
+                "config_inventory_egl_sha256": (
+                    matrix_inventory_metadata["egl_config_sha256"]
+                ),
             }
         )
     else:
@@ -453,6 +581,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 artifacts["selected.txt"]
             ).hexdigest(),
         }
+    elif matrix_shard is not None:
+        (
+            artifacts,
+            results,
+            totals,
+            capability,
+            native_display,
+        ) = common.validate_matrix_transcript(
+            transcript, matrix_shard, guest_page_size
+        )
+        result_metadata = {
+            "completed_cases": len(results),
+            "status_totals": totals,
+            "selected_caselist_sha256": hashlib.sha256(
+                artifacts["selected.txt"]
+            ).hexdigest(),
+        }
     else:
         (
             artifacts,
@@ -509,6 +654,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         cts.validate_required_passes(results)
         print(
             f"Connected-iPad VK-GL-CTS completed {len(results)} cases: "
+            f"{totals}"
+        )
+    elif matrix_shard is not None:
+        print(
+            f"Connected-iPad VK-GL-CTS matrix shard "
+            f"{matrix_shard.identifier} completed {len(results)} cases: "
             f"{totals}"
         )
     else:

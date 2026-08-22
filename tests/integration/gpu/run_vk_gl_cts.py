@@ -49,6 +49,9 @@ IDENTITY_PATH = Path(__file__).with_name("vk_gl_cts_identity.json")
 APPLE_CAMPAIGNS_PATH = Path(__file__).with_name(
     "vk_gl_cts_apple_campaigns.json"
 )
+APPLE_MATRIX_PATH = Path(__file__).with_name(
+    "vk_gl_cts_apple_matrix.json"
+)
 GLES_MUSTPASS_PATH = Path(__file__).with_name(
     "vk_gl_cts_gles_mustpass.xml"
 )
@@ -244,6 +247,28 @@ class AppleCampaign:
     @property
     def selection(self) -> Selection:
         return Selection(self.leaf, self.cases, 0, 1)
+
+
+@dataclass(frozen=True)
+class AppleMatrixShard:
+    identifier: str
+    api: str
+    matrix: MatrixRun
+    oracle: RunnerOracle
+    shard_timeout: int
+    manifest_sha256: str
+
+    @property
+    def leaf(self) -> LeafIdentity:
+        return self.matrix.selection.leaf
+
+    @property
+    def selection(self) -> Selection:
+        return self.matrix.selection
+
+    @property
+    def seed(self) -> int:
+        return self.matrix.configuration.base_seed
 
 
 @dataclass
@@ -1109,6 +1134,163 @@ def load_apple_campaigns(
     if not result:
         raise CampaignError("Apple CTS campaign allow-list is empty")
     return result
+
+
+def load_apple_matrix_shards(
+    identity: dict[str, Any] | None = None,
+    path: Path = APPLE_MATRIX_PATH,
+) -> dict[str, AppleMatrixShard]:
+    if identity is None:
+        identity = load_identity()
+    try:
+        payload = path.read_bytes()
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CampaignError(
+            f"cannot read Apple CTS matrix {path}: {error}"
+        ) from error
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "config_inventory",
+        "apis",
+    }:
+        raise CampaignError("invalid Apple CTS matrix document")
+    if value["schema_version"] != 1:
+        raise CampaignError("unsupported Apple CTS matrix schema")
+
+    inventory = value["config_inventory"]
+    if not isinstance(inventory, dict) or set(inventory) != {
+        "sha256",
+        "ids",
+        "surface_types",
+        "selected_surface_type",
+    }:
+        raise CampaignError("invalid Apple CTS matrix config inventory")
+    digest = inventory["sha256"]
+    identifiers = inventory["ids"]
+    surface_types = inventory["surface_types"]
+    selected_surface_type = inventory["selected_surface_type"]
+    if (
+        not isinstance(digest, str)
+        or SHA256.fullmatch(digest) is None
+        or not isinstance(identifiers, list)
+        or not identifiers
+        or any(
+            type(identifier) is not int or identifier < 1
+            for identifier in identifiers
+        )
+        or len(set(identifiers)) != len(identifiers)
+        or not isinstance(surface_types, list)
+        or not surface_types
+        or any(
+            surface_type not in {"window", "pixmap", "pbuffer"}
+            for surface_type in surface_types
+        )
+        or len(set(surface_types)) != len(surface_types)
+        or selected_surface_type not in {"window", "pixmap", "pbuffer"}
+    ):
+        raise CampaignError("invalid Apple CTS matrix config geometry")
+    configs = tuple(
+        EglConfig(identifier, tuple(surface_types))
+        for identifier in identifiers
+    )
+    if (
+        any(
+            config.selected_surface_type != selected_surface_type
+            for config in configs
+        )
+        or egl_config_digest(configs) != digest
+    ):
+        raise CampaignError("Apple CTS matrix config digest changed")
+
+    api_rows = value["apis"]
+    if (
+        not isinstance(api_rows, dict)
+        or set(api_rows) != set(BASELINE_GLES_APIS)
+    ):
+        raise CampaignError("Apple CTS matrix API set changed")
+    mustpass = load_gles_mustpass(identity)
+    oracle = load_runner_oracle(identity, mustpass)
+    leaves = leaf_identities(identity)
+    xml_identity = identity["mustpass"]["gles_xml"]
+    manifest_sha256 = hashlib.sha256(payload).hexdigest()
+    result: dict[str, AppleMatrixShard] = {}
+    for api in BASELINE_GLES_APIS:
+        row = api_rows[api]
+        if not isinstance(row, dict) or set(row) != {
+            "fraction_count",
+            "shard_timeout",
+        }:
+            raise CampaignError(f"invalid Apple CTS matrix row for {api}")
+        fraction_count = row["fraction_count"]
+        shard_timeout = row["shard_timeout"]
+        if (
+            type(fraction_count) is not int
+            or fraction_count != 1
+            or type(shard_timeout) is not int
+            or shard_timeout < 1
+            or shard_timeout > 7200
+        ):
+            raise CampaignError(
+                f"invalid Apple CTS matrix bounds for {api}"
+            )
+        leaf = leaves[api]
+        for config_index, config in enumerate(configs):
+            for fraction_index in range(fraction_count):
+                identifier = (
+                    f"{api}-matrix-cfg{config_index:02d}-"
+                    f"{fraction_index:03d}of{fraction_count:03d}-v1"
+                )
+                if APPLE_CAMPAIGN_ID.fullmatch(identifier) is None:
+                    raise CampaignError(
+                        f"invalid Apple CTS matrix identifier: {identifier}"
+                    )
+                selection = Selection(
+                    leaf, (), fraction_index, fraction_count
+                )
+                configuration = baseline_mustpass_configuration(
+                    mustpass, api, config_index == 0
+                )
+                matrix = MatrixRun(
+                    configuration=configuration,
+                    egl_config=config,
+                    egl_config_index=config_index,
+                    config_inventory_sha256=digest,
+                    selection=selection,
+                    mustpass_xml_path=xml_identity["path"],
+                    mustpass_xml_size=xml_identity["size"],
+                    mustpass_xml_sha256=xml_identity["sha256"],
+                )
+                result[identifier] = AppleMatrixShard(
+                    identifier=identifier,
+                    api=api,
+                    matrix=matrix,
+                    oracle=oracle,
+                    shard_timeout=shard_timeout,
+                    manifest_sha256=manifest_sha256,
+                )
+    if len(result) != len(configs) * len(BASELINE_GLES_APIS):
+        raise CampaignError("Apple CTS matrix generated duplicate shards")
+    return result
+
+
+def apple_matrix_configs(
+    shards: dict[str, AppleMatrixShard], api: str
+) -> tuple[EglConfig, ...]:
+    rows = sorted(
+        (
+            shard.matrix.egl_config_index,
+            shard.matrix.egl_config,
+        )
+        for shard in shards.values()
+        if shard.api == api and shard.selection.fraction_index == 0
+    )
+    if [index for index, _ in rows] != list(range(len(rows))):
+        raise CampaignError(f"Apple CTS matrix config indices changed for {api}")
+    return tuple(config for _, config in rows)
 
 
 def parse_fraction(value: str) -> tuple[int, int]:

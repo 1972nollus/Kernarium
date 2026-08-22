@@ -186,6 +186,19 @@ gates remain open. The original image also lacks a build receipt, so future
 qualification must use the checked derivative. Phase 3 and later profile work
 must not start until the lower shared baseline is measured and qualified.
 
+The next mobile gate now has a fixed signed authority rather than a generic
+selector. Checked schema-1 manifest `vk_gl_cts_apple_matrix.json` expands to
+40 compiled IDs: one complete frozen GLES 2 or GLES 3 leaf for each of the 20
+truthful configs. It rejects fractions and owns the exact must-pass XML runner
+arguments, seed, timeout, config tuple, config digest, runner oracle, and leaf
+identity. Both mobile adapters require the authenticated derivative,
+qualification mode, their matching signed inventory, and the exact prior
+product shard. `run_ios_vk_gl_cts_matrix.py` preserves one immutable attempt
+per fresh guest and independently aggregates all 20. All four runtimes,
+packaging, the Debug Simulator app, architecture audits, and 46 focused safety
+tests pass; a full predecessor/app/rootfs read-only preflight also passes. No
+complete mobile case matrix is claimed until those campaigns execute.
+
 ## Versioned kernel ownership preparation (2026-08-20)
 
 The former singleton kernel layout is split into

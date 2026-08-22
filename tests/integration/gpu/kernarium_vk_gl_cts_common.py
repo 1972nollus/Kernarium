@@ -270,6 +270,199 @@ def validate_macos_config_inventory_evidence(
     return metadata, configs
 
 
+def matrix_semantics(shard: cts.AppleMatrixShard) -> dict[str, Any]:
+    matrix = shard.matrix
+    configuration = matrix.configuration
+    return {
+        "mustpass_xml_path": matrix.mustpass_xml_path,
+        "mustpass_xml_size": matrix.mustpass_xml_size,
+        "mustpass_xml_sha256": matrix.mustpass_xml_sha256,
+        "runner_oracle_path": shard.oracle.path,
+        "runner_oracle_size": shard.oracle.size,
+        "runner_oracle_sha256": shard.oracle.sha256,
+        "successful_case_statuses": list(
+            shard.oracle.successful_case_statuses
+        ),
+        "configuration_name": configuration.name,
+        "configuration_role": (
+            "first" if matrix.egl_config_index == 0 else "other"
+        ),
+        "xml_arguments": list(configuration.xml_arguments),
+        "runner_arguments": cts.matrix_runner_arguments(
+            matrix, "/run/uml-cts/selected.txt"
+        ),
+        "egl_config_index": matrix.egl_config_index,
+        "egl_config_id": matrix.egl_config.identifier,
+        "egl_surface_types": list(matrix.egl_config.surface_types),
+        "egl_surface_type": matrix.egl_config.selected_surface_type,
+        "config_inventory_sha256": matrix.config_inventory_sha256,
+    }
+
+
+def validate_matrix_semantics(
+    value: Any,
+    shard: cts.AppleMatrixShard,
+    require_signed_manifest: bool,
+) -> None:
+    if not isinstance(value, dict):
+        raise cts.CampaignError("matrix semantics are not an object")
+    expected = matrix_semantics(shard)
+    if any(value.get(key) != item for key, item in expected.items()):
+        raise cts.CampaignError("matrix shard semantics changed")
+    if require_signed_manifest and value.get(
+        "signed_manifest_sha256"
+    ) != shard.manifest_sha256:
+        raise cts.CampaignError("signed matrix manifest identity changed")
+
+
+def validate_matrix_artifacts(
+    artifacts: dict[str, bytes],
+    shard: cts.AppleMatrixShard,
+    guest_page_size: int,
+) -> tuple[dict[str, str], dict[str, int]]:
+    required = cts.SHARD_ARTIFACTS - set(artifacts)
+    if required:
+        raise cts.CampaignError(
+            f"matrix shard omitted artifacts: {sorted(required)!r}"
+        )
+    unexpected = set(artifacts) - cts.SHARD_ARTIFACTS
+    if unexpected:
+        raise cts.CampaignError(
+            f"matrix shard emitted unexpected artifacts: {sorted(unexpected)!r}"
+        )
+    renderer_text = artifacts["renderer.txt"].decode(
+        "utf-8", errors="strict"
+    )
+    selected_payload = artifacts["selected.txt"]
+    selected_text = selected_payload.decode("utf-8", errors="strict")
+    summary_text = artifacts["summary.txt"].decode(
+        "utf-8", errors="strict"
+    )
+    cts.validate_renderer_probe(renderer_text, guest_page_size)
+    selection = shard.selection
+    if selection.fraction_index != 0 or selection.fraction_count != 1:
+        raise cts.CampaignError(
+            "signed matrix schema does not describe a full-leaf shard"
+        )
+    if hashlib.sha256(selected_payload).hexdigest() != shard.leaf.sha256:
+        raise cts.CampaignError(
+            "matrix selected-list identity differs from the frozen leaf"
+        )
+    selected_cases = cts.parse_case_list(selected_text)
+    if len(selected_cases) != selection.expected_count:
+        raise cts.CampaignError("matrix selected-case count changed")
+    results = cts.validate_qpa_union(
+        cts.decode_qpa(artifacts["results.qpa"]), selected_cases
+    )
+    cts.validate_official_runner_results(
+        results, shard.oracle.successful_case_statuses
+    )
+    if summary_text.strip() != "cts_rc=0":
+        raise cts.CampaignError(
+            f"matrix CTS process failed: {summary_text.strip()}"
+        )
+    return results, cts.status_totals(results)
+
+
+def read_matrix_artifacts(path: Path) -> dict[str, bytes]:
+    if path.is_symlink() or not path.is_dir():
+        raise cts.CampaignError("matching matrix artifact directory is invalid")
+    entries = {entry.name: entry for entry in path.iterdir()}
+    if set(entries) != set(cts.SHARD_ARTIFACTS):
+        raise cts.CampaignError("matching matrix artifact set changed")
+    if any(entry.is_symlink() or not entry.is_file() for entry in entries.values()):
+        raise cts.CampaignError("matching matrix artifact is not a regular file")
+    return {name: entry.read_bytes() for name, entry in entries.items()}
+
+
+def validate_macos_matrix_evidence(
+    path: Path,
+    shard: cts.AppleMatrixShard,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> dict[str, Any]:
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching macOS matrix evidence: {error}"
+        ) from error
+    required = {
+        "schema_version": 1,
+        "adapter": "macos",
+        "backend": "angle-metal",
+        "display": "vnc",
+        "page_profile": page_profile,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
+        "engine": "jit",
+        "cpus": 10,
+        "memory": "8G",
+        "surface": [1280, 720],
+        "context": "egl",
+        "mode": "mustpass-matrix-shard",
+        "qualification": True,
+        "api": shard.api,
+        "leaf": shard.leaf.identifier,
+        "leaf_sha256": shard.leaf.sha256,
+        "fraction": [
+            shard.selection.fraction_index,
+            shard.selection.fraction_count,
+        ],
+        "exact_cases": [],
+        "expected_cases": shard.selection.expected_count,
+        "seed": shard.seed,
+        "emulator_return_code": 0,
+    }
+    if any(metadata.get(key) != value for key, value in required.items()):
+        raise cts.CampaignError(
+            "Simulator matrix requires the exact passing macOS shard"
+        )
+    validate_matrix_semantics(metadata.get("matrix"), shard, False)
+    artifacts = read_matrix_artifacts(path.parent / "artifacts")
+    results, totals = validate_matrix_artifacts(
+        artifacts,
+        shard,
+        16384 if page_profile == "16k" else 4096,
+    )
+    hashes = {
+        "selected_caselist_sha256": hashlib.sha256(
+            artifacts["selected.txt"]
+        ).hexdigest(),
+        "renderer_sha256": hashlib.sha256(
+            artifacts["renderer.txt"]
+        ).hexdigest(),
+        "qpa_sha256": hashlib.sha256(
+            artifacts["results.qpa"]
+        ).hexdigest(),
+    }
+    if (
+        metadata.get("completed_cases") != len(results)
+        or metadata.get("status_totals") != totals
+        or any(metadata.get(key) != value for key, value in hashes.items())
+    ):
+        raise cts.CampaignError("matching macOS matrix artifacts changed")
+    try:
+        transcript = (path.parent / "console.log").read_text(
+            encoding="utf-8", errors="strict"
+        )
+    except (OSError, UnicodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching macOS matrix console: {error}"
+        ) from error
+    cts.validate_host_backend(transcript)
+    cts.validate_guest_shutdown(transcript)
+    capability = cts.parse_gpu_capability_report(transcript)
+    if any(
+        metadata.get(key) != capability[key]
+        for key in ("host_contexts", "virgl_capsets")
+    ):
+        raise cts.CampaignError(
+            "matching macOS matrix GPU evidence changed"
+        )
+    return metadata
+
+
 def wait_for_runtime(
     process: subprocess.Popen[bytes],
     log_path: Path,
@@ -357,6 +550,28 @@ def validate_transcript(
         capability,
         native_display,
     )
+
+
+def validate_matrix_transcript(
+    transcript: str,
+    shard: cts.AppleMatrixShard,
+    guest_page_size: int,
+) -> tuple[
+    dict[str, bytes],
+    dict[str, str],
+    dict[str, int],
+    dict[str, Any],
+    dict[str, int],
+]:
+    cts.validate_host_backend(transcript)
+    validate_clean_shutdown(transcript)
+    capability = cts.parse_gpu_capability_report(transcript)
+    native_display = cts.parse_native_display_final(transcript)
+    artifacts = cts.decode_artifacts(transcript)
+    results, totals = validate_matrix_artifacts(
+        artifacts, shard, guest_page_size
+    )
+    return artifacts, results, totals, capability, native_display
 
 
 def validate_config_inventory_transcript(
@@ -476,3 +691,78 @@ def validate_mobile_config_inventory_evidence(
         )
     validate_recorded_gpu_evidence(path, metadata, "mobile config inventory")
     return metadata, configs
+
+
+def validate_mobile_matrix_evidence(
+    path: Path,
+    adapter: str,
+    shard: cts.AppleMatrixShard,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> dict[str, Any]:
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching mobile matrix evidence: {error}"
+        ) from error
+    required = {
+        "schema_version": 1,
+        "adapter": adapter,
+        "backend": "angle-metal",
+        "mode": "mustpass-matrix-shard",
+        "campaign": shard.identifier,
+        "api": shard.api,
+        "leaf": shard.leaf.identifier,
+        "leaf_sha256": shard.leaf.sha256,
+        "page_profile": page_profile,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
+        "engine": "gadgets",
+        "qualification": True,
+        "fraction": [
+            shard.selection.fraction_index,
+            shard.selection.fraction_count,
+        ],
+        "expected_cases": shard.selection.expected_count,
+        "seed": shard.seed,
+        "runtime_return_code": 0,
+    }
+    if any(metadata.get(key) != value for key, value in required.items()):
+        raise cts.CampaignError("matching mobile matrix identity changed")
+    validate_matrix_semantics(metadata.get("matrix"), shard, True)
+    artifacts = read_matrix_artifacts(path.parent / "artifacts")
+    results, totals = validate_matrix_artifacts(
+        artifacts,
+        shard,
+        16384 if page_profile == "16k" else 4096,
+    )
+    hashes = {
+        "selected_caselist_sha256": hashlib.sha256(
+            artifacts["selected.txt"]
+        ).hexdigest(),
+        "renderer_sha256": hashlib.sha256(
+            artifacts["renderer.txt"]
+        ).hexdigest(),
+        "qpa_sha256": hashlib.sha256(
+            artifacts["results.qpa"]
+        ).hexdigest(),
+    }
+    if (
+        metadata.get("completed_cases") != len(results)
+        or metadata.get("status_totals") != totals
+        or any(metadata.get(key) != value for key, value in hashes.items())
+    ):
+        raise cts.CampaignError("matching mobile matrix artifacts changed")
+    try:
+        transcript = (path.parent / "console.log").read_text(
+            encoding="utf-8", errors="strict"
+        )
+    except (OSError, UnicodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching mobile matrix console: {error}"
+        ) from error
+    cts.validate_host_backend(transcript)
+    validate_clean_shutdown(transcript)
+    validate_recorded_gpu_evidence(path, metadata, "mobile matrix")
+    return metadata

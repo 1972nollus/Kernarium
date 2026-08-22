@@ -27,6 +27,7 @@ sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as cts  # noqa: E402
 import run_ios_device_vk_gl_cts as device_cts  # noqa: E402
 import run_ios_simulator_vk_gl_cts as ios_cts  # noqa: E402
+import run_ios_vk_gl_cts_matrix as ios_matrix  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1240,6 +1241,8 @@ Kernarium: runtime returned 0
                     str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
                     "--campaigns",
                     str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
+                    "--matrix",
+                    str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
                     "--derivative-receipt",
                     str(DERIVATIVE_RECEIPT),
                     "--page-size",
@@ -1255,8 +1258,13 @@ Kernarium: runtime returned 0
             self.assertIn("gles3-identity-sentinel-v1", generated)
             self.assertIn("gles2-config-inventory-v1", generated)
             self.assertIn("gles3-config-inventory-v1", generated)
+            self.assertIn("gles2-matrix-cfg00-000of001-v1", generated)
+            self.assertIn("gles3-matrix-cfg19-000of001-v1", generated)
             self.assertIn("--deqp-case=CTS-Configs.es2", generated)
             self.assertIn("--deqp-case=CTS-Configs.es3", generated)
+            self.assertIn("--deqp-gl-config-id=1", generated)
+            self.assertIn("--deqp-gl-config-id=52", generated)
+            self.assertIn("--deqp-caselist-file=/run/uml-cts/selected.txt", generated)
             self.assertIn("does not match 4096", generated)
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
             self.assertIn("x11_server=xwayland", generated)
@@ -1269,6 +1277,157 @@ Kernarium: runtime returned 0
                 generated,
             )
             self.assertNotIn("/dev/ubda", generated)
+
+    def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
+        shards = cts.load_apple_matrix_shards()
+        self.assertEqual(len(shards), 40)
+        for api in cts.BASELINE_GLES_APIS:
+            configs = cts.apple_matrix_configs(shards, api)
+            self.assertEqual(
+                [config.identifier for config in configs],
+                [
+                    1, 2, 3, 4,
+                    13, 14, 15, 16,
+                    25, 26, 27, 28,
+                    37, 38, 39, 40,
+                    49, 50, 51, 52,
+                ],
+            )
+            self.assertEqual(
+                cts.egl_config_digest(configs),
+                "843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607",
+            )
+            api_shards = [
+                shard for shard in shards.values() if shard.api == api
+            ]
+            self.assertEqual(len(api_shards), 20)
+            self.assertTrue(
+                all(
+                    shard.selection.fraction_index == 0
+                    and shard.selection.fraction_count == 1
+                    and shard.selection.expected_count == shard.leaf.case_count
+                    for shard in api_shards
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = json.loads(
+                (INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest["apis"]["gles3"]["fraction_count"] = 2
+            path = Path(temporary) / "matrix.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                cts.CampaignError, "invalid Apple CTS matrix bounds"
+            ):
+                cts.load_apple_matrix_shards(path=path)
+
+    def test_signed_matrix_accepts_only_runner_success_statuses(self) -> None:
+        cases = (
+            "KHR-GLES3.example.pass",
+            "KHR-GLES3.example.unsupported",
+        )
+        selected = ("\n".join(cases) + "\n").encode()
+        leaf = cts.LeafIdentity(
+            "gles3",
+            "/opt/example.txt",
+            len(cases),
+            hashlib.sha256(selected).hexdigest(),
+        )
+        configuration = cts.MustpassConfiguration(
+            api="gles3",
+            leaf=leaf,
+            name="test",
+            use_for_first_egl_config=True,
+            screen_rotation="unspecified",
+            surface_width=64,
+            surface_height=64,
+            base_seed=1,
+            watchdog="disable",
+            fbo_config=None,
+            xml_arguments=(),
+        )
+        selection = cts.Selection(leaf, (), 0, 1)
+        matrix = cts.MatrixRun(
+            configuration=configuration,
+            egl_config=cts.EglConfig(1, ("window",)),
+            egl_config_index=0,
+            config_inventory_sha256="1" * 64,
+            selection=selection,
+            mustpass_xml_path="/opt/mustpass.xml",
+            mustpass_xml_size=1,
+            mustpass_xml_sha256="2" * 64,
+        )
+        oracle = cts.RunnerOracle(
+            path="oracle.json",
+            size=1,
+            sha256="3" * 64,
+            fixture_configs=(),
+            successful_case_statuses=("Pass", "NotSupported"),
+        )
+        shard = cts.AppleMatrixShard(
+            identifier="gles3-matrix-cfg00-000of001-v1",
+            api="gles3",
+            matrix=matrix,
+            oracle=oracle,
+            shard_timeout=7200,
+            manifest_sha256="4" * 64,
+        )
+        renderer = b"""guest_page_size=16384
+device=/dev/dri/card0
+device=/dev/dri/renderD128
+x11_server=xwayland
+OpenGL renderer string: virgl
+"""
+        artifacts = {
+            "renderer.txt": renderer,
+            "selected.txt": selected,
+            "results.qpa": qpa(
+                qpa_result(cases[0]),
+                qpa_result(cases[1], "NotSupported"),
+            ).encode(),
+            "summary.txt": b"cts_rc=0\n",
+        }
+        _, totals = ios_cts.common.validate_matrix_artifacts(
+            artifacts, shard, 16384
+        )
+        self.assertEqual(totals, {"Pass": 1, "NotSupported": 1})
+        artifacts["results.qpa"] = qpa(
+            qpa_result(cases[0]), qpa_result(cases[1], "Fail")
+        ).encode()
+        with self.assertRaisesRegex(
+            cts.CampaignError, "official CTS runner rejects"
+        ):
+            ios_cts.common.validate_matrix_artifacts(
+                artifacts, shard, 16384
+            )
+
+    def test_mobile_matrix_child_command_has_no_selectors(self) -> None:
+        shards = cts.load_apple_matrix_shards()
+        shard = shards["gles2-matrix-cfg00-000of001-v1"]
+        definition = mock.Mock(
+            platform="simulator",
+            page_profile="16k",
+            device="simulator-id",
+            config_inventory_run=Path("/inventory/run.json"),
+            app=Path("/Kernarium.app"),
+            rootfs=Path("/rootfs.ext4"),
+            rootfs_receipt_path=Path("/receipt.json"),
+            guest_timeout=7800,
+        )
+        command = ios_matrix.child_command(
+            definition,
+            shard,
+            Path("/macos/run.json"),
+            Path("/artifacts"),
+        )
+        self.assertIn("gles2-matrix-cfg00-000of001-v1", command)
+        self.assertNotIn("--egl-config-index", command)
+        self.assertNotIn("--fraction", command)
+        self.assertNotIn("--case", command)
+        self.assertEqual(command.count("--qualification"), 1)
 
     def test_simulator_adapter_accepts_only_campaign_ids_and_fixed_engine(self) -> None:
         stdout = io.StringIO()
@@ -1345,6 +1504,70 @@ Kernarium: runtime returned 0
                     "--macos-run",
                     "/tmp/macos-config-run.json",
                     "--qualification",
+                ]
+            )
+
+    def test_mobile_adapters_expose_only_fixed_matrix_shards(self) -> None:
+        arguments = [
+            "--matrix-shard",
+            "gles3-matrix-cfg00-000of001-v1",
+            "--config-inventory-run",
+            "/tmp/simulator-config-run.json",
+            "--rootfs-type",
+            "ext4",
+            "--rootfs-receipt",
+            str(DERIVATIVE_RECEIPT),
+            "--qualification",
+        ]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                ios_cts.main(
+                    [
+                        *arguments,
+                        "--macos-run",
+                        "/tmp/macos-matrix-run.json",
+                        "--dry-run",
+                    ]
+                ),
+                0,
+            )
+        dry_run = json.loads(stdout.getvalue())
+        self.assertEqual(
+            dry_run["matrix_shard"],
+            "gles3-matrix-cfg00-000of001-v1",
+        )
+        self.assertEqual(
+            dry_run["launch_environment"][
+                "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN"
+            ],
+            "gles3-matrix-cfg00-000of001-v1",
+        )
+        device_options = device_cts.parse_arguments(
+            [
+                *arguments,
+                "--device",
+                "device-id",
+                "--simulator-run",
+                "/tmp/simulator-matrix-run.json",
+            ]
+        )
+        self.assertEqual(
+            device_options.matrix_shard,
+            "gles3-matrix-cfg00-000of001-v1",
+        )
+        self.assertEqual(device_options.guest_timeout, 7800)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            ios_cts.parse_arguments(
+                [
+                    "--matrix-shard",
+                    "gles3-matrix-cfg00-000of001-v1",
+                    "--config-inventory-run",
+                    "/tmp/simulator-config-run.json",
+                    "--macos-run",
+                    "/tmp/macos-matrix-run.json",
                 ]
             )
 

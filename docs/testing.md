@@ -945,6 +945,34 @@ the macOS QPA and requires exact ordered equality of config ID, supported
 surface types, and selected surface type. The device adapter applies the same
 fail-closed rule to its matching Simulator inventory before it may launch.
 
+The complete signed matrix uses the checked schema-1 manifest; it exposes no
+runtime config/fraction/case selector and fixes one full official leaf for each
+of the 20 configs. Run the Simulator campaign sequentially after its inventory
+and the matching complete macOS campaign:
+
+```sh
+python3 -B tests/integration/gpu/run_ios_vk_gl_cts_matrix.py \
+  --platform simulator --api gles3 --page-profile 16k \
+  --device SIMULATOR_UDID \
+  --config-inventory-run .build/vk-gl-cts-ios-simulator/CONFIG_RUN/run.json \
+  --predecessor-campaign .build/vk-gl-cts/matrix/MACOS_CAMPAIGN \
+  --campaign-dir .build/vk-gl-cts-ios-simulator-matrix/CAMPAIGN \
+  --app .build/kernarium-xcode-derived/Build/Products/Debug-iphonesimulator/Kernarium.app \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+```
+
+The campaign validates every macOS predecessor before creating its first
+attempt. Each compiled ID boots one fresh guest, runs the full frozen leaf,
+exports artifacts, and shuts down. An attempt directory is never removed or
+retried; interruption, incomplete output, a disallowed runner status, or a
+dirty shutdown permanently fails that campaign directory. Use the identical
+command plus `--verify-only` for independent reconstruction after completion.
+For the connected iPad, first run its fixed config inventory from the matching
+Simulator inventory, then use `--platform device`, the normally signed device
+app, and the passed Simulator matrix directory as `--predecessor-campaign`.
+The device orchestrator applies the same 20-ID and single-attempt contract.
+
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
 decodes the same bounded artifact frames, requires exact page/DRM/Xwayland/
