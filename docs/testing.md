@@ -381,7 +381,7 @@ kernel tick remains 100 Hz. Time-travel modes retain their deterministic
 simulated-jiffies clock.
 
 The rendered WebGL functional-page gate runs through VNC so repeated macOS
-qualification never opens an AppKit window. It uses JIT, ten vCPUs, the sealed
+qualification never opens an AppKit window. It uses Gadgets, ten vCPUs, the sealed
 ext4 derivative as a read-only lower, and disposable OverlayFS state:
 
 ```sh
@@ -390,13 +390,20 @@ python3 -B tests/integration/gpu/run_webgl_samples.py \
   --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
   --rootfs-type ext4 \
   --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
-  --engine jit --memory 8G --cpus 10
+  --engine gadgets --memory 8G --cpus 10
 ```
 
 The runner authenticates the lower before boot, captures every rendered page
 through the VNC client, and records the command and rootfs contract in its
 `run.json`. This is a functional display gate, not native-presentation or
 shutdown evidence.
+
+The accepted current-kernel run is
+`.build/webgl-samples-accepted/20260822-194715`: 33/33 ordered pages reported
+live `ANGLE (Mesa, virgl, OpenGL ES 3.0)` contexts and the final
+`UML_WEBGL_ALL_OK|COUNT=33` marker, with no Virgl context-error, illegal
+resource, invalid command buffer, or `0x1204` response. The runner stops the
+VNC guest after capture, so this result makes no clean-shutdown claim.
 
 Aquarium is an opt-in macOS/Simulator-only performance canary. The common
 probe requires WebGL 2 through guest Virgl, fixes 500 fish, waits 15 seconds,

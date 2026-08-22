@@ -50,6 +50,15 @@ shutdown, and zero dropped or CPU-fallback frames. These single observations
 are implementation canaries, not the seven interleaved pairs or a performance
 qualification. Aquarium remains excluded from physical-iPad acceptance.
 
+The current accepted 16 KiB kernel also closes the macOS rendered-page
+functional gate. `.build/webgl-samples-accepted/20260822-194715` used VNC,
+Gadgets, ten vCPUs, 8 GiB, and the authenticated ext4 lower read-only below
+OverlayFS. All 33 frozen pages created live Virgl WebGL contexts and completed
+in order with no host context poison, illegal resource, invalid command
+buffer, or `0x1204` response. The final marker is
+`UML_WEBGL_ALL_OK|COUNT=33`. This VNC capture is functional evidence only; it
+does not claim native presentation, performance, or orderly shutdown.
+
 ## Current macOS GLES qualification checkpoint (2026-08-22)
 
 The GLES 3 campaign also exposed four common-path defects before reaching the

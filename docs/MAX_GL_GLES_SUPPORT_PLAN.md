@@ -347,6 +347,18 @@ remains forbidden on the physical iPad. Phases 3 through 7 have not started;
 they remain gated on a truthful, qualified lower shared baseline and the
 explicit stop conditions below.
 
+The current 16 KiB macOS product also completes the rendered functional-page
+gate. `.build/webgl-samples-accepted/20260822-194715` booted release
+`6.18.41-geebc662cf6b6` through VNC with Gadgets, ten vCPUs, 8 GiB, and the
+sealed derivative read-only below disposable OverlayFS state. All 33 frozen
+pages created a live WebGL context through
+`ANGLE (Mesa, virgl, OpenGL ES 3.0)` and emitted the ordered success markers,
+ending with `UML_WEBGL_ALL_OK|COUNT=33`. The transcript contains no Virgl
+illegal-resource, invalid-command-buffer, context-error, or `0x1204` reply.
+This is functional rendering evidence; the runner deliberately stops the VNC
+guest after capture, so it is not native-presentation, performance, or clean
+shutdown evidence.
+
 In this plan, “maximum” means the highest truthful profile that preserves the
 shared high-performance ANGLE/Metal path. A higher version is rejected when it
 materially worsens throughput, latency, frame pacing, CPU/GPU time, energy,
