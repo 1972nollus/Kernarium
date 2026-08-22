@@ -77,11 +77,23 @@ complete macOS matrix now classifies the depth-buffer case as 15 `Pass` plus
 five permitted `NotSupported` results on no-depth configurations, and the
 repaired transform-feedback query passes all 20 configurations. The former
 Simulator-only GLES 2 texture image-comparison failures were later repaired by
-truthful Simulator swizzle and 32-bit-float-filter support and the complete
-Simulator GLES 2 matrix passed. Exact paths and hashes are indexed in
-`docs/refactor-evidence.md`. Predecessor validation now
+truthful Simulator swizzle and 32-bit-float-filter support. The complete
+Simulator GLES 2 matrix passed under the earlier memory policy; fresh
+4,096-MiB-policy mobile matrices remain required. Exact paths and hashes are
+indexed in `docs/refactor-evidence.md`. Predecessor validation now
 reparses the QPA and rechecks campaign, leaf, seed, selected-list, renderer,
 capability, and frame evidence before launching the next product.
+
+The first 2,048 MiB connected-iPad GLES 3 `cfg00` fraction `2/4` then exposed
+one real failure at
+`KHR-GLES3.core.internalformat.texture2d.rgb_float_rgb32f_linear`. The guest
+and emulator completed normally, so this was not an OOM and did not authorize
+a RAM decrement. The A15/Apple8 Metal query withheld 32-bit-float filtering
+although the operation executes correctly. Managed UTM WebKit topic
+`5328f5eb95` enables the common R/RG/RGBA32F filtering path; the rebuilt,
+normally signed app passed the exact same 1,624-case slice at 2,048 MiB with
+1,563 `Pass`, 61 permitted `NotSupported`, clean shutdown, and zero CPU
+fallback. This focused result does not replace either complete device matrix.
 
 The first iPad shutdown emitted `Memory manager not clean during takedown`
 from `drm_managed_release`. Maintained Linux topic 0020 now calls the atomic

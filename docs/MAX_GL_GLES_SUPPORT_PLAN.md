@@ -237,6 +237,25 @@ Together with the current GLES 2 result above, this completes both current
 macOS 16 KiB official GLES matrices. It does not substitute for the Simulator
 and connected-iPad matrices.
 
+The fixed signed-app authority now splits each 6,498-case GLES 3 configuration
+into immutable 1,625/1,625/1,624/1,624-case processes, fixes Simulator memory
+at 4,096 MiB, and starts physical-device campaigns at 2,048 MiB. Fresh
+Simulator inventories at
+`.build/vk-gl-cts-ios-simulator/20260822-131649-63237-16k-gles3-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-simulator/20260822-131735-63365-16k-gles2-config-inventory-v1`
+match the macOS 20-config digest under that policy. The first repaired
+Simulator GLES 3 slice passed 1,625/1,625 after managed topic `fff809d63b`
+restored native sampler comparison. The first physical-device run then found
+one real failure in `rgb_float_rgb32f_linear` on the A15/Apple8 query path.
+It was not an OOM, so memory remained 2,048 MiB. Managed UTM WebKit topic
+`5328f5eb95` enables R/RG/RGBA32F filtering for the common Metal provider;
+the rebuilt normally signed app passed the exact same 1,624-case device slice
+with 1,563 `Pass`, 61 permitted `NotSupported`, zero failure, clean shutdown,
+and zero CPU fallback at
+`.build/vk-gl-cts-ios-device-probe/float32-force-56b25e98/20260822-154345-73520-16k-gles3-matrix-cfg00-002of004-v1`.
+These are focused closures, not complete mobile matrix results.
+
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
@@ -254,9 +273,10 @@ identity sentinels. Both pass their exact ordered sets on 16 KiB and 4 KiB
 macOS, Simulator, and iPad with clean shutdown and zero CPU fallback. Three
 non-passes encountered while choosing that bounded identity corpus were not
 waived: current macOS qualification classified or repaired both host findings,
-while the Simulator-only GLES 2 texture result remains open. Connected-iPad
-qualification, seven-pair performance campaigns, sustained lifecycle
-acceptance, and complete Simulator/iPad Khronos matrices remain open. The
+and the Simulator GLES 2 texture findings were repaired in the common
+ANGLE/Metal dependency. Connected-iPad qualification, seven-pair performance
+campaigns, sustained lifecycle acceptance, and the fresh-policy
+Simulator/connected-iPad Khronos matrices remain open. The
 original exact
 allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and

@@ -1,7 +1,7 @@
 From fff809d63ba25772ab7ce89a40c26351f3eda736 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 13:07:13 +0900
-Subject: [PATCH 10/10] Metal: enable sampler comparison on arm64 Simulator
+Subject: [PATCH 10/11] Metal: enable sampler comparison on arm64 Simulator
 
 ---
  .../ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm           | 4 +++-

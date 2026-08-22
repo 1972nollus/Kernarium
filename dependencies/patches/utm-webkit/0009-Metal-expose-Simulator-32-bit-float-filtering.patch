@@ -1,7 +1,7 @@
 From cab62532b4b50b241495a7278a39db3c2dc08174 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 11:00:54 +0900
-Subject: [PATCH 09/10] Metal: expose Simulator 32-bit float filtering
+Subject: [PATCH 09/11] Metal: expose Simulator 32-bit float filtering
 
 ---
  .../src/libANGLE/renderer/metal/mtl_format_map.json  |  6 +++---

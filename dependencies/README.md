@@ -115,15 +115,22 @@ arithmetic interpolation.
 
 For the maintained arm64 Simulator slice, the series also enables Metal
 swizzled texture views even though Simulator omits the ordinary GPU-family
-flags. This preserves GLES legacy alpha, luminance, and depth sampling. Its
-R/RG/RGBA 32-bit-float filterability follows Metal's device query on hardware
-and the validated native Simulator path; the latter reports the query as false
-but successfully executes linear filtering. The same modern arm64 Simulator
-path enables native sampler comparison despite the missing family reports, so
-GLES shadow samplers retain Metal's compare-before-filter semantics instead of
-being forced to `MTLCompareFunctionNever`. Keep all three exceptions scoped to
-the arm64 Simulator product rather than generalizing them to other
-architectures.
+flags. This preserves GLES legacy alpha, luminance, and depth sampling. The
+same modern arm64 Simulator path enables native sampler comparison despite the
+missing family reports, so GLES shadow samplers retain Metal's
+compare-before-filter semantics instead of being forced to
+`MTLCompareFunctionNever`. Keep those two exceptions scoped to the arm64
+Simulator product rather than generalizing them to other architectures.
+
+The common Metal format table also marks R/RG/RGBA 32-bit-float textures
+filterable. The native query already reports that capability on the supported
+macOS path; arm64 Simulator and the connected A15 iPad do not report it, but
+both execute the official GLES linear-filter workload correctly. On the A15,
+the unmodified query path failed the exact 1,624-case qualification slice at
+the RGB32F linear case, while the enabled path passed the entire same slice.
+This is a tested provider contract for the current Apple products, not a claim
+about unqualified device families; complete mobile matrices remain the release
+gate.
 
 The maintained UTM virglrenderer series also keeps the GLES format inventory
 truthful: it does not advertise `VIRGL_FORMAT_Z32_UNORM`, whose GLES fallback

@@ -46,6 +46,21 @@
   `.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
   All eight formerly failing shadow cases now report `Pass`; the full fresh
   mobile matrices remain open.
+- The first 2,048 MiB connected-iPad GLES 3 `cfg00` fraction `2/4` exposed one
+  real failure at
+  `KHR-GLES3.core.internalformat.texture2d.rgb_float_rgb32f_linear`; the guest
+  and emulator completed normally, so this was not an OOM and the device
+  memory policy did not change. The A15/Apple8 Metal device does not report
+  32-bit-float filtering through ANGLE's former capability query even though
+  it executes the operation correctly. Managed UTM WebKit topic `5328f5eb95`
+  (stable patch ID `0b55294def2048ee0024858709cf5236d4afd90d`) enables the
+  common R/RG/RGBA32F filtering path. The rebuilt, normally signed app then
+  passed the exact same 1,624-case slice at 2,048 MiB with 1,563 `Pass`, 61
+  permitted `NotSupported`, zero failure, clean shutdown, and zero CPU
+  fallback at
+  `.build/vk-gl-cts-ios-device-probe/float32-force-56b25e98/20260822-154345-73520-16k-gles3-matrix-cfg00-002of004-v1`.
+  This closes the focused finding; the complete connected-iPad matrices remain
+  required.
 
 ## 2026-08-22: signed Simulator GLES configuration inventories
 

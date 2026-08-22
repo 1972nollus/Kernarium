@@ -1,0 +1,75 @@
+From 5328f5eb9572ae221681e64d1ce40a4eee2a9e69 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 15:33:07 +0900
+Subject: [PATCH 11/11] Metal: enable 32-bit float filtering on iOS device
+
+---
+ .../src/libANGLE/renderer/metal/mtl_format_map.json      | 6 +++---
+ .../libANGLE/renderer/metal/mtl_format_table_autogen.mm  | 9 +++------
+ 2 files changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
+index 1da648ae0a..e4ab9e3c4c 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_map.json
+@@ -410,7 +410,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatR32Float":{
+-                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
++                "filterable": "true",
+                 "writable": "true",
+                 "blendable": "true",
+                 "multisample": "true",
+@@ -602,7 +602,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatRG32Float":{
+-                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
++                "filterable": "true",
+                 "writable": "true",
+                 "blendable": "true",
+                 "multisample": "display->supportsEitherGPUFamily(7, 1)",
+@@ -610,7 +610,7 @@
+                 "colorRenderable": "true"
+             },
+             "MTLPixelFormatRGBA32Float":{
+-                "filterable": "display->supports32BitFloatFiltering() || display->isSimulator()",
++                "filterable": "true",
+                 "writable": "true",
+                 "blendable": "display->supportsMacGPUFamily(1)",
+                 "multisample": "display->supportsEitherGPUFamily(7, 1)",
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
+index 6527d0e37d..cf6c7fac82 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/mtl_format_table_autogen.mm
+@@ -3627,8 +3627,7 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatR32Float,
+-                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
++    setFormatCaps(MTLPixelFormatR32Float, /** filterable*/ true,
+                   /** writable*/ true, /** blendable*/ true, /** multisample*/ true,
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+@@ -3685,8 +3684,7 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatRG32Float,
+-                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
++    setFormatCaps(MTLPixelFormatRG32Float, /** filterable*/ true,
+                   /** writable*/ true, /** blendable*/ true,
+                   /** multisample*/ display->supportsEitherGPUFamily(7, 1),
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+@@ -3758,8 +3756,7 @@ void FormatTable::initNativeFormatCapsAutogen(const DisplayMtl *display)
+                   /** resolve*/ display->supportsMacGPUFamily(1), /** colorRenderable*/ true,
+                   /** depthRenderable*/ false);
+ 
+-    setFormatCaps(MTLPixelFormatRGBA32Float,
+-                  /** filterable*/ display->supports32BitFloatFiltering() || display->isSimulator(),
++    setFormatCaps(MTLPixelFormatRGBA32Float, /** filterable*/ true,
+                   /** writable*/ true,
+                   /** blendable*/ display->supportsMacGPUFamily(1),
+                   /** multisample*/ display->supportsEitherGPUFamily(7, 1),
