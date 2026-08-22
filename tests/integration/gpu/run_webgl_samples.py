@@ -20,9 +20,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
+import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
+import run_vk_gl_cts as cts  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
     announced_vnc_port,
+    git_state,
     install_text,
+    rootfs_contract_metadata,
     stop_guest,
 )
 
@@ -415,6 +419,7 @@ def capture_sample(client: Path, password: str, port: int, path: Path) -> None:
 
 
 def main() -> int:
+    identity = cts.load_identity()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--client",
@@ -431,11 +436,7 @@ def main() -> int:
         type=Path,
         default=REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin",
     )
-    parser.add_argument(
-        "--rootfs",
-        type=Path,
-        default=REPO_ROOT / "rootfs.erofs",
-    )
+    kernarium_common.add_rootfs_arguments(parser)
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument(
@@ -465,6 +466,7 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=float, default=900)
     options = parser.parse_args()
+    kernarium_common.finish_rootfs_options(parser, options, identity)
 
     if not 1 <= options.start_at <= len(SAMPLES):
         parser.error(f"--start-at must be between 1 and {len(SAMPLES)}")
@@ -474,6 +476,10 @@ def main() -> int:
         )
     if options.cpus < 1:
         parser.error("--cpus must be positive")
+    rootfs = options.rootfs.resolve()
+    kernarium_common.validate_rootfs(
+        rootfs, identity, options.rootfs_contract
+    )
     samples = SAMPLES[options.start_at - 1 : options.end_at]
     sample_json = json.dumps(samples, separators=(",", ":"))
     verifier = VERIFY_TEMPLATE.replace("@SAMPLES@", sample_json)
@@ -493,7 +499,8 @@ def main() -> int:
             "--port", str(port),
             "--password", password,
             "--emulator", str(options.emulator),
-            "--rootfs", str(options.rootfs),
+            "--rootfs", str(rootfs),
+            "--rootfs-type", options.rootfs_contract.filesystem_type,
             "--memory", options.memory,
             "--cpus", str(options.cpus),
             "--engine", options.engine,
@@ -542,6 +549,35 @@ def main() -> int:
     capture_directory = artifact / "captures"
     capture_directory.mkdir(parents=True)
     log_path = artifact / "console.log"
+    run_path = artifact / "run.json"
+    run_metadata: dict[str, object] = {
+        "schema_version": 1,
+        "adapter": "macos-vnc",
+        "workload": "webglsamples-functional-v1",
+        "state": "running",
+        "git": git_state(),
+        "rootfs": str(rootfs),
+        "rootfs_receipt": (
+            str(options.rootfs_receipt.resolve())
+            if options.rootfs_receipt is not None
+            else None
+        ),
+        "rootfs_contract": rootfs_contract_metadata(
+            options.rootfs_contract
+        ),
+        "engine": options.engine,
+        "cpus": options.cpus,
+        "memory": options.memory,
+        "start_at": options.start_at,
+        "end_at": options.end_at,
+        "samples": [name for name, _ in samples],
+        "command": command,
+        "shutdown_qualified": False,
+    }
+    run_path.write_text(
+        json.dumps(run_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     seen: set[int] = set()
     deadline = time.monotonic() + options.timeout
 
@@ -610,6 +646,16 @@ def main() -> int:
                     print(
                         f"All {len(samples)} WebGL demos passed; "
                         f"artifacts: {artifact}"
+                    )
+                    run_metadata.update({
+                        "state": "complete",
+                        "passed_samples": len(seen),
+                    })
+                    run_path.write_text(
+                        json.dumps(
+                            run_metadata, indent=2, sort_keys=True
+                        ) + "\n",
+                        encoding="utf-8",
                     )
                     return 0
                 time.sleep(0.25)

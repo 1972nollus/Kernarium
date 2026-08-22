@@ -66,7 +66,28 @@ def guest_measurement_transcript(samples: int = 30) -> str:
     return "\n".join(rows)
 
 
-def macos_evidence(directory: Path, page_profile: str = "16k") -> Path:
+def rootfs_contract(
+    filesystem_type: str = "erofs",
+) -> runner.cts.RootfsContract:
+    identity = runner.cts.load_identity()
+    receipt = (
+        runner.kernarium.DERIVATIVE_RECEIPT_PATH
+        if filesystem_type == "ext4"
+        else None
+    )
+    _, contract = runner.cts.select_rootfs_contract(
+        identity, filesystem_type, receipt
+    )
+    return contract
+
+
+def macos_evidence(
+    directory: Path,
+    page_profile: str = "16k",
+    contract: runner.cts.RootfsContract | None = None,
+) -> Path:
+    if contract is None:
+        contract = rootfs_contract()
     samples = [10.0 + index / 10 for index in range(30)]
     sample_rows = "\n".join(
         f"UML_AQUARIUM_SAMPLE|INDEX={index + 1}|FPS={sample:.3f}"
@@ -91,10 +112,13 @@ def macos_evidence(directory: Path, page_profile: str = "16k") -> Path:
     guest_measurement = runner.aquarium.parse_guest_snapshots(transcript, 30)
     native_display = runner.aquarium.parse_native_display_final(transcript)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": "macos",
         "workload": "webgl-aquarium-500-v1",
         "git": {"revision": "0" * 40, "dirty_paths": []},
+        "rootfs_contract": runner.aquarium.rootfs_contract_metadata(
+            contract
+        ),
         "display": "native",
         "page_profile": page_profile,
         "engine": "gadgets",
@@ -150,12 +174,43 @@ class SimulatorAquariumTests(unittest.TestCase):
         self.assertEqual(environment["SIMCTL_CHILD_KERNARIUM_RETINA_MODE"], "0")
         self.assertEqual(environment["SIMCTL_CHILD_UML_GPU_FRAME_STATS"], "1")
 
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = runner.main(
+                [
+                    "--macos-run",
+                    "/tmp/matching-run.json",
+                    "--rootfs",
+                    str(REPO_ROOT / ".build/rootfs/rootfs-gl-gles.ext4"),
+                    "--rootfs-type",
+                    "ext4",
+                    "--rootfs-receipt",
+                    str(runner.kernarium.DERIVATIVE_RECEIPT_PATH),
+                    "--dry-run",
+                ]
+            )
+        self.assertEqual(status, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["rootfs_type"], "ext4")
+        self.assertEqual(
+            payload["launch_environment"]["SIMCTL_CHILD_KERNARIUM_ROOTFS"],
+            "rootfs.ext4",
+        )
+
     def test_macos_predecessor_is_reparsed_and_shutdown_is_real(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            run_path = macos_evidence(directory)
-            metadata = runner.validate_macos_run(run_path, "16k")
+            contract = rootfs_contract("ext4")
+            run_path = macos_evidence(directory, contract=contract)
+            metadata = runner.validate_macos_run(
+                run_path, "16k", contract
+            )
             self.assertTrue(metadata["clean_shutdown"])
+
+            with self.assertRaises(runner.cts.CampaignError):
+                runner.validate_macos_run(
+                    run_path, "16k", rootfs_contract("erofs")
+                )
 
             console_path = directory / "console.log"
             transcript = console_path.read_text(encoding="utf-8")
@@ -166,7 +221,7 @@ class SimulatorAquariumTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaises(runner.cts.CampaignError):
-                runner.validate_macos_run(run_path, "16k")
+                runner.validate_macos_run(run_path, "16k", contract)
 
     def test_process_match_requires_exact_executable(self) -> None:
         executable = Path("/tmp/Kernarium.app/Kernarium")

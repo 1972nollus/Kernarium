@@ -380,6 +380,24 @@ records such as `[    0.004448]` retain sub-10-ms precision even though the
 kernel tick remains 100 Hz. Time-travel modes retain their deterministic
 simulated-jiffies clock.
 
+The rendered WebGL functional-page gate runs through VNC so repeated macOS
+qualification never opens an AppKit window. It uses JIT, ten vCPUs, the sealed
+ext4 derivative as a read-only lower, and disposable OverlayFS state:
+
+```sh
+python3 -B tests/integration/gpu/run_webgl_samples.py \
+  --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
+  --engine jit --memory 8G --cpus 10
+```
+
+The runner authenticates the lower before boot, captures every rendered page
+through the VNC client, and records the command and rootfs contract in its
+`run.json`. This is a functional display gate, not native-presentation or
+shutdown evidence.
+
 Aquarium is an opt-in macOS/Simulator-only performance canary. The common
 probe requires WebGL 2 through guest Virgl, fixes 500 fish, waits 15 seconds,
 then records thirty one-second FPS samples. A fixed native macOS run comes
@@ -389,6 +407,9 @@ first:
 python3 -B tests/integration/gpu/run_chromium_webgl.py \
   --display native --page-profile 16k \
   --emulator .build/presets/macos-integration/bin/uml-darwin \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
   --engine gadgets --memory 1536M --cpus 4 \
   --width 440 --height 860 --dpi 160
 ```
@@ -401,6 +422,9 @@ fixed 4096 MiB guest-memory policy:
 ```sh
 python3 -B tests/integration/gpu/run_ios_simulator_chromium_webgl.py \
   --page-profile 16k --device booted \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json \
   --macos-run .build/chromium-webgl/<run>/run.json
 ```
 
@@ -409,6 +433,8 @@ for the compatibility profile. Each adapter preserves raw FPS samples,
 derived frame-time statistics, shader compile/link calls and synchronous CPU
 time, raw host-process and synchronized guest CPU/memory snapshots, final
 native-display counters, exact configuration identity, and clean shutdown.
+Both authenticate the same checked rootfs contract; the Simulator adapter
+rejects a macOS predecessor recorded against a different lower image.
 Any CPU-fallback frame, missing sample/counter, dirty DRM teardown, nonzero
 runtime result, software renderer, or mismatched macOS predecessor fails the
 run. `Kernarium/scripts/run-ios-simulator.sh --aquarium` uses the same generated

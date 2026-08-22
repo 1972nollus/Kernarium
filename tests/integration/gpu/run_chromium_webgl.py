@@ -23,7 +23,10 @@ import time
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
+import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
+import run_vk_gl_cts as cts  # noqa: E402
 
 
 AQUARIUM_URL = (
@@ -917,7 +920,21 @@ def git_state() -> dict[str, object]:
     return {"revision": revision, "dirty_paths": dirty_paths}
 
 
+def rootfs_contract_metadata(
+    contract: cts.RootfsContract,
+) -> dict[str, object]:
+    return {
+        "filesystem_type": contract.filesystem_type,
+        "size": contract.size,
+        "sha256": contract.sha256,
+        "filesystem_uuid": contract.filesystem_uuid,
+        "guest_receipt_path": contract.guest_receipt_path,
+        "guest_receipt_sha256": contract.guest_receipt_sha256,
+    }
+
+
 def main() -> int:
+    identity = cts.load_identity()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--client",
@@ -934,11 +951,7 @@ def main() -> int:
         type=Path,
         default=REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin",
     )
-    parser.add_argument(
-        "--rootfs",
-        type=Path,
-        default=REPO_ROOT / "rootfs.erofs",
-    )
+    kernarium_common.add_rootfs_arguments(parser)
     parser.add_argument("--display", choices=("native", "vnc"), default="vnc")
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--memory", default="8G")
@@ -970,6 +983,7 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=float, default=360)
     options = parser.parse_args()
+    kernarium_common.finish_rootfs_options(parser, options, identity)
     if (
         options.cpus < 1
         or options.width < 1
@@ -982,6 +996,11 @@ def main() -> int:
     if options.sample_seconds < 1:
         parser.error("--sample-seconds must be positive")
 
+    rootfs = options.rootfs.resolve()
+    kernarium_common.validate_rootfs(
+        rootfs, identity, options.rootfs_contract
+    )
+
     port = 0
     password = "webgl"
     launcher_arguments = [
@@ -990,7 +1009,9 @@ def main() -> int:
         "--emulator",
         str(options.emulator),
         "--rootfs",
-        str(options.rootfs),
+        str(rootfs),
+        "--rootfs-type",
+        options.rootfs_contract.filesystem_type,
         "--memory",
         options.memory,
         "--cpus",
@@ -1064,10 +1085,19 @@ def main() -> int:
     log_path = artifact / "console.log"
     capture_path = artifact / "aquarium.ppm"
     run_metadata: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": "macos",
         "workload": "webgl-aquarium-500-v1",
         "git": git_state(),
+        "rootfs": str(rootfs),
+        "rootfs_receipt": (
+            str(options.rootfs_receipt.resolve())
+            if options.rootfs_receipt is not None
+            else None
+        ),
+        "rootfs_contract": rootfs_contract_metadata(
+            options.rootfs_contract
+        ),
         "display": options.display,
         "page_profile": options.page_profile,
         "engine": options.engine,

@@ -33,7 +33,11 @@ FIXED_HEIGHT = 860
 FIXED_DPI = 160
 
 
-def validate_macos_run(path: Path, page_profile: str) -> dict[str, Any]:
+def validate_macos_run(
+    path: Path,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> dict[str, Any]:
     try:
         metadata = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -60,6 +64,18 @@ def validate_macos_run(path: Path, page_profile: str) -> dict[str, Any]:
     if any(metadata.get(key) != value for key, value in required.items()):
         raise cts.CampaignError(
             "Simulator Aquarium requires the matching fixed native macOS run"
+        )
+    schema_version = metadata.get("schema_version")
+    if schema_version == 2:
+        if metadata.get("rootfs_contract") != (
+            aquarium.rootfs_contract_metadata(rootfs_contract)
+        ):
+            raise cts.CampaignError(
+                "matching macOS Aquarium rootfs identity changed"
+            )
+    elif schema_version != 1 or rootfs_contract.filesystem_type != "erofs":
+        raise cts.CampaignError(
+            "matching macOS Aquarium lacks authenticated rootfs identity"
         )
     console_path = path.parent / "console.log"
     try:
@@ -157,6 +173,7 @@ def wait_for_runtime_result(
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
+    identity = cts.load_identity()
     parser = argparse.ArgumentParser(
         description="run the fixed Aquarium canary in Kernarium Simulator"
     )
@@ -164,7 +181,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--device", default="booted")
     parser.add_argument("--macos-run", type=Path, required=True)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
-    parser.add_argument("--rootfs", type=Path, default=cts.DEFAULT_ROOTFS)
+    kernarium.add_rootfs_arguments(parser)
     parser.add_argument(
         "--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT
     )
@@ -172,17 +189,22 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--guest-timeout", type=cts.positive_integer, default=1200
     )
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    kernarium.finish_rootfs_options(parser, options, identity)
+    options.identity = identity
+    return options
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
     macos_run = options.macos_run.resolve()
+    rootfs_contract = options.rootfs_contract
+    rootfs_filename = f"rootfs.{rootfs_contract.filesystem_type}"
     launch_environment = {
         "SIMCTL_CHILD_KERNARIUM_WEBGL_AQUARIUM": "1",
         "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
-        "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
+        "SIMCTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
         "SIMCTL_CHILD_KERNARIUM_VCPU_COUNT": str(FIXED_CPUS),
         "SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(
@@ -198,6 +220,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 {
                     "page_profile": options.page_profile,
                     "macos_run": str(macos_run),
+                    "rootfs_type": rootfs_contract.filesystem_type,
+                    "rootfs_sha256": rootfs_contract.sha256,
                     "launch_environment": launch_environment,
                 },
                 indent=2,
@@ -206,15 +230,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    identity = cts.load_identity()
-    macos_metadata = validate_macos_run(macos_run, options.page_profile)
+    macos_metadata = validate_macos_run(
+        macos_run, options.page_profile, rootfs_contract
+    )
     app = options.app.resolve()
     rootfs = options.rootfs.resolve()
     kernarium.validate_app(app)
-    kernarium.validate_rootfs(rootfs, identity)
+    kernarium.validate_rootfs(rootfs, options.identity, rootfs_contract)
     device = simulator.resolve_device(options.device)
     simulator.require_booted_device(device)
-    installed_rootfs = simulator.provision(device, app, rootfs)
+    installed_rootfs = simulator.provision(
+        device, app, rootfs, rootfs_filename
+    )
     installed_app = Path(
         simulator.checked_output(
             [
@@ -244,7 +271,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         kernarium.BUNDLE_ID,
     ]
     metadata: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "adapter": "ios-simulator-kernarium",
         "workload": "webgl-aquarium-500-v1",
         "git": aquarium.git_state(),
@@ -262,7 +289,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         },
         "app": str(app),
         "rootfs": str(installed_rootfs),
-        "rootfs_sha256": identity["rootfs"]["sha256"],
+        "rootfs_receipt": (
+            str(options.rootfs_receipt.resolve())
+            if options.rootfs_receipt is not None
+            else None
+        ),
+        "rootfs_contract": aquarium.rootfs_contract_metadata(
+            rootfs_contract
+        ),
         "page_profile": options.page_profile,
         "engine": "gadgets",
         "cpus": FIXED_CPUS,
