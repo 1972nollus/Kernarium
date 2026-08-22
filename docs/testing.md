@@ -841,17 +841,19 @@ canonical raw transcript as `artifact-serial.log` and rechecks its hash during
 matrix aggregation. Do not redirect this protocol through `/dev/hvc0`, mask its
 getty, or fall back to the unacknowledged journal/console stream.
 
-Current 16 KiB macOS GLES 3 evidence is the clean detached campaign
-`.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful`. Its matching Release
-inventory contains config IDs 1-4, 13-16, 25-28, 37-40, and 49-52 with
-canonical SHA-256
+Current 16 KiB macOS evidence is the clean detached pair
+`.build/vk-gl-cts/matrix/gles2-16k-e741cbad-z32-truthful` and
+`.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful`. Their matching
+Release inventories contain config IDs 1-4, 13-16, 25-28, 37-40, and 49-52
+with canonical SHA-256
 `843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
-The campaign and a separate `--verify-only` run accepted all 129,960
-executions: 125,270 `Pass`, 4,690 released-policy `NotSupported`, and no
-disallowed status across 20 immutable shards. The earlier 25-config inventory
-falsely included normalized 32-bit depth configurations backed by 24-bit
-depth; retain its matrix only as diagnostic history. Generate a fresh current
-GLES 2 inventory and campaign rather than resuming that historical directory.
+The GLES 2 campaign and separate `--verify-only` run accepted all 9,460
+executions: 8,760 `Pass`, 700 released-policy `NotSupported`, and no disallowed
+status across 20 immutable shards. The GLES 3 pair likewise accepted all
+129,960 executions: 125,270 `Pass`, 4,690 `NotSupported`, and no disallowed
+status. The earlier 25-config inventory falsely included normalized 32-bit
+depth configurations backed by 24-bit depth; retain its matrix only as
+diagnostic history and never resume that directory.
 
 A native arm64 Debian 13 direct-virgl diagnostic using the exact installed CTS
 payload reproduces status 137, the same eight nonempty modules and 148,476
@@ -966,13 +968,14 @@ twelve-case GLES 3 sets under both 16 KiB and 4 KiB on macOS first, the booted
 Simulator second, and the connected iPad last. Predecessor validation reparses
 the selected list and QPA and rechecks campaign, leaf, seed, renderer,
 capability, and frame evidence.
-The accepted runs all shut down cleanly and reported zero CPU fallback. Two
-macOS GLES 3 non-passes and one Simulator-only GLES 2 texture comparison
-failure discovered while selecting these bounded sentinels remain open
-diagnostic defects; they are not qualification waivers. Complete matrices
-remain outstanding on Simulator/iPad, and the current 20-config GLES 2 matrix
-must still be rerun; the current 16 KiB macOS GLES 3 matrix passes as recorded
-above.
+The accepted runs all shut down cleanly and reported zero CPU fallback. None
+of the three diagnostic non-passes discovered while selecting these bounded
+sentinels was waived. The complete macOS matrix classifies the depth case as
+15 `Pass` plus five released-policy `NotSupported` results on no-depth
+configurations, and the repaired transform-feedback query case passes all 20
+configurations. The Simulator-only GLES 2 texture-comparison failure remains
+open for the complete mobile matrix. Both current 16 KiB macOS matrices pass
+as recorded above; complete matrices remain outstanding on Simulator/iPad.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
@@ -980,8 +983,8 @@ transcript must contain its exact backend marker and any CGL marker is fatal.
 `--qualification` still refuses to use the original image while its frozen
 identity lacks an authoritative CTS build receipt. The checked ext4 derivative
 has its own authenticated build receipt and is the required input for future
-qualification runs. Its 16 KiB macOS GLES 3 cross-product passes; current GLES
-2 and complete Simulator/iPad matrices remain. Its scoped display-backed GLES
+qualification runs. Its 16 KiB macOS GLES 2/GLES 3 cross-products pass;
+complete Simulator/iPad matrices remain. Its scoped display-backed GLES
 2/GLES 3 hierarchy inventory is complete and frozen; the separate global
 all-package diagnostic is not a qualification input because it includes an
 ES-on-desktop-GL 4.5 package outside the supported profile. See

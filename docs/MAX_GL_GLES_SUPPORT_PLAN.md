@@ -168,7 +168,18 @@ the exact 473-case leaf through VNC with JIT, ten vCPUs, 8 GiB, acknowledged
 Virtio serial artifacts, clean shutdown, and the sealed ext4 lower unchanged.
 This completed the matrix for the then-advertised inventory. Because the
 normalized-32-bit depth advertisement was later removed, it does not qualify
-the current 20-config product; a current-revision GLES 2 matrix remains open.
+the current 20-config product; a current-revision GLES 2 matrix was required.
+
+That current-revision rerun is now complete at
+`.build/vk-gl-cts/matrix/gles2-16k-e741cbad-z32-truthful`. Its matching Release
+inventory exposes the same 20 configuration IDs and canonical digest as GLES
+3. The exact 20 x 473 product contains 9,460 executions: 8,760 `Pass`, 700
+Khronos-permitted `NotSupported`, and no failure, warning, waiver, missing
+case, incomplete shard, dirty shutdown, or retry. Independent verify-only
+reconstruction reported
+`Verified 9460 gles2 case executions in 20 immutable shards`. Every guest used
+VNC, JIT, ten vCPUs, 8 GiB, acknowledged Virtio serial artifacts, and the
+sealed ext4 lower below disposable OverlayFS state.
 
 The first GLES 3 campaign stopped at exact official fraction `359/6498`, case
 `KHR-GLES3.shaders.loops.for_constant_iterations.conditional_continue_vertex`.
@@ -182,6 +193,16 @@ timeout. An isolated rebuild changed that helper to component-wise
 UTM WebKit topic `38fc4c80bc` adds the correction and a focused MSL translator
 regression. The temporary shader instrumentation was removed, and the sealed
 root remained mode 0444 at its exact authenticated hash.
+
+Subsequent immutable shards exposed four more common-path defects. Managed
+Virgl topics `42b8c00` and `a32f188` use ES 3.0 multisample renderbuffers when
+multisample textures are unavailable and map representable Gallium stream-out
+layouts to GLES separate transform-feedback attributes. Managed WebKit topics
+`a25e51c` and `45a2a7b` count transform-feedback query primitives per draw and
+disable Metal fast math only for shaders that emit or classify non-finite
+values. Focused VNC/JIT/ten-vCPU emulator reruns passed the implicated
+official cases; the complete matrix below supplies the required full-campaign
+closure.
 
 The regenerated common dependency exposed a second qualification defect. The
 then-advertised normalized 32-bit depth configurations failed
@@ -212,9 +233,9 @@ The current macOS Apple-GPU prefix was then rebuilt transactionally at its
 canonical path and passed its read-only verifier. `check-gpu` and
 `check-gpu-asan-ubsan` each passed the architecture audit, all eight selected
 tests, and the VNC smoke test; the matrix-orchestrator unit test also passed.
-This completes the current macOS 16 KiB official GLES 3 matrix; it does not
-substitute for the current GLES 2 rerun or the Simulator and connected-iPad
-matrices.
+Together with the current GLES 2 result above, this completes both current
+macOS 16 KiB official GLES matrices. It does not substitute for the Simulator
+and connected-iPad matrices.
 
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
@@ -231,11 +252,12 @@ desktop GL 2.1 and GLES 3.0 through the same DRM/Xwayland/virgl path on each.
 The campaign schema now also freezes five-case GLES 2 and twelve-case GLES 3
 identity sentinels. Both pass their exact ordered sets on 16 KiB and 4 KiB
 macOS, Simulator, and iPad with clean shutdown and zero CPU fallback. Three
-non-passes encountered while choosing that bounded identity corpus remain
-recorded as diagnostic defects rather than waivers. Connected-iPad
+non-passes encountered while choosing that bounded identity corpus were not
+waived: current macOS qualification classified or repaired both host findings,
+while the Simulator-only GLES 2 texture result remains open. Connected-iPad
 qualification, seven-pair performance campaigns, sustained lifecycle
-acceptance, the current GLES 2 rerun, and complete Simulator/iPad Khronos
-matrices remain open. The original exact
+acceptance, and complete Simulator/iPad Khronos matrices remain open. The
+original exact
 allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
 decoded Virgl v1/v2 capset field, cross-product semantic diffs, and final
@@ -1028,15 +1050,18 @@ ordered macOS/Simulator/iPad run captured explicit ES 3.0/3.1/3.2 attempts,
 sorted extensions, full raw and decoded Virgl capsets, exact platform diffs,
 and zero native CPU fallback on all three products. The broader fixed sentinels,
 now comprising five GLES 2 and twelve GLES 3 cases, passed in strict order on
-all three products under both page profiles. Selection retained three
-diagnostic non-passes without waiving them: macOS depth-buffer `NotSupported`
-and transform-feedback query failures, plus a Simulator-only GLES 2 texture
-image-comparison failure. Single fixed Aquarium canaries now pass on macOS and
-Simulator under both page profiles, including repaired-kernel runs with zero
-dropped or CPU-fallback frames. The current 20-config 16 KiB macOS GLES 3
-matrix now passes all 129,960 required executions. The seven interleaved
-performance pairs, connected-iPad thermal and sustained lifecycle baselines,
-the current GLES 2 rerun, and complete Simulator/iPad matrices remain missing.
+all three products under both page profiles. Selection waived none of its
+three diagnostic findings. The current complete macOS matrix classifies the
+depth-buffer result as permitted `NotSupported` on the five no-depth
+configurations and passes it on the other 15; the repaired transform-feedback
+query passes on all 20. The Simulator-only GLES 2 texture image-comparison
+failure remains open for the complete mobile matrix. Single fixed Aquarium
+canaries now pass on macOS and Simulator under both page profiles, including
+repaired-kernel runs with zero dropped or CPU-fallback frames. The current
+20-config 16 KiB macOS GLES 2 and GLES 3 matrices now pass all 9,460 and
+129,960 required executions. The seven interleaved performance pairs,
+connected-iPad thermal and sustained lifecycle baselines, and complete
+Simulator/iPad matrices remain missing.
 The former global all-package caselist attempt still
 fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
 GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
@@ -1130,9 +1155,10 @@ work is authorized by this evidence. Single accepted-artifact Aquarium
 canaries now pass on macOS and Simulator under both page profiles, after topic
 0021 repaired the 4 KiB nested-TLB RCU starvation. They establish workload
 bring-up and zero-fallback coverage only. The current 20-config 16 KiB macOS
-GLES 3 matrix passes all 129,960 required executions. The current-product GLES
-2 rerun, complete Simulator/iPad matrices, seven-pair performance campaign,
-connected-iPad thermal gate, and sustained-lifecycle campaign remain open.
+GLES 2 and GLES 3 matrices pass all 9,460 and 129,960 required executions,
+respectively. Complete Simulator/iPad matrices, the seven-pair performance
+campaign, connected-iPad thermal gate, and sustained-lifecycle campaign remain
+open.
 The original EROFS build receipt remains missing, the checked derivative owns
 its authenticated build receipt, and the scoped GLES hierarchy identity is
 complete. Qualification remains fail-closed on those remaining matrices and
@@ -1644,10 +1670,12 @@ RCU starvation; a fresh replay, both LLVM 22 builds, accepted artifacts, and
 clean macOS/Simulator canaries under both page profiles validate the bounded
 repair. The current 20-config 16 KiB macOS GLES 3 matrix completes all 129,960
 executions with 125,270 `Pass`, 4,690 Khronos-permitted `NotSupported`, and no
-disallowed status. The current GLES 2 and Simulator/iPad matrices, absent
-seven-pair performance/connected-iPad thermal/sustained-lifecycle campaigns,
-and missing original-image receipt still prevent any new shared capability or
-conformance claim. The derivative
+disallowed status. The matching current GLES 2 matrix completes 9,460
+executions with 8,760 `Pass`, 700 Khronos-permitted `NotSupported`, and no
+disallowed status. The Simulator/iPad matrices, absent seven-pair
+performance/connected-iPad thermal/sustained-lifecycle campaigns, and missing
+original-image receipt still prevent any new shared capability or conformance
+claim. The derivative
 build has its own authenticated receipt and passed the fixed macOS identity
 sentinels under both page profiles plus the one-case Simulator declaration
 sentinel under both profiles; that bounded evidence does not satisfy

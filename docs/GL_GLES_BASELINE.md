@@ -30,10 +30,10 @@ and three consecutive Simulator plus three connected-iPad exact-case runs then
 powered off without the warning. The app adapters reject that signature and
 missing clean-stop markers. The fixed identity sentinels now pass their five
 GLES 2 and twelve GLES 3 cases under both 16 KiB and 4 KiB in strict
-macOS-to-Simulator-to-iPad order. The current 20-config 16 KiB macOS GLES 3
-matrix now passes completely. The current-product GLES 2 rerun, complete
-Simulator/iPad matrices, seven-pair performance campaign, connected-iPad
-thermal acceptance, and sustained lifecycle campaigns remain outstanding.
+macOS-to-Simulator-to-iPad order. The current 20-config 16 KiB macOS GLES 2
+and GLES 3 matrices now pass completely. Complete Simulator/iPad matrices,
+the seven-pair performance campaign, connected-iPad thermal acceptance, and
+sustained lifecycle campaigns remain outstanding.
 
 The fixed Aquarium canary is now runnable on both permitted products and both
 page profiles. An initial 4 KiB macOS run reached measurement but suffered two
@@ -51,6 +51,15 @@ are implementation canaries, not the seven interleaved pairs or a performance
 qualification. Aquarium remains excluded from physical-iPad acceptance.
 
 ## Current macOS GLES qualification checkpoint (2026-08-22)
+
+The GLES 3 campaign also exposed four common-path defects before reaching the
+depth-inventory issue below. Managed Virgl topics `42b8c00` and `a32f188`
+implement ES 3.0 multisample renderbuffers and the representable separate
+transform-feedback layout. Managed WebKit topics `a25e51c` and `45a2a7b`
+count transform-feedback queries per draw and compile only shaders that require
+non-finite semantics without Metal fast math. Focused emulator reruns passed
+the implicated official cases, and the complete current matrix below closes
+their campaign-wide validation.
 
 Qualification found that the earlier 25-config inventory was not truthful.
 UTM Virgl's GLES format table advertised `VIRGL_FORMAT_Z32_UNORM` by mapping it
@@ -72,6 +81,14 @@ captured at
 The former 25-config inventory and matrix are retained as diagnostic history,
 not current qualification evidence.
 
+Current GLES 2 campaign
+`.build/vk-gl-cts/matrix/gles2-16k-e741cbad-z32-truthful` ran the exact 473-case
+official leaf once against every current configuration. Its 20 immutable
+shards contain 9,460 executions: 8,760 `Pass`, 700 Khronos-permitted
+`NotSupported`, and no disallowed status. Independent verify-only
+reconstruction reported
+`Verified 9460 gles2 case executions in 20 immutable shards`.
+
 The clean detached campaign
 `.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` ran the exact 6,498
 case Khronos GLES 3 leaf once against every current configuration through VNC,
@@ -83,8 +100,8 @@ status. Independent verify-only reconstruction reported
 `Verified 129960 gles3 case executions in 20 immutable shards`. The derivative
 remained mode 0444 at SHA-256
 `f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`.
-This completes the current 16 KiB macOS GLES 3 matrix only; current GLES 2 and
-the complete Simulator/iPad matrices remain required.
+Together these campaigns complete the current 16 KiB macOS GLES 2 and GLES 3
+matrices. The complete Simulator/iPad matrices remain required.
 
 ## Authenticated derivative-rootfs checkpoint (2026-08-21)
 
@@ -202,10 +219,11 @@ official must-pass leaves contain 473 and 6,498 cases respectively; the one
 additional GLES 3 hierarchy case is
 `KHR-GLES3.texture_filter_anisotropic.drawing`, which the released Khronos
 must-pass leaf does not select. The current 20-config 16 KiB macOS GLES 3
-cross-product now passes as recorded above. Qualification remains fail-closed
-pending current GLES 2, complete Simulator/iPad matrices, and the other Phase
-2 gates, and the original EROFS image still lacks build provenance; the scoped
-caselist itself is no longer a blocker.
+cross-product now passes as recorded above, as does the matching 20-config
+GLES 2 cross-product. Qualification remains fail-closed pending complete
+Simulator/iPad matrices and the other Phase 2 gates, and the original EROFS
+image still lacks build provenance; the scoped caselist itself is no longer a
+blocker.
 
 The current ordered 16 KiB capability diagnostic is preserved at
 `.build/vk-gl-cts/20260821-042014-33014-16k-gles3`,
@@ -288,18 +306,21 @@ counters are 520/931/1/0, 491/699/0/0, and 539/726/0/0. Both chains retain
 the same selected-list digests as their 16 KiB counterparts, shut down
 cleanly, and prove page-profile parity only for this bounded corpus.
 
-Sentinel selection also exposed three diagnostic non-passes that remain open,
-not waived. The macOS run at
+Sentinel selection exposed three diagnostic non-passes; none was waived. The
+macOS run at
 `.build/vk-gl-cts/20260821-045416-44189-16k-gles3-identity-sentinel-v1`
 reported `KHR-GLES3.shaders.fragdepth.write.const` as `NotSupported` because a
 depth buffer was required and failed
 `KHR-GLES3.transform_feedback2.transform_feedback2_states` with query result
-`0 != 2`. The Simulator run at
+`0 != 2`. The current complete macOS matrix classifies the depth case as 15
+`Pass` plus five Khronos-permitted `NotSupported` results on configurations
+without a depth buffer. The transform-feedback query case passes on all 20
+configurations after the Virgl separate-buffer and ANGLE per-draw query
+repairs. The Simulator run at
 `.build/vk-gl-cts-ios-simulator/20260821-050029-52429-16k-gles2-identity-sentinel-v1`
 failed `KHR-GLES2.core.internalformat.texture2d.rgba_unsigned_byte_rgba` with
-an image-comparison difference after that case had passed on macOS. These cases
-are outside the small cross-product identity sentinel, but remain required
-classification work for the complete matrices.
+an image-comparison difference after that case had passed on macOS. That
+mobile-only finding remains open for the complete Simulator matrix.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and

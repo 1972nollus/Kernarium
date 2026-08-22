@@ -1,6 +1,6 @@
 # Refactor progress
 
-## 2026-08-22: truthful GLES depth inventory and complete macOS GLES 3 matrix
+## 2026-08-22: truthful GLES depth inventory and complete macOS GLES matrices
 
 - CTS exposed that the GLES Virgl table advertised
   `VIRGL_FORMAT_Z32_UNORM` through a 24-bit depth backing. Guest Mesa rejected
@@ -13,7 +13,10 @@
   IDs 1-4, 13-16, 25-28, 37-40, and 49-52, with canonical SHA-256
   `843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
   The earlier 25-config inventory and GLES 2 campaign remain diagnostic
-  history and do not qualify the current product.
+  history and do not qualify the current product. Current campaign
+  `.build/vk-gl-cts/matrix/gles2-16k-e741cbad-z32-truthful` replaced that
+  evidence and passed all 9,460 executions: 8,760 `Pass`, 700 released-policy
+  `NotSupported`, no disallowed status, and 20 verified immutable shards.
 - Clean detached campaign
   `.build/vk-gl-cts/matrix/gles3-16k-e741cbad-z32-truthful` passed all 129,960
   current 16 KiB macOS GLES 3 executions: 125,270 `Pass`, 4,690
@@ -21,11 +24,21 @@
   verify-only reconstruction accepted all 20 immutable shards. Every guest
   used VNC, JIT, ten vCPUs, 8 GiB, acknowledged Virtio serial artifacts, and a
   disposable overlay above the sealed ext4 lower; that lower remained mode
-  0444 at its authenticated SHA-256. Current GLES 2, complete Simulator/iPad
-  matrices, and the performance/thermal/lifecycle gates remain open. The
+  0444 at its authenticated SHA-256. The two current campaigns complete the
+  16 KiB macOS GLES 2/GLES 3 matrices. Complete Simulator/iPad matrices and
+  the performance/thermal/lifecycle gates remain open. The
   current macOS Apple-GPU prefix was transactionally republished at the
   canonical path; its verifier, normal/sanitizer GPU workflows, both
   architecture audits, all selected unit tests, and both VNC smokes passed.
+- The full GLES 3 campaign additionally drove four maintained dependency
+  repairs: ES 3.0 multisample renderbuffer surfaces, representable GLES
+  separate transform-feedback buffers, per-draw Metal transform-feedback query
+  accounting, and strict non-finite shader semantics. Focused emulator reruns
+  passed the implicated official cases. The old depth diagnostic is now
+  classified as 15 `Pass` plus five permitted `NotSupported` results on
+  no-depth configurations, and the repaired transform-feedback query passes
+  all 20 configurations. The Simulator-only GLES 2 texture finding remains
+  open for the mobile matrix.
 
 ## 2026-08-21: common Apple ANGLE/Metal graphics transition
 
@@ -56,9 +69,11 @@
   then passed and powered off cleanly. A schema-2 campaign authority then
   froze ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels;
   both passed on 16 KiB and 4 KiB macOS, Simulator, and iPad with matching
-  selections, clean shutdown, and zero CPU fallback. Three non-passes encountered while
-  choosing those bounded sets remain diagnostic defects, not waivers.
-  Performance, sustained lifecycle, and CTS matrices remain open;
+  selections, clean shutdown, and zero CPU fallback. Three non-passes were
+  encountered while choosing those bounded sets and none was waived; later
+  macOS qualification classified or repaired the two host findings, while the
+  Simulator-only GLES 2 texture result remains open. Performance, sustained
+  lifecycle, and mobile CTS matrices remain open;
   qualification is blocked by those missing gates and the original image's
   absent authoritative build receipt. The former global inventory remains a
   diagnostic: native Debian reproduced its failure when the desktop-GL-based
