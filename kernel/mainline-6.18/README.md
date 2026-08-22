@@ -13,10 +13,10 @@ verifies its commit and tree identities, creates the local upstream base ref,
 and removes the network remote from the published replay checkout. Subsequent
 verification is offline.
 
-## Latest verified replay (2026-08-21)
+## Latest verified replay (2026-08-22)
 
-The manifest contains 21 ordered topics and replays to canonical tree
-`436f25b3c4cad9cbbead1d37bad19e219ce4075d`. A fresh pinned-commit replay,
+The manifest contains 22 ordered topics and replays to canonical tree
+`daa646c62f162dc46ce9e3ee1fc7f47a7a4e0d19`. A fresh pinned-commit replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, configured-checkout verification, and the delta audit passed. Both
 canonical production page profiles rebuilt with LLVM 22 in that fresh replay
@@ -53,6 +53,19 @@ GEM mapping and VMA manager are still live. A focused policy test pins the
 ordering, and three consecutive 16 KiB Simulator plus three connected-iPad CTS
 shutdowns completed without the formerly intermittent
 `Memory manager not clean during takedown` warning.
+Topic 0022 implements `arch_irq_work_raise()` for UML. The generic weak stub
+left queued work waiting for the next timer tick, which is a correctness
+problem and not only a latency one: `bpf_mem_alloc` prefills exactly one
+element per CPU once the unit size exceeds 256 bytes and refills the rest from
+irq work, so a non-preallocated BPF hash map with a value larger than a couple
+of hundred bytes accepted one insert per CPU per tick and failed every later
+one with `-ENOMEM`. The topic publishes a self-directed IPI vector that the
+cooperative drain this port already reaches services long before the tick, and
+leaves `arch_irq_work_has_interrupt()` false so the tick keeps its existing
+backstop. A freestanding guest probe that fills a 1024-byte-value
+`BPF_F_NO_PREALLOC` hash map inserted 1 of 256 elements before the topic and
+all 256 after it, on both canonical page profiles.
+
 Topic 0021 keeps Darwin's precise nested `mmu_gather` ranges instead of
 promoting concurrent users to a generation-wide flush. Darwin range
 invalidation already quiesces every executor and advances the mapping epoch;

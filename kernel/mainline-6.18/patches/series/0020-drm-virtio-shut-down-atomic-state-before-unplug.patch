@@ -1,7 +1,7 @@
 From cfeb4220a43216e67fe065e07e5077e260b0484c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 02:20:10 +0900
-Subject: [PATCH 20/21] drm/virtio: shut down atomic state before unplug
+Subject: [PATCH 20/22] drm/virtio: shut down atomic state before unplug
 
 ---
  drivers/gpu/drm/virtio/virtgpu_drv.c | 3 +++
