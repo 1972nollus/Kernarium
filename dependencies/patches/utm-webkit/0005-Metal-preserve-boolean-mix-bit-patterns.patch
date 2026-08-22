@@ -1,7 +1,7 @@
 From 38fc4c80bcd60670b0a235e0661e50775351c3e6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 01:06:08 +0900
-Subject: [PATCH 5/9] Metal: preserve boolean mix bit patterns
+Subject: [PATCH 05/10] Metal: preserve boolean mix bit patterns
 
 ---
  .../translator/msl/ProgramPrelude.cpp         |  2 +-

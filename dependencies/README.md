@@ -118,8 +118,12 @@ swizzled texture views even though Simulator omits the ordinary GPU-family
 flags. This preserves GLES legacy alpha, luminance, and depth sampling. Its
 R/RG/RGBA 32-bit-float filterability follows Metal's device query on hardware
 and the validated native Simulator path; the latter reports the query as false
-but successfully executes linear filtering. Keep both exceptions scoped to the
-arm64 Simulator product rather than generalizing them to other architectures.
+but successfully executes linear filtering. The same modern arm64 Simulator
+path enables native sampler comparison despite the missing family reports, so
+GLES shadow samplers retain Metal's compare-before-filter semantics instead of
+being forced to `MTLCompareFunctionNever`. Keep all three exceptions scoped to
+the arm64 Simulator product rather than generalizing them to other
+architectures.
 
 The maintained UTM virglrenderer series also keeps the GLES format inventory
 truthful: it does not advertise `VIRGL_FORMAT_Z32_UNORM`, whose GLES fallback

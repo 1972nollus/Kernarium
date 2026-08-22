@@ -1,7 +1,7 @@
 From 7a54fb0440da564e88a78dda3a02a164b1eb1d56 Mon Sep 17 00:00:00 2001
 From: Lichen Liu <lichenliu@microsoft.com>
 Date: Tue, 5 Nov 2024 21:06:42 +0000
-Subject: [PATCH 1/9] Add check for iOS simulator when initializing caps in
+Subject: [PATCH 01/10] Add check for iOS simulator when initializing caps in
  metal
 
 On the iOS Simulator, supportsFamily:MTLGPUFamilyApple3 can return false even

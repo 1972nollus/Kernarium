@@ -1,7 +1,7 @@
 From a25e51c14ba7d7e2f785ab5bb483da297cc92153 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 03:19:04 +0900
-Subject: [PATCH 6/9] Metal: count transform feedback queries per draw
+Subject: [PATCH 06/10] Metal: count transform feedback queries per draw
 
 ---
  .../ANGLE/src/libANGLE/TransformFeedback.cpp  |  5 +++

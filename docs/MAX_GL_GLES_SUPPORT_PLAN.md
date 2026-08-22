@@ -1076,6 +1076,13 @@ process slices per config; the aggregate reconstructs and hashes the exact
 original leaf. The failed attempts remain immutable evidence. The subsequently
 directed product policy uses 4 GiB on Simulator and starts physical-device runs
 at 2 GiB; it still adds no swap and does not weaken the bounded process layout.
+Fresh 4 GiB Simulator inventories now match the same 20 macOS tuples and
+digest. Managed UTM WebKit topic `fff809d63b` enables native Metal sampler
+comparison on modern arm64 Simulator after ANGLE's missing-family fallback was
+shown to force all shadow comparisons to `Never`. The exact repaired GLES 3
+`cfg00` fraction `0/4` passed all 1,625 executions (1,563 `Pass`, 62 permitted
+`NotSupported`) with all eight formerly failing depth/stencil shadow-repeat
+cases now `Pass` and zero CPU fallback.
 The seven interleaved performance pairs,
 connected-iPad thermal and sustained lifecycle baselines, complete sliced
 Simulator GLES 3 matrix, and both connected-iPad matrices remain missing.
@@ -1702,7 +1709,11 @@ runs reproducibly exhausted the former fixed 1.5 GiB guest. Current adapters
 fix Simulator runs at 4 GiB and start physical-device runs at 2 GiB, with only
 64 MiB post-OOM device decrements. The mobile adapters and
 immutable sequential orchestrator reconstruct the frozen leaf from every
-slice. The Simulator GLES 3 and iPad case matrices, absent seven-pair
+slice. Fresh 4 GiB inventories pass for both APIs. Topic `fff809d63b` enables
+native sampler comparison on modern arm64 Simulator, and the exact GLES 3
+`cfg00` fraction `0/4` passes 1,625/1,625 with the eight former shadow-repeat
+failures repaired and zero CPU fallback. The complete Simulator GLES 3 and
+iPad case matrices, absent seven-pair
 performance/connected-iPad thermal/sustained-lifecycle campaigns, and missing
 original-image receipt still prevent any new shared capability or conformance
 claim. The derivative

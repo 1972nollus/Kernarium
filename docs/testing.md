@@ -1048,15 +1048,20 @@ of the three diagnostic non-passes discovered while selecting these bounded
 sentinels was waived. The complete macOS matrix classifies the depth case as
 15 `Pass` plus five released-policy `NotSupported` results on no-depth
 configurations, and the repaired transform-feedback query case passes all 20
-configurations. The Simulator-only GLES 2 texture-comparison failure remains
-open for the complete mobile matrix. Both current 16 KiB macOS matrices pass
-as recorded above. Fixed signed Simulator inventories for both APIs match the
-same 20 tuples and canonical digest at
-`.build/vk-gl-cts-ios-simulator/20260822-093844-4028-16k-gles3-config-inventory-v1`
+configurations. The former Simulator GLES 2 texture findings are repaired by
+the swizzle and float-filter topics. Managed topic `fff809d63b` separately
+enables native Metal sampler comparison on modern arm64 Simulator and repairs
+the eight GLES 3 depth/stencil shadow texture-repeat failures from the first
+bounded slice. Both current 16 KiB macOS matrices pass as recorded above.
+Fresh fixed signed Simulator inventories for both APIs match the same 20
+tuples and canonical digest under the explicit 4,096 MiB policy at
+`.build/vk-gl-cts-ios-simulator/20260822-131649-63237-16k-gles3-config-inventory-v1`
 and
-`.build/vk-gl-cts-ios-simulator/20260822-093938-4195-16k-gles2-config-inventory-v1`,
-with clean shutdown and zero dropped or CPU-fallback frames. Complete case
-matrices remain outstanding on Simulator/iPad.
+`.build/vk-gl-cts-ios-simulator/20260822-131735-63365-16k-gles2-config-inventory-v1`.
+The repaired GLES 3 `cfg00` fraction `0/4` then completed 1,625/1,625 with
+1,563 `Pass`, 62 permitted `NotSupported`, and no failure or CPU fallback at
+`.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
+Complete fresh case matrices remain outstanding on Simulator/iPad.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host

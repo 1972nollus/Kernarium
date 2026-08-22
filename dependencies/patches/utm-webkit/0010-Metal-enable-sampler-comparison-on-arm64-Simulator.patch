@@ -1,0 +1,25 @@
+From fff809d63ba25772ab7ce89a40c26351f3eda736 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 13:07:13 +0900
+Subject: [PATCH 10/10] Metal: enable sampler comparison on arm64 Simulator
+
+---
+ .../ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm           | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+index a3fad0c794..b054f8ae06 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+@@ -1263,8 +1263,10 @@ void DisplayMtl::initializeFeatures()
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowMultisampleStoreAndResolve,
+                             supportsEitherGPUFamily(3, 1));
+ 
++    // Modern arm64 Simulator runtimes implement sampler comparison even though their
++    // virtual Metal device does not advertise an Apple or Mac GPU family.
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowRuntimeSamplerCompareMode,
+-                            supportsEitherGPUFamily(3, 1));
++                            supportsEitherGPUFamily(3, 1) || (isSimulator && isARM));
+     // AMD does not support sample_compare_grad
+     ANGLE_FEATURE_CONDITION((&mFeatures), allowSamplerCompareGradient,
+                             supportsEitherGPUFamily(3, 1) && !isAMD());

@@ -1,7 +1,7 @@
 From b2710939ab8d7b8800af99fcc2322e86c55b9351 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 10:43:36 +0900
-Subject: [PATCH 8/9] Metal: enable texture swizzles on arm64 Simulator
+Subject: [PATCH 08/10] Metal: enable texture swizzles on arm64 Simulator
 
 ---
  .../ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm          | 5 ++++-

@@ -221,9 +221,25 @@ clean-shutdown requirements. Current source now makes the memory policy
 explicit: 4,096 MiB on Simulator and 2,048 MiB initially on a physical device.
 The device adapter accepts only 64 MiB decrements after a confirmed emulator
 OOM, and every run records the exact value. Existing 1.5 GiB inventories are
-therefore historical inputs and must be recaptured before the current mobile
-matrices. The rebuilt-app and complete sliced Simulator/iPad campaigns remain
-the next gate.
+therefore historical inputs. Fresh 4,096 MiB inventories now pass at
+`.build/vk-gl-cts-ios-simulator/20260822-131649-63237-16k-gles3-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-simulator/20260822-131735-63365-16k-gles2-config-inventory-v1`,
+with the same 20 truthful configurations and canonical digest as macOS.
+
+The first sliced GLES 3 diagnostic had eight depth/stencil shadow
+texture-repeat failures because arm64 Simulator omits Metal GPU-family reports
+and ANGLE consequently replaced every sampler comparison with
+`MTLCompareFunctionNever`. Managed UTM WebKit topic `fff809d63b` enables the
+native sampler comparison supported by the modern arm64 Simulator while
+leaving macOS, physical-device, and other Simulator architectures on their
+existing predicates. After both mobile prefixes, all four runtimes, the
+XCFrameworks, and the clean Debug app were rebuilt, exact `cfg00` fraction
+`0/4` passed all 1,625 executions with 1,563 `Pass`, 62 permitted
+`NotSupported`, zero failure, and zero CPU fallback at
+`.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
+All eight implicated cases now pass. Complete fresh Simulator and iPad
+campaigns remain the next gate.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

@@ -32,7 +32,20 @@
   predecessors. The registered safety suite passes 52 cases. The former
   one-process GLES 3 layout OOM-killed the 1.5 GiB guest; the first bounded
   Simulator slice completed all 1,625 cases without OOM but exposed eight
-  depth/stencil texture-repeat failures that remain under repair.
+  depth/stencil shadow texture-repeat failures. Managed UTM WebKit topic
+  `fff809d63b` now enables native Metal sampler comparison on modern arm64
+  Simulator, whose virtual device omits the GPU-family reports ANGLE formerly
+  required and therefore forced every comparison to `Never`. Both fixed
+  inventories were recaptured under the explicit 4,096 MiB policy at
+  `.build/vk-gl-cts-ios-simulator/20260822-131649-63237-16k-gles3-config-inventory-v1`
+  and
+  `.build/vk-gl-cts-ios-simulator/20260822-131735-63365-16k-gles2-config-inventory-v1`.
+  The exact repaired GLES 3 `cfg00` fraction `0/4` then completed all 1,625
+  executions with 1,563 `Pass`, 62 permitted `NotSupported`, zero failure,
+  clean artifact export, and zero CPU-fallback frames at
+  `.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
+  All eight formerly failing shadow cases now report `Pass`; the full fresh
+  mobile matrices remain open.
 
 ## 2026-08-22: signed Simulator GLES configuration inventories
 
