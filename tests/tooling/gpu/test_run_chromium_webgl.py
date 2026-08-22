@@ -154,6 +154,21 @@ class AquariumProbePolicyTests(unittest.TestCase):
         self.assertIn("emit_guest_snapshot SAMPLE", launcher)
         self.assertIn("UML_AQUARIUM_GUEST_POWEROFF|RESULT=pass", launcher)
         self.assertIn("poweroff -f", launcher)
+        self.assertIn('[ "0" = 1 ]', launcher)
+        self.assertNotIn("@EGL_CONFIG_DIAGNOSTICS@", launcher)
+
+    def test_launcher_can_capture_x11_egl_config_diagnostics(self) -> None:
+        launcher = run_chromium_webgl.build_guest_launcher(
+            auto_poweroff=False,
+            egl_config_diagnostics=True,
+        )
+        self.assertIn('[ "1" = 1 ]', launcher)
+        self.assertIn("UML_EGL_CONFIG_DIAGNOSTICS_BEGIN", launcher)
+        self.assertIn("chromium --version", launcher)
+        self.assertIn("eglinfo -v -a gles -p x11", launcher)
+        self.assertIn("xdpyinfo", launcher)
+        self.assertIn("xwininfo -root -stats", launcher)
+        self.assertIn("UML_EGL_CONFIG_DIAGNOSTICS_END", launcher)
 
     def test_kernarium_header_is_generated_from_common_probe(self) -> None:
         driver = generate_aquarium_header.load_driver(SCRIPT)

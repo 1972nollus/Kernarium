@@ -299,6 +299,26 @@ runuser -u uml -- env \
     XAUTHORITY="$xauthority" \
     XDG_RUNTIME_DIR="$runtime" \
     glxinfo -B || true
+if [ "@EGL_CONFIG_DIAGNOSTICS@" = 1 ]; then
+    echo 'UML_EGL_CONFIG_DIAGNOSTICS_BEGIN'
+    chromium --version
+    runuser -u uml -- env \
+        DISPLAY=:0 \
+        XAUTHORITY="$xauthority" \
+        XDG_RUNTIME_DIR="$runtime" \
+        eglinfo -v -a gles -p x11
+    runuser -u uml -- env \
+        DISPLAY=:0 \
+        XAUTHORITY="$xauthority" \
+        XDG_RUNTIME_DIR="$runtime" \
+        xdpyinfo
+    runuser -u uml -- env \
+        DISPLAY=:0 \
+        XAUTHORITY="$xauthority" \
+        XDG_RUNTIME_DIR="$runtime" \
+        xwininfo -root -stats
+    echo 'UML_EGL_CONFIG_DIAGNOSTICS_END'
+fi
 printf 'UML_AQUARIUM_GUEST_IDENTITY|PAGE_SIZE=%s|CPUS=%s|MEM_TOTAL_KIB=%s\\n' \
     "$(getconf PAGESIZE)" "$(getconf _NPROCESSORS_ONLN)" \
     "$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo)"
@@ -432,6 +452,7 @@ def build_guest_launcher(
     chromium_flags: list[str] | tuple[str, ...] = (),
     *,
     auto_poweroff: bool,
+    egl_config_diagnostics: bool = False,
 ) -> str:
     return (
         LAUNCHER.replace(
@@ -440,6 +461,10 @@ def build_guest_launcher(
         )
         .replace("@AQUARIUM_URL@", shlex.quote(AQUARIUM_URL))
         .replace("@AUTO_POWEROFF@", "1" if auto_poweroff else "0")
+        .replace(
+            "@EGL_CONFIG_DIAGNOSTICS@",
+            "1" if egl_config_diagnostics else "0",
+        )
     )
 
 
@@ -981,6 +1006,14 @@ def main() -> int:
         action="store_true",
         help="remove the image's Chromium compatibility config in the overlay",
     )
+    parser.add_argument(
+        "--egl-config-diagnostics",
+        action="store_true",
+        help=(
+            "capture the guest EGL X11 configs and X visual inventory before "
+            "launching Chromium"
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=360)
     options = parser.parse_args()
     kernarium_common.finish_rootfs_options(parser, options, identity)
@@ -1059,6 +1092,7 @@ def main() -> int:
             build_guest_launcher(
                 options.chromium_flag,
                 auto_poweroff=options.display == "native",
+                egl_config_diagnostics=options.egl_config_diagnostics,
             ),
             "0755",
         ),
@@ -1109,6 +1143,7 @@ def main() -> int:
         "fish": FISH_COUNT,
         "warmup_seconds": options.warmup_seconds,
         "sample_seconds": options.sample_seconds,
+        "egl_config_diagnostics": options.egl_config_diagnostics,
         "url": AQUARIUM_URL,
         "command": command,
     }
