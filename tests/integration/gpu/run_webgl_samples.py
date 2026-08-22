@@ -385,6 +385,19 @@ OK_PATTERN = re.compile(
     r"UML_WEBGL_SAMPLE_OK\|(\d+)/(\d+)\|([^|]+)\|"
     r"CONTEXT=([^|]+)\|FRAMES=(\d+)\|RENDERER=([^\r\n\"]+)"
 )
+GRAPHICS_FAILURES = (
+    "context error reported",
+    "Illegal resource",
+    "Illegal command buffer",
+    "response 0x1204 (command 0x207)",
+)
+
+
+def graphics_failure(transcript: str) -> str | None:
+    for line in transcript.splitlines():
+        if any(signature in line for signature in GRAPHICS_FAILURES):
+            return line
+    return None
 
 
 def slug(name: str) -> str:
@@ -631,6 +644,11 @@ def main() -> int:
                     raise RuntimeError(marker)
                 if "UML_WEBGL_RUNNER_ERROR:" in text:
                     raise RuntimeError("Chromium sample runner failed to start")
+                failure = graphics_failure(text)
+                if failure is not None:
+                    raise RuntimeError(
+                        "Virgl rejected a WebGL command: " + failure
+                    )
                 if process.poll() is not None:
                     raise RuntimeError(
                         "emulator exited during WebGL samples run "

@@ -18,6 +18,8 @@ SPEC = importlib.util.spec_from_file_location("boot_kde_vnc", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 boot_kde_vnc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(boot_kde_vnc)
+sys.path.insert(0, str(GPU_INTEGRATION))
+import run_webgl_samples  # noqa: E402
 
 
 class KdeVncLauncherTests(unittest.TestCase):
@@ -123,6 +125,16 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("first WebGL sample did not render within", runner)
         self.assertIn('"state": "failed"', runner)
         self.assertIn('"state": "interrupted"', runner)
+
+    def test_webgl_samples_reject_poisoned_virgl_contexts(self) -> None:
+        clean = "UML_WEBGL_SAMPLE_OK|1/2|Aquarium"
+        self.assertIsNone(run_webgl_samples.graphics_failure(clean))
+        for signature in run_webgl_samples.GRAPHICS_FAILURES:
+            line = "host: " + signature
+            self.assertEqual(
+                run_webgl_samples.graphics_failure(clean + "\n" + line),
+                line,
+            )
 
     def test_guest_harness_runs_directly(self) -> None:
         options = boot_kde_vnc.parse_arguments(["--rootfs", "/tmp/rootfs.erofs"])
