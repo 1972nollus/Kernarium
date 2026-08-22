@@ -6,28 +6,18 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation started on 2026-08-20. As of 2026-08-22, the builder-local lane
-has produced and verified the 27-topic ACK 6.18 Darwin UML series, its 16 KiB
-built-in-only kernel, the routed AOSP 17 static UML product, standalone
-initramfs, and fixed seven-partition UBD image. It has also published, copied,
-and atomically installed accepted release
-`android17-ack6.18-16k-20260822-6afe4225-virgl2`. The release installer rejects
-an overwrite and the structural negative fixtures below pass. Import-only
-CMake consumption and the separate macOS executable are implemented. The
-predecessor four-vCPU gadgets candidate reached guest second 982 on a cold boot
-and second 284 on a same-COW warm boot without the earlier RCU stall or a kernel
-oops/panic. A reconnectable Virtio console exposes the Android shell and
-`logcat` on `hvc0`, while Linux printk remains on `ttyS0`. The current accepted
-image adds a source-built, 16 KiB-aligned Mesa Virgl EGL/GLES stack while
-retaining SwiftShader as an upstream fallback. Its Mesa EGL/GLES libraries now
-carry the DRI dependency and `$ORIGIN/../dri` runpath required by Android's
-restricted `sphal` namespace. A fresh default-JIT control boot of this release
-with four vCPUs remained responsive through guest second 420 and powered down
-normally at second 474, while the same release with the required ten vCPUs
-stopped at second 9.46 with every fixed carrier asleep in `os_idle_sleep()`.
-The ten-vCPU timer/idle wake defect is therefore open. Proving the hardware
-renderer, completed graphical boot, and signed iOS runtime framework also
-remains unfinished.
+Implementation started on 2026-08-20. As of the 2026-08-22 handoff below, the
+builder-local lane has produced and verified the 27-topic ACK 6.18 Darwin UML
+series, its 16 KiB built-in-only kernel, the routed AOSP 17 static UML product,
+standalone initramfs, fixed seven-partition UBD image, import-only Apple
+consumer, separate macOS executable, Virtio console, and source-built Mesa
+Virgl userspace while retaining SwiftShader. The latest ten-vCPU gadgets run
+did not reproduce the RCU stall and brought up hardware Virgl SurfaceFlinger,
+but it exposed a separate gadgets-engine SIMD load-pair correctness defect
+that prevents zygote and full Android boot. The current accepted release
+therefore remains `android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer
+diagnostic image is accepted. The exact recovery state and next actions are in
+the active implementation handoff.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project
@@ -47,6 +37,221 @@ The initial source pins, verified on 2026-08-20, are:
 
 These are exact starting identities, not floating branches. A future update
 is a reviewed metadata change that records a new full commit and tree.
+
+## Active implementation handoff (2026-08-22)
+
+This section is the entry point for the next implementation session. It
+supersedes earlier progress prose where the two differ; the architectural
+decisions and phase definitions below remain in force.
+
+### Durable repository and builder state
+
+- The outer repository was at `2275c9b4` (`gpu: restore Simulator GLES texture
+  sampling`) on `main` when this handoff was written. Android-specific durable
+  checkpoints immediately below it include `8f91b078` (GPU sysfs labeling),
+  `c659cfc3` (Mesa zstd SP-HAL labeling), `577dbfea` (four-vCPU stall control),
+  `8eeb714e` (Mesa DRI namespace release), `6afe4225` (incremental-analysis
+  mode), and the earlier Android kernel, image, console, and product commits.
+- The working tree also contains unrelated concurrent Apple-GPU/CTS and Xcode
+  edits. At this checkpoint those include `Kernarium.xcodeproj`,
+  `MAX_GL_GLES_SUPPORT_PLAN.md`, `REFACTOR_HANDOFF.md`, `testing.md`, and GPU
+  integration/tooling files. Inspect `git status` and preserve those edits;
+  they are not part of the Android CPU-correctness work or this handoff.
+- The operator-configured build machine alias is intentionally not recorded in
+  the repository. Its builder-local AOSP checkout is
+  `/home/build/aosp-17`, its ACK Repo checkout is
+  `/home/build/android-kernel-6.18`, and the ACK Git project is the `common/`
+  child of that Repo checkout. Tracked scripts still contain no remote-shell or
+  transport command, endpoint, or credential.
+- The AOSP incremental output is
+  `/home/build/aosp-17/out-uml-android17`. When invoking Android's build
+  environment from the AOSP root, keep `OUT_DIR=out-uml-android17` relative.
+  An attempted absolute `OUT_DIR` changed Soong's recorded environment and
+  failed during bootstrap; restoring the relative value caused a broad
+  dependency re-evaluation. That incremental build nevertheless completed
+  successfully after 180,084 executed steps in 1 hour 55 minutes. Do not clean
+  this output or repeat that build merely for preflight.
+- The tested ACK ELF is
+  `/home/build/uml-darwin-work/build-ack-android17-rcu-cond1/vmlinux`. It was
+  built from the tracked 27-topic series with final tree
+  `e675d73659f9f829c7e36db035f1652ce2a85408`, ABI version 8/fingerprint
+  `0x3871ad612337ea76`, `CONFIG_MODULES=n`, and the 16 KiB-only configuration.
+  Topic 27, `UML-DARWIN-LOCAL: poll timers before cond_resched`, is the
+  maintained form of the successful cooperative-timer experiment; the ignored
+  `cond-resched-timer.patch` is only its diagnostic precursor.
+
+### Latest ten-vCPU gadgets boot
+
+The latest run used the separate Android macOS executable, gadgets engine, a
+fresh COW instance, the ACK ELF above, and ten vCPUs. The diagnostic release
+root was
+`.build/android/diagnostics/mesa-glapi/test-release/android17-ack6.18-16k-20260822-8f91b078-gpu-sysfs1`.
+The corresponding files are:
+
+- COW: `.build/android/instances/mesa-glapi-10vcpu-gadgets1.cow`;
+- kernel/ttyS0 log:
+  `.build/android/logs/mesa-glapi-10vcpu-gadgets1-ttyS0.log`;
+- compressed diagnostic disk:
+  `.build/android/diagnostics/mesa-glapi/android17-ubd.img.zst`; and
+- raw diagnostic disk inside the release root:
+  `guest/android-17-uml-arm64.img`.
+
+The COW and raw disk each have a 16 GiB logical size and are sparse; the
+compressed disk is approximately 868 MiB and the ttyS0 log is approximately
+121 MiB. They are ignored diagnostics, not release inputs. Retain them until
+the CPU defect is reproduced by a host unit test, then remove these exact stale
+artifacts as part of the already-requested `.build` storage cleanup.
+
+Confirmed results from this run:
+
+- CPUs `0-9` came online. The 121 MiB ttyS0 log contains no RCU stall, kernel
+  panic, oops, or hard-lockup report through guest second 23,844. The original
+  multi-vCPU RCU/timer stall is therefore not reproduced with topic 27.
+- `ttyS0` carried Linux printk only. The reconnectable Virtio console on
+  `hvc0` carried the Android shell and `logcat`; the two streams remained
+  separated as required.
+- SurfaceFlinger remained running after the Mesa GLAPI correction. Its log
+  identified vendor `Mesa`, renderer `virgl`, `OpenGL ES 3.0 Mesa
+  26.1.0-devel`, a 16,384 maximum texture/viewport size, the AIDL composer3
+  service, and display 0. This proves the hardware Virgl path reaches Android;
+  SwiftShader remains packaged as the unchanged fallback.
+- Android did not complete boot. `sys.boot_completed` never became `1` because
+  zygote repeatedly died while preloading
+  `android.graphics.drawable.RippleAnimationSession`. At guest second 23,844,
+  after hours of service retry noise, `init` itself took signal 11 and requested
+  a reboot; the emulator then stopped with result 1. The old emulator process
+  and console socket are no longer live.
+
+Repeated missing audio-core and RIL/NFC service messages are real product gaps,
+but they are not the first blocker. Do not mask those services or change VINTF
+until the deterministic CPU result below is fixed and zygote can start
+reliably.
+
+### Confirmed gadgets-engine correctness defect
+
+Zygote fails in `PathInterpolator.initPath()` because the native Skia cubic
+path approximation reports an endpoint other than `(1,1)` for
+`new PathInterpolator(0.4f, 0f, 0.2f, 1f)`. The current unstripped `libhwui`
+compiled `SkPathGlue::cubicBezierCalculation` to a short scalar/SIMD sequence
+whose final relevant operations include:
+
+```text
+ldp  d4, d6, [x0, #16]
+fmul v2.2s, v4.2s, v2.s[0]
+fadd v1.2s, v1.2s, v3.2s
+fmul v0.2s, v6.2s, v0.s[0]
+fadd v1.2s, v1.2s, v2.2s
+fadd v0.2s, v1.2s, v0.2s
+```
+
+Two freestanding ARM64 payloads in the ignored diagnostics directory reproduce
+the failure without Java, ART, Skia allocation, Mesa, or SurfaceFlinger:
+
+- `.build/android/diagnostics/cubic-endpoints.S` executes the exact compiled
+  cubic calculation at `t=0` and `t=1`. Under the gadgets engine it writes four
+  zero words; `t=1` should write `3f800000 3f800000` for `(1,1)`.
+- `.build/android/diagnostics/cubic-steps.S` records the inputs around the final
+  vector multiply. It observes `t=1`, `t^2=1`, and the first loaded pair
+  `.2,1`, but the second destination of `ldp d4, d6, [x0,#16]` is zero instead
+  of `1,1`; the following multiply is consequently zero.
+
+The existing focused test still passes:
+
+```sh
+ctest --test-dir .build/presets/macos-unit-16k \
+  -R '^arm64-simd-load-store-pair$' --output-on-failure
+```
+
+That suite tests isolated SIMD/FP pair transfers, so its success means the
+production defect must first be captured as a multi-instruction
+`EngineHarness::check_program` case using the exact compiler sequence and
+memory layout. Do not patch the pair gadget based only on the intermediate
+observation. Determine whether the second result is lost in descriptor
+generation, block execution, TLB-hit handling, FP-state activation, or an
+adjacent instruction interaction. The regression must fail under gadgets,
+remain correct under the interpreter, and use JIT/native execution as an
+additional oracle where available.
+
+### AOSP diagnostic and patch-series state
+
+`device/google/cuttlefish` is clean on builder-local branch
+`uml-android17-no-userdata-quota`; its current tree is the already-recorded
+`ed279eb3c267bb8480d734f8219adcb2506dce3a` for route `p0001`. It includes the
+Virtio console, Mesa packaging, zstd SP-HAL label, and GPU sysfs uevent label.
+No p0001 regeneration is currently required unless a reviewed product property
+is added later.
+
+`external/mesa3d` is clean on branch
+`uml-android17-virgl-descriptor`. Its current three local commits are:
+
+```text
+e85639a2878 UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
+6d0d5ab94fa UML-ANDROID-LOCAL: Enable Virgl pipe-loader descriptor
+470d1a2b657 UML-ANDROID-LOCAL: Share GLAPI dispatch state
+```
+
+The current Mesa tree is
+`4295979a36e8b4650af5e98bb9fd0c6a9dd12bcd`. Route `p0004` in the outer
+repository still records only the first commit and old final tree
+`f70d7dbb58fbd5cf0977ef43ce5d0fbabd04e692`; regenerate the route from the
+clean three-commit topic branch with the checked tooling. Never edit its patch
+bytes manually.
+
+The GLAPI commit is required. Before it, `libEGL_mesa`, both GLES libraries,
+and `gallium_dri.so` each statically defined their own GLAPI dispatch state and
+SurfaceFlinger crashed. The fixed layout leaves `gallium_dri.so` as the sole
+GLAPI owner: EGL/GLES reference it dynamically, and `_glapi_new_nop_table` is
+exported from the DRI library. Preserve this dependency architecture when
+regenerating p0004.
+
+`frameworks/base` is detached at base commit
+`94b4c163b7dfe5ce3607f7bb8456f9573f7de57d` and has one uncommitted diagnostic
+change to `PathInterpolator.java` that appends the actual endpoint values to
+the exception. The completed target-files output contains that diagnostic.
+It is not a product fix and must never become an AOSP route. After the host
+regression has captured all needed evidence, restore that one file on the
+build machine and use the existing relative `OUT_DIR` for the incremental
+rebuild.
+
+The tracked accepted-release descriptor intentionally still selects
+`android17-ack6.18-16k-20260822-6afe4225-virgl2`. The installed
+`20260822-8f91b078-gpu-sysfs1` directory and the Mesa-GLAPI test release are
+diagnostic candidates. Do not advance `accepted-release.env` until a clean,
+patch-replayed image reaches full boot acceptance.
+
+### Required continuation order
+
+1. Add a focused host `EngineHarness::check_program` regression containing the
+   exact cubic instruction sequence, with data chosen so the second LDP result
+   must be `(1,1)`. Prove the current gadgets engine fails before changing it.
+2. Trace the compiled gadget stream and architectural vector state across the
+   LDP and its neighbors. Fix the smallest actual ownership defect, run the
+   focused test first, then the canonical 16 KiB and 4 KiB unit workflows
+   because CPU execution is page-profile sensitive. Commit the coherent host
+   fix and regression.
+3. Rebuild the separate Android macOS executable from the then-current outer
+   revision. The executable used by the diagnostic run came from an older
+   `c659cfc3` source snapshot and does not contain later host GPU commits.
+4. Boot a fresh COW with ten vCPUs and the gadgets engine. Require all CPUs
+   `0-9`, `sys.boot_completed=1`, stable zygote/system_server and
+   SurfaceFlinger processes, working `dumpsys SurfaceFlinger`, the Mesa/virgl
+   renderer report, and no RCU stall, panic, oops, lockup, or mixed ttyS0/hvc0
+   logs. A long retry loop is not a successful boot.
+5. Remove the temporary `frameworks/base` diagnostic, regenerate Mesa route
+   p0004 from its clean topic branch, copy the reviewed outer inputs to the
+   builder through the operator-managed workflow, replay the routes, and use
+   the existing Soong output for an incremental target-files build. Keep
+   SwiftShader packaged.
+6. Publish, copy, locally install, and select a new immutable release only after
+   the clean replayed image passes the ten-vCPU gadgets acceptance above.
+7. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
+   exact path. Then continue the remaining plan phases: Android application
+   acceptance, product HAL cleanup, and the separate signed 16 KiB iOS runtime
+   framework.
+
+Commit after each focused change reaches a consistent, tested state. Do not
+fold the CPU fix, Mesa patch regeneration, AOSP diagnostic cleanup, and release
+promotion into one unreviewable commit.
 
 ## Fixed decisions
 
