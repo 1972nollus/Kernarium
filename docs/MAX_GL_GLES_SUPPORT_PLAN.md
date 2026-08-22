@@ -1793,9 +1793,11 @@ authority now retains that full GLES 2 process geometry while splitting GLES 3
 into four signed bounded processes per config after complete-leaf Simulator
 runs reproducibly exhausted the former fixed 1.5 GiB guest. Current adapters
 fix Simulator runs at 4 GiB and start physical-device runs at 2 GiB, with only
-64 MiB post-OOM device decrements. The mobile adapters and
-immutable sequential orchestrator reconstruct the frozen leaf from every
-slice. Fresh 4 GiB inventories pass for both APIs. Topic `fff809d63b` enables
+64 MiB post-OOM device decrements. The mobile adapters and immutable
+orchestrator reconstruct the frozen leaf from every slice. Simulator campaigns
+may deterministically use as many as four unique booted devices with at most
+one active shard on each; physical-device campaigns remain single-worker.
+Fresh 4 GiB inventories pass for both APIs. Topic `fff809d63b` enables
 native sampler comparison on modern arm64 Simulator, and the exact GLES 3
 `cfg00` fraction `0/4` passes 1,625/1,625 with the eight former shadow-repeat
 failures repaired and zero CPU fallback. The complete Simulator GLES 3 and

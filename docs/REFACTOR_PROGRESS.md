@@ -15,10 +15,13 @@
   product's corresponding evidence before running one matrix ID. They reparse the QPA
   and accept only the successful statuses frozen by the Khronos runner oracle,
   rather than incorrectly requiring every conformant skip to be `Pass`.
-  `run_ios_vk_gl_cts_matrix.py` schedules the compiled IDs sequentially,
-  retains every attempt permanently, rejects retry after an incomplete or
-  failed attempt, revalidates all predecessor artifacts, and independently
-  reconstructs the complete config-by-leaf aggregate.
+  `run_ios_vk_gl_cts_matrix.py` schedules the compiled IDs on one Simulator by
+  default or deterministically across as many as four unique booted
+  Simulators, with at most one active shard per device. It retains every
+  attempt permanently, rejects retry after an incomplete or failed attempt,
+  revalidates all predecessor artifacts, and independently reconstructs the
+  complete config-by-leaf aggregate. Physical-device campaigns remain
+  strictly single-device and single-worker.
 - Kernarium now defaults to 4 GiB on Simulator and 2 GiB on physical devices;
   CTS launchers export and record those values explicitly. Device campaigns
   accept only 512--2,048 MiB in 64 MiB steps: start at 2,048 MiB and create a

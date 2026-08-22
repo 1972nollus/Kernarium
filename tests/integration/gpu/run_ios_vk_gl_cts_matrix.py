@@ -7,6 +7,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
@@ -50,7 +51,8 @@ class Definition:
     predecessor_adapter: str
     api: str
     page_profile: str
-    device: str
+    devices: tuple[str, ...]
+    jobs: int
     guest_memory_mib: int
     shards: tuple[cts.AppleMatrixShard, ...]
     configs: tuple[cts.EglConfig, ...]
@@ -81,7 +83,9 @@ class Definition:
                 "adapter": self.adapter,
                 "backend": "angle-metal",
                 "engine": "gadgets",
-                "device": self.device,
+                "device": self.devices[0],
+                "devices": list(self.devices),
+                "jobs": self.jobs,
                 "guest_memory_mib": self.guest_memory_mib,
                 "page_profile": self.page_profile,
                 "guest_timeout": self.guest_timeout,
@@ -456,7 +460,8 @@ def build_definition(options: argparse.Namespace) -> Definition:
         predecessor_adapter=predecessor_adapter,
         api=options.api,
         page_profile=options.page_profile,
-        device=options.device,
+        devices=tuple(options.device),
+        jobs=options.jobs,
         guest_memory_mib=guest_memory_mib,
         shards=shards,
         configs=configs,
@@ -482,11 +487,41 @@ def attempt_directory(campaign: Path, shard: cts.AppleMatrixShard) -> Path:
     return campaign / "shards" / shard.identifier / "attempt"
 
 
+def shard_device(definition: Definition, shard: cts.AppleMatrixShard) -> str:
+    try:
+        index = definition.shards.index(shard)
+    except ValueError as error:
+        raise cts.CampaignError(
+            "matrix shard is outside the frozen definition"
+        ) from error
+    return definition.devices[index % len(definition.devices)]
+
+
+def next_batch(
+    definition: Definition,
+    remaining: Sequence[cts.AppleMatrixShard],
+) -> list[cts.AppleMatrixShard]:
+    batch: list[cts.AppleMatrixShard] = []
+    occupied: set[str] = set()
+    for shard in remaining:
+        device = shard_device(definition, shard)
+        if device in occupied:
+            continue
+        batch.append(shard)
+        occupied.add(device)
+        if len(batch) == definition.jobs:
+            break
+    if not batch and remaining:
+        raise cts.CampaignError("mobile matrix scheduler made no progress")
+    return batch
+
+
 def child_command(
     definition: Definition,
     shard: cts.AppleMatrixShard,
     predecessor_run: Path,
     artifact_root: Path,
+    device: str,
 ) -> list[str]:
     runner = SIMULATOR_RUNNER if definition.platform == "simulator" else DEVICE_RUNNER
     predecessor_option = (
@@ -501,7 +536,7 @@ def child_command(
         "--page-profile",
         definition.page_profile,
         "--device",
-        definition.device,
+        device,
         predecessor_option,
         str(predecessor_run),
         "--config-inventory-run",
@@ -525,6 +560,56 @@ def child_command(
             ["--guest-memory-mib", str(definition.guest_memory_mib)]
         )
     return command
+
+
+def run_batch(
+    campaign: Path,
+    definition: Definition,
+    batch: Sequence[cts.AppleMatrixShard],
+    predecessor_by_id: dict[str, Path],
+) -> tuple[dict[str, ShardEvidence], dict[str, str]]:
+    completed: dict[str, ShardEvidence] = {}
+    failures: dict[str, str] = {}
+    futures: dict[Future[ShardEvidence], cts.AppleMatrixShard] = {}
+    shard_numbers = {
+        shard.identifier: index + 1
+        for index, shard in enumerate(definition.shards)
+    }
+    with ThreadPoolExecutor(max_workers=definition.jobs) as executor:
+        for shard in batch:
+            device = shard_device(definition, shard)
+            print(
+                f"Starting {shard.identifier} "
+                f"({shard_numbers[shard.identifier]}/"
+                f"{len(definition.shards)}) on {device}",
+                flush=True,
+            )
+            future = executor.submit(
+                run_shard,
+                campaign,
+                definition,
+                shard,
+                predecessor_by_id[shard.identifier],
+                device,
+            )
+            futures[future] = shard
+        for future in as_completed(futures):
+            shard = futures[future]
+            try:
+                completed[shard.identifier] = future.result()
+                print(f"Completed {shard.identifier}", flush=True)
+            except (
+                cts.CampaignError,
+                OSError,
+                subprocess.SubprocessError,
+            ) as error:
+                failures[shard.identifier] = str(error)
+                print(
+                    f"Failed {shard.identifier}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    return completed, failures
 
 
 def adapter_run_directories(path: Path) -> list[Path]:
@@ -606,7 +691,11 @@ def validate_attempt(
     }
     artifact_root = attempt / "adapter-output"
     expected_command = child_command(
-        definition, shard, predecessor_run, artifact_root
+        definition,
+        shard,
+        predecessor_run,
+        artifact_root,
+        shard_device(definition, shard),
     )
     if (
         not isinstance(metadata, dict)
@@ -636,6 +725,7 @@ def run_shard(
     definition: Definition,
     shard: cts.AppleMatrixShard,
     predecessor_run: Path,
+    device: str,
 ) -> ShardEvidence:
     attempt = attempt_directory(campaign, shard)
     attempt.parent.mkdir(parents=True, exist_ok=True)
@@ -643,7 +733,9 @@ def run_shard(
     artifact_root = attempt / "adapter-output"
     artifact_root.mkdir()
     log_path = attempt / "runner.log"
-    command = child_command(definition, shard, predecessor_run, artifact_root)
+    command = child_command(
+        definition, shard, predecessor_run, artifact_root, device
+    )
     metadata: dict[str, Any] = {
         "schema_version": 1,
         "shard": shard.identifier,
@@ -898,7 +990,21 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--platform", choices=("simulator", "device"), required=True)
     parser.add_argument("--api", choices=cts.BASELINE_GLES_APIS, required=True)
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
-    parser.add_argument("--device", required=True)
+    parser.add_argument(
+        "--device",
+        action="append",
+        required=True,
+        help=(
+            "target UDID; repeat once per Simulator worker (device campaigns "
+            "accept exactly one)"
+        ),
+    )
+    parser.add_argument(
+        "--jobs",
+        type=cts.positive_integer,
+        default=1,
+        help="parallel Simulator shards (maximum 4; device campaigns require 1)",
+    )
     parser.add_argument(
         "--guest-memory-mib",
         type=common.device_guest_memory_mib,
@@ -923,6 +1029,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         != common.DEVICE_DEFAULT_GUEST_MEMORY_MIB
     ):
         parser.error("--guest-memory-mib is only configurable for device runs")
+    if len(set(options.device)) != len(options.device):
+        parser.error("--device values must be unique")
+    if options.platform == "simulator":
+        if options.jobs > 4:
+            parser.error("Simulator matrix parallelism is limited to 4")
+        if len(options.device) != options.jobs:
+            parser.error("Simulator matrix requires one unique --device per job")
+    elif options.jobs != 1 or len(options.device) != 1:
+        parser.error("physical-device matrices require one device and one job")
     return options
 
 
@@ -1014,28 +1129,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
         remaining = list(pending)
         while remaining and (options.keep_going or not failures):
-            shard = remaining.pop(0)
-            print(
-                f"Starting {shard.identifier} "
-                f"({len(completed) + len(failures) + 1}/"
-                f"{len(definition.shards)})",
-                flush=True,
+            batch = next_batch(definition, remaining)
+            selected = {shard.identifier for shard in batch}
+            remaining = [
+                shard for shard in remaining if shard.identifier not in selected
+            ]
+            batch_completed, batch_failures = run_batch(
+                campaign, definition, batch, predecessor_by_id
             )
-            try:
-                completed[shard.identifier] = run_shard(
-                    campaign,
-                    definition,
-                    shard,
-                    predecessor_by_id[shard.identifier],
-                )
-                print(f"Completed {shard.identifier}", flush=True)
-            except (cts.CampaignError, OSError, subprocess.SubprocessError) as error:
-                failures[shard.identifier] = str(error)
-                print(
-                    f"Failed {shard.identifier}: {error}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+            completed.update(batch_completed)
+            failures.update(batch_failures)
             existing = update_campaign(
                 campaign_path,
                 existing,

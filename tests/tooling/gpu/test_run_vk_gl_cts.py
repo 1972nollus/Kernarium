@@ -18,6 +18,7 @@ import subprocess
 import struct
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -1490,7 +1491,6 @@ OpenGL renderer string: virgl
         definition = mock.Mock(
             platform="simulator",
             page_profile="16k",
-            device="simulator-id",
             config_inventory_run=Path("/inventory/run.json"),
             app=Path("/Kernarium.app"),
             rootfs=Path("/rootfs.ext4"),
@@ -1503,12 +1503,83 @@ OpenGL renderer string: virgl
             shard,
             Path("/macos/run.json"),
             Path("/artifacts"),
+            "simulator-id",
         )
         self.assertIn("gles2-matrix-cfg00-000of001-v1", command)
         self.assertNotIn("--egl-config-index", command)
         self.assertNotIn("--fraction", command)
         self.assertNotIn("--case", command)
         self.assertEqual(command.count("--qualification"), 1)
+
+    def test_mobile_matrix_runs_four_unique_simulators_concurrently(self) -> None:
+        shards = tuple(
+            list(cts.load_apple_matrix_shards().values())[:4]
+        )
+        devices = ("simulator-0", "simulator-1", "simulator-2", "simulator-3")
+        definition = mock.Mock(shards=shards, devices=devices, jobs=4)
+        predecessors = {
+            shard.identifier: Path(f"/{shard.identifier}/run.json")
+            for shard in shards
+        }
+        barrier = threading.Barrier(4)
+        observed: list[str] = []
+        lock = threading.Lock()
+
+        def run_shard(
+            _campaign: Path,
+            _definition: object,
+            shard: cts.AppleMatrixShard,
+            _predecessor: Path,
+            device: str,
+        ) -> object:
+            with lock:
+                observed.append(device)
+            barrier.wait(timeout=5)
+            return shard
+
+        with mock.patch.object(ios_matrix, "run_shard", side_effect=run_shard):
+            completed, failures = ios_matrix.run_batch(
+                Path("/campaign"), definition, shards, predecessors
+            )
+        self.assertFalse(failures)
+        self.assertEqual(set(completed), {shard.identifier for shard in shards})
+        self.assertEqual(set(observed), set(devices))
+
+    def test_mobile_matrix_parallel_cli_is_simulator_only(self) -> None:
+        common = [
+            "--api", "gles3",
+            "--config-inventory-run", "/inventory/run.json",
+            "--predecessor-campaign", "/predecessor",
+            "--campaign-dir", "/campaign",
+            "--app", "/Kernarium.app",
+            "--rootfs", "/rootfs.ext4",
+            "--rootfs-receipt", "/receipt.json",
+        ]
+        options = ios_matrix.parse_arguments(
+            [
+                "--platform", "simulator",
+                "--jobs", "4",
+                "--device", "simulator-0",
+                "--device", "simulator-1",
+                "--device", "simulator-2",
+                "--device", "simulator-3",
+                *common,
+            ]
+        )
+        self.assertEqual(options.jobs, 4)
+        self.assertEqual(len(options.device), 4)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            ios_matrix.parse_arguments(
+                [
+                    "--platform", "device",
+                    "--jobs", "2",
+                    "--device", "ipad",
+                    "--device", "other-ipad",
+                    *common,
+                ]
+            )
 
     def test_simulator_adapter_accepts_only_campaign_ids_and_fixed_engine(self) -> None:
         stdout = io.StringIO()

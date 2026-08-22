@@ -988,14 +988,17 @@ list hash for every slice. The slicing was introduced after a complete-leaf
 process reproducibly OOM-killed the former 1.5 GiB guest and remains useful for
 bounded process lifetime. Current qualification explicitly uses 4 GiB on
 Simulator and starts at 2 GiB on the physical device, without adding swap or
-omitting a case. Run the
-Simulator campaign sequentially after its inventory and the matching complete
-macOS campaign:
+omitting a case. Run the Simulator campaign after its inventory and the
+matching complete macOS campaign. One Simulator remains the default. To run
+four shards concurrently, boot four matching Simulator devices and pass one
+unique UDID per worker:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_vk_gl_cts_matrix.py \
   --platform simulator --api gles3 --page-profile 16k \
-  --device SIMULATOR_UDID \
+  --jobs 4 \
+  --device SIMULATOR_UDID_1 --device SIMULATOR_UDID_2 \
+  --device SIMULATOR_UDID_3 --device SIMULATOR_UDID_4 \
   --config-inventory-run .build/vk-gl-cts-ios-simulator/CONFIG_RUN/run.json \
   --predecessor-campaign .build/vk-gl-cts/matrix/MACOS_CAMPAIGN \
   --campaign-dir .build/vk-gl-cts-ios-simulator-matrix/CAMPAIGN \
@@ -1005,8 +1008,13 @@ python3 -B tests/integration/gpu/run_ios_vk_gl_cts_matrix.py \
 ```
 
 The campaign validates every complete macOS config predecessor before creating
-its first attempt. Each compiled ID boots one fresh guest, runs its immutable
-full leaf or signed slice, exports artifacts, and shuts down. Final aggregation
+its first attempt. Simulator shards are deterministically assigned across the
+frozen unique-device list, with at most one active guest per Simulator and no
+more than four workers. A batch failure prevents a later batch from starting
+unless `--keep-going` was explicitly selected; every already-started attempt
+remains permanent. Physical-device campaigns require one device and one worker.
+Each compiled ID boots one fresh guest, runs its immutable full leaf or signed
+slice, exports artifacts, and shuts down. Final aggregation
 interleaves every GLES 3 slice back into the exact frozen 6,498-case order for
 each config, rejects a duplicate or missing case, and verifies the reconstructed
 leaf hash. An attempt directory is never removed or retried; interruption,
