@@ -5,10 +5,10 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 26 ACK-based topic commits and resolves to the
+The checked series contains 28 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the final ten are ACK-only local compatibility
-topics discovered by compiling the 16 KiB Android product. Mainline patch
+applicable Darwin UML behavior; the final twelve are ACK-only local topics
+discovered by compiling and booting the 16 KiB Android product. Mainline patch
 bytes are never installed as this line's source of truth.
 
 The Android producer is owned by
@@ -37,6 +37,17 @@ IRQ-enabled kernel spin boundary, recomputing the logical CPU after IPI work in
 case the Linux task migrated. A four-vCPU gadgets run advanced continuously to
 guest second 198 without an RCU stall; the former kernel reproduced the stall
 at guest second 56–58.
+
+Topic 28 implements `arch_irq_work_raise()`, which UML never provided. The
+generic weak stub left queued work waiting for the next timer tick, and
+`bpf_mem_alloc` prefills exactly one element per CPU once the unit size exceeds
+256 bytes and refills the rest from irq work. A non-preallocated BPF hash map
+with a value larger than a couple of hundred bytes therefore accepted one
+insert per CPU per tick, which made `ConnectivityService` fail its
+1024-byte-value uid permission chunk map with `-ENOMEM` and crash-loop
+`system_server`. The topic publishes a self-directed IPI vector that the
+cooperative drain already reaches long before the tick, and leaves
+`arch_irq_work_has_interrupt()` false so the tick keeps its backstop.
 
 Topics 25 and 26 cover longer non-spinning kernel retry paths. Topic 25 adds
 explicit PREEMPT_NONE quiescent boundaries after fault-enabled uaccess and
