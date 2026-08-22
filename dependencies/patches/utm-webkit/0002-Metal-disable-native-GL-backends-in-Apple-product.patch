@@ -1,7 +1,7 @@
 From 2329d7700522b5c35c0d9bb8791e0375f569445b Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 22:48:35 +0900
-Subject: [PATCH 2/7] Metal: disable native GL backends in Apple product
+Subject: [PATCH 2/9] Metal: disable native GL backends in Apple product
 
 ---
  .../ANGLE/Configurations/BaseTarget.xcconfig           | 10 ++++++----

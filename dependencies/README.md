@@ -113,6 +113,14 @@ selection. This preserves exact selected bit patterns, including subnormal
 float values used to carry integer bits, instead of passing them through
 arithmetic interpolation.
 
+For the maintained arm64 Simulator slice, the series also enables Metal
+swizzled texture views even though Simulator omits the ordinary GPU-family
+flags. This preserves GLES legacy alpha, luminance, and depth sampling. Its
+R/RG/RGBA 32-bit-float filterability follows Metal's device query on hardware
+and the validated native Simulator path; the latter reports the query as false
+but successfully executes linear filtering. Keep both exceptions scoped to the
+arm64 Simulator product rather than generalizing them to other architectures.
+
 The maintained UTM virglrenderer series also keeps the GLES format inventory
 truthful: it does not advertise `VIRGL_FORMAT_Z32_UNORM`, whose GLES fallback
 would otherwise be only `GL_DEPTH_COMPONENT24`. Genuine floating-point

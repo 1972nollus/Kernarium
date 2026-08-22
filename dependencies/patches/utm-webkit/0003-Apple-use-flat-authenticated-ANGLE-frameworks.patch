@@ -1,7 +1,7 @@
 From 51b4ec4a2636946d90c1d60a51419ad80ffebe9c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 23:47:57 +0900
-Subject: [PATCH 3/7] Apple: use flat authenticated ANGLE frameworks
+Subject: [PATCH 3/9] Apple: use flat authenticated ANGLE frameworks
 
 ---
  Source/ThirdParty/ANGLE/src/common/system_utils.cpp   | 8 ++++----
