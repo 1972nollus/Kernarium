@@ -329,7 +329,12 @@ repairs. The Simulator run at
 `.build/vk-gl-cts-ios-simulator/20260821-050029-52429-16k-gles2-identity-sentinel-v1`
 failed `KHR-GLES2.core.internalformat.texture2d.rgba_unsigned_byte_rgba` with
 an image-comparison difference after that case had passed on macOS. That
-mobile-only finding remains open for the complete Simulator matrix.
+finding was repaired in the common ANGLE/Metal path rather than waived. The
+final 4,096 MiB Simulator campaign
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-ce8cfa0f-apple8-restored-4g`
+subsequently passed the full 20 x 473 product: 8,760 `Pass`, 700
+Khronos-permitted `NotSupported`, no disallowed result, and an independent
+verify-only reconstruction of all 9,460 executions.
 
 A normal 16 KiB iPhone 17 Pro Max Simulator boot separately selected
 `KernariumRuntime_6_18_41_16K`, emitted the hardware ANGLE/Metal marker and

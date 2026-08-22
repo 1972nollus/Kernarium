@@ -257,6 +257,33 @@ and zero CPU fallback at
 `.build/vk-gl-cts-ios-device-probe/float32-force-56b25e98/20260822-154345-73520-16k-gles3-matrix-cfg00-002of004-v1`.
 These are focused closures, not complete mobile matrix results.
 
+The final 4,096 MiB Simulator GLES 2 campaign at
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-ce8cfa0f-apple8-restored-4g`
+then completed the current 20-configuration product. Its exact 20 x 473
+matrix contains 9,460 executions: 8,760 `Pass`, 700 Khronos-permitted
+`NotSupported`, and no failure, warning, waiver, missing case, incomplete
+shard, dirty shutdown, or retry. A separate verify-only pass reparsed every
+retained QPA and console, rechecked the signed inputs, reconstructed every
+ordered leaf, and reported
+`Verified 9460 gles2 case executions in 20 signed simulator shards`. Every
+fresh guest used Gadgets, the common direct ANGLE/Metal presentation path,
+4,096 MiB, and the sealed ext4 lower below disposable OverlayFS state. The
+complete Simulator GLES 3 and both connected-iPad matrices remain open.
+
+The rebuilt normally signed physical-device app then produced final GLES 2
+and GLES 3 configuration inventories at
+`.build/vk-gl-cts-ios-device-restored-final/20260822-180049-69193-16k-gles2-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-device-restored-final/20260822-180246-70898-16k-gles3-config-inventory-v1`.
+Both match their 4,096 MiB Simulator predecessors at all 20 tuples and the
+canonical digest, run the guest at 2,048 MiB, return zero, shut down cleanly,
+and report zero CPU fallback. The new public marker also recorded `serious`
+thermal state at both ends because these inventory boots immediately followed
+the long diagnostic device campaign. They are valid configuration inputs but
+not thermal acceptance evidence; the final immutable device matrices are
+deliberately deferred until the iPad cools. There was no OOM, so no RAM
+reduction is authorized.
+
 Phase 2 has completed the common host implementation, dependency, unit, macOS
 product, mobile product, and packaging portions. A focused 16 KiB macOS guest
 diagnostic proves real DRM/Xwayland/virgl, natural desktop GL 2.1 and GLES 3.0,
@@ -1106,7 +1133,10 @@ shown to force all shadow comparisons to `Never`. The exact repaired GLES 3
 cases now `Pass` and zero CPU fallback.
 The seven interleaved performance pairs,
 connected-iPad thermal and sustained lifecycle baselines, complete sliced
-Simulator GLES 3 matrix, and both connected-iPad matrices remain missing.
+Simulator GLES 3 matrix, and both connected-iPad matrices remain missing. The
+final 4 GiB Simulator GLES 2 matrix now passes all 9,460 executions as recorded
+above; it closes that API on Simulator without substituting for any remaining
+gate.
 The former global all-package caselist attempt still
 fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
 GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
@@ -1736,8 +1766,10 @@ disallowed status. Fixed generated signed-app inventories subsequently proved
 that the iOS 26.5 Simulator exposes the same exact 20 config tuples and digest
 for both APIs while using Gadgets, direct ANGLE/Metal presentation, and the
 sealed read-only lower; both runs returned zero with no dropped or
-CPU-fallback frames. The current Simulator GLES 2 matrix also completes the
-same 9,460 executions and aggregate status totals. A fixed 100-ID schema-2
+CPU-fallback frames. The current Simulator GLES 2 campaign at
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-ce8cfa0f-apple8-restored-4g`
+also completes the same 9,460 executions and aggregate status totals, with an
+independent 20-shard verify-only reconstruction. A fixed 100-ID schema-2
 authority now retains that full GLES 2 process geometry while splitting GLES 3
 into four signed bounded processes per config after complete-leaf Simulator
 runs reproducibly exhausted the former fixed 1.5 GiB guest. Current adapters

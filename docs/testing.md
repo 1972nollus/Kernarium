@@ -1100,7 +1100,24 @@ With the rebuilt normally signed app, the exact same device slice passed all
 1,624 executions with 1,563 `Pass`, 61 permitted `NotSupported`, clean
 shutdown, and zero CPU fallback at
 `.build/vk-gl-cts-ios-device-probe/float32-force-56b25e98/20260822-154345-73520-16k-gles3-matrix-cfg00-002of004-v1`.
-Complete fresh-policy case matrices remain outstanding on Simulator/iPad.
+The final 4,096 MiB Simulator GLES 2 campaign at
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-ce8cfa0f-apple8-restored-4g`
+subsequently completed all 20 signed shards and all 9,460 executions: 8,760
+`Pass`, 700 permitted `NotSupported`, and no disallowed result. Its independent
+reconstruction reported
+`Verified 9460 gles2 case executions in 20 signed simulator shards`.
+The complete fresh-policy Simulator GLES 3 and both connected-iPad case
+matrices remain outstanding.
+Fresh final-app physical-device inventories at
+`.build/vk-gl-cts-ios-device-restored-final/20260822-180049-69193-16k-gles2-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-device-restored-final/20260822-180246-70898-16k-gles3-config-inventory-v1`
+match the corresponding 4,096 MiB Simulator inventories at all 20 tuples and
+canonical digest. Both 2,048 MiB guests returned zero, shut down cleanly, and
+reported zero CPU fallback. Because they immediately followed the long device
+diagnostic, their public thermal start and finish markers both read `serious`;
+do not start a final immutable matrix from that state. This was not an OOM and
+does not authorize a memory decrement.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
@@ -1109,7 +1126,8 @@ transcript must contain its exact backend marker and any CGL marker is fatal.
 identity lacks an authoritative CTS build receipt. The checked ext4 derivative
 has its own authenticated build receipt and is the required input for future
 qualification runs. Its 16 KiB macOS GLES 2/GLES 3 cross-products pass;
-complete Simulator/iPad matrices remain. Its scoped display-backed GLES
+Simulator GLES 2 now passes, while Simulator GLES 3 and both iPad matrices
+remain. Its scoped display-backed GLES
 2/GLES 3 hierarchy inventory is complete and frozen; the separate global
 all-package diagnostic is not a qualification input because it includes an
 ES-on-desktop-GL 4.5 package outside the supported profile. See
