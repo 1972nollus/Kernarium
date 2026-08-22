@@ -83,8 +83,9 @@ historical sections as history.
   such backing and must not claim zswap as additional guest memory.
 - When `mem=` or `ncpus=` is absent, the standalone macOS app defaults to
   8 GiB and 10 vCPUs. Kernarium retains its separate iOS application policy:
-  1.5 GiB and every processor reported by `NSProcessInfo` on both Simulator
-  and physical devices.
+  4 GiB on Simulator, 2 GiB on physical devices, and every processor reported
+  by `NSProcessInfo`. Physical-device qualification may reduce RAM only after
+  a confirmed emulator OOM and only in 64 MiB steps.
 - Kernarium defaults to mapping safe-area points directly to guest pixels and
   advertising 160 DPI through Virtio-GPU EDID. Its optional Retina mode uses
   safe-area points times `nativeScale` and advertises `160 * nativeScale` DPI;
@@ -270,7 +271,8 @@ derives the ELF and support paths from its manifest.
 - External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
   A64 campaigns are opt-in. Do not silently add them to ordinary unit
   acceptance.
-- Kernarium's current physical-iOS acceptance guest has 1.5 GiB of RAM. Do not
+- Kernarium's physical-iOS acceptance guest starts with 2 GiB of RAM. Reduce it
+  only after a confirmed emulator OOM, in 64 MiB steps. Do not
   run WebGL Aquarium on the physical device or add disk-backed swap, Chromium
   storage redirection, or another memory workaround to force that workload.
   Use the documented normal desktop boot on the connected iPad; the historical

@@ -1,30 +1,38 @@
 # Refactor progress
 
-## 2026-08-22: fixed signed-app GLES matrix authority
+## 2026-08-22: bounded signed-app GLES matrix authority
 
-- Added checked schema-1 authority
+- Added checked schema-2 authority
   `tests/integration/gpu/vk_gl_cts_apple_matrix.json`. It freezes the truthful
-  20-config digest and ordered IDs/surfaces plus one full official leaf per
-  config for GLES 2 and GLES 3. The generator expands this to 40 immutable
-  app campaign IDs; no app environment can supply a config ID, fraction, case,
-  seed, runner argument, or engine. Schema 1 deliberately rejects fractional
-  shards, so every selected-list SHA must equal the frozen leaf SHA.
+  20-config digest and ordered IDs/surfaces plus every official GLES 2 and
+  GLES 3 leaf case. The generator expands this to 100 immutable app campaign
+  IDs: one full 473-case GLES 2 process and four hash-pinned interleaved GLES 3
+  process slices per config. No app environment can supply a config ID,
+  fraction, case, seed, runner argument, or engine. Aggregation reconstructs
+  each exact 6,498-case GLES 3 leaf and verifies its frozen hash.
 - The Simulator and device adapters now require `--qualification`, the checked
   ext4 derivative, the matching product config inventory, and the exact prior
-  product's full-leaf shard before running one matrix ID. They reparse the QPA
+  product's corresponding evidence before running one matrix ID. They reparse the QPA
   and accept only the successful statuses frozen by the Khronos runner oracle,
   rather than incorrectly requiring every conformant skip to be `Pass`.
-  `run_ios_vk_gl_cts_matrix.py` schedules the 20 compiled IDs sequentially,
+  `run_ios_vk_gl_cts_matrix.py` schedules the compiled IDs sequentially,
   retains every attempt permanently, rejects retry after an incomplete or
   failed attempt, revalidates all predecessor artifacts, and independently
   reconstructs the complete config-by-leaf aggregate.
+- Kernarium now defaults to 4 GiB on Simulator and 2 GiB on physical devices;
+  CTS launchers export and record those values explicitly. Device campaigns
+  accept only 512--2,048 MiB in 64 MiB steps: start at 2,048 MiB and create a
+  new immutable campaign 64 MiB lower only after a confirmed emulator OOM.
+  Simulator predecessors captured under another memory policy fail closed.
 - Both mobile Apple-GPU prefixes reverified; all four runtime slices rebuilt
   with passing architecture audits; four-XCFramework packaging and the Debug
   Simulator app build passed. A negative preflight rejected the stale app, and
   the rebuilt app then passed the complete read-only GLES 2 preflight across
   its embedded IDs, sealed rootfs, signed inventory, and all 20 macOS
-  predecessors. The registered safety suite passes 46 cases. No mobile matrix
-  case execution is claimed by this infrastructure checkpoint.
+  predecessors. The registered safety suite passes 52 cases. The former
+  one-process GLES 3 layout OOM-killed the 1.5 GiB guest; the first bounded
+  Simulator slice completed all 1,625 cases without OOM but exposed eight
+  depth/stencil texture-repeat failures that remain under repair.
 
 ## 2026-08-22: signed Simulator GLES configuration inventories
 

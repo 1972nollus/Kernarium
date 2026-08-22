@@ -257,6 +257,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     common.add_rootfs_arguments(parser)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
     parser.add_argument("--guest-timeout", type=cts.positive_integer)
+    parser.add_argument(
+        "--guest-memory-mib",
+        type=common.device_guest_memory_mib,
+        default=common.DEVICE_DEFAULT_GUEST_MEMORY_MIB,
+        help=(
+            "physical-device guest RAM; start at 2048 and reduce only in "
+            "64 MiB steps after a confirmed emulator OOM"
+        ),
+    )
     parser.add_argument("--qualification", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
@@ -385,8 +394,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         matrix_inventory_metadata = None
         matrix_inventory_configs = None
+    if (
+        simulator_metadata.get("guest_memory_mib")
+        != common.SIMULATOR_GUEST_MEMORY_MIB
+    ):
+        raise cts.CampaignError(
+            "physical campaign requires 4096 MiB Simulator evidence"
+        )
     launch_environment = {
         "DEVICECTL_CHILD_KERNARIUM_CTS_CAMPAIGN": identifier,
+        "DEVICECTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(
+            options.guest_memory_mib
+        ),
         "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
         "DEVICECTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "DEVICECTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
@@ -411,6 +430,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     ),
                     "device": options.device,
                     "page_profile": options.page_profile,
+                    "guest_memory_mib": options.guest_memory_mib,
                     "rootfs_type": rootfs_contract.filesystem_type,
                     "rootfs_sha256": rootfs_contract.sha256,
                     "simulator_run": str(simulator_run),
@@ -464,6 +484,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs_type": rootfs_contract.filesystem_type,
         "rootfs_sha256": rootfs_contract.sha256,
         "page_profile": options.page_profile,
+        "guest_memory_mib": options.guest_memory_mib,
         "engine": "gadgets",
         "mode": (
             "campaign"

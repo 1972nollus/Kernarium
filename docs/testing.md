@@ -136,10 +136,10 @@ ctest --preset instruction-evidence-4k
 application that embeds separate versioned runtime frameworks for the
 maintained 4 KiB and 16 KiB UML kernels. It defaults to 16 KiB, loads exactly
 one saved page profile for the process lifetime, and boots the selected
-`.erofs` image from Documents with 1.5 GiB of guest memory by default. Device
-and Simulator both default to all processors reported by `NSProcessInfo`. The
-settings sheet persists 1 through that processor count, 512 MiB through 4 GiB
-of RAM in 128 MiB steps, a 1--32 GiB overlay size, a Documents rootfs filename,
+`.erofs` image from Documents with 4 GiB on Simulator and 2 GiB on physical
+devices by default. Both default to all processors reported by
+`NSProcessInfo`. The settings sheet persists 1 through that processor count,
+512 MiB through 4 GiB of RAM in 64 MiB steps, a 1--32 GiB overlay size, a Documents rootfs filename,
 the 4 KiB or 16 KiB kernel page profile, and Retina mode; changes are
 snapshotted on the next app launch. Retina mode is off by default.
 SwiftUI lays the `ContentView` Metal view out inside the safe area. Point mode
@@ -945,10 +945,17 @@ the macOS QPA and requires exact ordered equality of config ID, supported
 surface types, and selected surface type. The device adapter applies the same
 fail-closed rule to its matching Simulator inventory before it may launch.
 
-The complete signed matrix uses the checked schema-1 manifest; it exposes no
-runtime config/fraction/case selector and fixes one full official leaf for each
-of the 20 configs. Run the Simulator campaign sequentially after its inventory
-and the matching complete macOS campaign:
+The complete signed matrix uses the checked schema-2 manifest; it exposes no
+runtime config/fraction/case selector. GLES 2 fixes one full 473-case process
+for each of the 20 configs. GLES 3 fixes four interleaved process slices for
+each config, with 1,625, 1,625, 1,624, and 1,624 cases and a signed selected-
+list hash for every slice. The slicing was introduced after a complete-leaf
+process reproducibly OOM-killed the former 1.5 GiB guest and remains useful for
+bounded process lifetime. Current qualification explicitly uses 4 GiB on
+Simulator and starts at 2 GiB on the physical device, without adding swap or
+omitting a case. Run the
+Simulator campaign sequentially after its inventory and the matching complete
+macOS campaign:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_vk_gl_cts_matrix.py \
@@ -962,16 +969,25 @@ python3 -B tests/integration/gpu/run_ios_vk_gl_cts_matrix.py \
   --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
 ```
 
-The campaign validates every macOS predecessor before creating its first
-attempt. Each compiled ID boots one fresh guest, runs the full frozen leaf,
-exports artifacts, and shuts down. An attempt directory is never removed or
-retried; interruption, incomplete output, a disallowed runner status, or a
-dirty shutdown permanently fails that campaign directory. Use the identical
-command plus `--verify-only` for independent reconstruction after completion.
+The campaign validates every complete macOS config predecessor before creating
+its first attempt. Each compiled ID boots one fresh guest, runs its immutable
+full leaf or signed slice, exports artifacts, and shuts down. Final aggregation
+interleaves every GLES 3 slice back into the exact frozen 6,498-case order for
+each config, rejects a duplicate or missing case, and verifies the reconstructed
+leaf hash. An attempt directory is never removed or retried; interruption,
+incomplete output, a disallowed runner status, or a dirty shutdown permanently
+fails that campaign directory. Use the identical command plus `--verify-only`
+for independent reconstruction after completion.
 For the connected iPad, first run its fixed config inventory from the matching
 Simulator inventory, then use `--platform device`, the normally signed device
 app, and the passed Simulator matrix directory as `--predecessor-campaign`.
-The device orchestrator applies the same 20-ID and single-attempt contract.
+The device orchestrator applies the same signed 20-shard GLES 2 or 80-shard
+GLES 3 single-attempt contract. Its default is `--guest-memory-mib 2048`. If
+and only if the emulator is OOM-terminated on the physical device, begin a new
+immutable campaign and reduce that value by exactly 64 MiB; repeat one 64 MiB
+step per confirmed OOM until the emulator remains alive. The Simulator adapter
+always fixes and records 4,096 MiB, and device evidence cannot use a
+Simulator predecessor captured with another memory value.
 
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,

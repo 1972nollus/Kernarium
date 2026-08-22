@@ -257,6 +257,7 @@ class AppleMatrixShard:
     oracle: RunnerOracle
     shard_timeout: int
     manifest_sha256: str
+    selected_sha256: str
 
     @property
     def leaf(self) -> LeafIdentity:
@@ -1158,7 +1159,7 @@ def load_apple_matrix_shards(
         "apis",
     }:
         raise CampaignError("invalid Apple CTS matrix document")
-    if value["schema_version"] != 1:
+    if value["schema_version"] != 2:
         raise CampaignError("unsupported Apple CTS matrix schema")
 
     inventory = value["config_inventory"]
@@ -1222,14 +1223,25 @@ def load_apple_matrix_shards(
         row = api_rows[api]
         if not isinstance(row, dict) or set(row) != {
             "fraction_count",
+            "selected_sha256",
             "shard_timeout",
         }:
             raise CampaignError(f"invalid Apple CTS matrix row for {api}")
         fraction_count = row["fraction_count"]
+        selected_sha256 = row["selected_sha256"]
         shard_timeout = row["shard_timeout"]
+        leaf = leaves[api]
         if (
             type(fraction_count) is not int
-            or fraction_count != 1
+            or fraction_count < 1
+            or fraction_count > min(64, leaf.case_count)
+            or not isinstance(selected_sha256, list)
+            or len(selected_sha256) != fraction_count
+            or any(
+                not isinstance(digest, str)
+                or SHA256.fullmatch(digest) is None
+                for digest in selected_sha256
+            )
             or type(shard_timeout) is not int
             or shard_timeout < 1
             or shard_timeout > 7200
@@ -1237,7 +1249,6 @@ def load_apple_matrix_shards(
             raise CampaignError(
                 f"invalid Apple CTS matrix bounds for {api}"
             )
-        leaf = leaves[api]
         for config_index, config in enumerate(configs):
             for fraction_index in range(fraction_count):
                 identifier = (
@@ -1271,8 +1282,12 @@ def load_apple_matrix_shards(
                     oracle=oracle,
                     shard_timeout=shard_timeout,
                     manifest_sha256=manifest_sha256,
+                    selected_sha256=selected_sha256[fraction_index],
                 )
-    if len(result) != len(configs) * len(BASELINE_GLES_APIS):
+    expected_shards = len(configs) * sum(
+        row["fraction_count"] for row in api_rows.values()
+    )
+    if len(result) != expected_shards:
         raise CampaignError("Apple CTS matrix generated duplicate shards")
     return result
 

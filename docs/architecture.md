@@ -93,10 +93,12 @@ same guest range, RAM-scaled window derivation, relocation, and exclusion-hole
 handling, but places that window at 96 TiB rather than inside iOS's constrained
 sub-62 GiB host range.
 Product policy still lets
-macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 1.5 GiB and all
-processors reported by iOS; the app can persist a smaller launch configuration
-within its supported settings ranges. The common layout derives the appropriate
-native window from each guest's RAM. Guest page size remains a compile-time
+macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 4 GiB on
+Simulator, 2 GiB on physical devices, and all processors reported by iOS; the
+app can persist another launch configuration within its supported settings
+ranges. Physical-device qualification reduces RAM only after a confirmed OOM
+and only in 64 MiB steps. The common layout derives the appropriate native
+window from each guest's RAM. Guest page size remains a compile-time
 kernel and host-runtime choice, so the two profiles share architecture and
 source but not a binary framework or kernel artifact. Kernarium defaults to
 16 KiB and persists a 4 KiB compatibility selection for the next process

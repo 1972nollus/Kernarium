@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -21,6 +22,10 @@ import run_vk_gl_cts as cts
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUNDLE_ID = "com.imxieyi.Kernarium"
+SIMULATOR_GUEST_MEMORY_MIB = 4096
+DEVICE_DEFAULT_GUEST_MEMORY_MIB = 2048
+DEVICE_MINIMUM_GUEST_MEMORY_MIB = 512
+DEVICE_GUEST_MEMORY_STEP_MIB = 64
 DERIVATIVE_RECEIPT_PATH = Path(__file__).with_name(
     "vk_gl_cts_derivative_rootfs.json"
 )
@@ -31,6 +36,24 @@ REQUIRED_SHUTDOWN_MARKERS = (
     "Kernarium: runtime returned 0",
 )
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
+
+
+def device_guest_memory_mib(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "guest memory must be an integer number of MiB"
+        ) from error
+    if (
+        parsed < DEVICE_MINIMUM_GUEST_MEMORY_MIB
+        or parsed > DEVICE_DEFAULT_GUEST_MEMORY_MIB
+        or parsed % DEVICE_GUEST_MEMORY_STEP_MIB != 0
+    ):
+        raise argparse.ArgumentTypeError(
+            "guest memory must be 512..2048 MiB in 64 MiB steps"
+        )
+    return parsed
 
 
 def add_rootfs_arguments(parser: argparse.ArgumentParser) -> None:
@@ -340,13 +363,9 @@ def parse_matrix_artifacts(
     )
     cts.validate_renderer_probe(renderer_text, guest_page_size)
     selection = shard.selection
-    if selection.fraction_index != 0 or selection.fraction_count != 1:
+    if hashlib.sha256(selected_payload).hexdigest() != shard.selected_sha256:
         raise cts.CampaignError(
-            "signed matrix schema does not describe a full-leaf shard"
-        )
-    if hashlib.sha256(selected_payload).hexdigest() != shard.leaf.sha256:
-        raise cts.CampaignError(
-            "matrix selected-list identity differs from the frozen leaf"
+            "matrix selected-list identity differs from the signed fraction"
         )
     selected_cases = cts.parse_case_list(selected_text)
     if len(selected_cases) != selection.expected_count:
@@ -472,6 +491,24 @@ def validate_macos_matrix_evidence(
             "matching macOS matrix GPU evidence changed"
         )
     return metadata
+
+
+def validate_macos_full_matrix_evidence(
+    path: Path,
+    shard: cts.AppleMatrixShard,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> dict[str, Any]:
+    """Validate a complete config run as predecessor for a mobile fraction."""
+    full_selection = cts.Selection(shard.leaf, (), 0, 1)
+    full_shard = replace(
+        shard,
+        matrix=replace(shard.matrix, selection=full_selection),
+        selected_sha256=shard.leaf.sha256,
+    )
+    return validate_macos_matrix_evidence(
+        path, full_shard, page_profile, rootfs_contract
+    )
 
 
 def wait_for_runtime(

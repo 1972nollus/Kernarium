@@ -24,9 +24,13 @@ struct EmulatorConfiguration: Equatable {
     static let overlaySizeEnvironmentKey = "KERNARIUM_OVERLAY_SIZE_GIB"
     static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
     static let guestMemoryRangeMiB = 512...4096
-    static let guestMemoryStepMiB = 128
+    static let guestMemoryStepMiB = 64
     static let overlaySizeRangeGiB = 1...32
-    static let defaultGuestMemoryMiB = 1536
+#if targetEnvironment(simulator)
+    static let defaultGuestMemoryMiB = 4096
+#else
+    static let defaultGuestMemoryMiB = 2048
+#endif
     static let defaultOverlaySizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB
     static let defaultRetinaMode = false

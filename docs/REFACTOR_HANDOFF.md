@@ -75,9 +75,10 @@ identity, clean shutdown, and zero CPU fallback. None of the three diagnostic
 findings discovered while constructing those bounded sets was waived. The
 complete macOS matrix now classifies the depth-buffer case as 15 `Pass` plus
 five permitted `NotSupported` results on no-depth configurations, and the
-repaired transform-feedback query passes all 20 configurations. The
-Simulator-only GLES 2 texture image-comparison failure remains open for the
-mobile matrix. Exact paths and hashes are indexed in
+repaired transform-feedback query passes all 20 configurations. The former
+Simulator-only GLES 2 texture image-comparison failures were later repaired by
+truthful Simulator swizzle and 32-bit-float-filter support and the complete
+Simulator GLES 2 matrix passed. Exact paths and hashes are indexed in
 `docs/refactor-evidence.md`. Predecessor validation now
 reparses the QPA and rechecks campaign, leaf, seed, selected-list, renderer,
 capability, and frame evidence before launching the next product.
@@ -186,18 +187,43 @@ gates remain open. The original image also lacks a build receipt, so future
 qualification must use the checked derivative. Phase 3 and later profile work
 must not start until the lower shared baseline is measured and qualified.
 
-The next mobile gate now has a fixed signed authority rather than a generic
-selector. Checked schema-1 manifest `vk_gl_cts_apple_matrix.json` expands to
-40 compiled IDs: one complete frozen GLES 2 or GLES 3 leaf for each of the 20
-truthful configs. It rejects fractions and owns the exact must-pass XML runner
-arguments, seed, timeout, config tuple, config digest, runner oracle, and leaf
-identity. Both mobile adapters require the authenticated derivative,
-qualification mode, their matching signed inventory, and the exact prior
-product shard. `run_ios_vk_gl_cts_matrix.py` preserves one immutable attempt
-per fresh guest and independently aggregates all 20. All four runtimes,
-packaging, the Debug Simulator app, architecture audits, and 46 focused safety
-tests pass; a full predecessor/app/rootfs read-only preflight also passes. No
-complete mobile case matrix is claimed until those campaigns execute.
+The signed Simulator GLES 2 matrix subsequently completed all 9,460 current
+executions at
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-2275c9b4-full`: 8,760
+`Pass`, 700 permitted `NotSupported`, no disallowed status, and exact agreement
+with the macOS aggregate. Before that full run, UTM WebKit topics `b2710939ab`
+and `cab62532b4` enabled arm64-Simulator texture swizzles and truthful 32-bit
+float filtering after focused native-Metal and CTS diagnostics proved both
+features work despite the Simulator's missing GPU-family/property reports.
+Those changes repaired all 25 config-ID-1 GLES 2 texture failures without a
+guest change or waiver.
+
+The original signed GLES 3 layout used one complete 6,498-case CTS process per
+config. Its first two Simulator configs were reproducibly terminated by the
+guest OOM killer after 2,255 passing results, with `glcts` at 894 and 874 MiB
+RSS and total anonymous memory exhausting the fixed 1.5 GiB guest. This was a
+qualification-process lifetime defect, not a CTS result or permission to add
+swap or raise the product default; both incomplete attempts remain preserved
+under `.build/vk-gl-cts-ios-simulator-matrix/gles3-16k-2275c9b4-full`.
+
+Checked schema-2 `vk_gl_cts_apple_matrix.json` therefore expands to 100
+compiled IDs: one full GLES 2 leaf per config and four deterministic GLES 3
+slices per config. Each GLES 3 slice has 1,625, 1,625, 1,624, or 1,624 cases
+and a signed selected-list digest derived from the authenticated complete
+macOS leaf. The mobile aggregate reconstructs the original case order for
+every config and requires the exact frozen leaf hash, so a missing, duplicate,
+or reordered case fails closed. Simulator qualification accepts the existing
+complete passing macOS config run as the stronger predecessor for all four
+slices; connected-device qualification still requires the exact matching
+passing Simulator slice. Both mobile adapters retain the authenticated
+derivative, signed inventory, fixed Gadgets engine, immutable-attempt, and
+clean-shutdown requirements. Current source now makes the memory policy
+explicit: 4,096 MiB on Simulator and 2,048 MiB initially on a physical device.
+The device adapter accepts only 64 MiB decrements after a confirmed emulator
+OOM, and every run records the exact value. Existing 1.5 GiB inventories are
+therefore historical inputs and must be recaptured before the current mobile
+matrices. The rebuilt-app and complete sliced Simulator/iPad campaigns remain
+the next gate.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

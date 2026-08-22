@@ -67,9 +67,9 @@ Kernarium's network callback is the ordinary SLiRP provider compiled against
 the private iOS GLib/libslirp prefix. The application disables the UIKit idle
 timer while the managed guest run is active and restores it when that run
 finishes. Both iOS products default to all processors reported by
-`NSProcessInfo` and 1.5 GiB
-of guest RAM. The settings sheet can persist one through that processor count,
-512 MiB through 4 GiB of RAM in 128 MiB steps, a 1--32 GiB overlay image, the
+`NSProcessInfo`; Simulator defaults to 4 GiB of guest RAM and physical devices
+default to 2 GiB. The settings sheet can persist one through that processor
+count, 512 MiB through 4 GiB of RAM in 64 MiB steps, a 1--32 GiB overlay image, the
 selected `.erofs` filename from Documents, and either a 4 KiB or 16 KiB kernel
 page profile, plus Retina mode; a saved configuration is snapshotted on the
 next app launch. 16 KiB is the default kernel profile and Retina is off by
@@ -140,9 +140,9 @@ low host range. Its
 8 GiB default derives a 1 GiB auxiliary allowance and a 9 GiB active native
 window.
 
-At the 1.5 GiB Kernarium default, the direct map is 1.5 GiB and its
-one-eighth auxiliary allowance is 192 MiB, so the active iOS native window is
-60.3125--62 GiB.
+At the 4 GiB Simulator default, the one-eighth auxiliary allowance is 512 MiB
+and the active native window is 57.5--62 GiB. At the 2 GiB physical-device
+default, the allowance is 256 MiB and the active window is 59.75--62 GiB.
 
 Darwin schedules stackful Linux task contexts on exactly one persistent host
 carrier per configured guest CPU, including vCPU0. Task creation initializes a

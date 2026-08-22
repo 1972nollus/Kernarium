@@ -218,8 +218,9 @@ Simulator bias it so the active native window ends at the physical-iOS 62 GiB
 ceiling; macOS biases the same image to a 96 TiB base. The window contains
 exactly the RAM-sized direct map plus a
 page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
-Kernarium's 1.5 GiB default therefore receives exactly 192 MiB of auxiliary
-address capacity and uses the 60.3125--62 GiB active window. The standalone
+Kernarium's 4 GiB Simulator default receives 512 MiB of auxiliary address
+capacity and uses the 57.5--62 GiB active window; its 2 GiB physical-device
+default receives 256 MiB and uses 59.75--62 GiB. The standalone
 macOS app defaults to 8 GiB and 10 vCPUs; its 1 GiB auxiliary allowance gives
 it a 9 GiB active window beginning at 96 TiB. The kernel derives the hole
 endpoint from its relocated image. macOS and iOS therefore use the same exact

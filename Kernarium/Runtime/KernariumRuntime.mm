@@ -853,7 +853,7 @@ int runtimeRun(
         if (guestProcessorCount == 0 ||
             guestProcessorCount > maximumGuestProcessorCount ||
             guestMemoryMiB < 512U || guestMemoryMiB > 4096U ||
-            guestMemoryMiB % 128U != 0) {
+            guestMemoryMiB % 64U != 0) {
             std::fputs(
                 "Kernarium: invalid guest CPU or memory configuration\n",
                 stderr);

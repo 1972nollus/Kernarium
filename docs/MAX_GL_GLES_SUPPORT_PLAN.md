@@ -387,9 +387,10 @@ guest application
 The following are non-negotiable:
 
 1. iOS is the primary product. Renderer and protocol choices must satisfy iOS
-   public-API, signing, sandbox, lifecycle, and 1.5 GiB memory constraints
-   first. macOS is the fast development host for that design and may not add
-   desktop-only graphics assumptions.
+   public-API, signing, sandbox, lifecycle, and current memory constraints
+   first: 4 GiB on Simulator and 2 GiB initially on physical devices. macOS is
+   the fast development host for that design and may not add desktop-only
+   graphics assumptions.
 2. Only guest userspace is externally constrained. `rootfs.erofs` and its
    installed guest userspace are fixed inputs to this plan. Use the exact Mesa,
    libdrm, CTS executables/resources, WSI support, and desktop packages already
@@ -434,8 +435,9 @@ The following are non-negotiable:
 9. Report macOS, Simulator, and connected iPad separately. macOS is the first
    development stage, Simulator is the required iOS validation stage, and the
    connected iPad is the mandatory physical-device qualification stage.
-10. Do not run WebGL Aquarium on the connected iPad. Use its normal 1.5 GiB
-   desktop boot and the agreed focused graphics/qualification workloads.
+10. Do not run WebGL Aquarium on the connected iPad. Start its desktop and
+   qualification workloads at 2 GiB; only a confirmed emulator OOM permits a
+   fresh run 64 MiB lower, repeated one step at a time until stable.
 11. Profile version is subordinate to performance. Software emulation is
    forbidden when it adds heavy CPU work, synchronous GPU-to-CPU feedback,
    per-draw CPU expansion, or sustained command serialization. GPU-accelerated
@@ -907,7 +909,9 @@ Run these levels in order:
    as occasional read-only capability probes that confirm the documented stop
    boundary; they do not authorize emulation work or a higher claim.
 
-The production iPad guest remains 1,536 MiB. Run one shard at a time, disable
+The production iPad guest starts at 2,048 MiB. If the emulator is OOM-
+terminated, preserve that failed attempt and start a new immutable campaign
+64 MiB lower; repeat only after another confirmed OOM. Run one shard at a time, disable
 the suite's deliberate OOM tests, keep routine image/shader logging off, bound
 QPA and console growth, export artifacts after every shard, and start a fresh
 guest when resident memory does not return. Run every required shard under the
@@ -1054,21 +1058,27 @@ all three products under both page profiles. Selection waived none of its
 three diagnostic findings. The current complete macOS matrix classifies the
 depth-buffer result as permitted `NotSupported` on the five no-depth
 configurations and passes it on the other 15; the repaired transform-feedback
-query passes on all 20. The Simulator-only GLES 2 texture image-comparison
-failure remains open for the complete mobile matrix. Single fixed Aquarium
+query passes on all 20. The former Simulator-only GLES 2 texture failures are
+repaired by arm64-Simulator swizzle and truthful 32-bit-float-filter support;
+the complete current Simulator GLES 2 matrix passes all 9,460 executions.
+Single fixed Aquarium
 canaries now pass on macOS and Simulator under both page profiles, including
 repaired-kernel runs with zero dropped or CPU-fallback frames. The current
 20-config 16 KiB macOS GLES 2 and GLES 3 matrices now pass all 9,460 and
 129,960 required executions. Fixed signed Simulator GLES 2 and GLES 3 config
 inventories now match those macOS predecessors exactly at all 20 tuples and
 canonical digest, with direct ANGLE/Metal presentation, clean shutdown, and
-zero dropped or CPU-fallback frames. A schema-1 manifest now compiles one
-full-leaf campaign per config/API into the signed runtimes, and a fail-closed
-single-attempt orchestrator validates the exact macOS-to-Simulator-to-iPad
-chain; its builds and read-only preflight pass, but no complete mobile matrix
-is yet claimed. The seven interleaved performance pairs,
-connected-iPad thermal and sustained lifecycle baselines, and complete
-Simulator/iPad matrices remain missing.
+zero dropped or CPU-fallback frames. The first schema-1 complete-leaf GLES 3
+Simulator layout was reproducibly OOM-killed after 2,255 passing results in
+each of its first two configs under the fixed 1.5 GiB mobile guest. Schema 2
+now compiles one full GLES 2 process and four signed, hash-pinned GLES 3
+process slices per config; the aggregate reconstructs and hashes the exact
+original leaf. The failed attempts remain immutable evidence. The subsequently
+directed product policy uses 4 GiB on Simulator and starts physical-device runs
+at 2 GiB; it still adds no swap and does not weaken the bounded process layout.
+The seven interleaved performance pairs,
+connected-iPad thermal and sustained lifecycle baselines, complete sliced
+Simulator GLES 3 matrix, and both connected-iPad matrices remain missing.
 The former global all-package caselist attempt still
 fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
 GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
@@ -1502,7 +1512,8 @@ artifact integrity before interpreting status totals.
 - normal KDE/Phosh compositor startup and clean shutdown;
 - WebGL 1 and WebGL 2 functional pages;
 - WebGL Aquarium only on macOS and Simulator; and
-- the ordinary 1.5 GiB connected-iPad desktop boot with the agreed GL probes.
+- the connected-iPad desktop boot, starting at 2 GiB, with the agreed GL
+  probes.
 
 ### Performance gates
 
@@ -1559,7 +1570,7 @@ preferred outcome.
 | native Metal texture export is unavailable for an ordinary scanout | do not silently use sustained CPU readback; fix the direct path, narrow the supported format/mode, or retain the lower profile |
 | a forced cap produces a higher string but broken behavior | prohibit overrides; gate every capability on functional and conformance tests |
 | software rendering or a truncated CTS shard creates a false pass | reject unexpected renderers before execution; require QPA identity/trailer, exact caselist union, artifact digest, clean process exit, and clean guest shutdown |
-| full CTS exhausts the 1.5 GiB iPad guest | run one bounded shard per fresh guest, export artifacts immediately, disable deliberate OOM/image logging, and treat OOM or app termination as failure rather than a skip |
+| full CTS exhausts the physical-device guest | start at 2 GiB; preserve the failed attempt, reduce only by 64 MiB after each confirmed emulator OOM, run one bounded shard per fresh guest, export artifacts immediately, disable deliberate OOM/image logging, and treat OOM or app termination as failure rather than a skip |
 | a conformant feature silently executes workload-proportional work on the CPU | classify the data path before promotion and reject CPU shader/raster/geometry/format work, readback-driven decisions, and per-operation round trips |
 | GPU lowering requires excessive passes, command amplification, or memory traffic | fail the frozen performance budget and retain the lower profile even when CTS passes |
 | a higher profile regresses ordinary lower-profile workloads | require matched interleaved A/B canaries before full CTS and reject any repeatable regression beyond the frozen threshold |
@@ -1683,9 +1694,15 @@ disallowed status. Fixed generated signed-app inventories subsequently proved
 that the iOS 26.5 Simulator exposes the same exact 20 config tuples and digest
 for both APIs while using Gadgets, direct ANGLE/Metal presentation, and the
 sealed read-only lower; both runs returned zero with no dropped or
-CPU-fallback frames. The fixed 40-ID signed matrix authority, mobile adapters,
-and immutable sequential orchestrator are implemented and build-tested. The
-Simulator/iPad case matrices, absent seven-pair
+CPU-fallback frames. The current Simulator GLES 2 matrix also completes the
+same 9,460 executions and aggregate status totals. A fixed 100-ID schema-2
+authority now retains that full GLES 2 process geometry while splitting GLES 3
+into four signed bounded processes per config after complete-leaf Simulator
+runs reproducibly exhausted the former fixed 1.5 GiB guest. Current adapters
+fix Simulator runs at 4 GiB and start physical-device runs at 2 GiB, with only
+64 MiB post-OOM device decrements. The mobile adapters and
+immutable sequential orchestrator reconstruct the frozen leaf from every
+slice. The Simulator GLES 3 and iPad case matrices, absent seven-pair
 performance/connected-iPad thermal/sustained-lifecycle campaigns, and missing
 original-image receipt still prevent any new shared capability or conformance
 claim. The derivative

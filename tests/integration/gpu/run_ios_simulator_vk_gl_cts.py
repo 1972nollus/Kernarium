@@ -220,6 +220,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     rootfs_filename = f"rootfs.{rootfs_contract.filesystem_type}"
     launch_environment = {
         "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN": identifier,
+        "SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(
+            common.SIMULATOR_GUEST_MEMORY_MIB
+        ),
         "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
         "SIMCTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
@@ -243,6 +246,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         list(campaign.cases) if campaign is not None else None
                     ),
                     "page_profile": options.page_profile,
+                    "guest_memory_mib": common.SIMULATOR_GUEST_MEMORY_MIB,
                     "rootfs_type": rootfs_contract.filesystem_type,
                     "rootfs_sha256": rootfs_contract.sha256,
                     "macos_run": str(macos_run),
@@ -269,7 +273,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         matrix_inventory_metadata = None
         matrix_inventory_configs = None
     elif matrix_shard is not None:
-        macos_metadata = common.validate_macos_matrix_evidence(
+        macos_metadata = common.validate_macos_full_matrix_evidence(
             macos_run,
             matrix_shard,
             options.page_profile,
@@ -347,6 +351,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs_type": rootfs_contract.filesystem_type,
         "rootfs_sha256": rootfs_contract.sha256,
         "page_profile": options.page_profile,
+        "guest_memory_mib": common.SIMULATOR_GUEST_MEMORY_MIB,
         "engine": "gadgets",
         "mode": (
             "campaign"

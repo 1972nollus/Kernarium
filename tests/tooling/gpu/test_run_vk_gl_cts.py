@@ -1259,7 +1259,7 @@ Kernarium: runtime returned 0
             self.assertIn("gles2-config-inventory-v1", generated)
             self.assertIn("gles3-config-inventory-v1", generated)
             self.assertIn("gles2-matrix-cfg00-000of001-v1", generated)
-            self.assertIn("gles3-matrix-cfg19-000of001-v1", generated)
+            self.assertIn("gles3-matrix-cfg19-003of004-v1", generated)
             self.assertIn("--deqp-case=CTS-Configs.es2", generated)
             self.assertIn("--deqp-case=CTS-Configs.es3", generated)
             self.assertIn("--deqp-gl-config-id=1", generated)
@@ -1280,7 +1280,7 @@ Kernarium: runtime returned 0
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
         shards = cts.load_apple_matrix_shards()
-        self.assertEqual(len(shards), 40)
+        self.assertEqual(len(shards), 100)
         for api in cts.BASELINE_GLES_APIS:
             configs = cts.apple_matrix_configs(shards, api)
             self.assertEqual(
@@ -1300,15 +1300,34 @@ Kernarium: runtime returned 0
             api_shards = [
                 shard for shard in shards.values() if shard.api == api
             ]
-            self.assertEqual(len(api_shards), 20)
-            self.assertTrue(
-                all(
-                    shard.selection.fraction_index == 0
-                    and shard.selection.fraction_count == 1
-                    and shard.selection.expected_count == shard.leaf.case_count
+            fraction_count = 1 if api == "gles2" else 4
+            self.assertEqual(len(api_shards), 20 * fraction_count)
+            for config_index in range(20):
+                config_shards = [
+                    shard
                     for shard in api_shards
+                    if shard.matrix.egl_config_index == config_index
+                ]
+                self.assertEqual(
+                    [shard.selection.fraction_index for shard in config_shards],
+                    list(range(fraction_count)),
                 )
-            )
+                self.assertTrue(
+                    all(
+                        shard.selection.fraction_count == fraction_count
+                        and shard.selection.expected_count > 0
+                        and cts.SHA256.fullmatch(shard.selected_sha256)
+                        is not None
+                        for shard in config_shards
+                    )
+                )
+                self.assertEqual(
+                    sum(
+                        shard.selection.expected_count
+                        for shard in config_shards
+                    ),
+                    config_shards[0].leaf.case_count,
+                )
 
         with tempfile.TemporaryDirectory() as temporary:
             manifest = json.loads(
@@ -1316,7 +1335,7 @@ Kernarium: runtime returned 0
                     encoding="utf-8"
                 )
             )
-            manifest["apis"]["gles3"]["fraction_count"] = 2
+            manifest["apis"]["gles3"]["selected_sha256"].pop()
             path = Path(temporary) / "matrix.json"
             path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(
@@ -1374,6 +1393,7 @@ Kernarium: runtime returned 0
             oracle=oracle,
             shard_timeout=7200,
             manifest_sha256="4" * 64,
+            selected_sha256=hashlib.sha256(selected).hexdigest(),
         )
         renderer = b"""guest_page_size=16384
 device=/dev/dri/card0
@@ -1420,6 +1440,7 @@ OpenGL renderer string: virgl
             rootfs=Path("/rootfs.ext4"),
             rootfs_receipt_path=Path("/receipt.json"),
             guest_timeout=7800,
+            guest_memory_mib=ios_cts.common.SIMULATOR_GUEST_MEMORY_MIB,
         )
         command = ios_matrix.child_command(
             definition,
@@ -1461,6 +1482,7 @@ OpenGL renderer string: virgl
                 "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN":
                     "gles3-declaration-sentinel-v1",
                 "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
+                "SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": "4096",
                 "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": "4096",
                 "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
                 "SIMCTL_CHILD_UML_GPU_CAPABILITY_REPORT": "1",
@@ -1514,7 +1536,7 @@ OpenGL renderer string: virgl
     def test_mobile_adapters_expose_only_fixed_matrix_shards(self) -> None:
         arguments = [
             "--matrix-shard",
-            "gles3-matrix-cfg00-000of001-v1",
+            "gles3-matrix-cfg00-000of004-v1",
             "--config-inventory-run",
             "/tmp/simulator-config-run.json",
             "--rootfs-type",
@@ -1539,13 +1561,13 @@ OpenGL renderer string: virgl
         dry_run = json.loads(stdout.getvalue())
         self.assertEqual(
             dry_run["matrix_shard"],
-            "gles3-matrix-cfg00-000of001-v1",
+            "gles3-matrix-cfg00-000of004-v1",
         )
         self.assertEqual(
             dry_run["launch_environment"][
                 "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN"
             ],
-            "gles3-matrix-cfg00-000of001-v1",
+            "gles3-matrix-cfg00-000of004-v1",
         )
         device_options = device_cts.parse_arguments(
             [
@@ -1558,16 +1580,17 @@ OpenGL renderer string: virgl
         )
         self.assertEqual(
             device_options.matrix_shard,
-            "gles3-matrix-cfg00-000of001-v1",
+            "gles3-matrix-cfg00-000of004-v1",
         )
         self.assertEqual(device_options.guest_timeout, 7800)
+        self.assertEqual(device_options.guest_memory_mib, 2048)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
             SystemExit
         ):
             ios_cts.parse_arguments(
                 [
                     "--matrix-shard",
-                    "gles3-matrix-cfg00-000of001-v1",
+                    "gles3-matrix-cfg00-000of004-v1",
                     "--config-inventory-run",
                     "/tmp/simulator-config-run.json",
                     "--macos-run",
@@ -1783,6 +1806,7 @@ OpenGL renderer string: virgl
                     selected
                 ).hexdigest(),
                 "macos_run": "/tmp/macos-run.json",
+                "guest_memory_mib": 4096,
                 "macos_host_contexts_equal": True,
                 "macos_virgl_capsets_equal": True,
                 "macos_virgl_capset_comparison":
@@ -1829,6 +1853,42 @@ OpenGL renderer string: virgl
                 ],
                 "gadgets",
             )
+            self.assertEqual(dry_run["guest_memory_mib"], 2048)
+            self.assertEqual(
+                dry_run["launch_environment"][
+                    "DEVICECTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB"
+                ],
+                "2048",
+            )
+
+            lowered = device_cts.parse_arguments(
+                [
+                    "--campaign",
+                    campaign.identifier,
+                    "--device",
+                    "device-id",
+                    "--simulator-run",
+                    str(run),
+                    "--guest-memory-mib",
+                    "1984",
+                ]
+            )
+            self.assertEqual(lowered.guest_memory_mib, 1984)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+                SystemExit
+            ):
+                device_cts.parse_arguments(
+                    [
+                        "--campaign",
+                        campaign.identifier,
+                        "--device",
+                        "device-id",
+                        "--simulator-run",
+                        str(run),
+                        "--guest-memory-mib",
+                        "2016",
+                    ]
+                )
 
             metadata["status_totals"] = {"NotSupported": 1}
             run.write_text(json.dumps(metadata), encoding="utf-8")

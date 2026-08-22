@@ -34,6 +34,7 @@ CTS_RUNNER = INTEGRATION_GPU / "run_vk_gl_cts.py"
 class ShardEvidence:
     shard: cts.AppleMatrixShard
     run_directory: Path
+    cases: tuple[str, ...]
     completed_cases: int
     status_totals: dict[str, int]
     selected_sha256: str
@@ -50,6 +51,7 @@ class Definition:
     api: str
     page_profile: str
     device: str
+    guest_memory_mib: int
     shards: tuple[cts.AppleMatrixShard, ...]
     configs: tuple[cts.EglConfig, ...]
     config_digest: str
@@ -80,6 +82,7 @@ class Definition:
                 "backend": "angle-metal",
                 "engine": "gadgets",
                 "device": self.device,
+                "guest_memory_mib": self.guest_memory_mib,
                 "page_profile": self.page_profile,
                 "guest_timeout": self.guest_timeout,
             },
@@ -283,38 +286,90 @@ def load_predecessor_runs(
                 "device matrix predecessor is not a Simulator campaign"
             )
     rows = predecessor_rows(document)
-    if len(rows) != len(shards):
+    config_indices = sorted(
+        {shard.matrix.egl_config_index for shard in shards}
+    )
+    if config_indices != list(range(len(config_indices))) or len(rows) != len(
+        config_indices
+    ):
         raise cts.CampaignError("predecessor config count changed")
     campaign_directory = campaign_path.parent.resolve()
-    result: list[Path] = []
-    for shard, row in zip(shards, rows, strict=True):
+    result: dict[str, Path] = {}
+    for config_index, row in enumerate(rows):
+        config_shards = tuple(
+            shard
+            for shard in shards
+            if shard.matrix.egl_config_index == config_index
+        )
+        if not config_shards:
+            raise cts.CampaignError("predecessor config has no signed shards")
         if (
             not isinstance(row, dict)
-            or row.get("index") != shard.matrix.egl_config_index
-            or row.get("id") != shard.matrix.egl_config.identifier
+            or row.get("index") != config_index
+            or row.get("id") != config_shards[0].matrix.egl_config.identifier
         ):
             raise cts.CampaignError("predecessor config ordering changed")
+        shard_rows = row.get("shards")
+        if not isinstance(shard_rows, list):
+            raise cts.CampaignError("predecessor config shards changed")
         if platform == "simulator":
-            shard_rows = row.get("shards")
-            if not isinstance(shard_rows, list) or len(shard_rows) != 1:
+            if len(shard_rows) != 1 or not isinstance(shard_rows[0], dict):
                 raise cts.CampaignError("macOS predecessor shard count changed")
             run_path = safe_run_path(campaign_directory, shard_rows[0].get("run"))
             regular_file(run_path, "macOS predecessor run")
-            common.validate_macos_matrix_evidence(
-                run_path, shard, page_profile, rootfs_contract
+            common.validate_macos_full_matrix_evidence(
+                run_path, config_shards[0], page_profile, rootfs_contract
             )
+            for shard in config_shards:
+                result[shard.identifier] = run_path
         else:
-            run_path = safe_run_path(campaign_directory, row.get("run"))
-            regular_file(run_path, "Simulator predecessor run")
-            common.validate_mobile_matrix_evidence(
-                run_path,
-                "ios-simulator-kernarium",
-                shard,
-                page_profile,
-                rootfs_contract,
-            )
-        result.append(run_path)
-    return tuple(result)
+            if len(shard_rows) != len(config_shards) or any(
+                not isinstance(shard_row, dict) for shard_row in shard_rows
+            ):
+                raise cts.CampaignError(
+                    "Simulator predecessor shard count changed"
+                )
+            by_fraction = {
+                shard_row.get("fraction_index"): shard_row
+                for shard_row in shard_rows
+            }
+            expected_fractions = {
+                shard.selection.fraction_index for shard in config_shards
+            }
+            if set(by_fraction) != expected_fractions:
+                raise cts.CampaignError(
+                    "Simulator predecessor fractions changed"
+                )
+            for shard in config_shards:
+                fraction_index = shard.selection.fraction_index
+                shard_row = by_fraction.get(fraction_index)
+                if shard_row is None:
+                    raise cts.CampaignError(
+                        "Simulator predecessor fraction changed"
+                    )
+                run_path = safe_run_path(
+                    campaign_directory, shard_row.get("run")
+                )
+                regular_file(run_path, "Simulator predecessor run")
+                simulator_metadata = common.validate_mobile_matrix_evidence(
+                    run_path,
+                    "ios-simulator-kernarium",
+                    shard,
+                    page_profile,
+                    rootfs_contract,
+                )
+                if (
+                    simulator_metadata.get("guest_memory_mib")
+                    != common.SIMULATOR_GUEST_MEMORY_MIB
+                ):
+                    raise cts.CampaignError(
+                        "device predecessor used another Simulator "
+                        "guest-memory policy"
+                    )
+                result[shard.identifier] = run_path
+    if set(result) != {shard.identifier for shard in shards}:
+        raise cts.CampaignError("predecessor shard mapping is incomplete")
+    return tuple(result[shard.identifier] for shard in shards)
 
 
 def build_definition(options: argparse.Namespace) -> Definition:
@@ -349,15 +404,26 @@ def build_definition(options: argparse.Namespace) -> Definition:
     predecessor_adapter = (
         "macos" if options.platform == "simulator" else "ios-simulator-kernarium"
     )
+    guest_memory_mib = (
+        common.SIMULATOR_GUEST_MEMORY_MIB
+        if options.platform == "simulator"
+        else options.guest_memory_mib
+    )
     config_inventory_run = options.config_inventory_run.resolve()
     regular_file(config_inventory_run, "mobile config inventory run")
-    _, inventory_configs = common.validate_mobile_config_inventory_evidence(
-        config_inventory_run,
-        adapter,
-        options.api,
-        options.page_profile,
-        contract,
+    inventory_metadata, inventory_configs = (
+        common.validate_mobile_config_inventory_evidence(
+            config_inventory_run,
+            adapter,
+            options.api,
+            options.page_profile,
+            contract,
+        )
     )
+    if inventory_metadata.get("guest_memory_mib") != guest_memory_mib:
+        raise cts.CampaignError(
+            "mobile config inventory used another guest-memory policy"
+        )
     common.validate_matching_config_inventories(
         configs, inventory_configs, "signed matrix manifest"
     )
@@ -391,6 +457,7 @@ def build_definition(options: argparse.Namespace) -> Definition:
         api=options.api,
         page_profile=options.page_profile,
         device=options.device,
+        guest_memory_mib=guest_memory_mib,
         shards=shards,
         configs=configs,
         config_digest=config_digest,
@@ -425,7 +492,7 @@ def child_command(
     predecessor_option = (
         "--macos-run" if definition.platform == "simulator" else "--simulator-run"
     )
-    return [
+    command = [
         sys.executable,
         "-B",
         str(runner),
@@ -453,6 +520,11 @@ def child_command(
         str(definition.guest_timeout),
         "--qualification",
     ]
+    if definition.platform == "device":
+        command.extend(
+            ["--guest-memory-mib", str(definition.guest_memory_mib)]
+        )
+    return command
 
 
 def adapter_run_directories(path: Path) -> list[Path]:
@@ -486,11 +558,19 @@ def validate_run(
         or metadata.get("config_inventory_run")
         != str(definition.config_inventory_run)
         or metadata.get("rootfs_receipt") != definition.rootfs_receipt
+        or metadata.get("guest_memory_mib") != definition.guest_memory_mib
     ):
         raise cts.CampaignError("mobile matrix input evidence changed")
+    artifacts = common.read_matrix_artifacts(run_directory / "artifacts")
+    cases = tuple(
+        cts.parse_case_list(
+            artifacts["selected.txt"].decode("utf-8", errors="strict")
+        )
+    )
     return ShardEvidence(
         shard=shard,
         run_directory=run_directory,
+        cases=cases,
         completed_cases=metadata["completed_cases"],
         status_totals=metadata["status_totals"],
         selected_sha256=metadata["selected_caselist_sha256"],
@@ -631,31 +711,116 @@ def scan_campaign(
     return completed, failures, pending
 
 
+def reconstruct_cases(
+    definition: Definition,
+    completed: dict[str, ShardEvidence],
+    config_index: int,
+) -> tuple[str, ...]:
+    config_shards = sorted(
+        (
+            shard
+            for shard in definition.shards
+            if shard.matrix.egl_config_index == config_index
+        ),
+        key=lambda shard: shard.selection.fraction_index,
+    )
+    fraction_count = definition.shards[0].selection.fraction_count
+    if (
+        len(config_shards) != fraction_count
+        or [shard.selection.fraction_index for shard in config_shards]
+        != list(range(fraction_count))
+    ):
+        raise cts.CampaignError(
+            f"config {config_index} has incomplete signed fractions"
+        )
+    fractions = [completed[shard.identifier].cases for shard in config_shards]
+    if any(
+        len(cases) != shard.selection.expected_count
+        for shard, cases in zip(config_shards, fractions, strict=True)
+    ):
+        raise cts.CampaignError(
+            f"config {config_index} has an invalid fraction length"
+        )
+    cases: list[str] = []
+    for position in range(definition.shards[0].leaf.case_count):
+        fraction_index = position % fraction_count
+        offset = position // fraction_count
+        try:
+            cases.append(fractions[fraction_index][offset])
+        except IndexError as error:
+            raise cts.CampaignError(
+                f"config {config_index} has an incomplete fraction union"
+            ) from error
+    if len(cases) != len(set(cases)):
+        raise cts.CampaignError(
+            f"config {config_index} has duplicate selected cases"
+        )
+    payload = "".join(f"{case}\n" for case in cases).encode("utf-8")
+    if hashlib.sha256(payload).hexdigest() != definition.shards[0].leaf.sha256:
+        raise cts.CampaignError(
+            f"config {config_index} does not reconstruct the frozen leaf"
+        )
+    return tuple(cases)
+
+
 def aggregate_matrix(
     campaign: Path,
     definition: Definition,
     completed: dict[str, ShardEvidence],
 ) -> dict[str, Any]:
-    if len(completed) != len(definition.shards):
+    expected_shards = {shard.identifier for shard in definition.shards}
+    if set(completed) != expected_shards:
         raise cts.CampaignError("matrix aggregate is incomplete")
     totals: dict[str, int] = {}
     configs: list[dict[str, Any]] = []
-    for shard in definition.shards:
-        evidence = completed[shard.identifier]
-        for status, count in evidence.status_totals.items():
-            totals[status] = totals.get(status, 0) + count
+    canonical: tuple[str, ...] | None = None
+    for config_index, config in enumerate(definition.configs):
+        cases = reconstruct_cases(definition, completed, config_index)
+        if canonical is None:
+            canonical = cases
+        elif cases != canonical:
+            raise cts.CampaignError(
+                f"config {config_index} selected a different leaf order"
+            )
+        config_totals: dict[str, int] = {}
+        shard_rows: list[dict[str, Any]] = []
+        config_shards = sorted(
+            (
+                shard
+                for shard in definition.shards
+                if shard.matrix.egl_config_index == config_index
+            ),
+            key=lambda shard: shard.selection.fraction_index,
+        )
+        for shard in config_shards:
+            evidence = completed[shard.identifier]
+            for status, count in evidence.status_totals.items():
+                config_totals[status] = config_totals.get(status, 0) + count
+                totals[status] = totals.get(status, 0) + count
+            shard_rows.append(
+                {
+                    "fraction_index": shard.selection.fraction_index,
+                    "run": str(evidence.run_directory.relative_to(campaign)),
+                    "completed_cases": evidence.completed_cases,
+                    "status_totals": evidence.status_totals,
+                    "selected_sha256": evidence.selected_sha256,
+                    "qpa_sha256": evidence.qpa_sha256,
+                    "renderer_sha256": evidence.renderer_sha256,
+                    "native_display_final": evidence.native_display,
+                }
+            )
+        if sum(config_totals.values()) != definition.shards[0].leaf.case_count:
+            raise cts.CampaignError(
+                f"config {config_index} result count is incomplete"
+            )
         configs.append(
             {
-                "index": shard.matrix.egl_config_index,
-                "id": shard.matrix.egl_config.identifier,
-                "surface_type": shard.matrix.egl_config.selected_surface_type,
-                "run": str(evidence.run_directory.relative_to(campaign)),
-                "completed_cases": evidence.completed_cases,
-                "status_totals": evidence.status_totals,
-                "selected_sha256": evidence.selected_sha256,
-                "qpa_sha256": evidence.qpa_sha256,
-                "renderer_sha256": evidence.renderer_sha256,
-                "native_display_final": evidence.native_display,
+                "index": config_index,
+                "id": config.identifier,
+                "surface_type": config.selected_surface_type,
+                "completed_cases": definition.shards[0].leaf.case_count,
+                "status_totals": dict(sorted(config_totals.items())),
+                "shards": shard_rows,
             }
         )
     if sum(totals.values()) != definition.total_case_executions:
@@ -734,6 +899,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--api", choices=cts.BASELINE_GLES_APIS, required=True)
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--device", required=True)
+    parser.add_argument(
+        "--guest-memory-mib",
+        type=common.device_guest_memory_mib,
+        default=common.DEVICE_DEFAULT_GUEST_MEMORY_MIB,
+        help=(
+            "device-only guest RAM; start at 2048 and reduce only in 64 MiB "
+            "steps after a confirmed emulator OOM"
+        ),
+    )
     parser.add_argument("--config-inventory-run", type=Path, required=True)
     parser.add_argument("--predecessor-campaign", type=Path, required=True)
     parser.add_argument("--campaign-dir", type=Path, required=True)
@@ -742,7 +916,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--rootfs-receipt", type=Path, required=True)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    if (
+        options.platform == "simulator"
+        and options.guest_memory_mib
+        != common.DEVICE_DEFAULT_GUEST_MEMORY_MIB
+    ):
+        parser.error("--guest-memory-mib is only configurable for device runs")
+    return options
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
