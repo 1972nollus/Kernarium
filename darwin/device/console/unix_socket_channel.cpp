@@ -46,15 +46,23 @@ void setNonblocking(int descriptor)
     }
 }
 
-void configureClient(int descriptor)
+/*
+ * A client that connects and closes again before this process accepts it is
+ * ordinary, and Darwin rejects F_SETNOSIGPIPE on such a socket with EINVAL
+ * because it is already fully shut down.  Report that per-client condition
+ * instead of throwing: an exception here escapes drainEventSource() into the
+ * vhost-user connection loop, which tears the console device down for the rest
+ * of the run and leaves the guest spinning on an end-of-file call descriptor.
+ */
+bool configureClient(int descriptor) noexcept
 {
-    setCloseOnExec(descriptor);
-    setNonblocking(descriptor);
-    if (::fcntl(descriptor, F_SETNOSIGPIPE, 1) != 0) {
-        throw std::runtime_error(
-            "configuring no-signal console descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
+    const int descriptorFlags = ::fcntl(descriptor, F_GETFD);
+    const int statusFlags = ::fcntl(descriptor, F_GETFL);
+
+    return descriptorFlags >= 0 && statusFlags >= 0 &&
+        ::fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0 &&
+        ::fcntl(descriptor, F_SETFL, statusFlags | O_NONBLOCK) == 0 &&
+        ::fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0;
 }
 
 class SocketPathCleanup final {
@@ -227,7 +235,13 @@ private:
                 "Virtio console accept failed: " +
                 std::string(std::strerror(errno)));
         }
-        configureClient(accepted.get());
+        if (!configureClient(accepted.get())) {
+            std::fprintf(
+                stderr,
+                "Virtio console client rejected: %s\n",
+                std::strerror(errno));
+            return;
+        }
         client_ = std::move(accepted);
         reportedInputOverflow_ = false;
         reportedOutputDrop_ = false;

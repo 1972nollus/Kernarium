@@ -1723,8 +1723,20 @@ void VhostUserServer::run(
             throw std::runtime_error(
                 "accept failed: " + std::string(std::strerror(errno)));
         }
-        setCloseOnExec(connection.get());
-        configureOutputDescriptor(connection.get());
+        try {
+            setCloseOnExec(connection.get());
+            configureOutputDescriptor(connection.get());
+        } catch (const std::exception& error) {
+            /*
+             * A peer that connects and closes again before this accept lands
+             * leaves a fully shut down socket, which Darwin rejects with
+             * EINVAL.  Drop that one connection and keep listening rather than
+             * ending the server loop.
+             */
+            std::fprintf(
+                stderr, "vhost-user connection rejected: %s\n", error.what());
+            continue;
+        }
         serveConnection(connection.release(), stopRequested);
     }
 }

@@ -385,6 +385,35 @@ void unixSocketChannelSupportsTailInputAndReconnect()
     require(::lstat(path.c_str(), &removed) != 0 && errno == ENOENT);
 }
 
+void unixSocketChannelRejectsAClientThatClosedBeforeAccept()
+{
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "console.sock";
+    uml::console::UnixSocketChannel channel(path);
+
+    /*
+     * Darwin rejects F_SETNOSIGPIPE with EINVAL on a socket whose peer already
+     * closed, which a client that connects and exits immediately produces
+     * routinely.  Treating that as a channel error escapes into the vhost-user
+     * connection loop and takes the console device down for the rest of the
+     * run, so the accept has to drop just that client.
+     */
+    connectClient(path).reset();
+    waitReadable(channel.eventDescriptor());
+    channel.drainEventSource();
+
+    auto client = connectClient(path);
+    waitReadable(channel.eventDescriptor());
+    channel.drainEventSource();
+    constexpr std::array<std::uint8_t, 3> reply {'o', 'k', '\n'};
+    channel.write(reply);
+    waitReadable(client.get());
+    std::array<std::uint8_t, 16> received {};
+    require(::recv(client.get(), received.data(), received.size(), 0) ==
+            static_cast<ssize_t>(reply.size()));
+    require(std::equal(reply.begin(), reply.end(), received.begin()));
+}
+
 void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
     TemporaryDirectory temporary;
@@ -419,6 +448,7 @@ int main()
     deviceImplementsTheTwoQueueConsoleContract();
     deviceImplementsTheNamedSerialControlHandshake();
     unixSocketChannelSupportsTailInputAndReconnect();
+    unixSocketChannelRejectsAClientThatClosedBeforeAccept();
     inProcessServicePublishesAndRemovesTheExternalSocket();
     return EXIT_SUCCESS;
 }
