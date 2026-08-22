@@ -47,8 +47,18 @@
   executions with 1,563 `Pass`, 62 permitted `NotSupported`, zero failure,
   clean artifact export, and zero CPU-fallback frames at
   `.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
-  All eight formerly failing shadow cases now report `Pass`; the full fresh
-  mobile matrices remain open.
+  All eight formerly failing shadow cases now report `Pass`.
+- Final Simulator campaign
+  `.build/vk-gl-cts-ios-simulator-matrix/gles3-16k-ce8cfa0f-apple8-restored-4g-4way`
+  ran 80 signed fresh-guest shards across four matching booted iOS 26.5
+  `iPhone18,2` devices, with exactly 20 shards and at most one active guest per
+  Simulator. It reconstructed all 20 frozen 6,498-case leaves and passed
+  129,960 executions: 125,270 `Pass`, 4,690 permitted `NotSupported`, zero
+  failures, zero dropped frames, and zero CPU-fallback frames. Every attempt,
+  app runtime, and `simctl` command returned zero; independent verify-only
+  reconstruction accepted all 80 shards. Together with the final 9,460-case
+  GLES 2 campaign, this completes both 16 KiB Simulator matrices at the fixed
+  4,096 MiB policy. The connected-iPad matrices remain paused.
 - The first 2,048 MiB connected-iPad GLES 3 `cfg00` fraction `2/4` exposed one
   real failure at
   `KHR-GLES3.core.internalformat.texture2d.rgb_float_rgb32f_linear`; the guest
@@ -90,8 +100,9 @@
   CPU-fallback frames. The adapters reparse and authenticate predecessor QPA,
   config, GPU, native-frame, rootfs, and artifact evidence and now fail closed
   if the config tuples differ. The connected-device adapter accepted both
-  Simulator records as predecessors in dry-run validation. Complete
-  Simulator and connected-iPad case matrices remain open.
+  Simulator records as predecessors in dry-run validation. These inventory
+  runs did not themselves complete a case matrix; both final Simulator
+  matrices are recorded above, while the connected-iPad matrices remain open.
 
 ## 2026-08-22: truthful GLES depth inventory and complete macOS GLES matrices
 
@@ -118,8 +129,9 @@
   used VNC, JIT, ten vCPUs, 8 GiB, acknowledged Virtio serial artifacts, and a
   disposable overlay above the sealed ext4 lower; that lower remained mode
   0444 at its authenticated SHA-256. The two current campaigns complete the
-  16 KiB macOS GLES 2/GLES 3 matrices. Complete Simulator/iPad matrices and
-  the performance/thermal/lifecycle gates remain open. The
+  16 KiB macOS GLES 2/GLES 3 matrices. Both final Simulator matrices are
+  recorded above; the connected-iPad matrices and the
+  performance/thermal/lifecycle gates remain open. The
   current macOS Apple-GPU prefix was transactionally republished at the
   canonical path; its verifier, normal/sanitizer GPU workflows, both
   architecture audits, all selected unit tests, and both VNC smokes passed.
