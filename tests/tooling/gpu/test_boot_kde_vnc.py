@@ -113,6 +113,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("--use-gl=angle", runner)
         self.assertIn("--use-angle=gles-egl", runner)
         self.assertIn("--ignore-gpu-blocklist", runner)
+        self.assertIn("--disable-quic", runner)
         self.assertIn('"run_at": "document_end"', runner)
         self.assertNotIn('"run_at": "document_idle"', runner)
         self.assertIn('default=300', runner)

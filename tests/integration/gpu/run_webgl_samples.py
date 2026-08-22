@@ -340,6 +340,7 @@ exec runuser -u uml -- env \
     --use-gl=angle \
     --use-angle=gles-egl \
     --ignore-gpu-blocklist \
+    --disable-quic \
     --no-first-run \
     --disable-crash-reporter \
     --enable-logging=stderr \
