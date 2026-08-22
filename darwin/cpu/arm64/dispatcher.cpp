@@ -324,6 +324,8 @@ RunResult Dispatcher::execute_decoded(CpuState &cpu, GuestMemory &memory,
 			&Dispatcher::system_instruction_pair},
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7420U,
 			&Dispatcher::cache_maintenance}, // dc zva, Xt
+		DecodeEntry{0xffff'ffe0U, 0xd50b'7a20U,
+			&Dispatcher::cache_maintenance}, // dc cvac, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7b20U,
 			&Dispatcher::cache_maintenance}, // dc cvau, Xt
 		DecodeEntry{0xffff'ffe0U, 0xd50b'7e20U,

@@ -402,7 +402,7 @@ RunResult Dispatcher::cache_maintenance(CpuState &cpu, GuestMemory &memory,
 	}
 
 	/* Guest data writes already update the single coherent physical backing.
-	 * DC CVAU and DC CIVAC therefore need only an ordering edge. IC IVAU
+	 * DC CVAC, DC CVAU, and DC CIVAC therefore need only an ordering edge. IC IVAU
 	 * additionally invalidates translated instruction blocks so self-modifying
 	 * code becomes visible at the same architectural synchronization point as
 	 * on arm64.
