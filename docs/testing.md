@@ -1012,6 +1012,28 @@ guest start, every public `ProcessInfo.thermalState` notification, and clean
 finish. Preserve those records across the complete physical-device campaign;
 they provide thermal and lifecycle inputs but do not turn a partial matrix or
 a serious/critical state into acceptance.
+After both complete physical-device matrices independently pass and pass their
+own `--verify-only` reconstruction, join their 20 GLES 2 and 80 GLES 3 signed
+launches with the fail-closed thermal/lifecycle verifier:
+
+```sh
+python3 -B tests/integration/gpu/verify_ios_device_thermal_lifecycle.py \
+  --campaign-dir .build/vk-gl-cts-ios-device-matrix/GLES2_CAMPAIGN \
+  --campaign-dir .build/vk-gl-cts-ios-device-matrix/GLES3_CAMPAIGN \
+  --guest-memory-mib 2048 --minimum-launches 100 \
+  --report .build/vk-gl-cts-ios-device-matrix/thermal-lifecycle.json
+```
+
+If a confirmed physical-device emulator OOM required the mandated 64 MiB
+reduction, pass the final common memory value instead of 2048. The verifier
+requires exactly one passed GLES 2 and one passed GLES 3 16 KiB matrix with the
+same signed app, rootfs, wired device, and memory policy. It hashes every
+campaign, attempt, runner log, run record, and console; requires one ordered
+start/change*/finish thermal lifecycle and a clean guest/runtime shutdown per
+shard; rejects unknown, serious, or critical state; rejects a finish state
+higher than the launch state; and requires at least 100 launches. This is the
+thermal and repeated-lifecycle gate only after both CTS reconstructions pass;
+it is not the separate performance gate.
 The strict console frames are sufficient for these bounded artifacts, so this
 workflow does not require VirtioFS or a new Virtio-serial device.
 

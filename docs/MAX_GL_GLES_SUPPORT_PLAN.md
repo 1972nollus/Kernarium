@@ -1209,6 +1209,15 @@ start, on every state-change notification, and at clean finish. Its stable
 markers are captured by the existing device transcript, providing the input
 needed to audit the final repeated-shard campaign without a private API; no
 thermal or lifecycle result is claimed until that campaign completes.
+A fail-closed repository verifier now joins exactly one passed 20-launch GLES
+2 device matrix and one passed 80-launch GLES 3 device matrix. It requires the
+same signed app, sealed rootfs, wired device, 16 KiB profile, and final common
+memory policy; authenticates every campaign/attempt/run/console input; requires
+100 ordered start/change*/finish lifecycles and clean shutdowns; rejects
+unknown, serious, or critical thermal state; and rejects a finish state above
+that launch's starting state. This implements the evidence gate but claims no
+result until both final device matrices and their independent CTS
+reconstructions pass.
 The original EROFS build receipt remains missing, the checked derivative owns
 its authenticated build receipt, and the scoped GLES hierarchy identity is
 complete. Qualification remains fail-closed on those remaining matrices and

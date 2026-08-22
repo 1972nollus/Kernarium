@@ -41,3 +41,10 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py
     LABELS gpu;webgl;ios
     TIMEOUT 120)
+
+uml_add_tooling_test(
+    NAME ios-device-thermal-lifecycle-policy
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_verify_ios_device_thermal_lifecycle.py
+    LABELS gpu;cts;ios
+    TIMEOUT 120)
