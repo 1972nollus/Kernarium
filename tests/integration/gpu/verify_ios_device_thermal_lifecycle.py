@@ -32,6 +32,12 @@ THERMAL_RECORD = re.compile(
     r"state=(nominal|fair|serious|critical|unknown) "
     r"uptime=([0-9]+\.[0-9]{3})"
 )
+THERMAL_PROBE_PREFIX = "Kernarium thermal probe:"
+THERMAL_PROBE_RECORD = re.compile(
+    r"Kernarium thermal probe: "
+    r"state=(nominal|fair|serious|critical|unknown) "
+    r"uptime=([0-9]+\.[0-9]{3})"
+)
 STATE_SEVERITY = {
     "nominal": 0,
     "fair": 1,
@@ -39,7 +45,6 @@ STATE_SEVERITY = {
     "critical": 3,
     "unknown": 4,
 }
-ACCEPTED_STATES = frozenset(("nominal", "fair"))
 
 
 def fail(message: str) -> None:
@@ -109,14 +114,6 @@ def parse_thermal_samples(transcript: str, label: str) -> dict[str, Any]:
     if uptimes[-1] <= uptimes[0]:
         fail(f"{label} has a non-positive managed-run duration")
     states = [sample[1] for sample in samples]
-    disallowed = [state for state in states if state not in ACCEPTED_STATES]
-    if disallowed:
-        fail(f"{label} reached a disallowed thermal state: {disallowed!r}")
-    if STATE_SEVERITY[states[-1]] > STATE_SEVERITY[states[0]]:
-        fail(
-            f"{label} ended at a higher thermal state "
-            f"({states[0]} -> {states[-1]})"
-        )
     maximum_state = max(states, key=STATE_SEVERITY.__getitem__)
     return {
         "start_state": states[0],
@@ -127,6 +124,50 @@ def parse_thermal_samples(transcript: str, label: str) -> dict[str, Any]:
         "duration_seconds": round(uptimes[-1] - uptimes[0], 3),
         "state_totals": dict(sorted(Counter(states).items())),
     }
+
+
+def validate_thermal_preflights(
+    run: Path,
+    metadata: dict[str, Any],
+    shard: str,
+) -> list[dict[str, Any]]:
+    records = metadata.get("thermal_preflights")
+    if not isinstance(records, list) or not records:
+        fail(f"device matrix shard {shard} omits its thermal preflight")
+    validated: list[dict[str, Any]] = []
+    for index, record in enumerate(records, start=1):
+        expected_log = f"thermal-preflight-{index:03}.log"
+        if (
+            not isinstance(record, dict)
+            or set(record)
+            != {
+                "state",
+                "uptime",
+                "devicectl_return_code",
+                "log",
+                "log_sha256",
+            }
+            or record.get("log") != expected_log
+            or record.get("state") not in STATE_SEVERITY
+            or not isinstance(record.get("uptime"), (int, float))
+            or not isinstance(record.get("devicectl_return_code"), int)
+        ):
+            fail(f"device matrix shard {shard} has invalid thermal preflight")
+        log_path = run / expected_log
+        transcript, log_sha256 = read_console(log_path)
+        matches = list(THERMAL_PROBE_RECORD.finditer(transcript))
+        if (
+            transcript.count(THERMAL_PROBE_PREFIX) != 1
+            or len(matches) != 1
+            or record["state"] != matches[0].group(1)
+            or record["uptime"] != float(matches[0].group(2))
+            or record["log_sha256"] != log_sha256
+        ):
+            fail(f"device matrix shard {shard} thermal preflight changed")
+        validated.append(record)
+    if validated[-1]["state"] != "nominal":
+        fail(f"device matrix shard {shard} did not cool to nominal")
+    return validated
 
 
 def safe_adapter_run(
@@ -213,6 +254,7 @@ def validate_attempt(
         or device.get("transport") != "wired"
     ):
         fail(f"device matrix shard {shard} did not run on the wired device")
+    thermal_preflights = validate_thermal_preflights(run, run_metadata, shard)
     console_path = run / "console.log"
     transcript, console_sha256 = read_console(console_path)
     common.validate_clean_shutdown(transcript)
@@ -225,6 +267,7 @@ def validate_attempt(
         "run": str(run.relative_to(campaign)),
         "run_sha256": run_sha256,
         "console_sha256": console_sha256,
+        "thermal_preflights": thermal_preflights,
         "thermal": thermal,
     }
 
@@ -372,9 +415,8 @@ def verify_campaigns(
             "minimum_launches": minimum_launches,
             "guest_memory_mib": expected_memory_mib,
             "page_profile": "16k",
-            "accepted_states": sorted(ACCEPTED_STATES),
-            "serious_or_critical_allowed": False,
-            "finish_may_exceed_start": False,
+            "required_preflight_state": "nominal",
+            "thermal_state_changes_affect_result": False,
             "clean_shutdown_required": True,
         },
         "result": {

@@ -1654,6 +1654,46 @@ OpenGL renderer string: virgl
                 ]
             )
 
+    def test_device_matrix_waits_for_nominal_thermal_state(self) -> None:
+        self.assertEqual(device_cts.THERMAL_COOLDOWN_SECONDS, 60)
+        self.assertEqual(
+            device_cts.parse_thermal_probe(
+                "service: Kernarium thermal probe: state=fair "
+                "uptime=123.456\n"
+            ),
+            {"state": "fair", "uptime": 123.456},
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "invalid probe"):
+            device_cts.parse_thermal_probe("no thermal marker\n")
+
+        samples = [
+            {"state": "serious"},
+            {"state": "fair"},
+            {"state": "nominal"},
+        ]
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            device_cts,
+            "run_thermal_probe",
+            side_effect=samples,
+        ) as probe, mock.patch.object(device_cts.time, "sleep") as sleep:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = device_cts.await_nominal_device_thermal(
+                    ["xcrun", "devicectl"],
+                    {},
+                    Path(temporary),
+                    cooldown_seconds=7,
+                )
+        self.assertEqual(result, samples)
+        self.assertEqual(sleep.call_args_list, [mock.call(7), mock.call(7)])
+        self.assertEqual(
+            [call.args[2].name for call in probe.call_args_list],
+            [
+                "thermal-preflight-001.log",
+                "thermal-preflight-002.log",
+                "thermal-preflight-003.log",
+            ],
+        )
+
     def test_mobile_config_inventory_must_match_predecessor(self) -> None:
         predecessor = cts.parse_egl_config_qpa(config_qpa("gles3"), "gles3")
         ios_cts.common.validate_matching_config_inventories(

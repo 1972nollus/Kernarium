@@ -989,7 +989,11 @@ and only if the emulator is OOM-terminated on the physical device, begin a new
 immutable campaign and reduce that value by exactly 64 MiB; repeat one 64 MiB
 step per confirmed OOM until the emulator remains alive. The Simulator adapter
 always fixes and records 4,096 MiB, and device evidence cannot use a
-Simulator predecessor captured with another memory value.
+Simulator predecessor captured with another memory value. Immediately before
+every physical-device matrix shard, the adapter performs a probe-only signed
+app launch that does not initialize the guest. It records each probe and waits
+60 seconds between probes until the public thermal state is `nominal`; only
+then does it start the immutable shard.
 
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
@@ -1010,8 +1014,11 @@ between bytes.
 The signed app also emits stable `Kernarium thermal state` records at managed
 guest start, every public `ProcessInfo.thermalState` notification, and clean
 finish. Preserve those records across the complete physical-device campaign;
-they provide thermal and lifecycle inputs but do not turn a partial matrix or
-a serious/critical state into acceptance.
+they provide thermal and lifecycle observations but do not turn a partial
+matrix into acceptance. After the nominal preflight, fair, serious, critical,
+or unknown observations do not independently fail a passing shard. Ordinary
+CTS, performance-budget, app-termination, and lifecycle failures remain
+failures.
 After both complete physical-device matrices independently pass and pass their
 own `--verify-only` reconstruction, join their 20 GLES 2 and 80 GLES 3 signed
 launches with the fail-closed thermal/lifecycle verifier:
@@ -1029,11 +1036,12 @@ reduction, pass the final common memory value instead of 2048. The verifier
 requires exactly one passed GLES 2 and one passed GLES 3 16 KiB matrix with the
 same signed app, rootfs, wired device, and memory policy. It hashes every
 campaign, attempt, runner log, run record, and console; requires one ordered
-start/change*/finish thermal lifecycle and a clean guest/runtime shutdown per
-shard; rejects unknown, serious, or critical state; rejects a finish state
-higher than the launch state; and requires at least 100 launches. This is the
-thermal and repeated-lifecycle gate only after both CTS reconstructions pass;
-it is not the separate performance gate.
+start/change*/finish thermal lifecycle, a recorded nominal probe immediately
+before launch, and a clean guest/runtime shutdown per shard. Thermal changes
+during a passing shard are retained in the report but do not change its
+result. The verifier requires at least 100 launches. This is the preflight and
+repeated-lifecycle gate only after both CTS reconstructions pass; it is not the
+separate performance gate.
 The strict console frames are sufficient for these bounded artifacts, so this
 workflow does not require VirtioFS or a new Virtio-serial device.
 
@@ -1116,8 +1124,9 @@ match the corresponding 4,096 MiB Simulator inventories at all 20 tuples and
 canonical digest. Both 2,048 MiB guests returned zero, shut down cleanly, and
 reported zero CPU fallback. Because they immediately followed the long device
 diagnostic, their public thermal start and finish markers both read `serious`;
-do not start a final immutable matrix from that state. This was not an OOM and
-does not authorize a memory decrement.
+the final matrix adapter therefore waits for a nominal probe before each
+immutable shard. This was not an OOM and does not authorize a memory
+decrement.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host

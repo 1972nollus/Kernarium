@@ -547,6 +547,19 @@ enum ThermalStateReport {
         return "Kernarium thermal state: phase=\(phase.rawValue) " +
             "state=\(name(for: state)) uptime=\(uptimeText)"
     }
+
+    static func probeLine(
+        state: ProcessInfo.ThermalState,
+        uptime: TimeInterval
+    ) -> String {
+        let uptimeText = String(
+            format: "%.3f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            uptime
+        )
+        return "Kernarium thermal probe: state=\(name(for: state)) " +
+            "uptime=\(uptimeText)"
+    }
 }
 
 @MainActor
@@ -565,6 +578,18 @@ private final class EmulatorLauncher {
 
     func start(view: GuestMetalView, geometry: GuestDisplayGeometry) {
         guard !started else { return }
+        if ProcessInfo.processInfo.environment[
+            "KERNARIUM_THERMAL_PROBE_ONLY"
+        ] == "1" {
+            started = true
+            print(
+                ThermalStateReport.probeLine(
+                    state: ProcessInfo.processInfo.thermalState,
+                    uptime: ProcessInfo.processInfo.systemUptime
+                )
+            )
+            return
+        }
         guard let rootfsFilename = RootfsImage.selectedFilename(
             configuredFilename: configuration.rootfsFilename
         ) else {

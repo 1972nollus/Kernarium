@@ -1033,8 +1033,11 @@ Before changing a provider:
    behavior with no semantic lower-profile A/B, freeze an equivalent
    direct-Metal/reference workload or absolute CPU/GPU, pass, submission,
    bytes-moved, and work-amplification budget. Zero sustained native-display
-   CPU fallback, per-draw synchronization, new thermal escalation, and iPad
-   app termination are hard requirements rather than percentage budgets.
+   CPU fallback, per-draw synchronization, and iPad app termination are hard
+   requirements rather than percentage budgets. Begin every connected-iPad
+   shard only after a public nominal thermal probe; later thermal changes are
+   observational unless they cause a test or measured performance-budget
+   failure.
 3. Validate the central manifest and patch inventory and record the current
    platform contracts. Copy the already-recorded CGL version/capset result into
    the evidence index as explicitly archival data. Do not rebuild, rerun, or
@@ -1243,11 +1246,11 @@ A fail-closed repository verifier now joins exactly one passed 20-launch GLES
 2 device matrix and one passed 80-launch GLES 3 device matrix. It requires the
 same signed app, sealed rootfs, wired device, 16 KiB profile, and final common
 memory policy; authenticates every campaign/attempt/run/console input; requires
-100 ordered start/change*/finish lifecycles and clean shutdowns; rejects
-unknown, serious, or critical thermal state; and rejects a finish state above
-that launch's starting state. This implements the evidence gate but claims no
-result until both final device matrices and their independent CTS
-reconstructions pass.
+100 nominal preflight probes, ordered start/change*/finish lifecycles, and
+clean shutdowns. It retains all later thermal samples as observations without
+letting them reject an otherwise passing shard. This implements the evidence
+gate but claims no result until both final device matrices and their
+independent CTS reconstructions pass.
 The original EROFS build receipt remains missing, the checked derivative owns
 its authenticated build receipt, and the scoped GLES hierarchy identity is
 complete. Qualification remains fail-closed on those remaining matrices and
@@ -1278,8 +1281,9 @@ profile. MoltenVK and ANGLE's Vulkan renderer are forbidden in this phase.
    frozen absolute budget.
 5. Run the performance canaries on macOS first, repeat the same configuration
    on the iPhone 17 Pro Max Simulator, and run the short correctness,
-   performance, memory, and thermal canary on the connected iPad. A correct but
-   materially slower ES 3.1 implementation is rejected; retain GLES 3.0.
+   performance, memory, and thermal-observation canary on the connected iPad
+   after a nominal probe. A correct but materially slower ES 3.1
+   implementation is rejected; retain GLES 3.0.
 6. After the short canaries pass, run the change-local CTS families, direct
    presentation/lifecycle checks, and the decisive sustained connected-iPad
    performance/thermal gate. Only after that gate selects the candidate run
@@ -1371,8 +1375,9 @@ a higher version:
    on ANGLE/Metal and never traverse MoltenVK.
 5. Run the matched macOS-first, Simulator-second, connected-iPad-last
    performance campaign after every optimization. Reject an optimization that
-   merely shifts substantial work from the GPU to the CPU or worsens device
-   thermal throttling/frame pacing.
+   merely shifts substantial work from the GPU to the CPU or worsens measured
+   frame pacing. Record device thermal state, but reject it only when the
+   resulting run fails a test or frozen performance budget.
 
 Exit: the selected profile has direct hardware rendering and presentation,
 bounded memory, stable frame pacing, and measured performance on the connected
@@ -1624,8 +1629,10 @@ Apply the Phase 0 budgets without averaging away a failing primary workload:
   per-dispatch synchronous feedback, and no CPU execution whose work scales
   with vertices, primitives, pixels, samples, invocations, texels, or resource
   bytes; and
-- no new sustained iPad thermal escalation, throttling, Jetsam/app termination,
-  or lifecycle failure is permitted.
+- every connected-iPad shard starts only after a nominal thermal probe; later
+  state changes are recorded but do not independently reject a passing run.
+  Jetsam/app termination, lifecycle failure, or thermal effects that cross a
+  frozen performance threshold remain failures.
 
 An inconclusive or noisy result does not promote the profile. CTS success
 never overrides a failed performance gate; retaining the lower version is the

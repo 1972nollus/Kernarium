@@ -69,8 +69,13 @@ timer while the managed guest run is active and restores it when that run
 finishes. It records the public `ProcessInfo.thermalState` at managed-run
 start, on every iOS state-change notification, and at clean finish. Those
 stable markers let signed-app qualification distinguish nominal, fair,
-serious, critical, and unknown states without private APIs; they are evidence
-inputs rather than a thermal pass by themselves. Both iOS products default to
+serious, critical, and unknown states without private APIs. Before each
+physical-device matrix shard, the adapter uses a probe-only app launch that
+does not initialize the guest and waits in one-minute intervals until that
+public state is nominal. Thermal changes after the shard begins remain
+observational: they do not reject a passing CTS shard unless they produce an
+ordinary test, performance-budget, app-termination, or lifecycle failure.
+Both iOS products default to
 all processors reported by `NSProcessInfo`; Simulator defaults to 4 GiB of
 guest RAM and physical devices
 default to 2 GiB. The settings sheet can persist one through that processor

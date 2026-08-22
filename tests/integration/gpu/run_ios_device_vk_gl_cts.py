@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -29,6 +30,14 @@ DEFAULT_APP = (
     / "Kernarium.app"
 )
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/vk-gl-cts-ios-device"
+THERMAL_PROBE_PREFIX = "Kernarium thermal probe:"
+THERMAL_PROBE_RECORD = re.compile(
+    r"Kernarium thermal probe: "
+    r"state=(nominal|fair|serious|critical|unknown) "
+    r"uptime=([0-9]+\.[0-9]{3})"
+)
+THERMAL_PROBE_TIMEOUT_SECONDS = 30
+THERMAL_COOLDOWN_SECONDS = 60
 
 
 def device_details(device: str) -> dict[str, Any]:
@@ -236,6 +245,93 @@ def stop_console_process(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
+def parse_thermal_probe(transcript: str) -> dict[str, Any]:
+    matches = list(THERMAL_PROBE_RECORD.finditer(transcript))
+    if transcript.count(THERMAL_PROBE_PREFIX) != 1 or len(matches) != 1:
+        raise cts.CampaignError(
+            "Kernarium thermal preflight emitted an invalid probe record"
+        )
+    return {
+        "state": matches[0].group(1),
+        "uptime": float(matches[0].group(2)),
+    }
+
+
+def wait_for_thermal_probe(
+    process: subprocess.Popen[bytes],
+    log_path: Path,
+    timeout: int = THERMAL_PROBE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        transcript = log_path.read_text(encoding="utf-8", errors="replace")
+        if THERMAL_PROBE_RECORD.search(transcript) is not None:
+            return parse_thermal_probe(transcript)
+        if process.poll() is not None:
+            raise cts.CampaignError(
+                "Kernarium exited before reporting its thermal state"
+            )
+        time.sleep(0.1)
+    raise TimeoutError("Kernarium thermal preflight timed out")
+
+
+def run_thermal_probe(
+    command: Sequence[str],
+    environment: dict[str, str],
+    log_path: Path,
+) -> dict[str, Any]:
+    probe_environment = environment.copy()
+    probe_environment[
+        "DEVICECTL_CHILD_KERNARIUM_THERMAL_PROBE_ONLY"
+    ] = "1"
+    with log_path.open("wb") as log:
+        process = subprocess.Popen(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=probe_environment,
+        )
+        try:
+            sample = wait_for_thermal_probe(process, log_path)
+        finally:
+            stop_console_process(process)
+    sample.update(
+        {
+            "devicectl_return_code": process.returncode,
+            "log": log_path.name,
+            "log_sha256": cts.sha256_file(log_path),
+        }
+    )
+    return sample
+
+
+def await_nominal_device_thermal(
+    command: Sequence[str],
+    environment: dict[str, str],
+    artifact_directory: Path,
+    cooldown_seconds: int = THERMAL_COOLDOWN_SECONDS,
+) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    while True:
+        log_path = artifact_directory / (
+            f"thermal-preflight-{len(samples) + 1:03}.log"
+        )
+        sample = run_thermal_probe(command, environment, log_path)
+        samples.append(sample)
+        print(
+            "Connected iPad thermal preflight: "
+            f"state={sample['state']} attempt={len(samples)}",
+            flush=True,
+        )
+        if sample["state"] == "nominal":
+            return samples
+        print(
+            f"Cooling connected iPad for {cooldown_seconds} seconds",
+            flush=True,
+        )
+        time.sleep(cooldown_seconds)
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     identity = cts.load_identity()
     campaigns = cts.load_apple_campaigns(identity)
@@ -440,6 +536,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
                         else None
                     ),
                     "launch_environment": launch_environment,
+                    "thermal_preflight": matrix_shard is not None,
+                    "thermal_cooldown_seconds": (
+                        THERMAL_COOLDOWN_SECONDS
+                        if matrix_shard is not None
+                        else None
+                    ),
                 },
                 indent=2,
                 sort_keys=True,
@@ -557,12 +659,20 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     environment = os.environ.copy()
     for key in (
+        "DEVICECTL_CHILD_KERNARIUM_THERMAL_PROBE_ONLY",
         "DEVICECTL_CHILD_KERNARIUM_WEBGL_AQUARIUM",
         "DEVICECTL_CHILD_KERNARIUM_GEEKBENCH",
         "DEVICECTL_CHILD_KERNARIUM_GEEKBENCH_WORKLOADS",
     ):
         environment.pop(key, None)
     environment.update(launch_environment)
+    if matrix_shard is not None:
+        metadata["thermal_preflights"] = await_nominal_device_thermal(
+            command,
+            environment,
+            artifact_directory,
+        )
+        cts.write_json(artifact_directory / "run.json", metadata)
     log_path = artifact_directory / "console.log"
     runtime_status = -1
     with log_path.open("wb") as log:

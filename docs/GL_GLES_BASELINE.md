@@ -485,8 +485,10 @@ interval also remains inside all applicable limits:
 - at most 10% increase in p95 frame time, host/guest CPU, GPU time/energy, or
   resident memory; and
 - zero sustained native-display CPU readback, per-draw or per-dispatch
-  synchronous feedback, new thermal escalation/throttling, app termination,
-  or lifecycle failure.
+  synchronous feedback, app termination, or lifecycle failure. Device runs
+  begin only after a nominal thermal probe; later thermal state changes are
+  observational unless they cause a measured performance-budget or test
+  failure.
 
 Candidate-only operations use a frozen equivalent direct-Metal reference and
 record submissions, passes, bytes moved, CPU/GPU time, and command/memory

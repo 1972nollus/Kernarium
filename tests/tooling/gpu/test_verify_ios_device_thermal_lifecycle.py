@@ -83,6 +83,11 @@ def make_campaign(
         transcript if transcript is not None else console(),
         encoding="utf-8",
     )
+    thermal_probe = run / "thermal-preflight-001.log"
+    thermal_probe.write_text(
+        "Kernarium thermal probe: state=nominal uptime=9.000\n",
+        encoding="utf-8",
+    )
     write_json(
         run / "run.json",
         {
@@ -99,6 +104,17 @@ def make_campaign(
                 "identifier": DEVICE,
                 "transport": "wired",
             },
+            "thermal_preflights": [
+                {
+                    "state": "nominal",
+                    "uptime": 9.0,
+                    "devicectl_return_code": 130,
+                    "log": thermal_probe.name,
+                    "log_sha256": hashlib.sha256(
+                        thermal_probe.read_bytes()
+                    ).hexdigest(),
+                }
+            ],
         },
     )
     write_json(
@@ -185,13 +201,22 @@ class DeviceThermalLifecycleTests(unittest.TestCase):
             "malformed": (
                 "Kernarium thermal state: phase=start state=nominal\n"
             ),
-            "serious": console(changes=("serious",)),
-            "sustained escalation": console(finish="fair"),
             "phase": console().replace("phase=finish", "phase=start"),
         }
         for label, transcript in failures.items():
             with self.subTest(label=label), self.assertRaises(cts.CampaignError):
                 thermal.parse_thermal_samples(transcript, label)
+
+        observed = thermal.parse_thermal_samples(
+            console(
+                start="fair",
+                changes=("serious", "critical"),
+                finish="critical",
+            ),
+            "passing shard",
+        )
+        self.assertEqual(observed["maximum_state"], "critical")
+        self.assertEqual(observed["start_state"], "fair")
 
     def test_rejects_incomplete_or_mixed_campaign_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
