@@ -15,9 +15,11 @@ Virgl userspace while retaining SwiftShader. The latest ten-vCPU gadgets run
 did not reproduce the RCU stall and brought up hardware Virgl SurfaceFlinger,
 but it exposed a separate gadgets-engine SIMD load-pair correctness defect
 that prevented zygote and full Android boot. That defect has since been
-reproduced by a host unit regression and repaired in the gadget engine; the
-Android macOS executable has not yet been rebuilt or rebooted against the fix.
-The current accepted release therefore remains
+reproduced by a host unit regression, repaired in the gadget engine, and
+confirmed fixed by a fresh ten-vCPU guest boot in which zygote is stable and
+the failing preload no longer appears. Android still does not complete boot:
+the first blocker moved to an unrelated `system_server` crash on a BPF map
+`ENOMEM`. The current accepted release therefore remains
 `android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer diagnostic image is
 accepted. The exact recovery state and next actions are in the active
 implementation handoff.
@@ -192,6 +194,65 @@ ctest --test-dir .build/presets/macos-unit-16k \
   -R '^arm64-simd-load-store-pair$' --output-on-failure
 ```
 
+### Ten-vCPU verification boot (2026-08-22)
+
+The repaired engine was verified in the guest. The run used an Android macOS
+executable built from outer revision `eafe46af` in a throwaway worktree,
+because the tracked tree's Apple GPU dependency prefix predates the committed
+UTM WebKit patch 10 and no GPU-enabled preset configures until that prefix is
+rebuilt. The executable was bound to the same
+`android17-ack6.18-16k-20260822-8f91b078-gpu-sysfs1` Mesa-GLAPI diagnostic
+release the previous run used, with ten vCPUs, the gadgets engine, and a fresh
+COW:
+
+- COW: `.build/android/instances/cpufix-10vcpu-gadgets1.cow`;
+- kernel/ttyS0 log: `.build/android/logs/cpufix-10vcpu-gadgets1-ttyS0.log`;
+- Virtio console socket: `/tmp/a17-cpufix.sock`.
+
+Confirmed by this run:
+
+- CPUs `0-9` came online and the guest reports `nproc` 10. The ttyS0 log
+  contains no RCU stall, panic, oops, hard lockup, or soft lockup through guest
+  second 345.
+- SurfaceFlinger stayed up and `dumpsys SurfaceFlinger` reports
+  `GLES: Mesa, virgl, OpenGL ES 3.0 Mesa 26.1.0-devel`, so the hardware Virgl
+  path still reaches Android.
+- **The vector-pair defect is gone.** Zygote is stable at `running` and 20,066
+  lines of `logcat` contain zero occurrences of `Ripple` or `initPath`. The
+  previous run died repeatedly at exactly that preload.
+
+Android still does not complete boot, but the first blocker has moved and is
+now a different, independent defect. `system_server` takes three fatal
+exceptions and is not restarted:
+
+```text
+java.lang.RuntimeException: Failed to create service
+    com.android.server.ConnectivityServiceInitializer
+Caused by: java.lang.IllegalStateException: Failed to update uid permission
+    chunk map
+  at ...server.BpfNetMaps.setChunkPermListForUids(BpfNetMaps.java:1599)
+  at ...connectivity.PermissionMonitor.<init>(PermissionMonitor.java:488)
+  at ...server.ConnectivityService.<init>(ConnectivityService.java:2302)
+Caused by: android.system.ErrnoException: nativeWriteToMapEntry failed:
+    ENOMEM (Out of memory)
+  at ...net.module.util.BpfMap.nativeWriteToMapEntry(Native Method)
+```
+
+This is not memory exhaustion and not a vmalloc shortage: the guest reports
+`MemAvailable` 3,319,984 kB and `VmallocTotal` 516,016 kB against
+`VmallocUsed` 13,376 kB when the write fails, and the kernel log carries no
+allocation-failure or OOM record. `NetBpfLoad` loaded 5 of 5 programs first and
+logged `UML kernel has no eBPF JIT; using its built-in interpreter`, which is
+the expected `androidboot.uml_bpf_interpreter=1` contract. A plausible but
+unproven direction is the non-preallocated hash map allocator's asynchronous
+refill path under UML; confirm the failing map's type, flags, and value size
+before changing anything. Do not raise guest memory or mask ConnectivityService
+to route around this.
+
+`sys.boot_completed` never became `1`, so the ten-vCPU acceptance in the
+continuation order below is not met and the tracked accepted-release descriptor
+still selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`.
+
 ### AOSP diagnostic and patch-series state
 
 `device/google/cuttlefish` is clean on builder-local branch
@@ -241,19 +302,25 @@ patch-replayed image reaches full boot acceptance.
 
 ### Required continuation order
 
-The host CPU repair above is complete: the regression fails without it, passes
-with it, and both canonical page-profile unit workflows are green. The
-remaining order is:
+The host CPU repair is complete and confirmed in the guest: the regression
+fails without it, passes with it, both canonical page-profile unit workflows
+are green, and the ten-vCPU boot above no longer reproduces the zygote preload
+failure. The executable rebuild is also done. The remaining order is:
 
-1. Rebuild the separate Android macOS executable from the then-current outer
-   revision. The executable used by the diagnostic run came from an older
-   `c659cfc3` source snapshot and contains neither the later host GPU commits
-   nor the vector-pair repair.
-2. Boot a fresh COW with ten vCPUs and the gadgets engine. Require all CPUs
-   `0-9`, `sys.boot_completed=1`, stable zygote/system_server and
-   SurfaceFlinger processes, working `dumpsys SurfaceFlinger`, the Mesa/virgl
-   renderer report, and no RCU stall, panic, oops, lockup, or mixed ttyS0/hvc0
-   logs. A long retry loop is not a successful boot.
+1. Rebuild the Apple GPU dependency prefix so the tracked tree configures
+   again. Commit `bf680c93` added UTM WebKit patch 10 and the installed prefix
+   predates it, so `macos-android17` and every other GPU-enabled preset fail
+   provenance verification until `dependencies/build-apple-gpu.sh` reinstalls
+   the prefix from the committed ten-patch series.
+2. Diagnose the `BpfMap.nativeWriteToMapEntry` `ENOMEM` that now crash-loops
+   `system_server`. Identify the failing map's type, flags, value size, and
+   allocation path before changing kernel configuration, and do not raise guest
+   memory or mask ConnectivityService to route around it. Then reboot and
+   require all CPUs `0-9`, `sys.boot_completed=1`, stable
+   zygote/system_server and SurfaceFlinger processes, working
+   `dumpsys SurfaceFlinger`, the Mesa/virgl renderer report, and no RCU stall,
+   panic, oops, lockup, or mixed ttyS0/hvc0 logs. A long retry loop is not a
+   successful boot.
 3. Remove the temporary `frameworks/base` diagnostic, regenerate Mesa route
    p0004 from its clean topic branch, copy the reviewed outer inputs to the
    builder through the operator-managed workflow, replay the routes, and use
