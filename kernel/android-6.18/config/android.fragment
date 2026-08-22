@@ -537,6 +537,12 @@ CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_MAGIC_SYSRQ=y
 CONFIG_FTRACE=y
 CONFIG_SCHED_TRACER=y
+# Android's libmeminfo reads the gpu_mem_total BPF map and calls abort() from
+# BpfMapRO::abortOnMismatch when the map is missing, so Debug.getGpuTotalUsageKb
+# takes down system_server. The map only exists when the gpu_mem tracepoints are
+# built, and the upstream help text states plainly that this is required for
+# Android.
+CONFIG_TRACE_GPU_MEM=y
 CONFIG_PERF_EVENTS=y
 # Per-UID CPU and I/O accounting depends on the profiling infrastructure.
 CONFIG_PROFILING=y
