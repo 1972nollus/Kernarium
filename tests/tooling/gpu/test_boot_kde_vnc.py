@@ -106,6 +106,18 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "boot_kde_vnc.guest_argument_separator(command)", runner
             )
 
+    def test_webgl_samples_pin_gles_and_bound_first_navigation(self) -> None:
+        runner = (
+            GPU_INTEGRATION / "run_webgl_samples.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--use-gl=angle", runner)
+        self.assertIn("--use-angle=gles-egl", runner)
+        self.assertIn("--ignore-gpu-blocklist", runner)
+        self.assertIn('default=300', runner)
+        self.assertIn("first WebGL sample did not render within", runner)
+        self.assertIn('"state": "failed"', runner)
+        self.assertIn('"state": "interrupted"', runner)
+
     def test_guest_harness_runs_directly(self) -> None:
         options = boot_kde_vnc.parse_arguments(["--rootfs", "/tmp/rootfs.erofs"])
         command = boot_kde_vnc.build_harness_command(options)

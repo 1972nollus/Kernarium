@@ -337,6 +337,9 @@ exec runuser -u uml -- env \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
     chromium \
     @CHROMIUM_EXTRA_FLAGS@ \
+    --use-gl=angle \
+    --use-angle=gles-egl \
+    --ignore-gpu-blocklist \
     --no-first-run \
     --disable-crash-reporter \
     --enable-logging=stderr \
@@ -349,12 +352,13 @@ exec runuser -u uml -- env \
 
 SERVICE = """[Unit]
 Description=Chromium WebGL Samples verification
-After=display-manager.service
-Wants=display-manager.service
+After=display-manager.service network-online.target
+Wants=display-manager.service network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/libexec/uml-webgl-samples
+TasksMax=infinity
 StandardInput=null
 StandardOutput=journal+console
 StandardError=journal+console
@@ -464,6 +468,12 @@ def main() -> int:
         metavar="INDEX",
         help="stop at the one-based sample index (diagnostic use)",
     )
+    parser.add_argument(
+        "--first-sample-timeout",
+        type=float,
+        default=300,
+        help="bound browser navigation and extension startup",
+    )
     parser.add_argument("--timeout", type=float, default=900)
     options = parser.parse_args()
     kernarium_common.finish_rootfs_options(parser, options, identity)
@@ -476,6 +486,8 @@ def main() -> int:
         )
     if options.cpus < 1:
         parser.error("--cpus must be positive")
+    if options.first_sample_timeout <= 0:
+        parser.error("--first-sample-timeout must be positive")
     rootfs = options.rootfs.resolve()
     kernarium_common.validate_rootfs(
         rootfs, identity, options.rootfs_contract
@@ -509,6 +521,10 @@ def main() -> int:
     command = boot_kde_vnc.build_harness_command(launcher_options)
     separator = boot_kde_vnc.guest_argument_separator(command)
     overlay_commands = (
+        "for unit in docker.service docker.socket containerd.service "
+        "packagekit.service apt-daily.service apt-daily.timer "
+        "apt-daily-upgrade.service apt-daily-upgrade.timer; do "
+        "ln -sf /dev/null /etc/systemd/system/$unit; done",
         install_text(
             "/var/tmp/uml-webgl-samples-extension/manifest.json", MANIFEST
         ),
@@ -570,6 +586,7 @@ def main() -> int:
         "memory": options.memory,
         "start_at": options.start_at,
         "end_at": options.end_at,
+        "first_sample_timeout": options.first_sample_timeout,
         "samples": [name for name, _ in samples],
         "command": command,
         "shutdown_qualified": False,
@@ -580,6 +597,7 @@ def main() -> int:
     )
     seen: set[int] = set()
     deadline = time.monotonic() + options.timeout
+    first_sample_deadline = time.monotonic() + options.first_sample_timeout
 
     with log_path.open("wb") as log:
         process = subprocess.Popen(
@@ -638,6 +656,12 @@ def main() -> int:
                     seen.add(index)
                     print(f"PASS {index:02d}/{total}: {name}")
 
+                if not seen and time.monotonic() >= first_sample_deadline:
+                    raise TimeoutError(
+                        "first WebGL sample did not render within "
+                        f"{options.first_sample_timeout:g} seconds"
+                    )
+
                 if "UML_WEBGL_ALL_OK|" in text:
                     if len(seen) != len(samples):
                         raise RuntimeError(
@@ -662,6 +686,32 @@ def main() -> int:
             raise TimeoutError(
                 f"WebGL samples run timed out after {options.timeout:g} seconds"
             )
+        except KeyboardInterrupt:
+            run_metadata.update({
+                "state": "interrupted",
+                "passed_samples": len(seen),
+            })
+            run_path.write_text(
+                json.dumps(run_metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            raise
+        except (
+            OSError,
+            RuntimeError,
+            TimeoutError,
+            subprocess.SubprocessError,
+        ) as error:
+            run_metadata.update({
+                "state": "failed",
+                "passed_samples": len(seen),
+                "error": str(error),
+            })
+            run_path.write_text(
+                json.dumps(run_metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            raise
         finally:
             stop_guest(process)
 
@@ -669,6 +719,12 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        print(
+            "run_webgl_samples.py: interrupted; guest stopped",
+            file=sys.stderr,
+        )
+        raise SystemExit(130) from None
     except (OSError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
         print(f"run_webgl_samples.py: {error}", file=sys.stderr)
         raise SystemExit(1)
