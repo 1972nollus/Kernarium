@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ordered generated AOSP project topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-gpuservice-make-the-gpu_mem-tracep.patch	3db6193e1f79b0b9958e685accfd9168216d688a	477f81dafbe3147cdf0bf430217768c21a70feea189dd20e52cd537181655541	UML-ANDROID-LOCAL: gpuservice make the gpu_mem tracepoint program optional
