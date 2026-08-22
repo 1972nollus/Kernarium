@@ -1,7 +1,7 @@
 From e85639a28781c4ed45d79cf3af40723373842e50 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 11:42:29 +0000
-Subject: [PATCH 1/1] UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
+Subject: [PATCH 1/3] UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
 
 Change-Id: I448b293a9247b348ca9b97a33175629cd45b776c
 ---
