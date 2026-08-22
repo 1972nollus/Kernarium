@@ -130,7 +130,11 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser = argparse.ArgumentParser(
         description="run an allow-listed CTS campaign in Kernarium Simulator"
     )
-    parser.add_argument("--campaign", required=True, choices=sorted(campaigns))
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--campaign", choices=sorted(campaigns))
+    mode.add_argument(
+        "--config-inventory", choices=cts.BASELINE_GLES_APIS
+    )
     parser.add_argument("--page-profile", choices=("16k", "4k"), default="16k")
     parser.add_argument("--device", default="booted")
     parser.add_argument("--macos-run", type=Path, required=True)
@@ -141,6 +145,8 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--qualification", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(arguments)
+    if options.config_inventory is not None and options.qualification:
+        parser.error("config discovery is an input to, not itself, qualification")
     if options.qualification and not identity["cts"]["qualification_ready"]:
         parser.error(identity["cts"]["qualification_blocker"])
     common.finish_rootfs_options(parser, options, identity)
@@ -151,13 +157,24 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def main(arguments: Sequence[str] | None = None) -> int:
     options = parse_arguments(arguments)
-    campaign = options.campaigns[options.campaign]
+    campaign = (
+        options.campaigns[options.campaign]
+        if options.campaign is not None
+        else None
+    )
+    api = campaign.api if campaign is not None else options.config_inventory
+    assert api is not None
+    identifier = (
+        campaign.identifier
+        if campaign is not None
+        else f"{api}-config-inventory-v1"
+    )
     guest_page_size = 16384 if options.page_profile == "16k" else 4096
     macos_run = options.macos_run.resolve()
     rootfs_contract = options.rootfs_contract
     rootfs_filename = f"rootfs.{rootfs_contract.filesystem_type}"
     launch_environment = {
-        "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN": campaign.identifier,
+        "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN": identifier,
         "SIMCTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": str(guest_page_size),
         "SIMCTL_CHILD_KERNARIUM_ROOTFS": rootfs_filename,
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
@@ -168,8 +185,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "campaign": campaign.identifier,
-                    "cases": list(campaign.cases),
+                    "campaign": (
+                        campaign.identifier if campaign is not None else None
+                    ),
+                    "config_inventory": options.config_inventory,
+                    "cases": (
+                        list(campaign.cases) if campaign is not None else None
+                    ),
                     "page_profile": options.page_profile,
                     "rootfs_type": rootfs_contract.filesystem_type,
                     "rootfs_sha256": rootfs_contract.sha256,
@@ -184,9 +206,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     app = options.app.resolve()
     rootfs = options.rootfs.resolve()
-    macos_metadata = common.validate_macos_evidence(
-        macos_run, campaign, options.page_profile, rootfs_contract
-    )
+    if campaign is not None:
+        macos_metadata = common.validate_macos_evidence(
+            macos_run, campaign, options.page_profile, rootfs_contract
+        )
+        macos_configs = None
+    else:
+        macos_metadata, macos_configs = (
+            common.validate_macos_config_inventory_evidence(
+                macos_run, api, options.page_profile, rootfs_contract
+            )
+        )
     common.validate_app(app)
     common.validate_rootfs(rootfs, options.identity, rootfs_contract)
     device = resolve_device(options.device)
@@ -195,7 +225,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{campaign.identifier}"
+        f"{timestamp}-{os.getpid()}-{options.page_profile}-{identifier}"
     )
     artifact_directory.mkdir(parents=True, exist_ok=False)
     command = [
@@ -224,13 +254,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs_sha256": rootfs_contract.sha256,
         "page_profile": options.page_profile,
         "engine": "gadgets",
-        "campaign": campaign.identifier,
-        "api": campaign.api,
-        "leaf": campaign.leaf.identifier,
-        "leaf_sha256": campaign.leaf.sha256,
-        "cases": list(campaign.cases),
-        "expected_cases": len(campaign.cases),
-        "seed": campaign.seed,
+        "mode": (
+            "campaign" if campaign is not None else "config-inventory"
+        ),
+        "api": api,
         "qualification": options.qualification,
         "macos_run": str(macos_run),
         "macos_qpa_sha256": macos_metadata["qpa_sha256"],
@@ -238,6 +265,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "command": command,
         "launch_environment": launch_environment,
     }
+    if campaign is not None:
+        metadata.update(
+            {
+                "campaign": campaign.identifier,
+                "leaf": campaign.leaf.identifier,
+                "leaf_sha256": campaign.leaf.sha256,
+                "cases": list(campaign.cases),
+                "expected_cases": len(campaign.cases),
+                "seed": campaign.seed,
+            }
+        )
+    else:
+        assert macos_configs is not None
+        metadata.update(
+            {
+                "config_case": cts.CONFIG_CASES[api],
+                "macos_egl_config_sha256": cts.egl_config_digest(
+                    macos_configs
+                ),
+            }
+        )
     if options.derivative_receipt is not None:
         metadata["rootfs_receipt"] = options.derivative_receipt
     cts.write_json(artifact_directory / "run.json", metadata)
@@ -281,13 +329,48 @@ def main(arguments: Sequence[str] | None = None) -> int:
             f"Simulator guest returned {runtime_status}{detail}"
         )
 
-    (
-        artifacts,
-        results,
-        totals,
-        capability,
-        native_display,
-    ) = common.validate_transcript(transcript, campaign, guest_page_size)
+    if campaign is not None:
+        (
+            artifacts,
+            results,
+            totals,
+            capability,
+            native_display,
+        ) = common.validate_transcript(transcript, campaign, guest_page_size)
+        result_metadata: dict[str, Any] = {
+            "completed_cases": len(results),
+            "status_totals": totals,
+            "selected_caselist_sha256": hashlib.sha256(
+                artifacts["selected.txt"]
+            ).hexdigest(),
+        }
+    else:
+        (
+            artifacts,
+            configs,
+            capability,
+            native_display,
+        ) = common.validate_config_inventory_transcript(
+            transcript, api, guest_page_size
+        )
+        assert macos_configs is not None
+        common.validate_matching_config_inventories(
+            macos_configs, configs, "macOS"
+        )
+        result_metadata = {
+            "completed_cases": 1,
+            "status_totals": {"Pass": 1},
+            "egl_config_sha256": cts.egl_config_digest(configs),
+            "egl_configs": [
+                {
+                    "id": config.identifier,
+                    "surface_types": list(config.surface_types),
+                    "selected_surface_type": config.selected_surface_type,
+                }
+                for config in configs
+            ],
+            "macos_egl_configs_equal": True,
+        }
     output_directory = artifact_directory / "artifacts"
     cts.write_artifacts(artifacts, output_directory)
     capset_comparison = cts.virgl_capset.compare_reports(
@@ -299,12 +382,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     metadata.update(
         {
             **capability,
+            **result_metadata,
             "native_display_final": native_display,
-            "completed_cases": len(results),
-            "status_totals": totals,
-            "selected_caselist_sha256": hashlib.sha256(
-                artifacts["selected.txt"]
-            ).hexdigest(),
             "renderer_sha256": hashlib.sha256(
                 artifacts["renderer.txt"]
             ).hexdigest(),
@@ -317,8 +396,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
     )
     cts.write_json(artifact_directory / "run.json", metadata)
-    cts.validate_required_passes(results)
-    print(f"Simulator VK-GL-CTS completed {len(results)} cases: {totals}")
+    if campaign is not None:
+        cts.validate_required_passes(results)
+        print(f"Simulator VK-GL-CTS completed {len(results)} cases: {totals}")
+    else:
+        print(
+            f"Simulator VK-GL-CTS {api} config inventory captured "
+            f"{len(configs)} EGL configs"
+        )
     print(f"Artifacts: {artifact_directory}")
     return 0
 

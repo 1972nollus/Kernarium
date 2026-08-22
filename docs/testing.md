@@ -874,7 +874,10 @@ Kernarium accepts no arbitrary CTS script or selector. The schema-2 Apple
 campaign document names the original exact GLES 3 declaration sentinel plus
 fixed ordered five-case GLES 2 and twelve-case GLES 3 identity sentinels; CMake
 generates their bounded launchers from the same driver into each 4 KiB and 16
-KiB runtime.
+KiB runtime. The generator also emits exactly two fixed discovery launchers,
+`gles2-config-inventory-v1` and `gles3-config-inventory-v1`; they run only the
+corresponding `CTS-Configs` case and cannot accept a config ID, case selector,
+script, or engine from the app environment.
 Run the native macOS gadgets lane first so it records the common host context,
 full decoded Virgl capsets, direct-presentation counters, and passing QPA that
 the Simulator must consume. After packaging and building a clean app, boot the
@@ -913,6 +916,34 @@ Documents with an APFS clone when available, falls back to an ordinary copy,
 and enforces mode 0444. Kernarium selects `rootfstype=ext4`, passes `ro`,
 attaches the lower block device read-only, and keeps all runtime writes in its
 ordinary overlay disk. An arbitrary ext4 image is not accepted as CTS input.
+
+Before constructing a signed-app full matrix, run the matching macOS config
+inventory through VNC with JIT and ten vCPUs, then pass its authenticated
+`run.json` to the fixed Simulator inventory:
+
+```sh
+python3 -B tests/integration/gpu/run_vk_gl_cts.py \
+  --config-inventory gles3 --page-profile 16k --display vnc \
+  --engine jit --cpus 10 \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+
+python3 -B tests/integration/gpu/run_ios_simulator_vk_gl_cts.py \
+  --config-inventory gles3 --page-profile 16k \
+  --device SIMULATOR_UDID \
+  --macos-run .build/vk-gl-cts/MACOS_CONFIG_RUN/run.json \
+  --app .build/kernarium-xcode-derived/Build/Products/Debug-iphonesimulator/Kernarium.app \
+  --rootfs .build/rootfs/rootfs-gl-gles.ext4 \
+  --rootfs-type ext4 \
+  --rootfs-receipt tests/integration/gpu/vk_gl_cts_derivative_rootfs.json
+```
+
+Use `gles2` for the matching GLES 2 pair. Config discovery is an input to
+qualification and rejects `--qualification`. The Simulator adapter reparses
+the macOS QPA and requires exact ordered equality of config ID, supported
+surface types, and selected surface type. The device adapter applies the same
+fail-closed rule to its matching Simulator inventory before it may launch.
 
 The adapter verifies the frozen rootfs before copying it to app Documents,
 forces the selected runtime and gadgets engine, captures the app/guest console,
@@ -975,7 +1006,13 @@ sentinels was waived. The complete macOS matrix classifies the depth case as
 configurations, and the repaired transform-feedback query case passes all 20
 configurations. The Simulator-only GLES 2 texture-comparison failure remains
 open for the complete mobile matrix. Both current 16 KiB macOS matrices pass
-as recorded above; complete matrices remain outstanding on Simulator/iPad.
+as recorded above. Fixed signed Simulator inventories for both APIs match the
+same 20 tuples and canonical digest at
+`.build/vk-gl-cts-ios-simulator/20260822-093844-4028-16k-gles3-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-simulator/20260822-093938-4195-16k-gles2-config-inventory-v1`,
+with clean shutdown and zero dropped or CPU-fallback frames. Complete case
+matrices remain outstanding on Simulator/iPad.
 
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host

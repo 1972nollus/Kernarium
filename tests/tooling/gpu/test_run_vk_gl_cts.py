@@ -1253,6 +1253,10 @@ Kernarium: runtime returned 0
             self.assertIn("gles3-declaration-sentinel-v1", generated)
             self.assertIn("gles2-identity-sentinel-v1", generated)
             self.assertIn("gles3-identity-sentinel-v1", generated)
+            self.assertIn("gles2-config-inventory-v1", generated)
+            self.assertIn("gles3-config-inventory-v1", generated)
+            self.assertIn("--deqp-case=CTS-Configs.es2", generated)
+            self.assertIn("--deqp-case=CTS-Configs.es3", generated)
             self.assertIn("does not match 4096", generated)
             self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
             self.assertIn("x11_server=xwayland", generated)
@@ -1304,6 +1308,60 @@ Kernarium: runtime returned 0
         with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
             ios_cts.parse_arguments(
                 ["--campaign", "gles3-declaration-sentinel-v1", "--case", "x"]
+            )
+
+    def test_simulator_adapter_exposes_only_fixed_config_inventories(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(
+                ios_cts.main(
+                    [
+                        "--config-inventory",
+                        "gles3",
+                        "--macos-run",
+                        "/tmp/macos-config-run.json",
+                        "--dry-run",
+                    ]
+                ),
+                0,
+            )
+        dry_run = json.loads(stdout.getvalue())
+        self.assertIsNone(dry_run["campaign"])
+        self.assertEqual(dry_run["config_inventory"], "gles3")
+        self.assertIsNone(dry_run["cases"])
+        self.assertEqual(
+            dry_run["launch_environment"][
+                "SIMCTL_CHILD_KERNARIUM_CTS_CAMPAIGN"
+            ],
+            "gles3-config-inventory-v1",
+        )
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(
+            SystemExit
+        ):
+            ios_cts.parse_arguments(
+                [
+                    "--config-inventory",
+                    "gles3",
+                    "--macos-run",
+                    "/tmp/macos-config-run.json",
+                    "--qualification",
+                ]
+            )
+
+    def test_mobile_config_inventory_must_match_predecessor(self) -> None:
+        predecessor = cts.parse_egl_config_qpa(config_qpa("gles3"), "gles3")
+        ios_cts.common.validate_matching_config_inventories(
+            predecessor, predecessor, "macOS"
+        )
+        different = cts.parse_egl_config_qpa(
+            config_qpa("gles3", ("EGL(3): window",)), "gles3"
+        )
+        with self.assertRaisesRegex(
+            cts.CampaignError,
+            "config inventory differs from matching macOS run",
+        ):
+            ios_cts.common.validate_matching_config_inventories(
+                predecessor, different, "macOS"
             )
 
     def test_simulator_adapter_selects_the_authenticated_ext4_root(self) -> None:

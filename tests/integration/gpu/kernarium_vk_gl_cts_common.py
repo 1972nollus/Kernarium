@@ -224,6 +224,52 @@ def validate_macos_evidence(
     return metadata
 
 
+def validate_macos_config_inventory_evidence(
+    path: Path,
+    api: str,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> tuple[dict[str, Any], tuple[cts.EglConfig, ...]]:
+    configs, digest = cts.load_config_inventory_evidence(
+        path, api, page_profile, "vnc", rootfs_contract
+    )
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching macOS config inventory: {error}"
+        ) from error
+    if (
+        metadata.get("egl_config_sha256") != digest
+        or metadata.get("engine") != "jit"
+        or metadata.get("cpus") != 10
+        or [row.get("requested") for row in metadata.get("host_contexts", [])]
+        != [[3, 0], [3, 1], [3, 2]]
+        or [row.get("id") for row in metadata.get("virgl_capsets", [])]
+        != [1, 2]
+    ):
+        raise cts.CampaignError(
+            "matching macOS config inventory omitted required evidence"
+        )
+    try:
+        transcript = (path.parent / "console.log").read_text(
+            encoding="utf-8", errors="strict"
+        )
+    except (OSError, UnicodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching macOS config-inventory console: {error}"
+        ) from error
+    capability = cts.parse_gpu_capability_report(transcript)
+    if any(
+        metadata.get(key) != capability[key]
+        for key in ("host_contexts", "virgl_capsets")
+    ):
+        raise cts.CampaignError(
+            "matching macOS config-inventory GPU evidence changed"
+        )
+    return metadata, configs
+
+
 def wait_for_runtime(
     process: subprocess.Popen[bytes],
     log_path: Path,
@@ -311,3 +357,122 @@ def validate_transcript(
         capability,
         native_display,
     )
+
+
+def validate_config_inventory_transcript(
+    transcript: str,
+    api: str,
+    guest_page_size: int,
+) -> tuple[
+    dict[str, bytes],
+    tuple[cts.EglConfig, ...],
+    dict[str, Any],
+    dict[str, int],
+]:
+    cts.validate_host_backend(transcript)
+    validate_clean_shutdown(transcript)
+    capability = cts.parse_gpu_capability_report(transcript)
+    native_display = cts.parse_native_display_final(transcript)
+    artifacts = cts.decode_artifacts(transcript)
+    required = cts.CONFIG_INVENTORY_ARTIFACTS - set(artifacts)
+    if required:
+        raise cts.CampaignError(
+            "Kernarium config inventory omitted artifacts: "
+            f"{sorted(required)!r}"
+        )
+    unexpected = set(artifacts) - cts.CONFIG_INVENTORY_ARTIFACTS
+    if unexpected:
+        raise cts.CampaignError(
+            "Kernarium config inventory emitted unexpected artifacts: "
+            f"{sorted(unexpected)!r}"
+        )
+    renderer_text = artifacts["renderer.txt"].decode(
+        "utf-8", errors="strict"
+    )
+    summary_text = artifacts["summary.txt"].decode(
+        "utf-8", errors="strict"
+    )
+    cts.validate_renderer_probe(renderer_text, guest_page_size)
+    if summary_text.strip() != "cts_rc=0":
+        raise cts.CampaignError(
+            f"CTS config inventory failed: {summary_text.strip()}"
+        )
+    configs = cts.parse_egl_config_qpa(
+        cts.decode_qpa(artifacts["results.qpa"]), api
+    )
+    return artifacts, configs, capability, native_display
+
+
+def validate_matching_config_inventories(
+    predecessor: tuple[cts.EglConfig, ...],
+    current: tuple[cts.EglConfig, ...],
+    predecessor_name: str,
+) -> None:
+    if current != predecessor:
+        raise cts.CampaignError(
+            f"config inventory differs from matching {predecessor_name} run"
+        )
+
+
+def validate_mobile_config_inventory_evidence(
+    path: Path,
+    adapter: str,
+    api: str,
+    page_profile: str,
+    rootfs_contract: cts.RootfsContract,
+) -> tuple[dict[str, Any], tuple[cts.EglConfig, ...]]:
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise cts.CampaignError(
+            f"cannot read matching config inventory: {error}"
+        ) from error
+    required = {
+        "schema_version": 1,
+        "adapter": adapter,
+        "backend": "angle-metal",
+        "mode": "config-inventory",
+        "api": api,
+        "page_profile": page_profile,
+        "rootfs_type": rootfs_contract.filesystem_type,
+        "rootfs_sha256": rootfs_contract.sha256,
+        "engine": "gadgets",
+        "runtime_return_code": 0,
+        "completed_cases": 1,
+        "status_totals": {"Pass": 1},
+    }
+    if any(metadata.get(key) != value for key, value in required.items()):
+        raise cts.CampaignError(
+            "matching mobile config-inventory evidence changed"
+        )
+    artifacts = path.parent / "artifacts"
+    renderer = artifacts / "renderer.txt"
+    qpa = artifacts / "results.qpa"
+    summary = artifacts / "summary.txt"
+    if not renderer.is_file() or not qpa.is_file() or not summary.is_file():
+        raise cts.CampaignError(
+            "matching mobile config-inventory artifacts are incomplete"
+        )
+    for artifact, key in (
+        (renderer, "renderer_sha256"),
+        (qpa, "qpa_sha256"),
+    ):
+        if hashlib.sha256(artifact.read_bytes()).hexdigest() != metadata.get(key):
+            raise cts.CampaignError(
+                f"matching mobile config-inventory {artifact.name} changed"
+            )
+    if summary.read_text(encoding="utf-8").strip() != "cts_rc=0":
+        raise cts.CampaignError(
+            "matching mobile config-inventory CTS process failed"
+        )
+    configs = cts.parse_egl_config_qpa(cts.decode_qpa(qpa.read_bytes()), api)
+    if cts.egl_configs_from_json(metadata.get("egl_configs")) != configs:
+        raise cts.CampaignError(
+            "matching mobile config-inventory metadata changed"
+        )
+    if metadata.get("egl_config_sha256") != cts.egl_config_digest(configs):
+        raise cts.CampaignError(
+            "matching mobile config-inventory digest changed"
+        )
+    validate_recorded_gpu_evidence(path, metadata, "mobile config inventory")
+    return metadata, configs

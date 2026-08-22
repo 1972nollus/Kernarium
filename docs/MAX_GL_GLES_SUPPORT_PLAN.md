@@ -1059,7 +1059,10 @@ failure remains open for the complete mobile matrix. Single fixed Aquarium
 canaries now pass on macOS and Simulator under both page profiles, including
 repaired-kernel runs with zero dropped or CPU-fallback frames. The current
 20-config 16 KiB macOS GLES 2 and GLES 3 matrices now pass all 9,460 and
-129,960 required executions. The seven interleaved performance pairs,
+129,960 required executions. Fixed signed Simulator GLES 2 and GLES 3 config
+inventories now match those macOS predecessors exactly at all 20 tuples and
+canonical digest, with direct ANGLE/Metal presentation, clean shutdown, and
+zero dropped or CPU-fallback frames. The seven interleaved performance pairs,
 connected-iPad thermal and sustained lifecycle baselines, and complete
 Simulator/iPad matrices remain missing.
 The former global all-package caselist attempt still
@@ -1672,7 +1675,11 @@ repair. The current 20-config 16 KiB macOS GLES 3 matrix completes all 129,960
 executions with 125,270 `Pass`, 4,690 Khronos-permitted `NotSupported`, and no
 disallowed status. The matching current GLES 2 matrix completes 9,460
 executions with 8,760 `Pass`, 700 Khronos-permitted `NotSupported`, and no
-disallowed status. The Simulator/iPad matrices, absent seven-pair
+disallowed status. Fixed generated signed-app inventories subsequently proved
+that the iOS 26.5 Simulator exposes the same exact 20 config tuples and digest
+for both APIs while using Gadgets, direct ANGLE/Metal presentation, and the
+sealed read-only lower; both runs returned zero with no dropped or
+CPU-fallback frames. The Simulator/iPad case matrices, absent seven-pair
 performance/connected-iPad thermal/sustained-lifecycle campaigns, and missing
 original-image receipt still prevent any new shared capability or conformance
 claim. The derivative

@@ -26,6 +26,23 @@ def load_runner(path: Path) -> ModuleType:
     return module
 
 
+def wrap_setup(driver: ModuleType, launcher: str, identifier: str) -> str:
+    service = driver.CTS_SERVICE.rstrip()
+    return f"""install -d -m 0755 /usr/local/libexec \\
+    /etc/systemd/system/graphical.target.wants
+cat > /usr/local/libexec/uml-vk-gl-cts <<'KERNARIUM_CTS_LAUNCHER'
+{launcher}
+KERNARIUM_CTS_LAUNCHER
+chmod 0755 /usr/local/libexec/uml-vk-gl-cts
+cat > /etc/systemd/system/uml-vk-gl-cts.service <<'KERNARIUM_CTS_SERVICE'
+{service}
+KERNARIUM_CTS_SERVICE
+ln -sf ../uml-vk-gl-cts.service \\
+    /etc/systemd/system/graphical.target.wants/uml-vk-gl-cts.service
+echo 'Kernarium CTS campaign enabled: {identifier}'
+"""
+
+
 def campaign_setup(
     driver: ModuleType,
     campaign: object,
@@ -39,20 +56,25 @@ def campaign_setup(
         page_size,
         rootfs_contract,
     ).rstrip()
-    service = driver.CTS_SERVICE.rstrip()
-    return f"""install -d -m 0755 /usr/local/libexec \\
-    /etc/systemd/system/graphical.target.wants
-cat > /usr/local/libexec/uml-vk-gl-cts <<'KERNARIUM_CTS_LAUNCHER'
-{launcher}
-KERNARIUM_CTS_LAUNCHER
-chmod 0755 /usr/local/libexec/uml-vk-gl-cts
-cat > /etc/systemd/system/uml-vk-gl-cts.service <<'KERNARIUM_CTS_SERVICE'
-{service}
-KERNARIUM_CTS_SERVICE
-ln -sf ../uml-vk-gl-cts.service \\
-    /etc/systemd/system/graphical.target.wants/uml-vk-gl-cts.service
-echo 'Kernarium CTS campaign enabled: {campaign.identifier}'
-"""
+    return wrap_setup(driver, launcher, campaign.identifier)
+
+
+def config_inventory_setup(
+    driver: ModuleType,
+    api: str,
+    page_size: int,
+    rootfs_contract: object,
+) -> str:
+    identifier = f"{api}-config-inventory-v1"
+    launcher = driver.build_guest_launcher(
+        None,
+        0,
+        900,
+        page_size,
+        rootfs_contract,
+        config_inventory_api=api,
+    ).rstrip()
+    return wrap_setup(driver, launcher, identifier)
 
 
 def generate_header(
@@ -86,6 +108,26 @@ def generate_header(
         rows.append(
             "    Campaign {"
             f"{json.dumps(campaign.identifier)}, "
+            f"R\"{delimiters[0]}({setups[0]}){delimiters[0]}\", "
+            f"R\"{delimiters[1]}({setups[1]}){delimiters[1]}\""
+            "},"
+        )
+    for api in driver.BASELINE_GLES_APIS:
+        index = len(rows)
+        identifier = f"{api}-config-inventory-v1"
+        setups = (
+            config_inventory_setup(driver, api, page_size, erofs_contract),
+            config_inventory_setup(driver, api, page_size, ext4_contract),
+        )
+        delimiters = (f"CTS{index}E", f"CTS{index}X")
+        for setup, delimiter in zip(setups, delimiters):
+            if f"){delimiter}\"" in setup:
+                raise RuntimeError(
+                    f"raw-string delimiter collision for {identifier}"
+                )
+        rows.append(
+            "    Campaign {"
+            f"{json.dumps(identifier)}, "
             f"R\"{delimiters[0]}({setups[0]}){delimiters[0]}\", "
             f"R\"{delimiters[1]}({setups[1]}){delimiters[1]}\""
             "},"

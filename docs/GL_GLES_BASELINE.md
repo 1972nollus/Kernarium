@@ -101,7 +101,16 @@ status. Independent verify-only reconstruction reported
 remained mode 0444 at SHA-256
 `f3ebadb579988892f4e33524b3101e82437199f876a7463aae092251fccec57a`.
 Together these campaigns complete the current 16 KiB macOS GLES 2 and GLES 3
-matrices. The complete Simulator/iPad matrices remain required.
+matrices. The signed iOS 26.5 Simulator subsequently ran fixed generated GLES
+2 and GLES 3 config-inventory campaigns at
+`.build/vk-gl-cts-ios-simulator/20260822-093938-4195-16k-gles2-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-simulator/20260822-093844-4028-16k-gles3-config-inventory-v1`.
+Both matched the same 20 config tuples and canonical digest exactly, used
+Gadgets with direct ANGLE/Metal presentation and the sealed lower, returned
+zero, and recorded no dropped or CPU-fallback frames. This establishes the
+mobile matrix geometry; it is not a case-matrix result. The complete
+Simulator/iPad matrices remain required.
 
 ## Authenticated derivative-rootfs checkpoint (2026-08-21)
 

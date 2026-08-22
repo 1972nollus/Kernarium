@@ -169,8 +169,20 @@ The clean detached 16 KiB campaign
 artifacts, and clean shutdown throughout. Independent verify-only
 reconstruction passed, and the sealed derivative remained mode 0444 at its
 authenticated hash. This completes current 16 KiB macOS GLES 2 and GLES 3.
-Simulator/iPad matrices and Phase 2 performance, thermal, and lifecycle gates
-remain open. The original image also lacks a build receipt, so future
+The rebuilt signed iOS 26.5 Simulator app then ran the fixed generated
+`gles3-config-inventory-v1` and `gles2-config-inventory-v1` campaigns at
+`.build/vk-gl-cts-ios-simulator/20260822-093844-4028-16k-gles3-config-inventory-v1`
+and
+`.build/vk-gl-cts-ios-simulator/20260822-093938-4195-16k-gles2-config-inventory-v1`.
+Each returned zero through Gadgets, direct ANGLE/Metal presentation, and the
+sealed ext4 lower below OverlayFS, and each matched its VNC/JIT/ten-vCPU macOS
+predecessor exactly: the same 20 config tuples and canonical digest
+`843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
+Both recorded zero dropped and CPU-fallback frames. The adapters expose no
+arbitrary selector and fail closed on any predecessor config mismatch; both
+records also pass the connected-device predecessor validator. Complete
+Simulator/iPad case matrices and Phase 2 performance, thermal, and lifecycle
+gates remain open. The original image also lacks a build receipt, so future
 qualification must use the checked derivative. Phase 3 and later profile work
 must not start until the lower shared baseline is measured and qualified.
 

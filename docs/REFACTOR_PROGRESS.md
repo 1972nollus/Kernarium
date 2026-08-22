@@ -1,5 +1,32 @@
 # Refactor progress
 
+## 2026-08-22: signed Simulator GLES configuration inventories
+
+- Added two fixed, generated Kernarium campaigns,
+  `gles2-config-inventory-v1` and `gles3-config-inventory-v1`, and taught the
+  Simulator and device adapters to select only those identifiers or an
+  existing allow-listed sentinel. No arbitrary script, CTS selector, config
+  ID, or engine became app-controlled. Inventory runs are inputs to
+  qualification and therefore reject `--qualification` themselves.
+- Rebuilt and verified both mobile Apple-GPU prefixes, rebuilt all four
+  page-profile runtime slices, repackaged the runtime/EGL/GLESv2 frameworks,
+  and built the Debug Simulator app. On the booted iOS 26.5 iPhone 17 Pro Max,
+  `.build/vk-gl-cts-ios-simulator/20260822-093844-4028-16k-gles3-config-inventory-v1`
+  and
+  `.build/vk-gl-cts-ios-simulator/20260822-093938-4195-16k-gles2-config-inventory-v1`
+  each returned zero and captured the same 20 configs as its matching
+  VNC/JIT/ten-vCPU macOS predecessor: IDs 1-4, 13-16, 25-28, 37-40, and
+  49-52, all selecting `window` from window/pixmap/pbuffer support, with
+  canonical digest
+  `843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607`.
+  Both used Gadgets in the signed app, the sealed ext4 lower read-only below
+  OverlayFS, direct ANGLE/Metal presentation, and ended with zero dropped and
+  CPU-fallback frames. The adapters reparse and authenticate predecessor QPA,
+  config, GPU, native-frame, rootfs, and artifact evidence and now fail closed
+  if the config tuples differ. The connected-device adapter accepted both
+  Simulator records as predecessors in dry-run validation. Complete
+  Simulator and connected-iPad case matrices remain open.
+
 ## 2026-08-22: truthful GLES depth inventory and complete macOS GLES matrices
 
 - CTS exposed that the GLES Virgl table advertised
