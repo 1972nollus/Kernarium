@@ -1,6 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # Ordered generated AOSP project topic identity.
 order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Build-16-KiB-Mesa-Virgl-GLES-stack.patch	ec0b5fba3a9ac6bb1d9ff815750780e60f615064	55cbde7e27f183c6ca1f6b5fea500e991ee8a531c1d99272838188a26edf3a7e	UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
-2	0002-UML-ANDROID-LOCAL-Enable-Virgl-pipe-loader-descripto.patch	62f778fc6995ebd66aeec9a3280522da6e4a2a21	ceb02a6b8669f81ff565157bec64236c66eccf421d6767de6bb03f981fb6103e	UML-ANDROID-LOCAL: Enable Virgl pipe-loader descriptor
-3	0003-UML-ANDROID-LOCAL-Share-GLAPI-dispatch-state.patch	aee1ea29d12204c4210d9d7049da7f843d63e1be	93f784dc3975f6101d067629937533fa38104b6383420b427ec4facda3489dbe	UML-ANDROID-LOCAL: Share GLAPI dispatch state
+1	0001-UML-ANDROID-LOCAL-Build-16-KiB-Mesa-Virgl-GLES-stack.patch	ec0b5fba3a9ac6bb1d9ff815750780e60f615064	f7fae1f890f969f22b279a9f133aa54e304d9229b9badf4677e6468987a9d6fb	UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack

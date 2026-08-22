@@ -328,6 +328,54 @@ host interactions the candidate run performed, not only on the kernel.
 the continuation order below is still not met and the tracked accepted-release
 descriptor still selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`.
 
+### Withdrawn Mesa route regeneration (2026-08-22)
+
+Route `p0004` was regenerated from `external/mesa3d`'s three-commit local branch
+and has been reverted to its tested one-patch state. The two extra commits break
+SurfaceFlinger.
+
+The first boot on a host emulator carrying the console fix reached guest second
+990 with the console device healthy, but SurfaceFlinger crash-looped from guest
+second 38 onward and `system_server` never started. The guest tombstone is
+unambiguous:
+
+```text
+Abort message: 'no suitable EGLConfig found, giving up (format: 1, vendor:
+    Android, version: 1.4 Android META-EGL, ...)'
+  #03 SkiaGLRenderEngine::chooseEglConfig
+  #04 SkiaGLRenderEngine::create
+```
+
+The reported vendor and version are the Android EGL loader's own strings, so
+`libEGL_mesa` never supplied configs at all.
+
+Diffing the two installed release manifests isolates the cause exactly. The only
+AOSP route that differs between the working `20260822-8f91b078-gpu-sysfs1` and
+the broken `20260822-37b0ff5f-irqwork1` is `external/mesa3d`:
+
+| release | mesa3d patches | mesa3d final tree | SurfaceFlinger |
+| --- | --- | --- | --- |
+| `gpu-sysfs1` | 1 | `f70d7dbb` | started once, stayed up |
+| `irqwork1` | 3 | `4295979a` | 152 SIGABRTs, never came up |
+
+`build/make`, `device/google/cuttlefish`, and `packages/modules/Connectivity`
+are byte-identical across the two, and the kernel differs only by the irq-work
+topic, which cannot affect EGL config enumeration in a native process.
+
+Both `gpu-sysfs1` runs kept SurfaceFlinger up for the whole run, including one
+of 23,844 guest seconds, so the one-patch Mesa is the tested state and the
+`37b0ff5f` commit message had the causality backwards: the GLAPI dispatch change
+does not stop SurfaceFlinger crashing, it starts it. The likely mechanism is
+that dropping `glapi` from the `libEGL_mesa`, `libGLESv1_CM_mesa`, and
+`libGLESv2_mesa` static library lists leaves symbols that `gallium_dri.so` does
+not in fact export, so the driver fails to load and the loader falls back. That
+is a hypothesis; the missing symbols were not enumerated.
+
+Do not re-apply `UML-ANDROID-LOCAL: Enable Virgl pipe-loader descriptor` or
+`UML-ANDROID-LOCAL: Share GLAPI dispatch state` to route `p0004` without first
+demonstrating, in a guest boot, that SurfaceFlinger still starts. Both remain on
+the builder-local `uml-android17-virgl-descriptor` branch.
+
 ### AOSP diagnostic and patch-series state
 
 `device/google/cuttlefish` is clean on builder-local branch
@@ -376,38 +424,37 @@ patch-replayed image reaches full boot acceptance.
 ### Required continuation order
 
 The gadgets vector-pair repair, the BPF `ENOMEM` kernel repair, and the console
-accept repair are all in the tree. The remaining order is:
+accept repair are all in the tree, and the console repair is confirmed in a live
+guest: sixty deliberate connect-and-close races produced sixty rejected clients,
+zero device resets, zero `vu_interrupt` warnings, and a console that still
+answered afterwards. The Apple GPU dependency prefix has been reinstalled, so
+the tracked tree configures again. The remaining order is:
 
-1. Repeat the ten-vCPU gadgets boot against the already-installed release
-   `android17-ack6.18-16k-20260822-37b0ff5f-irqwork1` with a host emulator that
-   carries the console fix. Nothing needs rebuilding on the builder: that
-   release already contains the ACK ELF with topic 0028 and the regenerated
-   Mesa route. The boot watcher must hold **one** console connection for the
-   whole run instead of reconnecting on every poll, so it stops generating the
-   detach/attach churn that exposed the console race sixteen times in one run.
-   Require all CPUs `0-9`, `sys.boot_completed=1`, stable zygote/system_server
-   and SurfaceFlinger processes, working `dumpsys SurfaceFlinger`, the
-   Mesa/virgl renderer report, and no RCU stall, panic, oops, lockup, or mixed
-   ttyS0/hvc0 logs. A long retry loop is not a successful boot.
-2. Rebuild the Apple GPU dependency prefix so the tracked tree configures
-   again. Commit `bf680c93` added UTM WebKit patch 10 and the installed prefix
-   predates it, so `macos-android17` and every other GPU-enabled preset fail
-   provenance verification until `dependencies/build-apple-gpu.sh` reinstalls
-   the prefix from the committed ten-patch series. Until then the only emulator
-   build that configures is a worktree at or before `eafe46af` with the console
-   fix cherry-picked, which is a diagnostic build and not the acceptance
-   product.
-3. Publish, copy, locally install, and select a new immutable release only after
-   a clean replayed image passes the ten-vCPU gadgets acceptance above. The
-   `frameworks/base` diagnostic is already reverted on the builder and saved as
-   `pathinterpolator-diagnostic.patch`; Mesa route p0004 is already regenerated
-   and committed. Keep SwiftShader packaged and reuse the existing Soong output
-   for an incremental target-files build.
+1. Reset `external/mesa3d` on the builder to the single tested
+   `UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack` commit so its tree is
+   `f70d7dbb` again and the route verifier agrees with the reverted `p0004`.
+   Then build **incrementally** in the existing Soong output: Soong rebuilds the
+   Mesa libraries and relinks the image, and nothing else in AOSP changed. Do
+   not start a clean build. Publish, copy, and locally install the result. The
+   only difference from the working `gpu-sysfs1` release is then the ACK kernel,
+   27 topics to 28, which is the single variable this boot is meant to test.
+2. Repeat the ten-vCPU gadgets boot on that release. The boot watcher must hold
+   **one** console connection for the whole run instead of reconnecting on every
+   poll. Require all CPUs `0-9`, `sys.boot_completed=1`, stable
+   zygote/system_server and SurfaceFlinger processes, working
+   `dumpsys SurfaceFlinger`, the Mesa/virgl renderer report, and no RCU stall,
+   panic, oops, lockup, or mixed ttyS0/hvc0 logs. A long retry loop is not a
+   successful boot. The BPF `ENOMEM` repair is so far supported only by the
+   freestanding probe; this boot is what confirms it in the guest.
+3. Select the new immutable release in `accepted-release.env` only after that
+   boot passes. Keep SwiftShader packaged. The `frameworks/base` diagnostic is
+   already reverted on the builder and saved as
+   `pathinterpolator-diagnostic.patch`.
 4. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
-   exact path, including the 240 MiB `irqwork-10vcpu-gadgets1-ttyS0.log` once
-   its evidence is no longer needed. Then continue the remaining plan phases:
-   Android application acceptance, product HAL cleanup, and the separate signed
-   16 KiB iOS runtime framework.
+   exact path, including the 240 MiB `irqwork-10vcpu-gadgets1-ttyS0.log` and the
+   `37b0ff5f-irqwork1` release once their evidence is no longer needed. Then
+   continue the remaining plan phases: Android application acceptance, product
+   HAL cleanup, and the separate signed 16 KiB iOS runtime framework.
 
 Commit after each focused change reaches a consistent, tested state. Do not
 fold the CPU fix, Mesa patch regeneration, AOSP diagnostic cleanup, and release
