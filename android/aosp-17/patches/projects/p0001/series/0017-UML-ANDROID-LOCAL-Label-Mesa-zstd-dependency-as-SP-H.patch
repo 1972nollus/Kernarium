@@ -1,7 +1,7 @@
 From 2e617e466cbc61f22a66ff111c46173ac388f38f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 17:33:15 +0000
-Subject: [PATCH 17/18] UML-ANDROID-LOCAL: Label Mesa zstd dependency as SP-HAL
+Subject: [PATCH 17/19] UML-ANDROID-LOCAL: Label Mesa zstd dependency as SP-HAL
 
 Change-Id: I09c2c3f60d69158da2b4fbcd497d59469ddc8fe5
 ---

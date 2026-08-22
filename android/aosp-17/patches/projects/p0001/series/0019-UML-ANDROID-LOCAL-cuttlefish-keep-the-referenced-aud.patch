@@ -1,0 +1,46 @@
+From 715f3e2ae21f11e5d84efa5798f990ad00b320f6 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 15:06:16 +0000
+Subject: [PATCH 19/19] UML-ANDROID-LOCAL: cuttlefish keep the referenced audio
+ policy fragment
+
+Omitting the Bluetooth HAL also drops
+bluetooth_with_le_audio_policy_configuration_7_0.xml from /vendor/etc, but
+/vendor/etc/audio_policy_configuration.xml still XIncludes it. The failed
+include invalidates the whole document: the audio HAL logs "Invalid XML config
+file", parses zero strategies and zero volume groups, and never registers
+android.hardware.audio.core.IModule/default. audioserver then never publishes
+IAudioPolicyService, system_server blocks in AudioService.<init>, and the
+watchdog kills the system process after 69 s in a permanent runtime restart
+loop.
+
+Keep the referenced fragment. It is a policy declaration rather than an init
+service, so it cannot reintroduce the restart loop the surrounding block
+prevents, and AudioPolicyManager already skips modules whose HAL is absent.
+
+Change-Id: Iccb139dfad58566a1c54670d04c7f9c8b9dd762c
+---
+ vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+index c29de5361e9d80cff101b9114feae01aef655a27..46c2eae3333e4a013662e441de764056ad592986 100644
+--- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
++++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
+@@ -36,6 +36,16 @@ LOCAL_ENABLE_LIGHT := false
+ LOCAL_ENABLE_OEMLOCK := false
+ LOCAL_ENABLE_NEURALNETWORKS := false
+ LOCAL_ENABLE_SENSORS := false
++# Disabling the Bluetooth HAL above also drops
++# bluetooth_with_le_audio_policy_configuration_7_0.xml from /vendor/etc, but the
++# audio policy configuration still XIncludes it. The failed include invalidates
++# the whole document, so the audio HAL parses zero modules, never registers
++# android.hardware.audio.core.IModule/default, and system_server blocks forever
++# in AudioService while the watchdog restarts the runtime. Keep the referenced
++# fragment: it is a policy declaration, not an init service, so it cannot
++# reintroduce the restart loop this block exists to prevent.
++PRODUCT_COPY_FILES += \
++    frameworks/av/services/audiopolicy/config/bluetooth_with_le_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml
+ # Android 17's bundled arm64 Mesa prebuilt is linked for 4 KiB pages. Select
+ # the AOSP-source EGL/GLES and Gallium Virgl modules generated for this 16 KiB
+ # product while leaving every other Cuttlefish product on its existing stack.
