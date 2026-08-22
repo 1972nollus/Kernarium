@@ -404,6 +404,53 @@ Gallium pipe-loader so a virgl driver descriptor exists at all, and
 owner. Both are restored, returning the route to three patches and final tree
 `4295979a`.
 
+### Graphics fixed and proven; boot now blocks on the audio HAL (2026-08-22)
+
+Release `20260822-9db7004e-mesa3p1` carries the restored three-patch Mesa route
+together with the `c659cfc3` zstd label and the `fd2bc031` GPU sysfs label. Booted
+at ten vCPUs on the gadgets engine with SELinux enforcing and a host stdin that
+cannot hang up, it settles the EGL question:
+
+- SurfaceFlinger started once at guest 38.6 s and never restarted. No SIGABRT.
+- `dumpsys SurfaceFlinger` reports a working renderer:
+
+      GLES: Mesa, virgl, OpenGL ES 3.0 Mesa 26.1.0-devel
+      EGL implementation : 1.5 Android META-EGL
+      ------------RE GLES (Ganesh)------------
+      android.hardware.graphics.composer3.IComposer version:5 ... hwc3-drm
+
+- `ssl` interrupts stayed at zero, every CPU kept taking timer ticks, and no RCU
+  stall, panic, oops, or lockup appeared.
+- The only AVC denial in the entire run is the pre-existing, unrelated `init`
+  write to sysfs `discard_max_bytes`. Both graphics denials are gone in
+  enforcing mode, which confirms `c659cfc3` and `fd2bc031` together.
+
+`sys.boot_completed` still does not become `1`, but the cause has moved out of
+graphics and out of the CPU. `system_server`'s main thread blocks during
+`AudioService` construction:
+
+    SystemServer.startOtherServices
+      -> SystemServiceManager.startService
+      -> AudioService.<init> -> AudioDeviceBroker.<init>
+      -> AudioDeviceBroker.getCommunicationDeviceInt
+      -> AudioSystemAdapter.getDevicesForAttributes
+      -> AudioSystem.getDevicesForAttributes (native)
+      -> mediautils::getService<IAudioPolicyService>
+      -> condition_variable::wait_until        blocked
+
+`IAudioPolicyService` never arrives because `audioserver` cannot obtain
+`android.hardware.audio.core.IModule/default`; servicemanager reports it as not
+found and its lazy start fails. The release device VINTF manifest declares no
+HALs at all, while the init service `vendor.audio-hal-aidl` is installed and does
+start. Android's watchdog then kills the system process with "Blocked in handler
+on main thread (main) for 69s", four times in this run, and zygote restarted five
+times. That is a HAL declaration problem, not a renderer problem.
+
+Two further observations from the same run are recorded but not yet explained:
+`artd` took a SIGSEGV at fault address 0 with backtrace `#00 pc 0000000000000000`,
+a call through a null pointer, once; and `vendor.ril-daemon` exits with status 1
+in a tight restart loop.
+
 ### AOSP diagnostic and patch-series state
 
 `device/google/cuttlefish` is clean on builder-local branch
