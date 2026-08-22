@@ -10,4 +10,4 @@ order	patch	stable_patch_id	sha256	subject
 8	0008-Metal-enable-texture-swizzles-on-arm64-Simulator.patch	906310dbca467b4abd547d5f17c276f9eae8af54	d1c8b3cb018d7b3add49224fb6a32f2fc53867fe9cfef88e57747001fe40856a	Metal: enable texture swizzles on arm64 Simulator
 9	0009-Metal-expose-Simulator-32-bit-float-filtering.patch	3c6b4e334a298c4702028839687e7964028b446d	2b318837e9ddef2603c39f8c505e0176c5d9240d09feac79a823731d3c167fc9	Metal: expose Simulator 32-bit float filtering
 10	0010-Metal-enable-sampler-comparison-on-arm64-Simulator.patch	9a19cd5cbf84da1740a609c4b6ba337b3e461919	d1f453c58257aa3cfbcdf3e9a4bb1c7ac0c3fe16715806ad9effb34e35e67fe1	Metal: enable sampler comparison on arm64 Simulator
-11	0011-Metal-enable-32-bit-float-filtering-on-iOS-device.patch	0b55294def2048ee0024858709cf5236d4afd90d	d1a2f6128bcccfcd4f859e0c3e8310b3ac45e5d4549d1e7cd36b8c53b118b35e	Metal: enable 32-bit float filtering on iOS device
+11	0011-Metal-enable-32-bit-float-filtering-on-Apple8.patch	7491b897dad6da71dece5e35a4d32c3c2535fed3	5d2f854fbebf53442c91f94a87b6e4b4790dffe6b9849980ec141fdcaef8bfb6	Metal: enable 32-bit float filtering on Apple8

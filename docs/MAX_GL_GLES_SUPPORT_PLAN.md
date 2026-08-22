@@ -249,7 +249,8 @@ Simulator GLES 3 slice passed 1,625/1,625 after managed topic `fff809d63b`
 restored native sampler comparison. The first physical-device run then found
 one real failure in `rgb_float_rgb32f_linear` on the A15/Apple8 query path.
 It was not an OOM, so memory remained 2,048 MiB. Managed UTM WebKit topic
-`5328f5eb95` enables R/RG/RGBA32F filtering for the common Metal provider;
+`66766da048` retains the native query and Simulator route while adding only
+the Apple8 R/RG/RGBA32F filtering path;
 the rebuilt normally signed app passed the exact same 1,624-case device slice
 with 1,563 `Pass`, 61 permitted `NotSupported`, zero failure, clean shutdown,
 and zero CPU fallback at

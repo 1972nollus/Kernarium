@@ -52,9 +52,10 @@
   and emulator completed normally, so this was not an OOM and the device
   memory policy did not change. The A15/Apple8 Metal device does not report
   32-bit-float filtering through ANGLE's former capability query even though
-  it executes the operation correctly. Managed UTM WebKit topic `5328f5eb95`
-  (stable patch ID `0b55294def2048ee0024858709cf5236d4afd90d`) enables the
-  common R/RG/RGBA32F filtering path. The rebuilt, normally signed app then
+  it executes the operation correctly. Managed UTM WebKit topic `66766da048`
+  (stable patch ID `7491b897dad6da71dece5e35a4d32c3c2535fed3`) retains the
+  native query and Simulator route while adding only the Apple8
+  R/RG/RGBA32F filtering path. The rebuilt, normally signed app then
   passed the exact same 1,624-case slice at 2,048 MiB with 1,563 `Pass`, 61
   permitted `NotSupported`, zero failure, clean shutdown, and zero CPU
   fallback at

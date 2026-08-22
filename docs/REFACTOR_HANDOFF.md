@@ -90,7 +90,8 @@ one real failure at
 and emulator completed normally, so this was not an OOM and did not authorize
 a RAM decrement. The A15/Apple8 Metal query withheld 32-bit-float filtering
 although the operation executes correctly. Managed UTM WebKit topic
-`5328f5eb95` enables the common R/RG/RGBA32F filtering path; the rebuilt,
+`66766da048` retains the native query and Simulator route while adding only
+the Apple8 R/RG/RGBA32F filtering path; the rebuilt,
 normally signed app passed the exact same 1,624-case slice at 2,048 MiB with
 1,563 `Pass`, 61 permitted `NotSupported`, clean shutdown, and zero CPU
 fallback. This focused result does not replace either complete device matrix.

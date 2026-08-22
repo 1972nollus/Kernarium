@@ -1064,9 +1064,9 @@ The repaired GLES 3 `cfg00` fraction `0/4` then completed 1,625/1,625 with
 The first connected-iPad attempt at 2,048 MiB completed normally but found one
 real failure in the `cfg00` fraction `2/4` RGB32F linear-filter case. Because
 the emulator was not OOM-terminated, do not reduce RAM for that result.
-Managed UTM WebKit topic `5328f5eb95` enables the common Metal R/RG/RGBA32F
-filter path after the A15/Apple8 capability query withheld it despite the
-passing focused hardware operation.
+Managed UTM WebKit topic `66766da048` retains the native query and Simulator
+route while adding only the Apple8 Metal R/RG/RGBA32F filter path after the
+A15 property withheld it despite the passing focused hardware operation.
 With the rebuilt normally signed app, the exact same device slice passed all
 1,624 executions with 1,563 `Pass`, 61 permitted `NotSupported`, clean
 shutdown, and zero CPU fallback at

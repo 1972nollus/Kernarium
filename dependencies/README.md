@@ -122,15 +122,15 @@ compare-before-filter semantics instead of being forced to
 `MTLCompareFunctionNever`. Keep those two exceptions scoped to the arm64
 Simulator product rather than generalizing them to other architectures.
 
-The common Metal format table also marks R/RG/RGBA 32-bit-float textures
-filterable. The native query already reports that capability on the supported
-macOS path; arm64 Simulator and the connected A15 iPad do not report it, but
-both execute the official GLES linear-filter workload correctly. On the A15,
-the unmodified query path failed the exact 1,624-case qualification slice at
-the RGB32F linear case, while the enabled path passed the entire same slice.
-This is a tested provider contract for the current Apple products, not a claim
-about unqualified device families; complete mobile matrices remain the release
-gate.
+The Metal format table retains the native R/RG/RGBA 32-bit-float filter query,
+the validated arm64 Simulator exception, and one additional Apple GPU family 8
+gate. The connected A15 iPad is Apple8: its native property does not report the
+capability, but the unmodified query path failed the exact 1,624-case
+qualification slice at the RGB32F linear case while the Apple8-enabled path
+passed the entire same slice. Older device families that also fail the native
+query remain disabled. This is a tested provider contract for the current
+Apple8 device, not a claim about unqualified device families; complete mobile
+matrices remain the release gate.
 
 The maintained UTM virglrenderer series also keeps the GLES format inventory
 truthful: it does not advertise `VIRGL_FORMAT_Z32_UNORM`, whose GLES fallback

@@ -1,0 +1,30 @@
+From 66766da0486e9e5e22bccd934cb515641bef85e3 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 22 Aug 2026 15:33:07 +0900
+Subject: [PATCH 11/11] Metal: enable 32-bit float filtering on Apple8
+
+---
+ .../ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm    | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+index b054f8ae06..5a0199b107 100644
+--- a/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
++++ b/Source/ThirdParty/ANGLE/src/libANGLE/renderer/metal/DisplayMtl.mm
+@@ -1457,7 +1457,15 @@ bool DisplayMtl::supports32BitFloatFiltering() const
+     (defined(__IPHONE_14_0) && __IPHONE_OS_VERSION_MIN_REQUIRED >= __IPHONE_14_0)
+     if (@available(ios 14.0, macOS 11.0, *))
+     {
+-        return [mMetalDevice supports32BitFloatFiltering];
++        bool supported = [mMetalDevice supports32BitFloatFiltering];
++#    if (defined(__MAC_13_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_13_0) || \
++        (defined(__IPHONE_16_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_16_0)
++        if (@available(ios 16.0, macOS 13.0, *))
++        {
++            supported = supported || [mMetalDevice supportsFamily:MTLGPUFamilyApple8];
++        }
++#    endif
++        return supported;
+     }
+     else
+ #endif
