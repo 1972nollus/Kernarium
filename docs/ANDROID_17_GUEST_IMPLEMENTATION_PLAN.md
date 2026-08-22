@@ -328,68 +328,65 @@ host interactions the candidate run performed, not only on the kernel.
 the continuation order below is still not met and the tracked accepted-release
 descriptor still selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`.
 
-### SurfaceFlinger EGL failure is unresolved (2026-08-22)
+### SurfaceFlinger EGL failure is environmental (2026-08-22)
 
-SurfaceFlinger crash-loops on every recent ten-vCPU boot and `system_server`
-never starts. The cause is **not identified**. Two earlier attributions in this
-document's history were wrong, and both were wrong the same way: they compared
-release *metadata* instead of release *content*.
+SurfaceFlinger crash-loops on every ten-vCPU boot and `system_server` never
+starts. The cause is **not in this repository**. The decisive observation is
+that the previously accepted release `20260822-6afe4225-virgl2`, which booted
+before, now crash-loops the same way on the same machine.
 
-The guest tombstone is stable across every failing run:
+The failure point is exact. With `vendor.mesa.log.level=debug` set in the guest:
 
 ```text
-Abort message: 'no suitable EGLConfig found, giving up (format: 1, vendor:
-    Android, version: 1.4 Android META-EGL, ...)'
-  #03 SkiaGLRenderEngine::chooseEglConfig
-  #04 SkiaGLRenderEngine::create
+D/EGL-MAIN: using driver virtio_gpu for 12
+D/EGL-MAIN: MESA-LOADER: device is not located on the PCI bus
+W/EGL-MAIN: egl: failed to create dri2 screen
+W/EGL-MAIN: DRI2: failed to create screen
+W/EGL-MAIN: Failed to open any DRM device
+D/EGL-MAIN: EGL_NOT_INITIALIZED in eglInitialize: DRI2: failed to open device
 ```
 
-The reported vendor and version are the Android EGL loader's own strings, so
-`libEGL_mesa` never supplied configs at all. SurfaceFlinger dies about two
-seconds into its own uptime, `init` kills zygote with it, and the pair restarts
-indefinitely.
+Mesa opens `/dev/dri/renderD128`, resolves the `virtio_gpu` driver, and then
+`driCreateNewScreen` fails. **Zero virtio-gpu commands reach the host** during
+these attempts, so the failure is upstream of any host round-trip; the healthy
+`cpufix` run by contrast logged `virtio_gpu_dequeue_ctrl_func` errors at guest
+second 38, meaning it did reach the host. SurfaceFlinger's
+"no suitable EGLConfig found" abort is three layers downstream of this and
+should not be chased directly.
 
-**The guest image is byte-identical in every run.** The compressed disk is
-`sha256 612d157c3051e07836d89226de134b959e4df934a53617f61d69526d9d4c4d23` in the
-installed `gpu-sysfs1` release, in the `mesa-glapi` diagnostic copy, and in the
-`irqwork1` release. `irqwork1` reused the earlier staged disk instead of
-rebuilding it, so its manifest records a three-patch `external/mesa3d` route
-that its image does not contain. **A release manifest's route metadata describes
-the checkouts at publish time, not necessarily the bytes in the image.** Compare
-image hashes before attributing a guest-visible change to a route.
+Eliminated by direct test, one boot each:
 
-Guest Mesa is therefore ruled out entirely: it is the same in the healthy and
-failing runs. So is the ramdisk, and so is the AOSP userspace.
+| variable | test | result |
+| --- | --- | --- |
+| guest image | sha256 identical across all runs | still fails |
+| guest Mesa | library sizes match the one-patch build exactly | still fails |
+| release | the accepted `6afe4225-virgl2` image, a different build | still fails |
+| ACK kernel | 27 topics and 28 topics | both fail |
+| emulator source | worktree at `eafe46af`, the healthy run's revision | still fails |
+| Apple GPU prefix | `macos-arm64-pre-apple8`, EGL framework hash-matched to the healthy run's staged copy | still fails |
+| SELinux | `setenforce 0`, confirmed `Permissive` | still fails |
+| DRM sysfs labels | broadened to `sysfs_gpu`, verified in guest | still fails |
+| vCPU count | 4 and 10 | both fail |
+| guest `/data` | 5.8 GB free, writable | not exhausted |
+| console accept fix | present in three failing runs, absent in a fourth | not related |
 
-What remains differs on two axes, and each appears sufficient on its own:
+Two runs were healthy, at 04:07 and 14:06 on 2026-08-22; every run from 16:36
+onward fails. The host has run a VK-GL-CTS iOS Simulator campaign continuously
+across that boundary, driving Kernarium against the same M1 Ultra GPU. That is
+the only identified host-state change, and it is **not confirmed**: no host-side
+GL error is logged, and the guest fails before contacting the host, which argues
+against simple contention.
 
-| run | guest s | SF starts | SF aborts | ACK topics | host emulator / GPU prefix |
-| --- | --- | --- | --- | --- | --- |
-| `mesa-glapi` | 23,844 | 1 | 0 | 27 | pre-`eafe46af` / 9-patch |
-| `cpufix` | 1,449 | 1 | 0 | 27 | `eafe46af` / 9-patch |
-| `irqwork` | 994 | 153 | 152 | **28** | `eafe46af` / 9-patch |
-| `consolefix` | 990 | 137 | 137 | **28** | `cfedda53` / 11-patch |
-| `control27` | 258 | 35 | 34 | 27 | `cfedda53` / 11-patch |
+The control that would settle it is one ten-vCPU boot with the campaign stopped,
+about six minutes. A host reboot would test accumulated host state equally well.
+Neither has been run: both disturb work in progress and need the operator's
+decision. Do not attribute this failure to a code change without first
+reproducing it on an otherwise idle host.
 
-`irqwork` isolates the kernel: same host, 27 topics to 28, healthy to broken.
-`control27` isolates the host: same 27-topic kernel as the two healthy runs, new
-emulator and rebuilt Apple GPU dependency prefix, broken. Two independent
-perturbations each reproduce the same failure, which points at a marginal EGL
-initialization path rather than at one culprit. Within a boot the failure is
-deterministic: it recurs on every one of 150 restarts, and two separate
-`control27` boots both crash-looped.
-
-The control that would separate the host axis cleanly is the 27-topic kernel on
-the **9-patch** Apple GPU prefix with an emulator at `eafe46af`. That prefix has
-been replaced by the committed 11-patch build and rebuilding it is a multi-hour
-WebKit build that overwrites the installed prefix, so it needs explicit
-authorization before anyone runs it.
-
-Next steps, in order: capture the guest-side `libEGL`/virgl driver error rather
-than only SurfaceFlinger's abort, since the tombstone says the loader fell back
-but not why the Mesa driver refused; then decide between the kernel and host
-axes with that evidence. Do not revert either axis on the strength of the table
-above alone.
+The `sysfs_gpu` labelling broadened in `fd2bc031` is a genuine correctness
+improvement but **fixed nothing here**, proven by the permissive-mode run. It
+should be reverted with the other non-fixes once a real boot is available to
+validate against.
 
 ### AOSP diagnostic and patch-series state
 
