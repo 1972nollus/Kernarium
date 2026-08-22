@@ -113,7 +113,7 @@ MANIFEST = """{
   }, {
     "matches": ["https://webglsamples.org/*"],
     "js": ["verify.js"],
-    "run_at": "document_idle"
+    "run_at": "document_end"
   }]
 }
 """
