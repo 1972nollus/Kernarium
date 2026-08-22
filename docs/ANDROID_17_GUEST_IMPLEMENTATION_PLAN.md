@@ -328,65 +328,81 @@ host interactions the candidate run performed, not only on the kernel.
 the continuation order below is still not met and the tracked accepted-release
 descriptor still selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`.
 
-### SurfaceFlinger EGL failure is environmental (2026-08-22)
+### vCPU-0 serial-line interrupt storm (2026-08-22)
 
-SurfaceFlinger crash-loops on every ten-vCPU boot and `system_server` never
-starts. The cause is **not in this repository**. The decisive observation is
-that the previously accepted release `20260822-6afe4225-virgl2`, which booted
-before, now crash-loops the same way on the same machine.
+Every ten-vCPU boot recorded in this plan ran with a host `stdin` that could
+reach end of file. The UML serial line (`ssl`) polls that descriptor, sees it
+permanently readable, reads zero bytes, and re-arms, so the guest takes an
+unbounded level-triggered SIGIO storm on vCPU 0. One wedged run measured
 
-The failure point is exact. With `vendor.mesa.log.level=debug` set in the guest:
+    /proc/interrupts
+      0: CPU0=367       CPU1=48514 ... CPU9=35666   SIGALRM hr timer
+     19: CPU0=43851100  every other CPU=0           SIGIO   ssl
 
-```text
-D/EGL-MAIN: using driver virtio_gpu for 12
-D/EGL-MAIN: MESA-LOADER: device is not located on the PCI bus
-W/EGL-MAIN: egl: failed to create dri2 screen
-W/EGL-MAIN: DRI2: failed to create screen
-W/EGL-MAIN: Failed to open any DRM device
-D/EGL-MAIN: EGL_NOT_INITIALIZED in eglInitialize: DRI2: failed to open device
-```
+CPU 0 took 367 timer ticks while its peers took 32k-49k, `/proc/stat` shows its
+accounting frozen near 408 jiffies against roughly 49,300 elsewhere, and RCU
+reported `0-...0: (0 ticks this GP)` with `vdc` spinning on CPU 0. A host
+`sample` placed `uml-vcpu-0-carrier` in `poll()` or `read()` for 1966 of 2087
+samples. That boot died at 4.45 s, before SurfaceFlinger ever started.
 
-Mesa opens `/dev/dri/renderD128`, resolves the `virtio_gpu` driver, and then
-`driCreateNewScreen` fails. **Zero virtio-gpu commands reach the host** during
-these attempts, so the failure is upstream of any host round-trip; the healthy
-`cpufix` run by contrast logged `virtio_gpu_dequeue_ctrl_func` errors at guest
-second 38, meaning it did reach the host. SurfaceFlinger's
-"no suitable EGLConfig found" abort is three layers downstream of this and
-should not be chased directly.
+Giving the emulator a stdin that never reaches end of file removes the storm
+completely: `ssl` interrupts stay at zero, CPU 0 resumes ticking, and the same
+release boots past `vdc cryptfs encryptFstab` into the framework. Every earlier
+measurement in this plan was taken under the storm and must not be treated as a
+clean control. The serial line should also refuse to re-arm on a hung-up
+descriptor, which is the same defect class as the `vu_interrupt` end-of-file
+storm repaired in `93b4db99`; that repair is not yet written.
 
-Eliminated by direct test, one boot each:
+### SurfaceFlinger EGL failure is in this repository (2026-08-22)
 
-| variable | test | result |
-| --- | --- | --- |
-| guest image | sha256 identical across all runs | still fails |
-| guest Mesa | library sizes match the one-patch build exactly | still fails |
-| release | the accepted `6afe4225-virgl2` image, a different build | still fails |
-| ACK kernel | 27 topics and 28 topics | both fail |
-| emulator source | worktree at `eafe46af`, the healthy run's revision | still fails |
-| Apple GPU prefix | `macos-arm64-pre-apple8`, EGL framework hash-matched to the healthy run's staged copy | still fails |
-| SELinux | `setenforce 0`, confirmed `Permissive` | still fails |
-| DRM sysfs labels | broadened to `sysfs_gpu`, verified in guest | still fails |
-| vCPU count | 4 and 10 | both fail |
-| guest `/data` | 5.8 GB free, writable | not exhausted |
-| console accept fix | present in three failing runs, absent in a fourth | not related |
+An earlier section of this plan called the SurfaceFlinger failure environmental.
+That was wrong, and the evidence retiring it is recorded here. No run has ever
+reached `sys.boot_completed=1`; the two runs previously described as healthy
+stopped before SurfaceFlinger started, so their clean logs were never evidence
+of a working graphics stack.
 
-Two runs were healthy, at 04:07 and 14:06 on 2026-08-22; every run from 16:36
-onward fails. The host has run a VK-GL-CTS iOS Simulator campaign continuously
-across that boundary, driving Kernarium against the same M1 Ultra GPU. That is
-the only identified host-state change, and it is **not confirmed**: no host-side
-GL error is logged, and the guest fails before contacting the host, which argues
-against simple contention.
+With the storm removed, the accepted release
+`android17-ack6.18-16k-20260822-6afe4225-virgl2` fails in three separable
+layers, each confirmed in a live guest:
 
-The control that would settle it is one ten-vCPU boot with the campaign stopped,
-about six minutes. A host reboot would test accumulated host state equally well.
-Neither has been run: both disturb work in progress and need the operator's
-decision. Do not attribute this failure to a code change without first
-reproducing it on an otherwise idle host.
+1. `libEGL_mesa.so` does not load at all:
 
-The `sysfs_gpu` labelling broadened in `fd2bc031` is a genuine correctness
-improvement but **fixed nothing here**, proven by the permissive-mode run. It
-should be reverted with the other non-fixes once a real boot is available to
-validate against.
+       E libEGL : load_driver(/vendor/lib64/egl/libEGL_mesa.so): unknown
+
+   The kernel audit log carries the reason: SurfaceFlinger is denied `read`,
+   `open`, `execute`, `map`, and `getattr` on `/vendor/lib64/libzstd.so`, which
+   is labelled `vendor_file`. `dlopen` fails on that dependency, which is why
+   `dlerror()` was empty and the loader printed `unknown`. `c659cfc3` labels
+   Mesa's zstd as a same-process HAL and postdates this release.
+
+2. SurfaceFlinger is also denied `read`, `open`, and `getattr` on
+   `/sys/devices/virtio-uml-cmdline/virtio-uml.0/uevent`, labelled `sysfs`
+   rather than `sysfs_gpu`. libdrm reads that file to identify the device.
+   `8f91b078` and `fd2bc031` supply the label, so **`fd2bc031` is a real fix,
+   not the non-fix an earlier permissive run appeared to show**; that run was
+   taken under the vCPU-0 storm.
+
+3. With SELinux set permissive live, `libEGL_mesa.so` loads and Mesa still
+   fails, with the device present but never opened:
+
+       W EGL-MAIN: failed to get driver name for fd -1
+       W EGL-MAIN: MESA-LOADER: failed to retrieve device information
+       W EGL-MAIN: egl: failed to create dri2 screen
+
+   The guest DRM node is a platform device with no device-tree node
+   (`device/subsystem` resolves to `/sys/bus/platform`, and its uevent carries
+   only `DRIVER=virtio-uml` and `MODALIAS=platform:virtio-uml`), and the Mesa
+   route was missing the pipe-loader descriptor that makes virgl selectable.
+
+`a6bad438` cut route `p0004` from three patches to one on the inference that the
+regeneration had caused a SurfaceFlinger crash. That inference was disproved in
+the same session by hashing the two guest images, which were byte-identical;
+only the manifest metadata differed. The two withdrawn commits are
+`Enable Virgl pipe-loader descriptor`, which defines `GALLIUM_VIRGL` for the
+Gallium pipe-loader so a virgl driver descriptor exists at all, and
+`Share GLAPI dispatch state`, which leaves `gallium_dri.so` the sole GLAPI
+owner. Both are restored, returning the route to three patches and final tree
+`4295979a`.
 
 ### AOSP diagnostic and patch-series state
 
@@ -440,20 +456,16 @@ accept repair are all in the tree, and the console repair is confirmed in a live
 guest: sixty deliberate connect-and-close races produced sixty rejected clients,
 zero device resets, zero `vu_interrupt` warnings, and a console that still
 answered afterwards. The Apple GPU dependency prefix has been reinstalled, so
-the tracked tree configures again. Boot is now blocked by the unresolved
-SurfaceFlinger EGL failure above, which must be understood before any release is
-promoted. The remaining order is:
+the tracked tree configures again. The remaining order is:
 
-1. Find why `libEGL_mesa` supplies no EGLConfig. Capture the guest-side driver
-   error, not only SurfaceFlinger's abort. The builder already holds a fresh
-   target-files build on the reverted one-patch `p0004` route, and
-   `external/mesa3d` is on branch `uml-android17-virgl-base` at tree
-   `f70d7dbb`, so a release can be published from it without another AOSP
-   build; the two withdrawn Mesa commits stay on
-   `uml-android17-virgl-descriptor`.
-2. Repeat the ten-vCPU gadgets boot once that is understood. The boot watcher must hold
-   **one** console connection for the whole run instead of reconnecting on every
-   poll. Require all CPUs `0-9`, `sys.boot_completed=1`, stable
+1. Rebuild `external/mesa3d` incrementally on the builder from the restored
+   three-patch `p0004` route, reusing the existing Soong output, and publish a
+   release that also carries the `c659cfc3` zstd label and the `fd2bc031` GPU
+   sysfs label.
+2. Boot that release at ten vCPUs on the gadgets engine with SELinux enforcing
+   and a host stdin that cannot reach end of file. The JIT engine is not used
+   for Android boot. Require `ssl` interrupts to stay at zero and every CPU
+   `0-9` to keep taking timer ticks, then `sys.boot_completed=1`, stable
    zygote/system_server and SurfaceFlinger processes, working
    `dumpsys SurfaceFlinger`, the Mesa/virgl renderer report, and no RCU stall,
    panic, oops, lockup, or mixed ttyS0/hvc0 logs. A long retry loop is not a
@@ -464,10 +476,10 @@ promoted. The remaining order is:
    already reverted on the builder and saved as
    `pathinterpolator-diagnostic.patch`.
 4. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
-   exact path, including the 240 MiB `irqwork-10vcpu-gadgets1-ttyS0.log` and the
-   `37b0ff5f-irqwork1` release once their evidence is no longer needed. Then
-   continue the remaining plan phases: Android application acceptance, product
-   HAL cleanup, and the separate signed 16 KiB iOS runtime framework.
+   exact path, including the 240 MiB `irqwork-10vcpu-gadgets1-ttyS0.log` once
+   its evidence is no longer needed. Then continue the remaining plan phases:
+   Android application acceptance, product HAL cleanup, and the separate signed
+   16 KiB iOS runtime framework.
 
 Commit after each focused change reaches a consistent, tested state. Do not
 fold the CPU fix, Mesa patch regeneration, AOSP diagnostic cleanup, and release

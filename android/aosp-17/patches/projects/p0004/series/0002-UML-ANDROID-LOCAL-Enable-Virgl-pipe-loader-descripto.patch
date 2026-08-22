@@ -1,0 +1,26 @@
+From 6d0d5ab94fa9ca7ab9bc01f57ae8e85997e6023d Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 18:56:56 +0000
+Subject: [PATCH 2/3] UML-ANDROID-LOCAL: Enable Virgl pipe-loader descriptor
+
+Change-Id: I7328008f8884835c3a19c85289925bfb961e817e
+---
+ src/gallium/auxiliary/pipe-loader/Android.bp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/auxiliary/pipe-loader/Android.bp b/src/gallium/auxiliary/pipe-loader/Android.bp
+index 460d83c30fd29dfa74b72b569b6f3487c5a7c2ec..973c8381e10f29ed0dce53c3b2172628e6e2af7b 100644
+--- a/src/gallium/auxiliary/pipe-loader/Android.bp
++++ b/src/gallium/auxiliary/pipe-loader/Android.bp
+@@ -21,7 +21,10 @@ cc_defaults {
+     cflags: [
+         "-DXXH_FORCE_ALIGN_CHECK=0",
+         "-DXXH_FORCE_MEMORY_ACCESS=0",
+-    ],
++    ] + select((arch(), os()), {
++        ("arm64", "android"): ["-DGALLIUM_VIRGL"],
++        (default, default): [],
++    }),
+ }
+ 
+ cc_defaults {
