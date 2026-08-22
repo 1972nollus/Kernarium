@@ -1,4 +1,4 @@
-From bb92fb3405d4ec639717d3fd6aa815e65cf4bbf7 Mon Sep 17 00:00:00 2001
+From d0d71db9f010ffd1b6ded3dbaea967296a5f562d Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 19:51:26 +0000
 Subject: [PATCH 22/22] UML-ANDROID-LOCAL: cuttlefish relax audio TimeCheck
@@ -31,7 +31,7 @@ Change-Id: I853c55880de1e42bfc719884f6311e6854c526eb
  1 file changed, 13 insertions(+)
 
 diff --git a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
-index 4162ab8a90ea90718aa2cb540da9f7d85be0fabf..0c94dd1d6ffa1702f602ad6a1da6d1ca139fbf18 100644
+index 4162ab8a90ea90718aa2cb540da9f7d85be0fabf..80d44c13ba6dae78cc051a8255cdd404a4bf7a9e 100644
 --- a/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
 +++ b/vsoc_uml_arm64_pgagnostic/phone/aosp_uml.mk
 @@ -97,5 +97,18 @@ AB_OTA_POSTINSTALL_CONFIG :=
@@ -47,7 +47,7 @@ index 4162ab8a90ea90718aa2cb540da9f7d85be0fabf..0c94dd1d6ffa1702f602ad6a1da6d1ca
 +# it. CONFIG_FUTEX_PI and CONFIG_RT_MUTEXES are both built in, so the wait is
 +# slow rather than unsupported. Scale the documented overrides by the same
 +# factor this product already applies to androidboot.hw_timeout_multiplier.
-+PRODUCT_SYSTEM_PROPERTIES += \
++PRODUCT_PRODUCT_PROPERTIES += \
 +    audio.timecheck.timeout_duration_ms=300000 \
 +    audio.timecheck.second_chance_duration_ms=200000
 +
