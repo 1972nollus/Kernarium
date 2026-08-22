@@ -1267,6 +1267,13 @@ gadget \name
 	.else
 	ldr q0, [_cpu, x22]
 	ldr q1, [_cpu, x23]
+	/* The helper moves one contiguous range, so a narrower pair has to be
+	 * packed into it exactly as the cross-page path does. */
+		.if \bytes == 4
+	mov v0.s[1], v1.s[0]
+		.elseif \bytes == 8
+	mov v0.d[1], v1.d[0]
+		.endif
 	.endif
 	stp q0, q1, [sp]
 	mov x0, _cpu
@@ -1282,6 +1289,21 @@ gadget \name
 	cbz w0, 97f
 	.if \load
 	ldp q0, q1, [sp]
+	/* The contiguous range holds both narrow elements in q0, so split them
+	 * back into two zero-extended destinations. */
+		.if \bytes == 4
+	movi v1.16b, #0
+	mov v1.s[0], v0.s[1]
+	movi v2.16b, #0
+	mov v2.s[0], v0.s[0]
+	mov v0.16b, v2.16b
+		.elseif \bytes == 8
+	movi v1.16b, #0
+	mov v1.d[0], v0.d[1]
+	movi v2.16b, #0
+	mov v2.d[0], v0.d[0]
+	mov v0.16b, v2.16b
+		.endif
 	str q0, [_cpu, x22]
 	str q1, [_cpu, x23]
 	.endif

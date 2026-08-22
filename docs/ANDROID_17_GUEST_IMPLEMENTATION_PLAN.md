@@ -14,10 +14,13 @@ consumer, separate macOS executable, Virtio console, and source-built Mesa
 Virgl userspace while retaining SwiftShader. The latest ten-vCPU gadgets run
 did not reproduce the RCU stall and brought up hardware Virgl SurfaceFlinger,
 but it exposed a separate gadgets-engine SIMD load-pair correctness defect
-that prevents zygote and full Android boot. The current accepted release
-therefore remains `android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer
-diagnostic image is accepted. The exact recovery state and next actions are in
-the active implementation handoff.
+that prevented zygote and full Android boot. That defect has since been
+reproduced by a host unit regression and repaired in the gadget engine; the
+Android macOS executable has not yet been rebuilt or rebooted against the fix.
+The current accepted release therefore remains
+`android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer diagnostic image is
+accepted. The exact recovery state and next actions are in the active
+implementation handoff.
 
 The Android product is additive. It does not replace, rename, or silently
 change either of the current mainline Linux products. All project
@@ -98,9 +101,10 @@ The corresponding files are:
 
 The COW and raw disk each have a 16 GiB logical size and are sparse; the
 compressed disk is approximately 868 MiB and the ttyS0 log is approximately
-121 MiB. They are ignored diagnostics, not release inputs. Retain them until
-the CPU defect is reproduced by a host unit test, then remove these exact stale
-artifacts as part of the already-requested `.build` storage cleanup.
+121 MiB. They are ignored diagnostics, not release inputs. The CPU defect is now
+reproduced by a host unit test, so these exact stale artifacts may be removed
+as part of the already-requested `.build` storage cleanup; the two `cubic-*`
+payloads are still useful as an in-guest confirmation of the repair.
 
 Confirmed results from this run:
 
@@ -124,13 +128,12 @@ Confirmed results from this run:
 
 Repeated missing audio-core and RIL/NFC service messages are real product gaps,
 but they are not the first blocker. Do not mask those services or change VINTF
-until the deterministic CPU result below is fixed and zygote can start
-reliably.
+until a boot with the repaired engine below shows that zygote starts reliably.
 
-### Confirmed gadgets-engine correctness defect
+### Repaired gadgets-engine correctness defect
 
-Zygote fails in `PathInterpolator.initPath()` because the native Skia cubic
-path approximation reports an endpoint other than `(1,1)` for
+Zygote failed in `PathInterpolator.initPath()` because the native Skia cubic
+path approximation reported an endpoint other than `(1,1)` for
 `new PathInterpolator(0.4f, 0f, 0.2f, 1f)`. The current unstripped `libhwui`
 compiled `SkPathGlue::cubicBezierCalculation` to a short scalar/SIMD sequence
 whose final relevant operations include:
@@ -144,33 +147,50 @@ fadd v1.2s, v1.2s, v2.2s
 fadd v0.2s, v1.2s, v0.2s
 ```
 
-Two freestanding ARM64 payloads in the ignored diagnostics directory reproduce
+Two freestanding ARM64 payloads in the ignored diagnostics directory reproduced
 the failure without Java, ART, Skia allocation, Mesa, or SurfaceFlinger:
 
 - `.build/android/diagnostics/cubic-endpoints.S` executes the exact compiled
-  cubic calculation at `t=0` and `t=1`. Under the gadgets engine it writes four
+  cubic calculation at `t=0` and `t=1`. Under the gadgets engine it wrote four
   zero words; `t=1` should write `3f800000 3f800000` for `(1,1)`.
 - `.build/android/diagnostics/cubic-steps.S` records the inputs around the final
-  vector multiply. It observes `t=1`, `t^2=1`, and the first loaded pair
-  `.2,1`, but the second destination of `ldp d4, d6, [x0,#16]` is zero instead
-  of `1,1`; the following multiply is consequently zero.
+  vector multiply. It observed `t=1`, `t^2=1`, and the first loaded pair
+  `.2,1`, but the second destination of `ldp d4, d6, [x0,#16]` was zero instead
+  of `1,1`; the following multiply was consequently zero.
 
-The existing focused test still passes:
+The root cause is the tagged-address path of `vector_pair_fast` in
+`darwin/cpu/arm64/gadgets/engine/load_store.inc`. Android userspace enables
+top-byte-ignore, so `UML_GADGET_CPU_TAGGED_ADDRESS_STATE` is non-zero and every
+guest vector pair leaves the direct fast path for
+`uml_arm64_simd_structure_memory_transfer`. That helper moves the pair as one
+contiguous range through a 32-byte stack buffer, but the gadget reloaded the
+buffer with `ldp q0, q1, [sp]` and stored those two registers to the two
+destinations. Only the 128-bit variant matches that split. For a 32-bit or
+64-bit pair the whole range lands in `q0`, so the first destination kept the
+second element in its upper half and the second destination became zero; the
+store direction symmetrically wrote the first register's full width instead of
+the two low halves. The repair splits and packs the narrow variants exactly as
+the established cross-page path already did, so the fast, cross-page, and
+tagged paths now agree. No other tagged transfer site was affected: the integer
+pair path already reloads with `ldp w6, w7`/`ldp x6, x7`, and the SIMD
+structure, replicate, and lane paths walk the buffer through the same shared
+macros as their fast paths.
+
+The defect was invisible to the existing suite because
+`arm64-simd-load-store-pair` had no tagged-address coverage at all; the integer
+pair suite owned a `top_byte_ignore_without_mte` matrix and its SIMD
+counterpart did not. `tests/unit/arm64/arm64_simd_load_store_pair_tests.cpp`
+now adds both a TBI matrix over the six allocated variants and four addressing
+modes and an `EngineHarness::check_program` case carrying the exact
+21-instruction compiled cubic sequence, the exact Skia control points, and a
+tagged base pointer. Both new cases failed under gadgets and passed under the
+interpreter before the engine change. The suite executes interpreter, gadgets,
+and JIT over all 3,686 cases:
 
 ```sh
 ctest --test-dir .build/presets/macos-unit-16k \
   -R '^arm64-simd-load-store-pair$' --output-on-failure
 ```
-
-That suite tests isolated SIMD/FP pair transfers, so its success means the
-production defect must first be captured as a multi-instruction
-`EngineHarness::check_program` case using the exact compiler sequence and
-memory layout. Do not patch the pair gadget based only on the intermediate
-observation. Determine whether the second result is lost in descriptor
-generation, block execution, TLB-hit handling, FP-state activation, or an
-adjacent instruction interaction. The regression must fail under gadgets,
-remain correct under the interpreter, and use JIT/native execution as an
-additional oracle where available.
 
 ### AOSP diagnostic and patch-series state
 
@@ -208,9 +228,9 @@ regenerating p0004.
 `94b4c163b7dfe5ce3607f7bb8456f9573f7de57d` and has one uncommitted diagnostic
 change to `PathInterpolator.java` that appends the actual endpoint values to
 the exception. The completed target-files output contains that diagnostic.
-It is not a product fix and must never become an AOSP route. After the host
-regression has captured all needed evidence, restore that one file on the
-build machine and use the existing relative `OUT_DIR` for the incremental
+It is not a product fix and must never become an AOSP route. The host
+regression has now captured the needed evidence, so restore that one file on
+the build machine and use the existing relative `OUT_DIR` for the incremental
 rebuild.
 
 The tracked accepted-release descriptor intentionally still selects
@@ -221,30 +241,27 @@ patch-replayed image reaches full boot acceptance.
 
 ### Required continuation order
 
-1. Add a focused host `EngineHarness::check_program` regression containing the
-   exact cubic instruction sequence, with data chosen so the second LDP result
-   must be `(1,1)`. Prove the current gadgets engine fails before changing it.
-2. Trace the compiled gadget stream and architectural vector state across the
-   LDP and its neighbors. Fix the smallest actual ownership defect, run the
-   focused test first, then the canonical 16 KiB and 4 KiB unit workflows
-   because CPU execution is page-profile sensitive. Commit the coherent host
-   fix and regression.
-3. Rebuild the separate Android macOS executable from the then-current outer
+The host CPU repair above is complete: the regression fails without it, passes
+with it, and both canonical page-profile unit workflows are green. The
+remaining order is:
+
+1. Rebuild the separate Android macOS executable from the then-current outer
    revision. The executable used by the diagnostic run came from an older
-   `c659cfc3` source snapshot and does not contain later host GPU commits.
-4. Boot a fresh COW with ten vCPUs and the gadgets engine. Require all CPUs
+   `c659cfc3` source snapshot and contains neither the later host GPU commits
+   nor the vector-pair repair.
+2. Boot a fresh COW with ten vCPUs and the gadgets engine. Require all CPUs
    `0-9`, `sys.boot_completed=1`, stable zygote/system_server and
    SurfaceFlinger processes, working `dumpsys SurfaceFlinger`, the Mesa/virgl
    renderer report, and no RCU stall, panic, oops, lockup, or mixed ttyS0/hvc0
    logs. A long retry loop is not a successful boot.
-5. Remove the temporary `frameworks/base` diagnostic, regenerate Mesa route
+3. Remove the temporary `frameworks/base` diagnostic, regenerate Mesa route
    p0004 from its clean topic branch, copy the reviewed outer inputs to the
    builder through the operator-managed workflow, replay the routes, and use
    the existing Soong output for an incremental target-files build. Keep
    SwiftShader packaged.
-6. Publish, copy, locally install, and select a new immutable release only after
+4. Publish, copy, locally install, and select a new immutable release only after
    the clean replayed image passes the ten-vCPU gadgets acceptance above.
-7. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
+5. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
    exact path. Then continue the remaining plan phases: Android application
    acceptance, product HAL cleanup, and the separate signed 16 KiB iOS runtime
    framework.
