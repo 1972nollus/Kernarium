@@ -1,7 +1,7 @@
 From 06e392b8cfc9d0edecd1155a107d0a4ce49ba3e1 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 18:33:03 +0000
-Subject: [PATCH 07/21] UML-ANDROID-LOCAL: cuttlefish: disable DLKM board
+Subject: [PATCH 07/22] UML-ANDROID-LOCAL: cuttlefish: disable DLKM board
  images
 
 Change-Id: I16af4313b94aa1bd21bbb6f4ed08e68124f0f54b
