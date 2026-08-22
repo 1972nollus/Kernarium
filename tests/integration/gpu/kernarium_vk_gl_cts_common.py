@@ -36,6 +36,22 @@ REQUIRED_SHUTDOWN_MARKERS = (
     "Kernarium: runtime returned 0",
 )
 DIRTY_DRM_SHUTDOWN = "Memory manager not clean during takedown."
+IOSURFACE_NOTIFY_FAILURE = re.compile(
+    r"IOSurfaceClientSetSurfaceNotify failed e00002c7\r?\n"
+)
+NATIVE_DISPLAY_PERIODIC = re.compile(
+    r"Native display frames: guest [0-9]+\.[0-9]/s "
+    r"presented [0-9]+\.[0-9]/s dropped [0-9]+\.[0-9]/s "
+    r"\([0-9]+\.[0-9]%\) cpu-fallback [0-9]+\.[0-9]/s "
+    r"\| totals guest [0-9]+ presented [0-9]+ dropped [0-9]+ "
+    r"cpu-fallback [0-9]+\r?\n"
+)
+
+
+def normalize_mobile_transcript(transcript: str) -> str:
+    """Remove exact host-only records that can split a guest console line."""
+    transcript = IOSURFACE_NOTIFY_FAILURE.sub("", transcript)
+    return NATIVE_DISPLAY_PERIODIC.sub("", transcript)
 
 
 def device_guest_memory_mib(value: str) -> int:
@@ -151,6 +167,7 @@ def validate_recorded_gpu_evidence(
         raise cts.CampaignError(
             f"cannot read matching {product} console: {error}"
         ) from error
+    transcript = normalize_mobile_transcript(transcript)
     capability = cts.parse_gpu_capability_report(transcript)
     native_display = cts.parse_native_display_final(transcript)
     if any(
@@ -520,7 +537,9 @@ def wait_for_runtime(
     deadline = time.monotonic() + timeout
     next_heartbeat = time.monotonic() + 30
     while time.monotonic() < deadline:
-        transcript = log_path.read_text(encoding="utf-8", errors="replace")
+        transcript = normalize_mobile_transcript(
+            log_path.read_text(encoding="utf-8", errors="replace")
+        )
         matches = RUNTIME_RESULT.findall(transcript)
         if matches:
             return transcript, int(matches[-1])
@@ -539,6 +558,7 @@ def wait_for_runtime(
 
 
 def validate_clean_shutdown(transcript: str) -> None:
+    transcript = normalize_mobile_transcript(transcript)
     if DIRTY_DRM_SHUTDOWN in transcript:
         raise cts.CampaignError(
             "Virtio-GPU memory manager was not clean during guest shutdown"
@@ -565,6 +585,7 @@ def validate_transcript(
     dict[str, Any],
     dict[str, int],
 ]:
+    transcript = normalize_mobile_transcript(transcript)
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
     capability = cts.parse_gpu_capability_report(transcript)
@@ -611,6 +632,7 @@ def validate_matrix_transcript(
     dict[str, Any],
     dict[str, int],
 ]:
+    transcript = normalize_mobile_transcript(transcript)
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
     capability = cts.parse_gpu_capability_report(transcript)
@@ -632,6 +654,7 @@ def validate_config_inventory_transcript(
     dict[str, Any],
     dict[str, int],
 ]:
+    transcript = normalize_mobile_transcript(transcript)
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
     capability = cts.parse_gpu_capability_report(transcript)
@@ -810,6 +833,7 @@ def validate_mobile_matrix_evidence(
         raise cts.CampaignError(
             f"cannot read matching mobile matrix console: {error}"
         ) from error
+    transcript = normalize_mobile_transcript(transcript)
     cts.validate_host_backend(transcript)
     validate_clean_shutdown(transcript)
     validate_recorded_gpu_evidence(path, metadata, "mobile matrix")

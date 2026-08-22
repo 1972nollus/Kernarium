@@ -850,6 +850,62 @@ Kernarium: runtime returned 0
             {"results.qpa": b"qpa payload"},
         )
 
+    def test_mobile_transcript_rejoins_exact_interleaved_host_lines(self) -> None:
+        capability = gpu_capability_report()
+        capability_split = "name_hex=474c5f4558545f616c706861"
+        artifact = framed_artifact("results.qpa", b"qpa payload")
+        artifact_split = "UML_CTS_ARTIFACT_CHUNK|results.qpa|0|H4sI"
+        original = capability + artifact
+        interleaved = capability.replace(
+            capability_split,
+            "name_hex=474c5f4558545f"
+            "IOSurfaceClientSetSurfaceNotify failed e00002c7\n"
+            "616c706861",
+            1,
+        ) + artifact.replace(
+            artifact_split,
+            artifact_split
+            + "Native display frames: guest 1.0/s presented 2.0/s "
+            "dropped 0.0/s (0.0%) cpu-fallback 0.0/s | totals guest 1 "
+            "presented 2 dropped 0 cpu-fallback 0\r\n",
+            1,
+        )
+        normalized = ios_cts.common.normalize_mobile_transcript(interleaved)
+        self.assertEqual(normalized, original)
+        self.assertEqual(
+            cts.parse_gpu_capability_report(normalized),
+            cts.parse_gpu_capability_report(capability),
+        )
+        self.assertEqual(
+            cts.decode_artifacts(normalized),
+            {"results.qpa": b"qpa payload"},
+        )
+
+    def test_mobile_transcript_rejects_unknown_host_line_variants(self) -> None:
+        capability = gpu_capability_report().replace(
+            "name_hex=474c5f4558545f616c706861",
+            "name_hex=474c5f4558545f"
+            "IOSurfaceClientSetSurfaceNotify failed e00002c8\n"
+            "616c706861",
+            1,
+        )
+        normalized = ios_cts.common.normalize_mobile_transcript(capability)
+        with self.assertRaisesRegex(cts.CampaignError, "malformed"):
+            cts.parse_gpu_capability_report(normalized)
+
+        artifact = framed_artifact("results.qpa", b"qpa payload").replace(
+            "UML_CTS_ARTIFACT_CHUNK|results.qpa|0|H4sI",
+            "UML_CTS_ARTIFACT_CHUNK|results.qpa|0|H4sI"
+            "Native display frames: guest 1/s presented 2/s dropped 0/s "
+            "(0%) cpu-fallback 0/s | totals guest 1 presented 2 dropped 0 "
+            "cpu-fallback 0\n",
+            1,
+        )
+        with self.assertRaises(cts.CampaignError):
+            cts.decode_artifacts(
+                ios_cts.common.normalize_mobile_transcript(artifact)
+            )
+
     def test_artifact_frames_ignore_echoed_launcher_source(self) -> None:
         transcript = (
             "    printf 'UML_CTS_ARTIFACT_BEGIN|%s|gzip+base64|%s|%s\\n'\n"
