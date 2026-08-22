@@ -19,7 +19,8 @@ reproduced by a host unit regression, repaired in the gadget engine, and
 confirmed fixed by a fresh ten-vCPU guest boot in which zygote is stable and
 the failing preload no longer appears. Android still does not complete boot:
 the first blocker moved to an unrelated `system_server` crash on a BPF map
-`ENOMEM`. The current accepted release therefore remains
+`ENOMEM`, whose root cause is now identified but whose first repair was
+rejected for stalling the boot. The current accepted release therefore remains
 `android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer diagnostic image is
 accepted. The exact recovery state and next actions are in the active
 implementation handoff.
@@ -245,34 +246,50 @@ allocation-failure or OOM record. `NetBpfLoad` loaded 5 of 5 programs first and
 logged `UML kernel has no eBPF JIT; using its built-in interpreter`, which is
 the expected `androidboot.uml_bpf_interpreter=1` contract.
 
-The root cause was then identified exactly and is a UML kernel defect, not an
-Android or product one. `bpftool` in the failing guest shows the map as a
-`BPF_F_NO_PREALLOC` hash with a 4-byte key and a **1024-byte value**, and it
-held exactly four entries. A non-preallocated hash map allocates elements from
-`bpf_mem_alloc`, whose `prefill_mem_cache()` inserts exactly **one** element
-per CPU once the unit size exceeds 256 bytes and refills the rest from
-`irq_work`. UML never implemented `arch_irq_work_raise()`, so the generic weak
-stub in `kernel/irq_work.c` left that refill waiting for the next timer tick:
-`unit_alloc()` took the single prefilled element, found the free list empty on
-the next insert, and returned `NULL`, which `htab_map_update_elem()` reports as
-`-ENOMEM`. Any burst into such a map therefore accepts about one element per
-CPU per tick.
+The root cause is confirmed and is a UML kernel defect, not an Android or
+product one. `bpftool` in the failing guest shows the map as a
+`BPF_F_NO_PREALLOC` hash with a 4-byte key and a **1024-byte value**, holding
+exactly four entries. `bpf_mem_alloc`'s `prefill_mem_cache()` inserts exactly
+**one** element per CPU once the unit size exceeds 256 bytes and refills the
+rest from `irq_work`. UML never implemented `arch_irq_work_raise()`, so the
+generic weak stub in `kernel/irq_work.c` leaves that refill waiting for the
+next timer tick: `unit_alloc()` takes the single prefilled element, finds the
+free list empty on the next insert, and returns `NULL`, which
+`htab_map_update_elem()` reports as `-ENOMEM`. Any burst into such a map
+accepts roughly one element per CPU per tick.
 
-Mainline topic 0022, `uml: raise irq work locally instead of at the tick`,
-fixes this by publishing a self-directed IPI vector from
-`arch_irq_work_raise()` and running `irq_work_run()` when it is dispatched. A
-freestanding guest probe that fills a 1024-byte-value `BPF_F_NO_PREALLOC` hash
-map inserted 1 of 256 elements before the topic and all 256 after it, on both
-canonical page profiles.
+### Rejected first repair (2026-08-22)
 
-**The Android half of this repair is not done.** The ACK 6.18 series under
-`kernel/android-6.18/patches` needs the same topic, and it can only be created
-and built on the operator's Linux builder: this repository carries no ACK
-checkout and no `kernel/android-6.18` regeneration script, so
-`android/aosp-17/tools/regenerate-kernel-patches.py` must run there against
-`/home/build/android-kernel-6.18`. Port mainline topic 0022 unchanged, rebuild
-the ACK ELF, publish a release, and only then repeat the ten-vCPU boot. Do not
-raise guest memory or mask ConnectivityService to route around the defect.
+Implementing `arch_irq_work_raise()` as a self-directed UML IPI vector was
+tried and **rejected**. The topic added `os_raise_local_ipi()`, which published
+the pending bit without the wake pipe or a Darwin signal on the theory that the
+carrier raising a local vector is the carrier that consumes it.
+
+A freestanding guest probe confirmed the narrow mechanism on both canonical
+page profiles: a 1024-byte-value `BPF_F_NO_PREALLOC` map accepted 1 of 256
+inserts before the topic and all 256 after it. The mainline unit workflows,
+kernel series gates, and a full pinned-commit replay with both page-size
+rebuilds also passed. **None of that covers the idle-heavy multi-vCPU path, and
+the ten-vCPU Android boot regressed.**
+
+With the topic, `rcu_sched` detected stalls at guest second 877 with CPU 0
+one grace period behind in `default_idle_call`/`do_idle`, and
+`vu_interrupt+0xa0` warned `read returned 0` in a tight loop from `swapper/0`,
+writing roughly 10 MB/s until the ttyS0 log reached 240 MiB. The matched
+control is unambiguous: the 27-topic kernel ran the same image family on ten
+vCPUs for 23,844 guest seconds with zero RCU stalls and zero `vu_interrupt`
+warnings, and the only kernel delta is this topic.
+
+The likely mechanism is a livelock in the cooperative idle drain: the pending
+vector is observed at the idle boundary, `irq_work_run()` executes the refill,
+`bpf_mem_refill()` re-raises when `alloc_bulk()` cannot reach the watermark
+from atomic context, and CPU 0 never reports a quiescent state. Confirm that
+before trying again. A corrected repair must bound or suppress the re-raise
+from the idle path, and must be validated by a full ten-vCPU boot rather than
+by the narrow probe alone.
+
+Do not raise guest memory or mask ConnectivityService to route around the
+original defect.
 
 `sys.boot_completed` never became `1`, so the ten-vCPU acceptance in the
 continuation order below is not met and the tracked accepted-release descriptor
@@ -327,33 +344,35 @@ patch-replayed image reaches full boot acceptance.
 
 ### Required continuation order
 
-The host CPU repair is complete and confirmed in the guest: the regression
-fails without it, passes with it, both canonical page-profile unit workflows
-are green, and the ten-vCPU boot above no longer reproduces the zygote preload
-failure. The executable rebuild is also done. The remaining order is:
+The gadgets vector-pair repair is complete and confirmed in the guest, and the
+Android macOS executable rebuild is done. The BPF `ENOMEM` root cause is
+identified but **not fixed**: the first repair was rejected because it stalled
+the ten-vCPU boot, so both kernel series remain at their previously accepted
+identities. The remaining order is:
 
-1. Rebuild the Apple GPU dependency prefix so the tracked tree configures
+1. Design a corrected `arch_irq_work_raise()` for UML that does not livelock
+   the cooperative idle drain. Confirm the re-raise mechanism first, and
+   validate any candidate with a full ten-vCPU Android boot rather than the
+   freestanding BPF probe alone; the probe passed while the boot regressed.
+2. Rebuild the Apple GPU dependency prefix so the tracked tree configures
    again. Commit `bf680c93` added UTM WebKit patch 10 and the installed prefix
    predates it, so `macos-android17` and every other GPU-enabled preset fail
    provenance verification until `dependencies/build-apple-gpu.sh` reinstalls
    the prefix from the committed ten-patch series.
-2. Diagnose the `BpfMap.nativeWriteToMapEntry` `ENOMEM` that now crash-loops
-   `system_server`. Identify the failing map's type, flags, value size, and
-   allocation path before changing kernel configuration, and do not raise guest
-   memory or mask ConnectivityService to route around it. Then reboot and
-   require all CPUs `0-9`, `sys.boot_completed=1`, stable
+3. Reboot and require all CPUs `0-9`, `sys.boot_completed=1`, stable
    zygote/system_server and SurfaceFlinger processes, working
    `dumpsys SurfaceFlinger`, the Mesa/virgl renderer report, and no RCU stall,
    panic, oops, lockup, or mixed ttyS0/hvc0 logs. A long retry loop is not a
    successful boot.
-3. Remove the temporary `frameworks/base` diagnostic, regenerate Mesa route
-   p0004 from its clean topic branch, copy the reviewed outer inputs to the
+4. The temporary `frameworks/base` diagnostic is already reverted on the
+   builder and saved as `pathinterpolator-diagnostic.patch`; Mesa route p0004
+   is already regenerated and committed. Copy the reviewed outer inputs to the
    builder through the operator-managed workflow, replay the routes, and use
    the existing Soong output for an incremental target-files build. Keep
    SwiftShader packaged.
-4. Publish, copy, locally install, and select a new immutable release only after
+5. Publish, copy, locally install, and select a new immutable release only after
    the clean replayed image passes the ten-vCPU gadgets acceptance above.
-5. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
+6. Remove superseded diagnostic disks, COWs, logs, and builder-local images by
    exact path. Then continue the remaining plan phases: Android application
    acceptance, product HAL cleanup, and the separate signed 16 KiB iOS runtime
    framework.
