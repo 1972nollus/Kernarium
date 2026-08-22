@@ -1,7 +1,7 @@
 From 3aad016911a89214ee576e99bbda92ba65842e09 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 17:14:25 +0000
-Subject: [PATCH 03/19] UML-ANDROID-LOCAL: cuttlefish: use nonsecure security
+Subject: [PATCH 03/20] UML-ANDROID-LOCAL: cuttlefish: use nonsecure security
  HALs
 
 Change-Id: I908c1d6646aa6e7b3cdb2927489fd42ac667961f

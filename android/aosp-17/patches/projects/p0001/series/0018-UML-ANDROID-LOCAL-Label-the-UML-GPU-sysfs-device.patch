@@ -1,7 +1,7 @@
 From caab1fe05ff69a8bb3c0f3c12b18303a762c60dc Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 17:59:54 +0000
-Subject: [PATCH 18/19] UML-ANDROID-LOCAL: Label the UML GPU sysfs device
+Subject: [PATCH 18/20] UML-ANDROID-LOCAL: Label the UML GPU sysfs device
 
 libdrm resolves both /dev/dri/card0 and /dev/dri/renderD128 through the
 virtio-uml platform device.  Mesa EGL enumerates render nodes with
