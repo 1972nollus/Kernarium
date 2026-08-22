@@ -306,6 +306,12 @@ CONFIG_DUMMY=y
 CONFIG_VSOCKETS=y
 CONFIG_VSOCKETS_LOOPBACK=y
 CONFIG_TLS=y
+# Android's network statistics path calls synchronizeKernelRCU(), which opens
+# and immediately closes an AF_KEY socket purely so that pfkey_release() runs
+# synchronize_rcu(). Without PF_KEY the socket() call fails EAFNOSUPPORT and
+# BatteryStatsImpl.readWifiNetworkStatsLocked throws a fatal exception in the
+# system process, restarting the runtime before boot completes.
+CONFIG_NET_KEY=y
 CONFIG_NET_SCHED=y
 CONFIG_NET_SCH_HTB=y
 # Queueing and congestion control that behave well over the host NAT transport.
