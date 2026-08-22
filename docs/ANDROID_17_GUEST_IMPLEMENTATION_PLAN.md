@@ -328,16 +328,14 @@ host interactions the candidate run performed, not only on the kernel.
 the continuation order below is still not met and the tracked accepted-release
 descriptor still selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`.
 
-### Withdrawn Mesa route regeneration (2026-08-22)
+### SurfaceFlinger EGL failure is unresolved (2026-08-22)
 
-Route `p0004` was regenerated from `external/mesa3d`'s three-commit local branch
-and has been reverted to its tested one-patch state. The two extra commits break
-SurfaceFlinger.
+SurfaceFlinger crash-loops on every recent ten-vCPU boot and `system_server`
+never starts. The cause is **not identified**. Two earlier attributions in this
+document's history were wrong, and both were wrong the same way: they compared
+release *metadata* instead of release *content*.
 
-The first boot on a host emulator carrying the console fix reached guest second
-990 with the console device healthy, but SurfaceFlinger crash-looped from guest
-second 38 onward and `system_server` never started. The guest tombstone is
-unambiguous:
+The guest tombstone is stable across every failing run:
 
 ```text
 Abort message: 'no suitable EGLConfig found, giving up (format: 1, vendor:
@@ -347,34 +345,51 @@ Abort message: 'no suitable EGLConfig found, giving up (format: 1, vendor:
 ```
 
 The reported vendor and version are the Android EGL loader's own strings, so
-`libEGL_mesa` never supplied configs at all.
+`libEGL_mesa` never supplied configs at all. SurfaceFlinger dies about two
+seconds into its own uptime, `init` kills zygote with it, and the pair restarts
+indefinitely.
 
-Diffing the two installed release manifests isolates the cause exactly. The only
-AOSP route that differs between the working `20260822-8f91b078-gpu-sysfs1` and
-the broken `20260822-37b0ff5f-irqwork1` is `external/mesa3d`:
+**The guest image is byte-identical in every run.** The compressed disk is
+`sha256 612d157c3051e07836d89226de134b959e4df934a53617f61d69526d9d4c4d23` in the
+installed `gpu-sysfs1` release, in the `mesa-glapi` diagnostic copy, and in the
+`irqwork1` release. `irqwork1` reused the earlier staged disk instead of
+rebuilding it, so its manifest records a three-patch `external/mesa3d` route
+that its image does not contain. **A release manifest's route metadata describes
+the checkouts at publish time, not necessarily the bytes in the image.** Compare
+image hashes before attributing a guest-visible change to a route.
 
-| release | mesa3d patches | mesa3d final tree | SurfaceFlinger |
-| --- | --- | --- | --- |
-| `gpu-sysfs1` | 1 | `f70d7dbb` | started once, stayed up |
-| `irqwork1` | 3 | `4295979a` | 152 SIGABRTs, never came up |
+Guest Mesa is therefore ruled out entirely: it is the same in the healthy and
+failing runs. So is the ramdisk, and so is the AOSP userspace.
 
-`build/make`, `device/google/cuttlefish`, and `packages/modules/Connectivity`
-are byte-identical across the two, and the kernel differs only by the irq-work
-topic, which cannot affect EGL config enumeration in a native process.
+What remains differs on two axes, and each appears sufficient on its own:
 
-Both `gpu-sysfs1` runs kept SurfaceFlinger up for the whole run, including one
-of 23,844 guest seconds, so the one-patch Mesa is the tested state and the
-`37b0ff5f` commit message had the causality backwards: the GLAPI dispatch change
-does not stop SurfaceFlinger crashing, it starts it. The likely mechanism is
-that dropping `glapi` from the `libEGL_mesa`, `libGLESv1_CM_mesa`, and
-`libGLESv2_mesa` static library lists leaves symbols that `gallium_dri.so` does
-not in fact export, so the driver fails to load and the loader falls back. That
-is a hypothesis; the missing symbols were not enumerated.
+| run | guest s | SF starts | SF aborts | ACK topics | host emulator / GPU prefix |
+| --- | --- | --- | --- | --- | --- |
+| `mesa-glapi` | 23,844 | 1 | 0 | 27 | pre-`eafe46af` / 9-patch |
+| `cpufix` | 1,449 | 1 | 0 | 27 | `eafe46af` / 9-patch |
+| `irqwork` | 994 | 153 | 152 | **28** | `eafe46af` / 9-patch |
+| `consolefix` | 990 | 137 | 137 | **28** | `cfedda53` / 11-patch |
+| `control27` | 258 | 35 | 34 | 27 | `cfedda53` / 11-patch |
 
-Do not re-apply `UML-ANDROID-LOCAL: Enable Virgl pipe-loader descriptor` or
-`UML-ANDROID-LOCAL: Share GLAPI dispatch state` to route `p0004` without first
-demonstrating, in a guest boot, that SurfaceFlinger still starts. Both remain on
-the builder-local `uml-android17-virgl-descriptor` branch.
+`irqwork` isolates the kernel: same host, 27 topics to 28, healthy to broken.
+`control27` isolates the host: same 27-topic kernel as the two healthy runs, new
+emulator and rebuilt Apple GPU dependency prefix, broken. Two independent
+perturbations each reproduce the same failure, which points at a marginal EGL
+initialization path rather than at one culprit. Within a boot the failure is
+deterministic: it recurs on every one of 150 restarts, and two separate
+`control27` boots both crash-looped.
+
+The control that would separate the host axis cleanly is the 27-topic kernel on
+the **9-patch** Apple GPU prefix with an emulator at `eafe46af`. That prefix has
+been replaced by the committed 11-patch build and rebuilding it is a multi-hour
+WebKit build that overwrites the installed prefix, so it needs explicit
+authorization before anyone runs it.
+
+Next steps, in order: capture the guest-side `libEGL`/virgl driver error rather
+than only SurfaceFlinger's abort, since the tombstone says the loader fell back
+but not why the Mesa driver refused; then decide between the kernel and host
+axes with that evidence. Do not revert either axis on the strength of the table
+above alone.
 
 ### AOSP diagnostic and patch-series state
 
@@ -428,17 +443,18 @@ accept repair are all in the tree, and the console repair is confirmed in a live
 guest: sixty deliberate connect-and-close races produced sixty rejected clients,
 zero device resets, zero `vu_interrupt` warnings, and a console that still
 answered afterwards. The Apple GPU dependency prefix has been reinstalled, so
-the tracked tree configures again. The remaining order is:
+the tracked tree configures again. Boot is now blocked by the unresolved
+SurfaceFlinger EGL failure above, which must be understood before any release is
+promoted. The remaining order is:
 
-1. Reset `external/mesa3d` on the builder to the single tested
-   `UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack` commit so its tree is
-   `f70d7dbb` again and the route verifier agrees with the reverted `p0004`.
-   Then build **incrementally** in the existing Soong output: Soong rebuilds the
-   Mesa libraries and relinks the image, and nothing else in AOSP changed. Do
-   not start a clean build. Publish, copy, and locally install the result. The
-   only difference from the working `gpu-sysfs1` release is then the ACK kernel,
-   27 topics to 28, which is the single variable this boot is meant to test.
-2. Repeat the ten-vCPU gadgets boot on that release. The boot watcher must hold
+1. Find why `libEGL_mesa` supplies no EGLConfig. Capture the guest-side driver
+   error, not only SurfaceFlinger's abort. The builder already holds a fresh
+   target-files build on the reverted one-patch `p0004` route, and
+   `external/mesa3d` is on branch `uml-android17-virgl-base` at tree
+   `f70d7dbb`, so a release can be published from it without another AOSP
+   build; the two withdrawn Mesa commits stay on
+   `uml-android17-virgl-descriptor`.
+2. Repeat the ten-vCPU gadgets boot once that is understood. The boot watcher must hold
    **one** console connection for the whole run instead of reconnecting on every
    poll. Require all CPUs `0-9`, `sys.boot_completed=1`, stable
    zygote/system_server and SurfaceFlinger processes, working
