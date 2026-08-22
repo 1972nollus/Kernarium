@@ -394,7 +394,9 @@ python3 -B tests/integration/gpu/run_chromium_webgl.py \
 ```
 
 Pass that run's `run.json` to the Simulator adapter so it reparses rather than
-trusts the predecessor evidence:
+trusts the predecessor evidence. The macOS predecessor retains its fixed
+1536 MiB configuration, while the Simulator qualification uses the product's
+fixed 4096 MiB guest-memory policy:
 
 ```sh
 python3 -B tests/integration/gpu/run_ios_simulator_chromium_webgl.py \

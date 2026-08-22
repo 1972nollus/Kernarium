@@ -25,7 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_APP = simulator.DEFAULT_APP
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / ".build/chromium-webgl-ios-simulator"
 FIXED_CPUS = 4
-FIXED_MEMORY_MIB = 1536
+FIXED_MACOS_MEMORY_MIB = 1536
+FIXED_SIMULATOR_MEMORY_MIB = 4096
 FIXED_OVERLAY_GIB = 8
 FIXED_WIDTH = 440
 FIXED_HEIGHT = 860
@@ -46,7 +47,7 @@ def validate_macos_run(path: Path, page_profile: str) -> dict[str, Any]:
         "page_profile": page_profile,
         "engine": "gadgets",
         "cpus": FIXED_CPUS,
-        "memory": f"{FIXED_MEMORY_MIB}M",
+        "memory": f"{FIXED_MACOS_MEMORY_MIB}M",
         "width": FIXED_WIDTH,
         "height": FIXED_HEIGHT,
         "dpi": FIXED_DPI,
@@ -184,7 +185,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "SIMCTL_CHILD_KERNARIUM_ROOTFS": "rootfs.erofs",
         "SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
         "SIMCTL_CHILD_KERNARIUM_VCPU_COUNT": str(FIXED_CPUS),
-        "SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(FIXED_MEMORY_MIB),
+        "SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(
+            FIXED_SIMULATOR_MEMORY_MIB
+        ),
         "SIMCTL_CHILD_KERNARIUM_OVERLAY_SIZE_GIB": str(FIXED_OVERLAY_GIB),
         "SIMCTL_CHILD_KERNARIUM_RETINA_MODE": "0",
         "SIMCTL_CHILD_UML_GPU_FRAME_STATS": "1",
@@ -263,7 +266,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "page_profile": options.page_profile,
         "engine": "gadgets",
         "cpus": FIXED_CPUS,
-        "memory_mib": FIXED_MEMORY_MIB,
+        "memory_mib": FIXED_SIMULATOR_MEMORY_MIB,
         "overlay_gib": FIXED_OVERLAY_GIB,
         "retina": False,
         "expected_width": FIXED_WIDTH,

@@ -144,7 +144,7 @@ class SimulatorAquariumTests(unittest.TestCase):
             environment["SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE"], "gadgets"
         )
         self.assertEqual(
-            environment["SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB"], "1536"
+            environment["SIMCTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB"], "4096"
         )
         self.assertEqual(environment["SIMCTL_CHILD_KERNARIUM_VCPU_COUNT"], "4")
         self.assertEqual(environment["SIMCTL_CHILD_KERNARIUM_RETINA_MODE"], "0")

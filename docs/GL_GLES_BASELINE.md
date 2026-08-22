@@ -460,6 +460,12 @@ The lower-profile corpus is frozen as:
    samples, and the ordinary native-display frame counters. Aquarium runs on
    macOS and Simulator only.
 
+New Simulator qualification runs use 4,096 MiB of guest RAM. Their required
+native macOS predecessor remains fixed independently at 1,536 MiB; cross-product
+numbers are reported separately and are not treated as interchangeable
+samples. The earlier single-run Simulator canaries retain their historical
+memory setting and remain bring-up evidence only.
+
 Performance comparisons use seven interleaved lower/candidate pairs after one
 unscored bring-up run per product. A control series is acceptable only when
 its median throughput/frame-time variation is at most 1% and its p95/resource
