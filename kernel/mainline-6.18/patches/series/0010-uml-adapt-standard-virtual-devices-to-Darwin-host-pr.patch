@@ -1,7 +1,7 @@
 From 1f23cbd871f4b15802c8129a506e10d8c4b6ba74 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:11 +0900
-Subject: [PATCH 10/21] uml: adapt standard virtual devices to Darwin host
+Subject: [PATCH 10/22] uml: adapt standard virtual devices to Darwin host
  providers
 
 Apply the reviewed final-state topic without intermediate churn.

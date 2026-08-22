@@ -243,11 +243,36 @@ This is not memory exhaustion and not a vmalloc shortage: the guest reports
 `VmallocUsed` 13,376 kB when the write fails, and the kernel log carries no
 allocation-failure or OOM record. `NetBpfLoad` loaded 5 of 5 programs first and
 logged `UML kernel has no eBPF JIT; using its built-in interpreter`, which is
-the expected `androidboot.uml_bpf_interpreter=1` contract. A plausible but
-unproven direction is the non-preallocated hash map allocator's asynchronous
-refill path under UML; confirm the failing map's type, flags, and value size
-before changing anything. Do not raise guest memory or mask ConnectivityService
-to route around this.
+the expected `androidboot.uml_bpf_interpreter=1` contract.
+
+The root cause was then identified exactly and is a UML kernel defect, not an
+Android or product one. `bpftool` in the failing guest shows the map as a
+`BPF_F_NO_PREALLOC` hash with a 4-byte key and a **1024-byte value**, and it
+held exactly four entries. A non-preallocated hash map allocates elements from
+`bpf_mem_alloc`, whose `prefill_mem_cache()` inserts exactly **one** element
+per CPU once the unit size exceeds 256 bytes and refills the rest from
+`irq_work`. UML never implemented `arch_irq_work_raise()`, so the generic weak
+stub in `kernel/irq_work.c` left that refill waiting for the next timer tick:
+`unit_alloc()` took the single prefilled element, found the free list empty on
+the next insert, and returned `NULL`, which `htab_map_update_elem()` reports as
+`-ENOMEM`. Any burst into such a map therefore accepts about one element per
+CPU per tick.
+
+Mainline topic 0022, `uml: raise irq work locally instead of at the tick`,
+fixes this by publishing a self-directed IPI vector from
+`arch_irq_work_raise()` and running `irq_work_run()` when it is dispatched. A
+freestanding guest probe that fills a 1024-byte-value `BPF_F_NO_PREALLOC` hash
+map inserted 1 of 256 elements before the topic and all 256 after it, on both
+canonical page profiles.
+
+**The Android half of this repair is not done.** The ACK 6.18 series under
+`kernel/android-6.18/patches` needs the same topic, and it can only be created
+and built on the operator's Linux builder: this repository carries no ACK
+checkout and no `kernel/android-6.18` regeneration script, so
+`android/aosp-17/tools/regenerate-kernel-patches.py` must run there against
+`/home/build/android-kernel-6.18`. Port mainline topic 0022 unchanged, rebuild
+the ACK ELF, publish a release, and only then repeat the ten-vCPU boot. Do not
+raise guest memory or mask ConnectivityService to route around the defect.
 
 `sys.boot_completed` never became `1`, so the ten-vCPU acceptance in the
 continuation order below is not met and the tracked accepted-release descriptor
