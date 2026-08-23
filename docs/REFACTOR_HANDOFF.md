@@ -342,6 +342,31 @@ without special-casing: `--net-forward=5555-5555` plus
 command line no longer disables the boot animation, which now runs for the
 length of the cold boot.
 
+Guest memory is now elastic in both directions. `mem=` was already a ceiling
+rather than a reservation - `setup_physmem()` backs physical memory with a
+sparse file mapped `MAP_SHARED`, so host pages appear on first touch - but
+nothing ever gave them back, so a guest that peaked once stayed expensive for
+its whole life. That is the wrong shape for a phone, and raising `mem=` cannot
+fix it there. ACK topic 31 registers a free-page reporting driver that punches
+each reported range out of the backing file with `F_PUNCHHOLE`. Freeing
+2.15 GiB inside a booted guest took the emulator's resident set from 7.89 GiB
+to 6.85 GiB and it stayed there, against a resident set that had only ever
+grown before. Roughly half of freed memory returns; the rest is free in blocks
+below the order-5 reporting floor. This bounds host residency for an idle
+guest and does nothing for fragmentation, which by definition leaves no
+high-order free blocks to report.
+
+That topic also pinned down a trap worth knowing about. Calling
+`fcntl(F_PUNCHHOLE)` directly from `os-Darwin` failed every range, with
+correct, page-aligned arguments that a host probe accepted in every
+configuration. `fcntl()` is variadic, and Apple's arm64 ABI passes variadic
+arguments on the stack while that translation unit passes them in registers, so
+libc read a garbage third argument - `EINVAL` on one build and `EFAULT` on the
+next, from identical code. This is what the fixed-arity Darwin bridge is for:
+every other `fcntl()` in `os-Darwin` carrying a real argument already goes
+through `darwin_uml_fcntl()`, and only `F_GETFD`, which takes no argument,
+calls `fcntl()` directly.
+
 A much longer transfer still ends badly, and for a different reason. A 2 GiB
 push on the NAPI release transferred completely, but degraded from 14.3 MB/s to
 2.7 MB/s over 750 s and then stopped responding. Every one of the eleven RCU
