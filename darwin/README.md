@@ -23,7 +23,13 @@ superseded frame is retired as guest success without coupling rendering to the
 host display timeline. Unsupported resources may take the counted CPU
 diagnostic/VNC readback path, but zero sustained fallback is required for
 native qualification. `UML_GPU_FRAME_STATS` reports both timelines, drops,
-and fallback; see `docs/testing.md`. AppKit remains on the process
+and fallback; see `docs/testing.md`. The native AppKit shell releases every key
+it still believes is held whenever the window stops being key or the view
+resigns first responder, because AppKit delivers the matching `keyUp` and
+`flagsChanged` to whichever application took focus. It also reads the
+device-dependent modifier bits rather than `NSEventModifierFlagShift` and its
+siblings, which stay set while either side of a pair is held and would
+otherwise report a release as a press. AppKit remains on the process
 main thread while the synchronous emulator run moves to a worker whose signal
 mask preserves UML's SIGALRM timer contract.
 

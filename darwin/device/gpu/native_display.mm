@@ -77,21 +77,39 @@ std::optional<std::uint16_t> linuxKeyCode(unsigned short keyCode) noexcept
     return std::nullopt;
 }
 
+// Device-dependent modifier bits from IOKit's IOLLEvent.h. NSEvent carries
+// them alongside the device-independent flags and they are the only way to
+// tell which side of a modifier pair changed: NSEventModifierFlagShift stays
+// set while either Shift is held, so releasing one of two held Shifts would
+// otherwise be reported as a press and leave that key down in the guest.
+constexpr NSEventModifierFlags deviceLeftControl = 0x00000001;
+constexpr NSEventModifierFlags deviceLeftShift = 0x00000002;
+constexpr NSEventModifierFlags deviceRightShift = 0x00000004;
+constexpr NSEventModifierFlags deviceLeftCommand = 0x00000008;
+constexpr NSEventModifierFlags deviceRightCommand = 0x00000010;
+constexpr NSEventModifierFlags deviceLeftOption = 0x00000020;
+constexpr NSEventModifierFlags deviceRightOption = 0x00000040;
+constexpr NSEventModifierFlags deviceRightControl = 0x00002000;
+
 NSEventModifierFlags modifierFlag(unsigned short keyCode) noexcept
 {
     switch (keyCode) {
     case 56:
+        return deviceLeftShift;
     case 60:
-        return NSEventModifierFlagShift;
+        return deviceRightShift;
     case 59:
+        return deviceLeftControl;
     case 62:
-        return NSEventModifierFlagControl;
+        return deviceRightControl;
     case 58:
+        return deviceLeftOption;
     case 61:
-        return NSEventModifierFlagOption;
-    case 54:
+        return deviceRightOption;
     case 55:
-        return NSEventModifierFlagCommand;
+        return deviceLeftCommand;
+    case 54:
+        return deviceRightCommand;
     case 57:
         return NSEventModifierFlagCapsLock;
     default:
@@ -168,7 +186,9 @@ struct NativeDisplayState final :
     void scheduleWindow();
     void requestRedraw() noexcept;
     void sendKey(unsigned short nativeCode, std::int32_t value) noexcept;
+    void sendLinuxKey(std::uint16_t code, std::int32_t value) noexcept;
     void sendModifier(NSEvent* event) noexcept;
+    void releaseHeldInput() noexcept;
     void sendPointer(
         NSPoint location,
         NSSize bounds,
@@ -188,6 +208,10 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
+    // AppKit stops delivering keyUp and flagsChanged once the window loses key
+    // status, so remember what the guest still believes is held and release it
+    // at that boundary. Keyboard codes are all below BTN_MISC.
+    std::array<bool, 256> heldKeys {};
 };
 
 } // namespace uml::gpu
@@ -263,6 +287,13 @@ struct NativeDisplayState final :
         state->sendModifier(event);
 }
 
+- (BOOL)resignFirstResponder
+{
+    if (auto state = _state.lock())
+        state->releaseHeldInput();
+    return [super resignFirstResponder];
+}
+
 - (BOOL)pointerLandedOnSurface:(NSEvent*)event
 {
     const NSPoint location = [self convertPoint:event.locationInWindow
@@ -329,6 +360,16 @@ struct NativeDisplayState final :
     if (self != nil)
         _state = std::move(state);
     return self;
+}
+
+- (void)windowDidResignKey:(NSNotification*)notification
+{
+    (void)notification;
+    // Command-Tab and any other focus change delivers the modifier release to
+    // whichever application took over, so the guest would keep those keys down
+    // for the rest of the session.
+    if (auto state = _state.lock())
+        state->releaseHeldInput();
 }
 
 - (void)windowWillClose:(NSNotification*)notification
@@ -430,15 +471,24 @@ void NativeDisplayState::sendKey(
     unsigned short nativeCode,
     std::int32_t value) noexcept
 {
-    if (!inputSink)
-        return;
     const auto code = linuxKeyCode(nativeCode);
     if (!code)
         return;
+    sendLinuxKey(*code, value);
+}
+
+void NativeDisplayState::sendLinuxKey(
+    std::uint16_t code,
+    std::int32_t value) noexcept
+{
+    if (!inputSink)
+        return;
+    if (code < heldKeys.size())
+        heldKeys[code] = value != 0;
     const std::array events {
         native_input::VncInputEvent {
             .type = native_input::eventKey,
-            .code = *code,
+            .code = code,
             .value = value,
         },
         native_input::VncInputEvent {
@@ -449,6 +499,19 @@ void NativeDisplayState::sendKey(
     };
     if (!native_input::tryDeliver(inputSink, events))
         reportInputFailure();
+}
+
+void NativeDisplayState::releaseHeldInput() noexcept
+{
+    for (std::size_t code = 0; code < heldKeys.size(); ++code) {
+        if (heldKeys[code])
+            sendLinuxKey(static_cast<std::uint16_t>(code), 0);
+    }
+    // Pointer buttons live above the tracked keyboard range and the guest only
+    // ever learns their state from a pointer report, so clear all three.
+    sendLinuxKey(native_input::buttonLeft, 0);
+    sendLinuxKey(native_input::buttonMiddle, 0);
+    sendLinuxKey(native_input::buttonRight, 0);
 }
 
 void NativeDisplayState::sendModifier(NSEvent* event) noexcept
