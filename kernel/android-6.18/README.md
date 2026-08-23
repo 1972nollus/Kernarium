@@ -117,9 +117,23 @@ offset for a physical address, and for this file that offset is the physical
 address, so no new address arithmetic is involved. The minimum order is 5
 (512 KiB) rather than the `pageblock_order` default, because a 16 KiB profile
 makes a pageblock 32 MiB and a busy guest rarely has a whole one free;
-`page_reporting.page_reporting_order=` overrides it. This bounds host residency
-for an idle guest; it does not address fragmentation, since a fragmented zone
-has no high-order free blocks left to report.
+`page_reporting.page_reporting_order=` overrides it.
+
+The punch goes through `darwin_uml_fcntl()` rather than calling `fcntl()`
+directly. `fcntl()` is variadic, and Apple's arm64 ABI passes variadic
+arguments on the stack while this translation unit passes them in registers, so
+a direct call hands libc a garbage third argument; the same code returned
+`EINVAL` on one build and `EFAULT` on the next. Every other `fcntl()` in
+`os-Darwin` that carries a real argument already goes through the fixed-arity
+bridge for this reason, and only `F_GETFD`, which takes no argument, calls
+`fcntl()` directly.
+
+Measured on a booted guest: freeing 2.15 GiB inside the guest took the
+emulator's resident set from 7.89 GiB to 6.85 GiB, and it stayed there. Roughly
+half the freed memory comes back; the remainder is free in blocks below the
+reporting order. This bounds host residency for an idle guest; it does not
+address fragmentation, since a fragmented zone has no high-order free blocks
+left to report.
 
 Task-stack fragmentation is a known, unresolved limitation of this product.
 `CONFIG_KERNEL_STACK_ORDER=3` yields the required 128 KiB stack on the 16 KiB

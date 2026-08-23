@@ -1,4 +1,4 @@
-From 069993975b403e8ec7f49844eee0e8cac2342b6e Mon Sep 17 00:00:00 2001
+From 0d4e4adb1e66b1f40913ad7cd74ab6c3d94bc06f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 09:00:48 +0000
 Subject: [PATCH 31/31] UML-DARWIN-LOCAL: um: return free guest pages to the
@@ -37,9 +37,9 @@ optimization must not cost the guest anything else.
 Change-Id: Ib1467f28b83163f678ccf6c68ffb20ac91457e62
 ---
  arch/um/include/shared/os.h |  3 ++
- arch/um/kernel/physmem.c    | 79 +++++++++++++++++++++++++++++++++++++
- arch/um/os-Darwin/mem.c     | 21 ++++++++++
- 3 files changed, 103 insertions(+)
+ arch/um/kernel/physmem.c    | 91 +++++++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/mem.c     | 30 ++++++++++++
+ 3 files changed, 124 insertions(+)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
 index 316574f493669db8b8ce78197ca7606814ffd11e..b54cab5d1499bc56128a0186d6f64ee33c995fc6 100644
@@ -56,7 +56,7 @@ index 316574f493669db8b8ce78197ca7606814ffd11e..b54cab5d1499bc56128a0186d6f64ee3
  /* tlb.c */
  extern void report_enomem(void);
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index af02b5f9911d343b3089f40aea3d6d595b47f7f4..f90dac320080078060618721b4d7f88af3f62831 100644
+index af02b5f9911d343b3089f40aea3d6d595b47f7f4..20d326d8f8764bbabedbe60891efa78ff7593811 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
 @@ -6,7 +6,9 @@
@@ -69,7 +69,7 @@ index af02b5f9911d343b3089f40aea3d6d595b47f7f4..f90dac320080078060618721b4d7f88a
  #include <asm/page.h>
  #include <asm/sections.h>
  #include <as-layout.h>
-@@ -97,6 +99,83 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
+@@ -97,6 +99,95 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
  	max_low_pfn = min_low_pfn + (map_size >> PAGE_SHIFT);
  }
  
@@ -115,6 +115,18 @@ index af02b5f9911d343b3089f40aea3d6d595b47f7f4..f90dac320080078060618721b4d7f88a
 +		/* Only the physical-memory file is ours to punch. */
 +		if (fd != physmem_fd)
 +			continue;
++		/*
++		 * A range that is not page aligned did not come from the free
++		 * lists, and punching the wrong offset would discard live
++		 * guest memory. Refuse rather than trust it.
++		 */
++		if (!IS_ALIGNED(offset, PAGE_SIZE) ||
++		    !IS_ALIGNED(sg->length, PAGE_SIZE)) {
++			physmem_discard_failed = true;
++			pr_warn("Darwin free-page reporting disabled: misaligned range offset=%llx length=%x\n",
++				offset, sg->length);
++			return 0;
++		}
 +		err = os_discard_file_range(fd, offset, sg->length);
 +		if (err) {
 +			/*
@@ -124,8 +136,8 @@ index af02b5f9911d343b3089f40aea3d6d595b47f7f4..f90dac320080078060618721b4d7f88a
 +			 * else.
 +			 */
 +			physmem_discard_failed = true;
-+			pr_warn("Darwin free-page reporting disabled: host refused to release physical memory (%d)\n",
-+				err);
++			pr_warn("Darwin free-page reporting disabled: host refused to release %x bytes at %llx (%d)\n",
++				sg->length, offset, err);
 +			return 0;
 +		}
 +	}
@@ -154,10 +166,18 @@ index af02b5f9911d343b3089f40aea3d6d595b47f7f4..f90dac320080078060618721b4d7f88a
  {
  	int fd = -1;
 diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
-index 968c0de1b7ac9079e5379fd796fb81cf360a226a..f797fb3ee55e3c913afcef5e448a5a115fad3e05 100644
+index 968c0de1b7ac9079e5379fd796fb81cf360a226a..07b6a31d8bc7b440f2ae9350c0fc79419bf0a974 100644
 --- a/arch/um/os-Darwin/mem.c
 +++ b/arch/um/os-Darwin/mem.c
-@@ -39,3 +39,24 @@ int create_mem_file(unsigned long long length)
+@@ -6,6 +6,7 @@
+ #include <string.h>
+ #include <unistd.h>
+ #include <os.h>
++#include "bridge.h"
+ 
+ int create_mem_file(unsigned long long length)
+ {
+@@ -39,3 +40,32 @@ int create_mem_file(unsigned long long length)
  	}
  	return fd;
  }
@@ -178,7 +198,15 @@ index 968c0de1b7ac9079e5379fd796fb81cf360a226a..f797fb3ee55e3c913afcef5e448a5a11
 +	memset(&hole, 0, sizeof(hole));
 +	hole.fp_offset = (off_t)offset;
 +	hole.fp_length = (off_t)length;
-+	if (fcntl(fd, F_PUNCHHOLE, &hole) < 0)
++	/*
++	 * Through the fixed-arity bridge rather than fcntl() directly. fcntl()
++	 * is variadic, and Apple's arm64 ABI passes variadic arguments on the
++	 * stack while this translation unit passes them in registers, so a
++	 * direct call hands libc a garbage third argument - observed as EINVAL
++	 * and EFAULT from the same code on consecutive builds. Every other
++	 * fcntl() in os-Darwin that has a real argument goes the same way.
++	 */
++	if (darwin_uml_fcntl(fd, F_PUNCHHOLE, (long)&hole) < 0)
 +		return -errno;
 +	return 0;
 +}
