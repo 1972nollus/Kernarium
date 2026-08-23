@@ -1,0 +1,55 @@
+From 6c494ffb13128a20adfd058245a5f4ac1d264f09 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 23 Aug 2026 02:36:44 +0000
+Subject: [PATCH 1/1] UML-ANDROID-LOCAL: report an absent gpu_mem map instead
+ of aborting
+
+ReadProcessGpuUsageKb already contains a graceful path for an unavailable map,
+but it is dead code. BpfMapRO calls abortOnMismatch unconditionally from its
+constructor, and abortOnMismatch aborts as soon as the fd is invalid, so
+isValid() can never observe a missing map.
+
+The map is genuinely absent on this platform rather than misconfigured.
+CONFIG_BPF_EVENTS depends on KPROBE_EVENTS or UPROBE_EVENTS, arch/um declares
+neither HAVE_KPROBES nor ARCH_SUPPORTS_UPROBES, and the gpu_mem tracepoint
+program that creates the map can therefore never attach. Of the BPF objects
+shipped in the image only the socket-filter one is pinned under /sys/fs/bpf.
+
+The result was a fatal abort in system_server through
+android_os_Debug_getGpuTotalUsageKb and MemInfoReader.getGpuKernelUsedSizeKb,
+restarting the runtime before boot completed.
+
+Check the pinned path before constructing the map so the existing return false
+becomes reachable. Every framework caller already tests
+Debug.getGpuTotalUsageKb() >= 0, so reporting the absence is the contract they
+expect, and it is accurate: this product has no kernel GPU memory accounting.
+
+Change-Id: Ie7e6d73491149dda651217603381bc4999aadb0d
+---
+ sysmeminfo.cpp | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/sysmeminfo.cpp b/sysmeminfo.cpp
+index c014987916efbe68b37421bea65ff538ab2a8d4f..84129ad56d5617def6b1e66170153bdb9cbb0c44 100644
+--- a/sysmeminfo.cpp
++++ b/sysmeminfo.cpp
+@@ -415,6 +415,19 @@ bool ReadPerProcessGpuMem([[maybe_unused]] std::unordered_map<uint32_t, uint64_t
+ #if defined(__ANDROID__) && !defined(__ANDROID_APEX__) && !defined(__ANDROID_VNDK__)
+     static constexpr const char kBpfGpuMemTotalMap[] = "/sys/fs/bpf/map_gpuMem_gpu_mem_total_map";
+ 
++    // BpfMapRO aborts from its constructor when the pinned map is absent, so
++    // the isValid() guard below is only reachable when the path exists.
++    // Platforms that cannot load tracing BPF programs never pin this map:
++    // CONFIG_BPF_EVENTS requires KPROBE_EVENTS or UPROBE_EVENTS, and an
++    // architecture that provides neither can never attach the gpu_mem
++    // tracepoint program that creates it. Report the absence instead of
++    // aborting the caller; every framework caller already handles a negative
++    // result from Debug.getGpuTotalUsageKb().
++    if (access(kBpfGpuMemTotalMap, F_OK) != 0) {
++        LOG(ERROR) << "Not present: " << kBpfGpuMemTotalMap;
++        return false;
++    }
++
+     // Use the read-only wrapper BpfMapRO to properly retrieve the read-only map.
+     auto map = bpf::BpfMapRO<uint64_t, uint64_t>(kBpfGpuMemTotalMap);
+     if (!map.isValid()) {
