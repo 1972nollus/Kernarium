@@ -7,6 +7,7 @@ add_subdirectory(api)
 add_subdirectory(platform)
 add_subdirectory(memory)
 add_subdirectory(cpu)
+add_subdirectory(device/sockets)
 add_subdirectory(device/network)
 add_subdirectory(device/input/vnc)
 

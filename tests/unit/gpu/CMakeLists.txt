@@ -95,6 +95,7 @@ if(TARGET uml_gpu_service)
     target_compile_options(uml_gpu_transport_slow_stop_test_variant PRIVATE
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
     target_link_libraries(uml_gpu_transport_slow_stop_test_variant PUBLIC
+        UML::DeviceSocketPaths
         uml_gpu_transport_wire_slow_stop_test_variant
         uml_gpu_protocol_device
         UML::VncInput)

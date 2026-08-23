@@ -8,6 +8,7 @@
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
 #include "profile_reporter.hpp"
+#include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
 
 #include <array>
@@ -192,6 +193,9 @@ void host_fault(int signal, siginfo_t *info, void *context_pointer) noexcept
 	*output++ = '\n';
 	(void)write(STDERR_FILENO, message,
 		    static_cast<std::size_t>(output - message));
+	/* This path never unwinds, so the bound socket paths would survive the
+	 * process and block the next run on the same names. */
+	::uml::device::remove_registered_socket_paths();
 	_exit(128 + signal);
 }
 
@@ -413,6 +417,7 @@ int uml::app::runEmbeddedKernel(
 	const LaunchConfiguration &configuration)
 {
 	install_host_faults();
+	::uml::device::install_socket_path_signal_cleanup();
 	PreparedArguments prepared;
 	try {
 		prepared = prepare_host_arguments(argc, argv, configuration);

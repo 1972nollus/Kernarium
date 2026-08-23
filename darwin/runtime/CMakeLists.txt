@@ -69,6 +69,7 @@ add_library(uml_runtime_entry OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp)
 uml_declare_architecture_target(uml_runtime_entry runtime)
 target_link_libraries(uml_runtime_entry PRIVATE
+    UML::DeviceSocketPaths
     UML::RuntimeContract
     uml_cpu_engine_factory
     uml_static_guest_memory)

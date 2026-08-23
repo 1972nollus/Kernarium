@@ -4,6 +4,8 @@
 
 #include "unique_descriptor.hpp"
 
+#include "socket_paths.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -64,43 +66,6 @@ bool configureClient(int descriptor) noexcept
         ::fcntl(descriptor, F_SETFL, statusFlags | O_NONBLOCK) == 0 &&
         ::fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0;
 }
-
-class SocketPathCleanup final {
-public:
-    explicit SocketPathCleanup(std::filesystem::path path)
-        : path_(std::move(path))
-    {
-    }
-
-    void adopt()
-    {
-        struct stat status {};
-        if (::lstat(path_.c_str(), &status) != 0 ||
-            !S_ISSOCK(status.st_mode)) {
-            throw std::runtime_error(
-                "bound Virtio console socket path changed unexpectedly");
-        }
-        device_ = status.st_dev;
-        inode_ = status.st_ino;
-        owned_ = true;
-    }
-
-    ~SocketPathCleanup()
-    {
-        struct stat status {};
-        if (owned_ && ::lstat(path_.c_str(), &status) == 0 &&
-            S_ISSOCK(status.st_mode) && status.st_dev == device_ &&
-            status.st_ino == inode_) {
-            (void)::unlink(path_.c_str());
-        }
-    }
-
-private:
-    std::filesystem::path path_;
-    dev_t device_ {};
-    ino_t inode_ {};
-    bool owned_ {};
-};
 
 } // namespace
 
@@ -354,7 +319,7 @@ private:
     }
 
     std::filesystem::path socketPath_;
-    SocketPathCleanup cleanup_;
+    ::uml::device::SocketPath cleanup_;
     uml::gpu::UniqueDescriptor listener_;
     uml::gpu::UniqueDescriptor client_;
     std::deque<std::uint8_t> input_;

@@ -115,6 +115,20 @@ multiport feature and publishes `org.uml.host-serial.0` at
 HVC console or interfere with an image-owned `/dev/hvc0` getty. Android keeps
 the existing single-port attachment unchanged.
 
+Every bound filesystem socket - the Virtio console, the Virtio serial line, and
+each vhost-user device - is owned by `darwin/device/sockets`, which removes the
+path when its guard unwinds and refuses to remove one another process has since
+rebound at the same name. Ordinary teardown unwinds that guard, but a
+terminating signal does not, so the same removal also runs from the
+SIGHUP/SIGINT/SIGQUIT/SIGTERM handler the application installs and from
+`darwin_uml_exit()`, the single point every guest-driven termination reaches.
+The guest kernel installs its own SIGINT and SIGTERM handlers after the
+application's, so those two arrive through the exit bridge while SIGHUP and
+SIGQUIT stay with the application handler; both routes end in the same removal.
+A path left by SIGKILL or a host power loss is not recoverable this way, and
+because both socket servers refuse to replace an existing path, such a leftover
+must be removed before reusing that name.
+
 The opt-in Apple CTS adapters pass only an identifier from the checked
 campaign allow-list. CMake generates that campaign's exact bounded guest
 launcher from the common VK-GL-CTS driver into each page-profile runtime; the

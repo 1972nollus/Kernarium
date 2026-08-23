@@ -3,6 +3,8 @@
 
 #include "context.hpp"
 
+#include "device/sockets/socket_paths.hpp"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -40,13 +42,21 @@ int darwin_uml_stop_requested(void)
 
 void darwin_uml_abort(void)
 {
+	::uml::device::remove_registered_socket_paths();
 	signal(SIGABRT, SIG_DFL);
 	abort();
 }
 
+/*
+ * Every termination the guest kernel drives arrives here, including the
+ * SIGINT and SIGTERM its own fatal handler converts into _exit().  No host
+ * destructor runs past this point, so bound socket paths have to be released
+ * now or they outlive the process and block the next run on the same names.
+ */
 void darwin_uml_exit(int status, void *caller)
 {
 	dprintf(STDERR_FILENO, "Darwin: ELF exit(%d) called from %p\n",
 		status, caller);
+	::uml::device::remove_registered_socket_paths();
 	_exit(status);
 }

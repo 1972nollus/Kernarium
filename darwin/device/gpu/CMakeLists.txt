@@ -77,6 +77,7 @@ uml_configure_gpu_component(uml_gpu_transport)
 target_compile_definitions(uml_gpu_transport PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 target_link_libraries(uml_gpu_transport PUBLIC
+    UML::DeviceSocketPaths
     uml_gpu_transport_wire
     uml_gpu_protocol_device
     UML::VncInput)

@@ -13,4 +13,6 @@ target_include_directories(uml_console_device
 target_compile_features(uml_console_device PUBLIC cxx_std_20)
 target_compile_options(uml_console_device PRIVATE
     -Wall -Wextra -Werror -Wno-deprecated-declarations)
-target_link_libraries(uml_console_device PRIVATE uml_gpu_transport)
+target_link_libraries(uml_console_device
+    PUBLIC UML::DeviceSocketPaths
+    PRIVATE uml_gpu_transport)

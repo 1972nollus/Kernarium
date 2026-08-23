@@ -3,6 +3,8 @@
 #include "vhost_user_server.hpp"
 #include "virtio_gpu_device.hpp"
 
+#include "socket_paths.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -96,42 +98,6 @@ void flushReadinessOutput()
         "GPU readiness output flush failed: " +
         std::string(std::strerror(flushError)));
 }
-
-class SocketPathCleanup final {
-public:
-    explicit SocketPathCleanup(std::filesystem::path path)
-        : path_(std::move(path))
-    {
-    }
-
-    void adopt()
-    {
-        struct stat status {};
-        if (::lstat(path_.c_str(), &status) != 0 ||
-            !S_ISSOCK(status.st_mode)) {
-            throw std::runtime_error(
-                "bound vhost-user socket path changed unexpectedly");
-        }
-        device_ = status.st_dev;
-        inode_ = status.st_ino;
-        owned_ = true;
-    }
-
-    ~SocketPathCleanup()
-    {
-        struct stat status {};
-        if (owned_ && ::lstat(path_.c_str(), &status) == 0 &&
-            S_ISSOCK(status.st_mode) && status.st_dev == device_ &&
-            status.st_ino == inode_)
-            (void)::unlink(path_.c_str());
-    }
-
-private:
-    std::filesystem::path path_;
-    dev_t device_ {};
-    ino_t inode_ {};
-    bool owned_ {};
-};
 
 void writeExact(
     int descriptor,
@@ -1647,7 +1613,7 @@ void VhostUserServer::run(
             "vhost-user socket path inspection failed: " +
             std::string(std::strerror(errno)));
     }
-    SocketPathCleanup socketPathCleanup {socketPath_};
+    ::uml::device::SocketPath socketPathCleanup {socketPath_};
     UniqueDescriptor listener {::socket(AF_UNIX, SOCK_STREAM, 0)};
     if (listener.get() < 0)
         throw std::runtime_error(

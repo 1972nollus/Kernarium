@@ -417,6 +417,18 @@ is what made it work; see the address-profile section above.
 The Darwin cooperative-timer starvation that a 2 GiB `adb push` reaches remains
 the one open item from this run.
 
+Bound filesystem sockets are now removed on every termination this process can
+observe. `darwin/device/sockets` owns each bound path and refuses to remove one
+another process has since rebound at the same name; the removal runs from the
+guard's destructor, from the SIGHUP/SIGINT/SIGQUIT/SIGTERM handler the
+application installs, and from `darwin_uml_exit()`, which every guest-driven
+termination reaches. The guest kernel replaces the application's SIGINT and
+SIGTERM dispositions with its own, so those two arrive through the exit bridge
+while SIGHUP and SIGQUIT stay with the application handler. All four were
+measured to leave no socket behind. SIGKILL and host power loss remain
+unrecoverable, and because both socket servers still refuse to replace an
+existing path, a leftover from those must be removed before that name is reused.
+
 ## Required case-sensitive kernel source configuration (2026-08-20)
 
 The maintained Linux checkout now comes only from the Git-ignored
