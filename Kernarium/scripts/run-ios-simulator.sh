@@ -15,6 +15,7 @@ DEVICE=${KERNARIUM_SIMULATOR_UDID:-booted}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
 AQUARIUM=0
+GUEST_BUNDLE=
 
 fail()
 {
@@ -29,6 +30,9 @@ usage()
 		"" \
 		"Options:" \
 		"  --rootfs PATH  EROFS or sealed ext4 image for app Documents" \
+		"  --guest-bundle NAME  Assemble NAME.kern from the accepted" \
+		"                 Android release and select it; its writable disk" \
+		"                 is kept across runs" \
 		"  --artifact-16k PATH  Accepted 16 KiB kernel artifact directory" \
 		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
 		"  --device UDID  Booted Simulator UDID (default: booted)" \
@@ -56,6 +60,11 @@ while [ "$#" -gt 0 ]; do
 	--device)
 		[ "$#" -ge 2 ] || fail "--device requires a UDID"
 		DEVICE=$2
+		shift 2
+		;;
+	--guest-bundle)
+		[ "$#" -ge 2 ] || fail "--guest-bundle requires a name"
+		GUEST_BUNDLE=$2
 		shift 2
 		;;
 	--aquarium)
@@ -115,9 +124,23 @@ if [ "$ROOTFS_FILENAME" = rootfs.ext4 ]; then
 	chmod 0444 "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
 fi
 export SIMCTL_CHILD_KERNARIUM_ROOTFS=$ROOTFS_FILENAME
-printf '%s\n' \
-	"copied rootfs to $DATA_CONTAINER/Documents/$ROOTFS_FILENAME" \
-	"launching Kernarium; guest console follows on stdout"
+printf '%s\n' "copied rootfs to $DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
+if [ -n "$GUEST_BUNDLE" ]; then
+	case "$GUEST_BUNDLE" in
+	*/*|"") fail "--guest-bundle takes a plain name, not a path" ;;
+	esac
+	BUNDLE_PATH="$DATA_CONTAINER/Documents/${GUEST_BUNDLE%.kern}.kern"
+	# Assembling again would discard the writable disk the guest has been
+	# accumulating, so an existing bundle is reused as it stands.
+	if [ -d "$BUNDLE_PATH" ]; then
+		printf '%s\n' "reusing existing guest bundle $BUNDLE_PATH"
+	else
+		python3 -B "$ROOT_DIR/Kernarium/scripts/make-guest-bundle.py" \
+			--output "$BUNDLE_PATH"
+	fi
+	export SIMCTL_CHILD_KERNARIUM_ROOTFS=${GUEST_BUNDLE%.kern}.kern
+fi
+printf '%s\n' "launching Kernarium; guest console follows on stdout"
 if [ "$AQUARIUM" -eq 1 ]; then
 	export SIMCTL_CHILD_KERNARIUM_WEBGL_AQUARIUM=1
 	export SIMCTL_CHILD_KERNARIUM_EXECUTION_ENGINE=gadgets

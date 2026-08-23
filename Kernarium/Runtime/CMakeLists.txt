@@ -20,8 +20,13 @@ get_target_property(_kernarium_kernel_page_size
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_PAGE_SIZE)
 get_target_property(_kernarium_kernel_release
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_RELEASE)
-if(NOT _kernarium_artifact_family STREQUAL "mainline-6.18")
-    message(FATAL_ERROR "KernariumRuntime requires the mainline-6.18 artifact")
+if(_kernarium_artifact_family STREQUAL "android-17-ack-6.18-16k")
+    set(KERNARIUM_RUNTIME_ANDROID_GUEST 1)
+elseif(_kernarium_artifact_family STREQUAL "mainline-6.18")
+    set(KERNARIUM_RUNTIME_ANDROID_GUEST 0)
+else()
+    message(FATAL_ERROR
+        "KernariumRuntime requires the mainline-6.18 or Android 17 artifact")
 endif()
 string(REGEX MATCH "^[0-9]+(\\.[0-9]+)+"
     KERNARIUM_KERNEL_RELEASE "${_kernarium_kernel_release}")
@@ -41,8 +46,21 @@ endif()
 if(NOT _kernarium_kernel_page_size EQUAL _kernarium_guest_page_size)
     message(FATAL_ERROR "Kernarium page profile differs from its kernel artifact")
 endif()
-set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
-    "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
+# The application matches an embedded framework by name before it dares load
+# one, so the guest flavour has to lead the identity rather than trail it: a
+# trailing marker would leave the Android framework matching the Linux
+# page-profile suffix as well.
+if(KERNARIUM_RUNTIME_ANDROID_GUEST)
+    if(NOT UML_GUEST_16K_PAGES)
+        message(FATAL_ERROR
+            "The Kernarium Android runtime supports only 16 KiB guest pages")
+    endif()
+    set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
+        "KernariumRuntimeAndroid_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
+else()
+    set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
+        "KernariumRuntime_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
+endif()
 string(REPLACE "_" "-" _kernarium_runtime_bundle_component
     "${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 
@@ -161,7 +179,30 @@ endif()
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_AQUARIUM_SUPPORTED=${_kernarium_aquarium_supported}
     KERNARIUM_KERNEL_RELEASE="${KERNARIUM_KERNEL_RELEASE}"
+    KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_FRAMEWORK_NAME="${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
+if(KERNARIUM_RUNTIME_ANDROID_GUEST)
+    get_target_property(_kernarium_android_manifest
+        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_RELEASE_MANIFEST)
+    get_target_property(_kernarium_android_ramdisk
+        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_RAMDISK)
+    get_target_property(_kernarium_android_base_disk
+        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_BASE_DISK)
+    file(SIZE "${_kernarium_android_ramdisk}" _kernarium_android_ramdisk_size)
+    file(SIZE "${_kernarium_android_base_disk}"
+        _kernarium_android_base_disk_size)
+    target_compile_definitions(KernariumRuntime PRIVATE
+        KERNARIUM_ANDROID_RAMDISK_SIZE=${_kernarium_android_ramdisk_size}
+        KERNARIUM_ANDROID_BASE_DISK_SIZE=${_kernarium_android_base_disk_size})
+    # The accepted release identity travels inside the framework. A bundle
+    # whose manifest differs is refused before any of its payload is opened.
+    target_link_options(KernariumRuntime PRIVATE
+        "LINKER:-sectcreate,__DATA,__uml_android,${_kernarium_android_manifest}")
+    set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
+        "${_kernarium_android_manifest}"
+        "${_kernarium_android_ramdisk}"
+        "${_kernarium_android_base_disk}")
+endif()
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 if(UML_APPLE_PLATFORM MATCHES "^ios")

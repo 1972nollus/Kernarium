@@ -8,10 +8,26 @@ set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
     "Prebuilt kernel product consumed by the selected Apple executable/runtime")
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS mainline-6.18 android-17)
 
+if(UML_KERNEL_PRODUCT STREQUAL "android-17")
+    # The Android product ships one accepted release that owns its own ACK
+    # kernel, ramdisk, and base image. It exposes the same artifact properties
+    # as a mainline bundle, so a consumer selects it the same way.
+    if(NOT UML_GUEST_16K_PAGES)
+        message(FATAL_ERROR
+            "The Android 17 product supports only 16 KiB guest pages")
+    endif()
+    if(NOT TARGET uml_android17_release)
+        add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
+            "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
+    endif()
+    set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET "${UML_ANDROID17_RELEASE_TARGET}"
+        CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)
+    return()
+endif()
+
 if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
     message(FATAL_ERROR
-        "The current Apple products require UML_KERNEL_PRODUCT=mainline-6.18; "
-        "the separate Android target will own android-17")
+        "UML_KERNEL_PRODUCT must be mainline-6.18 or android-17")
 endif()
 
 if(UML_GUEST_16K_PAGES)

@@ -134,10 +134,11 @@ ctest --preset instruction-evidence-4k
 
 `Kernarium/Kernarium.xcodeproj` is an arm64 iOS device and Simulator
 application that embeds separate versioned runtime frameworks for the
-maintained 4 KiB and 16 KiB UML kernels. It defaults to 16 KiB, loads exactly
-one saved page profile for the process lifetime, and boots the selected
-`.erofs` image from Documents with 4 GiB on Simulator and 2 GiB on physical
-devices by default. Both default to all processors reported by
+maintained 4 KiB and 16 KiB UML kernels and for the accepted Android 17 ACK
+kernel. It defaults to 16 KiB Linux, loads exactly one saved flavour and page
+profile for the process lifetime, and boots the selected `.erofs` image or
+`.kern` guest bundle from Documents with 4 GiB on Simulator and 2 GiB on
+physical devices by default. Both default to all processors reported by
 `NSProcessInfo`. The settings sheet persists 1 through that processor count,
 512 MiB through 4 GiB of RAM in 64 MiB steps, a 1--32 GiB overlay size, a Documents rootfs filename,
 the 4 KiB or 16 KiB kernel page profile, and Retina mode; changes are
@@ -235,12 +236,23 @@ cmake --build --preset kernarium-ios-simulator
 cmake --preset kernarium-ios-simulator-4k
 cmake --build --preset kernarium-ios-simulator-4k
 
+cmake --preset kernarium-ios-simulator-android
+cmake --build --preset kernarium-ios-simulator-android
+
 cmake --preset kernarium-ios-device
 cmake --build --preset kernarium-ios-device
 cmake --preset kernarium-ios-device-4k
 cmake --build --preset kernarium-ios-device-4k
+cmake --preset kernarium-ios-device-android
+cmake --build --preset kernarium-ios-device-android
 Kernarium/scripts/package-ios-frameworks.sh
 ```
+
+The Android presets set `UML_KERNEL_PRODUCT=android-17`, which selects the
+accepted Android release instead of a mainline artifact. That release exposes
+the same artifact properties as a mainline bundle plus its ramdisk, base image,
+and manifest, so it needs no kernel source checkout and no separate Kbuild
+tree. There is no 4 KiB Android variant.
 
 The Apple-GPU contracts authenticate one source and topic matrix across all
 three platforms. Its UTM WebKit topics retain the Simulator ES 3 minimum
@@ -261,7 +273,7 @@ The network prefixes reuse the authenticated PCRE2, libffi, proxy-libintl,
 GLib, GVDB, and libslirp sources prepared by `dependencies/prepare.sh`. The
 iOS-specific GLib patch removes unavailable process-management probes; the
 guest still receives the normal SLiRP callback provider used by the emulator.
-`package-ios-frameworks.sh` combines both versioned runtimes plus EGL and
+`package-ios-frameworks.sh` combines all three versioned runtimes plus EGL and
 GLESv2 device and Simulator slices below `.build/kernarium-xcframeworks`, which
 is the only framework location referenced by the Xcode project.
 
@@ -270,7 +282,11 @@ The default macOS integration target and iOS runtime consume the accepted
 4 KiB compatibility products consume the accepted 4 KiB bundle. macOS embeds
 the manifest-derived ELF directly. Kernarium packages the same bytes into
 `KernariumRuntime_<release>_16K` and `KernariumRuntime_<release>_4K`, embeds
-both without a launch-time dependency, and loads only the saved profile.
+them without a launch-time dependency, and loads only the saved profile. The
+Android runtime is packaged the same way as
+`KernariumRuntimeAndroid_<ack-release>_16K`. Guest flavour leads a framework
+name and the page profile trails it, so the Android framework can never be
+mistaken for the 16 KiB Linux one.
 Override a whole artifact directory only when deliberately testing another
 maintained publication of the matching page profile. With one Simulator
 already booted, the following command builds both runtimes and the Xcode app,
@@ -283,6 +299,46 @@ Kernarium/scripts/run-ios-simulator.sh \
   --artifact-16k "$PWD/.build/kernel/artifacts/accepted-16k-directory" \
   --artifact-4k "$PWD/.build/kernel/artifacts/accepted-4k-directory"
 ```
+
+### Guest bundles
+
+A guest bundle is a `.kern` directory in the application's Documents holding
+one guest's complete payload and the writable disk it accumulates. The
+extension names no operating system; the payload decides the flavour, and a
+directory without a complete payload is not offered in the picker at all. An
+Android bundle holds `release-manifest.json`, `boot/ramdisk.img`,
+`boot/kernel-command-line.txt`, and exactly one `guest/*.img`. The runtime
+compares that manifest against the copy linked into its own framework and
+refuses a bundle built from a different release. UBD creates `userdata.cow`
+beside the payload on first boot and reopens it on every later boot, so guest
+state stays inside the bundle. Selecting a bundle whose kernel exists in only
+one page profile fixes the page-size picker at that profile.
+
+`--guest-bundle` assembles one from the accepted Android release and selects
+it. It reuses an existing bundle rather than reassembling, because
+reassembling would discard the writable disk:
+
+```sh
+Kernarium/scripts/run-ios-simulator.sh --guest-bundle Pixel
+```
+
+To build one by hand, or to replace a bundle and its accumulated state:
+
+```sh
+python3 -B Kernarium/scripts/make-guest-bundle.py --output /path/to/Pixel.kern
+```
+
+The base image is cloned rather than copied where the filesystem supports it,
+so a bundle costs the release's allocated size rather than its 16 GiB apparent
+size.
+
+The application flushes the guest's writable host files whenever it becomes
+inactive, enters the background, or is about to terminate, holding a background
+task assertion for the last two so the flush can finish. This is the host half
+of durability: writes the guest has already issued reach stable storage even if
+iOS reclaims the suspended process. Pages still dirty inside the guest are
+written back by the guest kernel on its own schedule, which nothing outside it
+can force.
 
 The serial console remains on that stdout relay and is also copied, in order,
 to the app's SwiftTerm surface. Typing in SwiftTerm writes to the same `ttyS0`

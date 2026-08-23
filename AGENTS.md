@@ -82,8 +82,11 @@ historical sections as history.
   to avoid the crowded low host VA range. The kernel derives its endpoint from
   the relocated image; there is no platform-specific Kbuild image or
   address-space selector. Kernarium embeds separate versioned signed runtime
-  frameworks for the canonical 4 KiB and 16 KiB artifacts, defaults to 16 KiB,
-  and loads exactly one framework for the process lifetime after launch.
+  frameworks for the canonical 4 KiB and 16 KiB mainline artifacts and for the
+  accepted Android 17 ACK release, defaults to 16 KiB Linux, and loads exactly
+  one framework for the process lifetime after launch. Guest flavour leads a
+  framework name and the page profile trails it, so no name can match two
+  selections; the Android framework exists only in 16 KiB.
 - The shipped kernel builds zswap in, enables it by default, and selects zstd,
   while retaining zram with the same compressor. Zswap allocates no pool until
   the guest activates backing swap; normal desktop launchers do not create
@@ -451,8 +454,9 @@ Executable-memory policy:
   carrier; the loader may alias only immutable executable pages from that
   mapping and must reject relocations into them. Device and Simulator must
   share the same signed image, dynamic load bias, and software-MMU layout for
-  each page profile. The app must embed both runtime frameworks without linking
-  either at process launch, then load exactly the saved profile. Do not replace
+  each page profile. The app must embed every runtime framework without linking
+  any at process launch, then load exactly the selected flavour and profile.
+  Do not replace
   this with anonymous executable pages, RW-to-RX
   publication, debugger-only behavior, or a JIT entitlement. Simulator and
   device use the signed carrier while macOS retains its established unsigned
@@ -467,6 +471,28 @@ Executable-memory policy:
   installed 16 KiB Android 17 release, embeds its ACK 6.18 ELF and manifest
   identity, and maps the static GPT only behind a per-instance COW file. It has
   no 4 KiB variant and must not inherit Linux desktop rootfs discovery.
+  `UML_KERNEL_PRODUCT=android-17` selects the same release for the Kernarium
+  iOS runtime, which embeds the ACK ELF in the same signed `__TEXT` carrier and
+  its release manifest in `__DATA`. That runtime boots only a guest bundle
+  whose manifest matches the embedded copy byte for byte, appends
+  `--guest-top-byte-ignore` for Android's tagged pointers, injects no console
+  bootstrap, and attaches no overlay disk.
+- A Kernarium guest bundle is a `.kern` directory in the application's
+  Documents holding one guest's complete payload and its writable disk. The
+  extension is neutral about the operating system inside; the payload names the
+  flavour, and an incomplete payload is not offered for selection at all. An
+  Android bundle carries `release-manifest.json`, `boot/ramdisk.img`,
+  `boot/kernel-command-line.txt`, and exactly one `guest/*.img`; UBD creates
+  `userdata.cow` beside them on first boot and reopens it afterwards, so guest
+  state accumulates inside the bundle rather than in disposable storage. A
+  bundle whose kernel exists in only one page profile fixes that profile in the
+  settings picker and at launch.
+- The Kernarium launcher owns a named `uml-launcher` thread for the guest run.
+  It must not be the main thread: the run holds its thread for the guest's
+  whole life while the GPU service reaches the main queue as it starts, and
+  scheduling that run through Swift concurrency deadlocked exactly there once
+  the toolchain began inheriting caller isolation. The thread inherits the
+  main thread's SIGALRM block and the runtime reasserts it.
   Keep the source architecture audit and supported iOS package/consumer builds
   green.
 

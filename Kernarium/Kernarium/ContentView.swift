@@ -41,9 +41,11 @@ struct ContentView: View {
         }
         .onAppear {
             serialConsole.startObserving()
+            GuestPersistence.shared.startObserving()
         }
         .onDisappear {
             serialConsole.stopObserving()
+            GuestPersistence.shared.stopObserving()
             EmulatorLauncher.shared.stop()
         }
     }
@@ -562,6 +564,80 @@ enum ThermalStateReport {
     }
 }
 
+/// The paths one boot needs, in the order the boot request declares them.
+/// They are held as Swift strings and only become C pointers for the duration
+/// of the run, which spans the entire guest lifetime.
+private struct PreparedBoot: Sendable {
+    private let paths: [String?]
+
+    init(rootfs: URL, overlay: URL) {
+        paths = [rootfs.path, overlay.path, nil, nil, nil, nil, nil]
+    }
+
+    init(bundle: GuestBundle) {
+        paths = [
+            nil,
+            nil,
+            bundle.manifest.path,
+            bundle.baseDisk.path,
+            bundle.instance.path,
+            bundle.ramdisk.path,
+            bundle.commandLine.path,
+        ]
+    }
+
+    func withCPaths<Result>(
+        _ body: ([UnsafePointer<CChar>?]) -> Result
+    ) -> Result {
+        let buffers = paths.map { path in
+            path.map { ContiguousArray($0.utf8CString) }
+        }
+        var pointers = [UnsafePointer<CChar>?](
+            repeating: nil, count: buffers.count
+        )
+        func bind(_ index: Int) -> Result {
+            guard index < buffers.count else { return body(pointers) }
+            guard let buffer = buffers[index] else { return bind(index + 1) }
+            return buffer.withUnsafeBufferPointer { raw in
+                pointers[index] = raw.baseAddress
+                defer { pointers[index] = nil }
+                return bind(index + 1)
+            }
+        }
+        return bind(0)
+    }
+}
+
+private func runGuest(
+    view: GuestMetalView,
+    boot: PreparedBoot,
+    width: UInt32,
+    height: UInt32,
+    dotsPerInch: UInt32,
+    guestMemoryMiB: UInt32,
+    vCPUCount: UInt32
+) -> Int32 {
+    boot.withCPaths { paths in
+        var request = kernarium_runtime_boot()
+        request.struct_size = UInt32(MemoryLayout<kernarium_runtime_boot>.size)
+        request.width = width
+        request.height = height
+        request.dots_per_inch = dotsPerInch
+        request.guest_memory_mib = guestMemoryMiB
+        request.guest_processor_count = vCPUCount
+        request.rootfs_path = paths[0]
+        request.overlay_path = paths[1]
+        request.android_manifest_path = paths[2]
+        request.android_base_disk_path = paths[3]
+        request.android_instance_path = paths[4]
+        request.android_ramdisk_path = paths[5]
+        request.android_command_line_path = paths[6]
+        return withUnsafePointer(to: &request) { pointer in
+            kernarium_runtime_loader_run(view, pointer)
+        }
+    }
+}
+
 @MainActor
 private final class EmulatorLauncher {
     static let shared = EmulatorLauncher(configuration: .load())
@@ -596,44 +672,29 @@ private final class EmulatorLauncher {
             print("Kernarium: invalid rootfs filename")
             return
         }
-        let rootfs = RootfsImage.documentsDirectory.appendingPathComponent(
-            rootfsFilename
-        )
-        guard FileManager.default.fileExists(atPath: rootfs.path) else {
+        guard let selection = RootfsImage.selection(named: rootfsFilename) else {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
-        if rootfs.pathExtension.lowercased() == "ext4" {
-            do {
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o444],
-                    ofItemAtPath: rootfs.path
-                )
-            } catch {
-                print("Kernarium: cannot seal the ext4 rootfs read-only")
-                return
-            }
-        }
+        // A bundle that pins a page profile overrides whatever was stored; the
+        // configuration already resolved that, and this keeps a hand-edited
+        // default from reaching a runtime with no kernel for the payload.
+        let pageSize = selection.requiredPageSize ?? configuration.kernelPageSize
         guard kernarium_runtime_loader_select(
-            UInt32(configuration.kernelPageSize.rawValue)
+            selection.flavor.rawValue,
+            UInt32(pageSize.rawValue)
         ) == 0 else {
-            print(
-                "Kernarium: cannot load the " +
-                "\(configuration.kernelPageSize.title) runtime"
-            )
+            print("Kernarium: cannot load the \(pageSize.title) runtime")
             return
         }
-        let overlay: URL
-        do {
-            overlay = try OverlayDisk.recreate(
-                sizeGiB: configuration.overlaySizeGiB
-            )
-        } catch {
-            print(
-                "Kernarium: cannot create " +
-                "\(configuration.overlaySizeGiB) GiB overlay disk: \(error)"
-            )
-            return
+        let boot: PreparedBoot
+        switch selection {
+        case let .image(rootfs):
+            guard let prepared = prepareImageBoot(rootfs: rootfs) else { return }
+            boot = prepared
+        case let .bundle(bundle):
+            guard let prepared = prepareBundleBoot(bundle: bundle) else { return }
+            boot = prepared
         }
         started = true
         startThermalObservation()
@@ -644,26 +705,71 @@ private final class EmulatorLauncher {
         let height = UInt32(size.height.rounded(.down))
         let guestMemoryMiB = UInt32(configuration.guestMemoryMiB)
         let vCPUCount = UInt32(configuration.vCPUCount)
-        Task.detached {
-            let result = rootfs.path.withCString { rootfsPath in
-                overlay.path.withCString { overlayPath in
-                    kernarium_runtime_loader_run(
-                        view,
-                        rootfsPath,
-                        overlayPath,
-                        width,
-                        height,
-                        geometry.dotsPerInch,
-                        guestMemoryMiB,
-                        vCPUCount
-                    )
-                }
+        let dotsPerInch = geometry.dotsPerInch
+        // The run occupies its thread for the guest's whole life and the GPU
+        // service reaches the main queue while it starts, so it must not be the
+        // main thread. Own the thread outright rather than depending on where a
+        // task happens to be scheduled, and keep it off the cooperative pool it
+        // would otherwise block for hours. It inherits the main thread's
+        // SIGALRM block, which the runtime then reasserts for itself.
+        let worker = Thread {
+            let result = runGuest(
+                view: view,
+                boot: boot,
+                width: width,
+                height: height,
+                dotsPerInch: dotsPerInch,
+                guestMemoryMiB: guestMemoryMiB,
+                vCPUCount: vCPUCount
+            )
+            Task { @MainActor in
+                EmulatorLauncher.shared.finished(result: result)
             }
-            await EmulatorLauncher.shared.finished(result: result)
+        }
+        worker.name = "uml-launcher"
+        worker.start()
+    }
+
+    /// A plain image boots read-only under a disposable overlay disk, which is
+    /// recreated every launch and holds no state worth keeping.
+    private func prepareImageBoot(rootfs: URL) -> PreparedBoot? {
+        if rootfs.pathExtension.lowercased() == "ext4" {
+            do {
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o444],
+                    ofItemAtPath: rootfs.path
+                )
+            } catch {
+                print("Kernarium: cannot seal the ext4 rootfs read-only")
+                return nil
+            }
+        }
+        do {
+            let overlay = try OverlayDisk.recreate(
+                sizeGiB: configuration.overlaySizeGiB
+            )
+            return PreparedBoot(rootfs: rootfs, overlay: overlay)
+        } catch {
+            print(
+                "Kernarium: cannot create " +
+                "\(configuration.overlaySizeGiB) GiB overlay disk: \(error)"
+            )
+            return nil
         }
     }
 
-    private func finished(result: Int32) {
+    /// A bundle keeps its writable disk beside its payload, so guest state
+    /// survives the app being closed and reopened. UBD creates the disk on
+    /// first boot; every later boot reopens the same one.
+    private func prepareBundleBoot(bundle: GuestBundle) -> PreparedBoot? {
+        guard FileManager.default.isWritableFile(atPath: bundle.url.path) else {
+            print("Kernarium: \(bundle.name) is not writable")
+            return nil
+        }
+        return PreparedBoot(bundle: bundle)
+    }
+
+    fileprivate func finished(result: Int32) {
         stopThermalObservation()
         started = false
         UIApplication.shared.isIdleTimerDisabled = false

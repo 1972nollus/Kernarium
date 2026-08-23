@@ -11,6 +11,7 @@
 		A10000000000000000000005 /* EGL.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* EGL.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000006 /* GLESv2.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* GLESv2.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000007 /* KernariumRuntime_6_18_41_4K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* KernariumRuntime_6_18_41_4K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000008 /* KernariumRuntimeAndroid_6_18_21_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* KernariumRuntimeAndroid_6_18_21_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		B20000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
@@ -40,6 +41,7 @@
 			files = (
 				A10000000000000000000007 /* KernariumRuntime_6_18_41_4K.xcframework in Embed Frameworks */,
 				A10000000000000000000004 /* KernariumRuntime_6_18_41_16K.xcframework in Embed Frameworks */,
+				A10000000000000000000008 /* KernariumRuntimeAndroid_6_18_21_16K.xcframework in Embed Frameworks */,
 				A10000000000000000000005 /* EGL.xcframework in Embed Frameworks */,
 				A10000000000000000000006 /* GLESv2.xcframework in Embed Frameworks */,
 			);
@@ -53,6 +55,7 @@
 		8AF5E8DE302C966400B19616 /* KernariumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF5E8E8302C966400B19616 /* KernariumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KernariumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000011 /* KernariumRuntime_6_18_41_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntime_6_18_41_16K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntime_6_18_41_16K.xcframework"; sourceTree = SOURCE_ROOT; };
+		A10000000000000000000015 /* KernariumRuntimeAndroid_6_18_21_16K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntimeAndroid_6_18_21_16K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntimeAndroid_6_18_21_16K.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000012 /* EGL.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = EGL.xcframework; path = "../.build/kernarium-xcframeworks/EGL.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000013 /* GLESv2.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = GLESv2.xcframework; path = "../.build/kernarium-xcframeworks/GLESv2.xcframework"; sourceTree = SOURCE_ROOT; };
 		A10000000000000000000014 /* KernariumRuntime_6_18_41_4K.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = KernariumRuntime_6_18_41_4K.xcframework; path = "../.build/kernarium-xcframeworks/KernariumRuntime_6_18_41_4K.xcframework"; sourceTree = SOURCE_ROOT; };
@@ -128,6 +131,7 @@
 			children = (
 				A10000000000000000000014 /* KernariumRuntime_6_18_41_4K.xcframework */,
 				A10000000000000000000011 /* KernariumRuntime_6_18_41_16K.xcframework */,
+				A10000000000000000000015 /* KernariumRuntimeAndroid_6_18_21_16K.xcframework */,
 				A10000000000000000000012 /* EGL.xcframework */,
 				A10000000000000000000013 /* GLESv2.xcframework */,
 			);

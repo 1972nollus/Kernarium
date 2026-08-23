@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -48,6 +49,15 @@ extern const unsigned char uml_elf_start[]
     __asm("section$start$__DATA$__uml_elf");
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
+#endif
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+/* The accepted release identity is fixed at link time, so a bundle whose
+ * payload was produced by a different release is refused before any of it is
+ * mapped. */
+extern const unsigned char uml_android_manifest_start[]
+    __asm("section$start$__DATA$__uml_android");
+extern const unsigned char uml_android_manifest_end[]
+    __asm("section$end$__DATA$__uml_android");
 #endif
 int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
 int uml_slirp_net_irq_fd(void*);
@@ -429,6 +439,9 @@ enum class ConsoleBootMode {
     aquarium,
     cts,
     geekbench,
+    /* Android brings up its own init from the bundle's ramdisk. The relay
+     * carries its console in both directions and injects nothing. */
+    android,
 };
 
 class ActiveRuntime final {
@@ -532,7 +545,8 @@ public:
                 derivativeRootfs] {
                 constexpr std::string_view shellReady =
                     "Run /bin/sh as init process";
-                bool bootstrapDelivered = false;
+                bool bootstrapDelivered =
+                    bootMode == ConsoleBootMode::android;
                 std::string observed;
                 char buffer[4096];
                 for (;;) {
@@ -712,6 +726,7 @@ public:
         const ActiveConsoleRegistration&) = delete;
 };
 
+#if !KERNARIUM_RUNTIME_ANDROID_GUEST
 bool usableFile(const char* path)
 {
     if (path == nullptr || path[0] == '\0')
@@ -780,6 +795,7 @@ bool validGeekbenchWorkloads(std::string_view workloads)
     }
     return !needsDigit;
 }
+#endif
 
 /* The translating engine to run guest userspace under.
  *
@@ -805,6 +821,98 @@ const char* selectedExecutionEngine()
     return "auto";
 }
 
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+std::size_t checkedRegularFileSize(
+    const std::filesystem::path& path,
+    std::uintmax_t expectedSize = 0)
+{
+    struct stat details {};
+    if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
+        details.st_size < 0 ||
+        (expectedSize != 0U &&
+         static_cast<std::uintmax_t>(details.st_size) != expectedSize)) {
+        throw std::runtime_error(
+            "bundle payload is missing or unexpected: " + std::string {path});
+    }
+    return static_cast<std::size_t>(details.st_size);
+}
+
+std::vector<unsigned char> readRegularFile(
+    const std::filesystem::path& path,
+    std::uintmax_t expectedSize = 0)
+{
+    const auto size = checkedRegularFileSize(path, expectedSize);
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (file == nullptr)
+        throw std::runtime_error("cannot open " + std::string {path});
+    std::vector<unsigned char> payload(size);
+    const auto read = std::fread(payload.data(), 1, payload.size(), file);
+    const int closeResult = std::fclose(file);
+    if (read != payload.size() || closeResult != 0)
+        throw std::runtime_error("cannot read " + std::string {path});
+    return payload;
+}
+
+/* A UBD specification is comma and colon delimited, so a path carrying either
+ * would silently become a different device configuration. */
+void validateUbdPath(const std::filesystem::path& path, const char* label)
+{
+    const auto value = path.string();
+    if (value.empty() || value.find_first_of(",:") != std::string::npos) {
+        throw std::invalid_argument(
+            std::string {label} + " path is unusable as a UBD device");
+    }
+}
+
+void appendKernelCommandLine(
+    std::vector<std::string>& arguments,
+    const std::filesystem::path& path)
+{
+    const auto payload = readRegularFile(path);
+    const std::string text(payload.begin(), payload.end());
+    std::size_t cursor = 0;
+    std::size_t appended = 0;
+    while (cursor < text.size()) {
+        while (cursor < text.size() &&
+               (text[cursor] == ' ' || text[cursor] == '\n' ||
+                text[cursor] == '\t'))
+            ++cursor;
+        const auto begin = cursor;
+        while (cursor < text.size() && text[cursor] != ' ' &&
+               text[cursor] != '\n' && text[cursor] != '\t')
+            ++cursor;
+        if (cursor != begin) {
+            arguments.emplace_back(text.substr(begin, cursor - begin));
+            ++appended;
+        }
+    }
+    if (appended == 0U)
+        throw std::invalid_argument("the bundle kernel command line is empty");
+}
+
+/* The instance disk is the guest's only persistent state. It lives beside the
+ * payload it belongs to, so a bundle carries its own history and cannot be
+ * paired with another release's disk. */
+void prepareAndroidInstance(const std::filesystem::path& instance)
+{
+    struct stat details {};
+    if (lstat(instance.c_str(), &details) == 0) {
+        if (!S_ISREG(details.st_mode))
+            throw std::invalid_argument("the instance disk is not a file");
+        if (::access(instance.c_str(), R_OK | W_OK) != 0)
+            throw std::invalid_argument("the instance disk is not writable");
+        return;
+    }
+    if (errno != ENOENT)
+        throw std::runtime_error("cannot inspect the instance disk");
+    /* UBD creates the copy-on-write disk itself on first boot; the bundle only
+     * has to be a writable directory when it does. */
+    if (::access(instance.parent_path().c_str(), W_OK) != 0)
+        throw std::invalid_argument("the bundle directory is not writable");
+}
+#endif
+
+#if !KERNARIUM_RUNTIME_ANDROID_GUEST
 std::string fbconFontArgument(uint32_t dotsPerInch)
 {
     static constexpr uint32_t largeConsoleFontDpi = 240U;
@@ -812,6 +920,7 @@ std::string fbconFontArgument(uint32_t dotsPerInch)
         ? "fbcon=font:TER16x32"
         : "fbcon=font:VGA8x16";
 }
+#endif
 
 } // namespace
 
@@ -819,13 +928,7 @@ namespace {
 
 int runtimeRun(
     KernariumMetalView view,
-    const char* rootfsPath,
-    const char* overlayPath,
-    uint32_t width,
-    uint32_t height,
-    uint32_t dotsPerInch,
-    uint32_t guestMemoryMiB,
-    uint32_t guestProcessorCount)
+    const kernarium_runtime_boot* boot)
 {
     try {
         /* A pre-existing Swift worker need not inherit the initial main-thread
@@ -834,16 +937,21 @@ int runtimeRun(
          */
         ScopedGuestTimerBlock guestTimerBlock;
         ActiveRuntime active;
-        if (view == nullptr || !usableFile(rootfsPath) ||
-            !immutableExt4Rootfs(rootfsPath) ||
-            !usableFile(overlayPath) ||
-            width == 0 || height == 0 ||
+        if (view == nullptr || boot == nullptr ||
+            boot->struct_size < sizeof(kernarium_runtime_boot)) {
+            std::fputs("Kernarium: invalid boot request\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        const uint32_t width = boot->width;
+        const uint32_t height = boot->height;
+        const uint32_t dotsPerInch = boot->dots_per_inch;
+        const uint32_t guestMemoryMiB = boot->guest_memory_mib;
+        const uint32_t guestProcessorCount = boot->guest_processor_count;
+        if (width == 0 || height == 0 ||
             width > uml::gpu::protocol::maximumEdidDimension ||
             height > uml::gpu::protocol::maximumEdidDimension ||
             dotsPerInch == 0) {
-            std::fputs(
-                "Kernarium: invalid display, rootfs, or overlay path\n",
-                stderr);
+            std::fputs("Kernarium: invalid display geometry\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const NSUInteger hostProcessorCount =
@@ -859,6 +967,50 @@ int runtimeRun(
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        if (boot->android_manifest_path == nullptr ||
+            boot->android_base_disk_path == nullptr ||
+            boot->android_instance_path == nullptr ||
+            boot->android_ramdisk_path == nullptr ||
+            boot->android_command_line_path == nullptr) {
+            std::fputs("Kernarium: incomplete Android bundle\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        const std::filesystem::path baseDisk {boot->android_base_disk_path};
+        const std::filesystem::path instance {boot->android_instance_path};
+        const std::filesystem::path ramdisk {boot->android_ramdisk_path};
+        const auto manifest = readRegularFile(boot->android_manifest_path);
+        const std::size_t embeddedManifestSize = static_cast<std::size_t>(
+            uml_android_manifest_end - uml_android_manifest_start);
+        if (manifest.size() != embeddedManifestSize ||
+            !std::equal(
+                manifest.begin(),
+                manifest.end(),
+                uml_android_manifest_start)) {
+            std::fputs(
+                "Kernarium: the bundle belongs to a different Android "
+                "release than this runtime\n",
+                stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        (void)checkedRegularFileSize(
+            ramdisk, KERNARIUM_ANDROID_RAMDISK_SIZE);
+        (void)checkedRegularFileSize(
+            baseDisk, KERNARIUM_ANDROID_BASE_DISK_SIZE);
+        validateUbdPath(baseDisk, "Android base disk");
+        validateUbdPath(instance, "Android instance");
+        prepareAndroidInstance(instance);
+        const bool derivativeRootfs = false;
+#else
+        const char* rootfsPath = boot->rootfs_path;
+        const char* overlayPath = boot->overlay_path;
+        if (!usableFile(rootfsPath) || !immutableExt4Rootfs(rootfsPath) ||
+            !usableFile(overlayPath)) {
+            std::fputs("Kernarium: invalid rootfs or overlay path\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        const bool derivativeRootfs = ext4Rootfs(rootfsPath);
+#endif
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
         std::printf(
             "Kernarium: booting %ux%u guest at %u DPI with mem=%uM "
@@ -884,6 +1036,23 @@ int runtimeRun(
         uml::audio::InProcessAudioService audioService;
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
+        std::vector<std::string> arguments {
+            "uml-kernarium",
+            std::string {"--execution-engine="} + selectedExecutionEngine(),
+            "mem=" + std::to_string(guestMemoryMiB) + "M",
+            "ncpus=" + std::to_string(guestProcessorCount),
+        };
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        const ConsoleBootMode bootMode = ConsoleBootMode::android;
+        const kernarium::cts::Campaign* ctsCampaign = nullptr;
+        const std::string geekbenchWorkloads;
+        ConsoleBridge consoleBridge {
+            bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs};
+        /* Android tags heap pointers, so the guest must run with the top byte
+         * ignored exactly as it does on the macOS Android product. */
+        arguments.emplace_back("--guest-top-byte-ignore");
+        arguments.emplace_back(consoleBridge.kernelArgument());
+#else
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
         if (aquarium && KERNARIUM_AQUARIUM_SUPPORTED == 0) {
             std::fputs(
@@ -895,7 +1064,6 @@ int runtimeRun(
             std::getenv("KERNARIUM_CTS_CAMPAIGN");
         const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
             ctsCampaignEnvironment[0] != '\0';
-        const bool derivativeRootfs = ext4Rootfs(rootfsPath);
         const kernarium::cts::Campaign* ctsCampaign = ctsRequested
             ? findCtsCampaign(ctsCampaignEnvironment)
             : nullptr;
@@ -948,26 +1116,37 @@ int runtimeRun(
         }
         if (geekbench)
             std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
-        std::vector<std::string> arguments {
-            "uml-kernarium",
-            std::string {"--execution-engine="} + selectedExecutionEngine(),
-            "mem=" + std::to_string(guestMemoryMiB) + "M",
-            "ncpus=" + std::to_string(guestProcessorCount),
-            "init=/bin/sh",
-            "console=tty0",
-            "console=ttyS0",
-            fbconFontArgument(dotsPerInch),
-            consoleBridge.kernelArgument(),
-            "ubd1=" + std::string(overlayPath),
+        arguments.emplace_back("init=/bin/sh");
+        arguments.emplace_back("console=tty0");
+        arguments.emplace_back("console=ttyS0");
+        arguments.emplace_back(fbconFontArgument(dotsPerInch));
+        arguments.emplace_back(consoleBridge.kernelArgument());
+        arguments.emplace_back("ubd1=" + std::string(overlayPath));
+#endif
+        arguments.emplace_back(
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
-                std::to_string(uml::gpu::protocol::virtioGpuDeviceId),
+            std::to_string(uml::gpu::protocol::virtioGpuDeviceId));
+        arguments.emplace_back(
             "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +
-                std::to_string(uml::input::virtio::protocol::deviceId),
+            std::to_string(uml::input::virtio::protocol::deviceId));
+        arguments.emplace_back(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
-                std::to_string(uml::input::virtio::protocol::deviceId),
+            std::to_string(uml::input::virtio::protocol::deviceId));
+        arguments.emplace_back(
             "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
-                std::to_string(uml::audio::protocol::deviceId),
-        };
+            std::to_string(uml::audio::protocol::deviceId));
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        /* The instance disk is the copy-on-write layer over the immutable
+         * bundle image, so every guest write lands in the bundle and survives
+         * the next launch. */
+        arguments.emplace_back(
+            "ubd0=" + instance.string() + "," + baseDisk.string());
+        arguments.emplace_back("initrd=" + ramdisk.string());
+        arguments.emplace_back("root=/dev/ram0");
+        arguments.emplace_back("rootfstype=ramfs");
+        appendKernelCommandLine(
+            arguments, boot->android_command_line_path);
+#else
         if (derivativeRootfs) {
             arguments.emplace_back("ubd0cr=" + std::string(rootfsPath));
             arguments.emplace_back("root=/dev/ubda");
@@ -978,10 +1157,15 @@ int runtimeRun(
             arguments.emplace_back("systemd.unit=graphical.target");
             arguments.emplace_back("plymouth.enable=0");
         }
+#endif
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,
             .struct_size = sizeof(uml_emulator_config),
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+            .rootfs_path = nullptr,
+#else
             .rootfs_path = rootfsPath,
+#endif
             .kernel_image = uml_elf_start,
             .kernel_image_size = static_cast<std::size_t>(
                 uml_elf_end - uml_elf_start),
@@ -1030,6 +1214,20 @@ void runtimeRequestStop(void)
     std::lock_guard lock(activeEmulatorMutex);
     if (activeEmulator != nullptr)
         uml_emulator_request_stop(activeEmulator);
+}
+
+/*
+ * iOS can reclaim a suspended application without running anything else in it,
+ * so the guest's writable images have to reach stable storage while the app is
+ * still scheduled. This flushes what the guest has already handed to the host;
+ * pages still dirty inside the guest are written back by the guest itself.
+ */
+int runtimeSync(void)
+{
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeEmulator == nullptr)
+        return 0;
+    return uml_emulator_sync(activeEmulator);
 }
 
 void runtimeSendTouch(
@@ -1107,11 +1305,14 @@ const kernarium_runtime_api runtimeApi {
     .abi_version = KERNARIUM_RUNTIME_API_VERSION,
     .struct_size = sizeof(kernarium_runtime_api),
     .guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE,
-    .reserved = 0,
+    .guest_flavor = KERNARIUM_RUNTIME_ANDROID_GUEST
+        ? KERNARIUM_RUNTIME_GUEST_ANDROID
+        : KERNARIUM_RUNTIME_GUEST_LINUX,
     .kernel_release = KERNARIUM_KERNEL_RELEASE,
     .framework_name = KERNARIUM_RUNTIME_FRAMEWORK_NAME,
     .run = runtimeRun,
     .request_stop = runtimeRequestStop,
+    .sync = runtimeSync,
     .send_touch = runtimeSendTouch,
     .send_key = runtimeSendKey,
     .set_console_output_callback = runtimeSetConsoleOutputCallback,
@@ -1120,7 +1321,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v1(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v2(void)
 {
     return &runtimeApi;
 }

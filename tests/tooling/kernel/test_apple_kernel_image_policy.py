@@ -332,7 +332,7 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v1" in runtime_source
+        "kernarium_runtime_get_api_v2" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
@@ -355,7 +355,7 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v1")',
+        'dlsym(handle, "kernarium_runtime_get_api_v2")',
         "selectedPageSize == guestPageSize",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",

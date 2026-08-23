@@ -402,6 +402,17 @@ deviceinfo with swap disabled, classifies the Virtio touchscreen and keyboard,
 and grants the `video` and `input` groups access after udev settles before
 executing `/sbin/init`. No image account, OpenRC runlevel, or desktop session
 is replaced.
+Kernarium also boots an Android guest from a `.kern` bundle in its Documents.
+That runtime is a third versioned framework carrying the accepted Android
+release's ACK ELF in the same signed `__TEXT` carrier and its release manifest
+in `__DATA`; the flavour leads the framework name so it can never be confused
+with the 16 KiB Linux one. It refuses a bundle whose manifest differs from the
+embedded copy, appends `--guest-top-byte-ignore` for Android's tagged pointers,
+attaches the bundle's `userdata.cow` as a copy-on-write layer over the
+immutable base image, and injects no console bootstrap because the bundle's
+ramdisk brings up Android's own init. It attaches no overlay disk: the instance
+disk inside the bundle is the guest's persistent state.
+
 Standard VT/fbcon renders early boot through Virtio-GPU. The legacy UML stdio
 console and DRM log client are disabled. Kernarium does not attach the optional
 macOS Virtio-console service, so `ttyS0` continues to carry its kernel console

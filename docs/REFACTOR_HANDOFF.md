@@ -1,5 +1,55 @@
 # Refactor handoff
 
+## Kernarium boots an Android guest bundle on iOS (2026-08-24)
+
+Kernarium now embeds a third versioned runtime framework,
+`KernariumRuntimeAndroid_<ack-release>_16K`, built by the new
+`kernarium-ios-{simulator,device}-android` presets. `UML_KERNEL_PRODUCT`
+selects `android-17` there, so `kernel/CMakeLists.txt` routes to the accepted
+Android release instead of a mainline artifact; the release already exposes the
+artifact properties a runtime consumer needs. The ACK ELF passes the signed
+carrier check unchanged and rides in the same `__TEXT,__uml_elf` section as the
+Linux runtimes, with the release manifest in `__DATA,__uml_android`. Guest
+flavour leads a framework name and the page profile trails it, so no name
+matches two selections.
+
+The application boots a `.kern` guest bundle from Documents: a directory
+holding one guest's complete payload plus the writable disk it accumulates.
+An Android bundle carries the release manifest, ramdisk, kernel command line,
+and base image; UBD creates `userdata.cow` beside them on first boot and
+reopens it afterwards. Selecting a bundle fixes the page-size picker at the
+only profile its kernel exists in. `Kernarium/scripts/make-guest-bundle.py`
+assembles one from the accepted release, cloning the base image where the
+filesystem allows.
+
+Kernarium calls the new `uml_emulator_sync()` when the application becomes
+inactive, enters the background, or is about to terminate, holding a background
+task assertion for the last two, so guest writes survive an iOS reclaim.
+
+The launcher now owns a named `uml-launcher` thread. The run holds its thread
+for the guest's whole life while the GPU service reaches the main queue as it
+starts, and the current toolchain scheduled the previous `Task.detached` body
+on the main actor, deadlocking exactly there. This reproduced on the Linux
+rootfs as well, so it is not Android-specific.
+
+Measured on the booted iPhone 17 Pro Max Simulator with 4 GiB and ten vCPUs on
+the gadget engine: a fresh bundle reaches `sys.boot_completed=1` at 194 s and
+renders the Android launcher. Backgrounding logs both the inactive and
+background flushes. After terminating and relaunching, the same bundle reopens
+the same `/data` filesystem (`897f3398-…`, journal recovery, no COW
+re-creation), which is the persistence contract.
+
+That relaunch did not finish booting. The first run was ended with SIGKILL,
+which discards the guest's dirty page cache; ext4 recovered its journal but the
+application-level state above it did not. The guest stayed live on all ten
+vCPUs with no console output and no further writes. The host flush cannot
+prevent this by construction — only the guest kernel can write back its own
+page cache, and nothing currently asks it to. A guest-side sync request would
+need a kernel and bridge ABI change. `docs/REFACTOR_HANDOFF.md` records this as
+the open limitation of the feature rather than a property of the bundle format;
+the identical virtio-gpu `CTX_CREATE` failure appears in the successful boot
+too and is not the cause.
+
 ## Host-owned guest storage durability (2026-08-24)
 
 `uml_emulator_sync()` is new public API, taking the installed emulator ABI to

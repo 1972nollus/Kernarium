@@ -34,6 +34,7 @@ find_tool()
 
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
+find_tool PYTHON3 python3
 
 . "$ROOT_DIR/kernel/mainline-6.18/patches/metadata.env"
 case "$UML_KERNEL_RELEASE_VERSION" in
@@ -43,10 +44,28 @@ RUNTIME_RELEASE=$(printf '%s\n' "$UML_KERNEL_RELEASE_VERSION" | tr . _)
 RUNTIME_4K="KernariumRuntime_${RUNTIME_RELEASE}_4K"
 RUNTIME_16K="KernariumRuntime_${RUNTIME_RELEASE}_16K"
 
+# The Android runtime carries its own ACK kernel, so its identity comes from
+# the accepted release rather than from the mainline series.
+. "$ROOT_DIR/android/aosp-17/metadata/accepted-release.env"
+ANDROID_RELEASE_ROOT="$ROOT_DIR/.build/android/releases/$ANDROID17_ACCEPTED_DIRECTORY_NAME"
+[ -d "$ANDROID_RELEASE_ROOT" ] ||
+	fail "the accepted Android release is not installed: $ANDROID_RELEASE_ROOT"
+ANDROID_KERNEL_RELEASE=$("$PYTHON3" -B -c 'import json,re,sys
+release = json.load(open(sys.argv[1]))["kernel"]["release"]
+match = re.match(r"^[0-9]+(\.[0-9]+)+", release)
+if not match:
+    raise SystemExit("cannot derive the Android kernel release")
+print(match.group(0).replace(".", "_"))' \
+	"$ANDROID_RELEASE_ROOT/release-manifest.json") ||
+	fail "cannot read the accepted Android release identity"
+RUNTIME_ANDROID_16K="KernariumRuntimeAndroid_${ANDROID_KERNEL_RELEASE}_16K"
+
 SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 SIMULATOR_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
+SIMULATOR_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
+DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 SIMULATOR_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-simulator-arm64/Frameworks"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
 
@@ -61,8 +80,10 @@ DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu/ios-device-arm64/Frameworks"
 for framework in \
 	"$SIMULATOR_RUNTIME_4K" \
 	"$SIMULATOR_RUNTIME_16K" \
+	"$SIMULATOR_RUNTIME_ANDROID" \
 	"$DEVICE_RUNTIME_4K" \
 	"$DEVICE_RUNTIME_16K" \
+	"$DEVICE_RUNTIME_ANDROID" \
 	"$SIMULATOR_GPU/EGL.framework" \
 	"$DEVICE_GPU/EGL.framework" \
 	"$SIMULATOR_GPU/GLESv2.framework" \
@@ -100,13 +121,16 @@ create_xcframework "$RUNTIME_4K" \
 	"$SIMULATOR_RUNTIME_4K" "$DEVICE_RUNTIME_4K"
 create_xcframework "$RUNTIME_16K" \
 	"$SIMULATOR_RUNTIME_16K" "$DEVICE_RUNTIME_16K"
+create_xcframework "$RUNTIME_ANDROID_16K" \
+	"$SIMULATOR_RUNTIME_ANDROID" "$DEVICE_RUNTIME_ANDROID"
 create_xcframework EGL \
 	"$SIMULATOR_GPU/EGL.framework" "$DEVICE_GPU/EGL.framework"
 create_xcframework GLESv2 \
 	"$SIMULATOR_GPU/GLESv2.framework" "$DEVICE_GPU/GLESv2.framework"
 
 for platform in ios-arm64 ios-arm64-simulator; do
-	for framework in "$RUNTIME_4K" "$RUNTIME_16K" EGL GLESv2; do
+	for framework in "$RUNTIME_4K" "$RUNTIME_16K" \
+		"$RUNTIME_ANDROID_16K" EGL GLESv2; do
 		binary="$STAGE/$framework.xcframework/$platform/$framework.framework/$framework"
 		[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
 	done

@@ -14,6 +14,27 @@ struct EmulatorSettingsView: View {
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
     private let rootfsFilenames: [String]
+    private let documentsDirectory: URL
+
+    /// A bundle whose kernel exists in only one page profile decides the
+    /// profile; the picker then shows that profile and stops offering the other
+    /// rather than letting a selection be saved that cannot boot.
+    private var requiredPageSize: KernelPageSize? {
+        RootfsImage.requiredPageSize(
+            forSelectionNamed: rootfsFilename,
+            in: documentsDirectory
+        )
+    }
+
+    /// Shows the profile the selection forces while remembering what the user
+    /// last chose, so switching back to an image restores their own setting
+    /// instead of the one a bundle imposed.
+    private var shownPageSize: Binding<KernelPageSize> {
+        Binding(
+            get: { requiredPageSize ?? kernelPageSize },
+            set: { kernelPageSize = $0 }
+        )
+    }
 
     init(
         defaults: UserDefaults = .standard,
@@ -23,10 +44,12 @@ struct EmulatorSettingsView: View {
         let maximum = max(maximumVCPUCount, 1)
         let configuration = EmulatorConfiguration.load(
             defaults: defaults,
-            physicalProcessorCount: maximum
+            physicalProcessorCount: maximum,
+            documentsDirectory: documentsDirectory
         )
         self.maximumVCPUCount = maximum
         self.defaults = defaults
+        self.documentsDirectory = documentsDirectory
         let availableRootfsFilenames = RootfsImage.availableFilenames(
             in: documentsDirectory
         )
@@ -49,11 +72,12 @@ struct EmulatorSettingsView: View {
                     Toggle("Retina mode", isOn: $retinaMode)
                         .accessibilityIdentifier("retinaModeToggle")
 
-                    Picker("Kernel page size", selection: $kernelPageSize) {
+                    Picker("Kernel page size", selection: shownPageSize) {
                         ForEach(KernelPageSize.allCases) { pageSize in
                             Text(pageSize.title).tag(pageSize)
                         }
                     }
+                    .disabled(requiredPageSize != nil)
                     .accessibilityIdentifier("kernelPageSizePicker")
 
                     Stepper(
@@ -87,7 +111,18 @@ struct EmulatorSettingsView: View {
                     }
                     .accessibilityIdentifier("rootfsPicker")
 
-                    Text("EROFS images are loaded from Documents.")
+                    if let required = requiredPageSize {
+                        Text(
+                            "\(rootfsFilename) carries its own kernel and " +
+                            "boots with \(required.title) pages."
+                        )
+                        .accessibilityIdentifier("guestBundleNote")
+                    } else {
+                        Text(
+                            "EROFS images and .\(GuestBundle.pathExtension) " +
+                            "guest bundles are loaded from Documents."
+                        )
+                    }
                 }
 
                 Section {
@@ -118,7 +153,7 @@ struct EmulatorSettingsView: View {
             guestMemoryMiB: guestMemoryMiB,
             overlaySizeGiB: overlaySizeGiB,
             rootfsFilename: rootfsFilename,
-            kernelPageSize: kernelPageSize,
+            kernelPageSize: requiredPageSize ?? kernelPageSize,
             retinaMode: retinaMode
         ).save(defaults: defaults)
         dismiss()

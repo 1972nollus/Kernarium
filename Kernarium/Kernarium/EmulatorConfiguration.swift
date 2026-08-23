@@ -57,7 +57,8 @@ struct EmulatorConfiguration: Equatable {
     static func load(
         defaults: UserDefaults,
         physicalProcessorCount: Int,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        documentsDirectory: URL = RootfsImage.documentsDirectory
     ) -> Self {
         let maximumVCPUCount = max(physicalProcessorCount, 1)
         let storedVCPUCount = defaults.object(forKey: Key.vCPUCount) == nil
@@ -111,6 +112,27 @@ struct EmulatorConfiguration: Equatable {
             }
         }
 
+        let rootfsFilename = RootfsImage.validatedFilename(
+            storedRootfsFilename
+        ) ?? RootfsImage.defaultFilename
+        let requestedKernelPageSize = environmentKernelPageSize ??
+            KernelPageSize(rawValue: storedKernelPageSize) ??
+            defaultKernelPageSize
+        // A bundle whose kernel exists in only one page profile decides the
+        // profile itself. Honouring a stale stored or environment setting here
+        // would only select a runtime that has no kernel for its payload. The
+        // environment override names what will actually boot, so it is what
+        // the profile has to follow.
+        let requiredKernelPageSize = RootfsImage.selectedFilename(
+            configuredFilename: rootfsFilename,
+            environment: environment
+        ).flatMap { effective in
+            RootfsImage.requiredPageSize(
+                forSelectionNamed: effective,
+                in: documentsDirectory
+            )
+        }
+
         return Self(
             vCPUCount: environmentVCPUCount ?? min(
                 max(storedVCPUCount, 1), maximumVCPUCount
@@ -121,12 +143,8 @@ struct EmulatorConfiguration: Equatable {
                 max(storedOverlaySizeGiB, overlaySizeRangeGiB.lowerBound),
                 overlaySizeRangeGiB.upperBound
             ),
-            rootfsFilename: RootfsImage.validatedFilename(
-                storedRootfsFilename
-            ) ?? RootfsImage.defaultFilename,
-            kernelPageSize: environmentKernelPageSize ??
-                KernelPageSize(rawValue: storedKernelPageSize) ??
-                defaultKernelPageSize,
+            rootfsFilename: rootfsFilename,
+            kernelPageSize: requiredKernelPageSize ?? requestedKernelPageSize,
             retinaMode: environmentRetinaMode ?? storedRetinaMode
         )
     }
@@ -176,6 +194,35 @@ struct EmulatorConfiguration: Equatable {
     }
 }
 
+/// What the launcher was asked to boot, once the stored name has been resolved
+/// against Documents.
+enum GuestSelection {
+    /// A single root filesystem image the Linux runtime boots.
+    case image(URL)
+    /// A self-contained bundle carrying its own payload and writable disk.
+    case bundle(GuestBundle)
+
+    var flavor: GuestFlavor {
+        switch self {
+        case .image:
+            .linux
+        case let .bundle(bundle):
+            bundle.flavor
+        }
+    }
+
+    /// A bundle whose kernel exists in only one page profile pins that profile;
+    /// a plain image leaves the choice to the setting.
+    var requiredPageSize: KernelPageSize? {
+        switch self {
+        case .image:
+            nil
+        case let .bundle(bundle):
+            bundle.requiredPageSize
+        }
+    }
+}
+
 enum RootfsImage {
     static let defaultFilename = "rootfs.erofs"
     static let environmentKey = "KERNARIUM_ROOTFS"
@@ -191,11 +238,44 @@ enum RootfsImage {
         let pathExtension = (filename as NSString).pathExtension.lowercased()
         guard !filename.isEmpty,
               (filename as NSString).lastPathComponent == filename,
-              pathExtension == "erofs" || pathExtension == "ext4"
+              pathExtension == "erofs" || pathExtension == "ext4" ||
+                  pathExtension == GuestBundle.pathExtension
         else {
             return nil
         }
         return filename
+    }
+
+    /// Resolves a stored name to what it actually is on disk. A bundle name is
+    /// only accepted when its payload is complete, so the picker and the
+    /// launcher agree on what can be booted.
+    static func selection(
+        named filename: String,
+        in directory: URL = documentsDirectory,
+        fileManager: FileManager = .default
+    ) -> GuestSelection? {
+        guard let validated = validatedFilename(filename) else { return nil }
+        let url = directory.appendingPathComponent(validated)
+        if (validated as NSString).pathExtension.lowercased() ==
+            GuestBundle.pathExtension {
+            return GuestBundle.load(at: url, fileManager: fileManager)
+                .map(GuestSelection.bundle)
+        }
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        return .image(url)
+    }
+
+    /// The page profile a stored selection forces, if any. Settings and the
+    /// launcher both consult this so a stale stored profile cannot reach a
+    /// runtime that has no kernel for it.
+    static func requiredPageSize(
+        forSelectionNamed filename: String,
+        in directory: URL = documentsDirectory,
+        fileManager: FileManager = .default
+    ) -> KernelPageSize? {
+        selection(
+            named: filename, in: directory, fileManager: fileManager
+        )?.requiredPageSize
     }
 
     static func selectedFilename(
@@ -217,7 +297,7 @@ enum RootfsImage {
         ) else {
             return []
         }
-        return urls.compactMap { url in
+        let images: [String] = urls.compactMap { url -> String? in
             guard let filename = validatedFilename(url.lastPathComponent),
                   let values = try? url.resourceValues(
                       forKeys: Set(resourceKeys)
@@ -226,7 +306,11 @@ enum RootfsImage {
                 return nil
             }
             return filename
-        }.sorted {
+        }
+        let bundles = GuestBundle.availableNames(
+            in: directory, fileManager: fileManager
+        )
+        return (images + bundles).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }

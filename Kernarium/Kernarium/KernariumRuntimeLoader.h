@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "../Runtime/KernariumRuntime.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^KernariumConsoleOutputHandler)(NSData* data);
@@ -15,20 +17,20 @@ typedef void (^KernariumConsoleOutputHandler)(NSData* data);
 extern "C" {
 #endif
 
-/* Selects and loads one bundled runtime for the lifetime of the process. */
-int kernarium_runtime_loader_select(uint32_t guest_page_size);
+/* Selects and loads one bundled runtime for the lifetime of the process. The
+ * flavour and page profile together name exactly one embedded framework. */
+int kernarium_runtime_loader_select(
+    uint32_t guest_flavor,
+    uint32_t guest_page_size);
 
 int kernarium_runtime_loader_run(
     MTKView* view,
-    const char* rootfs_path,
-    const char* overlay_path,
-    uint32_t width,
-    uint32_t height,
-    uint32_t dots_per_inch,
-    uint32_t guest_memory_mib,
-    uint32_t guest_processor_count);
+    const kernarium_runtime_boot* boot);
 
 void kernarium_runtime_loader_request_stop(void);
+/* Flushes the guest's writable host files. Returns the number that could not
+ * be flushed, or a negative value when no runtime is loaded. */
+int kernarium_runtime_loader_sync(void);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,
