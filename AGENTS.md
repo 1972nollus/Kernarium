@@ -69,8 +69,15 @@ historical sections as history.
   targets are owned by `cmake/toolchains/Apple.cmake`.
 - Each Darwin guest page profile uses one relocatable kernel image and the same
   128 TiB sparse software-MMU task range on every Apple product. The native
-  hole is guest RAM plus a page-rounded one eighth for auxiliary kernel
-  mappings, with a 32 MiB floor. Device and Simulator top-pack it below the
+  hole is guest RAM plus a page-rounded auxiliary allowance for kernel
+  mappings. That allowance is address space, not memory - vmalloc's pages come
+  from the guest page allocator and are already bounded by `mem=` - so it
+  tracks RAM one-for-one between a 1 GiB floor and a 4 GiB ceiling rather than
+  being one eighth of RAM. The ceiling keeps RAM plus auxiliary inside the
+  14 GiB signed iOS envelope for every guest up to 10 GiB. vmalloc owns the
+  whole allowance, not `min(allowance, RAM)`: `end_vm` is what the kernel
+  fault handler uses to recognise a vmalloc address. Device and Simulator
+  top-pack it below the
   physical-iOS 62 GiB ceiling; macOS places the same scalable window at 96 TiB
   to avoid the crowded low host VA range. The kernel derives its endpoint from
   the relocated image; there is no platform-specific Kbuild image or
@@ -518,8 +525,16 @@ Do not casually remove or reshape these accepted mechanisms:
   deadlock; do not execute them through an IRQ-disabled checkpoint or restore
   asynchronous Linux IPI execution in the Darwin signal handler. Page-size
   fragments must keep the
-  task-stack byte size equal at 128 KiB (order 3 for 16 KiB, order 5 for 4 KiB)
-  rather than restoring the 16 KiB profile's former 512 KiB allocation.
+  task-stack byte size equal at 128 KiB rather than restoring the 16 KiB
+  profile's former 512 KiB allocation. Those stacks are virtually mapped
+  (`CONFIG_VMAP_STACK=y`) on every kernel line, so they are backed by order-0
+  pages and no longer need a contiguous order-3 block each. Do not turn that
+  off: as physically contiguous allocations they pinned roughly 176 MiB of a
+  booted Android guest's zone in unmovable blocks and left it with no free
+  block at order 3 or above, 188 of 230 compaction attempts failing, and OOM
+  kills of healthy applications. It depends on the widened auxiliary window
+  above; at the former one-eighth allowance the vmapped stacks exhausted
+  vmalloc and panicked the guest.
 - **G133/G135:** the JIT cache geometry in
   `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` derives a fixed private working
   set per executor from a whole-process budget that defaults to half of guest

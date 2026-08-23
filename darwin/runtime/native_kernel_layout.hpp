@@ -16,13 +16,15 @@ struct NativeKernelLayout final {
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
 	std::uint64_t AuxiliaryDivisor, std::uint64_t MinimumAuxiliarySize,
-	std::uint64_t PageSize>
+	std::uint64_t MaximumAuxiliarySize, std::uint64_t PageSize>
 class NativeKernelLayoutGeometry final {
 	static_assert(PageSize != 0 && (PageSize & (PageSize - 1U)) == 0);
 	static_assert(AuxiliaryDivisor != 0);
 	static_assert(LinkAddress <= AddressCeiling);
-	static_assert(MinimumAuxiliarySize <= AddressCeiling - LinkAddress);
+	static_assert(MinimumAuxiliarySize <= MaximumAuxiliarySize);
+	static_assert(MaximumAuxiliarySize <= AddressCeiling - LinkAddress);
 	static_assert((MinimumAuxiliarySize & (PageSize - 1U)) == 0);
+	static_assert((MaximumAuxiliarySize & (PageSize - 1U)) == 0);
 
 public:
 	[[nodiscard]] static constexpr NativeKernelLayout derive(
@@ -41,8 +43,13 @@ public:
 			return {};
 		const auto scaled_auxiliary =
 			(proportional + PageSize - 1U) & ~(PageSize - 1U);
-		const auto auxiliary = scaled_auxiliary < MinimumAuxiliarySize ?
+		const auto floored = scaled_auxiliary < MinimumAuxiliarySize ?
 			MinimumAuxiliarySize : scaled_auxiliary;
+		/* Capped so RAM plus auxiliary stays inside the signed iOS
+		 * envelope; vmalloc's own consumption is bounded by the page
+		 * allocator rather than by this reservation. */
+		const auto auxiliary = floored > MaximumAuxiliarySize ?
+			MaximumAuxiliarySize : floored;
 		constexpr auto envelope = AddressCeiling - LinkAddress;
 		if (rounded == 0 || rounded > envelope ||
 		    auxiliary > envelope - rounded)
