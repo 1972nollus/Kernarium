@@ -15,8 +15,10 @@ verification is offline.
 
 ## Latest verified replay (2026-08-22)
 
-The manifest contains 22 ordered topics and replays to canonical tree
-`daa646c62f162dc46ce9e3ee1fc7f47a7a4e0d19`. A fresh pinned-commit replay,
+The manifest contains 23 ordered topics and replays to canonical tree
+`6b767a2e92161253562c08680195592527113a67`. Topic 0023 is not covered by the
+dated replay below; it was regenerated and policy-verified but its build and
+boot qualification on this line is outstanding. A fresh pinned-commit replay,
 stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
 checks, configured-checkout verification, and the delta audit passed. Both
 canonical production page profiles rebuilt with LLVM 22 in that fresh replay
@@ -32,8 +34,8 @@ treated as checked and left missing. Topic 0003 also gives ordinary UML a
 host-monotonic nanosecond scheduler clock while keeping deterministic
 time-travel semantics. Topic 0015 replaces the former macOS/iOS split
 with one scalable Darwin address mechanism, including the page-rounded
-one-eighth auxiliary allowance, 32 MiB floor, iOS low placement, and macOS high
-placement. Topic 0016 replaces per-task Darwin
+auxiliary allowance, iOS low placement, and macOS high placement. Topic 0023
+retunes that allowance; see below. Topic 0016 replaces per-task Darwin
 pthreads with one persistent carrier per configured vCPU on macOS, iOS
 Simulator, and physical iOS. Carrier names use a non-variadic decimal formatter
 because Linux AAPCS64 and Apple arm64 variadic call conventions differ. Topic
@@ -229,13 +231,25 @@ software-MMU task range of 128 TiB and treats the native kernel mapping as a
 hole inside that range. The ET_DYN kernel is linked at 48 GiB. Device and
 Simulator bias it so the active native window ends at the physical-iOS 62 GiB
 ceiling; macOS biases the same image to a 96 TiB base. The window contains
-exactly the RAM-sized direct map plus a
-page-rounded one eighth for auxiliary kernel mappings, with a 32 MiB floor.
-Kernarium's 4 GiB Simulator default receives 512 MiB of auxiliary address
-capacity and uses the 57.5--62 GiB active window; its 2 GiB physical-device
-default receives 256 MiB and uses 59.75--62 GiB. The standalone
-macOS app defaults to 8 GiB and 10 vCPUs; its 1 GiB auxiliary allowance gives
-it a 9 GiB active window beginning at 96 TiB. The kernel derives the hole
+exactly the RAM-sized direct map plus a page-rounded auxiliary allowance for
+kernel mappings. That allowance is address space, not memory: vmalloc's pages
+come from the guest page allocator and are already bounded by `mem=`. Topic
+0023 therefore tracks it to RAM one-for-one between a 1 GiB floor and a 4 GiB
+ceiling, and gives vmalloc the whole window rather than `min(window, RAM)`,
+because `end_vm` is what the kernel fault handler uses to recognise a vmalloc
+address. Kernarium's 4 GiB Simulator default receives 4 GiB of auxiliary
+address capacity and uses the 54--62 GiB active window; its 2 GiB
+physical-device default receives 2 GiB and uses 58--62 GiB. The standalone
+macOS app defaults to 8 GiB and 10 vCPUs; its capped 4 GiB auxiliary allowance
+gives it a 12 GiB active window beginning at 96 TiB. The ceiling keeps RAM
+plus auxiliary inside the 14 GiB signed envelope for every guest up to 10 GiB;
+the former one-eighth rule allowed up to 12 GiB there.
+
+The allowance exists to make `CONFIG_VMAP_STACK=y` viable, which this line now
+selects. Physically contiguous 128 KiB task stacks are order-3 allocations, and
+a busy guest holding roughly 1400 of them fragments the buddy allocator past
+what compaction recovers. At the former 504 MiB allowance the vmapped stacks
+exhausted vmalloc instead; a booted guest already uses about 350 MiB of it. The kernel derives the hole
 endpoint from its relocated image. macOS and iOS therefore use the same exact
 artifact for each selected page profile while retaining their unsigned CLI and
 signed-framework delivery mechanisms, respectively:

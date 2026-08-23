@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 path	topic_orders	rationale
-arch/arm64/Makefile.um	0009,0012	The arm64 port establishes its original address-profile constants while topic 0012 replaces the platform split with one scalable Darwin profile and guest-memory-scaled auxiliary allowance.
+arch/arm64/Makefile.um	0009,0012,0032	The arm64 port establishes its original address-profile constants, topic 0012 replaces the platform split with one scalable Darwin profile, and topic 0032 retunes the auxiliary allowance so vmalloc address space stops being the binding constraint on vmapped kernel stacks.
 arch/arm64/um/Kconfig	0009,0023	The arm64 UML port owns its architecture capabilities while topic 0023 exposes ACK's architecture-gated Android system-mapping sealing policy.
 arch/arm64/um/asm/mman.h	0009,0012	The arm64 port owns mmap policy while topic 0012 rejects guest mappings that cross the shared sparse native hole.
 arch/arm64/um/asm/processor.h	0009,0015	The arm64 port owns its relax primitive while topic 0015 turns an interruptible Darwin spin wait into a safe cooperative IPI boundary.
@@ -20,7 +20,7 @@ arch/um/kernel/smp.c	0003,0028	The SMP core owns the IPI vector table and dispat
 arch/um/kernel/time.c	0003,0024,0026	The shared timer core owns Darwin timer delivery, topic 0024 exposes it through a kernel-register checkpoint for cooperative spin waits, and topic 0026 generalizes that checkpoint for safe retry and VMA-walk boundaries.
 arch/um/kernel/tlb.c	0002,0025,0026	The MMU topic owns Darwin TLB synchronization and host invalidation, topic 0025 adds a quiescent boundary after each completed host VMA invalidation, and topic 0026 polls the cooperative timer there when logical IRQs are enabled.
 arch/um/kernel/trap.c	0002,0012	The MMU core owns guest fault dispatch while topic 0012 rejects faults that intersect the shared sparse native hole.
-arch/um/kernel/um_arch.c	0004,0012	The execution core owns Darwin task-size setup while topic 0012 selects the common Apple task ceiling, scalable native hole, and guest-memory-scaled auxiliary vmalloc capacity.
+arch/um/kernel/um_arch.c	0004,0012,0032	The execution core owns Darwin task-size setup, topic 0012 selects the common Apple task ceiling and scalable native hole, and topic 0032 caps the auxiliary allowance and gives vmalloc the whole window rather than min(window, RAM).
 arch/um/os-Darwin/internal.h	0007,0013,0014	The Darwin host implementation owns private service declarations, topic 0013 replaces per-task scheduler hooks with fixed-carrier lifetime hooks, and topic 0014 adds the host-stop boundary.
 arch/um/os-Darwin/main.c	0007,0014	The Darwin host implementation owns the entrypoint while topic 0014 keeps last-ditch signals from running Linux cleanup on an arbitrary carrier task.
 arch/um/os-Darwin/mem.c	0007,0031	The Darwin host service implementation owns the physical-memory file while topic 0031 adds only the call that punches a reported free range out of it.

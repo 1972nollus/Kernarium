@@ -135,25 +135,30 @@ reporting order. This bounds host residency for an idle guest; it does not
 address fragmentation, since a fragmented zone has no high-order free blocks
 left to report.
 
-Task-stack fragmentation is a known, unresolved limitation of this product.
-`CONFIG_KERNEL_STACK_ORDER=3` yields the required 128 KiB stack on the 16 KiB
-profile, but a booted Android guest holds roughly 1400 of them as physically
-contiguous order-3 allocations. That pins about 176 MiB of the zone in
-unmovable blocks and fragments the buddy allocator past what compaction can
-recover: an observed boot held 147 MiB free and 2.6 GiB `MemAvailable` with no
-free block at order 3 or above, 188 of 230 compaction attempts failing, and six
-global OOM kills of healthy applications. The guest still reached
-`sys.boot_completed`, so this degrades the running system rather than blocking
-boot.
+Topic 32 and `CONFIG_VMAP_STACK=y` close the task-stack fragmentation that
+this product carried until now. `CONFIG_KERNEL_STACK_ORDER=3` still yields the
+required 128 KiB stack, but as a physically contiguous order-3 allocation, and
+a booted guest holds roughly 1400 of them. That pinned about 176 MiB of the
+zone in unmovable blocks and fragmented the buddy allocator past what
+compaction could recover: an observed boot held 147 MiB free and 2.6 GiB
+`MemAvailable` with no free block at order 3 or above, 188 of 230 compaction
+attempts failing, and six global OOM kills of healthy applications.
 
-`CONFIG_VMAP_STACK=y` is the usual remedy and was measured to be much worse
-here, so it stays off. `arch/um` does select `HAVE_ARCH_VMAP_STACK`, but this
-port's vmalloc window is only about 375 MiB
-(`0x600100800000`-`0x60011ffec000`). 1400 vmapped stacks exhausted it at guest
-second 175 with 42 `vmalloc_node_range for size 16777216 failed` refusals and
-72 EROFS `-ENOMEM` read errors, which SIGKILLed zygote and ended in a kernel
-panic in `exit_mmap` at second 203. Widening the vmalloc window is
-address-profile work and is not attempted from the configuration fragment.
+Virtually mapped stacks are backed by order-0 pages and remove the contiguity
+requirement. They need address space, though, and the native hole's auxiliary
+allowance was one eighth of RAM - 504 MiB on a 4 GiB guest, of which a booted
+guest already uses about 350 MiB. Enabling `CONFIG_VMAP_STACK` alone therefore
+exhausted vmalloc at guest second 175 and panicked in `exit_mmap` at 203.
+Topic 32 tracks the allowance to RAM one-for-one between a 1 GiB floor and a
+4 GiB ceiling, and gives vmalloc the whole window rather than
+`min(window, RAM)`, because `end_vm` is what the kernel fault handler uses to
+recognise a vmalloc address.
+
+Together they hold. A boot on the widened window reached guest second 1469
+with zero vmalloc refusals, zero OOM kills, zero RCU stalls, and no panic, and
+its free-area breakdown read `0 1 1 97 20 3 0 0 0 0 0 0` - 97 free order-3
+blocks where there had been none - with `compact_stall` still 0, meaning
+compaction had not once been needed.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
