@@ -5,9 +5,9 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 28 ACK-based topic commits and resolves to the
+The checked series contains 29 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the final twelve are ACK-only local topics
+applicable Darwin UML behavior; the final thirteen are ACK-only local topics
 discovered by compiling and booting the 16 KiB Android product. Mainline patch
 bytes are never installed as this line's source of truth.
 
@@ -75,6 +75,19 @@ from IRQ-disabled call sites. The resulting 27-topic tree builds as a 16 KiB
 AArch64 ET_DYN image with an exact bridge-import match and no module output;
 multi-vCPU runtime qualification remains a separate gate before release
 acceptance.
+
+Topic 29 reshapes the Darwin pointer into a direct touchscreen. Topic 10
+exposes the host frontend's absolute window coordinates as an
+`INPUT_PROP_POINTER` tablet with `ABS_X`/`ABS_Y` and mouse buttons, which
+libinput accepts, so the Linux desktop guests are unaffected and that topic is
+unchanged. Android is stricter: `EventHub` recognises an absolute device only
+when it also reports `BTN_TOUCH`, and a device matching no input class is
+dropped before `InputReader` ever opens it. A fully booted Android 17 guest
+therefore listed only the keyboard in `dumpsys input` and ignored every click.
+The topic reports `BTN_TOUCH` alongside `BTN_LEFT` and marks the device
+`INPUT_PROP_DIRECT`, which selects `TouchInputMapper`'s direct mode and maps
+the absolute range straight onto the display. `REL_WHEEL` is no longer consumed
+under Android; touch drag is that platform's native scrolling gesture.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

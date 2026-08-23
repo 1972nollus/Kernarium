@@ -1,7 +1,7 @@
 From 7ed101a86759fc86a074687e11123c28db9f5996 Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:10 +0900
-Subject: [PATCH 09/28] arm64: add the user-mode Linux architecture port
+Subject: [PATCH 09/29] arm64: add the user-mode Linux architecture port
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
