@@ -149,9 +149,8 @@ endif()
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
 # the same relocation, exclusion-hole, and RAM-scaled auxiliary mechanisms at
 # its established 96 TiB native base, outside Darwin's crowded low host range.
-# The window is exactly guest RAM plus a page-rounded one-eighth kernel-
-# auxiliary allowance, with Linux UML's 32 MiB minimum retained for small
-# guests.
+# The window is exactly guest RAM plus a page-rounded auxiliary allowance for
+# kernel mappings; that allowance is stated with its constants below.
 # The existing three-level 16 KiB guest page tables expose their maximum 47-bit
 # range; a true 48-bit range would add a page-table level to every kernel.
 set(UML_GUEST_ADDRESS_LIMIT 0x0000800000000000ULL)
