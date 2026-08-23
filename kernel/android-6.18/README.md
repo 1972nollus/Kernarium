@@ -89,6 +89,21 @@ The topic reports `BTN_TOUCH` alongside `BTN_LEFT` and marks the device
 the absolute range straight onto the display. `REL_WHEEL` is no longer consumed
 under Android; touch drag is that platform's native scrolling gesture.
 
+Topic 30 moves the Darwin user-network receive path onto NAPI. Topic 10's
+driver drained up to 64 frames straight from the interrupt handler, and the
+host readiness descriptor is level triggered, so a sustained inbound stream
+re-armed the interrupt as soon as the handler returned and the CPU never left
+interrupt context long enough for the backlog softirq to drain. An `adb push`
+of a 512 MiB file over a forwarded port wedged a booted guest every time,
+while a 3 GiB guest-local write through the same block stack completed in 10 s
+at 293 MB/s. The wedged guest still took timer ticks - RCU reported "2515
+ticks this GP" rather than the zero that marks Darwin timer starvation - and
+its carriers were spinning in `darwin_cpu_relax` and `_raw_spin_lock_bh`, the
+per-CPU backlog lock. `arch/um/drivers/vector_kern.c` already runs NAPI on
+this architecture; the topic follows it, so repeated interrupts collapse into
+one `NAPI_STATE_SCHED` test and draining happens under a budget that
+`ksoftirqd` can defer.
+
 Task-stack fragmentation is a known, unresolved limitation of this product.
 `CONFIG_KERNEL_STACK_ORDER=3` yields the required 128 KiB stack on the 16 KiB
 profile, but a booted Android guest holds roughly 1400 of them as physically
