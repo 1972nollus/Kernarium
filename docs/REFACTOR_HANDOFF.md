@@ -39,16 +39,21 @@ background flushes. After terminating and relaunching, the same bundle reopens
 the same `/data` filesystem (`897f3398-…`, journal recovery, no COW
 re-creation), which is the persistence contract.
 
-That relaunch did not finish booting. The first run was ended with SIGKILL,
-which discards the guest's dirty page cache; ext4 recovered its journal but the
-application-level state above it did not. The guest stayed live on all ten
-vCPUs with no console output and no further writes. The host flush cannot
-prevent this by construction — only the guest kernel can write back its own
-page cache, and nothing currently asks it to. A guest-side sync request would
-need a kernel and bridge ABI change. `docs/REFACTOR_HANDOFF.md` records this as
-the open limitation of the feature rather than a property of the bundle format;
-the identical virtio-gpu `CTX_CREATE` failure appears in the successful boot
-too and is not the cause.
+That relaunch did not finish booting, and the stall reproduced on a second
+attempt: Android stops printing around 45 s, keeps every vCPU executing, and
+writes nothing further. Both stalled runs followed a SIGKILL of a live guest,
+which discards its dirty page cache; ext4 recovered its journal but the
+application state above it did not. A fresh instance disk booted to the
+launcher every time, including once from the saved picker selection with no
+environment override, so this is a property of a torn disk rather than of the
+bundle format. The identical virtio-gpu `CTX_CREATE` failure appears in the
+successful boots too and is not the cause.
+
+The host flush cannot prevent this by construction: only the guest kernel can
+write back its own page cache, and nothing currently asks it to. Ordinary iOS
+suspension freezes the guest rather than killing it, so the exposure is
+force-quit and jetsam. Closing it would need a host-to-guest sync request,
+which is a kernel and bridge ABI change.
 
 ## Host-owned guest storage durability (2026-08-24)
 
