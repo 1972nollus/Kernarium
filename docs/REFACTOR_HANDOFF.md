@@ -297,6 +297,72 @@ workflows passed all unit tests (576/576 at 16 KiB and 578/578 at 4 KiB); each
 tooling matrix passed apart from the sandbox's Unix-socket `EPERM`, whose exact
 `gpu-guest-rootfs-safety` rerun passed outside that restriction.
 
+## Android 17 guest reaches a usable desktop (2026-08-23)
+
+The Android 17 guest now boots to `sys.boot_completed=1` with SystemUI, the
+Launcher3 taskbar, and third-party applications drawing through
+Mesa/virgl/`hwc3-drm`. Accepted release `20260823-bb3cf26e-napi1` carries ACK
+topics 29 and 30; `android/aosp-17/metadata/accepted-release.env` records its
+identity.
+
+Four defects had to close before the guest was usable, and each is worth
+keeping visible because none of them announced itself as what it was:
+
+- The screen showed only wallpaper. The guest was at the lock screen, and its
+  window never drew: `dumpsys SurfaceFlinger --list` had no `VRI-` layer for
+  `QuickstepLauncher`. Nothing was broken in composition.
+- Clicks and taps did nothing because Android never opened the pointer at all.
+  `EventHub` classifies an absolute device only when it also reports
+  `BTN_TOUCH`, and a device that matches no class is dropped before
+  `InputReader` sees it, so `dumpsys input` listed only the keyboard. ACK topic
+  29 reports `BTN_TOUCH` and marks the device `INPUT_PROP_DIRECT`; the guest
+  now lists `Darwin UML VNC Tablet, Classes: TOUCH, Sources: TOUCHSCREEN`.
+  Topic 10 and the mainline series are untouched, so the Linux desktop guests
+  keep their absolute mouse.
+- The keyboard looked dead because `KEY_LEFTSHIFT` and `KEY_LEFTMETA` were
+  stuck down: AppKit stops delivering `keyUp` and `flagsChanged` once its
+  window is no longer key, so Command-Tab stranded them for the session. The
+  native shell now releases everything it believes is held at that boundary and
+  reads the device-dependent modifier bits, which distinguish the two sides of
+  a pair.
+- `adb push` of a large file wedged the guest every time. The Darwin
+  user-network driver drained frames from the interrupt handler on a
+  level-triggered descriptor, which is a receive livelock; the block stack was
+  never implicated, taking a 3 GiB guest-local write in 10 s at 293 MB/s on the
+  same boot. The wedged guest still took ticks - RCU reported "2515 ticks this
+  GP" - and its carriers spun in `darwin_cpu_relax` and `_raw_spin_lock_bh`.
+  ACK topic 30 moves the receive path onto NAPI, following
+  `arch/um/drivers/vector_kern.c`. The same 512 MiB push then completed in
+  35.8 s at 14.3 MB/s with matching SHA-256 and no stall of any kind.
+
+The macOS launcher gained `--net-forward`, so the guest's adbd is reachable
+without special-casing: `--net-forward=5555-5555` plus
+`adb connect 127.0.0.1:5555` gives the ordinary `adb install`, `adb shell`, and
+`adb push`. The product already sets `persist.adb.tcp.port=5555`. The boot
+command line no longer disables the boot animation, which now runs for the
+length of the cold boot.
+
+A much longer transfer still ends badly, and for a different reason. A 2 GiB
+push on the NAPI release transferred completely, but degraded from 14.3 MB/s to
+2.7 MB/s over 750 s and then stopped responding. Every one of the eleven RCU
+stalls on that boot reports `0 ticks this GP` on CPU 0 sitting in
+`default_idle_call`, which is the Darwin cooperative-timer starvation signature
+that topics 24 through 28 already address, not the receive livelock topic 30
+removed - that signature (ticks present, carriers spinning) did not occur once.
+An idle carrier losing its timer under sustained load is therefore the next
+thing to chase, and it is pre-existing rather than introduced here.
+
+Two limitations stay open. A booted guest holds roughly 1400 order-3
+(128 KiB) task stacks, which pins about 176 MiB of the zone in unmovable blocks
+and fragments the buddy allocator past what compaction recovers: an observed
+boot held 147 MiB free and 2.6 GiB `MemAvailable` with no free block at order 3
+or above, 188 of 230 compaction attempts failing, and six global OOM kills of
+background applications. `CONFIG_VMAP_STACK` is the usual remedy and was
+measured to be much worse here - this port's vmalloc window is only about
+375 MiB, and vmapped stacks exhausted it at guest second 175 and panicked in
+`exit_mmap` at second 203. Widening that window is address-profile work.
+`kernel/android-6.18/README.md` owns the detail.
+
 ## Required case-sensitive kernel source configuration (2026-08-20)
 
 The maintained Linux checkout now comes only from the Git-ignored
