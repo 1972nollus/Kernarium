@@ -89,16 +89,25 @@ The topic reports `BTN_TOUCH` alongside `BTN_LEFT` and marks the device
 the absolute range straight onto the display. `REL_WHEEL` is no longer consumed
 under Android; touch drag is that platform's native scrolling gesture.
 
-This product also selects `CONFIG_VMAP_STACK=y`, unlike the mainline profiles.
-`CONFIG_KERNEL_STACK_ORDER=3` still yields the required 128 KiB task stack, but
-a booted Android guest holds roughly 1400 of them. As physically contiguous
-order-3 allocations they pinned about 176 MiB of the zone in unmovable blocks
-and fragmented the buddy allocator past what compaction could recover: an
-observed boot held 147 MiB free and 2.6 GiB `MemAvailable` with no free block
-at order 3 or above, 188 of 230 compaction attempts failing, and six global OOM
-kills of healthy applications. Virtually mapped stacks are backed by order-0
-pages and remove the contiguity requirement. See
-[`config/android.fragment`](config/android.fragment).
+Task-stack fragmentation is a known, unresolved limitation of this product.
+`CONFIG_KERNEL_STACK_ORDER=3` yields the required 128 KiB stack on the 16 KiB
+profile, but a booted Android guest holds roughly 1400 of them as physically
+contiguous order-3 allocations. That pins about 176 MiB of the zone in
+unmovable blocks and fragments the buddy allocator past what compaction can
+recover: an observed boot held 147 MiB free and 2.6 GiB `MemAvailable` with no
+free block at order 3 or above, 188 of 230 compaction attempts failing, and six
+global OOM kills of healthy applications. The guest still reached
+`sys.boot_completed`, so this degrades the running system rather than blocking
+boot.
+
+`CONFIG_VMAP_STACK=y` is the usual remedy and was measured to be much worse
+here, so it stays off. `arch/um` does select `HAVE_ARCH_VMAP_STACK`, but this
+port's vmalloc window is only about 375 MiB
+(`0x600100800000`-`0x60011ffec000`). 1400 vmapped stacks exhausted it at guest
+second 175 with 42 `vmalloc_node_range for size 16777216 failed` refusals and
+72 EROFS `-ENOMEM` read errors, which SIGKILLed zygote and ended in a kernel
+panic in `exit_mmap` at second 203. Widening the vmalloc window is
+address-profile work and is not attempted from the configuration fragment.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
