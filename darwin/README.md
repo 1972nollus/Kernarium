@@ -69,6 +69,13 @@ supported PipeWire session manager such as WirePlumber. The macOS KDE overlay
 and Kernarium bootstrap do not synthesize a sink or routing policy when that
 package is absent.
 
+The SLiRP provider accepts host forwards. Each `--net-forward` specification is
+recorded by the provider rather than by the SLiRP instance, so a stop and reopen
+re-establishes the same set, and an individual forward that cannot claim its
+host port is reported without failing the guest's only interface. Forwards
+default to binding loopback and targeting the single DHCP lease; see
+`docs/testing.md` for the grammar.
+
 Kernarium's network callback is the ordinary SLiRP provider compiled against
 the private iOS GLib/libslirp prefix. The application disables the UIKit idle
 timer while the managed guest run is active and restores it when that run

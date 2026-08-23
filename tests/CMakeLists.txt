@@ -182,6 +182,10 @@ endif()
 if(TARGET uml_slirp_network_tests)
     list(APPEND _uml_required_conditional_tests slirp-network-arp)
 endif()
+if(TARGET uml_slirp_forward_tests)
+    list(APPEND _uml_required_conditional_tests
+        slirp-network-forward-specification)
+endif()
 if(UML_BUILD_UNIT_TESTS AND TARGET uml_gpu_service)
     list(APPEND _uml_required_conditional_tests
         gpu-transport-wire-ownership)

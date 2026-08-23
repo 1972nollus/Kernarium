@@ -11,10 +11,15 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace uml::network {
 namespace {
@@ -158,11 +163,11 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		config.version = 6;
 		config.in_enabled = true;
 		config.restricted = 0;
-		(void)inet_pton(AF_INET, "10.0.2.0", &config.vnetwork);
-		(void)inet_pton(AF_INET, "255.255.255.0", &config.vnetmask);
-		(void)inet_pton(AF_INET, "10.0.2.2", &config.vhost);
-		(void)inet_pton(AF_INET, "10.0.2.15", &config.vdhcp_start);
-		(void)inet_pton(AF_INET, "10.0.2.3", &config.vnameserver);
+		(void)inet_pton(AF_INET, network_address, &config.vnetwork);
+		(void)inet_pton(AF_INET, network_mask, &config.vnetmask);
+		(void)inet_pton(AF_INET, host_alias_address, &config.vhost);
+		(void)inet_pton(AF_INET, guest_address, &config.vdhcp_start);
+		(void)inet_pton(AF_INET, nameserver_address, &config.vnameserver);
 		config.vhostname = "uml-darwin";
 		config.if_mtu = 1500;
 		config.if_mru = 1500;
@@ -190,9 +195,54 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			return -EIO;
 		}
 		started_.store(true, std::memory_order_release);
+		/* Replay the recorded forwards onto the SLiRP instance this open
+		 * created. A refused forward is reported but never fails the guest
+		 * network: losing one convenience port must not cost every guest its
+		 * only interface. */
+		for (const auto &forward : forwards_) {
+			if (install_forward(forward) == 0)
+				continue;
+			std::fprintf(stderr,
+				"Unable to forward host %s:%u to guest %s:%u\n",
+				forward.host_address.c_str(),
+				static_cast<unsigned int>(forward.host_port),
+				forward.guest_address.c_str(),
+				static_cast<unsigned int>(forward.guest_port));
+		}
 	}
 	std::ranges::copy(default_mac, mac.begin());
 	mtu = 1500;
+	return 0;
+}
+
+int SlirpProvider::install_forward(const HostForward &forward) noexcept
+{
+	in_addr host_address{};
+	in_addr target_address{};
+
+	if (inet_pton(AF_INET, forward.host_address.c_str(), &host_address) != 1)
+		return -EINVAL;
+	if (inet_pton(AF_INET, forward.guest_address.c_str(), &target_address) != 1)
+		return -EINVAL;
+	if (slirp_add_hostfwd(slirp_.get(), forward.udp ? 1 : 0, host_address,
+			      forward.host_port, target_address,
+			      forward.guest_port) != 0)
+		return errno == 0 ? -EADDRINUSE : -errno;
+	return 0;
+}
+
+int SlirpProvider::add_forward(const HostForward &forward)
+{
+	std::lock_guard lock{start_mutex_};
+	if (forward.host_port == 0 || forward.guest_port == 0)
+		return -EINVAL;
+	if (started_.load(std::memory_order_acquire) && slirp_) {
+		const int error = install_forward(forward);
+		if (error != 0)
+			return error;
+	}
+	/* Record it either way so a later reopen re-establishes the same set. */
+	forwards_.push_back(forward);
 	return 0;
 }
 
@@ -385,6 +435,66 @@ void SlirpProvider::notify_receive_cleanup_for_testing() noexcept
 
 } // namespace uml::network
 
+namespace uml::network {
+
+bool parse_host_forward(
+	std::string_view specification, HostForward &forward) noexcept
+{
+	const auto port_of = [](std::string_view text,
+				std::uint16_t &port) noexcept {
+		unsigned int value = 0;
+		if (text.empty())
+			return false;
+		const auto *first = text.data();
+		const auto *last = first + text.size();
+		const auto result = std::from_chars(first, last, value);
+		if (result.ec != std::errc{} || result.ptr != last)
+			return false;
+		if (value == 0 || value > 65535U)
+			return false;
+		port = static_cast<std::uint16_t>(value);
+		return true;
+	};
+	const auto address_and_port = [&](std::string_view side,
+					  std::string &address,
+					  std::uint16_t &port) noexcept {
+		const auto separator = side.rfind(':');
+		if (separator == std::string_view::npos)
+			return port_of(side, port);
+		const auto text = side.substr(0, separator);
+		if (text.empty())
+			return false;
+		in_addr parsed{};
+		const std::string candidate{text};
+		if (inet_pton(AF_INET, candidate.c_str(), &parsed) != 1)
+			return false;
+		address = candidate;
+		return port_of(side.substr(separator + 1), port);
+	};
+
+	HostForward parsed{};
+	auto remainder = specification;
+	if (remainder.starts_with("tcp:")) {
+		remainder.remove_prefix(4);
+	} else if (remainder.starts_with("udp:")) {
+		parsed.udp = true;
+		remainder.remove_prefix(4);
+	}
+	const auto split = remainder.find('-');
+	if (split == std::string_view::npos)
+		return false;
+	if (!address_and_port(remainder.substr(0, split), parsed.host_address,
+			      parsed.host_port))
+		return false;
+	if (!address_and_port(remainder.substr(split + 1), parsed.guest_address,
+			      parsed.guest_port))
+		return false;
+	forward = std::move(parsed);
+	return true;
+}
+
+} // namespace uml::network
+
 extern "C" int uml_slirp_net_open(
 	void *context, unsigned char mac[6], unsigned int *mtu)
 {
@@ -433,6 +543,22 @@ extern "C" int uml_slirp_net_write(
 	try {
 		return static_cast<uml::network::SlirpProvider *>(context)->write(
 			{static_cast<const std::byte *>(buffer), length});
+	} catch (...) {
+		return -EIO;
+	}
+}
+
+extern "C" int uml_slirp_net_add_forward(
+	void *context, const char *specification)
+{
+	if (context == nullptr || specification == nullptr)
+		return -EINVAL;
+	try {
+		uml::network::HostForward forward{};
+		if (!uml::network::parse_host_forward(specification, forward))
+			return -EINVAL;
+		return static_cast<uml::network::SlirpProvider *>(context)
+			->add_forward(forward);
 	} catch (...) {
 		return -EIO;
 	}

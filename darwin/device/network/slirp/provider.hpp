@@ -14,7 +14,9 @@
 #include <mutex>
 #include <span>
 #include <stop_token>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #ifndef UML_SLIRP_TESTING
 #define UML_SLIRP_TESTING 0
@@ -25,6 +27,32 @@ namespace uml::network {
 inline constexpr std::size_t frame_size = 2048;
 inline constexpr std::size_t ring_size = 256;
 inline constexpr std::size_t max_poll_descriptors = 512;
+
+/* The user-mode network the guest sees. `guest_address` is the single DHCP
+ * lease, so it is also the default target of a host forward. */
+inline constexpr const char *network_address = "10.0.2.0";
+inline constexpr const char *network_mask = "255.255.255.0";
+inline constexpr const char *host_alias_address = "10.0.2.2";
+inline constexpr const char *guest_address = "10.0.2.15";
+inline constexpr const char *nameserver_address = "10.0.2.3";
+
+/* One host listening socket forwarded into the guest. Registrations are
+ * accepted before or after open(); the provider owns replaying them onto each
+ * SLiRP instance it creates, so a stop/reopen keeps the same forwards. */
+struct HostForward final {
+	bool udp{};
+	std::string host_address{"127.0.0.1"};
+	std::uint16_t host_port{};
+	std::string guest_address{uml::network::guest_address};
+	std::uint16_t guest_port{};
+};
+
+/* Parse "[PROTO:][HOSTADDR:]HOSTPORT-[GUESTADDR:]GUESTPORT". PROTO is tcp or
+ * udp and defaults to tcp, HOSTADDR defaults to loopback so a forward is not
+ * reachable off the machine unless it says so, and GUESTADDR defaults to the
+ * DHCP lease. Returns false on any malformed field. */
+[[nodiscard]] bool parse_host_forward(
+	std::string_view specification, HostForward &forward) noexcept;
 
 class UniqueFd final {
 public:
@@ -73,6 +101,11 @@ public:
 	~SlirpProvider();
 
     int open(std::span<unsigned char, 6> mac, unsigned int &mtu);
+	/* Register a host forward. Before open() the forward is recorded and
+	 * installed when SLiRP is created; afterwards it is installed immediately.
+	 * Returns 0, or a negative errno when the addresses are malformed or the
+	 * host port cannot be claimed. */
+	int add_forward(const HostForward &forward);
 	/* The active-session IRQ descriptor is borrowed from the provider and keeps
 	 * the same numeric identity across stop/reopen. It closes only when the
 	 * provider itself is destroyed, after users have released registrations. */
@@ -121,6 +154,8 @@ private:
 	static int add_poll_descriptor(slirp_os_socket descriptor, int events,
 				       void *opaque) noexcept;
 	static int get_poll_events(int index, void *opaque) noexcept;
+	/* Called with start_mutex_ held and slirp_ valid. */
+	int install_forward(const HostForward &forward) noexcept;
 
     slirp_ssize_t enqueue_received(std::span<const std::byte> frame);
 	void process_transmit_queue() noexcept;
@@ -152,6 +187,7 @@ private:
 	std::size_t transmit_head_{};
 	std::size_t transmit_tail_{};
 	std::list<std::unique_ptr<Timer>> timers_;
+	std::vector<HostForward> forwards_;
 	std::unique_ptr<Slirp, SlirpDeleter> slirp_;
 	std::array<UniqueFd, 2> wake_pipe_;
 	std::array<UniqueFd, 2> receive_pipe_;

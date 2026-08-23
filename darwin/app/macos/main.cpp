@@ -42,6 +42,7 @@ int uml_slirp_net_open(void *, unsigned char[6], unsigned int *);
 int uml_slirp_net_irq_fd(void *);
 int uml_slirp_net_read(void *, void *, std::size_t);
 int uml_slirp_net_write(void *, const void *, std::size_t);
+int uml_slirp_net_add_forward(void *, const char *);
 void uml_slirp_net_stop(void *);
 void *uml_slirp_net_create(void) noexcept;
 void uml_slirp_net_destroy(void *) noexcept;
@@ -84,6 +85,21 @@ public:
 		};
 #else
 		return {};
+#endif
+	}
+
+	/* Registered before the guest brings the interface up, so this only
+	 * validates the specification; a host port that cannot be claimed is
+	 * reported by the provider when it installs the forward. */
+	[[nodiscard]] int forward(const std::string &specification) noexcept
+	{
+#if UML_APP_HAS_SLIRP
+		return context_ == nullptr ?
+			-EINVAL :
+			uml_slirp_net_add_forward(context_, specification.c_str());
+#else
+		(void)specification;
+		return -ENOTSUP;
 #endif
 	}
 
@@ -223,6 +239,7 @@ struct PreparedArguments {
 	bool audio {};
 	std::string console_socket;
 	std::string serial_socket;
+	std::vector<std::string> net_forwards;
 	std::vector<std::string> kernel;
 };
 
@@ -325,6 +342,15 @@ PreparedArguments prepare_host_arguments(
 					std::string(argument));
 			prepared.gpu.vnc_option_specified = true;
 			prepared.gpu.enabled = true;
+		} else if (argument.starts_with("--net-forward=")) {
+			auto specification = std::string{argument.substr(
+				std::string_view{"--net-forward="}.size())};
+			if (specification.empty())
+				throw std::invalid_argument(
+					"--net-forward requires "
+					"[PROTO:][HOSTADDR:]HOSTPORT-"
+					"[GUESTADDR:]GUESTPORT");
+			prepared.net_forwards.push_back(std::move(specification));
 		} else if (
 			   parse_host_integer(
 				   argument, "--gpu-width=", prepared.gpu.width) ||
@@ -411,6 +437,17 @@ int uml::app::runEmbeddedKernel(
 				error.what());
 			return 1;
 		}
+		for (const auto &specification : prepared.net_forwards) {
+			if (app_network->forward(specification) == 0)
+				continue;
+			std::fprintf(stderr,
+				"Unable to accept --net-forward=%s\n",
+				specification.c_str());
+			return 1;
+		}
+	} else if (!prepared.net_forwards.empty()) {
+		std::fputs("--net-forward requires the user network\n", stderr);
+		return 1;
 	}
 
 	const uml_emulator_config config{

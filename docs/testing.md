@@ -694,6 +694,20 @@ guest-userspace deficiency with a whole-image update that installs a supported
 session-manager package such as WirePlumber. The KDE and Kernarium overlays do
 not synthesize a PipeWire sink or routing policy.
 
+`--net-forward=[PROTO:][HOSTADDR:]HOSTPORT-[GUESTADDR:]GUESTPORT` publishes a
+host listening socket into the user network, repeatably. `PROTO` is `tcp` or
+`udp` and defaults to `tcp`; `HOSTADDR` defaults to `127.0.0.1`, so a forward is
+never reachable off the machine unless it says so; `GUESTADDR` defaults to the
+single DHCP lease `10.0.2.15`. The short form is what an operator normally
+types: `--net-forward=5555-5555` reaches the Android guest's adbd, which the
+product already configures with `persist.adb.tcp.port=5555`, so
+`adb connect 127.0.0.1:5555` then works with the ordinary `adb install`,
+`adb shell`, and `adb logcat`. `--net-forward=8022-22` does the same for a
+Linux guest's ssh. A malformed specification fails the launch; a host port that
+cannot be claimed is reported on stderr when the guest brings the interface up,
+and never takes the rest of the network down with it. The option requires the
+user network, so it is rejected when `UML_DISABLE_NETWORK` is set.
+
 `--bind`, `--port`, and `--password` configure only VNC and therefore require
 `--display vnc`. The bare `uml-darwin --gpu` host option retains VNC
 as its compatibility default, while the KDE launcher deliberately selects
