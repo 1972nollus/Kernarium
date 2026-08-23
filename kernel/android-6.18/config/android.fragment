@@ -168,6 +168,13 @@ CONFIG_CIFS_XATTR=y
 # CONFIG_KSM is not set
 CONFIG_USERFAULTFD=y
 CONFIG_CMA=y
+# mem= is a ceiling rather than a reservation: the physical-memory file is
+# sparse and host pages appear on first touch. Without reporting, nothing ever
+# gives them back, so a guest that once peaked stays expensive for the rest of
+# its life - the wrong shape for a phone whose host may have 2 GiB in total.
+# arch/um registers a reporting driver that punches the reported range out of
+# that file, which drops the resident host pages at once.
+CONFIG_PAGE_REPORTING=y
 # Huge pages are deliberately absent. The guest's pages are host allocations
 # behind a software MMU, so a second huge-page tier buys no TLB reach here and
 # only adds fault-path and khugepaged work. Guest userspace that asks for

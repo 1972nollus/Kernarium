@@ -104,6 +104,23 @@ this architecture; the topic follows it, so repeated interrupts collapse into
 one `NAPI_STATE_SCHED` test and draining happens under a budget that
 `ksoftirqd` can defer.
 
+Topic 31 returns free guest pages to the host. `mem=` is a ceiling rather than
+a reservation - `setup_physmem()` backs physical memory with a sparse unlinked
+temp file mapped `MAP_SHARED`, so host pages appear on first touch - but
+nothing gave them back, so a guest that peaked once stayed expensive for its
+whole life. The topic registers a free-page reporting driver that punches the
+reported range out of that file with `F_PUNCHHOLE`. A measured probe on APFS
+took a fully touched 1 GiB `MAP_SHARED` mapping from 1025 MiB resident to
+513 MiB by punching half of it, with the punched range reading back as zero and
+re-materializing on the next write. `phys_mapping()` already returns the file
+offset for a physical address, and for this file that offset is the physical
+address, so no new address arithmetic is involved. The minimum order is 5
+(512 KiB) rather than the `pageblock_order` default, because a 16 KiB profile
+makes a pageblock 32 MiB and a busy guest rarely has a whole one free;
+`page_reporting.page_reporting_order=` overrides it. This bounds host residency
+for an idle guest; it does not address fragmentation, since a fragmented zone
+has no high-order free blocks left to report.
+
 Task-stack fragmentation is a known, unresolved limitation of this product.
 `CONFIG_KERNEL_STACK_ORDER=3` yields the required 128 KiB stack on the 16 KiB
 profile, but a booted Android guest holds roughly 1400 of them as physically

@@ -1,7 +1,7 @@
 From 025bd541e9fd342da078b3583db08bfe5904076c Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 07:02:10 +0000
-Subject: [PATCH 26/30] UML-DARWIN-LOCAL: service timers at kernel quiescent
+Subject: [PATCH 26/31] UML-DARWIN-LOCAL: service timers at kernel quiescent
  boundaries
 
 Change-Id: I6bc7c0c28b1a469acf97c28621804cb2e7f0ecab
