@@ -89,6 +89,17 @@ The topic reports `BTN_TOUCH` alongside `BTN_LEFT` and marks the device
 the absolute range straight onto the display. `REL_WHEEL` is no longer consumed
 under Android; touch drag is that platform's native scrolling gesture.
 
+This product also selects `CONFIG_VMAP_STACK=y`, unlike the mainline profiles.
+`CONFIG_KERNEL_STACK_ORDER=3` still yields the required 128 KiB task stack, but
+a booted Android guest holds roughly 1400 of them. As physically contiguous
+order-3 allocations they pinned about 176 MiB of the zone in unmovable blocks
+and fragmented the buddy allocator past what compaction could recover: an
+observed boot held 147 MiB free and 2.6 GiB `MemAvailable` with no free block
+at order 3 or above, 188 of 230 compaction attempts failing, and six global OOM
+kills of healthy applications. Virtually mapped stacks are backed by order-0
+pages and remove the contiguity requirement. See
+[`config/android.fragment`](config/android.fragment).
+
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
 backend assumes CPU-capability, Spectre, register-frame, and exception-table

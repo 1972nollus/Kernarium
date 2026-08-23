@@ -554,11 +554,18 @@ CONFIG_ARM_PMU=n
 CONFIG_DEBUG_FS=y
 
 # --- Kernel build policy ----------------------------------------------------
-# Darwin resumes each stackful UML task on one of the fixed vCPU carriers.
-# The page profiles select orders that both produce a 128 KiB task stack. Keep
-# those stacks contiguous in the direct map: vmalloc-backed stacks add a second
-# host mapping layer without reducing the number of carrier pthreads.
-# CONFIG_VMAP_STACK is not set
+# Darwin resumes each stackful UML task on one of the fixed vCPU carriers, and
+# the page profile selects the order that produces a 128 KiB task stack. On the
+# 16 KiB profile that is an order-3 physically contiguous allocation per thread.
+# A booted Android guest holds roughly 1400 kernel stacks, so ~176 MiB of the
+# zone is pinned in unmovable order-3 blocks. That fragments the buddy
+# allocator past the point compaction can recover: an observed boot reached
+# 147 MiB free and 2.6 GiB MemAvailable with *zero* free blocks at order 3 or
+# above, 188 of 230 compaction attempts failing, and six global OOM kills of
+# healthy apps. Virtually mapped stacks are backed by order-0 pages and remove
+# the contiguity requirement entirely. The extra host mapping layer costs less
+# than losing the app the user was looking at.
+CONFIG_VMAP_STACK=y
 CONFIG_NULL_CHAN=y
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # ACK enables compile warnings as errors by default. The maintained port keeps
