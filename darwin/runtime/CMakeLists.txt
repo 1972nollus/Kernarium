@@ -66,16 +66,19 @@ set_target_properties(uml_runtime_guest_selector PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_entry OBJECT
-    ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp)
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_sync.cpp)
 uml_declare_architecture_target(uml_runtime_entry runtime)
 target_link_libraries(uml_runtime_entry PRIVATE
     UML::DeviceSocketPaths
+    UML::GuestFiles
     UML::RuntimeContract
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_entry PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/include
-    ${PROJECT_SOURCE_DIR}/darwin)
+    ${PROJECT_SOURCE_DIR}/darwin
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
 target_compile_features(uml_runtime_entry PUBLIC cxx_std_20)
 target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_entry PROPERTIES

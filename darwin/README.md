@@ -129,6 +129,22 @@ A path left by SIGKILL or a host power loss is not recoverable this way, and
 because both socket servers refuse to replace an existing path, such a leftover
 must be removed before reusing that name.
 
+Every host file the guest kernel opens passes through `darwin_uml_open`, so
+`darwin/platform/guest_files.cpp` is the one place that knows the complete set
+of descriptors a running guest can still write to. It records the writable ones
+and forgets them at `darwin_uml_close`; read-only descriptors carry nothing to
+flush and are left out. `uml_emulator_sync()` flushes exactly that set with
+`F_FULLFSYNC`, falling back to `fsync` where the filesystem offers no barrier,
+and reports how many descriptors could not be flushed. Opens and closes are
+excluded for the duration, so a descriptor cannot be closed and reused for an
+unrelated host object between the snapshot and its flush. Like a stop request,
+the call is meant to overlap a run.
+
+This is the host half of durability, and it is the half that was missing: the
+guest's own `sync` already reaches `os_sync_file` through UBD's flush path,
+while nothing flushed those files on the host's behalf. It does not reach into
+the guest's page cache, which only the guest kernel can write back.
+
 The opt-in Apple CTS adapters pass only an identifier from the checked
 campaign allow-list. CMake generates that campaign's exact bounded guest
 launcher from the common VK-GL-CTS driver into each page-profile runtime; the

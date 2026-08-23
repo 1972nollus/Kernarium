@@ -2,3 +2,4 @@
 version	fingerprint	declaration_sha256	rationale
 3	0x3cb6915eb30f248f	3cb6915eb30f248f27b12d98568c614ba14266de069f5e41befc28be6f265073	Split baseline for the installed emulator API after public/kernel identity separation
 4	0xd9a69804d3303044	d9a69804d33030448b780d58c3f553c0e12e4f1e19ab37f89d2719b8b93115f1	Keep conditional JIT profiling diagnostics outside the installed public API
+5	0x9f0c59ba27d03993	9f0c59ba27d039934e630fc94dea959cd0dc2a416e9da72695ba2ce2e565bc0e	Add uml_emulator_sync so an embedding host can flush guest block writes at a lifecycle boundary

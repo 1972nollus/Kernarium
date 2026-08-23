@@ -1,5 +1,24 @@
 # Refactor handoff
 
+## Host-owned guest storage durability (2026-08-24)
+
+`uml_emulator_sync()` is new public API, taking the installed emulator ABI to
+version 5. Every host file the guest kernel opens already passes through
+`darwin_uml_open`, so `darwin/platform/guest_files.cpp` is the one place that
+knows the complete set of descriptors a running guest can still write to. It
+records the writable ones with the file identity each described and flushes
+exactly that set with `F_FULLFSYNC`, falling back to `fsync` where the
+filesystem offers no barrier. Recording the identity makes the registry
+self-validating, so closing needs no hook in the memory layer: a descriptor
+that no longer names its file is retired rather than flushed, whether it is now
+closed or reused for something else.
+
+This closes the half of durability nothing owned. A guest `sync` already
+reached `os_sync_file` through UBD's flush path, but nothing flushed those
+files on the host's behalf, so even data the guest had carefully committed
+stayed in the host page cache. The guest's own page cache remains outside this
+boundary; only the guest kernel can write that back.
+
 ## Common Apple ANGLE/Metal graphics transition (2026-08-21)
 
 The Phase 1 transition in `MAX_GL_GLES_SUPPORT_PLAN.md` is complete as one
@@ -267,7 +286,7 @@ current product targets without running Git, replay, toolchain selection, or
 Kbuild. The Android ACK series, AOSP product, static disk/initramfs producer,
 and accepted release are separately owned by `kernel/android-6.18` and
 `android/aosp-17`. A separate 16 KiB-only macOS executable now consumes that
-accepted release; the signed iOS Android runtime remains later work.
+accepted release, and a signed iOS Android runtime now consumes the same one.
 The accepted ACK source now has 26 generated topics. Topic 24 services
 throttled cooperative timers from IRQ-enabled kernel spin checkpoints. Topics
 25 and 26 add safe non-atomic uaccess and completed host-TLB quiescent

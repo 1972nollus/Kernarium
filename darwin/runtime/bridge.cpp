@@ -4,6 +4,7 @@
 #include "context.hpp"
 
 #include "device/sockets/socket_paths.hpp"
+#include "guest_files.hpp"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -15,7 +16,9 @@
 
 int darwin_uml_open(const char *path, int flags, int mode)
 {
-	return open(path, flags, mode);
+	const int descriptor = open(path, flags, mode);
+	::uml::platform::record_guest_file(descriptor, flags);
+	return descriptor;
 }
 
 int darwin_uml_fcntl(int fd, int command, long argument)

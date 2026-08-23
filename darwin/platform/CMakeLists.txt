@@ -28,6 +28,17 @@ target_compile_options(uml_host_topology PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_host_topology PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
+add_library(uml_guest_files OBJECT guest_files.cpp)
+add_library(UML::GuestFiles ALIAS uml_guest_files)
+uml_declare_architecture_target(uml_guest_files platform)
+target_link_libraries(uml_guest_files PRIVATE UML::PlatformContract)
+target_include_directories(uml_guest_files PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(uml_guest_files PUBLIC cxx_std_20)
+target_compile_options(uml_guest_files PRIVATE -Wall -Wextra -Werror)
+set_target_properties(uml_guest_files PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 add_library(uml_platform_component INTERFACE)
 add_library(UML::PlatformComponent ALIAS uml_platform_component)
 uml_declare_architecture_target(uml_platform_component platform)
@@ -35,4 +46,5 @@ target_link_libraries(uml_platform_component INTERFACE
     UML::PlatformContract)
 target_sources(uml_platform_component INTERFACE
     $<TARGET_OBJECTS:uml_run_routing>
-    $<TARGET_OBJECTS:uml_host_topology>)
+    $<TARGET_OBJECTS:uml_host_topology>
+    $<TARGET_OBJECTS:uml_guest_files>)

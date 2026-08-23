@@ -4,6 +4,7 @@
 #include "options.hpp"
 #include "profile_reporter.hpp"
 #include "context.hpp"
+#include "guest_sync.hpp"
 #include "native_kernel_layout.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -511,4 +512,12 @@ extern "C" void uml_emulator_request_stop(uml_emulator *emulator)
 {
 	if (emulator != nullptr)
 		emulator->implementation.request_stop();
+}
+
+extern "C" int uml_emulator_sync(uml_emulator *emulator)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	const auto result = ::uml::runtime::sync_guest_files();
+	return static_cast<int>(result.failed);
 }

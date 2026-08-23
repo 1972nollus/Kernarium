@@ -89,12 +89,21 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * process-global Linux state. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
-/* This is the sole operation intended to overlap uml_emulator_run on the same
- * handle. A request made while idle is not inherited by a later run. A request
+/* This and uml_emulator_sync are the operations intended to overlap
+ * uml_emulator_run on the same handle. A stop request made while idle is not
+ * inherited by a later run. A request
  * made while a 4 KiB native or embedded run is queued at process admission
  * cancels that run with -UML_EMULATOR_RUNTIME_ERROR and is not inherited by a
  * retry. */
 void uml_emulator_request_stop(struct uml_emulator *emulator);
+/* Flushes every host file the running guest can still write to, so that the
+ * writes it has already issued survive the process. Like a stop request, this
+ * is intended to overlap uml_emulator_run on the same handle; on an idle
+ * handle it flushes whatever the previous run left open. It reports the number
+ * of descriptors that could not be flushed, 0 when all of them were, and the
+ * negated error constant for API failures. The guest's own page cache is
+ * outside this boundary: only the guest kernel can write that back. */
+int uml_emulator_sync(struct uml_emulator *emulator);
 
 #ifdef __cplusplus
 }
