@@ -26,30 +26,55 @@ final class GuestPersistence {
 
     private init() {}
 
+    /// What the guest is asked to do at a lifecycle edge.
+    private enum Departure {
+        /// Write back, but keep running. Losing focus is not losing the
+        /// process, and freezing the guest for it would stall a user who is
+        /// about to come straight back.
+        case flush
+        /// Write back and freeze. Backgrounding is the point after which iOS
+        /// may never schedule this process again, and a guest left running
+        /// would dirty what was just written back.
+        case quiesce
+    }
+
     func startObserving() {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
-        let edges: [(Notification.Name, String, Bool)] = [
-            (UIApplication.willResignActiveNotification, "inactive", false),
-            (UIApplication.didEnterBackgroundNotification, "background", true),
-            (UIApplication.willTerminateNotification, "terminating", true),
+        let edges: [(Notification.Name, String, Departure, Bool)] = [
+            (UIApplication.willResignActiveNotification,
+             "inactive", .flush, false),
+            (UIApplication.didEnterBackgroundNotification,
+             "background", .quiesce, true),
+            (UIApplication.willTerminateNotification,
+             "terminating", .quiesce, true),
         ]
-        for (name, reason, waits) in edges {
+        for (name, reason, departure, waits) in edges {
             observers.append(
                 center.addObserver(
-                    forName: name,
-                    object: nil,
-                    queue: .main
+                    forName: name, object: nil, queue: .main
                 ) { _ in
                     MainActor.assumeIsolated {
                         GuestPersistence.shared.flush(
                             reason: reason,
+                            departure: departure,
                             waitingForCompletion: waits
                         )
                     }
                 }
             )
         }
+        observers.append(
+            center.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    kernarium_runtime_loader_resume()
+                }
+            }
+        )
     }
 
     func stopObserving() {
@@ -63,7 +88,11 @@ final class GuestPersistence {
     ///   the flush finishes. Backgrounding and termination do, because the
     ///   process may not be scheduled again; merely losing focus does not,
     ///   since the app keeps running and the flush would only stall the UI.
-    func flush(reason: String, waitingForCompletion: Bool) {
+    private func flush(
+        reason: String,
+        departure: Departure,
+        waitingForCompletion: Bool
+    ) {
         let application = UIApplication.shared
         var assertion = UIBackgroundTaskIdentifier.invalid
         assertion = application.beginBackgroundTask(withName: "guest-sync") {
@@ -72,7 +101,10 @@ final class GuestPersistence {
         }
         let finished = DispatchSemaphore(value: 0)
         queue.async {
-            let unflushed = kernarium_runtime_loader_sync()
+            let unflushed = switch departure {
+            case .flush: kernarium_runtime_loader_sync()
+            case .quiesce: kernarium_runtime_loader_quiesce()
+            }
             finished.signal()
             Task { @MainActor in
                 GuestPersistence.report(reason: reason, unflushed: unflushed)
@@ -94,7 +126,7 @@ final class GuestPersistence {
                 "file(s) unflushed"
             )
         } else if unflushed == 0 {
-            print("Kernarium: guest storage synced on \(reason)")
+            print("Kernarium: guest storage settled on \(reason)")
         }
     }
 }

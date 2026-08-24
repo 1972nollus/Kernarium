@@ -39,21 +39,63 @@ background flushes. After terminating and relaunching, the same bundle reopens
 the same `/data` filesystem (`897f3398-…`, journal recovery, no COW
 re-creation), which is the persistence contract.
 
-That relaunch did not finish booting, and the stall reproduced on a second
-attempt: Android stops printing around 45 s, keeps every vCPU executing, and
-writes nothing further. Both stalled runs followed a SIGKILL of a live guest,
-which discards its dirty page cache; ext4 recovered its journal but the
-application state above it did not. A fresh instance disk booted to the
-launcher every time, including once from the saved picker selection with no
-environment override, so this is a property of a torn disk rather than of the
-bundle format. The identical virtio-gpu `CTX_CREATE` failure appears in the
-successful boots too and is not the cause.
+That relaunch did not finish booting, and the stall reproduced. Both stalled
+runs followed a SIGKILL of a live guest, which discards its dirty page cache. A
+fresh instance disk booted to the launcher every time, so this was a property
+of a torn disk rather than of the bundle format.
 
-The host flush cannot prevent this by construction: only the guest kernel can
-write back its own page cache, and nothing currently asks it to. Ordinary iOS
-suspension freezes the guest rather than killing it, so the exposure is
-force-quit and jetsam. Closing it would need a host-to-guest sync request,
-which is a kernel and bridge ABI change.
+The conclusion drawn here at the time - that closing it would need a kernel and
+bridge ABI change - was wrong, and the correction is recorded below under
+"Asking the guest before abandoning it".
+
+## Asking the guest before abandoning it (2026-08-24)
+
+The Android relaunch stall was diagnosed as a torn instance disk and left as an
+open limitation, on the reasoning that only the guest kernel can write back its
+own page cache and nothing could ask it to. The second half of that is untrue.
+UML ships a management console for exactly this, it is built into both shipped
+kernels, and its initcall runs on every boot. It had never once worked.
+
+Two independent faults hid it. The guest composes its console socket path from
+the run's umid and never removes it, and the port's default umid is a constant,
+so the first guest on a host bound `/tmp/uml-darwin-mconsole` and every later
+guest printed `Failed to initialize management console` and carried on. The
+emulator now names each run, which also lets guests run side by side. Second, a
+guest that has magic SysRq disabled makes `handle_sysrq` a silent no-op, and
+Android's init disables it; the Linux guest answered a sync request while
+Android ignored one without a word. Kernarium's guests now boot with
+`sysrq_always_enabled`, and a refused request is reported rather than assumed
+to have worked.
+
+With the channel open, `uml_emulator_sync()` asks the guest first and the
+guest answers: `sysrq: Emergency Sync` followed by `Emergency Sync complete`.
+
+That alone was not enough. A guest asked to write back keeps running and
+dirties the result, and the iOS Simulator often does not suspend a backgrounded
+application, so the sync went stale before the kill. `uml_emulator_quiesce()`
+therefore writes back, then freezes the guest through the same console, then
+flushes the host's files; `uml_emulator_resume()` thaws it. Kernarium flushes
+on losing focus, quiesces on backgrounding and termination, and resumes on
+returning to the foreground.
+
+Measured on the Simulator with a 4 GiB, ten-vCPU Android guest. Backgrounding
+takes the process from 204% CPU to 0.0% and stops the instance disk growing
+entirely, 170448 KiB unchanged over thirty seconds. Killing it there and
+relaunching reopens the same disk: `init_user0` exits 0, with no
+`Version mismatch`, no `init_user0_failed` and no reboot into recovery, which
+is what every previous relaunch produced. The public ABI is version 6.
+
+The failure signature is worth recording because it is specific and was
+previously invisible. A guest killed while writing leaves `vold` reporting
+`Version mismatch, expected 1 got 2`, which fails `init_user0`, which makes
+Android reboot into recovery, which fails again because this product has no
+`/misc` partition, ending in `InitFatalReboot`. Before the guest console
+existed, the same torn state instead produced a silent hang with every vCPU
+still executing, which is far harder to attribute.
+
+Where the guest cannot bind a console the host flush behaves exactly as it did
+before. A physical iOS application sandbox cannot write `/tmp`, so the guest
+half is Simulator and macOS only until the port's console path moves.
 
 ## Host-owned guest storage durability (2026-08-24)
 

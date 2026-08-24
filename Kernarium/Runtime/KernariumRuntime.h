@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 2U
+#define KERNARIUM_RUNTIME_API_VERSION 3U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -52,6 +52,11 @@ typedef void (*kernarium_runtime_request_stop_function)(void);
 /* Flushes the guest's writable host files. Safe to call from any thread while
  * a guest runs, and reports the number of files that could not be flushed. */
 typedef int (*kernarium_runtime_sync_function)(void);
+/* Leaves the guest safely abandonable: writes its filesystems back, freezes it
+ * so nothing can be dirtied again, then flushes the host's own files. Pair it
+ * with resume. */
+typedef int (*kernarium_runtime_quiesce_function)(void);
+typedef void (*kernarium_runtime_resume_function)(void);
 typedef void (*kernarium_runtime_send_touch_function)(
     uint32_t x,
     uint32_t y,
@@ -84,6 +89,8 @@ typedef struct kernarium_runtime_api {
     kernarium_runtime_run_function run;
     kernarium_runtime_request_stop_function request_stop;
     kernarium_runtime_sync_function sync;
+    kernarium_runtime_quiesce_function quiesce;
+    kernarium_runtime_resume_function resume;
     kernarium_runtime_send_touch_function send_touch;
     kernarium_runtime_send_key_function send_key;
     kernarium_runtime_set_console_output_callback_function
@@ -98,7 +105,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v2(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v3(void);
 
 #ifdef __cplusplus
 }

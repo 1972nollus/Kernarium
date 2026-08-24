@@ -173,6 +173,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->run == nullptr ||
         api->request_stop == nullptr ||
         api->sync == nullptr ||
+        api->quiesce == nullptr ||
+        api->resume == nullptr ||
         api->send_touch == nullptr ||
         api->send_key == nullptr ||
         api->set_console_output_callback == nullptr ||
@@ -228,12 +230,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v2");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v3");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(
             stderr,
-            "Kernarium: selected runtime lacks API v2: %s\n",
+            "Kernarium: selected runtime lacks API v3: %s\n",
             symbolError == nullptr ? "symbol unavailable" : symbolError);
         (void)dlclose(handle);
         return -1;
@@ -315,6 +317,19 @@ extern "C" int kernarium_runtime_loader_sync(void)
 {
     const kernarium_runtime_api* runtime = api();
     return runtime == nullptr ? -1 : runtime->sync();
+}
+
+extern "C" int kernarium_runtime_loader_quiesce(void)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr ? -1 : runtime->quiesce();
+}
+
+extern "C" void kernarium_runtime_loader_resume(void)
+{
+    const kernarium_runtime_api* runtime = api();
+    if (runtime != nullptr)
+        runtime->resume();
 }
 
 extern "C" void kernarium_runtime_loader_send_touch(

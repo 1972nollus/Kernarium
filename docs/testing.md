@@ -332,13 +332,27 @@ The base image is cloned rather than copied where the filesystem supports it,
 so a bundle costs the release's allocated size rather than its 16 GiB apparent
 size.
 
-The application flushes the guest's writable host files whenever it becomes
-inactive, enters the background, or is about to terminate, holding a background
-task assertion for the last two so the flush can finish. This is the host half
-of durability: writes the guest has already issued reach stable storage even if
-iOS reclaims the suspended process. Pages still dirty inside the guest are
-written back by the guest kernel on its own schedule, which nothing outside it
-can force.
+The application asks the guest to write its filesystems back and then flushes
+the host's own files at every lifecycle edge, holding a background task
+assertion where the process may not be scheduled again. Losing focus flushes
+only, because the application keeps running. Backgrounding and termination also
+freeze the guest, because those are the points after which iOS may reclaim the
+process, and a guest left running dirties what was just written back. Returning
+to the foreground thaws it.
+
+Both halves go through UML's management console, which the emulator names per
+run so that every guest gets one; the stock constant name gave a console to the
+first guest on a host and nothing to the rest. Kernarium's guests boot with
+`sysrq_always_enabled` because a guest with magic SysRq disabled, as Android's
+init leaves it, ignores a writeback request without reporting anything. A guest
+that cannot bind a console - a physical iOS application sandbox cannot write
+`/tmp` - is flushed host-side only, exactly as before.
+
+Force-quitting a running guest is what tears an instance disk. On Android that
+surfaces as `vold: Version mismatch`, a failed `init_user0`, and a reboot into
+a recovery partition this product does not have. Quiescing on backgrounding
+removes the exposure for a guest the user put away; a guest killed while in the
+foreground is still at risk.
 
 The serial console remains on that stdout relay and is also copied, in order,
 to the app's SwiftTerm surface. Typing in SwiftTerm writes to the same `ttyS0`

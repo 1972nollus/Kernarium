@@ -31,6 +31,9 @@ void kernarium_runtime_loader_request_stop(void);
 /* Flushes the guest's writable host files. Returns the number that could not
  * be flushed, or a negative value when no runtime is loaded. */
 int kernarium_runtime_loader_sync(void);
+/* Leaves the guest safely abandonable, and lets it run again. */
+int kernarium_runtime_loader_quiesce(void);
+void kernarium_runtime_loader_resume(void);
 void kernarium_runtime_loader_send_touch(
     uint32_t x,
     uint32_t y,

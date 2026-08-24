@@ -487,6 +487,19 @@ Executable-memory policy:
   state accumulates inside the bundle rather than in disposable storage. A
   bundle whose kernel exists in only one page profile fixes that profile in the
   settings picker and at launch.
+- UML's management console is the only channel that reaches a running guest
+  kernel, and the guest names its socket after the run's umid and never removes
+  it. The emulator therefore supplies a per-run `umid=` when the caller has not,
+  so every guest gets a console instead of only the first one on the host, and
+  owns the resulting path. `uml_emulator_sync()` asks the guest to write its
+  filesystems back and then flushes the host's files;
+  `uml_emulator_quiesce()` additionally freezes the guest between the two, and
+  `uml_emulator_resume()` thaws it. Kernarium flushes on losing focus, quiesces
+  on backgrounding and termination, and resumes on returning. A guest with magic
+  SysRq disabled ignores a writeback request silently, so Kernarium boots its
+  guests with `sysrq_always_enabled`; do not assume a request succeeded without
+  the guest's acknowledgement. Where the guest cannot bind a console the host
+  flush stands alone, which is the physical-iOS case.
 - The Kernarium launcher owns a named `uml-launcher` thread for the guest run.
   It must not be the main thread: the run holds its thread for the guest's
   whole life while the GPU service reaches the main queue as it starts, and

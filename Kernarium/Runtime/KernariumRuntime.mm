@@ -1041,6 +1041,12 @@ int runtimeRun(
             std::string {"--execution-engine="} + selectedExecutionEngine(),
             "mem=" + std::to_string(guestMemoryMiB) + "M",
             "ncpus=" + std::to_string(guestProcessorCount),
+            /* iOS can reclaim the application without running any more of its
+             * code, and only the guest can write back its own page cache. The
+             * host asks for that through UML's management console, which needs
+             * magic SysRq to act rather than silently ignore the request;
+             * Android's init turns SysRq off, so state it here. */
+            "sysrq_always_enabled",
         };
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         const ConsoleBootMode bootMode = ConsoleBootMode::android;
@@ -1230,6 +1236,27 @@ int runtimeSync(void)
     return uml_emulator_sync(activeEmulator);
 }
 
+/*
+ * Flushing alone is not enough once the application stops being scheduled at a
+ * predictable moment: the guest keeps running afterwards and dirties what was
+ * just written back. Freezing it as well means the disk it leaves behind is
+ * the disk that was flushed.
+ */
+int runtimeQuiesce(void)
+{
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeEmulator == nullptr)
+        return 0;
+    return uml_emulator_quiesce(activeEmulator);
+}
+
+void runtimeResume(void)
+{
+    std::lock_guard lock(activeEmulatorMutex);
+    if (activeEmulator != nullptr)
+        uml_emulator_resume(activeEmulator);
+}
+
 void runtimeSendTouch(
     uint32_t x,
     uint32_t y,
@@ -1313,6 +1340,8 @@ const kernarium_runtime_api runtimeApi {
     .run = runtimeRun,
     .request_stop = runtimeRequestStop,
     .sync = runtimeSync,
+    .quiesce = runtimeQuiesce,
+    .resume = runtimeResume,
     .send_touch = runtimeSendTouch,
     .send_key = runtimeSendKey,
     .set_console_output_callback = runtimeSetConsoleOutputCallback,
@@ -1321,7 +1350,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v2(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v3(void)
 {
     return &runtimeApi;
 }
