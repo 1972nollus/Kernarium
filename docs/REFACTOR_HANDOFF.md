@@ -1,8 +1,35 @@
 # Refactor handoff
 
-## Minimal Android 17 device overlay accepted (2026-08-25)
+## Android GPT and APEX payloads moved to ext4 (2026-08-25)
 
 The current accepted Android bundle is
+`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, published from clean
+outer revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`. The producer
+verified 4,608 target-files entries, 1,147 target executables, VINTF, and all
+69 nested APEX payloads as ext4. The eight routed AOSP series have
+projects-manifest SHA-256
+`c19af30b12aadb52c941c8555e16aa26d01330fa028c796fef946117e233ab50`.
+The ACK ELF remains byte-identical: 34 built-in-only topics, final tree
+`621a0ab42d8990aa0960bf5d341d89b8f1042723`, release
+`6.18.21-ga64f141f6266`, and ABI v8 / `0x3871ad612337ea76`.
+
+The preceding partition-only ext4 release mounted all five immutable GPT
+filesystems by wall second 1.10 on the physical iPad, but APEX bootstrap then
+mounted inherited EROFS loop images. An `erofs_worker` running
+`z_erofs_decompressqueue_work` reproduced the RCU stall at wall second 46.70,
+so that run is not boot or timing evidence. The replacement sets the product
+APEX default to ext4 and carries local generated route `p0008` for the sole
+explicit `com.android.virt` EROFS selection. The target-files verifier now
+checks every nested `apex_payload.img` magic and rejects EROFS, compressed
+APEXes, and non-ext4 payloads. No ACK source, configuration, or EROFS-driver
+change was made. The new 17,179,869,184-byte GPT compresses to 704,869,601
+bytes and passed independent workstation verification and installation.
+Apple-product rebuild and a fresh 4-vCPU, 2-GiB physical-iPad boot are the next
+qualification gates.
+
+## Prior minimal Android 17 device-overlay checkpoint (2026-08-25)
+
+The preceding Android bundle was
 `android17-ack6.18-16k-20260825-e3cc7bae-overlay2`, published from clean outer
 revision `e3cc7bae8636bc8d41f42f128138972dc211115b`. The AOSP producer
 verified 4,609 target-files entries and 1,147 target executables. It reuses the
@@ -60,7 +87,7 @@ down cleanly. Raw logs are retained under
 did not reproduce, but remains an open host/kernel stability observation.
 The installed-release verifier, all six focused Android policy/series tests,
 the macOS Android product, both Android iOS runtime slices and final
-XCFramework packaging pass for this accepted descriptor.
+XCFramework packaging passed for that descriptor.
 
 ## Matched Android macOS/Simulator boot timing (2026-08-24)
 

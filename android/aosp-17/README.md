@@ -434,17 +434,15 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current
-descriptor selects `android17-ack6.18-16k-20260825-0417d8fc-ext4`, published
-from clean outer revision `0417d8fc9b259472958446fcae514e6a2d16c478`.
+descriptor selects
+`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, published from clean
+outer revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`.
 The static kernel, target-files, VINTF, SELinux, both partition-backed
 ramdisks, ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW
 UBD, warm-boot theme, minimal application/feature set, external Jelly, Context
-Hub exclusion and read-only ext4 image policies passed producer verification.
-The first physical-iOS retry of this descriptor proved that its GPT partitions
-were ext4 but its inherited APEX payloads were still EROFS; it reproduced the
-same `erofs_worker` RCU stall and is not boot evidence. Route `p0008` plus the
-product-level ext4 APEX policy is the next release candidate. Physical-iOS boot
-qualification remains separate.
+Hub exclusion, read-only ext4 partition policy, and 69 ext4 APEX payloads
+passed producer verification. Physical-iOS boot qualification remains
+separate.
 This is artifact acceptance for Apple-product integration. The bounded normal
 boot, stock-recovery and bundled-application checks below do not claim broad
 third-party application or HAL qualification.
@@ -513,17 +511,19 @@ final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
 The current accepted release is
-`android17-ack6.18-16k-20260825-0417d8fc-ext4`. It uses the 34-topic ACK
+`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`. It uses the 34-topic ACK
 tree `621a0ab42d8990aa0960bf5d341d89b8f1042723`; topic 34 loads a bounded
 initrd range from the GPT host file. The built-in-only 16 KiB ELF reports
 `6.18.21-ga64f141f6266`. The schema-2 release contains a ten-partition
-17,179,869,184-byte GPT compressed to 747,106,924 bytes and no standalone
+17,179,869,184-byte GPT compressed to 704,869,601 bytes and no standalone
 ramdisk. Its normal and stock-recovery ramdisks are verified in place inside
-`init_boot` and `recovery`. All five immutable GPT payload filesystems are
-read-only ext4, but this release still inherited EROFS inside its APEX files.
-The ACK kernel is byte-identical to the preceding accepted overlay release.
-`metadata/accepted-release.env` owns the exact release, ACK, AOSP, Jelly and
-common-ABI identities.
+`init_boot` and `recovery`. All five immutable GPT payload filesystems and all
+69 packaged APEX payloads are ext4. Route `p0008` changes the sole explicit
+Virtualization APEX override; the product default covers the remaining APEXes,
+and the target-files verifier checks their nested filesystem magic. The ACK
+kernel is byte-identical to the preceding accepted overlay release, including
+its unchanged built-in EROFS driver. `metadata/accepted-release.env` owns the
+exact release, ACK, AOSP, Jelly and common-ABI identities.
 
 LineageOS Jelly is fetched at upstream commit
 `767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local

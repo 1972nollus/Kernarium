@@ -18,7 +18,7 @@ SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
 guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
 request advancement, then removed a circular warm-boot theme wait. The accepted
-release is `android17-ack6.18-16k-20260825-0417d8fc-ext4`.
+release is `android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -69,10 +69,10 @@ Jelly's upstream optional camera, microphone and location declarations remain
 unchanged; no hardware-omission patch is retained.
 
 The accepted release is
-`android17-ack6.18-16k-20260825-0417d8fc-ext4`, produced from clean outer
-revision `0417d8fc9b259472958446fcae514e6a2d16c478`. AOSP projects-manifest
+`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, produced from clean outer
+revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`. AOSP projects-manifest
 SHA-256 is
-`b1ca438878d272aa94f2358ea08b7512d7c8d8123ae07d6a4052551526d90ade`.
+`c19af30b12aadb52c941c8555e16aa26d01330fa028c796fef946117e233ab50`.
 ACK has 34 topics, final tree
 `621a0ab42d8990aa0960bf5d341d89b8f1042723`, patch-manifest SHA-256
 `8bc9771b8b7776adfae244f098ca9fabb4bbab8a914e0c5aa522eface71b8594`
@@ -103,10 +103,13 @@ completion at 587.70 and then panicked at 594.44 on a kernel-mode Darwin signal
 evidence, and remains the only open stability observation from this overlay
 acceptance.
 
-Producer and copied-release verification, the installed schema-2 verifier,
-all six focused Android policy/series tests, the macOS Android target, both
-Android iOS runtime slices and final XCFramework packaging pass for the
-accepted descriptor. No new iOS guest boot is claimed by this checkpoint.
+The earlier overlay descriptor passed producer, copied-release and installed
+verification, all focused Android policy/series tests, the macOS Android
+target, both Android iOS runtime slices and final XCFramework packaging. The
+current ext4-APEX descriptor has passed producer, copied-release, release
+contract and installed verification. Its Apple consumers and physical-iPad
+boot remain the next gates; no new successful iOS guest boot is claimed by
+this checkpoint.
 
 A subsequent physical-iPad cold boot used 4 vCPUs, 2 GiB, the gadgets engine,
 and a fresh custom-overlay bundle. It reached the normal Android first stage,
@@ -124,14 +127,18 @@ images mounted at wall seconds 2.44--2.74 and reproduced an `erofs_worker`
 stall at wall second 46.70. That run was stopped at 103.68 seconds and is also
 not timing evidence.
 
-The next candidate therefore sets `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4`
+The accepted replacement sets `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4`
 after the Cuttlefish product inheritance and carries generated AOSP route
 `p0008` for `platform/packages/modules/Virtualization`, changing the one
 module-level `com.android.virt` EROFS override to ext4. The target-files
 verifier checks every nested `apex_payload.img` magic and rejects EROFS,
 compressed APEXes, and any non-ext4 payload. No ACK source, kernel
-configuration, or EROFS driver change is part of this fix. Rebuild and a fresh
-physical-iPad retry remain the qualification gate.
+configuration, or EROFS driver change is part of this fix. Its incremental
+AOSP build completed in 8 minutes 14 seconds; producer verification inspected
+4,608 target-files entries, 1,147 target executables and all 69 nested APEX
+payloads as ext4. The 17,179,869,184-byte GPT compressed to 704,869,601 bytes
+and passed independent workstation verification. A fresh physical-iPad retry
+remains the runtime qualification gate.
 
 ## Historical implementation handoff (2026-08-24)
 

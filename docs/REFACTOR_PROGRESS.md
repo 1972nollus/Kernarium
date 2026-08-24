@@ -1,8 +1,26 @@
 # Refactor progress
 
-## 2026-08-25: minimal Android 17 overlay and partition-backed recovery
+## 2026-08-25: Android GPT and APEX payloads moved to ext4
 
-- Accepted release
+- Accepted
+  `android17-ack6.18-16k-20260825-8c5881ab-ext4-apex` from clean outer
+  revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`. The incremental AOSP
+  build completed in 8 minutes 14 seconds and verified 4,608 target-files
+  entries, 1,147 target executables, VINTF, and 69/69 ext4 APEX payloads.
+- The first partition-only ext4 iPad retry mounted the five immutable GPT
+  filesystems as ext4, then reproduced the RCU stall in an inherited EROFS APEX
+  loop image at wall second 46.70. Product policy now selects ext4 for ordinary
+  APEXes, generated AOSP route `p0008` changes the sole explicit
+  `com.android.virt` selection, and target-files verification rejects EROFS,
+  compressed APEXes, and other nested payload formats.
+- The ACK source and ELF are unchanged. The new 16 GiB GPT compresses to
+  704,869,601 bytes and passed producer, independent copied-release, release
+  contract, and installed-release verification. Apple rebuild and physical
+  iPad runtime qualification remain pending.
+
+## 2026-08-25: earlier minimal Android 17 overlay and recovery checkpoint
+
+- Earlier accepted release
   `android17-ack6.18-16k-20260825-e3cc7bae-overlay2` from clean outer revision
   `e3cc7bae8636bc8d41f42f128138972dc211115b`. The Linux producer verified
   4,609 target-files entries, 1,147 target executables and VINTF against the
