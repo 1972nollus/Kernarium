@@ -1,7 +1,7 @@
 From 8bd1477d81596c55290478d3c8598e6c38ea07b0 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 18:12:04 +0000
-Subject: [PATCH 21/22] UML-ANDROID-LOCAL: cuttlefish omit factory reset
+Subject: [PATCH 21/23] UML-ANDROID-LOCAL: cuttlefish omit factory reset
  protection storage
 
 The fixed UBD GPT exposes seven partitions - system, system_ext, product,

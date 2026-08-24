@@ -1,7 +1,7 @@
 From 419355d96091601eb26f76327a8352f01f8ccb21 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 16:40:01 +0000
-Subject: [PATCH 09/22] UML-ANDROID-LOCAL: cuttlefish: use fixed UBD partitions
+Subject: [PATCH 09/23] UML-ANDROID-LOCAL: cuttlefish: use fixed UBD partitions
 
 Change-Id: Ic71cc097cabab1a08ae97bc8c4ff9be68d525ba4
 ---

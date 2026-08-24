@@ -569,21 +569,23 @@ enum ThermalStateReport {
 /// of the run, which spans the entire guest lifetime.
 private struct PreparedBoot: Sendable {
     private let paths: [String?]
+    let androidBootMode: AndroidBootMode
 
     init(rootfs: URL, overlay: URL) {
-        paths = [rootfs.path, overlay.path, nil, nil, nil, nil, nil]
+        paths = [rootfs.path, overlay.path, nil, nil, nil, nil]
+        androidBootMode = .automatic
     }
 
-    init(bundle: GuestBundle) {
+    init(bundle: GuestBundle, androidBootMode: AndroidBootMode) {
         paths = [
             nil,
             nil,
             bundle.manifest.path,
             bundle.baseDisk.path,
             bundle.instance.path,
-            bundle.ramdisk.path,
             bundle.commandLine.path,
         ]
+        self.androidBootMode = androidBootMode
     }
 
     func withCPaths<Result>(
@@ -625,13 +627,13 @@ private func runGuest(
         request.dots_per_inch = dotsPerInch
         request.guest_memory_mib = guestMemoryMiB
         request.guest_processor_count = vCPUCount
+        request.android_boot_mode = boot.androidBootMode.rawValue
         request.rootfs_path = paths[0]
         request.overlay_path = paths[1]
         request.android_manifest_path = paths[2]
         request.android_base_disk_path = paths[3]
         request.android_instance_path = paths[4]
-        request.android_ramdisk_path = paths[5]
-        request.android_command_line_path = paths[6]
+        request.android_command_line_path = paths[5]
         return withUnsafePointer(to: &request) { pointer in
             kernarium_runtime_loader_run(view, pointer)
         }
@@ -766,7 +768,10 @@ private final class EmulatorLauncher {
             print("Kernarium: \(bundle.name) is not writable")
             return nil
         }
-        return PreparedBoot(bundle: bundle)
+        return PreparedBoot(
+            bundle: bundle,
+            androidBootMode: configuration.androidBootMode
+        )
     }
 
     fileprivate func finished(result: Int32) {

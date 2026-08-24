@@ -88,6 +88,7 @@ struct KernariumTests {
         #expect(configuration.rootfsFilename == "rootfs.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
+        #expect(configuration.androidBootMode == .automatic)
     }
 
     @Test
@@ -101,7 +102,8 @@ struct KernariumTests {
             overlaySizeGiB: 16,
             rootfsFilename: "phosh.erofs",
             kernelPageSize: .fourKiB,
-            retinaMode: true
+            retinaMode: true,
+            androidBootMode: .recovery
         ).save(defaults: defaults)
         #expect(
             EmulatorConfiguration.load(
@@ -113,7 +115,8 @@ struct KernariumTests {
                 overlaySizeGiB: 16,
                 rootfsFilename: "phosh.erofs",
                 kernelPageSize: .fourKiB,
-                retinaMode: true
+                retinaMode: true,
+                androidBootMode: .recovery
             )
         )
 
@@ -132,6 +135,7 @@ struct KernariumTests {
         #expect(normalized.rootfsFilename == "rootfs.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
+        #expect(normalized.androidBootMode == .recovery)
     }
 
     @Test
@@ -163,6 +167,10 @@ struct KernariumTests {
         defaults.set(2048, forKey: "emulator.guestMemoryMiB")
         defaults.set(16, forKey: "emulator.overlaySizeGiB")
         defaults.set(true, forKey: "emulator.retinaMode")
+        defaults.set(
+            AndroidBootMode.normal.rawValue,
+            forKey: "emulator.androidBootMode"
+        )
 
         let selected = EmulatorConfiguration.load(
             defaults: defaults,
@@ -171,13 +179,15 @@ struct KernariumTests {
                 EmulatorConfiguration.vCPUEnvironmentKey: "4",
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1536",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "8",
-                EmulatorConfiguration.retinaEnvironmentKey: "0"
+                EmulatorConfiguration.retinaEnvironmentKey: "0",
+                AndroidBootMode.environmentKey: "recovery"
             ]
         )
         #expect(selected.vCPUCount == 4)
         #expect(selected.guestMemoryMiB == 1536)
         #expect(selected.overlaySizeGiB == 8)
         #expect(selected.retinaMode == false)
+        #expect(selected.androidBootMode == .recovery)
 
         let invalid = EmulatorConfiguration.load(
             defaults: defaults,
@@ -186,13 +196,15 @@ struct KernariumTests {
                 EmulatorConfiguration.vCPUEnvironmentKey: "7",
                 EmulatorConfiguration.guestMemoryEnvironmentKey: "1500",
                 EmulatorConfiguration.overlaySizeEnvironmentKey: "0",
-                EmulatorConfiguration.retinaEnvironmentKey: "false"
+                EmulatorConfiguration.retinaEnvironmentKey: "false",
+                AndroidBootMode.environmentKey: "invalid"
             ]
         )
         #expect(invalid.vCPUCount == 2)
         #expect(invalid.guestMemoryMiB == 2048)
         #expect(invalid.overlaySizeGiB == 16)
         #expect(invalid.retinaMode == true)
+        #expect(invalid.androidBootMode == .normal)
     }
 
     @Test

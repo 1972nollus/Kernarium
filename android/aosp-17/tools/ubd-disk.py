@@ -404,6 +404,7 @@ def assemble(
     images_dir: Path,
     output: Path,
     blank_partition_names: list[str],
+    image_overrides: list[str],
 ) -> None:
     if images_dir.is_symlink() or not images_dir.is_dir():
         raise DiskError(f"images directory must be a non-symlink directory: {images_dir}")
@@ -412,6 +413,21 @@ def assemble(
     if len(blank_partition_names) != len(set(blank_partition_names)):
         raise DiskError("blank partition names must not be repeated")
     partitions_by_name = {partition.name: partition for partition in layout.partitions}
+    overrides: dict[str, Path] = {}
+    for value in image_overrides:
+        name, separator, path_text = value.partition("=")
+        if not separator or not name or not path_text:
+            raise DiskError("partition image override must be NAME=ABSOLUTE_PATH")
+        if name in overrides:
+            raise DiskError(f"partition image override is repeated: {name}")
+        if name not in partitions_by_name:
+            raise DiskError(f"partition image override is absent from the layout: {name}")
+        path = Path(path_text)
+        if not path.is_absolute():
+            raise DiskError(f"partition image override must be absolute: {name}")
+        if path.is_symlink():
+            raise DiskError(f"partition image override must not be a symlink: {name}")
+        overrides[name] = path
     blank_partitions: set[str] = set()
     for name in blank_partition_names:
         partition = partitions_by_name.get(name)
@@ -419,6 +435,8 @@ def assemble(
             raise DiskError(f"blank partition is absent from the layout: {name}")
         if not partition.writable:
             raise DiskError(f"immutable partition cannot be blank: {name}")
+        if name in overrides:
+            raise DiskError(f"blank partition also has an image override: {name}")
         blank_partitions.add(name)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp.{os.getpid()}")
@@ -454,7 +472,7 @@ def assemble(
             disk.write(backup_header)
             for partition in layout.partitions:
                 disk.seek(partition.start_bytes)
-                image = images_dir / partition.image
+                image = overrides.get(partition.name, images_dir / partition.image)
                 if partition.name in blank_partitions:
                     if image.exists() or image.is_symlink():
                         raise DiskError(
@@ -578,6 +596,7 @@ def main() -> None:
     assemble_parser.add_argument("--images-dir", type=Path, required=True)
     assemble_parser.add_argument("--output", type=Path, required=True)
     assemble_parser.add_argument("--blank-partition", action="append", default=[])
+    assemble_parser.add_argument("--image", action="append", default=[])
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--layout", type=Path, required=True)
     verify_parser.add_argument("--disk", type=Path, required=True)
@@ -590,6 +609,7 @@ def main() -> None:
                 args.images_dir.resolve(),
                 args.output.resolve(),
                 args.blank_partition,
+                args.image,
             )
             verify(layout, args.output.resolve())
         elif args.command == "verify":

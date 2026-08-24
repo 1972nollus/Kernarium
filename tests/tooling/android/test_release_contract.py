@@ -60,6 +60,7 @@ def main() -> None:
         DIRECTORY_PREFIX,
         PAYLOAD_SPECS,
         PRODUCT_FAMILY,
+        SCHEMA_VERSION,
         ACCEPTANCE_KEYS,
         parse_env,
         sha256_path,
@@ -73,6 +74,7 @@ def main() -> None:
         fail("release schema does not pin the Android product family")
 
     aosp = parse_env(android_root / "metadata/aosp.env")
+    jelly = parse_env(android_root / "third_party/jelly/metadata.env")
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
     abi = parse_env(root / "kernel/common/abi/identity.env")
@@ -80,7 +82,7 @@ def main() -> None:
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
         fail("tracked acceptance descriptor keys differ from the release contract")
     tracked_expected = {
-        "ANDROID17_ACCEPTED_SCHEMA": "1",
+        "ANDROID17_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
         "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
@@ -98,7 +100,7 @@ def main() -> None:
     directory_name = DIRECTORY_PREFIX + release_id
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "release_id": release_id,
         "directory_name": directory_name,
         "product_family": PRODUCT_FAMILY,
@@ -124,6 +126,20 @@ def main() -> None:
                 android_root / "patches/projects.tsv"
             ),
             "routes": read_routes(android_root / "patches/projects.tsv"),
+        },
+        "jelly": {
+            "repository": jelly["JELLY_UPSTREAM_REPOSITORY"],
+            "branch": jelly["JELLY_UPSTREAM_BRANCH"],
+            "base_commit": jelly["JELLY_UPSTREAM_COMMIT"],
+            "base_tree": jelly["JELLY_UPSTREAM_TREE"],
+            "final_commit": jelly["JELLY_FINAL_COMMIT"],
+            "final_tree": jelly["JELLY_FINAL_TREE"],
+            "patch_count": int(jelly["JELLY_PATCH_COUNT"]),
+            "patch_manifest_sha256": sha256_path(
+                android_root / "third_party/jelly/series/manifest.tsv"
+            ),
+            "destination": jelly["JELLY_DESTINATION"],
+            "license": jelly["JELLY_LICENSE"],
         },
         "kernel": {
             "family": kernel["UML_KERNEL_FAMILY"],
@@ -180,7 +196,7 @@ def main() -> None:
         acceptance = temporary_root / "accepted-release.env"
         acceptance.write_text(
             "\n".join((
-                "ANDROID17_ACCEPTED_SCHEMA=1",
+                f"ANDROID17_ACCEPTED_SCHEMA={SCHEMA_VERSION}",
                 f"ANDROID17_ACCEPTED_RELEASE_ID='{release_id}'",
                 f"ANDROID17_ACCEPTED_DIRECTORY_NAME='{directory_name}'",
                 f"ANDROID17_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
@@ -188,6 +204,9 @@ def main() -> None:
                 f"ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT='{manifest['aosp']['manifest_commit']}'",
                 f"ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256='{manifest['aosp']['base_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256='{manifest['aosp']['projects_manifest_sha256']}'",
+                f"ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT='{manifest['jelly']['base_commit']}'",
+                f"ANDROID17_ACCEPTED_JELLY_FINAL_TREE='{manifest['jelly']['final_tree']}'",
+                f"ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256='{manifest['jelly']['patch_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
                 f"ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
@@ -265,6 +284,13 @@ def main() -> None:
         expect_failure(
             lambda: verify_release(release_root, android_root, semantic=False),
             "a 4 KiB Android kernel",
+        )
+        manifest = copy.deepcopy(original)
+        manifest["jelly"]["patch_manifest_sha256"] = "e" * 64
+        manifest_path.write_text(json.dumps(manifest))
+        expect_failure(
+            lambda: verify_release(release_root, android_root, semantic=False),
+            "a Jelly patch series different from tracked provenance",
         )
         manifest = copy.deepcopy(original)
         manifest["product_family"] = "wrong-family"

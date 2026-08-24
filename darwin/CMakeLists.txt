@@ -9,6 +9,7 @@ add_subdirectory(memory)
 add_subdirectory(cpu)
 add_subdirectory(device/sockets)
 add_subdirectory(device/mconsole)
+add_subdirectory(device/block)
 add_subdirectory(device/network)
 add_subdirectory(device/input/vnc)
 

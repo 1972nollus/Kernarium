@@ -74,8 +74,6 @@ function(uml_import_android17_release)
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
         UML_ANDROID_RELEASE_MANIFEST "${_uml_manifest}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ANDROID_RAMDISK "${RELEASE_RELEASE_ROOT}/boot/ramdisk.img")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
         UML_ANDROID_KERNEL_COMMAND_LINE
         "${RELEASE_RELEASE_ROOT}/boot/kernel-command-line.txt")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
@@ -89,11 +87,11 @@ function(uml_import_android17_release)
         "${RELEASE_ANDROID_ROOT}/tools/release_common.py"
         "${RELEASE_ANDROID_ROOT}/build/verify-kernel-elf.py"
         "${RELEASE_ANDROID_ROOT}/tools/verify-initramfs.py"
+        "${RELEASE_ANDROID_ROOT}/tools/boot-image.py"
         "${RELEASE_ANDROID_ROOT}/tools/ubd-disk.py"
         "${RELEASE_RELEASE_ROOT}/kernel/vmlinux"
         "${RELEASE_RELEASE_ROOT}/kernel/config"
         "${RELEASE_RELEASE_ROOT}/kernel/modules.builtin"
-        "${RELEASE_RELEASE_ROOT}/boot/ramdisk.img"
         "${RELEASE_RELEASE_ROOT}/boot/kernel-command-line.txt"
         "${RELEASE_RELEASE_ROOT}/guest/android-17-uml-arm64.img")
     foreach(_uml_input IN LISTS _uml_watch_inputs)

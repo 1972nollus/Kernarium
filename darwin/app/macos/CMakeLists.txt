@@ -95,11 +95,8 @@ if(UML_BUILD_ANDROID17_CLI)
         "${UML_ANDROID17_RELEASE_TARGET}" UML_ARTIFACT_RELEASE_ID)
     get_target_property(_uml_android_manifest
         "${UML_ANDROID17_RELEASE_TARGET}" UML_ANDROID_RELEASE_MANIFEST)
-    get_target_property(_uml_android_ramdisk
-        "${UML_ANDROID17_RELEASE_TARGET}" UML_ANDROID_RAMDISK)
     get_target_property(_uml_android_base_disk
         "${UML_ANDROID17_RELEASE_TARGET}" UML_ANDROID_BASE_DISK)
-    file(SIZE "${_uml_android_ramdisk}" _uml_android_ramdisk_size)
     file(SIZE "${_uml_android_base_disk}" _uml_android_base_disk_size)
 
     uml_add_macos_embedded_kernel_app(
@@ -109,12 +106,11 @@ if(UML_BUILD_ANDROID17_CLI)
         UML_ANDROID17_ACCEPTED_DIRECTORY_NAME="${_uml_android_directory_name}"
         UML_ANDROID17_ACCEPTED_RELEASE_ID="${_uml_android_release_id}"
         UML_ANDROID17_ACCEPTED_PRODUCT_FAMILY="${_uml_android_family}"
-        UML_ANDROID17_BASE_DISK_SIZE=${_uml_android_base_disk_size}
-        UML_ANDROID17_RAMDISK_SIZE=${_uml_android_ramdisk_size})
+        UML_ANDROID17_BASE_DISK_SIZE=${_uml_android_base_disk_size})
+    target_link_libraries(uml-darwin-android17 PRIVATE UML::AndroidBoot)
     target_link_options(uml-darwin-android17 PRIVATE
         "LINKER:-sectcreate,__DATA,__uml_android,${_uml_android_manifest}")
     set_property(TARGET uml-darwin-android17 APPEND PROPERTY LINK_DEPENDS
         "${_uml_android_manifest}"
-        "${_uml_android_ramdisk}"
         "${_uml_android_base_disk}")
 endif()

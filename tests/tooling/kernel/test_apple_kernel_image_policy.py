@@ -332,7 +332,7 @@ def main() -> int:
     loader_source = read(arguments.runtime_loader)
     loader_header = read(arguments.runtime_loader_header)
     require(
-        "kernarium_runtime_get_api_v3" in runtime_source
+        "kernarium_runtime_get_api_v4" in runtime_source
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
@@ -355,7 +355,7 @@ def main() -> int:
         "__attribute__((constructor))",
         "pthread_sigmask(SIG_BLOCK",
         "dlopen(executable.fileSystemRepresentation, RTLD_NOW | RTLD_GLOBAL)",
-        'dlsym(handle, "kernarium_runtime_get_api_v3")',
+        'dlsym(handle, "kernarium_runtime_get_api_v4")',
         "selectedPageSize == guestPageSize",
         "forwardConsoleOutput",
         "kernarium_runtime_loader_send_console_input",
@@ -528,9 +528,12 @@ def main() -> int:
         'android_default_guest_cpus{"ncpus=10"}',
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
+        'boot_mode_option{"--android-boot-mode="}',
         "section$start$__DATA$__uml_android",
         '"ubd0=" + instance.string()',
-        '"initrd=" + (release / "boot/ramdisk.img").string()',
+        '"initrd=" + base_disk.string()',
+        '"initrd_offset=" + std::to_string(boot.ramdisk.offset)',
+        '"initrd_size=" + std::to_string(boot.ramdisk.size)',
         '"root=/dev/ram0"',
         "release-owned kernel argument cannot be overridden",
         "Android instance belongs to another accepted release",

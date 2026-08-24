@@ -22,7 +22,6 @@ sys.dont_write_bytecode = True
 
 BUNDLE_SUFFIX = ".kern"
 MANIFEST = "release-manifest.json"
-RAMDISK = "boot/ramdisk.img"
 COMMAND_LINE = "boot/kernel-command-line.txt"
 GUEST_DIRECTORY = "guest"
 INSTANCE = "userdata.cow"
@@ -101,7 +100,6 @@ def main() -> int:
     )
     output.mkdir(parents=True)
     copy(release / MANIFEST, output / MANIFEST)
-    copy(release / RAMDISK, output / RAMDISK)
     copy(release / COMMAND_LINE, output / COMMAND_LINE)
     copy(disk, output / GUEST_DIRECTORY / disk.name)
     print(

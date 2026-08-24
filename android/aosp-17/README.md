@@ -52,12 +52,13 @@ the generated series, and runs the common manifest and topology verifiers
 before exposing the result. New ACK topics require the
 `UML-DARWIN-LOCAL:` subject prefix. Never edit generated kernel patch bytes.
 
-Apply the generated per-project AOSP series and build the initial 16 KiB,
-ARM64-only product composition:
+Apply the generated per-project AOSP series, exactly synchronize the checked
+device overlay to `device/kernarium/darwin`, and build the 16 KiB ARM64-only
+product:
 
-The builder host must provide `zip` and `rsync` for AOSP packaging. Install
-both before invoking the producer; the tracked producer scripts do not invoke
-transport tools themselves.
+The builder host must provide `zip` for AOSP packaging. Source preparation is
+the sole transport-enabled producer step; patch application, compilation,
+packaging, publication, and verification remain offline.
 
 ```sh
 android/aosp-17/build/apply-aosp-patches.sh \
@@ -80,10 +81,13 @@ the analysis mode already associated with the preserved output tree.
 
 [`metadata/base-manifest.xml`](metadata/base-manifest.xml) locks every resolved
 Repo project. [`patches/projects.tsv`](patches/projects.tsv) routes each changed
-project from its exact base commit and tree to its expected final tree. Files
-destined for the AOSP checkout, including the UML product definition, are
-introduced only by generated `git format-patch` series under `patches/projects`;
-`support/` is never copied over an AOSP project.
+upstream project from its exact base commit and tree to its expected final
+tree. Generated `git format-patch` series under `patches/projects` remain the
+authority for upstream-project changes. The standalone product is instead
+owned by [`overlay/`](overlay/) and
+[`tools/sync-device-overlay.py`](tools/sync-device-overlay.py), which replaces
+and byte-verifies exactly one destination, `device/kernarium/darwin`. It does
+not copy `support/`, the Jelly source, or modify any other AOSP path.
 
 After amending a clean, linear per-project topic branch, regenerate its patch
 bytes and all routed final-tree/count/manifest identities together:
@@ -110,7 +114,9 @@ directory unless the verifier receives explicit paths.
 
 `prepare-sources.sh` is the only producer command in this lane that may access
 the public source network. It moves clean builder-local workspaces to the pinned
-AOSP manifest and ACK commit. All later commands operate offline.
+AOSP manifest and ACK commit, fetches Jelly's exact external commit into
+`packages/apps/Jelly`, and replays the checked generated Jelly series. All later
+commands operate offline.
 
 No tracked command connects to or transfers files to another machine. Copy a
 reviewed outer-project snapshot to the builder before invoking these scripts,
@@ -126,18 +132,80 @@ configuration before compilation. A UML-specific vendor init file never starts
 the Cuttlefish DLKM loader or invokes `modprobe`. It also disables Cuttlefish's
 Trusty security VM before inheritance and retains only the explicitly nonsecure
 software KeyMint and gatekeeper APEXes; the build rejects remote or
-guest-Trusty alternatives. AOSP image assembly, release publication,
-and Apple consumers remain separate from the host build. The current product is
-still an initial page-size and ABI composition based on Cuttlefish; standalone
-UML storage, boot, VINTF, SELinux, and HAL adaptation remain later milestones.
+guest-Trusty alternatives. AOSP image assembly, release publication, and Apple
+consumers remain separate from the host build.
+
+## Dedicated emulator device overlay
+
+`overlay/aosp_kernarium_darwin.mk` defines a fresh-only product named
+`aosp_kernarium_darwin`. There is no legacy product alias, payload migration,
+or compatibility copy: the final Cuttlefish topic retires the preceding UML
+product registration and device tree, and the exact overlay is the only
+supported device tree for new images. It retains the Cuttlefish ARM64
+page-agnostic board foundation for Android framework compatibility, then
+removes machine services and applications that have no useful emulator
+implementation.
+
+The user-facing baseline keeps Settings, Launcher, Files/DocumentsUI,
+PackageInstaller, the system WebView, LatinIME, and ThemePicker. It deliberately
+removes the obsolete Calendar, Messages, Contacts, Dialer, Camera, Gallery,
+DeskClock, Music, photo-table, telephony, satellite, and hardware-demo packages.
+Framework services and providers that ordinary third-party applications depend
+on remain present even when no corresponding launcher application is shipped.
+
+Jelly comes from LineageOS
+[`android_packages_apps_Jelly`](https://github.com/LineageOS/android_packages_apps_Jelly)
+at commit `767833067da7bbbb639782bbddec33f602215c3d`. The full upstream source is
+not stored in this repository or copied through the device overlay.
+[`third_party/jelly/metadata.env`](third_party/jelly/metadata.env) pins the
+repository, branch, commit, base tree, final topic identity, destination, and
+license. [`third_party/jelly/series/manifest.tsv`](third_party/jelly/series/manifest.tsv)
+binds the two generated `git format-patch` files by order, stable patch ID,
+SHA-256, and subject. Source preparation fetches only the pinned commit and
+replays that series deterministically before any offline AOSP build begins.
+
+The local topic binds Jelly to SDK 37 and disables WebView geolocation by
+default. Jelly's upstream optional camera, microphone, and location declarations
+remain intact for browser compatibility; they do not cause this product to
+advertise absent system hardware. The framework overlay selects
+`org.lineageos.jelly` as the default browser. After amending the clean
+`kernarium-android17` Jelly topic, regenerate its tracked identities and patch
+bytes on the Linux builder:
+
+```sh
+android/aosp-17/tools/regenerate-jelly-patches.py \
+  --android-root /absolute/path/to/copied/repository/android/aosp-17 \
+  --topic-checkout /absolute/path/to/clean-jelly-topic
+```
+
+Never edit the generated Jelly patch bytes by hand.
+
+The product disables Bluetooth, Wi-Fi, telephony, GNSS, NFC, UWB, Thread,
+camera, biometric, sensor, light, vibrator, secure-element, and remote-Trusty
+payloads, and removes their PackageManager feature declarations. Unsupported
+microphone and USB hardware, plus verified boot while AVB is disabled, are not
+advertised either. This keeps feature queries truthful while preserving the
+standard Android APIs and the real Virtio-net Ethernet path. Bluetooth and
+Wi-Fi framework API components remain where the platform classpath requires
+them; no corresponding HAL, Cuttlefish service APEX, permission feature, or
+radio is advertised.
+
+The SettingsProvider resource overlay disables the lock screen, sets the screen
+timeout to the largest signed 32-bit value, keeps the display awake while
+powered, and always shows the soft keyboard even when Android sees a host
+keyboard. These are first-boot defaults for a new image, not a migration of an
+existing data partition. The recovery partition uses AOSP's default recovery.
+OrangeFox is intentionally not part of this implementation.
 
 ## Static UBD disk contract
 
-`support/image/partition-layout.json` owns the first fixed GPT layout. It has
-separate `system`, `system_ext`, `product`, `vendor`, `odm`, `metadata`, and
-`userdata` partitions; it deliberately has no `super` or DLKM partition. The
-kernel ELF and Android ramdisks remain separate release artifacts and are not
-placed in this disk.
+`support/image/partition-layout.json` owns the fixed 16 GiB GPT layout. It has
+separate `system`, `system_ext`, `product`, `vendor`, `odm`, `metadata`,
+`userdata`, `init_boot`, `misc`, and `recovery` partitions; it deliberately has
+no `super` or DLKM partition. `init_boot` and `recovery` are kernelless Android
+boot-image-v4 containers. The independently built and signed ACK ELF remains
+outside the disk, while both ramdisks are partition payloads in the one final
+guest image.
 
 The routed UML product selects static storage before inheriting the shared
 Cuttlefish products. This prevents their dynamic-partition and Virtual A/B
@@ -151,14 +219,17 @@ its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
 that inert format default is not an enablement signal when
 `PRODUCT_VIRTUAL_AB_OTA=false`.
 
-Route `p0002` carries one narrow `platform/build` correction for this explicit
-OTA-disabled composition: when `TARGET_SKIP_OTA_PACKAGE=true`, target-files no
-longer depends on or copies the legacy non-A/B `updater` binary. This keeps the
-useful target-files verification input without manufacturing an OTA path for a
-product that cannot consume one.
+Route `p0002` carries two narrow `platform/build` corrections. When
+`TARGET_SKIP_OTA_PACKAGE=true`, target-files no longer depends on or copies the
+legacy non-A/B `updater` binary. It also makes inherited package and copy-file
+exclusions explicit product variables, allowing this leaf product to remove
+unwanted Cuttlefish payloads after inheritance without changing other Android
+products.
 
-Route `p0001` also omits the inherited BootControl APEX and recovery service for
-this non-A/B product. Its fixed userdata fstab has no checkpoint flag, so vold
+Route `p0001` also omits the inherited A/B BootControl APEX and BootControl
+recovery service for this non-A/B product. This is separate from the stock AOSP
+recovery user interface built into the `recovery` partition. Its fixed userdata
+fstab has no checkpoint flag, so vold
 does not wait for a slot-based BootControl service that the static GPT cannot
 provide. The builder and target-files verifier reject either package, the APEX
 payload, or a checkpoint-bearing fstab if those contracts regress.
@@ -174,12 +245,12 @@ Route `p0001` also replaces the inherited dynamic/virtio fstab with
 `fstab.uml`. Android first-stage init discovers the fixed GPT partitions below
 the `uml-blkdev.0` platform device and mounts the immutable filesystems
 directly from `/dev/block/by-name`; there are no logical, slot-select, AVB, or
-DLKM mount flags. The UML init and ueventd inputs keep the first-stage mount,
+DLKM mount flags. The overlay-owned UML init and ueventd inputs keep the first-stage mount,
 late writable-state mount, serial console, and bugreport paths while removing
 Cuttlefish-only multiport HVC, vsock, Wi-Fi, custom-partition,
 persistent-memory, and suspend actions. The UML product labels its sole
 single-port `/dev/hvc0` as a serial device and grants the shell access through
-its patch-owned ueventd policy. Soong disables the inherited stock fstabs and
+its device-overlay ueventd policy. Soong disables the inherited stock fstabs and
 serial-logging file even though the base product still contributes their
 package names.
 `verify-target-files.py` checks the installed result rather than trusting that
@@ -190,15 +261,20 @@ immediately verify a raw UBD disk locally on the builder with:
 
 ```sh
 android/aosp-17/build/assemble-image.sh \
-  --target-files /absolute/path/to/aosp_uml_arm64_pgagnostic-target_files.zip \
+  --target-files /absolute/path/to/aosp_kernarium_darwin-target_files.zip \
   --kernel-elf /absolute/path/to/vmlinux \
+  --ramdisk /absolute/path/to/work/normal-ramdisk.img \
+  --mkbootimg /absolute/path/to/aosp/out/host/linux-x86/bin/mkbootimg \
   --output /absolute/path/to/release/android17-ubd.img
 ```
 
 The wrapper revalidates target-files against the selected kernel, consumes its
-adjacent `IMAGES` staging directory, and explicitly leaves `metadata` as the
-zero-filled writable template that Cuttlefish normally creates at assembly
-time. Every other partition requires its declared image. The disk assembler
+adjacent `IMAGES` staging directory, wraps the verified normal ramdisk in a
+kernelless boot-image-v4 `init_boot`, embeds AOSP's kernelless v4
+`recovery.img`, and explicitly leaves `metadata` and `misc` as zero-filled
+writable templates. Every other partition requires its declared image. The
+blank `misc` partition makes automatic boot select normal mode until Android or
+the host writes a standard `boot-recovery` BCB command. The disk assembler
 accepts ordinary raw images and Android sparse images, expands payloads into a
 sparse host file, rejects overflow and unsafe image paths, refuses to replace
 an existing output, and writes matching primary and backup GPT metadata.
@@ -206,18 +282,19 @@ Recheck an existing image with the `verify` subcommand. The fixed partition
 capacities are intentionally larger than the initial inherited Cuttlefish
 dynamic groups; every concrete image must fit before publication.
 
-## Standalone UML initramfs
+## Partition-backed boot ramdisks
 
-The emulator consumes neither Android `boot.img` nor `vendor_boot.img`.
-Compose the generic init-boot tree with only the patch-owned UML first-stage
-fstab and emit an uncompressed newc archive:
+The emulator does not use `boot.img` or `vendor_boot.img`, and the release no
+longer carries a standalone initramfs. Compose the generic init-boot tree with
+only the overlay-owned UML first-stage fstab as an intermediate raw newc
+archive:
 
 ```sh
 android/aosp-17/build/assemble-ramdisk.sh \
-  --target-files /absolute/path/to/aosp_uml_arm64_pgagnostic-target_files.zip \
+  --target-files /absolute/path/to/aosp_kernarium_darwin-target_files.zip \
   --kernel-elf /absolute/path/to/vmlinux \
-  --mkbootfs /absolute/path/to/aosp/host/linux-x86/bin/mkbootfs \
-  --output /absolute/path/to/release/ramdisk.img
+  --mkbootfs /absolute/path/to/aosp/out/host/linux-x86/bin/mkbootfs \
+  --output /absolute/path/to/work/normal-ramdisk.img
 ```
 
 The assembler removes generic `modprobe` and snapshot-userdata helpers before
@@ -230,10 +307,17 @@ tree and node list is accepted only when both directory records have identical
 mode and zero size.
 
 Current-candidate assembly requires exact byte equality with the current
-patch-owned UML fstab. Accepted-runtime import uses the verifier's structural
-mode instead: it still requires the regular first-stage fstab and every archive
-safety/module exclusion, but preserves the fstab version reviewed in that
-release rather than comparing it with a later producer revision.
+overlay-owned UML fstab. `assemble-image.sh` verifies the intermediate against
+the bytes embedded in `init_boot`; only the final GPT enters the release.
+Accepted-runtime import reads that bounded partition range and uses the
+initramfs verifier's structural mode: it still requires the regular first-stage
+fstab and every archive safety/module exclusion while preserving the reviewed
+fstab version inside that release.
+
+The common command line does not set `androidboot.force_normal_boot`. The
+selected `init_boot` ramdisk is intrinsically a normal boot, while the stock
+recovery ramdisk is detected by its `/system/bin/recovery`; forcing normal boot
+would make that recovery partition unusable.
 
 `support/boot/kernel-command-line.txt` owns the machine-independent launch
 arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
@@ -257,8 +341,9 @@ JIT-image length during post-load validation; program identity and translated
 bytecode length remain mandatory. When the current loader would otherwise use
 the callback/bpf-to-bpf `@funcs` objects, interpreter mode selects the shipped
 inline `dscpPolicy.o` and `netd.o` variants instead; it does not omit those
-networking programs. The runtime adds its local `ubd0=` disk and initrd paths;
-no builder or workstation path is stored in this tree.
+networking programs. The runtime points `initrd=` at the immutable base GPT and
+passes the verified `initrd_offset=` and `initrd_size=` for either `init_boot`
+or `recovery`; no builder or workstation path is stored in this tree.
 
 Route `p0007` breaks a framework boot dependency cycle without changing the
 global WindowManager timeout. When the wallpaper service is available but has
@@ -307,8 +392,14 @@ contracts; it does not yet claim an accepted HAL runtime.
 
 `support/release/release-manifest.schema.json` and `tools/release_common.py`
 define the compact runtime release. The inventory is fixed to the ACK UML ELF
-and built-in-module evidence, external initramfs and command line, compressed
-raw GPT disk and layout, VINTF/fstab support, and compact source provenance.
+and built-in-module evidence, command line, compressed raw GPT disk and layout,
+VINTF/fstab support, and compact source provenance. Normal and recovery
+ramdisks are verified in place inside that GPT and are not duplicated as
+release files.
+The manifest separately binds the external Jelly repository, pinned upstream
+commit and tree, deterministic final topic commit and tree, patch count, and
+series-manifest SHA-256 because that checkout is intentionally outside Repo's
+resolved AOSP manifest.
 The verifier rejects symlinks, special files, undeclared files or directories,
 unsafe paths, wrong family/page/ABI/source identities, size changes, and a
 kernel configuration with module support or any `=m` value.
@@ -340,11 +431,9 @@ acceptance remain separate later gates.
 Producer verification and accepted-runtime verification are deliberately
 separate. A new clean producer revision must match the current AOSP route table,
 ACK series, kernel policy, boot command line, and partition layout before it can
-publish a candidate. An already accepted runtime instead matches its checked-in
-descriptor and the current common host/kernel ABI. It remains importable while
-the next source candidate is built and reviewed; changing the producer route
-table alone neither silently promotes that candidate nor invalidates the last
-accepted runtime.
+publish a candidate. The schema-2 runtime is fresh-only: its checked acceptance
+descriptor, installed directory, and consumers advance together. There is no
+schema-1 fallback or migration path.
 
 Apple consumers validate that installed directory without a builder or transfer
 tool. The installed mode requires and checks the expanded GPT disk and all other
@@ -365,7 +454,7 @@ declares a release payload as an output and has no source, Soong, Kbuild, or
 transport operation.
 
 Publish only from the clean copied Git checkout on the builder, after rebuilding
-the disk and initramfs from the current target-files staging directory:
+the partition-backed disk from the current target-files staging directory:
 
 ```sh
 android/aosp-17/build/publish-release.sh \
@@ -373,7 +462,6 @@ android/aosp-17/build/publish-release.sh \
   --kernel-source /absolute/path/to/replayed-ack \
   --kernel-build /absolute/path/to/kernel-build \
   --target-files /absolute/path/to/target-files.zip \
-  --ramdisk /absolute/path/to/ramdisk.img \
   --disk /absolute/path/to/android17-ubd.img \
   --darwin-sdk /absolute/path/to/MacOSX.sdk \
   --clang /absolute/path/to/pinned/clang \
@@ -385,11 +473,11 @@ android/aosp-17/build/publish-release.sh \
 ```
 
 The publisher accepts only builder-local paths. It repeats ACK series/source,
-kernel, target-files, VINTF, initramfs, and GPT checks, rejects any module output,
-records only role-based input descriptions rather than builder paths, compresses
-the disk with a frame checksum, verifies the completed staging tree, and then
-atomically exposes the new release directory. It never changes the checked-in
-acceptance descriptor.
+kernel, target-files, VINTF, GPT, both boot-image-v4 headers, and bounded
+`init_boot` initramfs checks, rejects any module output, records only role-based
+input descriptions rather than builder paths, compresses the disk with a frame
+checksum, verifies the completed staging tree, and then atomically exposes the
+new release directory. It never changes the checked-in acceptance descriptor.
 
 The first source-built Virgl release, `20260822-6afe4225-virgl2`, compressed the
 17,179,869,184-byte sparse GPT disk to 830,866,283 bytes. Its target-files
@@ -498,6 +586,7 @@ path whose parent already exists:
 .build/presets/macos-android17/bin/uml-darwin-android17 \
   --android-release=/absolute/path/to/.build/android/releases/accepted-directory \
   --android-instance=/absolute/path/to/android17-instance.cow \
+  --android-boot-mode=auto \
   --virtio-console-socket=/absolute/path/to/android17-console.sock \
   --execution-engine=gadgets
 ```
@@ -505,7 +594,10 @@ path whose parent already exists:
 The executable embeds the accepted ACK ELF and release-manifest identity. It
 rejects another release, protects release-owned boot arguments, maps the large
 installed GPT image only as the COW backing file, and binds each instance to
-the accepted release with an adjacent manifest receipt. Attach to the console
+the accepted release with an adjacent manifest receipt. `auto` follows the
+standard `boot-recovery` command in the COW-backed `misc` partition; `normal`
+and `recovery` are explicit diagnostic overrides. Both choices load a bounded
+ramdisk range from the immutable GPT rather than a standalone file. Attach to the console
 socket with a local Unix-stream client such as `nc -U`; the userdebug shell on
 `hvc0` accepts `logcat` directly. Linux printk is deliberately restricted to
 `ttyS0`; `hvc0` is selected only through `androidboot.console=hvc0`, so the

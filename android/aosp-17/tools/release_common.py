@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PRODUCT_FAMILY = "android-17-ack-6.18-16k"
 DIRECTORY_PREFIX = "android17-ack6.18-16k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -25,7 +25,6 @@ HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 PAYLOAD_SPECS = {
     "boot/kernel-command-line.txt": ("kernel-command-line", "utf8-text"),
-    "boot/ramdisk.img": ("android-initramfs", "newc"),
     "guest/android-17-uml-arm64.img.zst": ("guest-disk-archive", "zstd-raw-gpt"),
     "guest/partition-layout.json": ("partition-layout", "json"),
     "kernel/System.map": ("kernel-symbol-map", "utf8-text"),
@@ -49,6 +48,7 @@ TOP_LEVEL_KEYS = {
     "published_at_utc",
     "android",
     "aosp",
+    "jelly",
     "kernel",
     "outer",
     "producer",
@@ -82,6 +82,18 @@ ROUTE_KEYS = {
     "final_tree",
     "patch_count",
     "series_manifest_sha256",
+}
+JELLY_KEYS = {
+    "repository",
+    "branch",
+    "base_commit",
+    "base_tree",
+    "final_commit",
+    "final_tree",
+    "patch_count",
+    "patch_manifest_sha256",
+    "destination",
+    "license",
 }
 KERNEL_KEYS = {
     "family",
@@ -121,6 +133,9 @@ ACCEPTANCE_KEYS = {
     "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT",
     "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256",
     "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256",
+    "ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT",
+    "ANDROID17_ACCEPTED_JELLY_FINAL_TREE",
+    "ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256",
     "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE",
     "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256",
     "ANDROID17_ACCEPTED_OUTER_REVISION",
@@ -261,6 +276,24 @@ def validate_manifest(value: object) -> dict:
             f"AOSP route {route_id} series manifest SHA-256",
         )
 
+    jelly = require_exact_keys(manifest["jelly"], JELLY_KEYS, "jelly")
+    if jelly["repository"] != (
+        "https://github.com/LineageOS/android_packages_apps_Jelly"
+    ):
+        fail("Jelly repository is not the reviewed LineageOS source")
+    if jelly["branch"] != "lineage-23.2":
+        fail("Jelly branch is not lineage-23.2")
+    for key in ("base_commit", "base_tree", "final_commit", "final_tree"):
+        require_hex(jelly[key], 40, f"jelly.{key}")
+    require_integer(jelly["patch_count"], "Jelly patch count", minimum=1)
+    require_hex(
+        jelly["patch_manifest_sha256"], 64, "Jelly patch manifest SHA-256"
+    )
+    if safe_relative(jelly["destination"], "Jelly destination") != "packages/apps/Jelly":
+        fail("Jelly destination is not packages/apps/Jelly")
+    if jelly["license"] != "Apache-2.0":
+        fail("Jelly license identity changed")
+
     kernel = require_exact_keys(manifest["kernel"], KERNEL_KEYS, "kernel")
     if kernel["family"] != "android-6.18":
         fail("kernel family is not android-6.18")
@@ -338,6 +371,7 @@ def sha256_path(path: Path) -> str:
 
 def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
+    jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
     kernel_root = android_root.parents[1] / "kernel/android-6.18"
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
     abi_metadata = parse_env(android_root.parents[1] / "kernel/common/abi/identity.env")
@@ -353,6 +387,24 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     for key, value in expected.items():
         if manifest["aosp"][key] != value:
             fail(f"release AOSP identity differs from tracked {key}")
+
+    jelly_expected = {
+        "repository": jelly_metadata["JELLY_UPSTREAM_REPOSITORY"],
+        "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
+        "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
+        "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
+        "final_commit": jelly_metadata["JELLY_FINAL_COMMIT"],
+        "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
+        "patch_count": int(jelly_metadata["JELLY_PATCH_COUNT"]),
+        "patch_manifest_sha256": sha256_path(
+            android_root / "third_party/jelly/series/manifest.tsv"
+        ),
+        "destination": jelly_metadata["JELLY_DESTINATION"],
+        "license": jelly_metadata["JELLY_LICENSE"],
+    }
+    for key, value in jelly_expected.items():
+        if manifest["jelly"][key] != value:
+            fail(f"release Jelly identity differs from tracked {key}")
 
     kernel_expected = {
         "family": kernel_metadata["UML_KERNEL_FAMILY"],
@@ -385,6 +437,9 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT": manifest["aosp"]["manifest_commit"],
         "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": manifest["aosp"]["base_manifest_sha256"],
         "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256": manifest["aosp"]["projects_manifest_sha256"],
+        "ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT": manifest["jelly"]["base_commit"],
+        "ANDROID17_ACCEPTED_JELLY_FINAL_TREE": manifest["jelly"]["final_tree"],
+        "ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256": manifest["jelly"]["patch_manifest_sha256"],
         "ANDROID17_ACCEPTED_KERNEL_FINAL_TREE": manifest["kernel"]["final_tree"],
         "ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256": manifest["kernel"]["patch_manifest_sha256"],
         "ANDROID17_ACCEPTED_OUTER_REVISION": manifest["outer"]["revision"],
@@ -493,6 +548,73 @@ def run_checked(arguments: list[str], *, env: dict[str, str] | None = None) -> N
         fail(f"verification command failed ({result.returncode}): {arguments[0]}")
 
 
+def run_checked_capture(arguments: list[str]) -> str:
+    result = subprocess.run(
+        arguments,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(
+            f"verification command failed ({result.returncode}): "
+            f"{arguments[0]} {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
+def verify_disk_boot_payloads(
+    disk: Path,
+    layout: Path,
+    android_root: Path,
+    *,
+    structural: bool,
+) -> None:
+    boot_tool = android_root / "tools/boot-image.py"
+    for partition in ("init_boot", "recovery"):
+        run_checked([
+            str(boot_tool),
+            "verify",
+            "--layout",
+            str(layout),
+            "--disk",
+            str(disk),
+            "--partition",
+            partition,
+        ])
+    raw_range = run_checked_capture([
+        str(boot_tool),
+        "range",
+        "--layout",
+        str(layout),
+        "--disk",
+        str(disk),
+        "--partition",
+        "init_boot",
+    ])
+    try:
+        ramdisk = json.loads(raw_range)
+        offset = ramdisk["ramdisk_offset"]
+        size = ramdisk["ramdisk_size"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        fail(f"cannot parse verified init_boot ramdisk range: {error}")
+    if (
+        isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or offset < 0
+        or size <= 0
+    ):
+        fail("verified init_boot ramdisk range is invalid")
+    arguments = [str(android_root / "tools/verify-initramfs.py")]
+    if structural:
+        arguments.append("--structural")
+    arguments.extend(["--offset", str(offset), "--size", str(size), str(disk)])
+    run_checked(arguments)
+
+
 def resolve_zstd(value: Path | None) -> Path:
     if value is not None:
         candidate = value
@@ -530,12 +652,6 @@ def verify_semantics(
         android_root,
         enforce_tracked_policy=enforce_tracked_policy,
     )
-    initramfs_arguments = [str(android_root / "tools/verify-initramfs.py")]
-    if not enforce_tracked_policy:
-        initramfs_arguments.append("--structural")
-    initramfs_arguments.append(str(release_root / "boot/ramdisk.img"))
-    run_checked(initramfs_arguments)
-
     if enforce_tracked_policy:
         if (release_root / "boot/kernel-command-line.txt").read_bytes() != (
             android_root / "support/boot/kernel-command-line.txt"
@@ -547,7 +663,16 @@ def verify_semantics(
             fail("release partition layout differs from tracked policy")
 
     fstab = (release_root / "support/fstab.uml").read_text(encoding="utf-8")
-    for name in ("system", "system_ext", "product", "vendor", "odm", "metadata", "userdata"):
+    for name in (
+        "system",
+        "system_ext",
+        "product",
+        "vendor",
+        "odm",
+        "metadata",
+        "userdata",
+        "misc",
+    ):
         if f"/dev/block/by-name/{name}" not in fstab:
             fail(f"release fstab is missing fixed partition {name}")
     for forbidden in ("logical", "slotselect", "avb", "_dlkm"):
@@ -586,6 +711,12 @@ def verify_semantics(
             "--disk",
             str(expanded_disk),
         ])
+        verify_disk_boot_payloads(
+            expanded_disk,
+            release_root / "guest/partition-layout.json",
+            android_root,
+            structural=not enforce_tracked_policy,
+        )
 
     if manifest["kernel"]["page_size"] != 16384:
         fail("semantic verification received a non-16-KiB kernel")

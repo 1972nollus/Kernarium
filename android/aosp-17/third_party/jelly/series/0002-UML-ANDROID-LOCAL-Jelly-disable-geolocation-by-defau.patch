@@ -1,0 +1,23 @@
+From 607d28aece407ccc5e245539d2e1b76d3ea81a37 Mon Sep 17 00:00:00 2001
+From: linux-um-darwin Android patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Mon, 24 Aug 2026 13:46:00 +0000
+Subject: [PATCH 2/2] UML-ANDROID-LOCAL: Jelly disable geolocation by default
+
+---
+ .../main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt b/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
+index dbd374bb0f6b2284fde7b30fd55b3008e17b5bfe..ee140ee6ea495af07db7dcbde53ae12d9bcc4280 100644
+--- a/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
++++ b/app/src/main/java/org/lineageos/jelly/utils/SharedPreferencesExt.kt
+@@ -108,7 +108,7 @@ class SharedPreferencesExt(context: Context) {
+         private const val JAVASCRIPT_ENABLED_DEFAULT = true
+ 
+         private const val LOCATION_ENABLED_KEY = "key_location"
+-        private const val LOCATION_ENABLED_DEFAULT = true
++        private const val LOCATION_ENABLED_DEFAULT = false
+ 
+         private const val COOKIES_ENABLED_KEY = "key_cookie"
+         private const val COOKIES_ENABLED_DEFAULT = true

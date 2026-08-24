@@ -17,7 +17,6 @@ struct GuestBundle: Equatable {
     /// Android payload layout, as published by the accepted release.
     enum Android {
         static let manifest = "release-manifest.json"
-        static let ramdisk = "boot/ramdisk.img"
         static let commandLine = "boot/kernel-command-line.txt"
         static let guestDirectory = "guest"
         static let diskExtension = "img"
@@ -33,7 +32,6 @@ struct GuestBundle: Equatable {
 
     var name: String { url.lastPathComponent }
     var manifest: URL { url.appendingPathComponent(Android.manifest) }
-    var ramdisk: URL { url.appendingPathComponent(Android.ramdisk) }
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
     var instance: URL { url.appendingPathComponent(Android.instance) }
 
@@ -59,7 +57,7 @@ struct GuestBundle: Equatable {
         else {
             return nil
         }
-        for relative in [Android.manifest, Android.ramdisk, Android.commandLine] {
+        for relative in [Android.manifest, Android.commandLine] {
             guard isRegularFile(
                 url.appendingPathComponent(relative),
                 fileManager: fileManager

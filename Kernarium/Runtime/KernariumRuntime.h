@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 3U
+#define KERNARIUM_RUNTIME_API_VERSION 4U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -25,9 +25,16 @@ enum {
     KERNARIUM_RUNTIME_GUEST_ANDROID = 1,
 };
 
+enum {
+    KERNARIUM_RUNTIME_ANDROID_BOOT_AUTO = 0,
+    KERNARIUM_RUNTIME_ANDROID_BOOT_NORMAL = 1,
+    KERNARIUM_RUNTIME_ANDROID_BOOT_RECOVERY = 2,
+};
+
 /* A boot request. Linux guests supply rootfs_path and overlay_path; Android
- * guests supply the four bundle payload paths plus the persistent instance
- * disk. A runtime rejects a request that does not match its own flavour. */
+ * guests supply the manifest, base disk, command line, persistent instance
+ * disk, and desired boot mode. A runtime rejects a request that does not
+ * match its own flavour. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;
@@ -35,12 +42,12 @@ typedef struct kernarium_runtime_boot {
     uint32_t dots_per_inch;
     uint32_t guest_memory_mib;
     uint32_t guest_processor_count;
+    uint32_t android_boot_mode;
     const char* rootfs_path;
     const char* overlay_path;
     const char* android_manifest_path;
     const char* android_base_disk_path;
     const char* android_instance_path;
-    const char* android_ramdisk_path;
     const char* android_command_line_path;
 } kernarium_runtime_boot;
 
@@ -105,7 +112,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v3(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v4(void);
 
 #ifdef __cplusplus
 }

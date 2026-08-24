@@ -1,7 +1,7 @@
 From 6c615c8949af9315f773b3fd5cacf51b57e250e9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 15:38:15 +0000
-Subject: [PATCH 20/22] UML-ANDROID-LOCAL: cuttlefish omit the RIL and NFC HALs
+Subject: [PATCH 20/23] UML-ANDROID-LOCAL: cuttlefish omit the RIL and NFC HALs
 
 The Cuttlefish RIL service needs the modem simulator and the Cuttlefish NFC
 service opens /dev/hvc12. Neither exists on the Darwin UML machine, so both

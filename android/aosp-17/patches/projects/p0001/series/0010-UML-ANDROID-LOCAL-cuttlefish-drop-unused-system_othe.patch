@@ -1,7 +1,7 @@
 From df00345b7179550bbb787cedaaa8c016a22acad7 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 19:33:26 +0000
-Subject: [PATCH 10/22] UML-ANDROID-LOCAL: cuttlefish: drop unused system_other
+Subject: [PATCH 10/23] UML-ANDROID-LOCAL: cuttlefish: drop unused system_other
  image
 
 Change-Id: I1405f5faf3e0e755ed6d4dfd4c8bc68f72ebf94e

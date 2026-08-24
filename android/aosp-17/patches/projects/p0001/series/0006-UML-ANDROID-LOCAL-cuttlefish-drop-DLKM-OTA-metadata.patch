@@ -1,7 +1,7 @@
 From e058771512ade1f1f268d315621d9cfcdd8fcfa6 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 18:17:14 +0000
-Subject: [PATCH 06/22] UML-ANDROID-LOCAL: cuttlefish: drop DLKM OTA metadata
+Subject: [PATCH 06/23] UML-ANDROID-LOCAL: cuttlefish: drop DLKM OTA metadata
 
 Change-Id: Ie60c65c85325087a6db0baf5055530e2cccd3c0c
 ---

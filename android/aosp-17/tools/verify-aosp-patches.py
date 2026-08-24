@@ -258,7 +258,13 @@ def inspect_series(android_root: Path, values: tuple[str, ...]) -> Route:
     )
 
 
-def verify_source(aosp_source: Path, base_projects: dict[str, ET.Element], routes: list[Route], expect: str) -> None:
+def verify_source(
+    android_root: Path,
+    aosp_source: Path,
+    base_projects: dict[str, ET.Element],
+    routes: list[Route],
+    expect: str,
+) -> None:
     source = aosp_source.resolve()
     if not (source / ".repo/manifests").is_dir():
         fail(f"AOSP source lacks Repo metadata: {source}")
@@ -329,6 +335,19 @@ def verify_source(aosp_source: Path, base_projects: dict[str, ET.Element], route
             if ids != [entry.patch_id]:
                 fail(f"route {route.route_id} commit patch ID differs at {entry.order}")
 
+    if expect == "final":
+        sync_tool = android_root / "tools/sync-device-overlay.py"
+        if not sync_tool.is_file():
+            fail("device-overlay sync tool is missing")
+        run(
+            str(sync_tool),
+            "--android-root",
+            str(android_root),
+            "--aosp-source",
+            str(source),
+            "--verify",
+        )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -364,7 +383,7 @@ def main() -> None:
             fail(f"route {route.route_id} manifest revision differs from the lock")
 
     if args.aosp_source is not None:
-        verify_source(args.aosp_source, base_projects, routes, args.expect)
+        verify_source(android_root, args.aosp_source, base_projects, routes, args.expect)
     print(f"verified {len(routes)} routed AOSP 17 project series")
 
 

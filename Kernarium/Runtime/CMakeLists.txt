@@ -157,6 +157,7 @@ target_include_directories(KernariumRuntime
         ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
 target_link_libraries(KernariumRuntime PRIVATE
     UML::Emulator
+    UML::AndroidBoot
     UML::GuestPageConfiguration
     UML::AudioDevice
     UML::GpuDevice
@@ -184,15 +185,11 @@ target_compile_definitions(KernariumRuntime PRIVATE
 if(KERNARIUM_RUNTIME_ANDROID_GUEST)
     get_target_property(_kernarium_android_manifest
         "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_RELEASE_MANIFEST)
-    get_target_property(_kernarium_android_ramdisk
-        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_RAMDISK)
     get_target_property(_kernarium_android_base_disk
         "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_BASE_DISK)
-    file(SIZE "${_kernarium_android_ramdisk}" _kernarium_android_ramdisk_size)
     file(SIZE "${_kernarium_android_base_disk}"
         _kernarium_android_base_disk_size)
     target_compile_definitions(KernariumRuntime PRIVATE
-        KERNARIUM_ANDROID_RAMDISK_SIZE=${_kernarium_android_ramdisk_size}
         KERNARIUM_ANDROID_BASE_DISK_SIZE=${_kernarium_android_base_disk_size})
     # The accepted release identity travels inside the framework. A bundle
     # whose manifest differs is refused before any of its payload is opened.
@@ -200,7 +197,6 @@ if(KERNARIUM_RUNTIME_ANDROID_GUEST)
         "LINKER:-sectcreate,__DATA,__uml_android,${_kernarium_android_manifest}")
     set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
         "${_kernarium_android_manifest}"
-        "${_kernarium_android_ramdisk}"
         "${_kernarium_android_base_disk}")
 endif()
 target_link_options(KernariumRuntime PRIVATE

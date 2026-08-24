@@ -32,8 +32,8 @@ Usage: android/aosp-17/build/assemble-ramdisk.sh \
 
 Run locally on the x86_64 Linux builder after build-aosp.sh. The target-files
 staging directory must remain beside its .zip archive. The output is a raw,
-uncompressed newc initramfs for the external UML initrd path; an existing path
-is never replaced.
+uncompressed newc initramfs that assemble-image.sh wraps in the final
+`init_boot` partition; an existing path is never replaced.
 EOF
 }
 
@@ -119,7 +119,7 @@ esac
 
 TARGET_FILES_DIR=${TARGET_FILES%.zip}
 RAMDISK_SOURCE="$TARGET_FILES_DIR/INIT_BOOT/RAMDISK"
-VENDOR_FSTAB="$TARGET_FILES_DIR/VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml"
+VENDOR_FSTAB="$TARGET_FILES_DIR/VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml"
 FILESYSTEM_CONFIG_SOURCE="$TARGET_FILES_DIR/META/init_boot_filesystem_config.txt"
 NODE_LIST="$TARGET_FILES_DIR/META/ramdisk_node_list"
 for path in "$RAMDISK_SOURCE" "$FILESYSTEM_CONFIG_SOURCE" "$NODE_LIST" "$VENDOR_FSTAB"; do

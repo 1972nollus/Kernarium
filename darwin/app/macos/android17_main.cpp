@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "launcher.hpp"
+#include "block/android_boot.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -31,10 +32,6 @@
 #ifndef UML_ANDROID17_BASE_DISK_SIZE
 #error "Android base-disk size is required"
 #endif
-#ifndef UML_ANDROID17_RAMDISK_SIZE
-#error "Android ramdisk size is required"
-#endif
-
 extern "C" {
 extern const unsigned char uml_android_manifest_start[]
 	__asm("section$start$__DATA$__uml_android");
@@ -48,12 +45,26 @@ constexpr std::string_view android_default_guest_memory{"mem=4G"};
 constexpr std::string_view android_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view release_option{"--android-release="};
 constexpr std::string_view instance_option{"--android-instance="};
+constexpr std::string_view boot_mode_option{"--android-boot-mode="};
 
 struct AndroidOptions {
 	std::filesystem::path release;
 	std::filesystem::path instance;
+	uml::android::BootMode boot_mode = uml::android::BootMode::automatic;
+	bool boot_mode_set = false;
 	std::vector<std::string> forwarded;
 };
+
+uml::android::BootMode parse_boot_mode(std::string_view value)
+{
+	if (value == "auto")
+		return uml::android::BootMode::automatic;
+	if (value == "normal")
+		return uml::android::BootMode::normal;
+	if (value == "recovery")
+		return uml::android::BootMode::recovery;
+	throw std::invalid_argument("Android boot mode must be auto, normal, or recovery");
+}
 
 bool has_argument(int argc, char *const argv[], std::string_view argument)
 {
@@ -88,7 +99,8 @@ bool starts_with_any(std::string_view value,
 void reject_protected_kernel_argument(std::string_view argument)
 {
 	if (starts_with_any(argument,
-			    {"ubd0", "initrd=", "init=", "root=", "rootfstype=",
+				    {"ubd0", "initrd=", "initrd_offset=", "initrd_size=",
+				     "init=", "root=", "rootfstype=",
 			     "androidboot.", "console=", "8250.nr_uarts=",
 			     "firmware_class.path="}))
 		throw std::invalid_argument(
@@ -128,6 +140,15 @@ AndroidOptions parse_options(int argc, char *const argv[])
 					"--android-instance requires a path");
 			continue;
 		}
+		if (argument.starts_with(boot_mode_option)) {
+			if (options.boot_mode_set)
+				throw std::invalid_argument(
+					"--android-boot-mode may be specified only once");
+			options.boot_mode = parse_boot_mode(
+				argument.substr(boot_mode_option.size()));
+			options.boot_mode_set = true;
+			continue;
+		}
 		has_gpu |= argument == "--gpu";
 		has_gpu_display |= argument.starts_with("--gpu-display=");
 		has_audio |= argument == "--audio";
@@ -139,6 +160,11 @@ AndroidOptions parse_options(int argc, char *const argv[])
 		options.release = environment_value("UML_ANDROID17_RELEASE");
 	if (options.instance.empty())
 		options.instance = environment_value("UML_ANDROID17_INSTANCE");
+	if (!options.boot_mode_set) {
+		const auto environment_mode = environment_value("UML_ANDROID17_BOOT_MODE");
+		if (!environment_mode.empty())
+			options.boot_mode = parse_boot_mode(environment_mode);
+	}
 	if (!has_gpu)
 		options.forwarded.emplace_back("--gpu");
 	if (!has_gpu_display)
@@ -201,8 +227,6 @@ std::filesystem::path validated_release_root(
 		       uml_android_manifest_start))
 		throw std::invalid_argument(
 			"Android release manifest differs from the embedded identity");
-	(void)checked_regular_file_size(
-		release / "boot/ramdisk.img", UML_ANDROID17_RAMDISK_SIZE);
 	(void)checked_regular_file_size(
 		release / "guest/android-17-uml-arm64.img",
 		UML_ANDROID17_BASE_DISK_SIZE);
@@ -330,11 +354,12 @@ void print_usage()
 {
 	std::fputs(
 		"Android 17 options:\n"
-		"  --android-release=/absolute/accepted/release\n"
-		"  --android-instance=/absolute/writable-instance.cow\n"
-		"  --virtio-console-socket=/absolute/console.sock\n"
-		"The same paths may be supplied through UML_ANDROID17_RELEASE and "
-		"UML_ANDROID17_INSTANCE.\n",
+			"  --android-release=/absolute/accepted/release\n"
+			"  --android-instance=/absolute/writable-instance.cow\n"
+			"  --android-boot-mode=auto|normal|recovery\n"
+			"  --virtio-console-socket=/absolute/console.sock\n"
+			"The same values may be supplied through UML_ANDROID17_RELEASE, "
+			"UML_ANDROID17_INSTANCE, and UML_ANDROID17_BOOT_MODE.\n",
 		stderr);
 }
 
@@ -356,10 +381,15 @@ int main(int argc, char *argv[], char *envp[])
 				release / "guest/android-17-uml-arm64.img";
 			const auto instance =
 				validated_instance(options.instance, base_disk);
+			const auto boot = uml::android::selectBoot(
+				base_disk, instance, options.boot_mode);
 			options.forwarded.emplace_back("ubd0=" + instance.string() +
 						       "," + base_disk.string());
+			options.forwarded.emplace_back("initrd=" + base_disk.string());
 			options.forwarded.emplace_back(
-				"initrd=" + (release / "boot/ramdisk.img").string());
+				"initrd_offset=" + std::to_string(boot.ramdisk.offset));
+			options.forwarded.emplace_back(
+				"initrd_size=" + std::to_string(boot.ramdisk.size));
 			options.forwarded.emplace_back("root=/dev/ram0");
 			options.forwarded.emplace_back("rootfstype=ramfs");
 			append_kernel_command_line(
@@ -367,10 +397,12 @@ int main(int argc, char *argv[], char *envp[])
 				release / "boot/kernel-command-line.txt");
 			std::fprintf(
 				stderr,
-				"Android release %s (%s), writable instance %s\n",
-				UML_ANDROID17_ACCEPTED_RELEASE_ID,
-				UML_ANDROID17_ACCEPTED_PRODUCT_FAMILY,
-				instance.c_str());
+					"Android release %s (%s), %s boot, writable instance %s\n",
+					UML_ANDROID17_ACCEPTED_RELEASE_ID,
+					UML_ANDROID17_ACCEPTED_PRODUCT_FAMILY,
+					boot.mode == uml::android::BootMode::recovery
+						? "recovery" : "normal",
+					instance.c_str());
 		}
 		auto pointers = argument_pointers(options.forwarded);
 		return uml::app::runEmbeddedKernel(

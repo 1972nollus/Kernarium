@@ -7,6 +7,8 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
+OVERLAY_SYNC="$ANDROID_ROOT/tools/sync-device-overlay.py"
+JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 AOSP_SOURCE=
 
 fail()
@@ -23,8 +25,9 @@ Usage: android/aosp-17/build/apply-aosp-patches.sh \
 
 Run locally on the x86_64 Linux builder after source preparation. Every routed
 project must be clean and at the exact revision in the resolved manifest lock.
-The command applies only generated per-project patches and performs no fetch,
-overlay copy, or transport operation.
+The command applies generated per-project patches, then exactly synchronizes
+the checked device overlay to device/kernarium/darwin. It performs no fetch or
+transport operation.
 EOF
 }
 
@@ -55,8 +58,12 @@ esac
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
 [ -x "$VERIFIER" ] || fail "AOSP patch verifier is missing"
+[ -x "$OVERLAY_SYNC" ] || fail "device-overlay sync tool is missing"
+[ -x "$JELLY_VERIFIER" ] || fail "Jelly source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
 
+"$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect base
 
@@ -74,6 +81,9 @@ while IFS="$(printf '\t')" read -r route_id checkout_path series_dir; do
 	done
 done
 
+"$OVERLAY_SYNC" --android-root "$ANDROID_ROOT" --aosp-source "$AOSP_SOURCE"
+"$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "applied routed AOSP 17 project patches"

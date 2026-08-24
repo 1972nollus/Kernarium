@@ -1,0 +1,5 @@
+# The UML product exposes one single-port Virtio console as its Android shell.
+/dev/hvc0  u:object_r:serial_device:s0
+
+# Mesa's EGL SP-HAL resolves this dependency through the same namespace.
+/vendor/lib(64)?/libzstd\.so  u:object_r:same_process_hal_file:s0

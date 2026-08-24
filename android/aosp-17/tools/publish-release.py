@@ -30,6 +30,7 @@ from release_common import (  # noqa: E402
     parse_env,
     resolve_zstd,
     sha256_path,
+    verify_disk_boot_payloads,
     verify_release,
 )
 
@@ -233,7 +234,6 @@ def main() -> None:
     parser.add_argument("--kernel-source", type=Path, required=True)
     parser.add_argument("--kernel-build", type=Path, required=True)
     parser.add_argument("--target-files", type=Path, required=True)
-    parser.add_argument("--ramdisk", type=Path, required=True)
     parser.add_argument("--disk", type=Path, required=True)
     parser.add_argument("--darwin-sdk", type=Path, required=True)
     parser.add_argument("--clang", type=Path, required=True)
@@ -257,7 +257,6 @@ def main() -> None:
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
     release_root = regular_directory(args.release_root, "release root")
     target_files = regular_file(args.target_files, "target-files archive")
-    ramdisk = regular_file(args.ramdisk, "initramfs")
     disk = regular_file(args.disk, "raw GPT disk")
     clang = executable_tool(args.clang, "pinned Clang")
     linker = executable_tool(args.linker, "pinned linker")
@@ -270,6 +269,7 @@ def main() -> None:
         fail("release destination already exists")
 
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
+    jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
     kernel_root = outer_root / "kernel/android-6.18"
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
     abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
@@ -280,6 +280,13 @@ def main() -> None:
         kernel_metadata["UML_KERNEL_FINAL_TREE"],
     )
 
+    run([
+        str(android_root / "tools/verify-jelly-source.py"),
+        "--android-root",
+        str(android_root),
+        "--aosp-source",
+        str(aosp_source),
+    ])
     run([
         str(android_root / "tools/verify-aosp-patches.py"),
         "--android-root",
@@ -320,7 +327,6 @@ def main() -> None:
     vintf_env = os.environ.copy()
     vintf_env["PATH"] = f"{vintf_checker.parent}:/usr/bin:/bin"
     run([str(vintf_checker), str(target_files)], env=vintf_env)
-    run([str(android_root / "tools/verify-initramfs.py"), str(ramdisk)])
     run([
         str(android_root / "tools/ubd-disk.py"),
         "verify",
@@ -329,6 +335,12 @@ def main() -> None:
         "--disk",
         str(disk),
     ])
+    verify_disk_boot_payloads(
+        disk,
+        android_root / "support/image/partition-layout.json",
+        android_root,
+        structural=False,
+    )
 
     java_candidates = (
         aosp_source / "prebuilts/jdk/jdk21/linux-x86/bin/java",
@@ -382,7 +394,6 @@ def main() -> None:
                 android_root / "support/boot/kernel-command-line.txt",
                 staging / "boot/kernel-command-line.txt",
             )
-            copy_regular(ramdisk, staging / "boot/ramdisk.img")
             copy_regular(
                 android_root / "support/image/partition-layout.json",
                 staging / "guest/partition-layout.json",
@@ -422,9 +433,12 @@ def main() -> None:
                 encoding="utf-8", errors="strict"
             ).strip()
             projects_manifest_sha = sha256_path(android_root / "patches/projects.tsv")
+            jelly_manifest_sha = sha256_path(
+                android_root / "third_party/jelly/series/manifest.tsv"
+            )
             kernel_manifest_sha = sha256_path(kernel_root / "patches/series/manifest.tsv")
             receipt_rows = [
-                ("schema", 1),
+                ("schema", 2),
                 ("release_id", args.release_id),
                 ("product_family", PRODUCT_FAMILY),
                 ("producer", "android/aosp-17/build/publish-release.sh"),
@@ -432,6 +446,9 @@ def main() -> None:
                 ("outer_dirty", "false"),
                 ("aosp_manifest_commit", aosp_metadata["ANDROID17_MANIFEST_COMMIT"]),
                 ("aosp_projects_manifest_sha256", projects_manifest_sha),
+                ("jelly_upstream_commit", jelly_metadata["JELLY_UPSTREAM_COMMIT"]),
+                ("jelly_final_tree", jelly_metadata["JELLY_FINAL_TREE"]),
+                ("jelly_patch_manifest_sha256", jelly_manifest_sha),
                 ("ack_final_tree", kernel_metadata["UML_KERNEL_FINAL_TREE"]),
                 ("ack_patch_manifest_sha256", kernel_manifest_sha),
                 ("kernel_release", kernel_release),
@@ -441,6 +458,7 @@ def main() -> None:
                 ("android_product", aosp_metadata["ANDROID17_PRODUCT"]),
                 ("android_build_id", build_id),
                 ("source_role_aosp", "pinned AOSP 17 Repo workspace"),
+                ("source_role_jelly", "pinned external LineageOS Jelly topic"),
                 ("source_role_ack", "replayed ACK 6.18 worktree"),
                 ("input_role_kernel", "verified standalone ACK UML build"),
                 ("input_role_disk", "verified fixed-layout UBD image"),
@@ -448,7 +466,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -475,6 +493,18 @@ def main() -> None:
                     "projects_manifest_sha256": projects_manifest_sha,
                     "routes": read_routes(android_root / "patches/projects.tsv"),
                 },
+                "jelly": {
+                    "repository": jelly_metadata["JELLY_UPSTREAM_REPOSITORY"],
+                    "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
+                    "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
+                    "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
+                    "final_commit": jelly_metadata["JELLY_FINAL_COMMIT"],
+                    "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
+                    "patch_count": int(jelly_metadata["JELLY_PATCH_COUNT"]),
+                    "patch_manifest_sha256": jelly_manifest_sha,
+                    "destination": jelly_metadata["JELLY_DESTINATION"],
+                    "license": jelly_metadata["JELLY_LICENSE"],
+                },
                 "kernel": {
                     "family": kernel_metadata["UML_KERNEL_FAMILY"],
                     "repository": kernel_metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
@@ -496,10 +526,11 @@ def main() -> None:
                     "entry_point": "android/aosp-17/build/publish-release.sh",
                     "functional_options": [
                         "pinned AOSP source",
+                        "pinned external Jelly source",
                         "clean replayed ACK source",
                         "verified standalone ACK build",
                         "verified AOSP target files",
-                        "verified UML initramfs",
+                        "verified partition-backed UML initramfs",
                         "verified fixed-layout UBD disk",
                         "explicit Darwin SDK",
                         "explicit pinned Clang",

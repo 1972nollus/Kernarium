@@ -9,6 +9,7 @@
 #include "gpu/in_process_service.hpp"
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
+#include "block/android_boot.hpp"
 #include "uml/emulator.h"
 
 #import <Foundation/Foundation.h>
@@ -971,14 +972,12 @@ int runtimeRun(
         if (boot->android_manifest_path == nullptr ||
             boot->android_base_disk_path == nullptr ||
             boot->android_instance_path == nullptr ||
-            boot->android_ramdisk_path == nullptr ||
             boot->android_command_line_path == nullptr) {
             std::fputs("Kernarium: incomplete Android bundle\n", stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const std::filesystem::path baseDisk {boot->android_base_disk_path};
         const std::filesystem::path instance {boot->android_instance_path};
-        const std::filesystem::path ramdisk {boot->android_ramdisk_path};
         const auto manifest = readRegularFile(boot->android_manifest_path);
         const std::size_t embeddedManifestSize = static_cast<std::size_t>(
             uml_android_manifest_end - uml_android_manifest_start);
@@ -994,12 +993,14 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         (void)checkedRegularFileSize(
-            ramdisk, KERNARIUM_ANDROID_RAMDISK_SIZE);
-        (void)checkedRegularFileSize(
             baseDisk, KERNARIUM_ANDROID_BASE_DISK_SIZE);
         validateUbdPath(baseDisk, "Android base disk");
         validateUbdPath(instance, "Android instance");
         prepareAndroidInstance(instance);
+        const auto androidBoot = uml::android::selectBoot(
+            baseDisk,
+            instance,
+            static_cast<uml::android::BootMode>(boot->android_boot_mode));
         const bool derivativeRootfs = false;
 #else
         const char* rootfsPath = boot->rootfs_path;
@@ -1147,7 +1148,11 @@ int runtimeRun(
          * the next launch. */
         arguments.emplace_back(
             "ubd0=" + instance.string() + "," + baseDisk.string());
-        arguments.emplace_back("initrd=" + ramdisk.string());
+        arguments.emplace_back("initrd=" + baseDisk.string());
+        arguments.emplace_back(
+            "initrd_offset=" + std::to_string(androidBoot.ramdisk.offset));
+        arguments.emplace_back(
+            "initrd_size=" + std::to_string(androidBoot.ramdisk.size));
         arguments.emplace_back("root=/dev/ram0");
         arguments.emplace_back("rootfstype=ramfs");
         appendKernelCommandLine(
@@ -1350,7 +1355,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v3(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v4(void)
 {
     return &runtimeApi;
 }

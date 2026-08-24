@@ -6,12 +6,14 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation started on 2026-08-20. **Android 17 now boots.** The
-builder-local lane produces the 33-topic ACK 6.18 Darwin UML series, its 16 KiB
-built-in-only kernel, the routed AOSP 17 static UML product, standalone
-initramfs, fixed seven-partition UBD image, import-only Apple consumer,
-separate macOS executable, Virtio console, and source-built Mesa Virgl
-userspace while retaining SwiftShader. `20260822-28ce51ba-mm21` was the first
+Implementation started on 2026-08-20. **Android 17 now boots.** The accepted
+release still uses the original 33-topic ACK 6.18 Darwin UML series and static
+UML product. The current implementation candidate advances that lane to a
+34-topic built-in-only 16 KiB kernel, a fresh `aosp_kernarium_darwin` device
+overlay, a fixed ten-partition UBD image with partition-backed normal and stock
+AOSP recovery ramdisks, pinned external LineageOS Jelly source, an import-only
+Apple consumer, separate macOS executable, Virtio console, and source-built
+Mesa Virgl userspace. `20260822-28ce51ba-mm21` was the first
 release to reach `sys.boot_completed=1`, in a ten-vCPU gadgets boot with
 SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
@@ -50,6 +52,34 @@ This section is the entry point for the next implementation session. It
 supersedes the 2026-08-22 handoff below wherever the two differ. The
 architectural decisions and phase definitions later in this document remain in
 force except where a superseding decision is recorded against them.
+
+### Current device-overlay candidate
+
+The new image is deliberately fresh-only; no migration or legacy product alias
+is part of this stage. `android/aosp-17/overlay` is synchronized exactly to
+`device/kernarium/darwin` and owns the `aosp_kernarium_darwin` product. It keeps
+ThemePicker and LatinIME, forces the software keyboard visible even with a host
+keyboard, disables the first-boot lock screen and practical idle timeout, and
+removes obsolete launcher applications plus machine services for Bluetooth,
+Wi-Fi, telephony, GNSS, NFC, camera, sensors, biometrics, UWB, Thread, and
+secure elements. Framework APIs, providers, WebView, PackageInstaller, and the
+real Virtio-net and Virtio-GPU paths remain.
+
+LineageOS Jelly is fetched only by `prepare-sources.sh` from the exact external
+commit recorded under `android/aosp-17/third_party/jelly`. This repository
+stores only provenance and a two-topic generated patch series: SDK-37 build
+compatibility and geolocation-disabled-by-default policy. Jelly's upstream
+camera, microphone, and location declarations are unchanged.
+
+The final GPT now carries `init_boot`, writable `misc`, and stock AOSP
+`recovery` in addition to the seven filesystem partitions. Both boot
+partitions are kernelless boot-image-v4 containers; the ACK ELF remains the
+separately signed kernel. Automatic launch reads the standard
+`boot-recovery` command from the COW-backed `misc` partition, while the macOS
+and Kernarium launchers also expose explicit normal and recovery modes. The
+release schema is version 2 and carries no standalone ramdisk. OrangeFox was
+investigated but is intentionally deferred. Builder publication and boot
+qualification of this candidate are the remaining acceptance steps.
 
 ### Durable repository and builder state
 
@@ -248,8 +278,9 @@ one for the process lifetime.
 
 A guest bundle is a `.kern` directory in Documents holding one guest's complete
 payload and its writable disk. An Android bundle carries
-`release-manifest.json`, `boot/ramdisk.img`, `boot/kernel-command-line.txt`, and
-exactly one `guest/*.img`; UBD creates `userdata.cow` beside them on first boot
+`release-manifest.json`, `boot/kernel-command-line.txt`, and exactly one
+`guest/*.img`; its GPT owns kernelless `init_boot`, writable `misc`, and stock
+AOSP `recovery` partitions. UBD creates `userdata.cow` beside them on first boot
 and reopens it afterwards, so guest state accumulates inside the bundle rather
 than in disposable storage. A bundle is recognised from its payload rather than
 its name, so a half-copied directory is never offered for selection, and
@@ -269,8 +300,9 @@ iOS can reclaim a suspended application without running any more of its code,
 and a killed guest that was mid-write leaves a torn `/data`. The failure is
 specific and was previously invisible: `vold` reports
 `Version mismatch, expected 1 got 2`, `init_user0` fails, Android reboots into
-recovery, recovery fails because this product has no `/misc` partition, and the
-run ends in `InitFatalReboot`.
+recovery, and the legacy image fails because it has neither `/misc` nor a
+recovery partition. The new device-overlay image supplies both partitions; the
+quiesce contract remains necessary to avoid torn writable state.
 
 The repair is to ask the guest before abandoning it. UML's management console is
 the only channel that reaches a running guest kernel, and it had never worked:
@@ -1875,11 +1907,13 @@ Deliverables:
 
 - routed per-project patch metadata and generated series under
   `android/aosp-17/patches`;
-- `aosp_uml_arm64_pgagnostic` product;
-- patch-owned UBD fstab/ueventd/init/VINTF/SELinux source;
+- fresh-only `aosp_kernarium_darwin` product synchronized from the checked
+  device overlay;
+- overlay-owned UBD fstab/ueventd/init/feature/SELinux source;
 - selected software HALs and accurate feature declarations;
 - external image/release/verification inputs under `android/aosp-17/support`;
-- standalone ramdisk and GPT disk assembly; and
+- partition-backed normal and stock recovery ramdisks in one ten-partition GPT
+  disk; and
 - Android page-alignment and image-layout verification.
 
 Exit criteria:
@@ -1893,7 +1927,8 @@ Exit criteria:
 - no changed AOSP project is absent from `projects.tsv` and no support overlay
   is copied into the source tree;
 - no Android build/support ownership remains under `kernel/android-6.18`;
-- the disk and ramdisk validate against the checked support contract.
+- the disk and both bounded ramdisks validate against the checked support
+  contract.
 
 ### Phase 5: publish, copy, and locally install an Android release
 

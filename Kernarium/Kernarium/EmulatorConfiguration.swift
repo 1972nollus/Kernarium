@@ -18,6 +18,36 @@ enum KernelPageSize: Int, CaseIterable, Identifiable {
     }
 }
 
+enum AndroidBootMode: UInt32, CaseIterable, Identifiable {
+    static let environmentKey = "KERNARIUM_ANDROID_BOOT_MODE"
+
+    case automatic = 0
+    case normal = 1
+    case recovery = 2
+
+    var id: UInt32 { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic:
+            "Automatic"
+        case .normal:
+            "Normal"
+        case .recovery:
+            "Recovery"
+        }
+    }
+
+    init?(environmentValue: String) {
+        switch environmentValue {
+        case "auto": self = .automatic
+        case "normal": self = .normal
+        case "recovery": self = .recovery
+        default: return nil
+        }
+    }
+}
+
 struct EmulatorConfiguration: Equatable {
     static let vCPUEnvironmentKey = "KERNARIUM_VCPU_COUNT"
     static let guestMemoryEnvironmentKey = "KERNARIUM_GUEST_MEMORY_MIB"
@@ -34,6 +64,7 @@ struct EmulatorConfiguration: Equatable {
     static let defaultOverlaySizeGiB = 8
     static let defaultKernelPageSize = KernelPageSize.sixteenKiB
     static let defaultRetinaMode = false
+    static let defaultAndroidBootMode = AndroidBootMode.automatic
 
     let vCPUCount: Int
     let guestMemoryMiB: Int
@@ -41,6 +72,7 @@ struct EmulatorConfiguration: Equatable {
     let rootfsFilename: String
     let kernelPageSize: KernelPageSize
     let retinaMode: Bool
+    let androidBootMode: AndroidBootMode
 
     static var physicalProcessorCount: Int {
         max(ProcessInfo.processInfo.processorCount, 1)
@@ -90,6 +122,15 @@ struct EmulatorConfiguration: Equatable {
         let storedRetinaMode = defaults.object(forKey: Key.retinaMode) == nil
             ? defaultRetinaMode
             : defaults.bool(forKey: Key.retinaMode)
+        let storedAndroidBootMode = defaults.object(
+            forKey: Key.androidBootMode
+        ) == nil
+            ? defaultAndroidBootMode
+            : AndroidBootMode(
+                rawValue: UInt32(clamping: defaults.integer(
+                    forKey: Key.androidBootMode
+                ))
+            ) ?? defaultAndroidBootMode
         let environmentVCPUCount = environmentInteger(
             environment[vCPUEnvironmentKey], in: 1...maximumVCPUCount
         )
@@ -111,6 +152,9 @@ struct EmulatorConfiguration: Equatable {
             default: nil
             }
         }
+        let environmentAndroidBootMode = environment[
+            AndroidBootMode.environmentKey
+        ].flatMap(AndroidBootMode.init(environmentValue:))
 
         let rootfsFilename = RootfsImage.validatedFilename(
             storedRootfsFilename
@@ -145,7 +189,8 @@ struct EmulatorConfiguration: Equatable {
             ),
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredKernelPageSize ?? requestedKernelPageSize,
-            retinaMode: environmentRetinaMode ?? storedRetinaMode
+            retinaMode: environmentRetinaMode ?? storedRetinaMode,
+            androidBootMode: environmentAndroidBootMode ?? storedAndroidBootMode
         )
     }
 
@@ -160,6 +205,7 @@ struct EmulatorConfiguration: Equatable {
         )
         defaults.set(kernelPageSize.rawValue, forKey: Key.kernelPageSize)
         defaults.set(retinaMode, forKey: Key.retinaMode)
+        defaults.set(androidBootMode.rawValue, forKey: Key.androidBootMode)
     }
 
     private static func normalizedGuestMemoryMiB(_ value: Int) -> Int {
@@ -191,6 +237,7 @@ struct EmulatorConfiguration: Equatable {
         static let rootfsFilename = "emulator.rootfsFilename"
         static let kernelPageSize = "emulator.kernelPageSize"
         static let retinaMode = "emulator.retinaMode"
+        static let androidBootMode = "emulator.androidBootMode"
     }
 }
 

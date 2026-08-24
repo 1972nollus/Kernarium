@@ -7,6 +7,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
+JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
@@ -129,11 +130,14 @@ fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || fail "jobs must be a positive integer"
 [[ -f "$METADATA" ]] || fail "AOSP metadata is missing"
 [[ -x "$VERIFIER" ]] || fail "AOSP patch verifier is missing"
+[[ -x "$JELLY_VERIFIER" ]] || fail "Jelly source verifier is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
 
+"$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
+	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 "$ELF_VERIFIER" "$KERNEL_ELF"
@@ -208,7 +212,19 @@ BOARD_VENDORIMAGE_PARTITION_SIZE vendor
 BOARD_ODMIMAGE_PARTITION_SIZE odm
 BOARD_METADATAIMAGE_PARTITION_SIZE metadata
 BOARD_USERDATAIMAGE_PARTITION_SIZE userdata
+BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE init_boot
+BOARD_RECOVERYIMAGE_PARTITION_SIZE recovery
 EOF
+[[ "$(get_build_var TARGET_NO_RECOVERY)" == false ]] ||
+	fail "TARGET_NO_RECOVERY must be false for the recovery partition"
+[[ "$(get_build_var PRODUCT_BUILD_RECOVERY_IMAGE)" == true ]] ||
+	fail "PRODUCT_BUILD_RECOVERY_IMAGE must be true"
+[[ "$(get_build_var BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE)" == true ]] ||
+	fail "recovery must use the separately built ACK kernel"
+[[ "$(get_build_var BOARD_BOOT_HEADER_VERSION)" == 4 ]] ||
+	fail "recovery must use boot image header v4"
+[[ "$(get_build_var BOARD_INIT_BOOT_HEADER_VERSION)" == 4 ]] ||
+	fail "init_boot must use boot image header v4"
 for property in $(get_build_var PRODUCT_VENDOR_PROPERTIES); do
 	case "$property" in
 	ro.virtual_ab.*) fail "Virtual A/B property remains enabled: $property" ;;
@@ -255,12 +271,30 @@ PRODUCT_PACKAGES=" $(get_build_var PRODUCT_PACKAGES) "
 for package in \
 	com.android.hardware.gatekeeper.nonsecure \
 	com.android.hardware.keymint.rust_nonsecure \
-	device_google_cuttlefish_uml_config_init_vendor_rc \
-	device_google_cuttlefish_uml_config_ueventd_rc \
-	fstab.uml \
-	fstab.uml.vendor_ramdisk; do
+	Jelly \
+	LatinIME \
+	ThemePicker; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"
+done
+for package in \
+	BasicDreams \
+	BluetoothMidiService \
+	Calendar \
+	Camera2 \
+	Contacts \
+	DeskClock \
+	Dialer \
+	Gallery2 \
+	TeleService \
+	Telecom \
+	TelephonyProvider \
+	com.android.hardware.wifi \
+	com.google.cf.wifi \
+	com.google.cf.wpa_supplicant \
+	messaging; do
+	[[ "$PRODUCT_PACKAGES" != *" $package "* ]] ||
+		fail "unneeded built-in application remains present: $package"
 done
 for package in \
 	com.android.hardware.gatekeeper.cf_remote \
@@ -299,9 +333,9 @@ for package in \
 		fail "unsupported Cuttlefish HAL package is present: $package"
 done
 
-# target-files always carries a kernel input even when this product does not
-# build an Android boot image. Stage only the already-built, verified ACK UML
-# ELF in the output tree; never copy it into an AOSP source project.
+# target-files always carries a kernel input. Stage only the already-built,
+# verified ACK UML ELF in the output tree; the product's init_boot and recovery
+# images deliberately exclude it, and no AOSP source project owns a copy.
 PRODUCT_OUT=$(get_build_var PRODUCT_OUT)
 case "$PRODUCT_OUT" in
 "$OUT_DIR"/*) ;;

@@ -1,0 +1,25 @@
+on early-init
+    setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
+    setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}
+    setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
+
+on fs
+    mount_all --early
+    chmod 622 /dev/kmsg
+
+on late-fs
+    mount_all --late
+    write /dev/kmsg "GUEST_BUILD_FINGERPRINT: ${ro.build.fingerprint}"
+
+on boot
+    setprop ro.hardware.audio.primary goldfish
+
+service bugreport /system/bin/dumpstate -d -p -z
+    class main
+    user root
+    disabled
+    oneshot
+    keycodes 30 48
+
+on early-init && property:ro.boot.enable_bootanimation=0
+    setprop debug.sf.nobootanimation 1

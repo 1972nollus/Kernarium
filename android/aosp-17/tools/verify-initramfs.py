@@ -9,6 +9,7 @@ import argparse
 import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 
 NEWC_HEADER_SIZE = 110
@@ -26,6 +27,7 @@ UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/misc /misc emmc defaults defaults
 """
 FORBIDDEN_PATHS = {
     "system/bin/modprobe",
@@ -58,6 +60,40 @@ class Entry:
     payload: bytes | None
 
 
+class RangeReader:
+    def __init__(self, source: BinaryIO, offset: int, size: int) -> None:
+        self.source = source
+        self.offset = offset
+        self.size = size
+        self.position = 0
+        source.seek(offset)
+
+    def tell(self) -> int:
+        return self.position
+
+    def read(self, count: int = -1) -> bytes:
+        remaining = self.size - self.position
+        amount = remaining if count < 0 else min(count, remaining)
+        payload = self.source.read(amount)
+        self.position += len(payload)
+        return payload
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence == 0:
+            position = offset
+        elif whence == 1:
+            position = self.position + offset
+        elif whence == 2:
+            position = self.size + offset
+        else:
+            fail("archive reader received an invalid seek origin")
+        if position < 0 or position > self.size:
+            fail("archive entry exceeds the selected initramfs range")
+        self.source.seek(self.offset + position)
+        self.position = position
+        return position
+
+
 def fail(message: str) -> None:
     raise SystemExit(f"Android initramfs verifier: {message}")
 
@@ -88,13 +124,15 @@ def read_exact(source, count: int, label: str) -> bytes:
     return payload
 
 
-def parse_newc(path: Path) -> dict[str, Entry]:
-    size = path.stat().st_size
+def parse_newc(path: Path, offset: int, size: int) -> dict[str, Entry]:
     if size == 0 or size > MAX_INITRAMFS_SIZE:
         fail(f"archive size is invalid: {size}")
+    if offset < 0 or offset + size > path.stat().st_size:
+        fail("archive range exceeds the input file")
 
     entries: dict[str, Entry] = {}
-    with path.open("rb") as source:
+    with path.open("rb") as raw_source:
+        source = RangeReader(raw_source, offset, size)
         while True:
             header = read_exact(source, NEWC_HEADER_SIZE, "newc header")
             if header[:6] not in (b"070701", b"070702"):
@@ -152,12 +190,18 @@ def main() -> None:
         action="store_true",
         help="validate invariant archive safety without current fstab byte equality",
     )
+    parser.add_argument("--offset", type=int)
+    parser.add_argument("--size", type=int)
     parser.add_argument("initramfs", type=Path)
     args = parser.parse_args()
     if not args.initramfs.is_file() or args.initramfs.is_symlink():
         fail("input must be a regular non-symlink file")
 
-    entries = parse_newc(args.initramfs)
+    if (args.offset is None) != (args.size is None):
+        fail("--offset and --size must be supplied together")
+    offset = args.offset if args.offset is not None else 0
+    size = args.size if args.size is not None else args.initramfs.stat().st_size
+    entries = parse_newc(args.initramfs, offset, size)
     init = entries.get("init")
     if init is None or not stat.S_ISREG(init.mode) or not (init.mode & 0o111):
         fail("archive does not contain an executable regular /init")
@@ -179,7 +223,7 @@ def main() -> None:
             if target in {"/system/bin/modprobe", "modprobe"}:
                 fail(f"module-loader symlink remains: {name}")
 
-    print(f"verified Android 17 UML initramfs: {len(entries)} entries, {args.initramfs.stat().st_size} bytes")
+    print(f"verified Android 17 UML initramfs: {len(entries)} entries, {size} bytes")
 
 
 if __name__ == "__main__":

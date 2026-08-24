@@ -10,6 +10,7 @@ import hashlib
 import stat
 import struct
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 
@@ -44,8 +45,10 @@ VIRGL_EGL_ENTRIES = {
 REQUIRED_ENTRIES = {
     "BOOT/kernel",
     "INIT_BOOT/RAMDISK/init",
+    "IMAGES/init_boot.img",
     "IMAGES/odm.img",
     "IMAGES/product.img",
+    "IMAGES/recovery.img",
     "IMAGES/system.img",
     "IMAGES/system_ext.img",
     "IMAGES/userdata.img",
@@ -55,13 +58,18 @@ REQUIRED_ENTRIES = {
     "META/kernel_version.txt",
     "META/misc_info.txt",
     "META/ramdisk_node_list",
+    "PRODUCT/app/Jelly/Jelly.apk",
+    "PRODUCT/app/LatinIME/LatinIME.apk",
+    "RECOVERY/RAMDISK/system/bin/recovery",
+    "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
     "VENDOR/etc/fstab.uml",
-    "VENDOR/etc/init/init.cutf_cvm.rc",
+    "VENDOR/etc/init/init.kernarium.rc",
+    "VENDOR/etc/permissions/handheld_core_hardware.xml",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
-    "VENDOR/etc/ueventd.rc",
+    "VENDOR/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
     "VENDOR/etc/vintf/manifest.xml",
-    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
     *VIRGL_ELF_ENTRIES,
     VIRGL_DRI_SYMLINK,
 }
@@ -120,11 +128,14 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.android.hardware.neuralnetworks.apex",
     "VENDOR/apex/com.android.hardware.threadnetwork.apex",
     "VENDOR/apex/com.android.hardware.uwb.apex",
+    "VENDOR/apex/com.android.hardware.wifi.apex",
     "VENDOR/apex/com.google.cf.bt.apex",
     "VENDOR/apex/com.google.cf.light.apex",
     "VENDOR/apex/com.google.cf.nfc.apex",
     "VENDOR/apex/com.google.cf.oemlock.apex",
     "VENDOR/apex/com.google.cf.rild.apex",
+    "VENDOR/apex/com.google.cf.wifi.apex",
+    "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
     "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/seriallogging.rc",
@@ -133,6 +144,58 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
     "VENDOR/overlay/cuttlefish_overlay_uwb_gsi.apk",
+}
+FORBIDDEN_APP_DIRECTORIES = {
+    "BasicDreams",
+    "BluetoothMidiService",
+    "Calendar",
+    "Camera2",
+    "Contacts",
+    "DeskClock",
+    "Dialer",
+    "Gallery2",
+    "TeleService",
+    "Telecom",
+    "TelephonyProvider",
+    "messaging",
+}
+FORBIDDEN_FEATURE_DECLARATIONS = {
+    "android.hardware.bluetooth.xml",
+    "android.hardware.bluetooth_le.xml",
+    "android.hardware.camera.concurrent.xml",
+    "android.hardware.camera.flash-autofocus.xml",
+    "android.hardware.camera.front.xml",
+    "android.hardware.camera.full.xml",
+    "android.hardware.camera.raw.xml",
+    "android.hardware.fingerprint.xml",
+    "android.hardware.location.gps.xml",
+    "android.hardware.telephony.xml",
+    "android.hardware.usb.accessory.xml",
+    "android.hardware.usb.host.xml",
+    "android.hardware.uwb.xml",
+    "android.hardware.wifi.direct.xml",
+    "android.hardware.wifi.passpoint.xml",
+    "android.hardware.wifi.xml",
+    "android.software.verified_boot.xml",
+}
+FORBIDDEN_FEATURE_NAMES = {
+    "android.hardware.bluetooth",
+    "android.hardware.bluetooth_le",
+    "android.hardware.camera",
+    "android.hardware.camera.any",
+    "android.hardware.camera.autofocus",
+    "android.hardware.camera.flash",
+    "android.hardware.camera.front",
+    "android.hardware.fingerprint",
+    "android.hardware.location.gps",
+    "android.hardware.microphone",
+    "android.hardware.telephony",
+    "android.hardware.usb.accessory",
+    "android.hardware.usb.host",
+    "android.hardware.uwb",
+    "android.hardware.wifi",
+    "android.hardware.wifi.direct",
+    "android.hardware.wifi.passpoint",
 }
 UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/system /system erofs ro wait,first_stage_mount
@@ -145,10 +208,11 @@ UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/misc /misc emmc defaults defaults
 """
 UML_FSTAB_ENTRIES = (
     "VENDOR/etc/fstab.uml",
-    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
 )
 UML_INIT_REQUIRED = (
     "mount_all --early",
@@ -226,6 +290,10 @@ def reject_nonstatic_payload(path: PurePosixPath) -> None:
         fail(f"DLKM image is forbidden: {path}")
     if path.name.startswith("fstab.cf.") and path.parts[0] in {"VENDOR", "VENDOR_BOOT"}:
         fail(f"Cuttlefish fstab is forbidden: {path}")
+    if any(part in FORBIDDEN_APP_DIRECTORIES for part in path.parts):
+        fail(f"unneeded built-in application payload is forbidden: {path}")
+    if path.name in FORBIDDEN_FEATURE_DECLARATIONS and "permissions" in path.parts:
+        fail(f"absent hardware feature declaration is forbidden: {path}")
 
 
 def read_small(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
@@ -240,7 +308,7 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
 
     init_payload = read_small(
-        archive, infos["VENDOR/etc/init/init.cutf_cvm.rc"]
+        archive, infos["VENDOR/etc/init/init.kernarium.rc"]
     ).decode("utf-8", errors="strict")
     for token in UML_INIT_REQUIRED:
         if token not in init_payload:
@@ -250,7 +318,7 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
             fail(f"UML init policy retains unsupported Cuttlefish action: {token}")
 
     ueventd_payload = read_small(
-        archive, infos["VENDOR/etc/ueventd.rc"]
+        archive, infos["VENDOR/ueventd.rc"]
     ).decode("utf-8", errors="strict")
     ueventd_entries = {
         line.strip()
@@ -270,6 +338,29 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
         for prefix in ("/dev/ion", "/dev/pmem", "/dev/vhci"):
             if device.startswith(prefix):
                 fail(f"UML ueventd policy retains unsupported device: {device}")
+
+
+def check_hardware_features(
+    archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
+) -> None:
+    for name, info in infos.items():
+        path = PurePosixPath(name)
+        if (
+            info.is_dir()
+            or path.suffix != ".xml"
+            or "permissions" not in path.parts
+        ):
+            continue
+        try:
+            root = ET.fromstring(read_small(archive, info))
+        except ET.ParseError as error:
+            fail(f"cannot parse hardware permission XML {name}: {error}")
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] != "feature":
+                continue
+            feature = element.attrib.get("name")
+            if feature in FORBIDDEN_FEATURE_NAMES:
+                fail(f"absent hardware feature is advertised in {name}: {feature}")
 
 
 def check_kernel_policy(
@@ -544,6 +635,7 @@ def main() -> None:
         missing = sorted(REQUIRED_ENTRIES - seen)
         if missing:
             fail(f"required entries are missing: {', '.join(missing)}")
+        check_hardware_features(archive, infos)
         check_virgl_stack(archive, infos)
         check_boot_policy(archive, infos)
         check_kernel_policy(

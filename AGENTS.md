@@ -481,8 +481,10 @@ Executable-memory policy:
   Documents holding one guest's complete payload and its writable disk. The
   extension is neutral about the operating system inside; the payload names the
   flavour, and an incomplete payload is not offered for selection at all. An
-  Android bundle carries `release-manifest.json`, `boot/ramdisk.img`,
-  `boot/kernel-command-line.txt`, and exactly one `guest/*.img`; UBD creates
+  Android bundle carries `release-manifest.json`,
+  `boot/kernel-command-line.txt`, and exactly one `guest/*.img`. That GPT image
+  owns kernelless boot-image-v4 `init_boot` and stock AOSP `recovery`
+  partitions plus writable `misc`; no standalone ramdisk is carried. UBD creates
   `userdata.cow` beside them on first boot and reopens it afterwards, so guest
   state accumulates inside the bundle rather than in disposable storage. A
   bundle whose kernel exists in only one page profile fixes that profile in the

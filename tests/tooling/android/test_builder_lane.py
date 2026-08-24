@@ -116,6 +116,7 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 # Static non-A/B storage uses neither userdata checkpointing nor BootControl.
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,wait,check,formattable,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
+/dev/block/by-name/misc /misc emmc defaults defaults
 """
 
 
@@ -140,6 +141,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           seriallogging: bool = False,
                           boot_control: bool = False,
                           unsupported_hal: bool = False,
+                          unsupported_feature: bool = False,
                           wrong_kernel_config: bool = False,
                           wrong_kernel_release: bool = False,
                           missing_memfd_policy: bool = False,
@@ -171,8 +173,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("META/misc_info.txt", "")
                 archive.writestr("META/ramdisk_node_list", "")
                 for image in (
+                    "init_boot.img",
                     "odm.img",
                     "product.img",
+                    "recovery.img",
                     "system.img",
                     "system_ext.img",
                     "userdata.img",
@@ -196,11 +200,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 fstab = UML_FSTAB.replace("/system erofs", "/system ext4", 1) if wrong_fstab else UML_FSTAB
                 archive.writestr("VENDOR/etc/fstab.uml", fstab)
                 archive.writestr(
-                    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/system/etc/fstab.uml",
+                    "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
                     fstab,
                 )
                 archive.writestr(
-                    "VENDOR/etc/init/init.cutf_cvm.rc",
+                    "VENDOR/etc/init/init.kernarium.rc",
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n    mount_all --late\n"
                     "on boot\n    setprop ro.hardware.audio.primary goldfish\n",
@@ -216,7 +220,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ueventd += "/dev/hvc0 0660 root shell\n"
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
-                archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
+                archive.writestr("VENDOR/ueventd.rc", ueventd)
+                archive.writestr("PRODUCT/app/Jelly/Jelly.apk", b"apk")
+                archive.writestr("PRODUCT/app/LatinIME/LatinIME.apk", b"apk")
+                archive.writestr(
+                    "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk", b"apk"
+                )
+                advertised_feature = (
+                    "android.hardware.microphone"
+                    if unsupported_feature
+                    else "android.hardware.touchscreen"
+                )
+                archive.writestr(
+                    "VENDOR/etc/permissions/handheld_core_hardware.xml",
+                    f'<permissions><feature name="{advertised_feature}"/></permissions>',
+                )
+                archive.writestr(
+                    "RECOVERY/RAMDISK/system/bin/recovery", b"recovery"
+                )
                 archive.writestr(
                     "VENDOR/etc/vintf/compatibility_matrix.xml",
                     "<compatibility-matrix/>\n",
@@ -302,6 +323,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
+            ("unsupported-feature", {"unsupported_feature": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
             ("kernel-release", {"wrong_kernel_release": True}),
             ("memfd-policy", {"missing_memfd_policy": True}),
@@ -403,6 +425,80 @@ def verify_initramfs_fixtures(verifier: Path) -> None:
                 fail(f"initramfs verifier accepted the {label} fixture")
 
 
+def synthetic_boot_image(
+    ramdisk: bytes = b"fixture-initramfs",
+    *,
+    kernel_size: int = 0,
+    header_version: int = 4,
+) -> bytes:
+    header = bytearray(4096)
+    header[:8] = b"ANDROID!"
+    struct.pack_into("<IIII", header, 8, kernel_size, len(ramdisk), 0, 1584)
+    struct.pack_into("<I", header, 40, header_version)
+    struct.pack_into("<I", header, 1580, 0)
+    return bytes(header) + ramdisk
+
+
+def verify_boot_image_fixtures(verifier: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="android-boot-image-") as temporary:
+        root = Path(temporary)
+        ramdisk = root / "ramdisk.img"
+        ramdisk.write_bytes(b"fixture-initramfs")
+        good = root / "init_boot.img"
+        good.write_bytes(synthetic_boot_image(ramdisk.read_bytes()))
+        subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(verifier),
+                "verify",
+                "--image",
+                str(good),
+                "--ramdisk",
+                str(ramdisk),
+            ],
+            check=True,
+        )
+        selected_range = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(verifier),
+                "range",
+                "--image",
+                str(good),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        parsed = json.loads(selected_range.stdout)
+        if parsed["ramdisk_offset"] != 4096 or parsed["ramdisk_size"] != ramdisk.stat().st_size:
+            fail("boot-image verifier reported the wrong ramdisk range")
+
+        for label, payload in (
+            ("embedded-kernel", synthetic_boot_image(kernel_size=1)),
+            ("old-header", synthetic_boot_image(header_version=3)),
+        ):
+            fixture = root / f"bad-{label}.img"
+            fixture.write_bytes(payload)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(verifier),
+                    "verify",
+                    "--image",
+                    str(fixture),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            if result.returncode == 0:
+                fail(f"boot-image verifier accepted {label}")
+
+
 def synthetic_sparse_image() -> bytes:
     block_size = 4096
     raw = b"A" * block_size
@@ -451,6 +547,9 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
         "odm",
         "metadata",
         "userdata",
+        "init_boot",
+        "misc",
+        "recovery",
     ]:
         fail("production UBD layout has the wrong fixed partition order")
     if "super" in names or any("dlkm" in name for name in names):
@@ -716,11 +815,25 @@ def main() -> None:
         android_root / "patches/projects/p0002/series/manifest.tsv",
         android_root / "patches/projects/p0003/metadata.env",
         android_root / "patches/projects/p0003/series/manifest.tsv",
+        android_root / "third_party/jelly/metadata.env",
+        android_root / "third_party/jelly/series/manifest.tsv",
         android_root / "tools/verify-aosp-patches.py",
         android_root / "tools/regenerate-aosp-patches.py",
+        android_root / "tools/verify-jelly-source.py",
+        android_root / "tools/regenerate-jelly-patches.py",
         android_root / "tools/verify-target-files.py",
         android_root / "tools/verify-initramfs.py",
+        android_root / "tools/boot-image.py",
+        android_root / "tools/sync-device-overlay.py",
         android_root / "tools/ubd-disk.py",
+        android_root / "overlay/AndroidProducts.mk",
+        android_root / "overlay/BoardConfig.mk",
+        android_root / "overlay/aosp_kernarium_darwin.mk",
+        android_root / "overlay/config/Android.bp",
+        android_root / "overlay/config/recovery.fstab",
+        android_root / "overlay/config/kernarium_core_hardware.xml",
+        android_root / "overlay/overlay/frameworks/base/core/res/res/values/config.xml",
+        android_root / "overlay/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml",
         android_root / "support/boot/kernel-command-line.txt",
         android_root / "support/image/partition-layout.json",
         kernel_root / "README.md",
@@ -734,6 +847,19 @@ def main() -> None:
         if not path.is_file():
             fail(f"required owner is missing: {path.relative_to(root)}")
 
+    subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(android_root / "tools/verify-jelly-source.py"),
+            "--android-root",
+            str(android_root),
+        ],
+        check=True,
+    )
+    if (android_root / "overlay/apps/Jelly").exists():
+        fail("the device overlay vendors the full Jelly source tree")
+
     aosp = parse_env(android_root / "metadata/aosp.env")
     ack = parse_env(kernel_root / "patches/metadata.env")
     expected_aosp = {
@@ -742,7 +868,7 @@ def main() -> None:
         "ANDROID17_MANIFEST_TREE": "1541b7154f1532032baf7c73f222256cc29e8cfb",
         "ANDROID17_BASE_MANIFEST_SHA256": "3aa2cfa6bf79012561b33755177e094cddd9f6488ba2f7fca583f12cbba698c1",
         "ANDROID17_MAJOR": "17",
-        "ANDROID17_PRODUCT": "aosp_uml_arm64_pgagnostic",
+        "ANDROID17_PRODUCT": "aosp_kernarium_darwin",
         "ANDROID17_PAGE_SIZE": "16384",
         "ANDROID17_RELEASE_CONFIG": "trunk_staging",
     }
@@ -751,8 +877,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "05c892f8175ca302ca869b01efc76f09ad14fa2c",
-        "UML_KERNEL_PATCH_COUNT": "33",
+        "UML_KERNEL_FINAL_TREE": "621a0ab42d8990aa0960bf5d341d89b8f1042723",
+        "UML_KERNEL_PATCH_COUNT": "34",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -781,6 +907,7 @@ def main() -> None:
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
+    verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_ubd_disk_fixtures(
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",
@@ -802,6 +929,10 @@ def main() -> None:
             fail(f"tracked producer contains endpoint or credential state: {script}")
         if "/home/build/" in text:
             fail(f"tracked producer stores a builder-specific path: {script}")
+        if script.name != "prepare-sources.sh" and re.search(
+            r"\bgit(?:\s+-[^\s]+|\s+-C\s+[^\s]+)*\s+(?:clone|fetch)\b", text
+        ):
+            fail(f"producer fetches source outside preparation: {script}")
 
     tracked_policy_text = "\n".join(
         path.read_text(errors="surrogateescape")
@@ -821,6 +952,19 @@ def main() -> None:
     preflight = (android_root / "build/preflight.sh").read_text()
     if "--aosp-source" not in prepare or "--ack-workspace" not in prepare:
         fail("source preparation does not require explicit local workspaces")
+    for token in (
+        "JELLY_UPSTREAM_REPOSITORY",
+        "JELLY_UPSTREAM_COMMIT",
+        "JELLY_UPSTREAM_TREE",
+        "JELLY_FINAL_COMMIT",
+        "JELLY_FINAL_TREE",
+        "JELLY_DESTINATION",
+        "git -C \"$JELLY_STAGING\" fetch",
+        "am --committer-date-is-author-date",
+        "verify-jelly-source.py",
+    ):
+        if token not in prepare:
+            fail(f"source preparation is missing Jelly policy: {token}")
     for token in (
         "builder host must be Linux",
         "builder host must be x86_64",
@@ -870,9 +1014,16 @@ def main() -> None:
         kernel_root
         / "patches/series/0033-UML-DARWIN-LOCAL-um-advance-COW-I-O-by-the-full-desc.patch"
     ).read_text()
-    build_make_patch = next(
-        (android_root / "patches/projects/p0002/series").glob("*.patch")
+    initrd_range_patch = (
+        kernel_root
+        / "patches/series/0034-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
     ).read_text()
+    build_make_patch = "\n".join(
+        path.read_text()
+        for path in sorted(
+            (android_root / "patches/projects/p0002/series").glob("*.patch")
+        )
+    )
     connectivity_patch = next(
         (android_root / "patches/projects/p0003/series").glob("*.patch")
     ).read_text()
@@ -983,12 +1134,115 @@ def main() -> None:
         r"^\+\s*req->offset \+= len;$", ubd_cow_offset_patch, re.MULTILINE
     ) is not None:
         fail("ACK UBD COW topic advances by only the final backing/COW run")
+    for token in (
+        '__uml_setup("initrd_offset=", uml_initrd_offset_setup',
+        '__uml_setup("initrd_size=", uml_initrd_size_setup',
+        "initrd_offset and initrd_size are invalid or incomplete",
+        "uml_load_file_range",
+        "os_pread_file",
+        "os_pread_file",
+    ):
+        if token not in initrd_range_patch:
+            fail(f"ACK initrd-range topic is missing fixed policy: {token}")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
-        fail("AOSP materializer stages an overlay instead of applying project patches")
+        fail("AOSP materializer stages support files outside the exact overlay sync")
+    for token in (
+        "sync-device-overlay.py",
+        '"$OVERLAY_SYNC" --android-root "$ANDROID_ROOT" --aosp-source "$AOSP_SOURCE"',
+    ):
+        if token not in apply_aosp:
+            fail(f"AOSP materializer is missing device-overlay policy: {token}")
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
+    for token in (
+        "PRODUCT_PACKAGES_EXCLUDE",
+        "PRODUCT_COPY_FILES_EXCLUDE",
+        "PRODUCT_PACKAGES := $(filter-out $(PRODUCT_PACKAGES_EXCLUDE)",
+        "PRODUCT_COPY_FILES := $(filter-out $(PRODUCT_COPY_FILES_EXCLUDE)",
+    ):
+        if token not in build_make_patch:
+            fail(f"AOSP build route is missing inherited-payload exclusion: {token}")
+
+    device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
+    settings_defaults = (
+        android_root
+        / "overlay/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml"
+    ).read_text()
+    framework_defaults = (
+        android_root / "overlay/overlay/frameworks/base/core/res/res/values/config.xml"
+    ).read_text()
+    jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
+    jelly_patches = "\n".join(
+        path.read_text()
+        for path in sorted((android_root / "third_party/jelly/series").glob("*.patch"))
+    )
+    core_hardware = (
+        android_root / "overlay/config/kernarium_core_hardware.xml"
+    ).read_text()
+    for token in (
+        "PRODUCT_NAME := aosp_kernarium_darwin",
+        "PRODUCT_PACKAGES_EXCLUDE",
+        "PRODUCT_COPY_FILES_EXCLUDE",
+        "Jelly",
+        "LatinIME",
+        "ThemePicker",
+        "BOARD_HAVE_BLUETOOTH := false",
+        "TARGET_NO_TELEPHONY := true",
+        "PRODUCT_BUILD_RECOVERY_IMAGE := true",
+        "com.android.hardware.wifi",
+        "com.google.cf.wifi",
+        "com.google.cf.wpa_supplicant",
+    ):
+        if token not in device_product:
+            fail(f"device overlay product is missing fixed policy: {token}")
+    for removed in (
+        "Calendar",
+        "Camera2",
+        "Contacts",
+        "DeskClock",
+        "Dialer",
+        "Gallery2",
+        "messaging",
+    ):
+        if removed not in device_product:
+            fail(f"device overlay does not remove obsolete app: {removed}")
+    for token in (
+        '<bool name="def_lockscreen_disabled">true</bool>',
+        '<integer name="def_screen_off_timeout">2147483647</integer>',
+        '<bool name="def_show_ime_with_hard_keyboard">true</bool>',
+        '<bool name="def_stay_on_while_plugged_in">true</bool>',
+    ):
+        if token not in settings_defaults:
+            fail(f"SettingsProvider overlay is missing emulator default: {token}")
+    if "org.lineageos.jelly" not in framework_defaults:
+        fail("framework overlay does not select Jelly as the default browser")
+    expected_jelly = {
+        "JELLY_UPSTREAM_REPOSITORY": (
+            "https://github.com/LineageOS/android_packages_apps_Jelly"
+        ),
+        "JELLY_UPSTREAM_BRANCH": "lineage-23.2",
+        "JELLY_UPSTREAM_COMMIT": "767833067da7bbbb639782bbddec33f602215c3d",
+        "JELLY_UPSTREAM_TREE": "82fe9a20385cd4546a0f5bc48c472e11ed7ad0fc",
+        "JELLY_FINAL_COMMIT": "607d28aece407ccc5e245539d2e1b76d3ea81a37",
+        "JELLY_FINAL_TREE": "ce63d63703fbfd2e616e94513ea1e5c63ccae4ef",
+        "JELLY_PATCH_COUNT": "2",
+        "JELLY_DESTINATION": "packages/apps/Jelly",
+    }
+    for key, expected in expected_jelly.items():
+        if jelly_metadata.get(key) != expected:
+            fail(f"Jelly metadata differs for {key}")
+    if '+    sdk_version: "37"' not in jelly_patches:
+        fail("Jelly topic is not bound to the AOSP 17 product SDK")
+    if "app/src/main/AndroidManifest.xml" in jelly_patches:
+        fail("Jelly topic unnecessarily changes upstream browser permissions")
+    if "+        private const val LOCATION_ENABLED_DEFAULT = false" not in jelly_patches:
+        fail("Jelly topic does not disable WebView geolocation by default")
+    if "android.hardware.microphone" in core_hardware:
+        fail("device overlay advertises unsupported audio capture hardware")
+    if "OrangeFox" in device_product or "OrangeFox" in assemble_image:
+        fail("custom recovery entered the current stock-recovery implementation")
     for token in (
         "platform/packages/modules/Connectivity",
         "ro.boot.uml_bpf_interpreter",
@@ -1092,8 +1346,15 @@ def main() -> None:
         "com.google.cf.oemlock",
         "cuttlefish_sensor_injection",
         "target-files-package",
-        "device_google_cuttlefish_uml_config_ueventd_rc",
-        "fstab.uml.vendor_ramdisk",
+        "BOARD_INIT_BOOT_IMAGE_PARTITION_SIZE",
+        "BOARD_RECOVERYIMAGE_PARTITION_SIZE",
+        "PRODUCT_BUILD_RECOVERY_IMAGE",
+        "BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE",
+        "BOARD_INIT_BOOT_HEADER_VERSION",
+        "BOARD_BOOT_HEADER_VERSION",
+        "Jelly",
+        "LatinIME",
+        "ThemePicker",
     ):
         if token not in build_aosp:
             fail(f"AOSP builder is missing fixed product policy: {token}")
@@ -1114,17 +1375,20 @@ def main() -> None:
         "VENDOR/apex/com.google.cf.bt.apex",
         "VENDOR/apex/com.google.cf.light.apex",
         "VENDOR/apex/com.google.cf.oemlock.apex",
+        "VENDOR/apex/com.google.cf.wifi.apex",
+        "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
         "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")
     for token in (
         "verify-aosp-patches.py",
+        "verify-jelly-source.py",
         "verify-series-policy.py",
         "verify-kernel-elf.py",
         "verify-target-files.py",
-        "verify-initramfs.py",
         "ubd-disk.py",
+        "verify_disk_boot_payloads",
         "check_no_module_output",
         "verify_kernel_config",
         'parser.add_argument("--clang"',
@@ -1132,6 +1396,8 @@ def main() -> None:
         "enforce_tracked_policy=True",
         "release-manifest.json",
         "android-17-uml-arm64.img.zst",
+        "jelly_patch_manifest_sha256",
+        '"jelly"',
         "repo",
         "manifest",
         '"-r"',
@@ -1169,6 +1435,8 @@ def main() -> None:
         fail("Android kernel logs must be restricted to ttyS0")
     if "ubd0=" in command_line or "/home/" in command_line:
         fail("Android kernel command line stores a machine-specific disk path")
+    if "androidboot.force_normal_boot" in command_line:
+        fail("Android kernel command line overrides the selected ramdisk boot mode")
     if any(
         token.startswith("androidboot.hardware.vulkan=")
         for token in command_line.split()

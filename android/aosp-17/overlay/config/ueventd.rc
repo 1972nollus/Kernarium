@@ -1,0 +1,4 @@
+# Generic Android policy owns input, sound, DRM, and block nodes. Darwin UML
+# adds only its host serial and single-port Virtio console permissions.
+/dev/ttyS0 0660 root shell
+/dev/hvc0 0660 root shell

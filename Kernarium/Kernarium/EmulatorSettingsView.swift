@@ -10,6 +10,7 @@ struct EmulatorSettingsView: View {
     @State private var rootfsFilename: String
     @State private var kernelPageSize: KernelPageSize
     @State private var retinaMode: Bool
+    @State private var androidBootMode: AndroidBootMode
 
     private let maximumVCPUCount: Int
     private let defaults: UserDefaults
@@ -34,6 +35,13 @@ struct EmulatorSettingsView: View {
             get: { requiredPageSize ?? kernelPageSize },
             set: { kernelPageSize = $0 }
         )
+    }
+
+    private var androidBundleSelected: Bool {
+        RootfsImage.selection(
+            named: rootfsFilename,
+            in: documentsDirectory
+        )?.flavor == .android
     }
 
     init(
@@ -63,6 +71,7 @@ struct EmulatorSettingsView: View {
         _rootfsFilename = State(initialValue: configuration.rootfsFilename)
         _kernelPageSize = State(initialValue: configuration.kernelPageSize)
         _retinaMode = State(initialValue: configuration.retinaMode)
+        _androidBootMode = State(initialValue: configuration.androidBootMode)
     }
 
     var body: some View {
@@ -111,6 +120,15 @@ struct EmulatorSettingsView: View {
                     }
                     .accessibilityIdentifier("rootfsPicker")
 
+                    if androidBundleSelected {
+                        Picker("Android boot", selection: $androidBootMode) {
+                            ForEach(AndroidBootMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .accessibilityIdentifier("androidBootModePicker")
+                    }
+
                     if let required = requiredPageSize {
                         Text(
                             "\(rootfsFilename) carries its own kernel and " +
@@ -154,7 +172,8 @@ struct EmulatorSettingsView: View {
             overlaySizeGiB: overlaySizeGiB,
             rootfsFilename: rootfsFilename,
             kernelPageSize: requiredPageSize ?? kernelPageSize,
-            retinaMode: retinaMode
+            retinaMode: retinaMode,
+            androidBootMode: androidBootMode
         ).save(defaults: defaults)
         dismiss()
     }

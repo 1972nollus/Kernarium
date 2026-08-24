@@ -7,10 +7,13 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/aosp-17/metadata/aosp.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
+JELLY_METADATA="$ROOT_DIR/android/aosp-17/third_party/jelly/metadata.env"
+JELLY_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-jelly-source.py"
 
 AOSP_SOURCE=
 ACK_WORKSPACE=
 JOBS=
+JELLY_STAGING=
 
 fail()
 {
@@ -26,10 +29,20 @@ Usage: android/aosp-17/build/prepare-sources.sh \
        --ack-workspace ABSOLUTE_PATH [--jobs N]
 
 Run this command locally on the x86_64 Linux builder. It is the only Android
-producer step allowed to synchronize public AOSP/ACK source. Both workspaces
-must already exist and be clean. No endpoint or transport option is accepted.
+producer step allowed to synchronize public AOSP, ACK, and Jelly source. Both
+Repo workspaces must already exist and be clean. Jelly is materialized at its
+pinned external commit plus generated local patch series. No endpoint or
+transport option is accepted.
 EOF
 }
+
+cleanup()
+{
+	if [ -n "${JELLY_STAGING:-}" ] && [ -d "$JELLY_STAGING" ]; then
+		rm -rf -- "$JELLY_STAGING"
+	fi
+}
+trap cleanup EXIT HUP INT TERM
 
 absolute_directory()
 {
@@ -55,6 +68,62 @@ dirty_repo_projects()
 			fi
 		'
 	)
+}
+
+prepare_jelly()
+{
+	destination="$AOSP_SOURCE/$JELLY_DESTINATION"
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+			--aosp-source "$AOSP_SOURCE"
+		printf '%s\n' "reusing pinned Jelly checkout: $destination"
+		return
+	fi
+
+	parent=$(dirname -- "$destination")
+	mkdir -p -- "$parent"
+	JELLY_STAGING=$(mktemp -d "$parent/.Jelly.prepare.XXXXXX")
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" init --quiet
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" remote add origin \
+		"$JELLY_UPSTREAM_REPOSITORY"
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" fetch --no-tags --depth=1 origin \
+		"$JELLY_UPSTREAM_COMMIT"
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" switch --detach "$JELLY_UPSTREAM_COMMIT"
+	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" rev-parse HEAD^{tree})
+	[ "$actual_tree" = "$JELLY_UPSTREAM_TREE" ] ||
+		fail "fetched Jelly tree is $actual_tree, expected $JELLY_UPSTREAM_TREE"
+
+	tab=$(printf '\t')
+	while IFS="$tab" read -r order filename patch_id digest subject; do
+		case "$order" in
+		\#*|order|'') continue ;;
+		esac
+		patch="$ROOT_DIR/android/aosp-17/third_party/jelly/series/$filename"
+		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+			git -C "$JELLY_STAGING" \
+			-c core.hooksPath=/dev/null \
+			-c user.name='linux-um-darwin Android patch maintainer' \
+			-c user.email='noreply@linux-um-darwin.invalid' \
+			am --committer-date-is-author-date "$patch"
+	done < "$ROOT_DIR/android/aosp-17/third_party/jelly/series/manifest.tsv"
+
+	actual_commit=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" rev-parse HEAD)
+	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+		git -C "$JELLY_STAGING" rev-parse HEAD^{tree})
+	[ "$actual_commit" = "$JELLY_FINAL_COMMIT" ] ||
+		fail "replayed Jelly commit is $actual_commit, expected $JELLY_FINAL_COMMIT"
+	[ "$actual_tree" = "$JELLY_FINAL_TREE" ] ||
+		fail "replayed Jelly tree is $actual_tree, expected $JELLY_FINAL_TREE"
+	mv -- "$JELLY_STAGING" "$destination"
+	JELLY_STAGING=
+	"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+		--aosp-source "$AOSP_SOURCE"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -97,10 +166,16 @@ esac
 
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
+[ -f "$JELLY_METADATA" ] || fail "missing Jelly metadata: $JELLY_METADATA"
+[ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
 # shellcheck disable=SC1090
 . "$AOSP_METADATA"
 # shellcheck disable=SC1090
 . "$ACK_METADATA"
+# shellcheck disable=SC1090
+. "$JELLY_METADATA"
+
+"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17"
 
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
@@ -129,6 +204,8 @@ git -C "$ACK_WORKSPACE/common" fetch --no-tags \
 	"refs/tags/$UML_KERNEL_UPSTREAM_TAG"
 git -C "$ACK_WORKSPACE/common" checkout --detach \
 	"$UML_KERNEL_UPSTREAM_COMMIT"
+
+prepare_jelly
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \

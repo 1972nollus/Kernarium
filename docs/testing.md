@@ -306,8 +306,10 @@ A guest bundle is a `.kern` directory in the application's Documents holding
 one guest's complete payload and the writable disk it accumulates. The
 extension names no operating system; the payload decides the flavour, and a
 directory without a complete payload is not offered in the picker at all. An
-Android bundle holds `release-manifest.json`, `boot/ramdisk.img`,
-`boot/kernel-command-line.txt`, and exactly one `guest/*.img`. The runtime
+Android bundle holds `release-manifest.json`, `boot/kernel-command-line.txt`,
+and exactly one `guest/*.img`. The GPT image contains kernelless boot-image-v4
+`init_boot` and stock AOSP `recovery` partitions plus writable `misc`; the
+bundle has no standalone ramdisk. The runtime
 compares that manifest against the copy linked into its own framework and
 refuses a bundle built from a different release. UBD creates `userdata.cow`
 beside the payload on first boot and reopens it on every later boot, so guest
@@ -350,9 +352,10 @@ that cannot bind a console - a physical iOS application sandbox cannot write
 
 Force-quitting a running guest is what tears an instance disk. On Android that
 surfaces as `vold: Version mismatch`, a failed `init_user0`, and a reboot into
-a recovery partition this product does not have. Quiescing on backgrounding
-removes the exposure for a guest the user put away; a guest killed while in the
-foreground is still at risk.
+recovery. The current image supplies both writable `misc` and stock recovery,
+but quiescing on backgrounding still removes the torn-state exposure for a
+guest the user put away; a guest killed while in the foreground is still at
+risk.
 
 The serial console remains on that stdout relay and is also copied, in order,
 to the app's SwiftTerm surface. Typing in SwiftTerm writes to the same `ttyS0`

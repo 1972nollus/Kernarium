@@ -68,6 +68,33 @@
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "523abb36-1f98-5d08-92d0-31c3c8a47304",
       "writable": true
+    },
+    {
+      "name": "init_boot",
+      "start_bytes": 15905849344,
+      "size_bytes": 8388608,
+      "image": "init_boot.img",
+      "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+      "unique_guid": "5c438c71-20cd-5a5a-b057-f473040f149c",
+      "writable": false
+    },
+    {
+      "name": "misc",
+      "start_bytes": 15914237952,
+      "size_bytes": 4194304,
+      "image": "misc.img",
+      "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+      "unique_guid": "0c75e9c7-83e5-5561-b210-8392111fdb97",
+      "writable": true
+    },
+    {
+      "name": "recovery",
+      "start_bytes": 15918432256,
+      "size_bytes": 268435456,
+      "image": "recovery.img",
+      "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+      "unique_guid": "63b8ab73-87d1-5eb2-9fee-e1c4fd574d36",
+      "writable": false
     }
   ]
 }
