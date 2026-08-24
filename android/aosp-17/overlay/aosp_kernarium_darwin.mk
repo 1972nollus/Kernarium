@@ -127,6 +127,7 @@ KERNARIUM_REMOVED_PACKAGES := \
     com.android.cellbroadcast \
     com.android.hardware.biometrics.face.virtual \
     com.android.hardware.biometrics.fingerprint.virtual \
+    com.android.hardware.contexthub \
     com.android.hardware.gnss \
     com.android.hardware.secure_element \
     com.android.hardware.vibrator \

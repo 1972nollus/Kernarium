@@ -140,6 +140,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
+                          context_hub: bool = False,
                           unsupported_hal: bool = False,
                           unsupported_feature: bool = False,
                           wrong_kernel_config: bool = False,
@@ -291,6 +292,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     archive.writestr(
                         "VENDOR/apex/com.android.hardware.boot.apex", b"apex"
                     )
+                if context_hub:
+                    archive.writestr(
+                        "VENDOR/apex/com.android.hardware.contexthub.apex", b"apex"
+                    )
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.bt.apex", b"apex")
 
@@ -322,6 +327,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
+            ("context-hub", {"context_hub": True}),
             ("unsupported-hal", {"unsupported_hal": True}),
             ("unsupported-feature", {"unsupported_feature": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
@@ -1209,6 +1215,7 @@ def main() -> None:
         "BOARD_HAVE_BLUETOOTH := false",
         "TARGET_NO_TELEPHONY := true",
         "PRODUCT_BUILD_RECOVERY_IMAGE := true",
+        "com.android.hardware.contexthub",
         "com.android.hardware.wifi",
         "com.google.cf.wifi",
         "com.google.cf.wpa_supplicant",

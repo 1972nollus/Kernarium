@@ -293,6 +293,7 @@ for package in \
 	TeleService \
 	Telecom \
 	TelephonyProvider \
+	com.android.hardware.contexthub \
 	com.android.hardware.wifi \
 	com.google.cf.wifi \
 	com.google.cf.wpa_supplicant \
