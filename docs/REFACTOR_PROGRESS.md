@@ -1,5 +1,23 @@
 # Refactor progress
 
+## 2026-08-24: matched Android macOS/Simulator boot timing
+
+- Measured the accepted Android 17 ACK 6.18 16 KiB release with the same
+  gadgets/4 GiB/ten-vCPU/440 x 860/160 DPI hardware-Virgl guest on the
+  standalone macOS product and Kernarium's iOS 26.5 Simulator product. From
+  host launch to init's first `sys.boot_completed=1` action, macOS measured
+  786.169 s cold and 84.795 s warm; Simulator measured 130.991 s and 42.780 s.
+- Every run reached late mount by 7.866 s and boot animation by 16.753 s.
+  First-boot ART/package verification dominates: macOS `artd` reported
+  579.415 s and Simulator's corresponding quiet interval was about 66 s.
+  Neither warm boot started `artd`; media codec-list, overlay/idmap, theme and
+  user-unlock work form the remaining post-animation cost.
+- The 6.00x cold and 1.98x warm ratios are campaign observations, not intrinsic
+  platform claims. Earlier accepted macOS evidence measured 130.287/44.977 s;
+  the new long ART interval reproduced twice, but the cross-campaign macOS
+  variance remains unexplained. Exact tables and evidence paths are in
+  [`android-17-boot-timing-20260824.md`](android-17-boot-timing-20260824.md).
+
 ## 2026-08-22: bounded signed-app GLES matrix authority
 
 - Added checked schema-2 authority

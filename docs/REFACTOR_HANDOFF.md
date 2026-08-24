@@ -1,5 +1,36 @@
 # Refactor handoff
 
+## Matched Android macOS/Simulator boot timing (2026-08-24)
+
+The accepted `android17-ack6.18-16k-20260824-c3febf12-theme1` release was
+measured on the standalone macOS product and the iOS 26.5 iPhone 17 Pro Max
+Simulator with identical guest settings: gadgets, 4 GiB, ten vCPUs, 16 KiB,
+440 x 860 at 160 DPI, and hardware Virgl. First boot used a fresh COW; second
+boot reopened the exact state persisted by the first. The boundary is host
+launch to Android init's first `sys.boot_completed=1` action.
+
+macOS measured 786.169 s first boot and 84.795 s second boot. Simulator
+measured 130.991 s and 42.780 s. Initial startup is not the bottleneck: all four
+runs reached late mount by 7.866 s and boot animation by 16.753 s. The dominant
+region is first-boot ART/package verification after boot animation. macOS
+`artd` lived for 579.415 s; Simulator's corresponding quiet compilation
+interval was about 66 seconds. Media codec-list generation, package
+overlay/idmap, initial theme application and user unlock form the smaller
+remainder. Neither warm run started `artd`.
+
+The measured macOS/Simulator ratios are 6.00x cold and 1.98x warm, but they are
+not a general product claim. Earlier accepted macOS runs of the same release
+measured 130.287/44.977 s. In the current campaign the long cold ART interval
+did reproduce twice at 555.631 and 579.415 s, and removing inherited Darwin
+background priority did not improve a warm control. The phase is identified;
+the cross-campaign macOS variance is still unexplained.
+
+Both Simulator starts were thermally nominal. Exact scans of the four passing
+kernel logs found no RCU stall, watchdog lockup, oops, panic, Darwin signal,
+userdata/journal fallback, torn-userdata signature, or Virtio-GPU
+`0x1204`/`0x1205`. Full tables and retained evidence paths are in
+[`android-17-boot-timing-20260824.md`](android-17-boot-timing-20260824.md).
+
 ## Android warm-boot theme cycle fixed (2026-08-24)
 
 The current accepted Android bundle is

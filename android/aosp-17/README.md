@@ -462,6 +462,25 @@ fresh attempt panicked four seconds after already completing boot on a
 kernel-mode Darwin signal 10; it did not reproduce and is retained as an
 isolated observation rather than counted as passing evidence.
 
+A later matched-platform campaign used the same accepted release, gadgets,
+4 GiB, ten vCPUs, 16 KiB pages, and 440 x 860 at 160 DPI on both the standalone
+macOS product and Kernarium's iOS 26.5 Simulator product. macOS reached init's
+first `sys.boot_completed=1` action at 786.169 s from a fresh COW and 84.795 s
+from the persisted disk. Simulator reached it at 130.991 s and 42.780 s.
+Initial startup remained fast on every run: late mount completed by 7.866 s
+and boot animation started by 16.753 s. First-boot ART/package verification is
+the dominant cost; macOS `artd` reported 579.415 s, while Simulator's
+corresponding quiet compilation interval was about 66 seconds. Neither second
+boot started `artd`.
+
+Those 6.00x cold and 1.98x warm platform ratios apply only to that campaign.
+The earlier 130.287/44.977-second macOS evidence above remains valid, and the
+cause of the cross-campaign macOS variance is not established. The long ART
+interval did reproduce twice in the new campaign, and an extra scheduling-
+policy control did not remove it. See
+[`../../docs/android-17-boot-timing-20260824.md`](../../docs/android-17-boot-timing-20260824.md)
+for the exact boundary, phase tables, error scan, and retained raw paths.
+
 ## Separate macOS Android executable
 
 Configure and build the Android-only 16 KiB product after installing the

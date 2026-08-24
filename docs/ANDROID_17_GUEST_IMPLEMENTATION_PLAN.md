@@ -67,6 +67,36 @@ force except where a superseding decision is recorded against them.
 - The builder-local checkouts, the relative `OUT_DIR=out-uml-android17`, and the
   no-tracked-endpoint policy are unchanged from the 2026-08-22 handoff.
 
+### Matched macOS and Simulator boot timing
+
+The current accepted release was measured from host launch to Android init's
+first `sys.boot_completed=1` action on macOS and the iOS 26.5 iPhone 17 Pro Max
+Simulator. Both products used gadgets, 4 GiB, ten vCPUs, a 16 KiB ACK kernel,
+440 x 860 at 160 DPI, and hardware Virgl through ANGLE/Metal. Boot 1 began
+without a COW; boot 2 reopened the disk persisted by boot 1.
+
+macOS completed at 786.169 s cold and 84.795 s warm. Simulator completed at
+130.991 s cold and 42.780 s warm. Every run reached late mount by 7.866 s,
+Zygote by 13.600 s, SurfaceFlinger by 15.386 s, and boot animation by 16.753 s.
+The time is therefore after initial graphics startup: boot-animation-to-
+completion was 771.291/74.103 s on macOS and 114.237/30.182 s on Simulator.
+
+First-boot ART/package verification is the dominant cost. macOS `artd` lived
+for 579.415 s; its captured first-boot `verify` dex2oat work used ten threads
+per job, with a longest observed job of 117.997 s wall/443.086 s guest CPU.
+Simulator's corresponding quiet ART/package interval was about 66 seconds.
+The next costs are media codec-list generation, package overlay/idmap and
+theme/user-unlock work. Neither second boot started `artd`.
+
+The macOS/Simulator ratios in this single matched campaign are 6.00x cold and
+1.98x warm, but they are not a general platform claim. Earlier accepted
+macOS evidence for the same release measured 130.287/44.977 s. The current
+long cold behavior did reproduce twice (`artd` 555.631 and 579.415 s), and an
+extra foreground-priority warm control was not faster. The phase is identified
+but the cross-campaign macOS variance is not explained. The full method,
+milestones, interval table, limitations and retained paths are in
+[`android-17-boot-timing-20260824.md`](android-17-boot-timing-20260824.md).
+
 ### Android completes boot
 
 `26e208db` accepted `20260822-28ce51ba-mm21`, the first Android 17 UML release
@@ -228,9 +258,10 @@ in. `Kernarium/scripts/make-guest-bundle.py` assembles a bundle from the
 accepted release, and `Kernarium/scripts/run-ios-simulator.sh --guest-bundle
 NAME` installs one into a booted Simulator.
 
-Measured on the iPhone 17 Pro Max Simulator with 4 GiB and ten vCPUs on the
-gadget engine: a fresh bundle reaches `sys.boot_completed=1` at 194 s and
-renders the Android launcher.
+The latest matched measurement on the iPhone 17 Pro Max Simulator used 4 GiB,
+ten vCPUs and the gadget engine. A fresh bundle reached
+`sys.boot_completed=1` at 130.991 s and the same persisted bundle reached it at
+42.780 s on its second boot. Both lifecycle transitions settled the guest disk.
 
 ### Durability across an iOS reclaim
 
@@ -309,6 +340,12 @@ implementation is the current contract:
   two warm boots did not reproduce it, including two 30-second post-completion
   dwells. Treat it as an open isolated stability observation until a repeat or
   a longer campaign gives it a disposition.
+- **Matched macOS timing is highly variable across campaigns.** The accepted
+  2026-08-24 run measured 786.169 s cold and 84.795 s warm, versus the earlier
+  130.287/44.977 s evidence for the same release. The current cold delay
+  reproduced in first-boot ART verification, but its host-side cause is not
+  established. Do not present the 6.00x cold Simulator comparison as an
+  intrinsic platform ratio.
 
 ### Required continuation order
 

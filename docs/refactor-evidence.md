@@ -1,5 +1,15 @@
 # Refactor evidence
 
+## Android 17 matched-platform boot timing (2026-08-24)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Matched product tuple | Standalone macOS and the iOS 26.5 iPhone 17 Pro Max Simulator used release `android17-ack6.18-16k-20260824-c3febf12-theme1`, ACK `6.18.21-gc345c80dbb03`, 16 KiB pages, gadgets, 4,096 MiB, ten vCPUs, 440 x 860 at 160 DPI, and hardware Virgl through ANGLE/Metal. Boot 1 used no prior COW and boot 2 reopened boot 1's persisted disk. Host launch to init's first `sys.boot_completed=1` action is the common wall boundary. |
+| Completion result | `.build/android/measurements/platform-compare-theme-c3febf12-20260824` records macOS at 786.169 s cold and 84.795 s warm, and Simulator at 130.991 s cold and 42.780 s warm. Cold-to-warm savings are 701.373 s (89.2%) and 88.210 s (67.3%), respectively. Simulator reaches its later `VIRTUAL_DEVICE_BOOT_COMPLETED` marker at 152.195/53.360 s, but that product-specific event is not the comparison boundary. |
+| Phase breakdown | Every run reaches late mount by 7.866 s, Zygote by 13.600 s, SurfaceFlinger by 15.386 s, and boot animation by 16.753 s. Boot-animation-to-completion is 771.291/74.103 s on macOS and 114.237/30.182 s on Simulator. macOS first-boot `artd` reports a 579.415-second lifetime; six captured ten-thread `dex2oat64` jobs include a 117.997-second wall/443.086-second guest-CPU maximum. Simulator's serial trace bounds the corresponding quiet ART/package interval at about 66 seconds. Media codec-list, overlay/idmap, theme and user-unlock work form the smaller remainder. Neither warm boot starts `artd`. |
+| Error and thermal boundary | Exact scans of all four successful `ttyS0` logs find no RCU stall, watchdog lockup, oops, panic, Darwin-signal failure, userdata/journal fallback, torn-userdata signature, or Virtio-GPU `0x1204`/`0x1205`. Both Simulator launches report nominal thermal state. First-boot userdata is recognised cleanly and late mount succeeds, so the repaired filesystem path is not the dominant cost. |
+| Interpretation limit | The 6.00x cold and 1.98x warm macOS/Simulator ratios describe this campaign only. Earlier accepted macOS evidence for the same release measured 130.287/44.977 s. The current long ART interval reproduced in a second cold observation (`artd` 555.631 s), while a foreground-priority warm control measured 95.652 s, so inherited background priority is excluded but the cross-campaign macOS variance remains unexplained. One pair per platform is phase-distribution evidence, not a statistically powered benchmark. Full method and tables are in [`android-17-boot-timing-20260824.md`](android-17-boot-timing-20260824.md). |
+
 ## Android 17 warm-boot theme-gate acceptance (2026-08-24)
 
 | Boundary | Current evidence and limitation |
