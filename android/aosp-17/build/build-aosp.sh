@@ -186,7 +186,6 @@ for variable in \
 	PRODUCT_VIRTUAL_AB_COMPRESSION \
 	PRODUCT_OTA_FORCE_NON_AB_PACKAGE \
 	AB_OTA_UPDATER \
-	TARGET_OTA_ALLOW_NON_AB \
 	BOARD_AVB_ENABLE; do
 	[[ "$(get_build_var "$variable")" == false ]] ||
 		fail "$variable must be false for the fixed UBD product"
@@ -201,6 +200,8 @@ for variable in \
 	[[ -z "$(get_build_var "$variable")" ]] ||
 		fail "$variable must be empty for the fixed UBD product"
 done
+[[ "$(get_build_var TARGET_SKIP_OTA_PACKAGE)" == true ]] ||
+	fail "TARGET_SKIP_OTA_PACKAGE must be true for the fixed UBD product"
 while read -r variable partition; do
 	expected_size=$(partition_size_from_layout "$partition")
 	[[ "$(get_build_var "$variable")" == "$expected_size" ]] ||

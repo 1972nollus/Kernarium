@@ -146,8 +146,10 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
     "VENDOR/overlay/cuttlefish_overlay_uwb_gsi.apk",
     "VENDOR/bin/install-recovery.sh",
+    "VENDOR/etc/recovery.img",
     "VENDOR/recovery-from-boot.p",
     "SYSTEM/vendor/bin/install-recovery.sh",
+    "SYSTEM/vendor/etc/recovery.img",
     "SYSTEM/vendor/etc/recovery-resource.dat",
     "SYSTEM/vendor/recovery-from-boot.p",
 }

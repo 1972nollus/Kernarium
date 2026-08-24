@@ -114,7 +114,6 @@ AB_OTA_PARTITIONS :=
 BOARD_PARTIAL_OTA_UPDATE_PARTITIONS_LIST :=
 BOARD_BOOTLOADER_IN_UPDATE_PACKAGE := false
 TARGET_SKIP_OTA_PACKAGE := true
-TARGET_OTA_ALLOW_NON_AB := false
 
 # The outer release manifest authenticates the complete fresh-only image.
 BOARD_AVB_ENABLE := false

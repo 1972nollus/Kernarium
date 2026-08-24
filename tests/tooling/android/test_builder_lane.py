@@ -1157,6 +1157,20 @@ def main() -> None:
     if "TARGET_SKIP_OTA_PACKAGE" not in build_make_patch or "built_ota_tools" not in build_make_patch:
         fail("AOSP build route does not remove the skipped-OTA updater dependency")
     for token in (
+        "$(TARGET_SKIP_OTA_PACKAGE) $(BOARD_USES_FULL_RECOVERY_IMAGE)",
+        "$(MAKE_RECOVERY_PATCH) $(zip_root) $(zip_root)",
+    ):
+        if token not in build_make_patch:
+            fail(f"AOSP build route is missing skipped-OTA recovery policy: {token}")
+    if re.search(
+        r"ifeq \(\$\(TARGET_OTA_ALLOW_NON_AB\),true\).*"
+        r"ifneq \(\$\(TARGET_SKIP_OTA_PACKAGE\),true\).*"
+        r"\$\(MAKE_RECOVERY_PATCH\) \$\(zip_root\) \$\(zip_root\)",
+        build_make_patch,
+        re.DOTALL,
+    ) is None:
+        fail("AOSP build route does not gate recovery reconstruction on skipped OTA")
+    for token in (
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
         "PRODUCT_PACKAGES := $(filter-out $(PRODUCT_PACKAGES_EXCLUDE)",
@@ -1167,10 +1181,7 @@ def main() -> None:
 
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
-    for token in (
-        "BOARD_USES_FULL_RECOVERY_IMAGE := true",
-        "TARGET_OTA_ALLOW_NON_AB := false",
-    ):
+    for token in ("BOARD_USES_FULL_RECOVERY_IMAGE := true",):
         if token not in board_config:
             fail(f"Android board configuration is missing recovery policy: {token}")
     settings_defaults = (
@@ -1321,7 +1332,7 @@ def main() -> None:
         "PRODUCT_BUILD_SYSTEM_OTHER_IMAGE",
         "PRODUCT_VIRTUAL_AB_OTA",
         "AB_OTA_UPDATER",
-        "TARGET_OTA_ALLOW_NON_AB",
+        "TARGET_SKIP_OTA_PACKAGE",
         "BOARD_AVB_ENABLE",
         "BOARD_SUPER_PARTITION_SIZE",
         "AB_OTA_POSTINSTALL_CONFIG",
@@ -1387,6 +1398,8 @@ def main() -> None:
         "VENDOR/apex/com.google.cf.wifi.apex",
         "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
         "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
+        "VENDOR/etc/recovery.img",
+        "SYSTEM/vendor/etc/recovery.img",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")

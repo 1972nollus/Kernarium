@@ -212,10 +212,12 @@ Cuttlefish products. This prevents their dynamic-partition and Virtual A/B
 inheritance, properties, postinstall configuration, and OTA-only packages from
 entering the resolved product. It also disables A/B OTA packaging and AVB.
 The product declares its dedicated recovery partition as the full recovery
-image and sets `TARGET_OTA_ALLOW_NON_AB=false`, so target-files does not build
-or install a legacy `recovery-from-boot.p`, `install-recovery.sh`, or recovery
-resource bonus. The release assembler embeds `recovery.img` directly in the
-GPT instead.
+image. AOSP derives `TARGET_OTA_ALLOW_NON_AB=true` for every non-A/B product,
+so route `p0002` makes `TARGET_SKIP_OTA_PACKAGE=true` suppress the otherwise
+automatic recovery resource and reconstruction steps. Target-files therefore
+does not install a legacy `recovery-from-boot.p`, `install-recovery.sh`, or
+redundant `recovery.img` payload under `vendor`; the release assembler embeds
+the one partition image directly in the GPT instead.
 The unused `system_other` image is disabled because this product has no second
 slot and does not copy preoptimized artifacts from one.
 `build-aosp.sh` rejects any regression in those switches and requires every
@@ -224,12 +226,13 @@ its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
 that inert format default is not an enablement signal when
 `PRODUCT_VIRTUAL_AB_OTA=false`.
 
-Route `p0002` carries two narrow `platform/build` corrections. When
+Route `p0002` carries three narrow `platform/build` corrections. When
 `TARGET_SKIP_OTA_PACKAGE=true`, target-files no longer depends on or copies the
-legacy non-A/B `updater` binary. It also makes inherited package and copy-file
-exclusions explicit product variables, allowing this leaf product to remove
-unwanted Cuttlefish payloads after inheritance without changing other Android
-products.
+legacy non-A/B `updater` binary, builds no recovery resource bonus, and does
+not reconstruct recovery into a vendor-side install payload. The route also
+makes inherited package and copy-file exclusions explicit product variables,
+allowing this leaf product to remove unwanted Cuttlefish payloads after
+inheritance without changing other Android products.
 
 Route `p0001` also omits the inherited A/B BootControl APEX and BootControl
 recovery service for this non-A/B product. This is separate from the stock AOSP
