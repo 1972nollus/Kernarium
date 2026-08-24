@@ -1398,6 +1398,8 @@ def main() -> None:
         "VENDOR/apex/com.google.cf.wifi.apex",
         "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
         "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
+        "RECOVERY/RAMDISK/odm_dlkm",
+        "RECOVERY/RAMDISK/vendor_dlkm/etc",
         "VENDOR/etc/recovery.img",
         "SYSTEM/vendor/etc/recovery.img",
     ):

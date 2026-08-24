@@ -75,6 +75,11 @@ REQUIRED_ENTRIES = {
 }
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
 DLKM_COMPATIBILITY_ENTRIES = {
+    "RECOVERY/RAMDISK/odm_dlkm",
+    "RECOVERY/RAMDISK/odm_dlkm/etc",
+    "RECOVERY/RAMDISK/system_dlkm",
+    "RECOVERY/RAMDISK/vendor_dlkm",
+    "RECOVERY/RAMDISK/vendor_dlkm/etc",
     "ROOT/odm_dlkm",
     "ROOT/odm_dlkm/etc",
     "ROOT/system_dlkm",
