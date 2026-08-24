@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import io
 import json
 import re
 import stat
@@ -120,6 +121,20 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 """
 
 
+def synthetic_apex(filesystem: str = "ext4") -> bytes:
+    payload = bytearray(1024 + 0x38 + 2)
+    if filesystem == "ext4":
+        payload[1024 + 0x38 : 1024 + 0x38 + 2] = b"\x53\xef"
+    elif filesystem == "erofs":
+        payload[1024 : 1024 + 4] = b"\xe2\xe1\xf5\xe0"
+    else:
+        fail(f"unsupported synthetic APEX filesystem: {filesystem}")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as apex:
+        apex.writestr("apex_payload.img", payload)
+    return output.getvalue()
+
+
 def verify_target_files_fixtures(verifier: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
@@ -139,6 +154,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           virtual_ab: bool = False, abi32: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
                           wrong_filesystem: bool = False,
+                          wrong_apex_filesystem: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
                           context_hub: bool = False,
@@ -209,6 +225,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 )
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
+                )
+                archive.writestr(
+                    "SYSTEM/apex/com.android.fixture.apex",
+                    synthetic_apex(
+                        "erofs" if wrong_apex_filesystem else "ext4"
+                    ),
                 )
                 fstab = (
                     UML_FSTAB.replace("/system ext4", "/system erofs", 1)
@@ -341,6 +363,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("alignment", {"alignment": 4096}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
+            ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
@@ -1060,6 +1083,9 @@ def main() -> None:
             (android_root / "patches/projects/p0001/series").glob("*.patch")
         )
     )
+    virtualization_patch = next(
+        (android_root / "patches/projects/p0008/series").glob("*.patch")
+    ).read_text()
     if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
         fail("ACK materializer does not replay generated topics in a worktree")
     for token in (
@@ -1205,6 +1231,13 @@ def main() -> None:
     ):
         if token not in build_make_patch:
             fail(f"AOSP build route is missing inherited-payload exclusion: {token}")
+    for token in (
+        'payload_fs_type: "ext4"',
+        '-    payload_fs_type: "erofs"',
+        "-        pcluster_size: 32768",
+    ):
+        if token not in virtualization_patch:
+            fail(f"Virtualization APEX route is missing ext4 policy: {token}")
 
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
@@ -1233,6 +1266,7 @@ def main() -> None:
     ).read_text()
     for token in (
         "PRODUCT_NAME := aosp_kernarium_darwin",
+        "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4",
         "PRODUCT_PACKAGES_EXCLUDE",
         "PRODUCT_COPY_FILES_EXCLUDE",
         "Jelly",
@@ -1364,6 +1398,8 @@ def main() -> None:
         "BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE",
         "BOARD_ODMIMAGE_FILE_SYSTEM_TYPE",
         "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE",
+        "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE",
+        "PRODUCT_COMPRESSED_APEX",
         "PRODUCT_USE_DYNAMIC_PARTITIONS",
         "PRODUCT_QUOTA_PROJID",
         "external_storage.projid.enabled=*",
@@ -1441,6 +1477,9 @@ def main() -> None:
         "RECOVERY/RAMDISK/vendor_dlkm/etc",
         "VENDOR/etc/recovery.img",
         "SYSTEM/vendor/etc/recovery.img",
+        "apex_payload.img",
+        "EROFS APEX payload is forbidden",
+        "compressed APEX is forbidden",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")

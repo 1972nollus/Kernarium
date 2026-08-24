@@ -187,6 +187,10 @@ for variable in \
 done
 [[ -z "$(get_build_var BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE)" ]] ||
 	fail "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE must be empty"
+[[ "$(get_build_var PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE)" == ext4 ]] ||
+	fail "PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE must select ext4"
+[[ "$(get_build_var PRODUCT_COMPRESSED_APEX)" == false ]] ||
+	fail "PRODUCT_COMPRESSED_APEX must be false for ext4 payload verification"
 for variable in \
 	PRODUCT_USE_DYNAMIC_PARTITIONS \
 	PRODUCT_USE_DYNAMIC_PARTITION_SIZE \

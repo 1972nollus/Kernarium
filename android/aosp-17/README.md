@@ -255,9 +255,12 @@ the `uml-blkdev.0` platform device and mounts the immutable filesystems
 directly from `/dev/block/by-name`; there are no logical, slot-select, AVB, or
 DLKM mount flags. All five immutable Android payload partitions are ext4 images
 mounted with `ro`; the host maps the release GPT as an immutable backing image
-behind the per-instance COW. This deliberately avoids EROFS decompression in
-the guest without changing the ACK EROFS driver or removing its built-in
-configuration.
+behind the per-instance COW. The product also overrides the inherited APEX
+payload default to ext4, while route `p0008` replaces the one explicit EROFS
+selection in `com.android.virt`. The target-files verifier reads every nested
+`apex_payload.img` filesystem magic and rejects EROFS, compressed APEXes, and
+non-ext4 payloads. This avoids EROFS execution in the guest without changing
+the ACK EROFS driver or removing its built-in configuration.
 The overlay-owned UML init and ueventd inputs keep the first-stage mount,
 late writable-state mount, serial console, and bugreport paths while removing
 Cuttlefish-only multiport HVC, vsock, Wi-Fi, custom-partition,
@@ -437,7 +440,11 @@ The static kernel, target-files, VINTF, SELinux, both partition-backed
 ramdisks, ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW
 UBD, warm-boot theme, minimal application/feature set, external Jelly, Context
 Hub exclusion and read-only ext4 image policies passed producer verification.
-Physical-iOS boot qualification remains separate.
+The first physical-iOS retry of this descriptor proved that its GPT partitions
+were ext4 but its inherited APEX payloads were still EROFS; it reproduced the
+same `erofs_worker` RCU stall and is not boot evidence. Route `p0008` plus the
+product-level ext4 APEX policy is the next release candidate. Physical-iOS boot
+qualification remains separate.
 This is artifact acceptance for Apple-product integration. The bounded normal
 boot, stock-recovery and bundled-application checks below do not claim broad
 third-party application or HAL qualification.
@@ -512,10 +519,11 @@ initrd range from the GPT host file. The built-in-only 16 KiB ELF reports
 `6.18.21-ga64f141f6266`. The schema-2 release contains a ten-partition
 17,179,869,184-byte GPT compressed to 747,106,924 bytes and no standalone
 ramdisk. Its normal and stock-recovery ramdisks are verified in place inside
-`init_boot` and `recovery`. All immutable payload filesystems are read-only
-ext4; the ACK kernel is byte-identical to the preceding accepted overlay
-release. `metadata/accepted-release.env` owns the exact release, ACK, AOSP,
-Jelly and common-ABI identities.
+`init_boot` and `recovery`. All five immutable GPT payload filesystems are
+read-only ext4, but this release still inherited EROFS inside its APEX files.
+The ACK kernel is byte-identical to the preceding accepted overlay release.
+`metadata/accepted-release.env` owns the exact release, ACK, AOSP, Jelly and
+common-ABI identities.
 
 LineageOS Jelly is fetched at upstream commit
 `767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local

@@ -118,7 +118,20 @@ already-ext4 `system_ext`, `vendor`, and `odm` partitions; all five remain
 mounted read-only. This is an image and device-overlay change only. The ACK
 kernel and its EROFS driver are intentionally unchanged. Its producer,
 target-files, VINTF, GPT, copied-release and kernel-identity checks pass; the
-physical-iPad retry is the next qualification gate.
+first retry of that image then identified a second EROFS owner: all five GPT
+partitions mounted as ext4 by wall second 1.10, but inherited EROFS APEX loop
+images mounted at wall seconds 2.44--2.74 and reproduced an `erofs_worker`
+stall at wall second 46.70. That run was stopped at 103.68 seconds and is also
+not timing evidence.
+
+The next candidate therefore sets `PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4`
+after the Cuttlefish product inheritance and carries generated AOSP route
+`p0008` for `platform/packages/modules/Virtualization`, changing the one
+module-level `com.android.virt` EROFS override to ext4. The target-files
+verifier checks every nested `apex_payload.img` magic and rejects EROFS,
+compressed APEXes, and any non-ext4 payload. No ACK source, kernel
+configuration, or EROFS driver change is part of this fix. Rebuild and a fresh
+physical-iPad retry remain the qualification gate.
 
 ## Historical implementation handoff (2026-08-24)
 
@@ -1555,10 +1568,10 @@ addressed partitions for:
 - writable `misc`; and
 - stock AOSP `recovery`.
 
-Immutable partitions may use 16 KiB-block EROFS; writable state uses ext4.
-Avoid F2FS in the first release. Disable dynamic-super, Virtual A/B, OTA, and
-production AVB policy until basic boot, application execution, and clean
-shutdown are accepted.
+Immutable partitions and APEX payloads use read-only ext4; writable state also
+uses ext4. EROFS and F2FS are not used by this Android guest image. Disable
+dynamic-super, Virtual A/B, OTA, and production AVB policy until basic boot,
+application execution, and clean shutdown are accepted.
 
 Keep `vmlinux` separate from Android boot containers. The producer composes
 the generic and vendor first-stage content, wraps the normal ramdisk in a

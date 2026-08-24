@@ -47,6 +47,10 @@ PRODUCT_BRAND := Android
 PRODUCT_MANUFACTURER := Kernarium
 PRODUCT_MODEL := Android 17 on Darwin UML
 
+# The desktop Cuttlefish base chooses EROFS APEX payloads. Keep every APEX on
+# the uncompressed ext4 path so this guest never depends on EROFS at runtime.
+PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4
+
 PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 16384
 PRODUCT_NO_BIONIC_PAGE_SIZE_MACRO := true
 PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true

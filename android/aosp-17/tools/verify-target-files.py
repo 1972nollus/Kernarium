@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import hashlib
+import io
 import stat
 import struct
 import zipfile
@@ -29,6 +30,11 @@ DT_STRSZ = 10
 DT_RUNPATH = 29
 PAGE_SIZE = 16384
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
+APEX_PAYLOAD_MAGIC_SIZE = 1024 + 0x38 + 2
+EXT4_MAGIC_OFFSET = 1024 + 0x38
+EXT4_MAGIC = b"\x53\xef"
+EROFS_MAGIC_OFFSET = 1024
+EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
 VIRGL_ELF_ENTRIES = {
     "VENDOR/lib64/dri/gallium_dri.so",
     "VENDOR/lib64/egl/libEGL_mesa.so",
@@ -322,6 +328,23 @@ def read_small(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
     if info.is_dir() or info.file_size > 1 << 20:
         fail(f"policy file is missing or unexpectedly large: {info.filename}")
     return archive.read(info)
+
+
+def check_apex_payload_filesystem(
+    archive: zipfile.ZipFile, info: zipfile.ZipInfo
+) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive.read(info))) as apex:
+            payload = apex.getinfo("apex_payload.img")
+            with apex.open(payload) as source:
+                prefix = source.read(APEX_PAYLOAD_MAGIC_SIZE)
+    except (KeyError, OSError, zipfile.BadZipFile) as error:
+        fail(f"cannot inspect APEX payload {info.filename}: {error}")
+    if prefix[EXT4_MAGIC_OFFSET : EXT4_MAGIC_OFFSET + len(EXT4_MAGIC)] == EXT4_MAGIC:
+        return
+    if prefix[EROFS_MAGIC_OFFSET : EROFS_MAGIC_OFFSET + len(EROFS_MAGIC)] == EROFS_MAGIC:
+        fail(f"EROFS APEX payload is forbidden: {info.filename}")
+    fail(f"APEX payload must use ext4: {info.filename}")
 
 
 def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
@@ -639,6 +662,7 @@ def main() -> None:
     seen: set[str] = set()
     infos: dict[str, zipfile.ZipInfo] = {}
     elf_count = 0
+    apex_count = 0
     try:
         archive = zipfile.ZipFile(args.target_files)
     except (OSError, zipfile.BadZipFile) as error:
@@ -656,6 +680,12 @@ def main() -> None:
             reject_nonstatic_payload(path)
             if info.is_dir():
                 continue
+            if len(path.parts) >= 3 and path.parts[1] == "apex":
+                if path.suffix == ".capex":
+                    fail(f"compressed APEX is forbidden: {path}")
+                if path.suffix == ".apex":
+                    check_apex_payload_filesystem(archive, info)
+                    apex_count += 1
             if path.name in {"build.prop", "default.prop"}:
                 check_property_file(archive, info)
             if path.parts[0] not in TARGET_PARTITIONS:
@@ -670,6 +700,8 @@ def main() -> None:
         missing = sorted(REQUIRED_ENTRIES - seen)
         if missing:
             fail(f"required entries are missing: {', '.join(missing)}")
+        if apex_count == 0:
+            fail("target files do not contain an APEX payload")
         check_hardware_features(archive, infos)
         check_virgl_stack(archive, infos)
         check_boot_policy(archive, infos)
@@ -681,7 +713,7 @@ def main() -> None:
 
     print(
         f"verified AOSP 17 target files: {len(seen)} entries, "
-        f"{elf_count} target executables"
+        f"{elf_count} target executables, {apex_count} ext4 APEX payloads"
     )
 
 
