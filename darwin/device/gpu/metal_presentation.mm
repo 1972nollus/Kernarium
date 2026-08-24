@@ -229,11 +229,6 @@ struct MetalPresentationState final :
                 MTKView* view = (__bridge MTKView*)nativeView;
                 if (view == nil)
                     return;
-                MTLRenderPassDescriptor* pass =
-                    view.currentRenderPassDescriptor;
-                id<CAMetalDrawable> drawable = view.currentDrawable;
-                if (pass == nil || drawable == nil)
-                    return;
                 {
                     std::lock_guard lock(presentationMutex);
                     if (presentationInFlight ||
@@ -246,6 +241,21 @@ struct MetalPresentationState final :
                     if (sourceTexture == nil)
                         return;
                     presentationInFlight = true;
+                }
+                /* Acquiring a drawable can block until the display releases
+                 * one, and this runs on the thread that owns the user
+                 * interface. Claim the frame first so a redraw with nothing
+                 * new to show never pays for it. */
+                MTLRenderPassDescriptor* pass =
+                    view.currentRenderPassDescriptor;
+                id<CAMetalDrawable> drawable = view.currentDrawable;
+                if (pass == nil || drawable == nil) {
+                    /* Release the claim without retiring the generation: the
+                     * frame was not shown, and the next guest frame asks for
+                     * this one again. */
+                    std::lock_guard lock(presentationMutex);
+                    presentationInFlight = false;
+                    return;
                 }
                 if (useCpu) {
                     std::lock_guard lock(framebuffer);

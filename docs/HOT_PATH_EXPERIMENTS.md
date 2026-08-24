@@ -10620,3 +10620,80 @@ The macOS win is not adopted here. The flag lives in the Aquarium launcher in
 edit throughout this work, and it must become conditional rather than absolute
 because it breaks the Simulator outright. Repairing the `gles-egl` config
 failure would help both products and is the open item.
+
+## G172: what the guest actually costs the thread that owns the interface
+
+Dated 2026-08-24. The question was whether the GPU service and the other guest
+services can be kept off the main thread entirely, so it belongs to the user
+interface alone. The measurement says almost all of it already is, and names
+the one part that is not.
+
+### Where the guest runs today
+
+Sampled live with an Android guest rendering: the ten `uml-vcpu-N-carrier`
+threads, `uml-gpu`, `uml-touch`, `uml-keyboard`, `uml-audio`, twenty
+`ANGLE-Worker` threads and `com.Metal.CommandQueueDispatch` are all off the
+main thread, and so is `uml-launcher` since the guest run stopped being
+scheduled through Swift concurrency. Virglrenderer, ANGLE and every guest GL
+command encode happen there. Nothing in that set reaches the main queue.
+
+What remains on the main thread is the presentation blit itself, reached
+through `[MTKView draw]`: one fullscreen triangle sampling the guest scanout,
+then `presentDrawable`. Beside it are the view attach and teardown, which
+mutate `CALayer` and `UIView` properties and therefore cannot move, and the
+console relay into SwiftTerm, which is the interface rather than the guest.
+
+### What it costs
+
+A three-second sample with the Android boot animation running continuously, on
+the iPhone 17 Pro Max Simulator:
+
+| Main-thread time | Samples | Share |
+|---|---:|---:|
+| Idle in `__CFRunLoopServiceMachPort` | 1107 | 98.5% |
+| UIKit's own update sequence | 13 | 1.2% |
+| `drawInMTKView:` -> `MetalPresentation::draw` | 3 | 0.27% |
+
+A six-second sample of a Linux guest holding 47.4 presented frames a second,
+zero dropped, produced no samples in the draw path at all against 3717
+main-thread samples, 98.7% of them idle. At a real frame rate the presentation
+charge is below the sampler's resolution.
+
+### The change that was worth making
+
+`draw()` acquired the drawable before deciding whether it had anything to
+present. `currentDrawable` is the one call in that function that can block,
+waiting for the display to release a drawable, and a redraw that is superseded
+or already in flight paid for it and then discarded the result. The claim now
+happens first and the drawable is acquired only once the frame is known to be
+worth showing; a nil drawable releases the claim without retiring the
+generation, so the frame is not lost and the next guest frame asks for it
+again. This removes a blocking call from the interface thread rather than
+speeding up a frame that is drawn.
+
+Held at 47.4 guest frames a second presented with zero dropped afterwards, so
+the reordering costs nothing behaviourally. It is not expected to move a frame
+rate, and no such claim is made for it.
+
+### The change that was not worth making
+
+The CPU fallback in `draw()` uploads the whole framebuffer with `replaceRegion`
+on the main thread, which at 440x860 is about 1.5 MB a frame, and hoisting it
+onto the producer thread was the other candidate. It is dead code in practice:
+`cpuFallbackFrames` totalled 0 across both the Linux and Android sessions, and
+the counter only advances when `presentMetal` cannot present the guest's own
+texture. Even the Linux fbcon text console goes through virtio-gpu, virgl,
+ANGLE and a Metal texture. Hoisting the upload safely needs a rotation of at
+least three scanout-sized textures, because two cannot exclude both the
+in-flight buffer and the next claimable one, and that is real memory for a path
+that does not execute. Rejected on those grounds rather than on principle; if a
+guest ever drives the fallback at a real rate, the rotation is the fix.
+
+### Moving presentation off the main thread entirely
+
+Still possible, and still not done. Dropping `[MTKView draw]` in favour of a
+presenter thread rendering into the view's own `CAMetalLayer` would make the
+main thread interface-only by construction, since `nextDrawable` and
+`presentDrawable` are both safe off it. It rewrites a presentation path shared
+with macOS for a charge measured at a quarter of one percent, so it is recorded
+here as available rather than taken.
