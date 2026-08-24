@@ -6,26 +6,22 @@ This document defines the implementation plan for a native ARM64 Android 17
 guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
-Implementation started on 2026-08-20. As of the 2026-08-22 handoff below, the
-builder-local lane has produced and verified the 27-topic ACK 6.18 Darwin UML
-series, its 16 KiB built-in-only kernel, the routed AOSP 17 static UML product,
-standalone initramfs, fixed seven-partition UBD image, import-only Apple
-consumer, separate macOS executable, Virtio console, and source-built Mesa
-Virgl userspace while retaining SwiftShader. The latest ten-vCPU gadgets run
-did not reproduce the RCU stall and brought up hardware Virgl SurfaceFlinger,
-but it exposed a separate gadgets-engine SIMD load-pair correctness defect
-that prevented zygote and full Android boot. That defect has since been
-reproduced by a host unit regression, repaired in the gadget engine, and
-confirmed fixed by a fresh ten-vCPU guest boot in which zygote is stable and
-the failing preload no longer appears. The next blocker was an unrelated
-`system_server` crash on a BPF map `ENOMEM`, caused by UML never implementing
-`arch_irq_work_raise()`; both kernel series now carry that repair. The boot that
-first carried it was ended by a third, independent defect in the host Virtio
-console accept path, which is also repaired and pinned by a regression. Android
-has not yet been shown to complete boot with all three repairs together, so the
-current accepted release remains
-`android17-ack6.18-16k-20260822-6afe4225-virgl2`; no newer diagnostic image is
-accepted. The exact recovery state and next actions are in the active
+Implementation started on 2026-08-20. **Android 17 now boots.** The
+builder-local lane produces the 32-topic ACK 6.18 Darwin UML series, its 16 KiB
+built-in-only kernel, the routed AOSP 17 static UML product, standalone
+initramfs, fixed seven-partition UBD image, import-only Apple consumer,
+separate macOS executable, Virtio console, and source-built Mesa Virgl
+userspace while retaining SwiftShader. `20260822-28ce51ba-mm21` was the first
+release to reach `sys.boot_completed=1`, in a ten-vCPU gadgets boot with
+SELinux enforcing and hardware Virgl SurfaceFlinger. Four further accepted
+releases added the touchscreen pointer and boot animation, NAPI receive, free
+guest page reporting, and virtually mapped task stacks. The accepted release is
+`android17-ack6.18-16k-20260823-5292a9ce-vmap`.
+
+The guest also runs on iOS. Kernarium embeds a third signed runtime framework
+carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
+Documents, with a writable disk that persists across application launches. The
+exact current state, its measurements, and the next actions are in the active
 implementation handoff.
 
 The Android product is additive. It does not replace, rename, or silently
@@ -47,11 +43,183 @@ The initial source pins, verified on 2026-08-20, are:
 These are exact starting identities, not floating branches. A future update
 is a reviewed metadata change that records a new full commit and tree.
 
-## Active implementation handoff (2026-08-22)
+## Active implementation handoff (2026-08-24)
 
 This section is the entry point for the next implementation session. It
-supersedes earlier progress prose where the two differ; the architectural
-decisions and phase definitions below remain in force.
+supersedes the 2026-08-22 handoff below wherever the two differ. The
+architectural decisions and phase definitions later in this document remain in
+force except where a superseding decision is recorded against them.
+
+### Durable repository and builder state
+
+- The outer repository is at `70fdf5a9` (`Kernarium: quiesce the guest when the
+  application is put away`) on `main`.
+- The accepted release is `android17-ack6.18-16k-20260823-5292a9ce-vmap`, built
+  from outer revision `5292a9ce` with ACK final tree
+  `5c697fee621e9c8108b7acef3bbbc3f95f5c333b`, common ABI version 8 and
+  fingerprint `0x3871ad612337ea76`, `CONFIG_MODULES=n`, and the 16 KiB-only
+  configuration. The ACK 6.18 series is 32 topics.
+- The builder-local checkouts, the relative `OUT_DIR=out-uml-android17`, and the
+  no-tracked-endpoint policy are unchanged from the 2026-08-22 handoff.
+
+### Android completes boot
+
+`26e208db` accepted `20260822-28ce51ba-mm21`, the first Android 17 UML release
+to reach `sys.boot_completed`. Verified in a live ten-vCPU gadgets boot with
+SELinux enforcing and a host `stdin` that cannot hang up: `sys.boot_completed=1`
+at guest 953 s and still set at 1134 s, `getenforce` Enforcing, one zygote
+start, zero watchdog dumps, zero abends, zero panics, RCU stalls, lockups, or
+oopses, zero `ssl` interrupts, and 89k-96k timer ticks on every CPU `0-9`. That
+even tick distribution is the direct contrast with the vCPU-0 serial storm that
+invalidated every measurement taken before it. `dumpsys SurfaceFlinger` reports
+`GLES: Mesa, virgl, OpenGL ES 3.0 Mesa 26.1.0-devel` over `hwc3-drm`.
+
+Thirteen fixes stand behind that release, from the restored three-patch Mesa
+route and the two graphics SELinux labels through the omitted RIL, NFC, and
+factory reset protection storage, `CONFIG_NET_KEY`, `CONFIG_TRACE_GPU_MEM`, the
+`DC CVAC` decode gap in all three CPU engines, the scaled guest timeouts, and
+the libmeminfo `gpu_mem` guard. Four accepted releases follow it, each adding
+one capability and each boot-verified before acceptance:
+
+| release | topics | what it added |
+| --- | --- | --- |
+| `20260822-28ce51ba-mm21` | 28 | first `sys.boot_completed=1`, enforcing, Mesa/virgl SurfaceFlinger |
+| `20260823-016033c1-input3` | 29 | touchscreen pointer (`Darwin UML VNC Tablet`), boot animation |
+| `20260823-bb3cf26e-napi1` | 30 | NAPI receive; 512 MiB `adb push` at 14.3 MB/s with the hash matched |
+| `20260823-4e793df3-pr2` | 31 | free-page reporting; 2.15 GiB freed, host RSS 7.89 to 6.85 GiB |
+| `20260823-5292a9ce-vmap` | 32 | `CONFIG_VMAP_STACK=y` on the widened vmalloc window |
+
+The vmapped-stack release closes the order-3 task-stack fragmentation that had
+been costing background applications: 97 free order-3 blocks, `compact_stall` 0,
+zero OOM kills, and 350 MiB of vmalloc in use against a 4 GiB window at guest
+second 1469. The same configuration on the former one-eighth auxiliary window
+exhausted vmalloc at second 175 and panicked in `exit_mmap` at 203, which is why
+the window change and the stack change had to land together.
+
+### The guest runs in the iOS application
+
+Kernarium embeds a third versioned runtime framework,
+`KernariumRuntimeAndroid_<ack-release>_16K`, built by the
+`kernarium-ios-{device,simulator}-android` presets with
+`UML_KERNEL_PRODUCT=android-17`. The ACK ELF passes the signed carrier check
+unchanged and rides in the same aligned `__TEXT,__uml_elf` section as the Linux
+runtimes, with the release manifest in `__DATA,__uml_android`. The application
+embeds all three runtime XCFrameworks, links none at launch, and loads exactly
+one for the process lifetime.
+
+A guest bundle is a `.kern` directory in Documents holding one guest's complete
+payload and its writable disk. An Android bundle carries
+`release-manifest.json`, `boot/ramdisk.img`, `boot/kernel-command-line.txt`, and
+exactly one `guest/*.img`; UBD creates `userdata.cow` beside them on first boot
+and reopens it afterwards, so guest state accumulates inside the bundle rather
+than in disposable storage. A bundle is recognised from its payload rather than
+its name, so a half-copied directory is never offered for selection, and
+selecting one fixes the page-size picker at the only profile its kernel exists
+in. `Kernarium/scripts/make-guest-bundle.py` assembles a bundle from the
+accepted release, and `Kernarium/scripts/run-ios-simulator.sh --guest-bundle
+NAME` installs one into a booted Simulator.
+
+Measured on the iPhone 17 Pro Max Simulator with 4 GiB and ten vCPUs on the
+gadget engine: a fresh bundle reaches `sys.boot_completed=1` at 194 s and
+renders the Android launcher.
+
+### Durability across an iOS reclaim
+
+iOS can reclaim a suspended application without running any more of its code,
+and a killed guest that was mid-write leaves a torn `/data`. The failure is
+specific and was previously invisible: `vold` reports
+`Version mismatch, expected 1 got 2`, `init_user0` fails, Android reboots into
+recovery, recovery fails because this product has no `/misc` partition, and the
+run ends in `InitFatalReboot`.
+
+The repair is to ask the guest before abandoning it. UML's management console is
+the only channel that reaches a running guest kernel, and it had never worked:
+the port's default umid was a constant, so only the first guest on a host could
+bind its socket, and Android's init disables magic SysRq, which makes
+`handle_sysrq` a silent no-op. The emulator now names each run and Kernarium
+boots its guests with `sysrq_always_enabled`, so a refused request is reported
+rather than assumed. `uml_emulator_sync()` asks the guest to write back;
+`uml_emulator_quiesce()` writes back, freezes the guest through the same
+console, then flushes the host's files; `uml_emulator_resume()` thaws it.
+Kernarium flushes on losing focus, quiesces on backgrounding and termination,
+and resumes on returning. The public API is version 6.
+
+Measured on the same Simulator guest: backgrounding takes the process from 204%
+CPU to 0.0% and stops the instance disk growing entirely, 170448 KiB unchanged
+over thirty seconds. Killing it there and relaunching reopens the same disk with
+`init_user0` exiting 0, no `Version mismatch`, and no reboot into recovery,
+which is what every previous relaunch produced.
+
+Guest-side write-through was evaluated as an alternative and rejected. It is
+not reachable for this product: `/data`'s mount options come from
+`support/fstab.uml` inside the vendor image, not from the host command line, so
+a synchronous `/data` would require an image rebuild. It is also expensive.
+Measured on a 2 GiB four-vCPU Linux guest with an ext4 scratch disk on the
+gadget engine, two interleaved runs per arm, `-o sync` cost 3.4x on 300 file
+creates (1.31 s to 4.49 s) and 1.41x on 1500 32 KiB overwrites (6.46 s to 9.10
+s). The reachable half, bounding writeback through `sysctl.vm.*` boot
+parameters, measured within 1% of the default but would be protecting a window
+that quiesce has already closed: `sysrq m` on the booted Android guest reports
+`dirty:0 writeback:0` at rest. Neither was adopted.
+
+### Superseding application decisions
+
+Two decisions recorded later in this document were made differently, and the
+implementation is the current contract:
+
+- The Android runtime framework is **not** a separate application. On explicit
+  request it is embedded in the existing Kernarium app behind a guest-family
+  selector, which the "Android runtime framework" section had deferred as a
+  later explicit application decision. That decision has now been made.
+- Its output name is `KernariumRuntimeAndroid_<release>_16K`, not
+  `KernariumAndroidRuntime_17_ACK6_18_16K`. The guest flavour leads the name and
+  the page profile trails it, so no name can match two selections; the loader
+  matches `KernariumRuntimeAndroid_` against `KernariumRuntime_` and neither is
+  a prefix of the other. Fixed decision 8's distinct-target-name requirement is
+  met by output name, bundle identifier, module name, and binary directory; the
+  CMake target `KernariumRuntime` is shared and parameterized by
+  `UML_KERNEL_PRODUCT`.
+
+### Open limitations
+
+- **Sustained large transfers still starve the cooperative timer.** A 2 GiB
+  `adb push` transferred completely but degraded to 2.7 MB/s over 750 s and left
+  the guest unresponsive; all eleven RCU stalls on that boot report `0 ticks
+  this GP` on an idle CPU 0. That is the starvation topics 24-28 address rather
+  than the receive livelock topic 30 removed. A 512 MiB push is clean.
+- **Physical iOS is unverified for Android.** Every Android application
+  measurement above is from the Simulator. The device policy of 2 GiB of guest
+  RAM has not been exercised against an Android guest.
+- `artd` took one SIGSEGV through a null pointer, and `vendor.ril-daemon` exits
+  1 in a restart loop. Both were observed on 2026-08-22 and neither is
+  explained.
+
+### Required continuation order
+
+The 2026-08-22 continuation order's release items are done: the Mesa route was
+rebuilt and published, the ten-vCPU boot passed, and `accepted-release.env` has
+advanced five times since. Its item 4 named the remaining plan phases, which
+continue here:
+
+1. Boot an Android `.kern` bundle on a physical iOS device at the 2 GiB device
+   policy, and record what it reaches. This is the last unexercised product
+   surface.
+2. Close the cooperative-timer starvation exposed by the 2 GiB `adb push`, which
+   is the only remaining defect that makes a booted guest unresponsive.
+3. Complete Phase 8's application acceptance: install and run one Java/Kotlin
+   APK and one aligned `arm64-v8a` native APK, and register the Android
+   integration workflow.
+4. Explain or retire the `artd` SIGSEGV and the `vendor.ril-daemon` restart
+   loop.
+
+Commit after each focused change reaches a consistent, tested state.
+
+## Superseded implementation handoff (2026-08-22)
+
+This section is retained as history. It records the state on 2026-08-22, when
+Android had not yet completed boot, and the three defects that were blocking it.
+The 2026-08-24 handoff above supersedes it wherever the two differ; its
+measurements remain valid observations of the builds they were taken on.
 
 ### Durable repository and builder state
 
@@ -496,7 +664,10 @@ The tracked accepted-release descriptor intentionally still selects
 diagnostic candidates. Do not advance `accepted-release.env` until a clean,
 patch-replayed image reaches full boot acceptance.
 
-### Required continuation order
+### Continuation order as of 2026-08-22
+
+Items 1 to 3 were carried out and the boot passed; item 4's remaining phases
+continue in the 2026-08-24 handoff above. Recorded as written:
 
 The gadgets vector-pair repair, the BPF `ENOMEM` kernel repair, and the console
 accept repair are all in the tree, and the console repair is confirmed in a live
@@ -551,8 +722,13 @@ The following decisions are requirements, not optional implementation ideas:
    never fetch sources, contact the Linux builder, replay patches, invoke
    Kbuild, run Soong, or assemble a disk image.
 8. The Android macOS executable and Android runtime framework have distinct
-   target names, output names, bundle identities, and output directories from
-   the current products.
+   output names, bundle identities, and output directories from the current
+   products. The macOS executable also has a distinct target name. The runtime
+   framework shares the `KernariumRuntime` CMake target, parameterized by
+   `UML_KERNEL_PRODUCT`, because both flavours build the same composition
+   against a different accepted artifact; its distinctness is carried by the
+   `KernariumRuntimeAndroid_` output name, bundle identifier, module name, and
+   binary directory, which is what loader discovery and packaging consume.
 9. Every change made inside an AOSP Git project is represented by a generated
    per-project patch series under `android/aosp-17/patches`; copying an overlay
    into an AOSP checkout is not an accepted source-management workflow.
@@ -1324,8 +1500,10 @@ Preserve the existing output names and behavior:
 - `KernariumRuntime_<release>_16K` remains the current 16 KiB framework;
 - `KernariumRuntime_<release>_4K` remains the current compatibility framework;
   and
-- the current packaging scripts continue to require both current page
-  profiles.
+- the packaging script continues to require both current page profiles. It now
+  also requires the two Android 16 KiB slices, because the application embeds
+  all three runtime families; a missing Linux slice still fails packaging
+  exactly as before.
 
 Their standalone kernel producer emits the same manifest contract after
 building. Moving kernel sources and decoupling CMake must pass the current 16
@@ -1361,35 +1539,46 @@ policy, and shutdown handling remain owned by the Android application.
 
 ### Android runtime framework
 
-Add a distinct target and output family:
+Delivered, with the naming and packaging decisions made differently from this
+section's original proposal. The accepted contract is:
 
 ```text
-CMake target:  KernariumAndroid17Runtime
-framework:     KernariumAndroidRuntime_17_ACK6_18_16K
-presets:       kernarium-android17-ios-device
-               kernarium-android17-ios-simulator
-package root:  .build/kernarium-android17-xcframeworks
+CMake target:  KernariumRuntime, with UML_KERNEL_PRODUCT=android-17
+framework:     KernariumRuntimeAndroid_<ack-release>_16K
+presets:       kernarium-ios-device-android
+               kernarium-ios-simulator-android
+binary dirs:   .build/kernarium-runtime-ios-{device,simulator}-android-16k
+package root:  .build/kernarium-xcframeworks, shared with the Linux runtimes
 ```
 
-The different `KernariumAndroidRuntime_` prefix is required. The current loader
-scans `KernariumRuntime_*_4K` and `KernariumRuntime_*_16K`; reusing that prefix
-would create an ambiguous candidate set when both families are embedded.
+The guest flavour leads the framework name and the page profile trails it.
+A trailing marker was rejected because it would leave the Android framework
+matching the Linux page-profile suffix as well; with the flavour leading,
+neither `KernariumRuntimeAndroid_` nor `KernariumRuntime_` is a prefix of the
+other, so the loader's candidate set stays unambiguous with all three frameworks
+embedded.
 
 The Android framework:
 
-- has Device and Simulator slices, both 16 KiB only;
+- has Device and Simulator slices, both 16 KiB only, and refuses to configure
+  against a 4 KiB guest profile;
 - embeds the exact imported Android `vmlinux` in its aligned signed
-  `__TEXT,__uml_elf` carrier;
+  `__TEXT,__uml_elf` carrier, and its release manifest in
+  `__DATA,__uml_android`;
 - runs the existing signed-carrier safety verifier;
-- packages the verified ramdisk/support resource without rebuilding it;
-- uses a dedicated Android runtime composition source and identity contract;
-- has its own bundle identifier and module map; and
-- is packaged by a new script that requires exactly the two Android 16 KiB
-  slices.
+- consumes the verified ramdisk and base image from the accepted release as
+  runtime resources rather than rebuilding or embedding them;
+- shares the runtime composition source with the Linux runtimes, branching on
+  the guest flavour rather than duplicating it; and
+- has its own output name, bundle identifier, and module map.
 
-Do not broaden the current four-slice packaging script or silently add this
-framework to the existing Kernarium app. Integrating a guest-family selector
-or a separate Android app target is a later explicit application decision.
+`Kernarium/scripts/package-ios-frameworks.sh` now requires six runtime slices
+rather than four and publishes three runtime XCFrameworks. The application
+embeds all three and links none at launch, loading exactly one for the process
+lifetime. The guest-family selector this section had deferred is implemented:
+the rootfs picker offers `.kern` bundles alongside Linux images, and selecting
+an Android bundle fixes the page-size picker at 16 KiB. A separate Android app
+target was not created and is not planned.
 
 ### Android boot and management
 
@@ -1398,15 +1587,27 @@ UBD disk, `tty0`, `ttyS0`, the project-owned Android boot properties, and the
 selected SELinux enforcing policy. It does not run the current Linux desktop
 overlay shell.
 
-Initial diagnostics use `ttyS0`. Add a local, Android-product-only SLiRP host
-forwarding path for ADB over TCP before application-install acceptance. Do not
-claim ADB availability merely because `adbd` starts inside the guest.
+Initial diagnostics use `ttyS0`. ADB over TCP reaches the guest through a
+local SLiRP host forwarding path, which was required before application-install
+acceptance precisely because `adbd` starting inside the guest is not evidence
+that ADB is reachable. `--net-forward=5555-5555` carried a verified 512 MiB
+`adb push` at 14.3 MB/s with the SHA-256 matched.
 
 The raw disk is a runtime resource and is not linked into the executable or
-framework. On iOS an instance is provisioned from the accepted base into the
-app's Documents space; on macOS the Android launcher receives a validated
-per-instance disk and its release receipt. Neither product boots the imported
-base disk writable.
+framework. On iOS it lives inside a `.kern` guest bundle in the app's Documents
+space, and UBD layers a per-bundle `userdata.cow` over it; on macOS the Android
+launcher receives a validated per-instance disk and its release receipt. Neither
+product boots the imported base disk writable.
+
+An iOS guest must survive being abandoned. `uml_emulator_sync()` asks the guest
+to write back through its management console and then flushes the host's files;
+`uml_emulator_quiesce()` additionally freezes the guest between the two, and
+`uml_emulator_resume()` thaws it. Android's init disables magic SysRq, so
+Kernarium boots its guests with `sysrq_always_enabled` and reports a refused
+request rather than assuming it succeeded. Do not substitute a synchronous
+`/data` mount for this: the mount options are owned by `support/fstab.uml`
+inside the vendor image, and the measurements in the 2026-08-24 handoff record
+what write-through would cost.
 
 ## Implementation phases
 
@@ -1579,12 +1780,15 @@ Exit criteria:
 
 ### Phase 7: add the dedicated runtime framework
 
+Complete as of 2026-08-24, under the naming recorded in the "Android runtime
+framework" section rather than this phase's original proposal.
+
 Deliverables:
 
-- Device and Simulator `KernariumAndroid17Runtime` slices;
-- `KernariumAndroidRuntime_17_ACK6_18_16K.xcframework`;
-- dedicated Android runtime API identity and loader tests; and
-- signed ELF carrier and packaged support resources.
+- Device and Simulator Android runtime slices;
+- `KernariumRuntimeAndroid_<ack-release>_16K.xcframework`;
+- Android runtime API identity and loader flavour matching; and
+- signed ELF carrier and release-resource consumption.
 
 Exit criteria:
 
@@ -1592,33 +1796,46 @@ Exit criteria:
 - carrier verification and package-shape tests pass;
 - physical-iOS execution requires no JIT entitlement, anonymous executable
   allocation, RW-to-RX publication, or module-text relocation outside the
-  signed immutable carrier;
+  signed immutable carrier. This is structurally true because the ACK ELF uses
+  the same signed carrier as the Linux runtimes, but it has not been exercised
+  on a physical device with an Android guest;
 - framework discovery cannot collide with current `KernariumRuntime_*` names;
 - no Android 4 KiB framework exists; and
 - current dual-profile framework packaging still passes independently.
 
 ### Phase 8: Android boot and application acceptance
 
+Partly complete. Boot, graphics, input, and ADB are delivered; APK acceptance
+and the registered integration workflow are not.
+
 Deliverables:
 
-- enforcing Android boot;
-- functional SurfaceFlinger/launcher on Virgl GLES;
-- ADB-over-TCP host forwarding;
-- APK install/run automation; and
-- Android-specific integration workflow.
+- enforcing Android boot - **done**, first at `20260822-28ce51ba-mm21`;
+- functional SurfaceFlinger/launcher on Virgl GLES - **done**, with the
+  launcher rendered on the Simulator under Kernarium;
+- ADB-over-TCP host forwarding - **done**, verified by a 512 MiB push;
+- APK install/run automation - **outstanding**; and
+- Android-specific integration workflow - **outstanding**; no Android guest
+  test is registered in `tests/test-manifest.tsv`, whose Android entries are
+  all builder-lane and release-contract tooling.
 
 Exit criteria:
 
-- Android reports major version 17;
-- `getconf PAGE_SIZE` reports `16384`;
-- SELinux reports enforcing and `memfd_class` enabled;
-- Binder service discovery works;
-- boot-complete, clean shutdown, and restart pass;
-- Virtio GPU/input, output-only sound, and Ethernet are exercised;
+- Android reports major version 17 - met;
+- `getconf PAGE_SIZE` reports `16384` - met;
+- SELinux reports enforcing and `memfd_class` enabled - enforcing is confirmed
+  in every accepted boot;
+- Binder service discovery works - met; servicemanager, zygote64,
+  surfaceflinger, and system_server all stay at their first pids;
+- boot-complete, clean shutdown, and restart pass - boot-complete and restart
+  are met, including restart from a persistent `.kern` instance disk;
+- Virtio GPU/input, output-only sound, and Ethernet are exercised - GPU, input,
+  and Ethernet are met; sound is not exercised;
 - one Java/Kotlin APK and one properly aligned `arm64-v8a` native APK install
-  and run; and
-- the same accepted disk boots in the dedicated macOS product and, after
-  application integration is authorized, the Android runtime framework.
+  and run - not attempted; and
+- the same accepted disk boots in the dedicated macOS product and the Android
+  runtime framework - met on macOS and on the iOS Simulator, not on a physical
+  device.
 
 ## Verification matrix
 
@@ -1709,7 +1926,7 @@ acceptance includes only its one 16 KiB profile.
 | Product files bypass patch ownership through a copied overlay | Structural and post-build audits reject support-tree staging, untracked Repo-root files, and changed projects absent from `projects.tsv`. |
 | The operator copies a partial or wrong release from the builder | Publish atomically on the builder and require the local installer to reject incomplete, undeclared, wrong-family, and semantically invalid incoming directories. |
 | An ELF is mixed with another release's ramdisk or disk | Accept one manifest/release root, derive all paths internally, and embed/check the release identity. |
-| Current and Android frameworks collide in loader discovery | Use the distinct `KernariumAndroidRuntime_` prefix and a dedicated identity contract. |
+| Current and Android frameworks collide in loader discovery | Lead the framework name with the guest flavour, `KernariumRuntimeAndroid_` against `KernariumRuntime_`, so neither is a prefix of the other, and match the loaded runtime's reported flavour and name before using it. |
 | Cuttlefish declares devices the emulator does not implement | Own feature XML and VINTF through the routed AOSP patches; omit unsupported services and declarations. |
 | Android native apps contain 4 KiB-only libraries | Enforce AOSP alignment checks and include a native `arm64-v8a` APK in acceptance. |
 | ADB starts but is unreachable from the host | Add and test an explicit local SLiRP forwarding path before APK-install acceptance. |
@@ -1731,7 +1948,7 @@ The plan is complete when:
 4. no tracked file contains a build-machine endpoint or credential and no
    tracked script initiates execution on or transport to or from that machine;
 5. `uml-darwin-android17` and
-   `KernariumAndroidRuntime_17_ACK6_18_16K` are separate accepted products;
+   `KernariumRuntimeAndroid_<ack-release>_16K` are separate accepted products;
 6. the Android ACK configuration has `CONFIG_MODULES=n`, every required kernel
    feature is built in, and the release/runtime has no loadable-module, DLKM,
    or JIT-dependent kernel-code path;
