@@ -18,7 +18,7 @@ SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
 guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
 request advancement, then removed a circular warm-boot theme wait. The accepted
-release is `android17-ack6.18-16k-20260825-e3cc7bae-overlay2`.
+release is `android17-ack6.18-16k-20260825-0417d8fc-ext4`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -69,8 +69,8 @@ Jelly's upstream optional camera, microphone and location declarations remain
 unchanged; no hardware-omission patch is retained.
 
 The accepted release is
-`android17-ack6.18-16k-20260825-e3cc7bae-overlay2`, produced from clean outer
-revision `e3cc7bae8636bc8d41f42f128138972dc211115b`. AOSP projects-manifest
+`android17-ack6.18-16k-20260825-0417d8fc-ext4`, produced from clean outer
+revision `0417d8fc9b259472958446fcae514e6a2d16c478`. AOSP projects-manifest
 SHA-256 is
 `b1ca438878d272aa94f2358ea08b7512d7c8d8123ae07d6a4052551526d90ade`.
 ACK has 34 topics, final tree
@@ -112,12 +112,13 @@ A subsequent physical-iPad cold boot used 4 vCPUs, 2 GiB, the gadgets engine,
 and a fresh custom-overlay bundle. It reached the normal Android first stage,
 but at wall second 169 an `erofs_worker` running
 `z_erofs_decompressqueue_work` triggered an RCU stall on one vCPU. The run did
-not reach boot completion and is not timing evidence. The next image switches
+not reach boot completion and is not timing evidence. The accepted ext4 image switches
 the immutable `system` and `product` payloads from EROFS to ext4, matching the
 already-ext4 `system_ext`, `vendor`, and `odm` partitions; all five remain
 mounted read-only. This is an image and device-overlay change only. The ACK
-kernel and its EROFS driver are intentionally unchanged until the ext4 retry is
-qualified.
+kernel and its EROFS driver are intentionally unchanged. Its producer,
+target-files, VINTF, GPT, copied-release and kernel-identity checks pass; the
+physical-iPad retry is the next qualification gate.
 
 ## Historical implementation handoff (2026-08-24)
 
