@@ -106,9 +106,9 @@ def synthetic_aarch64_elf(
 
 
 UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system erofs ro wait,first_stage_mount
+/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product erofs ro wait,first_stage_mount
+/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
@@ -138,6 +138,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           dynamic_image: bool = False, ota_tool: bool = False,
                           virtual_ab: bool = False, abi32: bool = False,
                           wrong_fstab: bool = False, stock_fstab: bool = False,
+                          wrong_filesystem: bool = False,
                           seriallogging: bool = False,
                           boot_control: bool = False,
                           context_hub: bool = False,
@@ -171,7 +172,18 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     if wrong_kernel_release
                     else kernel_release.read_bytes(),
                 )
-                archive.writestr("META/misc_info.txt", "")
+                archive.writestr(
+                    "META/misc_info.txt",
+                    "system_fs_type=erofs\n"
+                    if wrong_filesystem
+                    else (
+                        "system_fs_type=ext4\n"
+                        "system_ext_fs_type=ext4\n"
+                        "product_fs_type=ext4\n"
+                        "vendor_fs_type=ext4\n"
+                        "odm_fs_type=ext4\n"
+                    ),
+                )
                 archive.writestr("META/ramdisk_node_list", "")
                 for image in (
                     "init_boot.img",
@@ -198,7 +210,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr(
                     "SYSTEM/bin/android-fixture", synthetic_aarch64_elf(alignment)
                 )
-                fstab = UML_FSTAB.replace("/system erofs", "/system ext4", 1) if wrong_fstab else UML_FSTAB
+                fstab = (
+                    UML_FSTAB.replace("/system ext4", "/system erofs", 1)
+                    if wrong_fstab
+                    else UML_FSTAB
+                )
                 archive.writestr("VENDOR/etc/fstab.uml", fstab)
                 archive.writestr(
                     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
@@ -324,6 +340,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
             ("wrong-fstab", {"wrong_fstab": True}),
+            ("wrong-filesystem", {"wrong_filesystem": True}),
             ("stock-fstab", {"stock_fstab": True}),
             ("seriallogging", {"seriallogging": True}),
             ("boot-control", {"boot_control": True}),
@@ -388,7 +405,11 @@ def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
 
 def synthetic_initramfs(*, wrong_fstab: bool = False, module_loader: bool = False,
                         duplicate_file: bool = False) -> bytes:
-    fstab = UML_FSTAB.replace("/system erofs", "/system ext4", 1) if wrong_fstab else UML_FSTAB
+    fstab = (
+        UML_FSTAB.replace("/system ext4", "/system erofs", 1)
+        if wrong_fstab
+        else UML_FSTAB
+    )
     entries = [
         newc_entry("dev", 0o40755, b"", 1),
         newc_entry("dev", 0o40755, b"", 2),
@@ -1187,7 +1208,12 @@ def main() -> None:
 
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
-    for token in ("BOARD_USES_FULL_RECOVERY_IMAGE := true",):
+    for token in (
+        "BOARD_USES_FULL_RECOVERY_IMAGE := true",
+        "BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := ext4",
+        "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=",
+        "BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := ext4",
+    ):
         if token not in board_config:
             fail(f"Android board configuration is missing recovery policy: {token}")
     settings_defaults = (
@@ -1332,6 +1358,12 @@ def main() -> None:
         "partition_size_from_layout",
         "TARGET_2ND_ARCH",
         "TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE",
+        "BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE",
+        "BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE",
+        "BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE",
+        "BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE",
+        "BOARD_ODMIMAGE_FILE_SYSTEM_TYPE",
+        "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE",
         "PRODUCT_USE_DYNAMIC_PARTITIONS",
         "PRODUCT_QUOTA_PROJID",
         "external_storage.projid.enabled=*",

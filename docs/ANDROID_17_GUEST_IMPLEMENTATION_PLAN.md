@@ -108,6 +108,17 @@ all six focused Android policy/series tests, the macOS Android target, both
 Android iOS runtime slices and final XCFramework packaging pass for the
 accepted descriptor. No new iOS guest boot is claimed by this checkpoint.
 
+A subsequent physical-iPad cold boot used 4 vCPUs, 2 GiB, the gadgets engine,
+and a fresh custom-overlay bundle. It reached the normal Android first stage,
+but at wall second 169 an `erofs_worker` running
+`z_erofs_decompressqueue_work` triggered an RCU stall on one vCPU. The run did
+not reach boot completion and is not timing evidence. The next image switches
+the immutable `system` and `product` payloads from EROFS to ext4, matching the
+already-ext4 `system_ext`, `vendor`, and `odm` partitions; all five remain
+mounted read-only. This is an image and device-overlay change only. The ACK
+kernel and its EROFS driver are intentionally unchanged until the ext4 retry is
+qualified.
+
 ## Historical implementation handoff (2026-08-24)
 
 This section was the entry point on 2026-08-24 and is retained as dated

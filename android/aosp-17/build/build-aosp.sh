@@ -177,6 +177,17 @@ lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIAN
 [[ "$(get_build_var TARGET_BOOTS_16K)" == true ]] ||
 	fail "product does not select the 16 KiB boot contract"
 for variable in \
+	BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE \
+	BOARD_ODMIMAGE_FILE_SYSTEM_TYPE; do
+	[[ "$(get_build_var "$variable")" == ext4 ]] ||
+		fail "$variable must select ext4 for the immutable GPT"
+done
+[[ -z "$(get_build_var BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE)" ]] ||
+	fail "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE must be empty"
+for variable in \
 	PRODUCT_USE_DYNAMIC_PARTITIONS \
 	PRODUCT_USE_DYNAMIC_PARTITION_SIZE \
 	PRODUCT_BUILD_SUPER_PARTITION \

@@ -253,7 +253,12 @@ Route `p0001` also replaces the inherited dynamic/virtio fstab with
 `fstab.uml`. Android first-stage init discovers the fixed GPT partitions below
 the `uml-blkdev.0` platform device and mounts the immutable filesystems
 directly from `/dev/block/by-name`; there are no logical, slot-select, AVB, or
-DLKM mount flags. The overlay-owned UML init and ueventd inputs keep the first-stage mount,
+DLKM mount flags. All five immutable Android payload partitions are ext4 images
+mounted with `ro`; the host maps the release GPT as an immutable backing image
+behind the per-instance COW. This deliberately avoids EROFS decompression in
+the guest without changing the ACK EROFS driver or removing its built-in
+configuration.
+The overlay-owned UML init and ueventd inputs keep the first-stage mount,
 late writable-state mount, serial console, and bugreport paths while removing
 Cuttlefish-only multiport HVC, vsock, Wi-Fi, custom-partition,
 persistent-memory, and suspend actions. The UML product labels its sole

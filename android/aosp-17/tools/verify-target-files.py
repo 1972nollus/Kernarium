@@ -213,9 +213,9 @@ FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.wifi.passpoint",
 }
 UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system erofs ro wait,first_stage_mount
+/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product erofs ro wait,first_stage_mount
+/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
@@ -229,6 +229,13 @@ UML_FSTAB_ENTRIES = (
     "VENDOR/etc/fstab.uml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
 )
+READ_ONLY_FILESYSTEMS = {
+    "system_fs_type": "ext4",
+    "system_ext_fs_type": "ext4",
+    "product_fs_type": "ext4",
+    "vendor_fs_type": "ext4",
+    "odm_fs_type": "ext4",
+}
 UML_INIT_REQUIRED = (
     "mount_all --early",
     "mount_all --late",
@@ -321,6 +328,19 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     for entry in UML_FSTAB_ENTRIES:
         if read_small(archive, infos[entry]) != UML_FSTAB:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
+
+    misc_info: dict[str, str] = {}
+    for line in read_small(archive, infos["META/misc_info.txt"]).decode(
+        "utf-8", errors="strict"
+    ).splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            misc_info[key] = value
+    for key, expected in READ_ONLY_FILESYSTEMS.items():
+        if misc_info.get(key) != expected:
+            fail(f"{key} must select read-only ext4 images")
+    if "system_erofs_blocksize" in misc_info:
+        fail("system EROFS image policy remains enabled")
 
     init_payload = read_small(
         archive, infos["VENDOR/etc/init/init.kernarium.rc"]

@@ -19,6 +19,13 @@
 # provide, while this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
 
+# Keep every immutable Android partition on the kernel's uncompressed ext4
+# path. The GPT remains the read-only backing image at runtime, and fstab.uml
+# mounts these filesystems read-only inside the guest.
+BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := ext4
+BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=
+BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := ext4
+
 BOARD_VENDOR_SEPOLICY_DIRS += device/kernarium/darwin/sepolicy/vendor
 
 # The ACK UML ELF is built and published independently. Android packaging must

@@ -1,7 +1,7 @@
 # AOSP recovery sees the same fixed, non-A/B GPT as normal Android.
-/dev/block/by-name/system /system erofs ro wait
+/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait
-/dev/block/by-name/product /product erofs ro wait
+/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable

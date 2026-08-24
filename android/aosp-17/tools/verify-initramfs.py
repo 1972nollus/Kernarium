@@ -17,9 +17,9 @@ MAX_INITRAMFS_SIZE = 256 * 1024 * 1024
 MAX_ENTRY_SIZE = 128 * 1024 * 1024
 UML_FSTAB_PATH = "first_stage_ramdisk/system/etc/fstab.uml"
 UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system erofs ro wait,first_stage_mount
+/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product erofs ro wait,first_stage_mount
+/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
 /dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid wait,check,formattable,first_stage_mount
