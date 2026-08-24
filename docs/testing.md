@@ -250,9 +250,9 @@ Kernarium/scripts/package-ios-frameworks.sh
 
 The Android presets set `UML_KERNEL_PRODUCT=android-17`, which selects the
 accepted Android release instead of a mainline artifact. That release exposes
-the same artifact properties as a mainline bundle plus its ramdisk, base image,
-and manifest, so it needs no kernel source checkout and no separate Kbuild
-tree. There is no 4 KiB Android variant.
+the same artifact properties as a mainline bundle plus its base GPT, verified
+normal/recovery ramdisk ranges and manifest, so it needs no kernel source
+checkout and no separate Kbuild tree. There is no 4 KiB Android variant.
 
 The Apple-GPU contracts authenticate one source and topic matrix across all
 three platforms. Its UTM WebKit topics retain the Simulator ES 3 minimum

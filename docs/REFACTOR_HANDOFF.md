@@ -1,5 +1,67 @@
 # Refactor handoff
 
+## Minimal Android 17 device overlay accepted (2026-08-25)
+
+The current accepted Android bundle is
+`android17-ack6.18-16k-20260825-e3cc7bae-overlay2`, published from clean outer
+revision `e3cc7bae8636bc8d41f42f128138972dc211115b`. The AOSP producer
+verified 4,609 target-files entries and 1,147 target executables. It reuses the
+seven routed AOSP series with projects-manifest SHA-256
+`b1ca438878d272aa94f2358ea08b7512d7c8d8123ae07d6a4052551526d90ade`
+and advances ACK to the 34-topic, built-in-only 16 KiB final tree
+`621a0ab42d8990aa0960bf5d341d89b8f1042723`, release
+`6.18.21-ga64f141f6266`. Common ABI remains v8 / `0x3871ad612337ea76`.
+
+The fresh-only `aosp_kernarium_darwin` product is owned by the exact-synced
+`android/aosp-17/overlay` source. It keeps ThemePicker, LatinIME, framework
+APIs and compatibility providers while removing unused first-party Calendar,
+Messaging, Contacts, Camera, Gallery, DeskClock, Dialer and related
+hardware-backed packages. The first-boot overlay forces the soft keyboard
+visible with a host keyboard, disables the screen lock, sets the practical
+screen timeout to the signed 32-bit maximum and keeps the display awake while
+powered. Bluetooth, Wi-Fi, telephony, GNSS, camera, microphone, Context Hub and
+other absent devices are not advertised to applications; Ethernet,
+touchscreen, audio output and input-method features remain.
+
+LineageOS Jelly is not vendored. `prepare-sources.sh` fetches branch
+`lineage-23.2` at upstream commit
+`767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local
+topics, producing tree `ce63d63703fbfd2e616e94513ea1e5c63ccae4ef` with
+patch-manifest SHA-256
+`bb647d2db690f7bc3af85d0b8e243436fa0b59c1bb5c1a780e8861358bd48115`.
+Those topics build against SDK 37 and disable WebView geolocation by default.
+Jelly's upstream optional camera, microphone and location declarations are
+unchanged; the removed hardware-omission topic is not part of the series.
+
+The release schema is 2. Its 17,179,869,184-byte GPT contains ten partitions:
+the seven filesystem partitions plus `init_boot`, writable `misc` and stock
+AOSP `recovery`. The normal ramdisk is 4,375,040 bytes at disk offset
+15,905,853,440; the recovery ramdisk is 15,434,625 bytes at offset
+15,918,436,352. The 781,000,428-byte compressed transfer archive and installed
+runtime contain no standalone ramdisk. Automatic boot follows the standard
+`boot-recovery` request in `misc`; explicit normal and recovery modes select
+the corresponding verified boot-image-v4 range. OrangeFox remains deferred.
+
+The first overlay image repeatedly restarted `system_server`: its inherited
+Context Hub APEX advertised `android.hardware.context_hub`, then
+`ContextHubSystemService` dereferenced a missing `WifiManager`. Product-level
+exclusion of `com.android.hardware.contexthub`, plus target-files and builder
+regressions that forbid both the APEX and feature, removed the false service
+dependency. A rebuilt fresh-COW run then reached `sys.boot_completed=1` at
+guest second 587.70 with one stable `system_server`, but panicked at 594.44 on
+a kernel-mode Darwin signal 11 in a binder thread. That run is not passing
+stability evidence. Reopening the exact COW completed at 100.21, retained the
+same `system_server` through a greater-than-30-second guest-time dwell, passed
+the settings, package, browser-resolution and feature checks, had an empty
+Android crash buffer and powered down cleanly. Stock recovery independently
+started `/system/bin/recovery`, remained stable through its dwell and powered
+down cleanly. Raw logs are retained under
+`.build/android/measurements/overlay2-e3cc7bae-20260825`. The signal-11 event
+did not reproduce, but remains an open host/kernel stability observation.
+The installed-release verifier, all six focused Android policy/series tests,
+the macOS Android product, both Android iOS runtime slices and final
+XCFramework packaging pass for this accepted descriptor.
+
 ## Matched Android macOS/Simulator boot timing (2026-08-24)
 
 The accepted `android17-ack6.18-16k-20260824-c3febf12-theme1` release was
@@ -160,12 +222,12 @@ matches two selections.
 
 The application boots a `.kern` guest bundle from Documents: a directory
 holding one guest's complete payload plus the writable disk it accumulates.
-An Android bundle carries the release manifest, ramdisk, kernel command line,
-and base image; UBD creates `userdata.cow` beside them on first boot and
-reopens it afterwards. Selecting a bundle fixes the page-size picker at the
-only profile its kernel exists in. `Kernarium/scripts/make-guest-bundle.py`
-assembles one from the accepted release, cloning the base image where the
-filesystem allows.
+An Android bundle carries the release manifest, kernel command line and base
+GPT image; its `init_boot` and `recovery` partitions contain the ramdisks. UBD
+creates `userdata.cow` beside them on first boot and reopens it afterwards.
+Selecting a bundle fixes the page-size picker at the only profile its kernel
+exists in. `Kernarium/scripts/make-guest-bundle.py` assembles one from the
+accepted release, cloning the base image where the filesystem allows.
 
 Kernarium calls the new `uml_emulator_sync()` when the application becomes
 inactive, enters the background, or is about to terminate, holding a background

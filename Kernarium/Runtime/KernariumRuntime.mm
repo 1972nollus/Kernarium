@@ -440,8 +440,8 @@ enum class ConsoleBootMode {
     aquarium,
     cts,
     geekbench,
-    /* Android brings up its own init from the bundle's ramdisk. The relay
-     * carries its console in both directions and injects nothing. */
+    /* Android brings up its own init from the selected GPT ramdisk range. The
+     * relay carries its console in both directions and injects nothing. */
     android,
 };
 
@@ -1144,8 +1144,9 @@ int runtimeRun(
             std::to_string(uml::audio::protocol::deviceId));
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* The instance disk is the copy-on-write layer over the immutable
-         * bundle image, so every guest write lands in the bundle and survives
-         * the next launch. */
+         * bundle GPT. The initrd range is read from that same backing image,
+         * so every guest write lands in the bundle and survives the next
+         * launch without a standalone ramdisk. */
         arguments.emplace_back(
             "ubd0=" + instance.string() + "," + baseDisk.string());
         arguments.emplace_back("initrd=" + baseDisk.string());

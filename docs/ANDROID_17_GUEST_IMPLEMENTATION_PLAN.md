@@ -7,19 +7,18 @@ guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
 Implementation started on 2026-08-20. **Android 17 now boots.** The accepted
-release still uses the original 33-topic ACK 6.18 Darwin UML series and static
-UML product. The current implementation candidate advances that lane to a
-34-topic built-in-only 16 KiB kernel, a fresh `aosp_kernarium_darwin` device
-overlay, a fixed ten-partition UBD image with partition-backed normal and stock
-AOSP recovery ramdisks, pinned external LineageOS Jelly source, an import-only
-Apple consumer, separate macOS executable, Virtio console, and source-built
-Mesa Virgl userspace. `20260822-28ce51ba-mm21` was the first
+release uses a 34-topic built-in-only 16 KiB ACK 6.18 Darwin UML kernel, a
+fresh `aosp_kernarium_darwin` device overlay, a fixed ten-partition UBD image
+with partition-backed normal and stock AOSP recovery ramdisks, pinned external
+LineageOS Jelly source, an import-only Apple consumer, separate macOS
+executable, Virtio console, and source-built Mesa Virgl userspace.
+`20260822-28ce51ba-mm21` was the first
 release to reach `sys.boot_completed=1`, in a ten-vCPU gadgets boot with
 SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
 guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
 request advancement, then removed a circular warm-boot theme wait. The accepted
-release is `android17-ack6.18-16k-20260824-c3febf12-theme1`.
+release is `android17-ack6.18-16k-20260825-e3cc7bae-overlay2`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -46,12 +45,75 @@ The initial source pins, verified on 2026-08-20, are:
 These are exact starting identities, not floating branches. A future update
 is a reviewed metadata change that records a new full commit and tree.
 
-## Active implementation handoff (2026-08-24)
+## Active implementation handoff (2026-08-25)
 
-This section is the entry point for the next implementation session. It
-supersedes the 2026-08-22 handoff below wherever the two differ. The
-architectural decisions and phase definitions later in this document remain in
-force except where a superseding decision is recorded against them.
+This section is the current entry point and supersedes the 2026-08-24 handoff
+below wherever the two differ.
+
+The fresh-only overlay is implemented under `android/aosp-17/overlay` and is
+exact-synced into AOSP as `device/kernarium/darwin`. It keeps ThemePicker and
+LatinIME, forces the software keyboard visible even when Android sees a host
+keyboard, disables the first-boot screen lock and practical idle timeout, and
+removes obsolete launcher applications and packages tied to hardware this UML
+machine does not expose. Framework APIs, compatibility providers, WebView,
+PackageInstaller, Virtio network and hardware Virgl remain.
+
+Jelly is external source, not vendored code. `prepare-sources.sh` fetches
+LineageOS branch `lineage-23.2` at commit
+`767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two generated
+topics: SDK-37 build compatibility and geolocation disabled by default. The
+resulting tree is `ce63d63703fbfd2e616e94513ea1e5c63ccae4ef` and the series
+manifest SHA-256 is
+`bb647d2db690f7bc3af85d0b8e243436fa0b59c1bb5c1a780e8861358bd48115`.
+Jelly's upstream optional camera, microphone and location declarations remain
+unchanged; no hardware-omission patch is retained.
+
+The accepted release is
+`android17-ack6.18-16k-20260825-e3cc7bae-overlay2`, produced from clean outer
+revision `e3cc7bae8636bc8d41f42f128138972dc211115b`. AOSP projects-manifest
+SHA-256 is
+`b1ca438878d272aa94f2358ea08b7512d7c8d8123ae07d6a4052551526d90ade`.
+ACK has 34 topics, final tree
+`621a0ab42d8990aa0960bf5d341d89b8f1042723`, patch-manifest SHA-256
+`8bc9771b8b7776adfae244f098ca9fabb4bbab8a914e0c5aa522eface71b8594`
+and release `6.18.21-ga64f141f6266`; it remains built-in-only, 16 KiB and ABI
+v8 / `0x3871ad612337ea76`.
+
+The schema-2 product has one 17,179,869,184-byte GPT with ten partitions. Its
+normal `init_boot` ramdisk and stock AOSP `recovery` ramdisk are boot-image-v4
+payloads selected as bounded byte ranges; writable `misc` carries the standard
+`boot-recovery` request. The release and `.kern` guest bundle contain no
+standalone ramdisk. Explicit normal and recovery modes are implemented on
+macOS and Kernarium. OrangeFox remains intentionally deferred.
+
+The first built overlay exposed one invalid inherited dependency: the Context
+Hub APEX advertised `android.hardware.context_hub`, then
+`ContextHubSystemService` attempted to use the deliberately absent Wi-Fi
+framework service and repeatedly restarted `system_server`. The accepted
+product excludes `com.android.hardware.contexthub`; the target-files verifier
+and builder fixture reject its APEX, VINTF/permission payload and feature name.
+
+The corrected warm normal boot reaches `sys.boot_completed=1` at guest second
+100.21, keeps one `system_server` through a greater-than-30-second dwell,
+passes the settings, package, browser-resolution and feature checks, and powers
+down cleanly. Explicit stock recovery starts `/system/bin/recovery`, remains
+stable through its dwell and powers down cleanly. One fresh run reached boot
+completion at 587.70 and then panicked at 594.44 on a kernel-mode Darwin signal
+11. It did not reproduce on the exact persisted state, is excluded from passing
+evidence, and remains the only open stability observation from this overlay
+acceptance.
+
+Producer and copied-release verification, the installed schema-2 verifier,
+all six focused Android policy/series tests, the macOS Android target, both
+Android iOS runtime slices and final XCFramework packaging pass for the
+accepted descriptor. No new iOS guest boot is claimed by this checkpoint.
+
+## Historical implementation handoff (2026-08-24)
+
+This section was the entry point on 2026-08-24 and is retained as dated
+history. The 2026-08-25 handoff above supersedes it wherever the two differ.
+The architectural decisions and phase definitions later in this document
+remain in force except where a superseding decision is recorded against them.
 
 ### Current device-overlay candidate
 
@@ -1467,33 +1529,40 @@ hardware-security feature declarations.
 
 ### Disk and boot artifacts
 
-The first release uses one raw GPT UBD disk containing statically addressed
-partitions sufficient for:
+The accepted schema-2 release uses one raw GPT UBD disk containing statically
+addressed partitions for:
 
 - `system`;
 - `system_ext`;
 - `product`;
 - `vendor`;
-- `odm` only if a retained HAL requires it;
-- `metadata`; and
-- writable `userdata`.
+- `odm`;
+- `metadata`;
+- writable `userdata`;
+- `init_boot`;
+- writable `misc`; and
+- stock AOSP `recovery`.
 
 Immutable partitions may use 16 KiB-block EROFS; writable state uses ext4.
 Avoid F2FS in the first release. Disable dynamic-super, Virtual A/B, OTA, and
 production AVB policy until basic boot, application execution, and clean
 shutdown are accepted.
 
-Publish the generic and vendor ramdisk content needed for Android first-stage
-init separately from `vmlinux`. The runtime passes the verified ramdisk and
-`init=/init`; it does not ask the emulator to parse Android `boot.img`.
+Keep `vmlinux` separate from Android boot containers. The producer composes
+the generic and vendor first-stage content, wraps the normal ramdisk in a
+kernelless boot-image-v4 `init_boot` partition, and places AOSP's stock recovery
+ramdisk in a kernelless boot-image-v4 `recovery` partition. The runtime verifies
+the selected header and passes its bounded GPT byte range through
+`initrd_offset=` and `initrd_size=` with `init=/init`; no standalone ramdisk is
+published and the kernel is not asked to parse a complete Android boot image.
 
-The published disk is a pristine base with empty writable-state templates. An
-explicit runtime provisioning command copies or filesystem-clones that
-already-built disk into a per-instance location before first boot; it does not
-repartition or rebuild the image. The imported release is never opened writable.
-Subsequent boots use the instance disk, whose receipt binds it to the base
-release ID and partition layout. Resetting an instance is an explicit operation
-that replaces only that instance from the same accepted base.
+The published disk is a pristine base with empty writable-state templates.
+Runtime provisioning creates a per-instance COW file whose immutable backing
+is that already-built disk; it does not repartition or rebuild the image. The
+imported release is never opened writable. Subsequent boots reopen the same
+COW, whose receipt binds it to the base release ID and partition layout.
+Resetting an instance explicitly discards and recreates only that COW from the
+same accepted base.
 
 The UBD-aware fstab, init properties, ueventd rules, SELinux policy, VINTF
 manifests, compatibility matrices, HAL declarations, and Android property set
@@ -1538,7 +1607,6 @@ android17-ack6.18-16k-<release-id>/
     modules.builtin
     modules.builtin.modinfo
   boot/
-    ramdisk.img
     kernel-command-line.txt
   guest/
     android-17-uml-arm64.img.zst
@@ -1572,6 +1640,8 @@ The versioned manifest records:
 - AOSP manifest tag and pinned `repo manifest -r` identity;
 - `android/aosp-17/patches/projects.tsv` identity plus every routed AOSP
   project's base commit/tree, ordered-series identity, and final tree;
+- external Jelly repository, branch, pinned commit/tree, local final
+  commit/tree and ordered-series identity;
 - ACK repository, tag, base commit/tree, local final tree, and patch-manifest
   identity;
 - outer-project revision and dirty-state observation;
@@ -1752,8 +1822,9 @@ The Android framework:
   `__TEXT,__uml_elf` carrier, and its release manifest in
   `__DATA,__uml_android`;
 - runs the existing signed-carrier safety verifier;
-- consumes the verified ramdisk and base image from the accepted release as
-  runtime resources rather than rebuilding or embedding them;
+- consumes the verified base GPT from the accepted release and selects its
+  verified normal or recovery ramdisk range rather than rebuilding or
+  embedding either payload;
 - shares the runtime composition source with the Linux runtimes, branching on
   the guest flavour rather than duplicating it; and
 - has its own output name, bundle identifier, and module map.
@@ -1768,10 +1839,11 @@ target was not created and is not planned.
 
 ### Android boot and management
 
-The Android launch profile supplies the verified ramdisk, `init=/init`, the
-UBD disk, `tty0`, `ttyS0`, the project-owned Android boot properties, and the
-selected SELinux enforcing policy. It does not run the current Linux desktop
-overlay shell.
+The Android launch profile supplies the GPT as both the UBD backing and initrd
+host file, the selected verified `init_boot` or `recovery` byte range,
+`init=/init`, `tty0`, `ttyS0`, the project-owned Android boot properties, and
+the selected SELinux enforcing policy. It does not run the current Linux
+desktop overlay shell.
 
 Initial diagnostics use `ttyS0`. ADB over TCP reaches the guest through a
 local SLiRP host forwarding path, which was required before application-install
@@ -2114,7 +2186,7 @@ acceptance includes only its one 16 KiB profile.
 | An AOSP patch is applied to the wrong Repo project | Route patches by opaque ID, verify the manifest project/path and exact base before replay, and require the recorded clean final tree. |
 | Product files bypass patch ownership through a copied overlay | Structural and post-build audits reject support-tree staging, untracked Repo-root files, and changed projects absent from `projects.tsv`. |
 | The operator copies a partial or wrong release from the builder | Publish atomically on the builder and require the local installer to reject incomplete, undeclared, wrong-family, and semantically invalid incoming directories. |
-| An ELF is mixed with another release's ramdisk or disk | Accept one manifest/release root, derive all paths internally, and embed/check the release identity. |
+| An ELF is mixed with another release's boot payload or disk | Accept one manifest/release root, derive the GPT and verified ramdisk ranges internally, and embed/check the release identity. |
 | Current and Android frameworks collide in loader discovery | Lead the framework name with the guest flavour, `KernariumRuntimeAndroid_` against `KernariumRuntime_`, so neither is a prefix of the other, and match the loaded runtime's reported flavour and name before using it. |
 | Cuttlefish declares devices the emulator does not implement | Own feature XML and VINTF through the routed AOSP patches; omit unsupported services and declarations. |
 | Android native apps contain 4 KiB-only libraries | Enforce AOSP alignment checks and include a native `arm64-v8a` APK in acceptance. |

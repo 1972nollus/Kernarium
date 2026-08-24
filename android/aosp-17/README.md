@@ -426,15 +426,15 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260824-c3febf12-theme1`, published from
-clean outer revision `c3febf1273e129f43305f3c7cfb9f0bf0a03c8ca` after the
-static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
-no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
-service, built-in single-port Virtio-console, and source-built 16 KiB Mesa
-Virgl payload, DRI namespace-resolution, mixed-COW UBD, and warm-boot theme
-gates passed.
-This is artifact acceptance for Apple-product integration; HAL and application
-acceptance remain separate later gates.
+selects `android17-ack6.18-16k-20260825-e3cc7bae-overlay2`, published from
+clean outer revision `e3cc7bae8636bc8d41f42f128138972dc211115b` after the
+static kernel, target-files, VINTF, SELinux, both partition-backed ramdisks,
+ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW UBD,
+warm-boot theme, minimal application/feature set, external Jelly, Context Hub
+exclusion, normal boot and stock-recovery gates passed.
+This is artifact acceptance for Apple-product integration. The bounded normal
+boot, stock-recovery and bundled-application checks below do not claim broad
+third-party application or HAL qualification.
 
 Producer verification and accepted-runtime verification are deliberately
 separate. A new clean producer revision must match the current AOSP route table,
@@ -500,13 +500,41 @@ final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
 The current accepted release is
-`android17-ack6.18-16k-20260824-c3febf12-theme1`. It retains the 33-topic ACK
-tree `05c892f8175ca302ca869b01efc76f09ad14fa2c`; topic 33 corrects COW-backed
-UBD request advancement, while AOSP route `p0007` supplies the framework
-theme-gate fix. The built-in-only 16 KiB ELF reports
-`6.18.21-gc345c80dbb03`, and the sparse GPT disk compresses to 826,612,380
-bytes. `metadata/accepted-release.env` owns the exact release, patch-manifest,
-and source identities.
+`android17-ack6.18-16k-20260825-e3cc7bae-overlay2`. It uses the 34-topic ACK
+tree `621a0ab42d8990aa0960bf5d341d89b8f1042723`; topic 34 loads a bounded
+initrd range from the GPT host file. The built-in-only 16 KiB ELF reports
+`6.18.21-ga64f141f6266`. The schema-2 release contains a ten-partition
+17,179,869,184-byte GPT compressed to 781,000,428 bytes and no standalone
+ramdisk. Its normal and stock-recovery ramdisks are verified in place inside
+`init_boot` and `recovery`. `metadata/accepted-release.env` owns the exact
+release, ACK, AOSP, Jelly and common-ABI identities.
+
+LineageOS Jelly is fetched at upstream commit
+`767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local
+topics to final tree `ce63d63703fbfd2e616e94513ea1e5c63ccae4ef`: SDK-37
+build compatibility and geolocation disabled by default. The upstream optional
+camera, microphone and location declarations remain unchanged. The product
+keeps ThemePicker and LatinIME, forces the soft keyboard visible with a host
+keyboard, removes lock/idle friction, and omits unused first-party apps and
+unsupported hardware feature declarations.
+
+The first minimal-overlay image inherited the Context Hub APEX even though the
+product intentionally omitted Wi-Fi. That APEX advertised
+`android.hardware.context_hub`; `ContextHubSystemService` then dereferenced a
+missing `WifiManager` and restarted `system_server`. The accepted product
+excludes `com.android.hardware.contexthub`, and static regressions forbid its
+APEX, permission/VINTF payload and feature name. A warm normal boot holds one
+stable `system_server`, passes the settings, application, browser-resolution
+and feature checks, dwells for more than 30 guest seconds and powers down
+cleanly. Explicit recovery mode starts the stock `/system/bin/recovery`,
+survives its dwell and powers down cleanly. One preceding fresh run reached
+boot completion and then panicked on an isolated kernel-mode Darwin signal 11;
+it is not counted as passing stability evidence and remains an open runtime
+observation.
+
+The previous accepted `20260824-c3febf12-theme1` release established the
+mixed-COW and theme-gate fixes retained by the current image. Its evidence is
+kept below as dated history.
 
 The defect was visible only after the first writes to a fresh COW. UBD divided
 one descriptor into backing-image and COW-image runs, then advanced the next
@@ -605,8 +633,8 @@ installed GPT image only as the COW backing file, and binds each instance to
 the accepted release with an adjacent manifest receipt. `auto` follows the
 standard `boot-recovery` command in the COW-backed `misc` partition; `normal`
 and `recovery` are explicit diagnostic overrides. Both choices load a bounded
-ramdisk range from the immutable GPT rather than a standalone file. Attach to the console
-socket with a local Unix-stream client such as `nc -U`; the userdebug shell on
+ramdisk range from the immutable GPT rather than a standalone file. Attach to
+the console socket with a local Unix-stream client such as `nc -U`; the userdebug shell on
 `hvc0` accepts `logcat` directly. Linux printk is deliberately restricted to
 `ttyS0`; `hvc0` is selected only through `androidboot.console=hvc0`, so the
 interactive Android shell and logcat output cannot be mixed with kernel logs.

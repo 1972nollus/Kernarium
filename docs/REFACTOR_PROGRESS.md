@@ -1,5 +1,47 @@
 # Refactor progress
 
+## 2026-08-25: minimal Android 17 overlay and partition-backed recovery
+
+- Accepted release
+  `android17-ack6.18-16k-20260825-e3cc7bae-overlay2` from clean outer revision
+  `e3cc7bae8636bc8d41f42f128138972dc211115b`. The Linux producer verified
+  4,609 target-files entries, 1,147 target executables and VINTF against the
+  unchanged 34-topic ACK final tree
+  `621a0ab42d8990aa0960bf5d341d89b8f1042723`. The 16 KiB kernel reports
+  `6.18.21-ga64f141f6266`, has modules disabled and retains common ABI v8 /
+  `0x3871ad612337ea76`.
+- Added the fresh-only exact-synced `aosp_kernarium_darwin` overlay. It keeps
+  ThemePicker and LatinIME, forces the software keyboard visible with a host
+  keyboard, removes lock/idle friction, and omits obsolete first-party apps
+  and unimplemented hardware services while retaining the compatibility APIs,
+  providers, WebView, PackageInstaller, Virtio network and Virgl graphics that
+  ordinary Android applications use.
+- Added LineageOS Jelly without vendoring its source. Build preparation fetches
+  `lineage-23.2` commit `767833067da7bbbb639782bbddec33f602215c3d` and
+  replays only the SDK-37 and geolocation-disabled-by-default topics to final
+  tree `ce63d63703fbfd2e616e94513ea1e5c63ccae4ef`. Upstream optional camera,
+  microphone and location declarations remain; the hardware-omission patch was
+  removed.
+- Published a schema-2 16 GiB GPT with ten partitions, including `init_boot`,
+  writable `misc` and stock AOSP `recovery`. Normal and recovery ramdisks are
+  verified ranges in the GPT, not standalone release or guest-bundle files.
+  Explicit normal/recovery launch and the standard `boot-recovery` request are
+  supported. OrangeFox is intentionally deferred.
+- Fixed the new image's `system_server` restart loop by excluding the inherited
+  Context Hub APEX, which advertised a Context Hub feature and then required
+  the deliberately absent Wi-Fi framework service. A warm normal boot completed
+  at guest second 100.21, held one stable `system_server` through a 30-second
+  dwell, passed package/settings/feature/browser checks and powered down
+  cleanly. Stock recovery started and shut down cleanly. One fresh run reached
+  completion at 587.70 and then panicked at 594.44 on a kernel-mode Darwin
+  signal 11; it did not reproduce, is excluded from passing evidence and
+  remains an open host/kernel stability observation.
+- Reverified the installed schema-2 release, all six focused Android
+  policy/series tests and the macOS Android product. The Android Device and
+  Simulator runtime slices rebuilt with passing architecture audits, and the
+  complete three-runtime plus EGL/GLESv2 XCFramework package published
+  successfully.
+
 ## 2026-08-24: matched Android macOS/Simulator boot timing
 
 - Measured the accepted Android 17 ACK 6.18 16 KiB release with the same

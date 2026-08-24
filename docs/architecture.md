@@ -140,10 +140,10 @@ combined Android release and exposes its ACK ELF and boot support through a
 distinct target. Neither Apple graph can invoke a kernel or Android producer.
 
 The separate `uml-darwin-android17` target embeds that ACK ELF and the accepted
-release-manifest identity. It reads the external initramfs and static GPT from
-the installed release, maps the GPT only as a per-instance UML COW backing
-file, and does not inherit Linux desktop rootfs discovery. It has no 4 KiB
-variant.
+release-manifest identity. It reads the static GPT from the installed release,
+selects a verified normal or recovery ramdisk byte range inside that disk, and
+maps the GPT only as a per-instance UML COW backing file. It does not inherit
+Linux desktop rootfs discovery and has no 4 KiB variant.
 
 ## Apple GPU display composition
 
