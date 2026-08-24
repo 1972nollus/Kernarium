@@ -13,11 +13,11 @@ initramfs, fixed seven-partition UBD image, import-only Apple consumer,
 separate macOS executable, Virtio console, and source-built Mesa Virgl
 userspace while retaining SwiftShader. `20260822-28ce51ba-mm21` was the first
 release to reach `sys.boot_completed=1`, in a ten-vCPU gadgets boot with
-SELinux enforcing and hardware Virgl SurfaceFlinger. Five further accepted
+SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
 guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
-request advancement. The accepted release is
-`android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`.
+request advancement, then removed a circular warm-boot theme wait. The accepted
+release is `android17-ack6.18-16k-20260824-c3febf12-theme1`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -54,11 +54,12 @@ force except where a superseding decision is recorded against them.
 ### Durable repository and builder state
 
 - The accepted release is
-  `android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`, built from outer revision
-  `d6a6f91d` with ACK final tree
+  `android17-ack6.18-16k-20260824-c3febf12-theme1`, built from outer revision
+  `c3febf12` with ACK final tree
   `05c892f8175ca302ca869b01efc76f09ad14fa2c`, common ABI version 8 and
   fingerprint `0x3871ad612337ea76`, `CONFIG_MODULES=n`, and the 16 KiB-only
-  configuration. The ACK 6.18 series is 33 topics.
+  configuration. The ACK 6.18 series remains 33 topics. AOSP now has seven
+  routed local series; route `p0007` owns the framework theme-gate fix.
 - The host Virtio-GPU accepts the Linux driver's device-selected context
   request and the gadget cache bulk-owns allocator storage for each bounded
   resident address space. These are host changes; they do not alter the
@@ -93,6 +94,7 @@ one capability and each boot-verified before acceptance:
 | `20260823-4e793df3-pr2` | 31 | free-page reporting; 2.15 GiB freed, host RSS 7.89 to 6.85 GiB |
 | `20260823-5292a9ce-vmap` | 32 | `CONFIG_VMAP_STACK=y` on the widened vmalloc window |
 | `20260824-d6a6f91d-ubdcow1` | 33 | correct descriptor advancement across mixed backing/COW UBD runs |
+| `20260824-c3febf12-theme1` | 33 | AOSP route `p0007` releases a missing-wallpaper theme gate at boot phase 600 |
 
 The vmapped-stack release closes the order-3 task-stack fragmentation that had
 been costing background applications: 97 free order-3 blocks, `compact_stall` 0,
@@ -151,7 +153,7 @@ address space and preserves stable node addresses, the eight-generation bound,
 and exact survivor behavior, but returns allocator storage upstream in a small
 number of bulk releases instead of serialising individual system frees.
 
-A new fresh-COW run of the accepted release with 4 GiB, ten online vCPUs
+A fresh-COW run of the preceding UBD-fix release with 4 GiB, ten online vCPUs
 (`0-9`), and the gadgets engine set `sys.boot_completed=1` at guest second
 307.5; the console observed it set at uptime 314.8 with boot animation stopped,
 SELinux enforcing, and `nproc=10`. The independent `hvc0` Virtio console stayed
@@ -159,6 +161,49 @@ responsive for the Android shell and `logcat`, while `ttyS0` retained kernel and
 init output. The guest powered down normally at second 366.290. Its complete
 `ttyS0` capture contains no RCU stall, invalid-journal or unrecognised-userdata
 warning, Virtio-GPU `0x1204`/`0x1205`, oops, or panic.
+
+### Warm boot no longer waits for the hardware timeout
+
+The long warm boot was not emulator slowness and reducing its timeout would
+have hidden the defect. Before route `p0007`, WindowManager enabled the screen
+at guest second 31.827 but did not receive boot-animation completion until
+1531.950, a 1500.123-second interval. That is the 30-second WindowManager
+emergency timeout multiplied by `androidboot.hw_timeout_multiplier=50`.
+
+`ThemeInitializationObserver` registered a boot-screen blocker and called
+`setThemeReady(false)` while it waited for initial wallpaper colors. On this
+headless product no color callback arrived. Its fallback ran only at
+`PHASE_BOOT_COMPLETED`, but WindowManager withheld boot completion until theme
+readiness, so the fallback was behind the gate it was supposed to release.
+Route `p0007` moves only that fallback to
+`PHASE_THIRD_PARTY_APPS_CAN_START` (phase 600). The ordinary callback remains
+unchanged, and the focused `FrameworksServicesTests` regression proves phase
+550 leaves initialization pending while phase 600 forces it.
+
+The accepted candidate was produced by the standalone x86_64 Linux lane using
+the existing Ninja configuration. Its target-files archive has 4,548 entries
+and 1,162 target executables; its verified raw initramfs is 4,374,784 bytes and
+its seven-partition sparse GPT disk is 17,179,869,184 bytes, compressed to
+826,612,380 bytes. The ACK ELF and 33-topic final tree are byte-for-byte
+unchanged from the prior release.
+
+On macOS with 4 GiB, ten vCPUs and gadgets, a fresh COW reached
+`sys.boot_completed=1` at wall second 130.287, stayed live for another 30
+seconds, and powered down normally at 164.436. A natural warm boot logged the
+wallpaper wait at guest second 25.516, forced initialization at 28.279,
+notified WindowManager at 28.474, enabled the screen at 37.048, and completed
+the boot animation at 42.296. The host observed boot completion at wall second
+44.977, retained the guest for another 30 seconds, and powered down normally at
+78.615. A second warm run independently completed at 44.871 seconds. The three
+successful logs contain no RCU stall, userdata/journal fallback, Virtio-GPU
+`0x1204`/`0x1205`, oops, or panic.
+
+One earlier fresh attempt reached boot completion at 125.773 seconds and then
+panicked four seconds later on a kernel-mode Darwin signal 10. That signature
+does not occur in any older retained Android measurement and did not reproduce
+in the second fresh boot or either warm boot. It is retained as an isolated
+observation, not counted as a successful stability run and not conflated with
+the fixed theme wait.
 
 ### The guest runs in the iOS application
 
@@ -259,12 +304,17 @@ implementation is the current contract:
 - `artd` took one SIGSEGV through a null pointer, and `vendor.ril-daemon` exits
   1 in a restart loop. Both were observed on 2026-08-22 and neither is
   explained.
+- One fresh boot of `20260824-c3febf12-theme1` panicked four seconds after
+  boot completion with a kernel-mode Darwin signal 10. A second fresh boot and
+  two warm boots did not reproduce it, including two 30-second post-completion
+  dwells. Treat it as an open isolated stability observation until a repeat or
+  a longer campaign gives it a disposition.
 
 ### Required continuation order
 
 The 2026-08-22 continuation order's release items are done: the Mesa route was
 rebuilt and published, the ten-vCPU boot passed, and `accepted-release.env` has
-advanced five times since. Its item 4 named the remaining plan phases, which
+advanced six times since. Its item 4 named the remaining plan phases, which
 continue here:
 
 1. Boot an Android `.kern` bundle on a physical iOS device at the 2 GiB device

@@ -69,9 +69,11 @@ android/aosp-17/build/build-aosp.sh \
   --kernel-elf /absolute/path/to/kernel-build/vmlinux
 ```
 
-Preserve that output directory after the baseline build and pass the exact same
-`--out` path to later invocations so Ninja reuses all valid Android outputs. A
-new builder needs no special bootstrap option: a missing output path is created
+Ninja is the canonical build backend for this producer. Do not switch build
+systems when diagnosing a rebuild or continuing incremental work. Preserve the
+output directory after the baseline build and pass the exact same `--out` path
+to later invocations so Ninja reuses all valid Android outputs. A new builder
+needs no special bootstrap option: a missing output path is created
 automatically. The wrapper does not force `SOONG_INCREMENTAL_ANALYSIS`; the
 pinned Android environment owns that setting so subsequent builds keep using
 the analysis mode already associated with the preserved output tree.
@@ -325,12 +327,13 @@ staging directory under `.build/android/releases`, expands the GPT archive as
 a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current descriptor
-selects `android17-ack6.18-16k-20260822-6afe4225-virgl2`, published from
-clean outer revision `6afe4225bb2bc9a44d31503e96de76ab64369dcc` after the
+selects `android17-ack6.18-16k-20260824-c3febf12-theme1`, published from
+clean outer revision `c3febf1273e129f43305f3c7cfb9f0bf0a03c8ca` after the
 static kernel, target-files, VINTF, SELinux, initramfs, disk, DRM-HWC,
 no-camera APEX, non-A/B storage, built-in userdata-encryption, multi-vCPU timer
 service, built-in single-port Virtio-console, and source-built 16 KiB Mesa
-Virgl payload and DRI namespace-resolution gates passed.
+Virgl payload, DRI namespace-resolution, mixed-COW UBD, and warm-boot theme
+gates passed.
 This is artifact acceptance for Apple-product integration; HAL and application
 acceptance remain separate later gates.
 
@@ -401,10 +404,11 @@ final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
 The current accepted release is
-`android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`. It contains the 33-topic ACK
+`android17-ack6.18-16k-20260824-c3febf12-theme1`. It retains the 33-topic ACK
 tree `05c892f8175ca302ca869b01efc76f09ad14fa2c`; topic 33 corrects COW-backed
-UBD request advancement. The built-in-only 16 KiB ELF reports
-`6.18.21-gc345c80dbb03`, and the sparse GPT disk compresses to 826,612,194
+UBD request advancement, while AOSP route `p0007` supplies the framework
+theme-gate fix. The built-in-only 16 KiB ELF reports
+`6.18.21-gc345c80dbb03`, and the sparse GPT disk compresses to 826,612,380
 bytes. `metadata/accepted-release.env` owns the exact release, patch-manifest,
 and source identities.
 
@@ -435,6 +439,28 @@ second 307.5, retained an enforcing SELinux state and a responsive independent
 `hvc0` shell/logcat console, and powered down normally at second 366.290. Its
 `ttyS0` log contains no RCU stall, UBD/journal failure, unrecognised-userdata
 fallback, Virtio-GPU `0x1204`/`0x1205`, oops, or panic.
+
+The preceding image's natural warm boot enabled the screen at guest second
+31.827 but completed the boot animation only at 1531.950. That 1500.123-second
+interval was WindowManager's 30-second emergency timeout multiplied by the
+product factor 50. `ThemeInitializationObserver` had marked the theme unready
+while waiting for wallpaper colors, but its no-color fallback ran only at
+`PHASE_BOOT_COMPLETED`; WindowManager withheld that phase on the same theme
+readiness flag. Route `p0007` moves only the fallback to phase 600. Its focused
+test preserves the normal callback and proves phase 550 does not force the
+observer while phase 600 does.
+
+On the accepted release, a ten-vCPU gadgets warm run forces the fallback at
+guest second 28.279, notifies WindowManager at 28.474, enables the screen at
+37.048, completes animation at 42.296, and is observed complete at wall second
+44.977 with the multiplier unchanged. It remains live for a 30-second dwell
+and powers down normally at 78.615; a second warm run completes at 44.871.
+A fresh-COW rerun completes at 130.287, remains live for 30 seconds, and powers
+down at 164.436. Exact scans of those passing runs find no RCU stall,
+userdata/journal fallback, Virtio-GPU context error, oops, or panic. One prior
+fresh attempt panicked four seconds after already completing boot on a
+kernel-mode Darwin signal 10; it did not reproduce and is retained as an
+isolated observation rather than counted as passing evidence.
 
 ## Separate macOS Android executable
 

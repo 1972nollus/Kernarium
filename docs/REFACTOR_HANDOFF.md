@@ -1,8 +1,66 @@
 # Refactor handoff
 
-## Android fresh-userdata, GPU-context, and ten-vCPU fixes (2026-08-24)
+## Android warm-boot theme cycle fixed (2026-08-24)
 
 The current accepted Android bundle is
+`android17-ack6.18-16k-20260824-c3febf12-theme1`, produced from clean outer
+revision `c3febf1273e129f43305f3c7cfb9f0bf0a03c8ca`. ACK remains the same
+built-in-only 16 KiB, 33-topic final tree
+`05c892f8175ca302ca869b01efc76f09ad14fa2c`; the change is AOSP route `p0007`
+against `frameworks/base`. The route table now has seven local series and the
+accepted projects-manifest SHA-256 is
+`b37db0630dcaf9c8c1e5a67a5959b71fea2f7ba10d93dc444d4733f9cc353271`.
+
+The previous warm boot was not merely slow. WindowManager enabled the screen at
+guest second 31.827 and did not receive boot-animation completion until
+1531.950, exactly 1500.123 seconds later. The product retains the ordinary
+30-second WindowManager emergency timeout but sets
+`androidboot.hw_timeout_multiplier=50`, which accounts for that interval.
+Changing either timeout would only mask the dependency cycle.
+
+`ThemeInitializationObserver` registered a boot-screen blocker and marked the
+theme unready while waiting for initial wallpaper colors. No callback arrived
+on this product. Its no-color fallback ran at `PHASE_BOOT_COMPLETED`, while
+WindowManager withheld boot completion until the same observer restored theme
+readiness. Route `p0007` moves only the fallback to
+`PHASE_THIRD_PARTY_APPS_CAN_START` (phase 600), after the normal callback has
+had time to run but before boot completion can depend on it. The focused
+`FrameworksServicesTests` build passes and pins that phase 550 does nothing
+while phase 600 forces initialization. AOSP producer compilation remains on
+the repository's canonical Ninja configuration; do not switch its build
+backend in later incremental work.
+
+The clean x86_64 producer built and verified 4,548 target-files entries and
+1,162 target executables, a 4,374,784-byte initramfs, and a seven-partition
+17,179,869,184-byte sparse GPT disk. The compressed disk is 826,612,380 bytes.
+The copied release, expanded disk, macOS Android executable, dependency closure,
+and architecture audit all passed their local checks.
+
+The decisive macOS runs used gadgets, 4 GiB and ten vCPUs. A clean fresh-COW
+rerun reported userdata clean at 4.718 seconds, late mount at 5.559, zygote at
+10.738, SurfaceFlinger at 12.371 and `artd` at 30.390. It observed
+`sys.boot_completed=1` at wall second 130.287, stayed live another 30 seconds,
+and powered down at 164.436. The stable warm run waited for wallpaper colors at
+guest second 25.516, forced the phase-600 fallback at 28.279, notified
+WindowManager at 28.474, enabled the screen at 37.048 and completed the boot
+animation at 42.296. The host observed boot completion at wall second 44.977,
+held the guest for 30 more seconds, and powered down at 78.615. A separate
+natural warm run completed at 44.871 seconds and powered down normally. Thus
+the old 1500.123-second enable-screen-to-animation interval is now 5.248 seconds
+in the settled run, without changing the multiplier.
+
+Exact scans of the successful fresh run and both warm runs found no RCU stall,
+userdata/journal fallback, Virtio-GPU `0x1204`/`0x1205`, oops, or panic. An
+earlier fresh attempt had already reached boot completion at 125.773 seconds
+when it panicked four seconds later on a kernel-mode Darwin signal 10. That
+signature exists nowhere else in the retained Android measurements and did not
+reproduce in the second fresh boot or either warm boot. Keep it visible as one
+isolated stability observation; it is not the warm-boot dependency cycle and
+is not counted as a successful run.
+
+## Android fresh-userdata, GPU-context, and ten-vCPU fixes (2026-08-24)
+
+The accepted Android bundle at this checkpoint was
 `android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`, produced from outer revision
 `d6a6f91d` and ACK final tree
 `05c892f8175ca302ca869b01efc76f09ad14fa2c`. It remains a built-in-only 16 KiB
