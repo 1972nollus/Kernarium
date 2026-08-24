@@ -27,6 +27,21 @@ bool contains(const uml::emulator::EmulatorOptions &options,
 	});
 }
 
+std::size_t count_prefixed(const uml::emulator::EmulatorOptions &options,
+		      std::string_view prefix)
+{
+	return static_cast<std::size_t>(std::ranges::count_if(
+		options.arguments, [&](const auto &argument) {
+			return std::string_view{argument}.starts_with(prefix);
+		}));
+}
+
+bool starts_with_any(const uml::emulator::EmulatorOptions &options,
+		      std::string_view prefix)
+{
+	return count_prefixed(options, prefix) != 0U;
+}
+
 void test_defaults_and_engine_selection()
 {
 	const char *arguments[]{"uml-test", "--execution-engine=interpreter",
@@ -82,8 +97,18 @@ void test_explicit_defaults_are_preserved()
 		"guest top-byte-ignore mode was enabled by default");
 	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
-	require(options.arguments.size() == 7,
+	/* The seven explicit values, plus the management-console name the guest
+	 * needs and the caller did not supply. */
+	require(options.arguments.size() == 8,
 		"explicit kernel policy values were duplicated");
+	require(starts_with_any(options, "umid="),
+		"the guest was left without a management-console name");
+	const char *named_console[]{"umid=chosen"};
+	const auto named = uml::emulator::prepare_emulator_options(
+		1, named_console, "/tmp/rootfs.erofs", false);
+	require(contains(named, "umid=chosen") &&
+		count_prefixed(named, "umid=") == 1,
+		"a caller-supplied management-console name was replaced");
 	const char *explicit_mapping[]{"ubd0c=/custom/rootfs.erofs"};
 	require(uml::emulator::prepare_emulator_options(
 			1, explicit_mapping, "/unused/rootfs.erofs", false)

@@ -5,6 +5,7 @@
 #include "profile_reporter.hpp"
 #include "context.hpp"
 #include "guest_sync.hpp"
+#include "guest_console.hpp"
 #include "native_kernel_layout.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -32,6 +33,18 @@ extern "C" {
 namespace uml::emulator {
 
 namespace {
+
+/* The guest reports that its writeback started, not that it finished. This is
+ * the bound the host waits before flushing what the guest handed it: long
+ * enough for an ordinary writeback to reach the block layer, short enough to
+ * fit inside the few seconds an application has when it is being put away. */
+constexpr unsigned int guest_writeback_settle_ms = 1500U;
+
+/* Block I/O already handed to the host keeps completing after the guest stops
+ * issuing more, so a frozen guest still needs a moment before its disk has
+ * genuinely settled. */
+constexpr unsigned int guest_suspend_settle_ms = 250U;
+
 std::mutex process_address_space_mutex;
 std::condition_variable process_address_space_changed;
 std::size_t process_address_space_shared_runs;
@@ -518,6 +531,33 @@ extern "C" int uml_emulator_sync(uml_emulator *emulator)
 {
 	if (emulator == nullptr)
 		return -UML_EMULATOR_INVALID_ARGUMENT;
+	/* Ask the guest first. Only it can write back its own page cache, and
+	 * flushing the host before it would push down a prefix of what the guest
+	 * still holds. A guest without a management console simply does not
+	 * answer, which leaves the host flush doing what it did before. */
+	(void)::uml::device::request_guest_writeback(
+		::uml::emulator::guest_writeback_settle_ms);
 	const auto result = ::uml::runtime::sync_guest_files();
 	return static_cast<int>(result.failed);
+}
+
+extern "C" int uml_emulator_quiesce(uml_emulator *emulator)
+{
+	if (emulator == nullptr)
+		return -UML_EMULATOR_INVALID_ARGUMENT;
+	/* Order matters. Writing back first means the freeze captures a guest
+	 * that has nothing outstanding; freezing before the host flush means
+	 * nothing dirties the disk again between the two. */
+	(void)::uml::device::request_guest_writeback(
+		::uml::emulator::guest_writeback_settle_ms);
+	(void)::uml::device::suspend_guest(
+		::uml::emulator::guest_suspend_settle_ms);
+	const auto result = ::uml::runtime::sync_guest_files();
+	return static_cast<int>(result.failed);
+}
+
+extern "C" void uml_emulator_resume(uml_emulator *emulator)
+{
+	if (emulator != nullptr)
+		::uml::device::resume_guest();
 }

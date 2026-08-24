@@ -140,10 +140,28 @@ excluded for the duration, so a descriptor cannot be closed and reused for an
 unrelated host object between the snapshot and its flush. Like a stop request,
 the call is meant to overlap a run.
 
-This is the host half of durability, and it is the half that was missing: the
-guest's own `sync` already reaches `os_sync_file` through UBD's flush path,
-while nothing flushed those files on the host's behalf. It does not reach into
-the guest's page cache, which only the guest kernel can write back.
+This is the host half of durability. The other half is the guest's own page
+cache, and UML's management console reaches it. `darwin/device/mconsole` owns
+that channel: `uml_emulator_quiesce()` asks the guest to write its filesystems
+back, freezes it so nothing can be dirtied again, and only then flushes the
+host's files, while `uml_emulator_resume()` lets it run again.
+`uml_emulator_sync()` remains the flush-only form for a boundary the guest will
+run past.
+
+Two things had to be repaired before that channel existed at all. The guest
+binds its console socket at a path composed from the run's umid, and never
+removes it, so the stock name gave the first guest on a host a console and
+every later one a silent `Failed to initialize management console`. The
+emulator now names each run, which also lets guests run side by side, and owns
+the path that results. Separately, a guest that disables magic SysRq ignores
+the request without saying so, which is why Android needs
+`sysrq_always_enabled` on its command line; the request is refused loudly
+rather than silently when it is missing.
+
+The console is a real control channel, so its socket is narrowed to the owning
+user once the guest has bound it. Where the guest cannot bind one at all -
+`/tmp` is not writable inside a physical iOS application sandbox - the guest
+half is simply unavailable and the host flush behaves as it did before.
 
 The opt-in Apple CTS adapters pass only an identifier from the checked
 campaign allow-list. CMake generates that campaign's exact bounded guest

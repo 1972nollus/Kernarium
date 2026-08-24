@@ -15,6 +15,7 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
     uml_declare_architecture_target(${TARGET} emulator)
     target_link_libraries(${TARGET} PRIVATE
         UML::ApiContract
+        UML::DeviceGuestConsole
         UML::GuestPageConfiguration
         UML::RuntimeContract)
     target_include_directories(${TARGET} PRIVATE
@@ -48,6 +49,7 @@ uml_declare_architecture_target(uml_emulator emulator)
 
 target_link_libraries(uml_emulator PRIVATE
     UML::ApiContract
+    UML::DeviceGuestConsole
     UML::GuestPageConfiguration
     UML::NetworkDevice
     UML::RuntimeCore
@@ -92,6 +94,7 @@ if(_uml_need_admission_test_variant)
     endif()
     target_link_libraries(uml_emulator_admission_test_variant PRIVATE
         UML::ApiContract
+        UML::DeviceGuestConsole
         UML::GuestPageConfiguration
         UML::NetworkDevice
         ${_uml_test_runtime_core}

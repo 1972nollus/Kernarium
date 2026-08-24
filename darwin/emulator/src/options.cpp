@@ -7,6 +7,8 @@
 #include <optional>
 #include <string_view>
 
+#include "guest_console.hpp"
+
 namespace uml::emulator {
 
 constexpr std::string_view jit_cache_budget_prefix{"--jit-cache-budget="};
@@ -287,6 +289,12 @@ EmulatorOptions prepare_emulator_options(
 	}
 	if (!has_prefix(prepared.arguments, "mem="))
 		prepared.arguments.emplace_back("mem=256M");
+	// The guest names its management-console socket after this, and never
+	// removes it. A per-run name gives every guest a console instead of only
+	// the first one on the host, and lets guests run side by side.
+	if (!has_prefix(prepared.arguments, "umid="))
+		prepared.arguments.emplace_back(
+			"umid=" + ::uml::device::guest_management_console_umid());
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
 	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
