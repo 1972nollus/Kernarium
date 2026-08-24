@@ -5,11 +5,11 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 29 ACK-based topic commits and resolves to the
+The checked series contains 33 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the final thirteen are ACK-only local topics
-discovered by compiling and booting the 16 KiB Android product. Mainline patch
-bytes are never installed as this line's source of truth.
+applicable Darwin UML behavior; the remaining seventeen are ACK-only local
+topics discovered by compiling and booting the 16 KiB Android product.
+Mainline patch bytes are never installed as this line's source of truth.
 
 The Android producer is owned by
 [`../../android/aosp-17/`](../../android/aosp-17/README.md). Its scripts execute
@@ -159,6 +159,17 @@ with zero vmalloc refusals, zero OOM kills, zero RCU stalls, and no panic, and
 its free-area breakdown read `0 1 1 97 20 3 0 0 0 0 0 0` - 97 free order-3
 blocks where there had been none - with `compact_stall` still 0, meaning
 compaction had not once been needed.
+
+Topic 33 fixes COW-backed UBD request advancement. One block descriptor can
+cross several backing-image and COW-image extents, so `do_io()` divides it into
+homogeneous runs. The loop's `len` variable describes only the current run and
+therefore holds the final run length after the loop; using it to advance the
+request offset makes the next descriptor read or write the wrong disk region.
+The first writable Android userdata mount exposes the bug because journal and
+bitmap writes create a mixed backing/COW view, after which `e2fsck` can observe
+an invalid journal and `vold` falls back to full-device encryption. The request
+now advances by the complete `desc->length`; individual host I/O operations
+continue to use their per-run lengths.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

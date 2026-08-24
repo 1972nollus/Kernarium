@@ -751,8 +751,8 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_TAG": "android17-6.18-2026-06_r35",
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
-        "UML_KERNEL_FINAL_TREE": "5c697fee621e9c8108b7acef3bbbc3f95f5c333b",
-        "UML_KERNEL_PATCH_COUNT": "32",
+        "UML_KERNEL_FINAL_TREE": "05c892f8175ca302ca869b01efc76f09ad14fa2c",
+        "UML_KERNEL_PATCH_COUNT": "33",
         "UML_KERNEL_ABI_VERSION": "8",
         "UML_KERNEL_ABI_FINGERPRINT": "0x3871ad612337ea76",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -866,6 +866,10 @@ def main() -> None:
         kernel_root
         / "patches/series/0027-UML-DARWIN-LOCAL-poll-timers-before-cond_resched.patch"
     ).read_text()
+    ubd_cow_offset_patch = (
+        kernel_root
+        / "patches/series/0033-UML-DARWIN-LOCAL-um-advance-COW-I-O-by-the-full-desc.patch"
+    ).read_text()
     build_make_patch = next(
         (android_root / "patches/projects/p0002/series").glob("*.patch")
     ).read_text()
@@ -969,6 +973,16 @@ def main() -> None:
         re.DOTALL,
     ) is None:
         fail("ACK cond_resched boundary no longer polls the timer before rescheduling")
+    if re.search(
+        r"^\+\s*req->offset \+= desc->length;$",
+        ubd_cow_offset_patch,
+        re.MULTILINE,
+    ) is None:
+        fail("ACK UBD COW topic does not advance by the complete descriptor")
+    if re.search(
+        r"^\+\s*req->offset \+= len;$", ubd_cow_offset_patch, re.MULTILINE
+    ) is not None:
+        fail("ACK UBD COW topic advances by only the final backing/COW run")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
