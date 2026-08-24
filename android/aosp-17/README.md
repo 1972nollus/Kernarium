@@ -258,6 +258,19 @@ inline `dscpPolicy.o` and `netd.o` variants instead; it does not omit those
 networking programs. The runtime adds its local `ubd0=` disk and initrd paths;
 no builder or workstation path is stored in this tree.
 
+Route `p0007` breaks a framework boot dependency cycle without changing the
+global WindowManager timeout. When the wallpaper service is available but has
+not produced its initial color event, `ThemeInitializationObserver` marks the
+theme unready and WindowManager consequently withholds boot completion. The
+old no-color fallback ran only at `PHASE_BOOT_COMPLETED`, so it could never
+release the gate it was waiting behind; a warm ten-vCPU UML boot therefore
+continued only when WindowManager's 30-second emergency timeout, multiplied by
+the product's hardware-timeout factor, forced the display on. The local route
+moves that fallback to `PHASE_THIRD_PARTY_APPS_CAN_START` (phase 600), after the
+ordinary color callback has had time to arrive but before boot completion can
+depend on theme readiness. Its focused service test pins that phase 550 leaves
+initialization pending and phase 600 releases it.
+
 Route `p0004` carries the AOSP Mesa project changes for an ARM64 Virgl-only
 Gallium build. It generates vendor `libEGL_mesa`, GLES 1 and GLES 2 libraries,
 and `gallium_dri` from source with 16 KiB load alignment; it does not package

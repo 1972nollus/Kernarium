@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Ordered generated AOSP project topic identity.
+order	filename	stable_patch_id	sha256	subject
+1	0001-UML-ANDROID-LOCAL-theming-break-warm-boot-wallpaper-.patch	383a4da84c658f8b27c98c21d2c41fdb0b9aa8c8	0ee1d6d3ff8866fcc5540381afd9e2d43aee06f92287b799c53c143bca6f8a06	UML-ANDROID-LOCAL: theming: break warm-boot wallpaper wait cycle
