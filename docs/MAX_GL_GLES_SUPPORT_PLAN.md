@@ -268,7 +268,7 @@ ordered leaf, and reported
 `Verified 9460 gles2 case executions in 20 signed simulator shards`. Every
 fresh guest used Gadgets, the common direct ANGLE/Metal presentation path,
 4,096 MiB, and the sealed ext4 lower below disposable OverlayFS state. Both
-connected-iPad matrices remain open.
+connected-iPad matrices subsequently passed as recorded below.
 
 The final 4,096 MiB Simulator GLES 3 campaign at
 `.build/vk-gl-cts-ios-simulator-matrix/gles3-16k-ce8cfa0f-apple8-restored-4g-4way`
@@ -318,10 +318,11 @@ macOS, Simulator, and iPad with clean shutdown and zero CPU fallback. Three
 non-passes encountered while choosing that bounded identity corpus were not
 waived: current macOS qualification classified or repaired both host findings,
 and the Simulator GLES 2 texture findings were repaired in the common
-ANGLE/Metal dependency. Both fresh-policy Simulator Khronos matrices now pass.
-Connected-iPad qualification, both connected-iPad Khronos matrices,
-seven-pair performance campaigns, and sustained lifecycle acceptance remain
-open. The
+ANGLE/Metal dependency. Both fresh-policy Simulator Khronos matrices and both
+connected-iPad Khronos matrices now pass. The joined device verifier also
+closes the 100-launch nominal-preflight thermal and sustained-lifecycle gate.
+The seven-pair performance campaigns remain open, so Phase 2 and capability
+promotion remain blocked. The
 original exact
 allow-listed sentinel also captures
 explicit ES 3.0/3.1/3.2 host-context attempts, sorted extensions, every raw and
@@ -555,7 +556,7 @@ replaced by a slower emulation path.
 | Host renderer | macOS guest | Simulator guest | Connected-iPad guest | Status |
 | --- | --- | --- | --- | --- |
 | Apple CGL 4.1 | GL 4.1, GLES 3.0 | unavailable | unavailable | archived pre-migration measurement only; no planned build, runtime, or test lane |
-| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | GL 2.1 and GLES 3.0 measured by the exact 16 KiB signed-app sentinel; the normal boot also proved both Virgl capsets, direct Metal presentation, rendered KDE, and complete GLES 2/GLES 3 matrices | GL 2.1 and GLES 3.0 measured by the identical 16 KiB signed-app sentinel | all three host slices build from the common product; identity/capset probes and the complete macOS/Simulator GLES 2/GLES 3 matrices pass, while connected-iPad matrices, performance, thermal, and lifecycle qualification remain pending |
+| Current UTM ANGLE/Metal | GL 2.1 and GLES 3.0 measured in a focused 16 KiB guest diagnostic | GL 2.1 and GLES 3.0 measured by the exact 16 KiB signed-app sentinel; the normal boot also proved both Virgl capsets, direct Metal presentation, rendered KDE, and complete GLES 2/GLES 3 matrices | GL 2.1 and GLES 3.0 measured by the identical 16 KiB signed-app sentinel plus complete GLES 2/GLES 3 matrices | all three host slices build from the common product; identity/capset probes and the complete macOS/Simulator/connected-iPad GLES 2/GLES 3 matrices pass, and the 100-launch device thermal/lifecycle gate passes; performance qualification remains pending |
 | Direct ANGLE/Metal ES 3.1 implementation | GL 2.1 expected, GLES 3.1 stretch ceiling | same conditional ceiling | same conditional ceiling | acceptable only with native Metal compute/storage/image/atomic mappings and the full performance gate |
 | Previous row plus GPU-resident desktop gates | at most GL 3.1, GLES 3.1 | same conditional ceiling | same conditional ceiling | optional stretch; retain the immediately lower qualified desktop tier, GL 2.1 or GL 3.0, when a required next-tier gate needs CPU-heavy or materially slower emulation |
 | GLES/GL 3.2 or GL 4.x | not targeted | not targeted | not targeted | geometry/desktop translation does not meet the selected direct ANGLE/Metal, performance-first architecture |
@@ -1163,18 +1164,28 @@ shown to force all shadow comparisons to `Never`. The exact repaired GLES 3
 `cfg00` fraction `0/4` passed all 1,625 executions (1,563 `Pass`, 62 permitted
 `NotSupported`) with all eight formerly failing depth/stencil shadow-repeat
 cases now `Pass` and zero CPU fallback.
-The seven interleaved performance pairs,
-connected-iPad thermal and sustained lifecycle baselines, and both
-connected-iPad matrices remain missing. The final 4 GiB Simulator GLES 2 and
-GLES 3 matrices now pass all 9,460 and 129,960 executions, respectively, as
-recorded above; they close both APIs on Simulator without substituting for any
-remaining gate.
+The fresh 2 GiB physical-device GLES 2 campaign at
+`.build/vk-gl-cts-ios-device-matrix/gles2-16k-0a76cbc1-apple8-restored-resumed-2g`
+passes all 9,460 executions in 20 immutable shards: 8,760 `Pass`, 700
+permitted `NotSupported`, and no disallowed status. The matching GLES 3
+campaign at
+`.build/vk-gl-cts-ios-device-matrix/gles3-16k-0a76cbc1-apple8-restored-resumed-2g`
+passes all 129,960 executions in 80 immutable shards: 125,270 `Pass`, 4,690
+permitted `NotSupported`, and no disallowed status. Both independent
+`--verify-only` reconstructions pass. The fail-closed joined report at
+`.build/vk-gl-cts-ios-device-matrix/qualification-0a76cbc1/thermal-lifecycle.json`
+passes 100 clean launches, 100 first-probe nominal preflights, and 200/200
+nominal managed-run thermal samples at 2,048 MiB; no emulator OOM occurred and
+no memory decrement was authorized. The seven interleaved performance pairs
+remain missing. The final 4 GiB Simulator GLES 2 and GLES 3 matrices pass the
+same 9,460 and 129,960 executions, respectively, and close both APIs on
+Simulator without substituting for that remaining performance gate.
 The former global all-package caselist attempt still
 fails at `dEQP-GL45-ES3` and remains diagnostic, but it no longer defines the
 GLES qualification boundary. The filtered `KHR-GLES2`/`KHR-GLES3` hierarchy
 inventory is complete and frozen at 6,972 cases. The missing original-image
-receipt and remaining official matrices keep the exit open; no further rootfs
-or guest-userspace change is required.
+receipt and remaining performance qualification keep the exit open; no
+further rootfs or guest-userspace change is required.
 
 ### Phase 1: atomically replace macOS graphics with the common Apple path
 
@@ -1264,9 +1275,12 @@ canaries now pass on macOS and Simulator under both page profiles, after topic
 bring-up and zero-fallback coverage only. The current 20-config 16 KiB macOS
 GLES 2 and GLES 3 matrices pass all 9,460 and 129,960 required executions,
 respectively. The matching 4 GiB Simulator matrices pass the same 9,460 and
-129,960 executions through 20 and 80 signed fresh-guest shards. Both
-connected-iPad matrices, the seven-pair performance campaign, connected-iPad
-thermal gate, and sustained-lifecycle campaign remain open.
+129,960 executions through 20 and 80 signed fresh-guest shards. The final
+2 GiB connected-iPad matrices pass the same execution and status totals through
+20 and 80 signed fresh-guest shards, and their independent reconstructions
+pass. The joined verifier authenticates all 100 device launches and passes the
+nominal-preflight thermal and sustained-lifecycle gate with 200/200 managed-run
+samples nominal. The seven-pair performance campaign remains open.
 The normally signed app now records public iOS thermal state at managed-run
 start, on every state-change notification, and at clean finish. Its stable
 markers are captured by the existing device transcript, providing the input
@@ -1278,13 +1292,12 @@ same signed app, sealed rootfs, wired device, 16 KiB profile, and final common
 memory policy; authenticates every campaign/attempt/run/console input; requires
 100 nominal preflight probes, ordered start/change*/finish lifecycles, and
 clean shutdowns. It retains all later thermal samples as observations without
-letting them reject an otherwise passing shard. This implements the evidence
-gate but claims no result until both final device matrices and their
-independent CTS reconstructions pass.
+letting them reject an otherwise passing shard. The final report passes those
+requirements for all 100 launches at the unchanged 2,048 MiB policy.
 The original EROFS build receipt remains missing, the checked derivative owns
 its authenticated build receipt, and the scoped GLES hierarchy identity is
-complete. Qualification remains fail-closed on those remaining matrices and
-performance/lifecycle gates rather than on caselist enumeration.
+complete. Qualification remains fail-closed on the remaining performance and
+original-image provenance gates rather than on caselist enumeration.
 
 ### Phase 3: evaluate direct ANGLE/Metal GLES 3.1
 
@@ -1824,10 +1837,15 @@ failures repaired and zero CPU fallback. The final four-device Simulator GLES
 passes all 129,960 executions in 80 signed shards (125,270 `Pass`, 4,690
 permitted `NotSupported`) with zero dropped or CPU-fallback frames; its
 verify-only reconstruction passes. Together with the 9,460-execution GLES 2
-campaign, this closes both current Simulator matrices. The connected-iPad case
-matrices, absent seven-pair performance/connected-iPad
-thermal/sustained-lifecycle campaigns, and missing original-image receipt
-still prevent any new shared capability or conformance claim. The derivative
+campaign, this closes both current Simulator matrices. The final connected-iPad
+GLES 2 and GLES 3 campaigns pass the same 9,460 and 129,960 execution products
+in 20 and 80 signed shards, respectively, at 2,048 MiB, and both independent
+reconstructions pass. Their joined report authenticates 100 clean launches,
+requires and observes 100 nominal first-probe preflights, and records 200/200
+managed-run thermal samples as nominal, closing the device thermal and
+sustained-lifecycle gate. The absent seven-pair performance campaign and
+missing original-image receipt still prevent any new shared capability or
+conformance claim. The derivative
 build has its own authenticated receipt and passed the fixed macOS identity
 sentinels under both page profiles plus the one-case Simulator declaration
 sentinel under both profiles; that bounded evidence does not satisfy

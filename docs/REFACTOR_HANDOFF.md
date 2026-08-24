@@ -383,9 +383,10 @@ A fresh LLVM 22 replay and both page-profile builds passed; accepted artifacts
 shutdown, and zero dropped or CPU-fallback frames. The four runs are
 implementation canaries, not a controlled performance qualification or A/B.
 
-The broader lifecycle gate remains open alongside the Simulator/iPad matrices,
-seven interleaved performance pairs, connected-iPad thermal, and presentation
-campaigns.
+At that checkpoint the broader lifecycle gate remained open alongside the
+Simulator/iPad matrices, seven interleaved performance pairs, connected-iPad
+thermal, and presentation campaigns; the later final matrix and lifecycle
+results below close every item in that sentence except the performance gate.
 A fail-closed global display-backed diagnostic exercised the rebuilt common
 emulator and exact installed `glcts`: eight module hierarchies exported before
 the desktop-GL-dependent `dEQP-GL45-ES3` package requested an unsupported GL
@@ -456,10 +457,12 @@ predecessor exactly: the same 20 config tuples and canonical digest
 Both recorded zero dropped and CPU-fallback frames. The adapters expose no
 arbitrary selector and fail closed on any predecessor config mismatch; both
 records also pass the connected-device predecessor validator. Complete
-Simulator/iPad case matrices and Phase 2 performance, thermal, and lifecycle
-gates remain open. The original image also lacks a build receipt, so future
-qualification must use the checked derivative. Phase 3 and later profile work
-must not start until the lower shared baseline is measured and qualified.
+macOS, Simulator, and connected-iPad case matrices now pass, as detailed
+below. The 100-launch device thermal/lifecycle gate passes too; the separate
+Phase 2 performance gate remains open. The original image also lacks a build
+receipt, so future qualification must use the checked derivative. Phase 3 and
+later profile work must not start until the lower shared baseline is measured
+and qualified.
 
 The signed Simulator GLES 2 matrix subsequently completed all 9,460 current
 executions at
@@ -512,8 +515,29 @@ XCFrameworks, and the clean Debug app were rebuilt, exact `cfg00` fraction
 `0/4` passed all 1,625 executions with 1,563 `Pass`, 62 permitted
 `NotSupported`, zero failure, and zero CPU fallback at
 `.build/vk-gl-cts-ios-simulator/focused/gles3-shadow-sampler-fff809d/20260822-131903-63508-16k-gles3-matrix-cfg00-000of004-v1`.
-All eight implicated cases now pass. Complete fresh Simulator and iPad
-campaigns remain the next gate.
+All eight implicated cases now pass. The final 4,096 MiB Simulator campaigns
+at
+`.build/vk-gl-cts-ios-simulator-matrix/gles2-16k-ce8cfa0f-apple8-restored-4g`
+and
+`.build/vk-gl-cts-ios-simulator-matrix/gles3-16k-ce8cfa0f-apple8-restored-4g-4way`
+then passed all 9,460 and 129,960 executions, respectively, with independent
+reconstruction.
+
+The final normally signed physical-device campaigns at
+`.build/vk-gl-cts-ios-device-matrix/gles2-16k-0a76cbc1-apple8-restored-resumed-2g`
+and
+`.build/vk-gl-cts-ios-device-matrix/gles3-16k-0a76cbc1-apple8-restored-resumed-2g`
+ran serially on the wired iPad mini 6 at the unchanged 2,048 MiB policy. All
+20 GLES 2 shards and all 80 GLES 3 shards passed, reconstructing 9,460
+executions (8,760 `Pass`, 700 permitted `NotSupported`) and 129,960 executions
+(125,270 `Pass`, 4,690 permitted `NotSupported`) with no disallowed status.
+Both verify-only reconstructions passed; no emulator OOM occurred. The joined
+report at
+`.build/vk-gl-cts-ios-device-matrix/qualification-0a76cbc1/thermal-lifecycle.json`
+authenticates all 100 launches, each nominal on its first preflight probe and
+cleanly shut down. All 200 managed-run thermal samples are nominal. This
+closes the physical-device case, thermal, and sustained-lifecycle gates. It
+does not close the remaining seven-pair performance gate or promote a profile.
 
 ## Versioned kernel ownership preparation (2026-08-20)
 

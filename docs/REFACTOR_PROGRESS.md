@@ -18,6 +18,29 @@
   variance remains unexplained. Exact tables and evidence paths are in
   [`android-17-boot-timing-20260824.md`](android-17-boot-timing-20260824.md).
 
+## 2026-08-24: connected-iPad GLES matrices and lifecycle gate
+
+- Resumed the normally signed, single-worker physical-device campaign on the
+  wired iPad mini 6 without changing the 2,048 MiB guest policy. Campaign
+  `.build/vk-gl-cts-ios-device-matrix/gles2-16k-0a76cbc1-apple8-restored-resumed-2g`
+  passed all 20 immutable shards and 9,460 executions: 8,760 `Pass`, 700
+  released-policy `NotSupported`, and no disallowed result. Campaign
+  `.build/vk-gl-cts-ios-device-matrix/gles3-16k-0a76cbc1-apple8-restored-resumed-2g`
+  passed all 80 immutable shards and 129,960 executions: 125,270 `Pass`, 4,690
+  released-policy `NotSupported`, and no disallowed result. Independent
+  verify-only reconstruction accepted both complete products.
+- Every one of the 100 shards waited for the public thermal preflight and found
+  `nominal` on its first probe. The fail-closed joined report at
+  `.build/vk-gl-cts-ios-device-matrix/qualification-0a76cbc1/thermal-lifecycle.json`
+  authenticated every campaign, attempt, run, console, app, rootfs, device,
+  and memory-policy input. All 100 launches shut down cleanly, and all 200
+  managed-run start/finish samples were nominal. No emulator OOM occurred, so
+  no 64 MiB memory decrement was authorized.
+- These results close both connected-iPad Khronos matrices and the physical
+  thermal/sustained-lifecycle gate. They do not promote conformance or a guest
+  profile: the seven-pair performance campaign and recorded original-image
+  provenance gap remain open.
+
 ## 2026-08-22: bounded signed-app GLES matrix authority
 
 - Added checked schema-2 authority
@@ -76,7 +99,8 @@
   app runtime, and `simctl` command returned zero; independent verify-only
   reconstruction accepted all 80 shards. Together with the final 9,460-case
   GLES 2 campaign, this completes both 16 KiB Simulator matrices at the fixed
-  4,096 MiB policy. The connected-iPad matrices remain paused.
+  4,096 MiB policy. At this checkpoint the connected-iPad matrices remained
+  paused; the 2026-08-24 section above records their completion.
 - The first 2,048 MiB connected-iPad GLES 3 `cfg00` fraction `2/4` exposed one
   real failure at
   `KHR-GLES3.core.internalformat.texture2d.rgb_float_rgb32f_linear`; the guest
@@ -91,8 +115,9 @@
   permitted `NotSupported`, zero failure, clean shutdown, and zero CPU
   fallback at
   `.build/vk-gl-cts-ios-device-probe/float32-force-56b25e98/20260822-154345-73520-16k-gles3-matrix-cfg00-002of004-v1`.
-  This closes the focused finding; the complete connected-iPad matrices remain
-  required.
+  This closes the focused finding; at this checkpoint the complete
+  connected-iPad matrices remained required, and the 2026-08-24 section above
+  records their completion.
 
 ## 2026-08-22: signed Simulator GLES configuration inventories
 
@@ -120,7 +145,8 @@
   if the config tuples differ. The connected-device adapter accepted both
   Simulator records as predecessors in dry-run validation. These inventory
   runs did not themselves complete a case matrix; both final Simulator
-  matrices are recorded above, while the connected-iPad matrices remain open.
+  matrices are recorded above. At this checkpoint the connected-iPad matrices
+  remained open; the 2026-08-24 section records their completion.
 
 ## 2026-08-22: truthful GLES depth inventory and complete macOS GLES matrices
 
@@ -148,8 +174,10 @@
   disposable overlay above the sealed ext4 lower; that lower remained mode
   0444 at its authenticated SHA-256. The two current campaigns complete the
   16 KiB macOS GLES 2/GLES 3 matrices. Both final Simulator matrices are
-  recorded above; the connected-iPad matrices and the
-  performance/thermal/lifecycle gates remain open. The
+  recorded above. At this checkpoint the connected-iPad matrices and the
+  performance/thermal/lifecycle gates remained open; the 2026-08-24 section
+  above closes the device matrix/thermal/lifecycle portion, while performance
+  remains open. The
   current macOS Apple-GPU prefix was transactionally republished at the
   canonical path; its verifier, normal/sanitizer GPU workflows, both
   architecture audits, all selected unit tests, and both VNC smokes passed.
@@ -195,8 +223,8 @@
   selections, clean shutdown, and zero CPU fallback. Three non-passes were
   encountered while choosing those bounded sets and none was waived; later
   macOS qualification classified or repaired the two host findings, while the
-  Simulator-only GLES 2 texture result remains open. Performance, sustained
-  lifecycle, and mobile CTS matrices remain open;
+  Simulator-only GLES 2 texture result remained open at this checkpoint.
+  Performance, sustained lifecycle, and mobile CTS matrices also remained open;
   qualification is blocked by those missing gates and the original image's
   absent authoritative build receipt. The former global inventory remains a
   diagnostic: native Debian reproduced its failure when the desktop-GL-based

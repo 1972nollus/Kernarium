@@ -1239,8 +1239,8 @@ subsequently completed all 20 signed shards and all 9,460 executions: 8,760
 `Pass`, 700 permitted `NotSupported`, and no disallowed result. Its independent
 reconstruction reported
 `Verified 9460 gles2 case executions in 20 signed simulator shards`.
-The complete fresh-policy Simulator GLES 3 and both connected-iPad case
-matrices remain outstanding.
+The complete fresh-policy Simulator GLES 3 matrix and both final
+connected-iPad matrices now pass as recorded below.
 Fresh final-app physical-device inventories at
 `.build/vk-gl-cts-ios-device-restored-final/20260822-180049-69193-16k-gles2-config-inventory-v1`
 and
@@ -1253,6 +1253,26 @@ the final matrix adapter therefore waits for a nominal probe before each
 immutable shard. This was not an OOM and does not authorize a memory
 decrement.
 
+The final single-worker physical-device campaigns resumed only after cooling.
+At the unchanged 2,048 MiB policy,
+`.build/vk-gl-cts-ios-device-matrix/gles2-16k-0a76cbc1-apple8-restored-resumed-2g`
+passed 20/20 signed shards and all 9,460 executions: 8,760 `Pass`, 700
+permitted `NotSupported`, and no disallowed status. Campaign
+`.build/vk-gl-cts-ios-device-matrix/gles3-16k-0a76cbc1-apple8-restored-resumed-2g`
+passed 80/80 signed shards and all 129,960 executions: 125,270 `Pass`, 4,690
+permitted `NotSupported`, and no disallowed status. Their independent
+`--verify-only` reconstructions reported 9,460 executions in 20 device shards
+and 129,960 executions in 80 device shards. No emulator OOM occurred.
+
+All 100 final shards passed the nominal thermal preflight on their first probe
+and shut down cleanly. The joined command above produced
+`.build/vk-gl-cts-ios-device-matrix/qualification-0a76cbc1/thermal-lifecycle.json`;
+it authenticated both campaigns and passed 100 clean launch lifecycles with
+200/200 managed-run samples nominal. Report SHA-256 is
+`ee2bf712fdd44d9d5f1f25ca334223f18d330c52da12da588dc23b5d8befe5d2`.
+This is the completed physical-device thermal/repeated-lifecycle gate, not the
+separate seven-pair performance gate.
+
 The common macOS ANGLE/Metal provider is now the only built path, so diagnostic
 sentinels may run when the guest prerequisites are available. The host
 transcript must contain its exact backend marker and any CGL marker is fatal.
@@ -1260,8 +1280,9 @@ transcript must contain its exact backend marker and any CGL marker is fatal.
 identity lacks an authoritative CTS build receipt. The checked ext4 derivative
 has its own authenticated build receipt and is the required input for future
 qualification runs. Its 16 KiB macOS GLES 2/GLES 3 cross-products pass;
-Simulator GLES 2 now passes, while Simulator GLES 3 and both iPad matrices
-remain. Its scoped display-backed GLES
+both Simulator matrices and both connected-iPad matrices now pass, and the
+joined 100-launch device thermal/lifecycle gate passes. The seven-pair
+performance campaign remains. Its scoped display-backed GLES
 2/GLES 3 hierarchy inventory is complete and frozen; the separate global
 all-package diagnostic is not a qualification input because it includes an
 ES-on-desktop-GL 4.5 package outside the supported profile. See

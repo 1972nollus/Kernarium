@@ -31,9 +31,10 @@ powered off without the warning. The app adapters reject that signature and
 missing clean-stop markers. The fixed identity sentinels now pass their five
 GLES 2 and twelve GLES 3 cases under both 16 KiB and 4 KiB in strict
 macOS-to-Simulator-to-iPad order. The current 20-config 16 KiB macOS GLES 2
-and GLES 3 matrices now pass completely. Complete Simulator/iPad matrices,
-the seven-pair performance campaign, connected-iPad thermal acceptance, and
-sustained lifecycle campaigns remain outstanding.
+and GLES 3 matrices now pass completely. At this 2026-08-21 checkpoint,
+complete Simulator/iPad matrices, the seven-pair performance campaign,
+connected-iPad thermal acceptance, and sustained lifecycle campaigns remained
+outstanding; the later checkpoint below closes every item except performance.
 
 The fixed Aquarium canary is now runnable on both permitted products and both
 page profiles. An initial 4 KiB macOS run reached measurement but suffered two
@@ -58,6 +59,32 @@ in order with no host context poison, illegal resource, invalid command
 buffer, or `0x1204` response. The final marker is
 `UML_WEBGL_ALL_OK|COUNT=33`. This VNC capture is functional evidence only; it
 does not claim native presentation, performance, or orderly shutdown.
+
+## Connected-iPad matrix and lifecycle checkpoint (2026-08-24)
+
+The final normally signed 16 KiB physical-device campaigns ran serially on the
+wired iPad mini 6 at the unchanged 2,048 MiB guest policy. GLES 2 campaign
+`.build/vk-gl-cts-ios-device-matrix/gles2-16k-0a76cbc1-apple8-restored-resumed-2g`
+passed 20/20 immutable fresh-guest shards and all 9,460 executions: 8,760
+`Pass`, 700 released-policy `NotSupported`, and no disallowed result. GLES 3
+campaign
+`.build/vk-gl-cts-ios-device-matrix/gles3-16k-0a76cbc1-apple8-restored-resumed-2g`
+passed 80/80 shards and all 129,960 executions: 125,270 `Pass`, 4,690
+released-policy `NotSupported`, and no disallowed result. Both independent
+verify-only reconstructions passed. No emulator OOM occurred, so the memory
+policy was not reduced.
+
+Every shard waited for a nominal public thermal-state preflight and all 100
+passed on the first probe. The fail-closed joined report at
+`.build/vk-gl-cts-ios-device-matrix/qualification-0a76cbc1/thermal-lifecycle.json`
+authenticated both campaigns plus all 100 attempts/runs/consoles, required
+clean guest and app shutdown, and recorded 200/200 managed-run thermal samples
+as nominal.
+Its SHA-256 is
+`ee2bf712fdd44d9d5f1f25ca334223f18d330c52da12da588dc23b5d8befe5d2`.
+This closes the connected-iPad case, thermal, and sustained-lifecycle gates.
+It does not close the separate seven-pair performance gate or promote a
+profile; the recorded original-image provenance gap also remains.
 
 ## Current macOS GLES qualification checkpoint (2026-08-22)
 
@@ -118,8 +145,9 @@ and
 Both matched the same 20 config tuples and canonical digest exactly, used
 Gadgets with direct ANGLE/Metal presentation and the sealed lower, returned
 zero, and recorded no dropped or CPU-fallback frames. This establishes the
-mobile matrix geometry; it is not a case-matrix result. The complete
-Simulator/iPad matrices remain required.
+mobile matrix geometry; it is not a case-matrix result. At this 2026-08-22
+checkpoint the complete Simulator/iPad matrices remained required; the later
+checkpoint above records their completion.
 
 ## Authenticated derivative-rootfs checkpoint (2026-08-21)
 
