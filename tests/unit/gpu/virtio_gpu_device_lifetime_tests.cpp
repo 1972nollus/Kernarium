@@ -86,7 +86,7 @@ public:
 
     [[nodiscard]] int createContext(
         std::uint32_t contextId,
-        std::uint32_t,
+        std::uint32_t flags,
         std::string_view) noexcept override
     {
         if (reject(Operation::create_context))
@@ -96,6 +96,7 @@ public:
         } catch (...) {
             return ENOMEM;
         }
+        lastContextFlags = flags;
         ++createContextCount;
         return 0;
     }
@@ -289,6 +290,7 @@ public:
     unsigned clearCount {};
     unsigned displayUpdateCount {};
     unsigned createContextCount {};
+    std::uint32_t lastContextFlags {};
     unsigned destroyContextCount {};
     unsigned submitCount {};
     unsigned createResourceCount {};
@@ -441,14 +443,61 @@ void requireFirstAllocationFailsBeforeCommit(
 }
 
 [[nodiscard]] protocol::GpuContextCreate createContext(
-    std::uint32_t contextId)
+    std::uint32_t contextId,
+    std::uint32_t contextInit = protocol::virglCapsetId)
 {
     protocol::GpuContextCreate context {};
     context.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::contextCreate);
     context.header.contextId = contextId;
-    context.contextInit = protocol::virglCapsetId;
+    context.contextInit = contextInit;
     return context;
+}
+
+void contextInitUsesVirgl2ForTheDeviceSelectedDefault()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+
+    const auto deviceSelected = createContext(401, 0);
+    require(responseType(device.process(requestBytes(deviceSelected), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastContextFlags == protocol::virgl2CapsetId);
+
+    auto resource = create3d(402);
+    require(responseType(device.process(requestBytes(resource), false)) ==
+        protocol::GpuResponse::okNoData);
+    protocol::GpuContextResource association {};
+    association.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::contextAttachResource);
+    association.header.contextId = deviceSelected.header.contextId;
+    association.resourceId = resource.resourceId;
+    require(responseType(device.process(requestBytes(association), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.attachResourceCount == 1);
+
+    const auto virgl = createContext(403, protocol::virglCapsetId);
+    require(responseType(device.process(requestBytes(virgl), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastContextFlags == protocol::virglCapsetId);
+
+    const auto virgl2 = createContext(404, protocol::virgl2CapsetId);
+    require(responseType(device.process(requestBytes(virgl2), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.lastContextFlags == protocol::virgl2CapsetId);
+
+    const auto invalidCapset = createContext(405, 3);
+    require(responseType(device.process(requestBytes(invalidCapset), false)) ==
+        protocol::GpuResponse::errorInvalidParameter);
+    const auto reservedBits = createContext(406, 1U << 8U);
+    require(responseType(device.process(requestBytes(reservedBits), false)) ==
+        protocol::GpuResponse::errorInvalidParameter);
+    require(dependencies.createContextCount == 3);
 }
 
 void lifecycleCommandsAllocateBeforeCommitAndRetry()
@@ -1276,6 +1325,7 @@ void malformed3dCommandsUseSpecificErrors()
 void runVirtioGpuDeviceTests()
 {
     edidReportsDisplayPixelsAndEffectiveDensity();
+    contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
     resetRetiresEachExternalOwnerExactlyOnce();

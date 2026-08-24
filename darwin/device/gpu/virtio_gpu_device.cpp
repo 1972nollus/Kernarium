@@ -577,26 +577,32 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     case protocol::GpuCommand::contextCreate: {
         const auto* create =
             readStructure<protocol::GpuContextCreate>(request);
-        if (create == nullptr ||
-            create->header.contextId == protocol::invalidContextId ||
+        if (create == nullptr) {
+            return response(
+                *header, protocol::GpuResponse::errorInvalidParameter);
+        }
+        const auto requestedCapset =
+            create->contextInit & protocol::contextInitCapsetMask;
+        if (create->header.contextId == protocol::invalidContextId ||
             create->nameLength >
                 protocol::maximumContextDebugNameLength ||
-            ((create->contextInit & protocol::contextInitCapsetMask) !=
-                 protocol::virglCapsetId &&
-             (create->contextInit & protocol::contextInitCapsetMask) !=
-                 protocol::virgl2CapsetId) ||
+            (requestedCapset != 0 &&
+             requestedCapset != protocol::virglCapsetId &&
+             requestedCapset != protocol::virgl2CapsetId) ||
             (create->contextInit & ~protocol::contextInitCapsetMask) != 0 ||
             contexts_.contains(create->header.contextId)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
+        const auto rendererContextInit = requestedCapset == 0 ?
+            protocol::virgl2CapsetId : create->contextInit;
         const std::string_view debugName(
             create->debugName.data(), create->nameLength);
         auto success = response(*header, protocol::GpuResponse::okNoData);
         contexts_.insert(create->header.contextId);
         if (UML_GPU_RENDERER.createContext(
                 create->header.contextId,
-                create->contextInit,
+                rendererContextInit,
                 debugName) != 0) {
             contexts_.erase(create->header.contextId);
             return response(
