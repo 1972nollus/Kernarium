@@ -140,10 +140,16 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
     "VENDOR/etc/init/seriallogging.rc",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
+    "VENDOR/etc/recovery-resource.dat",
     "VENDOR/etc/sensors/hals.conf",
     "VENDOR/etc/vintf/manifest/android.hardware.sensors-multihal.xml",
     "VENDOR/lib64/hw/android.hardware.sensors@2.1-impl.cuttlefish.so",
     "VENDOR/overlay/cuttlefish_overlay_uwb_gsi.apk",
+    "VENDOR/bin/install-recovery.sh",
+    "VENDOR/recovery-from-boot.p",
+    "SYSTEM/vendor/bin/install-recovery.sh",
+    "SYSTEM/vendor/etc/recovery-resource.dat",
+    "SYSTEM/vendor/recovery-from-boot.p",
 }
 FORBIDDEN_APP_DIRECTORIES = {
     "BasicDreams",

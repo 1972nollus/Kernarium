@@ -1166,6 +1166,13 @@ def main() -> None:
             fail(f"AOSP build route is missing inherited-payload exclusion: {token}")
 
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
+    board_config = (android_root / "overlay/BoardConfig.mk").read_text()
+    for token in (
+        "BOARD_USES_FULL_RECOVERY_IMAGE := true",
+        "TARGET_OTA_ALLOW_NON_AB := false",
+    ):
+        if token not in board_config:
+            fail(f"Android board configuration is missing recovery policy: {token}")
     settings_defaults = (
         android_root
         / "overlay/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml"
@@ -1314,6 +1321,7 @@ def main() -> None:
         "PRODUCT_BUILD_SYSTEM_OTHER_IMAGE",
         "PRODUCT_VIRTUAL_AB_OTA",
         "AB_OTA_UPDATER",
+        "TARGET_OTA_ALLOW_NON_AB",
         "BOARD_AVB_ENABLE",
         "BOARD_SUPER_PARTITION_SIZE",
         "AB_OTA_POSTINSTALL_CONFIG",
@@ -1338,6 +1346,7 @@ def main() -> None:
         "update_engine_sideload",
         "trusty_security_vm.elf",
         "android.hardware.sensors-service.multihal",
+        "BOARD_USES_FULL_RECOVERY_IMAGE",
         "com.android.hardware.neuralnetworks",
         "com.android.hardware.threadnetwork",
         "com.android.hardware.uwb",

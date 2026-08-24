@@ -211,6 +211,11 @@ The routed UML product selects static storage before inheriting the shared
 Cuttlefish products. This prevents their dynamic-partition and Virtual A/B
 inheritance, properties, postinstall configuration, and OTA-only packages from
 entering the resolved product. It also disables A/B OTA packaging and AVB.
+The product declares its dedicated recovery partition as the full recovery
+image and sets `TARGET_OTA_ALLOW_NON_AB=false`, so target-files does not build
+or install a legacy `recovery-from-boot.p`, `install-recovery.sh`, or recovery
+resource bonus. The release assembler embeds `recovery.img` directly in the
+GPT instead.
 The unused `system_other` image is disabled because this product has no second
 slot and does not copy preoptimized artifacts from one.
 `build-aosp.sh` rejects any regression in those switches and requires every

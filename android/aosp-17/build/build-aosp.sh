@@ -186,6 +186,7 @@ for variable in \
 	PRODUCT_VIRTUAL_AB_COMPRESSION \
 	PRODUCT_OTA_FORCE_NON_AB_PACKAGE \
 	AB_OTA_UPDATER \
+	TARGET_OTA_ALLOW_NON_AB \
 	BOARD_AVB_ENABLE; do
 	[[ "$(get_build_var "$variable")" == false ]] ||
 		fail "$variable must be false for the fixed UBD product"
@@ -221,6 +222,8 @@ EOF
 	fail "PRODUCT_BUILD_RECOVERY_IMAGE must be true"
 [[ "$(get_build_var BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE)" == true ]] ||
 	fail "recovery must use the separately built ACK kernel"
+[[ "$(get_build_var BOARD_USES_FULL_RECOVERY_IMAGE)" == true ]] ||
+	fail "recovery must remain a full standalone partition image"
 [[ "$(get_build_var BOARD_BOOT_HEADER_VERSION)" == 4 ]] ||
 	fail "recovery must use boot image header v4"
 [[ "$(get_build_var BOARD_INIT_BOOT_HEADER_VERSION)" == 4 ]] ||
