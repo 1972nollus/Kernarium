@@ -375,7 +375,7 @@ the disk with a frame checksum, verifies the completed staging tree, and then
 atomically exposes the new release directory. It never changes the checked-in
 acceptance descriptor.
 
-Accepted release `20260822-6afe4225-virgl2` compressed the
+The first source-built Virgl release, `20260822-6afe4225-virgl2`, compressed the
 17,179,869,184-byte sparse GPT disk to 830,866,283 bytes. Its target-files
 archive contains the source-built 16 KiB Mesa EGL/GLES and Gallium Virgl
 libraries plus the exact `virtio_gpu_dri.so -> gallium_dri.so` link. All three
@@ -387,37 +387,41 @@ Its built-in-only 16 KiB ACK ELF is `6.18.21-g6385729901c5` from the 27-topic
 final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
-A fresh-COW default-JIT comparison used this exact accepted release and host
-executable. With the required ten vCPUs, Android stopped after ueventd coldboot
-at guest second 9.46. A native sample found all ten fixed carriers in
-`os_idle_sleep()`/`pselect`; live inspection found no pending IPI, every carrier
-published idle, and CPU0 still owned an expired active clock-event deadline.
-The matched four-vCPU control passed that point, kept the independent `hvc0`
-shell and logcat responsive through guest second 420, and completed Android
-poweroff at second 474 with `result=0 exitcode=0`. Its `ttyS0` log contains no
-RCU-stall, lockup, BUG, oops, or panic signature. `sys.boot_completed` remained
-unset, so this control isolates the ten-vCPU idle/timer wake defect; it does not
-claim a completed graphical boot.
+The current accepted release is
+`android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`. It contains the 33-topic ACK
+tree `05c892f8175ca302ca869b01efc76f09ad14fa2c`; topic 33 corrects COW-backed
+UBD request advancement. The built-in-only 16 KiB ELF reports
+`6.18.21-gc345c80dbb03`, and the sparse GPT disk compresses to 826,612,194
+bytes. `metadata/accepted-release.env` owns the exact release, patch-manifest,
+and source identities.
 
-The predecessor `20260821-5735514a-rcu-timer1` four-vCPU gadgets campaign used
-one fresh COW for a cold boot to guest uptime 982 seconds and a warm boot to
-284 seconds. Neither dedicated
-`ttyS0` capture contained an RCU stall, missing timer wakeup, oops, or panic;
-both ended with `result=0 exitcode=0`. The independent `hvc0` transcripts
-reached their target markers and returned `logcat -b main` output. They contain
-no kernel timestamp, Linux version, or kernel command-line record. Android's
-`sys.boot_completed` property remained unset because SurfaceFlinger still
-restarts with `SIGABRT`; this acceptance closes the SMP timer and console
-transport gates, not graphical application readiness.
+The defect was visible only after the first writes to a fresh COW. UBD divided
+one descriptor into backing-image and COW-image runs, then advanced the next
+descriptor by the final run length rather than by the complete descriptor.
+That corrupted the newly created ext4 journal: `e2fsck` deleted it and `vold`
+reported `No recognized filesystem found`, adding about 24 seconds of
+full-device-encryption fallback in a representative boot. With topic 33,
+`e2fsck` reports `data: clean` before and after `encryptFstab`, and
+`mount_all --late` completes in 925 ms at guest second 5.97. The fallback was
+therefore a real, avoidable delay, but normal first-boot package and ART work
+still dominates total boot time under emulation.
 
-The current host default-JIT gate additionally uses commit `2a28713a`, which
-defers a native atomic block's serialized cold fallback until its direct-write
-publication has unwound. A fresh-COW, four-vCPU run of this same accepted
-release kept the Unix-socket `hvc0` shell and main logcat buffer responsive
-through guest second 319.98, then powered off normally at second 368.49 with no
-observed RCU-stall, oops, or panic report on `ttyS0`. This closes the earlier
-approximately-25-second JIT publication deadlock without changing the accepted
-ACK or disk artifacts. SurfaceFlinger still prevents graphical boot completion.
+The host also accepts a Virtio-GPU `CTX_CREATE` whose `context_init` capset bits
+are zero, the Linux driver's device-selected form, and normalises it to Virgl2
+for virglrenderer. Previously it rejected that valid command with `0x1205`, so
+the following resource attachments produced the observed `0x1204` invalid-
+context errors. Explicit Virgl capsets 1 and 2 remain unchanged and reserved
+values remain errors.
+
+A fresh-COW acceptance run used this release with 4 GiB, ten online vCPUs and
+the gadgets engine. The first candidate exposed two host allocator stalls while
+several private gadget caches destroyed thousands of address-space link nodes;
+the host now gives each bounded cache generation its own PMR pool and releases
+that storage in bulk. The corrected run set `sys.boot_completed=1` at guest
+second 307.5, retained an enforcing SELinux state and a responsive independent
+`hvc0` shell/logcat console, and powered down normally at second 366.290. Its
+`ttyS0` log contains no RCU stall, UBD/journal failure, unrecognised-userdata
+fallback, Virtio-GPU `0x1204`/`0x1205`, oops, or panic.
 
 ## Separate macOS Android executable
 

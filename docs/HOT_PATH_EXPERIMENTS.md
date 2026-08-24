@@ -10697,3 +10697,31 @@ main thread interface-only by construction, since `nextDrawable` and
 `presentDrawable` are both safe off it. It rewrites a presentation path shared
 with macOS for a charge measured at a quarter of one percent, so it is recorded
 here as available rather than taken.
+
+## G173: bulk-owned gadget generations prevent Android boot stalls
+
+Dated 2026-08-24. G167 made address-space retirement proportional to what the
+retired address space owned, but every node in those per-generation maps and
+lists still came from the process allocator and returned to it individually.
+That distinction became correctness-visible in a 4 GiB, ten-vCPU Android 17
+gadgets boot. The guest reported RCU stalls at seconds 234.334 and 449.900, and
+a host sample held both `uml-vcpu-3-carrier` and `uml-vcpu-8-carrier` in
+`ProgramCache::prepare -> retire -> Generation::~Generation -> free` for every
+captured sample while other carriers continued executing guest work.
+
+Each `Generation` now owns an `unsynchronized_pool_resource`, and its link maps,
+live-link lists, indirect-site state, and slot list allocate from that resource.
+The containers still run their normal destructors, but their node deallocations
+return only to the local pool; destroying the pool releases its upstream chunks
+in bulk. The maps stay node-based, preserving the stable addresses embedded in
+translated link cells. G160's eight-generation limit, LRU selection, exact slot
+ownership checks, and whole-generation retirement are unchanged.
+
+The fixed executable booted the same newly accepted ACK 6.18/AOSP 17 release
+from a fresh COW with ten online vCPUs. Android set `sys.boot_completed=1` at
+guest second 307.5 and powered down normally at 366.290. Its complete `ttyS0`
+capture contains no RCU stall, lockup, oops, or panic. The focused cache
+validation passes at 16 KiB, 4 KiB, and under 16 KiB ASan/UBSan, and both
+complete page-profile unit workflows pass; this entry claims removal of the
+observed allocator stall, not a general speedup or closure of the separately
+observed 2 GiB transfer timer starvation.

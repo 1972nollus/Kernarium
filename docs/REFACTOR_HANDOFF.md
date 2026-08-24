@@ -1,5 +1,61 @@
 # Refactor handoff
 
+## Android fresh-userdata, GPU-context, and ten-vCPU fixes (2026-08-24)
+
+The current accepted Android bundle is
+`android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`, produced from outer revision
+`d6a6f91d` and ACK final tree
+`05c892f8175ca302ca869b01efc76f09ad14fa2c`. It remains a built-in-only 16 KiB
+kernel and advances the ACK series to 33 local topics.
+
+Topic 33 fixes the fresh-userdata warning. A COW-backed UBD descriptor can span
+several backing and COW runs. The driver issued each run correctly, but advanced
+the next descriptor by only the final run length rather than by the complete
+descriptor. First-boot `mke2fs` then exposed wrong-offset I/O: `e2fsck` found
+and deleted an invalid journal and `vold` reported `No recognized filesystem
+found`, falling back to full-device encryption. In a representative broken run
+that path took about 24 seconds. The fixed fresh COW reports `data: clean` both
+before and after `encryptFstab`, with `mount_all --late` succeeding in 925 ms at
+guest second 5.97. The warning and its delay are gone; Android's remaining
+minutes of cold-boot time are primarily first-boot package/ART work under
+emulation.
+
+The Virtio-GPU `0x1204 (command 0x202)` report also needed a host fix. The Linux
+driver first sent `CTX_CREATE` with capset bits zero, meaning device-selected,
+which the host incorrectly rejected with `0x1205`; its subsequent
+`CTX_ATTACH_RESOURCE` commands could only fail with invalid context `0x1204`.
+The host now accepts zero and selects Virgl2 for virglrenderer, while retaining
+explicit capsets 1 and 2 and rejecting reserved values. The GPU ownership test
+covers the accepted and rejected cases.
+
+The first ten-vCPU gadgets candidate with those two fixes then stalled at guest
+seconds 234.334 and 449.900. A host sample held the vCPU 3 and 8 carriers
+throughout the capture in `ProgramCache::prepare -> retire ->
+Generation::~Generation -> free`. Android address-space churn made ten private
+caches return thousands of nodes through the shared system allocator at once,
+starving carriers long enough to trigger guest RCU. Each bounded cache
+generation now owns an unsynchronised PMR pool, so retirement preserves exact
+survivor behavior and stable link addresses but releases upstream storage in
+bulk.
+
+The corrected fresh-COW run used 4 GiB, ten vCPUs online as `0-9`, and gadgets.
+It set `sys.boot_completed=1` at guest second 307.5, with boot animation stopped,
+SELinux enforcing, `nproc=10`, and a responsive independent `hvc0` Android
+shell/logcat console; `ttyS0` retained only kernel/init output. It powered down
+normally at second 366.290. The complete kernel log has no RCU stall,
+invalid-journal or unrecognised-userdata warning, Virtio-GPU `0x1204`/`0x1205`,
+oops, or panic. The focused gadget-cache test passes in both page profiles and
+under 16 KiB ASan/UBSan; the complete 4 KiB workflow passes 580/580 unit and
+60/60 tooling tests. The 16 KiB workflow passes all 578 unit tests when its
+Unix-socket lifetime test is run outside the filesystem sandbox, plus 60/60
+tooling tests. The Android product,
+architecture audit, GPU workflow, GPU ASan/UBSan workflow, release verifier,
+and shared-kernel-image policy all pass.
+
+This closes the boot-time ten-vCPU stall. It does not claim the older 2 GiB
+`adb push` timer-starvation signature is fixed; that sustained-transfer case
+must be repeated with the current host before its status changes.
+
 ## Kernarium boots an Android guest bundle on iOS (2026-08-24)
 
 Kernarium now embeds a third versioned runtime framework,

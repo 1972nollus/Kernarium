@@ -7,16 +7,17 @@ guest running on the Darwin User-Mode Linux emulator with a 16 KiB Android
 Common Kernel (ACK) 6.18 kernel.
 
 Implementation started on 2026-08-20. **Android 17 now boots.** The
-builder-local lane produces the 32-topic ACK 6.18 Darwin UML series, its 16 KiB
+builder-local lane produces the 33-topic ACK 6.18 Darwin UML series, its 16 KiB
 built-in-only kernel, the routed AOSP 17 static UML product, standalone
 initramfs, fixed seven-partition UBD image, import-only Apple consumer,
 separate macOS executable, Virtio console, and source-built Mesa Virgl
 userspace while retaining SwiftShader. `20260822-28ce51ba-mm21` was the first
 release to reach `sys.boot_completed=1`, in a ten-vCPU gadgets boot with
-SELinux enforcing and hardware Virgl SurfaceFlinger. Four further accepted
+SELinux enforcing and hardware Virgl SurfaceFlinger. Five further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
-guest page reporting, and virtually mapped task stacks. The accepted release is
-`android17-ack6.18-16k-20260823-5292a9ce-vmap`.
+guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
+request advancement. The accepted release is
+`android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -52,13 +53,16 @@ force except where a superseding decision is recorded against them.
 
 ### Durable repository and builder state
 
-- The outer repository is at `70fdf5a9` (`Kernarium: quiesce the guest when the
-  application is put away`) on `main`.
-- The accepted release is `android17-ack6.18-16k-20260823-5292a9ce-vmap`, built
-  from outer revision `5292a9ce` with ACK final tree
-  `5c697fee621e9c8108b7acef3bbbc3f95f5c333b`, common ABI version 8 and
+- The accepted release is
+  `android17-ack6.18-16k-20260824-d6a6f91d-ubdcow1`, built from outer revision
+  `d6a6f91d` with ACK final tree
+  `05c892f8175ca302ca869b01efc76f09ad14fa2c`, common ABI version 8 and
   fingerprint `0x3871ad612337ea76`, `CONFIG_MODULES=n`, and the 16 KiB-only
-  configuration. The ACK 6.18 series is 32 topics.
+  configuration. The ACK 6.18 series is 33 topics.
+- The host Virtio-GPU accepts the Linux driver's device-selected context
+  request and the gadget cache bulk-owns allocator storage for each bounded
+  resident address space. These are host changes; they do not alter the
+  accepted Android release bundle.
 - The builder-local checkouts, the relative `OUT_DIR=out-uml-android17`, and the
   no-tracked-endpoint policy are unchanged from the 2026-08-22 handoff.
 
@@ -78,7 +82,7 @@ Thirteen fixes stand behind that release, from the restored three-patch Mesa
 route and the two graphics SELinux labels through the omitted RIL, NFC, and
 factory reset protection storage, `CONFIG_NET_KEY`, `CONFIG_TRACE_GPU_MEM`, the
 `DC CVAC` decode gap in all three CPU engines, the scaled guest timeouts, and
-the libmeminfo `gpu_mem` guard. Four accepted releases follow it, each adding
+the libmeminfo `gpu_mem` guard. Five accepted releases follow it, each adding
 one capability and each boot-verified before acceptance:
 
 | release | topics | what it added |
@@ -88,6 +92,7 @@ one capability and each boot-verified before acceptance:
 | `20260823-bb3cf26e-napi1` | 30 | NAPI receive; 512 MiB `adb push` at 14.3 MB/s with the hash matched |
 | `20260823-4e793df3-pr2` | 31 | free-page reporting; 2.15 GiB freed, host RSS 7.89 to 6.85 GiB |
 | `20260823-5292a9ce-vmap` | 32 | `CONFIG_VMAP_STACK=y` on the widened vmalloc window |
+| `20260824-d6a6f91d-ubdcow1` | 33 | correct descriptor advancement across mixed backing/COW UBD runs |
 
 The vmapped-stack release closes the order-3 task-stack fragmentation that had
 been costing background applications: 97 free order-3 blocks, `compact_stall` 0,
@@ -95,6 +100,65 @@ zero OOM kills, and 350 MiB of vmalloc in use against a 4 GiB window at guest
 second 1469. The same configuration on the former one-eighth auxiliary window
 exhausted vmalloc at second 175 and panicked in `exit_mmap` at 203, which is why
 the window change and the stack change had to land together.
+
+### Fresh-userdata and device-selected Virgl contexts are fixed
+
+The two warnings investigated after the first complete boots were real defects,
+not harmless first-boot noise.
+
+The Linux Virtio-GPU driver creates a context with the capset bits in
+`context_init` set to zero when it wants the device to select the context type.
+The host accepted only explicit Virgl capset IDs 1 and 2, so it rejected the
+valid `CTX_CREATE` (`0x200`) with `0x1205`; the subsequent
+`CTX_ATTACH_RESOURCE` commands (`0x202`) then reported the observed invalid
+context response `0x1204`. The host now accepts zero and presents it to
+virglrenderer as Virgl2, while preserving explicit IDs 1 and 2 and continuing
+to reject reserved values. The GPU ownership test covers all four cases. A
+fresh accepted-release boot emits neither `0x1205` nor `0x1204`.
+
+The userdata warning was caused by ACK topic 33's UBD defect. A COW-backed block
+descriptor can be divided into several homogeneous backing-image and COW-image
+runs. `do_io()` correctly issued each run, but advanced the request by the
+length of only the last run instead of by the complete descriptor. Once
+`mke2fs` wrote enough COW extents, the next descriptor reached the wrong disk
+offset; `e2fsck` then found an invalid journal and `vold` could not recognise
+the filesystem, so it fell back to full-device encryption. Topic 33 advances by
+`desc->length` and leaves the per-run I/O lengths unchanged.
+
+This fallback did materially delay early boot, but it was not the main reason a
+fresh emulated Android boot takes minutes. In a representative broken run the
+warning appeared at guest second 4.87 and the encrypted filesystem mounted at
+28.78, about 24 seconds later. With topic 33, `e2fsck` reports `data: clean`
+both before and after `encryptFstab`, and `mount_all --late` completes in 925 ms
+at guest second 5.97. The remaining first-boot time is dominated by Android's
+normal package/ART preparation under emulation.
+
+### Ten-vCPU gadget boot is stable again
+
+The first ten-vCPU candidate containing the GPU and UBD fixes exposed a
+separate host-side stall at guest seconds 234.334 and 449.900. A host sample
+held `uml-vcpu-3-carrier` and `uml-vcpu-8-carrier` for every captured sample in
+`ProgramCache::prepare -> retire -> Generation::~Generation -> free`. Android
+process churn retires address spaces frequently, and ten private gadget caches
+were returning thousands of individually allocated link/map nodes through the
+system allocator at the same time. That starved guest vCPU carriers long enough
+for RCU to report stalls even though the kernel's cooperative timer fixes were
+present.
+
+Each bounded gadget-cache `Generation` now owns an unsynchronised PMR pool for
+its link maps, live lists, and slot list. Retirement still clears the same
+address space and preserves stable node addresses, the eight-generation bound,
+and exact survivor behavior, but returns allocator storage upstream in a small
+number of bulk releases instead of serialising individual system frees.
+
+A new fresh-COW run of the accepted release with 4 GiB, ten online vCPUs
+(`0-9`), and the gadgets engine set `sys.boot_completed=1` at guest second
+307.5; the console observed it set at uptime 314.8 with boot animation stopped,
+SELinux enforcing, and `nproc=10`. The independent `hvc0` Virtio console stayed
+responsive for the Android shell and `logcat`, while `ttyS0` retained kernel and
+init output. The guest powered down normally at second 366.290. Its complete
+`ttyS0` capture contains no RCU stall, invalid-journal or unrecognised-userdata
+warning, Virtio-GPU `0x1204`/`0x1205`, oops, or panic.
 
 ### The guest runs in the iOS application
 
@@ -182,11 +246,13 @@ implementation is the current contract:
 
 ### Open limitations
 
-- **Sustained large transfers still starve the cooperative timer.** A 2 GiB
-  `adb push` transferred completely but degraded to 2.7 MB/s over 750 s and left
-  the guest unresponsive; all eleven RCU stalls on that boot report `0 ticks
-  this GP` on an idle CPU 0. That is the starvation topics 24-28 address rather
-  than the receive livelock topic 30 removed. A 512 MiB push is clean.
+- **The sustained-transfer case has not been repeated with the current host
+  allocator fix.** An earlier 2 GiB `adb push` transferred completely but
+  degraded to 2.7 MB/s over 750 s and left the guest unresponsive; all eleven
+  RCU stalls on that boot reported `0 ticks this GP` on an idle CPU 0. That
+  signature is distinct from the now-fixed boot-time allocator stall. A 512 MiB
+  push is clean, but the 2 GiB case remains unqualified rather than assumed
+  fixed.
 - **Physical iOS is unverified for Android.** Every Android application
   measurement above is from the Simulator. The device policy of 2 GiB of guest
   RAM has not been exercised against an Android guest.
@@ -204,8 +270,9 @@ continue here:
 1. Boot an Android `.kern` bundle on a physical iOS device at the 2 GiB device
    policy, and record what it reaches. This is the last unexercised product
    surface.
-2. Close the cooperative-timer starvation exposed by the 2 GiB `adb push`, which
-   is the only remaining defect that makes a booted guest unresponsive.
+2. Repeat the 2 GiB `adb push` with the current bulk-retirement host. If its
+   older idle-CPU timer signature still reproduces, close that distinct
+   cooperative-timer starvation before claiming sustained-transfer stability.
 3. Complete Phase 8's application acceptance: install and run one Java/Kotlin
    APK and one aligned `arm64-v8a` native APK, and register the Android
    integration workflow.

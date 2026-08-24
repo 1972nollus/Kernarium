@@ -272,7 +272,11 @@ empty the cache and a return to a recently-run address space finds its
 translations intact. `UML_GADGET_CACHE_SLOTS` sizes the shared pool and
 `UML_GADGET_RESIDENT_GENERATIONS` bounds how many address spaces may hold
 translations; the least recently current one is retired whole when a new one
-arrives.
+arrives. Each resident address space owns a PMR pool backing its link maps and
+lists. Retirement therefore preserves the same exact bounded cache semantics
+and stable link-node addresses while returning allocator storage upstream in
+bulk, rather than making a busy vCPU carrier perform thousands of individually
+synchronised system frees.
 
 A block ends at its first control-flow instruction, which on a browser guest is
 a mean of 4.93 instructions. `UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH`, on by

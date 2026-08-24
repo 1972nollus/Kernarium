@@ -786,13 +786,31 @@ private:
 	 * one being retired. See G167.
 	 */
 	struct Generation final {
+		explicit Generation(std::pmr::memory_resource *upstream =
+					    std::pmr::get_default_resource())
+			: storage{upstream}, links{&storage}, indirect{&storage},
+			  live_links{&storage}, live_indirect{&storage}, slots{&storage}
+		{}
+
+		Generation(const Generation &) = delete;
+		Generation &operator=(const Generation &) = delete;
+		Generation(Generation &&) = delete;
+		Generation &operator=(Generation &&) = delete;
+
 		std::uint64_t changes{};
-		std::unordered_map<std::uint64_t, LinkRecord> links;
-		std::unordered_map<std::uint64_t, arm64::gadgets::IndirectLink>
+		/* These collections grow for the address space's whole residency and
+		 * are erased only together. Backing them with one arena turns retirement
+		 * into a small number of bulk releases instead of serialising thousands
+		 * of allocator frees across busy vCPU carriers. The node-based maps
+		 * retain the stable addresses required by translated link cells.
+		 */
+		std::pmr::unsynchronized_pool_resource storage;
+		std::pmr::unordered_map<std::uint64_t, LinkRecord> links;
+		std::pmr::unordered_map<std::uint64_t, arm64::gadgets::IndirectLink>
 			indirect;
 		/* The records and sites holding an activation. */
-		std::vector<LinkRecord *> live_links;
-		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
+		std::pmr::vector<LinkRecord *> live_links;
+		std::pmr::vector<arm64::gadgets::IndirectLink *> live_indirect;
 		/* Slots this address space has stored into, as flat slot
 		 * indices. It may name a slot another address space has since
 		 * taken, and may name one twice, so retirement checks every
@@ -800,7 +818,7 @@ private:
 		 * `slots_complete` records and retirement answers with the whole
 		 * sweep.
 		 */
-		std::vector<std::uint32_t> slots;
+		std::pmr::vector<std::uint32_t> slots;
 		bool slots_complete{true};
 	};
 
