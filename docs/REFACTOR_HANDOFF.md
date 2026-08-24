@@ -24,8 +24,22 @@ checks every nested `apex_payload.img` magic and rejects EROFS, compressed
 APEXes, and non-ext4 payloads. No ACK source, configuration, or EROFS-driver
 change was made. The new 17,179,869,184-byte GPT compresses to 704,869,601
 bytes and passed independent workstation verification and installation.
-Apple-product rebuild and a fresh 4-vCPU, 2-GiB physical-iPad boot are the next
-qualification gates.
+The macOS Android product, both Android iOS runtime slices, final XCFrameworks,
+and the signed physical-iOS app rebuilt against the exact installed release.
+
+The fresh physical-iPad gate now passes. On a wired iPad mini 6 with iOS 18.5,
+Kernarium started thermally nominal with gadgets, 4 vCPUs, 2 GiB, 16 KiB
+pages, normal boot, and hardware Virgl. There was no existing `userdata.cow`.
+All five immutable GPT filesystems mounted read-only ext4 by wall second 0.951;
+APEX bootstrap activated 67 packages from ext4 payloads by wall second 2.640.
+First-boot `artd` consumed 316.137 seconds and codec-list generation 30.170
+seconds. Boot animation exited at 504.123 seconds and init set
+`sys.boot_completed=1` at 525.731 seconds. The guest remained stable beyond
+the 30-second dwell and was then explicitly terminated. Exact log scans found
+zero EROFS/`erofs_worker`, RCU-stall, vold fallback, Virtio-GPU
+`0x1204`/`0x1205`, OOM, oops, panic, and Darwin-signal signatures. Retained
+evidence is
+`.build/android/measurements/ipad-ext4-apex-retry-20260825/{ipad-cold.log,ipad-cold.json}`.
 
 ## Prior minimal Android 17 device-overlay checkpoint (2026-08-25)
 

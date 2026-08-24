@@ -441,8 +441,9 @@ The static kernel, target-files, VINTF, SELinux, both partition-backed
 ramdisks, ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW
 UBD, warm-boot theme, minimal application/feature set, external Jelly, Context
 Hub exclusion, read-only ext4 partition policy, and 69 ext4 APEX payloads
-passed producer verification. Physical-iOS boot qualification remains
-separate.
+passed producer verification. Physical-iOS boot qualification remains a
+separate runtime gate and is recorded with the current release below.
+
 This is artifact acceptance for Apple-product integration. The bounded normal
 boot, stock-recovery and bundled-application checks below do not claim broad
 third-party application or HAL qualification.
@@ -524,6 +525,16 @@ and the target-files verifier checks their nested filesystem magic. The ACK
 kernel is byte-identical to the preceding accepted overlay release, including
 its unchanged built-in EROFS driver. `metadata/accepted-release.env` owns the
 exact release, ACK, AOSP, Jelly and common-ABI identities.
+
+That exact release also passed a fresh physical-iOS boot on a wired iPad mini
+6 running iOS 18.5. Kernarium used gadgets, 4 vCPUs, 2 GiB, 16 KiB guest pages,
+normal boot and hardware Virgl from a bundle with no pre-existing COW. The five
+GPT payload filesystems mounted read-only ext4 by wall second 0.951 and APEX
+bootstrap activated 67 ext4-backed packages by wall second 2.640. Init reached
+`sys.boot_completed=1` at wall second 525.731 and remained stable beyond the
+30-second dwell. Runtime scans found no EROFS worker, RCU stall, userdata
+fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or Darwin-signal
+signature. This qualification did not modify the retained EROFS driver.
 
 LineageOS Jelly is fetched at upstream commit
 `767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local

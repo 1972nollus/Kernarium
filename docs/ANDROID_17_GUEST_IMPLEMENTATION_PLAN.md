@@ -107,9 +107,11 @@ The earlier overlay descriptor passed producer, copied-release and installed
 verification, all focused Android policy/series tests, the macOS Android
 target, both Android iOS runtime slices and final XCFramework packaging. The
 current ext4-APEX descriptor has passed producer, copied-release, release
-contract and installed verification. Its Apple consumers and physical-iPad
-boot remain the next gates; no new successful iOS guest boot is claimed by
-this checkpoint.
+contract and installed verification. The macOS Android product, both Android
+iOS runtime slices, final XCFramework packaging, and the signed physical-iOS
+application were then rebuilt against that exact installed release. The app
+was installed on the connected iPad before the fresh runtime qualification
+below.
 
 A subsequent physical-iPad cold boot used 4 vCPUs, 2 GiB, the gadgets engine,
 and a fresh custom-overlay bundle. It reached the normal Android first stage,
@@ -137,8 +139,23 @@ configuration, or EROFS driver change is part of this fix. Its incremental
 AOSP build completed in 8 minutes 14 seconds; producer verification inspected
 4,608 target-files entries, 1,147 target executables and all 69 nested APEX
 payloads as ext4. The 17,179,869,184-byte GPT compressed to 704,869,601 bytes
-and passed independent workstation verification. A fresh physical-iPad retry
-remains the runtime qualification gate.
+and passed independent workstation verification.
+
+The fresh physical-iPad retry passed. A wired iPad mini 6 running iOS 18.5
+booted the new bundle with no pre-existing COW, the gadgets engine, 4 vCPUs,
+2 GiB of RAM, 16 KiB guest pages, normal boot, and hardware Virgl. Host thermal
+state was nominal. The five immutable GPT filesystems mounted read-only ext4 by
+wall second 0.951; APEX bootstrap scanned 67 active packages and mounted its
+payloads through ext4 loop devices, activating them by wall second 2.640.
+Userdata followed the normal ext4 encryption path with no unrecognized
+filesystem fallback. First-boot `artd` ran for 316.137 seconds, codec-list
+generation ran for 30.170 seconds, boot animation exited at wall second
+504.123, and init reached `sys.boot_completed=1` at wall second 525.731. The
+guest remained stable beyond the 30-second dwell and was then terminated by
+the host. Exact scans found no EROFS use, `erofs_worker`, RCU stall, vold
+fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or Darwin-signal
+signature. Evidence is retained under
+`.build/android/measurements/ipad-ext4-apex-retry-20260825`.
 
 ## Historical implementation handoff (2026-08-24)
 

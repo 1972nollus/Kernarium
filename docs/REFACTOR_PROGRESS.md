@@ -15,8 +15,18 @@
   compressed APEXes, and other nested payload formats.
 - The ACK source and ELF are unchanged. The new 16 GiB GPT compresses to
   704,869,601 bytes and passed producer, independent copied-release, release
-  contract, and installed-release verification. Apple rebuild and physical
-  iPad runtime qualification remain pending.
+  contract, and installed-release verification. The macOS Android target,
+  Android device and Simulator runtime slices, XCFramework package, and signed
+  physical-iOS app rebuilt against it.
+- A fresh wired iPad mini 6 boot passed with nominal thermal state, gadgets,
+  4 vCPUs, 2 GiB, 16 KiB pages, normal boot, and hardware Virgl. The five GPT
+  payload filesystems mounted read-only ext4 by wall second 0.951 and APEX
+  bootstrap activated 67 ext4-backed packages by wall second 2.640. First-boot
+  `artd` took 316.137 seconds, codec-list generation took 30.170 seconds, and
+  `sys.boot_completed=1` arrived at wall second 525.731. The guest remained
+  stable beyond the 30-second dwell. Exact scans found no EROFS worker, RCU
+  stall, vold fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or
+  Darwin-signal signature.
 
 ## 2026-08-25: earlier minimal Android 17 overlay and recovery checkpoint
 
