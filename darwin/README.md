@@ -425,11 +425,13 @@ and grants the `video` and `input` groups access after udev settles before
 executing `/sbin/init`. No image account, OpenRC runlevel, or desktop session
 is replaced.
 Kernarium also boots an Android guest from a `.kern` bundle in its Documents.
-That runtime is a third versioned framework carrying the accepted Android
-release's ACK ELF in the same signed `__TEXT` carrier and its release manifest
-in `__DATA`; the flavour leads the framework name so it can never be confused
-with the 16 KiB Linux one. It refuses a bundle whose manifest differs from the
-embedded copy, appends `--guest-top-byte-ignore` for Android's tagged pointers,
+That runtime is a third versioned framework carrying the independently
+accepted ACK artifact's ELF in the same signed `__TEXT` carrier and the
+selected rootfs manifest in `__DATA,__uml_android_rootfs`; the flavour leads
+the framework name so it can never be confused with the 16 KiB Linux one. It
+refuses a bundle whose rootfs manifest differs from that embedded copy, while
+a kernel-only app update leaves the rootfs selection and persistent COW
+unchanged. It appends `--guest-top-byte-ignore` for Android's tagged pointers,
 attaches the bundle's `userdata.cow` as a copy-on-write layer over the
 immutable base image, and injects no console bootstrap because the selected
 partition-backed ramdisk brings up Android's own init. It attaches no overlay

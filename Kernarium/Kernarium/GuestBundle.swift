@@ -14,7 +14,8 @@ enum GuestFlavor: UInt32 {
 struct GuestBundle: Equatable {
     static let pathExtension = "kern"
 
-    /// Android payload layout, as published by the accepted release.
+    /// Android rootfs payload layout. The signed runtime carries its kernel
+    /// independently, so a kernel-only app update does not rewrite the bundle.
     enum Android {
         static let manifest = "release-manifest.json"
         static let commandLine = "boot/kernel-command-line.txt"
@@ -86,10 +87,10 @@ struct GuestBundle: Equatable {
         return GuestBundle(url: url, flavor: .android, baseDisk: baseDisk)
     }
 
-    /// The base image name carries the release it was published for, so it is
-    /// discovered rather than assumed. Exactly one candidate keeps the choice
-    /// unambiguous; the runtime still checks its size against the release the
-    /// framework was built from.
+    /// The base image name carries the rootfs release it was published for, so
+    /// it is discovered rather than assumed. Exactly one candidate keeps the
+    /// choice unambiguous; the runtime still checks its size against the release
+    /// the framework was built from.
     private static func androidBaseDisk(
         in url: URL,
         fileManager: FileManager

@@ -26,16 +26,18 @@ function(uml_watch_artifact_inputs)
     endforeach()
 endfunction()
 
-function(uml_import_mainline_kernel_artifact)
+function(uml_import_kernel_artifact)
     set(options)
     set(oneValueArgs
-        TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_PAGE_SIZE)
+        TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_FAMILY
+        EXPECTED_PAGE_SIZE)
     cmake_parse_arguments(ARTIFACT "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS
-            TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_PAGE_SIZE)
+            TARGET ARTIFACT_ROOT ACCEPTANCE COMMON_ROOT LINE_ROOT EXPECTED_FAMILY
+            EXPECTED_PAGE_SIZE)
         if(NOT ARTIFACT_${_uml_required})
             message(FATAL_ERROR
-                "uml_import_mainline_kernel_artifact requires ${_uml_required}")
+                "uml_import_kernel_artifact requires ${_uml_required}")
         endif()
     endforeach()
     if(TARGET "${ARTIFACT_TARGET}")
@@ -64,7 +66,7 @@ function(uml_import_mainline_kernel_artifact)
         ERROR_VARIABLE _uml_artifact_error)
     if(NOT _uml_artifact_result EQUAL 0)
         message(FATAL_ERROR
-            "Cannot import the accepted mainline kernel artifact:\n"
+            "Cannot import the accepted kernel artifact:\n"
             "${_uml_artifact_output}${_uml_artifact_error}")
     endif()
 
@@ -75,12 +77,14 @@ function(uml_import_mainline_kernel_artifact)
     string(JSON _uml_release GET "${_uml_manifest_json}" release)
     string(JSON _uml_release_id GET "${_uml_manifest_json}" release_id)
     string(JSON _uml_directory_name GET "${_uml_manifest_json}" directory_name)
-    if(NOT _uml_family STREQUAL "mainline-6.18")
-        message(FATAL_ERROR "Imported kernel family is not mainline-6.18")
-    endif()
-    if(NOT _uml_page_size EQUAL ARTIFACT_EXPECTED_PAGE_SIZE)
+    if(NOT _uml_family STREQUAL "${ARTIFACT_EXPECTED_FAMILY}")
         message(FATAL_ERROR
-            "Imported mainline kernel page size ${_uml_page_size} does not match "
+            "Imported kernel family ${_uml_family} does not match "
+            "${ARTIFACT_EXPECTED_FAMILY}")
+    endif()
+    if(NOT _uml_page_size EQUAL "${ARTIFACT_EXPECTED_PAGE_SIZE}")
+        message(FATAL_ERROR
+            "Imported kernel page size ${_uml_page_size} does not match "
             "the configured ${ARTIFACT_EXPECTED_PAGE_SIZE}")
     endif()
 

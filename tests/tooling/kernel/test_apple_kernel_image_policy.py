@@ -171,6 +171,8 @@ def main() -> int:
     parser.add_argument("--artifact-cmake", type=Path, required=True)
     parser.add_argument("--acceptance-16k", type=Path, required=True)
     parser.add_argument("--acceptance-4k", type=Path, required=True)
+    parser.add_argument("--android-kernel-acceptance", type=Path, required=True)
+    parser.add_argument("--android-kernel-publisher", type=Path, required=True)
     parser.add_argument("--runtime-cmake", type=Path, required=True)
     parser.add_argument("--runtime-source", type=Path, required=True)
     parser.add_argument("--runtime-header", type=Path, required=True)
@@ -201,6 +203,7 @@ def main() -> int:
     }
     acceptance_16k = read(arguments.acceptance_16k)
     acceptance_4k = read(arguments.acceptance_4k)
+    android_kernel_acceptance = read(arguments.android_kernel_acceptance)
     directory_16k = env_value(
         acceptance_16k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
     )
@@ -226,6 +229,10 @@ def main() -> int:
         and android_profile["cacheVariables"]["UML_BUILD_ANDROID17_CLI"] is True
         and android_profile["cacheVariables"]["UML_GUEST_16K_PAGES"] is True,
         "Android macOS product is not a distinct 16 KiB-only executable",
+    )
+    require(
+        android_profile["cacheVariables"]["UML_KERNEL_PRODUCT"] == "android-17",
+        "Android macOS product does not select the independent ACK artifact",
     )
     require(
         "macos-android17-4k" not in configurations,
@@ -254,7 +261,7 @@ def main() -> int:
     kernel_cmake = read(arguments.kernel_cmake)
     artifact_cmake = read(arguments.artifact_cmake)
     for contract in (
-        "uml_import_mainline_kernel_artifact",
+        "uml_import_kernel_artifact",
         "UML_MAINLINE_618_KERNEL_ARTIFACT_DIR",
         "UML_ACTIVE_KERNEL_ARTIFACT_TARGET",
         "accepted-16k.env",
@@ -292,6 +299,29 @@ def main() -> int:
         and directory_4k.startswith("mainline-6.18-4k-"),
         "4 KiB artifact acceptance is malformed",
     )
+    require(
+        env_value(android_kernel_acceptance, "UML_KERNEL_ARTIFACT_FAMILY")
+        == "android-6.18"
+        and env_value(
+            android_kernel_acceptance, "UML_KERNEL_ARTIFACT_PAGE_SIZE"
+        ) == "16384"
+        and env_value(
+            android_kernel_acceptance, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+        ).startswith("android-6.18-16k-"),
+        "Android ACK artifact acceptance is malformed",
+    )
+    android_kernel_publisher = read(arguments.android_kernel_publisher)
+    for contract in (
+        'family = "android-6.18"',
+        "verify_artifact(",
+        'page_size = 16384',
+        'if name.endswith(".ko")',
+        "dedicated x86_64 Linux builder",
+    ):
+        require(
+            contract in android_kernel_publisher,
+            f"Android ACK artifact publisher lacks {contract}",
+        )
 
     toolchain_env = read(arguments.toolchain_env)
     require(
@@ -315,6 +345,9 @@ def main() -> int:
         "verify-signed-kernel-carrier.py",
         "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}",
         'LINK_DEPENDS "${_kernarium_kernel_image}"',
+        "UML_ANDROID17_ROOTFS_RELEASE_TARGET",
+        "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
+        "LINKER:-sectcreate,__DATA,__uml_android_rootfs",
     ):
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
     for forbidden in (
@@ -469,7 +502,7 @@ def main() -> int:
         "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}",
         "uml-darwin linux_main.cpp",
         "uml-darwin-android17 android17_main.cpp",
-        "LINKER:-sectcreate,__DATA,__uml_android,${_uml_android_manifest}",
+        "LINKER:-sectcreate,__DATA,__uml_android_rootfs,${_uml_android_manifest}",
     ):
         require(contract in macos_app_cmake, f"macOS app binding lacks {contract}")
     for forbidden in ("TARGET uml_kernel", "UML_KERNEL_BUILD_DIR"):
@@ -505,8 +538,10 @@ def main() -> int:
     android_release_cmake = read(arguments.android_release_cmake)
     for contract in (
         "if(NOT UML_GUEST_16K_PAGES)",
-        "UML_ANDROID17_RELEASE_DIR",
-        "uml_import_android17_release",
+        "UML_ANDROID17_ROOTFS_RELEASE_DIR",
+        "UML_ANDROID17_KERNEL_ARTIFACT_DIR",
+        "uml_import_android17_rootfs_release",
+        "uml_import_kernel_artifact",
     ):
         require(contract in android_cmake, f"Android product lacks {contract}")
     for contract in (
@@ -514,7 +549,7 @@ def main() -> int:
         "--installed",
         'STREQUAL "android-17-ack-6.18-16k"',
         'STREQUAL "android-6.18"',
-        "UML_KERNEL_PAGE_SIZE",
+        "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
         "UML_ANDROID_BASE_DISK",
     ):
         require(
@@ -529,14 +564,14 @@ def main() -> int:
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'boot_mode_option{"--android-boot-mode="}',
-        "section$start$__DATA$__uml_android",
+        "section$start$__DATA$__uml_android_rootfs",
         '"ubd0=" + instance.string()',
         '"initrd=" + base_disk.string()',
         '"initrd_offset=" + std::to_string(boot.ramdisk.offset)',
         '"initrd_size=" + std::to_string(boot.ramdisk.size)',
         '"root=/dev/ram0"',
         "release-owned kernel argument cannot be overridden",
-        "Android instance belongs to another accepted release",
+        "Android instance belongs to another rootfs release",
     ):
         require(contract in android_main, f"Android launcher lacks {contract}")
 

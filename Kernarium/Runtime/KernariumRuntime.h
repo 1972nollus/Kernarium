@@ -32,9 +32,9 @@ enum {
 };
 
 /* A boot request. Linux guests supply rootfs_path and overlay_path; Android
- * guests supply the manifest, base disk, command line, persistent instance
- * disk, and desired boot mode. A runtime rejects a request that does not
- * match its own flavour. */
+ * guests supply the rootfs manifest, base disk, command line, persistent
+ * instance disk, and desired boot mode. The Android kernel is carried and
+ * versioned independently by the runtime framework. */
 typedef struct kernarium_runtime_boot {
     uint32_t struct_size;
     uint32_t width;

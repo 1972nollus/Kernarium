@@ -76,6 +76,10 @@ uml_add_tooling_test(
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-16k.env
         --acceptance-4k
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/artifacts/accepted-4k.env
+        --android-kernel-acceptance
+            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/artifacts/accepted-16k.env
+        --android-kernel-publisher
+            ${PROJECT_SOURCE_DIR}/android/aosp-17/tools/publish-kernel-artifact.py
         --runtime-cmake ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/CMakeLists.txt
         --runtime-source
             ${PROJECT_SOURCE_DIR}/Kernarium/Runtime/KernariumRuntime.mm

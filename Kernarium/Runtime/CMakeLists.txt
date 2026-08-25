@@ -20,7 +20,7 @@ get_target_property(_kernarium_kernel_page_size
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_PAGE_SIZE)
 get_target_property(_kernarium_kernel_release
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_RELEASE)
-if(_kernarium_artifact_family STREQUAL "android-17-ack-6.18-16k")
+if(_kernarium_artifact_family STREQUAL "android-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 1)
 elseif(_kernarium_artifact_family STREQUAL "mainline-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 0)
@@ -183,18 +183,24 @@ target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_FRAMEWORK_NAME="${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 if(KERNARIUM_RUNTIME_ANDROID_GUEST)
+    if(NOT UML_ANDROID17_ROOTFS_RELEASE_TARGET OR
+       NOT TARGET "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}")
+        message(FATAL_ERROR
+            "The Kernarium Android runtime requires an accepted rootfs release")
+    endif()
     get_target_property(_kernarium_android_manifest
-        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_RELEASE_MANIFEST)
+        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}"
+        UML_ANDROID_ROOTFS_RELEASE_MANIFEST)
     get_target_property(_kernarium_android_base_disk
-        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ANDROID_BASE_DISK)
+        "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}" UML_ANDROID_BASE_DISK)
     file(SIZE "${_kernarium_android_base_disk}"
         _kernarium_android_base_disk_size)
     target_compile_definitions(KernariumRuntime PRIVATE
         KERNARIUM_ANDROID_BASE_DISK_SIZE=${_kernarium_android_base_disk_size})
-    # The accepted release identity travels inside the framework. A bundle
-    # whose manifest differs is refused before any of its payload is opened.
+    # Only the accepted rootfs identity travels inside the framework. The ACK
+    # kernel is selected independently through its own accepted artifact.
     target_link_options(KernariumRuntime PRIVATE
-        "LINKER:-sectcreate,__DATA,__uml_android,${_kernarium_android_manifest}")
+        "LINKER:-sectcreate,__DATA,__uml_android_rootfs,${_kernarium_android_manifest}")
     set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
         "${_kernarium_android_manifest}"
         "${_kernarium_android_base_disk}")
@@ -215,6 +221,9 @@ endif()
 add_dependencies(KernariumRuntime
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
     uml_dependency_prefix_verify)
+if(KERNARIUM_RUNTIME_ANDROID_GUEST)
+    add_dependencies(KernariumRuntime "${UML_ANDROID17_ROOTFS_RELEASE_TARGET}")
+endif()
 add_dependencies(KernariumRuntime uml_ios_network_prefix_verify)
 set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
     "${_kernarium_kernel_image}")

@@ -224,6 +224,14 @@ python3 -B kernel/mainline-6.18/build/publish-artifact.py \
   --page-size 16k \
   --output-root "$PWD/.build/kernel/artifacts" \
   --release-id reviewed-release-id
+
+# Run independently on the dedicated x86_64 Linux Android builder. This
+# consumes an existing ACK build and does not build or package AOSP.
+python3 -B android/aosp-17/tools/publish-kernel-artifact.py \
+  --source /absolute/path/to/replayed-ack \
+  --build /absolute/path/to/ack-build \
+  --output-root /absolute/path/to/kernel-artifacts \
+  --release-id reviewed-release-id
 python3 -B kernel/mainline-6.18/build/publish-artifact.py \
   --source /Volumes/<case-sensitive-volume>/linux \
   --build /Volumes/<case-sensitive-volume>/build-4k \
@@ -249,10 +257,13 @@ Kernarium/scripts/package-ios-frameworks.sh
 ```
 
 The Android presets set `UML_KERNEL_PRODUCT=android-17`, which selects the
-accepted Android release instead of a mainline artifact. That release exposes
-the same artifact properties as a mainline bundle plus its base GPT, verified
-normal/recovery ramdisk ranges and manifest, so it needs no kernel source
-checkout and no separate Kbuild tree. There is no 4 KiB Android variant.
+accepted `kernel/android-6.18` artifact instead of a mainline artifact. The
+accepted Android rootfs release is imported separately and exposes only its
+base GPT, verified normal/recovery ramdisk ranges, command line, and manifest.
+Apple configuration never invokes Kbuild or the AOSP producer. A newer ACK
+artifact can therefore ship in a newer app while the accepted rootfs release
+and existing `.kern` bundles remain unchanged. There is no 4 KiB Android
+variant.
 
 The Apple-GPU contracts authenticate one source and topic matrix across all
 three platforms. Its UTM WebKit topics retain the Simulator ES 3 minimum
@@ -309,12 +320,14 @@ directory without a complete payload is not offered in the picker at all. An
 Android bundle holds `release-manifest.json`, `boot/kernel-command-line.txt`,
 and exactly one `guest/*.img`. The GPT image contains kernelless boot-image-v4
 `init_boot` and stock AOSP `recovery` partitions plus writable `misc`; the
-bundle has no standalone ramdisk. The runtime
-compares that manifest against the copy linked into its own framework and
-refuses a bundle built from a different release. UBD creates `userdata.cow`
+bundle has no standalone ramdisk or kernel. The runtime compares that rootfs
+manifest against the independently selected rootfs copy linked into its own
+framework and refuses a bundle built from a different rootfs release. The ACK
+ELF comes from its separate accepted artifact, so a kernel-only application
+update does not invalidate the comparison. UBD creates `userdata.cow`
 beside the payload on first boot and reopens it on every later boot, so guest
-state stays inside the bundle. Selecting a bundle whose kernel exists in only
-one page profile fixes the page-size picker at that profile.
+state stays inside the bundle. Selecting an Android bundle fixes the page-size
+picker at the runtime's only supported 16 KiB profile.
 
 `--guest-bundle` assembles one from the accepted Android release and selects
 it. It reuses an existing bundle rather than reassembling, because

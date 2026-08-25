@@ -52,13 +52,13 @@ extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
 #endif
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-/* The accepted release identity is fixed at link time, so a bundle whose
- * payload was produced by a different release is refused before any of it is
- * mapped. */
-extern const unsigned char uml_android_manifest_start[]
-    __asm("section$start$__DATA$__uml_android");
-extern const unsigned char uml_android_manifest_end[]
-    __asm("section$end$__DATA$__uml_android");
+/* The accepted rootfs identity is fixed at link time independently of the ACK
+ * kernel artifact, so updating the signed carrier does not invalidate an
+ * existing bundle or its persistent COW. */
+extern const unsigned char uml_android_rootfs_manifest_start[]
+    __asm("section$start$__DATA$__uml_android_rootfs");
+extern const unsigned char uml_android_rootfs_manifest_end[]
+    __asm("section$end$__DATA$__uml_android_rootfs");
 #endif
 int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
 int uml_slirp_net_irq_fd(void*);
@@ -980,15 +980,16 @@ int runtimeRun(
         const std::filesystem::path instance {boot->android_instance_path};
         const auto manifest = readRegularFile(boot->android_manifest_path);
         const std::size_t embeddedManifestSize = static_cast<std::size_t>(
-            uml_android_manifest_end - uml_android_manifest_start);
+            uml_android_rootfs_manifest_end -
+            uml_android_rootfs_manifest_start);
         if (manifest.size() != embeddedManifestSize ||
             !std::equal(
                 manifest.begin(),
                 manifest.end(),
-                uml_android_manifest_start)) {
+                uml_android_rootfs_manifest_start)) {
             std::fputs(
                 "Kernarium: the bundle belongs to a different Android "
-                "release than this runtime\n",
+                "rootfs release than this runtime\n",
                 stderr);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }

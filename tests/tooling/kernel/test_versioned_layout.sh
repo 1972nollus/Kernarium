@@ -5,6 +5,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 COMMON="$ROOT_DIR/kernel/common"
 LINE="$ROOT_DIR/kernel/mainline-6.18"
+ANDROID_LINE="$ROOT_DIR/kernel/android-6.18"
 
 fail()
 {
@@ -27,7 +28,9 @@ for path in \
 	"$LINE/build/build-kernel.sh" \
 	"$LINE/build/publish-artifact.py" \
 	"$LINE/scripts/prepare-source.sh" \
-	"$LINE/source-location.conf.example"; do
+	"$LINE/source-location.conf.example" \
+	"$ANDROID_LINE/artifacts/accepted-16k.env" \
+	"$ROOT_DIR/android/aosp-17/tools/publish-kernel-artifact.py"; do
 	[ -f "$path" ] || fail "required owner is missing: $path"
 done
 

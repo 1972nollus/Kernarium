@@ -135,14 +135,17 @@ series, complete configuration, standalone build policy, and source location.
 series, and built-in-only 16 KiB configuration. `kernel/common` owns only the
 plain-C bridge, shared 16 KiB page geometry, artifact contract, and
 line-root-parameterized policy verification. Root `kernel/CMakeLists.txt`
-imports accepted mainline bundles. `android/aosp-17` imports the accepted
-combined Android release and exposes its ACK ELF and boot support through a
-distinct target. Neither Apple graph can invoke a kernel or Android producer.
+imports accepted mainline bundles and the independently accepted Android ACK
+artifact. `android/aosp-17` separately imports the accepted rootfs release and
+exposes only its manifest, boot policy, and static GPT through a distinct
+target. Neither Apple graph can invoke a kernel or Android producer.
 
-The separate `uml-darwin-android17` target embeds that ACK ELF and the accepted
-release-manifest identity. It reads the static GPT from the installed release,
-selects a verified normal or recovery ramdisk byte range inside that disk, and
-maps the GPT only as a per-instance UML COW backing file. It does not inherit
+The separate `uml-darwin-android17` target embeds the ACK artifact's ELF and
+the independently selected rootfs-manifest identity. It reads the static GPT
+from the installed rootfs release, selects a verified normal or recovery
+ramdisk byte range inside that disk, and maps the GPT only as a per-instance
+UML COW backing file. Advancing the signed kernel carrier does not change the
+rootfs selection or invalidate an existing bundle/COW. It does not inherit
 Linux desktop rootfs discovery and has no 4 KiB variant.
 
 ## Apple GPU display composition

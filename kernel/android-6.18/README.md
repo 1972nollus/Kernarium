@@ -16,6 +16,16 @@ The Android producer is owned by
 locally on an x86_64 Linux builder and receive the ACK Repo workspace as a local
 path. This directory contains no builder endpoint or transfer workflow.
 
+The already-built ACK ELF is published independently from the Android rootfs
+with `android/aosp-17/tools/publish-kernel-artifact.py`. The publisher emits the
+common compact kernel-artifact contract and rechecks this line's exact final
+tree, generated series, 16 KiB/module-free configuration, ELF geometry, and
+bridge imports. [`artifacts/accepted-16k.env`](artifacts/accepted-16k.env)
+selects the reviewed directory below `.build/kernel/artifacts` without storing
+a machine path. Apple builds consume only that installed artifact; advancing it
+does not invoke AOSP, republish the GPT, or invalidate an existing rootfs
+bundle.
+
 The product has exactly one 16 KiB configuration in
 [`config/android.fragment`](config/android.fragment). Loadable modules are
 forbidden: `CONFIG_MODULES=n`, Binder, ashmem compatibility, SELinux, audit,

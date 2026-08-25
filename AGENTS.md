@@ -83,7 +83,7 @@ historical sections as history.
   the relocated image; there is no platform-specific Kbuild image or
   address-space selector. Kernarium embeds separate versioned signed runtime
   frameworks for the canonical 4 KiB and 16 KiB mainline artifacts and for the
-  accepted Android 17 ACK release, defaults to 16 KiB Linux, and loads exactly
+  accepted Android 17 ACK kernel artifact, defaults to 16 KiB Linux, and loads exactly
   one framework for the process lifetime after launch. Guest flavour leads a
   framework name and the page profile trails it, so no name can match two
   selections; the Android framework exists only in 16 KiB.
@@ -467,14 +467,17 @@ Executable-memory policy:
   product and both 4 KiB iOS runtime slices likewise consume the same accepted
   4 KiB artifact; do not create a platform-specific Kbuild tree or kernel
   image. Apple product graphs may only validate and embed already-built files.
-  The separate `uml-darwin-android17` product accepts only a validated,
-  installed 16 KiB Android 17 release, embeds its ACK 6.18 ELF and manifest
-  identity, and maps the static GPT only behind a per-instance COW file. It has
-  no 4 KiB variant and must not inherit Linux desktop rootfs discovery.
-  `UML_KERNEL_PRODUCT=android-17` selects the same release for the Kernarium
-  iOS runtime, which embeds the ACK ELF in the same signed `__TEXT` carrier and
-  its release manifest in `__DATA`. That runtime boots only a guest bundle
-  whose manifest matches the embedded copy byte for byte, appends
+  The separate `uml-darwin-android17` product accepts an independently
+  validated 16 KiB ACK artifact and Android 17 rootfs release, embeds the ACK
+  6.18 ELF and the rootfs-manifest identity, and maps the static GPT only behind
+  a per-instance COW file. It has no 4 KiB variant and must not inherit Linux
+  desktop rootfs discovery. `UML_KERNEL_PRODUCT=android-17` selects the ACK
+  artifact for the Kernarium iOS runtime, which embeds that ELF in the same
+  signed `__TEXT` carrier and the independently selected rootfs manifest in
+  `__DATA,__uml_android_rootfs`. A kernel-only app update must not republish,
+  rename, or invalidate an existing rootfs bundle or its COW. The runtime still
+  boots only a guest bundle whose rootfs manifest matches the selected rootfs
+  copy byte for byte, appends
   `--guest-top-byte-ignore` for Android's tagged pointers, injects no console
   bootstrap, and attaches no overlay disk.
 - A Kernarium guest bundle is a `.kern` directory in the application's
@@ -487,8 +490,9 @@ Executable-memory policy:
   partitions plus writable `misc`; no standalone ramdisk is carried. UBD creates
   `userdata.cow` beside them on first boot and reopens it afterwards, so guest
   state accumulates inside the bundle rather than in disposable storage. A
-  bundle whose kernel exists in only one page profile fixes that profile in the
-  settings picker and at launch.
+  bundle selected with the Android runtime fixes the only supported 16 KiB page
+  profile in the settings picker and at launch; the kernel itself is not bundle
+  payload.
   When transferring one to a physical device, remember that
   `devicectl device copy to` copies a source directory's *contents* into the
   destination; it does not preserve the source directory as a wrapper. Pass

@@ -2,21 +2,22 @@
 
 include_guard(GLOBAL)
 
-function(uml_import_android17_release)
+function(uml_import_android17_rootfs_release)
     set(options)
     set(oneValueArgs TARGET RELEASE_ROOT ACCEPTANCE ANDROID_ROOT)
     cmake_parse_arguments(RELEASE "${options}" "${oneValueArgs}" "" ${ARGN})
     foreach(_uml_required IN ITEMS TARGET RELEASE_ROOT ACCEPTANCE ANDROID_ROOT)
         if(NOT RELEASE_${_uml_required})
             message(FATAL_ERROR
-                "uml_import_android17_release requires ${_uml_required}")
+                "uml_import_android17_rootfs_release requires ${_uml_required}")
         endif()
     endforeach()
     if(TARGET "${RELEASE_TARGET}")
-        message(FATAL_ERROR "Android release target already exists: ${RELEASE_TARGET}")
+        message(FATAL_ERROR
+            "Android rootfs release target already exists: ${RELEASE_TARGET}")
     endif()
     if(NOT IS_ABSOLUTE "${RELEASE_RELEASE_ROOT}")
-        message(FATAL_ERROR "Android release directory must be absolute")
+        message(FATAL_ERROR "Android rootfs release directory must be absolute")
     endif()
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -31,7 +32,7 @@ function(uml_import_android17_release)
         ERROR_VARIABLE _uml_release_error)
     if(NOT _uml_release_result EQUAL 0)
         message(FATAL_ERROR
-            "Cannot import the accepted Android 17 release:\n"
+            "Cannot import the accepted Android 17 rootfs release:\n"
             "${_uml_release_output}${_uml_release_error}")
     endif()
 
@@ -42,37 +43,26 @@ function(uml_import_android17_release)
     string(JSON _uml_release_id GET "${_uml_manifest_json}" release_id)
     string(JSON _uml_android_major GET "${_uml_manifest_json}" android major)
     string(JSON _uml_kernel_family GET "${_uml_manifest_json}" kernel family)
-    string(JSON _uml_kernel_release GET "${_uml_manifest_json}" kernel release)
     string(JSON _uml_kernel_page_size GET "${_uml_manifest_json}" kernel page_size)
     if(NOT _uml_product_family STREQUAL "android-17-ack-6.18-16k" OR
        NOT _uml_android_major EQUAL 17 OR
        NOT _uml_kernel_family STREQUAL "android-6.18" OR
        NOT _uml_kernel_page_size EQUAL 16384)
-        message(FATAL_ERROR "Imported release is not the Android 17 ACK 6.18 16 KiB product")
+        message(FATAL_ERROR
+            "Imported rootfs is not compatible with Android 17 ACK 6.18 16 KiB")
     endif()
 
     add_library("${RELEASE_TARGET}" INTERFACE)
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ARTIFACT_FAMILY "${_uml_product_family}")
+        UML_ANDROID_ROOTFS_FAMILY "${_uml_product_family}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ARTIFACT_DIRECTORY "${RELEASE_RELEASE_ROOT}")
+        UML_ANDROID_ROOTFS_DIRECTORY "${RELEASE_RELEASE_ROOT}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ARTIFACT_DIRECTORY_NAME "${_uml_directory_name}")
+        UML_ANDROID_ROOTFS_DIRECTORY_NAME "${_uml_directory_name}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ARTIFACT_RELEASE_ID "${_uml_release_id}")
+        UML_ANDROID_ROOTFS_RELEASE_ID "${_uml_release_id}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_KERNEL_RELEASE "${_uml_kernel_release}")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_KERNEL_PAGE_SIZE "${_uml_kernel_page_size}")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_KERNEL_IMAGE "${RELEASE_RELEASE_ROOT}/kernel/vmlinux")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_KERNEL_CONFIG "${RELEASE_RELEASE_ROOT}/kernel/config")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_KERNEL_MODULES_BUILTIN
-        "${RELEASE_RELEASE_ROOT}/kernel/modules.builtin")
-    set_property(TARGET "${RELEASE_TARGET}" PROPERTY
-        UML_ANDROID_RELEASE_MANIFEST "${_uml_manifest}")
+        UML_ANDROID_ROOTFS_RELEASE_MANIFEST "${_uml_manifest}")
     set_property(TARGET "${RELEASE_TARGET}" PROPERTY
         UML_ANDROID_KERNEL_COMMAND_LINE
         "${RELEASE_RELEASE_ROOT}/boot/kernel-command-line.txt")

@@ -86,8 +86,6 @@ def main() -> None:
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
         "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
-        "ANDROID17_ACCEPTED_ABI_VERSION": abi["DARWIN_UML_ABI_VERSION"],
-        "ANDROID17_ACCEPTED_ABI_FINGERPRINT": abi["DARWIN_UML_ABI_FINGERPRINT"],
     }
     for key, value in tracked_expected.items():
         if tracked_acceptance.get(key) != value:
@@ -228,6 +226,8 @@ def main() -> None:
         historical["aosp"]["projects_manifest_sha256"] = "b" * 64
         historical["kernel"]["final_tree"] = "c" * 40
         historical["kernel"]["patch_manifest_sha256"] = "d" * 64
+        historical["kernel"]["abi_version"] = 7
+        historical["kernel"]["abi_fingerprint"] = "0x0123456789abcdef"
         historical_manifest = temporary_root / "historical-release-manifest.json"
         historical_manifest.write_text(
             json.dumps(historical, indent=2, sort_keys=True) + "\n"
@@ -239,6 +239,14 @@ def main() -> None:
             .replace(manifest["aosp"]["projects_manifest_sha256"], "b" * 64)
             .replace(manifest["kernel"]["final_tree"], "c" * 40)
             .replace(manifest["kernel"]["patch_manifest_sha256"], "d" * 64)
+            .replace(
+                f"ANDROID17_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
+                "ANDROID17_ACCEPTED_ABI_VERSION=7",
+            )
+            .replace(
+                manifest["kernel"]["abi_fingerprint"],
+                "0x0123456789abcdef",
+            )
         )
         verify_release(
             release_root,

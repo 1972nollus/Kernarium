@@ -119,7 +119,8 @@
         "UML_BUILD_UNIT_TESTS": false,
         "UML_BUILD_INTEGRATION_TESTS": false,
         "UML_BUILD_TOOLING_TESTS": true,
-        "UML_GUEST_16K_PAGES": true
+        "UML_GUEST_16K_PAGES": true,
+        "UML_KERNEL_PRODUCT": "android-17"
       }
     },
     {

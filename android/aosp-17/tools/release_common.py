@@ -747,17 +747,11 @@ def verify_release(
         verify_tracked_identity(manifest, android_root)
     else:
         verify_acceptance(manifest, acceptance_path)
-        abi_metadata = parse_env(
-            android_root.parents[1] / "kernel/common/abi/identity.env"
-        )
-        if manifest["kernel"]["abi_version"] != int(
-            abi_metadata["DARWIN_UML_ABI_VERSION"]
-        ):
-            fail("accepted release ABI version differs from the current host bridge")
-        if manifest["kernel"]["abi_fingerprint"] != (
-            abi_metadata["DARWIN_UML_ABI_FINGERPRINT"]
-        ):
-            fail("accepted release ABI fingerprint differs from the current host bridge")
+        # Schema 2 recorded the ACK that qualified this rootfs build. Keep that
+        # identity as immutable historical provenance, but do not compare it to
+        # the current host/kernel bridge. The independently accepted ACK
+        # artifact owns that compatibility check now, allowing an old rootfs
+        # bundle and COW to survive a kernel-only application update.
     verify_inventory(release_root, manifest, allow_expanded_disk=allow_expanded_disk)
     if semantic:
         verify_semantics(

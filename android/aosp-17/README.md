@@ -33,7 +33,22 @@ android/aosp-17/build/build-kernel.sh \
   --kernel-source /absolute/path/to/new-android-kernel-source \
   --darwin-sdk /absolute/path/to/MacOSX.sdk \
   --build /absolute/path/to/kernel-build
+
+python3 -B android/aosp-17/tools/publish-kernel-artifact.py \
+  --source /absolute/path/to/new-android-kernel-source \
+  --build /absolute/path/to/kernel-build \
+  --output-root /absolute/path/to/kernel-artifacts \
+  --release-id reviewed-release-id
 ```
+
+The kernel publisher is independent of AOSP: it consumes only the clean ACK
+topic checkout and its already-built 16 KiB output. It repeats the module-free
+configuration, ELF, bridge-import, source-tree, and generated-series checks,
+then emits the common compact artifact contract. Transfer that directory to
+the workstation and install it below `.build/kernel/artifacts`; the checked
+`kernel/android-6.18/artifacts/accepted-16k.env` selects it without recording a
+builder endpoint. Advancing this descriptor does not rebuild, republish, or
+change the accepted Android rootfs release.
 
 After changing or appending commits on a clean linear ACK topic checkout,
 regenerate the complete kernel mail series from that Git history on the Linux
@@ -427,6 +442,16 @@ The verifier rejects symlinks, special files, undeclared files or directories,
 unsafe paths, wrong family/page/ABI/source identities, size changes, and a
 kernel configuration with module support or any `=m` value.
 
+For backward-compatible rootfs installation, the current schema-2 release
+still carries the ACK build that qualified its target-files and VINTF inputs.
+Apple products no longer select that ELF. They import the release only as the
+accepted rootfs owner (manifest, command line, fixed GPT, and boot ranges) and
+select the runtime ACK ELF from the independent kernel artifact above. A
+kernel-only application update therefore continues to embed the same rootfs
+manifest and accepts existing `.kern` bundles and their `userdata.cow`, even
+when the historical bridge identity recorded by schema 2 differs from the
+current ACK artifact's independently verified bridge identity.
+
 After an operator copies a complete release directory to the workstation, use
 only its local path:
 
@@ -666,10 +691,12 @@ path whose parent already exists:
   --execution-engine=gadgets
 ```
 
-The executable embeds the accepted ACK ELF and release-manifest identity. It
-rejects another release, protects release-owned boot arguments, maps the large
-installed GPT image only as the COW backing file, and binds each instance to
-the accepted release with an adjacent manifest receipt. `auto` follows the
+The executable embeds the independently accepted ACK ELF and the selected
+rootfs-manifest identity. It rejects another rootfs release, protects
+rootfs-owned boot arguments, maps the large installed GPT image only as the
+COW backing file, and binds each instance to the selected rootfs with an
+adjacent manifest receipt. Updating only the ACK artifact leaves that receipt
+valid. `auto` follows the
 standard `boot-recovery` command in the COW-backed `misc` partition; `normal`
 and `recovery` are explicit diagnostic overrides. Both choices load a bounded
 ramdisk range from the immutable GPT rather than a standalone file. Attach to

@@ -20,23 +20,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef UML_ANDROID17_ACCEPTED_DIRECTORY_NAME
-#error "Android release directory identity is required"
+#ifndef UML_ANDROID17_ROOTFS_DIRECTORY_NAME
+#error "Android rootfs release directory identity is required"
 #endif
-#ifndef UML_ANDROID17_ACCEPTED_RELEASE_ID
-#error "Android release identity is required"
+#ifndef UML_ANDROID17_ROOTFS_RELEASE_ID
+#error "Android rootfs release identity is required"
 #endif
-#ifndef UML_ANDROID17_ACCEPTED_PRODUCT_FAMILY
-#error "Android product-family identity is required"
+#ifndef UML_ANDROID17_ROOTFS_PRODUCT_FAMILY
+#error "Android rootfs product-family identity is required"
 #endif
 #ifndef UML_ANDROID17_BASE_DISK_SIZE
 #error "Android base-disk size is required"
 #endif
 extern "C" {
-extern const unsigned char uml_android_manifest_start[]
-	__asm("section$start$__DATA$__uml_android");
-extern const unsigned char uml_android_manifest_end[]
-	__asm("section$end$__DATA$__uml_android");
+extern const unsigned char uml_android_rootfs_manifest_start[]
+	__asm("section$start$__DATA$__uml_android_rootfs");
+extern const unsigned char uml_android_rootfs_manifest_end[]
+	__asm("section$end$__DATA$__uml_android_rootfs");
 }
 
 namespace {
@@ -216,17 +216,18 @@ std::filesystem::path validated_release_root(
 			"Android release must be a real local directory");
 	std::error_code error;
 	auto release = std::filesystem::canonical(candidate, error);
-	if (error || release.filename() != UML_ANDROID17_ACCEPTED_DIRECTORY_NAME)
+	if (error || release.filename() != UML_ANDROID17_ROOTFS_DIRECTORY_NAME)
 		throw std::invalid_argument(
-			"Android release directory does not match the accepted identity");
+			"Android rootfs directory does not match the accepted identity");
 	const auto manifest = read_regular_file(release / "release-manifest.json");
 	const std::size_t embedded_size = static_cast<std::size_t>(
-		uml_android_manifest_end - uml_android_manifest_start);
+		uml_android_rootfs_manifest_end -
+		uml_android_rootfs_manifest_start);
 	if (manifest.size() != embedded_size ||
 	    !std::equal(manifest.begin(), manifest.end(),
-		       uml_android_manifest_start))
+		       uml_android_rootfs_manifest_start))
 		throw std::invalid_argument(
-			"Android release manifest differs from the embedded identity");
+			"Android rootfs manifest differs from the embedded identity");
 	(void)checked_regular_file_size(
 		release / "guest/android-17-uml-arm64.img",
 		UML_ANDROID17_BASE_DISK_SIZE);
@@ -250,9 +251,10 @@ void write_receipt(const std::filesystem::path &path)
 		throw std::system_error(errno, std::generic_category(),
 					"cannot create Android instance receipt");
 	}
-	const unsigned char *cursor = uml_android_manifest_start;
+	const unsigned char *cursor = uml_android_rootfs_manifest_start;
 	std::size_t remaining = static_cast<std::size_t>(
-		uml_android_manifest_end - uml_android_manifest_start);
+		uml_android_rootfs_manifest_end -
+		uml_android_rootfs_manifest_start);
 	while (remaining != 0) {
 		const ssize_t count = write(descriptor, cursor, remaining);
 		if (count < 0 && errno == EINTR)
@@ -308,11 +310,13 @@ std::filesystem::path validated_instance(
 	write_receipt(receipt);
 	const auto stored = read_regular_file(receipt);
 	const std::size_t embedded_size = static_cast<std::size_t>(
-		uml_android_manifest_end - uml_android_manifest_start);
+		uml_android_rootfs_manifest_end -
+		uml_android_rootfs_manifest_start);
 	if (stored.size() != embedded_size ||
-	    !std::equal(stored.begin(), stored.end(), uml_android_manifest_start))
+	    !std::equal(stored.begin(), stored.end(),
+			uml_android_rootfs_manifest_start))
 		throw std::invalid_argument(
-			"Android instance belongs to another accepted release");
+			"Android instance belongs to another rootfs release");
 	return instance;
 }
 
@@ -398,8 +402,8 @@ int main(int argc, char *argv[], char *envp[])
 			std::fprintf(
 				stderr,
 					"Android release %s (%s), %s boot, writable instance %s\n",
-					UML_ANDROID17_ACCEPTED_RELEASE_ID,
-					UML_ANDROID17_ACCEPTED_PRODUCT_FAMILY,
+					UML_ANDROID17_ROOTFS_RELEASE_ID,
+					UML_ANDROID17_ROOTFS_PRODUCT_FAMILY,
 					boot.mode == uml::android::BootMode::recovery
 						? "recovery" : "normal",
 					instance.c_str());

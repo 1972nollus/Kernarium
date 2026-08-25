@@ -44,20 +44,21 @@ RUNTIME_RELEASE=$(printf '%s\n' "$UML_KERNEL_RELEASE_VERSION" | tr . _)
 RUNTIME_4K="KernariumRuntime_${RUNTIME_RELEASE}_4K"
 RUNTIME_16K="KernariumRuntime_${RUNTIME_RELEASE}_16K"
 
-# The Android runtime carries its own ACK kernel, so its identity comes from
-# the accepted release rather than from the mainline series.
-. "$ROOT_DIR/android/aosp-17/metadata/accepted-release.env"
-ANDROID_RELEASE_ROOT="$ROOT_DIR/.build/android/releases/$ANDROID17_ACCEPTED_DIRECTORY_NAME"
-[ -d "$ANDROID_RELEASE_ROOT" ] ||
-	fail "the accepted Android release is not installed: $ANDROID_RELEASE_ROOT"
+# The Android runtime carries an independently accepted ACK artifact. Rootfs
+# release updates do not rename this framework and kernel-only updates do not
+# invalidate an existing guest bundle.
+. "$ROOT_DIR/kernel/android-6.18/artifacts/accepted-16k.env"
+ANDROID_KERNEL_ARTIFACT_ROOT="$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
+[ -d "$ANDROID_KERNEL_ARTIFACT_ROOT" ] ||
+	fail "the accepted Android kernel artifact is not installed: $ANDROID_KERNEL_ARTIFACT_ROOT"
 ANDROID_KERNEL_RELEASE=$("$PYTHON3" -B -c 'import json,re,sys
-release = json.load(open(sys.argv[1]))["kernel"]["release"]
+release = json.load(open(sys.argv[1]))["release"]
 match = re.match(r"^[0-9]+(\.[0-9]+)+", release)
 if not match:
     raise SystemExit("cannot derive the Android kernel release")
 print(match.group(0).replace(".", "_"))' \
-	"$ANDROID_RELEASE_ROOT/release-manifest.json") ||
-	fail "cannot read the accepted Android release identity"
+	"$ANDROID_KERNEL_ARTIFACT_ROOT/kernel-artifact.json") ||
+	fail "cannot read the accepted Android kernel artifact identity"
 RUNTIME_ANDROID_16K="KernariumRuntimeAndroid_${ANDROID_KERNEL_RELEASE}_16K"
 
 SIMULATOR_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-simulator-4k/Kernarium/Runtime/$RUNTIME_4K.framework"

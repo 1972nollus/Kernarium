@@ -2,6 +2,7 @@
 
 set(UML_KERNEL_COMMON_ROOT "${PROJECT_SOURCE_DIR}/kernel/common")
 set(UML_KERNEL_LINE_ROOT "${PROJECT_SOURCE_DIR}/kernel/mainline-6.18")
+set(UML_ANDROID_KERNEL_LINE_ROOT "${PROJECT_SOURCE_DIR}/kernel/android-6.18")
 include("${UML_KERNEL_COMMON_ROOT}/artifacts/KernelArtifact.cmake")
 
 set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
@@ -9,18 +10,20 @@ set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS mainline-6.18 android-17)
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
-    # The Android product ships one accepted release that owns its own ACK
-    # kernel, ramdisk, and base image. It exposes the same artifact properties
-    # as a mainline bundle, so a consumer selects it the same way.
+    # The ACK kernel and Android rootfs are independent accepted inputs. The
+    # application may advance its signed kernel carrier without republishing
+    # or invalidating an otherwise compatible guest disk bundle.
     if(NOT UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
             "The Android 17 product supports only 16 KiB guest pages")
     endif()
-    if(NOT TARGET uml_android17_release)
+    if(NOT TARGET uml_android17_kernel_artifact OR
+       NOT TARGET uml_android17_rootfs_release)
         add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
             "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
     endif()
-    set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET "${UML_ANDROID17_RELEASE_TARGET}"
+    set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET
+        "${UML_ANDROID17_KERNEL_ARTIFACT_TARGET}"
         CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)
     return()
 endif()
@@ -49,12 +52,13 @@ set(UML_MAINLINE_618_KERNEL_ARTIFACT_DIR
     "${_uml_mainline_artifact_default}" CACHE PATH
     "Installed accepted mainline-6.18 kernel artifact directory")
 
-uml_import_mainline_kernel_artifact(
+uml_import_kernel_artifact(
     TARGET uml_mainline_kernel_artifact
     ARTIFACT_ROOT "${UML_MAINLINE_618_KERNEL_ARTIFACT_DIR}"
     ACCEPTANCE "${_uml_mainline_acceptance}"
     COMMON_ROOT "${UML_KERNEL_COMMON_ROOT}"
     LINE_ROOT "${UML_KERNEL_LINE_ROOT}"
+    EXPECTED_FAMILY mainline-6.18
     EXPECTED_PAGE_SIZE "${_uml_expected_page_size}")
 
 set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET uml_mainline_kernel_artifact
