@@ -1,5 +1,27 @@
 # Refactor progress
 
+## 2026-08-25: matched 4-vCPU / 2-GiB Android boot timing
+
+- Measured the accepted ext4/APEX Android release on standalone macOS and the
+  iOS 26.5 iPad mini Simulator with gadgets, 4 vCPUs, 2 GiB, 16 KiB, normal
+  boot, point-mode 160 DPI, hardware Virgl, fresh first-boot COWs and their
+  exact cleanly persisted second-boot state. macOS reached
+  `sys.boot_completed=1` in 788.926 seconds cold and 171.793 seconds warm;
+  Simulator measured 109.657 and 41.186 seconds.
+- All four runs mounted the five immutable ext4 partitions by 1.352 seconds
+  and activated all 67 ext4 APEX payloads by 3.198. The warm codec-list service
+  ended at 28.597 seconds on macOS and 28.998 on Simulator, but the remaining
+  path to completion took 143.196 versus 12.188 seconds. Post-codec UI and
+  boot-animation convergence dominates the clean warm platform delta.
+- Simulator cold `artd` ran once and exited cleanly after 74.428 seconds. The
+  macOS cold result is flagged: its initial `artd` aborted after 412.942
+  seconds because `getAndExecuteCommand(fd=4)` returned `-EFAULT`, restarted,
+  and then completed. The measured 788.926-second cold result is real but not a
+  clean baseline. Exact scans found no EROFS worker, RCU stall, vold fallback,
+  Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic or Darwin signal.
+- Full phase tables, limitations and evidence paths are in
+  [`android-17-boot-timing-20260825.md`](android-17-boot-timing-20260825.md).
+
 ## 2026-08-25: Android GPT and APEX payloads moved to ext4
 
 - Accepted

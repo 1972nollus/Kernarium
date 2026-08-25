@@ -157,6 +157,37 @@ fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or Darwin-signal
 signature. Evidence is retained under
 `.build/android/measurements/ipad-ext4-apex-retry-20260825`.
 
+The requested matched Apple-host follow-up is complete at outer revision
+`c529aeaa1a520ba0c0b870e170e72c8967b31a98`. The standalone macOS product and
+Kernarium's iOS 26.5 iPad mini Simulator product used that same accepted
+release, gadgets, 4 vCPUs, 2 GiB, 16 KiB, normal boot, point-mode 160 DPI,
+hardware Virgl, a fresh COW followed by its exact persisted state, and the
+same host-launch-to-init completion boundary. macOS measured 788.926 seconds
+cold and 171.793 seconds warm. Simulator measured 109.657 and 41.186 seconds.
+The accepted Simulator pair acknowledged inactive and background storage
+settlement before each termination; both macOS runs synced and powered down
+through the guest console. The Simulator surface was 744 x 1081 in its native
+portrait orientation versus the macOS/physical-iPad 1133 x 695 landscape
+surface, but its pixel area was only 2.14% larger.
+
+The early phases do not explain the difference: every run mounted the five GPT
+payload filesystems by wall second 1.352, activated all 67 ext4 APEX payloads
+by 3.198, and the two warm runs completed codec-list generation at 28.597 and
+28.998 seconds. macOS then took 143.196 seconds from codec exit to warm boot
+completion versus 12.188 on Simulator. Cold Simulator `artd` ran once and
+exited cleanly after a 74.428-second window. The macOS cold observation is
+flagged rather than presented as a clean baseline: its first `artd` aborted at
+wall second 443.417 with the tombstone message
+`getAndExecuteCommand(fd=4) returned unexpected error -14, aborting`, Android
+restarted it, and the replacement exited normally at 513.657. That is an
+`EFAULT` Binder-command failure, not an OOM, filesystem stall or timeout.
+
+Exact scans of the four accepted logs found no EROFS worker, RCU stall, vold
+fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic or Darwin-signal
+signature. The sole matched failure was the recovered macOS cold `artd`
+`SIGABRT`. Full phase tables, limits and retained evidence paths are in
+[`android-17-boot-timing-20260825.md`](android-17-boot-timing-20260825.md).
+
 ## Historical implementation handoff (2026-08-24)
 
 This section was the entry point on 2026-08-24 and is retained as dated

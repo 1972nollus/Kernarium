@@ -1,5 +1,36 @@
 # Refactor handoff
 
+## Matched Android 4-vCPU / 2-GiB Apple-host timing (2026-08-25)
+
+The accepted ext4/APEX release was remeasured on the standalone macOS product
+and Kernarium's iOS 26.5 iPad mini Simulator product with gadgets, 4 vCPUs,
+2 GiB, 16 KiB, normal boot, 160 DPI, hardware Virgl, a fresh COW and then the
+exact cleanly persisted COW. The boundary is host launch to init's first
+`sys.boot_completed=1` action. macOS measured 788.926 seconds cold and 171.793
+seconds warm; Simulator measured 109.657 and 41.186 seconds. The observed
+ratios are 7.19x and 4.17x, not intrinsic platform claims. The immediately
+preceding physical-iPad cold result was 525.731 seconds under the same compute
+and storage policy; there is no matched physical-device warm result yet.
+
+All four runs mounted the five immutable ext4 partitions by 1.352 seconds and
+activated all 67 ext4 APEX payloads by 3.198. Both warm runs finished the
+codec-list service at about 29 seconds, after which macOS needed 143.196
+seconds to complete versus Simulator's 12.188. The warm difference is thus a
+post-codec UI/boot-animation tail. Simulator cold `artd` ran cleanly for a
+74.428-second window. The macOS cold result is flagged: its first `artd`
+received `SIGABRT` after 412.942 seconds with tombstone message
+`getAndExecuteCommand(fd=4) returned unexpected error -14, aborting`; Android
+restarted it and completed. Do not treat its 788.926 seconds or 483.147-second
+first-start-to-final-exit ART window as a clean baseline.
+
+The accepted Simulator pair reported inactive and background storage
+settlement before termination, while both macOS runs synced and powered down
+through the Virtio console. Exact scans found no EROFS worker, RCU stall, vold
+fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic or Darwin signal; the
+recovered macOS `artd` abort is the sole matched error. Full tables and evidence
+paths are in
+[`android-17-boot-timing-20260825.md`](android-17-boot-timing-20260825.md).
+
 ## Android GPT and APEX payloads moved to ext4 (2026-08-25)
 
 The current accepted Android bundle is
