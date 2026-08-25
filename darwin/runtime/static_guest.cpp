@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <pthread.h>
+#include <time.h>
 #endif
 
 namespace uml::emulator {
@@ -83,7 +84,41 @@ enum class DispatchExit : std::size_t {
 
 using DispatchClock = std::chrono::steady_clock;
 
-void profile_dispatch(DispatchClock::time_point started,
+struct DispatchProfileStart final {
+	DispatchClock::time_point elapsed;
+	std::uint64_t thread_cpu_nanoseconds;
+	bool thread_cpu_valid;
+};
+
+[[nodiscard]] std::uint64_t thread_cpu_nanoseconds(bool &valid) noexcept
+{
+	timespec value{};
+	valid = clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0;
+	if (!valid)
+		return 0;
+	return static_cast<std::uint64_t>(value.tv_sec) * 1'000'000'000ULL +
+		static_cast<std::uint64_t>(value.tv_nsec);
+}
+
+[[nodiscard]] DispatchProfileStart begin_dispatch_profile() noexcept
+{
+	const auto elapsed = DispatchClock::now();
+	if (!dispatch_profile_enabled())
+		return {
+			.elapsed = elapsed,
+			.thread_cpu_nanoseconds = 0,
+			.thread_cpu_valid = false,
+		};
+	bool thread_cpu_valid = false;
+	const auto thread_cpu = thread_cpu_nanoseconds(thread_cpu_valid);
+	return {
+		.elapsed = elapsed,
+		.thread_cpu_nanoseconds = thread_cpu,
+		.thread_cpu_valid = thread_cpu_valid,
+	};
+}
+
+void profile_dispatch(DispatchProfileStart started,
 		      std::size_t instructions, DispatchExit reason)
 {
 	if (!dispatch_profile_enabled())
@@ -91,17 +126,25 @@ void profile_dispatch(DispatchClock::time_point started,
 	struct Statistics final {
 		std::uint64_t calls{};
 		std::uint64_t nanoseconds{};
+		std::uint64_t cpu_nanoseconds{};
 		std::uint64_t instructions{};
 		std::uint64_t maximum_nanoseconds{};
 		std::array<std::uint64_t,
 			static_cast<std::size_t>(DispatchExit::count)> exits{};
 	};
 	static thread_local Statistics statistics;
+	bool thread_cpu_valid = false;
+	const auto stopped_cpu = thread_cpu_nanoseconds(thread_cpu_valid);
 	const auto elapsed = static_cast<std::uint64_t>(
 		std::chrono::duration_cast<std::chrono::nanoseconds>(
-			DispatchClock::now() - started).count());
+			DispatchClock::now() - started.elapsed).count());
+	const auto cpu_elapsed = started.thread_cpu_valid && thread_cpu_valid &&
+		stopped_cpu >= started.thread_cpu_nanoseconds
+		? stopped_cpu - started.thread_cpu_nanoseconds
+		: 0;
 	++statistics.calls;
 	statistics.nanoseconds += elapsed;
+	statistics.cpu_nanoseconds += cpu_elapsed;
 	statistics.instructions += instructions;
 	statistics.maximum_nanoseconds = std::max(
 		statistics.maximum_nanoseconds, elapsed);
@@ -118,13 +161,14 @@ void profile_dispatch(DispatchClock::time_point started,
 		std::memcpy(thread_name.data(), "unnamed", sizeof("unnamed"));
 	std::fprintf(stderr,
 		"Darwin dispatch profile thread=%s calls=%llu nanoseconds=%llu "
-		"instructions=%llu average-us=%.1f max-us=%.1f "
+		"cpu-nanoseconds=%llu instructions=%llu average-us=%.1f max-us=%.1f "
 		"average-instructions=%.1f syscall=%llu fault=%llu interrupt=%llu "
 		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu "
 		"pc-alignment=%llu fatal=%llu\n",
 		thread_name.data(),
 		static_cast<unsigned long long>(statistics.calls),
 		static_cast<unsigned long long>(statistics.nanoseconds),
+		static_cast<unsigned long long>(statistics.cpu_nanoseconds),
 		static_cast<unsigned long long>(statistics.instructions),
 		statistics.nanoseconds / (statistics.calls * 1000.0),
 		statistics.maximum_nanoseconds / 1000.0,
@@ -417,7 +461,7 @@ int run_common_guest(
 		return DARWIN_UML_EVENT_FATAL;
 
 #if UML_RUNTIME_PROFILING
-	const auto started = DispatchClock::now();
+	const auto started = begin_dispatch_profile();
 #endif
 	const auto &interrupt = runtime->interrupt;
 	uml::cpu::ExecutionRequest request{
