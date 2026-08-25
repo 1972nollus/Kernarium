@@ -1,5 +1,28 @@
 # Refactor progress
 
+## 2026-08-25: build-time-ART three-platform qualification
+
+- Reran the discarded pre-crash timing campaign after rebuilding all Apple
+  consumers with the gadget cache fix. With gadgets, 4 vCPUs, 2 GiB, 16 KiB,
+  normal boot and hardware Virgl, macOS measured 72.858/54.594 seconds
+  first/second boot, Simulator 77.500/38.940, and the physical iPad
+  384.418/182.400.
+- The physical iPad remains the slowest host. Cold `artd` took 150.368 seconds
+  versus 40.261 on macOS and 49.097 on Simulator. Warm iPad skipped `artd` but
+  spent 56.252 seconds in codec-list generation and another 32.895 seconds
+  from codec exit to completion.
+- The macOS console contains 22 unique runtime dex2oat inputs, all under
+  `/apex`; ordinary partition applications use their build artifacts. Its
+  warm boot started neither `artd` nor dex2oat. The prior ten-APEX-input count
+  was an observed lower bound.
+- All six runs completed without timeout or forced termination, and exact
+  scans found no Darwin signal, panic, oops, RCU stall, lockup, OOM, EROFS,
+  userdata-recognition, Virtio-GPU response, or ART-crash signature. See
+  [`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md).
+- Documented the destructive `devicectl` directory-copy semantics in
+  `AGENTS.md`: target the exact `Documents/<bundle>.kern`, preserve and verify
+  siblings, and never copy a staged parent or use a broad `Documents` target.
+
 ## 2026-08-25: gadget cache slot-replacement link fix
 
 - Fixed the `ProgramCache` slot whose memoised `LinkRecord` survived the slot
@@ -30,7 +53,8 @@
 - Independently verified and accepted
   `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` from clean outer revision
   `87eaee1e433ce8db423cf48819084755ebd5c014`. Its ACK ELF is unchanged. Matched
-  cold/warm runtime measurements on all three Apple hosts remain the next gate.
+  cold/warm runtime measurements on all three Apple hosts were the next gate
+  and are completed in the newer entry above.
 
 ## 2026-08-25: Android build-time ART investigation
 

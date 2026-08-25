@@ -1,20 +1,47 @@
 # Android 17 build-time ART investigation (2026-08-25)
 
-## Result
+## Accepted implementation and runtime result
 
-The current Android product already enables AOSP dexpreopt, but inherited
-`system_other` policy prevents most ordinary application artifacts from being
-installed in any image that this product publishes. The minimal local fix is
-to clear `BOARD_USES_SYSTEM_OTHER_ODEX` in the project-owned device
-`BoardConfig.mk`, keep `PRODUCT_BUILD_SYSTEM_OTHER_IMAGE := false`, rebuild
-incrementally with the existing Ninja output, and require the resulting
-`odex`/`vdex` files beside their APKs in `system`, `system_ext`, and `product`.
+The local placement repair is implemented and accepted in release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`.
+`BOARD_USES_SYSTEM_OTHER_ODEX` resolves empty, the product still has no
+`system_other` image, generated Soong policy reports `HasSystemOther=false`,
+and target-files contains complete adjacent ARM64 artifacts for the 26
+required ordinary applications. The preserved AOSP Ninja output built the
+candidate incrementally; no clean build or build-system change was used.
 
-This should move all 26 observed first-boot verification jobs for ordinary
-partition APKs from the guest to the x86_64 builder. It will not, by itself,
-move the ten observed jobs for APKs contained in updatable APEXes: pinned AOSP
-17 deliberately disables dexpreopt for non-system-server APEX variants. That
-is a separate, materially larger problem and is not part of the first fix.
+Runtime qualification after host crash fix `051260e3` is complete. The macOS
+first-boot console contains no ordinary-partition dex2oat input and no
+ordinary-partition unusable-artifact diagnostic. It contains 22 unique
+runtime dex2oat inputs, all below active `/apex` mounts. The macOS warm boot
+starts neither `artd` nor dex2oat. The previous ten-APEX-input observation was
+therefore a lower bound on the unsupported APEX boundary, not a complete
+product inventory.
+
+Matched first/second boot times are 72.858/54.594 seconds on macOS,
+77.500/38.940 on Simulator, and 384.418/182.400 on the physical iPad. All six
+runs completed, and exact scans found no ART crash, OOM, RCU stall, filesystem
+regression, Virtio-GPU response error, panic, or Darwin signal. Full phase
+tables, comparisons, and evidence paths are in
+[`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md).
+
+## Investigation conclusion (pre-implementation)
+
+The pre-change Android product already enabled AOSP dexpreopt, but inherited
+`system_other` policy prevented most ordinary application artifacts from being
+installed in any image that the product published. The investigation's
+minimal local fix was to clear `BOARD_USES_SYSTEM_OTHER_ODEX` in the
+project-owned device `BoardConfig.mk`, keep
+`PRODUCT_BUILD_SYSTEM_OTHER_IMAGE := false`, rebuild incrementally with the
+existing Ninja output, and require the resulting `odex`/`vdex` files beside
+their APKs in `system`, `system_ext`, and `product`.
+
+This was expected to move all 26 observed first-boot verification jobs for
+ordinary partition APKs from the guest to the x86_64 builder. It was not
+expected, by itself, to move the ten then-observed jobs for APKs contained in
+updatable APEXes: pinned AOSP 17 deliberately disables dexpreopt for
+non-system-server APEX variants. That was a separate, materially larger
+problem and was not part of the first fix.
 
 No AOSP source, product file, build script, output tree, image, or accepted
 release was changed during this investigation. No Android build was started.
@@ -191,11 +218,18 @@ is not required to remove the current first-boot `verify` work.
 
 ## Residual APEX work
 
-The ten observed APEX-contained APKs are:
+The pre-change capture's ten observed APEX-contained APKs were:
 
 - SdkSandbox, AppSearch, Bluetooth, DeviceLockController, ExtServices, and
   MediaProvider;
 - OnDevicePersonalization, PermissionController, TetheringNext, and OsuLogin.
+
+The accepted candidate's complete macOS capture contains those ten plus 12
+additional APEX-contained inputs: AdServicesApk, HealthConnectBackupRestore,
+HealthConnectController, Photopicker, NfcNciApex, FederatedCompute, rkpdapp,
+TelecomUi, ServiceConnectivityResources, VmTerminalApp, WebAppService, and
+WifiDialog. All 22 runtime commands remain below `/apex`; none is an ordinary
+partition regression.
 
 `build/soong/java/dexpreopt.go` explicitly returns dexpreopt-disabled for an
 APEX variant unless it is an APEX system-server jar. Its own comments limit
@@ -204,9 +238,9 @@ prebuilt-APEX post-processing; ordinary apps inside an APEX are not covered.
 Clearing the board switch therefore cannot create supported artifacts for
 these APKs.
 
-The first candidate should leave that behavior unchanged and measure the
+The accepted candidate leaves that behavior unchanged and measures the
 residual. Do not claim that all first-boot ART work moved to build time. If the
-ten jobs remain dominant, a later local-only investigation can define an APEX
+APEX jobs remain dominant, a later local-only investigation can define an APEX
 artifact location plus update and invalidation semantics across APK version,
 APEX versioned mount path, boot image, ART release, class-loader context, and
 instruction-set features. That is not a one-variable product change.
@@ -224,15 +258,15 @@ The following shortcuts are rejected:
 
 ## Acceptance measurement
 
-Before publishing, the candidate target-files must contain no `SYSTEM_OTHER`
-tree or image and must contain adjacent ARM64 `odex`/`vdex` pairs for every
-required ordinary app. CredentialManager is the representative profile-guided
-check; Jelly, LatinIME, Settings, SystemUI, and ThemePicker are representative
-user-facing checks.
+The accepted target-files contains no `SYSTEM_OTHER` tree or image and has
+adjacent ARM64 `odex`/`vdex` pairs for every required ordinary app.
+CredentialManager is the representative profile-guided check; Jelly, LatinIME,
+Settings, SystemUI, and ThemePicker are representative user-facing checks.
 
-Boot a fresh COW with the established gadgets, four-vCPU, 2 GiB, 16 KiB,
-hardware-Virgl configuration. Capture the Virtio-console ART log separately
-from `ttyS0` kernel/init logs. Acceptance requires:
+The accepted campaign booted a fresh COW with the established gadgets,
+four-vCPU, 2 GiB, 16 KiB, hardware-Virgl configuration. It captured the
+Virtio-console ART log separately from `ttyS0` kernel/init logs. Acceptance
+required:
 
 - no first-boot dex2oat input below `/system`, `/system_ext`, `/product`,
   `/vendor`, or `/odm`;
@@ -244,10 +278,11 @@ from `ttyS0` kernel/init logs. Acceptance requires:
   regression; and
 - clean persistence, shutdown, and a warm boot that does not invoke `artd`.
 
-Measure the same fresh candidate on macOS, iOS Simulator, and the physical
-iPad with the established matched setup. Compare total boot, `artd` lifetime,
-first-to-last dex2oat interval, codec exit, boot-animation exit, and completion.
-The placement fix is expected to reduce cold ART time. It is not expected to
-fix the separate macOS warm post-codec/UI tail, and reducing `artd` exposure
-does not by itself prove the previously observed macOS Binder `EFAULT` abort
-is fixed.
+The same fresh candidate was measured on macOS, iOS Simulator, and the
+physical iPad with the established matched setup. The placement fix reduced
+the observed cold result relative to the preceding release on all three hosts,
+but it did not remove APEX runtime work or every host-specific post-codec/UI
+tail. The preceding macOS cold baseline also contained a recovered Binder
+`EFAULT` abort, so its large delta is not attributed solely to dexpreopt. The
+clean current run does not by itself prove that unrelated one-off failure can
+never recur.

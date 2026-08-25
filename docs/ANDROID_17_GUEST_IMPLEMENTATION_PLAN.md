@@ -79,6 +79,35 @@ ACK has 34 topics, final tree
 and release `6.18.21-ga64f141f6266`; it remains built-in-only, 16 KiB and ABI
 v8 / `0x3871ad612337ea76`.
 
+The accepted release has now completed matched runtime qualification after
+host fix `051260e3`. With gadgets, 4 vCPUs, 2 GiB, 16 KiB, normal boot,
+point-mode 160 DPI, hardware Virgl, a fresh COW and then the exact persisted
+COW, macOS reached `sys.boot_completed=1` in 72.858 seconds first boot and
+54.594 seconds second boot. The iOS 26.5 iPad mini Simulator measured 77.500
+and 38.940 seconds; the physical iPad mini 6 on iOS 18.5 measured 384.418 and
+182.400 seconds. All six runs completed without timeout or forced termination,
+and exact scans found no Darwin signal, panic, oops, RCU stall, lockup, OOM,
+EROFS worker, userdata-recognition fallback, Virtio-GPU response error, or ART
+crash.
+
+The physical device remains the slowest host: its first-boot `artd` interval
+was 150.368 seconds versus 40.261 on macOS and 49.097 on Simulator. Its warm
+boot skipped `artd`, but codec-list generation took 56.252 seconds and the
+codec-exit-to-completion tail took 32.895 seconds. The macOS first-boot console
+shows 22 unique runtime dex2oat inputs, every one below `/apex`, and no
+ordinary-partition runtime compilation. Full phase tables and preceding-release
+comparisons are in
+[`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md).
+
+The Simulator crash that invalidated the provisional timing was a host gadget
+cache defect, not an Android image or ACK defect. A cache slot handed to a
+different address space retained the prior owner's memoised `LinkRecord`, so a
+translation could be published into the wrong address space and outlive the
+retired owner's storage. `store()` now clears that memo and the deterministic
+cross-address-space regression covers the failure, including under
+ASan/UBSan. The separate older macOS signal at address `0x3` has a different
+signature and remains an isolated open observation.
+
 The schema-2 product has one 17,179,869,184-byte GPT with ten partitions. Its
 normal `init_boot` ramdisk and stock AOSP `recovery` ramdisk are boot-image-v4
 payloads selected as bounded byte ranges; writable `misc` carries the standard
@@ -93,25 +122,24 @@ framework service and repeatedly restarted `system_server`. The accepted
 product excludes `com.android.hardware.contexthub`; the target-files verifier
 and builder fixture reject its APEX, VINTF/permission payload and feature name.
 
-The corrected warm normal boot reaches `sys.boot_completed=1` at guest second
-100.21, keeps one `system_server` through a greater-than-30-second dwell,
-passes the settings, package, browser-resolution and feature checks, and powers
-down cleanly. Explicit stock recovery starts `/system/bin/recovery`, remains
-stable through its dwell and powers down cleanly. One fresh run reached boot
-completion at 587.70 and then panicked at 594.44 on a kernel-mode Darwin signal
-11. It did not reproduce on the exact persisted state, is excluded from passing
-evidence, and remains the only open stability observation from this overlay
-acceptance.
+The earlier overlay acceptance's corrected warm normal boot reached
+`sys.boot_completed=1` at guest second 100.21, kept one `system_server` through
+a greater-than-30-second dwell, passed the settings, package,
+browser-resolution and feature checks, and powered down cleanly. Explicit
+stock recovery started `/system/bin/recovery`, remained stable through its
+dwell and powered down cleanly. One fresh run reached boot completion at
+587.70 and then panicked at 594.44 on a kernel-mode Darwin signal 11. It did
+not reproduce on the exact persisted state, is excluded from passing evidence,
+has a different signature from the fixed gadget-cache crash, and remains an
+isolated open stability observation.
 
-The earlier overlay descriptor passed producer, copied-release and installed
-verification, all focused Android policy/series tests, the macOS Android
-target, both Android iOS runtime slices and final XCFramework packaging. The
-current ext4-APEX descriptor has passed producer, copied-release, release
-contract and installed verification. The macOS Android product, both Android
-iOS runtime slices, final XCFramework packaging, and the signed physical-iOS
-application were then rebuilt against that exact installed release. The app
-was installed on the connected iPad before the fresh runtime qualification
-below.
+Those earlier overlay and ext4-APEX descriptors passed producer,
+copied-release and installed verification, all focused Android policy/series
+tests, the macOS Android target, both Android iOS runtime slices and final
+XCFramework packaging. The macOS Android product, both Android iOS runtime
+slices, final XCFramework packaging, and the signed physical-iOS application
+were rebuilt against the ext4-APEX release before its historical fresh runtime
+qualification below.
 
 A subsequent physical-iPad cold boot used 4 vCPUs, 2 GiB, the gadgets engine,
 and a fresh custom-overlay bundle. It reached the normal Android first stage,
@@ -157,7 +185,7 @@ fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or Darwin-signal
 signature. Evidence is retained under
 `.build/android/measurements/ipad-ext4-apex-retry-20260825`.
 
-The requested matched Apple-host follow-up is complete at outer revision
+The preceding pre-ART matched Apple-host baseline completed at outer revision
 `c529aeaa1a520ba0c0b870e170e72c8967b31a98`. The standalone macOS product and
 Kernarium's iOS 26.5 iPad mini Simulator product used that same accepted
 release, gadgets, 4 vCPUs, 2 GiB, 16 KiB, normal boot, point-mode 160 DPI,
@@ -201,9 +229,12 @@ verify the resolved and generated dexpreopt policy, and target-files checks
 require adjacent ARM64 artifacts for the 26 ordinary apps from the captured
 first-boot workload. The accepted producer release was built incrementally
 from the preserved Ninja output. Pinned AOSP deliberately does not dexpreopt
-ordinary APEX-contained apps, so the ten APEX jobs remain an explicit runtime
-residual. The evidence, source trace, implementation boundary, rejected
-shortcuts, and pending matched acceptance measurement are in
+ordinary APEX-contained apps. The accepted macOS first-boot capture contains
+22 unique runtime inputs, all within that APEX boundary, while the warm capture
+starts neither `artd` nor dex2oat. The earlier ten-input observation was a
+lower bound rather than a complete residual inventory. The evidence, source
+trace, implementation boundary, rejected shortcuts, and completed matched
+acceptance measurement are in
 [`android-17-art-build-time-investigation-20260825.md`](android-17-art-build-time-investigation-20260825.md).
 
 ## Historical implementation handoff (2026-08-24)

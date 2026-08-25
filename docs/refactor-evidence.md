@@ -1,5 +1,17 @@
 # Refactor evidence
 
+## Android 17 build-time-ART platform qualification (2026-08-25)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Product tuple | Accepted release `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` was measured after host gadget fix `051260e3`. All products used gadgets, 4 vCPUs, 2 GiB, 16 KiB pages, normal boot, point-mode 160 DPI, hardware Virgl, a fresh COW and then the exact same persisted COW. macOS and the physical iPad used 1133 x 695; the native Simulator surface was 744 x 1081, only 2.14% more pixels. |
+| Completion result | `.build/android/measurements/platform-compare-artpreopt-fixed-4vcpu-2g-20260825-051260e3` records macOS at 72.858/54.594 seconds first/second boot, Simulator at 77.500/38.940, and the physical iPad at 384.418/182.400. The common boundary is host launch to init's first `sys.boot_completed=1` action. One pair per platform is phase-distribution evidence, not a statistical benchmark. |
+| Dominant phases | Cold `artd` start-to-exit is 40.261 seconds on macOS, 49.097 on Simulator, and 150.368 on iPad. None of the warm boots starts `artd`. The iPad warm codec-list service takes 56.252 seconds and codec exit to completion takes another 32.895; the macOS warm boot-animation-exit tail is 16.703 seconds versus 0.837 on Simulator and 4.198 on iPad. |
+| ART placement boundary | The macOS first-boot hvc0 capture has 22 unique runtime dex2oat inputs and every one is below `/apex`. It has no input below `/system`, `/system_ext`, `/product`, `/vendor`, or `/odm` and no ordinary-partition unusable-artifact diagnostic. The warm capture starts neither `artd` nor dex2oat. The preceding ten-APEX-input observation was a lower bound; pinned AOSP's non-system-server APEX limitation remains the residual. |
+| Stability and lifecycle | All six runs reached completion, dwelled 30 seconds, and ended without timeout or forced termination. macOS synced and powered down through hvc0 with status zero; Simulator acknowledged inactive/background storage settlement before successful termination; physical iOS performed the host flush and exited with the expected forwarded-SIGTERM status 143. Exact scans found no Darwin signal, panic, oops, RCU stall, lockup, OOM, EROFS worker, userdata-recognition fallback, Virtio-GPU `0x1204`/`0x1205`, or ART crash. |
+| Preceding-release comparison | Against the same-spec ext4/APEX observations, current cold results are 90.8% lower on macOS, 29.3% on Simulator, and 26.9% on iPad; current warm results are 68.2% lower on macOS and 5.5% on Simulator. The old macOS cold run recovered from an `artd` Binder `-EFAULT`, and the old warm run had a long post-codec tail, so those macOS deltas are observations rather than a clean causal ART A/B. Full tables and limitations are in [`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md). |
+| Device-transfer incident | A broad `devicectl` destination flattened a `.kern` bundle, and a staged-parent retry replaced `Documents`, destroying three old on-device bundles and their COWs. Their compact host evidence remains but their device state is not recoverable. The current bundle was then transferred fresh and recursively verified. `AGENTS.md` now requires the exact `Documents/<bundle>.kern` destination and before/after sibling checks, and forbids broad and staged-parent copies. |
+
 ## Android 17 minimal-overlay acceptance (2026-08-25)
 
 | Boundary | Current evidence and limitation |

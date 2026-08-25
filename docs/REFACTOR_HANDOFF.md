@@ -1,5 +1,52 @@
 # Refactor handoff
 
+## Android build-time-ART platform qualification complete (2026-08-25)
+
+The fixed Apple consumers were rebuilt and the accepted release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` was measured with
+gadgets, 4 vCPUs, 2 GiB, 16 KiB pages, normal boot, point-mode 160 DPI,
+hardware Virgl, a fresh COW, and then the exact same persisted COW. The
+completion boundary is host launch to init's first `sys.boot_completed=1`
+action.
+
+| Host product | First boot | Second boot |
+| --- | ---: | ---: |
+| macOS standalone | 72.858 s | 54.594 s |
+| iOS 26.5 iPad mini Simulator | 77.500 s | 38.940 s |
+| iPad mini 6, iOS 18.5 | 384.418 s | 182.400 s |
+
+The iPad is 5.28 times the macOS time and 4.96 times the Simulator time cold;
+it is 3.34 and 4.68 times their warm times. Its cold `artd` interval is
+150.368 seconds versus 40.261 on macOS and 49.097 on Simulator. The warm iPad
+does not start `artd`; its codec-list service takes 56.252 seconds and the
+remaining codec-exit-to-completion tail takes 32.895 seconds. The clean macOS
+warm run retains a separate 16.703-second boot-animation-exit-to-completion
+tail, versus 0.837 on Simulator and 4.198 on the device.
+
+The macOS first-boot console records 22 unique runtime dex2oat inputs, all
+below active `/apex` mounts. It has no ordinary-partition runtime input or
+ordinary-partition unusable-artifact diagnostic. The warm capture starts
+neither `artd` nor dex2oat. The pre-change ten-APEX-input count was therefore
+an observed lower bound; pinned AOSP's non-system-server APEX boundary is the
+only residual first-boot compilation owner seen here.
+
+All six runs completed without a timeout or forced termination. Exact scans
+found no Darwin signal, panic, oops, RCU stall, lockup, OOM, EROFS worker,
+userdata-recognition fallback, Virtio-GPU `0x1204`/`0x1205`, or ART crash. The
+provisional timings collected before the gadget cache fix remain discarded.
+Full milestone tables, preceding-release comparisons, limits, and evidence
+paths are in
+[`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md).
+
+One physical-device deployment mistake is material to future work:
+`devicectl device copy to` copies a directory's contents. A direct broad
+`Documents` destination flattened a bundle, and a staged-parent retry replaced
+`Documents`, destroying three older on-device timing bundles and their COWs.
+Their host-side compact logs remain, but those persisted device states are not
+recoverable. `AGENTS.md` now requires the exact
+`Documents/<bundle-name>.kern` destination, before/after sibling listings and
+recursive wrapper verification, and forbids broad or staged-parent repair.
+
 ## Gadget cache slot-replacement link defect fixed (2026-08-25)
 
 A 4-vCPU, 2 GiB, 16 KiB Android 17 gadgets guest on the iOS 26.5 iPad mini
@@ -58,9 +105,10 @@ incremental build in 8 minutes 16 seconds; producer verification inspected
 and all 69 ext4 APEX payloads. The independently copied bundle is now accepted
 as `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, from clean outer
 revision `87eaee1e433ce8db423cf48819084755ebd5c014`. Its ACK ELF is byte-identical
-to the preceding release. Matched cold/warm runtime qualification on macOS,
-Simulator, and physical iPad is the next gate; no new timing result is claimed
-by this checkpoint.
+to the preceding release. At this checkpoint matched cold/warm runtime
+qualification on macOS, Simulator, and physical iPad was still the next gate;
+it is completed in the newer section above, while this checkpoint itself makes
+no timing claim.
 
 ## Android build-time ART investigation (2026-08-25)
 
