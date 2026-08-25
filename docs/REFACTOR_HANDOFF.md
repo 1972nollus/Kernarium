@@ -1,5 +1,41 @@
 # Refactor handoff
 
+## Android iOS cold-boot CPU profile complete (2026-08-25)
+
+The accepted Android 17 release was profiled through fresh-COW cold boot with
+Release Kernarium applications on the physical iPad and iOS Simulator. Both
+used gadgets, 4 vCPUs, 2 GiB, 16 KiB pages, normal boot, point-mode 160 DPI,
+and hardware Virgl.
+
+| CPU owner | iPad CPU-s / share | Simulator CPU-s / share |
+| --- | ---: | ---: |
+| Real gadget bodies | 356.384 / 62.17% | 128.402 / 51.13% |
+| Translation | 19.635 / 3.43% | 7.469 / 2.97% |
+| Cache lookup + maintenance | 17.400 / 3.04% | 28.508 / 11.35% |
+| Memory/MMU runtime | 100.187 / 17.48% | 41.888 / 16.68% |
+| I/O/device paths on CPU | 5.775 / 1.01% | 15.357 / 6.12% |
+| Native guest-kernel slice | 37.170 / 6.48% | 3.797 / 1.51% |
+| Whole process | 573.213 / 100% | 251.115 / 100% |
+
+Real gadget execution is the dominant physical-device cost. Translation plus
+all software translation-cache work is only 6.46% of iPad CPU; I/O/device
+execution is 1.01% and excludes off-CPU wait. From `artd` start through boot
+completion consumes 72.24% of iPad CPU and 72.71% of Simulator CPU. The
+largest stage is `artd` start to codec generation start: 228.461 iPad CPU-s
+and 94.301 Simulator CPU-s.
+
+Physical Time Profiler classified 95.916% of carrier CPU and leaves 4.084%
+explicitly unresolved. Simulator Time Profiler repeatedly disconnected in the
+Xcode 26.6/iOS 26.5 DTServiceHub handshake, so the accepted Release fallback
+uses consecutive `sample(1)` windows plus process-CPU telemetry and has an
+0.810 active-sample/CPU cross-check. Its category shares are approximate and
+its sampling almost doubles wall time; they are not a replacement for the
+uninstrumented timing campaign. The Release rerun reproduced the preliminary
+Debug-app category shape, excluding build configuration as the reason for its
+higher late cache-maintenance share. Full stage tables, definitions, method
+limits, integrity scan, and retained evidence are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+
 ## Android build-time-ART platform qualification complete (2026-08-25)
 
 The fixed Apple consumers were rebuilt and the accepted release

@@ -99,6 +99,21 @@ ordinary-partition runtime compilation. Full phase tables and preceding-release
 comparisons are in
 [`android-17-artpreopt-boot-timing-20260825.md`](android-17-artpreopt-boot-timing-20260825.md).
 
+A subsequent fresh-COW cold-boot CPU profile used Release applications and the
+same guest compute, memory, page-size, boot, density, and Virgl policy on the
+physical iPad and Simulator. The iPad recorded 573.213 process CPU-s through
+the profile boundary: real gadget bodies consumed 356.384 CPU-s (62.17%),
+memory/MMU runtime 100.187 CPU-s (17.48%), and translation plus software
+translation-cache lookup and maintenance 37.035 CPU-s (6.46%). Its I/O/device
+paths consumed only 5.775 CPU-s (1.01%) on CPU. Simulator's fallback sampling
+attribution is approximate, but again identifies real gadget execution as the
+largest owner at 51.13%; its translation/cache subtotal is 14.33%, driven by
+late program-cache maintenance rather than translation itself. From `artd`
+start through boot completion accounts for 72.24% of iPad CPU and 72.71% of
+Simulator CPU. Full whole-boot and per-stage tables, category definitions,
+confidence gates, and evidence paths are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+
 The Simulator crash that invalidated the provisional timing was a host gadget
 cache defect, not an Android image or ACK defect. A cache slot handed to a
 different address space retained the prior owner's memoised `LinkRecord`, so a

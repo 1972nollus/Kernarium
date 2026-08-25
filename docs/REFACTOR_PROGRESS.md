@@ -1,5 +1,25 @@
 # Refactor progress
 
+## 2026-08-25: Android iOS cold-boot CPU profile
+
+- Profiled fresh-COW Release cold boots on the physical iPad and iOS Simulator
+  with gadgets, 4 vCPUs, 2 GiB, 16 KiB pages, normal boot, 160 DPI, and
+  hardware Virgl.
+- Physical Time Profiler recorded 573.213 process CPU-s. Real gadget bodies
+  own 356.384 CPU-s (62.17%), memory/MMU runtime 100.187 (17.48%), all
+  translation/cache work 37.035 (6.46%), and on-CPU I/O/device paths 5.775
+  (1.01%). Carrier symbol classification is 95.916% with 4.084% retained as
+  unresolved.
+- Simulator Time Profiler could not survive the Xcode 26.6/iOS 26.5
+  DTServiceHub handshake. The accepted Release `sample(1)` plus process-CPU
+  fallback is approximate: real gadget bodies own 51.13%, memory/MMU 16.68%,
+  and translation/cache 14.33%. Its 0.810 active-sample/CPU cross-check and
+  nearly doubled wall time are recorded limits, not hidden overhead.
+- From `artd` start through boot completion owns 72.24% of iPad CPU and 72.71%
+  of Simulator CPU. The largest interval on both is `artd` start to codec-list
+  generation start. See
+  [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+
 ## 2026-08-25: build-time-ART three-platform qualification
 
 - Reran the discarded pre-crash timing campaign after rebuilding all Apple
