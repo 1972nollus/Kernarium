@@ -1,6 +1,6 @@
 # Refactor progress
 
-## 2026-08-25: staged Android build-time ART packaging
+## 2026-08-25: accepted Android build-time ART packaging
 
 - Cleared the inherited `system_other` odex route in the exact-synced device
   BoardConfig without creating that image or changing compiler filters.
@@ -8,7 +8,14 @@
   ARM64 artifact coverage for the 26 ordinary first-boot applications.
 - Added negative fixtures for a `SYSTEM_OTHER` payload, a missing required
   application preopt, and an incomplete `odex`/`vdex` pair. The focused
-  `android17-builder-lane` test passes; no Android build is claimed yet.
+  `android17-builder-lane` test passes.
+- Reused the preserved AOSP Ninja output for an 8-minute-16-second incremental
+  build. Producer checks passed for 4,845 target-files entries, 1,206 AArch64
+  executables, VINTF, the fixed GPT, and 69/69 ext4 APEX payloads.
+- Independently verified and accepted
+  `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` from clean outer revision
+  `87eaee1e433ce8db423cf48819084755ebd5c014`. Its ACK ELF is unchanged. Matched
+  cold/warm runtime measurements on all three Apple hosts remain the next gate.
 
 ## 2026-08-25: Android build-time ART investigation
 

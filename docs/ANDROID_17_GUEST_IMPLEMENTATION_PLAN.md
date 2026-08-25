@@ -18,7 +18,7 @@ SELinux enforcing and hardware Virgl SurfaceFlinger. Six further accepted
 releases added the touchscreen pointer and boot animation, NAPI receive, free
 guest page reporting, virtually mapped task stacks, and correct mixed-COW UBD
 request advancement, then removed a circular warm-boot theme wait. The accepted
-release is `android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`.
+release is `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`.
 
 The guest also runs on iOS. Kernarium embeds a third signed runtime framework
 carrying the ACK kernel and boots an Android guest from a `.kern` bundle in its
@@ -69,8 +69,8 @@ Jelly's upstream optional camera, microphone and location declarations remain
 unchanged; no hardware-omission patch is retained.
 
 The accepted release is
-`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, produced from clean outer
-revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`. AOSP projects-manifest
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, produced from clean outer
+revision `87eaee1e433ce8db423cf48819084755ebd5c014`. AOSP projects-manifest
 SHA-256 is
 `c19af30b12aadb52c941c8555e16aa26d01330fa028c796fef946117e233ab50`.
 ACK has 34 topics, final tree
@@ -188,30 +188,22 @@ signature. The sole matched failure was the recovered macOS cold `artd`
 `SIGABRT`. Full phase tables, limits and retained evidence paths are in
 [`android-17-boot-timing-20260825.md`](android-17-boot-timing-20260825.md).
 
-### Build-time ART investigation
+### Build-time ART implementation and runtime gate
 
-The first-boot ART cost has been traced to a product-policy mismatch, without
-changing or rebuilding Android. Dexpreopt is enabled, boot/framework artifacts
-are present, and the product is `userdebug`, but the inherited mainline board
-sets `BOARD_USES_SYSTEM_OTHER_ODEX := true` while this product deliberately
-sets `PRODUCT_BUILD_SYSTEM_OTHER_IMAGE := false`. Soong consequently generates
-ordinary application artifacts for `system_other` and then skips their image
-installs. The accepted target-files has 67 ordinary partition APK entries but
-only six application `odex`/`vdex` pairs. CredentialManager's complete
-`speed-profile` artifacts exist in Soong intermediates but are absent beside
-its packaged APK.
+The first-boot ART cost was traced to a product-policy mismatch. Dexpreopt was
+enabled, but the inherited mainline board set
+`BOARD_USES_SYSTEM_OTHER_ODEX := true` while this product deliberately disables
+the `system_other` image. Soong generated ordinary application artifacts for
+an image that was never packaged.
 
-The captured first boot ran 36 unique `verify` jobs: 26 ordinary partition
-APKs and ten APKs inside active APEXes. The minimal next implementation is to
-clear `BOARD_USES_SYSTEM_OTHER_ODEX` with an empty assignment in the
-project-owned device `BoardConfig.mk`, preserve the existing Ninja output, and
-add fail-closed resolved-config and target-files coverage. Do not add a
-`system_other` partition, change first-boot dexopt properties, seed userdata,
-or change compiler filters in the same candidate. Pinned AOSP deliberately
-does not dexpreopt ordinary APEX-contained apps, so the ten APEX jobs are an
-explicit residual and must not be claimed as moved by this fix. The evidence,
-source trace, exact implementation boundary, rejected shortcuts, and matched
-acceptance measurement are in
+The project-owned BoardConfig now clears that inherited route. Build guards
+verify the resolved and generated dexpreopt policy, and target-files checks
+require adjacent ARM64 artifacts for the 26 ordinary apps from the captured
+first-boot workload. The accepted producer release was built incrementally
+from the preserved Ninja output. Pinned AOSP deliberately does not dexpreopt
+ordinary APEX-contained apps, so the ten APEX jobs remain an explicit runtime
+residual. The evidence, source trace, implementation boundary, rejected
+shortcuts, and pending matched acceptance measurement are in
 [`android-17-art-build-time-investigation-20260825.md`](android-17-art-build-time-investigation-20260825.md).
 
 ## Historical implementation handoff (2026-08-24)

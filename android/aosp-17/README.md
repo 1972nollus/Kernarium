@@ -442,8 +442,8 @@ a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current
 descriptor selects
-`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, published from clean
-outer revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`.
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, published from clean
+outer revision `87eaee1e433ce8db423cf48819084755ebd5c014`.
 The static kernel, target-files, VINTF, SELinux, both partition-backed
 ramdisks, ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW
 UBD, warm-boot theme, minimal application/feature set, external Jelly, Context
@@ -519,29 +519,34 @@ final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
 The current accepted release is
-`android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`. It uses the 34-topic ACK
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. It uses the 34-topic ACK
 tree `621a0ab42d8990aa0960bf5d341d89b8f1042723`; topic 34 loads a bounded
 initrd range from the GPT host file. The built-in-only 16 KiB ELF reports
 `6.18.21-ga64f141f6266`. The schema-2 release contains a ten-partition
-17,179,869,184-byte GPT compressed to 704,869,601 bytes and no standalone
+17,179,869,184-byte GPT compressed to 706,631,372 bytes and no standalone
 ramdisk. Its normal and stock-recovery ramdisks are verified in place inside
 `init_boot` and `recovery`. All five immutable GPT payload filesystems and all
 69 packaged APEX payloads are ext4. Route `p0008` changes the sole explicit
 Virtualization APEX override; the product default covers the remaining APEXes,
-and the target-files verifier checks their nested filesystem magic. The ACK
+and the target-files verifier checks their nested filesystem magic. The build
+also clears the inherited `system_other` odex route and packages adjacent
+ARM64 `odex`/`vdex` artifacts for the 26 ordinary applications observed in
+the prior first-boot ART workload. The ACK
 kernel is byte-identical to the preceding accepted overlay release, including
 its unchanged built-in EROFS driver. `metadata/accepted-release.env` owns the
 exact release, ACK, AOSP, Jelly and common-ABI identities.
 
-That exact release also passed a fresh physical-iOS boot on a wired iPad mini
-6 running iOS 18.5. Kernarium used gadgets, 4 vCPUs, 2 GiB, 16 KiB guest pages,
+The preceding `20260825-8c5881ab-ext4-apex` release passed a fresh physical-iOS
+boot on a wired iPad mini 6 running iOS 18.5. Kernarium used gadgets, 4 vCPUs,
+2 GiB, 16 KiB guest pages,
 normal boot and hardware Virgl from a bundle with no pre-existing COW. The five
 GPT payload filesystems mounted read-only ext4 by wall second 0.951 and APEX
 bootstrap activated 67 ext4-backed packages by wall second 2.640. Init reached
 `sys.boot_completed=1` at wall second 525.731 and remained stable beyond the
 30-second dwell. Runtime scans found no EROFS worker, RCU stall, userdata
 fallback, Virtio-GPU `0x1204`/`0x1205`, OOM, oops, panic, or Darwin-signal
-signature. This qualification did not modify the retained EROFS driver.
+signature. That result is the matched pre-ART-packaging baseline; the current
+release requires fresh and persisted-state remeasurement on every Apple host.
 
 LineageOS Jelly is fetched at upstream commit
 `767833067da7bbbb639782bbddec33f602215c3d` and replays exactly two local

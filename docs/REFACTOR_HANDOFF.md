@@ -1,16 +1,23 @@
 # Refactor handoff
 
-## Android build-time ART implementation staged (2026-08-25)
+## Android build-time ART release accepted for runtime qualification (2026-08-25)
 
-The local producer now clears inherited `BOARD_USES_SYSTEM_OTHER_ODEX` after
+The local producer clears inherited `BOARD_USES_SYSTEM_OTHER_ODEX` after
 the Cuttlefish board is evaluated, while retaining
 `PRODUCT_BUILD_SYSTEM_OTHER_IMAGE := false`. `build-aosp.sh` rejects a
 nonempty resolved value and verifies the generated Soong dexpreopt booleans
 after the build. The target-files verifier forbids every `SYSTEM_OTHER` entry,
 requires adjacent ARM64 `odex`/`vdex` artifacts for the 26 ordinary apps seen
 compiling on first boot, and rejects incomplete pairs. Focused positive and
-negative builder-lane fixtures pass. No AOSP build or accepted-release change
-is claimed by this checkpoint; the preserved Ninja output is the next gate.
+negative builder-lane fixtures pass. The preserved AOSP output completed an
+incremental build in 8 minutes 16 seconds; producer verification inspected
+4,845 target-files entries, 1,206 AArch64 executables, VINTF, the fixed GPT,
+and all 69 ext4 APEX payloads. The independently copied bundle is now accepted
+as `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, from clean outer
+revision `87eaee1e433ce8db423cf48819084755ebd5c014`. Its ACK ELF is byte-identical
+to the preceding release. Matched cold/warm runtime qualification on macOS,
+Simulator, and physical iPad is the next gate; no new timing result is claimed
+by this checkpoint.
 
 ## Android build-time ART investigation (2026-08-25)
 
@@ -68,7 +75,7 @@ paths are in
 
 ## Android GPT and APEX payloads moved to ext4 (2026-08-25)
 
-The current accepted Android bundle is
+The preceding matched baseline Android bundle was
 `android17-ack6.18-16k-20260825-8c5881ab-ext4-apex`, published from clean
 outer revision `8c5881ab23bc1586c6cf2b0d67f201d8e13a9053`. The producer
 verified 4,608 target-files entries, 1,147 target executables, VINTF, and all
