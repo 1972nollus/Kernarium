@@ -13,7 +13,6 @@
 #include <atomic>
 #include <cstddef>
 #include <condition_variable>
-#include <cstdio>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -293,9 +292,6 @@ public:
 			argc, argv, rootfs_, user_network_);
 		if (!prepared.valid || prepared.arguments.empty())
 			return -UML_EMULATOR_INVALID_ARGUMENT;
-		if (!prepared.host_cpu_profile_summary.empty())
-			std::fprintf(stderr, "UML: %s\n",
-				prepared.host_cpu_profile_summary.c_str());
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
 		runtime_.set_top_byte_ignore(prepared.top_byte_ignore);

@@ -1,7 +1,7 @@
 From 1d27ff79b282fb0097014f5ba7bee5b7a31c00f9 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 13 Aug 2026 18:21:18 +0900
-Subject: [PATCH 15/35] uml: service cross-CPU work on fixed carriers
+Subject: [PATCH 15/34] uml: service cross-CPU work on fixed carriers
 
 ---
  arch/arm64/um/asm/processor.h |  9 +++++++++

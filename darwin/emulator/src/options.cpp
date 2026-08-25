@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
-#include "runtime/host_cpu_profile.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -186,18 +185,17 @@ EmulatorOptions prepare_emulator_options(
 	bool default_user_network)
 {
 	EmulatorOptions prepared;
-	/* Policy can append at most ten kernel arguments. Keep the final argc
+	/* Policy can append at most eight kernel arguments. Keep the final argc
 	 * representable by the fixed-width kernel entry ABI before allocating or
 	 * inspecting a caller-supplied vector. */
-	constexpr int maximum_appended_arguments = 10;
+	constexpr int maximum_appended_arguments = 8;
 	if (argc < 0 ||
 	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
 	    (argc != 0 && argv == nullptr)) {
 		prepared.valid = false;
 		return prepared;
 	}
-	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 10U);
-	std::optional<std::string> apple_cpu_capacities;
+	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 8U);
 	for (int index = 0; index < argc; ++index) {
 		if (argv[index] == nullptr) {
 			prepared.valid = false;
@@ -223,20 +221,6 @@ EmulatorOptions prepare_emulator_options(
 		}
 		if (argument == "--guest-top-byte-ignore") {
 			prepared.top_byte_ignore = true;
-			continue;
-		}
-		if (argument.starts_with(
-				::uml::runtime::apple_cpu_capacities_option)) {
-			if (apple_cpu_capacities) {
-				prepared.valid = false;
-				return prepared;
-			}
-			apple_cpu_capacities = argument.substr(
-				::uml::runtime::apple_cpu_capacities_option.size());
-			if (apple_cpu_capacities->empty()) {
-				prepared.valid = false;
-				return prepared;
-			}
 			continue;
 		}
 		if (argument.starts_with("--jit-gadget-fallback")) {
@@ -314,29 +298,6 @@ EmulatorOptions prepare_emulator_options(
 	if (default_user_network && !has_prefix(prepared.arguments, "ip="))
 		prepared.arguments.emplace_back("ip=dhcp");
 	prepared.guest_cpus = guest_cpu_count(prepared.arguments);
-	if (apple_cpu_capacities) {
-		if (has_prefix(
-				prepared.arguments,
-				::uml::runtime::darwin_cpu_capacity_argument)) {
-			prepared.valid = false;
-			return prepared;
-		}
-		auto profile = ::uml::runtime::prepare_apple_host_cpu_profile(
-			prepared.guest_cpus, *apple_cpu_capacities);
-		prepared.host_cpu_profile_summary = std::move(profile.summary);
-		if (profile.status ==
-		    ::uml::runtime::HostCpuProfileStatus::invalid_configuration) {
-			prepared.valid = false;
-			return prepared;
-		}
-		if (profile.status ==
-		    ::uml::runtime::HostCpuProfileStatus::asymmetric) {
-			if (!has_prefix(prepared.arguments, "ncpus="))
-				prepared.arguments.push_back(
-					"ncpus=" + std::to_string(prepared.guest_cpus));
-			prepared.arguments.push_back(std::move(profile.kernel_argument));
-		}
-	}
 	prepared.guest_memory_bytes =
 		configured_guest_memory_bytes(prepared.arguments);
 	if (prepared.jit_cache_budget == 0)

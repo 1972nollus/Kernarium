@@ -336,42 +336,6 @@ void test_guest_cpu_count_matches_kernel_policy()
 		"later valid ncpus did not match kernel argument ordering");
 }
 
-void test_apple_cpu_capacity_host_option()
-{
-	const char *uniform[]{"uml-test", "ncpus=1",
-		"--apple-cpu-capacities=1024,512"};
-	auto options = uml::emulator::prepare_emulator_options(
-		3, uniform, "/tmp/rootfs.erofs", false);
-	require(options.valid,
-		"valid Apple capacity configuration was rejected");
-	require(!contains(options, uniform[2]),
-		"Apple capacity host option reached the kernel command line");
-	require(!contains(options, "darwin_cpu_capacity_v1=1024"),
-		"uniform host topology reached the kernel command line");
-	require(!options.host_cpu_profile_summary.empty(),
-		"requested Apple capacity profile produced no diagnostic");
-
-	const char *malformed[]{"uml-test",
-		"--apple-cpu-capacities=1024,1024"};
-	require(!uml::emulator::prepare_emulator_options(
-		2, malformed, "/tmp/rootfs.erofs", false).valid,
-		"malformed Apple capacity configuration was accepted");
-
-	const char *duplicate[]{"uml-test",
-		"--apple-cpu-capacities=1024,512",
-		"--apple-cpu-capacities=1024,500"};
-	require(!uml::emulator::prepare_emulator_options(
-		3, duplicate, "/tmp/rootfs.erofs", false).valid,
-		"duplicate Apple capacity configuration was accepted");
-
-	const char *conflicting[]{"uml-test", "ncpus=1",
-		"darwin_cpu_capacity_v1=1024",
-		"--apple-cpu-capacities=1024,512"};
-	require(!uml::emulator::prepare_emulator_options(
-		4, conflicting, "/tmp/rootfs.erofs", false).valid,
-		"host and direct kernel capacity profiles were combined");
-}
-
 void test_invalid_and_informational_inputs()
 {
 	const char *invalid_engine[]{"--execution-engine=unknown"};
@@ -417,7 +381,6 @@ int main()
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_scalable_native_kernel_layout_geometry();
 		test_guest_cpu_count_matches_kernel_policy();
-		test_apple_cpu_capacity_host_option();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {

@@ -823,20 +823,6 @@ const char* selectedExecutionEngine()
 }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-void appendAndroidCpuCapacityExperiment(std::vector<std::string>& arguments)
-{
-    const char* capacities =
-        std::getenv("KERNARIUM_ANDROID_CPU_CAPACITIES");
-    if (capacities == nullptr || capacities[0] == '\0')
-        return;
-    /* The shared emulator parser validates the complete ordered level list,
-     * discovers the live Apple topology, and keeps this host-only control out
-     * of the kernel command line. Leaving the variable unset is the topology-
-     * off arm; no unmeasured lower-level ratio becomes product policy. */
-    arguments.emplace_back(
-        std::string {"--apple-cpu-capacities="} + capacities);
-}
-
 std::size_t checkedRegularFileSize(
     const std::filesystem::path& path,
     std::uintmax_t expectedSize = 0)
@@ -1071,7 +1057,6 @@ int runtimeRun(
             bootMode, geekbenchWorkloads, ctsCampaign, derivativeRootfs};
         /* Android tags heap pointers, so the guest must run with the top byte
          * ignored exactly as it does on the macOS Android product. */
-        appendAndroidCpuCapacityExperiment(arguments);
         arguments.emplace_back("--guest-top-byte-ignore");
         arguments.emplace_back(consoleBridge.kernelArgument());
 #else

@@ -336,15 +336,6 @@ def main() -> int:
         and "KERNARIUM_RUNTIME_FRAMEWORK_NAME" in runtime_source,
         "runtime does not publish its versioned identity API",
     )
-    for contract in (
-        'std::getenv("KERNARIUM_ANDROID_CPU_CAPACITIES")',
-        'std::string {"--apple-cpu-capacities="} + capacities',
-        "appendAndroidCpuCapacityExperiment(arguments);",
-    ):
-        require(
-            contract in runtime_source,
-            f"Android runtime lacks CPU-topology experiment control {contract}",
-        )
     require(
         "__attribute__((constructor))" not in runtime_source,
         "deferred runtime still owns the pre-main timer constructor",
@@ -538,7 +529,6 @@ def main() -> int:
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'boot_mode_option{"--android-boot-mode="}',
-        '"  --apple-cpu-capacities=1024,<measured-lower-levels>\\n"',
         "section$start$__DATA$__uml_android",
         '"ubd0=" + instance.string()',
         '"initrd=" + base_disk.string()',
