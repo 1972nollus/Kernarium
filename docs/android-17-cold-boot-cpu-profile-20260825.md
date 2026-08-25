@@ -1,5 +1,76 @@
 # Android 17 iOS cold-boot CPU profile (2026-08-25)
 
+## Connected-iPad memory-limit qualification (2026-08-26)
+
+The physical benchmark target moved from the iPhone to the connected iPad mini
+6. A new campaign used the current anonymous-RAM Release app, unchanged rootfs
+release `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, ACK artifact
+`android-6.18-16k-20260826-a8bbe904-anonram1`, gadgets, 16 KiB pages, point-mode
+160 DPI, hardware Virgl, and a fresh COW for every cold run.
+
+The iOS 26.5 iPad mini Simulator completed the full requested 2 GiB matrix:
+
+| vCPUs | Cold | Warm |
+| ---: | ---: | ---: |
+| 2 | 105.922 s | 53.857 s |
+| 4 | 72.873 s | 41.157 s |
+
+The physical iPad did not supply a comparable timing. Every cold attempt was
+terminated by iOS before init's first `sys.boot_completed=1` action:
+
+| vCPUs | Guest RAM | `artd` start | Signal-9 line | Process exit |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 2,048 MiB | 33.865 s | 35.929 s | 36.101 s |
+| 2 | 2,048 MiB, retry | 32.332 s | 34.150 s | 34.293 s |
+| 4 | 2,048 MiB | not reached | 31.194 s | 31.220 s |
+| 2 | 1,792 MiB | 32.633 s | 34.381 s | 34.625 s |
+| 2 | 1,536 MiB | 35.075 s | 38.122 s | 38.295 s |
+
+The requested 1,536 MiB trial therefore fails the viability gate even though
+it lasts 3.67 seconds longer than the 1,792 MiB trial. A live iPad system-log
+capture around the second 2 GiB attempt recorded `ReportCrash` preparing fatal
+report 309 and `ReportMemoryException`. The other attempts end at the same
+abrupt signal-9 boundary without a guest panic, RCU stall, lockup, or OOM, but
+they did not retain their own host classification. None of these durations is
+a boot-performance result. Raw summaries and wall logs are under:
+
+```text
+.build/android/boot-comparison-anonram-20260826/
+```
+
+### Anonymous-memory compression cannot safely be disabled
+
+The installed public iOS 26.5 SDK was searched for an anonymous-memory
+compression policy. It exposes no no-compression `mmap`, `madvise`, Mach VM,
+or task-policy flag. This agrees with Apple's documented integrated VM model,
+which cannot be turned off. `MAP_NORESERVE` changes reservation policy rather
+than compressor eligibility; `MADV_WILLNEED` is not a pin; `MAP_NOCACHE` makes
+pages easier to reclaim; and reusable or purgeable memory permits content loss
+and cannot hold guest physical memory.
+
+Apple's XNU implementation establishes the only relevant public escape hatch:
+`mlock()` calls `vm_map_wire_kernel()`, maps resource shortage to `EAGAIN`, and
+`mlockall()` returns `ENOSYS`. The compressor path asserts that a page handed
+to it is not wired. Thus `mlock()` can prevent compression only by making each
+page permanently resident. Applying it to the 1.5--2 GiB guest range would
+fault and wire the sparse reservation, encounter per-process and system wire
+limits, and, if it succeeded, increase the pressure already causing iOS to
+terminate the app. It is not an acceptable implementation and no host code was
+changed.
+
+Primary references are Apple's
+[virtual-memory overview](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/AboutMemory.html),
+[app-memory-limit guidance](https://developer.apple.com/documentation/xcode/reducing-your-app-s-memory-use),
+and the open-source XNU implementations of
+[`mlock`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_mman.c)
+and the
+[compressor page-out path](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_pageout.c).
+
+The next useful experiment is to account for and reduce the host footprint of
+the anonymous root and its non-copying `vm_remap()` aliases, or reduce the
+guest's live boot working set. Do not wire the guest range, restore file-backed
+RAM, or mark guest pages purgeable merely to complete this matrix.
+
 ## Anonymous guest RAM verifies the diagnosis (2026-08-26)
 
 The accepted fix replaces the mapped regular-file physical-memory backing for

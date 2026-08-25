@@ -1,5 +1,23 @@
 # Refactor progress
 
+## 2026-08-26: iPad Android memory-ceiling probe
+
+- The requested two-vCPU 1,536 MiB fresh-COW iPad retry reached `artd` at
+  35.075 seconds but iOS killed Kernarium with signal 9 at 38.122 seconds;
+  process exit completed at 38.295 seconds and Android never reported boot
+  completion.
+- The same app also failed at 2,048 MiB with two and four vCPUs and at
+  1,792 MiB with two vCPUs. A live system log classified one repeated 2 GiB
+  termination as `ReportMemoryException`; none of the guest logs contains a
+  panic, RCU stall, or guest OOM before the host kill.
+- The public iOS 26.5 SDK exposes no per-map or per-process anonymous-memory
+  compression opt-out. `mlock()` would wire and commit the guest range and
+  aggravate the memory ceiling, while `mlockall()` is unimplemented in XNU, so
+  no unsafe compression-disabling code was added.
+- The 2 GiB Simulator matrix remains valid at 105.922/53.857 seconds cold/warm
+  with two vCPUs and 72.873/41.157 seconds with four. A matched iPad comparison
+  remains blocked pending a real process-footprint reduction.
+
 ## 2026-08-26: Android kernel/rootfs release decoupling
 
 - Added an independently accepted `android-6.18` 16 KiB kernel artifact and a

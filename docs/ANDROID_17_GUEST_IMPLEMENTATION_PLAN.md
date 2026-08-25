@@ -45,10 +45,41 @@ The initial source pins, verified on 2026-08-20, are:
 These are exact starting identities, not floating branches. A future update
 is a reviewed metadata change that records a new full commit and tree.
 
-## Active implementation handoff (2026-08-25)
+## Active implementation handoff (2026-08-26)
 
 This section is the current entry point and supersedes the 2026-08-24 handoff
 below wherever the two differ.
+
+The current Apple product selects the independently published built-in-only
+16 KiB ACK artifact `android-6.18-16k-20260826-a8bbe904-anonram1` while keeping
+the accepted rootfs release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. Android physical memory
+uses one lazily reserved anonymous root plus non-copying `vm_remap()` aliases;
+the sparse file descriptor is only an identity and size token. This removed the
+former physical-device file-pager/writeback loop without eagerly touching the
+guest range.
+
+The physical benchmark target is now the connected iPad mini 6. The 2 GiB
+Simulator matrix completed at 105.922/53.857 seconds cold/warm with two vCPUs
+and 72.873/41.157 seconds with four. The iPad cannot yet provide a matched
+result: fresh-COW cold boots were killed by iOS before boot completion at
+2,048 MiB with two and four vCPUs, at 1,792 MiB with two vCPUs, and at the
+requested 1,536 MiB with two vCPUs. The 1,536 MiB run reached `artd` at 35.075
+seconds, received signal 9 at 38.122 seconds, and completed process exit at
+38.295 seconds. A live system log classified one repeated 2 GiB termination as
+`ReportMemoryException`; the guest logs contain no panic, RCU stall, or OOM.
+These are failed viability probes, not boot-time measurements.
+
+The public iOS 26.5 SDK contains no control that leaves anonymous pages
+pageable while exempting them from compression. XNU's `mlock()` instead wires
+pages under per-process and global resource limits, and `mlockall()` is
+unimplemented. Wiring the 1.5--2 GiB guest range would destroy lazy allocation
+and worsen the observed host memory ceiling, so no compression-disabling code
+was added. Continue by measuring and reducing the footprint/accounting of the
+anonymous root and its aliases or the guest's live boot working set. Do not
+restore file-backed guest RAM, wire the range, use purgeable mappings, or count
+the incomplete iPad runs as benchmarks. Detailed evidence is in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
 The follow-up asymmetric-host prototype was implemented, measured, rejected,
 and reverted in `8b143c28`. Dynamic discovery found two P and four E cores on

@@ -1,5 +1,53 @@
 # Refactor handoff
 
+## Android iPad memory ceiling blocks the matched boot matrix (2026-08-26)
+
+The physical benchmark target is now the connected iPad mini 6 rather than the
+iPhone. The current anonymous-RAM Release app, unchanged Android rootfs, ACK
+artifact `android-6.18-16k-20260826-a8bbe904-anonram1`, gadgets, 16 KiB pages,
+point-mode display, and hardware Virgl completed the requested 2 GiB Simulator
+matrix: cold/warm boot took 105.922/53.857 seconds with two vCPUs and
+72.873/41.157 seconds with four vCPUs. Those are valid boot-completion
+measurements.
+
+The matching fresh-COW iPad cold boots did not complete. iOS terminated the
+application with signal 9 in every case:
+
+| vCPUs | Guest RAM | `artd` start | Process exit | Result |
+| ---: | ---: | ---: | ---: | --- |
+| 2 | 2,048 MiB | 33.865 s | 36.101 s | no boot completion |
+| 2 | 2,048 MiB, retry | 32.332 s | 34.293 s | no boot completion |
+| 4 | 2,048 MiB | not reached | 31.220 s | no boot completion |
+| 2 | 1,792 MiB | 32.633 s | 34.625 s | no boot completion |
+| 2 | 1,536 MiB | 35.075 s | 38.295 s | no boot completion |
+
+A live iPad system-log capture during the second 2,048 MiB run recorded
+`ReportCrash` formulating fatal report 309 and `ReportMemoryException`, which
+classifies that termination as an iOS host memory-limit event. The lower-memory
+runs have the same abrupt signal-9 boundary and no guest panic, RCU stall, or
+OOM record, but did not retain a separate host classification. They are
+viability failures, not boot-time samples. The warm-COW transfer was cancelled
+safely when the requested lower-memory trials superseded it; no broad
+Documents operation or sibling-bundle removal occurred. Evidence is below
+`.build/android/boot-comparison-anonram-20260826`.
+
+There is no safe supported iOS control to make ordinary anonymous mappings
+pageable but exempt from compression. The public iOS 26.5 SDK has no
+`MAP_*`, `MADV_*`, or Mach VM no-compression option. Apple documents that its
+integrated VM cannot be disabled. XNU shows that `mlock()` wires the requested
+range, subject to resource limits, while `mlockall()` returns `ENOSYS`; the
+compressor operates only on non-wired pages. Wiring up to 1.5--2 GiB would
+fault and permanently retain the guest pages, defeat the lazy reservation, and
+worsen the memory-limit condition, so it was deliberately not implemented.
+`MAP_NORESERVE`, `MAP_NOCACHE`, reusable, and purgeable mappings do not provide
+the required semantics and the latter options can make guest RAM reclaimable
+or discardable.
+
+The next physical-device investigation must reduce the process footprint or
+the accounting/working-set cost of its anonymous `vm_remap()` aliases. Do not
+re-enable file-backed RAM, wire the guest range, use purgeable memory, or treat
+the incomplete iPad attempts as benchmark results.
+
 ## Android anonymous RAM fixes the iPhone cold-boot penalty (2026-08-26)
 
 The Android ACK now requests a reserved physical-memory path, and the host
