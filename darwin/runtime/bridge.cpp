@@ -5,10 +5,11 @@
 
 #include "device/sockets/socket_paths.hpp"
 #include "guest_files.hpp"
+#include "memory/shared_backing.hpp"
 
-#include <atomic>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,35 +23,27 @@ namespace {
 constexpr char anonymous_physical_memory_path[] =
 	"uml:anonymous-physical-memory";
 
-int open_anonymous_shared_memory() noexcept
+int open_anonymous_backing_token() noexcept
 {
-	static std::atomic_uint sequence{0};
-	char name[64];
-
-	for (unsigned int attempt = 0; attempt != 16; ++attempt) {
-		const unsigned int suffix =
-			sequence.fetch_add(1, std::memory_order_relaxed);
-		const int length = snprintf(name, sizeof(name),
-			"/uml-phys-%ld-%u", static_cast<long>(getpid()), suffix);
-		if (length < 0 || static_cast<size_t>(length) >= sizeof(name)) {
-			errno = ENAMETOOLONG;
-			return -1;
-		}
-		const int descriptor = shm_open(name,
-			O_RDWR | O_CREAT | O_EXCL, 0600);
-		if (descriptor < 0) {
-			if (errno == EEXIST)
-				continue;
-			return -1;
-		}
-		if (shm_unlink(name) == 0)
-			return descriptor;
-		const int error = errno;
-		(void)close(descriptor);
-		errno = error;
+	const char *temporary_directory = getenv("TMPDIR");
+	if (temporary_directory == nullptr || temporary_directory[0] == '\0')
+		temporary_directory = "/tmp";
+	char name[PATH_MAX];
+	const int length = snprintf(name, sizeof(name),
+		"%s/uml-phys-token-XXXXXX", temporary_directory);
+	if (length < 0 || static_cast<size_t>(length) >= sizeof(name)) {
+		errno = ENAMETOOLONG;
 		return -1;
 	}
-	errno = EEXIST;
+	const int descriptor = mkstemp(name);
+	if (descriptor < 0)
+		return -1;
+	if (unlink(name) == 0 &&
+	    ::uml::memory::register_anonymous_shared_backing(descriptor))
+		return descriptor;
+	const int error = errno;
+	(void)close(descriptor);
+	errno = error;
 	return -1;
 }
 
@@ -58,11 +51,12 @@ int open_anonymous_shared_memory() noexcept
 
 int darwin_uml_open(const char *path, int flags, int mode)
 {
-	/* A diagnostic ACK can request a POSIX shared-memory object through the
-	 * existing fixed-arity open bridge. It retains the fd/offset aliasing
-	 * contract but is anonymous VM rather than an APFS regular file. */
+	/* Android ACK requests this unlinked sparse descriptor solely as an
+	 * identity and size token. The memory layer recognizes every duplicate of
+	 * the descriptor and aliases a lazily reserved anonymous Mach VM object;
+	 * the token itself is never mapped or written as guest RAM. */
 	if (path != nullptr && strcmp(path, anonymous_physical_memory_path) == 0)
-		return open_anonymous_shared_memory();
+		return open_anonymous_backing_token();
 	const int descriptor = open(path, flags, mode);
 	::uml::platform::record_guest_file(descriptor, flags);
 	return descriptor;
@@ -70,6 +64,11 @@ int darwin_uml_open(const char *path, int flags, int mode)
 
 int darwin_uml_fcntl(int fd, int command, long argument)
 {
+	if (command == F_PUNCHHOLE &&
+	    ::uml::memory::is_anonymous_shared_backing(fd)) {
+		errno = EOPNOTSUPP;
+		return -1;
+	}
 	return fcntl(fd, command, argument);
 }
 

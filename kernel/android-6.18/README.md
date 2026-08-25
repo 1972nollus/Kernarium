@@ -188,19 +188,25 @@ continues to use the same checked implementation. This keeps the kernelless
 boot-image-v4 ramdisk inside the release-owned disk instead of introducing a
 second standalone copy.
 
-Topic 35 is the anonymous-physical-memory performance diagnostic. Android asks
-the existing fixed-arity `darwin_uml_open()` bridge for a reserved internal
-path, and the host returns an immediately unlinked POSIX shared-memory object
-instead of an APFS regular file. `ftruncate()` establishes the 2 GiB virtual
-extent, but neither side touches or commits every 16 KiB page at startup: guest
-physical memory remains demand paged. The object preserves the shared-fd and
-offset aliasing contract required by the kernel and emulator mappings while
-removing the regular-file cache and its logical writeback path. Darwin does not
-support `F_PUNCHHOLE` on this object, so the existing ACK page-reporting driver
-disables itself after the first rejected range rather than repeatedly issuing
-discard calls. Runtime qualification must determine whether avoiding
-file-backed page-out outweighs retaining touched anonymous memory under iOS
-pressure.
+Topic 35 selects anonymous host VM for Android guest physical memory. Android
+asks the existing fixed-arity `darwin_uml_open()` bridge for a reserved internal
+path, and the host returns an immediately unlinked sparse temporary descriptor
+as a size and identity token. The kernel's `ftruncate()` establishes its 2 GiB
+logical extent, so duplicates passed through the existing fd/offset interfaces
+can still be recognized. The host memory layer lazily reserves one
+`MAP_PRIVATE | MAP_ANON` root of that size and uses non-copying `vm_remap()`
+aliases for kernel, software-MMU, native-address-space, and vhost-user views.
+The token is never mapped, read, or written as guest RAM. Neither side touches
+or commits every 16 KiB page at startup, and ordinary image descriptors retain
+their existing file-backed `mmap()` path.
+
+`F_PUNCHHOLE` is meaningless for the token, so the fixed-arity bridge returns
+`EOPNOTSUPP` and the existing ACK page-reporting driver disables itself after
+the first rejected range rather than repeatedly issuing discard calls. A
+matched, fresh-COW, two-vCPU/2-GiB iPhone 15 Pro Max cold boot reached the first
+`sys.boot_completed=1` action in 80.270 seconds, versus 136.298 seconds with
+the file-backed release. This qualifies the boot-performance decision; it does
+not yet claim sustained lifecycle or extreme host-memory-pressure behavior.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

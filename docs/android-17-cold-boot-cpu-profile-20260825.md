@@ -1,5 +1,56 @@
 # Android 17 iOS cold-boot CPU profile (2026-08-25)
 
+## Anonymous guest RAM verifies the diagnosis (2026-08-26)
+
+The accepted fix replaces the mapped regular-file physical-memory backing for
+Android with a lazily reserved anonymous Mach VM root. An unlinked sparse file
+remains only as the descriptor identity and logical-size token required by the
+ACK and fd-passing interfaces; it is never mapped, read, or written as guest
+RAM. All consumers use non-copying `vm_remap()` aliases of the anonymous root.
+No 16 KiB page is touched merely to reserve the 2 GiB extent. Because there is
+no backing-file range to deallocate, the host rejects `F_PUNCHHOLE` and ACK
+free-page reporting disables itself after its first attempt.
+
+A fresh-COW Release run on the same actively cooled iPhone 15 Pro Max used
+gadgets, two vCPUs, 2 GiB, 16 KiB pages, point-mode 160 DPI, hardware Virgl,
+normal boot, the unchanged rootfs release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, and the new independent
+ACK artifact `android-6.18-16k-20260826-a8bbe904-anonram1`. The completion
+boundary remained host launch through init's first `sys.boot_completed=1`
+action.
+
+| Milestone | File-backed baseline | Anonymous VM | Delta |
+| --- | ---: | ---: | ---: |
+| Kernel banner | 1.201 s | 1.004 s | -0.197 s |
+| APEX activated | 5.933 s | 5.649 s | -0.284 s |
+| Zygote started | 7.368 s | 8.722 s | +1.354 s |
+| SurfaceFlinger started | 8.730 s | 10.174 s | +1.444 s |
+| Boot animation started | 18.534 s | 12.053 s | -6.481 s |
+| Codec generator started | 54.613 s | 58.051 s | +3.438 s |
+| Codec generator exited | 99.707 s | 63.597 s | -36.111 s |
+| Boot animation exited | 118.658 s | 77.787 s | -40.872 s |
+| Boot complete | **136.298 s** | **80.270 s** | **-56.027 s** |
+
+The fix reduces wall time by **41.11%** and is **1.698x** faster. Codec-list
+generation collapses from 45.095 to 5.546 seconds, accounting for most of the
+late-boot recovery. The remaining gap to the previously matched 58.867-second
+Simulator result is 1.364x; this device run recovers 72.36% of the former
+device-over-Simulator excess.
+
+The log confirms Linux `6.18.21-g6f355385a00b`, exactly two online vCPUs,
+2,048 MiB, the 2,147,483,648-byte anonymous reservation, hardware Virgl, and a
+Nominal thermal state. It contains no panic or RCU stall and the timed process
+terminated normally after the five-second dwell. This single matched boot
+verifies the root cause and boot-performance fix; sustained lifecycle and
+extreme host-memory-pressure behavior remain outside this measurement.
+
+The retained summaries and wall log are:
+
+```text
+.build/android/boot-2vcpu-20260825/iphone15promax-ios26-cold-2vcpu-2g/
+.build/android/measurements/iphone15promax-anonram-2vcpu-2g-20260826-69423830/cold-sparse-token/
+```
+
 ## Host-OS trace isolates guest-physical-memory churn (2026-08-26)
 
 Later Xcode System Trace, Virtual Memory Trace, and Activity Monitor captures

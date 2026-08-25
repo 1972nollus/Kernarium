@@ -4,6 +4,7 @@
 #include "virtio_gpu_device.hpp"
 
 #include "socket_paths.hpp"
+#include "memory/shared_backing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -637,13 +638,13 @@ void VhostUserServer::configureMemory(VhostUserMessage& message)
                 throw std::runtime_error(
                     "guest-memory region exceeds its backing descriptor");
             }
-            void* mapped = ::mmap(
+            void* mapped = ::uml::memory::map_shared_backing(
                 nullptr,
                 static_cast<std::size_t>(region.size),
                 PROT_READ | PROT_WRITE,
                 MAP_SHARED,
                 descriptor,
-                static_cast<off_t>(region.mmapOffset));
+                region.mmapOffset);
             if (mapped == MAP_FAILED)
                 throw std::runtime_error(
                     "guest-memory mmap failed: " +

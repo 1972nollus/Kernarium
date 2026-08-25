@@ -7,6 +7,18 @@ target_link_libraries(uml_memory_contract INTERFACE
     UML::GuestPageConfiguration)
 target_compile_features(uml_memory_contract INTERFACE cxx_std_20)
 
+add_library(uml_memory_shared_backing STATIC shared_backing.cpp)
+add_library(UML::MemorySharedBacking ALIAS uml_memory_shared_backing)
+uml_declare_architecture_target(uml_memory_shared_backing memory)
+target_link_libraries(uml_memory_shared_backing PUBLIC UML::MemoryContract)
+target_include_directories(uml_memory_shared_backing PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin)
+target_compile_features(uml_memory_shared_backing PUBLIC cxx_std_20)
+target_compile_options(uml_memory_shared_backing PRIVATE
+    -Wall -Wextra -Werror)
+set_target_properties(uml_memory_shared_backing PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+
 set(_uml_static_mmu_sources
     mmu/address_layout.cpp
     mmu/address_space.cpp
@@ -85,7 +97,9 @@ endif()
 add_library(uml_memory_component INTERFACE)
 add_library(UML::MemoryComponent ALIAS uml_memory_component)
 uml_declare_architecture_target(uml_memory_component memory)
-target_link_libraries(uml_memory_component INTERFACE UML::MemoryContract)
+target_link_libraries(uml_memory_component INTERFACE
+    UML::MemoryContract
+    UML::MemorySharedBacking)
 target_sources(uml_memory_component INTERFACE
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_static_guest_memory>
@@ -139,7 +153,8 @@ if(UML_BUILD_UNIT_TESTS)
     add_library(UML::MemoryTestComponent ALIAS uml_memory_test_component)
     uml_declare_architecture_target(uml_memory_test_component memory)
     target_link_libraries(uml_memory_test_component INTERFACE
-        UML::MemoryContract)
+        UML::MemoryContract
+        UML::MemorySharedBacking)
     target_compile_definitions(uml_memory_test_component INTERFACE
         UML_MEMORY_ALLOCATION_TESTING=1)
     target_sources(uml_memory_test_component INTERFACE

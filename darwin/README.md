@@ -108,6 +108,18 @@ stream socket. The console transport never waits for a client: it retains a
 bounded recent output tail before attachment and drops backpressured output
 with a diagnostic rather than blocking the guest. Its launcher does not search
 for `rootfs.erofs` or alter the current `uml-darwin` product.
+
+The Android ACK physical-memory path uses anonymous host VM rather than a
+mapped regular file. Its reserved `darwin_uml_open()` path returns an unlinked
+sparse descriptor only as the size and identity token expected by the kernel
+and fd-passing protocols. The memory component recognizes its duplicates,
+lazily reserves the logical RAM extent with `MAP_ANON`, and creates all kernel,
+MMU, native-window, and vhost-user views as non-copying Mach aliases of that
+root. It does not touch every page at startup, and the token is never mapped or
+written as RAM. Normal disk and image descriptors keep their ordinary `mmap()`
+behavior. Android free-page reporting receives `EOPNOTSUPP` on its first punch
+attempt and disables itself because there is no file extent to deallocate.
+
 The ordinary macOS product additionally accepts the mutually exclusive
 `--virtio-serial-socket=/absolute/path`. That mode negotiates the standard
 multiport feature and publishes `org.uml.host-serial.0` at

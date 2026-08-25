@@ -1,5 +1,35 @@
 # Refactor handoff
 
+## Android anonymous RAM fixes the iPhone cold-boot penalty (2026-08-26)
+
+The Android ACK now requests a reserved physical-memory path, and the host
+returns an unlinked sparse descriptor only as a logical-size and identity
+token. The token itself is never mapped or written. The memory layer recognizes
+all of its duplicates, lazily reserves one 2 GiB `MAP_ANON` root, and serves
+the kernel, MMU, native-window, and vhost-user mappings through non-copying
+Mach aliases. This removes the regular-file cache and writeback path without
+touching every 16 KiB page at startup. `F_PUNCHHOLE` is rejected for this token,
+so ACK free-page reporting disables after one attempt.
+
+A matched fresh-COW cold boot on the actively cooled iPhone 15 Pro Max used
+the unchanged accepted rootfs, new independent ACK artifact
+`android-6.18-16k-20260826-a8bbe904-anonram1`, gadgets, two vCPUs, 2 GiB,
+16 KiB pages, point-mode 160 DPI, normal boot, and hardware Virgl. It reached
+init's first `sys.boot_completed=1` action in **80.270 seconds**, down from
+**136.298 seconds**: **56.027 seconds / 41.11% less wall time**, or **1.698x
+faster**. Codec-list generation fell from 45.095 to 5.546 seconds. The log
+confirms kernel `6.18.21-g6f355385a00b`, two CPUs, the full anonymous logical
+extent, Nominal thermal state, and no panic or RCU stall.
+
+This directly verifies that file-backed guest-RAM pager churn caused most of
+the physical-device penalty. The remaining device/Simulator ratio against the
+matched 58.867-second Simulator baseline is 1.364x. The accepted result is one
+normal cold-boot qualification, not yet a sustained-lifecycle or extreme
+memory-pressure claim. It supersedes the earlier file-backing-specific advice
+below to preserve hole-punch reporting: anonymous RAM has no file extent to
+reclaim. Full details and retained evidence paths are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+
 ## Android ACK and rootfs releases are independent (2026-08-26)
 
 Commits `87c60bdf` and `2a6461e8` split the Android Apple-product input into

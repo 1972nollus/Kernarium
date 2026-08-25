@@ -2,6 +2,7 @@
 #include "mapped_backing.hpp"
 
 #include "allocation_fault.hpp"
+#include "../shared_backing.hpp"
 
 #include "uml_darwin_guest.h"
 
@@ -36,7 +37,7 @@ std::shared_ptr<MappedBacking> MappedBacking::create(
 	    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX)
 		return {};
 	const auto size = static_cast<std::size_t>(status.st_size);
-	void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+	void *mapping = map_shared_backing(nullptr, size, PROT_READ | PROT_WRITE,
 		MAP_SHARED, fd, 0);
 	if (mapping == MAP_FAILED)
 		return {};

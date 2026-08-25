@@ -3,6 +3,7 @@
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
 #include "../domain_contract.hpp"
+#include "../shared_backing.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -234,9 +235,9 @@ public:
 			throw;
 		}
 
-		void *mapped = mmap(reinterpret_cast<void *>(address), length,
-			protection, MAP_FIXED | MAP_SHARED, fd,
-			static_cast<off_t>(offset));
+		void *mapped = map_shared_backing(
+			reinterpret_cast<void *>(address), length, protection,
+			MAP_FIXED | MAP_SHARED, fd, offset);
 		if (mapped == MAP_FAILED) {
 			rollback();
 			return -1;
@@ -324,9 +325,9 @@ public:
 			errno = found == owners_.end() ? ENOMEM : EBUSY;
 			return -1;
 		}
-		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
-			protection, MAP_FIXED | MAP_SHARED, fd,
-			static_cast<off_t>(offset));
+		void *mapped = map_shared_backing(
+			reinterpret_cast<void *>(slot), host_page_size(), protection,
+			MAP_FIXED | MAP_SHARED, fd, offset);
 		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
 			const int saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
 			if (mapped != MAP_FAILED)
@@ -991,9 +992,8 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 	 * produced by replacing a mapping with MAP_FIXED anonymous memory first. */
 	std::array<std::byte, 16 * 1024> snapshot{};
 	static_assert(snapshot.size() >= 4 * guest_page_size);
-	void *shared_alias = mmap(nullptr, host_page_size(), PROT_READ,
-		MAP_SHARED, direct->second.fd,
-		static_cast<off_t>(direct->second.offset));
+	void *shared_alias = map_shared_backing(nullptr, host_page_size(), PROT_READ,
+		MAP_SHARED, direct->second.fd, direct->second.offset);
 	if (shared_alias == MAP_FAILED)
 		return -1;
 	std::copy_n(static_cast<const std::byte *>(shared_alias), host_page_size(),
