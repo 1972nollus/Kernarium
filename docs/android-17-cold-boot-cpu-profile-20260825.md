@@ -51,6 +51,59 @@ The retained summaries and wall log are:
 .build/android/measurements/iphone15promax-anonram-2vcpu-2g-20260826-69423830/cold-sparse-token/
 ```
 
+### Fresh CPU and VM confirmation after cleanup (2026-08-26)
+
+After superseded profiling and build artifacts were pruned, two new fresh-COW
+captures repeated the same anonymous-RAM configuration on the connected iPhone
+15 Pro Max. The first combined Time Profiler, Activity Monitor, and Virtual
+Memory Trace. Instrument multiplexing omitted the carrier thread names from the
+VM export, so the reduction below deliberately includes all 749,245 VM events
+from the target Kernarium process. This is a stronger swap check than filtering
+only the two carrier threads: no `Page Out` operation exists anywhere in the
+process capture.
+
+| Host VM observation | File-backed baseline | Anonymous VM confirmation |
+| --- | ---: | ---: |
+| Capture span | final 16.230 s | full 115.083 s process lifetime |
+| Page Out | 207,714 / 3,460,628,480 bytes | **0 / 0 bytes** |
+| Process logical writes | 3,322,937,344 bytes | **36,864 bytes** |
+| Page Cache Hit aggregate duration | 6.526 s | 0.254 s |
+| Page Cache Hit median / p95 | 46.375 / 56.625 us | 0.916 / 2.917 us |
+
+Process writes are about 90,140x lower. System `vm-swap-used` also fell from
+459,276,288 to 445,644,800 bytes during the capture, a 13 MiB decrease rather
+than new swap growth. Together, the zero process page-outs, near-zero process
+writes, and falling system swap counter confirm that the former constant
+file-backed guest-RAM page-out/refault loop is fully eliminated. The remaining
+`Page Cache Hit` events are cheap and do not indicate that the anonymous guest
+RAM has silently returned to file backing.
+
+The anonymous working set does still encounter the host compressor: the trace
+records 207,308 `Decompress Memory` events covering 3,396,534,272 bytes, with
+1.223 seconds aggregate service time and 3.500 / 19.583 microsecond median / p95.
+This is anonymous-memory compression, not disk swap or process writeback. It is
+a remaining memory-pressure cost worth investigating separately, but it does
+not weaken the swap-fix result.
+
+The combined trace did not retain carrier names, so a second Time Profiler-only
+fresh-COW boot supplied the CPU breakdown. Its analysis window was 113.614
+seconds: the process used 192.131 CPU-seconds and the two vCPU carriers used
+187.477 CPU-seconds, averaging 1.650 active carrier cores. Carrier work was
+97.870% symbol-classified. The whole-process breakdown was 57.99% real gadget
+execution, 11.21% translation, 6.81% cache lookup/validation plus maintenance,
+13.88% memory/MMU runtime, and approximately zero on-CPU I/O/device work. This
+profiled boot has substantial Instruments overhead and ordinary cold-boot
+variance; it does not replace the 80.270-second uninstrumented performance
+result above.
+
+The cleanup removed the superseded System Trace, VM Trace, CPU-profile, old
+bundle/COW/image, preset/cache, and Xcode build-product directories while
+preserving accepted dependency and kernel artifacts, the current Android
+release, signed app/framework products needed to reproduce the run, the current
+bundle, the small uninstrumented baselines, and these two new traces. After the
+cleanup snapshot, `.build` occupied about 20 GiB before later build activity;
+the two current profiling trees together occupy 397 MiB.
+
 ## Host-OS trace isolates guest-physical-memory churn (2026-08-26)
 
 Later Xcode System Trace, Virtual Memory Trace, and Activity Monitor captures
@@ -217,14 +270,12 @@ hysteresis, or a different device-suitable backing/reclaim contract. It must
 not merely disable page reporting. No emulator, Android image, kernel, or
 runtime product changed during this investigation.
 
-The corrected System Trace and its reduced scheduler/syscall analyses are
-under
-`.build/android/host-os-profile-20260825/iphone15promax-system-trace-2vcpu-window180`.
-Matched VM captures and process/system summaries are under
-`.build/android/host-os-profile-20260825/iphone15promax-vm-final10-2vcpu` and
-`.build/android/host-os-profile-20260825/ios-simulator-vm-final10-2vcpu-restored`.
-The no-reporting control is under
-`.build/android/host-os-profile-20260825/iphone15promax-no-page-reporting-2vcpu/uninstrumented-cold`.
+The corrected System Trace, matched VM captures, and no-reporting control were
+formerly retained under `.build/android/host-os-profile-20260825`. Their raw
+artifacts were intentionally pruned during the 2026-08-26 storage cleanup after
+the anonymous-RAM replacement was accepted and re-profiled. The quantitative
+observations above remain the historical record; the current reproducible
+evidence paths are listed at the end of this document.
 
 ## Matched two-vCPU P-core control
 
@@ -746,31 +797,29 @@ Exact log scans found no Darwin signal, kernel panic, oops, RCU stall, lockup,
 OOM, EROFS worker, unrecognized-userdata fallback, Virtio-GPU `0x1204` or
 `0x1205` response, ART abort, or watchdog signature in either accepted run.
 
-## Retained evidence
+## Current retained evidence
 
 Ignored local evidence is retained under:
 
 ```text
-.build/android/profiling/cold-boot-20260825/
-  device-cold/
+.build/android/boot-2vcpu-20260825/
+  iphone15promax-ios26-cold-2vcpu-2g/
+.build/android/measurements/
+  iphone15promax-anonram-2vcpu-2g-20260826-69423830/cold-sparse-token/
+.build/android/profiling-anonram-20260826/
+  iphone15promax-cpu-vm-2vcpu/
     cold-boot.trace
-    time-profile.xml
-    toc.xml
     summary.json
     ttyS0-wall.log
-    analysis/{cpu-breakdown.json,cpu-breakdown.md,carrier-concurrency.json}
-  simulator-release-cold/
-    samples/window-*.sample.txt
-    host-cpu.csv
+    analysis/{virtual-memory.json,sysmon-process.json,sysmon-system.json}
+  iphone15promax-cpu-only-2vcpu/
+    cold-boot.trace
     summary.json
     ttyS0-wall.log
-    analysis/{cpu-breakdown.json,cpu-breakdown.md,carrier-activity.json}
-  two-vcpu-control/
-    device-cold-retry/{summary.json,ttyS0-wall.log}
-    simulator-cold/{summary.json,ttyS0-wall.log}
+    analysis/{cpu-breakdown.json,cpu-breakdown.md}
 ```
 
-For each accepted profile, stage CPU totals and category CPU totals independently
-sum exactly to the recorded whole-process CPU. The earlier
-`simulator-cold-2` directory is the excluded Debug-app preflight and is not a
-reported result.
+The superseded raw profiling trees documented in the historical sections were
+deleted by explicit request. For the current CPU-only profile, stage CPU totals
+and category CPU totals independently sum exactly to the recorded whole-process
+CPU.

@@ -30,6 +30,33 @@ below to preserve hole-punch reporting: anonymous RAM has no file extent to
 reclaim. Full details and retained evidence paths are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
+A fresh post-fix combined CPU/VM trace now confirms the mechanism directly over
+the entire 115.083-second target-process capture. Across all 749,245 Kernarium
+VM events there are **zero Page Out events and zero page-out bytes**; the
+process writes only 36,864 bytes, about 90,140x below the former 3,322,937,344
+bytes in its final 16.230-second baseline window. Host `vm-swap-used` decreases
+by exactly 13 MiB rather than growing. This closes the constant disk/file-pager
+swap question: it is fully fixed. The host still decompresses anonymous memory
+207,308 times / 3,396,534,272 bytes with 1.223 seconds aggregate service time.
+That compressor activity is a distinct remaining memory-pressure cost, not
+disk swap or guest-RAM writeback.
+
+A separate Time Profiler-only fresh-COW boot, required because the combined
+instrument export omitted carrier names, records 192.131 process CPU-seconds
+over a 113.614-second analysis window. The carriers account for 187.477
+CPU-seconds and average 1.650 active cores: 57.99% of process CPU is real gadget
+execution, 11.21% translation, 6.81% cache work, 13.88% memory/MMU runtime, and
+approximately zero is on-CPU I/O/device work. The instrumented wall time does
+not replace the 80.270-second uninstrumented result.
+
+Superseded raw profiles, stale Android bundles/COWs/images, preset/cache trees,
+and old Xcode products were removed. Accepted dependency/kernel artifacts, the
+current Android release and signed products, the current bundle, the small
+uninstrumented baselines, and the two new traces remain. The local `.build`
+tree was about 20 GiB at the cleanup snapshot before later build activity; the
+two current profiling trees occupy 397 MiB. Exact current evidence paths are in
+the profile document.
+
 ## Android ACK and rootfs releases are independent (2026-08-26)
 
 Commits `87c60bdf` and `2a6461e8` split the Android Apple-product input into
