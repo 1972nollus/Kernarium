@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <pthread.h>
 #endif
 
 namespace uml::emulator {
@@ -107,12 +108,20 @@ void profile_dispatch(DispatchClock::time_point started,
 	++statistics.exits[static_cast<std::size_t>(reason)];
 	if ((statistics.calls & 255U) != 0)
 		return;
+	std::array<char, 64> thread_name{};
+	if (pthread_getname_np(pthread_self(), thread_name.data(),
+		    thread_name.size()) != 0 || thread_name[0] == '\0')
+		std::memcpy(thread_name.data(), "unnamed", sizeof("unnamed"));
 	std::fprintf(stderr,
-		"Darwin dispatch profile calls=%llu average-us=%.1f max-us=%.1f "
+		"Darwin dispatch profile thread=%s calls=%llu nanoseconds=%llu "
+		"instructions=%llu average-us=%.1f max-us=%.1f "
 		"average-instructions=%.1f syscall=%llu fault=%llu interrupt=%llu "
 		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu "
 		"pc-alignment=%llu fatal=%llu\n",
+		thread_name.data(),
 		static_cast<unsigned long long>(statistics.calls),
+		static_cast<unsigned long long>(statistics.nanoseconds),
+		static_cast<unsigned long long>(statistics.instructions),
 		statistics.nanoseconds / (statistics.calls * 1000.0),
 		statistics.maximum_nanoseconds / 1000.0,
 		statistics.instructions / static_cast<double>(statistics.calls),
