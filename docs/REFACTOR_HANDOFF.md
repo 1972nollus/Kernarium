@@ -1,5 +1,28 @@
 # Refactor handoff
 
+## Android build-time ART investigation (2026-08-25)
+
+The first-boot ART work is not caused by globally disabled dexpreopt. The
+generated AOSP configuration has preopt and boot-image preopt enabled and is a
+real `userdebug` configuration, but it inherits
+`BOARD_USES_SYSTEM_OTHER_ODEX := true` while the Kernarium product disables the
+`system_other` image. Soong therefore routes most ordinary app artifacts to
+`system_other` and skips installing them. The accepted target-files contains
+67 ordinary partition APK entries and only six adjacent app
+`odex`/`vdex` pairs; CredentialManager's complete `speed-profile` artifacts
+exist only in intermediates.
+
+The retained macOS first-boot ART log has 36 unique `verify` inputs: 26 below
+ordinary partitions and ten inside APEX mounts. The minimal next change is an
+empty `BOARD_USES_SYSTEM_OTHER_ODEX :=` override in the project-owned device
+BoardConfig, plus resolved-config, target-files, and fixture checks. Reuse the
+preserved `out-kernarium-android17` Ninja output. Do not add a system_other
+partition, change ART properties or compiler filters, seed userdata, clean the
+output, or switch build systems. Ordinary APEX apps are explicitly outside
+AOSP 17's dexpreopt support, so their ten jobs remain a separate measured
+boundary. Full evidence and acceptance steps are in
+[`android-17-art-build-time-investigation-20260825.md`](android-17-art-build-time-investigation-20260825.md).
+
 ## Matched Android 4-vCPU / 2-GiB Apple-host timing (2026-08-25)
 
 The accepted ext4/APEX release was remeasured on the standalone macOS product

@@ -1,5 +1,20 @@
 # Refactor progress
 
+## 2026-08-25: Android build-time ART investigation
+
+- Traced first-boot dex2oat to an inherited `system_other` placement mismatch,
+  not disabled dexpreopt: AOSP generates ordinary app artifacts but omits them
+  because the board flag remains enabled while the product image is disabled.
+- Counted 36 unique first-boot `verify` inputs in retained evidence: 26 regular
+  partition APKs and ten APEX-contained APKs. The current target-files has 67
+  ordinary APK entries but only six adjacent app artifact pairs.
+- Defined the next local-only incremental change: clear
+  `BOARD_USES_SYSTEM_OTHER_ODEX` in the exact-synced device overlay, add
+  fail-closed build/package checks, retain current compiler filters, and
+  measure the ten unsupported APEX jobs as an explicit residual. No Android
+  source or build output was changed and no build was started. See
+  [`android-17-art-build-time-investigation-20260825.md`](android-17-art-build-time-investigation-20260825.md).
+
 ## 2026-08-25: matched 4-vCPU / 2-GiB Android boot timing
 
 - Measured the accepted ext4/APEX Android release on standalone macOS and the
