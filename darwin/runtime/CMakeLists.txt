@@ -30,6 +30,7 @@ set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON
 
 add_library(uml_runtime_context OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/context.cpp
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/host_cpu_profile.cpp
     ${PROJECT_SOURCE_DIR}/darwin/runtime/native_kernel_layout.cpp)
 uml_declare_architecture_target(uml_runtime_context runtime)
 target_link_libraries(uml_runtime_context PRIVATE

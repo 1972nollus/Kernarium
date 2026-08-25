@@ -1,0 +1,280 @@
+From 53d90213bf23eac31d05ad606d771401803f23f7 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 07:52:01 +0000
+Subject: [PATCH 35/35] UML-DARWIN-LOCAL: expose Apple CPU performance levels
+
+Change-Id: Ic37933a168749f33b43c83a4d9bf1ceaf50fa38e
+---
+ arch/um/include/asm/topology.h |   1 +
+ arch/um/include/shared/smp.h   |   9 +++
+ arch/um/kernel/smp.c           | 111 +++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/smp.c        |  67 ++++++++++++++++++--
+ 4 files changed, 184 insertions(+), 4 deletions(-)
+
+diff --git a/arch/um/include/asm/topology.h b/arch/um/include/asm/topology.h
+index 60f8b166743c3f943335c759ee42a414931b2518..96b97f15b483e72064b1f918b8d58724bd359ba4 100644
+--- a/arch/um/include/asm/topology.h
++++ b/arch/um/include/asm/topology.h
+@@ -14,6 +14,7 @@
+ #define topology_core_id(cpu)			(cpu)
+ #define topology_sibling_cpumask(cpu)		cpumask_of(cpu)
+ #define topology_core_cpumask(cpu)		cpu_possible_mask
++#define arch_scale_cpu_capacity			topology_get_cpu_scale
+ #endif
+ 
+ #include <asm-generic/topology.h>
+diff --git a/arch/um/include/shared/smp.h b/arch/um/include/shared/smp.h
+index 7e55aa69f7c282f33d947f58b723fbe31cec9e43..d42f10600e3a3d735bfd54bf65de93e769ef035a 100644
+--- a/arch/um/include/shared/smp.h
++++ b/arch/um/include/shared/smp.h
+@@ -6,6 +6,15 @@
+ 
+ extern int uml_ncpus;
+ 
++#ifdef UML_HOST_DARWIN
++#define UML_CPU_CAPACITY_SCALE 1024UL
++
++void uml_finalize_cpu_capacity_profile(void);
++void uml_disable_cpu_capacity_profile(void);
++int uml_cpu_capacity_profile_enabled(void);
++unsigned long uml_cpu_capacity(int cpu);
++#endif
++
+ int uml_curr_cpu(void);
+ void uml_start_secondary(void *opaque);
+ void uml_ipi_handler(int vector);
+diff --git a/arch/um/kernel/smp.c b/arch/um/kernel/smp.c
+index afbd7c2728430ab2119ba07251b8a7b6838877a6..1d04b60a2c82abc4c2939f16b58e3e53644ffb6e 100644
+--- a/arch/um/kernel/smp.c
++++ b/arch/um/kernel/smp.c
+@@ -21,6 +21,7 @@
+ #include <linux/irq_work.h>
+ #include <linux/smp.h>
+ #include <linux/smp-internal.h>
++#include <linux/topology.h>
+ #include <init.h>
+ #include <kern.h>
+ #include <os.h>
+@@ -358,6 +359,109 @@ int uml_ncpus;
+ int uml_ncpus = 1;
+ #endif
+ 
++#ifdef UML_HOST_DARWIN
++enum uml_cpu_capacity_profile_state {
++	UML_CPU_CAPACITY_ABSENT,
++	UML_CPU_CAPACITY_PENDING,
++	UML_CPU_CAPACITY_ENABLED,
++	UML_CPU_CAPACITY_REJECTED,
++};
++
++static enum uml_cpu_capacity_profile_state uml_cpu_capacity_state;
++static unsigned long uml_cpu_capacities[NR_CPUS];
++static int uml_cpu_capacity_count;
++
++static void reject_cpu_capacity_profile(const char *reason)
++{
++	os_warn("UML: ignoring Darwin CPU capacity profile: %s\n", reason);
++	uml_cpu_capacity_state = UML_CPU_CAPACITY_REJECTED;
++	uml_cpu_capacity_count = 0;
++}
++
++static int __init uml_cpu_capacity_setup(char *line, int *add)
++{
++	unsigned long previous = UML_CPU_CAPACITY_SCALE;
++	int count = 0;
++	char *cursor = line;
++
++	*add = 0;
++	if (uml_cpu_capacity_state != UML_CPU_CAPACITY_ABSENT) {
++		reject_cpu_capacity_profile("argument was supplied more than once");
++		return 0;
++	}
++	while (*cursor != '\0') {
++		unsigned long capacity = 0;
++
++		if (count >= NR_CPUS || *cursor < '0' || *cursor > '9')
++			goto malformed;
++		do {
++			capacity = capacity * 10 + (*cursor - '0');
++			if (capacity > UML_CPU_CAPACITY_SCALE)
++				goto malformed;
++			cursor++;
++		} while (*cursor >= '0' && *cursor <= '9');
++		if (capacity == 0 || (count == 0 &&
++		    capacity != UML_CPU_CAPACITY_SCALE) ||
++		    (count != 0 && capacity > previous))
++			goto malformed;
++		uml_cpu_capacities[count++] = capacity;
++		previous = capacity;
++		if (*cursor == '\0')
++			break;
++		if (*cursor != ',' || cursor[1] == '\0')
++			goto malformed;
++		cursor++;
++	}
++	if (count == 0)
++		goto malformed;
++	uml_cpu_capacity_count = count;
++	uml_cpu_capacity_state = UML_CPU_CAPACITY_PENDING;
++	return 0;
++
++malformed:
++	reject_cpu_capacity_profile("malformed value");
++	return 0;
++}
++
++__uml_setup("darwin_cpu_capacity_v1=", uml_cpu_capacity_setup,
++"darwin_cpu_capacity_v1=<capacity0,...,capacityN>\n"
++"    Assign one normalized scheduler capacity to every Darwin UML vCPU.\n"
++"    The vector must match ncpus, start at 1024, contain values in\n"
++"    1...1024, and be nonincreasing. Invalid input is ignored atomically.\n\n"
++);
++
++void uml_finalize_cpu_capacity_profile(void)
++{
++	if (uml_cpu_capacity_state != UML_CPU_CAPACITY_PENDING)
++		return;
++	if (uml_ncpus == 0)
++		uml_ncpus = clamp(os_num_processors(), 1, NR_CPUS);
++	if (uml_cpu_capacity_count != uml_ncpus) {
++		reject_cpu_capacity_profile("vector length does not match ncpus");
++		return;
++	}
++	uml_cpu_capacity_state = UML_CPU_CAPACITY_ENABLED;
++}
++
++void uml_disable_cpu_capacity_profile(void)
++{
++	uml_cpu_capacity_state = UML_CPU_CAPACITY_REJECTED;
++	uml_cpu_capacity_count = 0;
++}
++
++int uml_cpu_capacity_profile_enabled(void)
++{
++	return uml_cpu_capacity_state == UML_CPU_CAPACITY_ENABLED;
++}
++
++unsigned long uml_cpu_capacity(int cpu)
++{
++	if (!uml_cpu_capacity_profile_enabled() || cpu < 0 || cpu >= uml_ncpus)
++		return UML_CPU_CAPACITY_SCALE;
++	return uml_cpu_capacities[cpu];
++}
++#endif
++
+ void __init prefill_possible_map(void)
+ {
+ 	int cpu;
+@@ -370,6 +474,13 @@ void __init prefill_possible_map(void)
+ 		set_cpu_possible(cpu, true);
+ 	for (; cpu < NR_CPUS; cpu++)
+ 		set_cpu_possible(cpu, false);
++#ifdef UML_HOST_DARWIN
++	if (uml_cpu_capacity_profile_enabled()) {
++		for (cpu = 0; cpu < uml_ncpus; cpu++)
++			topology_set_cpu_scale(cpu, uml_cpu_capacity(cpu));
++		os_info("UML: enabled Darwin CPU capacity/QoS profile\n");
++	}
++#endif
+ }
+ 
+ static int __init uml_ncpus_setup(char *line, int *add)
+diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
+index b2977982b068fad40fd48ba46bba8feb7eb8ee2a..7d87f241c71ae2d13dde5777904d8ff3949efc55 100644
+--- a/arch/um/os-Darwin/smp.c
++++ b/arch/um/os-Darwin/smp.c
+@@ -4,6 +4,7 @@
+ #include <fcntl.h>
+ #include <poll.h>
+ #include <pthread.h>
++#include <pthread/qos.h>
+ #include <sched.h>
+ #include <signal.h>
+ #include <stdint.h>
+@@ -477,6 +478,45 @@ static void *cpu_carrier(void *argument)
+ 	return NULL;
+ }
+ 
++static qos_class_t cpu_carrier_qos(int cpu)
++{
++	return uml_cpu_capacity(cpu) == UML_CPU_CAPACITY_SCALE ?
++		QOS_CLASS_USER_INITIATED : QOS_CLASS_UTILITY;
++}
++
++static int preflight_cpu_carrier_qos(void)
++{
++	int cpu;
++
++	for (cpu = 0; cpu < uml_ncpus; cpu++) {
++		pthread_attr_t attributes;
++		int destroy_error;
++		int error;
++
++		error = pthread_attr_init(&attributes);
++		if (error != 0)
++			return error;
++		error = pthread_attr_set_qos_class_np(&attributes,
++						      cpu_carrier_qos(cpu), 0);
++		destroy_error = pthread_attr_destroy(&attributes);
++		if (error != 0 || destroy_error != 0)
++			return error != 0 ? error : destroy_error;
++	}
++	return 0;
++}
++
++static int initialize_cpu_carrier_attributes(pthread_attr_t *attributes)
++{
++	int error = pthread_attr_init(attributes);
++
++	if (error != 0)
++		return error;
++	error = pthread_attr_setdetachstate(attributes, PTHREAD_CREATE_DETACHED);
++	if (error != 0)
++		pthread_attr_destroy(attributes);
++	return error;
++}
++
+ static int start_cpu_carrier(int cpu, int primary, void *stack,
+ 			     jmp_buf *switch_buffer)
+ {
+@@ -488,6 +528,8 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+ 	int mask_set = 0;
+ 	int error;
+ 
++	if (primary)
++		uml_finalize_cpu_capacity_profile();
+ 	data = malloc(sizeof(*data));
+ 	if (data == NULL)
+ 		return -ENOMEM;
+@@ -499,10 +541,27 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+ 		free(data);
+ 		return -ESHUTDOWN;
+ 	}
+-	error = pthread_attr_init(&attributes);
+-	if (error == 0)
+-		error = pthread_attr_setdetachstate(&attributes,
+-						PTHREAD_CREATE_DETACHED);
++	error = initialize_cpu_carrier_attributes(&attributes);
++	if (error == 0 && uml_cpu_capacity_profile_enabled()) {
++		if (primary)
++			error = preflight_cpu_carrier_qos();
++		if (error == 0)
++			error = pthread_attr_set_qos_class_np(&attributes,
++						      cpu_carrier_qos(cpu), 0);
++		if (error != 0) {
++			if (primary) {
++				os_warn("UML: Darwin CPU QoS unavailable; disabling "
++					"CPU capacity profile: %d\n", error);
++				uml_disable_cpu_capacity_profile();
++				pthread_attr_destroy(&attributes);
++				error = initialize_cpu_carrier_attributes(&attributes);
++			} else {
++				os_warn("UML: CPU%d carrier QoS setup failed: %d\n",
++					cpu, error);
++				pthread_attr_destroy(&attributes);
++			}
++		}
++	}
+ 	if (error != 0) {
+ 		darwin_release_embedded_thread();
+ 		free(data);

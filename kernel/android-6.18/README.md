@@ -5,9 +5,9 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 33 ACK-based topic commits and resolves to the
+The checked series contains 35 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the remaining seventeen are ACK-only local
+applicable Darwin UML behavior; the remaining nineteen are ACK-only local
 topics discovered by compiling and booting the 16 KiB Android product.
 Mainline patch bytes are never installed as this line's source of truth.
 
@@ -170,6 +170,24 @@ bitmap writes create a mixed backing/COW view, after which `e2fsck` can observe
 an invalid journal and `vold` falls back to full-device encryption. The request
 now advances by the complete `desc->length`; individual host I/O operations
 continue to use their per-run lengths.
+
+Topic 34 lets the Darwin UML loader pass a bounded host-file range as the
+kernel initrd. Android uses that mechanism for the kernelless boot-image-v4
+`init_boot` and recovery partitions held inside its static GPT rather than
+shipping a duplicate standalone ramdisk.
+
+Topic 35 aligns Linux scheduling with Apple performance levels without
+claiming physical-core affinity. The host constructs a versioned, immutable
+capacity vector from public performance-level sysctls. ACK accepts it only
+when its length matches `ncpus`, its first value is 1024, every value is in
+`1...1024`, and the vector is nonincreasing; malformed or duplicate input
+leaves every vCPU at the existing uniform capacity. Before exposing an accepted
+profile to scheduler-domain construction, the Darwin host preflights every
+requested pthread QoS attribute and applies `QOS_CLASS_USER_INITIATED` to
+1024-capacity carriers and `QOS_CLASS_UTILITY` to lower-capacity carriers at
+creation. A preflight or CPU0 failure discards the complete profile, while a
+later carrier failure rejects that CPU bring-up. XNU may still migrate any
+carrier between physical cores.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
