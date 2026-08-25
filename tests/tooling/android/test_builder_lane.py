@@ -119,6 +119,34 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 /dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,errors=panic latemount,reservedsize=128M,wait,check,keydirectory=/metadata/vold/metadata_encryption,fileencryption=aes-256-xts:aes-256-hctr2
 /dev/block/by-name/misc /misc emmc defaults defaults
 """
+REQUIRED_PREOPT_APKS = (
+    "PRODUCT/app/Jelly/Jelly.apk",
+    "PRODUCT/app/LatinIME/LatinIME.apk",
+    "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
+    "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
+    "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
+    "SYSTEM/app/Traceur/Traceur.apk",
+    "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
+    "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
+    "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
+    "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk",
+    "SYSTEM/priv-app/E2eeContactKeysProvider/E2eeContactKeysProvider.apk",
+    "SYSTEM/priv-app/IntentResolver/IntentResolver.apk",
+    "SYSTEM/priv-app/LiveWallpapersPicker/LiveWallpapersPicker.apk",
+    "SYSTEM/priv-app/LocalTransport/LocalTransport.apk",
+    "SYSTEM/priv-app/ManagedProvisioning/ManagedProvisioning.apk",
+    "SYSTEM/priv-app/PackageInstaller/PackageInstaller.apk",
+    "SYSTEM/priv-app/ProxyHandler/ProxyHandler.apk",
+    "SYSTEM/priv-app/Shell/Shell.apk",
+    "SYSTEM/priv-app/SoundPicker/SoundPicker.apk",
+    "SYSTEM/priv-app/Tag/Tag.apk",
+    "SYSTEM/priv-app/UserDictionaryProvider/UserDictionaryProvider.apk",
+    "SYSTEM/priv-app/VpnDialogs/VpnDialogs.apk",
+    "SYSTEM_EXT/priv-app/Settings/Settings.apk",
+    "SYSTEM_EXT/priv-app/StorageManager/StorageManager.apk",
+    "SYSTEM_EXT/priv-app/SystemUI/SystemUI.apk",
+    "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+)
 
 
 def synthetic_apex(filesystem: str = "ext4") -> bytes:
@@ -170,6 +198,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           bad_virgl_link: bool = False,
                           missing_virgl_dependency: bool = False,
                           missing_virgl_runpath: bool = False,
+                          system_other: bool = False,
+                          missing_required_preopt: bool = False,
+                          half_preopt_pair: bool = False,
                           virgl_alignment: int = 16384,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
@@ -260,11 +291,21 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
                 archive.writestr("VENDOR/ueventd.rc", ueventd)
-                archive.writestr("PRODUCT/app/Jelly/Jelly.apk", b"apk")
-                archive.writestr("PRODUCT/app/LatinIME/LatinIME.apk", b"apk")
-                archive.writestr(
-                    "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk", b"apk"
-                )
+                for apk in REQUIRED_PREOPT_APKS:
+                    archive.writestr(apk, b"apk")
+                    apk_path = Path(apk)
+                    artifact = (
+                        apk_path.parent / "oat" / "arm64" / apk_path.stem
+                    )
+                    if not (
+                        missing_required_preopt
+                        and apk.endswith("/CredentialManager.apk")
+                    ):
+                        archive.writestr(f"{artifact}.odex", b"odex")
+                        if not (
+                            half_preopt_pair and apk.endswith("/Jelly.apk")
+                        ):
+                            archive.writestr(f"{artifact}.vdex", b"vdex")
                 advertised_feature = (
                     "android.hardware.microphone"
                     if unsupported_feature
@@ -336,6 +377,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 if unsupported_hal:
                     archive.writestr("VENDOR/apex/com.google.cf.bt.apex", b"apex")
+                if system_other:
+                    archive.writestr(
+                        "SYSTEM_OTHER/app/Fixture/Fixture.apk", b"apk"
+                    )
 
         good = root / "good.zip"
         write_fixture(good)
@@ -380,6 +425,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("virgl-link", {"bad_virgl_link": True}),
             ("virgl-dependency", {"missing_virgl_dependency": True}),
             ("virgl-runpath", {"missing_virgl_runpath": True}),
+            ("system-other", {"system_other": True}),
+            ("missing-preopt", {"missing_required_preopt": True}),
+            ("half-preopt-pair", {"half_preopt_pair": True}),
             ("virgl-alignment", {"virgl_alignment": 4096}),
         ):
             fixture = root / f"bad-{label}.zip"
@@ -1242,13 +1290,21 @@ def main() -> None:
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
     for token in (
+        "include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk",
         "BOARD_USES_FULL_RECOVERY_IMAGE := true",
+        "BOARD_USES_SYSTEM_OTHER_ODEX :=\n",
         "BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE := ext4",
         "BOARD_SYSTEMIMAGE_EROFS_BLOCKSIZE :=",
         "BOARD_PRODUCTIMAGE_FILE_SYSTEM_TYPE := ext4",
     ):
         if token not in board_config:
             fail(f"Android board configuration is missing recovery policy: {token}")
+    inherited_board = (
+        "include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk"
+    )
+    system_other_override = "BOARD_USES_SYSTEM_OTHER_ODEX :=\n"
+    if board_config.index(system_other_override) < board_config.index(inherited_board):
+        fail("Android board clears system_other odex before inherited policy")
     settings_defaults = (
         android_root
         / "overlay/overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml"
@@ -1450,6 +1506,11 @@ def main() -> None:
         "Jelly",
         "LatinIME",
         "ThemePicker",
+        "BOARD_USES_SYSTEM_OTHER_ODEX",
+        "DisablePreopt",
+        "DisablePreoptBootImages",
+        "OnlyPreoptArtBootImage",
+        "HasSystemOther",
     ):
         if token not in build_aosp:
             fail(f"AOSP builder is missing fixed product policy: {token}")
@@ -1480,6 +1541,9 @@ def main() -> None:
         "apex_payload.img",
         "EROFS APEX payload is forbidden",
         "compressed APEX is forbidden",
+        "SYSTEM_OTHER",
+        "REQUIRED_PREOPT_APKS",
+        "application dexpreopt artifact lacks its pair",
     ):
         if token not in target_files_verifier:
             fail(f"target-files verifier is missing fixed policy: {token}")

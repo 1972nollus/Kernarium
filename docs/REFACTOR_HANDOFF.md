@@ -1,5 +1,17 @@
 # Refactor handoff
 
+## Android build-time ART implementation staged (2026-08-25)
+
+The local producer now clears inherited `BOARD_USES_SYSTEM_OTHER_ODEX` after
+the Cuttlefish board is evaluated, while retaining
+`PRODUCT_BUILD_SYSTEM_OTHER_IMAGE := false`. `build-aosp.sh` rejects a
+nonempty resolved value and verifies the generated Soong dexpreopt booleans
+after the build. The target-files verifier forbids every `SYSTEM_OTHER` entry,
+requires adjacent ARM64 `odex`/`vdex` artifacts for the 26 ordinary apps seen
+compiling on first boot, and rejects incomplete pairs. Focused positive and
+negative builder-lane fixtures pass. No AOSP build or accepted-release change
+is claimed by this checkpoint; the preserved Ninja output is the next gate.
+
 ## Android build-time ART investigation (2026-08-25)
 
 The first-boot ART work is not caused by globally disabled dexpreopt. The

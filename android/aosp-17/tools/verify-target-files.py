@@ -79,6 +79,34 @@ REQUIRED_ENTRIES = {
     *VIRGL_ELF_ENTRIES,
     VIRGL_DRI_SYMLINK,
 }
+REQUIRED_PREOPT_APKS = {
+    "PRODUCT/app/Jelly/Jelly.apk",
+    "PRODUCT/app/LatinIME/LatinIME.apk",
+    "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
+    "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
+    "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
+    "SYSTEM/app/Traceur/Traceur.apk",
+    "SYSTEM/priv-app/BlockedNumberProvider/BlockedNumberProvider.apk",
+    "SYSTEM/priv-app/ContactsProvider/ContactsProvider.apk",
+    "SYSTEM/priv-app/CredentialManager/CredentialManager.apk",
+    "SYSTEM/priv-app/DeviceDiagnostics/DeviceDiagnostics.apk",
+    "SYSTEM/priv-app/E2eeContactKeysProvider/E2eeContactKeysProvider.apk",
+    "SYSTEM/priv-app/IntentResolver/IntentResolver.apk",
+    "SYSTEM/priv-app/LiveWallpapersPicker/LiveWallpapersPicker.apk",
+    "SYSTEM/priv-app/LocalTransport/LocalTransport.apk",
+    "SYSTEM/priv-app/ManagedProvisioning/ManagedProvisioning.apk",
+    "SYSTEM/priv-app/PackageInstaller/PackageInstaller.apk",
+    "SYSTEM/priv-app/ProxyHandler/ProxyHandler.apk",
+    "SYSTEM/priv-app/Shell/Shell.apk",
+    "SYSTEM/priv-app/SoundPicker/SoundPicker.apk",
+    "SYSTEM/priv-app/Tag/Tag.apk",
+    "SYSTEM/priv-app/UserDictionaryProvider/UserDictionaryProvider.apk",
+    "SYSTEM/priv-app/VpnDialogs/VpnDialogs.apk",
+    "SYSTEM_EXT/priv-app/Settings/Settings.apk",
+    "SYSTEM_EXT/priv-app/StorageManager/StorageManager.apk",
+    "SYSTEM_EXT/priv-app/SystemUI/SystemUI.apk",
+    "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
+}
 DLKM_COMPONENTS = {"system_dlkm", "vendor_dlkm", "odm_dlkm"}
 DLKM_COMPATIBILITY_ENTRIES = {
     "RECOVERY/RAMDISK/odm_dlkm",
@@ -310,6 +338,8 @@ def reject_module_payload(path: PurePosixPath) -> None:
 
 def reject_nonstatic_payload(path: PurePosixPath) -> None:
     canonical = str(path)
+    if path.parts[0] == "SYSTEM_OTHER":
+        fail(f"system_other payload is forbidden: {path}")
     if canonical in FORBIDDEN_STATIC_ENTRIES:
         fail(f"nonstatic image or metadata is forbidden: {path}")
     if path.parts[:2] == ("OTA", "bin"):
@@ -419,6 +449,36 @@ def check_hardware_features(
             feature = element.attrib.get("name")
             if feature in FORBIDDEN_FEATURE_NAMES:
                 fail(f"absent hardware feature is advertised in {name}: {feature}")
+
+
+def app_preopt_paths(apk: str) -> tuple[str, str]:
+    apk_path = PurePosixPath(apk)
+    artifact_base = apk_path.parent / "oat" / "arm64" / apk_path.stem
+    return f"{artifact_base}.odex", f"{artifact_base}.vdex"
+
+
+def check_app_dexpreopt(seen: set[str]) -> None:
+    for apk in sorted(REQUIRED_PREOPT_APKS):
+        if apk not in seen:
+            fail(f"required preoptimized application is missing: {apk}")
+        for artifact in app_preopt_paths(apk):
+            if artifact not in seen:
+                fail(f"required application dexpreopt artifact is missing: {artifact}")
+
+    for canonical in sorted(seen):
+        path = PurePosixPath(canonical)
+        if path.suffix not in {".odex", ".vdex"}:
+            continue
+        if len(path.parts) < 6 or path.parts[1] not in {"app", "priv-app"}:
+            continue
+        if path.parts[-3] != "oat":
+            continue
+        if path.parts[-2] != "arm64":
+            fail(f"application dexpreopt artifact is not ARM64: {path}")
+        companion_suffix = ".vdex" if path.suffix == ".odex" else ".odex"
+        companion = str(path.with_suffix(companion_suffix))
+        if companion not in seen:
+            fail(f"application dexpreopt artifact lacks its pair: {path}")
 
 
 def check_kernel_policy(
@@ -702,6 +762,7 @@ def main() -> None:
             fail(f"required entries are missing: {', '.join(missing)}")
         if apex_count == 0:
             fail("target files do not contain an APEX payload")
+        check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
         check_virgl_stack(archive, infos)
         check_boot_policy(archive, infos)

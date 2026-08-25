@@ -19,6 +19,11 @@
 # provide, while this board owns its static storage and module-free kernel.
 include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk
 
+# The inherited mainline board routes ordinary application dexpreopt outputs
+# into system_other. This product does not build that image, so keep the
+# artifacts adjacent to their APKs in the immutable partition images instead.
+BOARD_USES_SYSTEM_OTHER_ODEX :=
+
 # Keep every immutable Android partition on the kernel's uncompressed ext4
 # path. The GPT remains the read-only backing image at runtime, and fstab.uml
 # mounts these filesystems read-only inside the guest.

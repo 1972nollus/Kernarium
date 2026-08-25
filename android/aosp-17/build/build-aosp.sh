@@ -72,6 +72,36 @@ print(matches[0]["size_bytes"])
 PY
 }
 
+verify_dexpreopt_config()
+{
+	python3 -B - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+try:
+    with config_path.open(encoding="utf-8") as source:
+        config = json.load(source)
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"cannot read generated dexpreopt config {config_path}: {error}")
+
+expected = {
+    "DisablePreopt": False,
+    "DisablePreoptBootImages": False,
+    "OnlyPreoptArtBootImage": False,
+    "HasSystemOther": False,
+}
+for key, value in expected.items():
+    if config.get(key) is not value:
+        raise SystemExit(
+            f"generated dexpreopt config has {key}={config.get(key)!r}, "
+            f"expected {value!r}"
+        )
+print(f"verified generated dexpreopt policy: {config_path}")
+PY
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--aosp-source)
@@ -205,6 +235,8 @@ for variable in \
 	[[ "$(get_build_var "$variable")" == false ]] ||
 		fail "$variable must be false for the fixed UBD product"
 done
+[[ -z "$(get_build_var BOARD_USES_SYSTEM_OTHER_ODEX)" ]] ||
+	fail "BOARD_USES_SYSTEM_OTHER_ODEX must be empty without a system_other image"
 for variable in \
 	PRODUCT_VIRTUAL_AB_COMPRESSION_METHOD \
 	PRODUCT_VIRTUAL_AB_COMPRESSION_FACTOR \
@@ -367,6 +399,8 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 fi
 
 m -j"$JOBS" target-files-package check_target_files_vintf
+DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${ANDROID17_PRODUCT}.config"
+verify_dexpreopt_config "$DEXPREOPT_CONFIG"
 TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${ANDROID17_PRODUCT}-target_files.zip"
 [[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \

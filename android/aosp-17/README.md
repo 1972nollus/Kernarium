@@ -219,9 +219,16 @@ does not install a legacy `recovery-from-boot.p`, `install-recovery.sh`, or
 redundant `recovery.img` payload under `vendor`; the release assembler embeds
 the one partition image directly in the GPT instead.
 The unused `system_other` image is disabled because this product has no second
-slot and does not copy preoptimized artifacts from one.
-`build-aosp.sh` rejects any regression in those switches and requires every
-resolved partition capacity to match the JSON layout. AOSP core still assigns
+slot. The device BoardConfig also clears the inherited
+`BOARD_USES_SYSTEM_OTHER_ODEX` switch, so Soong installs ordinary application
+`odex`/`vdex` outputs beside their APKs instead of routing them to an image that
+is not built. `build-aosp.sh` rejects any regression in both switches, verifies
+the generated dexpreopt policy after the incremental build, and requires every
+resolved partition capacity to match the JSON layout. The target-files verifier
+forbids the `SYSTEM_OTHER` namespace, requires the version-scoped ordinary app
+artifact set, and rejects incomplete `odex`/`vdex` pairs. Ordinary applications
+inside updatable APEXes remain outside pinned AOSP 17's supported dexpreopt
+path and are verified at first boot instead. AOSP core still assigns
 its default `PRODUCT_VIRTUAL_AB_COW_VERSION` value after product evaluation;
 that inert format default is not an enablement signal when
 `PRODUCT_VIRTUAL_AB_OTA=false`.

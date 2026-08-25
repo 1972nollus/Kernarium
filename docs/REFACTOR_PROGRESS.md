@@ -1,5 +1,15 @@
 # Refactor progress
 
+## 2026-08-25: staged Android build-time ART packaging
+
+- Cleared the inherited `system_other` odex route in the exact-synced device
+  BoardConfig without creating that image or changing compiler filters.
+- Added resolved and generated dexpreopt policy gates plus exact adjacent
+  ARM64 artifact coverage for the 26 ordinary first-boot applications.
+- Added negative fixtures for a `SYSTEM_OTHER` payload, a missing required
+  application preopt, and an incomplete `odex`/`vdex` pair. The focused
+  `android17-builder-lane` test passes; no Android build is claimed yet.
+
 ## 2026-08-25: Android build-time ART investigation
 
 - Traced first-boot dex2oat to an inherited `system_other` placement mismatch,
