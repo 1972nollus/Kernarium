@@ -489,6 +489,17 @@ Executable-memory policy:
   state accumulates inside the bundle rather than in disposable storage. A
   bundle whose kernel exists in only one page profile fixes that profile in the
   settings picker and at launch.
+  When transferring one to a physical device, remember that
+  `devicectl device copy to` copies a source directory's *contents* into the
+  destination; it does not preserve the source directory as a wrapper. Never
+  pass the `.kern` directory itself with `--destination Documents`, because
+  that incorrectly leaves `boot`, `guest`, and `release-manifest.json` at the
+  top of Documents. Stage a parent directory containing exactly the one
+  `.kern` bundle and copy that parent to Documents, then list Documents and the
+  bundle before launch to verify the wrapper, required payload, and absence of
+  `userdata.cow` for a fresh-boot measurement. Do not use a broad
+  `--remove-existing-content` against Documents to repair a mistake; it can
+  erase unrelated guest bundles and their persistent COWs.
 - UML's management console is the only channel that reaches a running guest
   kernel, and the guest names its socket after the run's umid and never removes
   it. The emulator therefore supplies a per-run `umid=` when the caller has not,
