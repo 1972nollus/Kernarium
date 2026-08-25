@@ -66,6 +66,7 @@ REQUIRED_ENTRIES = {
     "META/ramdisk_node_list",
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
+    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "RECOVERY/RAMDISK/system/bin/recovery",
     "SYSTEM_EXT/priv-app/ThemePicker/ThemePicker.apk",
     "VENDOR/etc/fstab.uml",
@@ -82,6 +83,7 @@ REQUIRED_ENTRIES = {
 REQUIRED_PREOPT_APKS = {
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
+    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",

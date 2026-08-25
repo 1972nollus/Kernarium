@@ -53,8 +53,11 @@ and Home tray. Every tray action emits an ordinary press/release pair. By
 default the view maps safe-area points directly to
 guest pixels and supplies 160 DPI through Virtio-GPU EDID. Optional Retina mode
 multiplies the bounds by `nativeScale` and supplies `160 * nativeScale`; touch
-points are scaled into the same selected range. Point density selects VGA8x16
-fbcon text, while Retina density selects TER16x32. Its audio service exposes
+points are scaled into the same selected range. Android launches also pass the
+same effective value as `androidboot.lcd_density`, so the framework logical
+density matches the EDID instead of falling back to a generic emulator value.
+Point density selects VGA8x16 fbcon text, while Retina density selects
+TER16x32. Its audio service exposes
 one standard Virtio Sound playback stream backed by AVAudioEngine. The guest
 sees signed 16-bit interleaved stereo at 48 kHz; capture, jacks, mixer controls,
 and the legacy UML hostaudio relay remain absent. PCM periods stay owned by the

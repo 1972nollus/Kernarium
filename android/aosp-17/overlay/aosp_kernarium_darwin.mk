@@ -116,7 +116,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     MusicFX \
     ONS \
     PhotoTable \
-    QuickSearchBox \
     SatelliteClient \
     SimAppDialog \
     Stk \

@@ -324,6 +324,7 @@ for package in \
 	com.android.hardware.keymint.rust_nonsecure \
 	Jelly \
 	LatinIME \
+	QuickSearchBox \
 	ThemePicker; do
 	[[ "$PRODUCT_PACKAGES" == *" $package "* ]] ||
 		fail "required UML product package is absent: $package"

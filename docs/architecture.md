@@ -187,7 +187,10 @@ one keyboard, while UIKit scales safe-area point coordinates into the guest
 range—point-for-pixel by default or `nativeScale` Retina pixels—and converts
 them with text input to Linux evdev events. The GPU device independently
 advertises the matching 160 or `160 * nativeScale` effective density through
-EDID.
+EDID. The Android runtime additionally supplies that per-launch value through
+`androidboot.lcd_density`; init carries it through `ro.boot.lcd_density` to
+the framework-owned `ro.sf.lcd_density`. The checked bundle command line
+cannot fix or override this host-owned value.
 The audio sink is shared by macOS and both iOS products. It owns the AVAudio
 graph and a bounded period/completion ring; callback code performs no heap
 allocation or locking. iOS additionally owns AVAudioSession playback,

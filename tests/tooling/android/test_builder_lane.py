@@ -122,6 +122,7 @@ UML_FSTAB = """# Fixed GPT partitions exposed by the Darwin UML UBD device.
 REQUIRED_PREOPT_APKS = (
     "PRODUCT/app/Jelly/Jelly.apk",
     "PRODUCT/app/LatinIME/LatinIME.apk",
+    "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
     "SYSTEM/app/CaptivePortalLogin/CaptivePortalLogin.apk",
     "SYSTEM/app/PartnerBookmarksProvider/PartnerBookmarksProvider.apk",
     "SYSTEM/app/PrintRecommendationService/PrintRecommendationService.apk",
@@ -1355,6 +1356,11 @@ def main() -> None:
     ):
         if removed not in device_product:
             fail(f"device overlay does not remove obsolete app: {removed}")
+    removed_packages = device_product.split(
+        "KERNARIUM_REMOVED_PACKAGES :=", 1
+    )[1].split("PRODUCT_PACKAGES_EXCLUDE", 1)[0]
+    if "QuickSearchBox" in removed_packages:
+        fail("device overlay removes Launcher3's home-screen search provider")
     for token in (
         '<bool name="def_lockscreen_disabled">true</bool>',
         '<integer name="def_screen_off_timeout">2147483647</integer>',
@@ -1511,6 +1517,7 @@ def main() -> None:
         "BOARD_BOOT_HEADER_VERSION",
         "Jelly",
         "LatinIME",
+        "QuickSearchBox",
         "ThemePicker",
         "BOARD_USES_SYSTEM_OTHER_ODEX",
         "DisablePreopt",

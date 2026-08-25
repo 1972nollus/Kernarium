@@ -153,20 +153,22 @@ consumers remain separate from the host build.
 ## Dedicated emulator device overlay
 
 `overlay/aosp_kernarium_darwin.mk` defines a fresh-only product named
-`aosp_kernarium_darwin`. There is no legacy product alias, payload migration,
-or compatibility copy: the final Cuttlefish topic retires the preceding UML
-product registration and device tree, and the exact overlay is the only
-supported device tree for new images. It retains the Cuttlefish ARM64
-page-agnostic board foundation for Android framework compatibility, then
+`aosp_kernarium_darwin` and registers its userdebug lunch choice against the
+stable `aosp_current` release configuration. There is no legacy product alias,
+payload migration, or compatibility copy: the final Cuttlefish topic retires
+the preceding UML product registration and device tree, and the exact overlay
+is the only supported device tree for new images. It retains the Cuttlefish
+ARM64 page-agnostic board foundation for Android framework compatibility, then
 removes machine services and applications that have no useful emulator
 implementation.
 
-The user-facing baseline keeps Settings, Launcher, Files/DocumentsUI,
-PackageInstaller, the system WebView, LatinIME, and ThemePicker. It deliberately
-removes the obsolete Calendar, Messages, Contacts, Dialer, Camera, Gallery,
-DeskClock, Music, photo-table, telephony, satellite, and hardware-demo packages.
-Framework services and providers that ordinary third-party applications depend
-on remain present even when no corresponding launcher application is shipped.
+The user-facing baseline keeps Settings, Launcher, its inherited QuickSearchBox
+home-screen provider, Files/DocumentsUI, PackageInstaller, the system WebView,
+LatinIME, and ThemePicker. It deliberately removes the obsolete Calendar,
+Messages, Contacts, Dialer, Camera, Gallery, DeskClock, Music, photo-table,
+telephony, satellite, and hardware-demo packages. Framework services and
+providers that ordinary third-party applications depend on remain present even
+when no corresponding launcher application is shipped.
 
 Jelly comes from LineageOS
 [`android_packages_apps_Jelly`](https://github.com/LineageOS/android_packages_apps_Jelly)
@@ -356,6 +358,14 @@ The common command line does not set `androidboot.force_normal_boot`. The
 selected `init_boot` ramdisk is intrinsically a normal boot, while the stock
 recovery ramdisk is detected by its `/system/bin/recovery`; forcing normal boot
 would make that recovery partition unusable.
+
+The common command line also does not set `androidboot.lcd_density`. Display
+density belongs to the Apple launch geometry: Kernarium appends 160 in point
+mode or `160 * nativeScale` in Retina mode, matching the Virtio-GPU EDID. Init
+imports that token as `ro.boot.lcd_density`, and the inherited Cuttlefish
+graphics action publishes it as `ro.sf.lcd_density`. Keeping it out of the
+release payload lets the same image select phone or large-screen resources
+from the actual host surface.
 
 `support/boot/kernel-command-line.txt` owns the machine-independent launch
 arguments. It selects `/init`, the UML fstab suffix and boot device, enforcing
