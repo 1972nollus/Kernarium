@@ -50,6 +50,18 @@ is a reviewed metadata change that records a new full commit and tree.
 This section is the current entry point and supersedes the 2026-08-24 handoff
 below wherever the two differ.
 
+The follow-up asymmetric-host investigation found a feasible local scheduling
+contract but made no product change. Kernarium can discover ordered Apple core
+types through the public `hw.nperflevels` and `hw.perflevelN.logicalcpu`
+sysctls. A future prototype can pair an immutable performance level and ACK
+scheduler capacity with each fixed vCPU carrier, then request corresponding
+pthread QoS. Apple exposes no supported numbered-core binding and no normalized
+P/E throughput ratio, so exact affinity is not a valid goal and capacity must
+be calibrated before acceptance. Do not add a device table, Mach affinity tag,
+fake CPUFreq/Energy Model/EAS/uclamp support, or a QoS-only policy. See
+[`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
+and G176 in `HOT_PATH_EXPERIMENTS.md` for the contract and gates.
+
 The fresh-only overlay is implemented under `android/aosp-17/overlay` and is
 exact-synced into AOSP as `device/kernarium/darwin`. It keeps ThemePicker and
 LatinIME, forces the software keyboard visible even when Android sees a host

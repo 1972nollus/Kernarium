@@ -1,5 +1,23 @@
 # Refactor progress
 
+## 2026-08-25: Apple asymmetric host-CPU topology investigation
+
+- Established that the public Apple capability interface exposes ordered core
+  types through `hw.nperflevels` and `hw.perflevelN.logicalcpu`; the current M1
+  Ultra reports 16 level-0 and four level-1 logical CPUs.
+- Established that no supported iOS/macOS API binds a pthread to a numbered
+  physical P- or E-core. QoS can influence XNU's cluster choice, while Mach
+  affinity tags are only experimental L2-sharing hints.
+- Designed a local-only, fail-closed profile that assigns stable performance
+  levels to fixed vCPU carriers, supplies per-vCPU ACK scheduler capacities,
+  and applies matching carrier QoS. Four vCPUs remain symmetric on the current
+  M1 Ultra but become two high/two low on a 2P+4E device.
+- Kept CPUFreq, EAS, Energy Model, uclamp and modules out of the design. Apple
+  exposes no capacity ratio, so calibration and a matched physical-device A/B
+  remain mandatory before implementation can be accepted. See
+  [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
+  and G176 in `HOT_PATH_EXPERIMENTS.md`.
+
 ## 2026-08-25: Android physical-iPad boot scaling diagnosis
 
 - Decomposed the profiled 2.283 iPad/Simulator CPU-time ratio into 1.972 longer

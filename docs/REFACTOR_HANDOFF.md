@@ -1,5 +1,36 @@
 # Refactor handoff
 
+## Apple asymmetric host-CPU topology investigated (2026-08-25)
+
+Apple's public topology sysctls are sufficient to discover performance levels
+without a device table: query `hw.nperflevels`, then each ordered
+`hw.perflevelN.logicalcpu`, where level 0 is fastest. The current M1 Ultra
+acceptance host reports 16 level-0 and four level-1 logical CPUs. The target
+iPad's values still need a runtime diagnostic when implementation begins.
+
+There is no supported Apple API for pinning a pthread to a numbered physical
+P- or E-core. `pthread_attr_set_qos_class_np()` can request a QoS at carrier
+creation and XNU uses QoS in asymmetric cluster placement, but the host remains
+free to migrate and spill. `THREAD_AFFINITY_POLICY` is explicitly experimental
+and only hints that equal tags share an L2 cache; do not use it as affinity.
+
+The feasible local design gives each fixed vCPU one immutable performance
+level, tells ACK's ordinary fair scheduler its normalized per-vCPU capacity,
+and gives the corresponding pthread carrier a matching QoS request. ACK 6.18
+already has `topology_set_cpu_scale()` and capacity-aware misfit migration, so
+this needs neither EAS nor fake CPUFreq/energy-model/uclamp support. No common
+host/kernel ABI or AOSP rebuild is required.
+
+Apple does not publish a capacity ratio. Do not infer it from cache size,
+frequency, or a device-name table. A prototype must parameterize and calibrate
+lower-level capacity with equal guest work and measured P/E residence, then
+pass an interleaved 4-vCPU/2-GiB iPad A/B. Exact physical-core predictability
+is not an achievable product claim; only stable virtual class plus best-effort
+host QoS is. No product change was made in this investigation. The full design,
+fallbacks, rejected alternatives and acceptance gates are in
+[`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
+and G176 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+
 ## Android physical-iPad boot scaling diagnosed (2026-08-25)
 
 The physical-iPad slowdown is not a missing-vCPU, translation, I/O, or emulator

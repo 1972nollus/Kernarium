@@ -10887,3 +10887,54 @@ matched low-overhead host counters and guest task/scheduler plus retired-guest-
 instruction counts. Complete stage, carrier, core-class, ART-policy, and
 retained-evidence details are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+
+## G176: asymmetric vCPUs are feasible; exact Apple core binding is not
+
+Dated 2026-08-25. This is the design investigation following G175. It changes
+no product and does not claim a performance result.
+
+Apple publicly exposes the number of ordered CPU performance levels through
+`hw.nperflevels` and the enabled and maximum logical-core counts of each level
+through `hw.perflevelN.logicalcpu{,_max}`. Level 0 is defined as the highest
+performance level. The same selectors are declared in the iPhoneOS SDK. The
+current M1 Ultra acceptance host reports two levels with 16 and four logical
+CPUs, so a four-vCPU Simulator or macOS guest should remain uniform; a 2P+4E
+device can assign vCPU 0--1 to the highest level and vCPU 2--3 to the lower
+level without a model table.
+
+The public placement boundary is QoS, not affinity. Apple supports setting a
+pthread QoS in its creation attributes or on the current thread, and XNU's
+published Edge scheduler uses QoS in per-cluster placement recommendations.
+Neither target SDK exposes `pthread_setaffinity_np` or `sched_setaffinity`.
+Mach `THREAD_AFFINITY_POLICY` is explicitly experimental and asks only that
+equal tags share L2 if possible. Therefore no supported mechanism can tie a
+vCPU carrier to a numbered P- or E-core; XNU may migrate or spill every
+carrier.
+
+ACK 6.18 already supplies the required guest-side mechanism without EAS.
+`drivers/base/topology.c` maintains a normalized per-CPU scale and the fair
+scheduler detects unequal `arch_scale_cpu_capacity()` values while building
+scheduling domains. Mapping UML's hook to that scale and setting an immutable,
+validated vector before domain construction lets ordinary fit/misfit balancing
+prefer stronger virtual CPUs. It needs no CPUFreq, Energy Model, schedutil,
+uclamp, loadable module, common bridge-ABI, or AOSP change.
+
+The viable experiment assigns each fixed vCPU one ordered virtual performance
+level, supplies its calibrated capacity to ACK, and applies a matching QoS to
+the vCPU's persistent Darwin carrier. Capacity and host policy must be one
+profile: either alone leaves the two schedulers describing different
+machines. Discovery and parsing fail closed to today's uniform 1024/default
+QoS behavior. Apple exposes no throughput ratio, so cache size, nominal
+frequency, hard-coded device tables, and launch-time self-benchmarks are
+rejected as capacity sources.
+
+Acceptance requires equal-work capacity calibration with retired guest work
+and observed P/E residence, followed by an interleaved topology-off/on
+four-vCPU, 2-GiB cold/warm iPad campaign and matched Simulator/macOS controls.
+Every trace must report carrier migration and spill, and correctness still
+requires boot completion, dwell, orderly shutdown and no RCU/timer/carrier
+regression. The product claim, if the A/B passes, is stable virtual vCPU class
+plus best-effort host QoS. Exact physical-core predictability remains outside
+the supported Apple API. Full source evidence, initialization constraints,
+fallbacks and validation gates are in
+[`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md).

@@ -1,5 +1,15 @@
 # Refactor evidence
 
+## Apple asymmetric host-CPU topology investigation (2026-08-25)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Public topology discovery | Apple documents `hw.nperflevels` and ordered `hw.perflevelN.logicalcpu{,_max}` selectors in `sysctlbyname`; the iPhoneOS SDK declares the same keys. The current M1 Ultra reports two levels with 16 and four logical CPUs. The target iPad values have not yet been logged by this product, so implementation must verify them at runtime rather than use a model table. |
+| Host placement control | Apple documents pthread QoS and XNU describes QoS-sensitive cluster recommendations. No `pthread_setaffinity_np` or `sched_setaffinity` is present in the target SDKs. Published `THREAD_AFFINITY_POLICY` is experimental and only requests shared L2 placement if possible. The supported ceiling is a QoS request with observable migration/spill, not physical-core binding. |
+| Guest capacity path | ACK 6.18's base topology scale and fair-scheduler asymmetric-capacity scan can consume an early per-vCPU scale and expose it in `cpuN/cpu_capacity`. The proposed UML hook needs no CPUFreq, Energy Model, EAS, uclamp, module, common-ABI, or AOSP change. This is source inspection, not a built or booted implementation. |
+| Unresolved calibration | Apple exposes performance-level counts and order but no normalized throughput ratio. Cache size and nominal frequency are insufficient proxies. Lower-level capacity remains an explicit experiment parameter requiring identical guest work, retired-work accounting, Instruments P/E residence, and a matched physical-device A/B. |
+| Disposition | No product change. The feasible contract is an immutable virtual performance class per vCPU plus matching ACK capacity and best-effort carrier QoS. Exact host-core predictability is rejected. Full details are in [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md) and G176 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md). |
+
 ## Android 17 physical-iPad boot scaling diagnosis (2026-08-25)
 
 | Boundary | Current evidence and limitation |
