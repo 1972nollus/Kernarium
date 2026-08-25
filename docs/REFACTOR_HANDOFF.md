@@ -1,5 +1,30 @@
 # Refactor handoff
 
+## Android 17 adaptive-density overlay accepted (2026-08-26)
+
+The current accepted rootfs release is
+`android17-ack6.18-16k-20260826-4eb3fe17-density-search1`, published on the
+dedicated Linux builder from clean outer revision
+`4eb3fe1759def03bbb8dd8c1fbd1ab5002683525`. It selects AOSP release
+configuration `aosp_current`, retains the inherited QuickSearchBox provider,
+and carries the 35-topic ACK tree
+`cd3295d540a93f6d8d5849f2bf0496931229f4dc`. Producer verification accepted
+4,843 target-files entries, 1,216 AArch64 executables, all 69 ext4 APEX
+payloads, both partition-backed boot-image-v4 ramdisks, and the ten-partition
+GPT. Copied-source, installed-release, focused builder-lane, and release
+contract verification pass. No Files/DocumentsUI product override was added;
+that inherited app was already present.
+
+Kernarium now supplies `androidboot.lcd_density` at launch from the same display
+scale used for the Virtio-GPU surface and EDID. Point mode uses 160 DPI;
+Retina mode uses `160 * nativeScale`. Static density tokens in the release are
+rejected. On the iOS 26.5 iPad mini Simulator, the same persistent Android
+bundle reached `sys.boot_completed=1` at 1133x692/160 DPI and
+2266x1384/320 DPI. After the credential-less user-unlock gesture, both modes
+showed the restored home search widget and the tablet taskbar with Back, Home,
+and Recents at the same logical scale. Screenshots are retained under
+`.build/android/measurements/20260826-density-search`.
+
 ## Physical-iOS Android RAM now requires a full startup wire (2026-08-26)
 
 The physical benchmark target is now the connected iPad mini 6 rather than the
@@ -145,15 +170,16 @@ the profile document.
 Commits `87c60bdf` and `2a6461e8` split the Android Apple-product input into
 two accepted artifacts. `kernel/android-6.18/artifacts/accepted-16k.env`
 selects the module-free 16 KiB ACK bundle below `.build/kernel/artifacts`,
-while `android/aosp-17/metadata/accepted-release.env` continues to select the
-unchanged Android rootfs/GPT release. Apple configuration validates both but
+while `android/aosp-17/metadata/accepted-release.env` independently selects the
+Android rootfs/GPT release. Apple configuration validates both but
 embeds the ACK ELF only from the kernel artifact. The exact selected rootfs
 manifest is embedded separately in the valid Mach-O section
 `__DATA,__uml_rootfs`. A kernel-only app update therefore neither republishes
 the GPT nor changes the bundle manifest/receipt or invalidates its persistent
 `userdata.cow`.
 
-The current rootfs is still the historical schema-2 combined release
+At that decoupling checkpoint, the rootfs was still the historical schema-2
+combined release
 `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. Its bundled ACK files and
 kernel/bridge fields remain immutable qualification provenance, but no Apple
 consumer selects that ELF and installed-rootfs verification no longer compares
@@ -161,7 +187,8 @@ the historical bridge identity with the current host bridge. The independent
 kernel artifact owns the current source-tree, patch-manifest, ABI, page-size,
 ELF, and module-free checks. New rootfs publication may retain the existing
 producer until a schema migration is independently justified; no AOSP rebuild
-was needed for this kernel update.
+was needed for that kernel update. The newer adaptive-density section above
+records the subsequently accepted rootfs without changing this separation.
 
 The standalone publisher ran on the dedicated x86_64 Linux builder against the
 existing clean ACK tree/output and produced

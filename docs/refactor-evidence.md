@@ -1,5 +1,15 @@
 # Refactor evidence
 
+## Android 17 adaptive-density overlay acceptance (2026-08-26)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Accepted producer | `android17-ack6.18-16k-20260826-4eb3fe17-density-search1` was published from clean outer revision `4eb3fe1759def03bbb8dd8c1fbd1ab5002683525`. Its manifest selects `aosp_current`, Android 17 build `CP2A.260605.016`, ACK final tree `cd3295d540a93f6d8d5849f2bf0496931229f4dc`, and Jelly final tree `ce63d63703fbfd2e616e94513ea1e5c63ccae4ef`. Producer and installed verification accepted 4,843 target-files entries, 1,216 AArch64 executables, 69 ext4 APEX payloads, and a 17,179,869,184-byte GPT whose transfer archive is 706,296,099 bytes. |
+| Overlay boundary | The exact-synced product is registered only for `aosp_current`. Launcher, inherited QuickSearchBox, ThemePicker, Jelly, LatinIME, WebView, PackageInstaller, and ordinary compatibility providers remain. QuickSearchBox has an explicit build/package regression gate because removing it suppresses Launcher's home search widget. Files/DocumentsUI remains inherited without a new force-keep override. |
+| Density contract | Kernarium rejects a static `androidboot.lcd_density` token and appends the launch geometry's DPI. Point mode maps safe-area points directly and emitted 1133x692/160 DPI; Retina mode used the iPad Simulator's 2x native scale and emitted 2266x1384/320 DPI. The Retina kernel command line records `androidboot.lcd_density=320`. |
+| Runtime proof | Both iOS 26.5 iPad mini Simulator runs used gadgets, four vCPUs, 2 GiB, 16 KiB pages, hardware Virgl, and the same persistent `.kern` bundle. Both reached `sys.boot_completed=1`. After Android's credential-less user-unlock gesture, `.build/android/measurements/20260826-density-search/{ipad-point-160-launcher.png,ipad-retina-320-launcher.png}` show the QuickSearchBox widget plus Back, Home, and Recents in the large-screen taskbar at matching logical scale. This is Simulator UI qualification, not physical-iPad or broad third-party-app qualification. |
+| Consumer gates | `android17-builder-lane` and `android17-release-contract` pass. The Android Device and Simulator CMake slices configure against the installed release, build, and pass their architecture audits. |
+
 ## Android kernel/rootfs release decoupling (2026-08-26)
 
 | Boundary | Current evidence and limitation |
@@ -8,7 +18,7 @@
 | Compatibility rule | The runtime embeds the selected rootfs manifest in `__DATA,__uml_rootfs` and compares only that identity with the bundle. The kernel ELF comes from the independent artifact. Historical schema-2 kernel and ABI fields remain provenance and are not compared with the current bridge during installed-rootfs admission. |
 | Kernel artifact | `android-6.18-16k-20260826-a8bbe904-anonram1` contains module-free 16 KiB ACK `6.18.21-g6f355385a00b`, final tree `cd3295d540a93f6d8d5849f2bf0496931229f4dc`, patch-manifest SHA-256 `463d2006e568aa186c3bdb74f9ed1ba4150319c2746ebfe5c6332ee0deb53960`, and ABI v8 / `0x3871ad612337ea76`. The standalone Linux publisher and copied-artifact verifier passed without an AOSP build. |
 | Consumer builds | Focused layout/image/rootfs tests pass. The macOS Android executable, both Android iOS runtime slices, XCFramework package, and Simulator app build. Mach-O inspection finds distinct `__uml_elf` and `__uml_rootfs` sections. |
-| Runtime proof | The iOS 26.5 Simulator loaded `KernariumRuntimeAndroid_6_18_21_16K`, accepted a bundle from unchanged rootfs `20260825-87eaee1e-artpreopt1`, booted Linux `6.18.21-g6f355385a00b`, created its COW, mounted the old rootfs, and reached Android late init. A kernel-mode Darwin-signal panic at guest second 4.92 under the incidental 20-vCPU app setting prevents a full-boot stability claim but occurred after successful release admission. |
+| Decoupling-checkpoint runtime proof | The iOS 26.5 Simulator loaded `KernariumRuntimeAndroid_6_18_21_16K`, accepted a bundle from then-current rootfs `20260825-87eaee1e-artpreopt1`, booted Linux `6.18.21-g6f355385a00b`, created its COW, mounted that rootfs, and reached Android late init. A kernel-mode Darwin-signal panic at guest second 4.92 under the incidental 20-vCPU app setting prevents a full-boot stability claim for that checkpoint but occurred after successful release admission. The newer adaptive-density section records the subsequently accepted rootfs. |
 
 ## Apple asymmetric host-CPU topology experiment (2026-08-25)
 

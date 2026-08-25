@@ -477,14 +477,14 @@ a sparse local file, revalidates it, and atomically installs the result. It
 refuses to replace an existing release. The acceptance descriptor is added only
 when a clean builder-local publication has been reviewed. The current
 descriptor selects
-`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, published from clean
-outer revision `87eaee1e433ce8db423cf48819084755ebd5c014`.
+`android17-ack6.18-16k-20260826-4eb3fe17-density-search1`, published from
+clean outer revision `4eb3fe1759def03bbb8dd8c1fbd1ab5002683525`.
 The static kernel, target-files, VINTF, SELinux, both partition-backed
 ramdisks, ten-partition GPT, source-built 16 KiB Mesa Virgl payload, mixed-COW
-UBD, warm-boot theme, minimal application/feature set, external Jelly, Context
-Hub exclusion, read-only ext4 partition policy, and 69 ext4 APEX payloads
-passed producer verification. Physical-iOS boot qualification remains a
-separate runtime gate and is recorded with the current release below.
+UBD, warm-boot theme, minimal application/feature set, inherited
+QuickSearchBox, external Jelly, Context Hub exclusion, read-only ext4
+partition policy, and 69 ext4 APEX payloads passed producer verification.
+Physical-iOS boot qualification remains a separate runtime gate.
 
 This is artifact acceptance for Apple-product integration. The bounded normal
 boot, stock-recovery and bundled-application checks below do not claim broad
@@ -554,22 +554,32 @@ final tree `e675d73659f9f829c7e36db035f1652ce2a85408`. Hardware-renderer runtime
 qualification remains separate from this static artifact acceptance.
 
 The current accepted release is
-`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. It uses the 34-topic ACK
-tree `621a0ab42d8990aa0960bf5d341d89b8f1042723`; topic 34 loads a bounded
-initrd range from the GPT host file. The built-in-only 16 KiB ELF reports
-`6.18.21-ga64f141f6266`. The schema-2 release contains a ten-partition
-17,179,869,184-byte GPT compressed to 706,631,372 bytes and no standalone
-ramdisk. Its normal and stock-recovery ramdisks are verified in place inside
-`init_boot` and `recovery`. All five immutable GPT payload filesystems and all
-69 packaged APEX payloads are ext4. Route `p0008` changes the sole explicit
-Virtualization APEX override; the product default covers the remaining APEXes,
-and the target-files verifier checks their nested filesystem magic. The build
-also clears the inherited `system_other` odex route and packages adjacent
-ARM64 `odex`/`vdex` artifacts for the 26 ordinary applications observed in
-the prior first-boot ART workload. The ACK
-kernel is byte-identical to the preceding accepted overlay release, including
-its unchanged built-in EROFS driver. `metadata/accepted-release.env` owns the
-exact release, ACK, AOSP, Jelly and common-ABI identities.
+`android17-ack6.18-16k-20260826-4eb3fe17-density-search1`. It uses the 35-topic
+ACK tree `cd3295d540a93f6d8d5849f2bf0496931229f4dc`; the built-in-only 16 KiB
+ELF reports `6.18.21-g6f355385a00b`. The schema-2 release contains a
+ten-partition 17,179,869,184-byte GPT compressed to 706,296,099 bytes and no
+standalone ramdisk. Its normal and stock-recovery ramdisks are verified in
+place inside `init_boot` and `recovery`. All five immutable GPT payload
+filesystems and all 69 packaged APEX payloads are ext4. Route `p0008` changes
+the sole explicit Virtualization APEX override; the product default covers the
+remaining APEXes, and the target-files verifier checks their nested filesystem
+magic. The build uses release configuration `aosp_current`, clears the
+inherited `system_other` odex route, retains the inherited QuickSearchBox
+provider required by Launcher's home search widget, and packages adjacent
+ARM64 `odex`/`vdex` artifacts for the required ordinary applications.
+`metadata/accepted-release.env` owns the exact release, ACK, AOSP, Jelly and
+common-ABI identities.
+
+The copied and installed release passed the producer and workstation
+verifiers with 4,843 target-files entries and 1,216 AArch64 executables. Both
+Android iOS runtime slices then built and passed their architecture audits. On
+the iOS 26.5 iPad mini Simulator, the same persistent bundle booted point mode
+at 1133x692 and 160 DPI and Retina mode at 2266x1384 and 320 DPI. Both runs
+reached `sys.boot_completed=1`; after the credential-less user-unlock gesture,
+Launcher displayed the QuickSearchBox widget and the large-screen taskbar with
+Back, Home, and Recents. The matching logical layout across the two runs
+demonstrates that Retina mode scales backing pixels and `lcd_density`
+together, rather than changing Android's device-size classification.
 
 The preceding `20260825-8c5881ab-ext4-apex` release passed a fresh physical-iOS
 boot on a wired iPad mini 6 running iOS 18.5. Kernarium used gadgets, 4 vCPUs,

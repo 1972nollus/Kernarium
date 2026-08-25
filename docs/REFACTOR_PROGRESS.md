@@ -1,5 +1,24 @@
 # Refactor progress
 
+## 2026-08-26: Android adaptive density and Launcher search accepted
+
+- Switched the fresh-only product registration from `trunk_staging` to
+  `aosp_current` and made Kernarium append `androidboot.lcd_density` from its
+  display scale: 160 in point mode and `160 * nativeScale` in Retina mode.
+- Restored the inherited QuickSearchBox package removed by the minimal-app
+  sweep. Build and target-files gates now require its APK, while Files remains
+  untouched and naturally inherited.
+- Published, copied, installed, and accepted
+  `android17-ack6.18-16k-20260826-4eb3fe17-density-search1` from clean producer
+  revision `4eb3fe1759def03bbb8dd8c1fbd1ab5002683525`. The Linux lane verified
+  4,843 target-files entries, 1,216 AArch64 executables, 69 ext4 APEX payloads,
+  and the fixed partition-backed GPT.
+- Both Android Device and Simulator runtime slices build and pass their
+  architecture audits. The iPad mini Simulator booted the same bundle to
+  completion at 1133x692/160 DPI and 2266x1384/320 DPI; both settled Launcher
+  views show the home search widget and large-screen three-button taskbar at
+  the same logical scale.
+
 ## 2026-08-26: physical-iOS Android RAM is fail-fast wired
 
 - The user explicitly selected deterministic startup admission over the prior
