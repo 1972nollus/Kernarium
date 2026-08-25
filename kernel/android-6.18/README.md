@@ -5,9 +5,9 @@ and tree recorded in [`patches/metadata.env`](patches/metadata.env). It is the
 kernel source for the AOSP 17 guest only and does not replace either current
 mainline page profile.
 
-The checked series contains 33 ACK-based topic commits and resolves to the
+The checked series contains 35 ACK-based topic commits and resolves to the
 exact final tree recorded in the metadata. The first 16 topics port the
-applicable Darwin UML behavior; the remaining seventeen are ACK-only local
+applicable Darwin UML behavior; the remaining nineteen are ACK-only local
 topics discovered by compiling and booting the 16 KiB Android product.
 Mainline patch bytes are never installed as this line's source of truth.
 
@@ -170,6 +170,27 @@ bitmap writes create a mixed backing/COW view, after which `e2fsck` can observe
 an invalid journal and `vold` falls back to full-device encryption. The request
 now advances by the complete `desc->length`; individual host I/O operations
 continue to use their per-run lengths.
+
+Topic 34 lets the Android product load an initrd directly from a validated
+byte range inside its immutable GPT image. The range arguments must be supplied
+together and remain within the host file; ordinary whole-file initrd loading
+continues to use the same checked implementation. This keeps the kernelless
+boot-image-v4 ramdisk inside the release-owned disk instead of introducing a
+second standalone copy.
+
+Topic 35 is the anonymous-physical-memory performance diagnostic. Android asks
+the existing fixed-arity `darwin_uml_open()` bridge for a reserved internal
+path, and the host returns an immediately unlinked POSIX shared-memory object
+instead of an APFS regular file. `ftruncate()` establishes the 2 GiB virtual
+extent, but neither side touches or commits every 16 KiB page at startup: guest
+physical memory remains demand paged. The object preserves the shared-fd and
+offset aliasing contract required by the kernel and emulator mappings while
+removing the regular-file cache and its logical writeback path. Darwin does not
+support `F_PUNCHHOLE` on this object, so the existing ACK page-reporting driver
+disables itself after the first rejected range rather than repeatedly issuing
+discard calls. Runtime qualification must determine whether avoiding
+file-backed page-out outweighs retaining touched anonymous memory under iOS
+pressure.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64
