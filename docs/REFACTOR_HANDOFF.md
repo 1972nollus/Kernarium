@@ -1,5 +1,35 @@
 # Refactor handoff
 
+## Android iOS 26 P-core frequency suppression measured (2026-08-25)
+
+The connected device named `Google Pixel 8 Pro` is an iPhone 15 Pro Max
+(`iPhone16,2`) running iOS 26.5. Xcode 26.6 CPU Profiler measured one fresh-COW
+cold boot of accepted release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` with gadgets, 4 vCPUs,
+2 GiB, 16 KiB pages, normal boot, 160 DPI, and hardware Virgl. The stopped app
+was resumed after profiler attachment and the trace stopped at the first
+`sys.boot_completed=1` action. The intrusive guest boundary was 355.376
+seconds and is not an uninstrumented timing baseline.
+
+Xcode 26 Power Profiler works on the device but exports power impact, CPU
+instructions, QoS, and thermal state rather than CPU frequency. CPU Profiler
+supplies `CORE_ACTIVE_CYCLE`, one-million-cycle PMI samples, physical core
+identity, and the same thermal track. Filtering to adjacent full-PMI samples
+for the same `uml-vcpu-*` thread and physical core retains 186.232 billion
+cycles, 51.71% of vCPU cycle weight, without lost events or run issues.
+
+P-core median/p90 frequency changes from 3.56/3.73 GHz in the first boot third
+to 2.54/3.26 in the middle and 2.72/3.08 in the last. E-core median/p90 remains
+2.07--2.08/2.11 GHz. P cores carry 83.02% of measured vCPU cycles. This is
+material sustained-load P-cluster DVFS suppression, but not a public thermal
+throttle: Instruments records the entire 356.666-second trace as Nominal and
+the app emits no thermal change. Treat it as a tens-of-percent contributor to
+clock-bound device intervals, not an explanation for the prior multi-fold
+iPad/Simulator CPU-per-work gap. Full method, stage values, caveats, and local
+evidence paths are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+No emulator, Android image, kernel, or runtime product changed.
+
 ## Android asymmetric host-CPU topology rejected (2026-08-25)
 
 The complete local topology prototype was implemented, measured on the target

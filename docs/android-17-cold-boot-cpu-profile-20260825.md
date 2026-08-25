@@ -12,6 +12,62 @@ guest pages, normal boot, point-mode 160 DPI, and hardware Virgl.
 | iPad mini 6, iOS 18.5 | 303.145 s | 573.213 CPU-s | 1.891 | Time Profiler; 95.916% of carrier CPU classified |
 | iOS 26.5 iPad mini Simulator | 153.688 s | 251.115 CPU-s | 1.634 | `sample(1)` fallback; approximate, 0.810 active-sample/CPU cross-check |
 
+## iOS 26 CPU-frequency and throttling follow-up
+
+The connected device named `Google Pixel 8 Pro` is an iPhone 15 Pro Max
+(`iPhone16,2`) running iOS 26.5. It was measured with Xcode 26.6 against the
+same accepted Android release, gadgets engine, 4 vCPUs, 2 GiB, 16 KiB pages,
+normal boot, point-mode 160 DPI, hardware Virgl, and a fresh COW. CPU Profiler
+was attached while the app was stopped, the guest was then resumed, and the
+recording was stopped at init's first `sys.boot_completed=1` action. Guest boot
+at that intrusive boundary took 355.376 seconds; it is not a replacement for
+the uninstrumented timing baseline.
+
+The Xcode 26 Power Profiler was tested first. It now works on this iOS 26
+device and supplies device thermal state, modeled system power, per-process
+subsystem impact, CPU instruction count, and QoS execution. Its export schema
+does not contain CPU frequency or cycle data, so a Power Profiler value was
+not relabeled as frequency. The Xcode 26 CPU Profiler instead records
+`CORE_ACTIVE_CYCLE`, the physical core, one-million-cycle PMI samples, and the
+same device thermal track. Frequency was derived only between adjacent full
+PMI samples for one `uml-vcpu-*` thread on the same physical core. Scheduler
+partials, migration, intervals outside 0.1--5 ms, and implausible rates were
+excluded.
+
+| Boot interval | P-core median | P-core p90 | E-core median | E-core p90 |
+| --- | ---: | ---: | ---: | ---: |
+| First third | 3.56 GHz | 3.73 GHz | 2.08 GHz | 2.11 GHz |
+| Middle third | 2.54 GHz | 3.26 GHz | 2.08 GHz | 2.11 GHz |
+| Last third | 2.72 GHz | 3.08 GHz | 2.07 GHz | 2.11 GHz |
+
+The P-core median therefore falls 28.7% from the first to middle third and
+23.6% from the first to last third. Its p90 falls 12.6% and 17.4%. Stage
+results show the same boundary: before APEX the P-core median/p90 is
+3.68/3.73 GHz, during `artd` it is 2.54/3.26 GHz, during codec generation it is
+2.72/3.26 GHz, and from codec exit to boot-animation exit it is 2.72/3.08 GHz.
+Ten-second windows reach an observed 3.77 GHz P-core p90 early, fall mainly to
+3.07--3.44 GHz during sustained ART work, and are predominantly 2.90--3.08 GHz
+after codec exit. The E-core p90 remains at 2.10--2.11 GHz. CPU Profiler
+attributes 83.02% of all vCPU cycle weight to P cores and 16.98% to E cores,
+so the P-cluster reduction affects the majority of the measured work.
+
+The filtered set contains 186,728 intervals and 186.232 billion cycles,
+covering 51.71% of all vCPU cycle weight. Xcode reported no lost events or run
+issues. The observed maxima, 3.7769 GHz on P cores and 2.1092 GHz on E cores,
+also bound the calculated distributions. Instruments reports one continuous
+Nominal thermal interval over the complete 356.666-second trace, and the app's
+public `ProcessInfo.thermalState` record starts Nominal with no change event.
+
+The supported conclusion is therefore two-part. Sustained Android boot does
+measurably suppress P-core burst frequency and this reduces performance, but
+iOS does not classify the run as thermally constrained. Call it sustained
+DVFS/power-envelope behavior, not a Fair/Serious/Critical thermal throttle.
+The frequency loss can plausibly add tens of percent to clock-bound P-core
+intervals; it cannot by itself explain the prior multi-fold iPad/Simulator
+CPU-per-work gap. The local trace, summary, console, TOC, and reduced JSON are
+under
+`.build/android/cpu-frequency-20260825/iphone15promax-ios26-cold-4vcpu-2g`.
+
 ## Retired-work and carrier-CPU follow-up
 
 A later low-overhead run closes the work-volume question left open by the
