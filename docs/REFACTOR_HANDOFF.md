@@ -39,18 +39,49 @@ to the kernel, MMU, native-window, or vhost-user aliases. Failure unmaps the
 root and aborts guest startup instead of admitting a lazy allocation that can
 fail later; success faults and wires every page, which keeps it out of the XNU
 compressor. macOS and Simulator retain demand allocation. Both Android runtime
-slices build warning-clean and pass their architecture audits; packaging and
-the connected-iPad admission test remain pending at this checkpoint.
+slices build warning-clean and pass their architecture audits. The
+XCFrameworks and signed Release app were rebuilt and installed on the iPad;
+all seven existing Documents siblings and the selected `.kern` wrapper were
+verified before and after replacement.
 
-The last unwired 1,536 MiB iPad diagnostic trace peaked at 2,861,747,920 bytes
-of physical-footprint accounting, 2,832,105,472 anonymous bytes,
-663,863,296 compressed bytes, 2,333,736,960 resident bytes, and only
-271,433,728 real-private bytes. Thus the roughly 1.17 GiB physical-footprint
-excess over guest RAM is not an ordinary application heap. Continue by
-separating root/alias VM-object accounting from actual resident pages and by
-measuring graphics, translation-cache, stacks, framework, and allocator
-regions. Do not re-enable file-backed RAM, use purgeable memory, or treat the
-incomplete iPad attempts as benchmarks.
+The requested 1,536 MiB, two-vCPU physical-iPad admission has now run. The
+device reported unlimited soft and hard `RLIMIT_MEMLOCK`, and the complete
+1,610,612,736-byte wire took about 0.17 second in the uninstrumented fresh-COW
+run. It reached SurfaceFlinger at 14.853 seconds, then iOS sent signal 9 at
+15.385 and process exit completed at 15.506. This is the intended early
+commitment behavior, but not a successful boot: securing guest RAM cannot also
+reserve the emulator's later non-guest headroom.
+
+The matching Activity Monitor/VM Tracker trace peaked at 2,973,748,680 bytes
+(2,835.99 MiB) physical footprint, 2,961,588,224 bytes anonymous, and only
+77,316,096 bytes compressed; final compression was 59,097,088 bytes. The last
+unwired 1,536 MiB trace peaked at 663,863,296 compressed bytes, so the guest
+root is no longer compressor eligible. The residual 56--74 MiB is from other
+anonymous allocations.
+
+Region decoding provides the requested attribution. The 1,536 MiB guest object
+appears through 84 root/MMU/native/vhost-derived large region records and is
+counted as 10,593.25 MiB resident by VM Tracker. Identical 128 MiB resident and
+dirty-page fingerprints across up to seven non-copying aliases prove that this
+is one physical object, not duplicated contents. Excluding those regions
+leaves 470.14 MiB distinct non-guest resident and 63.16 MiB compressed: chiefly
+230.38 MiB untagged/framework/file/shared mappings, 181.77 MiB small malloc,
+32.06 MiB large malloc, and 24.23 MiB graphics/IOSurface/pmap state. The
+remaining 766.69 MiB of physical-footprint accounting matches, within
+4.72 MiB, the 771.41 MiB footprint drop in a separate warm trace when the live
+guest aliases unwind. The extra iPad charge is therefore dominated by
+same-task alias/native-mapping accounting plus about 533 MiB of real host
+runtime state, not a hidden multi-gigabyte heap or Virgl allocation.
+
+After guest shutdown the wired root itself remains: the large region set drops
+from 84 alias records to 12 root slices / exactly 1,536 MiB, and the idle app
+holds 1,643,350,008 bytes physical footprint. Future local footprint work
+should remove avoidable full-range aliases and add explicit root run-lifetime
+teardown while preserving fail-fast wiring, native-window behavior, and
+vhost-user access. Do not re-enable file-backed RAM, use purgeable memory, or
+treat the incomplete iPad attempts as benchmarks. Detailed retained evidence
+is in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
 ## Android anonymous RAM fixes the iPhone cold-boot penalty (2026-08-26)
 

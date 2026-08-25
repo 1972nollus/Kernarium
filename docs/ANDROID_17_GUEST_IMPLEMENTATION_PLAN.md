@@ -78,11 +78,32 @@ pageable while exempting them from compression. XNU's `mlock()` instead wires
 pages under per-process and global resource limits, and `mlockall()` is
 unimplemented. The user selected that fail-fast wire despite its higher
 resident commitment. The device and Simulator Android runtimes build with the
-policy enabled only for physical iOS; packaging and the first device admission
-test are pending. Continue by measuring the footprint/accounting of the
-anonymous root and its aliases and the remaining host allocations. Do not
-restore file-backed guest RAM, use purgeable mappings, or count incomplete
-iPad runs as benchmarks. Detailed evidence is in
+policy enabled only for physical iOS. Packaging, signed-app installation, and
+safe preservation of all seven iPad Documents siblings are complete.
+
+The first wired 1,536 MiB, two-vCPU fresh-COW attempt committed all
+1,610,612,736 bytes in about 0.17 second under unlimited `RLIMIT_MEMLOCK`, then
+reached SurfaceFlinger at 14.853 seconds before iOS killed the app at 15.385;
+process exit completed at 15.506. Peak compression fell from 633.11 MiB in the
+unwired trace to 73.73 MiB, proving the guest root is no longer compressed.
+The residual compression belongs to other anonymous allocations.
+
+VM Tracker region decoding also closes the footprint question. It counts the
+same guest object through 84 large root/MMU/native/vhost-derived records and
+reports 10,593.25 MiB resident because up to seven non-copying aliases repeat
+the same 128 MiB slice fingerprints. Unique guest content remains 1,536 MiB.
+Distinct non-guest regions contribute 470.14 MiB resident and 63.16 MiB
+compressed, while live alias/native-map accounting contributes approximately
+766.69 MiB to the 2,835.99 MiB process footprint. A warm control loses
+771.41 MiB at alias teardown, matching that residual within 4.72 MiB. Once the
+aliases are gone, the global root remains wired and the idle app still holds a
+1,643,350,008-byte footprint.
+
+The next bounded local memory work is to remove avoidable full-range aliases
+and give the root explicit run-lifetime teardown without weakening the
+fail-fast wire, native-window mappings, or vhost-user access. Do not restore
+file-backed guest RAM, use purgeable mappings, or count incomplete iPad runs
+as benchmarks. Detailed evidence is in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
 The follow-up asymmetric-host prototype was implemented, measured, rejected,

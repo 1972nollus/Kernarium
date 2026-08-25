@@ -38,7 +38,89 @@ a boot-performance result. Raw summaries and wall logs are under:
 .build/android/boot-comparison-anonram-20260826/
 ```
 
-### Anonymous-memory compression cannot safely be disabled
+### Fail-fast wire result and iPad footprint attribution
+
+The user subsequently selected deterministic startup commitment over lazy
+allocation. Physical iOS now calls `mlock()` on the complete anonymous
+guest-RAM root before publishing any alias; Simulator and macOS remain demand
+allocated. Both runtime slices built and passed the architecture audit, the
+XCFrameworks and signed Release app were rebuilt, and that app replaced the
+copy on the iPad without removing or flattening any of the seven existing
+Documents siblings.
+
+At 1,536 MiB, the iPad reported unlimited soft and hard `RLIMIT_MEMLOCK` and
+wired all 1,610,612,736 bytes. The uninstrumented fresh-COW run spent only
+about 0.17 second in the wire, then reached the kernel at 1.517 seconds, init
+at 1.599, APEX activation at 7.589, zygote at 12.805, and SurfaceFlinger at
+14.853. iOS sent signal 9 at 15.385 seconds and process exit completed at
+15.506. There is no guest panic, RCU stall, OOM, or orderly shutdown. The wire
+therefore does what was requested--the whole nominal RAM is committed before
+the guest runs--but the successful 1.5 GiB admission cannot reserve the
+additional host/runtime headroom consumed later in boot.
+
+An Activity Monitor plus VM Tracker capture of the same fresh configuration
+recorded the following final process state immediately before the host kill:
+
+| Process measure | Bytes | MiB |
+| --- | ---: | ---: |
+| Physical footprint | 2,973,748,680 | 2,835.99 |
+| Anonymous | 2,961,588,224 | 2,824.39 |
+| Resident | 2,993,422,336 | 2,854.75 |
+| Compressed | 59,097,088 | 56.36 |
+| Real private | 175,554,560 | 167.42 |
+| Real shared | 13,680,640 | 13.05 |
+
+The peak compressed count was 77,316,096 bytes (73.73 MiB), down from
+663,863,296 bytes (633.11 MiB) in the last unwired 1,536 MiB run. Because the
+guest root is wired, that remaining 56--74 MiB belongs to other anonymous
+allocations; it is not compressed guest RAM.
+
+The private VM Tracker run archive was decoded to its four `XRVMState`
+snapshots and individual `XRVMRegion` records. It resolves the apparent extra
+memory:
+
+- The same guest object appears as 84 large region records. VM Tracker sums
+  them to 10,593.25 MiB resident, but the repeated 128 MiB slices have exact
+  matching resident and dirty-page counts across as many as seven mappings.
+  The source mappings use non-copying `vm_remap()`, so their unique content is
+  still exactly the 1,536 MiB wired root. The extra 9,057.25 MiB in this VM
+  Tracker subtotal is alias double-counting, not physical allocation.
+- Excluding those guest-derived regions leaves 470.14 MiB of distinct
+  non-guest resident regions and 63.16 MiB swapped/compressed in the same
+  snapshot. The resident part is 230.38 MiB of untagged, framework, file, and
+  shared mappings; 181.77 MiB `VM_MEMORY_MALLOC_SMALL`; 32.06 MiB
+  `VM_MEMORY_MALLOC_LARGE`; 24.23 MiB combined IOSurface, IOAccelerator,
+  LayerKit, and unshared-pmap regions; and about 1.71 MiB of other tags. The
+  compressed part is chiefly 20.83 MiB untagged, 10.44 MiB small-malloc, and
+  29.66 MiB large-malloc pages.
+- Subtracting the 1,536 MiB root, those 470.14 MiB resident regions, and those
+  63.16 MiB compressed regions from the 2,835.99 MiB footprint leaves
+  766.69 MiB. A separate warm trace provides the control: immediately after
+  the guest's aliases unwound, physical footprint fell by 771.41 MiB while
+  the process stayed alive. The 4.72 MiB difference pins the residual on the
+  live alias/native-mapping set rather than a hidden heap or a large graphics
+  allocation. This is jetsam-relevant same-task VM accounting even though the
+  aliases do not duplicate the guest's contents.
+
+The warm trace also shows a lifetime issue separate from cold-boot admission.
+After the guest stopped, the large guest-derived region set fell from 84
+records / 10,593.25 MiB alias-counted resident to 12 records / exactly
+1,536 MiB. The global wired root remains alive, leaving the idle application
+at 1,643,350,008 bytes physical footprint and about 1.5 GiB real-private RAM.
+Any future local footprint work should first remove avoidable full-range
+aliases and give the root explicit run-lifetime teardown; it must preserve the
+fail-fast wire, native-window semantics, and vhost-user access rather than
+restoring file-backed or purgeable RAM.
+
+The retained evidence is under:
+
+```text
+.build/android/ipad-wired-ram-20260826/cold-2vcpu-1536m/
+.build/android/ipad-wired-ram-20260826/wired-cold-activity-2vcpu-1536m/
+.build/android/ipad-wired-ram-20260826/wired-activity-2vcpu-1536m/
+```
+
+### Historical compression decision (superseded)
 
 This subsection records the decision made during the original probe. It is
 superseded by the later user-selected physical-iOS fail-fast policy: the
@@ -57,11 +139,9 @@ Apple's XNU implementation establishes the only relevant public escape hatch:
 `mlock()` calls `vm_map_wire_kernel()`, maps resource shortage to `EAGAIN`, and
 `mlockall()` returns `ENOSYS`. The compressor path asserts that a page handed
 to it is not wired. Thus `mlock()` can prevent compression only by making each
-page permanently resident. Applying it to the 1.5--2 GiB guest range would
-fault and wire the sparse reservation, encounter per-process and system wire
-limits, and, if it succeeded, increase the pressure already causing iOS to
-terminate the app. It is not an acceptable implementation and no host code was
-changed.
+page permanently resident. At this historical checkpoint that tradeoff was
+rejected and no host code was changed. The later explicit fail-fast policy and
+measured result above supersede that decision.
 
 Primary references are Apple's
 [virtual-memory overview](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/AboutMemory.html),
@@ -71,10 +151,9 @@ and the open-source XNU implementations of
 and the
 [compressor page-out path](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_pageout.c).
 
-The next useful experiment is to account for and reduce the host footprint of
-the anonymous root and its non-copying `vm_remap()` aliases, or reduce the
-guest's live boot working set. Do not wire the guest range, restore file-backed
-RAM, or mark guest pages purgeable merely to complete this matrix.
+The old recommendation not to wire the range is no longer current. Do not
+restore file-backed RAM or mark guest pages purgeable merely to complete this
+matrix.
 
 ## Anonymous guest RAM verifies the diagnosis (2026-08-26)
 

@@ -11,14 +11,28 @@
 - Both Android 16 KiB runtime slices build warning-clean and pass the
   architecture audit. Their generated compile policy is respectively
   `UML_WIRE_ANONYMOUS_GUEST_RAM=1` for device and `=0` for Simulator. The
-  rebuilt device runtime still needs to be packaged and exercised on the
-  connected iPad.
-- Before the policy change, an Activity Monitor trace of the 1,536 MiB,
-  two-vCPU iPad failure measured a 2,861,747,920-byte peak physical-footprint
-  ledger, 2,832,105,472 bytes anonymous, 663,863,296 bytes compressed, and
-  271,433,728 bytes real private. The more than 1.1 GiB apparent excess over
-  guest RAM is therefore not an ordinary private heap; region-level alias and
-  VM-object accounting remains under investigation.
+  XCFrameworks and signed Release app were rebuilt and installed without
+  disturbing any of the seven existing iPad Documents siblings.
+- The 1,536 MiB, two-vCPU device run wired all 1,610,612,736 bytes in about
+  0.17 second with unlimited `RLIMIT_MEMLOCK`. It then reached SurfaceFlinger
+  at 14.853 seconds and was killed by iOS at 15.385; process exit completed at
+  15.506. Full RAM commitment succeeds, but later host/runtime headroom still
+  exceeds the device's process limit.
+- Peak compressed memory fell from 663,863,296 bytes in the unwired run to
+  77,316,096 bytes, with 59,097,088 bytes at the final wired sample. That
+  residual is non-guest anonymous memory; the complete guest root is wired and
+  cannot enter the compressor.
+- Decoded VM Tracker regions show the same 1,536 MiB guest object counted
+  through 84 large root/MMU/native/vhost-derived records, totaling
+  10,593.25 MiB only because up to seven non-copying aliases repeat identical
+  per-slice residency and dirtiness. Distinct non-guest state is 470.14 MiB
+  resident plus 63.16 MiB compressed, led by untagged/framework/file mappings
+  and the malloc small/large zones; graphics-related tags total only
+  24.23 MiB resident.
+- The 766.69 MiB remaining footprint charge matches a 771.41 MiB fall when a
+  warm run's aliases unwind. The idle app then retains the global 1,536 MiB
+  wired root at a 1,643,350,008-byte footprint. Avoidable alias removal and
+  explicit root run-lifetime teardown are the next local footprint targets.
 
 ## 2026-08-26: iPad Android memory-ceiling probe
 
