@@ -491,15 +491,18 @@ Executable-memory policy:
   settings picker and at launch.
   When transferring one to a physical device, remember that
   `devicectl device copy to` copies a source directory's *contents* into the
-  destination; it does not preserve the source directory as a wrapper. Never
-  pass the `.kern` directory itself with `--destination Documents`, because
-  that incorrectly leaves `boot`, `guest`, and `release-manifest.json` at the
-  top of Documents. Stage a parent directory containing exactly the one
-  `.kern` bundle and copy that parent to Documents, then list Documents and the
-  bundle before launch to verify the wrapper, required payload, and absence of
-  `userdata.cow` for a fresh-boot measurement. Do not use a broad
-  `--remove-existing-content` against Documents to repair a mistake; it can
-  erase unrelated guest bundles and their persistent COWs.
+  destination; it does not preserve the source directory as a wrapper. Pass
+  the `.kern` directory as the source and the complete
+  `Documents/<bundle-name>.kern` path as the destination. Never target
+  `Documents` itself: doing so either flattens `boot`, `guest`, and
+  `release-manifest.json` into Documents or, when a staged parent is used,
+  replaces the directory contents and destroys unrelated bundles and their
+  persistent COWs even without `--remove-existing-content`. Before transfer,
+  list Documents and record its existing siblings. After transfer, list it
+  again and recurse through the explicit bundle to verify that every sibling
+  remains, the wrapper and required payload exist, and `userdata.cow` is absent
+  for a fresh-boot measurement. Do not use `--remove-existing-content` against
+  Documents to repair a mistake.
 - UML's management console is the only channel that reaches a running guest
   kernel, and the guest names its socket after the run's umid and never removes
   it. The emulator therefore supplies a per-run `umid=` when the caller has not,
