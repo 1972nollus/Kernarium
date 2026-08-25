@@ -867,8 +867,11 @@ void validateUbdPath(const std::filesystem::path& path, const char* label)
 
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
-    const std::filesystem::path& path)
+    const std::filesystem::path& path,
+    uint32_t dotsPerInch)
 {
+    constexpr std::string_view densityPrefix {
+        "androidboot.lcd_density="};
     const auto payload = readRegularFile(path);
     const std::string text(payload.begin(), payload.end());
     std::size_t cursor = 0;
@@ -883,12 +886,25 @@ void appendKernelCommandLine(
                text[cursor] != '\n' && text[cursor] != '\t')
             ++cursor;
         if (cursor != begin) {
-            arguments.emplace_back(text.substr(begin, cursor - begin));
+            const std::string_view argument {
+                text.data() + begin, cursor - begin};
+            if (argument.starts_with(densityPrefix)) {
+                throw std::invalid_argument(
+                    "the bundle kernel command line fixes the display density");
+            }
+            arguments.emplace_back(argument);
             ++appended;
         }
     }
     if (appended == 0U)
         throw std::invalid_argument("the bundle kernel command line is empty");
+
+    /* Android init imports this as ro.boot.lcd_density. Cuttlefish graphics
+     * init then publishes the same value as ro.sf.lcd_density, keeping the
+     * framework's logical density aligned with the per-launch EDID. Swift has
+     * already scaled dotsPerInch by nativeScale when Retina mode is active. */
+    arguments.emplace_back(
+        std::string {densityPrefix} + std::to_string(dotsPerInch));
 }
 
 /* The instance disk is the guest's only persistent state. It lives beside the
@@ -1158,7 +1174,7 @@ int runtimeRun(
         arguments.emplace_back("root=/dev/ram0");
         arguments.emplace_back("rootfstype=ramfs");
         appendKernelCommandLine(
-            arguments, boot->android_command_line_path);
+            arguments, boot->android_command_line_path, dotsPerInch);
 #else
         if (derivativeRootfs) {
             arguments.emplace_back("ubd0cr=" + std::string(rootfsPath));

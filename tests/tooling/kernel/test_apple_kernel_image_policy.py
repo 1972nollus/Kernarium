@@ -466,6 +466,18 @@ def main() -> int:
         "static let defaultMode: Self = .framebuffer" in content_view,
         "Kernarium does not default to the framebuffer surface",
     )
+    require(
+        "let scale = retinaMode ? screen.nativeScale : 1" in content_view
+        and "(CGFloat(160) * scale).rounded()" in content_view
+        and "request.dots_per_inch = dotsPerInch" in content_view,
+        "Kernarium does not scale and forward the Android display density",
+    )
+    require(
+        '"androidboot.lcd_density="' in runtime_source
+        and "std::to_string(dotsPerInch)" in runtime_source
+        and "boot->android_command_line_path, dotsPerInch" in runtime_source,
+        "Kernarium does not publish its per-launch DPI to Android init",
+    )
     serial_console = read(arguments.serial_console_view)
     for contract in (
         "import SwiftTerm",

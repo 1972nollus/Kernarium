@@ -968,7 +968,7 @@ def main() -> None:
         "ANDROID17_MAJOR": "17",
         "ANDROID17_PRODUCT": "aosp_kernarium_darwin",
         "ANDROID17_PAGE_SIZE": "16384",
-        "ANDROID17_RELEASE_CONFIG": "trunk_staging",
+        "ANDROID17_RELEASE_CONFIG": "aosp_current",
     }
     expected_ack = {
         "UML_KERNEL_FAMILY": "android-6.18",
@@ -1287,8 +1287,14 @@ def main() -> None:
         if token not in virtualization_patch:
             fail(f"Virtualization APEX route is missing ext4 policy: {token}")
 
+    android_products = (android_root / "overlay/AndroidProducts.mk").read_text()
     device_product = (android_root / "overlay/aosp_kernarium_darwin.mk").read_text()
     board_config = (android_root / "overlay/BoardConfig.mk").read_text()
+    if (
+        "aosp_kernarium_darwin-aosp_current-userdebug" not in android_products
+        or "trunk_staging" in android_products
+    ):
+        fail("Android product registration does not select aosp_current")
     for token in (
         "include device/google/cuttlefish/vsoc_arm64_pgagnostic/BoardConfig.mk",
         "BOARD_USES_FULL_RECOVERY_IMAGE := true",
@@ -1603,6 +1609,11 @@ def main() -> None:
         fail("Android kernel command line stores a machine-specific disk path")
     if "androidboot.force_normal_boot" in command_line:
         fail("Android kernel command line overrides the selected ramdisk boot mode")
+    if any(
+        token.startswith("androidboot.lcd_density=")
+        for token in command_line.split()
+    ):
+        fail("Android display density must remain a per-launch host argument")
     if any(
         token.startswith("androidboot.hardware.vulkan=")
         for token in command_line.split()

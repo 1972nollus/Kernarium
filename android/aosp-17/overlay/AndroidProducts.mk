@@ -18,4 +18,4 @@ PRODUCT_MAKEFILES := \
 	aosp_kernarium_darwin:$(LOCAL_DIR)/aosp_kernarium_darwin.mk
 
 COMMON_LUNCH_CHOICES := \
-	aosp_kernarium_darwin-trunk_staging-userdebug
+	aosp_kernarium_darwin-aosp_current-userdebug
