@@ -1,5 +1,15 @@
 # Refactor evidence
 
+## Android kernel/rootfs release decoupling (2026-08-26)
+
+| Boundary | Current evidence and limitation |
+| --- | --- |
+| Independent inputs | `kernel/android-6.18/artifacts/accepted-16k.env` selects the ACK artifact; `android/aosp-17/metadata/accepted-release.env` independently selects the rootfs/GPT. Apple CMake imports both and cannot invoke either producer. |
+| Compatibility rule | The runtime embeds the selected rootfs manifest in `__DATA,__uml_rootfs` and compares only that identity with the bundle. The kernel ELF comes from the independent artifact. Historical schema-2 kernel and ABI fields remain provenance and are not compared with the current bridge during installed-rootfs admission. |
+| Kernel artifact | `android-6.18-16k-20260826-a8bbe904-anonram1` contains module-free 16 KiB ACK `6.18.21-g6f355385a00b`, final tree `cd3295d540a93f6d8d5849f2bf0496931229f4dc`, patch-manifest SHA-256 `463d2006e568aa186c3bdb74f9ed1ba4150319c2746ebfe5c6332ee0deb53960`, and ABI v8 / `0x3871ad612337ea76`. The standalone Linux publisher and copied-artifact verifier passed without an AOSP build. |
+| Consumer builds | Focused layout/image/rootfs tests pass. The macOS Android executable, both Android iOS runtime slices, XCFramework package, and Simulator app build. Mach-O inspection finds distinct `__uml_elf` and `__uml_rootfs` sections. |
+| Runtime proof | The iOS 26.5 Simulator loaded `KernariumRuntimeAndroid_6_18_21_16K`, accepted a bundle from unchanged rootfs `20260825-87eaee1e-artpreopt1`, booted Linux `6.18.21-g6f355385a00b`, created its COW, mounted the old rootfs, and reached Android late init. A kernel-mode Darwin-signal panic at guest second 4.92 under the incidental 20-vCPU app setting prevents a full-boot stability claim but occurred after successful release admission. |
+
 ## Apple asymmetric host-CPU topology experiment (2026-08-25)
 
 | Boundary | Current evidence and limitation |

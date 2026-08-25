@@ -1,5 +1,53 @@
 # Refactor handoff
 
+## Android ACK and rootfs releases are independent (2026-08-26)
+
+Commits `87c60bdf` and `2a6461e8` split the Android Apple-product input into
+two accepted artifacts. `kernel/android-6.18/artifacts/accepted-16k.env`
+selects the module-free 16 KiB ACK bundle below `.build/kernel/artifacts`,
+while `android/aosp-17/metadata/accepted-release.env` continues to select the
+unchanged Android rootfs/GPT release. Apple configuration validates both but
+embeds the ACK ELF only from the kernel artifact. The exact selected rootfs
+manifest is embedded separately in the valid Mach-O section
+`__DATA,__uml_rootfs`. A kernel-only app update therefore neither republishes
+the GPT nor changes the bundle manifest/receipt or invalidates its persistent
+`userdata.cow`.
+
+The current rootfs is still the historical schema-2 combined release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. Its bundled ACK files and
+kernel/bridge fields remain immutable qualification provenance, but no Apple
+consumer selects that ELF and installed-rootfs verification no longer compares
+the historical bridge identity with the current host bridge. The independent
+kernel artifact owns the current source-tree, patch-manifest, ABI, page-size,
+ELF, and module-free checks. New rootfs publication may retain the existing
+producer until a schema migration is independently justified; no AOSP rebuild
+was needed for this kernel update.
+
+The standalone publisher ran on the dedicated x86_64 Linux builder against the
+existing clean ACK tree/output and produced
+`android-6.18-16k-20260826-a8bbe904-anonram1`: kernel
+`6.18.21-g6f355385a00b`, final tree
+`cd3295d540a93f6d8d5849f2bf0496931229f4dc`, patch-manifest SHA-256
+`463d2006e568aa186c3bdb74f9ed1ba4150319c2746ebfe5c6332ee0deb53960`,
+and bridge ABI v8 / `0x3871ad612337ea76`. The copied local artifact passed
+the common verifier against its checked acceptance descriptor.
+
+Focused versioned-layout, Apple image-policy, Android builder-lane, and rootfs
+release-contract tests pass. The standalone macOS Android executable, Android
+Simulator runtime, and Android device runtime build; framework packaging and a
+Simulator Kernarium app build also pass. The macOS binary contains distinct
+`__uml_elf` and `__uml_rootfs` sections and reports the new full kernel release.
+On the booted iOS 26.5 Simulator, the new runtime accepted a fresh bundle made
+from the unchanged older rootfs, logged Linux
+`6.18.21-g6f355385a00b`, created its COW, mounted the rootfs partitions, and
+entered Android late init. This is direct compatibility/admission evidence.
+That 20-vCPU diagnostic later panicked on a kernel-mode Darwin signal at guest
+second 4.92, so it is not full-boot stability evidence and this release-split
+task makes no claim about that separate failure. The canonical unit workflow
+built all 125 targets and passed its architecture audit, then was stopped after
+generated instruction-evidence producer locks caused unrelated test failures;
+the focused Android and kernel-image contracts had already passed separately.
+
 ## Android iPhone gap isolated to host VM/file-pager churn (2026-08-26)
 
 Matched Xcode System Trace, Virtual Memory Trace, and Activity Monitor captures

@@ -1,5 +1,23 @@
 # Refactor progress
 
+## 2026-08-26: Android kernel/rootfs release decoupling
+
+- Added an independently accepted `android-6.18` 16 KiB kernel artifact and a
+  standalone x86_64-Linux publisher for an already-built ACK output; AOSP is
+  not part of that publication path.
+- Apple consumers now take the signed ACK ELF from that artifact and the GPT,
+  boot policy, and exact manifest from the separately accepted rootfs release.
+  Kernel-only app updates preserve existing bundle manifests, receipts, and
+  COWs, including when schema-2 records an older bridge identity.
+- Published and locally verified ACK artifact
+  `android-6.18-16k-20260826-a8bbe904-anonram1`, then built the macOS Android
+  executable, both Android iOS runtime slices, their XCFramework, and the
+  Simulator app.
+- A Simulator launch accepted the unchanged
+  `20260825-87eaee1e-artpreopt1` rootfs and entered Android late init under the
+  new `6.18.21-g6f355385a00b` kernel. A later 20-vCPU panic is retained as a
+  separate stability observation, not as a failure of manifest admission.
+
 ## 2026-08-25: Apple asymmetric host-CPU topology rejected
 
 - Implemented the complete local-only profile: public performance-level
