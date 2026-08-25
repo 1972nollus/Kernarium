@@ -54,10 +54,13 @@ The current Apple product selects the independently published built-in-only
 16 KiB ACK artifact `android-6.18-16k-20260826-a8bbe904-anonram1` while keeping
 the accepted rootfs release
 `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`. Android physical memory
-uses one lazily reserved anonymous root plus non-copying `vm_remap()` aliases;
-the sparse file descriptor is only an identity and size token. This removed the
-former physical-device file-pager/writeback loop without eagerly touching the
-guest range.
+uses one anonymous root plus non-copying `vm_remap()` aliases; the sparse file
+descriptor is only an identity and size token. This removed the former
+physical-device file-pager/writeback loop. Physical iOS now requires `mlock()`
+to commit and wire the complete root before any alias can observe it, making
+startup fail immediately when the memory cannot be secured and keeping an
+admitted root out of the host compressor. macOS and Simulator retain demand
+allocation.
 
 The physical benchmark target is now the connected iPad mini 6. The 2 GiB
 Simulator matrix completed at 105.922/53.857 seconds cold/warm with two vCPUs
@@ -73,12 +76,13 @@ These are failed viability probes, not boot-time measurements.
 The public iOS 26.5 SDK contains no control that leaves anonymous pages
 pageable while exempting them from compression. XNU's `mlock()` instead wires
 pages under per-process and global resource limits, and `mlockall()` is
-unimplemented. Wiring the 1.5--2 GiB guest range would destroy lazy allocation
-and worsen the observed host memory ceiling, so no compression-disabling code
-was added. Continue by measuring and reducing the footprint/accounting of the
-anonymous root and its aliases or the guest's live boot working set. Do not
-restore file-backed guest RAM, wire the range, use purgeable mappings, or count
-the incomplete iPad runs as benchmarks. Detailed evidence is in
+unimplemented. The user selected that fail-fast wire despite its higher
+resident commitment. The device and Simulator Android runtimes build with the
+policy enabled only for physical iOS; packaging and the first device admission
+test are pending. Continue by measuring the footprint/accounting of the
+anonymous root and its aliases and the remaining host allocations. Do not
+restore file-backed guest RAM, use purgeable mappings, or count incomplete
+iPad runs as benchmarks. Detailed evidence is in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
 The follow-up asymmetric-host prototype was implemented, measured, rejected,

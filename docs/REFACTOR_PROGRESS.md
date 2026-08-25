@@ -1,5 +1,25 @@
 # Refactor progress
 
+## 2026-08-26: physical-iOS Android RAM is fail-fast wired
+
+- The user explicitly selected deterministic startup admission over the prior
+  lazy-allocation policy. Physical iOS now calls `mlock()` on the complete
+  anonymous guest-RAM root before publishing it to any `vm_remap()` consumer.
+  A failed wire tears down the reservation and aborts guest startup; a
+  successful wire faults the whole range and keeps its pages out of the host
+  compressor. macOS and Simulator remain demand allocated.
+- Both Android 16 KiB runtime slices build warning-clean and pass the
+  architecture audit. Their generated compile policy is respectively
+  `UML_WIRE_ANONYMOUS_GUEST_RAM=1` for device and `=0` for Simulator. The
+  rebuilt device runtime still needs to be packaged and exercised on the
+  connected iPad.
+- Before the policy change, an Activity Monitor trace of the 1,536 MiB,
+  two-vCPU iPad failure measured a 2,861,747,920-byte peak physical-footprint
+  ledger, 2,832,105,472 bytes anonymous, 663,863,296 bytes compressed, and
+  271,433,728 bytes real private. The more than 1.1 GiB apparent excess over
+  guest RAM is therefore not an ordinary private heap; region-level alias and
+  VM-object accounting remains under investigation.
+
 ## 2026-08-26: iPad Android memory-ceiling probe
 
 - The requested two-vCPU 1,536 MiB fresh-COW iPad retry reached `artd` at
@@ -12,8 +32,10 @@
   panic, RCU stall, or guest OOM before the host kill.
 - The public iOS 26.5 SDK exposes no per-map or per-process anonymous-memory
   compression opt-out. `mlock()` would wire and commit the guest range and
-  aggravate the memory ceiling, while `mlockall()` is unimplemented in XNU, so
-  no unsafe compression-disabling code was added.
+  aggravate the memory ceiling, while `mlockall()` is unimplemented in XNU.
+  That was the policy at this checkpoint; the later entry above records the
+  user's explicit fail-fast override and its bounded physical-iOS
+  implementation.
 - The 2 GiB Simulator matrix remains valid at 105.922/53.857 seconds cold/warm
   with two vCPUs and 72.873/41.157 seconds with four. A matched iPad comparison
   remains blocked pending a real process-footprint reduction.

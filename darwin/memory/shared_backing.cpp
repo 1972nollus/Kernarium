@@ -7,6 +7,7 @@
 #include <mach/mach.h>
 #include <mutex>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -51,19 +52,49 @@ AnonymousSharedBacking anonymous_backing;
 		return MAP_FAILED;
 	}
 	if (anonymous_backing.root == nullptr) {
-		/* Reserve the logical guest-RAM extent without touching its pages. The
-		 * sparse descriptor is only an identity token; every consumer aliases
-		 * this anonymous root rather than mapping the token. */
+		/* The sparse descriptor is only an identity token; every consumer
+		 * aliases this anonymous root rather than mapping the token. */
 		void *root = mmap(nullptr, backing_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANON, -1, 0);
 		if (root == MAP_FAILED)
 			return MAP_FAILED;
-		anonymous_backing.root = root;
-		anonymous_backing.size = backing_size;
+#if UML_WIRE_ANONYMOUS_GUEST_RAM
+		struct rlimit lock_limit {};
+		if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
+			dprintf(STDERR_FILENO,
+				"Darwin anonymous guest RAM: wiring %zu bytes "
+				"(RLIMIT_MEMLOCK soft=%llu hard=%llu)\n",
+				backing_size,
+				static_cast<unsigned long long>(lock_limit.rlim_cur),
+				static_cast<unsigned long long>(lock_limit.rlim_max));
+		} else {
+			dprintf(STDERR_FILENO,
+				"Darwin anonymous guest RAM: wiring %zu bytes "
+				"(RLIMIT_MEMLOCK unavailable, errno=%d)\n",
+				backing_size, errno);
+		}
+		if (mlock(root, backing_size) != 0) {
+			const int saved_errno = errno;
+			dprintf(STDERR_FILENO,
+				"Darwin anonymous guest RAM: failed to wire %zu "
+				"bytes, errno=%d; refusing lazy guest RAM\n",
+				backing_size, saved_errno);
+			(void)munmap(root, backing_size);
+			errno = saved_errno;
+			return MAP_FAILED;
+		}
+		dprintf(STDERR_FILENO,
+			"Darwin anonymous guest RAM: committed and wired %zu "
+			"bytes; host compression is disabled for the root\n",
+			backing_size);
+#else
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: reserved %zu bytes without "
 			"file backing\n",
 			backing_size);
+#endif
+		anonymous_backing.root = root;
+		anonymous_backing.size = backing_size;
 	} else if (anonymous_backing.size != backing_size) {
 		errno = EINVAL;
 		return MAP_FAILED;

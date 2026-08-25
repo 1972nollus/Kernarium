@@ -40,6 +40,11 @@ a boot-performance result. Raw summaries and wall logs are under:
 
 ### Anonymous-memory compression cannot safely be disabled
 
+This subsection records the decision made during the original probe. It is
+superseded by the later user-selected physical-iOS fail-fast policy: the
+complete anonymous guest root is now wired before startup admission, accepting
+the higher resident commitment in exchange for deterministic early failure.
+
 The installed public iOS 26.5 SDK was searched for an anonymous-memory
 compression policy. It exposes no no-compression `mmap`, `madvise`, Mach VM,
 or task-policy flag. This agrees with Apple's documented integrated VM model,

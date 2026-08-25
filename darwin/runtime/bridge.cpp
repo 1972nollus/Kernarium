@@ -53,8 +53,9 @@ int darwin_uml_open(const char *path, int flags, int mode)
 {
 	/* Android ACK requests this unlinked sparse descriptor solely as an
 	 * identity and size token. The memory layer recognizes every duplicate of
-	 * the descriptor and aliases a lazily reserved anonymous Mach VM object;
-	 * the token itself is never mapped or written as guest RAM. */
+	 * the descriptor and aliases one anonymous Mach VM object. Physical iOS
+	 * commits and wires that object before publishing it; the token itself is
+	 * never mapped or written as guest RAM. */
 	if (path != nullptr && strcmp(path, anonymous_physical_memory_path) == 0)
 		return open_anonymous_backing_token();
 	const int descriptor = open(path, flags, mode);

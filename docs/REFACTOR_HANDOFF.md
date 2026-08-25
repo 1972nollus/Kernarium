@@ -1,6 +1,6 @@
 # Refactor handoff
 
-## Android iPad memory ceiling blocks the matched boot matrix (2026-08-26)
+## Physical-iOS Android RAM now requires a full startup wire (2026-08-26)
 
 The physical benchmark target is now the connected iPad mini 6 rather than the
 iPhone. The current anonymous-RAM Release app, unchanged Android rootfs, ACK
@@ -31,22 +31,26 @@ safely when the requested lower-memory trials superseded it; no broad
 Documents operation or sibling-bundle removal occurred. Evidence is below
 `.build/android/boot-comparison-anonram-20260826`.
 
-There is no safe supported iOS control to make ordinary anonymous mappings
-pageable but exempt from compression. The public iOS 26.5 SDK has no
-`MAP_*`, `MADV_*`, or Mach VM no-compression option. Apple documents that its
-integrated VM cannot be disabled. XNU shows that `mlock()` wires the requested
-range, subject to resource limits, while `mlockall()` returns `ENOSYS`; the
-compressor operates only on non-wired pages. Wiring up to 1.5--2 GiB would
-fault and permanently retain the guest pages, defeat the lazy reservation, and
-worsen the memory-limit condition, so it was deliberately not implemented.
-`MAP_NORESERVE`, `MAP_NOCACHE`, reusable, and purgeable mappings do not provide
-the required semantics and the latter options can make guest RAM reclaimable
-or discardable.
+There is no supported iOS control that leaves ordinary anonymous mappings
+pageable while exempting them from compression. The user explicitly chose the
+available fail-fast alternative: on physical iOS, the memory component now
+calls `mlock()` on the complete anonymous guest-RAM root before publishing it
+to the kernel, MMU, native-window, or vhost-user aliases. Failure unmaps the
+root and aborts guest startup instead of admitting a lazy allocation that can
+fail later; success faults and wires every page, which keeps it out of the XNU
+compressor. macOS and Simulator retain demand allocation. Both Android runtime
+slices build warning-clean and pass their architecture audits; packaging and
+the connected-iPad admission test remain pending at this checkpoint.
 
-The next physical-device investigation must reduce the process footprint or
-the accounting/working-set cost of its anonymous `vm_remap()` aliases. Do not
-re-enable file-backed RAM, wire the guest range, use purgeable memory, or treat
-the incomplete iPad attempts as benchmark results.
+The last unwired 1,536 MiB iPad diagnostic trace peaked at 2,861,747,920 bytes
+of physical-footprint accounting, 2,832,105,472 anonymous bytes,
+663,863,296 compressed bytes, 2,333,736,960 resident bytes, and only
+271,433,728 real-private bytes. Thus the roughly 1.17 GiB physical-footprint
+excess over guest RAM is not an ordinary application heap. Continue by
+separating root/alias VM-object accounting from actual resident pages and by
+measuring graphics, translation-cache, stacks, framework, and allocator
+regions. Do not re-enable file-backed RAM, use purgeable memory, or treat the
+incomplete iPad attempts as benchmarks.
 
 ## Android anonymous RAM fixes the iPhone cold-boot penalty (2026-08-26)
 

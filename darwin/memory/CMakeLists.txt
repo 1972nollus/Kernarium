@@ -16,6 +16,8 @@ target_include_directories(uml_memory_shared_backing PUBLIC
 target_compile_features(uml_memory_shared_backing PUBLIC cxx_std_20)
 target_compile_options(uml_memory_shared_backing PRIVATE
     -Wall -Wextra -Werror)
+target_compile_definitions(uml_memory_shared_backing PRIVATE
+    UML_WIRE_ANONYMOUS_GUEST_RAM=$<STREQUAL:${UML_APPLE_PLATFORM},ios>)
 set_target_properties(uml_memory_shared_backing PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
