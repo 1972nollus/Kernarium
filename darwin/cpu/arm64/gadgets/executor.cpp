@@ -603,6 +603,18 @@ public:
 			deactivate(slot.generation, slot.pc,
 				slot.result->program);
 		}
+		/* The memoised binding describes whoever held the slot until
+		 * now, and a store may hand the slot to a different address
+		 * space at the same guest PC -- where every test activate()
+		 * makes still passes. Left in place it would publish this
+		 * translation into the *previous* address space's record,
+		 * branching its code into this one and leaving the slot naming a
+		 * record that retiring that address space destroys. Taking a
+		 * slot therefore always resolves the binding again; ordinary
+		 * reactivation of an unchanged owner keeps the memo.
+		 */
+		slot.link = nullptr;
+		slot.link_epoch = 0;
 		slot.result.emplace(std::move(result));
 		slot.pc = pc;
 		slot.generation = current_generation_;
@@ -699,6 +711,13 @@ private:
 		 * advances epoch_, which is what link_epoch is compared against.
 		 * Retiring the address space clears this slot's epoch in the same
 		 * pass that destroys the map.
+		 *
+		 * The memo is only ever valid for the address space named by
+		 * `generation`, and nothing about the record itself says which
+		 * one that is: the guest PC it carries is equal across all of
+		 * them. Ordinary slot replacement does not keep the owner, so
+		 * store() resets this pair rather than letting activate() decide
+		 * from the record alone.
 		 */
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};

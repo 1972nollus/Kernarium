@@ -531,7 +531,11 @@ Do not casually remove or reshape these accepted mechanisms:
   retires the least recently current address space whole, including its slots,
   links, and indirect sites; an unbounded pool is not a cache. An eviction
   deactivates the link record of the slot's own address space, not of whichever
-  is running.
+  is running. A slot's memoised link record belongs to the address space the
+  slot names, and a store may hand the slot to a different one at the same
+  guest PC, so storing always rebinds; keeping the memo publishes the new
+  translation into the previous owner's record and leaves the slot naming
+  storage that owner's retirement destroys.
 - **G161 gadget translation sharing:** the contract that lets one gadget
   executor adopt another's translation, bounded by
   `UML_GADGET_SHARED_BUDGET_MIB`. `LinkRelocations` records every stream cell

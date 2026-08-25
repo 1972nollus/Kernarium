@@ -1,5 +1,20 @@
 # Refactor progress
 
+## 2026-08-25: gadget cache slot-replacement link fix
+
+- Fixed the `ProgramCache` slot whose memoised `LinkRecord` survived the slot
+  being handed to a different address space at the same guest PC, which
+  published one address space's translation into another's record and left the
+  slot naming storage that retiring the previous owner destroyed.
+- Closed the Android 17 Simulator `RenderThread` panic inside
+  `ProgramCache::activate`; see G174 in `HOT_PATH_EXPERIMENTS.md`.
+- Extended `arm64-gadget-cache-validation` with a deterministic
+  cross-address-space replacement regression that fails against the defect.
+- Both page-profile unit workflows, the focused test in both profiles and under
+  16 KiB ASan/UBSan, and four rebuilt-Simulator Android launches pass. No boot
+  timing is claimed; the earlier one-off macOS panic is a different signature
+  and stays open.
+
 ## 2026-08-25: accepted Android build-time ART packaging
 
 - Cleared the inherited `system_other` odex route in the exact-synced device

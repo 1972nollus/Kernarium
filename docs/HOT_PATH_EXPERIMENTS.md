@@ -10725,3 +10725,81 @@ validation passes at 16 KiB, 4 KiB, and under 16 KiB ASan/UBSan, and both
 complete page-profile unit workflows pass; this entry claims removal of the
 observed allocator stall, not a general speedup or closure of the separately
 observed 2 GiB transfer timer starvation.
+
+## G174: a replaced gadget slot must rebind its link record
+
+Dated 2026-08-25. G160 lets several address spaces share one gadget cache by
+tagging every slot, direct link and indirect site with the address space it
+describes. A slot also memoises the `LinkRecord` its translation publishes
+into, so an ordinary reactivation does not hash the guest PC again. Those two
+mechanisms did not agree. `ProgramCache::store()` deactivated the outgoing
+translation and rewrote the slot's guest PC, address space and epoch, but left
+the memo in place, and everything `activate()` can ask of a memo - non-null,
+current epoch, matching `link.guest_pc` - still passes when the slot has been
+handed to a *different* address space at the same guest PC. Nothing in a
+`LinkRecord` names its owner; the guest PC is equal across all of them.
+
+Four-way sets with round-robin replacement make that ordinary rather than
+exotic. Five address spaces whose translations of one guest PC collide in a set
+fill it and then take the first one's way. The first address space's own record
+was republished to name the fifth's translation, so its predecessor blocks
+branched straight into another address space's code, which is exactly what
+G160's tagging exists to prevent. The second consequence is worse: retirement
+walks only the slots the retired address space still owns, so the surviving slot
+was skipped, and destroying that address space's `Generation` released the pool
+holding the record the slot still named.
+
+The second form is what was observed. A 4-vCPU, 2 GiB, 16 KiB Android 17
+gadgets guest on the iOS 26.5 iPad mini Simulator took `Darwin POSIX signal=11`
+at guest second 73.825 in `RenderThread`, at `pc 0x114370e8c`, which the prior
+session resolved with LLDB to
+`GadgetExecutor::ProgramCache::activate(unsigned long long, Slot &) + 120`.
+`X21` held `0x14b232898` and the reported fault address was `0x14b2328c8`,
+which is `X21 + 0x30`. `LinkRecord` places `link` after two two-word streams and
+`BlockLink::guest_pc` sixteen bytes into that, so `+0x30` is precisely
+`slot.link->link.guest_pc` - the field the rebinding test reads. The retained
+capture is `.build/android/measurements/`
+`platform-compare-artpreopt-4vcpu-2g-20260825/`
+`ios-simulator-first-panic-observation/ttyS0-wall.log`.
+
+The earlier one-off macOS failure retained at
+`.build/android/measurements/overlay2-e3cc7bae-20260825/normal-fresh.log` was
+suspected of the same cause and is not. It reports `Kernel mode fault at addr
+0x3, ip 0x18ef53190` in `binder:721_5`: the faulting instruction is in the
+shared library cache rather than in the emulator image, and the fault address is
+not the offset of `BlockLink::guest_pc` in the memoised record. It remains an
+open, unexplained observation and this entry closes nothing about it.
+
+`store()` now clears `slot.link` and `slot.link_epoch` after deactivating the
+outgoing translation, so taking a slot always resolves the binding against the
+address space that is taking it. Reactivating an unchanged owner still keeps the
+memo, which is the case it exists for, and a store already had to do a map
+lookup's worth of work. No other path can leave a cross-address-space memo:
+`release()` clears it when the owning address space retires, `invalidate()`
+advances the epoch the memo is compared against, and `find()` only reaches
+`activate()` on a slot whose address space already matches.
+
+`arm64-gadget-cache-validation` grew a deterministic regression rather than one
+that waits for an allocator to reuse freed storage. It mirrors
+`ProgramCache::locate()` to choose five address spaces that collide at one guest
+PC and whose predecessor block does not, gives the first and the rest different
+immediates, and requires the first address space's predecessor to exit at its
+successor after the replacement instead of continuing. Against the defect it
+executed the fifth address space's translation and returned that immediate; the
+test also pins that no code-change sequence moved during the scenario, since a
+reset from that direction would make the check pass regardless. Under ASan the
+same test additionally covers the freed-storage form.
+
+Both host page-profile workflows pass on the fixed tree, and the focused test
+passes at 16 KiB, at 4 KiB, and under 16 KiB ASan/UBSan. The Simulator app was
+rebuilt with all three runtimes and relaunched four times against the same
+Android bundle - one short harness check and three held for 300 wall seconds
+each, roughly four times past the second at which the panic was seen. Every
+capture reached `sys.boot_completed=1` and none contains a Darwin signal,
+panic, oops, `BUG:`, RCU stall, or watchdog line; the captures and their
+provenance are under
+`.build/android/measurements/gadget-slot-link-fix-20260825/`. That is absence of
+recurrence against a single prior observation, not proof - the deterministic
+regression is what carries the claim. No boot timing was recorded or compared,
+and the provisional 4-vCPU/2-GiB platform figures collected immediately before
+the panic are discarded.

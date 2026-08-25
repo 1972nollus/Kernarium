@@ -1,5 +1,48 @@
 # Refactor handoff
 
+## Gadget cache slot-replacement link defect fixed (2026-08-25)
+
+A 4-vCPU, 2 GiB, 16 KiB Android 17 gadgets guest on the iOS 26.5 iPad mini
+Simulator panicked at guest second 73.825 in `RenderThread` with `Darwin POSIX
+signal=11` inside
+`GadgetExecutor::ProgramCache::activate`. The cause is host-side and in
+`darwin/cpu/arm64/gadgets/executor.cpp`: a cache slot memoises the `LinkRecord`
+its translation publishes into, and `store()` did not reset that memo when a
+slot passed to a different address space at the same guest PC. The record's
+guest PC and the cache epoch, which are all `activate()` can test, are equal
+across address spaces, so the new translation was published into the previous
+owner's record. That let one address space's code branch into another's
+translation, against G160, and left the surviving slot naming storage that
+retiring the previous owner destroyed. `store()` now clears the memo after
+deactivating the outgoing translation, so taking a slot always rebinds. See
+G174 in [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+
+No Android image, AOSP tree, or kernel artifact changed, and the accepted
+release `android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` is unaffected.
+
+The separate one-off macOS panic retained at
+`.build/android/measurements/overlay2-e3cc7bae-20260825/normal-fresh.log` was
+suspected of sharing this cause and does not: it faults at address `0x3` on an
+instruction inside the shared library cache, neither of which matches this
+defect. It stays open.
+
+`arm64-gadget-cache-validation` gained a deterministic cross-address-space
+replacement regression that fails against the defect with the wrong address
+space's result and passes with the fix; it also covers the freed-storage form
+under ASan/UBSan.
+
+The provisional 4-vCPU/2-GiB platform timings collected immediately before this
+panic are discarded rather than carried forward, and no timing is claimed here.
+
+Both host page-profile unit workflows pass on the fixed tree - 579/579 unit and
+61/61 tooling at 16 KiB, 581/581 and 61/61 at 4 KiB - and the focused test also
+passes under 16 KiB ASan/UBSan. The rebuilt Simulator app was relaunched four
+times against the same Android bundle, three of them held for 300 wall seconds,
+and no capture contains a Darwin signal, panic, oops, RCU stall, or watchdog
+line. That is absence of recurrence against a single prior observation, not
+proof; the deterministic regression carries the claim. The physical-device and
+macOS products were not re-exercised for this fix.
+
 ## Android build-time ART release accepted for runtime qualification (2026-08-25)
 
 The local producer clears inherited `BOARD_USES_SYSTEM_OTHER_ODEX` after
