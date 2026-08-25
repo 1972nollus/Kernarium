@@ -12,6 +12,80 @@ guest pages, normal boot, point-mode 160 DPI, and hardware Virgl.
 | iPad mini 6, iOS 18.5 | 303.145 s | 573.213 CPU-s | 1.891 | Time Profiler; 95.916% of carrier CPU classified |
 | iOS 26.5 iPad mini Simulator | 153.688 s | 251.115 CPU-s | 1.634 | `sample(1)` fallback; approximate, 0.810 active-sample/CPU cross-check |
 
+## Retired-work and carrier-CPU follow-up
+
+A later low-overhead run closes the work-volume question left open by the
+sampling profiles. A separate `UML_RUNTIME_PROFILING=ON` runtime counted
+retired arm64 guest-user instructions and dispatch exits exactly at each
+record. Every 4,096 dispatch entries it also sampled the carrier's thread CPU
+clock. The latter includes
+both emulated-user execution and native UML work performed by that persistent
+carrier between guest entries; it is not a hardware-cycle or native-kernel
+instruction counter. Native ACK instructions are not included in the retired
+guest-instruction count.
+
+Both platforms again used the same accepted release, gadgets, 4 vCPUs, 2 GiB,
+16 KiB pages, normal boot, 160 DPI and hardware Virgl. Cold runs removed only
+the selected bundle's COW; warm runs immediately reused the resulting COW.
+Both runtime slices were built with `-O3`, ThinLTO, and the same
+`armv8.2-a+fp16+dotprod+crypto+fcma` ISA target. A focused comparison found the
+1,621,680-byte assembled gadget-engine text identical after excluding Mach-O
+platform metadata, so this is not a device build using weaker optimization or
+instruction selection.
+
+| Boot | Host | Wall s | Retired guest instructions | Carrier CPU-s | Average carrier cores | Carrier ns / guest instruction |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | Simulator | 72.520 | 34,601,170,828 | 183.541 | 2.531 | 5.304 |
+| Cold | iPad | 435.979 | 36,370,137,341 | 795.954 | 1.826 | 21.885 |
+| Warm | Simulator | 40.854 | 14,035,766,767 | 85.319 | 2.088 | 6.079 |
+| Warm | iPad | 167.272 | 14,846,695,715 | 293.979 | 1.757 | 19.801 |
+
+Each row uses the last complete cumulative record from every carrier before the
+boot-complete milestone. A record is exact, but sparse emission can omit fewer
+than 4,096 later dispatches per carrier. Even if every omitted dispatch retired
+the full 65,536-instruction budget, the total residual is below 1.074 billion
+instructions. Giving that entire bound to the device and the full per-thread
+record-age CPU bound to Simulator still leaves at least a 3.98-fold cold and
+2.99-fold warm device carrier-CPU-per-work penalty. The conclusion does not
+depend on treating the sparse milestone as a perfect final flush.
+
+The recorded wall ratios have a direct accounting identity. Cold
+iPad/Simulator is
+`6.012 = 1.051` times the retired work, times `4.126` carrier CPU per retired
+instruction, divided by `0.721` relative carrier utilization. Warm is
+`4.094 = 1.058 * 3.257 / 0.842`. Only 5.1--5.8% more emulated guest work was
+retired on the device. The dominant term is therefore 3.26--4.13 times more
+carrier CPU time per stable guest-work unit; 16--28% lower effective carrier
+concurrency compounds it.
+
+The engine's cumulative elapsed service time is also much larger than carrier
+CPU: cold 1,253.381 versus 795.954 carrier-seconds, and warm 422.491 versus
+293.979. Because carrier CPU includes work outside the engine, those
+differences are conservative lower bounds: at least 457.427 seconds (36.5%)
+of cold and 128.512 seconds (30.4%) of warm summed engine service elapsed while
+the corresponding carrier was off-CPU. Physical scheduling/preemption is
+material, but the CPU-per-work ratio proves it is not the primary term.
+
+The stage boundary remains workload-sensitive. Warm device and Simulator are
+effectively equal through zygote. Afterward, device carrier CPU per instruction
+is 2.45 times Simulator through boot-animation start, 3.67 times through codec
+generation start, 4.05 times through codec exit, and 3.08 times through boot
+completion. This aligns with the earlier symbol profile: real gadget bodies
+plus memory/MMU own 79.65% of physical CPU, while translation/cache is 6.46%,
+host synchronization 0.20%, and on-CPU I/O 1.01%. The supported root cause is
+the A15's much lower sustained throughput for the full Android gadget/MMU and
+large-working-set mix, plus lower carrier concurrency and E-core spill. It is
+not extra Android instruction volume, a missing vCPU, a translator bottleneck,
+or storage I/O.
+
+One diagnostic run that read `CLOCK_THREAD_CPUTIME_ID` before and after every
+dispatch is explicitly discarded: it moved iPad cold boot from the prior
+355-second range to 411.898 seconds while barely changing Simulator. The
+accepted method reads the clock once at carrier baseline and once per 4,096
+entries. Its raw summaries and reduced stage comparisons are under
+`.build/android/cpu-split-20260825`; the preceding exact retired-work-only runs
+are under `.build/android/retired-work-20260825`.
+
 These wall values delimit the profiled samples; they are not replacements for
 the uninstrumented boot-timing results. Simulator sampling is particularly
 intrusive: the same uninstrumented product previously completed cold boot in
@@ -198,15 +272,16 @@ instrumentation and first-boot variance, so it is neither a speedup nor a
 regression result. Both controls brought up exactly two CPUs and completed
 without a stall or crash.
 
-The supported diagnosis is therefore two-part: Android exposes mostly one or
-two runnable critical-path tasks, and the iPad can give P-core service to only
-two carriers when more work does exist. Normal A15-versus-M1 per-core
-throughput and working-set differences stretch those dependencies further,
-but prior equal-work gadget probes reject a blanket twofold iPad execution
-penalty. Resolving the remaining work-volume versus per-core-cost split would
-require matched low-overhead host counters plus guest scheduler/task and
-retired-guest-instruction counts; the current CPU profiles cannot supply that
-causal precision.
+This sampling profile originally left work volume versus execution rate open.
+The later sparse counters at the top of this document close it: device work is
+only 1.051--1.058 times Simulator, while carrier CPU per retired guest-user
+instruction is 3.257--4.126 times larger. Android's mostly one- or two-task
+critical path, the A15's two P cores, E-core spill, and host preemption lower
+effective concurrency further. The supported diagnosis is therefore slower
+A15 execution of the full gadget/MMU and memory-intensive Android mix,
+compounded by scheduling service—not a missing carrier or extra guest work.
+Without matched hardware counters, the evidence cannot attribute that on-CPU
+term to one cache level or microarchitectural event.
 
 ## Physical-iPad stage breakdown
 

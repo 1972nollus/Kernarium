@@ -1437,6 +1437,20 @@ The principal runtime controls are `UML_JIT_PROFILE_COMPILE=1`,
 `UML_JIT_PROFILE_EXECUTOR_POOL=1`. The first three emit periodic cumulative
 snapshots and a process-wide final summary after a clean, joined shutdown; the
 pool trace emits only its change-detected final.
+
+`UML_PROFILE_DISPATCH=1` is another profiling-build-only control. Each named
+vCPU carrier emits a cumulative `Darwin dispatch profile` record every 4,096
+engine entries. `instructions=` is the exact retired arm64 guest-user count;
+the exit fields classify each return, `nanoseconds=` is cumulative engine
+elapsed time, and `carrier-cpu-nanoseconds=` sparsely samples that thread's CPU
+clock from its first entry. Carrier CPU includes native UML work between guest
+entries and is not a native-ACK instruction or hardware-cycle counter. Keep the
+sparse interval: reading the thread clock on every dispatch materially perturbs
+physical-iOS boot. For a fresh Android instance, the diagnostic launch
+environment may also set `KERNARIUM_RESET_ANDROID_INSTANCE=1`; Kernarium then
+removes only the selected bundle's `userdata.cow` before launch. The checked
+helper cannot remove the bundle wrapper, base GPT, or a sibling bundle.
+
 After the embedded ELF entry returns with its task carriers retired, the
 emulator invokes an explicit, idempotent reporting boundary before releasing
 the session-owned executor pool. The profiling CLI repeats that boundary after

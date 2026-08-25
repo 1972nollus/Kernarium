@@ -50,17 +50,19 @@ is a reviewed metadata change that records a new full commit and tree.
 This section is the current entry point and supersedes the 2026-08-24 handoff
 below wherever the two differ.
 
-The follow-up asymmetric-host investigation found a feasible local scheduling
-contract but made no product change. Kernarium can discover ordered Apple core
-types through the public `hw.nperflevels` and `hw.perflevelN.logicalcpu`
-sysctls. A future prototype can pair an immutable performance level and ACK
-scheduler capacity with each fixed vCPU carrier, then request corresponding
-pthread QoS. Apple exposes no supported numbered-core binding and no normalized
-P/E throughput ratio, so exact affinity is not a valid goal and capacity must
-be calibrated before acceptance. Do not add a device table, Mach affinity tag,
-fake CPUFreq/Energy Model/EAS/uclamp support, or a QoS-only policy. See
+The follow-up asymmetric-host prototype was implemented, measured, rejected,
+and reverted in `8b143c28`. Dynamic discovery found two P and four E cores on
+the iPad, and the `1024,1024,512,512` trace achieved 97.5% P residence for
+vCPU0/1 and effectively 100% E residence for vCPU2/3. Placement worked, but
+the trace averaged only 1.719 carriers. All swept lower capacities regressed
+warm boot by 13.2--21.9%, and the cold observation supplied no win. The current
+product and accepted release again give every configured vCPU symmetric
+capacity 1024 and default carrier QoS; the qualification campaign configured
+four vCPUs explicitly. Do not restore the prototype, add a device table or Mach
+affinity tag, fake CPUFreq/Energy Model/EAS/uclamp support, or a QoS-only
+policy without new evidence that reverses this result. See
 [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
-and G176 in `HOT_PATH_EXPERIMENTS.md` for the contract and gates.
+and G176--G177 in `HOT_PATH_EXPERIMENTS.md` for the experiment and disposition.
 
 The fresh-only overlay is implemented under `android/aosp-17/overlay` and is
 exact-synced into AOSP as `device/kernarium/darwin`. It keeps ThemePicker and
@@ -126,22 +128,29 @@ Simulator CPU. Full whole-boot and per-stage tables, category definitions,
 confidence gates, and evidence paths are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
-Follow-up carrier/core-class analysis closes the immediate scaling question
-without a product change. The 2.283 profiled process-CPU ratio is 1.972 longer
-wall time times 1.157 more average active cores, not a 2.283-fold
-per-instruction penalty. All four carriers are balanced within a 1.074
-maximum/minimum ratio. Android runs one or two carriers for 70.70% of physical
-profile wall and all four for only 6.58%; APEX-to-Zygote is 86.79%
-one-carrier, while the heaviest ART interval averages 2.175. When three or four
-do run, Darwin almost exactly fills the A15's two P-cores and spills the rest
-to E, which owns 22.76% of carrier CPU. The generated product has no ART
-thread/cpuset override and dex2oat therefore defaults to the four online guest
-CPUs. A two-vCPU control slowed Simulator boot 31.9%, while one physical result
-was inside the wide first-boot/profile variance. Keep the 4-vCPU measurement
-policy; the supported cause is mostly serial Android dependencies plus the
-two-P-core heterogeneous scheduling boundary, not a missing carrier, host
-global lock, translation, or I/O defect. See G175 in
-[`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+Low-overhead cumulative counters close the work-volume/per-core split. Cold
+Simulator/iPad boots retired 34.601/36.370 billion guest-user instructions and
+used 183.541/795.954 carrier CPU-s. Warm boots retired 14.036/14.847 billion
+and used 85.319/293.979 CPU-s. Thus the iPad executes only 5.1--5.8% more
+emulated work but spends 4.126 times more carrier CPU per instruction cold and
+3.257 times more warm. Its effective carrier concurrency is also only 72.1%
+and 84.2% of Simulator. The recorded snapshot decompositions are cold
+`6.012 = 1.051 * 4.126 / 0.721` and warm
+`4.094 = 1.058 * 3.257 / 0.842`. Each sparse record is exact; allowing the
+maximum possible tail before the host milestone still leaves a 3.98-fold cold
+and 2.99-fold warm device CPU-per-work penalty.
+
+Both slices use the same `-O3`, ThinLTO, and ARMv8.2 ISA policy, and their
+assembled gadget engine text is identical apart from Mach-O platform metadata.
+Together with the symbol profile, the supported cause is lower A15 sustained
+throughput on the full Android gadget/MMU and memory-intensive working set,
+compounded by the two-P-core limit, E-core spill, 16--28% lower concurrency,
+and host preemption. It is not extra Android work, a missing carrier, host
+global lock, translation/cache, or I/O. Keep the uniform-vCPU product policy;
+these comparisons explicitly used four vCPUs. The available evidence does not
+isolate the remaining on-CPU term to a particular hardware cache or event; that
+would require matched hardware counters. See
+G175--G177 in [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
 
 The Simulator crash that invalidated the provisional timing was a host gadget
 cache defect, not an Android image or ACK defect. A cache slot handed to a

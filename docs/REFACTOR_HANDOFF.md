@@ -1,70 +1,76 @@
 # Refactor handoff
 
-## Apple asymmetric host-CPU topology investigated (2026-08-25)
+## Android asymmetric host-CPU topology rejected (2026-08-25)
 
-Apple's public topology sysctls are sufficient to discover performance levels
-without a device table: query `hw.nperflevels`, then each ordered
-`hw.perflevelN.logicalcpu`, where level 0 is fastest. The current M1 Ultra
-acceptance host reports 16 level-0 and four level-1 logical CPUs. The target
-iPad's values still need a runtime diagnostic when implementation begins.
+The complete local topology prototype was implemented, measured on the target
+iPad, rejected, and reverted in `8b143c28`. The current product again presents
+symmetric capacity 1024 on every configured vCPU and leaves every carrier at
+default host QoS. The qualification campaign explicitly configured four
+vCPUs. The accepted Android release is again
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`; no experimental ACK
+topic, host-topology source, capacity argument, or differentiated release
+remains.
 
-There is no supported Apple API for pinning a pthread to a numbered physical
-P- or E-core. `pthread_attr_set_qos_class_np()` can request a QoS at carrier
-creation and XNU uses QoS in asymmetric cluster placement, but the host remains
-free to migrate and spill. `THREAD_AFFINITY_POLICY` is explicitly experimental
-and only hints that equal tags share an L2 cache; do not use it as affinity.
+The iPad dynamically reported two level-0 and four level-1 CPUs. A
+`1024,1024,512,512` Instruments run proved that the mechanism worked: vCPU0/1
+spent 97.5% of CPU on P cores and vCPU2/3 effectively 100% on E cores. It also
+averaged only 1.719 running carriers. Interleaved warm controls completed in
+147.644 and 158.415 seconds (153.029-second mean); lower capacities 512, 640,
+and 768 completed in 173.188, 179.015, and 186.556 seconds, regressions of
+13.2%, 17.0%, and 21.9%. A 512 cold run took 360.523 seconds versus the nearby
+355.008-second uniform observation and supplied no cold win.
 
-The feasible local design gives each fixed vCPU one immutable performance
-level, tells ACK's ordinary fair scheduler its normalized per-vCPU capacity,
-and gives the corresponding pthread carrier a matching QoS request. ACK 6.18
-already has `topology_set_cpu_scale()` and capacity-aware misfit migration, so
-this needs neither EAS nor fake CPUFreq/energy-model/uclamp support. No common
-host/kernel ABI or AOSP rebuild is required.
-
-Apple does not publish a capacity ratio. Do not infer it from cache size,
-frequency, or a device-name table. A prototype must parameterize and calibrate
-lower-level capacity with equal guest work and measured P/E residence, then
-pass an interleaved 4-vCPU/2-GiB iPad A/B. Exact physical-core predictability
-is not an achievable product claim; only stable virtual class plus best-effort
-host QoS is. No product change was made in this investigation. The full design,
-fallbacks, rejected alternatives and acceptance gates are in
+The guest capacity policy therefore discouraged useful work on the two
+E-class vCPUs while QoS could not create more than the A15's two P cores. There
+is still no supported Apple API for numbered-core binding. Do not revive the
+prototype, infer a capacity from cache or nominal frequency, or substitute a
+QoS-only policy without new evidence that changes this result. Full design,
+placement, A/B, and cleanup evidence is in
 [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
-and G176 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+and G176--G177 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
 
-## Android physical-iPad boot scaling diagnosed (2026-08-25)
+## Android physical-iPad boot gap isolated (2026-08-25)
 
-The physical-iPad slowdown is not a missing-vCPU, translation, I/O, or emulator
-global-lock defect. In the cold profile, the four fixed carriers receive
-136.898--146.976 CPU-s each. Host synchronization is 0.20% of process CPU,
-translation plus all software-cache work is 6.46%, and on-CPU I/O/device work
-is 1.01%.
+Low-overhead sparse cumulative accounting separates guest work, on-CPU cost,
+and effective parallelism. These are matched
+gadgets/4-vCPU/2-GiB/16-KiB boots of the accepted release:
 
-The apparent 2.283 CPU-time ratio is `1.972` longer profiled wall time times
-`1.157` more average active cores. CPU seconds are not guest-instruction counts;
-the iPad accumulates more CPU because it remains in boot longer while averaging
-slightly more, not fewer, active cores. Simulator sampling nearly doubled its
-wall time, so that ratio is explanatory for the captured runs rather than a
-precise equal-work hardware A/B.
+| Boot | Host | Wall s | Retired guest-user instructions | Carrier CPU-s | Average carrier cores | Carrier ns/instruction |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | Simulator | 72.520 | 34,601,170,828 | 183.541 | 2.531 | 5.304 |
+| Cold | iPad | 435.979 | 36,370,137,341 | 795.954 | 1.826 | 21.885 |
+| Warm | Simulator | 40.854 | 14,035,766,767 | 85.319 | 2.088 | 6.079 |
+| Warm | iPad | 167.272 | 14,846,695,715 | 293.979 | 1.757 | 19.801 |
 
-Android exposes one or two running carriers for 70.70% of the physical profile
-and three or four for only 24.06%; all four run for 6.58%. APEX-to-Zygote is
-one-carrier for 86.79% of its wall and already 97.17% P-core. The most parallel
-ART-to-codec interval averages 2.175 carriers. The A15 then has only two
-P-cores: 22.76% of carrier CPU lands on E-cores, and when three or four
-carriers run Darwin fills 1.946/1.987 of the two P-cores before spilling the
-rest to E. Linux sees symmetric vCPUs and cannot convey guest critical-path
-priority through this second scheduler.
+The recorded cold snapshot decomposes as
+`6.012 = 1.051 * 4.126 / 0.721`; warm is
+`4.094 = 1.058 * 3.257 / 0.842`. The iPad performs only 5.1--5.8% more
+emulated guest-user work. Its dominant penalty is 3.26--4.13 times more
+carrier CPU per retired instruction, compounded by 16--28% lower effective
+carrier concurrency. Each cumulative record is exact, but the 4,096-dispatch
+report interval leaves a bounded tail before the host milestone; an adversarial
+full-budget bound still leaves at least a 3.98-fold cold and 2.99-fold warm
+device CPU-per-work penalty. Summed engine elapsed also exceeds carrier CPU by
+at least 457.427 seconds cold and 128.512 seconds warm, so host
+preemption/service delay is material but secondary to on-CPU cost.
 
-The built AOSP product has no dex2oat thread or cpuset override; dex2oat's
-default is the four online guest CPUs. A two-vCPU fresh-COW control slowed
-Simulator completion by 31.9%, while the single physical result fell inside
-the wide prior four-vCPU profile/measurement spread. Do not change the
-four-vCPU policy or add QoS/affinity from this evidence. The accepted diagnosis
-is mostly serial Android boot dependencies plus the two-P-core A15 topology,
-with ordinary per-core and working-set differences stretching the chain. Full
-arithmetic, carrier/core-class tables, controls, limits, and evidence are in
+This is not a different optimized product: both slices use `-O3`, ThinLTO, and
+the same `armv8.2-a+fp16+dotprod+crypto+fcma` target; the 1,621,680-byte gadget
+engine text is identical after excluding Mach-O platform metadata. Prior Time
+Profiler attribution places 79.65% of iPad CPU in real gadget bodies plus the
+memory/MMU runtime, versus 6.46% in translation/cache, 0.20% in host
+synchronization, and 1.01% in on-CPU I/O. There is no missing carrier, emulator
+global lock, translator bottleneck, or storage-I/O explanation.
+
+The supported cause is lower sustained A15 throughput on the full Android
+gadget/MMU, memory-intensive working set, compounded by the two-P-core limit,
+E-core spill, and lower host scheduling service. Public tools used here do not
+supply matched hardware cache-miss or cycle counters, so do not narrow the
+on-CPU term to one cache level or microarchitectural event without new evidence.
+Keep the uniform-vCPU product policy; these comparisons explicitly used four
+vCPUs. Full counters, stages, caveats, and raw paths are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md)
-and G175 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+and G175--G177 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
 
 ## Android iOS cold-boot CPU profile complete (2026-08-25)
 

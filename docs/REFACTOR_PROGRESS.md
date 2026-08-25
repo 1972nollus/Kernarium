@@ -1,22 +1,47 @@
 # Refactor progress
 
-## 2026-08-25: Apple asymmetric host-CPU topology investigation
+## 2026-08-25: Apple asymmetric host-CPU topology rejected
 
-- Established that the public Apple capability interface exposes ordered core
-  types through `hw.nperflevels` and `hw.perflevelN.logicalcpu`; the current M1
-  Ultra reports 16 level-0 and four level-1 logical CPUs.
-- Established that no supported iOS/macOS API binds a pthread to a numbered
-  physical P- or E-core. QoS can influence XNU's cluster choice, while Mach
-  affinity tags are only experimental L2-sharing hints.
-- Designed a local-only, fail-closed profile that assigns stable performance
-  levels to fixed vCPU carriers, supplies per-vCPU ACK scheduler capacities,
-  and applies matching carrier QoS. Four vCPUs remain symmetric on the current
-  M1 Ultra but become two high/two low on a 2P+4E device.
-- Kept CPUFreq, EAS, Energy Model, uclamp and modules out of the design. Apple
-  exposes no capacity ratio, so calibration and a matched physical-device A/B
-  remain mandatory before implementation can be accepted. See
+- Implemented the complete local-only profile: public performance-level
+  discovery, fixed vCPU classes, normalized ACK capacities, and matching
+  persistent-carrier QoS. The target iPad dynamically reported two level-0 and
+  four level-1 CPUs.
+- Proved the mechanism worked. With capacities `1024,1024,512,512`, vCPU0/1
+  spent 97.5% of CPU on P cores and vCPU2/3 effectively 100% on E cores.
+- Rejected it on the required performance gate. Against a 153.029-second mean
+  of interleaved uniform warm controls, lower capacities 512, 640, and 768
+  regressed 13.2%, 17.0%, and 21.9%. The 512 cold observation was also slower
+  than its nearby uniform control.
+- Reverted the host, runtime, product, tests, and generated ACK topic in
+  `8b143c28`; the accepted release and symmetric capacity-1024/default-QoS
+  product are restored. See
   [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md)
-  and G176 in `HOT_PATH_EXPERIMENTS.md`.
+  and G176--G177 in `HOT_PATH_EXPERIMENTS.md`.
+
+## 2026-08-25: Android retired-work and carrier-CPU accounting
+
+- Added opt-in retired guest-user instruction and dispatch-exit counters that
+  are exact at each cumulative record, plus a sparse per-carrier thread-CPU
+  sample every 4,096 entries. A rejected per-dispatch thread-clock version was
+  measurably intrusive on iPad and was replaced by the sparse method.
+- Matched cold Simulator/iPad runs retired 34.601/36.370 billion instructions,
+  only 5.1% more work on device, but consumed 183.541/795.954 carrier CPU-s:
+  5.304 versus 21.885 ns per retired instruction, a 4.126-fold rate penalty.
+- Matched warm runs retired 14.036/14.847 billion instructions, 5.8% more on
+  device, but consumed 85.319/293.979 carrier CPU-s: 6.079 versus 19.801 ns per
+  instruction, a 3.257-fold rate penalty.
+- Recorded snapshot decompositions are cold
+  `6.012 = 1.051 * 4.126 / 0.721` and warm
+  `4.094 = 1.058 * 3.257 / 0.842`. The last term is the device's lower effective
+  carrier concurrency. Engine elapsed additionally proves conservative device
+  off-CPU lower bounds of 36.5% cold and 30.4% warm. Even the maximum sparse
+  dispatch tail cannot reduce the CPU-per-work penalty below 3.98-fold cold or
+  2.99-fold warm.
+- Both slices use the same optimization and ISA flags, and their assembled
+  gadget engine text is identical apart from object platform metadata. Combined
+  with the symbol profiles, the supported cause is lower A15 throughput on the
+  Android gadget/MMU and large-working-set mix, compounded by P-core scarcity,
+  E-core spill, and host preemption—not extra guest work or topology metadata.
 
 ## 2026-08-25: Android physical-iPad boot scaling diagnosis
 

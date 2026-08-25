@@ -2,32 +2,54 @@
 
 ## Outcome
 
-The emulator can expose Apple performance-core and efficiency-core classes to
-the Android guest, but it cannot promise a numbered physical host core for a
-vCPU. The supported local design is:
+The proposed topology contract was implemented locally, qualified on the
+physical iPad, rejected on performance, and completely reverted. The current
+product again presents every configured vCPU symmetrically and leaves every
+carrier at the default host QoS. The qualification campaign explicitly
+configured four vCPUs. No experimental ACK topic, host topology source,
+runtime capacity argument, or differentiated release remains in the accepted
+product.
 
-1. discover the host's ordered performance levels with the public
+The prototype proved that the emulator *can* expose Apple performance-core and
+efficiency-core classes to Android, but also proved that doing so is harmful
+for this boot workload. It implemented the complete proposed contract:
+
+1. discovering the host's ordered performance levels with the public
    `hw.nperflevels` and `hw.perflevelN.logicalcpu` sysctls;
-2. assign every fixed UML vCPU an immutable virtual performance level;
-3. give Linux a normalized capacity for each vCPU, so its ordinary
+2. assigning every fixed UML vCPU an immutable virtual performance level;
+3. giving Linux a normalized capacity for each vCPU, so its ordinary
    capacity-aware scheduler can prefer the stronger virtual CPUs for work that
    does not fit on a weaker one; and
-4. give each persistent Darwin vCPU carrier a QoS request corresponding to its
+4. giving each persistent Darwin vCPU carrier a QoS request corresponding to its
    virtual level.
 
-This makes the guest and host scheduling policies agree on which virtual CPUs
-are preferred. It does not bind a carrier to a physical core. XNU remains free
-to migrate a carrier between physical cores, spill high-QoS work to an
-efficiency cluster when the performance cluster is busy, or use a performance
-core for lower-QoS work when that is beneficial.
+The physical device reported two level-0 and four level-1 cores. With the
+`1024,1024,512,512` guest profile, an Instruments trace showed vCPU0/1 spending
+97.5% of their CPU time on P cores and vCPU2/3 effectively 100% on E cores, so
+the best-effort QoS placement worked. The same trace averaged only 1.719
+running carriers, however. An interleaved warm-boot sweep measured uniform
+controls at 147.644 and 158.415 seconds (153.029-second mean), while capacities
+512, 640 and 768 completed in 173.188, 179.015 and 186.556 seconds: regressions
+of 13.2%, 17.0% and 21.9%. The single 512 cold boot took 360.523 seconds versus
+the nearby 355.008-second uniform observation and supplied no cold win.
 
-No product change was made during this investigation. The capacity ratio and
-the benefit of differentiated carrier QoS require a measured A/B before this
-design can be accepted.
+The topology policy therefore made Android avoid useful work on the two lower
+capacity vCPUs without creating more P-core capacity. Its accepted limit was
+already known: A15 has only two P cores, and exact numbered-core binding is not
+available through supported Apple APIs. The implementation was removed in
+commit `8b143c28`; this document retains the design and evidence only as a
+rejected experiment.
+
+Subsequent uniform-product counters found only 5.1--5.8% more retired guest
+user work on iPad than Simulator, but 3.26--4.13 times more carrier CPU per
+recorded instruction and 16--28% lower effective carrier concurrency. Even the
+maximum sparse-report tail leaves at least a 2.99-fold penalty. The device gap
+is therefore dominated by host execution rate and scheduling service for the
+full Android gadget/MMU working set, not by missing virtual topology metadata.
 
 ## Current emulator boundary
 
-The current topology is symmetric at both scheduling layers:
+After the revert, the current topology is symmetric at both scheduling layers:
 
 - `EmulatorConfiguration.defaultVCPUCount` uses only
   `ProcessInfo.processorCount`.
@@ -62,9 +84,9 @@ Apple documents the following read-only topology discovery sequence for
 
 The same selectors are declared by the macOS and iPhoneOS SDK 26.5 headers.
 The current M1 Ultra acceptance host returned two levels, with 16 logical CPUs
-at level 0 and four at level 1. Runtime discovery on the target device must
-still be recorded as an implementation gate; the product must not infer the
-answer from a device-name table.
+at level 0 and four at level 1. The prototype recorded two level-0 and four
+level-1 cores on the target iPad. Discovery remained dynamic; no device-name
+table was introduced.
 
 Apple also supports setting a pthread QoS at creation with
 `pthread_attr_set_qos_class_np()` or on the running pthread with
@@ -115,7 +137,7 @@ The additional model and frequency requirements that make EAS unsuitable are
 documented in
 [Energy Aware Scheduling](https://docs.kernel.org/6.13/scheduler/sched-energy.html).
 
-## Proposed local contract
+## Experimented local contract (rejected)
 
 Represent topology as ordered performance levels rather than a P/E Boolean.
 Apple already permits more than two levels, and level numbers carry the only
@@ -181,22 +203,21 @@ only constructs the argument from public sysctls; Android kernel changes stay
 as generated local patches under `kernel/android-6.18`, and no AOSP image
 rebuild is involved.
 
-## Capacity calibration is the unresolved input
+## Capacity calibration result
 
 Apple exposes counts and ordering, not a normalized throughput ratio. Cache
 size is not CPU capacity, and a nominal frequency—where available—would omit
 microarchitectural work per cycle. The repository therefore has no defensible
-automatic value for level 1 today.
+automatic value for level 1. The measured 512/640/768 sweep rejected all three
+tested values for Android boot rather than selecting one.
 
-The first prototype should make lower-level capacities an explicit local
-experiment parameter and sweep plausible values rather than accepting one by
-inspection. Calibration must use identical guest work, count retired guest
-instructions or another stable work unit, and correlate each carrier's
-execution with Instruments' physical core class. Because QoS is not binding,
-every result must also report actual P/E residence and discard runs where the
-requested classes did not separate enough to identify a rate. The chosen
-capacity should represent sustainable maximum throughput for the workload
-class, not a short burst or a cache-size ratio.
+The prototype therefore made lower-level capacities an explicit local
+experiment parameter and swept plausible values rather than accepting one by
+inspection. Its Instruments capture correlated each carrier with the physical
+core class and showed a strong placement separation. Retired guest work was
+counted in the subsequent uniform-runtime investigation, after the topology
+policy was already rejected; no tested topology arm warranted further
+calibration.
 
 A runtime self-benchmark is not recommended. It would delay every launch,
 change thermal state before Android boot, and still could not force its worker
@@ -204,7 +225,7 @@ onto a particular core class. A per-model table is also rejected: it would be
 an unmaintained private hardware database and conflicts with the project's
 dynamic-capability policy.
 
-## Expected benefit and limit
+## Expected benefit and observed limit
 
 On the physical four-vCPU guest, a runnable task that Linux considers too
 large for vCPU 2 or 3 can be migrated to vCPU 0 or 1, whose carrier asks XNU
@@ -218,7 +239,7 @@ other system work from competing, or guarantee that a high-level carrier
 never runs on an E-core. The predictable contract is the vCPU's virtual class
 and requested host policy, not its momentary physical CPU number.
 
-## Implementation and acceptance gates
+## Historical implementation and acceptance gates
 
 No implementation should be accepted without all of the following:
 

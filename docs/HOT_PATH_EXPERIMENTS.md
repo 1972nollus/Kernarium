@@ -10877,21 +10877,20 @@ uninstrumented four-vCPU observations, so instrumentation and first-boot
 variance make it inconclusive. Both controls brought up two CPUs and completed
 without a stall or crash.
 
-Disposition: no product change. The supported cause is a mostly one- or
-two-task Android critical path combined with only two physical P-cores and an
-uncoordinated guest/host heterogeneous scheduling boundary when more tasks do
-exist. Per-core A15/M1 throughput and working-set effects stretch serial
-dependencies further, while G151--G153 reject a blanket twofold emulator or
-gadget penalty on equal work. Separating work-volume from per-core cost needs
-matched low-overhead host counters and guest task/scheduler plus retired-guest-
-instruction counts. Complete stage, carrier, core-class, ART-policy, and
-retained-evidence details are in
+Disposition at G175: no product change. The supported cause was a mostly one-
+or two-task Android critical path combined with only two physical P-cores and
+an uncoordinated guest/host heterogeneous scheduling boundary when more tasks
+do exist. Work volume versus per-work execution cost remained open here; G177
+later closes that split with exact cumulative retired guest-user records and
+sparse carrier CPU. Complete stage, carrier, core-class, ART-policy, and retained
+evidence details are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
 ## G176: asymmetric vCPUs are feasible; exact Apple core binding is not
 
-Dated 2026-08-25. This is the design investigation following G175. It changes
-no product and does not claim a performance result.
+Dated 2026-08-25. This records the design investigation following G175. It was
+subsequently implemented and rejected by G177; no part of the prototype remains
+in the product.
 
 Apple publicly exposes the number of ordered CPU performance levels through
 `hw.nperflevels` and the enabled and maximum logical-core counts of each level
@@ -10938,3 +10937,82 @@ plus best-effort host QoS. Exact physical-core predictability remains outside
 the supported Apple API. Full source evidence, initialization constraints,
 fallbacks and validation gates are in
 [`android-host-cpu-topology-investigation-20260825.md`](android-host-cpu-topology-investigation-20260825.md).
+
+## G177: asymmetric topology regresses; device per-work service dominates
+
+Dated 2026-08-25. The G176 contract was implemented locally through public
+Apple performance-level discovery, immutable ACK vCPU capacities, and matching
+carrier QoS. The iPad reported two level-0 and four level-1 CPUs. With profile
+`1024,1024,512,512`, Instruments measured vCPU0/1 at 97.49%/97.56% P-core CPU
+and vCPU2/3 effectively 100% E-core CPU. QoS therefore created the intended
+best-effort P/P/E/E separation; this was not an affinity claim.
+
+It failed the performance gate:
+
+| Warm arm | Wall s | Relative to uniform mean |
+| --- | ---: | ---: |
+| Uniform control 1 | 147.644 | — |
+| Lower capacity 512 | 173.188 | +13.2% |
+| Lower capacity 640 | 179.015 | +17.0% |
+| Lower capacity 768 | 186.556 | +21.9% |
+| Uniform control 2 | 158.415 | — |
+
+The uniform mean is 153.029 seconds. The 512 trace averaged only 1.719 running
+carriers, and the guest capacity model discouraged useful work on vCPU2/3. Its
+360.523-second cold run also failed to improve on the nearby 355.008-second
+uniform observation. A capacity model cannot create a third A15 P core, so
+further calibration was unwarranted. Commit `8b143c28` removed the host
+discovery, runtime plumbing, product argument, tests, and generated ACK topic,
+and restored the accepted `87eaee1e-artpreopt1` release. The current product is
+uniform capacity 1024 and default QoS for every configured vCPU; this campaign
+configured four explicitly.
+
+The follow-up used that restored uniform product and a low-overhead profiling
+runtime. It counts retired arm64 guest-user instructions and exit reasons
+exactly in each cumulative record, but reads each carrier's thread CPU clock
+only at its baseline and every 4,096 dispatches. Native ACK instructions are
+not included in the retired count; carrier CPU includes both emulated userspace
+and native UML work between guest entries.
+
+| Boot | Host | Wall s | Guest instructions | Carrier CPU-s | Average carriers | Carrier ns/instruction |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Cold | Simulator | 72.520 | 34.601 G | 183.541 | 2.531 | 5.304 |
+| Cold | iPad | 435.979 | 36.370 G | 795.954 | 1.826 | 21.885 |
+| Warm | Simulator | 40.854 | 14.036 G | 85.319 | 2.088 | 6.079 |
+| Warm | iPad | 167.272 | 14.847 G | 293.979 | 1.757 | 19.801 |
+
+The recorded cold snapshot decomposes as
+`6.012 wall = 1.051 work * 4.126 CPU/work / 0.721 utilization`; warm is
+`4.094 = 1.058 * 3.257 / 0.842`. Extra emulated work is only 5.1--5.8%, so it
+cannot explain the physical gap. The dominant term is 3.26--4.13 times more
+carrier CPU per retired instruction, with 16--28% lower effective carrier
+concurrency compounding it. Summed engine elapsed exceeds physical carrier CPU
+by at least 457.427 seconds cold (36.5%) and 128.512 seconds warm (30.4%),
+conservative lower bounds on time that an in-flight carrier was off-CPU. Sparse
+emission can omit fewer than 4,096 later dispatches per carrier before the host
+milestone. Even granting every omitted dispatch its maximum budget cannot
+reduce the device carrier-CPU-per-work penalty below 3.98-fold cold or
+2.99-fold warm.
+
+The device and Simulator slices use the same `-O3`, ThinLTO, and
+`armv8.2-a+fp16+dotprod+crypto+fcma` target, and the assembled gadget engine
+text is identical after excluding Mach-O platform metadata. Earlier symbol
+profiles assign 79.65% of physical CPU to real gadget bodies plus memory/MMU,
+but only 6.46% to translation/cache, 0.20% to host synchronization, and 1.01%
+to on-CPU I/O. Warm stage CPU per instruction remains near parity through
+zygote, then becomes 2.45--4.05 times Simulator during the Android framework,
+codec, and boot-animation work. This is a large-working-set workload effect,
+not a universal A15 gadget ratio; the tiny hot equal-work probe in G153 remains
+valid for its much smaller working set.
+
+Disposition: reject asymmetric topology and keep the uniform-vCPU product
+policy. The supported cause is lower sustained A15 execution rate on the full
+Android gadget/MMU and memory-intensive working-set mix, compounded by two P
+cores, E-core spill, and lower host scheduling service. The measurements exclude
+extra guest work, a missing carrier, a global emulator lock, translation, and
+I/O as dominant explanations. They do not expose matched hardware cache-miss
+or cycle counters, so no particular cache level or microarchitectural event is
+claimed. Raw reduced comparisons live under
+`.build/android/cpu-split-20260825`; the full narrative and method limits are
+in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
