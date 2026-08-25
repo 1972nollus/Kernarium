@@ -73,6 +73,38 @@ struct KernariumTests {
     }
 
     @Test
+    func bundleInstanceResetIsNarrowAndIdempotent() throws {
+        let manager = FileManager.default
+        let directory = manager.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        let guestDirectory = directory.appendingPathComponent("guest")
+        try manager.createDirectory(
+            at: guestDirectory,
+            withIntermediateDirectories: true
+        )
+        defer { try? manager.removeItem(at: directory) }
+        let baseDisk = guestDirectory.appendingPathComponent("base.img")
+        let instance = directory.appendingPathComponent("userdata.cow")
+        let sibling = directory.appendingPathComponent("release-manifest.json")
+        #expect(manager.createFile(atPath: baseDisk.path, contents: Data()))
+        #expect(manager.createFile(atPath: instance.path, contents: Data([1])))
+        #expect(manager.createFile(atPath: sibling.path, contents: Data([2])))
+
+        let bundle = GuestBundle(
+            url: directory,
+            flavor: .android,
+            baseDisk: baseDisk
+        )
+        #expect(try bundle.removeInstanceIfPresent(fileManager: manager))
+        #expect(!manager.fileExists(atPath: instance.path))
+        #expect(manager.fileExists(atPath: baseDisk.path))
+        #expect(manager.fileExists(atPath: sibling.path))
+        #expect(try !bundle.removeInstanceIfPresent(fileManager: manager))
+    }
+
+    @Test
     func configurationDefaultsUseMaximumCPUAndRequestedDefaults() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

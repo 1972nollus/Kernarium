@@ -35,6 +35,20 @@ struct GuestBundle: Equatable {
     var commandLine: URL { url.appendingPathComponent(Android.commandLine) }
     var instance: URL { url.appendingPathComponent(Android.instance) }
 
+    /// Removes only this bundle's writable instance. This is intentionally a
+    /// narrow primitive: callers cannot replace the bundle directory or touch
+    /// a sibling while preparing a fresh-boot diagnostic.
+    @discardableResult
+    func removeInstanceIfPresent(
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        guard fileManager.fileExists(atPath: instance.path) else {
+            return false
+        }
+        try fileManager.removeItem(at: instance)
+        return true
+    }
+
     /// Android guests boot the ACK kernel that only the 16 KiB runtime carries.
     var requiredPageSize: KernelPageSize? {
         switch flavor {

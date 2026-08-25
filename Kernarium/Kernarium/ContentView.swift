@@ -678,6 +678,27 @@ private final class EmulatorLauncher {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        if ProcessInfo.processInfo.environment[
+            "KERNARIUM_RESET_ANDROID_INSTANCE"
+        ] == "1" {
+            guard case let .bundle(bundle) = selection else {
+                print("Kernarium: instance reset requires an Android bundle")
+                return
+            }
+            do {
+                let removed = try bundle.removeInstanceIfPresent()
+                print(
+                    "Kernarium: Android instance reset bundle=\(bundle.name) " +
+                        "removed=\(removed ? 1 : 0)"
+                )
+            } catch {
+                print(
+                    "Kernarium: cannot reset Android instance " +
+                        "for \(bundle.name): \(error)"
+                )
+                return
+            }
+        }
         // A bundle that pins a page profile overrides whatever was stored; the
         // configuration already resolved that, and this keeps a hand-edited
         // default from reaching a runtime with no kernel for the payload.

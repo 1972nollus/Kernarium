@@ -106,7 +106,11 @@ void profile_dispatch(DispatchClock::time_point started,
 	statistics.maximum_nanoseconds = std::max(
 		statistics.maximum_nanoseconds, elapsed);
 	++statistics.exits[static_cast<std::size_t>(reason)];
-	if ((statistics.calls & 255U) != 0)
+	// Keep full-guest profiling sparse enough that forwarding the diagnostic
+	// through an iOS console cannot become part of the workload being measured.
+	constexpr std::uint64_t report_interval = 4096;
+	static_assert((report_interval & (report_interval - 1)) == 0);
+	if ((statistics.calls & (report_interval - 1)) != 0)
 		return;
 	std::array<char, 64> thread_name{};
 	if (pthread_getname_np(pthread_self(), thread_name.data(),
