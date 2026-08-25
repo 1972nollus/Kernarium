@@ -187,7 +187,10 @@ requested pthread QoS attribute and applies `QOS_CLASS_USER_INITIATED` to
 1024-capacity carriers and `QOS_CLASS_UTILITY` to lower-capacity carriers at
 creation. A preflight or CPU0 failure discards the complete profile, while a
 later carrier failure rejects that CPU bring-up. XNU may still migrate any
-carrier between physical cores.
+carrier between physical cores. The scheduler capacities are installed from
+`smp_prepare_cpus()`, after `setup_per_cpu_areas()` has assigned distinct
+per-CPU offsets and before scheduler domains are built; writing them from
+`setup_arch()` aliases every early write to the boot CPU's static storage.
 
 The BPF syscall ABI, verifier, cgroup hooks, and generic interpreter are also
 built in. This arm64 UML line deliberately has no eBPF JIT: ACK's native arm64

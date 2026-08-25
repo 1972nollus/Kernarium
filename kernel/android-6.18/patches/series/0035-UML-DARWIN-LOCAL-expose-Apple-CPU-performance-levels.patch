@@ -1,4 +1,4 @@
-From 53d90213bf23eac31d05ad606d771401803f23f7 Mon Sep 17 00:00:00 2001
+From 092836249bf647ecc0ea9f9fea7b03a5f9aad304 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Tue, 25 Aug 2026 07:52:01 +0000
 Subject: [PATCH 35/35] UML-DARWIN-LOCAL: expose Apple CPU performance levels
@@ -7,9 +7,9 @@ Change-Id: Ic37933a168749f33b43c83a4d9bf1ceaf50fa38e
 ---
  arch/um/include/asm/topology.h |   1 +
  arch/um/include/shared/smp.h   |   9 +++
- arch/um/kernel/smp.c           | 111 +++++++++++++++++++++++++++++++++
- arch/um/os-Darwin/smp.c        |  67 ++++++++++++++++++--
- 4 files changed, 184 insertions(+), 4 deletions(-)
+ arch/um/kernel/smp.c           | 113 +++++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/smp.c        |  67 +++++++++++++++++--
+ 4 files changed, 186 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/include/asm/topology.h b/arch/um/include/asm/topology.h
 index 60f8b166743c3f943335c759ee42a414931b2518..96b97f15b483e72064b1f918b8d58724bd359ba4 100644
@@ -44,7 +44,7 @@ index 7e55aa69f7c282f33d947f58b723fbe31cec9e43..d42f10600e3a3d735bfd54bf65de93e7
  void uml_start_secondary(void *opaque);
  void uml_ipi_handler(int vector);
 diff --git a/arch/um/kernel/smp.c b/arch/um/kernel/smp.c
-index afbd7c2728430ab2119ba07251b8a7b6838877a6..1d04b60a2c82abc4c2939f16b58e3e53644ffb6e 100644
+index afbd7c2728430ab2119ba07251b8a7b6838877a6..caa07461e7bfd2a7e4b4a2f6c6bf43e8b5a1a2cc 100644
 --- a/arch/um/kernel/smp.c
 +++ b/arch/um/kernel/smp.c
 @@ -21,6 +21,7 @@
@@ -55,7 +55,23 @@ index afbd7c2728430ab2119ba07251b8a7b6838877a6..1d04b60a2c82abc4c2939f16b58e3e53
  #include <init.h>
  #include <kern.h>
  #include <os.h>
-@@ -358,6 +359,109 @@ int uml_ncpus;
+@@ -302,6 +303,15 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
+ 	int err, cpu, me = smp_processor_id();
+ 	unsigned long deadline;
+ 
++#ifdef UML_HOST_DARWIN
++	/* Per-CPU offsets become distinct only after setup_per_cpu_areas(). */
++	if (uml_cpu_capacity_profile_enabled()) {
++		for_each_possible_cpu(cpu)
++			topology_set_cpu_scale(cpu, uml_cpu_capacity(cpu));
++		os_info("UML: enabled Darwin CPU capacity/QoS profile\n");
++	}
++#endif
++
+ 	os_init_smp();
+ #ifdef UML_HOST_DARWIN
+ 	/*
+@@ -358,6 +368,109 @@ int uml_ncpus;
  int uml_ncpus = 1;
  #endif
  
@@ -165,20 +181,6 @@ index afbd7c2728430ab2119ba07251b8a7b6838877a6..1d04b60a2c82abc4c2939f16b58e3e53
  void __init prefill_possible_map(void)
  {
  	int cpu;
-@@ -370,6 +474,13 @@ void __init prefill_possible_map(void)
- 		set_cpu_possible(cpu, true);
- 	for (; cpu < NR_CPUS; cpu++)
- 		set_cpu_possible(cpu, false);
-+#ifdef UML_HOST_DARWIN
-+	if (uml_cpu_capacity_profile_enabled()) {
-+		for (cpu = 0; cpu < uml_ncpus; cpu++)
-+			topology_set_cpu_scale(cpu, uml_cpu_capacity(cpu));
-+		os_info("UML: enabled Darwin CPU capacity/QoS profile\n");
-+	}
-+#endif
- }
- 
- static int __init uml_ncpus_setup(char *line, int *add)
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
 index b2977982b068fad40fd48ba46bba8feb7eb8ee2a..7d87f241c71ae2d13dde5777904d8ff3949efc55 100644
 --- a/arch/um/os-Darwin/smp.c
