@@ -1,5 +1,180 @@
 # Android 17 iOS cold-boot CPU profile (2026-08-25)
 
+## Host-OS trace isolates guest-physical-memory churn (2026-08-26)
+
+Later Xcode System Trace, Virtual Memory Trace, and Activity Monitor captures
+supersede the earlier provisional interpretation that the iPhone simply
+executes the gadget/MMU mix much less efficiently. The matched two-vCPU run is
+not starved of P-core service. Its distinguishing cost is host VM and file
+pager activity against UML's sparse, shared, file-backed physical-memory
+mapping while the 8 GB phone is under severe memory pressure.
+
+The uninstrumented comparison remains the timing baseline: 136.298 seconds on
+the actively cooled iPhone 15 Pro Max versus 58.867 seconds in the M1 Ultra
+Simulator, or 2.315x. The new traces use the same accepted release, gadgets,
+two vCPUs, 2 GiB, 16 KiB pages, normal boot, hardware Virgl, and a fresh COW.
+They explain the gap; their instrumented wall times do not replace it. Virtual
+Memory Trace moved the iPhone run to 147.701 seconds and the Simulator run to
+117.170 seconds, so the profiler penalized Simulator much more heavily.
+
+### The host scheduler is not withholding the P cores
+
+The corrected physical-device System Trace retained the final 27.757 seconds
+through `sys.boot_completed=1`. Its rolling detail buffer overwrote the first
+133.79 seconds, so these percentages apply only to the retained late-boot
+window. That is nevertheless the window where the uninstrumented device has
+its largest convergence penalty.
+
+| Combined two-carrier state | Seconds | Capacity share |
+| --- | ---: | ---: |
+| Running | 44.272 | 79.749% |
+| Blocked | 8.913 | 16.055% |
+| Interrupted | 1.385 | 2.496% |
+| Preempted | 0.492 | 0.886% |
+| Runnable | 0.448 | 0.807% |
+
+The window has 55.515 carrier-seconds of capacity. Runnable plus preempted
+time is only 1.693%; runnable p95 is 1.959 microseconds and preempted p95 is
+9.333 microseconds. Of the 44.272 running seconds, 43.860 seconds (99.07%) are
+on CPU 4 or CPU 5, the two P cores. This directly rules out host run-queue
+starvation and meaningful E-core placement for the matched iPhone result.
+Blocked time is real, but it is a wait within the guest/host execution path,
+not evidence that iOS had a runnable carrier and refused to schedule it.
+
+The same retained window contains 86,747 carrier syscalls, about 3,125 per
+second. The largest explicit wait totals are 2.169 seconds in `read`, 0.420
+seconds in `pselect`, and 0.106 seconds in `poll`; mapping calls themselves are
+not a direct syscall bottleneck (`mmap` totals 5.44 milliseconds and
+`mach_vm_map_trap` 0.199 milliseconds). The missing cost is visible in the VM
+fault stream rather than as one long blocking syscall.
+
+### The iPhone repeatedly drops and re-faults the guest-RAM mapping
+
+Matched rolling Virtual Memory Trace windows capture the final 16.230 seconds
+on iPhone and 17.336 seconds in Simulator. Counts below include only
+`uml-vcpu-0-carrier` and `uml-vcpu-1-carrier`, so unrelated application and
+system activity is excluded.
+
+| Carrier VM operation | iPhone | Simulator | Device / Simulator |
+| --- | ---: | ---: | ---: |
+| Page Out | 207,714 / 3.461 GB | 14 / 229 KB | 14,837x events |
+| Page Out aggregate duration | 1.097 s | 0.000809 s | 1,356x |
+| Page Cache Hit | 153,579 / 2.516 GB | 26,170 / 0.429 GB | 5.87x events |
+| Page Cache Hit aggregate duration | 6.526 s | 0.0964 s | 67.68x |
+| Page Cache Hit median / p95 | 46.375 / 56.625 us | 2.041 / 8.500 us | 22.72x / 6.66x |
+| File-backed Page In median / p95 | 5.625 / 271.458 us | 0.750 / 35.750 us | 7.50x / 7.59x |
+| Zero Fill | 17,884 / 0.0220 s | 125,822 / 0.1720 s | Simulator-dominant |
+
+The iPhone's page-cache faults land directly in translated guest memory
+operations. Leading stacks include `.Lscalar_unsigned_untagged58111`,
+`uml_arm64_gadget_exclusive_store_release_w_rr`, pair stores, and other gadget
+loads and stores. They are therefore not incidental UI or profiler faults.
+Simulator sees mostly cheap zero-fill work and almost no page-out activity;
+the phone continually revisits file-backed pages that are no longer resident.
+
+Activity Monitor independently correlates the VM events with process I/O.
+Across the comparable sampled interval, iPhone process logical writes rise by
+3,322,937,344 bytes, close to the 3,460,628,480 Page Out bytes despite slightly
+different sample boundaries. Simulator writes rise by exactly 229,376 bytes,
+the same 14 times 16 KiB reported by its 14 Page Out events. The iPhone process
+ledger reaches 37.247 GB (34.69 GiB) of logical writes by the end of this boot
+capture, compared with 4.866 MB in Simulator. Instruments' `Page Out` and
+logical-write counters do not prove that every byte reached physical flash;
+hole deallocation and pager accounting can charge logical I/O without a
+same-sized device write. They do prove a radically different VM/file-system
+path between the hosts.
+
+Host memory state explains why that path differs. During the iPhone window,
+only 1,726--7,064 host pages are free: 28.3--115.7 MB at the measured 16 KiB
+host page size. The system has 1.905 GB in its compressor, 665 MB of swap in
+use, and 7.91--8.00 GB represented by the used-page count. Kernarium's mapped
+resident size oscillates around 2.50--2.60 GB. In Simulator it remains around
+4.305--4.344 GB, even though the process physical-footprint counter is only
+0.378--0.402 GB. Resident size includes shared mappings and aliases and is not
+a unique-RAM charge, but the cross-host difference is exactly the expected
+signature: the much larger Mac host keeps substantially more of the mapped
+guest-physical-memory working set resident.
+
+### The calls come from ACK free-page reporting
+
+UML creates guest physical memory as a sparse, unlinked temporary file and
+maps it `MAP_SHARED`. The host memory layer maps the same descriptor, so gadget
+loads and stores ultimately touch that file-backed mapping. ACK topic 31 lets
+the guest buddy allocator return free pages by calling `F_PUNCHHOLE` on ranges
+of the physical-memory file; the current 16 KiB build reports at order 5, or
+512 KiB minimum ranges.
+
+The System Trace resolves this exact call chain. All 28 carrier `sys_fcntl`
+calls in the retained window use descriptor 31 and command `0x63` (Darwin
+`F_PUNCHHOLE`). Their kernel caller is runtime address `0xe802d90c4`.
+Subtracting the `0x280000000` kernel load bias gives linked address
+`0xc002d90c4`, 0x1c bytes into `os_discard_file_range` at `0xc002d90a8` in the
+accepted release's `System.map`. This excludes UBD COW discard and ties the
+host deallocation traffic to free guest physical pages.
+
+The resulting mechanism is a memory-capacity tradeoff, not simply a bad
+syscall to delete:
+
+1. Android allocation/free churn reports large runs of free guest pages.
+2. `F_PUNCHHOLE` releases those pages from the shared sparse backing so the
+   phone does not retain the guest's peak working set.
+3. On the memory-constrained iPhone, the host VM and APFS path accounts large
+   page-out/deallocation traffic and removes file-backed pages from residence.
+4. Android soon reuses part of that physical memory; gadget loads and stores
+   then incur the measured slow page-cache faults. The M1 Ultra host can retain
+   far more mapping residency, so the same guest observes cheap zero-fill and
+   page-cache service with almost no page-out traffic.
+
+### Disabling reporting is a decisive negative control
+
+A fresh uninstrumented iPhone boot added only
+`initcall_blacklist=uml_page_reporting_init` to the same guest command line.
+The live command line contained it, and both the free-page-reporting enable
+messages were absent. The result got much worse:
+
+| Milestone | Reporting enabled | Reporting disabled |
+| --- | ---: | ---: |
+| APEX activated | 5.933 s | 9.325 s |
+| Zygote started | 7.368 s | 29.500 s |
+| Boot animation started | 18.534 s | 56.042 s |
+| Codec generator started | 54.613 s | 253.987 s |
+| Codec generator exited | 99.707 s | 304.665 s |
+| Boot complete | 136.298 s | 448.561 s |
+
+The disabled run is 3.291x slower than the enabled control, remains at Nominal
+thermal state, and has no RCU stall, panic, watchdog, or OOM. It also starts a
+late `artd` job that runs for 157.741 seconds, so the 312-second delta is not a
+clean per-fault timing decomposition: extreme memory pressure changes Android
+service behavior too. It is nevertheless a decisive product result. Retaining
+every touched guest page is substantially worse, and removing free-page
+reporting is not a fix.
+
+### Accepted diagnosis and implication
+
+The primary physical-device penalty is the interaction between a
+memory-intensive Android boot, UML's sparse shared file backing for guest
+physical memory, the ACK free-page reclamation mechanism, and the iPhone's
+limited host-memory capacity. It is not explained by the A17 Pro clock,
+thermal state, P/E placement, runnable-thread scheduling, extra retired guest
+work, translation, or a missing vCPU. The carriers are already using both P
+cores; host VM/file-pager work on one shared physical-memory backing cannot be
+turned into parallel guest compute by adding vCPUs.
+
+Future optimization should preserve the ability to return free guest pages
+while reducing discard/re-fault churn, for example by qualifying batching,
+hysteresis, or a different device-suitable backing/reclaim contract. It must
+not merely disable page reporting. No emulator, Android image, kernel, or
+runtime product changed during this investigation.
+
+The corrected System Trace and its reduced scheduler/syscall analyses are
+under
+`.build/android/host-os-profile-20260825/iphone15promax-system-trace-2vcpu-window180`.
+Matched VM captures and process/system summaries are under
+`.build/android/host-os-profile-20260825/iphone15promax-vm-final10-2vcpu` and
+`.build/android/host-os-profile-20260825/ios-simulator-vm-final10-2vcpu-restored`.
+The no-reporting control is under
+`.build/android/host-os-profile-20260825/iphone15promax-no-page-reporting-2vcpu/uninstrumented-cold`.
+
 ## Matched two-vCPU P-core control
 
 The current iOS 26 comparison limits the guest to two vCPUs to test whether
@@ -199,11 +374,13 @@ is 2.45 times Simulator through boot-animation start, 3.67 times through codec
 generation start, 4.05 times through codec exit, and 3.08 times through boot
 completion. This aligns with the earlier symbol profile: real gadget bodies
 plus memory/MMU own 79.65% of physical CPU, while translation/cache is 6.46%,
-host synchronization 0.20%, and on-CPU I/O 1.01%. The supported root cause is
-the A15's much lower sustained throughput for the full Android gadget/MMU and
-large-working-set mix, plus lower carrier concurrency and E-core spill. It is
-not extra Android instruction volume, a missing vCPU, a translator bottleneck,
-or storage I/O.
+host synchronization 0.20%, and on-CPU I/O 1.01%. At this stage the provisional
+interpretation was lower sustained A15 throughput for the gadget/MMU and
+large-working-set mix, plus lower carrier concurrency and E-core spill. The
+later host-OS trace above supersedes that interpretation: expensive host VM
+fault and file-pager service is charged while the carrier executes gadget
+memory operations, so an on-CPU symbol profile does not classify it as an
+ordinary emulator I/O function.
 
 One diagnostic run that read `CLOCK_THREAD_CPUTIME_ID` before and after every
 dispatch is explicitly discarded: it moved iPad cold boot from the prior

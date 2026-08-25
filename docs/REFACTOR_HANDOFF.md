@@ -1,5 +1,43 @@
 # Refactor handoff
 
+## Android iPhone gap isolated to host VM/file-pager churn (2026-08-26)
+
+Matched Xcode System Trace, Virtual Memory Trace, and Activity Monitor captures
+supersede the earlier provisional interpretation that the physical device
+simply executes the gadget/MMU workload less efficiently. In the retained
+27.757-second late-boot System Trace window, the two iPhone carriers are
+running for 79.749% of their combined capacity, spend 99.07% of that running
+time on the two P cores, and have only 1.693% runnable-plus-preempted time.
+Runnable p95 is 1.959 microseconds and preempted p95 is 9.333 microseconds.
+The host scheduler is not withholding P-core service.
+
+The matched final Virtual Memory Trace windows instead distinguish the hosts.
+The iPhone records 207,714 carrier Page Out events covering 3.461 GB and
+153,579 Page Cache Hits consuming 6.526 seconds; Simulator records 14 Page Out
+events covering 229 KB and 26,170 Page Cache Hits consuming 0.0964 seconds.
+Median Page Cache Hit service is 46.375 microseconds on device versus 2.041
+microseconds in Simulator. The device's process logical writes rise by 3.323
+GB over the comparable interval, close to the VM Page Out byte count, while
+Simulator writes rise by exactly its 229 KB Page Out count. Fault stacks land
+inside gadget loads and stores, so this cost is charged to the apparent
+gadget/MMU CPU path rather than to a separately named emulator I/O function.
+
+All 28 retained carrier `fcntl` calls use Darwin command `0x63`
+(`F_PUNCHHOLE`) on the physical-memory descriptor. Their return address is
+inside ACK `os_discard_file_range`, proving that Android free-page reporting
+is punching ranges out of UML's sparse shared regular-file backing. Disabling
+that reporter is not a fix: a fresh uninstrumented device control regressed
+from 136.298 to 448.561 seconds and triggered a 157.741-second late `artd` job.
+The accepted diagnosis is memory-pressure interaction among the 2 GiB Android
+working set, UML's shared file-backed physical memory, free-page discard, and
+slow file-cache refaults on the 8 GB phone. Preserve reclaim capability while
+testing alternative backing or churn-control policies; do not remove page
+reporting outright.
+
+The full measurements, caveats, and retained local evidence paths are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+No product code or accepted artifact changed during this profiling checkpoint.
+
 ## Android two-vCPU P-core control retains device gap (2026-08-25)
 
 A matched, uninstrumented fresh-COW Android 17 cold boot used accepted release
@@ -122,16 +160,13 @@ the same `armv8.2-a+fp16+dotprod+crypto+fcma` target; the 1,621,680-byte gadget
 engine text is identical after excluding Mach-O platform metadata. Prior Time
 Profiler attribution places 79.65% of iPad CPU in real gadget bodies plus the
 memory/MMU runtime, versus 6.46% in translation/cache, 0.20% in host
-synchronization, and 1.01% in on-CPU I/O. There is no missing carrier, emulator
-global lock, translator bottleneck, or storage-I/O explanation.
-
-The supported cause is lower sustained A15 throughput on the full Android
-gadget/MMU, memory-intensive working set, compounded by the two-P-core limit,
-E-core spill, and lower host scheduling service. Public tools used here do not
-supply matched hardware cache-miss or cycle counters, so do not narrow the
-on-CPU term to one cache level or microarchitectural event without new evidence.
-Keep the uniform-vCPU product policy; these comparisons explicitly used four
-vCPUs. Full counters, stages, caveats, and raw paths are in
+synchronization, and 1.01% in on-CPU I/O. At this stage the provisional cause
+was lower sustained A15 throughput on the full Android gadget/MMU working set,
+compounded by the two-P-core limit and lower host scheduling service. The
+2026-08-26 host-OS traces above supersede that interpretation: host VM faults
+and file-pager service land inside gadget memory-access stacks and therefore
+inflate this apparent on-CPU term. Keep the uniform-vCPU product policy; these
+comparisons explicitly used four vCPUs. Full counters, stages, caveats, and raw paths are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md)
 and G175--G177 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
 
