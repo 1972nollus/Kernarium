@@ -357,7 +357,10 @@ void print_usage()
 			"  --android-release=/absolute/accepted/release\n"
 			"  --android-instance=/absolute/writable-instance.cow\n"
 			"  --android-boot-mode=auto|normal|recovery\n"
+			"  --apple-cpu-capacities=1024,<measured-lower-levels>\n"
 			"  --virtio-console-socket=/absolute/console.sock\n"
+			"Apple CPU capacities are an explicit experiment parameter; "
+			"omit it for uniform guest CPUs.\n"
 			"The same values may be supplied through UML_ANDROID17_RELEASE, "
 			"UML_ANDROID17_INSTANCE, and UML_ANDROID17_BOOT_MODE.\n",
 		stderr);

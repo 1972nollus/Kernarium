@@ -117,6 +117,29 @@ void discovery_fails_closed()
 		"enabled level above its maximum was accepted");
 }
 
+void discovery_reads_current_enabled_counts()
+{
+	auto fixture = topology_fixture({2, 4}, {2, 4});
+	const auto first = uml::platform::discover_host_performance_topology(
+		QueryFixture::query, &fixture);
+	require(first && first->levels[0].logical_cpus == 2 &&
+		first->levels[1].logical_cpus == 4,
+		"initial enabled counts changed");
+	for (auto &[name, value] : fixture.values) {
+		if (name == "hw.perflevel0.logicalcpu")
+			value = 1;
+		else if (name == "hw.perflevel1.logicalcpu")
+			value = 3;
+		else if (name == "hw.logicalcpu")
+			value = 4;
+	}
+	const auto second = uml::platform::discover_host_performance_topology(
+		QueryFixture::query, &fixture);
+	require(second && second->levels[0].logical_cpus == 1 &&
+		second->levels[1].logical_cpus == 3,
+		"discovery cached stale enabled counts");
+}
+
 void capacity_configuration_is_strict()
 {
 	const auto valid =
@@ -167,6 +190,7 @@ int main()
 	try {
 		discovery_accepts_one_two_and_three_levels();
 		discovery_fails_closed();
+		discovery_reads_current_enabled_counts();
 		capacity_configuration_is_strict();
 		guest_plan_assigns_fastest_levels_first();
 		std::puts("host CPU topology tests passed");
