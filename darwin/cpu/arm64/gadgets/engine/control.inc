@@ -794,8 +794,9 @@ gadget compare_branch_\width_name\()_\polarity\()_linked
 /* Fall-through translated inline; see conditional_branch_inline. */
 gadget compare_branch_\width_name\()_\polarity\()_inline
 	ldr x8, [_stream], #8
-	ldp x19, x20, [_stream]
-	add _stream, _stream, #16
+	ldr x19, [_stream], #8
+	lsr x20, x8, #16
+	and x8, x8, #0xffff
 	ldr \width\()9, [_cpu, x8]
 	cmp \width\()9, #0
 	b.\condition 99f

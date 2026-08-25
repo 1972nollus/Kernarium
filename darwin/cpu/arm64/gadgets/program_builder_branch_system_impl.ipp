@@ -177,7 +177,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				emit(words, selected);
 			}
 		} else if (resolve_link &&
-			   emit_inlined_compare_branch(
+			   emit_inlined_compare_zero_branch(
 				   context,
 				   compare_branch_inline_gadget(
 					   (instruction >> 31) != 0, nonzero),

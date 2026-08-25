@@ -56,6 +56,37 @@ struct Outcome final {
 		(reg & 31U);
 }
 
+/* B.EQ +offset */
+[[nodiscard]] constexpr std::uint32_t branch_equal(int words) noexcept
+{
+	return 0x5400'0000U |
+		((static_cast<std::uint32_t>(words) & 0x7ffffU) << 5U);
+}
+
+/* TBZ Xn, #0, +offset */
+[[nodiscard]] constexpr std::uint32_t test_bit_zero(
+	unsigned reg, int words) noexcept
+{
+	return 0x3600'0000U |
+		((static_cast<std::uint32_t>(words) & 0x3fffU) << 5U) |
+		(reg & 31U);
+}
+
+[[nodiscard]] constexpr std::uint32_t compare_immediate_zero(
+	unsigned reg) noexcept
+{
+	/* SUBS XZR, Xn, #0 (CMP Xn, #0). */
+	return 0xf100'001fU | ((reg & 31U) << 5U);
+}
+
+[[nodiscard]] constexpr std::uint32_t compare_registers(
+	unsigned left, unsigned right) noexcept
+{
+	/* SUBS XZR, Xn, Xm (CMP Xn, Xm). */
+	return 0xeb00'001fU | ((right & 31U) << 16U) |
+		((left & 31U) << 5U);
+}
+
 /* A block whose conditional branch is followed by more translated
  * instructions. Taking the branch leaves from the middle of the block, which
  * before the fall-through was inlined could not happen: every exit was a
@@ -73,6 +104,32 @@ void write_block(JitBacking &backing, unsigned taken)
 	 */
 	backing.put32(0x00, move_immediate(1, 1));
 	backing.put32(0x04, compare_branch_zero(0, taken));
+	backing.put32(0x08, move_immediate(2, 2));
+	backing.put32(0x0c, move_immediate(3, 3));
+	backing.put32(0x10, move_immediate(4, 4));
+	backing.put32(0x14, system_call);
+	backing.put32(0x18, move_immediate(5, 5));
+	backing.put32(0x1c, system_call);
+}
+
+void write_nonpacked_branch_block(
+	JitBacking &backing, std::uint32_t branch)
+{
+	backing.put32(0x00, move_immediate(1, 1));
+	backing.put32(0x04, branch);
+	backing.put32(0x08, move_immediate(2, 2));
+	backing.put32(0x0c, move_immediate(3, 3));
+	backing.put32(0x10, move_immediate(4, 4));
+	backing.put32(0x14, system_call);
+	backing.put32(0x18, move_immediate(5, 5));
+	backing.put32(0x1c, system_call);
+}
+
+void write_fused_compare_branch_block(
+	JitBacking &backing, std::uint32_t compare)
+{
+	backing.put32(0x00, compare);
+	backing.put32(0x04, branch_equal(5));
 	backing.put32(0x08, move_immediate(2, 2));
 	backing.put32(0x0c, move_immediate(3, 3));
 	backing.put32(0x10, move_immediate(4, 4));
@@ -143,6 +200,55 @@ void taking_the_branch_retires_only_what_ran()
 	require(target.event == ::uml::cpu::EngineEvent::system_call);
 	require(cpu.registers[5] == 5);
 	require(target.executed == 2);
+}
+
+void ordinary_inline_suffix_cells_remain_unpacked()
+{
+	unsigned long generation = 946;
+	for (const auto branch : {branch_equal(5), test_bit_zero(0, 5)}) {
+		JitBacking backing{1};
+		write_nonpacked_branch_block(backing, branch);
+		JitMapping mapping{generation, code_base, backing, 1};
+
+		Memory memory{std::make_unique<StaticGuestMemory>()};
+		auto executor = std::make_unique<gadgets::GadgetExecutor>();
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		cpu.nzcv = 1U << 30; /* B.EQ is taken; TBZ ignores flags. */
+		cpu.registers[0] = 0; /* TBZ is taken. */
+		const auto outcome = run_once(
+			*executor, *memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == code_base + 0x18);
+		require(outcome.executed == 2);
+		++generation;
+	}
+}
+
+void fused_compare_inline_operands_and_suffixes_remain_full_width()
+{
+	unsigned long generation = 948;
+	for (const auto compare : {
+		     compare_immediate_zero(0), compare_registers(0, 1)}) {
+		JitBacking backing{1};
+		write_fused_compare_branch_block(backing, compare);
+		JitMapping mapping{generation, code_base, backing, 1};
+
+		Memory memory{std::make_unique<StaticGuestMemory>()};
+		auto executor = std::make_unique<gadgets::GadgetExecutor>();
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		cpu.registers[0] = 7;
+		cpu.registers[1] = 7;
+		if (compare == compare_immediate_zero(0))
+			cpu.registers[0] = 0;
+		const auto outcome = run_once(
+			*executor, *memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == code_base + 0x18);
+		require(outcome.executed == 2);
+		++generation;
+	}
 }
 
 /* A fault after the branch still lands on the right instruction.
@@ -224,6 +330,8 @@ int main()
 {
 	the_fall_through_retires_the_whole_block();
 	taking_the_branch_retires_only_what_ran();
+	ordinary_inline_suffix_cells_remain_unpacked();
+	fused_compare_inline_operands_and_suffixes_remain_full_width();
 	a_fault_past_the_branch_counts_from_its_address();
 #if UML_GADGET_INLINE_CALLS
 	a_call_translates_its_callee_inline();

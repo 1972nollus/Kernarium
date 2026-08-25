@@ -163,6 +163,30 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	}
 }
 
+/* CBZ/CBNZ alone have a plain CpuState register offset that is small enough
+ * to share one cell with the translated suffix. Fused CMP+B.cond sites use
+ * the generic helper above: their operand carries instruction fields outside
+ * the low 16 bits and their gadgets consume a separate suffix cell. */
+[[nodiscard]] inline bool emit_inlined_compare_zero_branch(
+	DecodeContext &context, selection::Gadget gadget,
+	std::uintptr_t operand, std::uint64_t target, std::size_t retires = 1)
+{
+	if constexpr (!inline_conditional_fallthrough)
+		return false;
+	else if (gadget == nullptr || operand > 0xffffU ||
+		 context.suffixes == nullptr ||
+		 context.suffixes->full())
+		return false;
+	else {
+	selection::emit(context.words, gadget);
+	context.suffixes->add(context.words.size(),
+		context.retired_before_run + context.compiled + retires, 16);
+	selection::emit(context.words, operand);
+	emit_link(context, target);
+	return true;
+	}
+}
+
 [[nodiscard]] inline bool emit_inlined_test_branch(
 	DecodeContext &context, selection::Gadget gadget,
 	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,

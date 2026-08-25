@@ -254,14 +254,17 @@ struct InlineSuffixes final {
 
 	std::array<std::uint32_t, capacity> word{};
 	std::array<std::uint32_t, capacity> compiled{};
+	std::array<std::uint8_t, capacity> shift{};
 	std::uint32_t count{};
 
 	[[nodiscard]] bool full() const noexcept { return count == capacity; }
 
-	void add(std::size_t at, std::size_t translated) noexcept
+	void add(std::size_t at, std::size_t translated,
+		 std::uint8_t suffix_shift = 0) noexcept
 	{
 		word[count] = static_cast<std::uint32_t>(at);
 		compiled[count] = static_cast<std::uint32_t>(translated);
+		shift[count] = suffix_shift;
 		++count;
 	}
 };

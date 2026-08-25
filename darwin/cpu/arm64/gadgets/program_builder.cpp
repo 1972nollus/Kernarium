@@ -71,8 +71,13 @@ void resolve_inline_suffixes(ProgramWords &words,
 {
 	for (std::uint32_t index = 0; index < suffixes.count; ++index) {
 		const auto translated = suffixes.compiled[index];
-		words[suffixes.word[index]] = translated >= compiled ?
+		const auto suffix = translated >= compiled ?
 			0 : compiled - translated;
+		if (suffixes.shift[index] == 0)
+			words[suffixes.word[index]] = suffix;
+		else
+			words[suffixes.word[index]] |=
+				suffix << suffixes.shift[index];
 	}
 }
 
