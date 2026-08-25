@@ -1,5 +1,76 @@
 # Android 17 iOS cold-boot CPU profile (2026-08-25)
 
+## Matched two-vCPU P-core control
+
+The current iOS 26 comparison limits the guest to two vCPUs to test whether
+the physical-device gap was caused by third and fourth carriers spilling onto
+E cores. The connected device named `Google Pixel 8 Pro` is an iPhone 15 Pro
+Max (`iPhone16,2`) running iOS 26.5; the Simulator runs on the 16-P-core,
+4-E-core M1 Ultra Mac Studio. Both uninstrumented runs used the accepted
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1` release, gadgets, two
+vCPUs, 2 GiB, 16 KiB pages, normal boot, point-mode 160 DPI, hardware Virgl,
+a fresh COW, and host launch through init's first `sys.boot_completed=1`
+action. The iPhone was under user-confirmed active cooling.
+
+| Host | Uninstrumented cold boot | Device / Simulator |
+| --- | ---: | ---: |
+| iPhone 15 Pro Max, iOS 26.5 | 136.298 s | 2.315x |
+| iOS 26.5 Simulator, M1 Ultra host | 58.867 s | 1.000x |
+
+Both logs bring up exactly two guest CPUs with 2,048 MiB and the same ACK
+6.18.21 kernel. The device surface is 430 x 839 and the Simulator surface is
+744 x 1081, so the physical run renders fewer pixels and that difference does
+not explain its longer time. Both runs started at Nominal thermal state and
+contain no thermal-change, RCU-stall, watchdog, panic, or crash record.
+
+Two vCPUs limit the number of carrier threads but do not create host-core
+affinity. Separate Xcode 26.6 CPU Profiler cold boots therefore measured the
+actual physical core for every vCPU cycle sample. These profiles are placement
+checks, not replacements for the uninstrumented table:
+
+| Host | Profiled guest boot | P-core cycle share | E-core cycle share | P-core weighted mean |
+| --- | ---: | ---: | ---: | ---: |
+| iPhone 15 Pro Max | 135.761 s | 98.776% | 1.224% | 3.094 GHz |
+| M1 Ultra Simulator host | 61.900 s | 99.982% | 0.018% | 2.937 GHz |
+
+The device trace remained Nominal for its complete 137.083-second interval,
+with no public thermal-state transition, while the phone was actively cooled.
+The Simulator trace was likewise Nominal throughout. Neither trace reports
+lost events or run issues. The iPhone's P-core mean is 5.35% higher than the
+M1 Ultra value, and its 1.224% E-core spill is far too small to explain a
+2.315x wall penalty. This directly rejects E-core placement, lower P-core
+frequency, and thermal headroom as explanations for the matched gap.
+
+The wall-time divergence starts after early Android userspace. The iPhone is
+faster through SurfaceFlinger, then loses time in every material convergence
+stage:
+
+| Uninstrumented interval | iPhone | Simulator | Device / Simulator |
+| --- | ---: | ---: | ---: |
+| Launch through SurfaceFlinger | 8.730 s | 13.610 s | 0.641x |
+| SurfaceFlinger to boot animation | 9.805 s | 2.384 s | 4.112x |
+| Boot animation to codec generator start | 36.078 s | 21.425 s | 1.684x |
+| Codec-list generator | 45.095 s | 8.834 s | 5.105x |
+| Codec exit to boot-animation exit | 18.951 s | 10.253 s | 1.848x |
+| Boot-animation exit to boot complete | 17.639 s | 2.360 s | 7.473x |
+| SurfaceFlinger through boot complete | 127.568 s | 45.257 s | 2.819x |
+
+CPU Profiler observes 180.733 billion total vCPU cycle weight on the device
+versus 213.381 billion in Simulator, only 84.7% as much cycle weight despite
+2.193x profile wall time. The accepted adjacent-full-PMI intervals cover a
+similar fraction of vCPU cycles on each host (67.81% and 66.36%) but amount to
+only 0.292 sampled on-core carrier-seconds per device boot second versus 0.779
+in Simulator. This comparison points to much lower carrier on-core duty or
+service during the device's late Android path, not to slower P-core clocks.
+CPU Profiler alone cannot divide that off-CPU term between host preemption,
+guest dependency idleness, and host waits, and its cycle weight is not a
+retired guest-instruction count.
+
+Raw summaries, wall-prefixed consoles, CPU Profiler traces, and reduced
+core-residence analyses are under
+`.build/android/boot-2vcpu-20260825`. No emulator, Android image, kernel, or
+runtime product changed for this measurement.
+
 ## Result
 
 The accepted Android 17 guest was CPU-profiled through a fresh-COW cold boot

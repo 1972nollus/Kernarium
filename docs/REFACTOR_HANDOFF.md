@@ -1,5 +1,38 @@
 # Refactor handoff
 
+## Android two-vCPU P-core control retains device gap (2026-08-25)
+
+A matched, uninstrumented fresh-COW Android 17 cold boot used accepted release
+`android17-ack6.18-16k-20260825-87eaee1e-artpreopt1`, gadgets, two vCPUs,
+2 GiB, 16 KiB pages, normal boot, 160 DPI, hardware Virgl, and the first init
+`sys.boot_completed=1` action on both products. The actively cooled iPhone 15
+Pro Max (`iPhone16,2`, iOS 26.5) completed in 136.298 seconds; the iOS 26.5
+Simulator on the M1 Ultra Mac Studio completed in 58.867 seconds. The device is
+still 2.315x slower. Both logs confirm two CPUs and contain no thermal change,
+RCU stall, watchdog, panic, or crash.
+
+Separate Xcode 26.6 CPU Profiler placement checks show that this is already an
+effectively P-core-only comparison. The device put 98.776% of vCPU cycle weight
+on P cores and 1.224% on E cores; Simulator put 99.982% on P cores. The device
+remained Nominal through the entire profile while actively cooled, and its
+P-core weighted mean was 3.094 GHz versus 2.937 GHz on the M1 Ultra. The gap is
+therefore not explained by E-core spill, a lower P-core clock, or insufficient
+thermal headroom. Two vCPUs still do not constitute hard affinity; Apple
+provides no supported numbered-core binding, so the measured residence is the
+claim.
+
+The iPhone is faster through SurfaceFlinger (8.730 versus 13.610 seconds) but
+then needs 127.568 seconds to converge to boot complete versus 45.257 seconds
+in Simulator. Codec-list generation alone is 45.095 versus 8.834 seconds, and
+the final boot-animation-exit tail is 17.639 versus 2.360. CPU Profiler records
+only 84.7% as much total device vCPU cycle weight over 2.193x profile wall and
+a much lower comparable on-core interval density. This narrows the live issue
+to low carrier on-core duty or service in late Android userspace, while the
+trace cannot by itself separate host preemption from guest idleness or waits.
+Full methodology and raw evidence paths are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
+No product code or artifact changed.
+
 ## Android iOS 26 P-core frequency suppression measured (2026-08-25)
 
 The connected device named `Google Pixel 8 Pro` is an iPhone 15 Pro Max
