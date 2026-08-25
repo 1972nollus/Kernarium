@@ -1,5 +1,40 @@
 # Refactor handoff
 
+## Android physical-iPad boot scaling diagnosed (2026-08-25)
+
+The physical-iPad slowdown is not a missing-vCPU, translation, I/O, or emulator
+global-lock defect. In the cold profile, the four fixed carriers receive
+136.898--146.976 CPU-s each. Host synchronization is 0.20% of process CPU,
+translation plus all software-cache work is 6.46%, and on-CPU I/O/device work
+is 1.01%.
+
+The apparent 2.283 CPU-time ratio is `1.972` longer profiled wall time times
+`1.157` more average active cores. CPU seconds are not guest-instruction counts;
+the iPad accumulates more CPU because it remains in boot longer while averaging
+slightly more, not fewer, active cores. Simulator sampling nearly doubled its
+wall time, so that ratio is explanatory for the captured runs rather than a
+precise equal-work hardware A/B.
+
+Android exposes one or two running carriers for 70.70% of the physical profile
+and three or four for only 24.06%; all four run for 6.58%. APEX-to-Zygote is
+one-carrier for 86.79% of its wall and already 97.17% P-core. The most parallel
+ART-to-codec interval averages 2.175 carriers. The A15 then has only two
+P-cores: 22.76% of carrier CPU lands on E-cores, and when three or four
+carriers run Darwin fills 1.946/1.987 of the two P-cores before spilling the
+rest to E. Linux sees symmetric vCPUs and cannot convey guest critical-path
+priority through this second scheduler.
+
+The built AOSP product has no dex2oat thread or cpuset override; dex2oat's
+default is the four online guest CPUs. A two-vCPU fresh-COW control slowed
+Simulator completion by 31.9%, while the single physical result fell inside
+the wide prior four-vCPU profile/measurement spread. Do not change the
+four-vCPU policy or add QoS/affinity from this evidence. The accepted diagnosis
+is mostly serial Android boot dependencies plus the two-P-core A15 topology,
+with ordinary per-core and working-set differences stretching the chain. Full
+arithmetic, carrier/core-class tables, controls, limits, and evidence are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md)
+and G175 of [`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+
 ## Android iOS cold-boot CPU profile complete (2026-08-25)
 
 The accepted Android 17 release was profiled through fresh-COW cold boot with

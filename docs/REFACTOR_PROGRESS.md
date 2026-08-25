@@ -1,5 +1,28 @@
 # Refactor progress
 
+## 2026-08-25: Android physical-iPad boot scaling diagnosis
+
+- Decomposed the profiled 2.283 iPad/Simulator CPU-time ratio into 1.972 longer
+  wall time and 1.157 more average active cores. It is elapsed CPU, not a
+  2.283-fold per-instruction cost or evidence that the device used fewer cores.
+- Proved all four physical vCPU carriers are balanced within a 1.074
+  maximum/minimum CPU ratio. Host synchronization is 0.20%, translation plus
+  all software-cache work 6.46%, and on-CPU I/O/device work 1.01%; no missing
+  carrier or global host lock explains the gap.
+- Measured the actual parallelism ceiling: one or two carriers run for 70.70%
+  of physical wall, three or four for 24.06%, and all four for 6.58%.
+  APEX-to-Zygote is 86.79% one-carrier; ART-to-codec averages 2.175 carriers.
+- Accounted for A15 topology. Carrier CPU is 77.24% P and 22.76% E; when three
+  or four carriers run, Darwin nearly fills both P-cores and spills the rest to
+  E. Linux's symmetric vCPUs cannot convey guest critical-path priority through
+  the independent host scheduler.
+- Verified the generated AOSP product has no dex2oat thread/cpuset override;
+  the default is four threads for four online guest CPUs. A fresh two-vCPU
+  control slowed Simulator boot 31.9%; its single physical result is inside
+  prior first-boot variance and does not justify a policy change. See
+  [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md)
+  and G175 in `HOT_PATH_EXPERIMENTS.md`.
+
 ## 2026-08-25: Android iOS cold-boot CPU profile
 
 - Profiled fresh-COW Release cold boots on the physical iPad and iOS Simulator

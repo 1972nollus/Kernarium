@@ -86,6 +86,128 @@ averages only 1.891 active process cores despite a 4-vCPU guest, so CPU hot
 functions alone do not account for all wall time; dependency chains, idle
 periods, and off-CPU waits remain relevant.
 
+## Why the iPad uses more CPU time without using four cores
+
+The 2.283 whole-process CPU-time ratio is almost exactly the product of a
+1.972 wall-time ratio and a 1.157 average-active-core ratio:
+
+```text
+573.213 / 251.115 = (303.145 / 153.688) * (1.891 / 1.634)
+       2.283       =          1.972       *        1.157
+```
+
+CPU seconds integrate active cores over wall time; they are not a count of
+guest instructions. The iPad therefore accumulated more than twice the CPU
+time because the profiled boot stayed alive almost twice as long while using
+slightly *more*, not fewer, average cores. The same identity explains the
+largest stage ratios:
+
+| Stage | iPad/Simulator wall | Average-core ratio | CPU-time ratio |
+| --- | ---: | ---: | ---: |
+| Zygote -> boot animation | 5.175 | 0.860 | 4.452 |
+| `artd` -> codec generation start | 2.192 | 1.105 | 2.423 |
+| Codec exit -> boot-animation exit | 1.925 | 1.335 | 2.570 |
+| Whole profile | 1.972 | 1.157 | 2.283 |
+
+These ratios describe the two profiled observations, not an equal-work
+microbenchmark. Simulator sampling almost doubled its uninstrumented wall
+time, and neither profile counts retired guest instructions. A slower critical
+path also keeps time-dependent Android work such as boot animation, service
+convergence, and polling alive longer, so equal Android work volume must not be
+inferred from CPU seconds.
+
+The physical trace excludes a missing or starved carrier. CPU time is balanced
+across the four fixed vCPU threads:
+
+| Carrier | CPU-s | P-core CPU-s | E-core CPU-s |
+| --- | ---: | ---: | ---: |
+| `uml-vcpu-0-carrier` | 142.597 | 110.012 | 32.585 |
+| `uml-vcpu-1-carrier` | 146.976 | 114.892 | 32.084 |
+| `uml-vcpu-2-carrier` | 136.898 | 105.599 | 31.299 |
+| `uml-vcpu-3-carrier` | 140.450 | 107.372 | 33.078 |
+
+The maximum/minimum ratio is only 1.074. Simulator call-graph sampling is
+similarly balanced at 38.056--40.669 active sample-seconds per carrier, and
+roughly half of each carrier's snapshots end in the guest idle `pselect` path.
+There is no lost vCPU, permanently idle carrier, or single carrier receiving
+all guest work.
+
+The actual four-vCPU utilization limit is the runnable work exposed by the
+Android critical path:
+
+| Simultaneously running carriers | Physical-iPad wall | Share of profile wall |
+| ---: | ---: | ---: |
+| 0 | 15.880 s | 5.24% |
+| 1 | 100.487 s | 33.15% |
+| 2 | 113.846 s | 37.55% |
+| 3 | 52.986 s | 17.48% |
+| 4 | 19.946 s | 6.58% |
+
+One or two carriers run for 70.70% of the profile; three or four run for only
+24.06%. The APEX-to-Zygote interval is the clearest serial boundary: one
+carrier runs for 86.79% of its wall time, 97.17% of its carrier CPU lands on a
+P-core, and its average is only 1.084 carriers. The most parallel material
+interval, `artd` start to codec generation start, averages 2.175 carriers and
+has three or more running for 34.23% of its wall time. The approximate
+Simulator activity analysis has the same shape, rising from 1.307 sampled
+active carriers in APEX-to-Zygote to 2.582 in the corresponding ART interval.
+
+This is not a host global-lock bottleneck. Host synchronization accounts for
+only 1.138 CPU-s, or 0.20% of physical process CPU. Translation plus all
+software translation-cache work is 6.46%, and on-CPU I/O/device work is
+1.01%. The inactive carrier stacks and the stage boundaries instead point to
+guest idleness and Android service, Binder, package, and compilation
+dependencies that rarely make four independent critical-path tasks runnable
+at once.
+
+The A15's heterogeneous topology then makes the available parallelism less
+valuable than it is on the M1 Ultra. The iPad has two P-cores and four E-cores;
+the Simulator host has sixteen P-cores and four E-cores. Physical carrier CPU
+lands 437.875 CPU-s (77.24%) on P-cores and 129.046 CPU-s (22.76%) on E-cores.
+When three carriers run, the trace averages 1.946 P-cores and 1.054 E-cores;
+when four run, it averages 1.987 P-cores and 2.013 E-cores. Darwin is therefore
+filling both P-cores almost exactly when the guest exposes three or four
+runnable vCPUs. The third and fourth carriers necessarily spill to E-cores.
+
+Linux sees four symmetric virtual CPUs and cannot communicate which guest task
+is on the boot critical path to Darwin. Darwin independently schedules the
+four permanent host carriers, so a critical guest task may migrate onto a vCPU
+whose carrier is on an E-core. Neither Kernarium's `uml-launcher` Foundation
+thread nor the ACK carrier `pthread_create` path sets an explicit QoS or host
+affinity. That absence can contribute to the 33.070 E-core CPU-s observed while
+only one or two carriers run, but this is just 5.83% of whole carrier CPU. It
+does not explain the dominant ratio, and the trace does not support a QoS or
+affinity product change without a matched A/B.
+
+ART is also not accidentally configured as single-threaded. The generated
+`aosp_kernarium_darwin` product contains none of
+`dalvik.vm.{boot-,}dex2oat-{threads,cpu-set}`. `artd` adds `-j` only when one of
+those properties is present, while `art/dex2oat/dex2oat.cc` defaults its thread
+count to `sysconf(_SC_NPROCESSORS_CONF)`. With four online guest CPUs, the
+default is therefore four dex2oat threads. That is a ceiling for the compiler's
+parallel phases, not proof that four independent Android critical-path tasks
+exist throughout boot.
+
+A focused fresh-COW two-vCPU control does not justify matching the guest to the
+two A15 P-cores. Simulator completion moved from 77.500 seconds at four vCPUs
+to 102.213 seconds at two, a 31.9% regression, proving useful work exists above
+two CPUs on the M1 host. The physical two-vCPU control completed in 321.370
+seconds, between the prior 303.145-second profiled and 384.418-second
+uninstrumented four-vCPU observations. That spread is dominated by
+instrumentation and first-boot variance, so it is neither a speedup nor a
+regression result. Both controls brought up exactly two CPUs and completed
+without a stall or crash.
+
+The supported diagnosis is therefore two-part: Android exposes mostly one or
+two runnable critical-path tasks, and the iPad can give P-core service to only
+two carriers when more work does exist. Normal A15-versus-M1 per-core
+throughput and working-set differences stretch those dependencies further,
+but prior equal-work gadget probes reject a blanket twofold iPad execution
+penalty. Resolving the remaining work-volume versus per-core-cost split would
+require matched low-overhead host counters plus guest scheduler/task and
+retired-guest-instruction counts; the current CPU profiles cannot supply that
+causal precision.
+
 ## Physical-iPad stage breakdown
 
 Percentages below are of each row's process CPU, not of whole-boot CPU.
@@ -206,13 +328,16 @@ Ignored local evidence is retained under:
     toc.xml
     summary.json
     ttyS0-wall.log
-    analysis/{cpu-breakdown.json,cpu-breakdown.md}
+    analysis/{cpu-breakdown.json,cpu-breakdown.md,carrier-concurrency.json}
   simulator-release-cold/
     samples/window-*.sample.txt
     host-cpu.csv
     summary.json
     ttyS0-wall.log
-    analysis/{cpu-breakdown.json,cpu-breakdown.md}
+    analysis/{cpu-breakdown.json,cpu-breakdown.md,carrier-activity.json}
+  two-vcpu-control/
+    device-cold-retry/{summary.json,ttyS0-wall.log}
+    simulator-cold/{summary.json,ttyS0-wall.log}
 ```
 
 For each accepted profile, stage CPU totals and category CPU totals independently

@@ -114,6 +114,23 @@ Simulator CPU. Full whole-boot and per-stage tables, category definitions,
 confidence gates, and evidence paths are in
 [`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
 
+Follow-up carrier/core-class analysis closes the immediate scaling question
+without a product change. The 2.283 profiled process-CPU ratio is 1.972 longer
+wall time times 1.157 more average active cores, not a 2.283-fold
+per-instruction penalty. All four carriers are balanced within a 1.074
+maximum/minimum ratio. Android runs one or two carriers for 70.70% of physical
+profile wall and all four for only 6.58%; APEX-to-Zygote is 86.79%
+one-carrier, while the heaviest ART interval averages 2.175. When three or four
+do run, Darwin almost exactly fills the A15's two P-cores and spills the rest
+to E, which owns 22.76% of carrier CPU. The generated product has no ART
+thread/cpuset override and dex2oat therefore defaults to the four online guest
+CPUs. A two-vCPU control slowed Simulator boot 31.9%, while one physical result
+was inside the wide first-boot/profile variance. Keep the 4-vCPU measurement
+policy; the supported cause is mostly serial Android dependencies plus the
+two-P-core heterogeneous scheduling boundary, not a missing carrier, host
+global lock, translation, or I/O defect. See G175 in
+[`HOT_PATH_EXPERIMENTS.md`](HOT_PATH_EXPERIMENTS.md).
+
 The Simulator crash that invalidated the provisional timing was a host gadget
 cache defect, not an Android image or ACK defect. A cache slot handed to a
 different address space retained the prior owner's memoised `LinkRecord`, so a

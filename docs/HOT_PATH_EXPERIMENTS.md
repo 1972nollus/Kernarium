@@ -10803,3 +10803,87 @@ recurrence against a single prior observation, not proof - the deterministic
 regression is what carries the claim. No boot timing was recorded or compared,
 and the provisional 4-vCPU/2-GiB platform figures collected immediately before
 the panic are discarded.
+
+## G175: Android boot is dependency- and A15-topology-limited, not carrier-limited
+
+Dated 2026-08-25. This follows the fresh-COW Android 17 Release CPU profiles
+on the physical A15 iPad mini 6 and M1 Ultra iOS Simulator. Both used the same
+accepted release, gadgets, 4 vCPUs, 2 GiB, 16 KiB pages, normal boot, 160 DPI,
+and hardware Virgl. The question was why physical boot is much slower, why
+several stages accumulate more than twice the process CPU time, and why four
+vCPUs do not keep four host cores busy.
+
+The whole-profile CPU ratio contains no missing-core paradox. CPU seconds are
+wall seconds multiplied by average active process cores:
+
+```text
+573.213 / 251.115 = (303.145 / 153.688) * (1.891 / 1.634)
+       2.283       =          1.972       *        1.157
+```
+
+The iPad stays in the profiled boot 1.972 times as long and averages 1.157
+times as many active cores, producing 2.283 times the CPU seconds. The same
+decomposition gives 2.423 CPU-time ratio for `artd` start to codec generation
+start from 2.192 wall ratio times 1.105 average-core ratio, and 2.570 after
+codec exit from 1.925 times 1.335. This is elapsed CPU, not retired guest
+instructions. Simulator `sample(1)` nearly doubled its uninstrumented boot,
+so these are explanatory identities for the captured runs rather than a
+calibrated equal-work hardware ratio.
+
+The exact physical Time Profiler schedule excludes a lost carrier. The four
+fixed vCPU threads consume 142.597, 146.976, 136.898, and 140.450 CPU-s, a
+maximum/minimum ratio of 1.074. Simulator active call-graph weight is likewise
+balanced at 38.056--40.669 sample-seconds. Physical host synchronization is
+only 1.138 CPU-s (0.20%), and there is no global emulator lock holding three
+carriers out. Translation plus all software cache work is 6.46%, and on-CPU
+I/O/device work is 1.01%.
+
+Android instead exposes too little simultaneous critical-path work. Over the
+physical profile, zero, one, two, three, and four carriers run for 5.24%,
+33.15%, 37.55%, 17.48%, and 6.58% of wall time respectively. One or two
+carriers therefore cover 70.70%; three or four cover only 24.06%. During
+APEX-to-Zygote, one carrier runs for 86.79% of wall and 97.17% of carrier CPU
+is already on a P-core. During the heavier ART-to-codec interval, the guest
+averages 2.175 carriers and reaches three or more for 34.23%. Simulator idle
+stacks end in the guest `pselect` path at roughly half of each carrier's
+snapshots and show the same stage shape. Android service, Binder, package, and
+compilation dependencies, rather than host starvation, set the parallelism
+ceiling.
+
+The A15 topology then taxes the parallel portion. It has two P-cores and four
+E-cores, against the M1 Ultra's sixteen P-cores and four E-cores. Physical
+carrier CPU is 77.24% P and 22.76% E. At concurrency three the trace averages
+1.946 P plus 1.054 E cores; at concurrency four it averages 1.987 P plus 2.013
+E. Darwin is nearly saturating both P-cores whenever enough guest work exists,
+so the third and fourth carriers necessarily spill to E. Linux sees symmetric
+vCPUs and cannot tell Darwin which guest task is critical; the independent
+guest and host schedulers can migrate that task onto an E-hosted carrier.
+There is no explicit QoS or affinity on the launcher or carrier creation path,
+but only 33.070 CPU-s, 5.83% of carrier CPU, lands on E while one or two
+carriers run. A QoS change is not supported by this trace without an A/B.
+
+The built Android product is not silently capped at one ART thread. It sets no
+`dalvik.vm.{boot-,}dex2oat-{threads,cpu-set}` override. `artd` passes `-j` only
+for a nonempty property, and dex2oat otherwise defaults to
+`sysconf(_SC_NPROCESSORS_CONF)`, which is four here. A four-thread compiler is
+only a maximum for parallel compiler phases; it does not remove dependencies
+between Android boot jobs.
+
+A fresh-COW two-vCPU control rejects an immediate policy change. The same
+Simulator release regressed from 77.500 to 102.213 seconds, 31.9%, proving
+useful parallel work above two CPUs. The physical two-vCPU run completed in
+321.370 seconds, between the 303.145-second profiled and 384.418-second
+uninstrumented four-vCPU observations, so instrumentation and first-boot
+variance make it inconclusive. Both controls brought up two CPUs and completed
+without a stall or crash.
+
+Disposition: no product change. The supported cause is a mostly one- or
+two-task Android critical path combined with only two physical P-cores and an
+uncoordinated guest/host heterogeneous scheduling boundary when more tasks do
+exist. Per-core A15/M1 throughput and working-set effects stretch serial
+dependencies further, while G151--G153 reject a blanket twofold emulator or
+gadget penalty on equal work. Separating work-volume from per-core cost needs
+matched low-overhead host counters and guest task/scheduler plus retired-guest-
+instruction counts. Complete stage, carrier, core-class, ART-policy, and
+retained-evidence details are in
+[`android-17-cold-boot-cpu-profile-20260825.md`](android-17-cold-boot-cpu-profile-20260825.md).
