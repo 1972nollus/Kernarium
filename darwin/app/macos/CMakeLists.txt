@@ -113,7 +113,7 @@ if(UML_BUILD_ANDROID17_CLI)
         UML_ANDROID17_BASE_DISK_SIZE=${_uml_android_base_disk_size})
     target_link_libraries(uml-darwin-android17 PRIVATE UML::AndroidBoot)
     target_link_options(uml-darwin-android17 PRIVATE
-        "LINKER:-sectcreate,__DATA,__uml_android_rootfs,${_uml_android_manifest}")
+        "LINKER:-sectcreate,__DATA,__uml_rootfs,${_uml_android_manifest}")
     set_property(TARGET uml-darwin-android17 APPEND PROPERTY LINK_DEPENDS
         "${_uml_android_manifest}"
         "${_uml_android_base_disk}")

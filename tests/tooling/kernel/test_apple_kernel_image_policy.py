@@ -347,7 +347,7 @@ def main() -> int:
         'LINK_DEPENDS "${_kernarium_kernel_image}"',
         "UML_ANDROID17_ROOTFS_RELEASE_TARGET",
         "UML_ANDROID_ROOTFS_RELEASE_MANIFEST",
-        "LINKER:-sectcreate,__DATA,__uml_android_rootfs",
+        "LINKER:-sectcreate,__DATA,__uml_rootfs",
     ):
         require(contract in runtime_cmake, f"runtime carrier lacks {contract}")
     for forbidden in (
@@ -502,7 +502,7 @@ def main() -> int:
         "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}",
         "uml-darwin linux_main.cpp",
         "uml-darwin-android17 android17_main.cpp",
-        "LINKER:-sectcreate,__DATA,__uml_android_rootfs,${_uml_android_manifest}",
+        "LINKER:-sectcreate,__DATA,__uml_rootfs,${_uml_android_manifest}",
     ):
         require(contract in macos_app_cmake, f"macOS app binding lacks {contract}")
     for forbidden in ("TARGET uml_kernel", "UML_KERNEL_BUILD_DIR"):
@@ -564,7 +564,7 @@ def main() -> int:
         'release_option{"--android-release="}',
         'instance_option{"--android-instance="}',
         'boot_mode_option{"--android-boot-mode="}',
-        "section$start$__DATA$__uml_android_rootfs",
+        "section$start$__DATA$__uml_rootfs",
         '"ubd0=" + instance.string()',
         '"initrd=" + base_disk.string()',
         '"initrd_offset=" + std::to_string(boot.ramdisk.offset)',

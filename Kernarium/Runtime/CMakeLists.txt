@@ -200,7 +200,7 @@ if(KERNARIUM_RUNTIME_ANDROID_GUEST)
     # Only the accepted rootfs identity travels inside the framework. The ACK
     # kernel is selected independently through its own accepted artifact.
     target_link_options(KernariumRuntime PRIVATE
-        "LINKER:-sectcreate,__DATA,__uml_android_rootfs,${_kernarium_android_manifest}")
+        "LINKER:-sectcreate,__DATA,__uml_rootfs,${_kernarium_android_manifest}")
     set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
         "${_kernarium_android_manifest}"
         "${_kernarium_android_base_disk}")

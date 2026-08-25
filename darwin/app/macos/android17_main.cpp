@@ -34,9 +34,9 @@
 #endif
 extern "C" {
 extern const unsigned char uml_android_rootfs_manifest_start[]
-	__asm("section$start$__DATA$__uml_android_rootfs");
+	__asm("section$start$__DATA$__uml_rootfs");
 extern const unsigned char uml_android_rootfs_manifest_end[]
-	__asm("section$end$__DATA$__uml_android_rootfs");
+	__asm("section$end$__DATA$__uml_rootfs");
 }
 
 namespace {

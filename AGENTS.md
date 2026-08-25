@@ -474,7 +474,7 @@ Executable-memory policy:
   desktop rootfs discovery. `UML_KERNEL_PRODUCT=android-17` selects the ACK
   artifact for the Kernarium iOS runtime, which embeds that ELF in the same
   signed `__TEXT` carrier and the independently selected rootfs manifest in
-  `__DATA,__uml_android_rootfs`. A kernel-only app update must not republish,
+  `__DATA,__uml_rootfs`. A kernel-only app update must not republish,
   rename, or invalidate an existing rootfs bundle or its COW. The runtime still
   boots only a guest bundle whose rootfs manifest matches the selected rootfs
   copy byte for byte, appends

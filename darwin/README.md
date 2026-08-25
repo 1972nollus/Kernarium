@@ -427,7 +427,7 @@ is replaced.
 Kernarium also boots an Android guest from a `.kern` bundle in its Documents.
 That runtime is a third versioned framework carrying the independently
 accepted ACK artifact's ELF in the same signed `__TEXT` carrier and the
-selected rootfs manifest in `__DATA,__uml_android_rootfs`; the flavour leads
+selected rootfs manifest in `__DATA,__uml_rootfs`; the flavour leads
 the framework name so it can never be confused with the 16 KiB Linux one. It
 refuses a bundle whose rootfs manifest differs from that embedded copy, while
 a kernel-only app update leaves the rootfs selection and persistent COW

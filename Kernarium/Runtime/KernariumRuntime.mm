@@ -56,9 +56,9 @@ extern const unsigned char uml_elf_end[]
  * kernel artifact, so updating the signed carrier does not invalidate an
  * existing bundle or its persistent COW. */
 extern const unsigned char uml_android_rootfs_manifest_start[]
-    __asm("section$start$__DATA$__uml_android_rootfs");
+    __asm("section$start$__DATA$__uml_rootfs");
 extern const unsigned char uml_android_rootfs_manifest_end[]
-    __asm("section$end$__DATA$__uml_android_rootfs");
+    __asm("section$end$__DATA$__uml_rootfs");
 #endif
 int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
 int uml_slirp_net_irq_fd(void*);
