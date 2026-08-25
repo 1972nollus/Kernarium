@@ -8,7 +8,7 @@
 namespace uml::cpu::arm64::gadgets {
 
 Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
-		 std::pmr::vector<std::uintptr_t> words,
+		 ProgramWords words,
 		 bool accesses_fp_state) noexcept
 	: instruction_count_{instruction_count},
 	  words_{std::move(words)}, accesses_fp_state_{accesses_fp_state}
@@ -18,7 +18,7 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 }
 
 Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
-		 std::pmr::vector<std::uintptr_t> words,
+		 ProgramWords words,
 		 bool accesses_fp_state) noexcept
 	: instruction_count_{instruction_count},
 	  words_{std::move(words)},
@@ -28,6 +28,20 @@ Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
 {
 	std::copy_n(runs.begin(), run_count_, runs_.begin());
 }
+
+Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
+		 std::pmr::vector<std::uintptr_t> words,
+		 bool accesses_fp_state)
+	: Program{guest_address, instruction_count, ProgramWords{std::move(words)},
+		  accesses_fp_state}
+{}
+
+Program::Program(std::span<const GuestRun> runs, std::size_t instruction_count,
+		 std::pmr::vector<std::uintptr_t> words,
+		 bool accesses_fp_state)
+	: Program{runs, instruction_count, ProgramWords{std::move(words)},
+		  accesses_fp_state}
+{}
 ::uml::cpu::EngineEvent execute(const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb) noexcept
 {
 	std::size_t executed = 0;

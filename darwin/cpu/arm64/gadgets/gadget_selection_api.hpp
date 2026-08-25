@@ -5,14 +5,13 @@
 
 namespace uml::cpu::arm64::gadgets::selection {
 
-template <typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words, Gadget gadget) {
+template <typename Words>
+void emit(Words &words, Gadget gadget) {
   words.push_back(reinterpret_cast<std::uintptr_t>(gadget));
 }
 
-template <typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words,
-          std::uintptr_t operand) {
+template <typename Words>
+void emit(Words &words, std::uintptr_t operand) {
   words.push_back(operand);
 }
 

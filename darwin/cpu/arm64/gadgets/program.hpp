@@ -6,6 +6,7 @@
 #include "../fp_environment.hpp"
 #include "tlb.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <memory_resource>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace uml::cpu::arm64::gadgets {
@@ -30,17 +32,150 @@ struct GuestRun final {
 	std::uint32_t instructions{};
 };
 
+/* Most translated streams are small, but a pmr::vector gives every one its
+ * own pool allocation. Keep the common prefix in the Program itself and use
+ * the same allocator, with the builder's former 34-word reservation, only
+ * when a stream spills. */
+class ProgramWords final {
+public:
+	static constexpr std::size_t inline_capacity = 16;
+
+	explicit ProgramWords(std::pmr::memory_resource *resource) noexcept
+		: resource_{resource}
+	{}
+
+	explicit ProgramWords(std::pmr::vector<std::uintptr_t> words)
+		: resource_{words.get_allocator().resource()}
+	{
+		reserve(words.size());
+		std::copy(words.begin(), words.end(), data());
+		size_ = words.size();
+	}
+
+	ProgramWords(const ProgramWords &other)
+		: resource_{std::pmr::get_default_resource()}
+	{
+		reserve(other.size_);
+		std::copy_n(other.data(), other.size_, data());
+		size_ = other.size_;
+	}
+
+	ProgramWords &operator=(const ProgramWords &other)
+	{
+		if (this == &other)
+			return *this;
+		reserve(other.size_);
+		std::copy_n(other.data(), other.size_, data());
+		size_ = other.size_;
+		return *this;
+	}
+
+	ProgramWords(ProgramWords &&other) noexcept
+		: resource_{other.resource_}, size_{other.size_},
+		  capacity_{other.capacity_}, heap_{other.heap_}
+	{
+		if (heap_ == nullptr)
+			std::copy_n(other.inline_.begin(), size_, inline_.begin());
+		other.size_ = 0;
+		other.capacity_ = inline_capacity;
+		other.heap_ = nullptr;
+	}
+
+	ProgramWords &operator=(ProgramWords &&other) noexcept
+	{
+		if (this == &other)
+			return *this;
+		release();
+		resource_ = other.resource_;
+		size_ = other.size_;
+		capacity_ = other.capacity_;
+		heap_ = other.heap_;
+		if (heap_ == nullptr)
+			std::copy_n(other.inline_.begin(), size_, inline_.begin());
+		other.size_ = 0;
+		other.capacity_ = inline_capacity;
+		other.heap_ = nullptr;
+		return *this;
+	}
+
+	~ProgramWords() { release(); }
+
+	void push_back(std::uintptr_t word)
+	{
+		if (size_ == capacity_)
+			reserve(capacity_ == inline_capacity ? 34 : capacity_ * 2);
+		data()[size_++] = word;
+	}
+
+	void reserve(std::size_t requested)
+	{
+		if (requested <= capacity_)
+			return;
+		auto *replacement = static_cast<std::uintptr_t *>(
+			resource_->allocate(requested * sizeof(std::uintptr_t),
+				alignof(std::uintptr_t)));
+		std::copy_n(data(), size_, replacement);
+		if (heap_ != nullptr)
+			resource_->deallocate(heap_,
+				capacity_ * sizeof(std::uintptr_t),
+				alignof(std::uintptr_t));
+		heap_ = replacement;
+		capacity_ = requested;
+	}
+
+	[[nodiscard]] std::uintptr_t *data() noexcept
+	{
+		return heap_ != nullptr ? heap_ : inline_.data();
+	}
+	[[nodiscard]] const std::uintptr_t *data() const noexcept
+	{
+		return heap_ != nullptr ? heap_ : inline_.data();
+	}
+	[[nodiscard]] std::size_t size() const noexcept { return size_; }
+	[[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+	[[nodiscard]] std::uintptr_t &operator[](std::size_t index) noexcept
+	{
+		return data()[index];
+	}
+	[[nodiscard]] const std::uintptr_t &operator[](
+		std::size_t index) const noexcept
+	{
+		return data()[index];
+	}
+
+private:
+	void release() noexcept
+	{
+		if (heap_ != nullptr)
+			resource_->deallocate(heap_,
+				capacity_ * sizeof(std::uintptr_t),
+				alignof(std::uintptr_t));
+	}
+
+	std::pmr::memory_resource *resource_;
+	std::size_t size_{};
+	std::size_t capacity_{inline_capacity};
+	std::uintptr_t *heap_{};
+	std::array<std::uintptr_t, inline_capacity> inline_;
+};
+
 class Program final {
 public:
 	/* Caller, callee, and the continuation after the inlined return. */
 	static constexpr std::size_t maximum_runs = 3;
 
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		std::pmr::vector<std::uintptr_t> words,
+		ProgramWords words,
 		bool accesses_fp_state) noexcept;
 	Program(std::span<const GuestRun> runs, std::size_t instruction_count,
-		std::pmr::vector<std::uintptr_t> words,
+		ProgramWords words,
 		bool accesses_fp_state) noexcept;
+	Program(std::uint64_t guest_address, std::size_t instruction_count,
+		std::pmr::vector<std::uintptr_t> words,
+		bool accesses_fp_state);
+	Program(std::span<const GuestRun> runs, std::size_t instruction_count,
+		std::pmr::vector<std::uintptr_t> words,
+		bool accesses_fp_state);
 
 	/* Where the block starts, which is the first run's address. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
@@ -61,7 +196,7 @@ public:
 	}
 	[[nodiscard]] std::span<const std::uintptr_t> words() const noexcept
 	{
-		return words_;
+		return {words_.data(), words_.size()};
 	}
 	[[nodiscard]] bool accesses_fp_state() const noexcept
 	{
@@ -71,7 +206,7 @@ public:
 private:
 	std::array<GuestRun, maximum_runs> runs_{};
 	std::size_t instruction_count_{};
-	std::pmr::vector<std::uintptr_t> words_;
+	ProgramWords words_;
 	std::uint8_t run_count_{1};
 	bool accesses_fp_state_{};
 };

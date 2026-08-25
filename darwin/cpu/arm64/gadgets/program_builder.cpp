@@ -50,7 +50,7 @@ namespace {
 [[nodiscard]] Program finish(
 	const std::array<GuestRun, Program::maximum_runs> &runs,
 	std::size_t run_count, std::size_t retired,
-	std::pmr::vector<std::uintptr_t> words, bool accesses_fp_state)
+	ProgramWords words, bool accesses_fp_state)
 {
 	if (run_count <= 1)
 		return Program{runs[0].address, retired, std::move(words),
@@ -65,7 +65,7 @@ namespace {
  * that the block's translated length is final. A taken branch subtracts this
  * from the count its block was precharged, so it is the instructions after the
  * branch itself. */
-void resolve_inline_suffixes(std::pmr::vector<std::uintptr_t> &words,
+void resolve_inline_suffixes(ProgramWords &words,
 			     const InlineSuffixes &suffixes,
 			     std::size_t compiled) noexcept
 {
@@ -88,10 +88,8 @@ BuildResult Builder::build(
 {
 	const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
 		options.host_capabilities};
-	std::pmr::vector<std::uintptr_t> words{storage};
+	ProgramWords words{storage};
 	InlineSuffixes suffixes{};
-	words.reserve(std::min<std::size_t>(
-		instructions.size() * 2 + 2, 34));
 	std::size_t compiled = 0;
 	/* The runs closed so far, and what the block has retired through them.
 	 * A block is one run unless a call was translated inline into it. */

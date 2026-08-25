@@ -60,7 +60,7 @@ struct DecodeContext final {
 	std::span<const std::uint32_t> following;
 	std::size_t &compiled;
 	bool &program_accesses_fp_state;
-	std::pmr::vector<std::uintptr_t> &words;
+	ProgramWords &words;
 	const Builder::LinkResolver &resolve_link;
 	const Builder::IndirectLinkResolver &resolve_indirect_link;
 	const BuildOptions &options;
