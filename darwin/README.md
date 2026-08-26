@@ -68,7 +68,8 @@ Android guest RAM uses the kernel's linear physical window as its root. The
 signed kernel image occupies the reserved prefix and the allocatable suffix is
 created anonymously in place; software-MMU and host-service views borrow that
 window rather than retaining a second full-span mapping. Physical iOS commits
-and wires the allocatable suffix before exposing it, and a wire failure aborts
+and wires the anonymous suffix, the loader-to-reserve tail, and any prefix
+pages as the kernel releases them into guest RAM; a wire failure aborts
 startup. Simulator and macOS retain demand allocation. Disk and image
 descriptors remain file-backed.
 

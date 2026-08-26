@@ -25,6 +25,11 @@ struct AnonymousSharedBacking final {
 
 AnonymousSharedBacking anonymous_backing;
 
+struct AnonymousTail final {
+	void *address{};
+	std::size_t length{};
+};
+
 [[nodiscard]] bool same_backing(const struct stat &status) noexcept
 {
 	return anonymous_backing.registered &&
@@ -60,6 +65,56 @@ AnonymousSharedBacking anonymous_backing;
 	return true;
 }
 
+[[nodiscard]] bool materialize_anonymous_tail_locked(
+	std::uintptr_t root, std::uintptr_t limit,
+	AnonymousTail &tail) noexcept
+{
+	vm_address_t cursor = root;
+	while (cursor < limit) {
+		vm_address_t region = cursor;
+		vm_size_t region_size = 0;
+		vm_region_basic_info_data_64_t information {};
+		mach_msg_type_number_t information_count =
+			VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const kern_return_t result = vm_region_64(
+			mach_task_self(), &region, &region_size,
+			VM_REGION_BASIC_INFO_64,
+			reinterpret_cast<vm_region_info_t>(&information),
+			&information_count, &object);
+		if (object != MACH_PORT_NULL)
+			(void)mach_port_deallocate(mach_task_self(), object);
+		if (result == KERN_INVALID_ADDRESS || region >= limit)
+			break;
+		if (result != KERN_SUCCESS || region > cursor || region_size == 0 ||
+		    region > std::numeric_limits<vm_address_t>::max() - region_size ||
+		    region + region_size <= cursor) {
+			errno = result == KERN_NO_SPACE ? ENOMEM : EFAULT;
+			return false;
+		}
+		cursor = region + region_size;
+	}
+	if (cursor >= limit)
+		return true;
+
+	/* The signed loader reserves through the final ELF segment. UML rounds
+	 * its reserved physical prefix farther, leaving one unmapped tail before
+	 * the allocatable suffix. Materialize only that verified hole, without
+	 * replacing any signed or anonymous kernel segment. */
+	const auto length = static_cast<std::size_t>(limit - cursor);
+	void *mapping = mmap(reinterpret_cast<void *>(cursor), length,
+		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (mapping == MAP_FAILED)
+		return false;
+	if (mapping != reinterpret_cast<void *>(cursor)) {
+		(void)munmap(mapping, length);
+		errno = ENOMEM;
+		return false;
+	}
+	tail = {mapping, length};
+	return true;
+}
+
 [[nodiscard]] void *establish_anonymous_root_locked(
 	void *address, std::size_t length, std::uint64_t offset,
 	const struct stat &status) noexcept
@@ -68,11 +123,15 @@ AnonymousSharedBacking anonymous_backing;
 		return MAP_FAILED;
 	const auto backing_size = static_cast<std::size_t>(status.st_size);
 	const auto target = reinterpret_cast<std::uintptr_t>(address);
-	if (address == nullptr || offset > target ||
+	if (address == nullptr || target % vm_page_size != 0 || offset > target ||
 	    length != backing_size - static_cast<std::size_t>(offset)) {
 		errno = EINVAL;
 		return MAP_FAILED;
 	}
+	const auto physical_root = target - static_cast<std::size_t>(offset);
+	AnonymousTail tail;
+	if (!materialize_anonymous_tail_locked(physical_root, target, tail))
+		return MAP_FAILED;
 
 	/* UML's physical window begins with the signed kernel image. Only the
 	 * allocatable suffix is created from the physical-memory descriptor. Make
@@ -81,8 +140,11 @@ AnonymousSharedBacking anonymous_backing;
 	 * allocation would leave iOS accounting both full-span resident mappings. */
 	void *root = mmap(address, length, PROT_READ | PROT_WRITE,
 		MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (root == MAP_FAILED)
+	if (root == MAP_FAILED) {
+		if (tail.address != nullptr)
+			(void)munmap(tail.address, tail.length);
 		return MAP_FAILED;
+	}
 #if UML_WIRE_ANONYMOUS_GUEST_RAM
 	struct rlimit lock_limit {};
 	if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
@@ -98,33 +160,35 @@ AnonymousSharedBacking anonymous_backing;
 			"(RLIMIT_MEMLOCK unavailable, errno=%d)\n",
 			length, errno);
 	}
-	if (mlock(root, length) != 0) {
+	if ((tail.address != nullptr && mlock(tail.address, tail.length) != 0) ||
+	    mlock(root, length) != 0) {
 		const int saved_errno = errno;
 		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: failed to wire %zu "
-			"bytes, errno=%d; refusing lazy guest RAM\n",
-			length, saved_errno);
+			"Darwin anonymous guest RAM: failed to wire the direct "
+			"physical window, errno=%d; refusing lazy guest RAM\n",
+			saved_errno);
 		(void)munmap(root, length);
+		if (tail.address != nullptr)
+			(void)munmap(tail.address, tail.length);
 		errno = saved_errno;
 		return MAP_FAILED;
 	}
 	dprintf(STDERR_FILENO,
-		"Darwin anonymous guest RAM: committed and wired %zu "
-		"allocatable bytes in the %zu-byte physical window; host "
-		"compression is disabled; direct-root=yes offset=%llu\n",
-		length, backing_size,
+		"Darwin anonymous guest RAM: committed and wired %zu suffix "
+		"bytes plus %zu reserved-tail bytes in the %zu-byte physical "
+		"window; host compression is disabled; direct-root=yes "
+		"offset=%llu\n",
+		length, tail.length, backing_size,
 		static_cast<unsigned long long>(offset));
 #else
 	dprintf(STDERR_FILENO,
-		"Darwin anonymous guest RAM: reserved %zu allocatable bytes "
-		"in the %zu-byte physical window without file backing; "
-		"direct-root=yes offset=%llu\n",
-		length, backing_size,
+		"Darwin anonymous guest RAM: reserved %zu suffix bytes plus "
+		"%zu reserved-tail bytes in the %zu-byte physical window "
+		"without file backing; direct-root=yes offset=%llu\n",
+		length, tail.length, backing_size,
 		static_cast<unsigned long long>(offset));
 #endif
-	anonymous_backing.root = reinterpret_cast<void *>(
-		reinterpret_cast<std::uintptr_t>(root) -
-		static_cast<std::size_t>(offset));
+	anonymous_backing.root = reinterpret_cast<void *>(physical_root);
 	anonymous_backing.size = backing_size;
 	return root;
 }
@@ -152,6 +216,13 @@ AnonymousSharedBacking anonymous_backing;
 	if (fixed && target == source) {
 		if (mprotect(address, length, protection) != 0)
 			return MAP_FAILED;
+#if UML_WIRE_ANONYMOUS_GUEST_RAM
+		/* Early UML releases its final reserved-prefix pages into guest RAM
+		 * with an in-place writable mapping. Wire them at that transition so
+		 * no newly allocatable physical page can enter host compression. */
+		if (protection != PROT_NONE && mlock(address, length) != 0)
+			return MAP_FAILED;
+#endif
 		return address;
 	}
 	vm_prot_t current = VM_PROT_NONE;
