@@ -81,8 +81,10 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 
 - `dependencies/prepare.sh` is the only dependency workflow allowed to access
   the network. Prefer verification or `--no-fetch` when inputs already exist.
-- Dependency patch files are generated from Git topic branches. Regenerate
-  them with the owning script.
+- Patch-managed external repositories use Git topic commits as their editable
+  source. When a change belongs to an existing topic, amend it into that topic
+  commit and regenerate the owning patch series. Create a new topic commit only
+  for a distinct concern. Never edit generated patch files directly.
 - Kernel source must be materialized on a case-sensitive filesystem. The
   ignored `kernel/mainline-6.18/source-location.conf` selects the managed
   checkout for standalone kernel work.
@@ -183,8 +185,10 @@ Update documentation in the same change whenever its current contract changes.
 - Keep pure moves, behavior changes, performance changes, and generated or
   provenance updates independently reviewable when practical.
 - A completed feature or fix ends in a green, bisectable local commit after
-  applicable validation. This authorizes local commits, not pushing, rebasing,
-  amending, force-pushing, or rewriting history.
+  applicable validation. In this outer project repository, this authorizes new
+  local commits but not amending, rebasing, pushing, force-pushing, or otherwise
+  rewriting its history. The amend restriction does not apply to patch-managed
+  external repositories governed by the same-topic rule above.
 - If a required external input or permission prevents validation, leave the
   change uncommitted and report the prerequisite.
 - Before finishing, report changed files, checks run, checks not run, and any
