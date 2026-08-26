@@ -1,397 +1,127 @@
 # Mainline Linux 6.18 source policy
 
-Linux is built from the exact commit recorded in
-[`patches/metadata.env`](patches/metadata.env) in the upstream stable Linux Git
-repository. The maintained upstream line is `linux-6.18.y`; commit
-`2fe596715f840d053aed5cee5455f701bdcd2b50` and tree
-`9b4299714b8020ae57ca8c6310d747c2299aea0f` are the immutable source identity.
-There is no release-archive, detached-signature, imported-root-commit, or
-packaged-tree input.
+This directory owns the maintained stable Linux 6.18 source identity, local
+Darwin UML patch series, complete kernel configuration, standalone build
+policy, and accepted artifact descriptors.
 
-`materialize-git.sh` fetches only the pinned commit into the project Git cache,
-verifies its commit and tree identities, creates the local upstream base ref,
-and removes the network remote from the published replay checkout. Subsequent
-verification is offline.
+Exact upstream commit/tree, final tree, ABI identity, patch count, and delta
+limits live in [`patches/metadata.env`](patches/metadata.env). Ordered patch
+identity lives in [`patches/series/manifest.tsv`](patches/series/manifest.tsv).
+Those machine-readable files are the source of truth; replay commit IDs and
+binary hashes are observations.
 
-## Latest verified replay (2026-08-22)
+## Source preparation and replay
 
-The manifest contains 23 ordered topics and replays to canonical tree
-`6b767a2e92161253562c08680195592527113a67`. Topic 0023 is not covered by the
-dated replay below; it was regenerated and policy-verified but its build and
-boot qualification on this line is outstanding. A fresh pinned-commit replay,
-stable-ID/hash verification, topic ordering, declared-overlap policy, ABI
-checks, configured-checkout verification, and the delta audit passed. Both
-canonical production page profiles rebuilt with LLVM 22 in that fresh replay
-after the latest topic was added.
-The exact delta policy is 163 changed files
-with 9 outside the Darwin port. Topic 0010 makes the standard VT/fbcon stack
-available when the conflicting UML stdio console is disabled and makes the
-UML serial-line count configurable. Topic 0002 repairs the software-MMU mapping
-that uaccess verifies when the address carries none at all: `matches()`
-reports 1 for an equal mapping, 0 for one naming different backing, and -1
-for an absent one, and only the second was rebound, so a missing mapping was
-treated as checked and left missing. Topic 0003 also gives ordinary UML a
-host-monotonic nanosecond scheduler clock while keeping deterministic
-time-travel semantics. Topic 0015 replaces the former macOS/iOS split
-with one scalable Darwin address mechanism, including the page-rounded
-auxiliary allowance, iOS low placement, and macOS high placement. Topic 0023
-retunes that allowance; see below. Topic 0016 replaces per-task Darwin
-pthreads with one persistent carrier per configured vCPU on macOS, iOS
-Simulator, and physical iOS. Carrier names use a non-variadic decimal formatter
-because Linux AAPCS64 and Apple arm64 variadic call conventions differ. Topic
-0016 also keeps the process-directed early `ITIMER_REAL` signal blocked on the
-launcher and assigns it exclusively to vCPU0's carrier. Topic 0017 lets the
-host-stop descriptor wake those carriers for cooperative
-shutdown. Topic 0018 services pending cross-CPU work at IRQ-enabled spin
-checkpoints, preventing two fixed carriers from deadlocking in synchronous
-cross-calls while preserving Linux interrupt masking. Topic 0019 takes the
-`pthread_once` guard off `uml_curr_cpu()`, which Linux interrupt masking
-reaches through `local_signal_state()` on every `block_signals()` and
-`unblock_signals()`; the setters keep the once-guard, so the key and its
-carrier destructor are still created exactly once.
-Topic 0020 shuts down Virtio-GPU atomic state before unplugging the DRM device
-during system poweroff. This retires the final scanout framebuffer while its
-GEM mapping and VMA manager are still live. A focused policy test pins the
-ordering, and three consecutive 16 KiB Simulator plus three connected-iPad CTS
-shutdowns completed without the formerly intermittent
-`Memory manager not clean during takedown` warning.
-Topic 0022 implements `arch_irq_work_raise()` for UML. The generic weak stub
-left queued work waiting for the next timer tick, which is a correctness
-problem and not only a latency one: `bpf_mem_alloc` prefills exactly one
-element per CPU once the unit size exceeds 256 bytes and refills the rest from
-irq work, so a non-preallocated BPF hash map with a value larger than a couple
-of hundred bytes accepted one insert per CPU per tick and failed every later
-one with `-ENOMEM`. The topic publishes a self-directed IPI vector that the
-cooperative drain this port already reaches services long before the tick, and
-leaves `arch_irq_work_has_interrupt()` false so the tick keeps its existing
-backstop. A freestanding guest probe that fills a 1024-byte-value
-`BPF_F_NO_PREALLOC` hash map inserted 1 of 256 elements before the topic and
-all 256 after it, on both canonical page profiles.
-
-Topic 0021 keeps Darwin's precise nested `mmu_gather` ranges instead of
-promoting concurrent users to a generation-wide flush. Darwin range
-invalidation already quiesces every executor and advances the mapping epoch;
-discarding the collected ranges repeatedly walked every VMA and starved RCU
-during the 4 KiB Chromium workload. The generic hook defaults to the existing
-full-mm policy for every other architecture, and mutation fixtures pin both
-sides of that fail-safe contract.
-Topic 0001 also aligns the Darwin ET_DYN image's early executable boundaries
-to the 16 KiB host-page granularity. That keeps a 4 KiB guest kernel's signed
-text carrier from sharing an iOS host page with the following dynamic loader
-data without creating another page-profile or platform patch.
-
-The host/kernel bridge is ABI v8 with fingerprint `0x3871ad612337ea76`; the
-separate installed emulator API remains v4 with fingerprint
-`0xd9a69804d3303044`. These are dated accepted identities, while the manifest,
-metadata, ABI checks, and replay commands below remain the durable enforcement
-mechanisms.
-
-The ordered project patch files and
-their SHA-256/stable patch IDs are in
-[`patches/series/manifest.tsv`](patches/series/manifest.tsv). The expected
-final tree is checked after every replay. The shared core delta is separated
-into MMU/large-page, SMP/timer/interrupt, execution/capability, and build-rule
-topics so each can be reviewed and rebased independently. Final-state paths
-normally belong to one topic. Intentional multi-topic paths are declared with
-their exact ordered owners and rationale in
-[`patches/topic-path-overlaps.tsv`](patches/topic-path-overlaps.tsv). Darwin
-vhost-user transport changes remain in topic 0010 while the generic 64-bit
-DMA-mask correction remains independently reviewable and droppable as topic
-0014. Topic 0015 changes shared layout consumers owned by earlier topics; its
-exact overlaps are declared, including its update to the arm64 profile
-constants in `arch/arm64/Makefile.um` and removes the retired platform selector.
-The manifest verifier rejects undeclared, stale, or mismatched overlaps.
-
-The upstream repository/branch/full commit/tree, final tree, ordered stable
-patch IDs, generated patch hashes, and subjects are the source identities.
-Replay commit IDs are observations because `git am` retains real replay
-committer timestamps. Kernel binary hashes, build identity, and timestamps are
-observations for the same reason. Standalone source/build workflows run the
-offline clean-tree verifier and delta audit. Apple configure instead validates
-the accepted artifact's recorded final-tree, page, ABI, ELF, and inventory
-contract and does not inspect a source checkout.
-
-Linux must live on a case-sensitive filesystem. A normal macOS checkout cannot
-represent several upstream paths that differ only by case. The canonical
-checkout is the dedicated APFS case-sensitive volume mounted at
-`/Volumes/<case-sensitive-volume>`; its standalone page-profile builds remain in
-`build-16k` and `build-4k` on that volume. Publish both outputs into compact
-repository-local ignored bundles before configuring an Apple product. There is
-no platform-specific kernel build. Transient case-sensitive mounts under
-`/tmp` are not used for the canonical source or build trees. The source path
-has no repository default and is never a CMake input. Create the required
-standalone configuration first; the actual file is ignored by Git:
+Linux must be checked out on a case-sensitive filesystem. Copy
+`source-location.conf.example` to the ignored `source-location.conf` and set
+its single absolute `UML_KERNEL_SOURCE_DIR` value.
 
 ```sh
-cp kernel/mainline-6.18/source-location.conf.example \
-  kernel/mainline-6.18/source-location.conf
-# Edit UML_KERNEL_SOURCE_DIR to the absolute checkout path, then:
 kernel/mainline-6.18/scripts/prepare-source.sh
 kernel/mainline-6.18/scripts/prepare-source.sh --verify
-kernel/mainline-6.18/scripts/prepare-source.sh \
-  --cache /path/to/kernel-cache --no-fetch
 kernel/mainline-6.18/scripts/verify-replay.sh \
-  --work-root /Volumes/<case-sensitive-volume>
+  --work-root /case-sensitive/path
 ```
 
-`kernel/mainline-6.18/scripts/source-location.sh` parses the file as data,
-requires one unquoted
-absolute `UML_KERNEL_SOURCE_DIR` assignment, canonicalizes its parent, and
-performs a real case-collision probe. Preparation, CMake, delta audit, patch
-regeneration, and standalone Kbuild all consume that result. A missing config,
-missing source during builds, path mismatch, or case-insensitive filesystem is
-a hard error. `--source` remains only as a compatibility assertion and cannot
-override the configured path.
+Preparation uses the pinned Git cache and creates the managed replay branch.
+`--no-fetch` requires the exact commit to exist locally. `--recreate` may
+replace only a clean stale managed replay; it never replaces an arbitrary
+checkout.
 
-The first preparation populates
-`.build/kernel-cache/mainline-6.18/git` unless another cache is selected.
-`--no-fetch` requires the exact commit to be present there;
-ordinary `--verify` never reads the cache or network. The last command starts
-from a fresh checkout of the pinned stable commit and builds both 16 KiB and 4 KiB
-configurations out of tree. Kernel builds default to every online host
-processor. Resource-constrained hosts may override `UML_KERNEL_JOBS` or pass
-`--jobs N` to set a smaller explicit limit. `--recreate` is the only mode allowed to replace a
-clean stale managed replay branch, and it never replaces the source directory
-itself.
+`verify-replay.sh` starts from the pinned upstream commit, applies the complete
+series, checks the final tree and topology policy, and by default builds both
+page profiles. Use `--skip-build` only when source replay is the intended
+scope. Kernel builds use all online processors unless `UML_KERNEL_JOBS` or
+`--jobs` supplies a limit.
 
 ## Patch maintenance
 
-The `.patch` files below `patches/series/` are generated mail artifacts. Never
-edit their hunks, context, headers, or subjects manually. Modify the maintained
-Git commits instead:
+Patch files below `patches/series` are generated. Amend, reorder, add, or drop
+commits in the clean managed topic branch, update the reviewed final-tree
+identity when source changes, then run:
 
 ```sh
-cd "$(kernel/mainline-6.18/scripts/source-location.sh --require-source)"
-git rebase -i 2fe596715f840d053aed5cee5455f701bdcd2b50
-# amend/reorder/drop commits with Git, then return to the outer repository
-cd /path/to/linux-um-darwin
 kernel/mainline-6.18/scripts/rebase-patches.sh
 ```
 
-The regenerator requires a clean linear `codex/linux-6.18-darwin` branch,
-performs an explicit rebase onto the pinned stable commit, invokes
-`git format-patch --numbered`, replaces the series, rewrites the manifest’s
-stable patch IDs/hashes/subjects, and runs topology policy. If the resulting
-source changes, update `UML_KERNEL_FINAL_TREE` to the reviewed `HEAD^{tree}`
-before regeneration, then run a fresh replay and both page-profile validation
-required by the affected kernel behavior.
+The regenerator rebases onto the pinned stable commit and updates patch bytes,
+manifest IDs, hashes, subjects, order, and topology policy. Never edit patch
+files or their manifest manually. Update declared topic-path overlaps and delta
+limits only when the resulting series requires it.
 
-Fresh replay verification also runs the source-dependent `init_mm` TLB and
-fixed-vCPU carrier policy fixtures directly against its disposable checkout.
-Those checks intentionally do not enter Apple CMake or CTest, which consume no
-kernel source tree.
-
-This series is maintained locally. The optional next-base audit reports only
-`carry-locally`, `drop-locally-if-contained`, and local rebase/retest actions.
-It has no submission, upload, push, or review-server workflow.
+The series is maintained locally. Next-base tooling may recommend local carry,
+drop, or rebase actions but has no submission or push workflow.
 
 ## Kernel configuration
 
-One mainline-family kernel configuration ships.
-`kernel/mainline-6.18/config/common.fragment` is the entire policy;
-`kernel/mainline-6.18/build/build-kernel.sh` copies it verbatim as the starting `.config`,
-applies exactly one page-size fragment through `scripts/config`, and then runs
-`olddefconfig` so every unlisted symbol takes its Kconfig default.
+`config/common.fragment` is the complete shipped policy. The build copies it
+as the starting `.config`, applies exactly one page fragment, runs
+`olddefconfig`, and verifies that every requested symbol resolved as declared.
 
-```text
-kernel/mainline-6.18/config/common.fragment  the whole shipped policy
-kernel/common/config/page-16k.fragment       guest page size, default
-kernel/mainline-6.18/config/page-4k.fragment guest page size, compatibility profile
-```
+The profiles are:
 
-`olddefconfig` resolves a requested symbol against its dependencies in
-silence. One whose menu is closed is dropped, and one that another symbol
-selects is force-enabled, so a fragment can disagree with every kernel it
-produces without anything reporting it. `verify_config_fragment` in
-`build-kernel.sh` therefore compares both fragments against the resolved
-`.config` after `olddefconfig` and fails the build on any divergence. Treat a
-failure as a fragment defect: either the request is unsatisfiable and should be
-removed, or its missing dependency should be named explicitly.
+- 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
+- 4 KiB pages from `config/page-4k.fragment` (compatibility).
 
-`CONFIG_EXPERT=y` is the reason that check exists. It makes `NAMESPACES` a
-visible prompt whose default becomes `n` (`default !EXPERT` in `init/Kconfig`),
-which silently discarded `CONFIG_USER_NS` and `CONFIG_TIME_NS` and left the
-guest with no PID, network, UTS or IPC namespace either; the fragment now names
-`CONFIG_NAMESPACES=y` explicitly. `EXPERT` also carries `select DEBUG_KERNEL`,
-so that symbol cannot be requested off. It gates no code of its own here; its
-one direct effect is `BPF_WARN_ONCE` in the BPF verifier's internal-bug path.
-What it does do is default `DEBUG_MISC` and `RCU_TRACE` on, and the fragment
-turns both back off: `RCU_TRACE` ungates 116 `trace_rcu_*` sites that this port
-cannot patch to NOPs because it has no `CONFIG_JUMP_LABEL`, and `DEBUG_MISC`
-adds netfilter's registration-time `hooks_validate()`. Those three are the
-whole of `DEBUG_KERNEL`'s reach in this configuration; no other symbol depends
-on or defaults from it. The shipped profile should carry no diagnostic the
-configuration never requested, so treat a new one appearing the same way.
+Both use a 128 KiB virtually mapped task stack, a 128 TiB software-MMU task
+range, a relocatable ET_DYN image, 100 Hz plus `NO_HZ_IDLE`, built-in-only
+drivers, and the same host/kernel ABI. There is no platform-specific image or
+address-space configuration axis.
 
-Guest page size is the only kernel policy axis that varies, because a single
-`.config` cannot hold both values. There is no optional Kconfig policy layer
-or address-space selector: a symbol absent from `common.fragment` is absent
-from the product. Every Darwin kernel exposes the maximum three-level 16 KiB
-software-MMU task range of 128 TiB and treats the native kernel mapping as a
-hole inside that range. The ET_DYN kernel is linked at 48 GiB. Device and
-Simulator bias it so the active native window ends at the physical-iOS 62 GiB
-ceiling; macOS biases the same image to a 96 TiB base. The window contains
-exactly the RAM-sized direct map plus a page-rounded auxiliary allowance for
-kernel mappings. That allowance is address space, not memory: vmalloc's pages
-come from the guest page allocator and are already bounded by `mem=`. Topic
-0023 therefore tracks it to RAM one-for-one between a 1 GiB floor and a 4 GiB
-ceiling, and gives vmalloc the whole window rather than `min(window, RAM)`,
-because `end_vm` is what the kernel fault handler uses to recognise a vmalloc
-address. Kernarium's 4 GiB Simulator default receives 4 GiB of auxiliary
-address capacity and uses the 54--62 GiB active window; its 2 GiB
-physical-device default receives 2 GiB and uses 58--62 GiB. The standalone
-macOS app defaults to 8 GiB and 10 vCPUs; its capped 4 GiB auxiliary allowance
-gives it a 12 GiB active window beginning at 96 TiB. The ceiling keeps RAM
-plus auxiliary inside the 14 GiB signed envelope for every guest up to 10 GiB;
-the former one-eighth rule allowed up to 12 GiB there.
+The native mapping window contains guest RAM plus an auxiliary address-space
+allowance equal to RAM, bounded from 1 GiB to 4 GiB. Vmapped task stacks and
+other kernel virtual mappings use that allowance; their physical pages still
+come from the guest's `mem=` allocation.
 
-The allowance exists to make `CONFIG_VMAP_STACK=y` viable, which this line now
-selects. Physically contiguous 128 KiB task stacks are order-3 allocations, and
-a busy guest holding roughly 1400 of them fragments the buddy allocator past
-what compaction recovers. At the former 504 MiB allowance the vmapped stacks
-exhausted vmalloc instead; a booted guest already uses about 350 MiB of it. The kernel derives the hole
-endpoint from its relocated image. macOS and iOS therefore use the same exact
-artifact for each selected page profile while retaining their unsigned CLI and
-signed-framework delivery mechanisms, respectively:
+Loadable modules remain disabled. The required guest filesystems, networking,
+Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
+policy are built in. Hostfs is disabled. Deliberately unsupported kernel
+features are reflected in the LTP disabled manifest rather than enabled solely
+for test count.
+
+The framebuffer console uses standard VT/fbcon on Virtio-GPU. Host logs use
+`ttyS0`; four serial lines and the standard Virtio-console driver are built in.
+The legacy UML stdio console, DRM log client, legacy BSD PTYs, and loadable
+module path remain disabled.
+
+Zswap is built in and enabled with zstd but allocates no pool until the guest
+activates backing swap. Normal desktop launchers do not create backing swap and
+must not count zswap as guest memory.
+
+## Standalone build and publication
+
+Build each profile outside the source tree:
 
 ```sh
 kernel/mainline-6.18/build/build-kernel.sh \
-  --build /Volumes/<case-sensitive-volume>/build-16k \
-  --page-size 16k
+  --build /case-sensitive/build-16k --page-size 16k
 kernel/mainline-6.18/build/build-kernel.sh \
-  --build /Volumes/<case-sensitive-volume>/build-4k \
-  --page-size 4k
+  --build /case-sensitive/build-4k --page-size 4k
 ```
 
-After a standalone build, publish the compact prebuilt input consumed by Apple
-products. Publication requires a clean replay at the tracked final tree,
-rechecks the resolved page/module policy, ELF geometry, and bridge imports, and
-copies only the ELF and support evidence into the selected local output root:
+Publish each completed build with
+`build/publish-artifact.py`. The publisher requires a clean replay at the
+tracked final tree, validates resolved policy and ELF/ABI geometry, and copies
+only the compact runtime/support bundle. It never builds, fetches, or changes a
+source checkout. Use the script's `--help` for output and release options.
 
-```sh
-python3 -B kernel/mainline-6.18/build/publish-artifact.py \
-  --source /absolute/path/to/replayed-linux \
-  --build /absolute/path/to/build-16k \
-  --page-size 16k \
-  --output-root /absolute/path/to/kernel-artifacts \
-  --release-id reviewed-release-id
-```
-
-Run the command separately with the 4 KiB build and `--page-size 4k`. The
-publisher refuses loadable-module output and never builds, fetches, replays, or
-changes a source checkout.
-
-[`artifacts/accepted-16k.env`](artifacts/accepted-16k.env) and
-[`artifacts/accepted-4k.env`](artifacts/accepted-4k.env) select the reviewed
-local publications. Artifact directories are installed outside Git under
-`.build/kernel/artifacts`; the descriptors pin semantic source, page, release,
-and ABI identity without storing machine paths or binary payloads.
-
-The common policy builds zswap in, enables it by default, and selects zstd. It
-retains zram with zstd as a separately activatable compressed swap device.
-Zswap is a cache in front of backing swap rather than backing by itself; it
-allocates no pool when the guest has no active swap device or file. Normal KDE
-launchers, including Kernarium, deliberately activate none.
-
-Every shipped profile selects a 100 Hz timer tick and `NO_HZ_IDLE`. This keeps
-the fixed vCPU carriers responsive while avoiding a 1 kHz compulsory wakeup on
-every CPU and suppressing the periodic tick entirely while a guest CPU is
-idle. Periodic ticks, `NO_HZ_FULL`, and the 250/300/1000 Hz choices are
-explicitly disabled in the canonical fragment.
-
-The common profile also enables `CONFIG_PRINTK_TIME`, so every kernel printk
-record carries its guest monotonic timestamp on both the Virtio-GPU VT/fbcon
-console and the host-facing serial console. In normal UML mode the strong
-`sched_clock()` reads host `CLOCK_MONOTONIC` nanoseconds and subtracts an
-atomically established boot baseline. This removes the former 10 ms printk
-quantization without raising the 100 Hz tick rate or adding timer wakeups.
-UML time-travel modes continue to derive scheduler time from their simulated
-jiffies.
-
-Every profile also uses the standard VT/fbcon stack with Virtio-GPU fbdev
-emulation and leaves the DRM log client off. The legacy UML stdio-console
-driver is omitted so it cannot collide with the VT tty major. Unix98 PTYs are
-allocated dynamically from devpts, the legacy BSD PTY bank is disabled, and
-only four UML serial lines are registered. `ttyS0` is the host-facing console;
-the common profile also builds the standard Virtio-console driver in. The outer
-macOS runtime can attach either its legacy single-port `/dev/hvc0` console or a
-multiport named Virtio serial endpoint backed by a mode-0600 Unix socket. The
-CTS path uses `/dev/virtio-ports/org.uml.host-serial.0`, leaving every
-image-owned serial getty untouched. Launchers keep `console=tty0` as the
-framebuffer console and add `console=ttyS0` for host logging. The common font
-table includes VGA8x16 and TER16x32: Kernarium chooses the former for its
-160-DPI point mode and the latter for Retina densities.
-
-The page fragments also derive one 128 KiB Linux task-stack byte size: order 3
-for 16 KiB pages and order 5 for 4 KiB pages. Fixed carriers execute stackful
-task contexts there, but sleeping tasks must not each pin the former 512 KiB
-16 KiB-profile allocation. The build helper accepts only unsigned numeric
-values for this page-derived setting; arbitrary string policy remains outside
-the page fragments.
-
-Because UML deliberately ships without loadable-module support, every
-capability a guest distribution can use has to be built in there, including
-the control groups systemd requires to start at all. Per-file filesystem
-encryption is likewise built in through `CONFIG_FS_ENCRYPTION=y`; the LTP
-`statx05` boundary validates encrypted and plain ext4 attribute reporting.
-The same static policy includes TCP SYN cookies and the nftables inet-family
-table, conntrack, and reject expressions required by postmarketOS's default
-mixed IPv4/IPv6 firewall; OpenRC does not depend on unavailable modules to
-load that ruleset.
-
-Three constraints bound what may be added. Loadable modules stay off because
-module text would be dynamically published executable memory inside the host
-process, requiring the same Apple dynamic-code entitlement as the JIT engine.
-SELinux, Smack, and AppArmor are all `LSM_FLAG_EXCLUSIVE`, so exactly one can
-be active; Smack is the validated choice and the recorded LTP results depend
-on it. `CONFIG_HOSTFS` stays off because it lets the guest mount an arbitrary
-host directory, which would move the reachable host filesystem from
-emulator-side policy into guest control; host data is shared through an
-explicit device or image instead.
-
-`CONFIG_HUGETLBFS`, `CONFIG_TRANSPARENT_HUGEPAGE`, and `CONFIG_CAN` are also
-deliberately absent from the shipped policy. LTP cases that require those
-features are owned by `tests/integration/ltp/disabled-tests.tsv`; do not add a
-kernel feature solely to make its packaged test runnable. Change the kernel
-policy, LTP manifests, and `docs/LTP_PROGRESS.md` together if that product
-decision is revisited.
+`artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed local
+publications below `.build/kernel/artifacts`. Apple products validate the whole
+selected bundle and derive paths from its manifest; they do not inspect source
+or Kbuild state.
 
 ## Toolchain
 
-`kernel/mainline-6.18/build/toolchain/darwin.env` owns portable
-compiler/linker/tool defaults.
-Darwin host tools resolve their unmodified `<elf.h>`, `<libelf.h>`, and
-`<byteswap.h>` includes through the
-project-owned compatibility headers under
-`kernel/mainline-6.18/build/toolchain/darwin-host`.
-Their ELF ABI layouts come from the selected Linux source, and they do not
-discover or link a system libelf. Darwin UML is a native arm64 Mach-O build,
-so its cross-tool prefix is empty by default; set one only for a host that
-genuinely requires it.
-Linux 6.18 needs a compiler that supports `__counted_by` flexible arrays in
-type expressions (recent upstream LLVM does; some Apple Clang releases do not).
-The CMake kernel graph probes this capability during configuration. It prefers
-an explicit `UML_KERNEL_CC`, then `UML_KERNEL_TOOLCHAIN_ROOT/bin/clang`, and
-then the configured compiler or `clang` on `PATH`. It does not query a host
-package manager or bake in an installation layout. `UML_KERNEL_HOST_CC` and
-the individual tool overrides remain authoritative. Automatically selected
-LLVM companion tools must live beside the selected compiler; `ld.lld` may
-also come from `PATH` because distributions can package it separately. The
-host compiler builds utilities and is checked for availability only; it need
-not support the target compiler's Linux-specific language constructs. The
-standalone build script repeats the target compiler check before Kbuild. Set
-`UML_KERNEL_TOOLCHAIN_ROOT` or
-`UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,OBJDUMP,READELF,
-STRIP,LLVM,JOBS}` for a non-default host setup.
-When `JOBS` is omitted, the build helper uses the online processor count
-reported by `getconf`, with Darwin `sysctl` as a fallback.
-When LLVM binutils live beside the selected `clang`, the build helper and the
-macOS CMake target select that matching family automatically; explicit values
-remain authoritative.
+`build/toolchain/darwin.env` owns portable compiler/linker defaults and the
+project compatibility headers used by Darwin host tools. Linux 6.18 requires a
+compiler with `__counted_by` type-expression support; the preflight checks this
+before Kbuild. Select a compatible upstream LLVM toolchain explicitly when the
+default Apple compiler lacks the feature.
 
-[`../common/abi/`](../common/abi/) is the one plain-C host/kernel ABI source.
-Run `kernel/common/abi/sync.sh --kernel-metadata
-kernel/mainline-6.18/patches/metadata.env --kernel-source /path/to/linux` only
-when intentionally
-updating generated copies; build and replay commands use `--verify` and fail
-if either side is stale.
+`UML_KERNEL_TOOLCHAIN_ROOT` and the documented `UML_KERNEL_*` variables may
+override compiler, host compiler, linker, binutils, make, cross prefix, and job
+count. Companion LLVM tools must match the selected compiler family.
+
+The canonical bridge lives under [`../common/abi`](../common/abi/). Ordinary
+build and replay verification use `kernel/common/abi/sync.sh --verify`; only an
+intentional ABI change regenerates copies and the affected kernel topic.

@@ -14,17 +14,9 @@ namespace uml::cpu::arm64 {
 using Event = ::uml::cpu::EngineEvent;
 
 inline constexpr std::size_t maximum_block_instructions = 64;
-/* The block cache, its link tables and the arena are one coupled resource,
- * and their sizes are now derived per executor from a whole-process budget
- * rather than fixed here. See jit_cache_geometry.hpp.
- *
- * A multi-core Clang plus Object Detection campaign translates 283,353
- * distinct blocks, and a cache holding a fraction of that collapses into
- * retranslation rather than degrading gently: at the former 8192 sets it held
- * 32,768 entries and thrashed into roughly 385 translations per distinct
- * block. Growing either the cache or the arena alone is not enough, and the
- * arena alone is actively harmful, because arena exhaustion calls
- * clear_cache(). See G133 and G135 in docs/HOT_PATH_EXPERIMENTS.md.
+/* The block cache, link tables, and arena are one coupled resource sized from
+ * the process budget. Arena exhaustion clears the block cache. See
+ * jit_cache_geometry.hpp.
  */
 inline constexpr std::size_t cache_ways = 4;
 inline constexpr std::size_t floating_transaction_arena_size = 16U * 1024U;

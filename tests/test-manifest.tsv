@@ -1,675 +1,674 @@
-legacy_name	current_name	owner	suite	disposition	rationale
--	source-tree-cxx-only	tests/tooling/cmake/test_source_tree_audit.cmake	tooling	retained	structural source-tree audit
--	source-size-advisory-policy	tests/tooling/cmake/test_source_size_report.cmake	tooling	retained	advisory source-size policy regression test
--	xcframework-output-safety	tests/tooling/cmake/test_xcframework_destination.sh	tooling	retained	supported aggregate name and non-destructive build-root containment rejection
--	apple-xcframework-staging	tests/tooling/cmake/test_create_apple_xcframework.sh	tooling	retained	standard v1.0 three-slice staging with complete nonempty payloads plus malformed, duplicate, missing, unsupported, symlink, and existing-output negatives
--	jit-profile-preset-contract	tests/tooling/cmake/test_jit_profile_preset.py	tooling	retained	checked profiling configure, build, focused tooling, and workflow presets inherit the production integration graph, isolate profiling to their build tree, and retain every documented runtime control in the profiling executable
--	jit-profile-final-report-contract	tests/tooling/cmake/test_jit_profile_final_report.py	tooling	conditional	profiling-only native fixture links the private emulator-to-runtime reporting facade and proves nonblocking-descriptor backpressure completion, same-write leading-LF framing after an unterminated foreign prefix through both writer APIs, quiescent retired/live TLS draining, deterministic executor-pool wrapper, slot, waiter, session-keyed sequence wrapper/slot fanout and standalone-lifetime aggregation without raw keys, nonconsecutive and cross-wrapper slot associations, live-to-retired idempotence, a pool-only changed final, FILE-lock-independent output, reconstructible concurrent expansion chunks, changed-state cumulative finals across sequential activity, and silence for unchanged explicit repeats and for subsequent compile/overlap/shared normal-exit callbacks
--	test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cmake	tooling	retained	generated CTest registrations require exactly one manifest-matching suite label
--	symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained	rejects link and include edges in both directions across every concrete engine kind
--	kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained	deterministic configure-time target capability selection, host-compiler distinction, override precedence, coherent companion tools, missing-tool diagnostics, and reused-cache invalidation
--	kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained	unmodified Linux elf/libelf and byteswap includes resolve through repository headers while topic 0008 retains only Darwin Kbuild behavior and file2alias collision handling
--	arm64-engine-harness	tests/unit/arm64	unit	retained	existing registered test
--	arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained	raw concrete input recorder deduplication and conflicting-payload rejection
--	arm64-deferred-fp-state	tests/unit/arm64	unit	retained	existing registered test
--	arm64-host-instruction-probe	tests/unit/arm64	unit	retained	existing registered test
--	arm64-native-hardware-oracle	tests/unit/arm64/native_hardware_oracle_tests.cpp	unit	retained	subprocess-isolated independent host execution with exact feature, signal, memory, and timeout evidence
--	arm64-aslref-module-composition	tests/tooling/arm64/test_a64_aslref_module_composition.py	tooling	retained	owner modules replace exact official state boundaries without duplicate or cross-family declarations
--	arm64-aslref-corpus-validation	tests/tooling/arm64/validate_a64_aslref_corpus.py	tooling	retained	configure and tooling validation directly check the allocation corpus and interface queue schemas and semantics
--	arm64-aslref-execution-oracle	tests/tooling/arm64/test_a64_aslref_execution_oracle.py	tooling	retained	validates checked representative official-ASL execution partitions, exact instruction-function mapping, semantic witness identity, and aggregate-plan parity
--	arm64-aslref-materialization-batch	tests/tooling/arm64/test_a64_aslref_materialization_batch.py	tooling	retained	validates bounded batch policy, generated-output path isolation and exact reserve boundaries, pinned implementation-defined projection completeness and ranges, PAC dependency normalization, and MOPS whole-sequence topology
--	arm64-aslref-campaign-publication	tests/tooling/arm64/test_a64_aslref_campaign.py	tooling	retained	validates page-profile binding, authoritative input-set equality, bounded four-worker execution, success-only atomic publication, semantic artifact validation, and resume behavior
--	arm64-aslref-campaign-pilot	tests/tooling/arm64/test_a64_aslref_campaign_pilot.py	tooling	retained	runs exactly the first four 1024-contract shards of a complete plan with four workers, forbids pilot promotion/reporting, and proves full-campaign resume with honest invocation accounting
--	arm64-aslref-campaign-authority	tests/tooling/arm64/test_a64_aslref_campaign_authority.py	tooling	retained	proves canonical multi-producer authoritative joins and rejects same-count replacement, cross-aggregate swap, duplicate, payload mutation, mixed-page input, and symlinked checkpoints
--	arm64-aslref-campaign-sharding	tests/tooling/arm64/test_a64_aslref_campaign_sharding.py	tooling	retained	proves bounded-fan-in authority merging and producer-at-a-time deduplication, hard-capped shards/metadata, semantic validation, indexed exact-set joins, and resume
--	arm64-aslref-campaign-result-join	tests/tooling/arm64/test_a64_aslref_campaign_result_join.py	tooling	retained	requires separate verified 4K and 16K campaigns, disk-backed indexed exact result bindings, bounded aggregate streaming, hard database capacity, and semantic TSV verification before promotion
--	arm64-aslref-user-state-interface	tests/tooling/arm64/test_a64_aslref_user_state_interface.py	tooling	retained	validates exact X/W accessor widths and negative narrow writes, with configured pinned ASLRef and architecture inputs enabling direct official-semantics execution
--	uml-tlb-sync-ranges	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-tlb-layout	tests/unit/arm64	unit	retained	existing registered test
--	static-mmu-batch	tests/unit/arm64	unit	retained	existing registered test
--	memory-domain-lifetime	tests/unit/memory	unit	retained	bounded allocation-free run-domain retirement and delayed-resolver rejection in both page modes
--	memory-execution-gate-profile	tests/unit/memory	unit	retained	optional MMU gate profiling retires per-thread registrations after thread churn
--	gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional	fragmented wire input, connection retry, notification, device rollback, and service startup preserve GPU ownership
--	gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional	fragmented and malformed frames adopt ancillary descriptors once, close them on every failure path, and preserve retryability without a listener
--	gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional	partial header and payload shutdown require the in-process service's separately owned endpoint wake rather than timeout polling
--	gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional	ANGLE Metal provider context sharing, make-current behavior, and same-thread teardown
--	gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional	host-only fake renderer and display prove device-selected and explicit context capsets, mutating command atomicity, retry, checked EDID mode and density, and direct GPU presentation without CPU readback
--	gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional	post-listen event-thread construction failure releases the VNC server and permits immediate retry
--	vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained	key translation and the LibVNCServer callback boundary contain host sink exceptions and permit retry
--	native-4k-shadow-mmu	tests/unit/arm64	unit	conditional	4 KiB-only native shadow-MMU coverage
--	emulator-native-4k-admission	tests/unit/arm64	unit	conditional	4 KiB native callback runs serialize identical process addresses and support queued cancellation and retry
--	emulator-native-16k-ownership	tests/unit/arm64	unit	conditional	16 KiB native callback domains own high mappings, reject cross-handle collisions atomically, and retire leaked mappings
-backend-native-entry-api	emulator-native-entry-api	tests/unit/arm64	unit	retained	renamed during neutral module move
--	emulator-c-api-boundary	tests/unit/emulator_c_api_boundary_tests.cpp	unit	retained	public run and network C boundaries contain host callback exceptions, retire routing state, and permit retry
--	arm64-dispatcher-internal	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-exception	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-trap-scalar	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-trap-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-trap-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-trap-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-terminal-count	tests/unit/arm64	unit	retained	terminal retirement, fault-prefix accounting, link suffix correction, and a final ADD-immediate reaching Builder's complete synthetic terminal stream
--	arm64-gadget-successor-hoist-structure	tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp	unit	retained	pins every word and all register fields in all 32 ADD/SUB-immediate entries plus the probe's exact one-predecessor/eight-successor and register-counter loop topology in both A/B configurations
--	arm64-static-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-static-boundary-state	tests/unit/arm64	unit	retained	existing registered test
--	arm64-static-translation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-capability	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-cache_validation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-cache-geometry	tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp	unit	retained	minimum, representative, and extreme geometry stay inside the whole budget, complete private state never exceeds 64 MiB per executor, only the shared remainder grows with guest memory, one arena-adjacent activation anchor is reused per direct target and charged with its reverse index, publication is atomic, and executor/session admission remains bounded
--	arm64-jit-shared-translation-cache	tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp	unit	retained	fallback admission is bounded, empty shards allocate no backing, concurrent publication deduplicates owners, canonical pointer cells stay neutral, malformed pointer-bearing templates are rejected, peer-retired ownership survives, failed insertion reservations remain visible, and configured shard/process-byte ceilings reject excess entries
--	arm64-jit-executor-pool	tests/unit/arm64/arm64_jit_executor_pool_tests.cpp	unit	retained	more persistent task-thread wrappers than the one-executor budget reuse one slot across CPU states, distinct per-thread memory objects at one generation, later generations and backings, while queued borrowers precede tight preferred reborrows, N+1 tasks wait and wake, and drain rejects stale or incompatible wrappers while preserving active-borrow teardown and recovery
--	arm64-jit-executor-pool-multislot	tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp	unit	retained	four cacheline-separated exact-session availability cells retain lowest-slot fallback, exclusive concurrent preferred-slot transfers, FIFO priority over a tight reborrow, exact idle/active accounting, deferred drain and restart, stale pre-claim rejection across sessions, and standalone-lease exclusion throughout managed activation
--	arm64-jit-barrier_codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-barrier_runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-illegal_runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-publication_gate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-reservation_alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-lazy-flags-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-lazy-flags-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-indirect-link-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-indirect-link-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-chain-abi-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-chain-abi-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-exact-retirement-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-exact-retirement-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-fp-link-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-counter-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-counter-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-register-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-one-to-one-base-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-one-to-one-fp_simd-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-register-remap-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-tlb-miss-preservation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-sp-memory-run-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-sp-memory-run-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-gpr-memory-run-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-gpr-memory-run-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-simd-memory-run-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-simd-memory-run-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-scalar-atomic-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-simd-structure-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-simd-structure-remap-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-vector-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-table-list-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-table-list-remap-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-gpr-residency-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-gpr-residency-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-pair-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-control-remap-codegen	tests/unit/arm64	unit	retained	existing registered test
--	arm64-jit-control-remap-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-runtime	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-cache-validation	tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp	unit	retained	exact stale-program validation reuses unchanged decoded programs, rejects changed words, resets direct-link activations before retained programs can be reached, and keeps a replaced slot from republishing into the previous address space's link record
--	arm64-gadget-shared-translation	tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp	unit	conditional	cross-executor translation sharing: an adopted program outlives the executor that built it, one address space adopts another's, a differing code-generation profile does not share, and an adopted block still revalidates its guest words
--	arm64-gadget-inline-fallthrough	tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp	unit	retained	a conditional branch whose fall-through is translated inline retires the whole block when not taken, only what ran when taken, and counts a fault past the branch from its own address, and with callee inlining enabled that a direct call also translates its callee into the same block
--	arm64-gadget-hot-path	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-nzcv-residency	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-fp-environment	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-links	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-indirect-links	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-arithmetic-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-arithmetic-carry	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-arithmetic-divide	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-arithmetic-variable-shift	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bit-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bit-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bit-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-multiply-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-multiply-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-multiply-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-condition-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-condition-select	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-condition-compare-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-condition-compare-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-condition-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-min-max-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-min-max-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-min-max-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-min-max-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-add-sub-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-add-sub-shifted	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-add-sub-extended	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-pointer	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-tag	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-random-tag	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cpa-pointer	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cpa-multiply	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cmpbr-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cmpbr-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-logical-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-logical-shifted	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-logical-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-move-wide-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-move-wide-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-move-wide-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mov-inverted-alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rev64-alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bitfield-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bitfield-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-bitfield-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extract-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extract-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extract-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-control-pc-relative	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-control-direct-branch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-control-conditional-branch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-control-compare-test	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-control-register-branch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-crc-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-crc-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-crc-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-crc-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-crc-fallback	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-fixed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-rmif	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-setf	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-flag-fallback	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-barrier-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-barrier-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-barrier-alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-barrier-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-barrier-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-hint-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-hint-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-hint-feature	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-hint-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-hint-stateful	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-store-hint-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-store-hint-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-store-hint-feature	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-store-hint-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-0	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-1	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-2	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-3	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-4	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-5	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-6	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-extended-hints-7	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-registers	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cache-zero	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-cache-zero-faults	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-0	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-1	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-2	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-3	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-4	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-5	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-6	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_register_allocation-7	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_instruction	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_result_instruction	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-dc_operation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-dc_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-tlbi_named	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-tlbi_reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-tlbip_named	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-tlbip_reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-sysp_allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system_operation_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-0	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-1	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-2	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-3	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-4	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-5	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-6	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-0-7	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-0	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-1	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-2	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-3	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-4	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-5	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-6	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-system-register-pair-1-7	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-memory	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gcs-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gic	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gicr	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-gic_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-prediction_restriction	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-privileged_feature_alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-feature_system_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-chkfeat	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-chkfeat_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-at	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-at_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ic_privileged	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ic_ivau	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ic_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pstate-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pstate-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pstate-access	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pstate-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-strip	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-profile	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-code	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-auth	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-generic	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-branch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-return	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-load	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-lr-data	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-pauth-lr-return	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-exceptions	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-breakpoints	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-permanently-undefined	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-el0-undefined-exceptions	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-prefetch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-range-prefetch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ls64-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ls64-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ls64-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ls64-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-copy-forward	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-copy	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-set	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-set-tag	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-set-tag-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mops-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-tag-load	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-tag-store	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-zero_store	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-stgp	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-multiple-load	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-multiple-store	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-mte-multiple-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-literal-load-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-literal-load-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-literal-load-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-immediate-memory-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-immediate-memory-offset	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-immediate-memory-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-immediate-memory-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-immediate-memory-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-register-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-register-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-register-prefetch	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-register-structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-load-store-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lsui-pair-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lsui-pair-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lsui-pair-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lsui-pair-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-exclusive	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-exclusive-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-compare-swap	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-compare-swap-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-atomic-bit	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-atomic-minmax	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-atomic-swap	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lse128-pair-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lse128-pair-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lse128-pair-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-lse128-pair-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-bfloat	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-precision	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-ordering_alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-atomic-floating-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rcw-scalar	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rcw-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rcw-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rcw-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-rcw-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-clear-exclusive	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-pair-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-pair-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-pair-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-base-ordered-pair-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-immediate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-tag	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordinary-memory-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-load-store-pair	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-multiple-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-multiple-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-multiple-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-lane-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-lane-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-lane-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-replicate-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-replicate-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-replicate-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-store-atomicity	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-tag	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-structure-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordered-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordered-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordered-fault	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-ordered-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-baseline-inventory	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-three-same-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-three-same-arithmetic	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-three-same-saturation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-gadget-simd-destination-residency	tests/unit/arm64/arm64_gadget_simd_destination_residency_tests.cpp	unit	retained	default-on destination-resident MLA runs preserve exact shape thresholds, alias and register-bank fallbacks, pre-link flushing, retirement, and visibility to the next ordinary SIMD instruction
--	arm64-simd-widening-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-widening-long	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-widening-wide	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-widening-absolute	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-widening-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-high-narrow-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-high-narrow-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-high-narrow-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-high-narrow-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-ordinary	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-pairwise	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-bit	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-compare_zero	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-narrow	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-two-register-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-reduce-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-reduce-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-estimate-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-estimate-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-bitwise-logic	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-bitwise-merge	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-bitwise-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-bitwise-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-immediate-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-immediate-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-rearrange-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-rearrange-permute_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-rearrange-table_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-rearrange-gadget_structure	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lut-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lut-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lut-alias	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lut-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lut-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-basic-floating-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-basic-floating-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-basic-floating-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-basic-floating-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fused-floating-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fused-floating-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fused-floating-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fused-floating-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-round-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-round-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-round-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-round-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-integer-to-floating-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-binary	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-pairwise	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-reduction	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-horizontal-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-estimate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-step	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-reciprocal-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-add	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-multiply	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-complex-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-absolute-minmax-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-absolute-minmax-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-absolute-minmax-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-absolute-minmax-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-scale-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-scale-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-scale-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-scale-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-conversion-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-conversion-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-conversion-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-conversion-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-multiply-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-multiply-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-multiply-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-multiply-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-multiply-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-dot-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-dot-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-dot-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-dot-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-dot-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-matrix-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-matrix-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-matrix-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-bfloat-matrix-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-fused-long-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-non_widening	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-widening	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-matrix-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-half-dot-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-extract-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-extract-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-aes-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-aes-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-aes-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-aes-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-aes-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha3-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha3-rotation_allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha3-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha3-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha3-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-pmull-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-pmull-matrix	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-pmull-edge	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-pmull-portable	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-pmull-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-addp-scalar-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-addp-scalar-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lane-move-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lane-move-duplicate	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lane-move-insert	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-lane-move-gpr	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-immediate-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-immediate-right	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-immediate-left	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-immediate-narrow	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-left-long-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-shift-left-long-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-reserved	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-same	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-long	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-vector_long	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-saturating_long	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-vector_saturating_long	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-saturating_high	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-rdm	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-vector_rdm	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-indexed-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-dot-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-dot-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-dot-indexed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-dot-portable	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-dot-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fp-indexed-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fp-indexed-arithmetic	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fp-indexed-extended	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-matrix-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-matrix-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-matrix-registers	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-matrix-portable	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-matrix-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fmulx-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fmulx-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fabs-fneg-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fabs-fneg-scalar	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fabs-fneg-vector	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fmov-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fmov-scalar	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fmov-general	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcsel-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcsel-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcmp-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcmp-direct	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcmp-conditional	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcmp-fpcr	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-precision-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-precision-exact	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-precision-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-precision-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-precision-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-floating-compare-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-floating-compare-register	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-floating-compare-zero	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-floating-compare-fpcr	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-vector-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-vector-exact	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-vector-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvt-vector-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvtxn-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvtxn-exact	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvtxn-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fcvtxn-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-to-integer-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-to-integer-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-to-integer-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-to-integer-fixed	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-to-integer-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-floating-javascript-conversion	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha12_allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha1_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha256_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha512_allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sha512_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sm_allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sm3_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-sm4_behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fixed_transform_portable	tests/unit/arm64	unit	retained	existing registered test
--	arm64-simd-fixed_transform_gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-multiply-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-matrix-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-scale	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-multiply-matrix-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-dot-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-dot-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-dot-scale	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-dot-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-dot-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-up-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-up-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-up-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-up-control	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-up-gadget	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-down-allocation	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-down-behavior	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-down-rounding	tests/unit/arm64	unit	retained	existing registered test
--	arm64-fp8-convert-down-control	tests/unit/arm64	unit	retained	existing registered test
--	slirp-network-arp	tests/tooling/network/slirp_arp_probe.cpp	tooling	conditional	host-only SLiRP contract registered when the optional provider is built
--	slirp-network-forward-specification	tests/tooling/network/slirp_forward_probe.cpp	tooling	conditional	host-forward specification grammar registered when the optional provider is built
--	guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained	the shared guest harness starts the emulator attached so a killed runner group takes the guest with it instead of orphaning a spinning emulator, and exposes the attached process's observed read-only return status
--	embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional	real embedded ELF handles serialize the relocated native runtime window and process-global Linux state
--	virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional	host-only protocol fixture registered when GPU dependencies and tooling are built
--	virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	conditional	genuine vhost-user Virtio input configuration and asynchronous event-queue contract registered with the GPU transport
--	virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional	standard Virtio Sound discovery, repeatable PCM lifecycle transitions, stereo playback state machine, and deferred completion contract registered when the Apple audio provider is built
--	platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained	host durability registry: writable guest descriptors are recorded and flushed, read-only and forgotten ones are not, and an unflushable descriptor is reported without stopping the rest
--	android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained	exact ten-partition GPT and kernelless boot-v4 range validation, explicit normal and recovery selection, automatic missing-instance normal boot, BCB recovery selection through the UML COW layer, and corrupted-GPT rejection
--	device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained	bound Unix-socket path ownership: destructor and terminating-signal removal, refusal to remove a path another process rebound, oversize and unbound refusals, and fixed-table exhaustion
--	virtio-console-protocol	tests/unit/console/virtio_console_tests.cpp	unit	conditional	standard single-port Virtio console queues, reconnectable nonblocking Unix-socket I/O, bounded recent-output tail, path ownership, and in-process service lifetime registered with the generic vhost-user transport
--	json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained	rejects malformed or duplicate-key first-party JSON and JSONC with exact file and key-path diagnostics
--	ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained	host-only parser and expectation self-test
--	rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained	provision-time local artifact validation, authenticated release installation, tamper rejection, and atomic no-replace publication
--	rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained	pins the raw EROFS device, filesystem type, launcher-owned kernel arguments, Kernarium Phosh selection of stock greetd/Phrog, the bounded KDE-overlay VT getty relocation with image-owned getties preserved everywhere else, and postmarketOS OpenRC/Sxmo selection with image-owned accounts and sessions, udev coldplug, Virtio-input classification, group device access, no-swap deviceinfo, and built-in nftables firewall support
--	gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained	host-only raw EROFS mapping, protected kernel arguments, attachable serial-console socket safety, and overlay runner self-test
--	vk-gl-cts-campaign-safety	tests/tooling/gpu/test_run_vk_gl_cts.py	tooling	retained	frozen EROFS and authenticated read-only derivative ext4 identities, exact GLES 2/3 scoped hierarchy inventory, typed exact-case and deterministic-shard selection, allow-listed Apple app campaigns and fixed signed full-leaf matrix shards, unique four-Simulator concurrency with physical-device single-worker enforcement, real Virgl/Xwayland/DRM negative controls, official-runner status policy, required-Pass QPA unions, and bounded checksummed artifact egress
--	vk-gl-cts-matrix-orchestrator-safety	tests/tooling/gpu/test_run_vk_gl_cts_matrix.py	tooling	retained	immutable official GLES matrix specifications, VNC/JIT/ten-vCPU enforcement, exact single-attempt resumption, independent shard artifact verification, ordered fraction reconstruction, frozen leaf identity, and complete config-by-case aggregation
--	kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained	host-only launcher proves default Virtio Sound attachment, attachable serial-console forwarding, native display default, explicit VNC compatibility mode, optional Virtio-GPU density and read-only ISO forwarding, and the bounded KDE-overlay VT getty relocation
--	chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained	freezes the common 500-fish, 15-second warm-up, thirty-sample WebGL 2 probe and validates raw FPS, shader, host/guest CPU and memory, direct-frame, shutdown, authenticated lower-filesystem metadata, generated-app bootstrap, and VNC raster evidence
--	ios-simulator-webgl-aquarium-policy	tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py	tooling	retained	pins Simulator-only Aquarium enablement, fixed gadgets/CPU/memory/point-density configuration, authenticated ext4 provisioning, exact-process resource sampling, and reparsed clean same-rootfs native-macOS predecessor evidence
--	ios-device-thermal-lifecycle-policy	tests/tooling/gpu/test_verify_ios_device_thermal_lifecycle.py	tooling	retained	fail-closed joined GLES2/GLES3 physical-device campaign audit requiring at least 100 clean signed-app launches, a recorded nominal probe immediately before every shard, exact observational public thermal marker lifecycle, and matching app/rootfs/device/memory identity
--	network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained	keeps host-network probes out of the deterministic SLiRP smoke
--	jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained	host-only profile parser self-test
--	performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained	host-only benchmark runner CLI, engine forwarding, image-local no-upload Geekbench policy including Kernarium's opt-in direct-shell ext4 OverlayFS launch and validated focused-workload selector, source-audited orderly-shutdown and status-zero enforcement for all four timing entry points, and dynamically tested Geekbench/guest-shell failure precedence
--	arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained	host-only inventory consistency audit
--	arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained	rejects form confusion, unreachable words, and undeclared exact-encoding aliases
--	arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained	rejects missing, duplicate, swapped, count, digest, reserved-predicate, feature-gate, oracle-locator, and page-profile aggregate drift
--	arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained	proves lossless gzip replacement and resumability while rejecting duplicate, mismatched, symlink, and truncated raw evidence
--	arm64-input-materialization-negative-fixtures	tests/tooling/arm64/test_a64_input_materialization.py	tooling	retained	validates canonical content-addressed raw inputs, projection mutations, callback descriptors, corruption, and disk-backed join ordering
--	arm64-aslref-system-state	tests/tooling/arm64/test_a64_aslref_system_state.py	tooling	retained	validates the projected system-state bridge, all exposed selector contracts, official XML provenance, and official read/write instruction procedures
--	arm64-instruction-evidence-reset	tests/unit/arm64/reset_instruction_evidence.cmake	unit	conditional	CMake-only unit setup that clears stale per-test evidence before producers run
--	arm64-instruction-evidence	tests/tooling/arm64/validate_a64_instruction_evidence.py	tooling	conditional	validates selected unit-producer evidence and rewrites stable-id-bindings.tsv
--	arm64-input-materialization-join	tests/tooling/arm64/join_a64_input_materializations.py	tooling	conditional	long-running exhaustive gate validates and joins every raw concrete input to the exact checked aggregate identity after all unit producers complete
--	arm64-jit-gpr-link-profile-codegen	tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp	unit	conditional	registered when JIT guest-GPR link profiling is enabled
--	arm64-jit-gpr-link-profile-runtime	tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp	unit	conditional	registered when JIT guest-GPR link profiling is enabled
--	arm64-jit-gpr-pressure-profile	tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp	unit	conditional	registered when JIT guest-GPR pressure profiling is enabled
--	emulator-options	tests/unit	unit	retained	explicit emulator option contract coverage
--	runtime-context-lifecycle	tests/unit/runtime	unit	retained	synchronized run/stop admission plus thread-state churn and reuse cleanup
--	runtime-route-transaction	tests/unit/runtime	unit	retained	allocation-free shared CPU/network route publication and retirement are one observable transaction
--	runtime-exit-order	tests/unit/runtime	unit	retained	legacy context teardown cannot call a destroyed software-memory registry
--	cpu-engine-contract	tests/unit	unit	retained	explicit CPU engine boundary coverage
--	arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained	subprocess-isolated cross-engine and C-bridge PC-alignment signal contract with retry and cache reuse
--	kernel-git-source-preparer	tests/tooling/kernel/test_materialize_git.sh	tooling	retained	offline exact stable-branch Git commit materialization and provenance tamper rejection
--	kernel-versioned-layout	tests/tooling/kernel/test_versioned_layout.sh	tooling	retained	shared ABI and 16 KiB geometry are separated from the versioned mainline patch, policy, build, and source owners without retaining singleton tracked paths
--	android17-builder-lane	tests/tooling/android/test_builder_lane.py	tooling	retained	pinned AOSP 17 and ACK 6.18 builder-local preparation, adjacent ordinary-app dexpreopt packaging, and fixed raw/sparse UBD disk assembly use explicit local paths with no tracked endpoint, credential, or transport command
--	android17-aosp-patch-regenerator	tests/tooling/android/test_aosp_patch_regenerator.py	tooling	retained	per-project AOSP topic regeneration emits generated full-index mail patches and synchronized route identities while rejecting dirty input without cross-route writes
--	android17-kernel-patch-regenerator	tests/tooling/android/test_kernel_patch_regenerator.py	tooling	retained	Android ACK topic regeneration is isolated to kernel/android-6.18, emits generated full-index mail patches and synchronized final-tree/count identities, and rejects wrong-line or dirty input without writes
--	android17-jelly-source-contract	tests/tooling/android/test_jelly_source_contract.py	tooling	retained	LineageOS Jelly stays external at an exact repository commit and tree, replays only generated full-index local patches during source setup, and rejects altered series or dirty regeneration input
--	android17-release-contract	tests/tooling/android/test_release_contract.py	tooling	retained	local Android release manifests, acceptance identities, inventories, path safety, and local-only installer input reject altered or undeclared payload structure without any transport endpoint
--	kernel-source-location-config	tests/tooling/kernel/test_source_location_config.sh	tooling	retained	kernel preparation and builds require a Git-ignored explicit source path and reject missing configuration or checked-preset bypasses
--	kernel-series-topology	tests/tooling/kernel/test_series_topology.sh	tooling	retained	exact patch-count, patch-ID, subject/order, and no-merge history rejection
--	kernel-next-version-policy-actions	tests/tooling/kernel/test_next_version_policy.sh	tooling	retained	already-contained fixes and genuine conflicts emit distinct per-path local carry, drop, rebase, and retest actions without a submission workflow
--	kernel-compressed-memory-policy	tests/tooling/kernel/test_compressed_memory_policy.py	tooling	retained	shipped kernel enables zswap by default with zstd while retaining the matching zram compressor policy
--	kernel-virtio-gpu-shutdown-policy	tests/tooling/kernel/test_virtio_gpu_shutdown_policy.py	tooling	retained	generated topic 0020 must shut atomic scanout down before Virtio-GPU unplug so the final framebuffer GEM mapping cannot outlive the DRM VMA manager
--	apple-shared-kernel-image-policy	tests/tooling/kernel/test_apple_kernel_image_policy.py	tooling	retained	Apple CMake imports accepted mainline and Android ACK kernel artifacts without a producer command, imports the Android rootfs independently, keeps Android 17 in a separate 16 KiB-only macOS product, binds current macOS and signed iOS runtimes to matching kernel ELFs, and retains the framebuffer-default SwiftTerm serial-console bridge
--	darwin-init-mm-tlb-policy	tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py	tooling	conditional	standalone fresh kernel replay verification, outside Apple CTest, runs rootfs-free mutation fixtures that pin serialized all-Darwin init_mm synchronization, complete failed-range retry, precise Darwin nested mmu-gather ranges, 4 KiB present-before-absent host-slot repair, and exact post-fault validation
--	darwin-vcpu-carrier-policy	tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py	tooling	conditional	standalone fresh kernel replay verification, outside Apple CTest, pins persistent named host carriers, task contexts, retirement, scheduling, scalable address policy, printk time, fbcon fonts, and timer-signal ownership
--	abi-declaration-identity	tests/tooling/abi/test_declaration_identity.sh	tooling	retained	rejects declaration changes without an ABI identity-history update
-dependency-state-verifier	dependency-source-preparer	tests/tooling/dependencies/test_prepare.sh	tooling	retained	offline pinned Git commit preparation, ordered mail-patch replay, and tamper rejection
--	dependency-patch-regenerator	tests/tooling/dependencies/test_rebase_patches.sh	tooling	retained	maintained dependency commits are rebased onto the pinned upstream and patches are regenerated exclusively with git format-patch
--	dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained	exact ordered recipe name and release-version coverage
--	dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained	private prefix manifest, required payload, symlink exclusion, static arm64 format, platform, and deployment compatibility
--	dependency-apple-gpu-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh	tooling	retained	common Apple ANGLE/Metal prefix contract, exact provenance and payload, binary platform and deployment identity, forbidden provider symbols, and non-replacement of invalid prefixes
--	dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained	production executables may depend dynamically only on Apple system libraries without object or link-map attribution
--	guest-overlay-systemd-smoke	tests/integration	integration	retained	EROFS lower, required /opt plus LTP userspace and offline Geekbench payload, image-owned uml tty0 login, Docker and containerd tmpfs state, offline source-built hello-world container execution, and systemd guest boot
--	guest-interpreter-smoke	tests/integration/jit	integration	retained	lightweight interpreter kernel, shell, and CPU-feature smoke
--	guest-gadgets-smoke	tests/integration/jit	integration	retained	gadget-engine guest dynamic-code smoke
--	guest-jit-smoke	tests/integration/jit	integration	retained	JIT-engine guest dynamic-code smoke
--	guest-slirp-network	tests/integration/network	integration	retained	deterministic SLiRP gateway guest smoke
-guest-smp-topology	guest-smp-topology	tests/integration/smp	integration	removed	run_guest_smp.py is an explicit standalone guest campaign, not a CTest registration
--	guest-mmu-stress	tests/integration/smp	integration	retained	10-vCPU shared-MM and mapping stress campaign
--	guest-docker-hello-world	tests/integration	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission and pulls the official hello-world image over SLiRP onto the docker0 bridge
--	guest-external-network	tests/integration/network	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
--	guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
--	guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional	requires explicit UML_ENABLE_EXTERNAL_NETWORK_TESTS permission
+name	owner	suite	availability
+source-tree-cxx-only	tests/tooling/cmake/test_source_tree_audit.cmake	tooling	retained
+source-size-advisory-policy	tests/tooling/cmake/test_source_size_report.cmake	tooling	retained
+xcframework-output-safety	tests/tooling/cmake/test_xcframework_destination.sh	tooling	retained
+apple-xcframework-staging	tests/tooling/cmake/test_create_apple_xcframework.sh	tooling	retained
+jit-profile-preset-contract	tests/tooling/cmake/test_jit_profile_preset.py	tooling	retained
+jit-profile-final-report-contract	tests/tooling/cmake/test_jit_profile_final_report.py	tooling	conditional
+test-manifest-suite-label-policy	tests/tooling/cmake/test_test_manifest_audit.cmake	tooling	retained
+symmetric-engine-edge-audit	tests/tooling/cmake/test_engine_edge_audit.py	tooling	retained
+kernel-compiler-selection	tests/tooling/kernel/test_kernel_toolchain.sh	tooling	retained
+kernel-darwin-host-compat	tests/tooling/kernel/test_darwin_host_compat.sh	tooling	retained
+arm64-engine-harness	tests/unit/arm64	unit	retained
+arm64-instruction-materialization	tests/unit/arm64/arm64_instruction_materialization_tests.cpp	unit	retained
+arm64-deferred-fp-state	tests/unit/arm64	unit	retained
+arm64-host-instruction-probe	tests/unit/arm64	unit	retained
+arm64-native-hardware-oracle	tests/unit/arm64/native_hardware_oracle_tests.cpp	unit	retained
+arm64-aslref-module-composition	tests/tooling/arm64/test_a64_aslref_module_composition.py	tooling	retained
+arm64-aslref-corpus-validation	tests/tooling/arm64/validate_a64_aslref_corpus.py	tooling	retained
+arm64-aslref-execution-oracle	tests/tooling/arm64/test_a64_aslref_execution_oracle.py	tooling	retained
+arm64-aslref-materialization-batch	tests/tooling/arm64/test_a64_aslref_materialization_batch.py	tooling	retained
+arm64-aslref-campaign-publication	tests/tooling/arm64/test_a64_aslref_campaign.py	tooling	retained
+arm64-aslref-campaign-pilot	tests/tooling/arm64/test_a64_aslref_campaign_pilot.py	tooling	retained
+arm64-aslref-campaign-authority	tests/tooling/arm64/test_a64_aslref_campaign_authority.py	tooling	retained
+arm64-aslref-campaign-sharding	tests/tooling/arm64/test_a64_aslref_campaign_sharding.py	tooling	retained
+arm64-aslref-campaign-result-join	tests/tooling/arm64/test_a64_aslref_campaign_result_join.py	tooling	retained
+arm64-aslref-user-state-interface	tests/tooling/arm64/test_a64_aslref_user_state_interface.py	tooling	retained
+uml-tlb-sync-ranges	tests/unit/arm64	unit	retained
+arm64-gadget-tlb-layout	tests/unit/arm64	unit	retained
+static-mmu-batch	tests/unit/arm64	unit	retained
+memory-domain-lifetime	tests/unit/memory	unit	retained
+memory-execution-gate-profile	tests/unit/memory	unit	retained
+gpu-service-fd-ownership	tests/unit/gpu/gpu_lifetime_tests.cpp	unit	conditional
+gpu-transport-wire-ownership	tests/unit/gpu/vhost_user_message_tests.cpp	unit	conditional
+gpu-service-stop-wake	tests/unit/gpu/in_process_service_stop_wake_tests.cpp	unit	conditional
+gpu-host-gl-provider-lifetime	tests/unit/gpu/host_gl_provider_lifetime_tests.cpp	unit	conditional
+gpu-device-command-atomicity	tests/unit/gpu/virtio_gpu_device_lifetime_tests.cpp	unit	conditional
+gpu-vnc-lifetime	tests/unit/gpu/vnc_display_lifetime_tests.cpp	unit	conditional
+vnc-input-boundary	tests/unit/input/vnc/vnc_input_tests.cpp	unit	retained
+native-4k-shadow-mmu	tests/unit/arm64	unit	conditional
+emulator-native-4k-admission	tests/unit/arm64	unit	conditional
+emulator-native-16k-ownership	tests/unit/arm64	unit	conditional
+emulator-native-entry-api	tests/unit/arm64	unit	retained
+emulator-c-api-boundary	tests/unit/emulator_c_api_boundary_tests.cpp	unit	retained
+arm64-dispatcher-internal	tests/unit/arm64	unit	retained
+arm64-floating-exception	tests/unit/arm64	unit	retained
+arm64-floating-trap-scalar	tests/unit/arm64	unit	retained
+arm64-floating-trap-vector	tests/unit/arm64	unit	retained
+arm64-floating-trap-control	tests/unit/arm64	unit	retained
+arm64-floating-trap-runtime	tests/unit/arm64	unit	retained
+arm64-gadget-terminal-count	tests/unit/arm64	unit	retained
+arm64-gadget-successor-hoist-structure	tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp	unit	retained
+arm64-static-runtime	tests/unit/arm64	unit	retained
+arm64-static-boundary-state	tests/unit/arm64	unit	retained
+arm64-static-translation	tests/unit/arm64	unit	retained
+arm64-jit-runtime	tests/unit/arm64	unit	retained
+arm64-jit-capability	tests/unit/arm64	unit	retained
+arm64-jit-cache_validation	tests/unit/arm64	unit	retained
+arm64-jit-cache-geometry	tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp	unit	retained
+arm64-jit-shared-translation-cache	tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp	unit	retained
+arm64-jit-executor-pool	tests/unit/arm64/arm64_jit_executor_pool_tests.cpp	unit	retained
+arm64-jit-executor-pool-multislot	tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp	unit	retained
+arm64-jit-barrier_codegen	tests/unit/arm64	unit	retained
+arm64-jit-barrier_runtime	tests/unit/arm64	unit	retained
+arm64-jit-illegal_runtime	tests/unit/arm64	unit	retained
+arm64-jit-publication_gate	tests/unit/arm64	unit	retained
+arm64-jit-reservation_alias	tests/unit/arm64	unit	retained
+arm64-jit-lazy-flags-runtime	tests/unit/arm64	unit	retained
+arm64-jit-lazy-flags-codegen	tests/unit/arm64	unit	retained
+arm64-jit-indirect-link-codegen	tests/unit/arm64	unit	retained
+arm64-jit-indirect-link-runtime	tests/unit/arm64	unit	retained
+arm64-jit-chain-abi-codegen	tests/unit/arm64	unit	retained
+arm64-jit-chain-abi-runtime	tests/unit/arm64	unit	retained
+arm64-jit-exact-retirement-codegen	tests/unit/arm64	unit	retained
+arm64-jit-exact-retirement-runtime	tests/unit/arm64	unit	retained
+arm64-jit-fp-link-runtime	tests/unit/arm64	unit	retained
+arm64-counter-codegen	tests/unit/arm64	unit	retained
+arm64-jit-counter-runtime	tests/unit/arm64	unit	retained
+arm64-jit-register-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-one-to-one-base-codegen	tests/unit/arm64	unit	retained
+arm64-jit-one-to-one-fp_simd-codegen	tests/unit/arm64	unit	retained
+arm64-jit-register-remap-behavior	tests/unit/arm64	unit	retained
+arm64-jit-tlb-miss-preservation	tests/unit/arm64	unit	retained
+arm64-jit-sp-memory-run-codegen	tests/unit/arm64	unit	retained
+arm64-jit-sp-memory-run-runtime	tests/unit/arm64	unit	retained
+arm64-jit-gpr-memory-run-codegen	tests/unit/arm64	unit	retained
+arm64-jit-gpr-memory-run-runtime	tests/unit/arm64	unit	retained
+arm64-jit-simd-memory-run-codegen	tests/unit/arm64	unit	retained
+arm64-jit-simd-memory-run-runtime	tests/unit/arm64	unit	retained
+arm64-jit-scalar-atomic-codegen	tests/unit/arm64	unit	retained
+arm64-jit-simd-structure-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-simd-structure-remap-runtime	tests/unit/arm64	unit	retained
+arm64-jit-vector-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-table-list-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-table-list-remap-runtime	tests/unit/arm64	unit	retained
+arm64-jit-gpr-residency-codegen	tests/unit/arm64	unit	retained
+arm64-jit-gpr-residency-runtime	tests/unit/arm64	unit	retained
+arm64-jit-pair-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-control-remap-codegen	tests/unit/arm64	unit	retained
+arm64-jit-control-remap-behavior	tests/unit/arm64	unit	retained
+arm64-gadget-runtime	tests/unit/arm64	unit	retained
+arm64-gadget-cache-validation	tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp	unit	retained
+arm64-gadget-shared-translation	tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp	unit	conditional
+arm64-gadget-inline-fallthrough	tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp	unit	retained
+arm64-gadget-hot-path	tests/unit/arm64	unit	retained
+arm64-gadget-nzcv-residency	tests/unit/arm64	unit	retained
+arm64-gadget-fp-environment	tests/unit/arm64	unit	retained
+arm64-gadget-links	tests/unit/arm64	unit	retained
+arm64-gadget-indirect-links	tests/unit/arm64	unit	retained
+arm64-base-arithmetic-allocation	tests/unit/arm64	unit	retained
+arm64-base-arithmetic-carry	tests/unit/arm64	unit	retained
+arm64-base-arithmetic-divide	tests/unit/arm64	unit	retained
+arm64-base-arithmetic-variable-shift	tests/unit/arm64	unit	retained
+arm64-base-bit-allocation	tests/unit/arm64	unit	retained
+arm64-base-bit-behavior	tests/unit/arm64	unit	retained
+arm64-base-bit-reserved	tests/unit/arm64	unit	retained
+arm64-base-multiply-allocation	tests/unit/arm64	unit	retained
+arm64-base-multiply-behavior	tests/unit/arm64	unit	retained
+arm64-base-multiply-reserved	tests/unit/arm64	unit	retained
+arm64-base-condition-allocation	tests/unit/arm64	unit	retained
+arm64-base-condition-select	tests/unit/arm64	unit	retained
+arm64-base-condition-compare-immediate	tests/unit/arm64	unit	retained
+arm64-base-condition-compare-register	tests/unit/arm64	unit	retained
+arm64-base-condition-structure	tests/unit/arm64	unit	retained
+arm64-base-min-max-allocation	tests/unit/arm64	unit	retained
+arm64-base-min-max-immediate	tests/unit/arm64	unit	retained
+arm64-base-min-max-register	tests/unit/arm64	unit	retained
+arm64-base-min-max-structure	tests/unit/arm64	unit	retained
+arm64-base-add-sub-immediate	tests/unit/arm64	unit	retained
+arm64-base-add-sub-shifted	tests/unit/arm64	unit	retained
+arm64-base-add-sub-extended	tests/unit/arm64	unit	retained
+arm64-base-mte-pointer	tests/unit/arm64	unit	retained
+arm64-base-mte-tag	tests/unit/arm64	unit	retained
+arm64-base-mte-random-tag	tests/unit/arm64	unit	retained
+arm64-base-cpa-pointer	tests/unit/arm64	unit	retained
+arm64-base-cpa-multiply	tests/unit/arm64	unit	retained
+arm64-base-cmpbr-immediate	tests/unit/arm64	unit	retained
+arm64-base-cmpbr-register	tests/unit/arm64	unit	retained
+arm64-base-logical-immediate	tests/unit/arm64	unit	retained
+arm64-base-logical-shifted	tests/unit/arm64	unit	retained
+arm64-base-logical-behavior	tests/unit/arm64	unit	retained
+arm64-base-move-wide-allocation	tests/unit/arm64	unit	retained
+arm64-base-move-wide-behavior	tests/unit/arm64	unit	retained
+arm64-base-move-wide-reserved	tests/unit/arm64	unit	retained
+arm64-base-mov-inverted-alias	tests/unit/arm64	unit	retained
+arm64-base-rev64-alias	tests/unit/arm64	unit	retained
+arm64-base-bitfield-allocation	tests/unit/arm64	unit	retained
+arm64-base-bitfield-behavior	tests/unit/arm64	unit	retained
+arm64-base-bitfield-reserved	tests/unit/arm64	unit	retained
+arm64-base-extract-allocation	tests/unit/arm64	unit	retained
+arm64-base-extract-behavior	tests/unit/arm64	unit	retained
+arm64-base-extract-reserved	tests/unit/arm64	unit	retained
+arm64-base-control-pc-relative	tests/unit/arm64	unit	retained
+arm64-base-control-direct-branch	tests/unit/arm64	unit	retained
+arm64-base-control-conditional-branch	tests/unit/arm64	unit	retained
+arm64-base-control-compare-test	tests/unit/arm64	unit	retained
+arm64-base-control-register-branch	tests/unit/arm64	unit	retained
+arm64-base-crc-allocation	tests/unit/arm64	unit	retained
+arm64-base-crc-behavior	tests/unit/arm64	unit	retained
+arm64-base-crc-reserved	tests/unit/arm64	unit	retained
+arm64-base-crc-gadget	tests/unit/arm64	unit	retained
+arm64-base-crc-fallback	tests/unit/arm64	unit	retained
+arm64-base-flag-allocation	tests/unit/arm64	unit	retained
+arm64-base-flag-fixed	tests/unit/arm64	unit	retained
+arm64-base-flag-rmif	tests/unit/arm64	unit	retained
+arm64-base-flag-setf	tests/unit/arm64	unit	retained
+arm64-base-flag-reserved	tests/unit/arm64	unit	retained
+arm64-base-flag-structure	tests/unit/arm64	unit	retained
+arm64-base-flag-fallback	tests/unit/arm64	unit	retained
+arm64-base-barrier-allocation	tests/unit/arm64	unit	retained
+arm64-base-barrier-behavior	tests/unit/arm64	unit	retained
+arm64-base-barrier-alias	tests/unit/arm64	unit	retained
+arm64-base-barrier-reserved	tests/unit/arm64	unit	retained
+arm64-base-barrier-structure	tests/unit/arm64	unit	retained
+arm64-base-hint-allocation	tests/unit/arm64	unit	retained
+arm64-base-hint-behavior	tests/unit/arm64	unit	retained
+arm64-base-hint-feature	tests/unit/arm64	unit	retained
+arm64-base-hint-structure	tests/unit/arm64	unit	retained
+arm64-base-hint-stateful	tests/unit/arm64	unit	retained
+arm64-base-store-hint-allocation	tests/unit/arm64	unit	retained
+arm64-base-store-hint-behavior	tests/unit/arm64	unit	retained
+arm64-base-store-hint-feature	tests/unit/arm64	unit	retained
+arm64-base-store-hint-gadget	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-0	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-1	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-2	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-3	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-4	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-5	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-6	tests/unit/arm64	unit	retained
+arm64-base-extended-hints-7	tests/unit/arm64	unit	retained
+arm64-base-system-registers	tests/unit/arm64	unit	retained
+arm64-base-cache-zero	tests/unit/arm64	unit	retained
+arm64-base-cache-zero-faults	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-0	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-1	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-2	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-3	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-4	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-5	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-6	tests/unit/arm64	unit	retained
+arm64-base-system_register_allocation-7	tests/unit/arm64	unit	retained
+arm64-base-system_instruction	tests/unit/arm64	unit	retained
+arm64-base-system_result_instruction	tests/unit/arm64	unit	retained
+arm64-base-system_alias	tests/unit/arm64	unit	retained
+arm64-base-dc_operation	tests/unit/arm64	unit	retained
+arm64-base-dc_gadget	tests/unit/arm64	unit	retained
+arm64-base-tlbi_named	tests/unit/arm64	unit	retained
+arm64-base-tlbi_reserved	tests/unit/arm64	unit	retained
+arm64-base-tlbip_named	tests/unit/arm64	unit	retained
+arm64-base-tlbip_reserved	tests/unit/arm64	unit	retained
+arm64-base-sysp_allocation	tests/unit/arm64	unit	retained
+arm64-base-system_operation_gadget	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-0	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-1	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-2	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-3	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-4	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-5	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-6	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-0-7	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-0	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-1	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-2	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-3	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-4	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-5	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-6	tests/unit/arm64	unit	retained
+arm64-base-system-register-pair-1-7	tests/unit/arm64	unit	retained
+arm64-base-gcs-allocation	tests/unit/arm64	unit	retained
+arm64-base-gcs-behavior	tests/unit/arm64	unit	retained
+arm64-base-gcs-control	tests/unit/arm64	unit	retained
+arm64-base-gcs-memory	tests/unit/arm64	unit	retained
+arm64-base-gcs-fault	tests/unit/arm64	unit	retained
+arm64-base-gcs-reserved	tests/unit/arm64	unit	retained
+arm64-base-gcs-gadget	tests/unit/arm64	unit	retained
+arm64-base-gic	tests/unit/arm64	unit	retained
+arm64-base-gicr	tests/unit/arm64	unit	retained
+arm64-base-gic_gadget	tests/unit/arm64	unit	retained
+arm64-base-prediction_restriction	tests/unit/arm64	unit	retained
+arm64-base-privileged_feature_alias	tests/unit/arm64	unit	retained
+arm64-base-feature_system_gadget	tests/unit/arm64	unit	retained
+arm64-base-chkfeat	tests/unit/arm64	unit	retained
+arm64-base-chkfeat_gadget	tests/unit/arm64	unit	retained
+arm64-base-at	tests/unit/arm64	unit	retained
+arm64-base-at_gadget	tests/unit/arm64	unit	retained
+arm64-base-ic_privileged	tests/unit/arm64	unit	retained
+arm64-base-ic_ivau	tests/unit/arm64	unit	retained
+arm64-base-ic_gadget	tests/unit/arm64	unit	retained
+arm64-base-pstate-allocation	tests/unit/arm64	unit	retained
+arm64-base-pstate-behavior	tests/unit/arm64	unit	retained
+arm64-base-pstate-access	tests/unit/arm64	unit	retained
+arm64-base-pstate-gadget	tests/unit/arm64	unit	retained
+arm64-base-pauth-strip	tests/unit/arm64	unit	retained
+arm64-base-pauth-profile	tests/unit/arm64	unit	retained
+arm64-base-pauth-code	tests/unit/arm64	unit	retained
+arm64-base-pauth-auth	tests/unit/arm64	unit	retained
+arm64-base-pauth-generic	tests/unit/arm64	unit	retained
+arm64-base-pauth-branch	tests/unit/arm64	unit	retained
+arm64-base-pauth-return	tests/unit/arm64	unit	retained
+arm64-base-pauth-load	tests/unit/arm64	unit	retained
+arm64-base-pauth-lr-data	tests/unit/arm64	unit	retained
+arm64-base-pauth-lr-return	tests/unit/arm64	unit	retained
+arm64-base-exceptions	tests/unit/arm64	unit	retained
+arm64-base-breakpoints	tests/unit/arm64	unit	retained
+arm64-base-permanently-undefined	tests/unit/arm64	unit	retained
+arm64-base-el0-undefined-exceptions	tests/unit/arm64	unit	retained
+arm64-base-prefetch	tests/unit/arm64	unit	retained
+arm64-base-range-prefetch	tests/unit/arm64	unit	retained
+arm64-base-ls64-allocation	tests/unit/arm64	unit	retained
+arm64-base-ls64-behavior	tests/unit/arm64	unit	retained
+arm64-base-ls64-fault	tests/unit/arm64	unit	retained
+arm64-base-ls64-gadget	tests/unit/arm64	unit	retained
+arm64-base-mops-allocation	tests/unit/arm64	unit	retained
+arm64-base-mops-copy-forward	tests/unit/arm64	unit	retained
+arm64-base-mops-copy	tests/unit/arm64	unit	retained
+arm64-base-mops-set	tests/unit/arm64	unit	retained
+arm64-base-mops-set-tag	tests/unit/arm64	unit	retained
+arm64-base-mops-set-tag-fault	tests/unit/arm64	unit	retained
+arm64-base-mops-gadget	tests/unit/arm64	unit	retained
+arm64-base-mte-tag-load	tests/unit/arm64	unit	retained
+arm64-base-mte-tag-store	tests/unit/arm64	unit	retained
+arm64-base-mte-zero_store	tests/unit/arm64	unit	retained
+arm64-base-mte-stgp	tests/unit/arm64	unit	retained
+arm64-base-mte-multiple-load	tests/unit/arm64	unit	retained
+arm64-base-mte-multiple-store	tests/unit/arm64	unit	retained
+arm64-base-mte-multiple-gadget	tests/unit/arm64	unit	retained
+arm64-literal-load-allocation	tests/unit/arm64	unit	retained
+arm64-literal-load-behavior	tests/unit/arm64	unit	retained
+arm64-literal-load-fault	tests/unit/arm64	unit	retained
+arm64-base-immediate-memory-allocation	tests/unit/arm64	unit	retained
+arm64-base-immediate-memory-offset	tests/unit/arm64	unit	retained
+arm64-base-immediate-memory-behavior	tests/unit/arm64	unit	retained
+arm64-base-immediate-memory-fault	tests/unit/arm64	unit	retained
+arm64-base-immediate-memory-structure	tests/unit/arm64	unit	retained
+arm64-base-load-store-register	tests/unit/arm64	unit	retained
+arm64-base-load-store-register-allocation	tests/unit/arm64	unit	retained
+arm64-base-load-store-register-fault	tests/unit/arm64	unit	retained
+arm64-base-load-store-register-prefetch	tests/unit/arm64	unit	retained
+arm64-base-load-store-register-structure	tests/unit/arm64	unit	retained
+arm64-base-load-store-pair	tests/unit/arm64	unit	retained
+arm64-base-lsui-pair-allocation	tests/unit/arm64	unit	retained
+arm64-base-lsui-pair-behavior	tests/unit/arm64	unit	retained
+arm64-base-lsui-pair-fault	tests/unit/arm64	unit	retained
+arm64-base-lsui-pair-gadget	tests/unit/arm64	unit	retained
+arm64-base-ordered-allocation	tests/unit/arm64	unit	retained
+arm64-base-ordered-behavior	tests/unit/arm64	unit	retained
+arm64-base-ordered-fault	tests/unit/arm64	unit	retained
+arm64-base-ordered-gadget	tests/unit/arm64	unit	retained
+arm64-base-exclusive	tests/unit/arm64	unit	retained
+arm64-base-exclusive-pair	tests/unit/arm64	unit	retained
+arm64-base-compare-swap	tests/unit/arm64	unit	retained
+arm64-base-compare-swap-pair	tests/unit/arm64	unit	retained
+arm64-base-atomic-bit	tests/unit/arm64	unit	retained
+arm64-base-atomic-minmax	tests/unit/arm64	unit	retained
+arm64-base-atomic-swap	tests/unit/arm64	unit	retained
+arm64-base-lse128-pair-allocation	tests/unit/arm64	unit	retained
+arm64-base-lse128-pair-behavior	tests/unit/arm64	unit	retained
+arm64-base-lse128-pair-fault	tests/unit/arm64	unit	retained
+arm64-base-lse128-pair-gadget	tests/unit/arm64	unit	retained
+arm64-atomic-floating-allocation	tests/unit/arm64	unit	retained
+arm64-atomic-floating-bfloat	tests/unit/arm64	unit	retained
+arm64-atomic-floating-precision	tests/unit/arm64	unit	retained
+arm64-atomic-floating-ordering_alias	tests/unit/arm64	unit	retained
+arm64-atomic-floating-fault	tests/unit/arm64	unit	retained
+arm64-atomic-floating-gadget	tests/unit/arm64	unit	retained
+arm64-base-rcw-scalar	tests/unit/arm64	unit	retained
+arm64-base-rcw-pair	tests/unit/arm64	unit	retained
+arm64-base-rcw-allocation	tests/unit/arm64	unit	retained
+arm64-base-rcw-fault	tests/unit/arm64	unit	retained
+arm64-base-rcw-gadget	tests/unit/arm64	unit	retained
+arm64-base-clear-exclusive	tests/unit/arm64	unit	retained
+arm64-base-ordered-pair-allocation	tests/unit/arm64	unit	retained
+arm64-base-ordered-pair-behavior	tests/unit/arm64	unit	retained
+arm64-base-ordered-pair-fault	tests/unit/arm64	unit	retained
+arm64-base-ordered-pair-gadget	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-allocation	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-immediate	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-register	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-pair	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-fault	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-tag	tests/unit/arm64	unit	retained
+arm64-simd-ordinary-memory-gadget	tests/unit/arm64	unit	retained
+arm64-simd-load-store-pair	tests/unit/arm64	unit	retained
+arm64-simd-structure-multiple-allocation	tests/unit/arm64	unit	retained
+arm64-simd-structure-multiple-behavior	tests/unit/arm64	unit	retained
+arm64-simd-structure-multiple-fault	tests/unit/arm64	unit	retained
+arm64-simd-structure-lane-allocation	tests/unit/arm64	unit	retained
+arm64-simd-structure-lane-behavior	tests/unit/arm64	unit	retained
+arm64-simd-structure-lane-fault	tests/unit/arm64	unit	retained
+arm64-simd-structure-replicate-allocation	tests/unit/arm64	unit	retained
+arm64-simd-structure-replicate-behavior	tests/unit/arm64	unit	retained
+arm64-simd-structure-replicate-fault	tests/unit/arm64	unit	retained
+arm64-simd-structure-store-atomicity	tests/unit/arm64	unit	retained
+arm64-simd-structure-tag	tests/unit/arm64	unit	retained
+arm64-simd-structure-gadget	tests/unit/arm64	unit	retained
+arm64-simd-ordered-allocation	tests/unit/arm64	unit	retained
+arm64-simd-ordered-behavior	tests/unit/arm64	unit	retained
+arm64-simd-ordered-fault	tests/unit/arm64	unit	retained
+arm64-simd-ordered-gadget	tests/unit/arm64	unit	retained
+arm64-simd-baseline-inventory	tests/unit/arm64	unit	retained
+arm64-simd-three-same-allocation	tests/unit/arm64	unit	retained
+arm64-simd-three-same-arithmetic	tests/unit/arm64	unit	retained
+arm64-simd-three-same-saturation	tests/unit/arm64	unit	retained
+arm64-gadget-simd-destination-residency	tests/unit/arm64/arm64_gadget_simd_destination_residency_tests.cpp	unit	retained
+arm64-simd-widening-allocation	tests/unit/arm64	unit	retained
+arm64-simd-widening-long	tests/unit/arm64	unit	retained
+arm64-simd-widening-wide	tests/unit/arm64	unit	retained
+arm64-simd-widening-absolute	tests/unit/arm64	unit	retained
+arm64-simd-widening-gadget	tests/unit/arm64	unit	retained
+arm64-simd-high-narrow-allocation	tests/unit/arm64	unit	retained
+arm64-simd-high-narrow-behavior	tests/unit/arm64	unit	retained
+arm64-simd-high-narrow-rounding	tests/unit/arm64	unit	retained
+arm64-simd-high-narrow-gadget	tests/unit/arm64	unit	retained
+arm64-simd-two-register-allocation	tests/unit/arm64	unit	retained
+arm64-simd-two-register-ordinary	tests/unit/arm64	unit	retained
+arm64-simd-two-register-pairwise	tests/unit/arm64	unit	retained
+arm64-simd-two-register-bit	tests/unit/arm64	unit	retained
+arm64-simd-two-register-compare_zero	tests/unit/arm64	unit	retained
+arm64-simd-two-register-narrow	tests/unit/arm64	unit	retained
+arm64-simd-two-register-gadget	tests/unit/arm64	unit	retained
+arm64-simd-reduce-allocation	tests/unit/arm64	unit	retained
+arm64-simd-reduce-behavior	tests/unit/arm64	unit	retained
+arm64-simd-estimate-allocation	tests/unit/arm64	unit	retained
+arm64-simd-estimate-behavior	tests/unit/arm64	unit	retained
+arm64-simd-bitwise-logic	tests/unit/arm64	unit	retained
+arm64-simd-bitwise-merge	tests/unit/arm64	unit	retained
+arm64-simd-bitwise-behavior	tests/unit/arm64	unit	retained
+arm64-simd-bitwise-gadget	tests/unit/arm64	unit	retained
+arm64-simd-immediate-allocation	tests/unit/arm64	unit	retained
+arm64-simd-immediate-behavior	tests/unit/arm64	unit	retained
+arm64-simd-rearrange-allocation	tests/unit/arm64	unit	retained
+arm64-simd-rearrange-permute_behavior	tests/unit/arm64	unit	retained
+arm64-simd-rearrange-table_behavior	tests/unit/arm64	unit	retained
+arm64-simd-rearrange-gadget_structure	tests/unit/arm64	unit	retained
+arm64-simd-lut-allocation	tests/unit/arm64	unit	retained
+arm64-simd-lut-behavior	tests/unit/arm64	unit	retained
+arm64-simd-lut-alias	tests/unit/arm64	unit	retained
+arm64-simd-lut-reserved	tests/unit/arm64	unit	retained
+arm64-simd-lut-gadget	tests/unit/arm64	unit	retained
+arm64-basic-floating-allocation	tests/unit/arm64	unit	retained
+arm64-basic-floating-behavior	tests/unit/arm64	unit	retained
+arm64-basic-floating-control	tests/unit/arm64	unit	retained
+arm64-basic-floating-gadget	tests/unit/arm64	unit	retained
+arm64-fused-floating-allocation	tests/unit/arm64	unit	retained
+arm64-fused-floating-behavior	tests/unit/arm64	unit	retained
+arm64-fused-floating-control	tests/unit/arm64	unit	retained
+arm64-fused-floating-gadget	tests/unit/arm64	unit	retained
+arm64-floating-round-allocation	tests/unit/arm64	unit	retained
+arm64-floating-round-behavior	tests/unit/arm64	unit	retained
+arm64-floating-round-control	tests/unit/arm64	unit	retained
+arm64-floating-round-gadget	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-allocation	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-behavior	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-control	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-rounding	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-reserved	tests/unit/arm64	unit	retained
+arm64-integer-to-floating-gadget	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-allocation	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-binary	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-pairwise	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-reduction	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-control	tests/unit/arm64	unit	retained
+arm64-floating-horizontal-gadget	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-allocation	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-reserved	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-estimate	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-step	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-control	tests/unit/arm64	unit	retained
+arm64-floating-reciprocal-gadget	tests/unit/arm64	unit	retained
+arm64-floating-complex-allocation	tests/unit/arm64	unit	retained
+arm64-floating-complex-add	tests/unit/arm64	unit	retained
+arm64-floating-complex-multiply	tests/unit/arm64	unit	retained
+arm64-floating-complex-indexed	tests/unit/arm64	unit	retained
+arm64-floating-complex-control	tests/unit/arm64	unit	retained
+arm64-floating-complex-gadget	tests/unit/arm64	unit	retained
+arm64-floating-absolute-minmax-allocation	tests/unit/arm64	unit	retained
+arm64-floating-absolute-minmax-behavior	tests/unit/arm64	unit	retained
+arm64-floating-absolute-minmax-control	tests/unit/arm64	unit	retained
+arm64-floating-absolute-minmax-gadget	tests/unit/arm64	unit	retained
+arm64-floating-scale-allocation	tests/unit/arm64	unit	retained
+arm64-floating-scale-behavior	tests/unit/arm64	unit	retained
+arm64-floating-scale-control	tests/unit/arm64	unit	retained
+arm64-floating-scale-gadget	tests/unit/arm64	unit	retained
+arm64-bfloat-conversion-allocation	tests/unit/arm64	unit	retained
+arm64-bfloat-conversion-behavior	tests/unit/arm64	unit	retained
+arm64-bfloat-conversion-control	tests/unit/arm64	unit	retained
+arm64-bfloat-conversion-gadget	tests/unit/arm64	unit	retained
+arm64-bfloat-multiply-allocation	tests/unit/arm64	unit	retained
+arm64-bfloat-multiply-vector	tests/unit/arm64	unit	retained
+arm64-bfloat-multiply-indexed	tests/unit/arm64	unit	retained
+arm64-bfloat-multiply-control	tests/unit/arm64	unit	retained
+arm64-bfloat-multiply-gadget	tests/unit/arm64	unit	retained
+arm64-bfloat-dot-allocation	tests/unit/arm64	unit	retained
+arm64-bfloat-dot-vector	tests/unit/arm64	unit	retained
+arm64-bfloat-dot-indexed	tests/unit/arm64	unit	retained
+arm64-bfloat-dot-control	tests/unit/arm64	unit	retained
+arm64-bfloat-dot-gadget	tests/unit/arm64	unit	retained
+arm64-bfloat-matrix-allocation	tests/unit/arm64	unit	retained
+arm64-bfloat-matrix-behavior	tests/unit/arm64	unit	retained
+arm64-bfloat-matrix-control	tests/unit/arm64	unit	retained
+arm64-bfloat-matrix-gadget	tests/unit/arm64	unit	retained
+arm64-half-fused-long-allocation	tests/unit/arm64	unit	retained
+arm64-half-fused-long-vector	tests/unit/arm64	unit	retained
+arm64-half-fused-long-indexed	tests/unit/arm64	unit	retained
+arm64-half-fused-long-control	tests/unit/arm64	unit	retained
+arm64-half-fused-long-reserved	tests/unit/arm64	unit	retained
+arm64-half-fused-long-gadget	tests/unit/arm64	unit	retained
+arm64-half-matrix-allocation	tests/unit/arm64	unit	retained
+arm64-half-matrix-non_widening	tests/unit/arm64	unit	retained
+arm64-half-matrix-widening	tests/unit/arm64	unit	retained
+arm64-half-matrix-control	tests/unit/arm64	unit	retained
+arm64-half-matrix-reserved	tests/unit/arm64	unit	retained
+arm64-half-matrix-gadget	tests/unit/arm64	unit	retained
+arm64-half-dot-allocation	tests/unit/arm64	unit	retained
+arm64-half-dot-vector	tests/unit/arm64	unit	retained
+arm64-half-dot-indexed	tests/unit/arm64	unit	retained
+arm64-half-dot-control	tests/unit/arm64	unit	retained
+arm64-half-dot-reserved	tests/unit/arm64	unit	retained
+arm64-half-dot-gadget	tests/unit/arm64	unit	retained
+arm64-simd-extract-allocation	tests/unit/arm64	unit	retained
+arm64-simd-extract-behavior	tests/unit/arm64	unit	retained
+arm64-simd-aes-allocation	tests/unit/arm64	unit	retained
+arm64-simd-aes-behavior	tests/unit/arm64	unit	retained
+arm64-simd-aes-control	tests/unit/arm64	unit	retained
+arm64-simd-aes-reserved	tests/unit/arm64	unit	retained
+arm64-simd-aes-gadget	tests/unit/arm64	unit	retained
+arm64-simd-sha3-allocation	tests/unit/arm64	unit	retained
+arm64-simd-sha3-rotation_allocation	tests/unit/arm64	unit	retained
+arm64-simd-sha3-behavior	tests/unit/arm64	unit	retained
+arm64-simd-sha3-reserved	tests/unit/arm64	unit	retained
+arm64-simd-sha3-gadget	tests/unit/arm64	unit	retained
+arm64-simd-pmull-allocation	tests/unit/arm64	unit	retained
+arm64-simd-pmull-matrix	tests/unit/arm64	unit	retained
+arm64-simd-pmull-edge	tests/unit/arm64	unit	retained
+arm64-simd-pmull-portable	tests/unit/arm64	unit	retained
+arm64-simd-pmull-gadget	tests/unit/arm64	unit	retained
+arm64-simd-addp-scalar-allocation	tests/unit/arm64	unit	retained
+arm64-simd-addp-scalar-behavior	tests/unit/arm64	unit	retained
+arm64-simd-lane-move-allocation	tests/unit/arm64	unit	retained
+arm64-simd-lane-move-duplicate	tests/unit/arm64	unit	retained
+arm64-simd-lane-move-insert	tests/unit/arm64	unit	retained
+arm64-simd-lane-move-gpr	tests/unit/arm64	unit	retained
+arm64-simd-shift-immediate-allocation	tests/unit/arm64	unit	retained
+arm64-simd-shift-immediate-right	tests/unit/arm64	unit	retained
+arm64-simd-shift-immediate-left	tests/unit/arm64	unit	retained
+arm64-simd-shift-immediate-narrow	tests/unit/arm64	unit	retained
+arm64-simd-shift-left-long-allocation	tests/unit/arm64	unit	retained
+arm64-simd-shift-left-long-behavior	tests/unit/arm64	unit	retained
+arm64-simd-indexed-allocation	tests/unit/arm64	unit	retained
+arm64-simd-indexed-reserved	tests/unit/arm64	unit	retained
+arm64-simd-indexed-same	tests/unit/arm64	unit	retained
+arm64-simd-indexed-long	tests/unit/arm64	unit	retained
+arm64-simd-indexed-vector_long	tests/unit/arm64	unit	retained
+arm64-simd-indexed-saturating_long	tests/unit/arm64	unit	retained
+arm64-simd-indexed-vector_saturating_long	tests/unit/arm64	unit	retained
+arm64-simd-indexed-saturating_high	tests/unit/arm64	unit	retained
+arm64-simd-indexed-rdm	tests/unit/arm64	unit	retained
+arm64-simd-indexed-vector_rdm	tests/unit/arm64	unit	retained
+arm64-simd-indexed-gadget	tests/unit/arm64	unit	retained
+arm64-simd-dot-allocation	tests/unit/arm64	unit	retained
+arm64-simd-dot-vector	tests/unit/arm64	unit	retained
+arm64-simd-dot-indexed	tests/unit/arm64	unit	retained
+arm64-simd-dot-portable	tests/unit/arm64	unit	retained
+arm64-simd-dot-gadget	tests/unit/arm64	unit	retained
+arm64-simd-fp-indexed-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fp-indexed-arithmetic	tests/unit/arm64	unit	retained
+arm64-simd-fp-indexed-extended	tests/unit/arm64	unit	retained
+arm64-simd-matrix-allocation	tests/unit/arm64	unit	retained
+arm64-simd-matrix-behavior	tests/unit/arm64	unit	retained
+arm64-simd-matrix-registers	tests/unit/arm64	unit	retained
+arm64-simd-matrix-portable	tests/unit/arm64	unit	retained
+arm64-simd-matrix-gadget	tests/unit/arm64	unit	retained
+arm64-simd-fmulx-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fmulx-behavior	tests/unit/arm64	unit	retained
+arm64-simd-fabs-fneg-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fabs-fneg-scalar	tests/unit/arm64	unit	retained
+arm64-simd-fabs-fneg-vector	tests/unit/arm64	unit	retained
+arm64-simd-fmov-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fmov-scalar	tests/unit/arm64	unit	retained
+arm64-simd-fmov-general	tests/unit/arm64	unit	retained
+arm64-simd-fcsel-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fcsel-behavior	tests/unit/arm64	unit	retained
+arm64-simd-fcmp-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fcmp-direct	tests/unit/arm64	unit	retained
+arm64-simd-fcmp-conditional	tests/unit/arm64	unit	retained
+arm64-simd-fcmp-fpcr	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-precision-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-precision-exact	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-precision-rounding	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-precision-control	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-precision-gadget	tests/unit/arm64	unit	retained
+arm64-simd-floating-compare-allocation	tests/unit/arm64	unit	retained
+arm64-simd-floating-compare-register	tests/unit/arm64	unit	retained
+arm64-simd-floating-compare-zero	tests/unit/arm64	unit	retained
+arm64-simd-floating-compare-fpcr	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-vector-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-vector-exact	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-vector-rounding	tests/unit/arm64	unit	retained
+arm64-simd-fcvt-vector-control	tests/unit/arm64	unit	retained
+arm64-simd-fcvtxn-allocation	tests/unit/arm64	unit	retained
+arm64-simd-fcvtxn-exact	tests/unit/arm64	unit	retained
+arm64-simd-fcvtxn-rounding	tests/unit/arm64	unit	retained
+arm64-simd-fcvtxn-control	tests/unit/arm64	unit	retained
+arm64-floating-to-integer-allocation	tests/unit/arm64	unit	retained
+arm64-floating-to-integer-behavior	tests/unit/arm64	unit	retained
+arm64-floating-to-integer-rounding	tests/unit/arm64	unit	retained
+arm64-floating-to-integer-fixed	tests/unit/arm64	unit	retained
+arm64-floating-to-integer-control	tests/unit/arm64	unit	retained
+arm64-floating-javascript-conversion	tests/unit/arm64	unit	retained
+arm64-simd-sha12_allocation	tests/unit/arm64	unit	retained
+arm64-simd-sha1_behavior	tests/unit/arm64	unit	retained
+arm64-simd-sha256_behavior	tests/unit/arm64	unit	retained
+arm64-simd-sha512_allocation	tests/unit/arm64	unit	retained
+arm64-simd-sha512_behavior	tests/unit/arm64	unit	retained
+arm64-simd-sm_allocation	tests/unit/arm64	unit	retained
+arm64-simd-sm3_behavior	tests/unit/arm64	unit	retained
+arm64-simd-sm4_behavior	tests/unit/arm64	unit	retained
+arm64-simd-fixed_transform_portable	tests/unit/arm64	unit	retained
+arm64-simd-fixed_transform_gadget	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-allocation	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-multiply-behavior	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-matrix-behavior	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-scale	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-control	tests/unit/arm64	unit	retained
+arm64-fp8-multiply-matrix-gadget	tests/unit/arm64	unit	retained
+arm64-fp8-dot-allocation	tests/unit/arm64	unit	retained
+arm64-fp8-dot-behavior	tests/unit/arm64	unit	retained
+arm64-fp8-dot-scale	tests/unit/arm64	unit	retained
+arm64-fp8-dot-control	tests/unit/arm64	unit	retained
+arm64-fp8-dot-gadget	tests/unit/arm64	unit	retained
+arm64-fp8-convert-up-allocation	tests/unit/arm64	unit	retained
+arm64-fp8-convert-up-behavior	tests/unit/arm64	unit	retained
+arm64-fp8-convert-up-rounding	tests/unit/arm64	unit	retained
+arm64-fp8-convert-up-control	tests/unit/arm64	unit	retained
+arm64-fp8-convert-up-gadget	tests/unit/arm64	unit	retained
+arm64-fp8-convert-down-allocation	tests/unit/arm64	unit	retained
+arm64-fp8-convert-down-behavior	tests/unit/arm64	unit	retained
+arm64-fp8-convert-down-rounding	tests/unit/arm64	unit	retained
+arm64-fp8-convert-down-control	tests/unit/arm64	unit	retained
+slirp-network-arp	tests/tooling/network/slirp_arp_probe.cpp	tooling	conditional
+slirp-network-forward-specification	tests/tooling/network/slirp_forward_probe.cpp	tooling	conditional
+guest-harness-attached-session	tests/tooling/emulator/guest_harness_session_tests.py	tooling	retained
+embedded-kernel-handle-serialization	tests/tooling/emulator/embedded_kernel_serialization_tests.cpp	tooling	conditional
+virtio-gpu-vnc-smoke	tests/tooling/gpu/run_vnc_smoke.py	tooling	conditional
+virtio-input-protocol	tests/unit/input/virtio/virtio_input_tests.cpp	unit	conditional
+virtio-sound-protocol	tests/unit/audio/virtio_sound_tests.cpp	unit	conditional
+platform-guest-file-sync	tests/unit/platform/guest_file_sync_tests.cpp	unit	retained
+android-partition-boot-selection	tests/unit/block/android_boot_tests.cpp	unit	retained
+device-socket-path-lifetime	tests/unit/sockets/socket_path_tests.cpp	unit	retained
+virtio-console-protocol	tests/unit/console/virtio_console_tests.cpp	unit	conditional
+json-input-duplicate-key-policy	tests/tooling/cmake/test_json_input_policy.py	tooling	retained
+ltp-runner-parser	tests/tooling/ltp/run_guest_ltp_tests.py	tooling	retained
+rootfs-provisioning	tests/tooling/rootfs/test_provision.py	tooling	retained
+rootfs-overlay-launcher-options	tests/tooling/rootfs/test_boot_overlay_systemd.py	tooling	retained
+gpu-guest-rootfs-safety	tests/tooling/gpu/test_run_gpu_guest.py	tooling	retained
+vk-gl-cts-campaign-safety	tests/tooling/gpu/test_run_vk_gl_cts.py	tooling	retained
+vk-gl-cts-matrix-orchestrator-safety	tests/tooling/gpu/test_run_vk_gl_cts_matrix.py	tooling	retained
+kde-vnc-launcher-options	tests/tooling/gpu/test_boot_kde_vnc.py	tooling	retained
+chromium-webgl-aquarium-metrics	tests/tooling/gpu/test_run_chromium_webgl.py	tooling	retained
+ios-simulator-webgl-aquarium-policy	tests/tooling/gpu/test_run_ios_simulator_chromium_webgl.py	tooling	retained
+ios-device-thermal-lifecycle-policy	tests/tooling/gpu/test_verify_ios_device_thermal_lifecycle.py	tooling	retained
+network-smoke-taxonomy	tests/tooling/network/test_run_guest_network_smoke.py	tooling	retained
+jit-gpr-link-profile-analysis	tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py	tooling	retained
+performance-runner-cli	tests/tooling/performance/test_cli.py	tooling	retained
+arm64-instruction-inventory	tests/tooling/arm64/validate_a64_instruction_inventory.py	tooling	retained
+arm64-instruction-evidence-negative-fixtures	tests/tooling/arm64/test_a64_instruction_evidence_validator.py	tooling	retained
+arm64-instruction-aggregate-negative-fixtures	tests/tooling/arm64/test_a64_instruction_aggregate_manifest.py	tooling	retained
+arm64-raw-evidence-compression-fixtures	tests/tooling/arm64/test_a64_raw_evidence_compression.py	tooling	retained
+arm64-input-materialization-negative-fixtures	tests/tooling/arm64/test_a64_input_materialization.py	tooling	retained
+arm64-aslref-system-state	tests/tooling/arm64/test_a64_aslref_system_state.py	tooling	retained
+arm64-instruction-evidence-reset	tests/unit/arm64/reset_instruction_evidence.cmake	unit	conditional
+arm64-instruction-evidence	tests/tooling/arm64/validate_a64_instruction_evidence.py	tooling	conditional
+arm64-input-materialization-join	tests/tooling/arm64/join_a64_input_materializations.py	tooling	conditional
+arm64-jit-gpr-link-profile-codegen	tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp	unit	conditional
+arm64-jit-gpr-link-profile-runtime	tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp	unit	conditional
+arm64-jit-gpr-pressure-profile	tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp	unit	conditional
+emulator-options	tests/unit	unit	retained
+runtime-context-lifecycle	tests/unit/runtime	unit	retained
+runtime-route-transaction	tests/unit/runtime	unit	retained
+runtime-exit-order	tests/unit/runtime	unit	retained
+cpu-engine-contract	tests/unit	unit	retained
+arm64-pc-alignment-contract	tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp	unit	retained
+kernel-git-source-preparer	tests/tooling/kernel/test_materialize_git.sh	tooling	retained
+kernel-versioned-layout	tests/tooling/kernel/test_versioned_layout.sh	tooling	retained
+android17-builder-lane	tests/tooling/android/test_builder_lane.py	tooling	retained
+android17-aosp-patch-regenerator	tests/tooling/android/test_aosp_patch_regenerator.py	tooling	retained
+android17-kernel-patch-regenerator	tests/tooling/android/test_kernel_patch_regenerator.py	tooling	retained
+android17-jelly-source-contract	tests/tooling/android/test_jelly_source_contract.py	tooling	retained
+android17-release-contract	tests/tooling/android/test_release_contract.py	tooling	retained
+kernel-source-location-config	tests/tooling/kernel/test_source_location_config.sh	tooling	retained
+kernel-series-topology	tests/tooling/kernel/test_series_topology.sh	tooling	retained
+kernel-next-version-policy-actions	tests/tooling/kernel/test_next_version_policy.sh	tooling	retained
+kernel-compressed-memory-policy	tests/tooling/kernel/test_compressed_memory_policy.py	tooling	retained
+kernel-virtio-gpu-shutdown-policy	tests/tooling/kernel/test_virtio_gpu_shutdown_policy.py	tooling	retained
+apple-shared-kernel-image-policy	tests/tooling/kernel/test_apple_kernel_image_policy.py	tooling	retained
+darwin-init-mm-tlb-policy	tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py	tooling	conditional
+darwin-vcpu-carrier-policy	tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py	tooling	conditional
+abi-declaration-identity	tests/tooling/abi/test_declaration_identity.sh	tooling	retained
+dependency-source-preparer	tests/tooling/dependencies/test_prepare.sh	tooling	retained
+dependency-patch-regenerator	tests/tooling/dependencies/test_rebase_patches.sh	tooling	retained
+dependency-build-manifest	tests/tooling/dependencies/test_build_manifest.sh	tooling	retained
+dependency-prefix-verifier	tests/tooling/dependencies/test_verify_prefix.sh	tooling	retained
+dependency-apple-gpu-prefix-verifier	tests/tooling/dependencies/test_verify_apple_gpu_prefix.sh	tooling	retained
+dependency-runtime-closure	tests/tooling/dependencies/test_verify_runtime_dependencies.sh	tooling	retained
+guest-overlay-systemd-smoke	tests/integration	integration	retained
+guest-interpreter-smoke	tests/integration/jit	integration	retained
+guest-gadgets-smoke	tests/integration/jit	integration	retained
+guest-jit-smoke	tests/integration/jit	integration	retained
+guest-slirp-network	tests/integration/network	integration	retained
+guest-mmu-stress	tests/integration/smp	integration	retained
+guest-docker-hello-world	tests/integration	integration	conditional
+guest-external-network	tests/integration/network	integration	conditional
+guest-kde-vnc-webgl-aquarium	tests/integration/gpu	integration	conditional
+guest-webgl-rendered-workflows	tests/integration/gpu	integration	conditional

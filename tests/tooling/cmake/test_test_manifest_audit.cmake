@@ -23,26 +23,10 @@ file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}/build" "${TEST_ROOT}/tests/tooling")
 file(WRITE "${TEST_ROOT}/tests/tooling/owner.txt" "fixture owner\n")
 
-set(MANIFEST_CONTENT
-    "legacy_name\tcurrent_name\towner\tsuite\tdisposition\trationale\n")
-set(BASELINE_CONTENT "")
-foreach(INDEX RANGE 0 559)
-    if(INDEX EQUAL 0)
-        set(NAME suite-label-sample)
-        string(APPEND MANIFEST_CONTENT
-            "-\t${NAME}\ttests/tooling/owner.txt\ttooling\tretained\tlabel fixture\n")
-    else()
-        set(NAME "historical-${INDEX}")
-        string(APPEND MANIFEST_CONTENT
-            "${NAME}\t${NAME}\ttests/tooling/owner.txt\ttooling\tremoved\tfixture baseline\n")
-    endif()
-    string(APPEND BASELINE_CONTENT "${NAME}\n")
-endforeach()
+string(CONCAT MANIFEST_CONTENT
+    "name\towner\tsuite\tavailability\n"
+    "suite-label-sample\ttests/tooling/owner.txt\ttooling\tretained\n")
 file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv" "${MANIFEST_CONTENT}")
-file(WRITE "${TEST_ROOT}/tests/pre-refactor-test-inventory.txt"
-    "${BASELINE_CONTENT}")
-file(WRITE "${TEST_ROOT}/tests/test-migration-ledger.tsv"
-    "baseline_name\tcurrent_name\tdisposition\trationale\n")
 
 function(_uml_write_ctest_fixture LABEL_DECLARATION)
     file(WRITE "${TEST_ROOT}/build/CTestTestfile.cmake"
@@ -87,8 +71,8 @@ _uml_write_ctest_fixture(
 _uml_run_manifest_audit(TRUE "")
 
 string(REPLACE
-    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
-    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tconditional"
+    "suite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
+    "suite-label-sample\ttests/tooling/owner.txt\ttooling\tconditional"
     CONDITIONAL_MANIFEST_CONTENT "${MANIFEST_CONTENT}")
 file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv"
     "${CONDITIONAL_MANIFEST_CONTENT}")
@@ -107,8 +91,8 @@ _uml_write_ctest_fixture(
     "set_tests_properties([=[suite-label-sample]=] PROPERTIES LABELS [=[tooling]=])\n")
 
 string(REPLACE
-    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
-    "-\tsuite-label-sample\ttests/tooling/owner.txt\tunit\tretained"
+    "suite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
+    "suite-label-sample\ttests/tooling/owner.txt\tunit\tretained"
     PHYSICAL_SUITE_MISMATCH "${MANIFEST_CONTENT}")
 file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv"
     "${PHYSICAL_SUITE_MISMATCH}")
@@ -121,8 +105,8 @@ _uml_run_manifest_audit(FALSE
 file(MAKE_DIRECTORY "${TEST_ROOT}/tests/perf")
 file(WRITE "${TEST_ROOT}/tests/perf/run_guest_bench.py" "# fixture\n")
 string(REPLACE
-    "-\tsuite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
-    "-\tsuite-label-sample\ttests/perf/run_guest_bench.py\ttooling\tretained"
+    "suite-label-sample\ttests/tooling/owner.txt\ttooling\tretained"
+    "suite-label-sample\ttests/perf/run_guest_bench.py\ttooling\tretained"
     NONCANONICAL_OWNER "${MANIFEST_CONTENT}")
 file(WRITE "${TEST_ROOT}/tests/test-manifest.tsv" "${NONCANONICAL_OWNER}")
 _uml_run_manifest_audit(FALSE

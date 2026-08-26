@@ -1,5 +1,7 @@
 # Architecture
 
+## Dependency direction
+
 The enforced first-party dependency direction is:
 
 ```text
@@ -11,232 +13,151 @@ memory -> platform
 device -> memory / platform
 ```
 
-`darwin/CMakeLists.txt` composes owning subdirectories; source manifests and
-targets reside with their modules. The concrete interpreter, gadget, and JIT
-adapters are under `cpu/arm64/{interpreter,gadgets,jit}`. The neutral
-`cpu/engine_factory.cpp` selects one adapter without containing an engine
-loop. Runtime aggregates those owned objects in order and supplies the single
-guest-entry boundary.
+`darwin/CMakeLists.txt` composes owning subdirectories. Each module owns its
+targets and source manifest. The neutral CPU factory selects the interpreter,
+gadget, or JIT adapter; engines do not depend on one another.
 
-`cpu/arm64/layout/assembly_offsets.h` is the neutral assembly-visible
-CPU/TLB layout contract. C++ static assertions in
-`cpu/arm64/layout/assembly_layout.hpp` and
-the assembly consumers verify it. The JIT does not include gadget
-implementation files.
+The assembly-visible CPU and TLB layout is owned by
+`darwin/cpu/arm64/layout/assembly_offsets.h` and checked from C++ and assembly.
+Test-only hooks belong in test/support targets, not production libraries.
 
-Opt-in build-local JIT reporting follows the same dependency direction: the
-app calls a private emulator facade, the emulator calls a runtime-owned bridge,
-and only that runtime bridge includes the CPU reporting contract. The facade is
-not part of the installed emulator ABI. The CPU-owned executor-pool profiler is
-compiled only into that profiling graph. It aggregates fixed wrapper-local
-records through a quiescent private registry; the borrow path never updates a
-process-global profiling counter. Successful borrows update bounded wrapper-
-local session/sequence slot masks. Quiescent aggregation keys them by session
-and sequence, so address reuse across runs remains distinct, and emits only
-fanout indicators rather than raw keys.
+## Runtime ownership
 
-## Test ownership and taxonomy
+Each `uml_emulator` handle owns its runtime context, engine selection, stop
+state, and copied network callback table. A handle admits at most one run at a
+time. Stop requests affect only that handle's current or queued run and are not
+carried into later runs.
 
-The enforced test taxonomy is suite-level. Every first-party CTest registration
-has exactly one primary label, `unit`, `tooling`, or `integration`, and that
-label must match `tests/test-manifest.tsv`. Registration helpers and canonical
-owner paths make the suite boundary mechanically auditable. Domain information
-belongs in test names, manifest ownership, and source location; secondary
-per-domain labels and any particular per-domain subdirectory layout are
-optional organization rather than architecture or acceptance requirements.
+Different 16 KiB native-callback handles may run concurrently when their host
+mappings do not overlap. Embedded kernels and 4 KiB native-callback runs use a
+process address-space gate because their fixed host mappings cannot be safely
+shared. Ambiguous unbound callbacks fail closed rather than borrowing another
+handle's context.
 
-## Executable-memory policy
+The caller owns provider lifetimes. The macOS app therefore creates and
+destroys SLiRP around emulator use; the library has no process-global network
+provider.
 
-Interpreter state, gadget program buffers, software-MMU backing, and 4 KiB
-native shadow aliases are sandbox-safe data. This includes the process-wide
-store of gadget translations executors adopt from one another: a gadget
-program is a data stream of pointers into ordinary signed RX text, so sharing
-one copies data between heap allocations and allocates nothing executable. The
-precompiled gadget implementation stays in ordinary signed RX text. Neither engine contains an
-executable-allocation or code-publication primitive or performs an RW-to-RX
-transition. Guest execute permission in the software MMU is metadata used by
-instruction fetch, not a Darwin VM permission.
+## Memory and executable code
 
-Dynamic code belongs only to the explicitly selected JIT. All `MAP_JIT`, JIT
-write-protection, and instruction-cache publication logic is owned by
-`cpu/arm64/jit/jit_arena.cpp`. The JIT stays in iOS products for entitled
-debugger or jailbreak deployments, while sandboxed consumers can select the
-interpreter or precompiled gadget engine without entering that path.
+All products use a 128 TiB sparse software-MMU guest task range. The default
+guest page profile is 16 KiB; 4 KiB is a supported compatibility build. The
+native kernel window contains guest RAM plus a RAM-scaled auxiliary mapping
+allowance bounded between 1 GiB and 4 GiB. macOS places it at 96 TiB; iOS
+top-packs it below the physical-device address ceiling.
 
-The direct native-VM branch and ELF loader are compiled out of ordinary iOS
-device and Simulator libraries; the shared bridge retains only software-MMU
-entry points there. The opt-in Kernarium composition builds one versioned
-runtime framework for each maintained 4 KiB and 16 KiB page profile, enabling
-the existing native bridge and embedded loader for arm64 iOS device and
-Simulator kernel runs. It selects the precompiled gadget engine and does not
-alter the supported iOS package graph or authorize executable JIT publication.
-The application links neither runtime at launch. Its always-linked C loader
-masks the early process-directed timer before main, dynamically loads exactly
-the saved framework, validates a versioned immutable function table, and
-rejects a second page profile for that process lifetime.
+Interpreter state, gadget streams, MMU backing, and shadow mappings are data.
+Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
+publish RW pages as RX, control JIT write protection, or publish the instruction
+cache.
 
-On both iOS targets each kernel ELF is a 16 KiB-aligned section of its
-framework's code-signed Mach-O `__TEXT`. The loader derives a RAM-scaled native
-window below the iOS ceiling and uses `vm_remap` to alias only immutable,
-relocation-free executable ELF pages from that signed mapping; non-executable
-data and BSS remain ordinary anonymous mappings. The Darwin kernel link keeps
-signed executable boundaries on 16 KiB host pages even for a 4 KiB guest.
-The current Linux Simulator, physical-device, and macOS products consume the
-same accepted prebuilt mainline artifact within each profile. The acceptance
-descriptors under
-`kernel/mainline-6.18/artifacts` select local bundles below
-`.build/kernel/artifacts`; CMake validates each manifest, page size, ABI,
-configuration, ELF, and support inventory before deriving any path. Simulator
-and physical device carry the selected ELF through the same signed framework
-strategy. macOS retains its established unsigned CLI embedding and uses the
-same guest range, RAM-scaled window derivation, relocation, and exclusion-hole
-handling, but places that window at 96 TiB rather than inside iOS's constrained
-sub-62 GiB host range.
-Product policy still lets
-macOS default to 8 GiB and ten vCPUs while Kernarium defaults to 4 GiB on
-Simulator, 2 GiB on physical devices, and all processors reported by iOS; the
-app can persist another launch configuration within its supported settings
-ranges. Physical-device qualification reduces RAM only after a confirmed OOM
-and only in 64 MiB steps. The common layout derives the appropriate native
-window from each guest's RAM. Guest page size remains a compile-time
-kernel and host-runtime choice, so the two profiles share architecture and
-source but not a binary framework or kernel artifact. Kernarium defaults to
-16 KiB and persists a 4 KiB compatibility selection for the next process
-launch.
-Executable-memory ownership is enforced in source
-architecture and functional JIT publication tests, not by comparing or
-attributing individual archive members.
+Ordinary iOS libraries exclude native-VM and embedded-ELF execution. Kernarium
+uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
+`__TEXT`. Its loader aliases immutable executable pages from that mapping and
+rejects writable executable segments or relocations into signed text. The app
+embeds every selectable framework, links none at launch, and loads exactly one
+guest flavour/page profile for the process lifetime. macOS retains its
+unsigned embedded-loader path.
 
-## Darwin scheduling boundary
+Apple products consume accepted kernel bundles and never invoke Kbuild. Linux
+uses the same accepted 16 KiB or 4 KiB mainline artifact on macOS, Simulator,
+and device. Android uses a separate accepted 16 KiB ACK artifact.
 
-The maintained Darwin Linux port owns one persistent pthread per configured
-vCPU, including vCPU0. Linux tasks retain their stackful runtime context on
-guest kernel stacks and the ordinary scheduler resumes that context on the
-selected carrier; task creation, exit, and migration do not create or retire
-host threads. Secondary CPU hotplug reuses its existing carrier, while guest
-shutdown transfers back to the carrier's native stack before pthread teardown.
-This is one common macOS/iOS Simulator/iOS device mechanism, and the carrier
-names are `uml-vcpu-N-carrier`. The kernel's 100 Hz plus `NO_HZ_IDLE` policy
-reduces host wakeups without changing this ownership boundary.
-The early Darwin `ITIMER_REAL` calibration signal is process-directed, so
-Kernarium blocks `SIGALRM` on application and launcher workers and only the
-vCPU0 carrier temporarily unmasks it. This signal ownership does not add or
-move an application launcher thread.
-Darwin host signals wake carriers but do not execute Linux IPIs asynchronously.
-The arm64 spin-loop relaxation checkpoint services pending IPIs only while
-Linux interrupts are enabled, which breaks synchronous cross-call wait cycles
-without violating an IRQ-disabled critical section.
+## CPU execution and scheduling
 
-## Kernel-family ownership
+Darwin owns one persistent pthread per configured vCPU, including vCPU0.
+Linux task contexts remain on guest kernel stacks and migrate between carriers;
+guest task creation does not create host threads. CPU hotplug reuses carriers,
+and shutdown returns to a native carrier stack before thread teardown.
 
-`kernel/mainline-6.18` owns the current stable source identity, generated
-series, complete configuration, standalone build policy, and source location.
-`kernel/android-6.18` separately owns the ACK identity, local Darwin UML patch
-series, and built-in-only 16 KiB configuration. `kernel/common` owns only the
-plain-C bridge, shared 16 KiB page geometry, artifact contract, and
-line-root-parameterized policy verification. Root `kernel/CMakeLists.txt`
-imports accepted mainline bundles and the independently accepted Android ACK
-artifact. `android/aosp-17` separately imports the accepted rootfs release and
-exposes only its manifest, boot policy, and static GPT through a distinct
-target. Neither Apple graph can invoke a kernel or Android producer.
+Carriers are named `uml-vcpu-N-carrier`. The shipped kernels use a 100 Hz tick
+with `NO_HZ_IDLE`. Darwin signals wake carriers but do not execute Linux IPIs
+asynchronously; IRQ-enabled spin checkpoints service pending IPIs.
 
-The separate `uml-darwin-android17` target embeds the ACK artifact's ELF and
-the independently selected rootfs-manifest identity. It reads the static GPT
-from the installed rootfs release, selects a verified normal or recovery
-ramdisk byte range inside that disk, and maps the GPT only as a per-instance
-UML COW backing file. Advancing the signed kernel carrier does not change the
-rootfs selection or invalidate an existing bundle/COW. It does not inherit
-Linux desktop rootfs discovery and has no 4 KiB variant.
+Early UML calibration uses process-directed `SIGALRM`. Application and launcher
+threads keep it blocked, and only the vCPU0 carrier unmasks it until cooperative
+deadlines take over. Kernarium runs the guest on its named `uml-launcher`
+thread, never the main thread.
 
-## Apple GPU display composition
+The interpreter is the reference oracle. The gadget engine executes arrays of
+precompiled function pointers and data. The JIT emits native blocks through its
+sole executable arena. Guest-visible exceptions, fault priority, retirement,
+and feature exposure must agree across engines.
 
-Every Apple GPU product preserves the real Virtio-GPU protocol and renderer
-rather than substituting an application-owned framebuffer:
+The JIT uses a process budget with a bounded private working set per executor
+and a process-global shared translation tier. Shared entries contain immutable
+guest identity and relocatable code only; executor-owned link state is rebuilt
+when materialized. A managed run owns at most one persistent executor per guest
+CPU, and no executor survives its runtime memory domain.
+
+The gadget cache may retain several address spaces. Cache slots and links are
+tagged by address space, retirement drops one address space's owned state, and
+same-generation stale programs are reused only after exact page-bounded word
+validation. Shared gadget translations remain data-only and relocate every
+executor-owned link cell before use.
+
+## Kernel and Android ownership
+
+`kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned
+source identity, configuration, generated patch series, and standalone build
+policy. `kernel/common` owns only contracts shared across families. The Apple
+CMake graph imports compact accepted artifacts.
+
+`android/aosp-17` owns the Android product, static GPT layout, ramdisks, rootfs
+release, and producer tools. Kernel and rootfs releases are selected
+independently. The `uml-darwin-android17` product embeds the ACK ELF and rootfs
+manifest identity, reads the GPT through a per-instance COW, and has no 4 KiB
+variant.
+
+A Kernarium `.kern` bundle contains one guest's rootfs payload and persistent
+COW. Android bundles contain a release manifest, kernel command line, and one
+GPT image; the kernel comes from the selected runtime framework. Incomplete or
+mismatched bundles are rejected.
+
+## Devices and graphics
+
+The vhost-user transport owns connection, queue framing, and deferred used-ring
+publication. GPU, input, sound, console, and network providers own their
+protocol behavior independently.
+
+The Apple graphics path is:
 
 ```text
-Linux virtio-gpu -> vhost-user device -> virglrenderer -> libepoxy/EGL
-    -> UTM ANGLE Metal backend -> MTLTexture -> common Metal presentation
-       -> AppKit MTKView | UIKit MTKView
+Linux virtio-gpu -> vhost-user -> virglrenderer -> ANGLE/EGL on Metal
+    -> shared Metal presentation -> AppKit or UIKit
 ```
 
-`HostGlProvider` is the single fixed ANGLE/EGL facade on macOS, Simulator, and
-device. Its opaque ownership keeps EGL state out of public renderer layout,
-and the transport thread owns provider construction, context use, reset, and
-teardown. Virglrenderer exports the ANGLE-backed scanout as a native Metal
-texture. A common device-layer presentation owner validates same-device,
-full-frame textures and maintains newest-frame-wins publication with one Metal
-command buffer in flight; thin AppKit and UIKit shells retain only platform UI,
-input, sizing, and lifecycle. Unsupported resource shapes retain a counted CPU
-conversion for bounded diagnostics and macOS VNC, but that path cannot qualify
-native performance. VNC is a macOS presentation consumer and cannot create a
-context, select a provider, or change capsets. The iOS target contains no
-AppKit or LibVNCServer dependency, the macOS target contains no UIKit, and no
-Apple GPU target compiles or links CGL, OpenGL.framework, EAGL, ANGLE/Vulkan,
-MoltenVK, or Zink for the GL facade.
+GPU commands and rendering stay off the UI thread. The shared presentation
+layer keeps the newest frame and at most one command buffer in flight. A
+backpressured presentation may drop a superseded frame; only unsupported
+resource shapes use CPU readback. See [`graphics.md`](graphics.md).
 
-The vhost-user transport owns connection, dynamic queue framing, and deferred
-used-ring publication. The GPU, Virtio-input, Virtio Sound, and single-port
-Virtio console devices independently implement their protocol operations over
-that transport. The console's device-owned Unix-stream listener is a host I/O
-boundary: queue output is always completed without waiting for an external
-client, while socket readability retries pending guest input descriptors.
-Deferred publication lets a playback descriptor remain outstanding until the
-Apple audio engine consumes the corresponding PCM period. Kernarium registers
-one signed-16-bit, stereo, 48 kHz output stream, one absolute touchscreen, and
-one keyboard, while UIKit scales safe-area point coordinates into the guest
-range—point-for-pixel by default or `nativeScale` Retina pixels—and converts
-them with text input to Linux evdev events. The GPU device independently
-advertises the matching 160 or `160 * nativeScale` effective density through
-EDID. The Android runtime additionally supplies that per-launch value through
-`androidboot.lcd_density`; init carries it through `ro.boot.lcd_density` to
-the framework-owned `ro.sf.lcd_density`. The checked bundle command line
-cannot fix or override this host-owned value.
-The audio sink is shared by macOS and both iOS products. It owns the AVAudio
-graph and a bounded period/completion ring; callback code performs no heap
-allocation or locking. iOS additionally owns AVAudioSession playback,
-interruption, and route/configuration recovery. This is a device-internal
-boundary and changes neither the public emulator API nor the host/kernel ABI.
-`ContentView` keeps both that framebuffer surface and a SwiftTerm
-`TerminalView` mounted, shows the framebuffer by default, and changes only
-their visibility and input ownership when the user toggles surfaces. The
-existing `ttyS0` relay publishes each ordered output chunk to both application
-stdout and SwiftTerm; SwiftTerm delegate input returns through the same serial
-socket. This is a view over the existing UML serial endpoint, not a synthetic
-Virtio-console device, and hiding the framebuffer does not stop or recreate
-the Virtio-GPU presentation path.
-Networking remains the emulator's existing callback boundary backed by the
-iOS static GLib/libslirp prefix. These iOS owners do not enter the macOS
-application graph.
+Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
+Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
+serial terminal view. Point mode maps safe-area points to guest pixels at 160
+DPI; Retina mode multiplies both size and density by `nativeScale`. Android's
+logical density is derived from the same launch value.
 
-`architecture-audit` combines four checks. Documentation paths in this file
-are validated by the same target, so a moved contract cannot leave a stale
-architecture reference behind:
+Writable host files are tracked by the platform layer. Emulator sync asks the
+guest to write back through the management console and then flushes host files;
+quiesce also freezes the guest, and resume thaws it. Guests receive unique run
+identities so management-console paths do not collide.
 
-- CMake File API direct-link layer rules and dependency-cycle detection;
-- CPU/memory/device implementation include rules, including assembly and
-  `.inc` files;
-- unowned implementation, empty-directory, retired-terminology, and
-  implementation-fragment checks; and
-- the explicit CTest manifest and advisory source-size review records.
+## Tests and structural audit
 
-Git-ignored OS and interpreter outputs (`.DS_Store`, `__pycache__`, `.pyc`,
-and `.pyo`) are excluded from structural decisions. Their incidental presence
-does not change the architecture graph or fail a build.
+Every first-party CTest has one primary suite: `unit`, `tooling`, or
+`integration`. `tests/test-manifest.tsv` is the exact registration and owner
+inventory.
 
-The audit does not prove generated-code shape, performance, or a kernel boot.
-Those remain separate measured acceptance gates. The 800-line production,
-600-line test/support, and 300-line CMake guidelines are advisory. Crossing a
-guideline is always reported and never fails the audit; large cohesive units
-may remain without an exception. Optional owner, reviewed-size, date, and
-rationale metadata lives in
-[`source-size-reviews.tsv`](source-size-reviews.tsv). Malformed, duplicate, or
-stale review records still fail because they would make the report misleading.
-The report covers first-party code and support sources below `cmake`, `darwin`,
-`dependencies`, `kernel`, `scripts`, `tests`, and `tools`; recognized
-declarative configuration, manifests, and patches are included as
-informational rows without a numeric guideline.
+`architecture-audit` checks the CMake File API graph, dependency cycles,
+implementation includes, source ownership, test manifests, and advisory
+source-size metadata. It does not prove performance, generated code shape, a
+kernel boot, or guest behavior; those require their owning validation.
 
-The canonical host/kernel C ABI is in
-[`../kernel/common/abi`](../kernel/common/abi). Its version/fingerprint and
-host/kernel layout assertions fail compilation when a guest-register boundary
-drifts.
+Production files above 800 lines, test/support files above 600, and CMake files
+above 300 are reported as advisory review points; they are not acceptance
+failures or a request for a dated review ledger.
+
+The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
+Version, fingerprint, generated-copy, layout, and import checks fail closed on
+drift.

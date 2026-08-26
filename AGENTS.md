@@ -1,415 +1,48 @@
 # Repository agent guide
 
-This file applies to the entire repository. A more deeply nested `AGENTS.md`
-may add or override instructions for its subtree. Direct user instructions take
-precedence over this file.
+This file applies to the whole repository. A nested `AGENTS.md` may add or
+override rules for its subtree. Direct user instructions take precedence.
 
 ## Start here
 
-This repository implements an arm64 Apple host for User-Mode Linux. The outer
-project is C++20, assembly, CMake, and Python tooling with a plain-C public and
-host/kernel ABI; the maintained Linux port is a pinned upstream stable Git
-commit plus an ordered Git-generated patch series.
+This project implements an arm64 Apple host for User-Mode Linux. The host is
+C++20, assembly, CMake, and Python tooling with plain-C public and host/kernel
+ABIs. Maintained kernels are pinned upstream Git revisions plus generated patch
+series.
 
-Before changing code, read the documents that own the relevant truth:
+Before changing a subsystem, read:
 
-1. `docs/REFACTOR_HANDOFF.md` — current accepted state, limitations, and external
-   work that is not claimed.
-2. `docs/testing.md` — canonical commands, prerequisites, and campaign scope.
-3. `docs/architecture.md` — enforced dependency direction and ownership.
-4. The relevant subsystem guide: `darwin/README.md`,
-   `dependencies/README.md`, `kernel/README.md`, or `kernel/common/abi/README.md`.
+- [`docs/README.md`](docs/README.md) for documentation ownership;
+- [`docs/architecture.md`](docs/architecture.md) for dependency and runtime
+  boundaries;
+- [`docs/testing.md`](docs/testing.md) for supported validation; and
+- the nearest subsystem README.
 
-`docs/REFACTORING_PLAN.md` is a historical proposed plan. Its old paths, counts,
-open checklists, per-domain label proposal, and blanket implementation-fragment
-language are not current requirements where the authoritative documents have
-superseded them. `docs/REFACTOR_PROGRESS.md` is the compact current summary and
-`docs/refactor-evidence.md` is the evidence index. Preserve explicitly dated
-historical sections as history.
+Inspect `git status --short` before editing. Preserve unrelated changes and
+avoid unrelated formatting churn. There is no repository-wide formatter.
 
-## Build model and prerequisites
+## Build and product boundaries
 
-- CMake 3.27 or newer with Ninja is the canonical first-party build system.
-  CTest is the canonical test registry. Use checked-in `CMakePresets.json`;
-  `CMakeUserPresets.json` is local and ignored.
-- Linux keeps its Kbuild/GNU Make boundary. Third-party projects keep their
-  verified upstream build systems.
-- Kernel material is family/version scoped. `kernel/mainline-6.18` owns the
-  current source, patch, complete configuration, and build policy;
-  `kernel/common` owns only the shared ABI, 16 KiB geometry, and parameterized
-  series verifier. Do not restore singleton owners directly under `kernel/`.
-- Standalone mainline kernel preparation and builds require the Git-ignored
-  `kernel/mainline-6.18/source-location.conf`. Copy
-  `kernel/mainline-6.18/source-location.conf.example`, set its absolute
-  `UML_KERNEL_SOURCE_DIR`, and keep that checkout on a case-sensitive
-  filesystem. Apple CMake never reads this file or invokes Kbuild. It consumes
-  the accepted bundles selected by
-  `kernel/mainline-6.18/artifacts/accepted-{16k,4k}.env`, installed below
-  `.build/kernel/artifacts` by the standalone publisher.
-- Apple builds require arm64 macOS, Xcode command-line tools and SDKs, Clang,
-  CMake, Ninja, Python 3, GNU Make, Meson, `pkg-config`, Git, rsync, Autoconf,
-  Automake, gettext, GNU libtool, gperf, `curl`, and `patch`.
-  Dependency and kernel preparation have additional tools documented in their
-  READMEs.
-- On the current Apple acceptance host, never run a standalone kernel build or
-  `kernel/mainline-6.18/scripts/verify-replay.sh` with the default
-  `/usr/bin/clang`. Apple Clang 21
-  fails Linux 6.18's `__counted_by` type-expression probe. Select the known-good
-  LLVM 22 toolchain explicitly:
+- CMake 3.27 or newer with Ninja is the first-party build system. Use the
+  checked-in presets; `CMakeUserPresets.json` is local and ignored.
+- CTest is the test registry. Register first-party tests through the helpers in
+  `cmake/UmlTesting.cmake`, never raw `add_test`.
+- Linux retains Kbuild/GNU Make. Third-party projects retain their verified
+  upstream build systems.
+- Supported Apple products are arm64 macOS, iOS device, and iOS Simulator.
+- The default guest page profile is 16 KiB. The 4 KiB compatibility profile is
+  also supported and must be tested when a change is page-size-sensitive.
+- Apple builds consume accepted prebuilt kernel bundles. They must not locate a
+  kernel checkout, invoke Kbuild, or publish a kernel artifact.
+- Android 17 uses its own 16 KiB ACK kernel and rootfs release. It has no 4 KiB
+  product and must not inherit Linux desktop rootfs discovery.
 
-  ```sh
-  env UML_KERNEL_CC=/opt/homebrew/opt/llvm/bin/clang \
-    UML_KERNEL_HOST_CC=/opt/homebrew/opt/llvm/bin/clang \
-    UML_KERNEL_LD=/opt/homebrew/bin/ld.lld \
-    kernel/mainline-6.18/scripts/verify-replay.sh --work-root /Volumes/<case-sensitive-volume>
-  ```
+Keep C++20 code warning-clean under `-Wall -Wextra -Werror`, preserve SPDX
+headers, and follow adjacent formatting.
 
-  Do not repeat a bare-Clang replay after the capability preflight rejects it.
-- Supported products are arm64 macOS, iOS device, and iOS Simulator. Deployment
-  targets are owned by `cmake/toolchains/Apple.cmake`.
-- Each Darwin guest page profile uses one relocatable kernel image and the same
-  128 TiB sparse software-MMU task range on every Apple product. The native
-  hole is guest RAM plus a page-rounded auxiliary allowance for kernel
-  mappings. That allowance is address space, not memory - vmalloc's pages come
-  from the guest page allocator and are already bounded by `mem=` - so it
-  tracks RAM one-for-one between a 1 GiB floor and a 4 GiB ceiling rather than
-  being one eighth of RAM. The ceiling keeps RAM plus auxiliary inside the
-  14 GiB signed iOS envelope for every guest up to 10 GiB. vmalloc owns the
-  whole allowance, not `min(allowance, RAM)`: `end_vm` is what the kernel
-  fault handler uses to recognise a vmalloc address. Device and Simulator
-  top-pack it below the
-  physical-iOS 62 GiB ceiling; macOS places the same scalable window at 96 TiB
-  to avoid the crowded low host VA range. The kernel derives its endpoint from
-  the relocated image; there is no platform-specific Kbuild image or
-  address-space selector. Kernarium embeds separate versioned signed runtime
-  frameworks for the canonical 4 KiB and 16 KiB mainline artifacts and for the
-  accepted Android 17 ACK kernel artifact, defaults to 16 KiB Linux, and loads exactly
-  one framework for the process lifetime after launch. Guest flavour leads a
-  framework name and the page profile trails it, so no name can match two
-  selections; the Android framework exists only in 16 KiB.
-- The shipped kernel builds zswap in, enables it by default, and selects zstd,
-  while retaining zram with the same compressor. Zswap allocates no pool until
-  the guest activates backing swap; normal desktop launchers do not create
-  such backing and must not claim zswap as additional guest memory.
-- When `mem=` or `ncpus=` is absent, the standalone macOS app defaults to
-  8 GiB and 10 vCPUs. Kernarium retains its separate iOS application policy:
-  4 GiB on Simulator, 2 GiB on physical devices, and every processor reported
-  by `NSProcessInfo`. Physical-device qualification may reduce RAM only after
-  a confirmed emulator OOM and only in 64 MiB steps.
-- Kernarium defaults to mapping safe-area points directly to guest pixels and
-  advertising 160 DPI through Virtio-GPU EDID. Its optional Retina mode uses
-  safe-area points times `nativeScale` and advertises `160 * nativeScale` DPI;
-  both modes and their scale-only density policy are shared by Device and
-  Simulator. Do not add per-model panel tables or private physical-PPI
-  discovery. Point mode selects VGA8x16 fbcon text, while Retina densities
-  select the built-in TER16x32 font.
-- Darwin's early UML calibration uses the process-directed `ITIMER_REAL`.
-  Kernarium must keep `SIGALRM` blocked on its application and launcher
-  workers without moving the launcher to another thread; only
-  `uml-vcpu-0-carrier` may unblock it before the kernel switches to
-  cooperative deadlines. Keep this ownership pinned by
-  `darwin-vcpu-carrier-policy`.
-- There is no repository-wide formatter. Follow adjacent formatting, retain
-  SPDX headers, keep C++20 code warning-clean under `-Wall -Wextra -Werror`,
-  and avoid unrelated formatting churn.
+## Architecture and source ownership
 
-## Canonical validation
-
-Use the narrowest relevant target or exact test first, then run the single
-canonical workflow that owns the changed behavior before claiming completion.
-Do not repeat equivalent presets, sanitizers, packages, or guest campaigns
-unless the change actually crosses those boundaries. For a focused CTest,
-prefer an anchored expression:
-
-```sh
-ctest --test-dir .build/presets/macos-unit-16k \
-  -R '^exact-test-name$' --output-on-failure
-```
-
-Ordinary 16 KiB and 4 KiB host workflows:
-
-```sh
-cmake --workflow --preset check-unit
-cmake --workflow --preset check-unit-4k
-```
-
-GPU/VNC and loader workflows:
-
-```sh
-cmake --workflow --preset check-gpu
-cmake --workflow --preset check-gpu-asan-ubsan
-cmake --workflow --preset check-loader-asan-ubsan
-```
-
-Opt-in JIT profiling product and focused structural audit:
-
-```sh
-cmake --workflow --preset check-jitprof
-```
-
-Sanitizer and threading gates:
-
-```sh
-cmake --preset macos-unit-16k-asan-ubsan
-cmake --build --preset asan-ubsan
-ctest --preset unit-asan-ubsan -j 10 \
-  --resource-spec-file "$PWD/cmake/ctest-resources.json"
-
-cmake --preset macos-unit-16k-tsan
-cmake --build --preset tsan
-ctest --preset unit-tsan
-```
-
-Apple libraries and package:
-
-```sh
-cmake --preset ios-device
-cmake --build --preset ios-device
-cmake --preset ios-simulator
-cmake --build --preset ios-simulator
-scripts/build-xcframework.sh
-```
-
-`architecture-audit` is part of the supported build presets. It checks the
-first-party source tree, CMake File API graph, test manifest, and advisory
-source-size report. It does not prove performance, generated-code shape, a
-kernel boot, or guest behavior.
-
-## Lean workflow policy
-
-Git is the source and history authority. Do not copy, freeze, seal, recursively
-hash, or make read-only a source tree, object set, product, or evidence
-directory for ordinary development or performance work. Separate build
-directories and the recorded revision/configure command are sufficient for an
-A/B. Do not require object/archive byte equality, object-level isolation, a
-common relink, or product hash manifests; validate behavior at the supported
-target, API, and workload boundaries.
-
-Let Git, Kbuild, the compiler, linker, archiver, and Xcode generate their real
-timestamps, versions, UUIDs, build IDs, user/host fields, and tool identities.
-Do not pass flags or macros whose only purpose is to normalize that metadata or
-make independent outputs deterministic. Stable ordering or identifiers remain
-appropriate only when they are part of a functional file format, ABI, protocol,
-or semantic test contract.
-
-Keep experiment artifacts compact: record the revision and dirty status,
-configure options, exact run command, raw relevant measurements, exit/shutdown
-status, and a concise result. Avoid inventories, full-tree/object manifests,
-duplicated products, and repeated preflight checks that do not affect the
-decision. Use the narrow focused checks followed by the single applicable
-workflow; do not rerun unrelated matrices or recreate already-green evidence.
-
-Run both page profiles for page-size-sensitive CPU, memory, ABI, kernel, or
-guest changes. The default guest page size is 16 KiB; 4 KiB is a supported
-compatibility profile, not an optional approximation.
-
-## Integration tests and unified EROFS rootfs
-
-Integration requires the accepted prebuilt mainline kernel artifact for the
-selected page profile, the unified rootfs, and the verified private dependency
-prefix. It does not require a kernel source checkout or compiler:
-
-```sh
-cmake --workflow --preset check-integration
-cmake --workflow --preset check-integration-4k
-```
-
-The checked acceptance descriptors select the matching bundle directory below
-`.build/kernel/artifacts`. A non-default local installation may override only
-`UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; CMake validates the whole bundle and
-derives the ELF and support paths from its manifest.
-
-- `rootfs.erofs` is the ignored, unified guest image. Ordinary guest runs use
-  it directly without hashing or sidecar locking. Map the shared image with
-  `ubd0c=` so UML does not take a conflicting host-file lock when guests run
-  in parallel,
-  and boot it as `root=/dev/ubda rootfstype=erofs`. EROFS itself supplies the
-  read-only filesystem contract; do not add Unix-mode, `ubd0r`, or `ro`
-  enforcement. The `c` flag disables UML's host-file lock; it does not make the
-  raw `/dev/ubda` block device suitable as scratch space. Never direct a test
-  that overwrites a block device at the root device.
-- Rootfs updates are whole-image operations: build and sign a new EROFS
-  artifact, update the provisioning manifest, then install it with
-  `tools/rootfs/provision.py --replace`. Provisioning authenticates the input;
-  it is not part of ordinary guest execution. There is no in-place writable
-  maintenance workflow.
-- The image owns its VT and serial getty definitions, account credentials, and
-  login policy. Desktop launchers, including Kernarium, preserve them and must
-  not synthesize, disable, or override a getty in the overlay. There is exactly
-  one accepted exception, and it is bounded to the KDE overlay: the image
-  enables `getty@tty0.service`, but `/dev/tty0` is the active-VT alias rather
-  than a fixed console, so once SDDM jumps to VT 2 that getty follows the
-  compositor onto the same VT and the Wayland session dies immediately with no
-  output. Both KDE launchers therefore mask `getty@tty0.service` and start
-  `getty@tty1.service`, which preserves the image's text login prompt on the VT
-  boot already leaves it on. An interleaved macOS A/B measured 12/12 successful
-  desktop bring-ups with the relocation against 3/10 without it; see G155. This
-  exception does not extend to serial getties, credentials, autologin, the
-  Phosh/greetd graph, or the postmarketOS OpenRC image, and the defect should
-  still be repaired in the image so the exception can be retired. Kernarium's
-  Phosh bootstrap whiteouts only the image's stale, mutually exclusive
-  development `graphical.target.wants/phosh.service` enablement so the stock
-  display-manager alias selects greetd/Phrog; it must not replace either unit
-  or add a greetd/getty ordering workaround. It also installs empty overlay
-  copies of both `/etc/phrog/phoc.ini` and `/etc/phosh/phoc.ini`, preventing the
-  image's fixed 720x1440 mode from replacing the Virtio-GPU EDID mode when the
-  greeter hands off to the logged-in session. Kernarium systemd boots append
-  `plymouth.enable=0`: a same-build iOS Simulator A/B proved that this image's
-  Plymouth start blocks before greetd, while disabling it reaches the stock
-  display manager and authenticated full-geometry Phosh session without
-  changing any image unit. The direct Geekbench shell and macOS launchers
-  retain their existing behavior. The shipped kernel assigns tty0 to standard
-  VT/fbcon on Virtio-GPU and carries host logs on ttyS0; it disables
-  the conflicting UML stdio console, DRM log client, and legacy BSD PTYs, and
-  registers four serial lines. The `pmos-sxmo.erofs` image instead keeps its
-  OpenRC init, UID-10000 account, tinydm default session, and Sxmo/Sway startup.
-  UML satisfies OpenRC's container test even though this guest owns devtmpfs
-  and virtual hardware, so Kernarium removes only `keyword -containers` from
-  disposable copies of the image's udev services, supplies minimal no-swap
-  deviceinfo, classifies the Virtio-input devices, and grants the desktop's
-  `video` and `input` groups device access after udev settles. It must not
-  replace the image's user or session. Before starting systemd, the generic
-  bootstrap mounts separate tmpfs filesystems at `/var/lib/docker` and
-  `/var/lib/containerd` so Docker storage and containerd state are not nested
-  on the writable root overlay. `guest-overlay-systemd-smoke` builds its
-  freestanding arm64/Linux hello-world payload from repository source, wraps it
-  in a local rootfs archive, imports it into the disposable Docker
-  state, and runs it with `--pull=never --network none`; it must not depend on a
-  registry or external network. KDE native/VNC and WebGL launchers must reuse
-  the image's non-root `uml` account; never synthesize `plasma` or another
-  desktop account in the overlay.
-- External-network, KDE native/VNC, WebGL, full LTP, SMP, performance, and official
-  A64 campaigns are opt-in. Do not silently add them to ordinary unit
-  acceptance.
-- Kernarium's physical-iOS acceptance guest starts with 2 GiB of RAM. Reduce it
-  only after a confirmed emulator OOM, in 64 MiB steps. Do not
-  run WebGL Aquarium on the physical device or add disk-backed swap, Chromium
-  storage redirection, or another memory workaround to force that workload.
-  Use the documented normal desktop boot on the connected iPad; the historical
-  2 GiB Simulator Aquarium result remains graphics evidence, and the Simulator
-  launcher keeps its explicit opt-in check.
-- Heavy guest campaigns run on the gadget and JIT engines only, whether
-  registered or run by hand. The interpreter is the reference oracle, not a
-  campaign engine: it is far slower than the translating engines, and the unit
-  suites already execute interpreter, gadgets, and JIT in order against one
-  oracle, so a long campaign under it costs hours and proves nothing new. Its
-  registered coverage is the short `guest-interpreter-smoke` boot. Answer an
-  interpreter-specific question with a focused freestanding payload under
-  `tools/guest-shell.py --engine interpreter` instead.
-- Full LTP uses `/opt/ltp` from `rootfs.erofs`. Tests that require deliberately
-  removed kernel configuration must be listed in `disabled-tests.tsv`; do not
-  re-enable those flags merely to increase the LTP count. Each campaign uses
-  the selected artifact's `kernel/modules.builtin`; the runner
-  release-checks and copies its complete contents into disposable OverlayFS
-  state so built-in-driver discovery matches the embedded kernel. The host
-  compresses that generated setup and sends it through independently
-  acknowledged commands below 2 KiB; the final guest command executes and
-  removes staging under `/run`, and console echo is restored on every path.
-  With `CONFIG_MODULES=n`, that same disposable overlay supplies fail-closed
-  `kmod`, `modprobe`, and `rmmod` command names: only exact build-proven
-  built-ins may receive no-op load success, while removals, parameters,
-  unknown names, and unsupported operations fail. Do not add kmod to the
-  immutable image for this accommodation. The unified image also carries
-  `e2fsprogs` (`mkfs.ext2`, `mkfs.ext3`, `mkfs.ext4`, `mke2fs`, `debugfs`, and
-  `e4crypt`), the full iproute2 `ip` utility, `bc`, and `quota`; the fast
-  integration smoke pins those userspace prerequisites.
-- Benchmarks and supporting runtimes come from `/opt` in the same image.
-  Geekbench runs its local payload with `--no-upload`, without an Internet
-  preflight or upload permission gate.
-
-## Dependency provenance
-
-Production libraries may come only from the verified private static prefix,
-normally `.build/dependencies/macos-arm64`. Never fall back to Homebrew or
-other ambient package roots, `CMAKE_PREFIX_PATH`, or unrestricted
-`pkg-config` discovery.
-
-- `dependencies/prepare.sh` is the only dependency workflow allowed to access
-  the network. Prefer `--no-fetch` or verification-only modes when inputs are
-  already present.
-- Build or verify with the procedures in `dependencies/README.md`. A typical
-  fresh preparation is:
-
-  ```sh
-  dependencies/prepare.sh
-  dependencies/build.sh
-  ```
-
-- Changes to `dependencies/manifest.tsv`, pinned source inputs, or dependency
-  patch series invalidate the prefix receipt. Rebuild the prefix and run
-  the dependency tooling tests. Git reviews changes to `prepare.sh` and
-  `build.sh`; the receipt does not duplicate their identity.
-- Dependency patch files are generated artifacts. Modify topic commits with
-  `git rebase -i`/`git commit --amend`, then run
-  `dependencies/rebase-patches.sh`; never edit patch bytes manually.
-- Keep `dependencies/README.md` synchronized with source, version, patch,
-  recipe, prefix-policy, or prerequisite changes.
-
-## Linux patch-series policy
-
-`linux/` is ignored and is a separately managed replay checkout. It is not the
-outer repository's source of truth, and edits there must not be committed as
-the final change.
-
-- Linux must be materialized on a case-sensitive filesystem. The canonical
-  source is the pinned upstream stable repository/branch/full commit and
-  ordered policy under `kernel/mainline-6.18/patches/`.
-- Safe verification examples:
-
-  ```sh
-  kernel/mainline-6.18/scripts/prepare-source.sh --verify
-  kernel/mainline-6.18/scripts/audit-delta.sh --tree HEAD
-  kernel/mainline-6.18/scripts/verify-replay.sh --work-root /case-sensitive/path --skip-build
-  ```
-
-  Omit `--skip-build` for a fresh replay plus both production page-size builds.
-  Kernel compilation uses every online host processor by default; set
-  `UML_KERNEL_JOBS` or pass `--jobs N` only when an explicit resource limit is
-  required.
-- Kernel patch files are generated artifacts. Modify, reorder, or drop topic
-  commits only with Git rebase/amend, update the reviewed final-tree identity,
-  then run `kernel/mainline-6.18/scripts/rebase-patches.sh` to regenerate patch
-  bytes, the series manifest, stable IDs, hashes, subjects, and order. Update
-  delta ceilings, ownership/overlap/extraction metadata, and
-  `kernel/mainline-6.18/README.md` as applicable.
-- All maintained kernel changes stay local to this project. Next-base tooling
-  may recommend carrying, dropping, or rebasing a local topic; it must not
-  suggest submitting, uploading, or pushing one.
-- Preserve real timestamps, commit IDs, compiler metadata, build IDs, and
-  binary hashes as observations. Do not rewrite them to manufacture byte
-  equality.
-- `kernel/mainline-6.18/scripts/prepare-source.sh --recreate` is the only
-  supported way to replace a clean stale managed replay branch. Never replace
-  an arbitrary source tree.
-
-## ABI and generated copies
-
-There are two independent ABI domains:
-
-- Installed public API: declarations under `darwin/api/include/uml/`, identity
-  and history under `darwin/api/abi/`.
-- Host/Linux bridge: canonical declarations, identity, and history under
-  `kernel/common/abi/`.
-
-`kernel/common/abi/sync.sh` is the exact generated-copy authority. Its host outputs
-under `darwin/include/` are `uml_darwin_abi.h`,
-`uml_darwin_abi_identity.h`, `uml_darwin_cpu.h`, `uml_darwin_host.h`,
-`uml_darwin_memory.h`, `uml_darwin_network.h`, `uml_darwin_bridge.h`, and
-`uml/tlb_sync_ranges.h`; corresponding replay headers are generated too. Do
-not edit those copies directly.
-`darwin/include/uml_darwin_guest.h`, `uml_darwin_static_mmu.h`, and
-`uml_elf64.h` are authored host-only contracts, not sync outputs.
-
-- Use `kernel/common/abi/sync.sh --verify` for ordinary verification.
-- For an intentional declaration change, follow `kernel/common/abi/README.md`:
-  update only the affected ABI domain's version/fingerprint/history, run the
-  sync, and update the Linux topic only when the host/kernel bridge changed.
-- A public-only API change does not alter the kernel ABI or patch series.
-- Rebuild external C, C++, and Objective-C consumers after public API changes.
-
-## Architecture and implementation rules
-
-Preserve the enforced direction:
+Preserve this dependency direction:
 
 ```text
 app -> emulator / device
@@ -420,372 +53,131 @@ memory -> platform
 device -> memory / platform
 ```
 
-- No dependency cycles, engine-to-engine edges, CPU-to-device edges,
-  device-to-runtime edges, or lower-layer includes of composition layers.
-- Source manifests and targets belong to their owning directory.
-  `darwin/CMakeLists.txt` composes subdirectories; it does not own leaf source
-  lists. Add every new implementation source to its owning target.
-- Keep test-only hooks in test/support variants and out of production source
-  targets; source and runtime tests enforce that ownership without object-byte
-  proofs.
-- Do not introduce implementation-source includes (`.cpp`, `.cc`, `.cxx`,
-  `.inc`, `_impl.hpp`, or `.ipp`) in C/C++. The five-file gadget composer
-  exception described below is exact and mechanically audited. Assembly `.inc`
-  contracts are separately checked.
-- Outer host-project C implementation source is forbidden except the
-  intentional external package consumer at `tests/consumer/apple/main.c`.
-  Linux patch data naturally contains kernel C sources.
-- Do not leave source-adjacent `__pycache__`, `.pyc`, temporary audit output,
-  unowned sources, or empty first-party architecture directories.
-  The structural audit deliberately ignores `.DS_Store`, `__pycache__`,
-  `.pyc`, and `.pyo` as generated metadata, so incidental tool output does not
-  make an otherwise identical build fail; keep those paths Git-ignored.
+- Do not introduce dependency cycles, engine-to-engine edges, CPU-to-device
+  edges, device-to-runtime edges, or lower-layer includes of composition
+  layers.
+- Source manifests and targets live in their owning directories.
+  `darwin/CMakeLists.txt` composes subdirectories and does not own leaf source
+  lists.
+- Keep test-only hooks in test/support targets and out of production targets.
+- Do not include C/C++ implementation files. The audited gadget composer is
+  the sole `.ipp` exception; assembly `.inc` contracts are separate.
+- Host-project C implementation is forbidden except the external package
+  consumer at `tests/consumer/apple/main.c`.
+- Interpreter and gadget engines remain data-only. Executable allocation and
+  publication belong only to `darwin/cpu/arm64/jit/jit_arena.cpp`.
+- Keep generated ABI copies, kernel patches, and dependency patches under
+  their documented generators. Never edit generated output directly.
 
-Executable-memory policy:
+The detailed runtime, executable-memory, scheduling, device, and cache
+contracts live in [`docs/architecture.md`](docs/architecture.md) and subsystem
+READMEs rather than in this agent guide.
 
-- Interpreter and gadget engines remain data-only and sandbox-safe.
-- Only `darwin/cpu/arm64/jit/jit_arena.cpp` owns executable allocation,
-  RW-to-RX publication, JIT write protection, and instruction-cache
-  publication.
-- Direct native VM and ELF-loader paths are macOS-only in the general library
-  graph. The opt-in Kernarium composition also enables them for its embedded
-  iOS kernel. On both iOS device and Simulator, each selectable kernel ELF must
-  remain in its aligned, normally code-signed versioned framework `__TEXT`
-  carrier; the loader may alias only immutable executable pages from that
-  mapping and must reject relocations into them. Device and Simulator must
-  share the same signed image, dynamic load bias, and software-MMU layout for
-  each page profile. The app must embed every runtime framework without linking
-  any at process launch, then load exactly the selected flavour and profile.
-  Do not replace
-  this with anonymous executable pages, RW-to-RX
-  publication, debugger-only behavior, or a JIT entitlement. Simulator and
-  device use the signed carrier while macOS retains its established unsigned
-  loader behavior and high native-window placement. All three products use
-  the same scalable address mechanism and sparse guest profile.
-  The default macOS integration product and both 16 KiB iOS runtime slices
-  consume the same accepted 16 KiB mainline artifact. The macOS compatibility
-  product and both 4 KiB iOS runtime slices likewise consume the same accepted
-  4 KiB artifact; do not create a platform-specific Kbuild tree or kernel
-  image. Apple product graphs may only validate and embed already-built files.
-  The separate `uml-darwin-android17` product accepts an independently
-  validated 16 KiB ACK artifact and Android 17 rootfs release, embeds the ACK
-  6.18 ELF and the rootfs-manifest identity, and maps the static GPT only behind
-  a per-instance COW file. It has no 4 KiB variant and must not inherit Linux
-  desktop rootfs discovery. `UML_KERNEL_PRODUCT=android-17` selects the ACK
-  artifact for the Kernarium iOS runtime, which embeds that ELF in the same
-  signed `__TEXT` carrier and the independently selected rootfs manifest in
-  `__DATA,__uml_rootfs`. A kernel-only app update must not republish,
-  rename, or invalidate an existing rootfs bundle or its COW. The runtime still
-  boots only a guest bundle whose rootfs manifest matches the selected rootfs
-  copy byte for byte, appends
-  `--guest-top-byte-ignore` for Android's tagged pointers, injects no console
-  bootstrap, and attaches no overlay disk.
-- A Kernarium guest bundle is a `.kern` directory in the application's
-  Documents holding one guest's complete payload and its writable disk. The
-  extension is neutral about the operating system inside; the payload names the
-  flavour, and an incomplete payload is not offered for selection at all. An
-  Android bundle carries `release-manifest.json`,
-  `boot/kernel-command-line.txt`, and exactly one `guest/*.img`. That GPT image
-  owns kernelless boot-image-v4 `init_boot` and stock AOSP `recovery`
-  partitions plus writable `misc`; no standalone ramdisk is carried. UBD creates
-  `userdata.cow` beside them on first boot and reopens it afterwards, so guest
-  state accumulates inside the bundle rather than in disposable storage. A
-  bundle selected with the Android runtime fixes the only supported 16 KiB page
-  profile in the settings picker and at launch; the kernel itself is not bundle
-  payload.
-  When transferring one to a physical device, remember that
-  `devicectl device copy to` copies a source directory's *contents* into the
-  destination; it does not preserve the source directory as a wrapper. Pass
-  the `.kern` directory as the source and the complete
-  `Documents/<bundle-name>.kern` path as the destination. Never target
-  `Documents` itself: doing so either flattens `boot`, `guest`, and
-  `release-manifest.json` into Documents or, when a staged parent is used,
-  replaces the directory contents and destroys unrelated bundles and their
-  persistent COWs even without `--remove-existing-content`. Before transfer,
-  list Documents and record its existing siblings. After transfer, list it
-  again and recurse through the explicit bundle to verify that every sibling
-  remains, the wrapper and required payload exist, and `userdata.cow` is absent
-  for a fresh-boot measurement. Do not use `--remove-existing-content` against
-  Documents to repair a mistake.
-- UML's management console is the only channel that reaches a running guest
-  kernel, and the guest names its socket after the run's umid and never removes
-  it. The emulator therefore supplies a per-run `umid=` when the caller has not,
-  so every guest gets a console instead of only the first one on the host, and
-  owns the resulting path. `uml_emulator_sync()` asks the guest to write its
-  filesystems back and then flushes the host's files;
-  `uml_emulator_quiesce()` additionally freezes the guest between the two, and
-  `uml_emulator_resume()` thaws it. Kernarium flushes on losing focus, quiesces
-  on backgrounding and termination, and resumes on returning. A guest with magic
-  SysRq disabled ignores a writeback request silently, so Kernarium boots its
-  guests with `sysrq_always_enabled`; do not assume a request succeeded without
-  the guest's acknowledgement. Where the guest cannot bind a console the host
-  flush stands alone, which is the physical-iOS case.
-- The Kernarium launcher owns a named `uml-launcher` thread for the guest run.
-  It must not be the main thread: the run holds its thread for the guest's
-  whole life while the GPU service reaches the main queue as it starts, and
-  scheduling that run through Swift concurrency deadlocked exactly there once
-  the toolchain began inheriting caller isolation. The thread inherits the
-  main thread's SIGALRM block and the runtime reasserts it.
-  Keep the source architecture audit and supported iOS package/consumer builds
-  green.
+## Dependencies and kernel sources
 
-## Protected correctness and performance structures
+Production libraries come only from the verified private static prefixes.
+Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
+`pkg-config` discovery.
 
-Do not casually remove or reshape these accepted mechanisms:
+- `dependencies/prepare.sh` is the only dependency workflow allowed to access
+  the network. Prefer verification or `--no-fetch` when inputs already exist.
+- Dependency patch files are generated from Git topic branches. Regenerate
+  them with the owning script.
+- Kernel source must be materialized on a case-sensitive filesystem. The
+  ignored `kernel/mainline-6.18/source-location.conf` selects the managed
+  checkout for standalone kernel work.
+- `linux/` is an ignored replay checkout, not outer-repository source. Commit
+  kernel changes through the generated series under the owning versioned
+  kernel directory.
+- Use `prepare-source.sh --recreate` only for a clean stale managed replay.
+  Never replace an arbitrary source tree.
+- Maintained kernel changes are local to this project; tooling must not suggest
+  submitting, uploading, or pushing them.
 
-- **G99:** ThinLTO/IPO on `uml_arm64_gadgets`.
-- **G100:** exactly five audited decode-family `.ipp` files included only by
-  `darwin/cpu/arm64/gadgets/program_builder.cpp`.
-- **G140/G141 gadget locality:** destination residency is limited to
-  nonfaulting integer MLA runs with one nonaliasing v0-v7 destination and must
-  flush before every unaware instruction or translated boundary. A
-  same-generation code change resets every local direct and indirect link
-  activation; a stale decoded program may be reactivated only after exact,
-  page-bounded comparison of every consumed guest word. Generation changes,
-  mismatches, and fetch faults retain the ordinary invalidate/redecode path.
-- **G160 tagged gadget cache:** slots, direct links, and indirect sites all
-  carry the address space they describe, so switching address space does not
-  empty the cache. `UML_GADGET_RESIDENT_GENERATIONS` bounds residency and
-  retires the least recently current address space whole, including its slots,
-  links, and indirect sites; an unbounded pool is not a cache. An eviction
-  deactivates the link record of the slot's own address space, not of whichever
-  is running. A slot's memoised link record belongs to the address space the
-  slot names, and a store may hand the slot to a different one at the same
-  guest PC, so storing always rebinds; keeping the memo publishes the new
-  translation into the previous owner's record and leaves the slot naming
-  storage that owner's retirement destroys.
-- **G161 gadget translation sharing:** the contract that lets one gadget
-  executor adopt another's translation, bounded by
-  `UML_GADGET_SHARED_BUDGET_MIB`. `LinkRelocations` records every stream cell
-  holding a `BlockLink` or `IndirectLink` pointer, by the guest PC it names;
-  every builder site that emits one must go through `emit_link` or
-  `emit_indirect_link` so the record cannot drift from the stream. A canonical
-  entry retains zero in those cells, so a missed relocation faults rather than
-  branching into another executor's state, and a record that does not describe
-  its stream is refused at publication. Consumers resolve the cells against
-  their own records and current address space while copying the stream into
-  their own storage; executor addresses and mutable link state never enter the
-  store. Identity is the guest address, every guest word the build could have
-  consumed, and the complete code-generation profile, compared exactly rather
-  than by hash. Publication stays gated on two or more live executors. Nothing
-  may retain a pointer into the store past its shard lock, because publication
-  reclaims. `tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp`
-  destroys the producing executor before the consumer executes, so a
-  relocation defect is a sanitizer failure rather than a silent wrong answer.
-- **G121:** the `seq_cst` published per-thread `ActiveAccessSlot` lifecycle
-  protocol in `darwin/memory/mmu/address_space.cpp`.
-- **G123:** serialized Darwin `init_mm` synchronization and whole-16-KiB host
-  slot repair in the maintained Linux series, mutation-pinned by
-  `tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py`. Do not restore the
-  diagnostic pre-refactor rollback.
-- **Darwin vCPU carriers:** macOS, iOS Simulator, and iOS device use exactly one
-  persistent host carrier per configured vCPU, including vCPU0. Guest task
-  creation must not create pthreads; task contexts migrate on their Linux
-  kernel stacks, secondary hotplug reuses carriers, and shutdown returns to a
-  native carrier stack. Keep the `uml-vcpu-N-carrier` names, 100 Hz tick, and
-  `NO_HZ_IDLE` policy mechanically pinned. Pending Darwin IPIs must be serviced
-  from the IRQ-enabled arm64 spin checkpoint so synchronous cross-calls cannot
-  deadlock; do not execute them through an IRQ-disabled checkpoint or restore
-  asynchronous Linux IPI execution in the Darwin signal handler. Page-size
-  fragments must keep the
-  task-stack byte size equal at 128 KiB rather than restoring the 16 KiB
-  profile's former 512 KiB allocation. Those stacks are virtually mapped
-  (`CONFIG_VMAP_STACK=y`) on every kernel line, so they are backed by order-0
-  pages and no longer need a contiguous order-3 block each. Do not turn that
-  off: as physically contiguous allocations they pinned roughly 176 MiB of a
-  booted Android guest's zone in unmovable blocks and left it with no free
-  block at order 3 or above, 188 of 230 compaction attempts failing, and OOM
-  kills of healthy applications. It depends on the widened auxiliary window
-  above; at the former one-eighth allowance the vmapped stacks exhausted
-  vmalloc and panicked the guest.
-- **G133/G135:** the JIT cache geometry in
-  `darwin/cpu/arm64/jit/jit_cache_geometry.cpp` derives a fixed private working
-  set per executor from a whole-process budget that defaults to half of guest
-  memory. The complete private charge is capped at 64 MiB per executor; once
-  that ceiling is funded, only the process-global shared tier grows with guest
-  memory. The block cache and ordinary code arena remain one resource because
-  arena exhaustion clears the block cache. Publish total budget, executor
-  count, and private ceiling as one first-valid configuration, and keep all
-  eager and retained executor state within that ceiling: implementation/TLB,
-  block cache, fallback validation words, reverse direct-link index, fixed
-  indirect links, relocation scratch, and rounded arenas. The first arena block
-  that names a direct target allocates one compact activation anchor immediately
-  after its code; later sources reuse that target-PC anchor through the fixed
-  reverse index instead of duplicating mutable state. Arena reset therefore
-  retires code and anchors together. Indirect records remain fixed-capacity
-  stable storage. Any index/table refusal uses the semantic unlinked path and
-  is reported; it must not trigger unbudgeted growth.
-- **G134:** the relocation contract that lets one executor reuse another's
-  translation. `JitRelocation` records every literal cell that names
-  executor-owned link state. A canonical shared entry retains zero in those
-  cells plus neutral guest keys; `ExecutableArena::store_block` regenerates the
-  consumer's compact direct anchors and resolves indirect sites while copying
-  code into its private arena. Mutable activation state and executor addresses
-  never enter the shared cache. The pinning test in
-  `tests/unit/arm64/arm64_jit_cache_validation_tests.cpp` destroys the
-  compiling executor first so a missed relocation becomes a sanitizer failure
-  rather than a branch through freed state. The shared key includes the exact
-  consumed guest words and complete code-generation profile. Validate all
-  retained metadata before materialization and distinguish an exact lookup from
-  a successfully installed reuse. Publication stays gated on two or more live
-  executors; shard backing is allocated on first insertion and the production
-  cache is bounded by its process byte budget. A compilation whose emitted
-  shape was degraded by a requested-link refusal must not occupy a new
-  canonical key. Shared translations own immutable saved validation words;
-  every noncanonical block aliases its executor's already-budgeted fallback
-  slab.
-- **JIT executor pool:** one managed run owns at most the configured guest CPU
-  count of executors. Wrappers borrow them per guest entry; session tokens and
-  the bound code-generation profile prevent cross-run reuse, and the pool
-  drains before its runtime memory domain. Idle availability is one
-  cacheline-separated, lock-free exact-session token per slot; zero means
-  uncreated, borrowed, or drain-claimed, and tokens never wrap. Managed-session
-  reservation excludes standalone executor leases through teardown; only the
-  private pool construction path is authorized while the session is active. A pooled
-  executor may move to a new task-carrier `StaticGuestMemory` with the same
-  generation/change tuple, so
-  `memory.prepare()` must run for each distinct per-entry memory object while
-  executor-TLB preparation remains conditional on mapping changes. Reset that
-  prepared-memory identity at every begin/end execution boundary.
-- **Opt-in JIT reporting:** task carriers must format bounded records privately
-  and write directly to the stderr descriptor with interruption/partial-write
-  handling; do not acquire or flush the shared stderr `FILE`. Each formatted
-  buffer starts with an LF in the same descriptor write, so unrelated
-  unterminated PTY output cannot prefix the record schema. The embedded ELF
-  explicit boundary reports compile/overlap, executor pool, then shared after
-  carriers join and before the executor pool drains; the app may repeat the
-  same change-detected, idempotent facade. Compile/overlap and shared retain
-  normal-exit callbacks. Pool reporting is intentionally explicit-only because
-  its snapshot requires a quiescent pre-drain boundary. An unchanged state
-  emits no duplicate final. The optional
-  executor-pool mechanism trace stays profiling-build-only, aggregates ordinary
-  wrapper-local borrow records at that quiescent boundary without global hot-
-  path profiling atomics, and never emits raw sequence addresses. Successful
-  borrows accumulate bounded session/sequence slot masks; final aggregation
-  keys them by session and sequence so pointer reuse across runs cannot merge
-  identities. The pool reporter is called before the shared-cache reporter, so
-  the pool record precedes the shared record when both changed; either may be
-  silent independently. Its observed post-claim population is not a
-  linearizable global maximum. When the environment control is unset, wrappers
-  pass a null profile and skip the post-claim scan. Trace-build branches and
-  trace-enabled scans are diagnostic, so timings from that build are not score
-  evidence. The bounded pool line may exceed `PIPE_BUF`, but it is emitted only
-  at the quiescent final boundary and the descriptor writer resumes partial
-  writes.
+Let Git, compilers, linkers, Kbuild, and Xcode retain authentic timestamps,
+IDs, tool identities, and output hashes. Do not add reproducibility flags whose
+only purpose is normalizing incidental metadata.
 
-For hot-path changes, preserve guest-visible behavior, exception/fault
-priority, retirement counts, memory ordering, engine defaults, HWCAP exposure,
-assembly-visible layout, cache/link topology, and the single virtual call
-outside engine inner loops.
+## ABI changes
 
-Correctness tests alone do not prove unchanged performance. Use focused probes
-and matched measurements appropriate to the affected path, then record
-accepted and rejected trials, controls, and limitations in
-`docs/HOT_PATH_EXPERIMENTS.md`. Full Geekbench is a separate manual campaign, not an
-ordinary correctness gate. Keep `tests/perf/probes.tsv` exact when adding,
-renaming, or removing a performance probe.
+The installed public API and the host/Linux bridge are independent domains.
+Follow [`kernel/common/abi/README.md`](kernel/common/abi/README.md) and update
+only the affected domain's identity and history.
 
-## Test taxonomy and manifests
+- Canonical public declarations live under `darwin/api/include/uml/`.
+- Canonical bridge declarations live under `kernel/common/abi/`.
+- Use `kernel/common/abi/sync.sh --verify` for ordinary verification.
+- Rebuild C, C++, and Objective-C consumers after public API changes.
 
-- Every first-party CTest has exactly one primary suite: `unit`, `tooling`, or
-  `integration`.
-- Register tests only through `uml_add_unit_test`, `uml_add_tooling_test`,
-  `uml_add_integration_test`, or `uml_add_guest_integration_test` from
-  `cmake/UmlTesting.cmake`. Raw `add_test` is forbidden.
-- Unit tests are native C++/assembly and must not require Python, shell, the
-  CLI, a kernel, networking, or a rootfs. Tooling tests own repository/build
-  contracts and may use CMake, shell, or Python. Guest/rootfs/GUI/network tests
-  belong to integration.
-- Keep `tests/test-manifest.tsv` exact for every registration, semantic owner,
-  suite, and conditional disposition.
-- Preserve `tests/pre-refactor-test-inventory.txt`. Record renames and removals
-  in `tests/test-migration-ledger.tsv`; never silently drop baseline coverage.
-- Secondary domain labels and extra domain subdirectories are optional. The
-  enforced taxonomy is suite-level.
-- Input materialization is off by default and costs roughly 6.6 GiB per full
-  profile. Enable `UML_INSTRUCTION_INPUT_MATERIALIZATION` only for the explicit
-  evidence campaign. The official A64 semantics campaign can run for days and
-  is outside ordinary CTest.
-- Historical 983-entry evidence is not exhaustive variant correctness. Follow
-  the current completeness boundary in `docs/A64_INSTRUCTION_PROGRESS.md`.
+## Validation
 
-## Source-size policy
+Run the narrowest relevant test first, then the single canonical workflow that
+owns the changed behavior. Do not repeat equivalent matrices merely to create
+more evidence.
 
-The 800-line production, 600-line test/support, and 300-line CMake guidelines
-are advisory. A threshold crossing does not fail acceptance and is not by
-itself a reason to split cohesive generated-like, ordering-sensitive, or
-hot-path code. Optional rationale lives in `docs/source-size-reviews.tsv`;
-stale, duplicate, or malformed rows fail the audit because they make the report
-misleading.
+Common workflows are:
 
-## Documentation is part of every change
+```sh
+cmake --workflow --preset check-unit
+cmake --workflow --preset check-unit-4k
+cmake --workflow --preset check-integration
+cmake --workflow --preset check-integration-4k
+cmake --workflow --preset check-gpu
+cmake --workflow --preset check-loader-asan-ubsan
+```
 
-Keep project documentation under `docs/`. The repository root is reserved for
-`AGENTS.md`, its one-line `CLAUDE.md` link, and an optional `README.md`.
+Use an anchored expression for a focused CTest. Run both page profiles for
+page-size-sensitive CPU, memory, ABI, kernel, or guest changes. GPU/VNC,
+sanitizers, Apple packaging, Android, LTP, performance, external-network, and
+official A64 campaigns are opt-in and are required only when the change crosses
+their boundary. See [`docs/testing.md`](docs/testing.md).
 
-Keep documentation and manifests synchronized in the same change whenever
-their current contract changes. Do not copy every intermediate experiment or
-counter into every status document:
+Every CTest has exactly one primary suite: `unit`, `tooling`, or `integration`.
+Keep the current-state `tests/test-manifest.tsv` synchronized.
 
-- architecture, ownership, dependency direction, executable-memory policy, or
-  test taxonomy -> `docs/architecture.md` and the relevant module README;
-- presets, commands, options, prerequisites, suite selection, rootfs, guest,
-  sanitizer, package, or external-campaign behavior -> `docs/testing.md`;
-- Darwin layout or runtime contracts -> `darwin/README.md`;
-- dependency sources, versions, patches, recipes, prefix policy, or tools ->
-  `dependencies/README.md`;
-- Linux upstream Git identity, replay, topics, delta, toolchain, or build
-  policy -> `kernel/mainline-6.18/README.md`; kernel-family ownership ->
-  `kernel/README.md`;
-- public/kernel ABI -> `kernel/common/abi/README.md`, identities, histories,
-  generated copies, and consumers as applicable;
-- test registration or ownership -> `tests/test-manifest.tsv`, plus the
-  migration ledger for renames/removals;
-- instruction evidence or completeness -> `docs/A64_INSTRUCTION_PROGRESS.md`;
-- performance mechanism or measurement -> `docs/HOT_PATH_EXPERIMENTS.md`,
-  plus `docs/JIT_CACHE_HANDOFF.md` for JIT cache, arena and translation-sharing
-  work in progress. These two own intermediate, rejected, and default-off
-  experiment detail;
-- LTP policy or result -> `docs/LTP_PROGRESS.md`;
-- accepted supported default, baseline, or externally relevant limitation -> a
-  compact current-section update in `docs/REFACTOR_HANDOFF.md`, with
-  `docs/REFACTOR_PROGRESS.md` and `docs/refactor-evidence.md` updated only when
-  their summary/index truth changes. Prefer a link to the owning detailed
-  document over duplicating full counters in all three.
+## Documentation policy
 
-Do not rewrite dated historical evidence as though it were current. Record only
-checks actually run, distinguish a tested implementation commit from a later
-documentation-only commit, and state skipped or unavailable campaigns plainly.
+Documentation records durable current contracts and concise historical
+outcomes. Git history is the worklog.
 
-Update this `AGENTS.md` whenever repository layout, supported commands,
-invariants, generated-file ownership, or documentation responsibilities
-change. `CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
+- Do not add investigation diaries, handoff files, progress logs, temporary
+  failure analysis, machine-specific snapshots, or evidence indexes.
+- Remove temporary-state problems and their analysis once the durable result
+  is understood. Document only a continuing limitation or contract.
+- Explain decisions with a short outcome and its consequences. Do not preserve
+  exhaustive comparisons of rejected alternatives.
+- Keep code and command examples to the smallest canonical entry point needed
+  for quick use. Put detailed mechanics in scripts, `--help`, tests, or code.
+- Describe what a component guarantees, not the step-by-step history of how it
+  was implemented.
+- Keep attempted performance work only in
+  [`docs/optimization-history.md`](docs/optimization-history.md). Each entry is
+  a brief hypothesis, disposition, and durable lesson; omit raw logs,
+  temporary paths, build IDs, and full measurement tables.
+- Keep `AGENTS.md` limited to reusable repository-wide instructions. Put
+  product and subsystem contracts in their owning documentation, not incident
+  narratives here.
+- Prefer one owning document and links from other locations. Delete superseded
+  documents instead of retaining duplicate status summaries.
+- Keep project documentation under `docs/` or beside the subsystem it owns.
+  The repository root is reserved for `AGENTS.md`, the one-line `CLAUDE.md`
+  compatibility link, and an optional human-facing `README.md`.
 
-## Commit and workspace hygiene
+Update documentation in the same change whenever its current contract changes.
+`CLAUDE.md` must remain exactly one line containing `@AGENTS.md`.
 
-A completed feature or bug fix must end in a green, bisectable local commit.
-Once the relevant focused checks and the single applicable workflow pass,
-stage and commit the coherent change without waiting for a separate request.
-This is standing authorization for local commits at verified working states;
-it is not authorization to push or rewrite history.
+## Workspace and commit hygiene
 
-- Inspect `git status --short` before and after work. Preserve unrelated user
-  changes and do not stage them.
-- Treat each commit as an independently working checkpoint. Do not commit
-  temporary diagnostics, incomplete implementations, regressions introduced by
-  the change, or an emulator state that fails its applicable validation.
-- Keep logically distinct changes in separate commits, but include the tests,
-  documentation, manifests, ABI identities, and generated copies required by
-  the implementation in the same commit that changes their truth.
-- When an external prerequisite or permission prevents the required validation,
-  leave the change uncommitted and report the blocker.
-- Do not commit `.build/`, `linux/`, rootfs images, PDFs, IDE state, caches, or
-  generated build output.
-- Do not delete or overwrite a rootfs, replay checkout, dependency prefix, or
+- Do not commit build trees, kernel replay checkouts, rootfs images, caches,
+  IDE state, temporary reports, or generated runtime output.
+- Do not delete or overwrite a rootfs, dependency prefix, replay checkout, or
   another developer's artifacts without explicit authorization.
-- Keep pure moves, behavior changes, performance changes, and provenance or
-  generated-file updates independently reviewable.
-- Do not push, force-push, rebase, amend, or otherwise rewrite history unless
-  the user requests it.
-- Before handoff, report changed files, checks actually run, checks not run,
-  and remaining external prerequisites.
+- Keep pure moves, behavior changes, performance changes, and generated or
+  provenance updates independently reviewable when practical.
+- A completed feature or fix ends in a green, bisectable local commit after
+  applicable validation. This authorizes local commits, not pushing, rebasing,
+  amending, force-pushing, or rewriting history.
+- If a required external input or permission prevents validation, leave the
+  change uncommitted and report the prerequisite.
+- Before finishing, report changed files, checks run, checks not run, and any
+  remaining external prerequisites.

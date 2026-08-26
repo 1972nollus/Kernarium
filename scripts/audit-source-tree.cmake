@@ -729,17 +729,11 @@ endforeach()
 
 include("${SOURCE_ROOT}/cmake/SourceSizeReport.cmake")
 set(SOURCE_SIZE_ARGUMENTS
-    SOURCE_ROOT "${SOURCE_ROOT}"
-    REVIEW_MANIFEST "${SOURCE_ROOT}/docs/source-size-reviews.tsv"
-    OUT_ERRORS SOURCE_SIZE_METADATA_ERRORS)
+    SOURCE_ROOT "${SOURCE_ROOT}")
 if(DEFINED SOURCE_SIZE_REPORT AND NOT SOURCE_SIZE_REPORT STREQUAL "")
     list(APPEND SOURCE_SIZE_ARGUMENTS REPORT_PATH "${SOURCE_SIZE_REPORT}")
 endif()
 uml_report_source_sizes(${SOURCE_SIZE_ARGUMENTS})
-foreach(SOURCE_SIZE_METADATA_ERROR IN LISTS SOURCE_SIZE_METADATA_ERRORS)
-    list(APPEND VIOLATIONS
-        "source-size review metadata: ${SOURCE_SIZE_METADATA_ERROR}")
-endforeach()
 
 # Keep project documentation together. The root retains only the agent guide,
 # its compatibility link, and the conventional human-facing README.
@@ -758,17 +752,11 @@ foreach(ROOT_MARKDOWN_DOCUMENT IN LISTS ROOT_MARKDOWN_DOCUMENTS)
     endif()
 endforeach()
 
-# Active implementation/docs must use the neutral module vocabulary. Historical
-# planning and evidence archives are deliberately excluded from this terminology
-# check even though they now live with the active documentation under docs/.
+# Active implementation and documentation must use the neutral module vocabulary.
 file(GLOB_RECURSE TERMINOLOGY_FILES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/darwin/*"
     "${SOURCE_ROOT}/cmake/*"
     "${SOURCE_ROOT}/docs/*.md")
-list(REMOVE_ITEM TERMINOLOGY_FILES
-    "${SOURCE_ROOT}/docs/HOT_PATH_EXPERIMENTS.md"
-    "${SOURCE_ROOT}/docs/REFACTORING_PLAN.md"
-    "${SOURCE_ROOT}/docs/REFACTOR_HANDOFF.md")
 foreach(PATH IN LISTS TERMINOLOGY_FILES)
     if(IS_DIRECTORY "${PATH}")
         continue()

@@ -1,2 +1,0 @@
-baseline_name	current_name	disposition	rationale
-backend-native-entry-api	emulator-native-entry-api	renamed	public product and API moved from backend terminology to emulator terminology

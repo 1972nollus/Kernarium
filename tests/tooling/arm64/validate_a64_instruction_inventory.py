@@ -23,10 +23,6 @@ COLUMNS = [
     "three_engine_status",
 ]
 SECTION_COUNTS = {"Base": 516, "FP&SIMD": 467}
-LEDGER_ROW = re.compile(
-    r"^- \[x\] Spec \[x\] Interpreter \[x\] Gadget "
-    r"\[(?P<jit>[ x])\] JIT \[x\] Tests - (?P<body>.+)$"
-)
 THREE_ENGINE_STATUSES = {"pending", "verified"}
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
@@ -165,23 +161,6 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
-def ledger_rows(progress: Path) -> list[tuple[str, str, bool]]:
-    rows: list[tuple[str, str, bool]] = []
-    section: str | None = None
-    for line in progress.read_text(encoding="utf-8").splitlines():
-        if line.startswith("## Base instructions"):
-            section = "Base"
-        elif line.startswith("## SIMD and Floating-point instructions"):
-            section = "FP&SIMD"
-        elif section is not None and (match := LEDGER_ROW.fullmatch(line)):
-            label_and_description = match.group("body")
-            label, separator, _ = label_and_description.partition(": ")
-            if not separator:
-                fail(f"malformed ledger row: {line}")
-            rows.append((section, label, match.group("jit") == "x"))
-    return rows
-
-
 def validate_requirement(value: str, stable_id: str) -> None:
     if value == "baseline":
         return
@@ -204,7 +183,6 @@ def validate_requirement(value: str, stable_id: str) -> None:
 def main() -> int:
     repository = Path(__file__).resolve().parents[3]
     inventory = repository / "tests/unit/arm64/a64_instruction_inventory.tsv"
-    progress = repository / "docs/A64_INSTRUCTION_PROGRESS.md"
     # The feature representation is a neutral platform contract shared by the
     # Apple probe and CPU engines. Neither side owns the other's types.
     host_features = repository / "darwin/platform/host_capabilities.hpp"
@@ -288,25 +266,6 @@ def main() -> int:
         )
     if ids != expected_ids:
         fail("stable IDs are not contiguous in section order")
-
-    ledger = ledger_rows(progress)
-    expected_ledger = [(section, label) for section, label, _ in ledger]
-    if identities != expected_ledger:
-        mismatch = next(
-            (
-                index
-                for index, pair in enumerate(zip(identities, expected_ledger))
-                if pair[0] != pair[1]
-            ),
-            min(len(identities), len(expected_ledger)),
-        )
-        fail(f"inventory diverges from progress ledger at row {mismatch + 1}")
-    for row, (_, _, jit_complete) in zip(rows, ledger):
-        status_complete = row["three_engine_status"] == "verified"
-        if status_complete != jit_complete:
-            fail(
-                f"{row['stable_id']}: inventory status and ledger JIT box differ"
-            )
 
     print(
         "A64 instruction inventory valid: "

@@ -1,0 +1,200 @@
+# Optimization history
+
+This is the repository's single history of attempted performance work. Entries
+retain only the hypothesis, disposition, and durable lesson. They do not define
+current behavior; current contracts live in architecture and subsystem docs.
+
+`Accepted` means the useful mechanism remains or its result became product
+policy. `Rejected` means the candidate was removed or disabled. `Measured`
+means the work improved understanding without justifying a product change.
+
+## Early gadget and MMU trials
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| Trial 1 | Preserve gadget caches across address-space switches | Rejected; mixed results did not improve the aggregate. |
+| Trial 2 | Share immutable gadget programs across vCPUs | Rejected; shared-miss synchronization overwhelmed short parallel work. |
+| Trial 3 | Fixed set-associative cache with slab storage | Accepted; stable bounded storage removed full-cache clear cliffs. |
+| Trial 4 | Data-only successor links | Accepted; cached blocks can link without executable publication. |
+| Trial 5 | Specialized CMP/branch gadgets | Rejected after a marginal, workload-specific result. |
+| Trial 6 | Reduce syscall-boundary state copying | Accepted; persistent per-vCPU state removed redundant frame work while preserving migration semantics. |
+| Trial 7 | Batch cold fetches and pool translated programs | Accepted; cold process and translation workloads improved. |
+| Trial 8 | Larger gadget cache and translation window | Rejected; capacity was not limiting and the larger window did extra work. |
+| Trial 9 | Asynchronous Darwin UBD dispatch | Rejected as a performance change; correctness worked but cached benchmark work did not benefit. |
+| Trial 10 | Keep guest NEON values in host registers | Rejected; the target workloads rarely used the selected regions. |
+| Trial 11 | Vectorize bulk sparse-MMU translation | Rejected; sparse lookup and cached cross-page work dominated the vector setup. |
+
+## Geekbench-guided gadget work
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| G12 | One translation for same-page SIMD pairs | Accepted. |
+| G13 | One translation for same-page integer pairs | Accepted. |
+| G14 | Native host SIMD pair transfers | Accepted. |
+| G15 | Native host integer pair transfers | Accepted. |
+| G16 | Remove impossible scalar-byte page crossing | Accepted. |
+| G17 | Direct ADD/SUB-immediate gadget addressing | Rejected; instruction reduction alone did not improve runtime. |
+| G18 | Inline immutable direct-link records | Accepted. |
+| G19 | Inline indirect-link cells | Accepted. |
+| G20 | Pool link-map nodes | Rejected; added ownership cost without a useful gain. |
+| G21 | Longer linked-chain checkpoint | Rejected. |
+| G22 | Lightweight production builder callbacks | Rejected. |
+| G23 | Combine scalar page and TLB checks | Rejected. |
+| G24 | Predecode one-table SIMD lookup offsets | Accepted. |
+| G25 | Predecode indexed floating-point vector offsets | Accepted. |
+| G26 | Predecode basic vector floating-point offsets | Accepted. |
+| G27 | Predecode three-same SIMD offsets | Accepted. |
+| G28 | Predecode pairwise-long SIMD offsets | Rejected. |
+| G29 | Predecode widening and high-narrow SIMD offsets | Accepted. |
+| G30 | Dispatch-scoped native floating-point environment | Accepted. |
+| G31 | Single link-map lookup | Accepted. |
+| G32 | Bounded initial program reserve | Accepted. |
+| G33/G33b/G33c | Cache active-link pointers | Rejected; lifetime and invalidation costs outweighed lookup savings. |
+| G34 | Retain direct-link map nodes | Rejected for the same lifecycle pressure. |
+| G35 | Branch-free logical MOV alias | Accepted. |
+| G36 | Reuse ADD-immediate register-bank base | Rejected. |
+
+The workload profile behind these trials showed that memory translation was
+the broadest gadget cost, cold translation mattered most for compiler-style
+work, and several image workloads were dominated by pair-vector transfers.
+The detailed per-workload sample matrix was intentionally discarded.
+
+## Page size and native JIT campaign
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| G37 | Make 16 KiB the default guest page profile | Accepted; multi-core gains outweighed a small single-core cost, with 4 KiB retained for compatibility. |
+| G38-G41 | Smaller, one-way, wider, and folded 16 KiB TLBs | Rejected; direct-index conflicts or extra index work remained. |
+| G42 | Two-way 16 KiB gadget TLB | Accepted; it removed deterministic alias conflicts while keeping a short primary hit path. |
+| G43 | Strict native ARM64 JIT with host-safe feature exposure | Accepted. Pair-memory fast paths were separately rejected after instability or regression. |
+| G44 | Reduce generated-code expansion and validate stale blocks exactly | Retained; block-local register reuse and exact saved-word validation became the durable direction. |
+| G45 | Stateful native links and compact block boundaries | Accepted. |
+| G46 | Deferred architectural state with one-to-one native shapes | Accepted. |
+| G47 | Replace reservation serialization with a mutex | Rejected; convoy behavior worsened the gate. |
+| G48 | Native remapping and cold translation cleanup | Accepted where code shape and semantics stayed exact. |
+| G49 | Exact constants and constrained vector prebinding | Accepted. |
+| G50 | Plan consecutive vector-list registers at translation time | Accepted. |
+| G51 | Select resident GPRs from observed block use | Accepted. |
+| G52 | Compare JIT and gadgets under matched Geekbench | Measured; the JIT won serial work but exposed a global publication bottleneck in several parallel workloads. |
+| G53-G79 | Scale publication and recover gadget regressions | Accepted; ordinary stores became lock-free while uncommon reservation work retained synchronization. |
+| G80-G84 | Shared templates and alternate flat JIT caches | Rejected; ownership and working-set costs were not justified. |
+| G85 | Diagnose a JIT layout regression | Measured; large inline tables, not vCPU scheduling, caused the regression. |
+| G86-G88 | Restore compact cache hashing and descriptors | Accepted. |
+| G89 | Limit translated blocks to eight instructions | Rejected; short blocks sharply regressed compiler work. |
+| G90-G92 | Heap-backed tables and construction-time verification selection | Accepted; large per-vCPU initialization and production polling were removed. |
+| G93 | Always fetch the full translation window | Rejected; early termination remained valuable. |
+| G94 | Replace direct opcode checks with a lookup table | Rejected by a matched control; direct checks stayed faster. |
+| G95 | Final direct-check and desktop graphics baseline | Measured; confirmed the retained JIT state and removed the earlier scheduling concern. |
+
+## Gadget-first and cache-budget campaign
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| G96 | Define matched performance and code-layout controls | Accepted as campaign policy; later conclusions use focused controls rather than one noisy score. |
+| G97 | Hash page addresses across four batch-planner buckets | Accepted. |
+| G98 | Lower guest YIELD to host ISB in gadgets | Rejected; neutral aggregate and negative focused result. |
+| G99 | Enable interprocedural optimization for gadget code | Accepted. |
+| G100 | Compose five decode families in one translation unit | Accepted; this remains the audited `.ipp` exception. |
+| G101 | Resolve the address space once per thread | Accepted. |
+| G102 | Add ISB at JIT gate sites | Initial rejection withdrawn by G108 because the benchmark band was not established. |
+| G103 | Resolve the per-thread execution object once | Accepted. |
+| G104 | Use BFI/NEG for two gadget lowering patterns | Accepted on focused controls. |
+| G105 | Measure host issue ratios | Measured; used to rank later changes. |
+| G106 | Fold the vector-bank base into load displacement | Rejected; smaller code did not become faster. |
+| G107 | Hoist successor fetch | Accepted for the bounded safe family; broader polymorphic claims were not made. |
+| G108 | Establish the JIT noise band | Measured; retracted G102's unsupported rejection. |
+| G109 | Validate stale blocks in bulk | Accepted. |
+| G110 | Measure gadget-bank size headroom | Measured; prevented size assumptions from driving changes. |
+| G111 | Fuse CMP-immediate with B.cond | Accepted on a focused probe. |
+| G112 | Generalize fusion to destination-writing SUBS | Rejected. |
+| G113 | Measure adjacent instruction pairs | Measured; used to choose later fusions. |
+| G114 | Fold ADRP plus ADD | Accepted. |
+| G115 | Remove NOP entries | Not implemented; the evidence contract did not justify it. |
+| G116 | Profile instruction pairs over a full workload | Measured; corrected the NOP and conditional-pair priorities. |
+| G117 | Fuse register CMP with B.cond | Accepted; further fusion had a small ceiling. |
+| G118 | Replace the MMU miss structure with a radix table | Rejected before implementation after measurement disproved the premise. |
+| G119 | Remove the mapping lock from the miss path | Rejected; it produced no useful change. |
+| G120 | Isolate lifecycle-lease cost | Measured; identified the actual miss-path target. |
+| G121 | Replace the lease with a published per-thread access slot | Accepted. |
+| G122 | Use a FIFO ticket turn | Rejected as neutral. |
+| G123 | Serialize Darwin kernel mappings and repair whole host slots | Accepted as a correctness repair; no performance claim. |
+| G124 | Establish a post-migration baseline | Measured; an earlier PSI conclusion was withdrawn. |
+| G125 | Expose the host-safe guest feature surface | Accepted; vector workloads had been feature-starved. |
+| G126 | Requalify the feature surface end to end | Accepted. |
+| G127 | Investigate Text Processing scaling | Measured; the workload itself exposes limited parallelism, so no emulator change followed. |
+| G128 | Bound the possible value of a fixed vector bank | Measured in the JIT. |
+| G129 | Try gadget-shaped fixed-bank routes | One route was rejected and one required better instrumentation. |
+| G130 | Measure a fixed gadget vector bank | Measured; retained only as a possible bounded default-off prototype. |
+| G131 | Profile the JIT store gate | Measured; score-only evidence could not settle the ISB idea. |
+| G132 | Make the publication store scan lock-free | Accepted. |
+| G133 | Greatly enlarge JIT cache and arena | Superseded; it fixed thrash but used an unbounded per-executor shape. |
+| G134 | Share JIT translations between executors | Retained for bounded reuse and ownership; the measured throughput result was neutral to negative. |
+| G135 | Derive JIT cache geometry from one process budget | Accepted; corrected G133. |
+| G136 | Bound shared storage, reporting, and executor-pool state | Cache and reporting foundations retained; executor-pool performance A/Bs were rejected. |
+| G137 | Carry guest x8/x9 across JIT links | Focused-accepted but left default-off; no broad workload claim. |
+| G138 | Cap private JIT state and use compact link anchors | Accepted. |
+| G139 | Sweep smaller private-cache ceilings | Rejected below the retained 64 MiB ceiling. |
+
+## iOS, graphics, and later gadget work
+
+| ID | Attempt | Disposition and lesson |
+| --- | --- | --- |
+| G140 | Keep a bounded SIMD destination resident in gadgets | Accepted only for the proven nonfaulting family. |
+| G141 | Reuse stale gadget programs after exact word validation | Accepted. |
+| G142 | Share decoded gadget templates | Closed before implementation; the expected gain did not justify executable/code complexity. |
+| G143 | Profile gadget-engine time by category | Measured; guided the next candidate set. |
+| G144 | Ten post-profile gadget candidates | Rejected; none beat controls without unacceptable cost. |
+| G145 | Requalify common iOS-style memory and persistent carriers | Accepted architecture; a separate SDOT residency arm remained rejected. |
+| G146 | Requalify the 4 KiB high-address profile | Measured; no product change. |
+| G147 | Profile completed workloads on physical iPad | Measured; host service rate, not missing carriers, dominated. |
+| G148 | Compare page profiles with four vCPUs | Measured; no product change. |
+| G149 | Repeat slow iPad workloads | Measured; confirmed device-specific throughput limits. |
+| G150 | Check a 1.5 GiB physical-iPad workload subset | Measured as a fit result only; it did not establish desktop capacity or a speedup. |
+| G151 | Compare macOS and iPad regression traces | Measured; no product change. |
+| G152 | Compare equal guest instruction throughput across hosts | Measured; rejected a simple instruction-latency explanation. |
+| G153 | Run equal-work vector-store probes | Measured; rejected the HDR vector-store hypothesis. |
+| G154 | Vary vCPU count for iOS KDE bring-up | Measured; startup was limited by available guest CPUs rather than translation. |
+| G155 | Move the KDE text getty off the compositor VT | Accepted as a narrow launcher compatibility fix. |
+| G156 | Compare WebGL Aquarium at matched resolution | Measured; Simulator presentation was slower, with no immediate product change. |
+| G157 | Try JIT for Simulator Aquarium | Rejected; it was slower and did not address the dominant wait. |
+| G158 | Memoize gadget link records during reactivation | Accepted. |
+| G159 | Reset only activated gadget links | Rejected; the removed work was too small to matter. |
+| G160 | Keep several tagged address spaces in one gadget cache | Accepted; whole-cache switching was removed. |
+| G161 | Share gadget translations across executors | Mechanism retained as bounded data sharing, but the speed/memory optimization claim was rejected: adopting tiny programs cost more than rebuilding them. |
+| G162 | Inline a conditional branch's fall-through | Accepted and materially beneficial; broader noncontiguous continuation was rejected. |
+| G163 | Inline one direct-call callee | Accepted with one site per callee. |
+| G164 | Recheck cache and block-length work on Simulator | Measured; confirmed the retained direction. |
+| G165 | Profile Simulator Aquarium cache and CPU time | Measured; boot was cache/CPU-sensitive while steady frames were host-round-trip-limited. |
+| G166 | Add or fund a 512 MiB shared gadget tier | Rejected in both forms. |
+| G167 | Give each address space owned cache state | Accepted; retirement became proportional to owned entries. |
+| G168 | Recheck G167 on Simulator | Measured; confirmed startup benefits without a steady-frame claim. |
+| G169 | Cache the Darwin current-vCPU lookup | Accepted on the hot-path profile, not as a frame-rate claim. |
+| G170 | Decouple guest completion from host presentation | Retained as a correctness/latency boundary; it was performance-neutral and retracted an occlusion-biased native-display result. |
+| G171 | Attribute the Simulator/macOS Aquarium gap | Measured; synchronous Simulator framework round trips dominated, and the obvious batching change was rejected. |
+| G172 | Reduce UI-thread presentation work | Claim-before-drawable ordering accepted; fallback-buffer rotation and a separate presenter thread were not justified. |
+| G173 | Bulk-own gadget generation allocations | Accepted; removed allocator-heavy Android boot stalls. |
+| G174 | Rebind link state when a cache slot changes owner | Accepted correctness fix. |
+| G175 | Profile Android boot carriers and dependencies | Measured; ART/dependency work and A15 host service dominated, not missing carriers. |
+| G176 | Prototype asymmetric virtual CPUs | Feasible, but exact Apple core binding was unavailable through supported APIs. |
+| G177 | Qualify asymmetric topology | Rejected; it reduced useful scheduling capacity and regressed boot. Uniform vCPUs remain current. |
+
+## Android boot and memory investigations
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Matched cold/warm platform timing | Early Android startup was not the bottleneck; first-boot ART and package verification dominated. Exact one-off timing tables were not retained. |
+| Build-time ART placement | Accepted. Ordinary application artifacts are installed beside their APKs instead of being routed to an unbuilt `system_other` image. APEX-contained apps remain a separate platform boundary. |
+| ext4 Android payloads and APEXes | Accepted for the Android release; it removed EROFS-specific execution issues without changing Linux desktop rootfs policy. |
+| Anonymous host VM for Android RAM | Accepted. It removed file-pager churn from cold boot while preserving ordinary file-backed disk behavior. |
+| Full physical-device RAM wiring | Retained as fail-fast startup policy. A successful wire does not reserve all later framework/runtime headroom, so memory-limit qualification still uses real device outcomes. |
+| Apple asymmetric CPU topology | Rejected and reverted. Public topology/QoS hints could steer carriers but reduced useful Android capacity on the target device. |
+| Physical-device boot profiling | Measured. After RAM changes, the remaining gap is dominated by host execution and scheduling service for the full gadget/MMU working set. |
+
+## Graphics backend investigations
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Separate CGL/OpenGL and mobile renderer paths | Replaced by one authenticated ANGLE/Metal path across Apple products. |
+| Complete GLES 3.2 through existing APIs | Not viable as a single current Apple/Virgl path; the product claims only the qualified GLES boundary in [`graphics.md`](graphics.md). |
+| Add Vulkan by pairing Venus with MoltenVK | Not implemented. MoltenVK does not supply the missing Virtio-GPU blob/shared-memory protocol, synchronization, or lifetime model. |
+| CPU readback as native presentation | Retained only as a diagnostic fallback; sustained native qualification requires the Metal texture path. |
