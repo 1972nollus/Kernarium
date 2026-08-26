@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_sha3_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -215,20 +216,19 @@ void translation_specializes_operation_immediate_and_registers()
 			test::engine_tests::engine_test_code_base,
 			std::array{test::instruction(variant)});
 		const auto words = built.program.words();
-		const auto operands = test::four_sources(operation) ? 4U : 3U;
-		test::require(built.complete && words.size() > operands,
+		test::require(built.complete && words.size() == 4U,
 			"logical/rotation gadget stream is truncated");
 		const auto gadget = expected_gadget(operation, native);
 		test::require(words[0] == address(gadget),
 			"operation or host path remained in the runtime stream");
-		test::require(words[1] == vector_offset(registers.destination) &&
-				words[2] == vector_offset(registers.first) &&
-				words[3] == vector_offset(registers.second),
-			"register fields were not translated to direct offsets");
-		if (operands == 4U)
-			test::require(words[4] ==
-					vector_offset(registers.third),
-				"third register retained runtime decode");
+		const auto third = test::four_sources(operation) ?
+			vector_offset(registers.third) : 0U;
+		test::require(words[1] ==
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.first),
+					vector_offset(registers.second), third),
+			"register offsets were not packed during translation");
 		selected.insert(words[0]);
 	}
 	for (unsigned rotate = 0; rotate < 64U; ++rotate) {
@@ -241,15 +241,17 @@ void translation_specializes_operation_immediate_and_registers()
 			test::engine_tests::engine_test_code_base,
 			std::array{test::instruction(variant)});
 		const auto words = built.program.words();
-		test::require(built.complete && words.size() > 3U,
+		test::require(built.complete && words.size() == 4U,
 			"immediate rotation gadget stream is truncated");
 		test::require(words[0] == address(
 				expected_gadget(variant.operation, native, rotate)),
 			"rotation immediate remained in the runtime stream");
-		test::require(words[1] == vector_offset(registers.destination) &&
-				words[2] == vector_offset(registers.first) &&
-				words[3] == vector_offset(registers.second),
-			"rotation registers retained runtime decode");
+		test::require(words[1] ==
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.first),
+					vector_offset(registers.second)),
+			"rotation register offsets were not packed");
 		selected.insert(words[0]);
 	}
 	test::require(selected.size() == 67U,
@@ -291,7 +293,7 @@ void every_definition_is_reachable_and_branch_free()
 		}
 	test::require(definitions.size() == 134U,
 		"logical/rotation gadget table has a duplicate or missing entry");
-	test::require(maximum_native <= 9U && maximum_software <= 11U,
+	test::require(maximum_native <= 12U && maximum_software <= 14U,
 		"logical/rotation hot path exceeds its instruction budget");
 }
 

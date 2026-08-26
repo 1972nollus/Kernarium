@@ -5,6 +5,17 @@
 
 namespace uml::cpu::arm64::gadgets::selection {
 
+/* CpuState register operands are byte offsets, not host pointers. Every
+ * offset used by the gadget bank is bounded to 16 bits, so up to four of them
+ * share one naturally aligned stream cell while gadget and link pointers stay
+ * full width. */
+[[nodiscard]] constexpr std::uintptr_t packed_u16_operands(
+	std::uintptr_t first, std::uintptr_t second = 0,
+	std::uintptr_t third = 0, std::uintptr_t fourth = 0) noexcept
+{
+	return first | (second << 16) | (third << 32) | (fourth << 48);
+}
+
 [[nodiscard]] constexpr std::int64_t sign_extend(std::uint64_t value,
 						 unsigned bits) noexcept
 {
@@ -127,9 +138,10 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] constexpr std::uintptr_t arithmetic_binary_operand(
 	std::uint32_t instruction) noexcept
 {
-	return arithmetic_register_offset(instruction & 31U) |
-		(arithmetic_register_offset((instruction >> 5) & 31U) << 16) |
-		(arithmetic_register_offset((instruction >> 16) & 31U) << 32);
+	return packed_u16_operands(
+		arithmetic_register_offset(instruction & 31U),
+		arithmetic_register_offset((instruction >> 5) & 31U),
+		arithmetic_register_offset((instruction >> 16) & 31U));
 }
 
 [[nodiscard]] constexpr std::uintptr_t mops_operand(

@@ -1,3 +1,24 @@
+/* Direct CpuState vector offsets fit in 16 bits. Builders use these layouts
+ * whenever one instruction has multiple vector operands; gadget/link/helper
+ * pointers and full-width data remain separate stream cells. */
+.macro unpack_u16_2 packed, first, second
+	and \first, \packed, #0xffff
+	lsr \second, \packed, #16
+.endm
+
+.macro unpack_u16_3 packed, first, second, third
+	and \first, \packed, #0xffff
+	ubfx \second, \packed, #16, #16
+	lsr \third, \packed, #32
+.endm
+
+.macro unpack_u16_4 packed, first, second, third, fourth
+	and \first, \packed, #0xffff
+	ubfx \second, \packed, #16, #16
+	ubfx \third, \packed, #32, #16
+	lsr \fourth, \packed, #48
+.endm
+
 /* FMOV (immediate), decoded once by the builder into IEEE bits. */
 gadget floating_move_immediate
 	ldr x8, [_stream], #8
@@ -236,14 +257,13 @@ gadget floating_horizontal_\name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #\control_mask
 	b.ne .Lfloating_horizontal_scalar_binary_software_\@
-	ldp x8, x9, [_stream], #16
-	/* Consume the second offset while skipping the cold descriptor. */
-	ldr x10, [_stream], #16
+	ldr x11, [_stream], #16
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr \destination, [_cpu, x10]
 	.else
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr \destination, [_cpu, x10]
 	.endif
@@ -252,8 +272,8 @@ gadget floating_horizontal_\name
 	next_gadget
 	.if \control_mask
 .Lfloating_horizontal_scalar_binary_software_\@:
-	ldr x8, [_stream, #24]
-	add _stream, _stream, #32
+	ldr x8, [_stream, #8]
+	add _stream, _stream, #16
 	b .Lfloating_horizontal_ah_software
 	.endif
 .endm
@@ -271,14 +291,13 @@ gadget floating_horizontal_\name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #\control_mask
 	b.ne .Lfloating_horizontal_vector_software_\@
-	ldp x8, x9, [_stream], #16
-	/* Consume the second offset while skipping the cold descriptor. */
-	ldr x10, [_stream], #16
+	ldr x11, [_stream], #16
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	.else
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	.endif
@@ -287,8 +306,8 @@ gadget floating_horizontal_\name
 	next_gadget
 	.if \control_mask
 .Lfloating_horizontal_vector_software_\@:
-	ldr x8, [_stream, #24]
-	add _stream, _stream, #32
+	ldr x8, [_stream, #8]
+	add _stream, _stream, #16
 	b .Lfloating_horizontal_ah_software
 	.endif
 .endm
@@ -308,11 +327,12 @@ gadget floating_horizontal_\name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #\control_mask
 	b.ne .Lfloating_horizontal_scalar_pair_software_\@
-	ldp x8, x9, [_stream], #16
-	add _stream, _stream, #8
+	ldr x10, [_stream], #16
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
 	.else
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
 	.endif
 	\operation \destination, v0.\arrangement
@@ -320,8 +340,8 @@ gadget floating_horizontal_\name
 	next_gadget
 	.if \control_mask
 .Lfloating_horizontal_scalar_pair_software_\@:
-	ldr x8, [_stream, #16]
-	add _stream, _stream, #24
+	ldr x8, [_stream, #8]
+	add _stream, _stream, #16
 	b .Lfloating_horizontal_ah_software
 	.endif
 .endm
@@ -339,11 +359,12 @@ gadget floating_horizontal_\name
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tst w16, #\control_mask
 	b.ne .Lfloating_horizontal_reduce_software_\@
-	ldp x8, x9, [_stream], #16
-	add _stream, _stream, #8
+	ldr x10, [_stream], #16
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
 	.else
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
 	.endif
 	\operation \destination, v0.\arrangement
@@ -351,8 +372,8 @@ gadget floating_horizontal_\name
 	next_gadget
 	.if \control_mask
 .Lfloating_horizontal_reduce_software_\@:
-	ldr x8, [_stream, #16]
-	add _stream, _stream, #24
+	ldr x8, [_stream, #8]
+	add _stream, _stream, #16
 	b .Lfloating_horizontal_ah_software
 	.endif
 .endm
@@ -420,8 +441,8 @@ floating_horizontal_reduce_shapes fminnmv_ah, fminnmv, 1
 .macro floating_horizontal_absolute_native name, encoding
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	.inst \encoding
@@ -2563,15 +2584,13 @@ simd_integer_to_floating_fixed_variants ucvtf, ucvtf
 .purgem floating_fixed_table_end
 .purgem floating_fixed_table_begin
 
-/* Translation emits four direct CpuState vector offsets in destination,
+/* Translation packs four direct CpuState vector offsets in destination,
  * first multiplicand, second multiplicand, and addend order. */
 .macro floating_fused name, first, second, addend, destination, element, operation
 gadget \name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr x12, [_stream], #8
+	unpack_u16_4 x12, x8, x9, x10, x11
 	movi v3.16b, #0
 	ldr \first, [_cpu, x9]
 	ldr \second, [_cpu, x10]
@@ -2606,9 +2625,8 @@ floating_fused floating_nmsub_double, d0, d1, d2, d3, d, fnmsub
 .macro simd_fused name, operation, arrangement
 gadget simd_fused_\name
 	ensure_fp_environment
-	ldr x8, [_stream], #8
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x8]
@@ -2823,14 +2841,13 @@ simd_three_same_scalar sqrdmulh_s, sqrdmulh, s, 0, 1
 
 /* FEAT_RDM three-same-extra operations use the destination as the exact
  * accumulator. They are kept in dedicated symbols because their encoding
- * class is separate from ordinary three-same. Translation supplies three
- * direct CpuState offsets, so the valid native hot path does no field
- * extraction or address arithmetic. */
+ * class is separate from ordinary three-same. Translation packs three direct
+ * CpuState offsets in one stream cell. */
 .macro simd_rdm_direct name, operation, destination, left, right, load_destination, load_left, load_right
 gadget simd_three_same_\name
 	ensure_fp_environment
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	ldr \load_destination, [_cpu, x13]
 	ldr \load_left, [_cpu, x14]
 	ldr \load_right, [_cpu, x15]
@@ -2884,9 +2901,8 @@ gadget simd_rdm_software
  * the builder when the host extension is unavailable. */
 .macro simd_dot_vector name, operation, destination, sources, wide
 gadget simd_dot_vector_\name
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x11]
@@ -2912,9 +2928,8 @@ simd_dot_vector usdot_4s, usdot, 4s, 16b, 1
 
 .macro simd_dot_indexed name, operation, destination, sources, index, wide
 gadget simd_dot_indexed_\name\()_\destination\()_\index
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x11]
@@ -2989,9 +3004,8 @@ simd_dot_indexed_family usdot, usdot
 
 .macro simd_dot_vector_software name, signed_left, signed_right, wide
 gadget simd_dot_vector_\name\()_soft
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x11]
@@ -3017,9 +3031,8 @@ simd_dot_vector_software usdot_4s, 0, 1, 1
 
 .macro simd_dot_indexed_software name, signed_left, signed_right, shape, index, wide
 gadget simd_dot_indexed_\name\()_\shape\()_\index\()_soft
-	ldr x9, [_stream], #8
-	ldr x10, [_stream], #8
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x11]
@@ -3053,8 +3066,8 @@ simd_dot_indexed_software_family usdot, 0, 1
 
 .macro simd_matrix_native name, operation
 gadget simd_matrix_\name
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	ldr q2, [_cpu, x11]
@@ -3086,8 +3099,8 @@ simd_matrix_native usmmla, usmmla
 
 .macro simd_matrix_software name, signed_left, signed_right, unsigned_product
 gadget simd_matrix_\name\()_soft
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	ldr q16, [_cpu, x9]
@@ -3133,8 +3146,8 @@ gadget simd_widening_\name
 	.if \fpstate
 	ensure_fp_environment
 	.endif
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	.if \accumulate
@@ -3148,8 +3161,8 @@ gadget simd_widening_\name
 .macro simd_widening_scalar name, operation, destination, source, accumulate=0
 gadget simd_widening_\name
 	ensure_fp_environment
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	.if \accumulate
@@ -3178,13 +3191,12 @@ gadget simd_widening_\name
 	simd_widening_vector \name\()_4s,  \operation2, 2d, 2d, 4s
 .endm
 
-/* High-narrow streams carry three direct CpuState offsets.  Two stream loads
- * replace packed-field extraction in the runtime hot path; the upper-half
+/* High-narrow streams carry three packed CpuState offsets. The upper-half
  * forms alone load the old destination because lower-half forms clear it. */
 .macro simd_high_narrow_vector name, operation, destination, left, right, preserve=0
 gadget simd_widening_\name
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	.if \preserve
@@ -3530,12 +3542,12 @@ simd_unary_vector ursqrte_4s, ursqrte, 4s, 4s
 .purgem simd_unary_vector
 
 /* Translation-specialized Advanced SIMD bitwise operations. Register fields
- * become direct CpuState byte offsets in the stream, so the runtime path
- * performs no guest-register decoding or address formation. */
+ * become packed CpuState byte offsets in the stream, so the runtime only
+ * unpacks offsets rather than decoding guest registers or forming addresses. */
 .macro simd_bitwise_shape name, operation, arrangement, wide, accumulate=0
 gadget \name\()_\arrangement
-	ldp x9, x10, [_stream], #16
-	ldr x11, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x9, x10, x11
 	.if \wide
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
@@ -3573,7 +3585,8 @@ simd_bitwise simd_bif, bif, 1
  * half required by the 8-byte arrangement. */
 .macro simd_move_shape name, register
 gadget \name
-	ldp x9, x10, [_stream], #16
+	ldr x8, [_stream], #8
+	unpack_u16_2 x8, x9, x10
 	ldr \register\()2, [_cpu, x10]
 	str q2, [_cpu, x9]
 	next_gadget
@@ -3591,7 +3604,8 @@ simd_move_shape simd_mov_16b, q
  * no opcode decode, register-index arithmetic, or conditional branch. */
 .macro simd_aes_native_binary name, operation
 gadget \name\()_native
-	ldp x9, x10, [_stream], #16
+	ldr x8, [_stream], #8
+	unpack_u16_2 x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
 	\operation v0.16b, v1.16b
@@ -3601,7 +3615,8 @@ gadget \name\()_native
 
 .macro simd_aes_native_unary name, operation
 gadget \name\()_native
-	ldp x9, x10, [_stream], #16
+	ldr x8, [_stream], #8
+	unpack_u16_2 x8, x9, x10
 	ldr q1, [_cpu, x10]
 	\operation v0.16b, v1.16b
 	str q0, [_cpu, x9]
@@ -3610,7 +3625,8 @@ gadget \name\()_native
 
 .macro simd_aes_software name
 gadget \name\()_soft
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -3638,8 +3654,8 @@ simd_aes_software simd_aesimc
  * in a valid translated block. */
 .macro simd_sha_three name, operation, destination, first, second
 gadget \name
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x8]
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
@@ -3663,7 +3679,8 @@ simd_sha_three simd_sha512su1, sha512su1, v0.2d, v1.2d, v2.2d
 
 .macro simd_sha_two name, operation, destination, source
 gadget \name
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x8]
 	ldr q1, [_cpu, x9]
 	\operation \destination, \source
@@ -3684,8 +3701,8 @@ simd_sha_two simd_sha512su0, sha512su0, v0.2d, v1.2d
  * decoded by the threaded runtime. */
 .macro simd_sha_three_software name
 gadget \name\()_soft
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -3711,7 +3728,8 @@ simd_sha_three_software simd_sha512su1
 
 .macro simd_sha_two_software name
 gadget \name\()_soft
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
@@ -3730,8 +3748,8 @@ simd_sha_two_software simd_sha512su0
 
 .macro simd_sm_three name, operation
 gadget \name
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x8]
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
@@ -3747,8 +3765,8 @@ simd_sm_three simd_sm4ekey, sm4ekey
 .purgem simd_sm_three
 
 gadget simd_sm3ss1
-	ldp x8, x9, [_stream], #16
-	ldp x10, x11, [_stream], #16
+	ldr x12, [_stream], #8
+	unpack_u16_4 x12, x8, x9, x10, x11
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
 	ldr q3, [_cpu, x11]
@@ -3758,8 +3776,8 @@ gadget simd_sm3ss1
 
 .macro simd_sm3tt name, operation, index
 gadget simd_\name\()_\index
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x8]
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
@@ -3778,7 +3796,8 @@ gadget simd_\name\()_\index
 .purgem simd_sm3tt
 
 gadget simd_sm4e
-	ldp x8, x9, [_stream], #16
+	ldr x10, [_stream], #8
+	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x8]
 	ldr q1, [_cpu, x9]
 	sm4e v0.4s, v1.4s
@@ -3788,8 +3807,8 @@ gadget simd_sm4e
 /* Branch-free baseline-AdvSIMD fallbacks selected at translation time on
  * hosts without FEAT_SM3/FEAT_SM4. */
 gadget simd_sm3partw1_soft
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	add x13, _cpu, x8
 	ldr q0, [x13]
 	ldr q1, [_cpu, x9]
@@ -3818,8 +3837,8 @@ gadget simd_sm3partw1_soft
 	next_gadget
 
 gadget simd_sm3partw2_soft
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	add x13, _cpu, x8
 	ldr q0, [x13]
 	ldr q1, [_cpu, x9]
@@ -3841,8 +3860,8 @@ gadget simd_sm3partw2_soft
 	next_gadget
 
 gadget simd_sm3ss1_soft
-	ldp x8, x9, [_stream], #16
-	ldp x10, x11, [_stream], #16
+	ldr x12, [_stream], #8
+	unpack_u16_4 x12, x8, x9, x10, x11
 	add x13, _cpu, x8
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
@@ -3861,8 +3880,8 @@ gadget simd_sm3ss1_soft
 
 .macro simd_sm3tt_soft name, operation, index
 gadget simd_\name\()_\index\()_soft
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	add x13, _cpu, x8
 	ldr q0, [x13]
 	ldr q1, [_cpu, x9]
@@ -3978,7 +3997,8 @@ gadget simd_\name\()_\index\()_soft
 .endm
 
 gadget simd_sm4e_soft
-	ldp x4, x5, [_stream], #16
+	ldr x7, [_stream], #8
+	unpack_u16_2 x7, x4, x5
 	add x4, _cpu, x4
 	add x5, _cpu, x5
 	adr x6, simd_sm4_sbox_table
@@ -3993,8 +4013,8 @@ gadget simd_sm4e_soft
 	next_gadget
 
 gadget simd_sm4ekey_soft
-	ldp x4, x5, [_stream], #16
-	ldr x7, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x4, x5, x7
 	add x4, _cpu, x4
 	add x5, _cpu, x5
 	add x7, _cpu, x7
@@ -4034,8 +4054,8 @@ simd_sm4_sbox_table:
 
 .macro simd_four_source_logic name, operation, native, kind
 gadget \name
-	ldp x8, x9, [_stream], #16
-	ldp x10, x11, [_stream], #16
+	ldr x12, [_stream], #8
+	unpack_u16_4 x12, x8, x9, x10, x11
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
 	ldr q3, [_cpu, x11]
@@ -4060,8 +4080,8 @@ simd_four_source_logic simd_bcax_soft, bcax, 0, 1
 
 .macro simd_rax1 name, native
 gadget \name
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
 .if \native
@@ -4082,8 +4102,8 @@ simd_rax1 simd_rax1_soft, 0
 
 .macro simd_xar name, rotate, native
 gadget \name
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ldr x11, [_stream], #8
+	unpack_u16_3 x11, x8, x9, x10
 	ldr q1, [_cpu, x9]
 	ldr q2, [_cpu, x10]
 .if \native
@@ -4943,12 +4963,13 @@ simd_saturating_narrow_operation uqrshrn, urshl, uqxtn
 .purgem simd_saturating_narrow_shape
 
 /* Integer by-element operations use one native gadget for every operation,
- * arrangement, and lane index.  The builder resolves every encoding choice;
- * the hot path contains only register loads, the host operation, and stores. */
+ * arrangement, and lane index. The builder resolves every encoding choice;
+ * the hot path unpacks offsets, then performs register loads, the host
+ * operation, and stores. */
 .macro simd_indexed_same_shape name, operation, arrangement, element, index, wide, accumulate
 gadget simd_indexed_\name\()_\arrangement\()_\index
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	.if \accumulate
 	ldr q0, [_cpu, x13]
 	.endif
@@ -4979,8 +5000,8 @@ simd_indexed_same_family mul, mul, 0
 
 .macro simd_indexed_long_shape name, operation, narrow, wide, element, index, high, accumulate
 gadget simd_indexed_\name\()_\element\()_\high\()_\index
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	.if \accumulate
 	ldr q0, [_cpu, x13]
 	.endif
@@ -5015,8 +5036,8 @@ simd_indexed_long_family umull, umull, umull2, 0
 .macro simd_indexed_saturating_long_shape name, operation, narrow, wide, element, load_source, load_destination, index, shape, scalar, accumulate
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	.if \scalar
 	movi v0.16b, #0
 	movi v1.16b, #0
@@ -5059,8 +5080,8 @@ simd_indexed_saturating_long_family sqdmull, sqdmull, sqdmull2, 0
 .macro simd_indexed_saturating_high_shape name, operation, arrangement, element, load_source, index, shape, scalar, wide
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	.if \scalar
 	movi v1.16b, #0
 	ldr \load_source, [_cpu, x14]
@@ -5097,8 +5118,8 @@ simd_indexed_saturating_high_family sqrdmulh, sqrdmulh
 .macro simd_indexed_saturating_accumulate_high_shape name, operation, arrangement, element, load_source, load_destination, index, shape, scalar, wide
 gadget simd_indexed_\name\()_\element\()_\shape\()_\index
 	ensure_fp_environment
-	ldp x13, x14, [_stream], #16
-	ldr x15, [_stream], #8
+	ldr x8, [_stream], #8
+	unpack_u16_3 x8, x13, x14, x15
 	.if \scalar
 	movi v0.16b, #0
 	movi v1.16b, #0
@@ -5778,3 +5799,7 @@ gadget fp8_software
 	msr fpsr, x12
 1:
 	next_gadget
+
+.purgem unpack_u16_4
+.purgem unpack_u16_3
+.purgem unpack_u16_2

@@ -453,7 +453,7 @@ gadget compare_register_branch_\width\()_\name\()_linked
 gadget compare_register_branch_\width\()_\name\()_inline
 	ldr x8, [_stream], #8
 	ldr x19, [_stream], #8
-	ldr x20, [_stream], #8
+	lsr x20, x8, #48
 	ubfx x10, x8, #16, #16
 	ldr x15, [_cpu, x10]
 	ubfx x11, x8, #32, #16
@@ -562,10 +562,10 @@ gadget compare_immediate_branch_\width\()_\name\()_linked
 gadget compare_immediate_branch_\width\()_\name\()_inline
 	ldr x8, [_stream], #8
 	ldr x19, [_stream], #8
-	ldr x20, [_stream], #8
+	lsr x20, x8, #40
 	ubfx w10, w8, #8, #5
 	ldr x15, [_cpu, x10, lsl #3]
-	lsr x11, x8, #16
+	ubfx x11, x8, #16, #24
 	.if \bits64
 	subs xzr, x15, x11
 	.else
@@ -834,9 +834,11 @@ gadget test_branch_\polarity\()_linked
 
 /* Fall-through translated inline; see conditional_branch_inline. */
 gadget test_branch_\polarity\()_inline
-	ldp x8, x9, [_stream], #16
-	ldp x19, x20, [_stream]
-	add _stream, _stream, #16
+	ldr x8, [_stream], #8
+	ldr x9, [_stream], #8
+	ldr x19, [_stream], #8
+	lsr x20, x8, #16
+	and x8, x8, #0xffff
 	ldr x10, [_cpu, x8]
 	tst x10, x9
 	b.\condition 99f

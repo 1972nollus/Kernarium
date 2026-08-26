@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_matrix_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -108,16 +109,17 @@ void translation_resolves_host_choice_and_register_offsets()
 				std::array{test::instruction(mode, registers)},
 				{}, std::pmr::get_default_resource(), {}, options);
 			const auto words = built.program.words();
-			test::require(built.complete && words.size() == 6U,
+			test::require(built.complete && words.size() == 4U,
 				"matrix stream has an unexpected shape");
 			test::require(words[0] == address(
 					selected_gadget(mode, portable)),
 				"matrix host/form choice was not made in translation");
-			test::require(
-				words[1] == vector_offset(registers.destination) &&
-					words[2] == vector_offset(registers.left) &&
-					words[3] == vector_offset(registers.right),
-				"matrix stream retained encoded register indices");
+			test::require(words[1] ==
+					gadgets::selection::packed_u16_operands(
+						vector_offset(registers.destination),
+						vector_offset(registers.left),
+						vector_offset(registers.right)),
+				"matrix offsets were not packed during translation");
 		}
 }
 

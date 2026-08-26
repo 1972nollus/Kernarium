@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_fused_floating_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -125,18 +126,14 @@ void direct_operands_and_live_bank()
 			test::common::require(
 				built.program.words()[0] == expected_entry);
 			test::common::require(
-				built.program.words().size() >=
-					(form.scalar ? 5U : 4U));
+				built.program.words().size() == 4U);
 			test::common::require(built.program.words()[1] ==
-				vector_offset(registers.destination));
-			test::common::require(built.program.words()[2] ==
-				vector_offset(registers.left));
-			test::common::require(built.program.words()[3] ==
-				vector_offset(registers.right));
-			if (form.scalar)
-				test::common::require(
-					built.program.words()[4] ==
-						vector_offset(registers.addend));
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.left),
+					vector_offset(registers.right),
+					form.scalar ?
+						vector_offset(registers.addend) : 0U));
 			selected.insert(expected_entry);
 		}
 	});
@@ -168,7 +165,7 @@ void direct_operands_and_live_bank()
 		test::common::require(shape.conditional_branches <=
 			(scalar ? 2U : 1U));
 		test::common::require(shape.instructions <=
-			(scalar ? 22U : 14U));
+			(scalar ? 25U : 16U));
 	}
 }
 

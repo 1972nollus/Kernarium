@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_fixed_transform_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <algorithm>
@@ -146,23 +147,21 @@ void check_stream(std::uint32_t instruction, Gadget native, Gadget software,
                   const std::array<unsigned, count> &registers,
                   std::set<std::uintptr_t> &selected,
                   std::set<std::uintptr_t> &portable) {
-  const auto expected_offsets = [&] {
-    std::array<std::uintptr_t, count> result{};
-    for (unsigned index = 0; index < count; ++index)
-      result[index] = vector_offset(registers[index]);
-    return result;
-  }();
+  std::array<std::uintptr_t, 4> expected_offsets{};
+  for (unsigned index = 0; index < count; ++index)
+    expected_offsets[index] = vector_offset(registers[index]);
   for (const bool forced : {false, true}) {
     const auto built = build(instruction, forced);
     const auto words = built.program.words();
-    test::require(built.complete && words.size() == count + 3U,
+    test::require(built.complete && words.size() == 4U,
                   "fixed transform stream shape is not exact");
     const auto expected_gadget = !forced && host_native ? native : software;
     test::require(words[0] == address(expected_gadget),
                   "fixed transform host path remained at runtime");
-    for (unsigned index = 0; index < count; ++index)
-      test::require(words[index + 1U] == expected_offsets[index],
-                    "fixed transform register retained runtime decode");
+    test::require(words[1] == gadgets::selection::packed_u16_operands(
+                                  expected_offsets[0], expected_offsets[1],
+                                  expected_offsets[2], expected_offsets[3]),
+                  "fixed transform offsets were not packed");
     (forced ? portable : selected).insert(words[0]);
   }
 }
@@ -238,11 +237,12 @@ void baseline_regression_stream_consumes_every_operand() {
   const auto built = build(instruction, false);
   const auto words = built.program.words();
   test::require(
-      built.complete && words.size() == 6U,
+      built.complete && words.size() == 4U,
       "baseline regression stream has mismatched producer/consumer shape");
-  test::require(words[1] == vector_offset(0) && words[2] == vector_offset(1) &&
-                    words[3] == vector_offset(2),
-                "baseline regression stream retained packed register fields");
+  test::require(words[1] == gadgets::selection::packed_u16_operands(
+                                  vector_offset(0), vector_offset(1),
+                                  vector_offset(2)),
+                "baseline regression offsets were not packed");
 }
 
 [[nodiscard]] constexpr bool
@@ -319,9 +319,9 @@ void every_definition_is_unique_branch_free_and_bounded() {
   test::require(
       definitions.size() == 70U,
       "fixed transform gadget definition is duplicate or unreachable");
-  test::require(maximum_native <= 9U,
+  test::require(maximum_native <= 12U,
                 "native fixed transform gadget exceeds instruction budget");
-  test::require(maximum_helper_software <= 12U,
+  test::require(maximum_helper_software <= 13U,
                 "portable helper gadget exceeds instruction budget");
   test::require(maximum_vector_software <= 128U,
                 "portable vector gadget exceeds instruction budget");

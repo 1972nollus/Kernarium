@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_bit_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -94,40 +95,36 @@ void production_specialization()
 			const auto regular = gadgets::Builder{}.build(
 				base, std::array{test::instruction(
 					wide, operation, 3, 7)});
-			if (!regular.complete ||
-			    regular.program.words().size() != 5U)
-				std::fprintf(stderr,
-					"unexpected ordinary stream width=%u op=%u complete=%u words=%zu\n",
-					wide ? 64U : 32U, operation,
-					regular.complete ? 1U : 0U,
-					regular.program.words().size());
 			require(regular.complete &&
-					regular.program.words().size() == 5U,
-				"ordinary bit operation was not lowered to one gadget and two offsets");
+					regular.program.words().size() == 4U,
+				"ordinary bit operation has unexpected packed stream shape");
 			require(regular.program.words()[1] ==
-					offsetof(uml::cpu::arm64::CpuState,
-						 registers) +
-						3U * sizeof(std::uint64_t),
-				"source register was not decoded at translation time");
-			require(regular.program.words()[2] ==
-					offsetof(uml::cpu::arm64::CpuState,
-						 registers) +
-						7U * sizeof(std::uint64_t),
-				"destination register was not decoded at translation time");
+					gadgets::selection::packed_u16_operands(
+						offsetof(uml::cpu::arm64::CpuState,
+							registers) +
+							3U * sizeof(std::uint64_t),
+						offsetof(uml::cpu::arm64::CpuState,
+							registers) +
+							7U * sizeof(std::uint64_t)),
+				"register offsets were not packed at translation time");
 			entries.insert(regular.program.words().front());
 
 			const auto zero_source = gadgets::Builder{}.build(
 				base, std::array{test::instruction(
 					wide, operation, 31, 7)});
 			require(zero_source.complete &&
-					zero_source.program.words().size() == 5U,
+					zero_source.program.words().size() == 4U,
 				"zero-source bit operation has unexpected stream shape");
 			require(zero_source.program.words().front() ==
 					regular.program.words().front(),
 				"zero source selected a redundant runtime gadget");
 			require(zero_source.program.words()[1] ==
-					offsetof(uml::cpu::arm64::CpuState,
-						 gadget_zero),
+					gadgets::selection::packed_u16_operands(
+						offsetof(uml::cpu::arm64::CpuState,
+							gadget_zero),
+						offsetof(uml::cpu::arm64::CpuState,
+							registers) +
+							7U * sizeof(std::uint64_t)),
 				"zero source was not resolved at translation time");
 
 			const auto discarded = gadgets::Builder{}.build(

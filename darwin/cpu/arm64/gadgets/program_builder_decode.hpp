@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory_resource>
 #include <span>
 #include <vector>
@@ -142,34 +143,50 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	}
 }
 
-/* As above, for the branches that read a register operand first. */
-[[nodiscard]] inline bool emit_inlined_compare_branch(
+/* Pack an inline suffix into a zero high-bit range of an operand. The bound
+ * includes the two 64-instruction windows an inlined call can add after this
+ * run, so the builder falls back to an ordinary terminal branch before a
+ * public caller's unusually large input could overlap live operand bits. */
+[[nodiscard]] inline bool emit_inlined_packed_compare_branch(
 	DecodeContext &context, selection::Gadget gadget,
-	std::uintptr_t operand, std::uint64_t target, std::size_t retires = 1)
+	std::uintptr_t operand, std::uint64_t target, std::uint8_t suffix_shift,
+	std::size_t retires = 1)
 {
+	constexpr std::size_t maximum_inlined_tail = 128;
+	const auto suffix_maximum =
+		std::numeric_limits<std::uintptr_t>::max() >> suffix_shift;
 	if constexpr (!inline_conditional_fallthrough)
 		return false;
-	else if (gadget == nullptr || context.suffixes == nullptr ||
+	else if (gadget == nullptr || suffix_shift == 0 ||
+		 (operand >> suffix_shift) != 0 ||
+		 context.following.size() >
+			suffix_maximum - maximum_inlined_tail ||
+		 context.suffixes == nullptr ||
 		 context.suffixes->full())
 		return false;
 	else {
 	selection::emit(context.words, gadget);
+	context.suffixes->add(context.words.size(),
+		context.retired_before_run + context.compiled + retires,
+		suffix_shift);
 	selection::emit(context.words, operand);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(),
-		context.retired_before_run + context.compiled + retires);
-	context.words.push_back(0);
 	return true;
 	}
 }
 
-/* CBZ/CBNZ alone have a plain CpuState register offset that is small enough
- * to share one cell with the translated suffix. Fused CMP+B.cond sites use
- * the generic helper above: their operand carries instruction fields outside
- * the low 16 bits and their gadgets consume a separate suffix cell. */
 [[nodiscard]] inline bool emit_inlined_compare_zero_branch(
 	DecodeContext &context, selection::Gadget gadget,
 	std::uintptr_t operand, std::uint64_t target, std::size_t retires = 1)
+{
+	return emit_inlined_packed_compare_branch(
+		context, gadget, operand, target, 16, retires);
+}
+
+[[nodiscard]] inline bool emit_inlined_test_branch(
+	DecodeContext &context, selection::Gadget gadget,
+	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,
+	std::size_t retires = 1)
 {
 	if constexpr (!inline_conditional_fallthrough)
 		return false;
@@ -182,29 +199,8 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source)
 	context.suffixes->add(context.words.size(),
 		context.retired_before_run + context.compiled + retires, 16);
 	selection::emit(context.words, operand);
-	emit_link(context, target);
-	return true;
-	}
-}
-
-[[nodiscard]] inline bool emit_inlined_test_branch(
-	DecodeContext &context, selection::Gadget gadget,
-	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,
-	std::size_t retires = 1)
-{
-	if constexpr (!inline_conditional_fallthrough)
-		return false;
-	else if (gadget == nullptr || context.suffixes == nullptr ||
-		 context.suffixes->full())
-		return false;
-	else {
-	selection::emit(context.words, gadget);
-	selection::emit(context.words, operand);
 	selection::emit(context.words, mask);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(),
-		context.retired_before_run + context.compiled + retires);
-	context.words.push_back(0);
 	return true;
 	}
 }

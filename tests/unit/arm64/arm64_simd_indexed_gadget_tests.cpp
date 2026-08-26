@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_indexed_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -318,15 +319,14 @@ void every_form_uses_direct_offsets_and_no_gadget_is_dead()
 						words[1] == encoded,
 						"non-RDM host did not select exact software helper");
 				} else {
-					test::require(words.size() == 6U,
+					test::require(words.size() == 4U,
 						"multiply gadget stream has unexpected shape");
 					test::require(words[1] ==
-							vector_offset(current.destination) &&
-						words[2] ==
-							vector_offset(current.left) &&
-						words[3] ==
-							vector_offset(current.right),
-						"register fields were not translated to direct offsets");
+							gadgets::selection::packed_u16_operands(
+								vector_offset(current.destination),
+								vector_offset(current.left),
+								vector_offset(current.right)),
+						"register offsets were not packed during translation");
 				}
 				selected.insert(words[0]);
 			}
@@ -343,14 +343,14 @@ void every_form_uses_direct_offsets_and_no_gadget_is_dead()
 				"saturating hot path needs exactly one FP activation branch");
 			test::require(shape.calls == 1U,
 				"saturating hot path needs exactly one cold activation call");
-			test::require(shape.instructions <= 14U,
+			test::require(shape.instructions <= 16U,
 				"saturating hot path exceeds instruction budget");
 		} else {
 			test::require(shape.conditional_branches == 0U,
 				"ordinary multiply hot path contains a conditional branch");
 			test::require(shape.calls == 0U,
 				"ordinary multiply hot path contains a call");
-			test::require(shape.instructions <= 9U,
+			test::require(shape.instructions <= 11U,
 				"ordinary multiply hot path exceeds instruction budget");
 		}
 	}

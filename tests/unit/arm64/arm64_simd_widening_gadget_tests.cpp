@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_widening_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -119,17 +120,18 @@ void every_form_uses_one_direct_offset_gadget()
 				test::require(built.complete,
 					"allocated widening instruction did not build");
 				const auto words = built.program.words();
-				test::require(words.size() == 6U,
+				test::require(words.size() == 4U,
 					"widening gadget stream has an unexpected shape");
 				const auto selected_gadget =
 					expected_gadgets[operation][unsigned_values][shape];
 				test::require(words[0] == address_of(selected_gadget),
 					"operation or arrangement was not selected in translation");
 				test::require(words[1] ==
-						vector_offset(registers.destination) &&
-						words[2] == vector_offset(registers.left) &&
-						words[3] == vector_offset(registers.right),
-					"register fields were not translated to direct offsets");
+						gadgets::selection::packed_u16_operands(
+							vector_offset(registers.destination),
+							vector_offset(registers.left),
+							vector_offset(registers.right)),
+					"register offsets were not packed during translation");
 				selected.insert(words[0]);
 			}
 	test::require(expected.size() == 72U,
@@ -181,7 +183,7 @@ void every_hot_path_is_minimal_and_branch_free()
 				const unsigned expected_count =
 					test::operations[operation] ==
 						test::Operation::absolute_accumulate ?
-					9U : 8U;
+					11U : 10U;
 				test::require(instructions_to_dispatch(gadget) ==
 						expected_count,
 					"widening gadget has unexpected runtime work");

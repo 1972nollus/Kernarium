@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_bitwise_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -90,15 +91,17 @@ void production_specialization() {
       const auto built = gadgets::Builder{}.build(
           base, std::array{bitwise::instruction(
                     q, static_cast<bitwise::Operation>(operation), registers)});
-      require(built.complete && built.program.words().size() == 6U,
+      require(built.complete && built.program.words().size() == 4U,
               "ordinary bitwise instruction has an unexpected stream shape");
       require(built.program.words()[0] ==
                   address_of(expected_gadgets[operation][q ? 1U : 0U]),
               "operation or arrangement was not specialized in translation");
-      require(built.program.words()[1] == vector_offset(registers.destination) &&
-                  built.program.words()[2] == vector_offset(registers.left) &&
-                  built.program.words()[3] == vector_offset(registers.right),
-              "register fields were not translated to direct CpuState offsets");
+      require(built.program.words()[1] ==
+                  gadgets::selection::packed_u16_operands(
+                      vector_offset(registers.destination),
+                      vector_offset(registers.left),
+                      vector_offset(registers.right)),
+              "register offsets were not packed during translation");
     }
 
   for (const bool q : {false, true}) {
@@ -107,13 +110,14 @@ void production_specialization() {
                   q, bitwise::Operation::bit_or, {5, 9, 9})});
     const auto expected =
         q ? uml_arm64_gadget_simd_mov_16b : uml_arm64_gadget_simd_mov_8b;
-    require(moved.complete && moved.program.words().size() == 5U,
+    require(moved.complete && moved.program.words().size() == 4U,
             "MOV alias has an unexpected stream shape");
     require(moved.program.words()[0] == address_of(expected),
             "MOV alias retained the generic two-source operation");
-    require(moved.program.words()[1] == vector_offset(5) &&
-                moved.program.words()[2] == vector_offset(9),
-            "MOV alias retained encoded register indices");
+    require(moved.program.words()[1] ==
+                gadgets::selection::packed_u16_operands(
+                    vector_offset(5), vector_offset(9)),
+            "MOV alias offsets were not packed during translation");
   }
 
   const auto ordinary_nop =
@@ -133,11 +137,12 @@ void production_specialization() {
       base, std::array{bitwise::instruction(
                 false, bitwise::Operation::bit_or, {9, 9, 9})});
   require(narrow_self_move.complete &&
-              narrow_self_move.program.words().size() == 5U &&
+              narrow_self_move.program.words().size() == 4U &&
               narrow_self_move.program.words().front() ==
                   address_of(uml_arm64_gadget_simd_mov_8b) &&
-              narrow_self_move.program.words()[1] == vector_offset(9) &&
-              narrow_self_move.program.words()[2] == vector_offset(9),
+              narrow_self_move.program.words()[1] ==
+                  gadgets::selection::packed_u16_operands(
+                      vector_offset(9), vector_offset(9)),
           "narrow self MOV lost its required upper-half clear");
 }
 

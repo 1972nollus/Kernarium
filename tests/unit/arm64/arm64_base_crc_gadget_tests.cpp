@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_crc_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -124,27 +125,12 @@ void exact_translation_selection_and_stream_shape(bool force_software)
 				"checksum implementation was not selected in translation");
 			const auto destination_offset =
 				offsetof(arm64::CpuState, registers) + 23U * 8U;
-			if (accumulator != 31U && source != 31U &&
-			    accumulator != source) {
-				require(words.size() == 6U &&
-						words[1] == accumulator * 8U &&
-						words[2] == source * 8U &&
-						words[3] == destination_offset,
-					"two-source checksum fields were not "
-					"resolved during translation");
-			} else if (accumulator == 31U && source == 31U) {
-				require(words.size() == 4U &&
-						words[1] == destination_offset,
-					"zero-source checksum retained runtime fields");
-			} else {
-				const auto live = accumulator == 31U ?
-					source : accumulator;
-				require(words.size() == 5U &&
-						words[1] == live * 8U &&
-						words[2] == destination_offset,
-					"single-source checksum fields were not "
-					"resolved during translation");
-			}
+			const auto expected_operand =
+				gadgets::selection::arithmetic_binary_operand(instruction);
+			require(words.size() == 4U &&
+					words[1] == expected_operand &&
+					(expected_operand & 0xffffU) == destination_offset,
+				"checksum fields were not packed during translation");
 			entries.insert(words[0]);
 
 			const auto discard = build(

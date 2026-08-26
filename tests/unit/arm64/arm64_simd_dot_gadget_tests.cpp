@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_dot_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -226,14 +227,16 @@ void translation_specializes_every_form()
 				std::array{test::instruction(
 					test::Form::vector, mode, q, registers)});
 			const auto words = built.program.words();
-			test::require(built.complete && words.size() == 6U,
+			test::require(built.complete && words.size() == 4U,
 				"dot vector stream has an unexpected shape");
 			test::require(words[0] == address(vector_gadget(mode, q)),
 				"dot vector host/form choice was not made in translation");
-			test::require(words[1] == vector_offset(registers.destination) &&
-					words[2] == vector_offset(registers.left) &&
-					words[3] == vector_offset(registers.right),
-				"dot vector retained encoded register indices");
+			test::require(words[1] ==
+					gadgets::selection::packed_u16_operands(
+						vector_offset(registers.destination),
+						vector_offset(registers.left),
+						vector_offset(registers.right)),
+				"dot vector offsets were not packed");
 			selected.insert(words[0]);
 		}
 	for (const auto mode : test::indexed_modes)
@@ -244,16 +247,17 @@ void translation_specializes_every_form()
 						test::Form::indexed, mode, q,
 						registers, index)});
 				const auto words = built.program.words();
-				test::require(built.complete && words.size() == 6U,
+				test::require(built.complete && words.size() == 4U,
 					"dot indexed stream has an unexpected shape");
 				test::require(words[0] ==
 						address(indexed_gadget(mode, q, index)),
 					"dot indexed host/form choice was not made in translation");
-				test::require(
-					words[1] == vector_offset(registers.destination) &&
-						words[2] == vector_offset(registers.left) &&
-						words[3] == vector_offset(registers.right),
-					"dot indexed retained encoded register indices");
+				test::require(words[1] ==
+						gadgets::selection::packed_u16_operands(
+							vector_offset(registers.destination),
+							vector_offset(registers.left),
+							vector_offset(registers.right)),
+					"dot indexed offsets were not packed");
 				selected.insert(words[0]);
 			}
 	test::require(selected.size() == 38U,

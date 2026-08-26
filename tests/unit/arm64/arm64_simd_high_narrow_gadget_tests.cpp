@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_high_narrow_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -108,20 +109,17 @@ void every_form_uses_one_direct_offset_gadget()
 			test::require(built.complete,
 				"allocated high-narrow instruction did not build");
 			const auto words = built.program.words();
-			if (words.size() != 6U)
-				std::fprintf(stderr,
-					"high-narrow stream words=%zu operation=%u shape=%u\n",
-					words.size(), operation, shape);
-			test::require(words.size() == 6U,
+			test::require(words.size() == 4U,
 				"high-narrow gadget stream has an unexpected shape");
 			test::require(words[0] ==
 					address_of(expected_gadgets[operation][shape]),
 				"operation or arrangement was not selected in translation");
 			test::require(words[1] ==
-					vector_offset(registers.destination) &&
-					words[2] == vector_offset(registers.left) &&
-					words[3] == vector_offset(registers.right),
-				"register fields were not translated to direct offsets");
+					gadgets::selection::packed_u16_operands(
+						vector_offset(registers.destination),
+						vector_offset(registers.left),
+						vector_offset(registers.right)),
+				"register offsets were not packed during translation");
 			selected.insert(words[0]);
 		}
 	test::require(expected.size() == 24U,

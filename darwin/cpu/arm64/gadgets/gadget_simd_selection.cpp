@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "gadget_selection_dependencies.hpp"
+#include "gadget_operand_encoding.hpp"
 
 namespace uml::cpu::arm64::gadgets::selection {
 
@@ -443,8 +444,8 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	};
 	static_assert(offsetof(CpuState, vectors) +
 		31U * sizeof(VectorRegister) <= 0xffffU);
-	return vector_offset(destination) |
-		(static_cast<std::uintptr_t>(vector_offset(source)) << 16U);
+	return packed_u16_operands(vector_offset(destination),
+		vector_offset(source));
 }
 
 [[nodiscard]] std::uintptr_t simd_ternary_operand(
@@ -457,10 +458,22 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	};
 	static_assert(offsetof(CpuState, vectors) +
 		31U * sizeof(VectorRegister) <= 0xffffU);
-	return vector_offset(destination) |
-		(static_cast<std::uintptr_t>(vector_offset(first)) << 16U) |
-		(static_cast<std::uintptr_t>(vector_offset(second)) << 32U) |
-		(static_cast<std::uintptr_t>(descriptor) << 48U);
+	return packed_u16_operands(vector_offset(destination),
+		vector_offset(first), vector_offset(second), descriptor);
+}
+
+[[nodiscard]] std::uintptr_t simd_quaternary_operand(
+	unsigned destination, unsigned first, unsigned second,
+	unsigned third) noexcept
+{
+	const auto vector_offset = [](unsigned index) {
+		return offsetof(CpuState, vectors) +
+			index * sizeof(VectorRegister);
+	};
+	static_assert(offsetof(CpuState, vectors) +
+		31U * sizeof(VectorRegister) <= 0xffffU);
+	return packed_u16_operands(vector_offset(destination),
+		vector_offset(first), vector_offset(second), vector_offset(third));
 }
 
 #define UML_SIMD_UNARY_V6(name) SimdUnaryGadgets{ \

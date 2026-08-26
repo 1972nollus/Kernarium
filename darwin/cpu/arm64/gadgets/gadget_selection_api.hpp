@@ -383,6 +383,9 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] std::uintptr_t
 simd_ternary_operand(unsigned int, unsigned int, unsigned int,
                      unsigned int = 0U) noexcept;
+[[nodiscard]] std::uintptr_t
+simd_quaternary_operand(unsigned int, unsigned int, unsigned int,
+                        unsigned int) noexcept;
 [[nodiscard]] Gadget simd_integer_unary_gadget(unsigned int, bool, bool, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_compare_zero_native_gadget(unsigned int, bool, bool, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_floating_compare_gadget(const detail::SimdFloatingCompareDecode &) noexcept;

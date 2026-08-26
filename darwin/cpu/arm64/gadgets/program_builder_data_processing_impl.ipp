@@ -149,11 +149,11 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				 * translated inline behind it, exactly as for
 				 * the unfused branch. */
 				if (resolve_link &&
-				    emit_inlined_compare_branch(
+				    emit_inlined_packed_compare_branch(
 					    context,
 					    compare_immediate_branch_inline_gadget(
 						    wide, branch & 15U),
-					    operand, target, 2)) {
+					    operand, target, 40, 2)) {
 					/* The loop advances past this
 					 * instruction itself; the pair's second
 					 * one is ours. */
@@ -246,11 +246,11 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				 * translated inline behind it, exactly as for
 				 * the unfused branch. */
 				if (resolve_link &&
-				    emit_inlined_compare_branch(
+				    emit_inlined_packed_compare_branch(
 					    context,
 					    compare_register_branch_inline_gadget(
 						    is_64_bit, branch & 15U),
-					    operand, target, 2)) {
+					    operand, target, 48, 2)) {
 					/* The loop advances past this
 					 * instruction itself; the pair's second
 					 * one is ours. */
@@ -332,10 +332,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			emit(words, shifted_mask);
 		} else {
 			emit(words, uml_arm64_gadget_rmif_fast);
-			emit(words, static_cast<std::uintptr_t>(source * 8U));
-			emit(words, static_cast<std::uintptr_t>(
-				(instruction >> 15) & 63U));
-			emit(words, shifted_mask);
+			emit(words,
+				packed_u16_operands(
+					static_cast<std::uintptr_t>(source * 8U),
+					static_cast<std::uintptr_t>(
+						(instruction >> 15) & 63U)) |
+				(shifted_mask << 32));
 		}
 	} else if ((instruction & 0xffff'bc1fU) == 0x3a00'080dU) {
 		const unsigned source = (instruction >> 5) & 31U;
@@ -532,14 +534,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 					left == right && left != 31U,
 					!options.force_software_checksum &&
 						host_capabilities().crc32));
-				if (left != 31U)
-					emit(words, offsetof(CpuState, registers) +
-						left * 8U);
-				if (right != 31U && right != left)
-					emit(words, offsetof(CpuState, registers) +
-						right * 8U);
-				emit(words, offsetof(CpuState, registers) +
-					destination * 8U);
+				emit(words, arithmetic_binary_operand(instruction));
 			}
 		} else {
 			emit(words, uml_arm64_gadget_illegal);
@@ -783,12 +778,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		} else {
 			emit(words, bit_reverse_count_gadget(
 				is_64_bit, operation));
-			emit(words, source == 31U ?
-				offsetof(CpuState, gadget_zero) :
+			emit(words, packed_u16_operands(
+				source == 31U ? offsetof(CpuState, gadget_zero) :
+					offsetof(CpuState, registers) +
+						source * sizeof(std::uint64_t),
 				offsetof(CpuState, registers) +
-					source * sizeof(std::uint64_t));
-			emit(words, offsetof(CpuState, registers) +
-				destination * sizeof(std::uint64_t));
+					destination * sizeof(std::uint64_t)));
 		}
 	} else {
 		return implementation_gap(context);

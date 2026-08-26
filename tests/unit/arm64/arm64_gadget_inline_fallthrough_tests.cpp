@@ -202,7 +202,7 @@ void taking_the_branch_retires_only_what_ran()
 	require(target.executed == 2);
 }
 
-void ordinary_inline_suffix_cells_remain_unpacked()
+void ordinary_inline_suffix_packing_preserves_branch_behavior()
 {
 	unsigned long generation = 946;
 	for (const auto branch : {branch_equal(5), test_bit_zero(0, 5)}) {
@@ -225,7 +225,7 @@ void ordinary_inline_suffix_cells_remain_unpacked()
 	}
 }
 
-void fused_compare_inline_operands_and_suffixes_remain_full_width()
+void fused_compare_inline_suffix_packing_preserves_branch_behavior()
 {
 	unsigned long generation = 948;
 	for (const auto compare : {
@@ -330,8 +330,8 @@ int main()
 {
 	the_fall_through_retires_the_whole_block();
 	taking_the_branch_retires_only_what_ran();
-	ordinary_inline_suffix_cells_remain_unpacked();
-	fused_compare_inline_operands_and_suffixes_remain_full_width();
+	ordinary_inline_suffix_packing_preserves_branch_behavior();
+	fused_compare_inline_suffix_packing_preserves_branch_behavior();
 	a_fault_past_the_branch_counts_from_its_address();
 #if UML_GADGET_INLINE_CALLS
 	a_call_translates_its_callee_inline();

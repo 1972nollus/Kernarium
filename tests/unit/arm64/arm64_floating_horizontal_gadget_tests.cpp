@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_floating_horizontal_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
@@ -245,30 +246,22 @@ void direct_operands_live_symbols_and_hot_shapes()
 					::uml::cpu::ArmFeature::afp));
 			const auto entry = entry_for_afp(form, afp);
 			test::common::require(built.program.words()[0] == entry);
-			test::common::require(
-				built.program.words().size() >= 3U);
-			test::common::require(built.program.words()[1] ==
-				vector_offset(registers.destination));
-			test::common::require(built.program.words()[2] ==
-				vector_offset(registers.first));
 			const bool uses_second =
 				form.kind == test::Kind::scalar_binary ||
 				form.kind == test::Kind::vector_binary ||
 				form.kind == test::Kind::vector_pairwise;
-			if (uses_second) {
-				test::common::require(
-					built.program.words().size() >= 4U);
-				test::common::require(built.program.words()[3] ==
-					vector_offset(registers.second));
-			}
+			const bool checked = checked_entry(form);
+			test::common::require(built.program.words().size() ==
+				(checked ? 5U : 4U));
+			test::common::require(built.program.words()[1] ==
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.first),
+					uses_second ?
+						vector_offset(registers.second) : 0U));
 			if (checked_entry(form)) {
-				const unsigned descriptor_index =
-					uses_second ? 4U : 3U;
 				test::common::require(
-					built.program.words().size() >
-						descriptor_index);
-				test::common::require(
-					built.program.words()[descriptor_index] ==
+					built.program.words()[2] ==
 					test::detail::floating_horizontal_operand(
 						test::instruction(form, registers),
 						test::detail::
@@ -302,7 +295,7 @@ void direct_operands_live_symbols_and_hot_shapes()
 		test::common::require(shape.conditional_branches <=
 			(checked ? 2U : 1U));
 		test::common::require(shape.instructions <=
-			(checked ? 13U : 10U));
+			(checked ? 15U : 12U));
 	}
 }
 

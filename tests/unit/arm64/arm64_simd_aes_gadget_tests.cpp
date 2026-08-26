@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_simd_aes_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -121,15 +122,16 @@ void translation_specializes_operation_host_path_and_registers()
 			test::engine_tests::engine_test_code_base,
 			std::array{test::instruction(variant)});
 		const auto words = built.program.words();
-		test::require(built.complete && words.size() > 2U,
+		test::require(built.complete && words.size() == 4U,
 			"block-transform gadget stream is truncated");
 		test::require(words[0] ==
 				address(expected_gadget(operation, native)),
 			"operation or host path remained in the runtime stream");
-		test::require(
-			words[1] == vector_offset(registers.destination) &&
-				words[2] == vector_offset(registers.source),
-			"register fields were not translated to direct offsets");
+		test::require(words[1] ==
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.source)),
+			"register offsets were not packed during translation");
 		selected.insert(words[0]);
 
 		gadgets::BuildOptions options{};
@@ -140,17 +142,16 @@ void translation_specializes_operation_host_path_and_registers()
 			std::pmr::get_default_resource(), {}, options);
 		const auto portable_words = portable.program.words();
 		test::require(portable.complete &&
-				portable_words.size() > 2U,
+				portable_words.size() == 4U,
 			"portable block-transform stream is truncated");
 		test::require(portable_words[0] ==
 				address(expected_gadget(operation, false)),
 			"portable operation remained selected at runtime");
-		test::require(
-			portable_words[1] ==
-				vector_offset(registers.destination) &&
-				portable_words[2] ==
-				vector_offset(registers.source),
-			"portable registers retained runtime decode");
+		test::require(portable_words[1] ==
+				gadgets::selection::packed_u16_operands(
+					vector_offset(registers.destination),
+					vector_offset(registers.source)),
+			"portable register offsets were not packed");
 	}
 	test::require(selected.size() == operations.size(),
 		"translation did not select every current-host gadget");
@@ -174,9 +175,9 @@ void every_definition_is_reachable_and_branch_free()
 		}
 	test::require(definitions.size() == 8U,
 		"block-transform gadget table has a duplicate entry");
-	test::require(maximum_native <= 7U,
+	test::require(maximum_native <= 9U,
 		"native block-transform hot path exceeds its instruction budget");
-	test::require(maximum_software <= 9U,
+	test::require(maximum_software <= 11U,
 		"portable block-transform path exceeds its instruction budget");
 }
 

@@ -1295,28 +1295,29 @@ divide_sources 1, 1, x_s
  * extension bodies remain the shortest supported-host path; software entries
  * share one fully unrolled body per operation for extension-less hosts. */
 .macro crc32_load_sources source_mode
+	ldr x11, [_stream], #8
+	and x10, x11, #0xffff
 	.ifc \source_mode, rr
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_stream], #8
+	ubfx x8, x11, #16, #16
+	lsr x9, x11, #32
 	ldr x14, [_cpu, x8]
 	ldr x15, [_cpu, x9]
 	.else
 	.ifc \source_mode, same
-	ldp x8, x10, [_stream], #16
+	ubfx x8, x11, #16, #16
 	ldr x14, [_cpu, x8]
 	mov x15, x14
 	.else
 	.ifc \source_mode, rz
-	ldp x8, x10, [_stream], #16
+	ubfx x8, x11, #16, #16
 	ldr x14, [_cpu, x8]
 	mov x15, xzr
 	.else
 	.ifc \source_mode, zr
-	ldp x9, x10, [_stream], #16
+	lsr x9, x11, #32
 	mov w14, wzr
 	ldr x15, [_cpu, x9]
 	.else
-	ldr x10, [_stream], #8
 	mov w14, wzr
 	mov x15, xzr
 	.endif
@@ -1937,7 +1938,9 @@ bitfield_sources 2, 1, x_u
  * selected only when the running host advertises the matching extension. */
 .macro bit_reverse_count_fast operation, bits64, native, suffix
 gadget bit_reverse_count_\suffix
-	ldp x10, x11, [_stream], #16
+	ldr x9, [_stream], #8
+	and x10, x9, #0xffff
+	lsr x11, x9, #16
 	ldr x12, [_cpu, x10]
 	.if \native
 		.if \bits64
@@ -2228,8 +2231,10 @@ gadget xaflag_native
 
 gadget rmif_fast
 	ldr x8, [_stream], #8
-	ldr x12, [_cpu, x8]
-	ldp x11, x14, [_stream], #16
+	and x12, x8, #0xffff
+	ubfx x11, x8, #16, #6
+	lsr x14, x8, #32
+	ldr x12, [_cpu, x12]
 	ror x13, x12, x11
 	lsl w13, w13, #28
 	bic w27, w27, w14

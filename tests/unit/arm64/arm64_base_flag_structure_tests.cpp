@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_flag_test_support.hpp"
 
+#include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -128,14 +129,15 @@ void rmif_translation()
 
 	const auto ordinary = build(encode_rmif(19, 47, 0xd));
 	require(ordinary.complete &&
-			ordinary.program.words().size() == 6U &&
+			ordinary.program.words().size() == 4U &&
 			ordinary.program.words()[0] ==
 				address(uml_arm64_gadget_rmif_fast) &&
 			ordinary.program.words()[1] ==
-				offsetof(arm64::CpuState, registers) + 19U * 8U &&
-			ordinary.program.words()[2] == 47U &&
-			ordinary.program.words()[3] == 0xd000'0000U,
-		"RMIF fields were not fully resolved during translation");
+				(gadgets::selection::packed_u16_operands(
+					offsetof(arm64::CpuState, registers) + 19U * 8U,
+					47U) |
+				 (std::uintptr_t{0xd000'0000U} << 32)),
+		"RMIF fields were not packed during translation");
 	require(conditional_branches(
 			address(uml_arm64_gadget_rmif_fast)) == 0U &&
 			conditional_branches(
