@@ -32,9 +32,9 @@ AnonymousSharedBacking anonymous_backing;
 		status.st_ino == anonymous_backing.inode;
 }
 
-[[nodiscard]] bool prepare_anonymous_root_locked(
+[[nodiscard]] bool validate_anonymous_range_locked(
 	const struct stat &status, std::uint64_t offset,
-	std::size_t length, void *preferred_root) noexcept
+	std::size_t length) noexcept
 {
 	if (!same_backing(status)) {
 		errno = EBADF;
@@ -42,7 +42,8 @@ AnonymousSharedBacking anonymous_backing;
 	}
 	if (status.st_size <= 0 ||
 	    static_cast<std::uintmax_t>(status.st_size) > SIZE_MAX ||
-	    length == 0 || offset % vm_page_size != 0) {
+	    length == 0 || offset % vm_page_size != 0 ||
+	    length % vm_page_size != 0) {
 		errno = EINVAL;
 		return false;
 	}
@@ -51,67 +52,81 @@ AnonymousSharedBacking anonymous_backing;
 		errno = EINVAL;
 		return false;
 	}
-	if (anonymous_backing.root == nullptr) {
-		/* The sparse descriptor is only an identity token; every consumer
-		 * shares this anonymous root or aliases a protected subrange of it.
-		 * When the kernel's first operation is its writable fixed full-span
-		 * physical-memory mapping, make that mapping the root itself. Keeping
-		 * a separate anywhere root would make iOS account two resident copies
-		 * of the complete guest-RAM range even though they share one VM object. */
-		const int placement = preferred_root == nullptr ? 0 : MAP_FIXED;
-		void *root = mmap(preferred_root, backing_size,
-			PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON | placement, -1, 0);
-		if (root == MAP_FAILED && preferred_root != nullptr)
-			root = mmap(nullptr, backing_size, PROT_READ | PROT_WRITE,
-				MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (root == MAP_FAILED)
-			return false;
-		const bool anchored =
-			preferred_root != nullptr && root == preferred_root;
-#if UML_WIRE_ANONYMOUS_GUEST_RAM
-		struct rlimit lock_limit {};
-		if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
-			dprintf(STDERR_FILENO,
-				"Darwin anonymous guest RAM: wiring %zu bytes "
-				"(RLIMIT_MEMLOCK soft=%llu hard=%llu)\n",
-				backing_size,
-				static_cast<unsigned long long>(lock_limit.rlim_cur),
-				static_cast<unsigned long long>(lock_limit.rlim_max));
-		} else {
-			dprintf(STDERR_FILENO,
-				"Darwin anonymous guest RAM: wiring %zu bytes "
-				"(RLIMIT_MEMLOCK unavailable, errno=%d)\n",
-				backing_size, errno);
-		}
-		if (mlock(root, backing_size) != 0) {
-			const int saved_errno = errno;
-			dprintf(STDERR_FILENO,
-				"Darwin anonymous guest RAM: failed to wire %zu "
-				"bytes, errno=%d; refusing lazy guest RAM\n",
-				backing_size, saved_errno);
-			(void)munmap(root, backing_size);
-			errno = saved_errno;
-			return false;
-		}
-		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: committed and wired %zu "
-			"bytes; host compression is disabled for the root; "
-			"fixed-root=%s\n",
-			backing_size, anchored ? "yes" : "no");
-#else
-		dprintf(STDERR_FILENO,
-			"Darwin anonymous guest RAM: reserved %zu bytes without "
-			"file backing; fixed-root=%s\n",
-			backing_size, anchored ? "yes" : "no");
-#endif
-		anonymous_backing.root = root;
-		anonymous_backing.size = backing_size;
-	} else if (anonymous_backing.size != backing_size) {
+	if (anonymous_backing.root != nullptr &&
+	    anonymous_backing.size != backing_size) {
 		errno = EINVAL;
 		return false;
 	}
 	return true;
+}
+
+[[nodiscard]] void *establish_anonymous_root_locked(
+	void *address, std::size_t length, std::uint64_t offset,
+	const struct stat &status) noexcept
+{
+	if (!validate_anonymous_range_locked(status, offset, length))
+		return MAP_FAILED;
+	const auto backing_size = static_cast<std::size_t>(status.st_size);
+	const auto target = reinterpret_cast<std::uintptr_t>(address);
+	if (address == nullptr || offset > target ||
+	    length != backing_size - static_cast<std::size_t>(offset)) {
+		errno = EINVAL;
+		return MAP_FAILED;
+	}
+
+	/* UML's physical window begins with the signed kernel image. Only the
+	 * allocatable suffix is created from the physical-memory descriptor. Make
+	 * that first fixed suffix mapping the anonymous allocation itself and use
+	 * address - offset as the linear physical base. A separate anywhere
+	 * allocation would leave iOS accounting both full-span resident mappings. */
+	void *root = mmap(address, length, PROT_READ | PROT_WRITE,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (root == MAP_FAILED)
+		return MAP_FAILED;
+#if UML_WIRE_ANONYMOUS_GUEST_RAM
+	struct rlimit lock_limit {};
+	if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
+		dprintf(STDERR_FILENO,
+			"Darwin anonymous guest RAM: wiring %zu bytes "
+			"(RLIMIT_MEMLOCK soft=%llu hard=%llu)\n",
+			length,
+			static_cast<unsigned long long>(lock_limit.rlim_cur),
+			static_cast<unsigned long long>(lock_limit.rlim_max));
+	} else {
+		dprintf(STDERR_FILENO,
+			"Darwin anonymous guest RAM: wiring %zu bytes "
+			"(RLIMIT_MEMLOCK unavailable, errno=%d)\n",
+			length, errno);
+	}
+	if (mlock(root, length) != 0) {
+		const int saved_errno = errno;
+		dprintf(STDERR_FILENO,
+			"Darwin anonymous guest RAM: failed to wire %zu "
+			"bytes, errno=%d; refusing lazy guest RAM\n",
+			length, saved_errno);
+		(void)munmap(root, length);
+		errno = saved_errno;
+		return MAP_FAILED;
+	}
+	dprintf(STDERR_FILENO,
+		"Darwin anonymous guest RAM: committed and wired %zu "
+		"allocatable bytes in the %zu-byte physical window; host "
+		"compression is disabled; direct-root=yes offset=%llu\n",
+		length, backing_size,
+		static_cast<unsigned long long>(offset));
+#else
+	dprintf(STDERR_FILENO,
+		"Darwin anonymous guest RAM: reserved %zu allocatable bytes "
+		"in the %zu-byte physical window without file backing; "
+		"direct-root=yes offset=%llu\n",
+		length, backing_size,
+		static_cast<unsigned long long>(offset));
+#endif
+	anonymous_backing.root = reinterpret_cast<void *>(
+		reinterpret_cast<std::uintptr_t>(root) -
+		static_cast<std::size_t>(offset));
+	anonymous_backing.size = backing_size;
+	return root;
 }
 
 [[nodiscard]] void *map_anonymous_alias(void *address, std::size_t length,
@@ -120,15 +135,16 @@ AnonymousSharedBacking anonymous_backing;
 {
 	std::lock_guard lock{anonymous_backing.mutex};
 	const bool fixed = (flags & MAP_FIXED) != 0;
-	void *preferred_root = nullptr;
-	if (fixed && address != nullptr && offset == 0 && status.st_size > 0 &&
-	    static_cast<std::uintmax_t>(status.st_size) <= SIZE_MAX &&
-	    length == static_cast<std::size_t>(status.st_size) &&
-	    protection == (PROT_READ | PROT_WRITE))
-		preferred_root = address;
-	if (!prepare_anonymous_root_locked(
-		status, offset, length, preferred_root))
+	if (!validate_anonymous_range_locked(status, offset, length))
 		return MAP_FAILED;
+	if (anonymous_backing.root == nullptr) {
+		if (!fixed || protection != (PROT_READ | PROT_WRITE)) {
+			errno = EAGAIN;
+			return MAP_FAILED;
+		}
+		return establish_anonymous_root_locked(
+			address, length, offset, status);
+	}
 
 	vm_address_t target = fixed ? reinterpret_cast<vm_address_t>(address) : 0;
 	const vm_address_t source =
@@ -248,9 +264,12 @@ SharedBackingView acquire_shared_backing_view(int fd,
 		std::lock_guard lock{anonymous_backing.mutex};
 		if (same_backing(status) &&
 		    protection == (PROT_READ | PROT_WRITE)) {
-			if (!prepare_anonymous_root_locked(
-				status, offset, length, nullptr))
+			if (!validate_anonymous_range_locked(status, offset, length))
 				return {};
+			if (anonymous_backing.root == nullptr) {
+				errno = EAGAIN;
+				return {};
+			}
 			auto *data = static_cast<std::byte *>(
 				anonymous_backing.root) + offset;
 			return SharedBackingView{data, length, false};

@@ -64,10 +64,13 @@ data/BSS into anonymous storage. It rejects carrier mismatch, writable
 executable segments, and relocations into signed text. macOS retains the
 unsigned embedded-loader path.
 
-Android guest RAM uses an anonymous host-VM root with non-copying aliases.
-Physical iOS commits and wires the complete root before exposing it; a wire
-failure aborts startup. Simulator and macOS retain demand allocation. Disk and
-image descriptors remain file-backed.
+Android guest RAM uses the kernel's linear physical window as its root. The
+signed kernel image occupies the reserved prefix and the allocatable suffix is
+created anonymously in place; software-MMU and host-service views borrow that
+window rather than retaining a second full-span mapping. Physical iOS commits
+and wires the allocatable suffix before exposing it, and a wire failure aborts
+startup. Simulator and macOS retain demand allocation. Disk and image
+descriptors remain file-backed.
 
 ## CPU engines
 

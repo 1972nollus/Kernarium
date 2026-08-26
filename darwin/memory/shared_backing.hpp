@@ -38,7 +38,8 @@ private:
 [[nodiscard]] bool is_anonymous_shared_backing(int fd) noexcept;
 
 /* Acquire a read/write consumer view without creating another Mach mapping
- * when fd identifies the anonymous guest-RAM root. Other protections and
+ * when fd identifies the anonymous guest-RAM root. The kernel's in-place
+ * physical window must have been established first. Other protections and
  * ordinary descriptors retain mmap/vm_remap ownership semantics. */
 [[nodiscard]] SharedBackingView acquire_shared_backing_view(int fd,
 	std::uint64_t offset, std::size_t length, int protection) noexcept;
