@@ -89,6 +89,14 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 - `linux/` is an ignored replay checkout, not outer-repository source. Commit
   kernel changes through the generated series under the owning versioned
   kernel directory.
+- Treat every kernel source, patch, and configuration change as shared across
+  all maintained kernel lines and every supported configuration or page
+  profile. Update the mainline and Android lines, plus both 16 KiB and 4 KiB
+  profiles where those products exist, in the same change. Omit a line or
+  profile only when the behavior genuinely depends on the guest OS or the
+  target product does not exist, and record that reason in the owning
+  versioned README or patch metadata. Differences in source layout or Kconfig
+  spelling require an adapted port, not an exemption.
 - Use `prepare-source.sh --recreate` only for a clean stale managed replay.
   Never replace an arbitrary source tree.
 - Maintained kernel changes are local to this project; tooling must not suggest
