@@ -98,12 +98,19 @@ void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
 	require(uml::memory::register_anonymous_shared_backing(token.get()));
 	require(uml::memory::is_anonymous_shared_backing(token.get()));
 
-	void *root_address = nullptr;
+	const auto backing_size = page_size * 2;
+	void *root_address = ::mmap(nullptr, backing_size, PROT_NONE,
+		MAP_PRIVATE | MAP_ANON, -1, 0);
+	require(root_address != MAP_FAILED);
+	void *anchored = uml::memory::map_shared_backing(root_address,
+		backing_size, PROT_READ | PROT_WRITE,
+		MAP_FIXED | MAP_SHARED, token.get(), 0);
+	require(anchored == root_address);
 	{
 		auto root = uml::memory::acquire_shared_backing_view(
-			token.get(), 0, page_size * 2, PROT_READ | PROT_WRITE);
+			token.get(), 0, backing_size, PROT_READ | PROT_WRITE);
 		require(static_cast<bool>(root));
-		root_address = root.data();
+		require(root.data() == root_address);
 		{
 			auto tail = uml::memory::acquire_shared_backing_view(
 				token.get(), page_size, page_size,
@@ -125,7 +132,7 @@ void test_anonymous_consumers_borrow_one_root(std::size_t page_size)
 	}
 
 	auto reacquired = uml::memory::acquire_shared_backing_view(
-		token.get(), 0, page_size * 2, PROT_READ | PROT_WRITE);
+		token.get(), 0, backing_size, PROT_READ | PROT_WRITE);
 	require(static_cast<bool>(reacquired));
 	require(reacquired.data() == root_address);
 	require(static_cast<std::uint8_t *>(reacquired.data())[page_size] == 0xa5);

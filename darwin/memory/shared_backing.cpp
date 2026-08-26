@@ -34,7 +34,7 @@ AnonymousSharedBacking anonymous_backing;
 
 [[nodiscard]] bool prepare_anonymous_root_locked(
 	const struct stat &status, std::uint64_t offset,
-	std::size_t length) noexcept
+	std::size_t length, void *preferred_root) noexcept
 {
 	if (!same_backing(status)) {
 		errno = EBADF;
@@ -53,11 +53,22 @@ AnonymousSharedBacking anonymous_backing;
 	}
 	if (anonymous_backing.root == nullptr) {
 		/* The sparse descriptor is only an identity token; every consumer
-		 * shares this anonymous root or aliases a protected subrange of it. */
-		void *root = mmap(nullptr, backing_size, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
+		 * shares this anonymous root or aliases a protected subrange of it.
+		 * When the kernel's first operation is its writable fixed full-span
+		 * physical-memory mapping, make that mapping the root itself. Keeping
+		 * a separate anywhere root would make iOS account two resident copies
+		 * of the complete guest-RAM range even though they share one VM object. */
+		const int placement = preferred_root == nullptr ? 0 : MAP_FIXED;
+		void *root = mmap(preferred_root, backing_size,
+			PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANON | placement, -1, 0);
+		if (root == MAP_FAILED && preferred_root != nullptr)
+			root = mmap(nullptr, backing_size, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANON, -1, 0);
 		if (root == MAP_FAILED)
 			return false;
+		const bool anchored =
+			preferred_root != nullptr && root == preferred_root;
 #if UML_WIRE_ANONYMOUS_GUEST_RAM
 		struct rlimit lock_limit {};
 		if (getrlimit(RLIMIT_MEMLOCK, &lock_limit) == 0) {
@@ -85,13 +96,14 @@ AnonymousSharedBacking anonymous_backing;
 		}
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: committed and wired %zu "
-			"bytes; host compression is disabled for the root\n",
-			backing_size);
+			"bytes; host compression is disabled for the root; "
+			"fixed-root=%s\n",
+			backing_size, anchored ? "yes" : "no");
 #else
 		dprintf(STDERR_FILENO,
 			"Darwin anonymous guest RAM: reserved %zu bytes without "
-			"file backing\n",
-			backing_size);
+			"file backing; fixed-root=%s\n",
+			backing_size, anchored ? "yes" : "no");
 #endif
 		anonymous_backing.root = root;
 		anonymous_backing.size = backing_size;
@@ -107,13 +119,25 @@ AnonymousSharedBacking anonymous_backing;
 	const struct stat &status) noexcept
 {
 	std::lock_guard lock{anonymous_backing.mutex};
-	if (!prepare_anonymous_root_locked(status, offset, length))
+	const bool fixed = (flags & MAP_FIXED) != 0;
+	void *preferred_root = nullptr;
+	if (fixed && address != nullptr && offset == 0 && status.st_size > 0 &&
+	    static_cast<std::uintmax_t>(status.st_size) <= SIZE_MAX &&
+	    length == static_cast<std::size_t>(status.st_size) &&
+	    protection == (PROT_READ | PROT_WRITE))
+		preferred_root = address;
+	if (!prepare_anonymous_root_locked(
+		status, offset, length, preferred_root))
 		return MAP_FAILED;
 
-	const bool fixed = (flags & MAP_FIXED) != 0;
 	vm_address_t target = fixed ? reinterpret_cast<vm_address_t>(address) : 0;
 	const vm_address_t source =
 		reinterpret_cast<vm_address_t>(anonymous_backing.root) + offset;
+	if (fixed && target == source) {
+		if (mprotect(address, length, protection) != 0)
+			return MAP_FAILED;
+		return address;
+	}
 	vm_prot_t current = VM_PROT_NONE;
 	vm_prot_t maximum = VM_PROT_NONE;
 	const int mach_flags = fixed ? VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE :
@@ -224,7 +248,8 @@ SharedBackingView acquire_shared_backing_view(int fd,
 		std::lock_guard lock{anonymous_backing.mutex};
 		if (same_backing(status) &&
 		    protection == (PROT_READ | PROT_WRITE)) {
-			if (!prepare_anonymous_root_locked(status, offset, length))
+			if (!prepare_anonymous_root_locked(
+				status, offset, length, nullptr))
 				return {};
 			auto *data = static_cast<std::byte *>(
 				anonymous_backing.root) + offset;
