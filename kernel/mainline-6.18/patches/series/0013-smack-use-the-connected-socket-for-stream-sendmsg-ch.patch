@@ -1,7 +1,7 @@
-From 51bac8ee073a4761a41f5d760a56c1b8b9e0abb8 Mon Sep 17 00:00:00 2001
+From 4c1286e77bbd42609e10f0c4b66d847e8a9fdb3e Mon Sep 17 00:00:00 2001
 From: Darwin UML maintainers <uml-darwin@example.invalid>
 Date: Mon, 3 Aug 2026 17:24:12 +0900
-Subject: [PATCH 13/23] smack: use the connected socket for stream sendmsg
+Subject: [PATCH 13/32] smack: use the connected socket for stream sendmsg
  checks
 
 Apply the reviewed final-state topic without intermediate churn.

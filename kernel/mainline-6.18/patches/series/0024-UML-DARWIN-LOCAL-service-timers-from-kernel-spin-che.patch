@@ -1,0 +1,108 @@
+From 47802a91fb48f3ec5d1b10c9919b8ef8d4a0eecd Mon Sep 17 00:00:00 2001
+From: linux-um-darwin kernel patch maintainer
+ <noreply@linux-um-darwin.invalid>
+Date: Fri, 21 Aug 2026 04:11:17 +0000
+Subject: [PATCH 24/32] UML-DARWIN-LOCAL: service timers from kernel spin
+ checkpoints
+
+Change-Id: Ib011cee9d37ffccef57cc6b86b2ee77df023dc28
+---
+ arch/um/include/shared/kern_util.h |  3 +++
+ arch/um/kernel/time.c              | 14 ++++++++++++++
+ arch/um/os-Darwin/smp.c            | 23 ++++++++++++++++++-----
+ 3 files changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
+index 3daaa5c4b..b9d97a673 100644
+--- a/arch/um/include/shared/kern_util.h
++++ b/arch/um/include/shared/kern_util.h
+@@ -37,6 +37,9 @@ extern unsigned int do_IRQ(int irq, struct uml_pt_regs *regs);
+ extern void initial_thread_cb(void (*proc)(void *), void *arg);
+ 
+ extern void timer_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs);
++#ifdef UML_HOST_DARWIN
++extern void darwin_timer_spin_checkpoint(void);
++#endif
+ 
+ extern void uml_pm_wake(void);
+ 
+diff --git a/arch/um/kernel/time.c b/arch/um/kernel/time.c
+index b46649f2e..50b6beb05 100644
+--- a/arch/um/kernel/time.c
++++ b/arch/um/kernel/time.c
+@@ -13,6 +13,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/jiffies.h>
+ #include <linux/mm.h>
++#include <linux/ptrace.h>
+ #include <linux/sched.h>
+ #include <linux/sched/clock.h>
+ #include <linux/spinlock.h>
+@@ -814,6 +815,19 @@ void timer_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs)
+ 		ct_irq_exit();
+ }
+ 
++#ifdef UML_HOST_DARWIN
++void darwin_timer_spin_checkpoint(void)
++{
++	/* Cooperative Darwin timers normally run at guest/kernel or idle
++	 * boundaries.  A kernel lock can spin until need_resched() becomes true,
++	 * so it also needs a safe tick source after asynchronous timer delivery
++	 * has been disabled.  darwin_cpu_relax() calls this only with logical IRQs
++	 * enabled, matching an ordinary interrupt of the current kernel frame.
++	 */
++	darwin_timer_poll(&current_pt_regs()->regs);
++}
++#endif
++
+ static int itimer_shutdown(struct clock_event_device *evt)
+ {
+ 	int cpu = evt - &timer_clockevent[0];
+diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
+index 5a47d6e54..679263bcf 100644
+--- a/arch/um/os-Darwin/smp.c
++++ b/arch/um/os-Darwin/smp.c
+@@ -33,6 +33,7 @@ static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
+ static unsigned int pending_ipis[CONFIG_NR_CPUS];
+ static unsigned int guest_ipi_sequences[CONFIG_NR_CPUS];
+ static unsigned char guest_executing[CONFIG_NR_CPUS];
++static unsigned int spin_relax_counts[CONFIG_NR_CPUS];
+ static unsigned char ipi_idle_waiting[CONFIG_NR_CPUS];
+ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
+ 	[0 ... CONFIG_NR_CPUS - 1] = { -1, -1 },
+@@ -233,18 +234,30 @@ void darwin_ipi_poll(void)
+ 
+ void darwin_cpu_relax(void)
+ {
+-	int cpu = uml_curr_cpu();
++	int cpu;
+ 
+ 	asm volatile("yield" : : : "memory");
+ 	/* Darwin signals are wake edges, not Linux interrupt frames.  A carrier
+ 	 * waiting synchronously for remote kernel work must therefore service a
+ 	 * pending call-function IPI itself; otherwise two vCPUs can wait on one
+-	 * another forever inside csd_lock_wait().  Only enter Linux interrupt code
+-	 * when local IRQs are enabled.  Other spin loops retain the ordinary yield.
++	 * another forever inside csd_lock_wait().  Cooperative per-CPU timers also
++	 * need a kernel spin boundary: an rwsem optimistic spinner otherwise never
++	 * receives the tick which sets need_resched(), can monopolize its carrier,
++	 * and prevents an RCU grace period from completing.
++	 *
++	 * Only enter Linux interrupt code when local IRQs are enabled.  Throttle the
++	 * timer check because every call reads the monotonic clock, while keeping IPI
++	 * service immediate.  Each index has exactly one fixed carrier writer.
+ 	 */
+-	if (__atomic_load_n(&pending_ipis[cpu], __ATOMIC_ACQUIRE) != 0 &&
+-	    um_get_signals())
++	if (!um_get_signals())
++		return;
++	cpu = uml_curr_cpu();
++	if (__atomic_load_n(&pending_ipis[cpu], __ATOMIC_ACQUIRE) != 0)
+ 		darwin_ipi_poll();
++	/* IPI completion can migrate this task before it resumes. */
++	cpu = uml_curr_cpu();
++	if ((++spin_relax_counts[cpu] & 0xffU) == 0)
++		darwin_timer_spin_checkpoint();
+ }
+ 
+ int darwin_ipi_idle_fd(void)

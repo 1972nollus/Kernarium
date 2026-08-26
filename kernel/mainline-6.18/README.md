@@ -73,6 +73,18 @@ allowance equal to RAM, bounded from 1 GiB to 4 GiB. Vmapped task stacks and
 other kernel virtual mappings use that allowance; their physical pages still
 come from the guest's `mem=` allocation.
 
+Both page profiles request the runtime's anonymous physical-memory token. The
+kernel's linear physical window becomes the RAM root, so MMU and host-service
+consumers do not retain a second full-span mapping. Physical iOS wires the
+guest-allocatable ranges before use; macOS and Simulator allocate on demand.
+Free-page reporting remains available to a file-backed provider and disables
+itself after the anonymous provider rejects range punching.
+
+Darwin's cooperative scheduler services timer deadlines at safe kernel spin,
+retry, TLB-walk, and `cond_resched()` boundaries. The Darwin network receive
+path uses NAPI, the display-mapped absolute pointer is a direct touchscreen,
+and UBD advances mixed COW requests by each complete descriptor.
+
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
 policy are built in. Hostfs is disabled. Deliberately unsupported kernel

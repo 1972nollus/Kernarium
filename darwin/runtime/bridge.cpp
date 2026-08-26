@@ -51,7 +51,7 @@ int open_anonymous_backing_token() noexcept
 
 int darwin_uml_open(const char *path, int flags, int mode)
 {
-	/* Android ACK requests this unlinked sparse descriptor solely as an
+	/* Darwin UML kernels request this unlinked sparse descriptor solely as an
 	 * identity and size token. The memory layer recognizes every duplicate of
 	 * the descriptor, lets the kernel's linear physical window establish the
 	 * RAM root, and borrows or aliases ranges of that window for consumers.

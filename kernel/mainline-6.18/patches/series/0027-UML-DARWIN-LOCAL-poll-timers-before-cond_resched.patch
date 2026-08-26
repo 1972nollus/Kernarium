@@ -1,0 +1,43 @@
+From 7b33b6395691a208c8a2f9a1ca0435d841aa6de6 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 21 Aug 2026 08:09:54 +0000
+Subject: [PATCH 27/32] UML-DARWIN-LOCAL: poll timers before cond_resched
+
+Change-Id: Ic8baf21a1447ae757ca86fbe050d865eb27d4418
+---
+ kernel/sched/core.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index b5b5897b5..4abab9a6b 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -82,6 +82,10 @@
+ #include <asm/switch_to.h>
+ #include <asm/tlb.h>
+ 
++#ifdef UML_HOST_DARWIN
++#include <kern_util.h>
++#endif
++
+ #define CREATE_TRACE_POINTS
+ #include <linux/sched/rseq_api.h>
+ #include <trace/events/sched.h>
+@@ -7455,6 +7459,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
+ #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
+ int __sched __cond_resched(void)
+ {
++#ifdef UML_HOST_DARWIN
++	/*
++	 * Darwin's per-CPU timer deadlines are cooperative.  Poll at the
++	 * scheduler's central lock-free kernel boundary before testing
++	 * TIF_NEED_RESCHED, because the expired clock event is what raises that
++	 * flag.  IRQ-disabled callers retain the ordinary no-op behavior.
++	 */
++	if (!irqs_disabled())
++		darwin_timer_kernel_checkpoint();
++#endif
++
+ 	if (should_resched(0) && !irqs_disabled()) {
+ 		preempt_schedule_common();
+ 		return 1;

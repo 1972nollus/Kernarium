@@ -1,7 +1,7 @@
-From 584d8c1e49c78699386e1749260a08e02aafdae4 Mon Sep 17 00:00:00 2001
+From d6a95368a399ec4cf597fde638969f1bbb4edc6f Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 23 Aug 2026 20:27:16 +0900
-Subject: [PATCH 23/23] uml: let vmalloc use the whole auxiliary window
+Subject: [PATCH 23/32] uml: let vmalloc use the whole auxiliary window
 
 The native hole is guest RAM plus an auxiliary allowance, and that allowance
 was one eighth of RAM: 504 MiB on a 4 GiB guest. That made address space the

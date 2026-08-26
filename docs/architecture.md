@@ -46,6 +46,12 @@ native kernel window contains guest RAM plus a RAM-scaled auxiliary mapping
 allowance bounded between 1 GiB and 4 GiB. macOS places it at 96 TiB; iOS
 top-packs it below the physical-device address ceiling.
 
+Every Darwin UML kernel uses its linear physical window as the anonymous RAM
+root. Software-MMU and host-service consumers borrow that root or create
+non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
+Physical iOS wires all guest-allocatable pages before publishing them, while
+macOS and Simulator retain demand allocation.
+
 Interpreter state, gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
 publish RW pages as RX, control JIT write protection, or publish the instruction

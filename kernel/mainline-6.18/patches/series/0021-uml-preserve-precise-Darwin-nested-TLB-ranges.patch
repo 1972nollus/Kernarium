@@ -1,7 +1,7 @@
-From 28bfc7baf71d64fb233436795c3953a49139ec6b Mon Sep 17 00:00:00 2001
+From 6c7ebf74f76f8652373e08e2ca2463d82ae88eca Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 21 Aug 2026 07:52:49 +0900
-Subject: [PATCH 21/23] uml: preserve precise Darwin nested TLB ranges
+Subject: [PATCH 21/32] uml: preserve precise Darwin nested TLB ranges
 
 ---
  arch/um/include/asm/tlb.h | 9 +++++++++

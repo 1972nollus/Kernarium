@@ -1,7 +1,7 @@
-From eebc662cf6b6166155365e9de3a7cc65f588b92e Mon Sep 17 00:00:00 2001
+From 87860cbd8c08021fed6508ed6e9580829a1385d5 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 22 Aug 2026 14:08:31 +0900
-Subject: [PATCH 22/23] uml: raise irq work locally instead of at the tick
+Subject: [PATCH 22/32] uml: raise irq work locally instead of at the tick
 
 UML never implemented arch_irq_work_raise(), so the generic weak stub left
 queued work waiting for the next timer tick.  That is not just slow, it breaks

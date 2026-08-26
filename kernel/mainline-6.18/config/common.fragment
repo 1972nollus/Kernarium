@@ -152,6 +152,12 @@ CONFIG_CIFS_XATTR=y
 # CONFIG_KSM is not set
 CONFIG_USERFAULTFD=y
 CONFIG_CMA=y
+# Retain the free-page reporter for a file-backed physical-memory provider.
+# The accepted Darwin runtime uses anonymous physical RAM and rejects its first
+# hole-punch request, causing the reporter to disable itself without further
+# polling; ordinary file-backed providers can still release past high-water
+# memory without changing the configured mem= ceiling.
+CONFIG_PAGE_REPORTING=y
 # Huge pages are deliberately absent. The guest's pages are host allocations
 # behind a software MMU, so a second huge-page tier buys no TLB reach here and
 # only adds fault-path and khugepaged work. Guest userspace that asks for
