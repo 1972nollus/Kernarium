@@ -187,6 +187,7 @@ The detailed per-workload sample matrix was intentionally discarded.
 | ext4 Android payloads and APEXes | Accepted for the Android release; it removed EROFS-specific execution issues without changing Linux desktop rootfs policy. |
 | Anonymous host VM for Android RAM | Accepted. It removed file-pager churn from cold boot while preserving ordinary file-backed disk behavior. |
 | Full physical-device RAM wiring | Retained as fail-fast startup policy. A successful wire does not reserve all later framework/runtime headroom, so memory-limit qualification still uses real device outcomes. |
+| Kernel physical window as the Android RAM root | Accepted. The software MMU and host services borrow the kernel's linear window, while protection-specific native mappings remain shared aliases. VM tracking confirmed that the separate full-size root mapping disappeared without creating another resident guest-RAM range; physical devices still require headroom for non-guest memory. |
 | Apple asymmetric CPU topology | Rejected and reverted. Public topology/QoS hints could steer carriers but reduced useful Android capacity on the target device. |
 | Physical-device boot profiling | Measured. After RAM changes, the remaining gap is dominated by host execution and scheduling service for the full gadget/MMU working set. |
 
